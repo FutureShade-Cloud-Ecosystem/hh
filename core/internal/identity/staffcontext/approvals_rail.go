@@ -139,6 +139,22 @@ func (s *Approvals) FileJEApproval(ctx context.Context, journalID, branchID stri
 	})
 }
 
+// pendingJEChecker is the optional store read HasPendingJEApproval needs. The repository has it; a test
+// double that predates it answers no pending request, which is the shipped behaviour.
+type pendingJEChecker interface {
+	HasPendingJEApproval(ctx context.Context, journalID string) (bool, error)
+}
+
+// HasPendingJEApproval reports whether a parked journal has a JE_OVER_THRESHOLD request still PENDING. The
+// GL's approve route asks it so a journal with a request is approved only by deciding that request.
+func (s *Approvals) HasPendingJEApproval(ctx context.Context, journalID string) (bool, error) {
+	c, ok := s.store.(pendingJEChecker)
+	if !ok {
+		return false, nil
+	}
+	return c.HasPendingJEApproval(ctx, journalID)
+}
+
 // FileFreightApproval files a FREIGHT_ABOVE_QUOTE request for a parked freight raise and fans out
 // cards (0195). dispatch's gate calls it after parking the proposal; requestedBy is the dispatcher who
 // asked, so four-eyes stops them approving their own raise.

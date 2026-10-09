@@ -260,6 +260,19 @@ func TestDemoWorld_Controller(t *testing.T) {
 	if j := readJournal(j1); j.Status != "DRAFT" {
 		t.Fatalf("J1 reads %s before the decision, want DRAFT", j.Status)
 	}
+	// One way to approve a parked journal: the GL's own approve route refuses a journal whose request is
+	// pending, in words naming the approvals queue, and writes nothing (finding 3).
+	viaGL := controller.call("POST", "/api/v1/gl/journals/"+j1+"/approve", nil)
+	viaGL.ok(t, http.StatusConflict)
+	if !strings.Contains(string(viaGL.body), "approvals queue") {
+		t.Errorf("the GL approve route refused without naming the approvals queue: %s", viaGL.body)
+	}
+	if j := readJournal(j1); j.Status != "DRAFT" {
+		t.Fatalf("J1 reads %s after the refused GL approve, want DRAFT", j.Status)
+	}
+	if got := qwCount(t, ctx, pool, `SELECT count(*) FROM permission_approval_requests WHERE id = $1::uuid AND status = 'PENDING'`, j1Req); got != 1 {
+		t.Errorf("J1's request left PENDING after the refused GL approve (%d rows)", got)
+	}
 	decide(controller, j1Req, true).ok(t, http.StatusOK)
 	if j := readJournal(j1); j.Status != "POSTED" || j.ApprovedBy != cwControllerUserID {
 		t.Errorf("J1 reads %s approved by %q after the decision, want POSTED by the controller", j.Status, j.ApprovedBy)

@@ -701,6 +701,23 @@ func (r *ApprovalRepository) HasApprovedOverride(ctx context.Context, requestedB
 	return ok, nil
 }
 
+// HasPendingJEApproval reports whether a JE_OVER_THRESHOLD request for this journal is still PENDING.
+func (r *ApprovalRepository) HasPendingJEApproval(ctx context.Context, journalID string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var ok bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM permission_approval_requests
+			WHERE policy_type = 'JE_OVER_THRESHOLD' AND status = 'PENDING'
+			  AND deleted_at IS NULL AND subject_ref = $1)`, journalID).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("check pending journal request: %w", err)
+	}
+	return ok, nil
+}
+
 // FloorRequestFor answers the caller's open quote floor request for one
 // subject quote and line: a PENDING request, or an APPROVED one no write
 // has used up (the used state lives in the data JSON column, D3: no schema

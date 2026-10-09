@@ -102,7 +102,8 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	glSvc := gl.NewService(gl.NewRepository(pool)).
 		WithDeadRequeuer(outboxStore).
 		WithAudit(auditSvc).
-		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals})
+		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
+		WithPendingApprovalChecker(approvals)
 	gl.NewHandler(glSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
 

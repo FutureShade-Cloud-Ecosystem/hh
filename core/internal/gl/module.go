@@ -117,6 +117,15 @@ type ApprovalFiler interface {
 	FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error
 }
 
+// PendingApprovalChecker is the rail read the GL's own approve route asks before it posts: does this parked
+// journal have a JE_OVER_THRESHOLD request still PENDING on the approvals queue. A journal over the threshold
+// is approved one way only, by deciding its request (the rail posts it in the same transaction that stamps
+// the request); posting it here would leave the request PENDING and a later decide on it failing. Nil
+// (unwired) keeps the route as it was.
+type PendingApprovalChecker interface {
+	HasPendingJEApproval(ctx context.Context, journalID string) (bool, error)
+}
+
 // NoopCostBasis is the dormant W5 cost-basis seam: it always reports "no cost basis" (found=false) so the
 // COGS leg of an order.fulfilled posting is skipped until the W6 inventory module supplies a real one. The
 // scaffold wires this into glSvc; W6 swaps in the inventory-backed impl.
@@ -165,19 +174,20 @@ func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: po
 // Service is the GL domain seam. It owns the journal lifecycle, the posting consumer, tie-out, and close.
 // Sibling seams are injected via the With* builder options (main.go wires the real adapters).
 type Service struct {
-	repo          *Repository
-	store         glStore
-	invoices      InvoiceReader
-	taxSplits     TaxSplitReader
-	ar            ARSubledger
-	payments      PaymentReader
-	costBasis     CostBasis
-	dead          DeadRequeuer
-	audit         audit.Recorder
-	approvalFiler ApprovalFiler // 0075: nil-able JE park → approvals-rail filing seam
-	log           *slog.Logger
-	now           func() time.Time
-	callerFrom    func(context.Context) (identity.StaffContext, bool)
+	repo           *Repository
+	store          glStore
+	invoices       InvoiceReader
+	taxSplits      TaxSplitReader
+	ar             ARSubledger
+	payments       PaymentReader
+	costBasis      CostBasis
+	dead           DeadRequeuer
+	audit          audit.Recorder
+	approvalFiler  ApprovalFiler          // 0075: nil-able JE park → approvals-rail filing seam
+	pendingChecker PendingApprovalChecker // nil-able: the approve route refuses a journal whose request is pending
+	log            *slog.Logger
+	now            func() time.Time
+	callerFrom     func(context.Context) (identity.StaffContext, bool)
 }
 
 // NewService wires the repository. Optional deps are injected via the With* methods. The repository is the
@@ -272,6 +282,12 @@ func (s *Service) WithDeadRequeuer(d DeadRequeuer) *Service { s.dead = d; return
 // WithApprovalFiler injects the approvals-rail JE-park filing seam (0075). Nil = the shipped maker-checker
 // park behaves exactly as today (no rail filing). Chainable.
 func (s *Service) WithApprovalFiler(f ApprovalFiler) *Service { s.approvalFiler = f; return s }
+
+// WithPendingApprovalChecker injects the pending-request read the approve route consults. Chainable.
+func (s *Service) WithPendingApprovalChecker(c PendingApprovalChecker) *Service {
+	s.pendingChecker = c
+	return s
+}
 
 // - provider surface (bankrec + finstmt + boot depend on these) -
 

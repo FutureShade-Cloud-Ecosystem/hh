@@ -173,6 +173,17 @@ func (s *Service) ApproveJournal(ctx context.Context, id string) (Journal, error
 	if j.CreatedBy != "" && j.CreatedBy == caller.UserID {
 		return Journal{}, errFourEyes
 	}
+	// One way to approve a parked journal that has a request: through the queue. The four eyes check above
+	// stays first, so a maker is still refused as the maker whichever route they use.
+	if s.pendingChecker != nil {
+		pending, perr := s.pendingChecker.HasPendingJEApproval(ctx, id)
+		if perr != nil {
+			return Journal{}, perr
+		}
+		if pending {
+			return Journal{}, clientErr(409, "gl: this journal has a pending approval request; decide it from the approvals queue, which posts it")
+		}
+	}
 	approved, err := s.store.ApproveJournal(ctx, id, caller.UserID)
 	if err != nil {
 		return Journal{}, err
