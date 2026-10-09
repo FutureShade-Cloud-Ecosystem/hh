@@ -166,6 +166,22 @@ func TestDemoWorld_PayablesReceivables(t *testing.T) {
 		"promised_by": "the account's payables clerk", "note": "calls on the first", "idempotency_key": uuid.NewString()})
 	promise.ok(t, http.StatusOK, http.StatusCreated)
 
+	// 5b. MARK BOUNCED (ruling 77 (a)): the cheque just recorded comes back. The persona marks it
+	// bounced, the queue then shows it, and the invoice it had paid stands open for the whole again.
+	var chequeID string
+	if err := pool.QueryRow(ctx, `
+		SELECT p.id::text FROM payments p JOIN payment_allocations a ON a.payment_id = p.id
+		 WHERE a.invoice_id = $1::uuid AND p.status = 'RECEIVED' AND p.method = 'CHEQUE'
+		 ORDER BY p.created_at DESC LIMIT 1`, i06).Scan(&chequeID); err != nil {
+		t.Fatalf("the cheque the persona recorded: %v", err)
+	}
+	payRec.call("POST", "/api/v1/ar/payments/"+chequeID+"/nsf", map[string]any{"reason": "returned by the bank"}).ok(t, http.StatusOK)
+	again := payRec.call("GET", "/api/v1/ar/bounced", nil)
+	again.ok(t, http.StatusOK)
+	if !strings.Contains(string(again.body), chequeID) {
+		t.Fatalf("the queue does not show the payment the persona marked bounced: %s", again.body)
+	}
+
 	// 6. THE WALLS, in the gate's shared refusal body: journal approval and the release of a credit hold.
 	refused := map[string]demoResponse{
 		"journal approval": payRec.call("POST", "/api/v1/gl/journals/"+uuid.NewString()+"/approve", map[string]any{}),
