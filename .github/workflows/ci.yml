@@ -229,7 +229,13 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # The official image, pulled through Amazon ECR Public's mirror of
+        # the Docker official images so the hosted runners do not hit
+        # Docker Hub's anonymous pull rate limit (PRs 290 and 291 failed at
+        # "Initialize containers" with toomanyrequests before any code ran).
+        # Same Postgres major and same alpine variant as the source image
+        # (16.15 on alpine 3.24); the index digest matches docker.io's.
+        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: till_base
@@ -366,7 +372,13 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # The official image, pulled through Amazon ECR Public's mirror of
+        # the Docker official images so the hosted runners do not hit
+        # Docker Hub's anonymous pull rate limit (PRs 290 and 291 failed at
+        # "Initialize containers" with toomanyrequests before any code ran).
+        # Same Postgres major and same alpine variant as the source image
+        # (16.15 on alpine 3.24); the index digest matches docker.io's.
+        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: postgres
         ports:
