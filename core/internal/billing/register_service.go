@@ -635,6 +635,11 @@ func (s *RegisterService) ResolveDispute(ctx context.Context, invoiceID, outcome
 	if !containsString([]string{"PAID", "CREDITED", "WRITTEN_OFF", "WITHDRAWN"}, o) {
 		return false, httpx.BadRequestf("closing a dispute names how it ended: paid, credited, written off, or withdrawn")
 	}
+	// The branch door first: resolving is a per invoice act like every other, and the true or false
+	// answer for an invoice in another branch would say whether it has an open dispute.
+	if _, err := s.header(ctx, invoiceID); err != nil {
+		return false, err
+	}
 	caller, _ := s.callerFrom(ctx)
 	return s.store.ResolveDispute(ctx, invoiceID, o, caller.UserID)
 }
