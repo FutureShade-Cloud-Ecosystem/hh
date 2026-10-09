@@ -54,7 +54,7 @@ func (f *fakeARStore) UpsertARLandingPolicy(_ context.Context, p ARLandingPolicy
 	f.policy = p
 	return nil
 }
-func (f *fakeARStore) OpenInvoices(context.Context, time.Time, string) ([]OpenInvoice, error) {
+func (f *fakeARStore) OpenInvoices(context.Context, time.Time, string, BranchReach) ([]OpenInvoice, error) {
 	return f.invoices, nil
 }
 func (f *fakeARStore) ActiveHoldCustomers(context.Context) (map[string]bool, error) {
@@ -63,7 +63,7 @@ func (f *fakeARStore) ActiveHoldCustomers(context.Context) (map[string]bool, err
 func (f *fakeARStore) EngagementFor(context.Context, []string, int, time.Time) (map[string]EngagementInput, error) {
 	return f.engage, nil
 }
-func (f *fakeARStore) OpenPaperPathFlags(context.Context) ([]PaperPathEntry, error) {
+func (f *fakeARStore) OpenPaperPathFlags(context.Context, BranchReach) ([]PaperPathEntry, error) {
 	return f.flags, nil
 }
 func (f *fakeARStore) ReminderContextFor(context.Context, string, string, string) (ReminderContext, error) {

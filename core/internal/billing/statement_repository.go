@@ -284,6 +284,22 @@ func (r *Repository) GetRun(ctx context.Context, runID string) (StatementRun, []
 	return run, out, rows.Err()
 }
 
+// CustomerInReach reports whether an account has any invoice in the branch reach: the cut a branch
+// caller's statement reads are made by.
+func (r *Repository) CustomerInReach(ctx context.Context, customerID string, reach BranchReach) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var in bool
+	if err := r.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM invoices WHERE customer_id = $1::uuid
+		                  AND ($2::uuid[] IS NULL OR branch_id = ANY($2::uuid[])))`,
+		customerID, reach.SQLArg()).Scan(&in); err != nil {
+		return false, fmt.Errorf("billing: customer in reach: %w", err)
+	}
+	return in, nil
+}
+
 // LatestStatement returns the most recent statement for a customer, HTML included.
 func (r *Repository) LatestStatement(ctx context.Context, customerID string) (Statement, bool, error) {
 	if r.pool == nil {

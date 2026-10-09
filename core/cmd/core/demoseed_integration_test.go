@@ -37,7 +37,7 @@ var tablesTheSeedWrites = []string{
 	"credit_holds", "customers", "delivery_freight_raises", "delivery_runs", "delivery_stops",
 	"dispatch_branch_depots",
 	"dispatch_drivers", "dispatch_reschedules", "dispatch_trucks", "invoice_lines", "invoices",
-	"load_scan_checkpoints", "order_lines", "orders", "payment_allocations", "payments",
+	"load_scan_checkpoints", "order_lines", "orders", "payment_allocations", "payment_nsf", "payments",
 	"permission_approval_requests", "pos_parked_tickets",
 	"pos_sale", "pos_signature", "pricing_list_prices", "pricing_rules", "product_branch_costs",
 	"product_images",
