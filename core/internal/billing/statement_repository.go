@@ -18,7 +18,12 @@ import (
 // Reading the subledger rather than joining invoices and payments separately is what makes a reversed
 // payment (DIB-170) appear correctly: the reversal is a subledger row like any other, so it shows up
 // as a line on the statement instead of silently altering an earlier one.
-func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf time.Time) ([]StatementLine, error) {
+//
+// reach cuts the subledger rows by the branch they were posted at, so a statement made for a branch
+// reach lists that reach's lines and its running balance follows the same cut as its closing figure
+// (the aging the run read with the same reach). A row with no branch is the whole book's, not any
+// branch's, and is left out of a reach limited statement.
+func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf time.Time, reach BranchReach) ([]StatementLine, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
@@ -27,7 +32,8 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 		   FROM customer_transactions t
 		   LEFT JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
 		  WHERE t.customer_id = $1::uuid AND t.occurred_at::date <= $2::date
-		  ORDER BY t.occurred_at, t.created_at`, customerID, asOf)
+		    AND ($3::uuid[] IS NULL OR t.branch_id = ANY($3::uuid[]))
+		  ORDER BY t.occurred_at, t.created_at`, customerID, asOf, reach.SQLArg())
 	if err != nil {
 		return nil, fmt.Errorf("billing: statement lines: %w", err)
 	}
@@ -284,20 +290,31 @@ func (r *Repository) GetRun(ctx context.Context, runID string) (StatementRun, []
 	return run, out, rows.Err()
 }
 
-// CustomerInReach reports whether an account has any invoice in the branch reach: the cut a branch
-// caller's statement reads are made by.
-func (r *Repository) CustomerInReach(ctx context.Context, customerID string, reach BranchReach) (bool, error) {
+// LatestStatementIn is LatestStatement inside a branch reach: only a statement of a run filed under a
+// branch of the reach (a run of the whole book has no branch and is every branch's, so a reach
+// limited caller does not read it).
+func (r *Repository) LatestStatementIn(ctx context.Context, customerID string, reach BranchReach) (Statement, bool, error) {
 	if r.pool == nil {
-		return false, errNoDB
+		return Statement{}, false, errNoDB
 	}
-	var in bool
-	if err := r.pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM invoices WHERE customer_id = $1::uuid
-		                  AND ($2::uuid[] IS NULL OR branch_id = ANY($2::uuid[])))`,
-		customerID, reach.SQLArg()).Scan(&in); err != nil {
-		return false, fmt.Errorf("billing: customer in reach: %w", err)
+	var s Statement
+	err := r.pool.QueryRow(ctx,
+		`SELECT st.id::text, st.run_id::text, st.customer_id::text, st.as_of_date, st.current_cents, st.days_30_cents,
+		        st.days_60_cents, st.days_90_plus_cents, st.closing_balance_cents, st.html, st.delivery_status, st.created_at
+		   FROM ar_statements st
+		   JOIN ar_statement_runs ru ON ru.id = st.run_id
+		  WHERE st.customer_id = $1::uuid
+		    AND ($2::uuid[] IS NULL OR ru.branch_id = ANY($2::uuid[]))
+		  ORDER BY st.as_of_date DESC, st.created_at DESC LIMIT 1`, customerID, reach.SQLArg()).
+		Scan(&s.ID, &s.RunID, &s.CustomerID, &s.AsOfDate, &s.CurrentCents, &s.Days30Cents,
+			&s.Days60Cents, &s.Days90PlusCents, &s.ClosingCents, &s.HTML, &s.DeliveryStatus, &s.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Statement{}, false, nil
+		}
+		return Statement{}, false, fmt.Errorf("billing: latest statement in reach: %w", err)
 	}
-	return in, nil
+	return s, true, nil
 }
 
 // LatestStatement returns the most recent statement for a customer, HTML included.
