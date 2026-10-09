@@ -920,7 +920,7 @@ paths:
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
-        - { name: customer_id, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: customer_id, in: query, required: false, schema: { type: string, format: uuid }, description: "The customer; leave it out with a number to read the WALK-IN house account's sale (the till carries no id for it); neither is a 400" }
         - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
         - { name: number, in: query, required: false, schema: { type: string }, description: "A receipt or order number (an order number or an invoice number, with or without the hash, or the bare digits a branch's numbers end in) narrowing the answer to that order; required for the WALK-IN account" }
         - $ref: "#/components/parameters/Limit"
@@ -2416,15 +2416,19 @@ components:
         One payment shape the counter may offer this account. A credit
         customer (terms above zero and a credit line) is offered pay in
         full, all on account, and a deposit with the rest on account; a
-        cash on demand account, a walk in and any no credit account are
-        offered pay in full and a deposit with the rest due later, never on
-        account. A credit customer on hold loses on account (the hold
+        cash on demand account (zero day terms with a line) is offered
+        pay in full, pay before release (the whole ticket unpaid at ring,
+        no deposit: the invoice issues now and is due today, and
+        fulfilment waits for paid in full, any fulfilment), and a deposit
+        with the rest due later; a walk in and any no credit account are
+        offered pay in full and a deposit with the rest due later, never
+        on account. A credit customer on hold loses on account (the hold
         rule's own posture, cash or card only).
       required: [shape]
       properties:
         shape:
           type: string
-          enum: [PAY_IN_FULL_NOW, ALL_ON_ACCOUNT, DEPOSIT_NOW_REST_ON_ACCOUNT, DEPOSIT_NOW_REST_DUE_LATER]
+          enum: [PAY_IN_FULL_NOW, ALL_ON_ACCOUNT, DEPOSIT_NOW_REST_ON_ACCOUNT, DEPOSIT_NOW_REST_DUE_LATER, PAY_BEFORE_RELEASE]
         line_two_words:
           type: string
           enum: [On account, Balance due later]
@@ -3103,10 +3107,11 @@ components:
         the whole-note restock flag stands for lines that name none; the drawer
         (till_session_id) is needed only by a CASH refund. No fee field, the
         flow carries no restocking fee.
-      required: [idempotency_key, customer_id, orders, refund_method, reason]
+      required: [idempotency_key, orders, refund_method, reason]
       properties:
         idempotency_key: { type: string, format: uuid }
-        customer_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid, description: "The customer; empty with a number is the WALK-IN house account" }
+        number: { type: string, description: "The receipt or order number the sale was found by; with an empty customer_id it makes the note the walk-in's" }
         orders:
           type: array
           minItems: 1
@@ -3131,9 +3136,10 @@ components:
         The draft of a returns-across note, without a key or a drawer. With a
         refund_method of CASH or CARD the answer carries, per order, the split the
         commit will make on an order that is not fully paid.
-      required: [customer_id, orders]
+      required: [orders]
       properties:
-        customer_id: { type: string, format: uuid }
+        customer_id: { type: string, format: uuid, description: "The customer; empty with a number is the WALK-IN house account" }
+        number: { type: string, description: "The receipt or order number the sale was found by; with an empty customer_id it makes the draft the walk-in's" }
         refund_method: { type: string, enum: [CASH, CARD, ACCOUNT_CREDIT] }
         orders:
           type: array

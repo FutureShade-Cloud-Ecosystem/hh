@@ -15540,10 +15540,11 @@ paths:
         - $ref: "#/components/parameters/XOrg"
         - name: customer_id
           in: query
-          required: true
+          required: false
           schema:
             type: string
             format: uuid
+          description: The customer; leave it out with a number to read the WALK-IN house account's sale (the till carries no id for it); neither is a 400
         - name: branch_id
           in: query
           required: false
@@ -40822,7 +40823,7 @@ components:
           description: The line the Summary and the receipt print for the billed deposit, present when allowed
     PosPaymentOption:
       type: object
-      description: One payment shape the counter may offer this account. A credit customer (terms above zero and a credit line) is offered pay in full, all on account, and a deposit with the rest on account; a cash on demand account, a walk in and any no credit account are offered pay in full and a deposit with the rest due later, never on account. A credit customer on hold loses on account (the hold rule's own posture, cash or card only).
+      description: "One payment shape the counter may offer this account. A credit customer (terms above zero and a credit line) is offered pay in full, all on account, and a deposit with the rest on account; a cash on demand account (zero day terms with a line) is offered pay in full, pay before release (the whole ticket unpaid at ring, no deposit: the invoice issues now and is due today, and fulfilment waits for paid in full, any fulfilment), and a deposit with the rest due later; a walk in and any no credit account are offered pay in full and a deposit with the rest due later, never on account. A credit customer on hold loses on account (the hold rule's own posture, cash or card only)."
       required:
         - shape
       properties:
@@ -40833,6 +40834,7 @@ components:
             - ALL_ON_ACCOUNT
             - DEPOSIT_NOW_REST_ON_ACCOUNT
             - DEPOSIT_NOW_REST_DUE_LATER
+            - PAY_BEFORE_RELEASE
         line_two_words:
           type: string
           enum:
@@ -42258,7 +42260,6 @@ components:
       description: The idempotent credit-note-across-orders body. One customer, one branch, one refund rail; each line may carry its own disposition, and the whole-note restock flag stands for lines that name none; the drawer (till_session_id) is needed only by a CASH refund. No fee field, the flow carries no restocking fee.
       required:
         - idempotency_key
-        - customer_id
         - orders
         - refund_method
         - reason
@@ -42269,6 +42270,10 @@ components:
         customer_id:
           type: string
           format: uuid
+          description: The customer; empty with a number is the WALK-IN house account
+        number:
+          type: string
+          description: The receipt or order number the sale was found by; with an empty customer_id it makes the note the walk-in's
         orders:
           type: array
           minItems: 1
@@ -42307,12 +42312,15 @@ components:
       type: object
       description: The draft of a returns-across note, without a key or a drawer. With a refund_method of CASH or CARD the answer carries, per order, the split the commit will make on an order that is not fully paid.
       required:
-        - customer_id
         - orders
       properties:
         customer_id:
           type: string
           format: uuid
+          description: The customer; empty with a number is the WALK-IN house account
+        number:
+          type: string
+          description: The receipt or order number the sale was found by; with an empty customer_id it makes the draft the walk-in's
         refund_method:
           type: string
           enum:

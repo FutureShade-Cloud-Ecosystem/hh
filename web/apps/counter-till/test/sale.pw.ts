@@ -552,110 +552,16 @@ test("the read-back states the server's tax and total, and the confirmation read
   );
 });
 
-test("a walk-in COD sale and a terms account COD sale are both refused in words that are true", async ({
-  page,
-}) => {
-  await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  // The COD tile sits in the Items step's fulfilment row, beside Collect now.
-  // COD is unpaid at ring, so the requested-date box appears; the counter
-  // asks for the house zone's day and the stub refuses any other.
-  await page.getByRole("button", { name: /^COD/ }).click();
-  await page.getByLabel("Requested date: type eight digits YYYYMMDD, or use the calendar button").fill(
-    houseDay().replace(/-/g, ""),
-  );
-  // The customer stays Walk-in and Cash is the chosen tender: this sale draws
-  // on no account at all, and the counter still asks the server to ring it.
-  await openStep(page, "payment");
-  const ringPost = page.waitForResponse(
-    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
-  );
-  await page.getByTestId("pos-complete-sale").click();
-
-  // The server refuses it under the COD constraint, before any money moves.
-  const refused = await ringPost;
-  expect(refused.status()).toBe(409);
-  const body = (await refused.json()) as Record<string, unknown>;
-  expect(body.error).toBe("credit_blocked");
-  expect(body.policy).toBe("COD_CONSTRAINT");
-
-  // The refusal's words say what it is: COD, the missing account, and the two
-  // ways out. The account sentence every other credit_blocked carries is
-  // FALSE here (there is no account, nothing is on account, Cash is chosen),
-  // so it must not appear.
-  const alert = page.getByRole("alert");
-  await expect(alert).toContainText("COD needs a customer account");
-  await expect(alert).toContainText("Collect now");
-  await expect(alert).not.toContainText("This account cannot carry this sale on account");
-  await expect(page.getByTestId("sold-panel")).toHaveCount(0);
-
-  // The other edge, pinned so the rule cuts both ways: the same COD sale with
-  // an account that pays on terms is refused in the ruling's own words (Cash
-  // On Demand is the account's posture, and this account is not in it), and
-  // with the Cash On Demand account it rings.
-  await openStep(page, "customer");
-  await pickAccount(page, "C02", "Fenwick Builders Ltd");
-  const ringTerms = page.waitForResponse(
-    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
-  );
-  await openStep(page, "payment");
-  await page.getByTestId("pos-complete-sale").click();
-  const refusedTerms = await ringTerms;
-  expect(refusedTerms.status()).toBe(422);
-  const termsBody = (await refusedTerms.json()) as Record<string, unknown>;
-  expect(termsBody.error).toBe("cod_not_for_terms_account");
-  // The ring's banner speaks (the preview's refused total row speaks the same
-  // words beside it, its own leg pins that).
-  await expect(page.locator(".banner.bad")).toContainText("This account pays on terms");
-  await expect(page.getByTestId("sold-panel")).toHaveCount(0);
-
-});
-
-// Item 9 delta review P3-d: the preview shares the ring's pay before release
-// refusal for a terms account, so the payment step's total row says it BEFORE
-// the ring is built: the words arrive with the totals read the step already
-// opens, rendered from the problem body's message, never its code.
-test("a terms account's COD sale is refused at the preview, before the ring", async ({ page }) => {
-  await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  await page.getByRole("button", { name: /^COD/ }).click();
-  await page.getByLabel("Requested date: type eight digits YYYYMMDD, or use the calendar button").fill(
-    houseDay().replace(/-/g, ""),
-  );
-  await openStep(page, "customer");
-  await pickAccount(page, "C02", "Fenwick Builders Ltd");
-  await openStep(page, "payment");
-  const refused = page.getByTestId("pos-preview-refused");
-  await expect(refused).toBeVisible();
-  await expect(refused).toContainText(
-    "This account pays on terms, so its sale is not pay before release. Ring it on account or paid in full.",
-  );
-  await expect(refused).not.toContainText("cod_not_for_terms_account");
-});
-
-// The same COD sale with the Cash On Demand account on it rings: the sale
-// type is that account's own posture (its own ticket, because the ticket above
-// keeps its refused customer).
-test("the same COD sale with the Cash On Demand account rings", async ({ page }) => {
-  await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  await page.getByRole("button", { name: /^COD/ }).click();
-  await page.getByLabel("Requested date: type eight digits YYYYMMDD, or use the calendar button").fill(
-    houseDay().replace(/-/g, ""),
-  );
-  await openStep(page, "customer");
-  await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  const ringWithAccount = page.waitForResponse(
-    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
-  );
-  await openStep(page, "payment");
-  await page.getByTestId("pos-complete-sale").click();
-  const sale = (await (await ringWithAccount).json()) as Record<string, unknown>;
-  await expect(page.getByTestId("sold-panel")).toBeVisible();
-  const bearer = await salesBearer(page);
-  const read = await getSale(page, bearer, sale.order_id as string);
-  expect(read.sale_type).toBe("COD");
-});
+// The row 1214 ruling removed the COD fulfilment tile: the pay before release ring is the
+// Cash On Demand account's payment option now, the server offers it and the payment step
+// draws it (test/paystep-pbr.pw.ts holds those legs, the ring, its body and its read back).
+// The two refusals the tile made reachable from this terminal have no route here anymore,
+// and both stay pinned where the rule lives, in the core: a terms account's COD ring and
+// preview (TestSale_CODSaleType_RefusedForATermsAccount,
+// TestSalePreview_CODSaleType_RefusedForATermsAccount) and the walk-in no-account COD
+// constraint (the credit gate's COD_CONSTRAINT, whose counter words _pos.ts still maps for
+// any ring the server refuses). The stub keeps both arms, mirroring the core's answers for
+// any client that rings them.
 
 test("the account's available credit says it is a derived figure, in the picker row and on the card", async ({
   page,
@@ -1579,38 +1485,34 @@ test("the manager-up till keeps the margin column, the segments and the eye, and
   await expect(eye).toHaveAttribute("aria-label", "Hide margin and est. profit (counter privacy)");
 });
 
-// The COD tile's gate in the UI. The stub always answers COD allowed, so the off side is held by
-// answering the policy read with cod_enabled false for this one page (the contract's own shape).
-test("with COD off by policy, the COD tile reads 'COD: off' and cannot be selected", async ({ page }) => {
-  await page.route("**/api/v1/pos/policy*", async (route) => {
+// The row 1214 ruling moved the branch's Cash On Demand switch off the tile and into the
+// server's own menu: with cod_enabled off, the core's preview drops the pay before release
+// shape and the due later deposit (its own leg,
+// TestSalePreview_PaymentOptions_CodOffDropsTheDueLaterDeposit, pins that answer) and the
+// terminal draws what it is given. The stub's policy is fixed on, so this one page answers
+// the preview with the core's cod-off menu, the same way the leg this replaces answered the
+// policy read with cod_enabled false. The switch's on side is the offered shape itself,
+// pinned where the option rings (test/paystep-pbr.pw.ts).
+test("with Cash On Demand off at the branch, the server's menu drops the pay before release shape", async ({ page }) => {
+  await page.route("**/api/v1/pos/sale-preview*", async (route) => {
     const real = await route.fetch();
     const body = (await real.json()) as Record<string, unknown>;
-    await route.fulfill({ response: real, json: { ...body, cod_enabled: false } });
+    await route.fulfill({
+      response: real,
+      json: { ...body, payment_options: [{ shape: "PAY_IN_FULL_NOW" }] },
+    });
   });
   await signIn(page, "Sales");
   await ensureSession(page);
+  await pickAccount(page, "C10", "Cash On Demand Landscaping");
   await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  const tile = page.getByRole("button", { name: /^COD/ });
-  await expect(tile).toBeVisible();
-  await expect(tile).toContainText("COD: off");
-  await expect(tile).toBeDisabled();
-  await expect(tile).toHaveAttribute("title", /disabled by policy/);
-  await expect(tile).toHaveAttribute("aria-pressed", "false");
-  // The one disabled rule: no fill, grey ink, no fade.
-  const shape = await tile.evaluate((node) => {
-    const style = getComputedStyle(node);
-    return { background: style.backgroundColor, opacity: style.opacity, cursor: style.cursor };
-  });
-  expect(shape).toEqual({ background: "rgba(0, 0, 0, 0)", opacity: "1", cursor: "not-allowed" });
-});
-
-test("with COD allowed (the stub's default), the COD tile is selectable", async ({ page }) => {
-  await signIn(page, "Sales");
-  await ensureSession(page);
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  const tile = page.getByRole("button", { name: /^COD/ });
-  await expect(tile).toBeEnabled();
-  await expect(tile).not.toContainText("off");
+  await openStep(page, "payment");
+  // Pay in full now is all the server offered, so no menu stands at all and the tender
+  // tiles carry the step alone: the terminal never promises a shape the ring would refuse.
+  await expect(page.getByTestId("pay-shapes")).toHaveCount(0);
+  await expect(page.getByTestId("pay-shape-PAY_BEFORE_RELEASE")).toHaveCount(0);
+  await expect(page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER")).toHaveCount(0);
+  await expect(page.getByTestId("deposit-panel")).toHaveCount(0);
 });
 
 test("a util control that cannot act takes the one disabled rule's cursor", async ({ page }) => {

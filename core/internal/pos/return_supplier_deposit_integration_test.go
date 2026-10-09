@@ -126,11 +126,11 @@ func depositSaleReturnLeg(t *testing.T, leg depositLeg) {
 	}
 	ret, err := svc.Return(ctx, in)
 	if refund == RefundCash {
-		// Interim rule (the Opus review's P2-2, until the principal rules on the open invoice gap): a
-		// cash or card refund is refused on an order whose invoice is still owed. This leg used to pin
-		// the gap (the cash paid out and both documents stayed open); it now pins the refusal, and
-		// that nothing was booked.
-		if err == nil || !strings.Contains(err.Error(), "open invoice") {
+		// The principal's ruling (FROM-PRINCIPAL 47): nothing was paid on either document of this
+		// unpaid account sale, so no cash or card goes back at all, in the ruling's words. This leg
+		// used to pin the gap (the cash paid out and both documents stayed open); it now pins the
+		// refusal, and that nothing was booked.
+		if err == nil || !strings.Contains(err.Error(), "This order is not paid yet") {
 			t.Fatalf("a cash refund of an unpaid account sale must be refused in words, got %v", err)
 		}
 		var n int

@@ -51,6 +51,32 @@ var errWalkInNotReturnable = clientErr(http.StatusUnprocessableEntity,
 var errWalkInNeedsNumber = clientErr(http.StatusUnprocessableEntity,
 	"pos: walk-in sales are never listed; find the sale by the receipt or order number, and it goes back to the card it was paid on or in cash")
 
+// errCustomerOrNumber answers a read or a write that names neither a customer nor a walk-in sale.
+var errCustomerOrNumber = clientErr(http.StatusBadRequest,
+	"pos: name the customer, or give the receipt or order number of a walk-in sale")
+
+// customerOrWalkIn is how every returns door reads its customer: a named customer is that customer;
+// an empty customer_id together with a receipt or order number is the house WALK-IN row, as the ring
+// treats an empty customer, so no app has to carry the row's id; an empty customer_id with no
+// number is refused in words.
+func (s *Service) customerOrWalkIn(ctx context.Context, customerID, number string) (string, error) {
+	customerID = strings.TrimSpace(customerID)
+	if customerID != "" {
+		return customerID, nil
+	}
+	if normalizeSaleRef(number) == "" {
+		return "", errCustomerOrNumber
+	}
+	walkIn, err := s.store.ResolveWalkIn(ctx)
+	if err != nil {
+		return "", err
+	}
+	if walkIn == "" {
+		return "", errCustomerOrNumber
+	}
+	return walkIn, nil
+}
+
 // CustomerLines is the customer lines read (sub item 10.1): every sales order the customer holds in
 // HH, till rings and quote conversions alike (the widened Q1 ruling), newest first, each line with
 // the quantity the commit guard would accept and the money and tax already back. The branch wall is
@@ -58,9 +84,9 @@ var errWalkInNeedsNumber = clientErr(http.StatusUnprocessableEntity,
 // others are simply absent), and naming a branch the caller does not reach is the wall's 403 naming
 // the branch.
 func (s *Service) CustomerLines(ctx context.Context, in CustomerLinesInput) (CustomerLinesView, error) {
-	in.CustomerID = strings.TrimSpace(in.CustomerID)
-	if in.CustomerID == "" {
-		return CustomerLinesView{}, clientErr(http.StatusBadRequest, "pos: customer_id is required")
+	var cerr error
+	if in.CustomerID, cerr = s.customerOrWalkIn(ctx, in.CustomerID, in.Number); cerr != nil {
+		return CustomerLinesView{}, cerr
 	}
 	caller, err := s.caller(ctx)
 	if err != nil {
@@ -485,8 +511,10 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	if err := s.store.LockSaleForReturn(ctx, tx, oc.OrderID); err != nil {
 		return Return{}, false, false, err
 	}
-	if in.RefundMethod == RefundAccountCredit && !in.railOptional {
-		if err := s.lockReturnInvoicesTx(ctx, tx, []returnOrderCtx{oc}); err != nil {
+	if !in.railOptional {
+		// The account rail offsets invoices; a cash or card return offsets them too when the order is
+		// not fully paid (the ruling's split): take them, sorted, before the first offset (P2-1).
+		if err := s.lockReturnInvoicesTx(ctx, tx, []returnOrderCtx{oc}, in.RefundMethod != RefundAccountCredit); err != nil {
 			return Return{}, false, false, err
 		}
 	}
@@ -891,24 +919,37 @@ func (s *Service) commitReturnTx(ctx context.Context, tx pgx.Tx, plan *returnPla
 			return Return{}, err
 		}
 	}
-	// The split's account part comes off the order's open invoice (the rail moved only what was paid).
+	// The split's account part comes off the order's open documents: the sale's invoice first, then the
+	// supplier deposit documents (as the account rail does), each a plain offset of the document's
+	// balance with its own CREDIT_MEMO row on the customer's account, never a credit memo document.
 	if plan.offset > 0 {
-		done, oerr := s.store.ApplyCreditToInvoice(ctx, tx, oc.InvoiceID, plan.offset)
-		if oerr != nil {
-			return Return{}, oerr
+		remaining := plan.offset
+		targets := append([]string{oc.InvoiceID}, depositDocs...)
+		for _, docID := range targets {
+			if remaining <= 0 {
+				break
+			}
+			done, oerr := s.store.ApplyCreditToInvoice(ctx, tx, docID, remaining)
+			if oerr != nil {
+				return Return{}, oerr
+			}
+			if done == 0 {
+				continue
+			}
+			cust, cerr := s.store.ReadCustomerTx(ctx, tx, oc.CustomerID)
+			if cerr != nil {
+				return Return{}, cerr
+			}
+			if terr := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
+				CustomerID: oc.CustomerID, TxnType: "CREDIT_MEMO", AmountCents: -done,
+				BalanceAfter: cust.OpenBalanceCents - done, SourceType: "invoice", SourceRefID: docID, BranchID: oc.BranchID,
+			}); terr != nil {
+				return Return{}, terr
+			}
+			remaining -= done
 		}
-		if done != plan.offset {
+		if remaining > 0 {
 			return Return{}, clientErr(http.StatusConflict, "pos: the order's invoice changed while the return was being rung; review the return and ring it again")
-		}
-		cust, cerr := s.store.ReadCustomerTx(ctx, tx, oc.CustomerID)
-		if cerr != nil {
-			return Return{}, cerr
-		}
-		if terr := s.store.InsertCustomerTxn(ctx, tx, customerTxnRow{
-			CustomerID: oc.CustomerID, TxnType: "CREDIT_MEMO", AmountCents: -done,
-			BalanceAfter: cust.OpenBalanceCents - done, SourceType: "invoice", SourceRefID: oc.InvoiceID, BranchID: oc.BranchID,
-		}); terr != nil {
-			return Return{}, terr
 		}
 	}
 
@@ -1097,12 +1138,31 @@ type railSplit struct {
 // earlier returns already paid out that way; the rest comes off the open invoice. A fully paid invoice
 // splits nothing. tx nil reads the pool (the preview).
 func (s *Service) railSplitFor(ctx context.Context, tx pgx.Tx, oc returnOrderCtx, method string, total int64) (railSplit, error) {
-	if (method != RefundCash && method != RefundCard) || oc.InvoiceStatus == "PAID" || oc.InvoiceID == "" {
+	if (method != RefundCash && method != RefundCard) || oc.InvoiceID == "" {
 		return railSplit{rail: total}, nil
 	}
-	invTotal, balance, err := s.store.InvoiceMoney(ctx, tx, oc.InvoiceID)
-	if err != nil {
-		return railSplit{}, err
+	// The order's money sits on the sale's invoice and on any live supplier deposit documents: what
+	// was paid and what is still owed are counted across all of them (rulings 16 and 17: the deposit
+	// is released once, the customer gets back the returned goods' value, never a share of the deposit).
+	docs := []string{oc.InvoiceID}
+	if s.deposits != nil {
+		deps, err := s.deposits.DepositDocumentIDsTx(ctx, tx, oc.OrderID)
+		if err != nil {
+			return railSplit{}, err
+		}
+		docs = append(docs, deps...)
+	}
+	var invTotal, balance int64
+	for _, id := range docs {
+		t, b, err := s.store.InvoiceMoney(ctx, tx, id)
+		if err != nil {
+			return railSplit{}, err
+		}
+		invTotal += t
+		balance += b
+	}
+	if balance == 0 { // every document is paid: unchanged
+		return railSplit{rail: total}, nil
 	}
 	offsets, payouts, err := s.store.SumReturnRails(ctx, tx, oc.OrderID)
 	if err != nil {
@@ -1116,7 +1176,7 @@ func (s *Service) railSplitFor(ctx context.Context, tx pgx.Tx, oc returnOrderCtx
 	if avail < total {
 		sp.rail = avail
 		sp.offset = total - avail
-		if sp.offset > balance { // never more than the invoice still asks for; the rest is paid out
+		if sp.offset > balance { // never more than the documents still ask for; the rest is paid out
 			sp.rail += sp.offset - balance
 			sp.offset = balance
 		}
@@ -1167,7 +1227,7 @@ func (s *Service) resolveConverted(ctx context.Context, oc returnOrderCtx) (retu
 // rail offsets invoices, so only it takes these locks: a cash or card return touches an invoice by its
 // foreign key share alone, and a stronger lock there would queue it against a multi invoice reversal
 // that draws the payments counter first (lockorder_pos_return_test.go).
-func (s *Service) lockReturnInvoicesTx(ctx context.Context, tx pgx.Tx, ocs []returnOrderCtx) error {
+func (s *Service) lockReturnInvoicesTx(ctx context.Context, tx pgx.Tx, ocs []returnOrderCtx, owedOnly bool) error {
 	seen := map[string]bool{}
 	var ids []string
 	add := func(id string) {
@@ -1177,15 +1237,21 @@ func (s *Service) lockReturnInvoicesTx(ctx context.Context, tx pgx.Tx, ocs []ret
 		}
 	}
 	for _, oc := range ocs {
-		add(oc.InvoiceID)
+		var docs []string
 		if s.deposits != nil {
-			docs, err := s.deposits.DepositDocumentIDsTx(ctx, tx, oc.OrderID)
-			if err != nil {
+			var err error
+			if docs, err = s.deposits.DepositDocumentIDsTx(ctx, tx, oc.OrderID); err != nil {
 				return err
 			}
-			for _, d := range docs {
-				add(d)
-			}
+		}
+		// A cash or card return offsets documents only on an order that is not fully paid: a paid
+		// order with no deposit document keeps the plain path (and its lock window).
+		if owedOnly && oc.InvoiceStatus == "PAID" && len(docs) == 0 {
+			continue
+		}
+		add(oc.InvoiceID)
+		for _, d := range docs {
+			add(d)
 		}
 	}
 	sort.Strings(ids)
@@ -1389,6 +1455,7 @@ func (s *Service) applyAccountCredit(ctx context.Context, tx pgx.Tx, oc returnOr
 				return 0, err
 			}
 			applied += depApplied
+			invoiceOffset += depApplied // the documents' offsets all count toward what the invoices took
 			remainder -= depApplied
 		}
 	}

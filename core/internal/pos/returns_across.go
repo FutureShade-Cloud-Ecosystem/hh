@@ -39,10 +39,10 @@ func noteChildKey(noteKey, orderID string) string {
 // read's own refusal: the note is one account customer's credit note, never the shared row's),
 // every order named once, carrying lines, each with a line and a positive quantity. It answers the
 // trimmed customer id.
-func (s *Service) checkNoteShape(ctx context.Context, customerID string, orders []ReturnAcrossOrderInput, allowWalkIn bool) (string, error) {
-	customerID = strings.TrimSpace(customerID)
-	if customerID == "" {
-		return "", clientErr(http.StatusBadRequest, "pos: customer_id is required")
+func (s *Service) checkNoteShape(ctx context.Context, customerID, number string, orders []ReturnAcrossOrderInput, allowWalkIn bool) (string, error) {
+	customerID, err := s.customerOrWalkIn(ctx, customerID, number)
+	if err != nil {
+		return "", err
 	}
 	if walkIn, werr := s.store.ResolveWalkIn(ctx); !allowWalkIn && werr == nil && walkIn != "" && walkIn == customerID {
 		return "", errWalkInNotReturnable
@@ -105,7 +105,7 @@ func (s *Service) previewNoteProducts(ctx context.Context, in ReturnPreviewInput
 	if len(in.Orders) == 0 {
 		return ReturnPreview{}, nil, nil, clientErr(http.StatusBadRequest, "pos: a return note needs at least one order")
 	}
-	customerID, err := s.checkNoteShape(ctx, in.CustomerID, in.Orders, allowWalkIn)
+	customerID, err := s.checkNoteShape(ctx, in.CustomerID, in.Number, in.Orders, allowWalkIn)
 	if err != nil {
 		return ReturnPreview{}, nil, nil, err
 	}
@@ -227,7 +227,7 @@ func (s *Service) prepareReturnAcross(ctx context.Context, in ReturnAcrossInput)
 	default:
 		return nil, errBadRefundMethod
 	}
-	customerID, shapeErr := s.checkNoteShape(ctx, in.CustomerID, in.Orders, !in.swap)
+	customerID, shapeErr := s.checkNoteShape(ctx, in.CustomerID, in.Number, in.Orders, !in.swap)
 	if shapeErr != nil {
 		return nil, shapeErr
 	}
@@ -413,8 +413,8 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 	for i, child := range ordered {
 		ocs[i] = child.oc
 	}
-	if in.RefundMethod == RefundAccountCredit && !in.railOptional {
-		if err := s.lockReturnInvoicesTx(ctx, tx, ocs); err != nil {
+	if !in.railOptional {
+		if err := s.lockReturnInvoicesTx(ctx, tx, ocs, in.RefundMethod != RefundAccountCredit); err != nil {
 			return ReturnNote{}, false, false, err
 		}
 	}

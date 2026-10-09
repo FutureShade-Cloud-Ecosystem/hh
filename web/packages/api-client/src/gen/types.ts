@@ -4100,7 +4100,7 @@ export type PosSupplierDepositOption = {
   words?: string;
 };
 export type PosPaymentOption = {
-  shape: "PAY_IN_FULL_NOW" | "ALL_ON_ACCOUNT" | "DEPOSIT_NOW_REST_ON_ACCOUNT" | "DEPOSIT_NOW_REST_DUE_LATER";
+  shape: "PAY_IN_FULL_NOW" | "ALL_ON_ACCOUNT" | "DEPOSIT_NOW_REST_ON_ACCOUNT" | "DEPOSIT_NOW_REST_DUE_LATER" | "PAY_BEFORE_RELEASE";
   line_two_words?: "On account" | "Balance due later";
   line_two_sentence?: string;
 };
@@ -4480,7 +4480,8 @@ export type PosReturnLookup = {
 };
 export type PosReturnAcrossInput = {
   idempotency_key: string;
-  customer_id: string;
+  customer_id?: string;
+  number?: string;
   orders: PosReturnAcrossOrder[];
   refund_method: "CASH" | "CARD" | "ACCOUNT_CREDIT";
   reason: string;
@@ -4492,7 +4493,8 @@ export type PosReturnAcrossOrder = {
   lines: PosReturnLineInput[];
 };
 export type PosReturnPreviewInput = {
-  customer_id: string;
+  customer_id?: string;
+  number?: string;
   refund_method?: "CASH" | "CARD" | "ACCOUNT_CREDIT";
   orders: PosReturnAcrossOrder[];
 };

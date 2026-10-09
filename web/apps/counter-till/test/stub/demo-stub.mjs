@@ -763,7 +763,9 @@ function customerFor(customerId) {
 
 // Item 9.1's menu, the core's own rule (payment_options.go): a credit customer is terms above
 // zero AND a credit line and not on hold; everything else (Cash On Demand, walk in, no credit,
-// a held credit account) is offered the deposit with the balance due later.
+// a held credit account) is offered the deposit with the balance due later. The row 1214 ruling
+// adds the no deposit pay before release shape, the Cash On Demand account's alone (zero day
+// terms with a line, the same fact that picks the sentence), between pay in full and the deposit.
 const SENTENCE_ON_ACCOUNT = "A credit customer: the rest rides their account and is paid from the statement.";
 const SENTENCE_CASH_ON_DEMAND =
   "Cash On Demand means pay before release, never cash on delivery: the deposit puts the order in process, and picking waits for paid in full.";
@@ -780,14 +782,16 @@ function paymentOptionsFor(customer) {
       { shape: "DEPOSIT_NOW_REST_ON_ACCOUNT", line_two_words: "On account", line_two_sentence: SENTENCE_ON_ACCOUNT },
     ];
   }
-  return [
-    { shape: "PAY_IN_FULL_NOW" },
-    {
-      shape: "DEPOSIT_NOW_REST_DUE_LATER",
-      line_two_words: "Balance due later",
-      line_two_sentence: terms <= 0 && limit > 0 ? SENTENCE_CASH_ON_DEMAND : SENTENCE_CANNOT_CARRY,
-    },
-  ];
+  const options = [{ shape: "PAY_IN_FULL_NOW" }];
+  if (terms <= 0 && limit > 0) {
+    options.push({ shape: "PAY_BEFORE_RELEASE" });
+  }
+  options.push({
+    shape: "DEPOSIT_NOW_REST_DUE_LATER",
+    line_two_words: "Balance due later",
+    line_two_sentence: terms <= 0 && limit > 0 ? SENTENCE_CASH_ON_DEMAND : SENTENCE_CANNOT_CARRY,
+  });
+  return options;
 }
 
 // Item 9.5's allowance, the core's own rule (sale_supplier_deposit.go): the supplier's demanded
@@ -2546,10 +2550,12 @@ const server = createServer(async (request, response) => {
             ...(leg.method === "CARD" ? { gateway_ref: `rp_sim_${docCounter + 1}` } : {}),
           });
         });
-      } else if (parsed.sale_type === "COD" && requestedDeposit > 0) {
-        // Pay before release with a deposit: the deposit is the only capture (its own leg lands
-        // below); the rest is the invoice's balance, held from picking until it is paid.
-        if (parsed.deposit_method === "CARD" && (typeof parsed.payment_token !== "string" || parsed.payment_token === "")) {
+      } else if (parsed.sale_type === "COD") {
+        // Pay before release: nothing is captured at ring, whatever the tender tile names (it is
+        // the settlement method only, as the core's ring takes no tender for the sale type). With
+        // a deposit, the deposit is the only capture (its own leg lands below); the rest is the
+        // invoice's balance, held from picking until it is paid.
+        if (requestedDeposit > 0 && parsed.deposit_method === "CARD" && (typeof parsed.payment_token !== "string" || parsed.payment_token === "")) {
           respondJson(response, 400, { error: "a card deposit carries the terminal's token, never a card number" });
           return;
         }

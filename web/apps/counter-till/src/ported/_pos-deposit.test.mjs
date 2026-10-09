@@ -10,6 +10,8 @@ import {
   depositRefusalWords,
   depositButtonWords,
   cashOnDemandPosture,
+  payBeforeReleaseOffered,
+  payBeforeReleaseRingFacts,
   supplierDepositLine,
   supplierDepositRefusalWords,
   supplierDepositShown,
@@ -22,6 +24,11 @@ const credit = [
   { shape: 'DEPOSIT_NOW_REST_ON_ACCOUNT', lineTwoWords: 'On account' },
 ];
 const cod = [{ shape: 'PAY_IN_FULL_NOW' }, { shape: 'DEPOSIT_NOW_REST_DUE_LATER', lineTwoWords: 'Balance due later' }];
+const codWithOption = [
+  { shape: 'PAY_IN_FULL_NOW' },
+  { shape: 'PAY_BEFORE_RELEASE' },
+  { shape: 'DEPOSIT_NOW_REST_DUE_LATER', lineTwoWords: 'Balance due later' },
+];
 const money = (c) => `$${(c / 100).toFixed(2)}`;
 
 test('the preview answer carries the options, read whole or not at all', () => {
@@ -112,6 +119,24 @@ test('the ring facts: credit rides ACCOUNT, pay before release rides COD with th
     saleType: 'COD',
     fulfilment: 'DELIVERY',
   });
+});
+
+// The row 1214 ruling's till half: the no deposit pay before release shape, the
+// former COD fulfilment tile's ring, now read off the server's own offer.
+test('the pay before release option: offered reads the server, the ring rides COD on the chosen tile', () => {
+  assert.equal(payBeforeReleaseOffered(codWithOption), true);
+  // The server alone decides: a terms account, the walk in and a no credit
+  // account are not offered the shape, and the branch switch off drops it.
+  assert.equal(payBeforeReleaseOffered(cod), false);
+  assert.equal(payBeforeReleaseOffered(credit), false);
+  assert.equal(payBeforeReleaseOffered([{ shape: 'PAY_IN_FULL_NOW' }]), false);
+  assert.equal(payBeforeReleaseOffered([]), false);
+  // The ring's facts: the COD sale type on the fulfilment of the chosen tile,
+  // any fulfilment, no deposit. The tender stays the settlement method the
+  // counter picked; nothing captures at ring.
+  assert.deepEqual(payBeforeReleaseRingFacts('COLLECT_NOW'), { saleType: 'COD', fulfilment: 'PICKUP' });
+  assert.deepEqual(payBeforeReleaseRingFacts('COLLECT_LATER'), { saleType: 'COD', fulfilment: 'WILL_CALL' });
+  assert.deepEqual(payBeforeReleaseRingFacts('DELIVERED'), { saleType: 'COD', fulfilment: 'DELIVERY' });
 });
 
 test('refusals read from the server message, else from the fields, never cents or a code', () => {

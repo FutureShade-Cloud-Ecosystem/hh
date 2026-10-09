@@ -146,10 +146,12 @@ func loposSaleInvoice(t *testing.T, pool *pgxpool.Pool, orderID string) (invoice
 	return invoiceID
 }
 
-// loposStatus sets the invoice's status only: the balance and the allocations stay as the leg made them.
+// loposStatus sets the invoice's status and its balance together.
 func loposStatus(t *testing.T, pool *pgxpool.Pool, invoiceID, status string) {
 	t.Helper()
-	if _, err := pool.Exec(context.Background(), `UPDATE invoices SET status=$2 WHERE id=$1::uuid`, invoiceID, status); err != nil {
+	// PAID means nothing owed, FINALIZED the whole total owed: the status and the balance move together,
+	// as the return's split reads the balance.
+	if _, err := pool.Exec(context.Background(), `UPDATE invoices SET status=$2, balance_cents = CASE WHEN $2 = 'PAID' THEN 0 ELSE total_cents END WHERE id=$1::uuid`, invoiceID, status); err != nil {
 		t.Fatalf("set the invoice %s: %v", status, err)
 	}
 }
