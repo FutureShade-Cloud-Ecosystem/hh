@@ -131,7 +131,7 @@ The exact forms the gates use, copied from `.github/workflows/ci.yml` and the
 suite runbook, for the legs above:
 
 ```
-cd core && go test ./... -count=1 -p 1
+cd core && go test ./... -count=1 -p 1 -timeout 30m
 ```
 
 with the demo job's database variables set inline on the command (the
@@ -142,14 +142,14 @@ that `ci.yml`'s `demo` job builds against its own `postgres` service):
 DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_base?sslmode=disable \
 HH_CORE_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_core_gate?sslmode=disable \
 HH_B3_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_b3_gate?sslmode=disable \
-go test ./... -count=1 -p 1
+go test ./... -count=1 -p 1 -timeout 30m
 ```
 
 CI's whole integration package list, in `go list` order, on one migrated and
 seeded database, the `red` exclusion being the single line CI carries:
 
 ```
-go test -tags integration -p 1 -count=1 $(go list ./... | grep -Ev "/internal/(dispatch)$")
+go test -tags integration -p 1 -count=1 -timeout 30m $(go list ./... | grep -Ev "/internal/(dispatch)$")
 ```
 
 The web loop, folder by folder, typecheck then test:
