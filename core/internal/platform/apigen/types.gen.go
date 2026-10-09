@@ -5235,7 +5235,8 @@ type PosReturnLookup struct {
 
 type PosReturnAcrossInput struct {
 	IdempotencyKey string                 `json:"idempotency_key"`
-	CustomerId     string                 `json:"customer_id"`
+	CustomerId     *string                `json:"customer_id,omitempty"`
+	Number         *string                `json:"number,omitempty"`
 	Orders         []PosReturnAcrossOrder `json:"orders"`
 	RefundMethod   string                 `json:"refund_method"`
 	Reason         string                 `json:"reason"`
@@ -5249,7 +5250,8 @@ type PosReturnAcrossOrder struct {
 }
 
 type PosReturnPreviewInput struct {
-	CustomerId   string                 `json:"customer_id"`
+	CustomerId   *string                `json:"customer_id,omitempty"`
+	Number       *string                `json:"number,omitempty"`
 	RefundMethod *string                `json:"refund_method,omitempty"`
 	Orders       []PosReturnAcrossOrder `json:"orders"`
 }

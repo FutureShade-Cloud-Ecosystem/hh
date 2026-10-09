@@ -430,3 +430,64 @@ func TestIntegration_Rulings_TheCashSplitLocksItsInvoicesFirst(t *testing.T) {
 		t.Fatalf("the note must commit once the payer is done, got %d", noteCode)
 	}
 }
+
+// The till carries no walk-in id: an empty customer_id together with a number is the walk-in, on the
+// customer lines read, the preview and the note write, as the ring treats an empty customer; a named
+// customer keeps today's behaviour; an empty customer_id with no number is refused in words.
+func TestIntegration_Rulings_AnEmptyCustomerWithANumberIsTheWalkIn(t *testing.T) {
+	s := newTrentonStackOnPoolWithRail(t, intPool(t), newKeyedRail())
+	walk := walkInID(t, s.pool)
+	other := s.plantCustomer("Ruling empty id other", 30, 5000000)
+	sale := s.ringSale(key(), trentonBranchID, s.trentonTill, "trenton", []float64{4}, TenderCash)
+	foreign := s.ringForCustomer(t, key(), trentonBranchID, s.trentonTill, "trenton", other, "", 2, TenderCash)
+
+	// The lines read.
+	rec := s.do(http.MethodGet, "/api/v1/pos/returns/customer-lines?number="+urlQueryEscape(sale.OrderNo), s.bearer(trentonClerkSub), "", nil)
+	body := s.decodeBody(rec)
+	if items := orderItems(t, body); rec.Code != http.StatusOK || len(items) != 1 || items[0]["order_id"] != sale.OrderID || body["customer_id"] != walk {
+		t.Fatalf("no customer id with a number reads the walk-in's sale and names the walk-in: %d %v", rec.Code, body)
+	}
+	rec = s.do(http.MethodGet, "/api/v1/pos/returns/customer-lines?number="+urlQueryEscape(foreign.OrderNo), s.bearer(trentonClerkSub), "", nil)
+	if items := orderItems(t, s.decodeBody(rec)); rec.Code != http.StatusOK || len(items) != 0 {
+		t.Fatalf("another customer's number never appears under the walk-in: %d", rec.Code)
+	}
+	rec = s.do(http.MethodGet, "/api/v1/pos/returns/customer-lines", s.bearer(trentonClerkSub), "", nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("no customer and no number is refused, got %d", rec.Code)
+	}
+	if msg, _ := s.decodeBody(rec)["error"].(string); !containsStr(msg, "receipt or order number") {
+		t.Fatalf("the refusal says what to give: %q", msg)
+	}
+
+	// The preview and the note write: orders by id, the number marks the walk-in.
+	orders := func(o trentonSaleView) []any {
+		return []any{map[string]any{"order_id": o.OrderID, "lines": []any{map[string]any{"order_line_id": s.lineOf(o.OrderID), "qty_base": 1}}}}
+	}
+	rec = s.postPreview(trentonClerkSub, map[string]any{"number": sale.OrderNo, "orders": orders(sale)})
+	if rec.Code != http.StatusOK || s.decodeBody(rec)["customer_id"] != walk {
+		t.Fatalf("the preview takes the walk-in without an id: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = s.postPreview(trentonClerkSub, map[string]any{"orders": orders(sale)})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("the preview with no customer and no number is refused, got %d", rec.Code)
+	}
+	note := map[string]any{"idempotency_key": key(), "number": sale.OrderNo, "orders": orders(sale), "refund_method": RefundCash,
+		"reason": "x", "restock": false, "till_session_id": s.trentonTill}
+	rec = s.postNote(trentonClerkSub, "", note)
+	if rec.Code != http.StatusCreated || s.decodeBody(rec)["customer_id"] != walk {
+		t.Fatalf("the note takes the walk-in without an id: %d %s", rec.Code, rec.Body.String())
+	}
+	bad := map[string]any{"idempotency_key": key(), "number": sale.OrderNo, "orders": orders(foreign), "refund_method": RefundCash,
+		"reason": "x", "restock": false, "till_session_id": s.trentonTill}
+	if rec = s.postNote(trentonClerkSub, "", bad); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("another customer's order cannot ride the walk-in, got %d: %s", rec.Code, rec.Body.String())
+	}
+	none := map[string]any{"idempotency_key": key(), "orders": orders(sale), "refund_method": RefundCash, "reason": "x", "restock": false, "till_session_id": s.trentonTill}
+	if rec = s.postNote(trentonClerkSub, "", none); rec.Code != http.StatusBadRequest {
+		t.Fatalf("no customer and no number is refused, got %d", rec.Code)
+	}
+	// A named customer keeps today's behaviour (the walk-in id spelled out still works).
+	if rec = s.postNote(trentonClerkSub, "", s.noteBody(key(), walk, RefundCash, []trentonSaleView{sale}, []float64{1})); rec.Code != http.StatusCreated {
+		t.Fatalf("a named walk-in id still works: %d %s", rec.Code, rec.Body.String())
+	}
+}

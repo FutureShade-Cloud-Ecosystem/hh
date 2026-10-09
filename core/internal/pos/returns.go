@@ -51,6 +51,32 @@ var errWalkInNotReturnable = clientErr(http.StatusUnprocessableEntity,
 var errWalkInNeedsNumber = clientErr(http.StatusUnprocessableEntity,
 	"pos: walk-in sales are never listed; find the sale by the receipt or order number, and it goes back to the card it was paid on or in cash")
 
+// errCustomerOrNumber answers a read or a write that names neither a customer nor a walk-in sale.
+var errCustomerOrNumber = clientErr(http.StatusBadRequest,
+	"pos: name the customer, or give the receipt or order number of a walk-in sale")
+
+// customerOrWalkIn is how every returns door reads its customer: a named customer is that customer;
+// an empty customer_id together with a receipt or order number is the house WALK-IN row, as the ring
+// treats an empty customer, so no app has to carry the row's id; an empty customer_id with no
+// number is refused in words.
+func (s *Service) customerOrWalkIn(ctx context.Context, customerID, number string) (string, error) {
+	customerID = strings.TrimSpace(customerID)
+	if customerID != "" {
+		return customerID, nil
+	}
+	if normalizeSaleRef(number) == "" {
+		return "", errCustomerOrNumber
+	}
+	walkIn, err := s.store.ResolveWalkIn(ctx)
+	if err != nil {
+		return "", err
+	}
+	if walkIn == "" {
+		return "", errCustomerOrNumber
+	}
+	return walkIn, nil
+}
+
 // CustomerLines is the customer lines read (sub item 10.1): every sales order the customer holds in
 // HH, till rings and quote conversions alike (the widened Q1 ruling), newest first, each line with
 // the quantity the commit guard would accept and the money and tax already back. The branch wall is
@@ -58,9 +84,9 @@ var errWalkInNeedsNumber = clientErr(http.StatusUnprocessableEntity,
 // others are simply absent), and naming a branch the caller does not reach is the wall's 403 naming
 // the branch.
 func (s *Service) CustomerLines(ctx context.Context, in CustomerLinesInput) (CustomerLinesView, error) {
-	in.CustomerID = strings.TrimSpace(in.CustomerID)
-	if in.CustomerID == "" {
-		return CustomerLinesView{}, clientErr(http.StatusBadRequest, "pos: customer_id is required")
+	var cerr error
+	if in.CustomerID, cerr = s.customerOrWalkIn(ctx, in.CustomerID, in.Number); cerr != nil {
+		return CustomerLinesView{}, cerr
 	}
 	caller, err := s.caller(ctx)
 	if err != nil {

@@ -864,6 +864,9 @@ type ReturnAcrossInput struct {
 	Reason         string                   `json:"reason"`
 	Restock        bool                     `json:"restock"`
 	TillSessionID  string                   `json:"till_session_id"` // CASH refunds, the OPEN drawer
+	// Number is the receipt or order number the sale was found by: with an empty customer_id it makes
+	// the note the WALK-IN row's, so the till carries no id for it.
+	Number string `json:"number,omitempty"`
 
 	// ApproverCredential rides X-Approver-Authorization beside the clerk's bearer, the single
 	// return's own second-credential machinery (row 482); the handler reads it from the header.
@@ -886,6 +889,9 @@ type ReturnPreviewInput struct {
 	// RefundMethod is optional: with CASH or CARD the preview carries, per order, the split the commit
 	// will make on an order that is not fully paid (the principal's ruling).
 	RefundMethod string `json:"refund_method,omitempty"`
+	// Number is the receipt or order number the sale was found by: with an empty customer_id it makes
+	// the draft the WALK-IN row's, so the till carries no id for it.
+	Number string `json:"number,omitempty"`
 }
 
 // ReturnPreviewLine is one draft line's credit, priced by the commit's own function.
