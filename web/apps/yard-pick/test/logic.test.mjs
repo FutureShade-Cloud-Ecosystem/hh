@@ -1,0 +1,280 @@
+// The ported logic's unit leg: every rule the screens rest on, pinned in
+// Node with no DOM and no browser. Each case names the port's source: the
+// original app's yard-logic.ts, or the core's own file where HH wrote the
+// rule against the server.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  MAX_SKIDS,
+  RESOLVE_WALL_NAMES,
+  SHORT_REASONS,
+  FORBIDDEN_BODY,
+  actionDone,
+  actionLabel,
+  ageLabel,
+  isUnclaimed,
+  lineIsShort,
+  mtoLabel,
+  nextAction,
+  orderHandle,
+  pickSummary,
+  priorityWord,
+  qtyLabel,
+  qtyText,
+  queueOrder,
+  reasonLabel,
+  reasonPhrase,
+  recordBlockedReason,
+  shortOf,
+  shortPickWords,
+  shortageSummary,
+  shortageSentWords,
+  skidBlockedReason,
+  skidWords,
+  statusTone,
+  taskNextStates,
+  validatePickQty,
+  validateShortage,
+  validateStage,
+  wallWords,
+  yardError,
+} from "../src/yard-logic.ts";
+
+const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
+const viewsSource = readFileSync(join(appDir, "src", "views.ts"), "utf8");
+
+// ---- the lifecycle, ported from the original's yard-logic.ts and held to the core's model.go ----
+
+test("the lifecycle offers claim, start and stage exactly where the core allows them", () => {
+  assert.equal(nextAction("QUEUED"), "claim");
+  assert.equal(nextAction("PUSHED"), "claim");
+  assert.equal(nextAction("ACCEPTED"), "start");
+  assert.equal(nextAction("IN_PROGRESS"), "stage");
+  assert.equal(nextAction("STAGED"), null);
+  assert.equal(nextAction("DONE"), null);
+  assert.equal(nextAction("CANCELLED"), null);
+  assert.equal(nextAction("SOMETHING_ELSE"), null);
+  assert.deepEqual(actionLabel("claim"), "Claim");
+  assert.deepEqual(actionLabel("start"), "Start picking");
+  assert.deepEqual(actionLabel("stage"), "Stage");
+});
+
+test("the ported matrix mirrors the core's allowedTransitions exactly", () => {
+  assert.deepEqual(taskNextStates("QUEUED"), ["PUSHED", "ACCEPTED", "CANCELLED"]);
+  assert.deepEqual(taskNextStates("IN_PROGRESS"), ["STAGED", "DONE", "CANCELLED"]);
+  assert.deepEqual(taskNextStates("STAGED"), ["DONE", "CANCELLED"]);
+  assert.deepEqual(taskNextStates("DONE"), []);
+  assert.deepEqual(taskNextStates("UNKNOWN"), []);
+});
+
+test("the done words carry the two facts that move together on a stage", () => {
+  assert.equal(actionDone("claim"), "Claimed. It is yours to pull.");
+  assert.equal(actionDone("start"), "Picking started.");
+  assert.equal(actionDone("stage", { location: "Bay 3", ref: "STG-AB2CDE" }), "Staged at Bay 3, ref STG-AB2CDE. The counter has been told it is ready.");
+  assert.equal(actionDone("stage", {}), "Staged. The counter has been told it is ready.");
+});
+
+test("the unclaimed half of the board is the queue's own split", () => {
+  assert.equal(isUnclaimed("QUEUED"), true);
+  assert.equal(isUnclaimed("PUSHED"), true);
+  assert.equal(isUnclaimed("ACCEPTED"), false);
+  assert.equal(statusTone("STAGED"), "ready");
+  assert.equal(statusTone("CANCELLED"), "stopped");
+});
+
+// ---- the board's order and its words ----
+
+test("queueOrder puts an open shortage first, then open work, priority, oldest", () => {
+  const now = new Date("2026-01-02T12:00:00Z");
+  const row = (over) => ({
+    task: {
+      open_shortages: over.short ?? 0,
+      status: over.status ?? "QUEUED",
+      priority: over.priority ?? "NORMAL",
+      created_at: over.at ?? "2026-01-01T10:00:00Z",
+    },
+    ...over.extra,
+  });
+  const ordered = queueOrder([
+    row({ priority: "URGENT", at: "2026-01-01T09:00:00Z", extra: { id: "plain" } }),
+    row({ short: 1, extra: { id: "short" } }),
+    row({ status: "DONE", extra: { id: "done" } }),
+    row({ at: "2025-12-31T08:00:00Z", extra: { id: "older" } }),
+  ]);
+  assert.deepEqual(ordered.map((r) => r.id), ["short", "plain", "older", "done"]);
+});
+
+test("ageLabel speaks in the units a person uses, pinned to a passed clock", () => {
+  const now = new Date("2026-01-02T12:00:00Z");
+  assert.equal(ageLabel("2026-01-02T11:59:40Z", now), "just now");
+  assert.equal(ageLabel("2026-01-02T11:30:00Z", now), "30m");
+  assert.equal(ageLabel("2026-01-02T09:00:00Z", now), "3h");
+  assert.equal(ageLabel("2025-12-30T12:00:00Z", now), "3d");
+  assert.equal(ageLabel("not a date", now), "");
+});
+
+test("qtyText trims the storage format and never rounds or edits what it cannot read", () => {
+  assert.equal(qtyText("46.0000"), "46");
+  assert.equal(qtyText("2.5000"), "2.5");
+  assert.equal(qtyText("0.0500"), "0.05");
+  assert.equal(qtyText("7"), "7");
+  assert.equal(qtyText("?"), "?");
+  assert.equal(qtyText(""), "");
+  assert.equal(qtyLabel("2.5000", "TONNE"), "2.5 TONNE");
+  assert.equal(qtyLabel("3", ""), "3");
+});
+
+test("the shortage summary leads with the count and names the first item", () => {
+  assert.equal(
+    shortageSummary([{ resolved_at: "", qty_short: "22.0000", uom: "SQFT", description: "Flagstone" }]),
+    "1 open shortage · short 22 SQFT of Flagstone",
+  );
+  assert.equal(shortageSummary([{ resolved_at: "x", qty_short: "1", uom: "EA", description: "d" }]), "");
+  assert.equal(shortageSummary(undefined), "");
+});
+
+test("priority words and the made to order note follow the feed's own rules", () => {
+  assert.equal(priorityWord("URGENT"), "Wanted today");
+  assert.equal(priorityWord("HIGH"), "Wanted soon");
+  assert.equal(priorityWord("NORMAL"), "");
+  assert.equal(priorityWord("LOW"), "No rush");
+  assert.equal(priorityWord("WHENEVER"), "whenever");
+  assert.equal(mtoLabel("MTO"), "Made to order: do not substitute");
+  assert.equal(mtoLabel("MIXED"), "Mixed load: check each pallet");
+  assert.equal(mtoLabel("MTO", "PICKUP"), "");
+  assert.equal(mtoLabel("STANDARD"), "");
+});
+
+test("a row is called by its order number, never a uuid and never nothing", () => {
+  assert.equal(orderHandle({ order_no: "SO-1042" }), "SO-1042");
+  assert.equal(orderHandle({ reference: "ST-2201", order_no: "" }), "ST-2201");
+  assert.equal(orderHandle({ reference: "0a000000-0000-4000-9000-000000000042", order_no: "" }), "Order number not on file");
+  assert.equal(orderHandle({ customer_name: "Someone (demo)" }), "Someone (demo)");
+  assert.equal(orderHandle(null), "Order number not on file");
+});
+
+// ---- the short pick reasons, the core's closed list (0369) ----
+
+test("the reason list is the core's own, in the order a screen shows it", () => {
+  assert.deepEqual(SHORT_REASONS, ["CONDENSED_SKIDS", "DAMAGED", "NOT_IN_YARD", "COUNT_CORRECTION", "OTHER"]);
+  assert.equal(reasonPhrase("CONDENSED_SKIDS"), "Skids condensed");
+  assert.equal(reasonPhrase("NOT_IN_YARD"), "Not in the yard");
+  assert.equal(reasonPhrase("SOMETHING"), "SOMETHING");
+  assert.equal(reasonLabel("DAMAGED"), "Damaged (DAMAGED)");
+});
+
+test("the static options the screens carry match the core's list, word for word", () => {
+  for (const code of SHORT_REASONS) {
+    assert.ok(viewsSource.includes(`<option value="${code}">${reasonLabel(code)}</option>`), `views.ts is missing the static option for ${code}`);
+  }
+});
+
+// ---- recording what was pulled ----
+
+test("short means the picked less the ordered, in the one place that decides it", () => {
+  assert.equal(lineIsShort("10.0000", "9"), true);
+  assert.equal(lineIsShort("10.0000", "10"), false);
+  assert.equal(lineIsShort("x", "1"), false);
+  assert.equal(shortOf("10.0000", "4"), "6");
+  assert.equal(shortOf("10", "10"), "");
+  assert.equal(shortOf("x", "1"), "");
+});
+
+test("a picked quantity allows zero and refuses blank, negative and nonsense", () => {
+  assert.equal(validatePickQty("0"), "");
+  assert.equal(validatePickQty(" 7 "), "");
+  assert.notEqual(validatePickQty(""), "");
+  assert.notEqual(validatePickQty("few"), "");
+  assert.notEqual(validatePickQty("-1"), "");
+});
+
+test("the record is blocked until every short line carries a reason, and OTHER a note", () => {
+  assert.equal(recordBlockedReason([{ qty_picked: "10", qty_ordered: "10", short_reason: "", short_note: "" }]), "");
+  assert.equal(
+    recordBlockedReason([{ qty_picked: "4", qty_ordered: "10", short_reason: "NOT_IN_YARD", short_note: "" }]),
+    "",
+  );
+  assert.ok(recordBlockedReason([{ qty_picked: "4", qty_ordered: "10", short_reason: "", short_note: "" }]).includes("reason"));
+  assert.ok(recordBlockedReason([{ qty_picked: "4", qty_ordered: "10", short_reason: "OTHER", short_note: "" }]).includes("note"));
+  assert.ok(recordBlockedReason([{ qty_picked: "", qty_ordered: "10", short_reason: "", short_note: "" }]).includes("blank is not"));
+});
+
+test("the pick summary says what was pulled, not what is missing", () => {
+  assert.equal(pickSummary([{ qty_ordered: "10", qty_picked: "10", uom: "EA", description: "a" }]), "All 1 line pulled in full.");
+  assert.equal(
+    pickSummary([
+      { qty_ordered: "10", qty_picked: "7", uom: "EA", description: "pavers" },
+      { qty_ordered: "2", qty_picked: "1", uom: "ROLL", description: "fabric" },
+    ]),
+    "7 of 10 EA pulled on pavers, and 1 other line came up short.",
+  );
+  assert.equal(pickSummary([]), "");
+});
+
+test("the short pick's answer words name the backorder and the rep", () => {
+  assert.equal(
+    shortPickWords({ qty_picked: "14.0000", qty_ordered: "24.0000", uom: "EA" }, "10.0000"),
+    "Picked 14 of 24 EA. The rest (10 EA) is on backorder and the order's rep has been told.",
+  );
+  assert.equal(
+    shortPickWords({ qty_picked: "14.0000", qty_ordered: "24.0000", uom: "EA" }, ""),
+    "Picked 14 of 24 EA. The rest is on backorder and the order's rep has been told.",
+  );
+});
+
+// ---- the shortage sheet ----
+
+test("a shortage needs a positive number", () => {
+  assert.equal(validateShortage("10"), "");
+  assert.notEqual(validateShortage(""), "");
+  assert.notEqual(validateShortage("few"), "");
+  assert.notEqual(validateShortage("0"), "");
+  assert.equal(
+    shortageSentWords({ qty_short: "10.0000", uom: "SQFT", description: "Flagstone" }),
+    "Shortage sent: 10 SQFT of Flagstone. The counter has been told.",
+  );
+});
+
+// ---- staging ----
+
+test("a stage without a spot is refused before the round trip", () => {
+  assert.notEqual(validateStage(""), "");
+  assert.equal(validateStage("Bay 3"), "");
+  assert.notEqual(validateStage("x".repeat(121)), "");
+});
+
+// ---- skids ----
+
+test("a skid count needs a whole number and a reason, and OTHER a note", () => {
+  assert.equal(skidBlockedReason(15, "CONDENSED_SKIDS", ""), "");
+  assert.equal(skidBlockedReason(0, "COUNT_CORRECTION", ""), "");
+  assert.notEqual(skidBlockedReason(null, "DAMAGED", ""), "");
+  assert.notEqual(skidBlockedReason(2, "", ""), "");
+  assert.notEqual(skidBlockedReason(2, "OTHER", ""), "");
+  assert.notEqual(skidBlockedReason(MAX_SKIDS + 1, "DAMAGED", ""), "");
+  assert.equal(skidWords({ skid_count: 15, previous_skid_count: null, changed: true, order_no: "SO-1042" }), "SO-1042 now holds 15 skids.");
+  assert.equal(skidWords({ skid_count: 5, previous_skid_count: 2, changed: true, order_no: "SO-1042" }), "SO-1042 changed from 2 to 5 skids.");
+  assert.equal(skidWords({ skid_count: 5, previous_skid_count: 5, changed: false, order_no: "SO-1042" }), "Still 5 skids on SO-1042. Nothing changed.");
+});
+
+// ---- refusals, and the list wall ----
+
+test("a refusal in the core's words is shown as it came, capped and stopped", () => {
+  assert.equal(yardError("line 1 is short, give the reason (CONDENSED_SKIDS)", 400, "fallback"), "Line 1 is short, give the reason (CONDENSED_SKIDS).");
+  assert.equal(yardError("tasks: branch out of scope", 403, "fallback"), "You are not allowed to do that on this yard.");
+  assert.equal(yardError("anything", 500, "the fallback"), "the fallback");
+  assert.equal(yardError("", undefined, "the fallback"), "the fallback");
+  assert.equal(yardError("x", 401, "f"), "Your sign in has ended. Sign out and sign in again.");
+  assert.equal(yardError("x", 404, "f"), "That is no longer on the board.");
+});
+
+test("the role gate's bare Forbidden body is answered with the wall's plain words", () => {
+  assert.equal(FORBIDDEN_BODY, "Forbidden");
+  assert.deepEqual(RESOLVE_WALL_NAMES, ["Yard Team", "Yard Manager"]);
+  assert.equal(wallWords(RESOLVE_WALL_NAMES), "That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
+  assert.equal(yardError("Forbidden", 403, "fallback"), "That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
+  assert.equal(yardError("Forbidden", 403, "fallback", { wall: ["Yard Manager"] }), "That is not yours to settle. Only the Yard Manager may resolve a shortage.");
+});
