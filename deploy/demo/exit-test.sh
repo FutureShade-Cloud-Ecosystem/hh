@@ -248,10 +248,12 @@ page_gated() {
 page_has / fd-app-root "the front door at /"
 page_has /till/ ct-app-root "the counter till at /till/"
 page_has /drive/ drive-run-app "HH Drive at /drive/"
+page_has /money-desk/ money-desk-app "the Money Desk at /money-desk/"
 page_has /q/ pd-quote-public "the public desk at /q/"
 page_has "/quote.html?t=x" pd-quote-public "the public desk at /quote.html"
 page_gated /till/ "the counter till at /till/"
 page_gated /drive/ "HH Drive at /drive/"
+page_gated /money-desk/ "the Money Desk at /money-desk/"
 page_gated /q/ "the public desk at /q/"
 page_gated /quote/ "the /quote/ prefix"
 # Never indexed, gate open or shut (decision log row 981): the header rides the
