@@ -382,6 +382,16 @@ export function shortageSentWords(s: { qty_short: string; uom: string; descripti
   return `Shortage sent: ${qtyText(s.qty_short)} ${s.uom} of ${s.description}. The counter has been told.`;
 }
 
+// ---- staging ----
+
+/** The client's check for the stage form: the server requires a location (a staged pick nobody can find is worse than an unstaged one). */
+export function validateStage(location: string): string {
+  const trimmed = location.trim();
+  if (!trimmed) return "Where did you put it? A stage location is required.";
+  if (trimmed.length > 120) return "That location is too long. 120 characters at most.";
+  return "";
+}
+
 // ---- skids ----
 
 /** The most skids one order can plausibly leave on (the core's maxSkids). */

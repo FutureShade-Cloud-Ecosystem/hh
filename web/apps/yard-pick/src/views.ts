@@ -392,6 +392,30 @@ function skidsCard(model: PickModel): TemplateResult {
   `;
 }
 
+function stageBox(t: YardTask): TemplateResult {
+  return html`
+    <section class="card staged-box" data-staged>
+      <p class="staged-where">Staged at ${t.stage_location}</p>
+      ${t.stage_ref !== "" ? html`<p class="staged-ref">Ref ${t.stage_ref} · tell the counter, it is what they read out</p>` : nothing}
+    </section>
+  `;
+}
+
+function stageCard(): TemplateResult {
+  return html`
+    <section class="card" data-stage-form>
+      <h3>Stage this pick</h3>
+      <span class="field-label">Where did you put it?</span>
+      <input class="text-field" type="text" autocomplete="off" data-field="stage-where" placeholder="Bay 3" aria-label="The stage location" />
+      <p class="hint">A spot nobody can find is worse than an unstaged pick. The ref is made up for you if you leave it blank.</p>
+      <div class="actions">
+        <button type="button" class="btn btn-primary big" data-action="stage" data-tap>Stage</button>
+        <button type="button" class="btn btn-secondary big" data-action="close-stage" data-tap>Not yet</button>
+      </div>
+    </section>
+  `;
+}
+
 /** One pick: the pull list on the left (tablet) and the skids, stage and shortages beside it. */
 export function renderPick(model: PickModel): TemplateResult {
   const pick = model.pick;
@@ -438,6 +462,7 @@ export function renderPick(model: PickModel): TemplateResult {
         ${shortageSheet(model)}
       </div>
       <div>
+        ${t.status === "STAGED" || t.status === "DONE" ? stageBox(t) : t.status === "IN_PROGRESS" ? stageCard() : nothing}
         ${recordable ? skidsCard(model) : nothing}
         ${shortageList(model)}
       </div>

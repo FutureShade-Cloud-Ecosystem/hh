@@ -37,6 +37,7 @@ import {
   qtyText,
   recordBlockedReason,
   shortPickWords,
+  validateStage,
   skidBlockedReason,
   skidWords,
   shortageSentWords,
@@ -114,6 +115,7 @@ export class YardPickApp extends HHElement {
   #sheetNote = "";
   #skidReason = "";
   #skidNote = "";
+  #stageWhere = "";
   #resolveText = "";
 
   // The way in: this app's own card, drawn by views.ts.
@@ -244,6 +246,10 @@ export class YardPickApp extends HHElement {
       void this.#saveSkids();
       return;
     }
+    if (action === "stage") {
+      void this.#stage();
+      return;
+    }
   };
 
   // The form fields: quantities, reasons, notes, the sheet, the stage spot.
@@ -279,6 +285,10 @@ export class YardPickApp extends HHElement {
       }
       if (field === "resolution") {
         this.#resolveText = value;
+        return;
+      }
+      if (field === "stage-where") {
+        this.#stageWhere = value;
         return;
       }
       return;
@@ -366,6 +376,7 @@ export class YardPickApp extends HHElement {
       else if (name === "sheet-note") value = this.#sheetNote;
       else if (name === "skid-reason") value = this.#skidReason;
       else if (name === "skid-note") value = this.#skidNote;
+      else if (name === "stage-where") value = this.#stageWhere;
       else if (name === "resolution") value = this.#resolveText;
       if (value !== null && field.value !== value) field.value = value;
     }
@@ -714,6 +725,30 @@ export class YardPickApp extends HHElement {
       this.#notice = skidWords(answer.value);
     } else {
       this.#error = yardError(answer.error, answer.status, "The skid count did not save. Check your signal and try again.");
+    }
+    this.requestUpdate();
+  }
+
+  async #stage(): Promise<void> {
+    if (this.#view.kind !== "pick" || this.#busy) return;
+    const locationBad = validateStage(this.#stageWhere);
+    if (locationBad !== "") {
+      this.#error = locationBad;
+      this.requestUpdate();
+      return;
+    }
+    this.#busy = true;
+    this.#error = "";
+    this.#notice = "";
+    this.requestUpdate();
+    const answer = await this.#yard.stage(this.#view.id, this.#stageWhere.trim(), "", "");
+    this.#busy = false;
+    if (answer.ok) {
+      this.#stageWhere = "";
+      this.#notice = actionDone("stage", { location: answer.value.stage_location, ref: answer.value.stage_ref });
+      await this.#refreshPick();
+    } else {
+      this.#error = yardError(answer.error, answer.status, "The pick did not stage. Check your signal and try again.");
     }
     this.requestUpdate();
   }

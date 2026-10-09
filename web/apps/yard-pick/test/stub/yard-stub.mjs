@@ -439,6 +439,7 @@ async function handle(req, res) {
     if (!task) return notFound(res);
     const action = pickMatch[2] ?? "";
     if (req.method === "GET" && action === "") return json(res, entryOut(task));
+    if (req.method === "POST" && action === "stage") return stage(res, task, body ?? {});
     if (req.method === "POST" && action === "shortages") return reportShortage(res, task, body ?? {});
     if (req.method === "PUT" && action === "lines") return recordPick(res, task, body ?? {});
     if (req.method === "PUT" && action === "skids") return recordSkids(res, task, body ?? {});
@@ -632,6 +633,25 @@ function stableRef(id) {
     n = Math.floor(n / alphabet.length);
   }
   return out;
+}
+
+function stage(res, task, input) {
+  const location = String(input.location ?? "").trim();
+  if (location === "") return refuse(res, 400, "stage location is required");
+  if (location.length > 120) return refuse(res, 400, "stage location is too long (max 120)");
+  const ref = String(input.ref ?? "").trim();
+  if (ref.length > 40) return refuse(res, 400, "stage ref is too long (max 40)");
+  const ticket = ticketFor(task);
+  if (ticket.held_from_picking === true) {
+    return refuse(res, 409, "This order cannot reach picking until the balance is paid.");
+  }
+  if (task.status !== "IN_PROGRESS") return refuse(res, 409, "illegal task transition");
+  task.status = "STAGED";
+  task.staged_at = new Date().toISOString();
+  task.stage_location = location;
+  task.stage_ref = ref !== "" ? ref : `STG-${stableRef(task.id)}`;
+  task.updated_at = new Date().toISOString();
+  return json(res, taskOut(task));
 }
 
 function reportShortage(res, task, input) {
