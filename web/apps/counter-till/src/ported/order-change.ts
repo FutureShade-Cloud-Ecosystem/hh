@@ -285,9 +285,14 @@ export class HosOrderChange extends LitElement {
     if (changed.has('orderId')) void this.load();
   }
 
-  /** Re-reads the whole surface. Public so a parent refreshes it after an external change. */
+  /** Re-reads the whole surface: this element's own reads and the embedded panels' (the terminal's
+   *  refresh reaches this element, and the trail beneath an edit lives inside this shadow root where
+   *  the terminal's query cannot see it). */
   reload(): void {
     void this.load();
+    this.renderRoot
+      ?.querySelectorAll('hos-order-edit, hos-order-edits')
+      .forEach((el) => (el as HTMLElement & { reload?: () => void }).reload?.());
   }
 
   private async load() {
@@ -391,7 +396,16 @@ export class HosOrderChange extends LitElement {
   render() {
     const postPick = this.status !== null && statusIsPostPick(this.status.status);
     return html`
-      <details class="change" data-testid="order-change">
+      <details
+        class="change"
+        data-testid="order-change"
+        @toggle=${(e: Event) => {
+          // Reopening re-reads: the yard and finance move a change out of band
+          // (their apps, or a colleague at another counter), and a surface that
+          // kept its first read would answer "With yard" to a decided question.
+          if ((e.target as HTMLDetailsElement).open) void this.load();
+        }}
+      >
         <summary>Change order</summary>
         ${this.status === null
           ? nothing

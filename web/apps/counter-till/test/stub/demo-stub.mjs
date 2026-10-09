@@ -405,6 +405,104 @@ seedParkedKingstonTicket();
 seedOwingOrders();
 
 // ---------------------------------------------------------------------------
+// The change-order world (change orders stage 1): the order statuses the
+// core's transitions move, the change requests raised against rung orders,
+// the edits trail a line edit appends to, and the matrix answers the role
+// gate gives the two demo logins. The stub stands in for the core, so the
+// statuses, the ladder, the threshold and the refusal words below are the
+// core's own (order/change.go, order/edit.go, authz BodyForbidden), field by
+// field: the till's legs must see what the served core would answer.
+// ---------------------------------------------------------------------------
+
+// order_id -> status. A rung order starts CONFIRMED (the ring's own ladder);
+// the transitions route below moves it the way the core's manual matrix does.
+const ORDER_STATUS = new Map();
+// change_id -> one change request row (the core's ChangeOrder shape).
+const CHANGES = new Map();
+// order_id -> the edits trail rows, oldest first (the core's OrderFieldChange shape).
+const EDITS = new Map();
+let changeCounter = 0;
+let editRequestCounter = 0;
+// The SCOPE:F10 default (core change.go defaultFinanceThresholdCents), the
+// figure stamped on a new request, |delta| graded against it.
+const FINANCE_THRESHOLD_CENTS = 50000;
+
+// The census walls (the routes' x-access rows against the default matrix):
+// what each demo login may reach on the change surface. sales is inside_sales
+// (quote-desk work: raise, list, read, reject, cancel; no manage cell), and
+// sales-manager is sales_manager (quote-desk manage: the line edits and the
+// apply beside them). Neither holds a yard-pick or money-desk manage cell, so
+// the yard ack and the finance signature answer the shared Forbidden word
+// exactly as the served core's role gate answers them.
+function changeWalls(caller) {
+  const account = Object.values(USERS).find((u) => u.user_id === caller.userId) ?? null;
+  const manager = account !== null && account.tier <= 2;
+  return {
+    manager,
+    lineEdits: manager,
+    raise: true,
+    decide: true,
+    yardAck: false,
+    financeApprove: false,
+    apply: manager,
+  };
+}
+
+// editRules (core order/edit.go): line edits die at READY and are the
+// manager's alone; the requested date lives to PARTIALLY_FULFILLED for
+// everyone. editable_fields on the order read is computed from THIS, never
+// offered by the client.
+function editableFieldsFor(status, manager) {
+  const fields = [];
+  const lineStatuses = new Set(["DRAFT", "CONFIRMED", "PICKING"]);
+  const dateStatuses = new Set(["DRAFT", "CONFIRMED", "PICKING", "READY", "PARTIALLY_FULFILLED"]);
+  if (manager && lineStatuses.has(status)) fields.push("line_qty", "line_add", "line_remove");
+  if (dateStatuses.has(status)) fields.push("requested_date");
+  return fields;
+}
+
+// The manual matrix's own answers for the statuses this world reaches.
+function legalActionsFor(status) {
+  if (status === "CONFIRMED") return ["PICKING", "CANCELLED"];
+  if (status === "PICKING") return ["READY", "CANCELLED"];
+  return [];
+}
+
+// statusIsPostPick (core change.go): the status-ladder half of the raise gate.
+function statusIsPostPick(status) {
+  return status === "PICKING" || status === "READY" || status === "PARTIALLY_FULFILLED";
+}
+
+// changeNextActions (core change.go), for the caller this stub minted.
+function changeNextActions(status, manager) {
+  if (status === "PENDING_YARD") return ["yard_ack", "reject", "cancel"];
+  if (status === "PENDING_FINANCE") return manager ? ["finance_approve", "reject", "cancel"] : ["reject", "cancel"];
+  if (status === "APPROVED") return manager ? ["apply", "reject", "cancel"] : ["cancel"];
+  return [];
+}
+
+function isTerminalChange(status) {
+  return status === "APPLIED" || status === "REJECTED" || status === "CANCELLED";
+}
+
+function qtyWord(qty) {
+  return (Math.round(qty * 10000) / 10000).toFixed(4);
+}
+
+// One rung order or owing order by id, with the branch fence the core holds.
+function orderForRead(id, callerBranch) {
+  const sale = sales.get(id);
+  if (sale !== undefined) return { kind: "sale", row: sale };
+  const owed = owing.get(id);
+  if (owed !== undefined) return { kind: "owing", row: owed };
+  return null;
+}
+
+function orderStatusOf(orderId) {
+  return ORDER_STATUS.get(orderId) ?? "CONFIRMED";
+}
+
+// ---------------------------------------------------------------------------
 // The returns world: the demo branch's sales, the drawer, and the returns
 // already taken. The sale numbers are the counter's own spellings, every id
 // is uuid shaped as the contract's formats name them, the money is integer
@@ -1270,6 +1368,39 @@ const server = createServer(async (request, response) => {
     PAY_BALANCE_KEYS.clear();
     seedOwingOrders();
     respondJson(response, 200, { ok: true });
+    return;
+  }
+
+  // Harness-only: the yard's acknowledgement and the finance signature, the
+  // two halves stages 2 and 3 carry. The stub world performs them the way the
+  // yard app and the money desk will (the ladder's own moves), so the till's
+  // legs can walk a change to APPROVED without an identity this world cannot
+  // mint. No contract path shares the namespace, and the app never calls it.
+  // It sits with the other /_stub routes ABOVE the counter caller gate: the
+  // world acts, and no counter identity is involved.
+  if (request.method === "POST" && path === "/_stub/change-decide") {
+    readBody(request, (parsed) => {
+      const co = CHANGES.get(typeof parsed?.change_id === "string" ? parsed.change_id : "");
+      if (co === undefined) {
+        respondJson(response, 404, { error: "no such change" });
+        return;
+      }
+      if (parsed?.decide === "yard-ack" && co.status === "PENDING_YARD") {
+        co.status = co.finance_required ? "PENDING_FINANCE" : "APPROVED";
+        co.yard_acked_by = "yard (world)";
+        co.yard_acked_at = new Date().toISOString();
+        co.yard_ack_note = typeof parsed.note === "string" ? parsed.note : "";
+      } else if (parsed?.decide === "finance-approve" && co.status === "PENDING_FINANCE") {
+        co.status = "APPROVED";
+        co.finance_approved_by = "finance (world)";
+        co.finance_approved_at = new Date().toISOString();
+        co.finance_note = typeof parsed.note === "string" ? parsed.note : "";
+      } else {
+        respondJson(response, 409, { error: `cannot ${String(parsed?.decide)} from ${co.status}` });
+        return;
+      }
+      respondJson(response, 200, co);
+    });
     return;
   }
 
@@ -2300,20 +2431,435 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  // Item 9.3: the staff order read, only the pay hold and the lines the till's held card needs.
+  // Item 9.3 plus the change-order stage: the staff order read, the core's
+  // OrderView field by field (status, this caller's legal actions and editable
+  // fields, the lines and the money, the pay hold on an order that owes).
   const orderMatch = path.match(/^\/api\/v1\/orders\/([^/]+)$/);
   if (request.method === "GET" && orderMatch !== null) {
-    const order = owing.get(orderMatch[1]);
-    if (order === undefined || order.branch_id !== callerBranch) {
+    const found = orderForRead(orderMatch[1], callerBranch);
+    if (found === null || found.row.branch_id !== callerBranch) {
       respondJson(response, 404, { error: "no such order" });
       return;
     }
+    const order = found.row;
+    const status = orderStatusOf(order.order_id);
+    const walls = changeWalls(caller);
+    const viewLines =
+      found.kind === "sale"
+        ? order.lines.map((l) => ({
+            line_no: l.line_no,
+            product_id: l.product_id,
+            description: l.description,
+            qty_entered: qtyWord(l.qty_entered),
+            uom_entered: l.uom_entered,
+            qty_base: qtyWord(l.qty_entered),
+            allocated_base: "0.0000",
+            fulfilled_base: "0.0000",
+            unit_price_cents: l.unit_price_cents,
+            line_total_cents: l.line_total_cents,
+          }))
+        : order.lines.map((l, index) => {
+            const parts = /^([0-9.]+)\s+(\S+)$/.exec(l.qty ?? "") ?? null;
+            return {
+              line_no: index + 1,
+              product_id: "",
+              description: l.description,
+              qty_entered: parts === null ? "0.0000" : qtyWord(Number(parts[1])),
+              uom_entered: parts === null ? "" : parts[2],
+              qty_base: parts === null ? "0.0000" : qtyWord(Number(parts[1])),
+              allocated_base: "0.0000",
+              fulfilled_base: "0.0000",
+              unit_price_cents: 0,
+              line_total_cents: l.line_total_cents,
+            };
+          });
+    const subtotal = found.kind === "sale" ? order.subtotal_cents : order.order_total_cents;
+    const tax = found.kind === "sale" ? order.tax_cents : 0;
+    // A deposit sale that still owes joins the pay balance world too (the ring
+    // plants it in both): the sale row serves the lines and the money here,
+    // and the owing twin decides the hold, exactly the one OrderView the core
+    // serves with pay_hold riding beside the lines.
+    const owed = owing.get(order.order_id);
     respondJson(response, 200, {
       id: order.order_id,
       order_no: order.order_no,
       customer_id: order.customer_id,
-      status: "CONFIRMED",
-      pay_hold: payHoldBody(order),
+      branch_id: order.branch_id,
+      status,
+      legal_actions: legalActionsFor(status),
+      editable_fields: editableFieldsFor(status, walls.manager),
+      lines: viewLines,
+      subtotal_cents: subtotal,
+      tax_cents: tax,
+      total_cents: subtotal + tax,
+      has_backorder: false,
+      ...(found.kind === "owing" || owed !== undefined ? { pay_hold: payHoldBody(owed ?? order) } : {}),
+    });
+    return;
+  }
+
+  // The staff transition the legs use to start a pick (the core's manual
+  // matrix: CONFIRMED takes PICKING; the census row is staff at quote-desk
+  // work, so both logins may move it).
+  const pickingMatch = path.match(/^\/api\/v1\/orders\/([^/]+)\/picking$/);
+  if (request.method === "POST" && pickingMatch !== null) {
+    const found = orderForRead(pickingMatch[1], callerBranch);
+    if (found === null || found.row.branch_id !== callerBranch) {
+      respondJson(response, 404, { error: "not found" });
+      return;
+    }
+    const from = orderStatusOf(found.row.order_id);
+    if (from !== "CONFIRMED") {
+      respondJson(response, 409, { error: `order: this order is ${from}, picking is no longer available` });
+      return;
+    }
+    ORDER_STATUS.set(found.row.order_id, "PICKING");
+    respondJson(response, 200, { order_id: found.row.order_id, status: "PICKING" });
+    return;
+  }
+
+  // The line edits (DIB-175): the census walls first (the shared Forbidden
+  // word a non-manager earns), then the matrix's own refusal naming the
+  // status, then the write, priced at the line's own unit (the stub stands in
+  // for the pricing seam; no price ever arrives from the client).
+  const lineMatch = path.match(/^\/api\/v1\/orders\/([^/]+)\/lines\/([0-9]+)$/);
+  if (request.method === "PATCH" && lineMatch !== null) {
+    const walls = changeWalls(caller);
+    if (!walls.lineEdits) {
+      respondJson(response, 403, { error: "Forbidden" });
+      return;
+    }
+    const found = orderForRead(lineMatch[1], callerBranch);
+    if (found === null || found.row.branch_id !== callerBranch || found.kind !== "sale") {
+      respondJson(response, 404, { error: "not found" });
+      return;
+    }
+    const status = orderStatusOf(found.row.order_id);
+    if (!["DRAFT", "CONFIRMED", "PICKING"].includes(status)) {
+      respondJson(response, 409, {
+        error: `order: line quantity cannot be edited while the order is ${status}`,
+      });
+      return;
+    }
+    readBody(request, (parsed) => {
+      const raw = typeof parsed?.qty_entered === "string" ? parsed.qty_entered.trim() : "";
+      const qty = Number(raw);
+      if (raw === "") {
+        respondJson(response, 400, { error: "qty_entered is required" });
+        return;
+      }
+      if (!Number.isFinite(qty) || qty <= 0) {
+        respondJson(response, 400, { error: "qty_entered must be greater than zero, remove the line instead" });
+        return;
+      }
+      const lineNo = Number(lineMatch[2]);
+      const line = found.row.lines.find((l) => l.line_no === lineNo);
+      if (line === undefined) {
+        respondJson(response, 404, { error: "order: line not found" });
+        return;
+      }
+      const beforeQty = line.qty_entered;
+      const beforeTotal = line.line_total_cents;
+      line.qty_entered = qty;
+      line.qty_base = qty;
+      line.line_total_cents = lineTotalCents(line.unit_price_cents, qty);
+      line.tax_cents = Math.round((line.line_total_cents * HST_RATE_BPS) / 10000);
+      const subtotal = found.row.lines.reduce((sum, l) => sum + l.line_total_cents, 0);
+      found.row.subtotal_cents = subtotal;
+      found.row.tax_cents = taxCents(subtotal);
+      found.row.total_cents = subtotal + found.row.tax_cents;
+      const requestId = `req-${++editRequestCounter}`;
+      const actor = Object.values(USERS).find((u) => u.user_id === caller.userId) ?? {
+        user_id: caller.userId,
+        display_name: "Staff (demo)",
+      };
+      const stamp = new Date().toISOString();
+      const rows = [
+        { field: "qty_entered", line_no: lineNo, before: qtyWord(beforeQty), after: qtyWord(qty), actor_id: actor.user_id, actor_name: actor.display_name, request_id: requestId, occurred_at: stamp },
+        { field: "qty_base", line_no: lineNo, before: qtyWord(beforeQty), after: qtyWord(qty), actor_id: actor.user_id, actor_name: actor.display_name, request_id: requestId, occurred_at: stamp },
+        { field: "line_total_cents", line_no: lineNo, before: String(beforeTotal), after: String(line.line_total_cents), actor_id: actor.user_id, actor_name: actor.display_name, request_id: requestId, occurred_at: stamp },
+        { field: "subtotal_cents", line_no: 0, before: "", after: String(subtotal), actor_id: actor.user_id, actor_name: actor.display_name, request_id: requestId, occurred_at: stamp },
+      ];
+      const trail = EDITS.get(found.row.order_id) ?? [];
+      trail.push(...rows);
+      EDITS.set(found.row.order_id, trail);
+      respondJson(response, 200, {
+        order_id: found.row.order_id,
+        status,
+        subtotal_cents: subtotal,
+        total_cents: found.row.total_cents,
+        line: {
+          line_no: lineNo,
+          product_id: line.product_id,
+          qty_entered: qtyWord(qty),
+          qty_base: qtyWord(qty),
+          unit_price_cents: line.unit_price_cents,
+          line_total_cents: line.line_total_cents,
+        },
+      });
+    });
+    return;
+  }
+
+  // The edits trail (DIB-175): the audit rows the writes above appended,
+  // oldest first, grouped client-side by request id.
+  const editsMatch = path.match(/^\/api\/v1\/orders\/([^/]+)\/edits$/);
+  if (request.method === "GET" && editsMatch !== null) {
+    const found = orderForRead(editsMatch[1], callerBranch);
+    if (found === null || found.row.branch_id !== callerBranch) {
+      respondJson(response, 404, { error: "not found" });
+      return;
+    }
+    respondJson(response, 200, {
+      order_id: found.row.order_id,
+      changes: EDITS.get(found.row.order_id) ?? [],
+    });
+    return;
+  }
+
+  // The reservations read (W5 seam 3): the lines' holds, HARD in this world.
+  const reservationsMatch = path.match(/^\/api\/v1\/orders\/([^/]+)\/reservations$/);
+  if (request.method === "GET" && reservationsMatch !== null) {
+    const found = orderForRead(reservationsMatch[1], callerBranch);
+    if (found === null || found.row.branch_id !== callerBranch || found.kind !== "sale") {
+      respondJson(response, 404, { error: "not found" });
+      return;
+    }
+    const status = orderStatusOf(found.row.order_id);
+    const holds =
+      status === "PICKING" || status === "READY" || status === "PARTIALLY_FULFILLED"
+        ? found.row.lines.map((l) => {
+            const product = PRODUCTS.find((p) => p.product_id === l.product_id) ?? null;
+            return {
+              reservation_id: `res-${found.row.order_id}-${l.line_no}`,
+              product_id: l.product_id,
+              product_name: product === null ? l.description : product.name,
+              sku: product === null ? "" : product.sku,
+              branch_id: found.row.branch_id,
+              hold_mode: "HARD",
+              qty_base: l.qty_entered,
+              status: "ACTIVE",
+              created_at: found.row.created_at,
+            };
+          })
+        : [];
+    respondJson(response, 200, {
+      order_id: found.row.order_id,
+      status,
+      seam_wired: true,
+      reservations: holds,
+      held_base: 0,
+    });
+    return;
+  }
+
+  // The change orders (SCOPE:F10): list and raise, then the decisions on one
+  // request. Every refusal below is the core's own sentence; the walls answer
+  // the role gate's shared Forbidden word.
+  const changesMatch = path.match(/^\/api\/v1\/orders\/([^/]+)\/changes$/);
+  if (request.method === "GET" && changesMatch !== null) {
+    const found = orderForRead(changesMatch[1], callerBranch);
+    if (found === null || found.row.branch_id !== callerBranch) {
+      respondJson(response, 404, { error: "not found" });
+      return;
+    }
+    const walls = changeWalls(caller);
+    const rows = [...CHANGES.values()]
+      .filter((co) => co.order_id === found.row.order_id)
+      .map((co) => ({ ...co, next_actions: changeNextActions(co.status, walls.manager) }))
+      .reverse();
+    respondJson(response, 200, { changes: rows });
+    return;
+  }
+  if (request.method === "POST" && changesMatch !== null) {
+    const found = orderForRead(changesMatch[1], callerBranch);
+    if (found === null || found.row.branch_id !== callerBranch) {
+      respondJson(response, 404, { error: "not found" });
+      return;
+    }
+    readBody(request, (parsed) => {
+      const status = orderStatusOf(found.row.order_id);
+      // uq_change_orders_one_open: at most one live request per order, live
+      // being DRAFT, PENDING_YARD, PENDING_FINANCE or APPROVED.
+      const openExists = [...CHANGES.values()].some(
+        (co) =>
+          co.order_id === found.row.order_id &&
+          ["DRAFT", "PENDING_YARD", "PENDING_FINANCE", "APPROVED"].includes(co.status),
+      );
+      if (openExists) {
+        respondJson(response, 409, {
+          error: "this order already has an open change request, decide it before raising another",
+        });
+        return;
+      }
+      const rawLines = Array.isArray(parsed?.lines) ? parsed.lines : [];
+      if (rawLines.length === 0) {
+        respondJson(response, 400, { error: "order: a change order must carry at least one line change" });
+        return;
+      }
+      // The post-pick gate, the core's own order: the status ladder decides
+      // here (this world has no tasks substrate), and the refusal names the
+      // line-edit path.
+      if (!statusIsPostPick(status)) {
+        respondJson(response, 409, {
+          error: "order: this order's pick has not started, use the line-edit endpoints, not a change order",
+        });
+        return;
+      }
+      // Price the delta once, at request time, at the line's own unit price.
+      const lines = [];
+      let deltaCents = 0;
+      for (const raw of rawLines) {
+        const op = typeof raw?.op === "string" ? raw.op.toUpperCase() : "";
+        if (op !== "QTY") {
+          respondJson(response, 400, { error: `line 1: unknown change op ${JSON.stringify(raw?.op ?? "")} (ADD|QTY|REMOVE)` });
+          return;
+        }
+        const lineNo = raw.line_no;
+        const line = found.row.lines.find((l) => l.line_no === lineNo);
+        if (typeof lineNo !== "number" || line === undefined) {
+          respondJson(response, 404, { error: "order: line not found" });
+          return;
+        }
+        const qty = Number(typeof raw.qty_entered === "string" ? raw.qty_entered.trim() : "");
+        if (!Number.isFinite(qty) || qty <= 0) {
+          respondJson(response, 400, { error: "qty_entered must be greater than zero, remove the line instead" });
+          return;
+        }
+        const before = line.qty_entered;
+        const after = lineTotalCents(line.unit_price_cents, qty);
+        lines.push({
+          seq: lines.length + 1,
+          op: "QTY",
+          line_no: lineNo,
+          product_id: line.product_id,
+          product_name: line.description,
+          description: line.description,
+          qty_entered_new: qtyWord(qty),
+          uom_entered: line.uom_entered,
+          qty_base_before: before,
+          qty_base_after: qty,
+          qty_delta_base: qty - before,
+          unit_price_cents: line.unit_price_cents,
+          price_uom: line.uom_entered,
+          line_delta_cents: after - line.line_total_cents,
+        });
+        deltaCents += after - line.line_total_cents;
+      }
+      const financeRequired = Math.abs(deltaCents) >= FINANCE_THRESHOLD_CENTS;
+      const id = uuidFromCounter(60000 + ++changeCounter);
+      const co = {
+        id,
+        order_id: found.row.order_id,
+        branch_id: found.row.branch_id,
+        change_no: `CHG-${String(changeCounter).padStart(4, "0")}`,
+        status: "PENDING_YARD",
+        reason: typeof parsed?.reason === "string" ? parsed.reason.trim() : "",
+        delta_cents: deltaCents,
+        finance_threshold_cents: FINANCE_THRESHOLD_CENTS,
+        finance_required: financeRequired,
+        order_status_at_request: status,
+        pick_started_at_request: true,
+        requested_by: caller.userId,
+        requested_at: new Date().toISOString(),
+        yard_task_id: `task-${found.row.order_id}`,
+        lines,
+      };
+      CHANGES.set(id, co);
+      respondJson(response, 201, { ...co, next_actions: changeNextActions(co.status, changeWalls(caller).manager) });
+    });
+    return;
+  }
+
+  const changeMatch = path.match(/^\/api\/v1\/order-changes\/([^/]+)(\/([a-z-]+))?$/);
+  if (changeMatch !== null && request.method === "POST") {
+    const co = CHANGES.get(changeMatch[1]);
+    if (co === undefined || co.branch_id !== callerBranch) {
+      respondJson(response, 404, { error: "not found" });
+      return;
+    }
+    const action = changeMatch[3] ?? "";
+    const walls = changeWalls(caller);
+    const manager = walls.manager;
+    const terminal = () =>
+      respondJson(response, 409, { error: "order: this change order is already closed" });
+    if (action === "yard-ack") {
+      // The census row walls the ack to yard-pick work: neither demo login
+      // holds it, so the answer is the role gate's own shared body.
+      respondJson(response, 403, { error: "Forbidden" });
+      return;
+    }
+    if (action === "finance-approve") {
+      // money-desk manage: financial controller and general manager alone.
+      respondJson(response, 403, { error: "Forbidden" });
+      return;
+    }
+    if (action === "reject" || action === "cancel") {
+      if (isTerminalChange(co.status)) return terminal();
+      co.status = action === "reject" ? "REJECTED" : "CANCELLED";
+      co.decision_note = "";
+      respondJson(response, 200, { ...co, next_actions: changeNextActions(co.status, manager) });
+      return;
+    }
+    if (action === "apply") {
+      if (!walls.apply) {
+        respondJson(response, 403, { error: "Forbidden" });
+        return;
+      }
+      if (isTerminalChange(co.status)) return terminal();
+      if (co.status === "PENDING_YARD") {
+        respondJson(response, 409, { error: "the yard has not acknowledged this change yet" });
+        return;
+      }
+      if (co.status === "PENDING_FINANCE") {
+        respondJson(response, 409, {
+          error: "this change is over the finance threshold and has not been approved",
+        });
+        return;
+      }
+      if (co.status !== "APPROVED") {
+        respondJson(response, 409, { error: "order: this change is not approved" });
+        return;
+      }
+      // Apply writes the priced delta onto the lines and recomputes the
+      // totals from the lines, never a delta increment.
+      const sale = sales.get(co.order_id);
+      if (sale === undefined) {
+        respondJson(response, 409, { error: "order: this change order is already closed" });
+        return;
+      }
+      for (const l of co.lines) {
+        const line = sale.lines.find((row) => row.line_no === l.line_no);
+        line.qty_entered = l.qty_base_after;
+        line.qty_base = l.qty_base_after;
+        line.line_total_cents = lineTotalCents(line.unit_price_cents, l.qty_base_after);
+        line.tax_cents = Math.round((line.line_total_cents * HST_RATE_BPS) / 10000);
+      }
+      const subtotal = sale.lines.reduce((sum, l) => sum + l.line_total_cents, 0);
+      sale.subtotal_cents = subtotal;
+      sale.tax_cents = taxCents(subtotal);
+      sale.total_cents = subtotal + sale.tax_cents;
+      // The order's owing twin (a deposit sale that still owes) follows the
+      // new total, so the pay balance world and the order read never disagree.
+      const owed = owing.get(sale.order_id);
+      if (owed !== undefined) owed.order_total_cents = sale.total_cents;
+      co.status = "APPLIED";
+      co.applied_at = new Date().toISOString();
+      respondJson(response, 200, { ...co, next_actions: changeNextActions(co.status, manager) });
+      return;
+    }
+    respondJson(response, 404, { error: "not found" });
+    return;
+  }
+  if (changeMatch !== null && request.method === "GET" && changeMatch[3] === undefined) {
+    const co = CHANGES.get(changeMatch[1]);
+    if (co === undefined || co.branch_id !== callerBranch) {
+      respondJson(response, 404, { error: "not found" });
+      return;
+    }
+    respondJson(response, 200, {
+      ...co,
+      next_actions: changeNextActions(co.status, changeWalls(caller).manager),
     });
     return;
   }
