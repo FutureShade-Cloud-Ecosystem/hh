@@ -53,3 +53,24 @@ SELECT invoice_no::text, total_cents, total_cents - balance_cents
 	}
 	return invoiceNo, totalCents, paidCents, true, nil
 }
+
+// LiveOrderInvoice is the order's own live invoice for the counter's return of a converted order: the
+// newest non-void INVOICE document that is not a supplier deposit (the deposit documents are released
+// on a return, never refunded against). found is false when the order has none; status is the
+// document's, so the caller can tell a draft from a finalised one.
+func (r *Repository) LiveOrderInvoice(ctx context.Context, orderID string) (invoiceID, status string, found bool, err error) {
+	if r.pool == nil {
+		return "", "", false, nil
+	}
+	err = r.pool.QueryRow(ctx, `
+SELECT id::text, status FROM invoices
+ WHERE order_id = $1 AND doc_type = 'INVOICE' AND source_kind <> 'SUPPLIER_DEPOSIT' AND status <> 'VOID'
+ ORDER BY created_at DESC, id DESC LIMIT 1`, orderID).Scan(&invoiceID, &status)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", "", false, nil
+		}
+		return "", "", false, fmt.Errorf("live invoice for order %q: %w", orderID, err)
+	}
+	return invoiceID, status, true, nil
+}
