@@ -934,7 +934,7 @@ export class FrontDoorApp extends HHElement {
         </div>
         <details class="coming-card" data-testid="coming-disclosure">
           <summary>
-            <span class="coming-heading">Eleven more roles are coming</span>
+            <span class="coming-heading">Ten more roles are coming</span>
             <span class="chev" aria-hidden="true">${drawIcon(iconForId("lucide:chevron-up"), 16)}</span>
           </summary>
           <ul class="coming" aria-label="Coming roles">

@@ -112,7 +112,7 @@ const USERS = {
     email: "yard-manager@demo.invalid",
     display_name: "Yard manager (demo)",
     role_code: "yard_manager",
-    role_name: "Yard Manager",
+    role_name: "Yard manager",
     tier: 2,
     scope: "BRANCH",
   },

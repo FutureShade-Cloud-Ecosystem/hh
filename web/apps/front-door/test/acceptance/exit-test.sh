@@ -29,13 +29,13 @@
 #   the app builds (vite build) and the core's demo build compiles;
 #   the gate answers /healthz without a phrase;
 #   the picker page is refused without the phrase and served with it;
-#   the served bundle carries the picker's structure: the two live card
-#     labels ("Sales", "Sales manager"), the eleven coming rows' labels, the
-#     Coming heading, and the demo badge's copy;
+#   the served bundle carries the picker's structure: the three live card
+#     labels ("Sales", "Sales manager", "Yard manager"), the ten coming rows'
+#     labels, the Coming heading, and the demo badge's copy;
 #   /api/v1/demo/flows answers the closed table's three flows;
 #   POST /api/v1/demo/session without the phrase is refused by the gate, and
-#     with it mints for both flow ids the front door maps (sales,
-#     sales-manager);
+#     with it mints for every flow id the front door maps (sales,
+#     sales-manager, yard-manager);
 #   the gate stands down on a staff route behind a bearer and no phrase.
 #
 # Cleanup removes every process, container, network and temporary path the
@@ -254,11 +254,12 @@ assert_in_bundle() {
 assert_in_bundle "Pick a role to walk the demo."
 assert_in_bundle "Sales"
 assert_in_bundle "Sales manager"
+assert_in_bundle "Yard manager"
 assert_in_bundle "Coming"
 assert_in_bundle "Everything on this box is invented demo data: nothing here is real."
 assert_in_bundle "Switch role"
 assert_in_bundle "Sign out"
-for role in "Outside Sales" "Yard Team" "Yard Manager" "Logistics Manager" "Driver" \
+for role in "Outside Sales" "Yard Team" "Logistics Manager" "Driver" \
 	"Branch Manager" "Procurement Manager" "Payables and Receivables" \
 	"Financial Controller" "General Manager" "HR"; do
 	assert_in_bundle "$role"
@@ -270,7 +271,7 @@ case "$flows" in
 	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*)
 		pass "/api/v1/demo/flows answers the closed table's three flows"
 		;;
-	*) fail "/api/v1/demo/flows did not answer the two flows: $flows" ;;
+	*) fail "/api/v1/demo/flows did not answer the three flows: $flows" ;;
 esac
 
 code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
@@ -279,7 +280,7 @@ code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
 [ "$code" = "401" ] && pass "the mint without the phrase is refused by the gate" \
 	|| fail "the mint without the phrase answered $code, want 401"
 
-for flow in sales sales-manager; do
+for flow in sales sales-manager yard-manager; do
 	mint="$(curl -s -u "demo:$PHRASE" -H 'Content-Type: application/json' \
 		-d "{\"flow\":\"$flow\"}" "$BASE/api/v1/demo/session")"
 	case "$mint" in
