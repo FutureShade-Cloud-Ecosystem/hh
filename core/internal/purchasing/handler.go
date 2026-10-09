@@ -23,6 +23,36 @@ func (h *Handler) listVendors(w http.ResponseWriter, r *http.Request, caller gua
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+// createVendor is the staff writer for the vendor record (vendor_master.go). The org stamp comes
+// from the guard resolved scope on the caller, never from a header or the body.
+func (h *Handler) createVendor(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in CreateVendorRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	v, err := h.svc.CreateVendor(r.Context(), caller.OrgID, in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusCreated, v)
+}
+
+// setVendor corrects the fields the body names on one vendor, the same PUT shape the expected-date
+// and delivery-method corrections carry.
+func (h *Handler) setVendor(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in UpdateVendorRequest
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	v, err := h.svc.UpdateVendor(r.Context(), caller.OrgID, r.PathValue("vendorID"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, v)
+}
+
 func (h *Handler) listPOs(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	items, err := h.svc.ListPOs(r.Context(), r.URL.Query().Get("branch_id"), r.URL.Query().Get("status"))
 	if err != nil {

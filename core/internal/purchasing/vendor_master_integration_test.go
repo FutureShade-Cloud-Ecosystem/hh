@@ -1,0 +1,168 @@
+//go:build integration
+
+// vendor_master_integration_test.go, the vendor create and edit pair against a real database: the
+// roadmap's Buying and Stock core slice names vendor create and edit as missing ("no vendor create
+// or edit", section 1.5), and this file is the red first half of filling it. The load doors'
+// supplier writer (vendorload.go) was the only writer the table had; these routes are the staff
+// writer, and they follow the load's own conventions at source: the number is minted server side
+// and never accepted from the caller, the seq is drawn from the vendors scope in the same
+// statement, and the org stamp is the caller's.
+package purchasing
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+)
+
+// vendorMasterCleanup removes the vendors this file mints, by the number prefix the mint draws.
+func vendorMasterCleanup(t *testing.T, h *harness) {
+	t.Helper()
+	t.Cleanup(func() {
+		_, _ = h.pool.Exec(context.Background(),
+			`DELETE FROM vendors WHERE vendor_no LIKE 'V-01%' AND vendor_no <> 'V-0100'`)
+	})
+}
+
+func TestIntegration_VendorMaster_CreateMintsTheNumberAndStampsTheOrg(t *testing.T) {
+	h := newHarness(t)
+	vendorMasterCleanup(t, h)
+	org := h.orgID(t)
+
+	v, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{
+		Name: "Test Aggregate Works (demo)", OrderEmail: "orders@testaggregate.example",
+	})
+	if err != nil {
+		t.Fatalf("create vendor: %v", err)
+	}
+	if v.ID == "" || !strings.HasPrefix(v.VendorNo, "V-0") {
+		t.Fatalf("the created vendor reads %+v, want a minted V-0xxx number", v)
+	}
+	if !v.IsActive || v.PaymentTermsDays != 30 {
+		t.Errorf("a created vendor reads terms %d active %v, want the 30 day active default", v.PaymentTermsDays, v.IsActive)
+	}
+	if v.OrderEmail != "orders@testaggregate.example" {
+		t.Errorf("the ordering email reads %q, want what the create wrote", v.OrderEmail)
+	}
+
+	// The row the projections read: the directory lists it, and the remit fallback carries the
+	// email the outbound send's address book reads.
+	var email string
+	if err := h.pool.QueryRow(context.Background(),
+		`SELECT remit_address->>'email' FROM vendors WHERE id = $1`, v.ID).Scan(&email); err != nil || email != "orders@testaggregate.example" {
+		t.Errorf("remit_address->email reads %q (err %v), want the ordering email", email, err)
+	}
+	items, err := h.svc.ListVendors(h.ctx)
+	if err != nil {
+		t.Fatalf("list vendors: %v", err)
+	}
+	found := false
+	for _, it := range items {
+		if it.ID == v.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the directory projection omits the created vendor")
+	}
+
+	// A PO may be raised against it at once: the whole point of the route is a buyer adding a
+	// supplier mid job.
+	po, err := h.svc.CreatePO(h.ctx, CreatePORequest{VendorID: v.ID, BranchID: branchTRT,
+		Lines: []AddLineParams{{ProductID: h.prodAny(t), QtyOrderedBase: 10, UOM: "PC", UnitCostCents: 90}}})
+	if err != nil {
+		t.Fatalf("draft a PO against the created vendor: %v", err)
+	}
+	_, _ = h.pool.Exec(context.Background(), `DELETE FROM purchasing_pos WHERE id = $1`, po.ID)
+}
+
+func TestIntegration_VendorMaster_CreateRefusesTheMalformed(t *testing.T) {
+	h := newHarness(t)
+	vendorMasterCleanup(t, h)
+	org := h.orgID(t)
+
+	if _, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "   "}); err == nil {
+		t.Errorf("a blank name created a vendor, want a refusal")
+	}
+	if _, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Terms negative",
+		PaymentTermsDays: ptr(-1)}); err == nil {
+		t.Errorf("negative terms created a vendor, want a refusal")
+	}
+	if _, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Bad email",
+		OrderEmail: "not-an-address"}); err == nil {
+		t.Errorf("a malformed ordering email created a vendor, want a refusal")
+	}
+	if _, err := h.svc.CreateVendor(h.ctx, "not-a-uuid", CreateVendorRequest{Name: "No org"}); err == nil {
+		t.Errorf("a caller with no org stamp created a vendor, want a refusal")
+	}
+	// Zero day terms are legal (pay on delivery), not a malformed absent.
+	v, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Cash on delivery (demo)", PaymentTermsDays: ptr(0)})
+	if err != nil {
+		t.Fatalf("zero day terms refused: %v", err)
+	} else if v.PaymentTermsDays != 0 {
+		t.Errorf("zero day terms read %d, want 0", v.PaymentTermsDays)
+	}
+}
+
+func TestIntegration_VendorMaster_EditCorrectsTheRecordAndTheActiveSwitchHasTeeth(t *testing.T) {
+	h := newHarness(t)
+	vendorMasterCleanup(t, h)
+	org := h.orgID(t)
+
+	v, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "First name (demo)"})
+	if err != nil {
+		t.Fatalf("create vendor: %v", err)
+	}
+	edited, err := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{
+		Name: ptr("Renamed supplier (demo)"), PaymentTermsDays: ptr(45), OrderEmail: ptr("desk@renamed.example"),
+	})
+	if err != nil {
+		t.Fatalf("edit vendor: %v", err)
+	}
+	if edited.Name != "Renamed supplier (demo)" || edited.PaymentTermsDays != 45 || edited.OrderEmail != "desk@renamed.example" {
+		t.Errorf("the edited vendor reads %+v, want the corrections", edited)
+	}
+
+	// Deactivating has teeth: the PO route refuses a new order against an inactive vendor.
+	if _, err := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{IsActive: ptr(false)}); err != nil {
+		t.Fatalf("deactivate vendor: %v", err)
+	}
+	_, err = h.svc.CreatePO(h.ctx, CreatePORequest{VendorID: v.ID, BranchID: branchTRT,
+		Lines: []AddLineParams{{ProductID: h.prodAny(t), QtyOrderedBase: 10, UOM: "PC", UnitCostCents: 90}}})
+	if err == nil {
+		t.Fatalf("a PO was drafted against the deactivated vendor, want the refusal")
+	}
+
+	// An unknown vendor is a 404, never a silent edit of nothing.
+	if _, err := h.svc.UpdateVendor(h.ctx, org, uuid.NewString(), UpdateVendorRequest{Name: ptr("Nobody")}); !errors.Is(err, ErrUnknownVendor) {
+		t.Errorf("edit an unknown vendor: got %v, want ErrUnknownVendor", err)
+	}
+	// A row another org owns is not this caller's to edit.
+	_, _ = h.pool.Exec(context.Background(),
+		`UPDATE vendors SET org_id = $2 WHERE id = $1`, v.ID, uuid.NewString())
+	if _, err := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{Name: ptr("Other org row")}); !errors.Is(err, errForbidden) {
+		t.Errorf("edit another org's vendor: got %v, want the refusal", err)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// orgID plants one throwaway org anchor row and answers its id, because an org row on this gate
+// database is otherwise the demo populate's to provision and the gate build stops at migrate and
+// seed. The route stamps the org the guard resolved; the test has to own one to resolve.
+func (h *harness) orgID(t *testing.T) string {
+	t.Helper()
+	const id = "7e110000-0000-4000-9000-0000000000b1"
+	if _, err := h.pool.Exec(context.Background(),
+		`INSERT INTO org (id, slug, name) VALUES ($1::uuid, 'vm-fence-org', 'Vendor master fence org')
+		 ON CONFLICT (id) DO NOTHING`, id); err != nil {
+		t.Fatalf("plant the org anchor: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = h.pool.Exec(context.Background(), `DELETE FROM org WHERE id = $1::uuid`, id)
+	})
+	return id
+}

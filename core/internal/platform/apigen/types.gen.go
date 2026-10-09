@@ -6347,6 +6347,28 @@ type PurchasingVendor struct {
 	IsActive         bool   `json:"is_active"`
 }
 
+type PurchasingCreateVendorRequest struct {
+	Name             string  `json:"name"`
+	PaymentTermsDays *int32  `json:"payment_terms_days,omitempty"`
+	OrderEmail       *string `json:"order_email,omitempty"`
+}
+
+type PurchasingUpdateVendorRequest struct {
+	Name             *string `json:"name,omitempty"`
+	PaymentTermsDays *int32  `json:"payment_terms_days,omitempty"`
+	OrderEmail       *string `json:"order_email,omitempty"`
+	IsActive         *bool   `json:"is_active,omitempty"`
+}
+
+type PurchasingVendorMaster struct {
+	Id               string `json:"id"`
+	VendorNo         string `json:"vendor_no"`
+	Name             string `json:"name"`
+	PaymentTermsDays int32  `json:"payment_terms_days"`
+	OrderEmail       string `json:"order_email"`
+	IsActive         bool   `json:"is_active"`
+}
+
 type PurchasingPO struct {
 	Id               string             `json:"id"`
 	PoNo             string             `json:"po_no"`

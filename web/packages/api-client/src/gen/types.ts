@@ -5459,6 +5459,25 @@ export type PurchasingVendor = {
   payment_terms_days: number;
   is_active: boolean;
 };
+export type PurchasingCreateVendorRequest = {
+  name: string;
+  payment_terms_days?: number;
+  order_email?: string;
+};
+export type PurchasingUpdateVendorRequest = {
+  name?: string;
+  payment_terms_days?: number;
+  order_email?: string;
+  is_active?: boolean;
+};
+export type PurchasingVendorMaster = {
+  id: string;
+  vendor_no: string;
+  name: string;
+  payment_terms_days: number;
+  order_email: string;
+  is_active: boolean;
+};
 export type PurchasingPO = {
   id: string;
   po_no: string;

@@ -346,6 +346,10 @@ func NewHandler(svc *Service, log *slog.Logger) *Handler {
 // operational one.
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/purchasing/vendors", g.RequireStaff(h.staff(h.listVendors)))
+	// The vendor MASTER writes sit at the same gate the module's other vendor writes (contact, SKU)
+	// already sit at: RequireManager, a vendor record being a commitment the business stands behind.
+	r.Handle("POST /api/v1/purchasing/vendors", g.RequireManager(h.staff(h.createVendor)))
+	r.Handle("PUT /api/v1/purchasing/vendors/{vendorID}", g.RequireManager(h.staff(h.setVendor)))
 
 	r.Handle("GET /api/v1/purchasing/pos", g.RequireStaff(h.staff(h.listPOs)))
 	r.Handle("POST /api/v1/purchasing/pos", g.RequireManager(h.staff(h.createPO)))

@@ -18597,6 +18597,81 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: purchasingCreateVendor
+      tags:
+        - staff-purchasing
+      x-addition: the vendor create route of the roles roadmap's Buying and Stock core slice; no ERP source route
+      summary: Create a vendor
+      description: The vendor number is minted server side and is never accepted from the caller. The record is created active under the caller's org; the ordering email rides the record as the remit fallback the outbound send's address book reads.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - buying-and-stock
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingCreateVendorRequest"
+      responses:
+        "201":
+          description: The created vendor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorMaster"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/purchasing/vendors/{vendorID}:
+    put:
+      operationId: purchasingUpdateVendor
+      tags:
+        - staff-purchasing
+      x-addition: the vendor edit route of the roles roadmap's Buying and Stock core slice; no ERP source route
+      summary: Correct one vendor's record
+      description: Every field is optional and absent means unchanged; an empty order_email clears the fallback address. The vendor number is not editable. A vendor another org owns is refused.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - buying-and-stock
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingUpdateVendorRequest"
+      responses:
+        "200":
+          description: The vendor after the corrections
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorMaster"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/purchasing/pos:
     get:
       operationId: purchasingListPOs
@@ -45649,6 +45724,57 @@ components:
         payment_terms_days:
           type: integer
           format: int32
+        is_active:
+          type: boolean
+    PurchasingCreateVendorRequest:
+      type: object
+      description: The vendor number is minted server side. payment_terms_days defaults to 30 when absent; zero is legal and means pay on delivery.
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        payment_terms_days:
+          type: integer
+          format: int32
+        order_email:
+          type: string
+    PurchasingUpdateVendorRequest:
+      type: object
+      description: Every field is optional and absent means unchanged; an empty order_email clears the fallback address. A body naming nothing is refused.
+      properties:
+        name:
+          type: string
+        payment_terms_days:
+          type: integer
+          format: int32
+        order_email:
+          type: string
+        is_active:
+          type: boolean
+    PurchasingVendorMaster:
+      type: object
+      description: "The vendor record as the master writes answer it: the directory projection plus the ordering email on the record. order_email empty is a real answer, no address on file."
+      required:
+        - id
+        - vendor_no
+        - name
+        - payment_terms_days
+        - order_email
+        - is_active
+      properties:
+        id:
+          type: string
+          format: uuid
+        vendor_no:
+          type: string
+        name:
+          type: string
+        payment_terms_days:
+          type: integer
+          format: int32
+        order_email:
+          type: string
         is_active:
           type: boolean
     PurchasingPO:
