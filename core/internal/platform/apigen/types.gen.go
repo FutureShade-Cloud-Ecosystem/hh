@@ -3417,6 +3417,8 @@ type InventoryShortfallRow struct {
 	LeadTimeDays        int32   `json:"lead_time_days"`
 	AvgCostCents        int64   `json:"avg_cost_cents"`
 	SuggestedValueCents int64   `json:"suggested_value_cents"`
+	DraftPoId           *string `json:"draft_po_id,omitempty"`
+	DraftPoNo           *string `json:"draft_po_no,omitempty"`
 }
 
 type InventoryReorderPoint struct {

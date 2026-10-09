@@ -2883,6 +2883,8 @@ export type InventoryShortfallRow = {
   lead_time_days: number;
   avg_cost_cents: number;
   suggested_value_cents: number;
+  draft_po_id?: string;
+  draft_po_no?: string;
 };
 export type InventoryReorderPoint = {
   product_id: string;

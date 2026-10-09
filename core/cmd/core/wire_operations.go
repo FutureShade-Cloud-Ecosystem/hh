@@ -213,6 +213,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// on-order read stops reporting the constant zero.
 	inventorySvc.WithPOCreator(unionPOCreator{svc: purchasingSvc})
 	inventorySvc.WithOnOrderReader(inv470OnOrder{svc: purchasingSvc})
+	inventorySvc.WithDraftPOReader(invDraftPOs{svc: purchasingSvc})
 
 	// MSG-01 / DIB-152: the messaging hub. The stream-ticket HMAC takes
 	// its DEDICATED environment key (the A1 ruling; the HS256 secret it
@@ -1451,6 +1452,23 @@ func (a inv470OnOrder) OutstandingOnOrderBase(ctx context.Context, branchID stri
 	out := make([]inventory.OnOrderQty, len(rows))
 	for i, r := range rows {
 		out[i] = inventory.OnOrderQty{ProductID: r.ProductID, BranchID: r.BranchID, QtyBase: r.QtyBase}
+	}
+	return out, nil
+}
+
+// invDraftPOs satisfies inventory.DraftPOReader over purchasing's open draft read: the draft a
+// worklist row points at ("drafted, not placed"). A draft is not on order, so it is not in the
+// aggregate above; it rides beside it as a pointer.
+type invDraftPOs struct{ svc *purchasing.Service }
+
+func (a invDraftPOs) OpenDraftsFor(ctx context.Context, branchID string, productIDs []string) ([]inventory.DraftPO, error) {
+	rows, err := a.svc.OpenDraftsFor(ctx, branchID, productIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]inventory.DraftPO, len(rows))
+	for i, r := range rows {
+		out[i] = inventory.DraftPO{ProductID: r.ProductID, BranchID: r.BranchID, POID: r.POID, PONo: r.PONo}
 	}
 	return out, nil
 }

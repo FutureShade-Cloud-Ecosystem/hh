@@ -565,9 +565,18 @@ func (h *Handler) shortfall(w http.ResponseWriter, r *http.Request, _ guards.Sta
 	// on_order_degraded is ALWAYS present rather than omitted when false: a flag that appears only in
 	// the broken case is one a client forgets to read. It is false on every wired deployment, so the
 	// surface renders nothing for it, see DIB-470.
+	//
+	// The page is the contract's InventoryShortfallPage: the list under `items` (an array, never
+	// null: nothing short is an ordinary answer), the cursor key present and null (the worklist is
+	// one bounded page), the same envelope every list carries.
+	rows := wl.Rows
+	if rows == nil {
+		rows = []ShortfallRow{}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"shortfall":         wl.Rows,
+		"items":             rows,
 		"on_order_degraded": wl.OnOrderDegraded,
+		"next_cursor":       nil,
 	})
 }
 

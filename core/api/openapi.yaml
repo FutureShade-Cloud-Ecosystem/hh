@@ -10423,7 +10423,7 @@ paths:
       tags:
         - staff-inventory
       summary: List the replenishment worklist, worst shortfall first
-      description: Graded on the projected position (available plus in transit plus on order), not on-hand. on_order_degraded is true when the on-order leg was not measured; it is always present rather than omitted when false.
+      description: "Graded on the projected position (available plus in transit plus on order), not on-hand. On order counts placed orders only (ORDERED and PARTIAL): a draft never covers a shortfall, so a row with a draft stays here and names it in draft_po_id and draft_po_no. on_order_degraded is true when the on-order leg was not measured; it is always present rather than omitted when false."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -36447,6 +36447,13 @@ components:
           type: integer
           format: int64
           description: suggested_qty_base times the branch weighted-average cost
+        draft_po_id:
+          type: string
+          format: uuid
+          description: The newest draft purchase order a buyer has started for this product at this branch, unplaced. A draft never covers a shortfall, so the row stays on the worklist beside it; absent when there is none. Placing the draft takes the row off the worklist.
+        draft_po_no:
+          type: string
+          description: The number of the draft named by draft_po_id; present with it, absent without it
     InventoryReorderPoint:
       type: object
       description: The per (product, branch) replenishment policy row

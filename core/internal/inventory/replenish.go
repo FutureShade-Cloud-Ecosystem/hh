@@ -66,6 +66,12 @@ type ShortfallRow struct {
 	AvgCostCents        int64  `json:"avg_cost_cents"`
 	// SuggestedValueCents is suggested_qty × the branch weighted-average, what saying yes costs.
 	SuggestedValueCents int64 `json:"suggested_value_cents"`
+
+	// DraftPOID and DraftPONo point at the newest draft purchase order a buyer has started for this
+	// product at this branch, unplaced. A draft never covers a shortfall, so the row is still here;
+	// these let a screen say "drafted, not placed" and link the draft. Absent when there is none.
+	DraftPOID string `json:"draft_po_id,omitempty"`
+	DraftPONo string `json:"draft_po_no,omitempty"`
 }
 
 // ReorderPoint is the per (product, branch) replenishment policy row.
@@ -89,7 +95,7 @@ type ReorderPoint struct {
 // useful together: "nothing is short" means one thing when on-order was measured and a weaker thing
 // when it was not. DIB-470.
 type Worklist struct {
-	Rows []ShortfallRow `json:"shortfall"`
+	Rows []ShortfallRow `json:"items"`
 	// OnOrderDegraded is true when no OnOrderReader is bound, i.e. every on_order_base on these rows
 	// is a ZERO NOBODY MEASURED rather than a measured nothing. The surface says so; see the seam.
 	OnOrderDegraded bool `json:"on_order_degraded"`
@@ -189,6 +195,9 @@ func (s *Service) ShortfallWorklist(ctx context.Context, branchID string, limit 
 	}
 	rows, err := st.ShortfallWorklist(ctx, branchID, limit, onOrder)
 	if err != nil {
+		return Worklist{}, err
+	}
+	if err := s.attachDrafts(ctx, branchID, rows); err != nil {
 		return Worklist{}, err
 	}
 	return Worklist{Rows: rows, OnOrderDegraded: degraded}, nil
