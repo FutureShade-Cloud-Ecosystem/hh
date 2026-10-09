@@ -3,7 +3,7 @@ package main
 // The census half of the completeness contract (the PR 44 review's P2-5),
 // split out of the composition walk so it runs where the repository's CI
 // actually runs: with no gate variable, no database, no composition. The
-// document and the census are asserted here in both directions: all 611
+// document and the census are asserted here in both directions: all 615
 // staff operations carry a surface and a level in roleconfig's
 // vocabulary, no non-staff operation carries an annotation, and every
 // named list is one the gate reads. What this test cannot see is a route
