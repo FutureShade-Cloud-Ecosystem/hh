@@ -6,11 +6,14 @@ import "context"
 // SHAPES THE COUNTER MAY OFFER, answered by the server so no screen decides a
 // money rule.
 //
-// The shapes, one per account type, in the item's own words:
+// The shapes, one per account type, in the item's own words (the pay before
+// release option added by the row 1214 ruling):
 //
 //	CREDIT customer (terms above zero AND a credit line):
 //	  PAY_IN_FULL_NOW, ALL_ON_ACCOUNT, DEPOSIT_NOW_REST_ON_ACCOUNT
-//	CASH ON DEMAND customer (zero day terms), walk in, any NO CREDIT account:
+//	CASH ON DEMAND customer (zero day terms WITH a credit line):
+//	  PAY_IN_FULL_NOW, PAY_BEFORE_RELEASE, DEPOSIT_NOW_REST_DUE_LATER
+//	WALK IN, any NO CREDIT account, a held credit account:
 //	  PAY_IN_FULL_NOW, DEPOSIT_NOW_REST_DUE_LATER
 //
 // Never on account for a walk in or a no credit account, and a credit customer
@@ -47,6 +50,12 @@ const (
 	// PaymentShapeDepositDueLater: line one a deposit now, line two the rest due later,
 	// paid before release (the pay before release posture).
 	PaymentShapeDepositDueLater = "DEPOSIT_NOW_REST_DUE_LATER"
+	// PaymentShapePayBeforeRelease: the whole ticket unpaid at ring, no deposit: the
+	// invoice number issues now, is due today, and fulfilment waits for paid in full
+	// (any fulfilment). The counter's former COD fulfilment tile rang exactly this
+	// sale; the ruling (row 1214) moved the choice here, where the account, not the
+	// tile, decides. Offered to the Cash On Demand account alone.
+	PaymentShapePayBeforeRelease = "PAY_BEFORE_RELEASE"
 )
 
 // The words the till shows for line two of a deposit sale. Server owned, the
@@ -101,13 +110,25 @@ func paymentOptionsFor(termsDays int, creditLimitCents int64, held bool) []Payme
 		}
 	}
 	sentence := SentenceCannotCarry
+	options := []PaymentOption{{Shape: PaymentShapePayInFull}}
+	// The no deposit pay before release ring is the Cash On Demand account's
+	// alone (row 1214, the posture of row 999): zero day terms WITH a line, the
+	// same fact that chooses the sentence below. A terms account is refused the
+	// ring outright (ruling 11), a no credit account and the walk in have no
+	// line to draw the unpaid exposure against (the credit gate's own COD
+	// constraint), and a held credit account is back on cash or card only: none
+	// of them may be offered a shape the ring would refuse, with ONE known
+	// exception: a Cash On Demand account on a hold is still offered the option
+	// (the preview skips the hold read for it), and the ring's credit gate then
+	// refuses it with COD_CONSTRAINT, as it did for the removed tile and the due
+	// later deposit. The option carries no line two (there is no deposit) and no
+	// sentence of its own.
 	if termsDays <= 0 && creditLimitCents > 0 {
 		sentence = SentenceCashOnDemand
+		options = append(options, PaymentOption{Shape: PaymentShapePayBeforeRelease})
 	}
-	return []PaymentOption{
-		{Shape: PaymentShapePayInFull},
-		{Shape: PaymentShapeDepositDueLater, LineTwoWords: LineTwoDueLater, LineTwoSentence: sentence},
-	}
+	return append(options,
+		PaymentOption{Shape: PaymentShapeDepositDueLater, LineTwoWords: LineTwoDueLater, LineTwoSentence: sentence})
 }
 
 // previewPaymentOptions reads the hold fact only when the account could offer
@@ -119,10 +140,13 @@ func paymentOptionsFor(termsDays int, creditLimitCents int64, held bool) []Payme
 // so the unwired shape is a composition gap, not a state a dealer meets.
 //
 // Item 9 Opus P2-3: the due later deposit rides the COD sale type, so the
-// branch's pos_policy.cod_enabled gates it too. With Cash On Demand off (or a
-// policy read that cannot be made), the pay before release accounts are
+// branch's pos_policy.cod_enabled gates it too, and the pay before release
+// option rides the same sale type and the same switch. With Cash On Demand off
+// (or a policy read that cannot be made), the pay before release accounts are
 // offered pay in full now only, the same fact the ring's own errCODDisabled
-// refuses on: the menu never promises a shape the ring will not take. A credit
+// refuses on: the menu does not promise a shape the ring will not take, save
+// that a held Cash On Demand account is still offered Pay Before Release and
+// the ring's credit gate refuses it (the hold read is skipped for it). A credit
 // customer's shapes ride on account, not the COD sale type, and are untouched.
 func (s *Service) previewPaymentOptions(ctx context.Context, branchID string, cust customerRec) []PaymentOption {
 	if cust.PaymentTermsDays <= 0 || cust.CreditLimitCents <= 0 {
