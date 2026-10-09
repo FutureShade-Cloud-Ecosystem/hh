@@ -90,8 +90,20 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("PUT /api/v1/pos/workspace", g.RequireStaff(h.staff(h.putWorkspace)))
 	r.Handle("DELETE /api/v1/pos/workspace", g.RequireStaff(h.staff(h.resetWorkspace)))
 	r.Handle("POST /api/v1/pos/returns", g.RequireStaff(h.staff(h.createReturn)))
+	// Sub item 10.2: the credit note across orders, several orders of one customer in one
+	// transaction, the approval threshold judging the note total (Q3).
+	r.Handle("POST /api/v1/pos/returns-across", g.RequireStaff(h.staff(h.createReturnAcross)))
+	// Sub item 10.5, the swap: a credit note across orders and a new order in one transaction.
+	r.Handle("POST /api/v1/pos/swaps", g.RequireStaff(h.staff(h.createSwap)))
+	r.Handle("POST /api/v1/pos/swaps/preview", g.RequireStaff(h.staff(h.previewSwap)))
+	// The credit preview of a draft note: the commit's own pricing, nothing written.
+	r.Handle("POST /api/v1/pos/returns/preview", g.RequireStaff(h.staff(h.previewReturnAcross)))
 	h.registerReturnRequestRoutes(r, g) // A-06 portal-return approval queue
 	r.Handle("GET /api/v1/pos/returns/lookup", g.RequireStaff(h.staff(h.lookupReturn)))
+	// Sub item 10.1: the customer lines read behind the returns-across flow, every sales order the
+	// customer holds (till rings and quote conversions), the same branch wall the counter's reads
+	// answer. Read only; the commit re-guards every quantity under FOR UPDATE.
+	r.Handle("GET /api/v1/pos/returns/customer-lines", g.RequireStaff(h.staff(h.customerLines)))
 	r.Handle("GET /api/v1/pos/returns/pickups", g.RequireStaff(h.staff(h.listPickups)))
 	r.Handle("POST /api/v1/pos/returns/{id}/pickup", g.RequireManager(h.staff(h.advancePickup)))
 	r.Handle("POST /api/v1/pos/parked", g.RequireStaff(h.staff(h.parkTicket)))
@@ -240,9 +252,100 @@ func (h *Handler) createReturn(w http.ResponseWriter, r *http.Request, caller gu
 	httpx.WriteJSON(w, status, ret)
 }
 
+// createReturnAcross commits one credit note across several orders of one customer. 201 on the
+// first commit, 200 with the same body on a replay. The approver's credential rides the same
+// header the single return reads.
+func (h *Handler) createReturnAcross(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ReturnAcrossInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	in.ApproverCredential = r.Header.Get(approverAuthorizationHeader)
+	note, err := h.svc.ReturnAcross(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if note.Replayed {
+		status = http.StatusOK
+	}
+	httpx.WriteJSON(w, status, note)
+}
+
 func (h *Handler) lookupReturn(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	q := r.URL.Query()
 	out, err := h.svc.LookupReturn(r.Context(), q.Get("order_id"), q.Get("order_no"))
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// createSwap serves the swap; previewSwap its server figures.
+func (h *Handler) createSwap(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in SwapInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	in.ApproverCredential = r.Header.Get(approverAuthorizationHeader)
+	res, err := h.svc.Swap(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	status := http.StatusCreated
+	if res.Replayed {
+		status = http.StatusOK
+	}
+	httpx.WriteJSON(w, status, res)
+}
+
+func (h *Handler) previewSwap(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in SwapInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	out, err := h.svc.PreviewSwap(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// previewReturnAcross serves the credit preview: the draft note's credit so far, priced by the
+// commit's own function. Branch-fenced in the service.
+func (h *Handler) previewReturnAcross(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ReturnPreviewInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	out, err := h.svc.PreviewReturnAcross(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// customerLines serves the customer lines read (sub item 10.1): the customer's every sales order
+// with each line's returnable quantity. Branch-fenced in the service.
+func (h *Handler) customerLines(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	q := r.URL.Query()
+	limit := 0
+	if raw := strings.TrimSpace(q.Get("limit")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			limit = n
+		}
+	}
+	out, err := h.svc.CustomerLines(r.Context(), CustomerLinesInput{
+		CustomerID: q.Get("customer_id"),
+		BranchID:   q.Get("branch_id"),
+		Limit:      limit,
+		Number:     q.Get("number"),
+	})
 	if err != nil {
 		h.writeErr(w, r, err)
 		return

@@ -1201,7 +1201,7 @@ export type Branch = {
   is_system_default: boolean;
   is_active: boolean;
 };
-export type DashboardProfile = "counter" | "yard" | "driver" | "manager" | "admin";
+export type DashboardProfile = "counter" | "yard" | "driver" | "manager" | "admin" | "manager.branch" | "manager.sales" | "manager.yard" | "manager.logistics" | "manager.procurement" | "manager.payables" | "manager.controller" | "manager.general";
 export type DashboardKind = "count" | "money_cents" | "days" | "basis_points";
 export type DashboardSource = "user" | "role" | "catalog";
 export type DashboardTileState = "ok" | "unwired" | "error" | "hidden";
@@ -4030,6 +4030,7 @@ export type PosTenderLegResult = {
   gateway_ref?: string;
 };
 export type PosSale = {
+  swap_id?: string;
   order_id: string;
   order_no: string;
   invoice_id: string;
@@ -4416,6 +4417,7 @@ export type PosReturnLineInput = {
   order_line_id: string;
   qty_base: number;
   reason_code: "DAMAGED" | "DEFECT" | "WRONG_ITEM" | "NO_LONGER_NEEDED" | "OTHER";
+  disposition?: "RESTOCK" | "DAMAGED" | "NO_RETURN";
 };
 export type PosPickupInput = {
   required: boolean;
@@ -4435,6 +4437,9 @@ export type PosReturnInput = {
   fee_bps?: number;
 };
 export type PosReturn = {
+  invoice_offset_cents?: number;
+  payment_note?: string;
+  applied_cents?: number;
   return_id: string;
   return_no: string;
   order_id: string;
@@ -4471,7 +4476,150 @@ export type PosReturnLookup = {
   invoice_id: string;
   sale_tender: "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
   card_refundable: boolean;
+  returnable: boolean;
+  not_returnable_reason: string;
   lines: PosReturnableLine[];
+};
+export type PosReturnAcrossInput = {
+  idempotency_key: string;
+  customer_id?: string;
+  number?: string;
+  orders: PosReturnAcrossOrder[];
+  refund_method: "CASH" | "CARD" | "ACCOUNT_CREDIT";
+  reason: string;
+  restock?: boolean;
+  till_session_id?: string;
+};
+export type PosReturnAcrossOrder = {
+  order_id: string;
+  lines: PosReturnLineInput[];
+};
+export type PosReturnPreviewInput = {
+  customer_id?: string;
+  number?: string;
+  refund_method?: "CASH" | "CARD" | "ACCOUNT_CREDIT";
+  orders: PosReturnAcrossOrder[];
+};
+export type PosReturnPreviewLine = {
+  order_line_id: string;
+  qty_base: number;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+};
+export type PosReturnPreviewOrder = {
+  rail_cents?: number;
+  invoice_offset_cents?: number;
+  rail_note?: string;
+  order_id: string;
+  order_no: string;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  lines: PosReturnPreviewLine[];
+};
+export type PosReturnPreview = {
+  rail_cents?: number;
+  invoice_offset_cents?: number;
+  customer_id: string;
+  branch_id: string;
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  orders: PosReturnPreviewOrder[];
+};
+export type PosSwapInput = {
+  idempotency_key: string;
+  customer_id: string;
+  orders: PosReturnAcrossOrder[];
+  reason?: string;
+  leftover_method?: "CASH" | "CARD" | "ACCOUNT_CREDIT";
+  till_session_id: string;
+  sale_type?: "COLLECT_NOW" | "COLLECT_LATER" | "DELIVERED";
+  tender?: "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
+  payment_token?: string;
+  card_type?: "DEBIT" | "CREDIT" | "PREPAID" | "UNKNOWN";
+  signature_ref?: string;
+  requested_date?: string;
+  notes?: string;
+  po_job_ref?: string;
+  salesperson_id?: string;
+  job_address?: string;
+  job_reference?: string;
+  relief?: PosReliefDecision;
+  discount?: PosDiscountInput;
+  lines: PosLineInput[];
+};
+export type PosSwapNewOrder = {
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+};
+export type PosSwapPreview = {
+  credit: PosReturnPreview;
+  new_order: PosSwapNewOrder;
+  applied_cents: number;
+  leftover_cents: number;
+  shortfall_cents: number;
+  leftover_method: "CASH" | "CARD" | "ACCOUNT_CREDIT";
+};
+export type PosSwapResult = {
+  swap_id: string;
+  note: PosReturnNote;
+  sale: PosSale;
+  credit_cents: number;
+  applied_cents: number;
+  leftover_cents: number;
+  shortfall_cents: number;
+  leftover_method: "CASH" | "CARD" | "ACCOUNT_CREDIT";
+  replayed: boolean;
+};
+export type PosReturnNote = {
+  swap_id?: string;
+  note_id: string;
+  note_no: string;
+  customer_id: string;
+  branch_id: string;
+  refund_method: "CASH" | "CARD" | "ACCOUNT_CREDIT";
+  subtotal_cents: number;
+  tax_cents: number;
+  total_cents: number;
+  returns: PosReturn[];
+  replayed: boolean;
+};
+export type PosCustomerLine = {
+  order_line_id: string;
+  product_id: string;
+  sku: string;
+  description: string;
+  qty_sold: number;
+  qty_returned: number;
+  qty_open: number;
+  unit_price_cents: number;
+  line_total_cents: number;
+  tax_cents: number;
+  money_returned_cents: number;
+  tax_returned_cents: number;
+  shelf_state: "NOT_FULFILLED" | "PARTIALLY_FULFILLED" | "FULFILLED";
+};
+export type PosCustomerOrder = {
+  order_id: string;
+  order_no: string;
+  branch_id: string;
+  branch_name: string;
+  created_at: string;
+  job_label: string;
+  source: "TILL" | "QUOTE";
+  sale_type: "" | "COLLECT_NOW" | "COLLECT_LATER" | "DELIVERED" | "COD";
+  tender: "" | "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
+  fulfilment_state: string;
+  invoice_id: string;
+  card_refundable: boolean;
+  lines: PosCustomerLine[];
+};
+export type PosCustomerLines = {
+  customer_id: string;
+  items: PosCustomerOrder[];
 };
 export type PosReturnPickup = {
   return_id: string;

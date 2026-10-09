@@ -1390,7 +1390,7 @@ type Branch struct {
 	IsActive        bool          `json:"is_active"`
 }
 
-// DashboardProfile is the document's enum: "counter", "yard", "driver", "manager", "admin".
+// DashboardProfile is the document's enum: "counter", "yard", "driver", "manager", "admin", "manager.branch", "manager.sales", "manager.yard", "manager.logistics", "manager.procurement", "manager.payables", "manager.controller", "manager.general".
 type DashboardProfile string
 
 // DashboardKind is the document's enum: "count", "money_cents", "days", "basis_points".
@@ -4732,6 +4732,7 @@ type PosTenderLegResult struct {
 }
 
 type PosSale struct {
+	SwapId                   *string               `json:"swap_id,omitempty"`
 	OrderId                  string                `json:"order_id"`
 	OrderNo                  string                `json:"order_no"`
 	InvoiceId                string                `json:"invoice_id"`
@@ -5164,6 +5165,7 @@ type PosReturnLineInput struct {
 	OrderLineId string  `json:"order_line_id"`
 	QtyBase     float64 `json:"qty_base"`
 	ReasonCode  string  `json:"reason_code"`
+	Disposition *string `json:"disposition,omitempty"`
 }
 
 type PosPickupInput struct {
@@ -5186,19 +5188,22 @@ type PosReturnInput struct {
 }
 
 type PosReturn struct {
-	ReturnId        string  `json:"return_id"`
-	ReturnNo        string  `json:"return_no"`
-	OrderId         string  `json:"order_id"`
-	InvoiceId       string  `json:"invoice_id"`
-	RefundMethod    string  `json:"refund_method"`
-	SubtotalCents   int64   `json:"subtotal_cents"`
-	TaxCents        int64   `json:"tax_cents"`
-	TotalCents      int64   `json:"total_cents"`
-	FeeCents        *int64  `json:"fee_cents,omitempty"`
-	RefundPaymentId *string `json:"refund_payment_id,omitempty"`
-	PickupStatus    string  `json:"pickup_status"`
-	Status          string  `json:"status"`
-	Replayed        bool    `json:"replayed"`
+	InvoiceOffsetCents *int64  `json:"invoice_offset_cents,omitempty"`
+	PaymentNote        *string `json:"payment_note,omitempty"`
+	AppliedCents       *int64  `json:"applied_cents,omitempty"`
+	ReturnId           string  `json:"return_id"`
+	ReturnNo           string  `json:"return_no"`
+	OrderId            string  `json:"order_id"`
+	InvoiceId          string  `json:"invoice_id"`
+	RefundMethod       string  `json:"refund_method"`
+	SubtotalCents      int64   `json:"subtotal_cents"`
+	TaxCents           int64   `json:"tax_cents"`
+	TotalCents         int64   `json:"total_cents"`
+	FeeCents           *int64  `json:"fee_cents,omitempty"`
+	RefundPaymentId    *string `json:"refund_payment_id,omitempty"`
+	PickupStatus       string  `json:"pickup_status"`
+	Status             string  `json:"status"`
+	Replayed           bool    `json:"replayed"`
 }
 
 type PosRefundApproval struct {
@@ -5218,14 +5223,171 @@ type PosReturnableLine struct {
 }
 
 type PosReturnLookup struct {
-	OrderId        string              `json:"order_id"`
-	OrderNo        string              `json:"order_no"`
-	BranchId       string              `json:"branch_id"`
-	CustomerId     string              `json:"customer_id"`
-	InvoiceId      string              `json:"invoice_id"`
-	SaleTender     string              `json:"sale_tender"`
-	CardRefundable bool                `json:"card_refundable"`
-	Lines          []PosReturnableLine `json:"lines"`
+	OrderId             string              `json:"order_id"`
+	OrderNo             string              `json:"order_no"`
+	BranchId            string              `json:"branch_id"`
+	CustomerId          string              `json:"customer_id"`
+	InvoiceId           string              `json:"invoice_id"`
+	SaleTender          string              `json:"sale_tender"`
+	CardRefundable      bool                `json:"card_refundable"`
+	Returnable          bool                `json:"returnable"`
+	NotReturnableReason string              `json:"not_returnable_reason"`
+	Lines               []PosReturnableLine `json:"lines"`
+}
+
+type PosReturnAcrossInput struct {
+	IdempotencyKey string                 `json:"idempotency_key"`
+	CustomerId     *string                `json:"customer_id,omitempty"`
+	Number         *string                `json:"number,omitempty"`
+	Orders         []PosReturnAcrossOrder `json:"orders"`
+	RefundMethod   string                 `json:"refund_method"`
+	Reason         string                 `json:"reason"`
+	Restock        *bool                  `json:"restock,omitempty"`
+	TillSessionId  *string                `json:"till_session_id,omitempty"`
+}
+
+type PosReturnAcrossOrder struct {
+	OrderId string               `json:"order_id"`
+	Lines   []PosReturnLineInput `json:"lines"`
+}
+
+type PosReturnPreviewInput struct {
+	CustomerId   *string                `json:"customer_id,omitempty"`
+	Number       *string                `json:"number,omitempty"`
+	RefundMethod *string                `json:"refund_method,omitempty"`
+	Orders       []PosReturnAcrossOrder `json:"orders"`
+}
+
+type PosReturnPreviewLine struct {
+	OrderLineId   string  `json:"order_line_id"`
+	QtyBase       float64 `json:"qty_base"`
+	SubtotalCents int64   `json:"subtotal_cents"`
+	TaxCents      int64   `json:"tax_cents"`
+	TotalCents    int64   `json:"total_cents"`
+}
+
+type PosReturnPreviewOrder struct {
+	RailCents          *int64                 `json:"rail_cents,omitempty"`
+	InvoiceOffsetCents *int64                 `json:"invoice_offset_cents,omitempty"`
+	RailNote           *string                `json:"rail_note,omitempty"`
+	OrderId            string                 `json:"order_id"`
+	OrderNo            string                 `json:"order_no"`
+	SubtotalCents      int64                  `json:"subtotal_cents"`
+	TaxCents           int64                  `json:"tax_cents"`
+	TotalCents         int64                  `json:"total_cents"`
+	Lines              []PosReturnPreviewLine `json:"lines"`
+}
+
+type PosReturnPreview struct {
+	RailCents          *int64                  `json:"rail_cents,omitempty"`
+	InvoiceOffsetCents *int64                  `json:"invoice_offset_cents,omitempty"`
+	CustomerId         string                  `json:"customer_id"`
+	BranchId           string                  `json:"branch_id"`
+	SubtotalCents      int64                   `json:"subtotal_cents"`
+	TaxCents           int64                   `json:"tax_cents"`
+	TotalCents         int64                   `json:"total_cents"`
+	Orders             []PosReturnPreviewOrder `json:"orders"`
+}
+
+type PosSwapInput struct {
+	IdempotencyKey string                 `json:"idempotency_key"`
+	CustomerId     string                 `json:"customer_id"`
+	Orders         []PosReturnAcrossOrder `json:"orders"`
+	Reason         *string                `json:"reason,omitempty"`
+	LeftoverMethod *string                `json:"leftover_method,omitempty"`
+	TillSessionId  string                 `json:"till_session_id"`
+	SaleType       *string                `json:"sale_type,omitempty"`
+	Tender         *string                `json:"tender,omitempty"`
+	PaymentToken   *string                `json:"payment_token,omitempty"`
+	CardType       *string                `json:"card_type,omitempty"`
+	SignatureRef   *string                `json:"signature_ref,omitempty"`
+	RequestedDate  *string                `json:"requested_date,omitempty"`
+	Notes          *string                `json:"notes,omitempty"`
+	PoJobRef       *string                `json:"po_job_ref,omitempty"`
+	SalespersonId  *string                `json:"salesperson_id,omitempty"`
+	JobAddress     *string                `json:"job_address,omitempty"`
+	JobReference   *string                `json:"job_reference,omitempty"`
+	Relief         *PosReliefDecision     `json:"relief,omitempty"`
+	Discount       *PosDiscountInput      `json:"discount,omitempty"`
+	Lines          []PosLineInput         `json:"lines"`
+}
+
+type PosSwapNewOrder struct {
+	SubtotalCents int64 `json:"subtotal_cents"`
+	TaxCents      int64 `json:"tax_cents"`
+	TotalCents    int64 `json:"total_cents"`
+}
+
+type PosSwapPreview struct {
+	Credit         PosReturnPreview `json:"credit"`
+	NewOrder       PosSwapNewOrder  `json:"new_order"`
+	AppliedCents   int64            `json:"applied_cents"`
+	LeftoverCents  int64            `json:"leftover_cents"`
+	ShortfallCents int64            `json:"shortfall_cents"`
+	LeftoverMethod string           `json:"leftover_method"`
+}
+
+type PosSwapResult struct {
+	SwapId         string        `json:"swap_id"`
+	Note           PosReturnNote `json:"note"`
+	Sale           PosSale       `json:"sale"`
+	CreditCents    int64         `json:"credit_cents"`
+	AppliedCents   int64         `json:"applied_cents"`
+	LeftoverCents  int64         `json:"leftover_cents"`
+	ShortfallCents int64         `json:"shortfall_cents"`
+	LeftoverMethod string        `json:"leftover_method"`
+	Replayed       bool          `json:"replayed"`
+}
+
+type PosReturnNote struct {
+	SwapId        *string     `json:"swap_id,omitempty"`
+	NoteId        string      `json:"note_id"`
+	NoteNo        string      `json:"note_no"`
+	CustomerId    string      `json:"customer_id"`
+	BranchId      string      `json:"branch_id"`
+	RefundMethod  string      `json:"refund_method"`
+	SubtotalCents int64       `json:"subtotal_cents"`
+	TaxCents      int64       `json:"tax_cents"`
+	TotalCents    int64       `json:"total_cents"`
+	Returns       []PosReturn `json:"returns"`
+	Replayed      bool        `json:"replayed"`
+}
+
+type PosCustomerLine struct {
+	OrderLineId        string  `json:"order_line_id"`
+	ProductId          string  `json:"product_id"`
+	Sku                string  `json:"sku"`
+	Description        string  `json:"description"`
+	QtySold            float64 `json:"qty_sold"`
+	QtyReturned        float64 `json:"qty_returned"`
+	QtyOpen            float64 `json:"qty_open"`
+	UnitPriceCents     int64   `json:"unit_price_cents"`
+	LineTotalCents     int64   `json:"line_total_cents"`
+	TaxCents           int64   `json:"tax_cents"`
+	MoneyReturnedCents int64   `json:"money_returned_cents"`
+	TaxReturnedCents   int64   `json:"tax_returned_cents"`
+	ShelfState         string  `json:"shelf_state"`
+}
+
+type PosCustomerOrder struct {
+	OrderId         string            `json:"order_id"`
+	OrderNo         string            `json:"order_no"`
+	BranchId        string            `json:"branch_id"`
+	BranchName      string            `json:"branch_name"`
+	CreatedAt       time.Time         `json:"created_at"`
+	JobLabel        string            `json:"job_label"`
+	Source          string            `json:"source"`
+	SaleType        string            `json:"sale_type"`
+	Tender          string            `json:"tender"`
+	FulfilmentState string            `json:"fulfilment_state"`
+	InvoiceId       string            `json:"invoice_id"`
+	CardRefundable  bool              `json:"card_refundable"`
+	Lines           []PosCustomerLine `json:"lines"`
+}
+
+type PosCustomerLines struct {
+	CustomerId string             `json:"customer_id"`
+	Items      []PosCustomerOrder `json:"items"`
 }
 
 type PosReturnPickup struct {

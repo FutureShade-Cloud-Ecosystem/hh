@@ -74,6 +74,10 @@ type SaleInput struct {
 	// above is ignored (the primary leg is derived) and `deposit_cents` is refused, a split settles
 	// the sale itself. See split_tender.go.
 	Tenders []TenderLegInput `json:"tenders,omitempty"`
+
+	// swapCreditCents is the credit note a swap spends on this sale (10.5): unexported, so no JSON
+	// body can set it. The sale applies min(credit, total) to the new order, the tender takes the rest.
+	swapCreditCents int64
 }
 
 // LineInput is one cart line. The PRICE is NOT in the body, it is resolved server-side, and no
@@ -90,6 +94,7 @@ type LineInput struct {
 
 // Sale is the committed result (also returned verbatim on an idempotent replay).
 type Sale struct {
+	SwapID        string `json:"swap_id,omitempty"` // set when the sale is the new order of a swap
 	OrderID       string `json:"order_id"`
 	OrderNo       string `json:"order_no"`
 	InvoiceID     string `json:"invoice_id"`
@@ -684,7 +689,18 @@ type ReturnLineInput struct {
 	OrderLineID string  `json:"order_line_id"`
 	QtyBase     float64 `json:"qty_base"`
 	ReasonCode  string  `json:"reason_code"`
+	// Disposition says what became of the goods (sub item 10.3): RESTOCK, DAMAGED or NO_RETURN.
+	// Empty falls back to the whole return's restock flag (true is RESTOCK, false NO_RETURN), the
+	// single order path's meaning from before dispositions existed.
+	Disposition string `json:"disposition,omitempty"`
 }
+
+// The three dispositions of a returned line (pos_return_lines.disposition, 0378).
+const (
+	DispositionRestock  = "RESTOCK"
+	DispositionDamaged  = "DAMAGED"
+	DispositionNoReturn = "NO_RETURN"
+)
 
 // PickupInput is the optional logistics pickup block on a return.
 type PickupInput struct {
@@ -723,6 +739,16 @@ type ReturnInput struct {
 	// POST /api/v1/pos/returns with an "rreq:" key is refused (422) before it can hijack a request's
 	// replay slot.
 	internalRail bool
+
+	// railOptional marks a child of a swap (10.5) whose leftover is zero, in
+	// which case no refund rail runs and the rail's own preconditions (a drawer, a card capture, a
+	// spendable account) are not asked for.
+	railOptional bool
+
+	// noteChild marks a child of a returns-across note (returns_across.go), whose idempotency key
+	// is DERIVED under the reserved "note:" namespace. Unexported for the same reason: a public
+	// body can never claim it, only ReturnAcross's own children carry it.
+	noteChild bool
 }
 
 // Return is the committed result (returned verbatim on an idempotent replay).
@@ -735,8 +761,11 @@ type Return struct {
 	SubtotalCents   int64  `json:"subtotal_cents"`
 	TaxCents        int64  `json:"tax_cents"`
 	TotalCents      int64  `json:"total_cents"`
-	FeeCents        int64  `json:"fee_cents,omitempty"`         // A-06 restocking fee, the credited amount is total − fee
-	RefundPaymentID string `json:"refund_payment_id,omitempty"` // the REFUNDED payments row (CASH/CARD)
+	FeeCents        int64  `json:"fee_cents,omitempty"`            // A-06 restocking fee, the credited amount is total − fee
+	OffsetCents     int64  `json:"invoice_offset_cents,omitempty"` // the part of an unpaid order's return that came off its open invoice, the rail moved the rest
+	PaymentNote     string `json:"payment_note,omitempty"`         // the split in words, when there was one
+	AppliedCents    int64  `json:"applied_cents,omitempty"`        // a swap child: the part of the total spent on the new order, the rail moved total less this
+	RefundPaymentID string `json:"refund_payment_id,omitempty"`    // the REFUNDED payments row (CASH/CARD)
 	PickupStatus    string `json:"pickup_status"`
 	Status          string `json:"status"`
 	Replayed        bool   `json:"replayed"`
@@ -765,6 +794,177 @@ type ReturnableLineView struct {
 	UnitPriceCents int64   `json:"unit_price_cents"`
 	LineTotalCents int64   `json:"line_total_cents"`
 	TaxCents       int64   `json:"tax_cents"`
+}
+
+// CustomerLinesInput is the customer lines read's parameters (sub item 10.1): one account customer,
+// optionally narrowed to one branch. The read is the pre-return read of the returns-across flow:
+// every sales order the customer holds in HH, till rings and quote conversions alike, newest first,
+// each line with the quantity the commit guard would accept.
+type CustomerLinesInput struct {
+	CustomerID string
+	BranchID   string
+	Limit      int
+	// Number is the receipt or order number filter (an order number, an invoice number, with or
+	// without the hash, or the bare digits a branch's numbers end in). The WALK-IN house account is
+	// answered ONLY through it, never as a list of every walk in sale.
+	Number string
+}
+
+// CustomerReturnableLineView is one line of one order in the customer lines read: the guard's own
+// netting (qty open is qty sold less every returned qty, the same SQL the commit reads) plus the
+// money and tax already back, the product facts for the tile, and the shelf state the disposition
+// work reads later.
+type CustomerReturnableLineView struct {
+	OrderLineID        string  `json:"order_line_id"`
+	ProductID          string  `json:"product_id"`
+	SKU                string  `json:"sku"`
+	Description        string  `json:"description"`
+	QtySold            float64 `json:"qty_sold"`
+	QtyReturned        float64 `json:"qty_returned"`
+	QtyOpen            float64 `json:"qty_open"`
+	UnitPriceCents     int64   `json:"unit_price_cents"`
+	LineTotalCents     int64   `json:"line_total_cents"`
+	TaxCents           int64   `json:"tax_cents"`
+	MoneyReturnedCents int64   `json:"money_returned_cents"`
+	TaxReturnedCents   int64   `json:"tax_returned_cents"`
+	ShelfState         string  `json:"shelf_state"`
+}
+
+// CustomerOrderView is one order of the customer lines read. Source names where the order came from:
+// TILL (a committed ring, the facts of which ride beside it) or QUOTE (an order a quote became,
+// an order like any other that carries no till facts). FulfilmentState is the order's own ladder word
+// (CONFIRMED through FULFILLED); ShelfState on each line says whether the goods ever left the shelf.
+type CustomerOrderView struct {
+	OrderID         string `json:"order_id"`
+	OrderNo         string `json:"order_no"`
+	BranchID        string `json:"branch_id"`
+	BranchName      string `json:"branch_name"`
+	CreatedAt       string `json:"created_at"`
+	JobLabel        string `json:"job_label"`
+	Source          string `json:"source"`
+	SaleType        string `json:"sale_type"`
+	Tender          string `json:"tender"`
+	FulfilmentState string `json:"fulfilment_state"`
+	InvoiceID       string `json:"invoice_id"`
+	CardRefundable  bool   `json:"card_refundable"`
+	// Returnable says whether the order can be returned now; when it cannot, NotReturnableReason says
+	// why in words (a converted order with no live invoice has nothing to refund against yet).
+	Returnable          bool                         `json:"returnable"`
+	NotReturnableReason string                       `json:"not_returnable_reason"`
+	Lines               []CustomerReturnableLineView `json:"lines"`
+}
+
+// CustomerLinesView is the customer lines read's answer: the customer echoed, the orders newest
+// first, bounded by the limit.
+type CustomerLinesView struct {
+	CustomerID string              `json:"customer_id"`
+	Items      []CustomerOrderView `json:"items"`
+}
+
+// ReturnAcrossOrderInput is one order's share of a returns-across note: the order id and the lines
+// of that one order being returned (each a fraction or all of one original order line).
+type ReturnAcrossOrderInput struct {
+	OrderID string            `json:"order_id"`
+	Lines   []ReturnLineInput `json:"lines"`
+}
+
+// ReturnAcrossInput is the idempotent POST /api/v1/pos/returns-across body (sub item 10.2): one
+// credit note across several orders of ONE customer at ONE branch, on ONE refund rail, in ONE
+// transaction. There is no fee field: the flow carries no restocking fee (the Q10 ruling). The
+// per-line dispositions are sub item 10.3's; the restock boolean here is the whole note's, the
+// single-order path's own flag carried across its children until 10.3 makes it per line.
+type ReturnAcrossInput struct {
+	IdempotencyKey string                   `json:"idempotency_key"`
+	CustomerID     string                   `json:"customer_id"`
+	Orders         []ReturnAcrossOrderInput `json:"orders"`
+	RefundMethod   string                   `json:"refund_method"` // CASH | CARD | ACCOUNT_CREDIT
+	Reason         string                   `json:"reason"`
+	Restock        bool                     `json:"restock"`
+	TillSessionID  string                   `json:"till_session_id"` // CASH refunds, the OPEN drawer
+	// Number is the receipt or order number the sale was found by: with an empty customer_id it makes
+	// the note the WALK-IN row's, so the till carries no id for it.
+	Number string `json:"number,omitempty"`
+
+	// ApproverCredential rides X-Approver-Authorization beside the clerk's bearer, the single
+	// return's own second-credential machinery (row 482); the handler reads it from the header.
+	ApproverCredential string `json:"-"`
+
+	// The swap's facts (10.5), unexported: the credit the swap was priced against (the note must
+	// total exactly it), the part of it spent on the new order, and whether the leftover is zero
+	// (then no rail runs). All zero on an ordinary note.
+	swap         bool
+	swapCredit   int64
+	swapApplied  int64
+	railOptional bool
+}
+
+// ReturnPreviewInput is the POST /api/v1/pos/returns/preview body: the draft of a returns-across
+// note (the customer and the orders' lines), without a key, a rail or a drawer.
+type ReturnPreviewInput struct {
+	CustomerID string                   `json:"customer_id"`
+	Orders     []ReturnAcrossOrderInput `json:"orders"`
+	// RefundMethod is optional: with CASH or CARD the preview carries, per order, the split the commit
+	// will make on an order that is not fully paid (the principal's ruling).
+	RefundMethod string `json:"refund_method,omitempty"`
+	// Number is the receipt or order number the sale was found by: with an empty customer_id it makes
+	// the draft the WALK-IN row's, so the till carries no id for it.
+	Number string `json:"number,omitempty"`
+}
+
+// ReturnPreviewLine is one draft line's credit, priced by the commit's own function.
+type ReturnPreviewLine struct {
+	OrderLineID   string  `json:"order_line_id"`
+	QtyBase       float64 `json:"qty_base"`
+	SubtotalCents int64   `json:"subtotal_cents"`
+	TaxCents      int64   `json:"tax_cents"`
+	TotalCents    int64   `json:"total_cents"`
+}
+
+// ReturnPreviewOrder is one order's share of the draft credit.
+type ReturnPreviewOrder struct {
+	OrderID       string `json:"order_id"`
+	OrderNo       string `json:"order_no"`
+	SubtotalCents int64  `json:"subtotal_cents"`
+	TaxCents      int64  `json:"tax_cents"`
+	TotalCents    int64  `json:"total_cents"`
+	// RailCents, OffsetCents and RailNote carry the split of a CASH or CARD return of an order that is
+	// not fully paid: what goes back in cash or card, what comes off the open invoice, and the split in
+	// words. Present only when the preview was asked with a refund_method.
+	RailCents   *int64              `json:"rail_cents,omitempty"`
+	OffsetCents *int64              `json:"invoice_offset_cents,omitempty"`
+	RailNote    string              `json:"rail_note,omitempty"`
+	Lines       []ReturnPreviewLine `json:"lines"`
+}
+
+// ReturnPreview is the credit so far: what the note would credit, money and tax, were it
+// committed now. The figures are the commit's own (priceReturnLine); nothing is written.
+type ReturnPreview struct {
+	CustomerID    string `json:"customer_id"`
+	BranchID      string `json:"branch_id"`
+	SubtotalCents int64  `json:"subtotal_cents"`
+	TaxCents      int64  `json:"tax_cents"`
+	TotalCents    int64  `json:"total_cents"`
+	// RailCents and OffsetCents sum the orders' split when the preview was asked with a refund_method.
+	RailCents   *int64               `json:"rail_cents,omitempty"`
+	OffsetCents *int64               `json:"invoice_offset_cents,omitempty"`
+	Orders      []ReturnPreviewOrder `json:"orders"`
+}
+
+// ReturnNote is the committed credit note across orders (answered verbatim on an idempotent
+// replay): its own number, its customer, its one branch, its totals summed over the children, and
+// every child return with its own return number kept.
+type ReturnNote struct {
+	NoteID        string   `json:"note_id"`
+	NoteNo        string   `json:"note_no"`
+	CustomerID    string   `json:"customer_id"`
+	BranchID      string   `json:"branch_id"`
+	RefundMethod  string   `json:"refund_method"`
+	SubtotalCents int64    `json:"subtotal_cents"`
+	TaxCents      int64    `json:"tax_cents"`
+	TotalCents    int64    `json:"total_cents"`
+	Returns       []Return `json:"returns"`
+	Replayed      bool     `json:"replayed"`
+	SwapID        string   `json:"swap_id,omitempty"` // set when the note is the credit of a swap
 }
 
 // ReturnPickup is one row on the logistics pickup queue (REQUESTED/SCHEDULED returns).
@@ -870,6 +1070,24 @@ type returnOrderCtx struct {
 	InvoiceStatus string
 	SaleTender    string // pos_sale.tender of the original ring
 	GatewayRef    string // the original CARD capture's processor ref ("" for non-card)
+	// CapturedCents is what the original capture holds (payments.amount_cents of the sale's payment,
+	// 0 when it has none): the ceiling every card refund of the order is judged against (D5).
+	CapturedCents int64
+	// Converted marks an order a quote became (no pos_sale facet): its invoice comes from the billing
+	// seam, it has no tender and no card capture.
+	Converted bool
+}
+
+// cardRefundFact is one processor refund made inside a return transaction: what the processor
+// holds, kept so a rolled back transaction leaves a record of it (D4) and a committed one closes it.
+type cardRefundFact struct {
+	RefundKey   string
+	OrderID     string
+	BranchID    string
+	CustomerID  string
+	GatewayRef  string
+	RefundRef   string
+	AmountCents int64
 }
 
 // returnableLine is the FOR UPDATE-locked read of one original order line plus its prior-return sums.
@@ -883,6 +1101,11 @@ type returnableLine struct {
 	PriorQty       float64
 	PriorMoney     int64
 	PriorTax       int64
+	// PriorCreditOnly is the part of the earlier returns that was credit only (no goods came back).
+	PriorCreditOnly float64
+	// LeftShelfBase is the quantity of the line that has left the shelf: all of it on a collect now
+	// ring (stock is decremented at the ring), else what fulfilment has taken out (fulfilled_base).
+	LeftShelfBase float64
 }
 
 // returnRow is the pos_returns header insert.
@@ -906,6 +1129,26 @@ type returnRow struct {
 	PickupStatus    string
 	IdempotencyKey  string
 	CreatedBy       string
+	// NoteID links the return to its across-orders note (0377); empty on every single-order return.
+	NoteID string
+	// AppliedCents is the part of the total applied to a swap's new order instead of going out on the
+	// rail (0380); zero on every other return.
+	AppliedCents int64
+	// OffsetCents is the part that reduced the order's open invoice instead of going out on the rail (0384).
+	OffsetCents int64
+}
+
+// returnNoteRow is the return_notes header insert (sub item 10.2).
+type returnNoteRow struct {
+	CustomerID     string
+	BranchID       string
+	RefundMethod   string
+	SubtotalCents  int64
+	TaxCents       int64
+	TotalCents     int64
+	Reason         string
+	IdempotencyKey string
+	CreatedBy      string
 }
 
 // returnLineRow is one pos_return_lines insert.
@@ -917,6 +1160,15 @@ type returnLineRow struct {
 	LineTotalCents int64
 	TaxCents       int64
 	ReasonCode     string
+	// Disposition and the two quantities it produced (0378): what became of the goods, how much
+	// went back on the shelf, how much was written off. The last two are zero for goods that never
+	// left the shelf, whatever the disposition asked for.
+	Disposition    string
+	RestockedBase  float64
+	WrittenOffBase float64
+	// CreditOnlyBase is the part of the returned quantity that was credit only: the goods never left
+	// the shelf, so none came back (0383).
+	CreditOnlyBase float64
 }
 
 // -- DIB-488 rev 8 (item 10): the role-gated margin glance ---------------------------------------

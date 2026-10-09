@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -252,6 +253,15 @@ func (s *Service) decrementForSale(ctx context.Context, tx pgx.Tx, in DecrementI
 		}
 	}
 	return nil
+}
+
+// LockStockTx takes the branch's balance rows of these products, sorted, before a move over several
+// of them (the swap restocks the returned products and then decrements the new order's): the one
+// order every such caller uses, so two crossed moves queue instead of deadlocking.
+func (s *Service) LockStockTx(ctx context.Context, tx pgx.Tx, branchID string, productIDs []string) error {
+	ids := append([]string(nil), productIDs...)
+	sort.Strings(ids)
+	return s.db().LockBalances(ctx, tx, branchID, ids)
 }
 
 // - POS return restock (W7) -

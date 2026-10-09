@@ -55,6 +55,8 @@ func (s *Service) consume(ctx context.Context, e notify.Event) error {
 		draft, post, err = s.buildPosReturnCommitted(ctx, e.Payload)
 	case "order.returned":
 		draft, post, err = s.buildOrderReturned(ctx, e.Payload)
+	case "pos.return.written_off":
+		draft, post, err = s.buildPosReturnWrittenOff(ctx, e.Payload)
 	case "pos.sale.committed", "bank.recon.completed":
 		// No direct GL effect: a POS sale's revenue/cash post via its own invoice.finalized / payment.received
 		// events; bankrec posts its clearing journals directly through PostExternal. Ack to avoid double-count.
@@ -657,7 +659,14 @@ type posReturnCommittedPayload struct {
 	TaxCents      int64  `json:"tax_cents"`
 	TotalCents    int64  `json:"total_cents"`
 	FeeCents      int64  `json:"fee_cents"` // A-06 restocking fee, reduces the rail credit; books to fee_revenue
-	BranchID      string `json:"branch_id"`
+	// AppliedCents is the part of a swap child's total spent on the swap's new order (10.5): it
+	// credits the receivable (the new invoice it settles debits it) instead of the refund rail.
+	AppliedCents int64 `json:"applied_cents"`
+	// InvoiceOffsetCents is the part of a CASH or CARD return of an order not fully paid that came off
+	// the order's open invoice instead of going out on the rail (the principal's split): it credits
+	// the receivable, as the applied credit does.
+	InvoiceOffsetCents int64  `json:"invoice_offset_cents"`
+	BranchID           string `json:"branch_id"`
 }
 
 // buildPosReturnCommitted posts the money reversal of a POS return: DR 4000 revenue (subtotal) + DR 2200
@@ -686,6 +695,10 @@ func (s *Service) buildPosReturnCommitted(ctx context.Context, payload []byte) (
 	if p.FeeCents < 0 || p.FeeCents > p.TotalCents {
 		return journalDraft{}, false, fmt.Errorf("gl: pos.return.committed fee_cents %d out of range (total %d)",
 			p.FeeCents, p.TotalCents)
+	}
+	if p.AppliedCents < 0 || p.InvoiceOffsetCents < 0 || p.AppliedCents+p.InvoiceOffsetCents+p.FeeCents > p.TotalCents {
+		return journalDraft{}, false, fmt.Errorf("gl: pos.return.committed applied_cents %d and invoice_offset_cents %d out of range (total %d, fee %d)",
+			p.AppliedCents, p.InvoiceOffsetCents, p.TotalCents, p.FeeCents)
 	}
 	et := "pos.return.committed"
 	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
@@ -722,8 +735,22 @@ func (s *Service) buildPosReturnCommitted(ctx context.Context, payload []byte) (
 		}
 		lines = append(lines, dr(hstCode, p.TaxCents, "HST reversed"))
 	}
-	if net := p.TotalCents - p.FeeCents; net > 0 {
+	if net := p.TotalCents - p.FeeCents - p.AppliedCents - p.InvoiceOffsetCents; net > 0 {
 		lines = append(lines, cr(railCode, net, "refund ("+p.RefundMethod+")"))
+	}
+	if p.AppliedCents > 0 {
+		arCode, err := pick(rules, et, "ar")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		lines = append(lines, cr(arCode, p.AppliedCents, "credit applied to the swap's new order"))
+	}
+	if p.InvoiceOffsetCents > 0 {
+		arCode, err := pick(rules, et, "ar")
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		lines = append(lines, cr(arCode, p.InvoiceOffsetCents, "taken off the order's open invoice"))
 	}
 	if p.FeeCents > 0 {
 		feeCode, err := pick(rules, et, "fee_revenue")
@@ -801,6 +828,58 @@ func (s *Service) buildOrderReturned(ctx context.Context, payload []byte) (journ
 		BranchID:       p.BranchID,
 		OccurredAt:     s.clock(),
 		Lines:          []draftLine{dr(invCode, total, "inventory restocked"), cr(cogsCode, total, "COGS reversal")},
+	}, true, nil
+}
+
+// buildPosReturnWrittenOff posts the write off of goods that came back damaged (sub item 10.3, the Q4
+// ruling): DR 5200 inventory adjustments / CR 5000 COGS at the CostBasis weighted average, the cost the
+// sale booked to COGS moving to the damage expense so the loss reads as damage, not cost of sales.
+// found=false (no cost row) skips quietly like the COGS reversal. Keyed per RETURN.
+func (s *Service) buildPosReturnWrittenOff(ctx context.Context, payload []byte) (journalDraft, bool, error) {
+	var p orderReturnedPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return journalDraft{}, false, fmt.Errorf("gl: pos.return.written_off payload: %w", err)
+	}
+	if p.ReturnID == "" {
+		return journalDraft{}, false, fmt.Errorf("gl: pos.return.written_off missing return_id")
+	}
+	if s.costBasis == nil {
+		return journalDraft{}, false, nil
+	}
+	var total int64
+	for _, ln := range p.Lines {
+		cost, found, err := s.costBasis.UnitCostCents(ctx, ln.ProductID, ln.QtyBase)
+		if err != nil {
+			return journalDraft{}, false, err
+		}
+		if found {
+			total += cost
+		}
+	}
+	if total == 0 {
+		return journalDraft{}, false, nil
+	}
+	et := "pos.return.written_off"
+	rules, err := s.store.PostingAccounts(ctx, et, p.BranchID)
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	expenseCode, err := pick(rules, et, "expense")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	cogsCode, err := pick(rules, et, "cogs")
+	if err != nil {
+		return journalDraft{}, false, err
+	}
+	return journalDraft{
+		Source:         SourceAdjustment,
+		SourceRefID:    p.ReturnID,
+		IdempotencyKey: "pos.return.written_off:" + p.ReturnID,
+		Memo:           "Damaged goods written off on return",
+		BranchID:       p.BranchID,
+		OccurredAt:     s.clock(),
+		Lines:          []draftLine{dr(expenseCode, total, "damaged goods written off"), cr(cogsCode, total, "COGS moved to write off")},
 	}, true, nil
 }
 
@@ -955,6 +1034,7 @@ func (s *Service) ValidatePostingRules(ctx context.Context) error {
 		"order.returned":         {"inventory", "cogs"},
 		"deposit.released":       {"customer_deposit", "revenue"},
 		"deposit.cancelled":      {"customer_deposit", "ar", "other_income"},
+		"pos.return.written_off": {"expense", "cogs"},
 	}
 	for et, roles := range required {
 		for _, role := range roles {

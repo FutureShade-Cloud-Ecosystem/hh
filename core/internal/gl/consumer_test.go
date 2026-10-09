@@ -266,6 +266,7 @@ func healthyRules() []RuleRef {
 		"order.returned":         {"inventory", "cogs"},
 		"deposit.released":       {"customer_deposit", "revenue"},
 		"deposit.cancelled":      {"customer_deposit", "ar", "other_income"},
+		"pos.return.written_off": {"expense", "cogs"},
 	}
 	var out []RuleRef
 	for et, roles := range set {
