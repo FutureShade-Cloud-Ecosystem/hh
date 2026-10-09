@@ -556,9 +556,11 @@ func (r *Repository) InsertEventMessage(ctx context.Context, channelID, eventKey
 // - Approvals rail (0075) -
 // EnsureApprovalChannel lazily + idempotently provisions the caller-approver's dedicated APPROVAL
 // channel (slug approvals-<username>, sole member the approver) and returns its id. Idempotent two ways:
-// the channel upserts on its unique slug (a second call returns the same id), and the member row upserts
+// the channel converges on its unique slug (a second call returns the same id), and the member row upserts
 // on the (channel_id, user_id) PK. The member is EXPLICIT so the FR-1 derived-membership prune never
-// garbage-collects it. Returns the channel id.
+// garbage-collects it. A row of another kind already holding the slug (a squat the founding walls
+// refuse but a hand written row can still plant) is NEVER adopted: the provision refuses loudly
+// rather than seating the approver OWNER in a room they do not own. Returns the channel id.
 func (r *Repository) EnsureApprovalChannel(ctx context.Context, userID string) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
@@ -586,12 +588,36 @@ func (r *Repository) EnsureApprovalChannel(ctx context.Context, userID string) (
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var channelID string
-	// DO UPDATE (not DO NOTHING) so RETURNING always yields the id, whether the row is new or pre-existing.
-	if err := tx.QueryRow(ctx, `
+	// DO NOTHING (not DO UPDATE): RETURNING yields the id on the fresh arm
+	// alone, and the conflict arm below decides whether the row this
+	// provision converges on is its own (idempotent re-run) or a squat.
+	err = tx.QueryRow(ctx, `
 		INSERT INTO msg_channels (kind, slug, name, topic, tier)
 		VALUES ('APPROVAL', $1, $2, 'Your approval requests', 'STANDARD')
-		ON CONFLICT (slug) DO UPDATE SET updated_at = now()
-		RETURNING id::text`, slug, "Approvals, "+handle).Scan(&channelID); err != nil {
+		ON CONFLICT (slug) DO NOTHING
+		RETURNING id::text`, slug, "Approvals, "+handle).Scan(&channelID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var kind string
+		kerr := tx.QueryRow(ctx,
+			`SELECT kind FROM msg_channels WHERE slug = $1`, slug).Scan(&kind)
+		if errors.Is(kerr, pgx.ErrNoRows) {
+			return "", errNotFound // the conflicting row vanished mid-flight
+		}
+		if kerr != nil {
+			return "", fmt.Errorf("load conflicting approval channel: %w", kerr)
+		}
+		if kind != KindApproval {
+			// The slug embeds this approver's own user id and this
+			// provision is its only rightful writer: a row of another
+			// kind is a squat, and seating the approver into it would
+			// hand the squatter the room's cards and the OWNER pen.
+			return "", fmt.Errorf("ensure approval channel: %w", ErrChannelSlugTaken)
+		}
+		if err := tx.QueryRow(ctx,
+			`SELECT id::text FROM msg_channels WHERE slug = $1`, slug).Scan(&channelID); err != nil {
+			return "", fmt.Errorf("load approval channel: %w", err)
+		}
+	} else if err != nil {
 		return "", fmt.Errorf("ensure approval channel: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `

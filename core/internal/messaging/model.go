@@ -110,10 +110,16 @@ func sanitizeSlugPart(s string) string {
 var reservedChannelSlugPrefixes = []string{"dm-", "rep-", "approvals-"}
 
 // isReservedChannelSlug reports whether the slug lands in one of the system
-// namespaces reservedChannelSlugPrefixes names.
+// namespaces reservedChannelSlugPrefixes names. The slug column is CITEXT,
+// so the unique index folds case: the namespace wall must fold the same
+// way or an upper cased APPROVALS- slug squats a system room the next
+// provision converges on. The service lower cases caller chosen slugs
+// before this runs; folding here too keeps the wall whole for any other
+// caller.
 func isReservedChannelSlug(slug string) bool {
+	lower := strings.ToLower(slug)
 	for _, p := range reservedChannelSlugPrefixes {
-		if strings.HasPrefix(slug, p) {
+		if strings.HasPrefix(lower, p) {
 			return true
 		}
 	}

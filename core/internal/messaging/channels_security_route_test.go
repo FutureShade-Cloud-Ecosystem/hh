@@ -71,6 +71,27 @@ func TestRoute_CreateChannel_Refuses_Reserved_Slug_Namespaces(t *testing.T) {
 	}
 }
 
+// The slug column is CITEXT, so the unique index folds case; the reserved
+// namespace wall folds the same way or an upper cased APPROVALS- slug
+// squats a system room the next provision converges on. Any case variant
+// of a system prefix is refused with 400.
+func TestRoute_CreateChannel_Refuses_Reserved_Slug_In_Every_Case(t *testing.T) {
+	fs := newAdminStore()
+	mux, bearer := newAdminRoutes(t, fs)
+	for _, slug := range []string{
+		"APPROVALS-probe", "Rep-probe", "dM-probe", "DM-PROBE",
+	} {
+		rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels",
+			[]byte(`{"kind":"TEAM","slug":"`+slug+`","name":"Probe"}`))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("founding slug %q: %d %s, want 400", slug, rec.Code, rec.Body.String())
+		}
+	}
+	if len(fs.createdChannels) != 0 {
+		t.Fatalf("a case variant of a reserved slug created a channel: %+v", fs.createdChannels)
+	}
+}
+
 // A direct message is reached only through its own route: the dm- namespace
 // is refused outright (the reserved prefix wall), and a DM room holding a
 // slug outside the reserved namespaces (the backstop arm) is refused by

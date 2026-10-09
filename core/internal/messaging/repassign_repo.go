@@ -199,9 +199,10 @@ func (r *Repository) RepDMChannelExists(ctx context.Context, userID string) (boo
 
 // EnsureRepDMChannel lazily + idempotently provisions the rep's customer-message DM channel and
 // returns its id. It is EnsureApprovalChannel's twin (0075) and deliberately so: same slug discipline
-// (userID-suffixed so two reps sharing a display name never share a channel), same DO UPDATE so
-// RETURNING always yields an id, same EXPLICIT membership so the FR-1 derived-membership prune never
-// garbage-collects the rep out of their own inbox.
+// (userID-suffixed so two reps sharing a display name never share a channel), same DO NOTHING
+// convergence with the wrong-kind refusal (a row of another kind holding the slug is a squat, never
+// adopted), same EXPLICIT membership so the FR-1 derived-membership prune never garbage-collects
+// the rep out of their own inbox.
 func (r *Repository) EnsureRepDMChannel(ctx context.Context, userID string) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
@@ -228,11 +229,36 @@ func (r *Repository) EnsureRepDMChannel(ctx context.Context, userID string) (str
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var channelID string
-	if err := tx.QueryRow(ctx, `
+	// DO NOTHING (not DO UPDATE): the conflict arm decides whether the row
+	// this provision converges on is its own (idempotent re-run) or a
+	// squat of another kind, which is refused loudly, never adopted.
+	err = tx.QueryRow(ctx, `
 		INSERT INTO msg_channels (kind, slug, name, topic, tier)
 		VALUES ('DM', $1, $2, 'Customer messages routed to you', 'STANDARD')
-		ON CONFLICT (slug) DO UPDATE SET updated_at = now()
-		RETURNING id::text`, slug, "Customers, "+handle).Scan(&channelID); err != nil {
+		ON CONFLICT (slug) DO NOTHING
+		RETURNING id::text`, slug, "Customers, "+handle).Scan(&channelID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var kind string
+		kerr := tx.QueryRow(ctx,
+			`SELECT kind FROM msg_channels WHERE slug = $1`, slug).Scan(&kind)
+		if errors.Is(kerr, pgx.ErrNoRows) {
+			return "", errNotFound // the conflicting row vanished mid-flight
+		}
+		if kerr != nil {
+			return "", fmt.Errorf("load conflicting rep dm channel: %w", kerr)
+		}
+		if kind != KindDM {
+			// The slug embeds this rep's own user id and this provision is
+			// its only rightful writer: a row of another kind is a squat,
+			// and seating the rep into it would route the rep's customers
+			// into a room someone else owns and reads.
+			return "", fmt.Errorf("ensure rep dm channel: %w", ErrChannelSlugTaken)
+		}
+		if err := tx.QueryRow(ctx,
+			`SELECT id::text FROM msg_channels WHERE slug = $1`, slug).Scan(&channelID); err != nil {
+			return "", fmt.Errorf("load rep dm channel: %w", err)
+		}
+	} else if err != nil {
 		return "", fmt.Errorf("ensure rep dm channel: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `

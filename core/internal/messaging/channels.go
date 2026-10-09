@@ -102,7 +102,11 @@ func (s *Service) CreateChannel(ctx context.Context, c Caller, in CreateChannelI
 		return Channel{}, false, ErrNotInBranch
 	}
 	in.Topic = strings.TrimSpace(in.Topic)
-	in.Slug = strings.TrimSpace(in.Slug)
+	// A caller chosen slug is canonicalized to lower case: the slug column
+	// is CITEXT, so the index folds case for uniqueness anyway, and the
+	// reserved namespace wall below reads the canonical form (an upper
+	// cased APPROVALS- slug must not slip past a lower case only check).
+	in.Slug = strings.ToLower(strings.TrimSpace(in.Slug))
 	if in.Slug == "" {
 		in.Slug = sanitizeSlugPart(in.Name)
 	}
