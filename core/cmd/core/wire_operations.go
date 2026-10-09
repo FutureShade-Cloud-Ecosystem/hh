@@ -22,6 +22,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/attachments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/bankrec"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/branches"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dashboard"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
@@ -710,6 +711,22 @@ type staffNameAdapter struct{ repo *order.Repository }
 
 func (a staffNameAdapter) ActorNames(ctx context.Context, ids []string) (map[string]string, error) {
 	return a.repo.ActorNames(ctx, ids)
+}
+
+// posBranchNameAdapter satisfies pos.BranchNamer over the branches module's service, so the customer
+// lines read names each order's branch without pos reading the locations table.
+type posBranchNameAdapter struct{ svc *branches.Service }
+
+func (a posBranchNameAdapter) BranchNames(ctx context.Context) (map[string]string, error) {
+	list, err := a.svc.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(list))
+	for _, b := range list {
+		out[b.ID] = b.Name
+	}
+	return out, nil
 }
 
 // orderReaderAdapter satisfies tasks.OrderReader over the order
