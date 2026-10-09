@@ -548,6 +548,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 			{dashboard.NeedsDueToCommit, w6bLoadBoard(pool, ops.dispatchSvc, true)},
 			{dashboard.NeedsParkedTickets, w6bParkedTickets(pool, posSvc)},
 			{dashboard.NeedsStalePicks, w6bStalePicks(pool)},
+			{dashboard.NeedsOpenShortages, w6bOpenShortages(ops.yardTasksSvc)},
+			// A receiving difference is a purchase order received in part with a short line, aged by
+			// its latest receipt; it leaves the queue on full receipt or close (see ReceivingDifferences).
+			{dashboard.NeedsReceivingDifferences, w6bReceivingDifferences(ops.purchasingSvc)},
 		} {
 			if err := dashboardSvc.RegisterNeedsSource(reg.key, reg.source); err != nil {
 				log.Error("dashboard: needs source NOT registered - that queue row will never appear", "source", reg.key, "err", err)

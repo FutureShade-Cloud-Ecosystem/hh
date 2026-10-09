@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { IdentityApproval, IdentityApprovalCreateRequest, IdentityApprovalDecideRequest, IdentityApprovalPage, IdentityApprovalStatus, IdentityAssignRoleRequest, IdentityAssignRoleResponse, IdentityChangePasswordRequest, IdentityCreateStaffRequest, IdentityLoginRequest, IdentityLoginResponse, IdentityPasswordResetConfirmRequest, IdentityPasswordResetLink, IdentityPing, IdentityPolicyCheckRequest, IdentityPolicyCheckResponse, IdentityRolePage, IdentityStaffMember, IdentityStaffMemberPage, IdentityStatusResponse } from "./types.js";
+import type { IdentityApproval, IdentityApprovalCreateRequest, IdentityApprovalDecideRequest, IdentityApprovalPage, IdentityApprovalStatus, IdentityAssignRoleRequest, IdentityAssignRoleResponse, IdentityChangePasswordRequest, IdentityCreateStaffRequest, IdentityLoginRequest, IdentityLoginResponse, IdentityPasswordResetConfirmRequest, IdentityPasswordResetLink, IdentityPing, IdentityPolicyCheckRequest, IdentityPolicyCheckResponse, IdentityPolicyType, IdentityRolePage, IdentityStaffMember, IdentityStaffMemberPage, IdentityStatusResponse } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -146,7 +146,7 @@ export async function identityCreateApproval(
 
 export async function identityListApprovals(
   client: ApiClient,
-  opts?: { cursor?: string; limit?: number; status?: IdentityApprovalStatus },
+  opts?: { cursor?: string; limit?: number; status?: IdentityApprovalStatus; kind?: IdentityPolicyType },
   call?: ApiCallOptions
 ): Promise<Result<IdentityApprovalPage>> {
   return client.request<IdentityApprovalPage>({

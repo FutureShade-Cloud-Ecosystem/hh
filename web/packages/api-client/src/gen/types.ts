@@ -1201,7 +1201,7 @@ export type Branch = {
   is_system_default: boolean;
   is_active: boolean;
 };
-export type DashboardProfile = "counter" | "yard" | "driver" | "manager" | "admin";
+export type DashboardProfile = "counter" | "yard" | "driver" | "manager" | "admin" | "manager.branch" | "manager.sales" | "manager.yard" | "manager.logistics" | "manager.procurement" | "manager.payables" | "manager.controller" | "manager.general";
 export type DashboardKind = "count" | "money_cents" | "days" | "basis_points";
 export type DashboardSource = "user" | "role" | "catalog";
 export type DashboardTileState = "ok" | "unwired" | "error" | "hidden";
