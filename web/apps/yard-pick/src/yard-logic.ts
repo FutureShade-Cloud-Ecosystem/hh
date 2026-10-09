@@ -352,6 +352,36 @@ export function pickSummary(picked: ReadonlyArray<{ qty_ordered: string; qty_pic
   return rest > 0 ? `${head}, and ${rest} other line${rest === 1 ? "" : "s"} came up short.` : `${head}.`;
 }
 
+/**
+ * The banner the pick shows after the server took a short pick: the numbers
+ * are the server's own answer and the re-read ticket's backorder figure, and
+ * the last words name the core's contracted act (Phase 0 item 6): the line is
+ * backordered and the order's rep is told.
+ */
+export function shortPickWords(answer: { qty_picked: string; qty_ordered: string; uom: string }, backordered: string): string {
+  const picked = qtyText(answer.qty_picked);
+  const ordered = qtyText(answer.qty_ordered);
+  const back = backordered === "" ? "" : ` (${qtyText(backordered)} ${answer.uom})`;
+  return `Picked ${picked} of ${ordered} ${answer.uom}. The rest${back} is on backorder and the order's rep has been told.`;
+}
+
+// ---- the shortage sheet ----
+
+/** The client's check for the shortage sheet: a positive quantity, the server's own rule (FlagShortage). */
+export function validateShortage(qty: string): string {
+  const v = (qty ?? "").trim();
+  if (!v) return "How many are short? The counter has to tell the customer.";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "That is not a number.";
+  if (n <= 0) return "A shortage has to be greater than zero.";
+  return "";
+}
+
+/** The words the yard reads once a shortage report lands: the server echoed it, the counter is its audience. */
+export function shortageSentWords(s: { qty_short: string; uom: string; description: string }): string {
+  return `Shortage sent: ${qtyText(s.qty_short)} ${s.uom} of ${s.description}. The counter has been told.`;
+}
+
 // ---- skids ----
 
 /** The most skids one order can plausibly leave on (the core's maxSkids). */

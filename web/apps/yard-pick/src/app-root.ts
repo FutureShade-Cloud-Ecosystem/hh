@@ -36,8 +36,11 @@ import {
   pickSummary,
   qtyText,
   recordBlockedReason,
+  shortPickWords,
   skidBlockedReason,
   skidWords,
+  shortageSentWords,
+  validateShortage,
   yardError,
 } from "./yard-logic.js";
 import { yardStyles } from "./styles.js";
@@ -98,14 +101,20 @@ export class YardPickApp extends HHElement {
   #pick: YardPick | null = null;
   #drafts = new Map<number, Draft>();
   #editing: number | null = null;
+  #sheetFor: number | null = null;
+  #resolveFor = "";
   #skids: number | null = null;
 
   // The field mirrors: what the yard typed, keyed by field name (and line).
   #qtyMirror = new Map<number, string>();
   #reasonMirror = new Map<number, string>();
   #noteMirror = new Map<number, string>();
+  #sheetQty = "";
+  #sheetReason = "";
+  #sheetNote = "";
   #skidReason = "";
   #skidNote = "";
+  #resolveText = "";
 
   // The way in: this app's own card, drawn by views.ts.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
@@ -196,6 +205,37 @@ export class YardPickApp extends HHElement {
       void this.#savePick();
       return;
     }
+    if (action === "open-sheet") {
+      this.#openSheet(Number(control?.getAttribute("data-line-no") ?? "0"));
+      return;
+    }
+    if (action === "close-sheet") {
+      this.#sheetFor = null;
+      this.#sheetQty = "";
+      this.#sheetReason = "";
+      this.#sheetNote = "";
+      this.requestUpdate();
+      return;
+    }
+    if (action === "send-shortage") {
+      void this.#sendShortage();
+      return;
+    }
+    if (action === "resolve") {
+      this.#resolveFor = control?.getAttribute("data-shortage-id") ?? "";
+      this.#resolveText = "";
+      this.requestUpdate();
+      return;
+    }
+    if (action === "cancel-resolve") {
+      this.#resolveFor = "";
+      this.requestUpdate();
+      return;
+    }
+    if (action === "send-resolve") {
+      void this.#sendResolve(control?.getAttribute("data-shortage-id") ?? "");
+      return;
+    }
     if (action === "skid-step") {
       this.#stepSkids(Number(control?.getAttribute("data-step") ?? "1"));
       return;
@@ -229,6 +269,18 @@ export class YardPickApp extends HHElement {
         this.#skidNote = value;
         return;
       }
+      if (field === "sheet-qty") {
+        this.#sheetQty = value;
+        return;
+      }
+      if (field === "sheet-note") {
+        this.#sheetNote = value;
+        return;
+      }
+      if (field === "resolution") {
+        this.#resolveText = value;
+        return;
+      }
       return;
     }
     if (target instanceof HTMLSelectElement) {
@@ -241,6 +293,11 @@ export class YardPickApp extends HHElement {
       }
       if (field === "skid-reason") {
         this.#skidReason = value;
+        this.requestUpdate();
+        return;
+      }
+      if (field === "sheet-reason") {
+        this.#sheetReason = value;
         this.requestUpdate();
         return;
       }
@@ -304,8 +361,12 @@ export class YardPickApp extends HHElement {
       if (name === "qty") value = this.#qtyMirror.get(lineNo) ?? "";
       else if (name === "reason") value = this.#reasonMirror.get(lineNo) ?? "";
       else if (name === "short-note") value = this.#noteMirror.get(lineNo) ?? "";
+      else if (name === "sheet-qty") value = this.#sheetQty;
+      else if (name === "sheet-reason") value = this.#sheetReason;
+      else if (name === "sheet-note") value = this.#sheetNote;
       else if (name === "skid-reason") value = this.#skidReason;
       else if (name === "skid-note") value = this.#skidNote;
+      else if (name === "resolution") value = this.#resolveText;
       if (value !== null && field.value !== value) field.value = value;
     }
   }
@@ -455,6 +516,8 @@ export class YardPickApp extends HHElement {
       this.#reasonMirror = new Map();
       this.#noteMirror = new Map();
       this.#editing = null;
+      this.#sheetFor = null;
+      this.#resolveFor = "";
       this.#skids = null;
       this.#skidReason = "";
       this.#skidNote = "";
@@ -525,10 +588,103 @@ export class YardPickApp extends HHElement {
     this.#busy = false;
     if (answer.ok) {
       await this.#refreshPick();
-      this.#notice = pickSummary(answer.value) || "The pick is recorded.";
+      const firstShort = answer.value.find((p) => lineIsShort(p.qty_ordered, p.qty_picked));
+      if (firstShort !== undefined) {
+        const ticketLine = this.#pick?.ticket?.lines.find((l) => l.line_no === firstShort.order_line_no);
+        this.#notice = shortPickWords(firstShort, ticketLine?.qty_backordered ?? "");
+      } else {
+        this.#notice = pickSummary(answer.value) || "The pick is recorded.";
+      }
     } else {
       this.#error = yardError(answer.error, answer.status, "The pick did not save. Check your signal and try again.");
       await this.#refreshPick();
+    }
+    this.requestUpdate();
+  }
+
+  #openSheet(statedLineNo: number): void {
+    const ticket = this.#pick?.ticket;
+    if (ticket === null || ticket === undefined || ticket.lines.length === 0) return;
+    let lineNo = statedLineNo;
+    if (lineNo <= 0) {
+      const shortDrafted = ticket.lines.find((l) => {
+        const draft = this.#drafts.get(l.line_no);
+        return draft !== undefined && draft.qty.trim() !== "" && lineIsShort(l.qty_ordered, draft.qty.trim());
+      });
+      lineNo = (shortDrafted ?? ticket.lines[0]).line_no;
+    }
+    this.#sheetFor = lineNo;
+    this.#sheetQty = "";
+    this.#sheetReason = "";
+    this.#sheetNote = "";
+    this.#error = "";
+    this.requestUpdate();
+  }
+
+  async #sendShortage(): Promise<void> {
+    if (this.#view.kind !== "pick" || this.#sheetFor === null || this.#busy) return;
+    const line = this.#ticketLine(this.#sheetFor);
+    if (line === null) return;
+    const qtyBad = validateShortage(this.#sheetQty);
+    if (qtyBad !== "") {
+      this.#error = qtyBad;
+      this.requestUpdate();
+      return;
+    }
+    if (this.#sheetReason === "") {
+      this.#error = "Give the reason. The counter has to tell the customer why.";
+      this.requestUpdate();
+      return;
+    }
+    if (this.#sheetReason === "OTHER" && this.#sheetNote.trim() === "") {
+      this.#error = "Say what happened in the note when the reason is Other.";
+      this.requestUpdate();
+      return;
+    }
+    this.#busy = true;
+    this.#error = "";
+    this.requestUpdate();
+    const answer = await this.#yard.reportShortage(this.#view.id, {
+      orderLineNo: line.line_no,
+      description: line.description,
+      qtyShort: this.#sheetQty.trim(),
+      uom: line.uom,
+      note: this.#sheetNote.trim(),
+    });
+    this.#busy = false;
+    if (answer.ok) {
+      this.#sheetFor = null;
+      this.#sheetQty = "";
+      this.#sheetReason = "";
+      this.#sheetNote = "";
+      this.#notice = shortageSentWords(answer.value);
+      await this.#refreshPick();
+    } else {
+      this.#error = yardError(answer.error, answer.status, "The shortage did not send. Check your signal and try again.");
+    }
+    this.requestUpdate();
+  }
+
+  async #sendResolve(shortageId: string): Promise<void> {
+    if (this.#view.kind !== "pick" || shortageId === "" || this.#busy) return;
+    const resolution = this.#resolveText.trim();
+    if (resolution === "") {
+      this.#error = "Say how it was settled. The counter reads this back to the customer.";
+      this.requestUpdate();
+      return;
+    }
+    this.#busy = true;
+    this.#error = "";
+    this.requestUpdate();
+    const answer = await this.#yard.resolveShortage(this.#view.id, shortageId, resolution);
+    this.#busy = false;
+    if (answer.ok) {
+      this.#resolveFor = "";
+      this.#resolveText = "";
+      this.#notice = `Shortage cleared: ${answer.value.resolution}`;
+      await this.#refreshPick();
+    } else {
+      this.#error = yardError(answer.error, answer.status, "That did not go through. Check your signal and try again.");
     }
     this.requestUpdate();
   }
@@ -615,6 +771,8 @@ export class YardPickApp extends HHElement {
         pick: this.#pick,
         drafts,
         editing: this.#editing,
+        sheetFor: this.#sheetFor,
+        resolveFor: this.#resolveFor,
         busy: this.#busy,
         error: this.#error,
         notice: this.#notice,

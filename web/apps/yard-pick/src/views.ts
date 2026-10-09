@@ -22,7 +22,7 @@
 // row 563 (take the existing and improve it).
 import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
-import type { YardLine, YardPick, YardPickedLine, YardTask } from "./yard-api.js";
+import type { YardLine, YardPick, YardPickedLine, YardShortage, YardTask } from "./yard-api.js";
 import {
   STATUS_LABEL,
   SHORT_REASONS,
@@ -172,6 +172,10 @@ export interface PickModel {
   }>;
   /** The line whose quantity editor is open, by line number; null when none. */
   readonly editing: number | null;
+  /** The line the shortage sheet is open for; null when none. */
+  readonly sheetFor: number | null;
+  /** The shortage whose resolution form is open; empty when none. */
+  readonly resolveFor: string;
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
@@ -300,6 +304,72 @@ function pullList(model: PickModel): TemplateResult {
   `;
 }
 
+function shortageRow(model: PickModel, s: YardShortage): TemplateResult {
+  const open = s.resolved_at === "";
+  const resolving = model.resolveFor === s.id;
+  return html`
+    <li data-shortage data-shortage-id=${s.id}>
+      <p class="shortage-what">Short ${qtyLabel(s.qty_short, s.uom)} of ${s.description}${s.note !== "" ? html`<span class="dim small"> · ${s.note}</span>` : nothing}</p>
+      ${open
+        ? html`<p class="shortage-open">Open: the counter has not settled it.</p>`
+        : html`<p class="shortage-cleared">Cleared: ${s.resolution}</p>`}
+      ${open && !resolving
+        ? html`<button type="button" class="btn btn-secondary" data-action="resolve" data-shortage-id=${s.id} ?disabled=${model.busy} data-tap>Mark it settled</button>`
+        : nothing}
+      ${open && resolving
+        ? html`
+            <span class="field-label">How was it settled? (required)</span>
+            <input class="text-field" type="text" autocomplete="off" data-field="resolution" ?disabled=${model.busy} aria-label="How the shortage was settled" />
+            <div class="actions">
+              <button type="button" class="btn btn-primary big" data-action="send-resolve" data-shortage-id=${s.id} ?disabled=${model.busy} data-tap>Send</button>
+              <button type="button" class="btn btn-secondary big" data-action="cancel-resolve" ?disabled=${model.busy} data-tap>Never mind</button>
+            </div>
+            <p class="hint">Resolving a shortage is held to the shortage resolvers list: the Yard Team and the Yard Manager. The server says who may, in its own words, if it refuses.</p>
+          `
+        : nothing}
+    </li>
+  `;
+}
+
+function shortageList(model: PickModel): TemplateResult | typeof nothing {
+  const list = model.pick.shortages;
+  if (list.length === 0) return nothing;
+  return html`
+    <section class="card" data-shortages>
+      <h3>Shortages on this pick</h3>
+      <ul class="shortage-list">
+        ${list.map((s) => shortageRow(model, s))}
+      </ul>
+    </section>
+  `;
+}
+
+/** The shortage sheet: what is short, and why. The deliberate act that tells the counter. */
+function shortageSheet(model: PickModel): TemplateResult | typeof nothing {
+  if (model.sheetFor === null || model.pick.ticket === null) return nothing;
+  const line = model.pick.ticket.lines.find((l) => l.line_no === model.sheetFor);
+  if (line === undefined) return nothing;
+  return html`
+    <section class="card sheet" data-shortage-sheet>
+      <p class="sheet-head">Shortage sheet · line ${line.line_no}</p>
+      <p class="dim">${line.description}</p>
+      <span class="field-label">What is short, of ${qtyLabel(line.qty_ordered, line.uom)} ordered</span>
+      <input class="text-field" type="text" inputmode="decimal" data-field="sheet-qty" data-line-no=${line.line_no} ?disabled=${model.busy} aria-label="How many are short" />
+      <span class="field-label">Why (required)</span>
+      <select class="text-field" data-field="sheet-reason" ?disabled=${model.busy} aria-label="Why it is short">
+        <option value="">Choose the reason</option>
+        ${REASON_OPTIONS}
+      </select>
+      <textarea class="text-field text-area" rows="2" data-field="sheet-note" ?disabled=${model.busy} aria-label="Say what happened, when the reason is Other"></textarea>
+      <div class="actions">
+        <button type="button" class="btn btn-primary big" data-action="send-shortage" data-line-no=${line.line_no} ?disabled=${model.busy} data-tap>Send shortage</button>
+        <button type="button" class="btn btn-secondary big" data-action="close-sheet" data-tap>Never mind</button>
+      </div>
+      <p class="hint">Sending a shortage tells the counter now. Recording the pick writes what came off the shelf; this says why the customer's order is short.</p>
+    </section>
+  `;
+}
+
 function skidsCard(model: PickModel): TemplateResult {
   return html`
     <section class="card" data-skids>
@@ -365,9 +435,11 @@ export function renderPick(model: PickModel): TemplateResult {
               <button type="button" class="btn btn-secondary big btn-door" data-action="open-sheet" data-tap>Report a shortage</button>
             </div>`
           : nothing}
+        ${shortageSheet(model)}
       </div>
       <div>
         ${recordable ? skidsCard(model) : nothing}
+        ${shortageList(model)}
       </div>
     </div>
   `;

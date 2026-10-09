@@ -182,6 +182,7 @@ let world;
 let scenario;
 let log;
 let shortageSeq;
+let repNotices;
 
 function buildWorld() {
   const now = Date.now();
@@ -249,6 +250,7 @@ function reset() {
   scenario = "";
   log = [];
   shortageSeq = 2;
+  repNotices = [];
 }
 reset();
 
@@ -331,6 +333,17 @@ function reasonPhrase(code) {
   }[code] ?? code;
 }
 
+// The notice the order's rep receives, the core's own sentence shape
+// (yard_notice.go shortPickMessage): what was ordered, what was picked, what
+// is on backorder, the reason, and the order's money. The rep's money rides
+// the rep's channel; the yard's reads never carry it.
+function shortPickNotice(orderNo, line, ordered, picked, backordered, reason, note) {
+  let s = `Short pick on order ${orderNo}, line ${line.order_line_no} (${line.description}): ordered ${ordered} ${line.uom}, picked ${picked} ${line.uom}, ${backordered} ${line.uom} on backorder.`;
+  if (reason !== "") s += ` Reason: ${reasonPhrase(reason)}${note !== "" ? `, ${note}` : ""}.`;
+  s += ` The order total is now $1,234.56 (was $1,411.44).`;
+  return s;
+}
+
 // ---- the routes ---------------------------------------------------------
 
 async function handle(req, res) {
@@ -349,6 +362,8 @@ async function handle(req, res) {
     return json(res, { ok: true, scenario });
   }
   if (req.method === "GET" && path === "/_stub/log") return json(res, log);
+  // The rep's API read, doubled: the notices the order's rep holds.
+  if (req.method === "GET" && path === "/_stub/rep-notices") return json(res, repNotices);
   if (req.method === "GET" && path === "/_stub/state") return json(res, { tasks: world.tasks.map(taskOut), shortages: world.shortages });
 
   // ---- the demo way in ----
@@ -424,9 +439,17 @@ async function handle(req, res) {
     if (!task) return notFound(res);
     const action = pickMatch[2] ?? "";
     if (req.method === "GET" && action === "") return json(res, entryOut(task));
+    if (req.method === "POST" && action === "shortages") return reportShortage(res, task, body ?? {});
     if (req.method === "PUT" && action === "lines") return recordPick(res, task, body ?? {});
     if (req.method === "PUT" && action === "skids") return recordSkids(res, task, body ?? {});
     return notFound(res);
+  }
+
+  const shortageMatch = /^\/api\/v1\/yard\/picks\/([^/]+)\/shortages\/([^/]+)\/resolve$/.exec(path);
+  if (req.method === "POST" && shortageMatch) {
+    const task = findTask(shortageMatch[1]);
+    if (!task) return notFound(res);
+    return resolveShortage(res, task, shortageMatch[2], body ?? {});
   }
 
   const taskMatch = /^\/api\/v1\/tasks\/([^/]+)\/(claim|accept)$/.exec(path);
@@ -535,6 +558,19 @@ function recordPick(res, task, input) {
     };
   });
   world.picked.set(task.id, picked);
+  // The rep hears at once (Phase 0 item 6): every short line, in the core's words.
+  for (const p of picked) {
+    const ordered = Number(p.qty_ordered);
+    const pickedQty = Number(p.qty_picked);
+    if (pickedQty >= ordered) continue;
+    const back = (Number((ordered - pickedQty).toFixed(4))).toFixed(4);
+    repNotices.push({
+      topic: "yard.short_pick",
+      order_no: ticket.order_no,
+      line_no: p.order_line_no,
+      body: shortPickNotice(ticket.order_no, p, p.qty_ordered, p.qty_picked, back, p.short_reason ?? "", p.short_note ?? ""),
+    });
+  }
   task.updated_at = new Date().toISOString();
   return json(res, { items: picked.map(pickedOut) });
 }
@@ -596,6 +632,57 @@ function stableRef(id) {
     n = Math.floor(n / alphabet.length);
   }
   return out;
+}
+
+function reportShortage(res, task, input) {
+  const description = String(input.description ?? "").trim();
+  if (description === "") return refuse(res, 400, "description is required");
+  if (description.length > 400) return refuse(res, 400, "description is too long (max 400)");
+  const qtyRaw = String(input.qty_short ?? "").trim();
+  if (qtyRaw === "") return refuse(res, 400, "qty_short is required");
+  const qty = Number(qtyRaw);
+  if (!Number.isFinite(qty)) return refuse(res, 400, "qty_short must be a number");
+  if (qty <= 0) return refuse(res, 400, "qty_short must be greater than zero");
+  if (qty > 1e12) return refuse(res, 400, "qty_short is implausibly large");
+  const lineNo = input.order_line_no === null || input.order_line_no === undefined ? null : Number(input.order_line_no);
+  if (lineNo !== null && !(lineNo > 0)) return refuse(res, 400, "order_line_no must be positive");
+  shortageSeq += 1;
+  const shortage = {
+    id: `3a000000-0000-4000-9000-${String(shortageSeq).padStart(12, "0")}`,
+    task_id: task.id,
+    ...(lineNo !== null ? { order_line_no: lineNo } : {}),
+    sku: String(input.sku ?? ""),
+    description,
+    qty_short: qty.toFixed(4),
+    uom: String(input.uom ?? "").trim() === "" ? "EA" : String(input.uom).trim(),
+    ...(String(input.note ?? "").trim() !== "" ? { note: String(input.note).trim() } : {}),
+    reported_by: YARD_USER,
+    reported_at: new Date().toISOString(),
+  };
+  world.shortages.push(shortage);
+  const t = findTask(task.id);
+  t.updated_at = new Date().toISOString();
+  return json(res, shortageOut(shortage), 201);
+}
+
+function resolveShortage(res, task, shortageId, input) {
+  // The shortage resolvers list wall (PR 274): the role gate answers a
+  // caller off the list with its shared Forbidden body, byte for byte.
+  if (scenario === "resolve-walled") {
+    return json(res, { error: "Forbidden" }, 403);
+  }
+  const resolution = String(input.resolution ?? "").trim();
+  if (resolution === "") return refuse(res, 400, "resolution is required");
+  if (resolution.length > 400) return refuse(res, 400, "resolution is too long (max 400)");
+  const shortage = world.shortages.find((s) => s.id === shortageId && s.task_id === task.id);
+  if (!shortage) return refuse(res, 404, "shortage not found");
+  if (shortage.resolved_at !== undefined && shortage.resolved_at !== "") return refuse(res, 409, "shortage already resolved");
+  shortage.resolved_at = new Date().toISOString();
+  shortage.resolved_by = YARD_USER;
+  shortage.resolution = resolution;
+  const t = findTask(task.id);
+  t.updated_at = new Date().toISOString();
+  return json(res, shortageOut(shortage));
 }
 
 const server = createServer((req, res) => {

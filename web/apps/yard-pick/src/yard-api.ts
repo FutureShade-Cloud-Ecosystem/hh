@@ -313,4 +313,25 @@ export class YardApi {
     return answer.ok ? { ok: true, value: toTask(answer.value) } : answer;
   }
 
-}
+  /** Report one shortage: the deliberate act that tells the counter, separate from the measurement. */
+  async reportShortage(
+    id: string,
+    line: { orderLineNo: number | null; description: string; qtyShort: string; uom: string; note: string },
+  ): Promise<Result<YardShortage>> {
+    const answer = await staffTasks.yardReportShortage(this.#client, id, {
+      order_line_no: line.orderLineNo,
+      product_id: "",
+      sku: "",
+      description: line.description,
+      qty_short: line.qtyShort,
+      uom: line.uom,
+      note: line.note,
+    });
+    return answer.ok ? { ok: true, value: toShortage(answer.value) } : answer;
+  }
+
+  /** Clear one shortage with a stated resolution. Refused to a caller off the shortage resolvers list. */
+  async resolveShortage(id: string, shortageId: string, resolution: string): Promise<Result<YardShortage>> {
+    const answer = await staffTasks.yardResolveShortage(this.#client, id, shortageId, { resolution });
+    return answer.ok ? { ok: true, value: toShortage(answer.value) } : answer;
+  }}
