@@ -146,6 +146,26 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 		return ApplyAnswer{}, err
 	}
 
+	// The counter has now serialised this writer against every payments writer, so a twin of this
+	// payment (the same key) that committed while this request waited on the counter is already
+	// visible here. Re-read the key on the transaction BEFORE the invoice judgements: a duplicate
+	// of a payment that closed its invoices must answer the first result, not trip the not open or
+	// ceiling refusal on the balances the twin already moved (the same in-transaction re-check the
+	// till's return makes after its sale lock, and QD-5's rule at counter_receipt.go).
+	if _, _, _, ok, err := receiptByKeyOn(ctx, tx, in.IdempotencyKey); err != nil {
+		return ApplyAnswer{}, err
+	} else if ok {
+		_ = tx.Rollback(ctx)
+		existing, found, readErr := r.receiptByKey(ctx, in.IdempotencyKey)
+		if readErr != nil {
+			return ApplyAnswer{}, readErr
+		}
+		if !found {
+			return ApplyAnswer{}, fmt.Errorf("payments: apply key %q was claimed and then vanished", in.IdempotencyKey)
+		}
+		return r.replayAnswer(ctx, existing, in)
+	}
+
 	rows, err := r.lockApplyInvoicesTx(ctx, tx, in)
 	if err != nil {
 		return ApplyAnswer{}, err
