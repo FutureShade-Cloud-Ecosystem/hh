@@ -117,7 +117,8 @@ type applyInvoiceRow struct {
 // ApplyReceived records ONE received payment against a list of the account's open invoices and
 // allocates it oldest first, atomically and idempotently.
 func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyAnswer, error) {
-	if err := validateApply(in); err != nil {
+	in, err := validateApply(in)
+	if err != nil {
 		return ApplyAnswer{}, err
 	}
 	if r.pool == nil {
@@ -228,34 +229,43 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 }
 
 // validateApply is the request check that runs before any database is consulted, the same posture
-// validateReceipt holds: a malformed request is malformed with or without a pool behind it.
-func validateApply(in ApplyRequest) error {
+// validateReceipt holds: a malformed request is malformed with or without a pool behind it. It
+// answers the request with its invoice ids NORMALISED, each trimmed and re-spelled in the canonical
+// form, so the rest of the walk (the duplicate refusal, the sort, the locks, the stored body) sees
+// one spelling per invoice: uuid.Parse accepts upper case, braces, the urn prefix, the undashed
+// form and Postgres folds them all onto the same row, so the raw strings cannot be the identity.
+func validateApply(in ApplyRequest) (ApplyRequest, error) {
 	if in.IdempotencyKey == "" {
-		return httpx.BadRequestf("recording a payment needs an idempotency key")
+		return ApplyRequest{}, httpx.BadRequestf("recording a payment needs an idempotency key")
 	}
 	if !validTender(in.Method) {
-		return httpx.BadRequestf("tender must be one of %s", strings.Join(CounterTenders, ", "))
+		return ApplyRequest{}, httpx.BadRequestf("tender must be one of %s", strings.Join(CounterTenders, ", "))
 	}
 	if in.AmountCents <= 0 {
-		return httpx.BadRequestf("a payment amount must be greater than zero")
+		return ApplyRequest{}, httpx.BadRequestf("a payment amount must be greater than zero")
 	}
 	if len(in.InvoiceIDs) == 0 {
-		return httpx.BadRequestf("a payment must be applied to at least one invoice")
+		return ApplyRequest{}, httpx.BadRequestf("a payment must be applied to at least one invoice")
 	}
 	if len(in.InvoiceIDs) > MaxApplyInvoices {
-		return httpx.BadRequestf("a received payment may name at most %d invoices; record it as more than one payment", MaxApplyInvoices)
+		return ApplyRequest{}, httpx.BadRequestf("a received payment may name at most %d invoices; record it as more than one payment", MaxApplyInvoices)
 	}
+	ids := make([]string, 0, len(in.InvoiceIDs))
 	seen := map[string]bool{}
-	for _, id := range in.InvoiceIDs {
-		if _, err := uuid.Parse(id); err != nil {
-			return httpx.BadRequestf("invoice ids must be uuids")
+	for _, raw := range in.InvoiceIDs {
+		u, err := uuid.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			return ApplyRequest{}, httpx.BadRequestf("invoice ids must be uuids")
 		}
+		id := u.String()
 		if seen[id] {
-			return httpx.BadRequestf("the same invoice is named twice: %s", id)
+			return ApplyRequest{}, httpx.BadRequestf("the same invoice is named twice: %s", id)
 		}
 		seen[id] = true
+		ids = append(ids, id)
 	}
-	return nil
+	in.InvoiceIDs = ids
+	return in, nil
 }
 
 // normalisedInvoiceIDs answers a list of invoice ids in the one spelling the walk locks in: each
