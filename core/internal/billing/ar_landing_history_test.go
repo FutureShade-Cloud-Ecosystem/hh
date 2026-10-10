@@ -436,3 +436,36 @@ func TestARChangeStr_MissingAndRoundTrippedValues(t *testing.T) {
 		t.Fatalf("a bool renders %q", got)
 	}
 }
+
+// TestSetPolicy_RefusesNonAdminWithTheFourRolesNamedExactly pins the billing admin-refusal text.
+// The gate caller.IsAdmin() admits exactly the four Tier-1 GLOBAL roles (General Manager, Financial
+// Controller, HR and Platform Administrator), the refusal names those four so the reader sees who
+// may act instead of "limited to administrators", and the caller's role code never reaches the
+// words; the package prefix is "billing:" to match the convention the settings kit carries.
+// Red-first witness (captured in /home/colton/Desktop/FBHQ/hh-sup/reports/ADMIN-REFUSAL-WORDING-REPORT.md):
+// this test fails on main with the old "is limited to administrators, ask a tech admin" message,
+// passes on this branch.
+func TestSetPolicy_RefusesNonAdminWithTheFourRolesNamedExactly(t *testing.T) {
+	frontlineCtx := func() context.Context {
+		return identity.ContextWithStaff(context.Background(), identity.StaffContext{
+			UserID: "u-frontline", RoleCode: "INSIDE_SALES", Tier: identity.TierFrontline, Scope: identity.ScopeBranch,
+		})
+	}
+	// The store is never reached: the gate fires before any store deref, so nil is enough.
+	svc := NewRegisterService(nil)
+	const want = "billing: only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings"
+	err := svc.SetPolicy(frontlineCtx(), RegisterPolicy{
+		AccountPositionVisibility: VisibilityManagerUp,
+		DueSoonDays:               7,
+		ReminderCooldownHours:     24,
+		WorkspaceSplitPct:         50,
+		WorkspaceArrangement:      "PRIMARY_LEFT",
+		ReminderTones:             []string{"NICE"},
+	})
+	if err == nil {
+		t.Fatalf("a frontline caller must be refused by SetPolicy; got nil")
+	}
+	if got := err.Error(); got != want {
+		t.Fatalf("the billing admin refusal must name the four roles exactly:\n  want %q\n  got  %q", want, got)
+	}
+}

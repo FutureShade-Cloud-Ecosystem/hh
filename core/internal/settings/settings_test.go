@@ -440,3 +440,23 @@ func TestCounterRosterReadsEveryValidProfile(t *testing.T) {
 		}
 	}
 }
+
+// TestNotAdminError_NamesTheFourRolesExactly pins the admin-refusal text. The gate caller.IsAdmin()
+// admits exactly the four Tier-1 GLOBAL roles (General Manager, Financial Controller, HR and
+// Platform Administrator), the refusal names those four so the reader sees who may act instead of
+// "limited to administrators", and the caller's role code never reaches the words; it stays on
+// the type for the audit (the NotSettingsAdminError posture the Quote Desk decided). Red-first
+// witness (captured in /home/colton/Desktop/FBHQ/hh-sup/reports/ADMIN-REFUSAL-WORDING-REPORT.md):
+// this test fails on main with the old "is limited to administrators, ... cannot do it; ask a tech
+// admin" message, passes on this branch.
+func TestNotAdminError_NamesTheFourRolesExactly(t *testing.T) {
+	const want = "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings"
+	got := (&NotAdminError{RoleCode: "FINANCIAL_CONTROLLER"}).Error()
+	if got != want {
+		t.Fatalf("the admin refusal must name the four roles exactly and exactly:\n  want %q\n  got  %q", want, got)
+	}
+	gotNoRole := (&NotAdminError{}).Error()
+	if gotNoRole != want {
+		t.Fatalf("the role code on the type must not reach the words; the no-role arm must equal the role-coded arm:\n  want %q\n  got  %q", want, gotNoRole)
+	}
+}

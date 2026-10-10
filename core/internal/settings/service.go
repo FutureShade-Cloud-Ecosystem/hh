@@ -15,7 +15,6 @@ package settings
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -121,11 +120,14 @@ func (s *Service) caller(ctx context.Context) (identity.StaffContext, error) {
 // can answer 403 with the sentence (the quote NotSettingsAdminError posture).
 type NotAdminError struct{ RoleCode string }
 
+// Error names the people the IsAdmin() gate admits (the four Tier-1 GLOBAL roles), never the
+// caller's role code: the person reading the words is the one refused, and the role code stays on
+// the type alone for the audit (the NotSettingsAdminError posture the Quote Desk decided). The
+// gate is s.Tier == TierLeadership && s.Scope == ScopeGlobal (staffcontext/rbac.go); the four
+// roles it admits are GENERAL_MANAGER (label "General Manager"), FINANCIAL_CONTROLLER
+// ("Financial Controller"), HR ("HR") and SUPER_ADMIN ("Platform Administrator").
 func (e *NotAdminError) Error() string {
-	if e.RoleCode == "" {
-		return "settings: changing dealer screen settings is limited to the General Manager, Financial Controller, HR or Platform Administrator"
-	}
-	return fmt.Sprintf("settings: changing dealer screen settings is limited to the General Manager, Financial Controller, HR or Platform Administrator; %s cannot do it", e.RoleCode)
+	return "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings"
 }
 
 // SurfaceConfig is the GET /api/v1/surfaces/{surface}/config answer.
