@@ -9,7 +9,7 @@
 // grades), never what the app expected. A refusal reads in words (po-logic.ts),
 // a walled move in words naming who may do it. Nothing is stored.
 import type { TemplateResult } from "lit";
-import type { InventoryShortfallRow, PurchasingPO, PurchasingPODetail, Result } from "@hardscapehouse/api-client";
+import type { InventoryShortfallRow, Product, PurchasingPO, PurchasingPODetail, Result } from "@hardscapehouse/api-client";
 import { PoApi, type DeliveryMethod } from "./po-api.js";
 import { draftOf, landedWords, poRows, refusalWords, shortfallRows, validateExpectedDate } from "./po-logic.js";
 import { formatMoney, formatQty } from "./po-money.js";
@@ -47,6 +47,11 @@ export class PoDesk {
   #branchNames: ReadonlyMap<string, string> = new Map();
   #vendorCodes: ReadonlyMap<string, string> = new Map();
   #landed: ReadonlyMap<string, string> = new Map();
+  // The catalogue the add a line picker lists (read once; a refusal leaves the picker empty and
+  // its Add line closed), and the line editor's state: the line being corrected, the add row.
+  #products: readonly Product[] = [];
+  #editing: string | null = null;
+  #adding = false;
 
   constructor(api: PoApi, host: DeskHost) {
     this.#api = api;
@@ -55,17 +60,19 @@ export class PoDesk {
 
   // ---- loads ----------------------------------------------------------------------------------
 
-  /** The first read of the desk: the worklist and the register. */
+  /** The first read of the desk: the worklist, the register and the catalogue the picker lists. */
   async load(): Promise<void> {
     this.#phase = "loading";
     this.#host.repaint();
-    const [shortfall, orders, branches] = await Promise.all([this.#api.shortfall(), this.#api.orders(), this.#api.branches()]);
+    const [shortfall, orders, branches, products] = await Promise.all([this.#api.shortfall(), this.#api.orders(), this.#api.branches(), this.#api.products()]);
     if (!shortfall.ok) return this.#loadFailed(shortfall);
     if (!orders.ok) return this.#loadFailed(orders);
     this.#shortfall = shortfallRows(shortfall.value);
     this.#orders = poRows(orders.value);
     // A branch name is a nicety: without it the screen reads the branch code.
     if (branches.ok) this.#branchNames = new Map(branches.value.map((b) => [b.id, b.name]));
+    // The catalogue is the add a line picker's list: a refusal leaves it empty and honest.
+    if (products.ok) this.#products = products.value.items ?? [];
     await this.#readLanded();
     // The yard's gap is what the manager came for: the worst short line that has no draft is already picked.
     const first = this.#shortfall.find((r) => draftOf(r) === null && r.projected_base < 0);
@@ -127,6 +134,8 @@ export class PoDesk {
       this.#method = detail.value.delivery_method ?? "UNKNOWN";
       this.#expectedText = (detail.value.expected_at ?? "").slice(0, 10);
       this.#seeded = null;
+      this.#editing = null;
+      this.#adding = false;
     }
     this.#busy = false;
     this.#host.repaint();
@@ -171,6 +180,33 @@ export class PoDesk {
       }
       case "remove-line":
         void this.#removeLine(attr("data-line-id"));
+        return true;
+      case "edit-line": {
+        this.#editing = attr("data-line-id") || null;
+        this.#adding = false;
+        this.#clearMessages();
+        this.#host.repaint();
+        return true;
+      }
+      case "edit-line-close":
+        this.#editing = null;
+        this.#host.repaint();
+        return true;
+      case "save-line":
+        void this.#saveLine(attr("data-line-id"));
+        return true;
+      case "add-line":
+        this.#adding = true;
+        this.#editing = null;
+        this.#clearMessages();
+        this.#host.repaint();
+        return true;
+      case "add-line-close":
+        this.#adding = false;
+        this.#host.repaint();
+        return true;
+      case "add-line-confirm":
+        void this.#addLine();
         return true;
       case "save-draft":
         void this.#saveDraft();
@@ -221,6 +257,8 @@ export class PoDesk {
     await this.#readVendorCodes(detail.value.vendor_id);
     this.#picked = null;
     this.#seeded = null;
+    this.#editing = null;
+    this.#adding = false;
     this.#method = detail.value.delivery_method ?? "UNKNOWN";
     this.#expectedText = (detail.value.expected_at ?? "").slice(0, 10);
     await this.#reload();
@@ -282,8 +320,75 @@ export class PoDesk {
     this.#clearMessages();
     this.#host.repaint();
     const removed = await this.#api.removeLine(draft.po.id, lineId);
-    if (removed.ok) this.#draft = { ...draft, po: removed.value };
-    else this.#fail("order", removed);
+    if (removed.ok) {
+      this.#draft = { ...draft, po: removed.value };
+      if (this.#editing === lineId) this.#editing = null;
+    } else {
+      this.#fail("order", removed);
+    }
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
+  /** Corrects one line's quantity or cost on the draft: only the fields that changed are sent. */
+  async #saveLine(lineId: string): Promise<void> {
+    const draft = this.#draft;
+    const line = draft?.po.lines.find((l) => l.id === lineId);
+    if (draft === null || line === undefined || this.#busy) return;
+    const qty = Number(this.#host.field("qty"));
+    const costText = this.#host.field("cost");
+    const body: { qty_ordered_base?: number; unit_cost_cents?: number } = {};
+    if (Number.isFinite(qty) && qty !== line.qty_ordered_base) body.qty_ordered_base = qty;
+    if (costText !== "") {
+      const cents = Math.round(Number(costText) * 100);
+      if (Number.isFinite(cents) && cents !== line.unit_cost_cents) body.unit_cost_cents = cents;
+    }
+    if (Object.keys(body).length === 0) {
+      this.#error = "Nothing changed on this line yet.";
+      this.#host.repaint();
+      return;
+    }
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const saved = await this.#api.updateLine(draft.po.id, lineId, body);
+    if (saved.ok) {
+      this.#draft = { ...draft, po: saved.value };
+      this.#editing = null;
+    } else {
+      this.#fail("order", saved);
+    }
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
+  /** Adds a line from the catalogue: the picker's text is resolved back to the product it listed. */
+  async #addLine(): Promise<void> {
+    const draft = this.#draft;
+    if (draft === null || this.#busy) return;
+    const product = this.#products.find((p) => `${p.sku} ${p.name}` === this.#host.field("add-product"));
+    const qty = Number(this.#host.field("add-qty"));
+    const costText = this.#host.field("add-cost");
+    if (product === undefined || !Number.isFinite(qty)) {
+      this.#error = "Pick a product and write how many to order.";
+      this.#host.repaint();
+      return;
+    }
+    const body: { product_id: string; qty_ordered_base: number; unit_cost_cents?: number } = { product_id: product.id, qty_ordered_base: qty };
+    if (costText !== "") {
+      const cents = Math.round(Number(costText) * 100);
+      if (Number.isFinite(cents)) body.unit_cost_cents = cents;
+    }
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const added = await this.#api.addLine(draft.po.id, body);
+    if (added.ok) {
+      this.#draft = { ...draft, po: added.value };
+      this.#adding = false;
+    } else {
+      this.#fail("order", added);
+    }
     this.#busy = false;
     this.#host.repaint();
   }
@@ -346,15 +451,27 @@ export class PoDesk {
   // ---- the template ---------------------------------------------------------------------------
 
   /**
-   * After a render: the draft's starting field values, set once per draft. The position gate
+   * After a render: the draft's starting field values, set once per draft, and the line editor's
+   * starting figures, set whenever the edited line or the server's answer moves. The position gate
    * allows no bound value on an input, so the root hands this the field setter.
    */
   seed(set: (name: string, value: string) => void): void {
     const draft = this.#draft;
-    if (draft === null || this.#seeded === draft.po.id) return;
-    set("expected", (draft.po.expected_at ?? "").slice(0, 10));
-    this.#seeded = draft.po.id;
+    if (draft === null) return;
+    if (this.#seeded !== draft.po.id) {
+      set("expected", (draft.po.expected_at ?? "").slice(0, 10));
+      this.#seeded = draft.po.id;
+    }
+    const line = this.#editing === null ? undefined : draft.po.lines.find((l) => l.id === this.#editing);
+    if (line !== undefined && this.#seededLine !== `${line.id}:${line.qty_ordered_base}:${line.unit_cost_cents}`) {
+      set("qty", String(line.qty_ordered_base));
+      set("cost", ((line.unit_cost_cents ?? 0) / 100).toFixed(2));
+      this.#seededLine = `${line.id}:${line.qty_ordered_base}:${line.unit_cost_cents}`;
+    }
   }
+
+  /** The edited line whose figures the screen has already been given. */
+  #seededLine: string | null = null;
 
   render(): TemplateResult {
     return renderDesk({
@@ -373,6 +490,9 @@ export class PoDesk {
       branchNames: this.#branchNames,
       vendorCodes: this.#vendorCodes,
       landed: this.#landed,
+      products: this.#products,
+      editing: this.#editing,
+      adding: this.#adding,
       today: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
     });
   }

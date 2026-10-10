@@ -6,10 +6,9 @@
 // the core's source, so the browser legs never lean on an answer the server
 // would not give.
 //
-// Two answers follow the core's handlers and not the generated contract, on
-// purpose, because the app has to read what the core really writes (the shape
-// census names both): the shortfall worklist under the key "shortfall", and
-// the product incoming read under the key "lines".
+// The list pages follow the contract's keys, the ones the core writes since
+// FROM-PRINCIPAL 72 settled them: the shortfall worklist and the product
+// incoming read both answer under "items".
 //
 // The world is invented and small: one yard, four vendors, three managed
 // lines (one of them the K08 gap: promised to customers, never inbound) and
@@ -44,7 +43,9 @@ function mintToken(sub) {
 function dayOffset(offset) {
   const at = new Date();
   at.setUTCDate(at.getUTCDate() + offset);
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  // The app's own "today" is the reader's local day: the same zone here, so a
+  // seeded "in 2 days" reads as 2 days at any hour of any machine's clock.
+  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
 }
 
 function uuid(kind, n) {
@@ -257,7 +258,38 @@ async function handle(req, res) {
   if (method === "GET" && path === "/api/v1/inventory/shortfall") {
     const rows = PRODUCTS.filter((p) => p.unmanaged !== true).map(productRow).filter((r) => r.short_base > 0);
     rows.sort((a, b) => b.short_base - a.short_base);
-    return json(res, { shortfall: rows, on_order_degraded: false });
+    return json(res, { items: rows, on_order_degraded: false, next_cursor: null });
+  }
+  if (method === "GET" && path === "/api/v1/products") {
+    // The add a line picker's list: the active catalogue, the fields the picker reads.
+    const items = PRODUCTS.map((p) => ({
+      id: uuid("f", p.n),
+      sku: p.sku,
+      name: p.name,
+      description: p.name,
+      manufacturer: "HH (demo)",
+      collection: "",
+      color: "",
+      finish: "",
+      application: "",
+      color_family: "",
+      texture: "",
+      product_size: "",
+      sold_by: p.uom,
+      base_uom: p.uom,
+      dimensions_lwh: "",
+      is_featured: false,
+      is_special_order: false,
+      contractor_pricing_event_discount: false,
+      full_skid_quantity: null,
+      layer_quantity: null,
+      pallet_count: null,
+      minimum_order_qty: null,
+      is_active: true,
+      metadata: null,
+      list_price_cents: p.cost,
+    }));
+    return json(res, { items, next_cursor: null, limit: 200 });
   }
   if (method === "GET" && path === "/api/v1/branches") {
     return json(res, [
@@ -315,7 +347,7 @@ async function handle(req, res) {
         lines.push(line);
       });
     }
-    return json(res, { lines });
+    return json(res, { items: lines, next_cursor: null });
   }
 
   // ---- the walled moves: the gate answers before any handler ----
@@ -395,11 +427,45 @@ async function handle(req, res) {
     }
   }
   const line = path.match(/^\/api\/v1\/purchasing\/pos\/([^/]+)\/lines\/([^/]+)$/);
-  if (method === "DELETE" && line) {
+  if (line && (method === "DELETE" || method === "PUT")) {
     const po = world.pos.find((p) => p.id === line[1]);
     if (po === undefined) return refuse(res, 404, "not found");
+    const target = po.lines.find((l) => l.id === line[2]);
+    if (method === "DELETE") {
+      if (po.status !== "DRAFT") return refuse(res, 409, `cannot edit the lines of a ${po.status} purchase order`);
+      po.lines = po.lines.filter((l) => l.id !== line[2]);
+      return json(res, poDetail(po));
+    }
+    // PUT: correct the quantity or the cost (purchasing/service.go UpdateLine, its own words).
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 400, "invalid_json");
+    if (body.qty_ordered_base === undefined && body.unit_cost_cents === undefined) {
+      return refuse(res, 400, "the body names nothing to change");
+    }
+    if (body.qty_ordered_base !== undefined && body.qty_ordered_base <= 0) return refuse(res, 400, "line quantity must be positive");
+    if (body.unit_cost_cents !== undefined && body.unit_cost_cents < 0) return refuse(res, 400, "line unit cost cannot be negative");
     if (po.status !== "DRAFT") return refuse(res, 409, `cannot edit the lines of a ${po.status} purchase order`);
-    po.lines = po.lines.filter((l) => l.id !== line[2]);
+    if (target === undefined) return refuse(res, 404, "not found");
+    if (body.qty_ordered_base !== undefined) target.qty = body.qty_ordered_base;
+    if (body.unit_cost_cents !== undefined) target.cost = body.unit_cost_cents;
+    return json(res, poDetail(po));
+  }
+  if (method === "POST" && path.match(/^\/api\/v1\/purchasing\/pos\/([^/]+)\/lines$/)) {
+    const add = path.match(/^\/api\/v1\/purchasing\/pos\/([^/]+)\/lines$/);
+    const po = world.pos.find((p) => p.id === add[1]);
+    if (po === undefined) return refuse(res, 404, "not found");
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 400, "invalid_json");
+    // The core's validateLine words, with the line number the add route passes (0: the number is
+    // assigned after the insert).
+    if (!body.product_id) return refuse(res, 400, "line 0 needs a product_id");
+    if (!(body.qty_ordered_base > 0)) return refuse(res, 400, "line 0 quantity must be greater than zero");
+    if (body.unit_cost_cents !== undefined && body.unit_cost_cents < 0) return refuse(res, 400, "line 0 unit cost cannot be negative");
+    if (po.status !== "DRAFT") return refuse(res, 409, `cannot edit the lines of a ${po.status} purchase order`);
+    const p = PRODUCTS.find((x) => uuid("f", x.n) === body.product_id);
+    if (p === undefined) return refuse(res, 400, "product not found");
+    const cost = body.unit_cost_cents !== undefined ? body.unit_cost_cents : p.cost;
+    po.lines.push({ id: uuid("d", ++world.lineCounter), product: p.n, qty: body.qty_ordered_base, cost });
     return json(res, poDetail(po));
   }
   return refuse(res, 404, "not found");

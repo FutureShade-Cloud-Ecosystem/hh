@@ -116,6 +116,9 @@ export const poStyles = css`
   label { display: grid; gap: var(--hh-s-4); font-size: 14px; color: var(--hh-text-dim); font-weight: 600; }
   input, select { font: inherit; font-size: 16px; min-height: 44px; padding: 0 var(--hh-s-12); background: var(--hh-field); color: var(--hh-text); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); width: 100%; box-sizing: border-box; }
   input:focus-visible, select:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
+  .addline { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--hh-s-8); align-items: end; padding: var(--hh-s-8) 0; }
+  .addline-actions { display: flex; gap: var(--hh-s-8); }
+  td input[data-line-qty], td input[data-line-cost] { min-height: 36px; font-size: 14px; }
   .sub { border-top: 1px solid var(--hh-line); margin-top: var(--hh-s-16); padding-top: var(--hh-s-16); }
   .actions { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; margin-top: var(--hh-s-16); }
   .actions.end { justify-content: flex-end; }
@@ -129,6 +132,7 @@ export const poStyles = css`
   @media (max-width: 900px) {
     .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .forms { grid-template-columns: minmax(0, 1fr); }
+    .addline { grid-template-columns: minmax(0, 1fr); }
   }
   @media (max-width: 700px) {
     .opt2 { display: none; }

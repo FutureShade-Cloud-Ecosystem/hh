@@ -19,12 +19,12 @@ import type {
 // ---- the shapes the core really writes ------------------------------------------------------------
 
 /**
- * The shortfall worklist's rows. The core writes the list under "shortfall"
- * (Handler.shortfall) while the contract names it "items"; the shape census
- * records the drift. Both are read, so the fix on either side keeps this working.
+ * The shortfall worklist's rows, under the contract's key. The core writes the
+ * page as the contract's InventoryShortfallPage (FROM-PRINCIPAL 72: the contract
+ * won); the ERP's old "shortfall" key is gone on both sides and is not read.
  */
-export function shortfallRows(page: Partial<InventoryShortfallPage> & { shortfall?: InventoryShortfallRow[] | null }): InventoryShortfallRow[] {
-  return page.shortfall ?? page.items ?? [];
+export function shortfallRows(page: Partial<InventoryShortfallPage>): InventoryShortfallRow[] {
+  return page.items ?? [];
 }
 
 /** The PO list, which the core answers as {"items":null} when there is none. */
@@ -32,9 +32,9 @@ export function poRows(page: Partial<Omit<PurchasingPOPage, "items">> & { items?
   return page.items ?? [];
 }
 
-/** The product incoming read: the core writes "lines", the contract names "items". */
-export function incomingLines(page: { lines?: PurchasingIncomingLine[] | null; items?: PurchasingIncomingLine[] | null }): PurchasingIncomingLine[] {
-  return page.lines ?? page.items ?? [];
+/** The product incoming read, under the contract's key: the core writes "items". */
+export function incomingLines(page: { items?: PurchasingIncomingLine[] | null }): PurchasingIncomingLine[] {
+  return page.items ?? [];
 }
 
 // ---- order states ---------------------------------------------------------------------------------
@@ -136,16 +136,14 @@ export function refusalWords(action: string, error: string, status: number | und
 // ---- the draft the core says does not cover a row ----------------------------------------------------
 
 /**
- * PENDING on lane B core (FROM-PRINCIPAL 72): the shortfall row will carry the draft that does not cover it.
- * The field names are the app's reading of that change (draft_po_id, draft_po_no); the stub contract test
- * holds the stub to them and switches to the generated descriptor the day the contract declares them.
+ * The shortfall row carries the draft that does not cover it (FROM-PRINCIPAL 72), and the contract
+ * now declares both fields on the row, so the read is the descriptor's own.
  */
 export type DraftMarker = { readonly id: string; readonly no: string };
 
 export function draftOf(row: InventoryShortfallRow): DraftMarker | null {
-  const marked = row as InventoryShortfallRow & { draft_po_id?: string; draft_po_no?: string };
-  if (marked.draft_po_id === undefined || marked.draft_po_id === "") return null;
-  return { id: marked.draft_po_id, no: marked.draft_po_no ?? "" };
+  if (row.draft_po_id === undefined || row.draft_po_id === "") return null;
+  return { id: row.draft_po_id, no: row.draft_po_no ?? "" };
 }
 
 // ---- dates as the yard reads them -------------------------------------------------------------------------

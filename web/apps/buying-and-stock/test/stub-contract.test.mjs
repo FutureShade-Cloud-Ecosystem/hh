@@ -138,29 +138,23 @@ const later = (days) => {
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
 
-test("the shortfall worklist: the core's key, and each row in the contract's shape", async () => {
+test("the shortfall worklist: the contract's key, and each row in the contract's shape", async () => {
   await reset();
   const res = await call("GET", "/api/v1/inventory/shortfall");
   assert.equal(res.status, 200);
-  // The core writes the list under "shortfall" while the contract says "items" (the shape census
-  // records it); the stub follows the core, and the core's source is the proof.
-  assert.ok(coreSource.includes('"shortfall":         wl.Rows') || /"shortfall":\s+wl\.Rows/.test(coreSource), "the core no longer writes the shortfall under the key shortfall");
+  // The contract won (FROM-PRINCIPAL 72): the core writes the list under "items", and the core's
+  // source is the proof; the ERP's old "shortfall" key is gone on both sides.
+  assert.ok(/"items":\s+rows,\s*"on_order_degraded":/.test(coreSource), "the core no longer writes the shortfall page under the key items");
   assert.equal(typeof res.json.on_order_degraded, "boolean");
-  assert.equal(res.json.items, undefined);
-  assert.equal(res.json.shortfall.length, 3);
-  for (const row of res.json.shortfall) {
-    // PENDING on lane B core (FROM-PRINCIPAL 72): the row's draft marker. Until the contract declares
-    // draft_po_id and draft_po_no, the stub may carry exactly those two beyond the descriptor; the day the
-    // descriptor declares them this strips nothing and the whole row is held to it.
-    const declared = SCHEMA_DESCRIPTORS.InventoryShortfallRow.props ?? {};
-    const { draft_po_id, draft_po_no, ...base } = row;
-    holds("InventoryShortfallRow", declared.draft_po_id === undefined ? base : row);
-    assert.equal(draft_po_id === undefined, draft_po_no === undefined, "the two draft fields come together");
+  assert.equal(res.json.shortfall, undefined);
+  assert.equal(res.json.items.length, 3);
+  for (const row of res.json.items) {
+    holds("InventoryShortfallRow", row);
   }
-  const gap = res.json.shortfall.find((r) => r.sku === "DBS-BRUS-DIM");
+  const gap = res.json.items.find((r) => r.sku === "DBS-BRUS-DIM");
   assert.equal(gap.projected_base, -40);
   assert.equal(gap.on_order_base, 0);
-  assert.ok(res.json.shortfall.every((r) => r.short_base > 0), "a listed row is always short");
+  assert.ok(res.json.items.every((r) => r.short_base > 0), "a listed row is always short");
 });
 
 test("the PO register answers in the contract's shapes, and a PO reads with its lines", async () => {
@@ -176,7 +170,7 @@ test("the PO register answers in the contract's shapes, and a PO reads with its 
 
 test("drafting from a shortfall row makes a DRAFT PO the contract's shape, and does not cover the row", async () => {
   await reset();
-  const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.shortfall;
+  const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.items;
   const gap = rows.find((r) => r.sku === "DBS-BRUS-DIM");
   const made = await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: BRANCH, qty_base: 0 });
   assert.equal(made.status, 200);
@@ -186,8 +180,7 @@ test("drafting from a shortfall row makes a DRAFT PO the contract's shape, and d
   holds("PurchasingPODetail", po.json);
   assert.equal(po.json.status, "DRAFT");
   assert.equal(po.json.lines[0].qty_ordered_base, 240);
-  // The core's on-order leg counts DRAFT, so the line leaves the worklist (replenish.go: short is always > 0).
-  const after = (await call("GET", "/api/v1/inventory/shortfall")).json.shortfall;
+  const after = (await call("GET", "/api/v1/inventory/shortfall")).json.items;
   // FROM-PRINCIPAL 72: a draft never covers a shortfall. The row stays, with its draft, and the draft is not on order.
   const stays = after.find((r) => r.sku === "DBS-BRUS-DIM");
   assert.equal(stays.draft_po_id, made.json.po_id);
@@ -196,9 +189,9 @@ test("drafting from a shortfall row makes a DRAFT PO the contract's shape, and d
   assert.equal(stays.projected_base, -40);
 });
 
-test("placing moves a draft to ORDERED, and the product's incoming read answers under the core's key", async () => {
+test("placing moves a draft to ORDERED, and the product's incoming read answers under the contract's key", async () => {
   await reset();
-  const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.shortfall;
+  const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.items;
   const gap = rows.find((r) => r.sku === "DBS-BRUS-DIM");
   const made = await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: BRANCH, qty_base: 0 });
   const date = later(5);
@@ -212,20 +205,21 @@ test("placing moves a draft to ORDERED, and the product's incoming read answers 
   holds("PurchasingPODetail", placed.json);
   assert.equal(placed.json.status, "ORDERED");
   // Placing is what closes the gap: only now does the row leave the worklist.
-  const left = (await call("GET", "/api/v1/inventory/shortfall")).json.shortfall;
+  const left = (await call("GET", "/api/v1/inventory/shortfall")).json.items;
   assert.equal(left.find((r) => r.sku === "DBS-BRUS-DIM"), undefined);
   const incoming = await call("GET", `/api/v1/purchasing/incoming?product_id=${gap.product_id}`);
   assert.equal(incoming.status, 200);
-  assert.ok(/"lines":\s*lines/.test(coreSource), "the core no longer writes the incoming read under the key lines");
-  assert.equal(incoming.json.lines.length, 1);
-  holds("PurchasingIncomingLine", incoming.json.lines[0]);
-  assert.equal(incoming.json.lines[0].expected_at, date);
-  assert.equal(incoming.json.lines[0].qty_outstanding_base, 240);
+  assert.ok(/map\[string\]any\{"items": lines/.test(coreSource), "the core no longer writes the incoming read under the key items");
+  assert.equal(incoming.json.lines, undefined);
+  assert.equal(incoming.json.items.length, 1);
+  holds("PurchasingIncomingLine", incoming.json.items[0]);
+  assert.equal(incoming.json.items[0].expected_at, date);
+  assert.equal(incoming.json.items[0].qty_outstanding_base, 240);
 });
 
 test("the refusals are the core's sentences, with the module prefix stripped as the core strips it", async () => {
   await reset();
-  const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.shortfall;
+  const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.items;
   const gap = rows.find((r) => r.sku === "DBS-BRUS-DIM");
   const made = await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: BRANCH, qty_base: 0 });
   const id = made.json.po_id;
@@ -238,6 +232,52 @@ test("the refusals are the core's sentences, with the module prefix stripped as 
   refused(await call("DELETE", `/api/v1/purchasing/pos/${id}/lines/${lineId}`), 409, "cannot edit the lines of a CANCELLED purchase order", "cannot edit the lines of a %s purchase order");
   refused(await call("POST", `/api/v1/purchasing/pos/${id}/transition`, { to: "CANCELLED" }), 409, "purchase order is already CANCELLED", "purchase order is already %s");
   refused(await call("GET", "/api/v1/purchasing/incoming"), 400, "product_id is required");
+});
+
+test("the line editor on a draft: add, change the quantity or the cost, each in the contract's shape", async () => {
+  await reset();
+  const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.items;
+  const gap = rows.find((r) => r.sku === "DBS-BRUS-DIM");
+  const made = await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: BRANCH, qty_base: 0 });
+  const id = made.json.po_id;
+  // Change the quantity and the cost of the drafted line.
+  const lineId = (await call("GET", `/api/v1/purchasing/pos/${id}`)).json.lines[0].id;
+  const changed = await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${lineId}`, { qty_ordered_base: 480, unit_cost_cents: 900 });
+  assert.equal(changed.status, 200);
+  holds("PurchasingPODetail", changed.json);
+  assert.equal(changed.json.lines[0].qty_ordered_base, 480);
+  assert.equal(changed.json.lines[0].unit_cost_cents, 900);
+  assert.equal(changed.json.lines[0].line_total_cents, 432_000);
+  // Add a line from the catalogue.
+  const catalogue = await call("GET", "/api/v1/products?active=true&limit=200");
+  assert.equal(catalogue.status, 200);
+  const added = await call("POST", `/api/v1/purchasing/pos/${id}/lines`, { product_id: catalogue.json.items[0].id, qty_ordered_base: 10 });
+  assert.equal(added.status, 200);
+  holds("PurchasingPODetail", added.json);
+  assert.equal(added.json.line_count, 2);
+  assert.equal(added.json.lines[1].qty_ordered_base, 10);
+  // Remove the added line again.
+  const removed = await call("DELETE", `/api/v1/purchasing/pos/${id}/lines/${added.json.lines[1].id}`);
+  assert.equal(removed.status, 200);
+  assert.equal(removed.json.line_count, 1);
+});
+
+test("the line editor's refusals are the core's sentences, and the freeze once placed", async () => {
+  await reset();
+  const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.items;
+  const gap = rows.find((r) => r.sku === "DBS-BRUS-DIM");
+  const made = await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: BRANCH, qty_base: 0 });
+  const id = made.json.po_id;
+  const lineId = (await call("GET", `/api/v1/purchasing/pos/${id}`)).json.lines[0].id;
+  refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${lineId}`, {}), 400, "the body names nothing to change");
+  refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${lineId}`, { qty_ordered_base: 0 }), 400, "line quantity must be positive");
+  refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${lineId}`, { unit_cost_cents: -1 }), 400, "line unit cost cannot be negative");
+  refused(await call("POST", `/api/v1/purchasing/pos/${id}/lines`, { product_id: "", qty_ordered_base: 10 }), 400, "line 0 needs a product_id", "line %d needs a product_id");
+  refused(await call("POST", `/api/v1/purchasing/pos/${id}/lines`, { product_id: gap.product_id, qty_ordered_base: 0 }), 400, "line 0 quantity must be greater than zero", "line %d quantity must be greater than zero");
+  await call("POST", `/api/v1/purchasing/pos/${id}/transition`, { to: "ORDERED" });
+  refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${lineId}`, { qty_ordered_base: 10 }), 409, "cannot edit the lines of a ORDERED purchase order", "cannot edit the lines of a %s purchase order");
+  refused(await call("POST", `/api/v1/purchasing/pos/${id}/lines`, { product_id: gap.product_id, qty_ordered_base: 10 }), 409, "cannot edit the lines of a ORDERED purchase order", "cannot edit the lines of a %s purchase order");
+  refused(await call("DELETE", `/api/v1/purchasing/pos/${id}/lines/${lineId}`), 409, "cannot edit the lines of a ORDERED purchase order", "cannot edit the lines of a %s purchase order");
 });
 
 test("the gate's refusal is the shared Forbidden body, and a bill cannot be posted", async () => {

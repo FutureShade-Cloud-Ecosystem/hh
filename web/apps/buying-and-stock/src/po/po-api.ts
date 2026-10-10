@@ -4,18 +4,21 @@
 // serves (inventory shortfall and reorder PO, the purchasing PO routes); no
 // vendor bill route is wired at all.
 //
-// Reads: the shortfall worklist, the PO register, one PO, and what is on order
-// for one product. Writes: draft a PO from a shortfall row (the reorder PO
-// route), set a draft's promised date and delivery, remove a draft's line, and
+// Reads: the shortfall worklist, the PO register, one PO, what is on order
+// for one product, and the active catalogue the add a line picker lists.
+// Writes: draft a PO from a shortfall row (the reorder PO route), set a draft's
+// promised date and delivery, add, correct or remove a draft's line, and
 // move a PO to ORDERED (place) or CANCELLED.
 import {
   staffBranches,
   staffInventory,
+  staffProduct,
   staffPurchasing,
   type ApiClient,
   type Branch,
   type InventoryReorderResult,
   type InventoryShortfallPage,
+  type ProductPage,
   type PurchasingIncomingLinePage,
   type PurchasingPODetail,
   type PurchasingPOPage,
@@ -54,6 +57,11 @@ export class PoApi {
     return staffPurchasing.purchasingListVendorSKUs(this.#client, vendorId);
   }
 
+  /** The active catalogue, the list the add a line picker reads. */
+  products(): Promise<Result<ProductPage>> {
+    return staffProduct.productList(this.#client, { active: true, limit: 200 });
+  }
+
   /** What is on order for one product, soonest first; the core answers it per product. */
   incomingFor(productId: string): Promise<Result<PurchasingIncomingLinePage>> {
     return staffPurchasing.purchasingListIncoming(this.#client, { product_id: productId });
@@ -74,6 +82,16 @@ export class PoApi {
 
   removeLine(id: string, lineId: string): Promise<Result<PurchasingPODetail>> {
     return staffPurchasing.purchasingRemoveLine(this.#client, id, lineId);
+  }
+
+  /** Adds a line to a DRAFT: the product, a quantity, and the cost when the vendor's confirmation carries one. */
+  addLine(id: string, body: { product_id: string; qty_ordered_base: number; unit_cost_cents?: number }): Promise<Result<PurchasingPODetail>> {
+    return staffPurchasing.purchasingAddLine(this.#client, id, body);
+  }
+
+  /** Corrects one line's quantity or cost on a DRAFT; the product is not editable (remove and add another). */
+  updateLine(id: string, lineId: string, body: { qty_ordered_base?: number; unit_cost_cents?: number }): Promise<Result<PurchasingPODetail>> {
+    return staffPurchasing.purchasingUpdateLine(this.#client, id, lineId, body);
   }
 
   place(id: string): Promise<Result<PurchasingPODetail>> {

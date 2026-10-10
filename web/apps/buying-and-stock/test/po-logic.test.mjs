@@ -20,12 +20,13 @@ import {
 } from "../src/po/po-logic.ts";
 import { formatMoney, formatQty } from "../src/po/po-money.ts";
 
-test("the shortfall is read from the key the core writes, and from the contract's key too", () => {
+test("the shortfall is read from the contract's key, the one key the core writes", () => {
   const row = { sku: "A" };
-  assert.deepEqual(shortfallRows({ shortfall: [row], on_order_degraded: false }), [row]);
   assert.deepEqual(shortfallRows({ items: [row], on_order_degraded: false }), [row]);
-  assert.deepEqual(shortfallRows({ shortfall: null, on_order_degraded: false }), []);
+  assert.deepEqual(shortfallRows({ items: null, on_order_degraded: false }), []);
   assert.deepEqual(shortfallRows({}), []);
+  // The ERP's old key is gone from the core (the contract won): a page that still carries it is not read.
+  assert.deepEqual(shortfallRows({ shortfall: [row], on_order_degraded: false }), []);
 });
 
 test("an empty PO list the core answers as null reads as no orders", () => {
@@ -33,10 +34,11 @@ test("an empty PO list the core answers as null reads as no orders", () => {
   assert.deepEqual(poRows({ items: [{ id: "1" }] }), [{ id: "1" }]);
 });
 
-test("incoming lines are read from the key the core writes, and from the contract's key too", () => {
-  assert.deepEqual(incomingLines({ lines: [{ po_no: "X" }] }), [{ po_no: "X" }]);
+test("incoming lines are read from the contract's key, the one key the core writes", () => {
   assert.deepEqual(incomingLines({ items: [{ po_no: "Y" }] }), [{ po_no: "Y" }]);
   assert.deepEqual(incomingLines({}), []);
+  // The ERP's old key is gone from the core (the contract won): a page that still carries it is not read.
+  assert.deepEqual(incomingLines({ lines: [{ po_no: "X" }] }), []);
 });
 
 test("order states are words, and RECEIVED, PARTIAL and ORDERED are never buttons", () => {

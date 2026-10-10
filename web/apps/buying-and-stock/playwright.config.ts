@@ -30,6 +30,9 @@ const stubPort = process.env.ROLE_STUB_PORT ?? String(20000 + slot + 1);
 export default defineConfig({
   testDir: "./test",
   testMatch: "**/*.pw.ts",
+  // The acceptance folder is the cross app card leg's own harness (its config
+  // builds the front door beside this app); the default legs never build it.
+  testIgnore: ["**/acceptance/**"],
   workers: 1,
   use: {
     baseURL: `http://127.0.0.1:${appPort}`,

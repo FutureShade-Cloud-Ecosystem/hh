@@ -210,6 +210,60 @@ test("delivery is a three way control, and the choice is saved with the draft", 
   await expect(page.locator("[data-field='expected']")).toHaveValue("2031-03-04");
 });
 
+test("a draft's line can be corrected: the quantity and the cost, sent to the core and read back", async ({ page, request }) => {
+  await openHome(page, request);
+  await draftTheGap(page);
+  const panel = page.locator("[data-draft]");
+  const line = panel.locator("[data-draft-line]");
+  await expect(line).toContainText("240");
+  await expect(line).toContainText("$8.40");
+  // Change opens the line's editor: the two figures a vendor's confirmation corrects.
+  await line.getByRole("button", { name: "Change" }).click();
+  await page.locator("[data-line-qty]").fill("480");
+  await page.locator("[data-line-cost]").fill("9.00");
+  await line.getByRole("button", { name: "Save" }).click();
+  await expect(line).toContainText("480");
+  await expect(line).toContainText("$9.00");
+  await expect(line).toContainText("$4,320.00");
+  await expect(panel.locator("[data-draft-total]")).toContainText("$4,320.00");
+  // The editor closed; the line reads as words again.
+  await expect(page.locator("[data-line-editing]")).toHaveCount(0);
+  await expect(line.getByRole("button", { name: "Change" })).toBeVisible();
+});
+
+test("a line can be added to a draft from the catalogue, and removed again", async ({ page, request }) => {
+  await openHome(page, request);
+  await draftTheGap(page);
+  const panel = page.locator("[data-draft]");
+  await panel.getByRole("button", { name: "Add a line" }).click();
+  await page.locator("[data-add-product]").selectOption({ label: "TB-PAVER-60 Techo Bloc Paver 60mm" });
+  await page.locator("[data-add-qty]").fill("12");
+  await panel.getByRole("button", { name: "Add line" }).click();
+  const lines = panel.locator("[data-draft-line]");
+  await expect(lines).toHaveCount(2);
+  const added = panel.locator("[data-draft-line]", { hasText: "TB-PAVER-60" });
+  await expect(added).toContainText("12");
+  // The cost left empty: the server keeps the branch's own figure for the product.
+  await expect(added).toContainText("$820.00");
+  await added.getByRole("button", { name: "Remove" }).click();
+  await expect(panel.locator("[data-draft-line]")).toHaveCount(1);
+  await expect(panel.locator("[data-add-line]")).toHaveCount(0);
+});
+
+test("a role the gate walls out of editing is refused in the ruled words, beside the line's Save", async ({ page, request }) => {
+  await openHome(page, request);
+  await draftTheGap(page);
+  await request.post("/_stub/wall");
+  const line = page.locator("[data-draft-line]");
+  await line.getByRole("button", { name: "Change" }).click();
+  await page.locator("[data-line-qty]").fill("480");
+  await line.getByRole("button", { name: "Save" }).click();
+  const error = page.locator("[data-draft] [data-error]");
+  await expect(error).toContainText("Drafting, placing, editing and cancelling a purchase order is for the Procurement Manager, the General Manager and the super admin only.");
+  await expect(error).toContainText("The Yard Manager receives goods only; other roles can read.");
+  await expect(page.locator("[data-line-editing]")).toHaveCount(1);
+});
+
 test("a draft does not cover the shortfall: the K08 row stays, reading drafted not placed, with the draft's link", async ({ page, request }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openHome(page, request);

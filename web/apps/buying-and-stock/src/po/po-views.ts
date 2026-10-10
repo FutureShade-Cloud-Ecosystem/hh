@@ -14,6 +14,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type {
   InventoryShortfallRow,
+  Product,
   PurchasingPO,
   PurchasingPODetail,
 } from "@hardscapehouse/api-client";
@@ -48,6 +49,12 @@ export interface DeskModel {
   readonly vendorCodes: ReadonlyMap<string, string>;
   /** "6 of 10 pc landed" by PO id, for the part received orders. */
   readonly landed: ReadonlyMap<string, string>;
+  /** The active catalogue, the add a line picker's list; empty when the read refused. */
+  readonly products: readonly Product[];
+  /** The draft line being corrected, its id; null when no line is in the editor. */
+  readonly editing: string | null;
+  /** The add a line row is open under the draft's lines. */
+  readonly adding: boolean;
   /** Today, YYYY-MM-DD in the reader's own day. */
   readonly today: string;
 }
@@ -228,10 +235,73 @@ function methodButton(model: DeskModel, value: string, label: string): TemplateR
   return html`<button type="button" class="seg" data-action="method" data-method=${value} aria-pressed="${model.method === value ? "true" : "false"}">${label}</button>`;
 }
 
+function draftLineRow(model: DeskModel, line: PurchasingPODetail["lines"][number]): TemplateResult {
+  const editing = model.editing === line.id;
+  if (editing) {
+    // The editor: the two figures a vendor's confirmation corrects, quantity and cost; the
+    // product is not editable (that is a different line: remove this one and add it).
+    return html`
+      <tr data-draft-line data-line-editing>
+        <td class="sku" data-label="SKU">${line.sku}</td>
+        <td class="full" data-label="Product">${line.description}</td>
+        <td class="code" data-label="Vendor code">${model.vendorCodes.get(line.product_id) ?? "(none on file)"}</td>
+        <td class="num" data-label="Qty"><input type="number" min="1" step="any" inputmode="decimal" data-field="qty" data-line-qty /></td>
+        <td class="num" data-label="Unit cost"><input type="number" min="0" step="0.01" inputmode="decimal" data-field="cost" data-line-cost /></td>
+        <td class="num" data-label="Line" data-amount>${formatMoney(line.line_total_cents)}</td>
+        <td class="pick">
+          <button type="button" class="btn btn-secondary small-btn" data-action="save-line" data-line-id=${line.id} ?disabled=${model.busy}>Save</button>
+          <button type="button" class="btn btn-secondary small-btn" data-action="edit-line-close" ?disabled=${model.busy}>Close</button>
+        </td>
+      </tr>
+    `;
+  }
+  return html`
+    <tr data-draft-line>
+      <td class="sku" data-label="SKU">${line.sku}</td>
+      <td class="full" data-label="Product">${line.description}</td>
+      <td class="code" data-label="Vendor code">${model.vendorCodes.get(line.product_id) ?? "(none on file)"}</td>
+      <td class="num" data-label="Qty">${formatQty(line.qty_ordered_base, line.uom)}</td>
+      <td class="num" data-label="Unit cost">${formatMoney(line.unit_cost_cents)}</td>
+      <td class="num" data-label="Line" data-amount>${formatMoney(line.line_total_cents)}</td>
+      <td class="pick">
+        ${model.busy ? nothing : html`<button type="button" class="btn btn-secondary small-btn" data-action="edit-line" data-line-id=${line.id}>Change</button>`}
+        <button type="button" class="btn btn-secondary small-btn" data-action="remove-line" data-line-id=${line.id} ?disabled=${model.busy}>Remove</button>
+      </td>
+    </tr>
+  `;
+}
+
+function addLineRow(model: DeskModel): TemplateResult {
+  return html`
+    <tr data-add-line>
+      <td colspan="7">
+        <div class="addline">
+          <label>Product
+            <select data-field="add-product" data-add-product>
+              ${model.products.map((p) => html`<option>${p.sku} ${p.name}</option>`)}
+            </select>
+          </label>
+          <label>Qty
+            <input type="number" min="1" step="any" inputmode="decimal" data-field="add-qty" data-add-qty />
+          </label>
+          <label>Unit cost
+            <input type="number" min="0" step="0.01" inputmode="decimal" data-field="add-cost" data-add-cost />
+          </label>
+          <div class="addline-actions">
+            <button type="button" class="btn btn-secondary small-btn" data-action="add-line-close" ?disabled=${model.busy}>Close</button>
+            <button type="button" class="btn btn-primary small-btn" data-action="add-line-confirm" ?disabled=${model.busy || model.products.length === 0}>Add line</button>
+          </div>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
 function draftPanel(model: DeskModel, draft: DraftModel): TemplateResult {
   const po = draft.po;
   const row = draft.row;
   const lineCount = po.lines.length;
+  const editable = po.status === "DRAFT";
   const shipTo = model.branchNames.get(po.branch_id) ?? row?.branch_code ?? "Your branch";
   const words = dateWords(model.expectedText, model.today);
   return html`
@@ -271,30 +341,26 @@ function draftPanel(model: DeskModel, draft: DraftModel): TemplateResult {
               <th class="num">Qty</th>
               <th class="num">Unit cost</th>
               <th class="num">Line</th>
-              <th><span class="visually-hidden">Remove</span></th>
+              <th><span class="visually-hidden">Line actions</span></th>
             </tr>
           </thead>
           <tbody>
-            ${po.lines.map(
-              (line) => html`
-                <tr data-draft-line>
-                  <td class="sku" data-label="SKU">${line.sku}</td>
-                  <td class="full" data-label="Product">${line.description}</td>
-                  <td class="code" data-label="Vendor code">${model.vendorCodes.get(line.product_id) ?? "(none on file)"}</td>
-                  <td class="num" data-label="Qty">${formatQty(line.qty_ordered_base, line.uom)}</td>
-                  <td class="num" data-label="Unit cost">${formatMoney(line.unit_cost_cents)}</td>
-                  <td class="num" data-label="Line" data-amount>${formatMoney(line.line_total_cents)}</td>
-                  <td class="pick"><button type="button" class="btn btn-secondary small-btn" data-action="remove-line" data-line-id=${line.id} ?disabled=${model.busy}>Remove</button></td>
-                </tr>
-              `,
-            )}
-            ${lineCount === 0 ? html`<tr><td colspan="7" class="dim">No lines on this order.</td></tr>` : nothing}
+            ${po.lines.map((line) => draftLineRow(model, line))}
+            ${model.adding && editable ? addLineRow(model) : nothing}
+            ${lineCount === 0 && !model.adding ? html`<tr><td colspan="7" class="dim">No lines on this order.</td></tr>` : nothing}
           </tbody>
           ${lineCount === 0
             ? nothing
             : html`<tfoot><tr class="total"><td colspan="5" class="num dim">Order total</td><td class="num" data-label="Order total" data-draft-total>${formatMoney(po.subtotal_cents)}</td><td></td></tr></tfoot>`}
         </table>
       </div>
+      ${editable
+        ? html`<div class="actions">
+            ${model.adding
+              ? nothing
+              : html`<button type="button" class="btn btn-secondary small-btn" data-action="add-line" ?disabled=${model.busy}>Add a line</button>`}
+          </div>`
+        : nothing}
       ${row === null
         ? nothing
         : html`<p class="foot dim" data-suggested>Suggested from the worklist: short by ${formatQty(row.short_base, row.uom)}, ordered in multiples of ${formatQty(row.order_multiple_base, row.uom)}.</p>`}
