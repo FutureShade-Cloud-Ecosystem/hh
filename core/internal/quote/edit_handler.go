@@ -344,7 +344,7 @@ func (h *StaffHandler) convertQuote(w http.ResponseWriter, r *http.Request, _ gu
 			return
 		}
 	}
-	res, err := h.svc.ConvertQuote(r.Context(), r.PathValue("id"), ConvertOptions{Fulfillment: body.Fulfillment})
+	res, err := h.svc.ConvertQuote(r.Context(), r.PathValue("id"), ConvertOptions{Fulfillment: body.Fulfillment, IdempotencyKey: r.Header.Get("Idempotency-Key")})
 	if err != nil {
 		h.writeErr(w, err)
 		return
@@ -526,7 +526,7 @@ func (h *StaffHandler) writeErr(w http.ResponseWriter, err error) {
 		httpx.Error(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.As(err, &decisionRefused):
 		httpx.Error(w, http.StatusConflict, decisionRefused.Error())
-	case errors.Is(err, ErrIdempotencyKeyReused):
+	case errors.Is(err, ErrIdempotencyKeyReused), errors.Is(err, ErrConvertKeyReused):
 		httpx.Error(w, http.StatusConflict, err.Error())
 	case errors.As(err, &paymentConflict):
 		httpx.Error(w, http.StatusConflict, paymentConflict.Error())

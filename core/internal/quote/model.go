@@ -63,4 +63,8 @@ type Filter struct {
 type ConvertResult struct {
 	OrderID string `json:"order_id"`
 	OrderNo string `json:"order_no"`
+
+	// replayed marks an answer rebuilt from an earlier conversion under the same Idempotency-Key:
+	// nothing was written, so the caller writes no history row for it (convert_idempotency.go).
+	replayed bool
 }

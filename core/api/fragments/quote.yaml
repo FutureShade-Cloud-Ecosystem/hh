@@ -293,7 +293,13 @@ paths:
         a bare POST converts with no fulfilment choice. The credit and hold
         gate runs inside the conversion transaction, and the selling-role
         check runs in the service. A 409 names the refusal (credit policy,
-        repeat acceptance, or a state that cannot convert).
+        repeat acceptance, or a state that cannot convert). An optional
+        Idempotency-Key header (a UUID) makes a retry safe: a repeat under the
+        same key on the same quote answers the first order and makes no
+        second one, whatever the quote's status is by then and whatever the
+        dealer's multi accept switch says; the same key with a different
+        fulfilment is a 409 in words. Without a key the switch's own
+        behaviour stands.
       x-role: requireStaff
       x-access:
         surfaces: [counter-till, quote-desk]
@@ -305,6 +311,13 @@ paths:
           required: true
           description: Quote id (uuid) or the visible quote number
           schema: { type: string }
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: >-
+            A UUID chosen once per conversion attempt and resent unchanged
+            on every retry of it. Scoped to the quote.
+          schema: { type: string, format: uuid }
       requestBody:
         required: false
         content:

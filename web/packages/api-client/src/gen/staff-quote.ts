@@ -206,17 +206,21 @@ export async function quoteQuoteAvailability(
   });
 }
 
+// The document lets this call carry an Idempotency-Key: call.idempotencyKey, a UUID chosen
+// once per acceptance and resent unchanged on every retry of it (never a new key per try), so a retry after a
+// timeout answers the first outcome instead of recording a second one.
 export async function quoteConvertQuote(
   client: ApiClient,
   id: string | number,
   body: QuoteConvertRequest,
-  call?: ApiCallOptions
+  call?: ApiKeyedCallOptions
 ): Promise<Result<QuoteConvertResult>> {
   return client.request<QuoteConvertResult>({
     method: "POST",
     path: "/api/v1/quotes/{id}/convert",
     pathParams: { id },
     body,
+    idempotencyKey: call?.idempotencyKey,
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "quoteConvertQuote",

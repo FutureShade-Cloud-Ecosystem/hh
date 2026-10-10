@@ -61,6 +61,13 @@ const (
 type ConvertOptions struct {
 	Fulfillment string
 
+	// IdempotencyKey is the staff door's optional Idempotency-Key (FROM-PRINCIPAL 121), a UUID as the
+	// handler read it. StaffService.ConvertQuote validates and lowercases it and hands the transactional
+	// audit recorder in keyAudit; empty means no key, and the dealer's multi accept switch alone decides
+	// whether a converted quote converts again (convert_idempotency.go).
+	IdempotencyKey string
+	keyAudit       txRecorder
+
 	// paidAtCounter and paidTotalCents are QD-5's: the order is paid in full, at the agreed total,
 	// in the same counter action (order_payment.go), so the credit gate judges it as a cash sale.
 	// Unexported on purpose: only this package's payment door can set them, never the portal door,
@@ -127,6 +134,10 @@ func runConvert(ctx context.Context, store convertStore, rec audit.Recorder,
 	res, err := store.Convert(ctx, customerID, quoteID, opt)
 	if err != nil {
 		return ConvertResult{}, err
+	}
+	if res.replayed {
+		// A keyed repeat: the first conversion already wrote the order's history. Nothing more to write.
+		return res, nil
 	}
 
 	// DIB-159 order-change history: the conversion is a creation writer, the order is INSERTed with
