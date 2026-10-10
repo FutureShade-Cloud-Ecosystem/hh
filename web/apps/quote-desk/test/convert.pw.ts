@@ -525,6 +525,118 @@ for (const answer of ["drop", "502"] as const) {
   });
 }
 
+// ── a lost convert answer holds the attempt open (PR 296 round 4, the Opus P1) ──
+
+test("a lost convert answer holds the fulfilment and the key: presses make one order (multi accept ON)", async ({ page }) => {
+  await page.request.put("/_stub/multi-accept", { data: { on: true } });
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  let lost = true;
+  await page.route(/\/api\/v1\/quotes\/q-1003\/convert$/, async (route) => {
+    if (!lost) {
+      await route.continue();
+      return;
+    }
+    lost = false;
+    await route.fetch();
+    await route.abort();
+  });
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-refusal")).toContainText("not known yet");
+  // Back to the fulfilment step: the attempt whose answer was lost is still open, so the choice is
+  // held as it was sent and a change is not taken.
+  await page.getByTestId("qc-back").click();
+  await page.getByTestId("qc-back").click();
+  await page.getByTestId("qc-back").click();
+  await expect(page.getByTestId("qc-fulfilment")).toBeVisible();
+  await expect(page.getByTestId("qc-fulfil-held")).toContainText("held as it was sent");
+  await expect(page.getByTestId("qc-fulfil-will-call")).toBeDisabled();
+  await expect(page.getByTestId("qc-fulfil-pickup")).toBeDisabled();
+  await expect(page.getByTestId("qc-fulfil-pickup")).toHaveAttribute("aria-pressed", "true");
+  // Presses on: the same key and the same fulfilment go, so the stub answers the first order.
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  const seen = await state(page);
+  const posted = seen.posts.filter((p) => p.kind === "convert");
+  expect(posted).toHaveLength(2);
+  expect(posted[0]!.key).not.toBeNull();
+  expect(posted[1]!.key).toBe(posted[0]!.key);
+  expect(seen.conversions).toHaveLength(1);
+  expect(seen.conversions[0]!.fulfillment).toBe("PICKUP");
+});
+
+test("a key reuse refusal after a lost answer shows the earlier order and never the use a new key words", async ({ page }) => {
+  await page.request.put("/_stub/multi-accept", { data: { on: true } });
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  const keys: Array<string | undefined> = [];
+  let step = 0;
+  await page.route(/\/api\/v1\/quotes\/q-1003\/convert$/, async (route) => {
+    keys.push(route.request().headers()["idempotency-key"]);
+    step += 1;
+    if (step === 1) {
+      await route.fetch();
+      await route.abort();
+      return;
+    }
+    if (step === 2) {
+      // The core's ErrConvertKeyReused, word for word.
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "quote: this idempotency key was used for a different conversion; use a new key for a new conversion" }) });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-refusal")).toContainText("not known yet");
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-done-earlier")).toContainText("An order was already created for this quote");
+  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  const screen = await page.locator("body").innerText();
+  expect(screen).not.toContain("use a new key");
+  expect(screen).not.toContain("different conversion");
+  // One order stands, and no fresh key was minted from the refusal.
+  const seen = await state(page);
+  expect(seen.conversions).toHaveLength(1);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBeTruthy();
+  expect(keys[1]).toBe(keys[0]);
+});
+
+test("a reload of a converted quote names its order and offers no second convert (multi accept ON)", async ({ page }) => {
+  await page.request.put("/_stub/multi-accept", { data: { on: true } });
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  const orderNo = /SO-\d+/.exec(await page.getByTestId("qc-done-order").innerText())![0];
+  await page.reload();
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  // A sign in always starts at the list (the split list's rule), so the route is walked to again.
+  await expect(page.getByTestId("qb-list")).toBeVisible();
+  await page.evaluate((id) => {
+    window.location.hash = `#/quotes/${id}/convert`;
+  }, "q-1003");
+  const stop = page.getByTestId("qc-not-ready");
+  await expect(stop).toContainText("An order was already created for this quote");
+  await expect(stop).toContainText(orderNo);
+  await expect(page.getByTestId("qc-review")).toHaveCount(0);
+  await expect(page.getByTestId("qc-next")).toHaveCount(0);
+  await expect(page.getByTestId("qc-confirm")).toHaveCount(0);
+  expect((await state(page)).conversions).toHaveLength(1);
+});
+
 test("an unworded 4xx payment refusal says the outcome is unknown, never 'Nothing was charged', and the retry reuses the key", async ({ page }) => {
   await arrive(page, "q-1003");
   await next(page);

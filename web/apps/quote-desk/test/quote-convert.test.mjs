@@ -4,10 +4,12 @@ import assert from "node:assert/strict";
 
 import {
   awayNotice,
+  convertedStopWords,
   paymentNotTakenWords,
   codRefusalWords,
   convertRouteQuoteId,
   isCodRefusal,
+  isConvertKeyReusedRefusal,
   paymentKeyFor,
   parsePayAmount,
   refusalWords,
@@ -93,6 +95,20 @@ test("the real gate's COD refusal is told apart from a credit one", () => {
   assert.equal(isCodRefusal("this customer cannot buy on account right now (account has no credit; cash or card only (COD)), the quote is unchanged"), true);
   assert.equal(isCodRefusal("this order is $9.00 against a $5.00 credit limit with $0.00 already owing"), false);
   assert.equal(isCodRefusal(""), false);
+});
+
+test("the core's key reuse refusal is told apart, and it is proof an order exists", () => {
+  assert.equal(isConvertKeyReusedRefusal("quote: this idempotency key was used for a different conversion; use a new key for a new conversion"), true);
+  assert.equal(isConvertKeyReusedRefusal("quote: this quote is sent, only an accepted quote converts"), false);
+  assert.equal(isConvertKeyReusedRefusal(""), false);
+});
+
+test("a converted quote's stop words name the order and refuse a second conversion", () => {
+  assert.match(convertedStopWords("Q-1003", "SO-2002"), /An order was already created for this quote: SO-2002\./);
+  assert.match(convertedStopWords("Q-1003", "SO-2002"), /No second order is made here\./);
+  // The family read not having answered yet is not a guess: the order is named as made, without a number.
+  assert.doesNotMatch(convertedStopWords("Q-1003", null), /SO-|: null/);
+  assert.match(convertedStopWords("Q-1003", null), /An order was already created for this quote\./);
 });
 
 test("the idempotency key follows the intended payment", () => {

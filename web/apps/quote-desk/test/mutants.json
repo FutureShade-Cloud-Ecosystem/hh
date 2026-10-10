@@ -1818,6 +1818,13 @@
     "test": "D when the customer read is unavailable"
   },
   {
+    "id": "qc-reuse-settles",
+    "file": "src/quote-convert.ts",
+    "find": "      if (isConvertKeyReusedRefusal(result.error)) {\n        // The core's reuse refusal is proof the earlier keyed attempt made an order: the attempt is",
+    "replace": "      if (false as boolean) {\n        // The core's reuse refusal is proof the earlier keyed attempt made an order: the attempt is",
+    "test": "a key reuse refusal after a lost answer shows the earlier order and never the use a new key words"
+  },
+  {
     "id": "qc-key-keeps",
     "file": "src/_quote-convert.ts",
     "find": "key: same ? prev.key : mint()",

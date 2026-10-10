@@ -41,10 +41,12 @@ import {
   awayNotice,
   paymentNotTakenWords,
   codRefusalWords,
+  convertedStopWords,
   fulfilmentLabel,
   accountKind,
   isCashOnDemand,
   isCodRefusal,
+  isConvertKeyReusedRefusal,
   parsePayAmount,
   paymentKeyFor,
   refusalWords,
@@ -327,12 +329,12 @@ export class QuoteConvert extends HHElement {
   #planned: KeyedIntent | null = null;
   #busy = false;
   #refusal = "";
-  #done: { orderId: string; orderNo: string } | null = null;
+  #done: { orderId: string; orderNo: string; earlier?: boolean } | null = null;
   #paid: { paymentNo: string; amountCents: number; balanceCents: number } | null = null;
   #payNote = "";
-  /** A conversion answer was lost: a later refusal may be that attempt's own order. */
+  /** A conversion answer was lost: the attempt stays open until a re read of the quote settles it, and nothing on the way (a fulfilment change, a refusal) may mint a fresh key. */
   #convertLost = false;
-  /** The Idempotency-Key of the convert attempt whose outcome is not known yet; null between attempts. */
+  /** The Idempotency-Key of the open convert attempt: one key for the quote, whatever the person changes; null between attempts. */
   #convertKey: string | null = null;
   /** Each load carries a number; an answer that comes back for an older one is dropped. */
   #seq = 0;
@@ -423,13 +425,26 @@ export class QuoteConvert extends HHElement {
       return;
     }
     this.#view = view;
-    if (!view.can_convert) {
+    // A converted quote never opens the steps from this surface, even where the dealer's multi accept
+    // switch lets the core convert it again: that second conversion would need a fresh key, and no
+    // fresh key is ever minted for a quote whose conversion may already stand (item 121, PR 296 r4).
+    if (view.status === "CONVERTED" || !view.can_convert) {
       this.#phase = "not-ready";
       this.#message =
         view.status === "CONVERTED"
-          ? `Quote ${view.quote_no} is already converted to an order.`
+          ? convertedStopWords(view.quote_no, null)
           : `Quote ${view.quote_no} is ${quoteStatusWord(view.status)}, and only an accepted quote can be converted.`;
       this.requestUpdate();
+      if (view.status === "CONVERTED") {
+        // The stop screen names the order the conversion made, read from the quote's document family.
+        const family = await client.relatedDocuments(quoteId);
+        if (seq !== this.#seq) return;
+        const order = family.ok ? (family.value.find((doc) => doc.kind === "ORDER") ?? null) : null;
+        if (order !== null) {
+          this.#message = convertedStopWords(view.quote_no, order.number);
+          this.requestUpdate();
+        }
+      }
       return;
     }
     this.#phase = "ready";
@@ -494,7 +509,9 @@ export class QuoteConvert extends HHElement {
       this.requestUpdate();
     } else if (action === "fulfil") {
       const value = control.getAttribute("data-fulfil");
-      if (value === "PICKUP" || value === "WILL_CALL") {
+      // While an attempt's outcome is unknown the fulfilment is held as it was sent: a changed body
+      // under the held key would be refused for reuse, and a fresh key for the change is never minted.
+      if ((value === "PICKUP" || value === "WILL_CALL") && !this.#convertLost) {
         this.#fulfilment = value;
         this.requestUpdate();
       }
@@ -601,11 +618,13 @@ export class QuoteConvert extends HHElement {
     this.#refusal = "";
     this.requestUpdate();
     // One key per convert attempt: minted at the press, kept while the outcome is unknown (a lost or 5xx
-    // answer), so the retry replays the first order; a definite answer ends the attempt.
+    // answer), so the retry replays the first order. While an attempt's outcome is unknown the key is
+    // kept whatever the answer says: only a success, or a re read of the quote that settles it, ends
+    // the attempt, so no refusal ever sends this quote to a fresh key and a second order.
     const convertKey = this.#convertKey ?? crypto.randomUUID();
     this.#convertKey = convertKey;
     const result = await client.convertWithFulfilment(quoteId, this.#fulfilment, convertKey);
-    if (result.ok || !isUnknownOutcome(result.status)) this.#convertKey = null;
+    if (result.ok || (!isUnknownOutcome(result.status) && !this.#convertLost)) this.#convertKey = null;
     // The order exists whatever is on screen now: the quote it was made from is announced either way.
     if (result.ok) {
       this.dispatchEvent(new CustomEvent("quote-converted", { detail: { orderId: result.value.orderId, quoteId }, bubbles: true, composed: true }));
@@ -625,6 +644,37 @@ export class QuoteConvert extends HHElement {
         this.#codLearned = true;
         this.#payError = "";
         this.#step = "payment";
+        this.requestUpdate();
+        return;
+      }
+      if (isConvertKeyReusedRefusal(result.error)) {
+        // The core's reuse refusal is proof the earlier keyed attempt made an order: the attempt is
+        // settled by re reading the quote, and the order it made is shown, never a fresh conversion.
+        // The core's "use a new key" words are never passed on, and none is minted from them.
+        this.#busy = true;
+        this.requestUpdate();
+        const again = await client.readQuote(quoteId);
+        if (seq !== this.#seq) return;
+        if (again.ok && again.value.status === "CONVERTED") {
+          const family = await client.relatedDocuments(quoteId);
+          if (seq !== this.#seq) return;
+          const order = family.ok ? (family.value.find((doc) => doc.kind === "ORDER") ?? null) : null;
+          this.#busy = false;
+          this.#convertLost = false;
+          this.#convertKey = null;
+          this.#refusal = "";
+          this.#done = { orderId: order?.id ?? "", orderNo: order?.number ?? "", earlier: true };
+          if (order !== null) {
+            this.dispatchEvent(new CustomEvent("quote-converted", { detail: { orderId: order.id, quoteId }, bubbles: true, composed: true }));
+          }
+          this.dispatchEvent(new CustomEvent("quote-changed", { detail: { quoteId }, bubbles: true, composed: true }));
+          this.requestUpdate();
+          return;
+        }
+        // The re read did not settle it: the outcome is still not known, the key stays held and the
+        // words say so, so the next press replays under the same key whatever it answers.
+        this.#busy = false;
+        this.#refusal = refusalWords(undefined, "");
         this.requestUpdate();
         return;
       }
@@ -853,6 +903,7 @@ export class QuoteConvert extends HHElement {
 
   #renderFulfilment(): TemplateResult {
     const cod = this.#isCod();
+    const held = this.#convertLost;
     return html`
       <section class="card" data-testid="qc-fulfilment" aria-label="Fulfilment">
         <h3>How will the customer get the order?</h3>
@@ -865,12 +916,16 @@ export class QuoteConvert extends HHElement {
               data-fulfil=${f.value}
               data-testid=${f.value === "PICKUP" ? "qc-fulfil-pickup" : "qc-fulfil-will-call"}
               aria-pressed=${this.#fulfilment === f.value ? "true" : "false"}
+              ?disabled=${held}
             >
               <span class="name">${f.label}</span>
               <span class="hint">${f.hint}</span>
             </button>`,
           )}
         </div>
+        ${held
+          ? html`<p class="notice stop" data-testid="qc-fulfil-held">An earlier conversion's answer was lost, so the fulfilment is held as it was sent: converting again sends the same key and the server answers the same order, never a second one. Reload the quote to settle it.</p>`
+          : nothing}
         ${cod
           ? html`<p class="sub" data-testid="qc-fulfil-cod-note">A Cash On Demand order is created and paid in one action, and this choice goes with it.</p>`
           : nothing}
@@ -1017,8 +1072,10 @@ export class QuoteConvert extends HHElement {
     if (done === null) return html`${nothing}`;
     return html`
       <section class="card done" data-testid="qc-done" aria-label="Done" role="status">
-        <h2 data-testid="qc-done-order">Order ${done.orderNo} created</h2>
-        <p>Quote ${view.quote_no} is now marked converted.</p>
+        <h2 data-testid="qc-done-order">${done.earlier ? (done.orderNo === "" ? "This quote is already converted" : `Order ${done.orderNo} was already created`) : `Order ${done.orderNo} created`}</h2>
+        ${done.earlier
+          ? html`<p data-testid="qc-done-earlier">An order was already created for this quote${done.orderNo === "" ? ", but its number could not be read; reload the quote to see it" : ""}. No second order is made here.</p>`
+          : html`<p>Quote ${view.quote_no} is now marked converted.</p>`}
         ${this.#paid !== null
           ? html`<p data-testid="qc-done-payment">Payment ${this.#paid.paymentNo} of ${moneyWord(this.#paid.amountCents)} taken. Balance on the invoice: ${moneyWord(this.#paid.balanceCents)}.</p>`
           : nothing}

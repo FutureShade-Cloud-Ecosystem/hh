@@ -236,6 +236,25 @@ export function isCodRefusal(detail: string): boolean {
 }
 
 /**
+ * True when the refusal is the core's convert key reuse refusal (convert_idempotency.go
+ * ErrConvertKeyReused). It is proof the earlier keyed attempt made an order, so the desk settles the
+ * attempt by re reading the quote and shows that order; the core's advice to use a new key is never
+ * passed on, and no fresh key is minted from it.
+ */
+export function isConvertKeyReusedRefusal(detail: string): boolean {
+  return /used for a different conversion/i.test(detail);
+}
+
+/**
+ * What the convert route says about a quote that is already converted: an order was already created
+ * for it, named when the document family answered. This surface never asks for a second conversion,
+ * whatever the dealer's multi accept switch would let the core do with a fresh key.
+ */
+export function convertedStopWords(quoteNo: string, orderNo: string | null): string {
+  return `Quote ${quoteNo} is converted. An order was already created for this quote${orderNo === null ? "" : `: ${orderNo}`}. No second order is made here.`;
+}
+
+/**
  * The server's refusal at confirm, in plain words, with what to do next. The refusal's own sentence
  * (spoken, its module prefix peeled) stays the first thing said; the next step follows it. Only an
  * answer in words proves nothing was created; a lost or 5xx answer says the outcome is not known.

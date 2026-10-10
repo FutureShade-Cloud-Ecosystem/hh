@@ -863,7 +863,10 @@ function viewOf(caller, quote) {
     valid_until: quote.valid_until === "" ? undefined : quote.valid_until,
     expired: quote.expired,
     editable_fields: editable,
-    can_convert: quote.status === "ACCEPTED",
+    // The core's own offer (staff.go): ACCEPTED always, and CONVERTED again only where the dealer's
+    // multi accept switch is on. The desk's convert surface still refuses a converted quote on its own
+    // (PR 296 round 4): no fresh key is minted for a quote whose conversion may already stand.
+    can_convert: quote.status === "ACCEPTED" || (quote.status === "CONVERTED" && acceptance.allow_multi_accept),
     // PR 247: the offer is the server's; a role without the grant to decide is offered neither.
     can_accept: (quote.status === "DRAFT" || quote.status === "SENT") && !quote.expired && !decisionSwitches.grantRefused,
     can_reject: (quote.status === "DRAFT" || quote.status === "SENT") && !quote.expired && !decisionSwitches.grantRefused,
