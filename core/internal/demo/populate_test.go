@@ -398,8 +398,11 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if err := nameRows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(saw) != len(allowedNames) || len(saw) != 13 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 13 invented ones (saw: %v)", len(saw), saw)
+	// 14 since the merge of PR 300: the two Counter Till accounts, the planted
+	// demo teammates, and both roadmap personas (Payables and Receivables and
+	// the Financial Controller), each one invented name.
+	if len(saw) != len(allowedNames) || len(saw) != 14 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 14 invented ones (saw: %v)", len(saw), saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the
