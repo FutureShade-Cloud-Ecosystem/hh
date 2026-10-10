@@ -78,7 +78,7 @@ test("the board carries its footnote in the board's own words", async ({ page })
 test("the empty branch state says so in words", async ({ page, request }) => {
   await useScenario(request, "empty");
   await page.goto("/");
-  await expect(page.locator("[data-empty]")).toContainText("Nothing to pick at this branch.");
+  await expect(page.locator("[data-empty]")).toContainText("Nothing to pick here.");
 });
 
 test("a login off the yard is told so, in words", async ({ page, request }) => {

@@ -161,7 +161,7 @@ export function renderQueue(model: QueueModel): TemplateResult {
   } else if (model.phase === "ready" && model.picks.length === 0) {
     body = html`
       <div class="card empty" data-empty>
-        <p class="empty-head">Nothing to pick at this branch.</p>
+        <p class="empty-head">Nothing to pick here.</p>
         <p class="dim">When the counter queues a pick it lands here, and the oldest one is the one somebody is standing around for.</p>
       </div>
     `;

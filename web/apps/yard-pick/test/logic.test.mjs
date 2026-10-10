@@ -203,6 +203,17 @@ test("the stage hint says the ref is generated for you, not made up", () => {
   );
 });
 
+test("the empty queue card says 'Nothing to pick here', not 'at this branch'", () => {
+  assert.ok(
+    viewsSource.includes("Nothing to pick here.</p>"),
+    "the empty queue card drops the redundant 'at this branch'",
+  );
+  assert.ok(
+    !viewsSource.includes("Nothing to pick at this branch."),
+    "the old 'at this branch' wording is gone",
+  );
+});
+
 // ---- recording what was pulled ----
 
 test("short means the picked less the ordered, in the one place that decides it", () => {
