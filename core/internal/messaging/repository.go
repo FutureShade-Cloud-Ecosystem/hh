@@ -873,12 +873,20 @@ func (r *Repository) UnackedRequiresAck(ctx context.Context, userID string) ([]M
 
 // ChannelIDBySlug resolves a stable channel slug to its id (used by the FR-3 consumer to route an
 // event to e.g. #yard-trenton). Returns errNotFound when the slug is unknown.
+//
+// Every system post and route by slug goes through here (the consumer's yard, house and payments
+// posts, the task notifier's counter, yard and #office, the escalations mirror, the portal bridge,
+// the order notice fallbacks), so the lookup resolves ONLY a system row: one carrying the auto_scope
+// marker every seeded system room has and no caller founded room ever gets (no Go insert writes it).
+// A caller room that squats a name the system derives from branch facts can then never receive a
+// system post, whatever family the reservation list names. The marker is enough here, unlike the
+// house pick, because a slug is unique: the lookup is by exact name, never "the first of a family".
 func (r *Repository) ChannelIDBySlug(ctx context.Context, slug string) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
 	}
 	var id string
-	err := r.pool.QueryRow(ctx, `SELECT id::text FROM msg_channels WHERE slug = $1 AND is_archived = FALSE`, slug).Scan(&id)
+	err := r.pool.QueryRow(ctx, `SELECT id::text FROM msg_channels WHERE slug = $1 AND auto_scope IS NOT NULL AND is_archived = FALSE`, slug).Scan(&id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", errNotFound

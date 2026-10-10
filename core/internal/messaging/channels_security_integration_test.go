@@ -100,29 +100,35 @@ func TestIntegration_CreateChannel_Collision_BranchWall_Runs_On_The_Existing_Row
 		t.Fatalf("sync sam: %v", err)
 	}
 
-	// sales-kingston: TEAM, auto_scope BRANCH, granted Kingston, a family
-	// outside the reserved system namespaces. The request names no branch;
-	// the wall must read the room's own.
+	// A TEAM room with auto_scope BRANCH on Kingston, in a family outside
+	// the reserved system namespaces (every seeded branch room lives in a
+	// reserved family now, so only a hand written row can arrange it). The
+	// request names no branch; the wall must read the room's own.
+	var depotTeam string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO msg_channels (kind, branch_id, slug, name, tier, auto_scope)
+		VALUES ('TEAM', $1, 'depot-team-kingston', 'Hand planted depot team', 'STANDARD', 'BRANCH')
+		RETURNING id::text`, branchKingston).Scan(&depotTeam); err != nil {
+		t.Fatalf("plant the Kingston depot team room: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, depotTeam)
+	})
 	if _, _, err := svc.CreateChannel(ctx, samCaller(), CreateChannelInput{
-		Kind: KindTeam, Name: "Sales Kingston",
+		Kind: KindTeam, Name: "depot-team-kingston",
 	}); !errors.Is(err, ErrNotInBranch) {
-		t.Fatalf("founding the Kingston sales room from Trenton must answer the branch wall, got %v", err)
+		t.Fatalf("founding the Kingston depot room from Trenton must answer the branch wall, got %v", err)
 	}
-	var chSalesKingston string
-	if err := pool.QueryRow(ctx,
-		`SELECT id::text FROM msg_channels WHERE slug = 'sales-kingston'`).Scan(&chSalesKingston); err != nil {
-		t.Fatalf("resolve the seeded Kingston sales room: %v", err)
-	}
-	if _, _, ok := memberRow(ctx, t, pool, chSalesKingston, uSamRivera); ok {
+	if _, _, ok := memberRow(ctx, t, pool, depotTeam, uSamRivera); ok {
 		t.Fatalf("the refused founding must leave the caller a non member")
 	}
 
 	// The reserved branch families answer their own wall first: the
-	// payments and yard namespaces are closed to caller founding (any
+	// payments, yard, sales and drivers namespaces are closed to caller founding (any
 	// case, chosen or derived), so a founding that names one is refused
 	// as reserved before any collision is consulted, and the caller is
 	// left a non member of the seeded rooms.
-	for _, name := range []string{"Payments Kingston", "Yard Kingston"} {
+	for _, name := range []string{"Payments Kingston", "Yard Kingston", "Sales Kingston", "Drivers Kingston"} {
 		if _, _, err := svc.CreateChannel(ctx, samCaller(), CreateChannelInput{
 			Kind: KindTeam, Name: name,
 		}); !errors.Is(err, ErrReservedSlug) {

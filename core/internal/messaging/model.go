@@ -106,13 +106,16 @@ func sanitizeSlugPart(s string) string {
 // from branch facts and converged on by system routing: the house queues
 // (house-<city>, the branch's home for unassigned customers), the
 // payments channels (payments-<city>, the day's rollup) and the yard
-// rooms (yard-<city>). A caller founded room that squatted one of them
+// rooms (yard-<city>), the counter rooms (sales-<city>) and the drivers
+// rooms (drivers-<city>). A caller founded room that squatted one of them
 // would capture the next system convergence on the same slug (the
 // branch's pick or the post by slug), so a slug arriving there (chosen
-// or derived from the name) is refused before the insert runs. The cost
+// or derived from the name) is refused before the insert runs. This is
+// the first wall; the second is structural: the system's lookup by slug
+// resolves only a row carrying the auto_scope marker (ChannelIDBySlug). The cost
 // is honest: a room whose name happens to derive into the namespace
 // ("DM guidelines", "House 0 mine") is told to pick another name.
-var reservedChannelSlugPrefixes = []string{"dm-", "rep-", "approvals-", "house-", "payments-", "yard-"}
+var reservedChannelSlugPrefixes = []string{"dm-", "rep-", "approvals-", "house-", "payments-", "yard-", "sales-", "drivers-"}
 
 // reservedChannelSlugs are the exact system slugs no caller founded room
 // may take: the GLOBAL payments floor ("payments"), which the routine
