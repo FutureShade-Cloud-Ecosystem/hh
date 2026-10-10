@@ -36,18 +36,19 @@ const TEN_PRODUCTS = [
   "DEMO-EDGE-ALU",
 ];
 
-test("the way in's data: six flows with role codes and labels", async ({ page }) => {
+test("the way in's data: seven flows with role codes and labels", async ({ page }) => {
   const flows = await page.request.get("/api/v1/demo/flows");
   expect(flows.ok()).toBe(true);
   const body = (await flows.json()) as {
     flows: Array<{ flow: string; role_code: string; label: string }>;
   };
-  expect(body.flows).toHaveLength(6);
+  expect(body.flows).toHaveLength(7);
   expect(body.flows.map((row) => row.flow)).toEqual([
     "sales",
     "sales-manager",
     "yard-team",
     "driver",
+    "payables-receivables",
     "procurement-manager",
     "financial-controller",
   ]);
@@ -56,6 +57,7 @@ test("the way in's data: six flows with role codes and labels", async ({ page })
     "sales_manager",
     "yard_team",
     "driver",
+    "payables_receivables",
     "procurement_manager",
     "financial_controller",
   ]);
@@ -64,6 +66,7 @@ test("the way in's data: six flows with role codes and labels", async ({ page })
     "Sales manager",
     "Yard Team",
     "Driver",
+    "Payables and Receivables",
     "Procurement manager",
     "Financial Controller",
   ]);

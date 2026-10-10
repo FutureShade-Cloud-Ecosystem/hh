@@ -300,11 +300,11 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
 		t.Errorf("the org scope did not stamp clean: %+v", counts)
 	}
-	if counts.UsersLinked != 6 || counts.UsersUnlinked != 8 {
-		t.Errorf("linked %d / unlinked %d users, want the 2 demo role accounts, the 2 personas, the buyer and the controller linked (6) and the 8 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	if counts.UsersLinked != 7 || counts.UsersUnlinked != 8 {
+		t.Errorf("linked %d / unlinked %d users, want the 7 demo role accounts (sales, manager, payables-receivables, buyer, controller, yard, driver) linked and the 8 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	if counts.StaffGrants != 6 || counts.StaffGrantsBranch != 5 || counts.StaffGrantsGlobal != 1 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the five branch-scoped linked accounts' one-branch grants and the controller's one global grant", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	if counts.StaffGrants != 7 || counts.StaffGrantsBranch != 5 || counts.StaffGrantsGlobal != 2 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the five branch-scoped linked accounts' one-branch grants (sales, manager, buyer, yard, driver) and the two global grants (Payables and Receivables, Financial Controller)", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -329,6 +329,8 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	// The two role accounts are exactly as the demo sign-in will resolve them.
 	assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER", trentonBranchID)
+	assertRoleAccount(t, ctx, pool, payRecUserID, payRecEmail, payRecDisplayName, "PAYABLES_RECEIVABLES", trentonBranchID)
+	assertRoleAccount(t, ctx, pool, buyerUserID, buyerEmail, buyerDisplayName, "PROCUREMENT_MANAGER", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, controllerUserID, controllerEmail, controllerDisplayName, "FINANCIAL_CONTROLLER", trentonBranchID)
 
 	// The personas: each holds its role, its platform link and exactly one
@@ -339,7 +341,6 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	// works, and the dispatch persona (a later increment) keeps 0200's shape.
 	assertRoleAccount(t, ctx, pool, yardUserID, yardEmail, yardDisplayName, "YARD_TEAM", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, driverUserID, driverEmail, driverDisplayName, "DRIVERS", kingstonBranchID)
-	assertRoleAccount(t, ctx, pool, buyerUserID, buyerEmail, buyerDisplayName, "PROCUREMENT_MANAGER", trentonBranchID)
 	for _, p := range []struct{ id, branch string }{
 		{yardUserID, trentonBranchID},
 		{driverUserID, kingstonBranchID},
@@ -399,6 +400,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	allowedNames := map[string]bool{
 		salesDisplayName:                true,
 		managerDisplayName:              true,
+		payRecDisplayName:               true,
 		controllerDisplayName:           true,
 		"Platform admin (demo)":         true,
 		"Demo teammate (demo)":          true,
@@ -431,8 +433,12 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if err := nameRows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(saw) != len(allowedNames) || len(saw) != 14 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 14 invented ones (saw: %v)", len(saw), saw)
+// 15 since taking in PR 303: the two Counter Till accounts, the planted
+	// demo teammates, and the three roadmap personas (Payables and Receivables
+	// and the Procurement Manager and the Financial Controller), each one
+	// invented name.
+	if len(saw) != len(allowedNames) || len(saw) != 15 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 15 invented ones (saw: %v)", len(saw), saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the
@@ -540,7 +546,7 @@ func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 	}
 	// The grant resolves: one live staff_role_grant, the account's own role,
 	// in the demo org, branch-scoped to Trenton (a global role's grant carries
-	// no branch: the Financial Controller reaches every branch).
+	// no branch: Payables and Receivables and the Financial Controller reach every branch).
 	var gotRole string
 	var gotBranch *string
 	err := pool.QueryRow(ctx, `
@@ -552,7 +558,7 @@ func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 	if err != nil {
 		t.Fatalf("role account %s resolves no staff grant: %v", email, err)
 	}
-	global := roleCode == "FINANCIAL_CONTROLLER"
+	global := roleCode == "PAYABLES_RECEIVABLES" || roleCode == "FINANCIAL_CONTROLLER"
 	if gotRole != roleCode || (global && gotBranch != nil) || (!global && (gotBranch == nil || *gotBranch != branchID)) {
 		t.Errorf("role account %s resolves role %s at branch %v, want %s at %s", email, gotRole, gotBranch, roleCode, branchID)
 	}

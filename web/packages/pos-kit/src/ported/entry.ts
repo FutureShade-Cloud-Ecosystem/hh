@@ -63,11 +63,13 @@ export interface EntryView {
 const FLOW_ICONS: Record<string, string> = {
   sales: "lucide:receipt",
   "sales-manager": "lucide:badge-check",
+  "payables-receivables": "lucide:landmark",
   "financial-controller": "lucide:landmark",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
   "sales-manager": "The counter plus approvals and margins.",
+  "payables-receivables": "Chase overdue accounts and work the bounced payments.",
   "financial-controller": "Decide approvals and keep the ledger.",
 };
 

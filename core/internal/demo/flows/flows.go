@@ -14,10 +14,12 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
-// The table is closed: the Counter Till's pair (D49, DECISIONS.md), the Financial
-// Controller and the live role logins the roles roadmap adds one reviewed row at a time.
-// A new flow is an edit here, reviewed, never a runtime input: the entry
-// page may only ever offer what this file lists.
+// The table is closed: the Counter Till's pair (D49, DECISIONS.md) and the
+// live role logins the roles roadmap adds one reviewed row at a time
+// (Payables and Receivables and the Procurement Manager and the Financial
+// Controller after PRs 300 and 303). A new flow is an edit here, reviewed,
+// never a runtime input: the entry page may only ever offer what this file
+// lists.
 package flows
 
 // OrgSlug is the one org a demo box holds and the only org the demo
@@ -111,9 +113,20 @@ var accounts = map[string]Account{
 		Label:          "Driver",
 		Role:           "driver",
 	},
+	// Payables and Receivables, the roles roadmap's first receivables
+	// increment, PR 300. The id block is the lane's own, so the role
+	// lanes' rows cannot collide as they land one after another.
+	"payables-receivables": {
+		Flow:           "payables-receivables",
+		PlatformUserID: "de110000-0000-4000-9000-0000000000a1",
+		Email:          "payables.receivables@" + ReservedDomain,
+		DisplayName:    "Payables and Receivables (demo)",
+		Label:          "Payables and Receivables",
+		Role:           "payables_receivables",
+	},
 	// The procurement manager's login, the roles roadmap's Buying and
-	// Stock slice: the buyer's card. The id block is this lane's own, so
-	// the role lanes' rows cannot collide as they land one after another.
+	// Stock slice, PR 303. The id block is this lane's own, so the role
+	// lanes' rows cannot collide as they land one after another.
 	"procurement-manager": {
 		Flow:           "procurement-manager",
 		PlatformUserID: "de64b000-0000-4000-9000-000000000001",
@@ -148,6 +161,7 @@ func All() []Account {
 		accounts["sales-manager"],
 		accounts["yard-team"],
 		accounts["driver"],
+		accounts["payables-receivables"],
 		accounts["procurement-manager"],
 		accounts["financial-controller"],
 	}

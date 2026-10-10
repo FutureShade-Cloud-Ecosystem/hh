@@ -31,7 +31,7 @@ func TestIntegrationARReminderContext_NoInvoiceFallbackIsTheHouseDay(t *testing.
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM customers WHERE id = $1::uuid`, customerID)
 	})
-	rc, err := NewARLandingRepository(pool).ReminderContextFor(ctx, customerID, "", ChannelEmail)
+	rc, err := NewARLandingRepository(pool).ReminderContextFor(ctx, customerID, "", ChannelEmail, AllBranches)
 	if err != nil {
 		t.Fatalf("reminder context: %v", err)
 	}

@@ -171,6 +171,8 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 	b.counterSales()
 	// Item 9.9: two deposit sales a tester can walk, after the counter sales whose trio they follow.
 	b.depositSales()
+	// Item 64: the receivables world's bounced payment, after the invoices it was tendered against.
+	b.bouncedPayments()
 	// The buying world (demoseed_procurement.go), after the products its lines name.
 	b.procurementWorld()
 	b.fleet()
