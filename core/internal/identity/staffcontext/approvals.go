@@ -555,6 +555,24 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 	if r.pool == nil {
 		return ApprovalRequest{}, errNoDB
 	}
+	return insertApproval(ctx, r.pool, req)
+}
+
+// CreateApprovalTx is CreateApproval on the caller's transaction, so a request commits or rolls back with the
+// row it is filed for (a parked journal's request, ruling 108).
+func (r *ApprovalRepository) CreateApprovalTx(ctx context.Context, tx pgx.Tx, req ApprovalRequest) (ApprovalRequest, error) {
+	if tx == nil {
+		return ApprovalRequest{}, errNoDB
+	}
+	return insertApproval(ctx, tx, req)
+}
+
+// approvalRowQuerier is the one method the insert needs, satisfied by the pool and by a transaction.
+type approvalRowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func insertApproval(ctx context.Context, q approvalRowQuerier, req ApprovalRequest) (ApprovalRequest, error) {
 	var subject any
 	if req.SubjectRef != "" {
 		subject = req.SubjectRef
@@ -587,7 +605,7 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 		}
 	}
 	var id string
-	err := r.pool.QueryRow(ctx, approvalsSeqCTE+`
+	err := q.QueryRow(ctx, approvalsSeqCTE+`
 		INSERT INTO permission_approval_requests (requested_by, branch_id, policy_type, detail, subject_ref, data, status, seq)
 		VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', (SELECT next_value FROM aseq))
 		RETURNING id::text, `+requesterRoleSQL("requested_by"),
@@ -636,14 +654,14 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 	q := `SELECT id::text, requested_by::text, branch_id::text, policy_type, detail,
 	             COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
 	             COALESCE(data->>'line_id',''),
-	             status, COALESCE(decided_by::text,''), ` + requesterRoleSQL("requested_by") + `
+	             status, COALESCE(decided_by::text,''), ` + requesterRoleSQL("requested_by") + `, requested_at
 	      FROM permission_approval_requests WHERE deleted_at IS NULL AND ($1 = '' OR status = $1)`
 	args := []any{status}
 	if branches != nil {
 		q += ` AND branch_id = ANY($2::uuid[])`
 		args = append(args, branches)
 	}
-	q += ` ORDER BY requested_at DESC`
+	q += ` ORDER BY requested_at DESC, id`
 	rows, err := r.pool.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -654,7 +672,7 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 		var a ApprovalRequest
 		var policy, st string
 		if err := rows.Scan(&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
-			&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy, &a.RequesterRole); err != nil {
+			&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy, &a.RequesterRole, &a.RequestedAt); err != nil {
 			return nil, err
 		}
 		a.Policy = PolicyType(policy)
@@ -762,6 +780,43 @@ func (r *ApprovalRepository) HasApprovedOverride(ctx context.Context, requestedB
 		return false, fmt.Errorf("check approved override: %w", err)
 	}
 	return ok, nil
+}
+
+// JournalApprovalState says where a journal stands with its JE_OVER_THRESHOLD requests, given the amount the
+// journal carries now. Tombstoned requests are read on purpose: deleting a request must not free the journal
+// for the GL's own route. The id is compared as a uuid, so its letter case cannot hide a request. Precedence
+// when several requests exist: an APPROVED live request for this amount, then a PENDING one, then an
+// APPROVED one for another amount, then a REJECTED live one, then a tombstoned one, then none.
+func (r *ApprovalRepository) JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (JEApprovalState, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var approvedHere, pending, approvedOther, rejected, deleted bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(bool_or(deleted_at IS NULL AND status = 'APPROVED' AND COALESCE((data->>'amount_cents')::bigint, -1) = $2), false),
+		       COALESCE(bool_or(deleted_at IS NULL AND status = 'PENDING'), false),
+		       COALESCE(bool_or(deleted_at IS NULL AND status = 'APPROVED' AND COALESCE((data->>'amount_cents')::bigint, -1) <> $2), false),
+		       COALESCE(bool_or(deleted_at IS NULL AND status = 'REJECTED'), false),
+		       COALESCE(bool_or(deleted_at IS NOT NULL), false)
+		FROM permission_approval_requests
+		WHERE policy_type = 'JE_OVER_THRESHOLD' AND lower(subject_ref) = $1::uuid::text`,
+		journalID, amountCents).Scan(&approvedHere, &pending, &approvedOther, &rejected, &deleted)
+	if err != nil {
+		return "", fmt.Errorf("check journal request state: %w", err)
+	}
+	switch {
+	case approvedHere:
+		return JEApprovalApproved, nil
+	case pending:
+		return JEApprovalPending, nil
+	case approvedOther:
+		return JEApprovalAmountDiffers, nil
+	case rejected:
+		return JEApprovalRejected, nil
+	case deleted:
+		return JEApprovalDeleted, nil
+	}
+	return JEApprovalNone, nil
 }
 
 // FloorRequestFor answers the caller's open quote floor request for one

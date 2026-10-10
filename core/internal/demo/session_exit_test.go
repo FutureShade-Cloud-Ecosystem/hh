@@ -93,12 +93,13 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if err := json.Unmarshal([]byte(body(flowsRsp)), &listing); err != nil {
 		t.Fatalf("the flows body does not decode: %v", err)
 	}
-	if len(listing.Flows) != 2 {
-		t.Fatalf("the listing carries %d flows, want the closed table's two", len(listing.Flows))
+	if len(listing.Flows) != 3 {
+		t.Fatalf("the listing carries %d flows, want the closed table's three", len(listing.Flows))
 	}
 	if listing.Flows[0].Flow != "sales" || listing.Flows[0].Label != "Sales" ||
-		listing.Flows[1].Flow != "sales-manager" || listing.Flows[1].Label != "Sales manager" {
-		t.Fatalf("the listing is %+v, want the flow table's pair with its own labels", listing.Flows)
+		listing.Flows[1].Flow != "sales-manager" || listing.Flows[1].Label != "Sales manager" ||
+		listing.Flows[2].Flow != "financial-controller" || listing.Flows[2].Label != "Financial Controller" {
+		t.Fatalf("the listing is %+v, want the flow table's three with their own labels", listing.Flows)
 	}
 
 	// The exit pair: mint the sales flow, read the till's policy with the

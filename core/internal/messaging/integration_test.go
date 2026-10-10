@@ -30,6 +30,7 @@ const (
 	chYardTrenton  = "a5000000-0000-4000-9000-000000000001"
 	chYardKingston = "a5000000-0000-4000-9000-000000000002"
 	chOffice       = "a5000000-0000-4000-9000-000000000003"
+	chFinance      = "a5000000-0000-4000-9000-000000000004"
 	chDMAlexSam    = "a5000000-0000-4000-9000-0000000000d1"
 
 	// Migration-only actor + the 0060 demo-gap fixtures. colton is the ONLY staff login that exists on
