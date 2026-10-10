@@ -2686,7 +2686,7 @@ export type InventoryStockMove = {
   move_type: "RECEIPT" | "SHIP" | "COUNT" | "ADJUST" | "RETURN" | "TRANSFER";
   source_type: string;
   source_ref_id: string;
-  unit_cost_cents: number;
+  unit_cost_cents?: number;
   occurred_at: string;
 };
 export type InventoryOnHand = {
@@ -2696,7 +2696,7 @@ export type InventoryOnHand = {
   on_hand_base: number;
   allocated_base: number;
   available_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type InventoryPendingFulfilment = {
   order_id: string;
@@ -2750,7 +2750,7 @@ export type InventoryBranchStock = {
   in_transit_base: number;
   available_base: number;
   soft_held_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type InventoryBrowseRow = {
   product_id: string;
@@ -2771,7 +2771,7 @@ export type InventoryBrowseRow = {
   reserved_base: number;
   available_base: number;
   in_transit_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type InventoryFacetValue = {
   value: string;
@@ -2857,7 +2857,7 @@ export type InventoryTransferLine = {
   qty_base: number;
   qty_shipped_base: number;
   qty_received_base: number;
-  unit_cost_cents: number;
+  unit_cost_cents?: number;
   ship_move_id: string;
   recv_move_id: string;
 };
@@ -2908,8 +2908,8 @@ export type InventoryShortfallRow = {
   preferred_vendor_id: string;
   preferred_vendor_name: string;
   lead_time_days: number;
-  avg_cost_cents: number;
-  suggested_value_cents: number;
+  avg_cost_cents?: number;
+  suggested_value_cents?: number;
 };
 export type InventoryReorderPoint = {
   product_id: string;
@@ -3055,8 +3055,8 @@ export type InvCountLine = {
   snapshot_qty_base: number;
   counted_qty_base: number | null;
   variance_base: number;
-  unit_cost_cents: number;
-  variance_value_cents: number;
+  unit_cost_cents?: number;
+  variance_value_cents?: number;
   reason_code?: string;
   move_id?: string;
 };
@@ -3082,8 +3082,8 @@ export type InvCountVarianceSummary = {
   line_count: number;
   counted_lines: number;
   variance_lines: number;
-  net_variance_value_cents: number;
-  abs_variance_value_cents: number;
+  net_variance_value_cents?: number;
+  abs_variance_value_cents?: number;
 };
 export type InvCountSheetDetail = {
   sheet: InvCountSheet;
@@ -3094,7 +3094,7 @@ export type InvCountNegativeStockRow = {
   product_id: string;
   location_id: string;
   on_hand_base: number;
-  avg_cost_cents: number;
+  avg_cost_cents?: number;
 };
 export type InvCountCreateSheetRequest = {
   branch_id: string;

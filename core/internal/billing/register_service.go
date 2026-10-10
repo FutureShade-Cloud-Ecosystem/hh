@@ -24,6 +24,7 @@ import (
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -67,13 +68,9 @@ func registerStatus(v RegisterRow, asOf time.Time, dueSoonDays int) (string, int
 	return StatusOpen, 0
 }
 
-// daysBetween is asOf − due in whole days, both truncated to their calendar day in UTC. Positive
-// means past due.
-func daysBetween(due, asOf time.Time) int {
-	d := time.Date(due.Year(), due.Month(), due.Day(), 0, 0, 0, 0, time.UTC)
-	a := time.Date(asOf.Year(), asOf.Month(), asOf.Day(), 0, 0, 0, 0, time.UTC)
-	return int(a.Sub(d).Hours() / 24)
-}
+// daysBetween is asOf − due in whole days on the house day (see DaysPastDue for the two meanings of
+// its arguments). Positive means past due.
+func daysBetween(due, asOf time.Time) int { return DaysPastDue(due, asOf) }
 
 // accountStatusFor is the line under the customer's name.
 //
@@ -630,7 +627,7 @@ func (s *RegisterService) AddPromise(ctx context.Context, in PromiseInput) (Prom
 	if err != nil {
 		return PromiseView{}, false, httpx.BadRequestf("the promised date must be a calendar date (YYYY-MM-DD)")
 	}
-	if day.Before(truncDay(s.clock())) {
+	if today, _ := time.Parse("2006-01-02", houseday.Today(s.clock)); day.Before(today) {
 		// A promise for a date already gone is a typo, and accepting it would put a row in the
 		// worklist that is broken the moment it is written.
 		return PromiseView{}, false, httpx.BadRequestf("the promised date is already past")
@@ -759,10 +756,6 @@ func containsString(list []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func truncDay(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 }
 
 // -- statements from a selection ----------------------------------------------------------------

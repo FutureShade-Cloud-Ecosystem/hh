@@ -173,7 +173,11 @@ func loadFactEqual(leg *loadFactLeg, standing *float64) bool {
 // the standing row and stamps nothing, so a superseded replay of one
 // constant fact cannot inflate the feed.
 func (s *LoadsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key string, fields map[string]any) (sync.RowState, error) {
-	if _, _, ok := stopScopePredicate(f); !ok {
+	d, err := s.resolveDriverFenceFor(ctx, f)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if _, _, ok := stopScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	weight, volume, pallets, err := loadWriteFields(fields)
@@ -189,10 +193,11 @@ func (s *LoadsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 
 	var standingWeight, standingVolume *float64
 	var standingPallets *int
+	preArm, preArg := d.leg(stopDriverCol, 3)
 	if err := tx.QueryRow(ctx,
 		`SELECT weight_kg, volume_m3, pallet_positions FROM delivery_stops
-		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&standingWeight, &standingVolume, &standingPallets); err != nil {
+		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+preArm+` FOR UPDATE`,
+		id, f.OrgID, preArg).Scan(&standingWeight, &standingVolume, &standingPallets); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
@@ -248,8 +253,10 @@ func (s *LoadsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 	}
 	sets = append(sets, `updated_at = now()`, fmt.Sprintf(`seq = $%d`, len(args)+1), fmt.Sprintf(`idempotency_key = $%d::uuid`, len(args)+2))
 	args = append(args, seq, key)
+	setArm, setArg := d.leg(stopDriverCol, len(args)+1)
+	args = append(args, setArg)
 	q := `UPDATE delivery_stops SET ` + strings.Join(sets, ", ") + `
-		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL
+		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL` + setArm + `
 		RETURNING id::text`
 	var rowID string
 	if err := tx.QueryRow(ctx, q, args...).Scan(&rowID); err != nil {
@@ -274,7 +281,11 @@ func (s *LoadsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key 
 // matrix, READY only). A load that left the yard is a record and
 // refuses the tombstone.
 func (s *LoadsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key string) (sync.RowState, error) {
-	return boardWithdrawStop(ctx, s.pool, f, id, key)
+	d, err := s.resolveDriverFenceFor(ctx, f)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	return boardWithdrawStop(ctx, s.pool, f, id, key, d)
 }
 
 // - delivery_stops -
@@ -331,7 +342,11 @@ func deliveryStopWriteFields(fields map[string]any) (string, string, error) {
 // trail committing together on one transaction, the seq drawn off the
 // shared stops stream.
 func (s *DeliveryStopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key string, fields map[string]any) (sync.RowState, error) {
-	if _, _, ok := stopScopePredicate(f); !ok {
+	d, err := s.resolveDriverFenceFor(ctx, f)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if _, _, ok := stopScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	date, reason, err := deliveryStopWriteFields(fields)
@@ -347,11 +362,12 @@ func (s *DeliveryStopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, 
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from, runID, branchID string
+	preArm, preArg := d.leg(stopDriverCol, 3)
 	if err := tx.QueryRow(ctx,
 		`SELECT to_char(scheduled_date,'YYYY-MM-DD'), COALESCE(run_id::text,''), branch_id::text
 		 FROM delivery_stops
-		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&from, &runID, &branchID); err != nil {
+		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+preArm+` FOR UPDATE`,
+		id, f.OrgID, preArg).Scan(&from, &runID, &branchID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
@@ -392,15 +408,16 @@ func (s *DeliveryStopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, 
 		return sync.RowState{}, err
 	}
 	var rowID string
+	setArm, setArg := d.leg(stopDriverCol, 7)
 	err = tx.QueryRow(ctx, `
 		UPDATE delivery_stops SET
 			scheduled_date  = $3::date,
 			updated_at      = now(),
 			seq             = $4,
 			idempotency_key = $5::uuid
-		WHERE id = $1::uuid AND org_id = $2::uuid AND scheduled_date = $6::date AND status = 'READY'
+		WHERE id = $1::uuid AND org_id = $2::uuid AND scheduled_date = $6::date AND status = 'READY'`+setArm+`
 		RETURNING id::text`,
-		id, f.OrgID, date, seq, key, from).Scan(&rowID)
+		id, f.OrgID, date, seq, key, from, setArg).Scan(&rowID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
@@ -426,7 +443,11 @@ func (s *DeliveryStopsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, 
 // Delete tombstones one stop and withdraws it, the loads scope's
 // Delete: the pre-departure CANCELLED plus the tombstone.
 func (s *DeliveryStopsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key string) (sync.RowState, error) {
-	return boardWithdrawStop(ctx, s.pool, f, id, key)
+	d, err := s.resolveDriverFenceFor(ctx, f)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	return boardWithdrawStop(ctx, s.pool, f, id, key, d)
 }
 
 // boardWithdrawStop is the two board scopes' shared delete: the
@@ -434,7 +455,7 @@ func (s *DeliveryStopsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter,
 // module's own withdrawal writes, READY only (a load that left the
 // yard is a record), the seq off the shared stops stream, the live
 // row's idempotency key kept.
-func boardWithdrawStop(ctx context.Context, pool *pgxpool.Pool, f sync.ScopeFilter, id, key string) (sync.RowState, error) {
+func boardWithdrawStop(ctx context.Context, pool *pgxpool.Pool, f sync.ScopeFilter, id, key string, d driverFence) (sync.RowState, error) {
 	if f.Tenant || f.OrgID == "" {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
@@ -445,9 +466,10 @@ func boardWithdrawStop(ctx context.Context, pool *pgxpool.Pool, f sync.ScopeFilt
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var status string
+	preArm, preArg := d.leg(stopDriverCol, 3)
 	if err := tx.QueryRow(ctx,
-		`SELECT status FROM delivery_stops WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&status); err != nil {
+		`SELECT status FROM delivery_stops WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+preArm+` FOR UPDATE`,
+		id, f.OrgID, preArg).Scan(&status); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
@@ -464,14 +486,15 @@ func boardWithdrawStop(ctx context.Context, pool *pgxpool.Pool, f sync.ScopeFilt
 		return sync.RowState{}, err
 	}
 	var deleted bool
+	delArm, delArg := d.leg(stopDriverCol, 4)
 	err = tx.QueryRow(ctx, `
 		UPDATE delivery_stops SET
 			status     = 'CANCELLED',
 			deleted_at = now(),
 			updated_at = now(),
 			seq        = $3
-		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL AND status = 'READY'
-		RETURNING (deleted_at IS NOT NULL)`, id, f.OrgID, seq).Scan(&deleted)
+		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL AND status = 'READY'`+delArm+`
+		RETURNING (deleted_at IS NOT NULL)`, id, f.OrgID, seq, delArg).Scan(&deleted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
