@@ -275,7 +275,7 @@ done
 echo "== the demo routes through the gate"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"driver"'*)
+	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
 		pass "/api/v1/demo/flows answers the seven flows, the five the front door maps among them"
 		;;
 	*) fail "/api/v1/demo/flows did not answer the seven flows, the five the front door maps among them: $flows" ;;

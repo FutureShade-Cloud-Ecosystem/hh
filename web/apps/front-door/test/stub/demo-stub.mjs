@@ -39,10 +39,10 @@ const port = Number(process.env.FD_STUB_PORT ?? 4927);
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "driver", role_code: "driver", label: "Driver" },
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
-  { flow: "driver", role_code: "driver", label: "Driver" },
 ];
 
 const USERS = {
