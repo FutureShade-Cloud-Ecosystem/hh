@@ -279,6 +279,45 @@ func invoiceBalance(t *testing.T, pool *pgxpool.Pool, invoiceID string) (int64, 
 	return balance, status
 }
 
+// A key that already recorded a payment is refused in words when the request describes a
+// different payment: the desk that retries with a corrected amount must not be told "replayed"
+// with the old figure and a success.
+func TestApplyRoute_TheSameKeyWithADifferentBodyIsRefusedInWords(t *testing.T) {
+	w := newApplyRouteWorld(t)
+	ctx := context.Background()
+	inv := w.invoice(t, w.customerID, "BODY", 90, 60, 12000, "")
+	first := w.post(t, applyGlobalCaller(), map[string]any{
+		"customer_id": w.customerID, "method": "CASH", "amount_cents": 12000,
+		"reference": "CHQ 500", "invoice_ids": []string{inv}, "idempotency_key": w.tag,
+	})
+	if code, _ := decodeApply(t, first); code != http.StatusOK {
+		t.Fatalf("the first apply must land, got %d", code)
+	}
+
+	code, body := decodeApply(t, w.post(t, applyGlobalCaller(), map[string]any{
+		"customer_id": w.customerID, "method": "CASH", "amount_cents": 9000,
+		"reference": "CHQ 500", "invoice_ids": []string{inv}, "idempotency_key": w.tag,
+	}))
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("a different body under a spent key is refused, got %d body %v", code, body)
+	}
+	words, _ := body["error"].(string)
+	if !strings.Contains(words, "that idempotency key already recorded a different payment") {
+		t.Fatalf("the refusal says what happened: %q", words)
+	}
+	var payRows int
+	if err := w.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM payments WHERE customer_id = $1::uuid`, w.customerID).Scan(&payRows); err != nil {
+		t.Fatalf("count payments: %v", err)
+	}
+	if payRows != 1 {
+		t.Fatalf("only the first body's payment exists, found %d rows", payRows)
+	}
+	if b, _ := invoiceBalance(t, w.pool, inv); b != 0 {
+		t.Fatalf("the first payment's balance move stands, balance %d", b)
+	}
+}
+
 // The preview flag answers the same split through the route and writes nothing the ledger can see.
 func TestApplyRoute_PreviewWritesNothing(t *testing.T) {
 	w := newApplyRouteWorld(t)

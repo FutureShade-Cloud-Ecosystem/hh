@@ -175,10 +175,14 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	}
 	sort.Slice(allocs, func(i, j int) bool { return allocs[i].InvoiceID < allocs[j].InvoiceID })
 
+	// The named list rides the payment row (see ReceiptRequest.NamedInvoices) so a replay of this
+	// key can be judged against the body that posted, including an invoice the walk never reached.
+	named := append([]string(nil), in.InvoiceIDs...)
+	sort.Strings(named)
 	p, claimed, err := settleReceipt(ctx, tx, ReceiptRequest{
 		CustomerID: in.CustomerID, Method: in.Method, Reference: in.Reference,
 		IdempotencyKey: in.IdempotencyKey, ReceivedBy: in.ReceivedBy,
-		Allocations: allocs,
+		Allocations: allocs, NamedInvoices: named,
 	})
 	if err != nil {
 		return ApplyAnswer{}, err
@@ -232,6 +236,51 @@ func validateApply(in ApplyRequest) error {
 		seen[id] = true
 	}
 	return nil
+}
+
+// normalisedInvoiceIDs answers a list of invoice ids in the one spelling the walk locks in: each
+// trimmed, parsed and re-spelled canonical, then the list sorted. Two lists that differ only in
+// order, or in the uuid spellings Parse accepts (case, braces, the undashed form), are one list.
+func normalisedInvoiceIDs(ids []string) ([]string, error) {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		u, err := uuid.Parse(strings.TrimSpace(id))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u.String())
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// sameReplayBody answers whether the stored payment is THIS request's own replay. The body of a
+// received payment is its account, its amount, its method, its reference and its named invoice
+// list, the last compared after the same normalising the route applies (canonical spellings,
+// order free, exactly the freedom ruling 73 gives the list). A key that recorded a different
+// payment is not a bearer of that payment's answer.
+func sameReplayBody(p Payment, storedReference string, storedNamed []string, in ApplyRequest) bool {
+	if p.CustomerID != in.CustomerID || p.AmountCents != in.AmountCents || p.Method != in.Method ||
+		storedReference != in.Reference {
+		return false
+	}
+	stored, err := normalisedInvoiceIDs(storedNamed)
+	if err != nil {
+		return false
+	}
+	named, err := normalisedInvoiceIDs(in.InvoiceIDs)
+	if err != nil {
+		return false
+	}
+	if len(stored) != len(named) {
+		return false
+	}
+	for i := range stored {
+		if stored[i] != named[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // allocateOldestFirst is the pure walk: order the locked rows oldest first (issue date, due date,

@@ -34,6 +34,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -58,6 +59,11 @@ type ReceiptRequest struct {
 	ReceivedBy     string // the staff caller; also the allocator (0043 allocated_by)
 	BranchID       string // the drawer's branch when known; "" falls back to the invoice's
 	Allocations    []Allocation
+	// NamedInvoices is the caller's whole named list, canonical and sorted, recorded on the payment
+	// row so a replay can be judged against the body that posted it. The apply route names the full
+	// list, including an invoice the money never reached (no allocation row exists to remember it);
+	// nil falls back to the allocations, which are the per invoice settle's own named list.
+	NamedInvoices []string
 }
 
 // ReceiptOutcome is the settle's answer. Replayed=true means THIS REQUEST POSTED NOTHING.
@@ -198,20 +204,32 @@ func settleReceipt(ctx context.Context, tx pgx.Tx, in ReceiptRequest) (p Payment
 	if in.ReceivedBy != "" {
 		receivedBy = in.ReceivedBy
 	}
+	// The named invoice list rides the row's metadata: one payment's body is a fact of the payment,
+	// not a screen's memory. The apply route's list can name an invoice the walk never reached, so
+	// it cannot be rebuilt from the allocations; the per invoice settle's list is its allocations.
+	named := in.NamedInvoices
+	if named == nil {
+		named = make([]string, 0, len(in.Allocations))
+		for _, a := range in.Allocations {
+			named = append(named, a.InvoiceID)
+		}
+	}
+	sort.Strings(named)
 	// ON CONFLICT DO NOTHING against ux_payments_idempotency_key (0028). RETURNING yields no row when
 	// the key was already used, which is the whole guard, see the file header. The row also stamps
 	// the 0213 sync legs (the payments feed seq, the org off the branch's location), the settle's
 	// own posture: a counter receipt FOR a customer's account is that payer's history.
 	row := tx.QueryRow(ctx, paymentsFeedSeqCTE+`
 INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id,
-                       gateway_ref, received_by, idempotency_key, metadata, org_id, seq)
+                      gateway_ref, received_by, idempotency_key, metadata, org_id, seq)
 		 VALUES (nextval('payment_no_seq')::text, $1, $2, $3, 'RECEIVED', $4, '', $5::uuid, $6,
-		         jsonb_build_object('reference', $7::text, 'source', 'AR_REGISTER'),
+		         jsonb_build_object('reference', $7::text, 'source', 'AR_REGISTER',
+		                            'invoice_ids', to_jsonb($8::text[])),
 		         (SELECT org_id FROM locations WHERE id = $4::uuid),
 		         (SELECT next_value FROM pseq))
 		 ON CONFLICT (idempotency_key) WHERE idempotency_key <> '' DO NOTHING
 		 RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, status, received_at`,
-		in.CustomerID, in.Method, total, branchID, receivedBy, in.IdempotencyKey, in.Reference)
+		in.CustomerID, in.Method, total, branchID, receivedBy, in.IdempotencyKey, in.Reference, named)
 	err = row.Scan(&p.ID, &p.PaymentNo, &pCustomerID, &p.Method, &p.AmountCents, &p.Status, &p.ReceivedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Payment{}, false, nil

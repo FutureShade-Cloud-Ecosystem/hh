@@ -337,8 +337,11 @@ func branchInReach(reach []string, branchID string) bool {
 // status.
 //
 // The key is not a bearer of the answer (the till's replayIfAllowed rule, PR 277): a replay is
-// judged like a first attempt. An allocated invoice outside the caller's branch reach answers as
-// not found, and a key that recorded a payment for another account is refused in words.
+// judged like a first attempt, and then against its own body. An allocated invoice outside the
+// caller's branch reach answers as not found, a key that recorded a payment for another account is
+// refused in words, and so is a key re-used for a different payment (another amount, method,
+// reference or invoice list): the desk that retries with a corrected amount must not be told
+// "replayed" with the old figure.
 func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyRequest) (ApplyAnswer, error) {
 	ans := ApplyAnswer{
 		PaymentID: p.ID, PaymentNo: p.PaymentNo, AmountCents: p.AmountCents,
@@ -346,6 +349,22 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 	}
 	if p.Allocations == nil {
 		p.Allocations = []Allocation{}
+	}
+	// The stored body: the reference and the named invoice list recorded on the row when it posted.
+	// A payment recorded before the named list rode the row reads its allocations as its named
+	// list, which is exactly what the per invoice settle names.
+	var storedRef string
+	var storedNamed []string
+	if err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(metadata->>'reference', ''),
+		       ARRAY(SELECT jsonb_array_elements_text(COALESCE(metadata->'invoice_ids', '[]'::jsonb)))
+		  FROM payments WHERE id = $1::uuid`, p.ID).Scan(&storedRef, &storedNamed); err != nil {
+		return ApplyAnswer{}, fmt.Errorf("apply: replay read payment body: %w", err)
+	}
+	if len(storedNamed) == 0 {
+		for _, a := range p.Allocations {
+			storedNamed = append(storedNamed, a.InvoiceID)
+		}
 	}
 	appliedBy := map[string]int64{}
 	for _, a := range p.Allocations {
@@ -375,6 +394,9 @@ func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyReques
 	}
 	if p.CustomerID != in.CustomerID {
 		return ApplyAnswer{}, httpx.BadRequestf("that idempotency key already recorded a payment for another account; use a new key")
+	}
+	if !sameReplayBody(p, storedRef, storedNamed, in) {
+		return ApplyAnswer{}, httpx.BadRequestf("that idempotency key already recorded a different payment; use a new key")
 	}
 	// The zero amount walk answers the rows in the allocation's own oldest first order with their
 	// live balances; each line is then patched with what THIS payment put on it.
