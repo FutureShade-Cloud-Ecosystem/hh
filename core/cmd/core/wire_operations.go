@@ -778,11 +778,21 @@ func (a taskChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEvent
 }
 
 // yardChatNotifier is taskChatNotifier reading ref.Audience and routing
-// accordingly: yard events to the branch yard channel, counter events to
-// the counter channel with the yard channel and #office as fallbacks.
+// accordingly: yard events to the branch yard channel, counter events to the
+// counter channel with the yard channel and #office as fallbacks.
 type yardChatNotifier struct {
-	svc *messaging.Service
+	svc yardChatMessenger
 	log *slog.Logger
+}
+
+// yardChatMessenger is the messaging seam yardChatNotifier reads: the yard
+// channel for a branch, the channel post, and the order rep routing.
+// *messaging.Service satisfies it; the notice fence's untagged legs
+// (yard_notice_fence_test.go) drive the routing with a double.
+type yardChatMessenger interface {
+	YardSlugForBranch(ctx context.Context, branchID string) (string, error)
+	PostEventToChannelSlug(ctx context.Context, slug, eventKey, body string, ref messaging.EventRef, requiresAck bool) (messaging.Message, bool, error)
+	NotifyOrderRep(ctx context.Context, in messaging.OrderRepNotice) (messaging.OrderRepResult, error)
 }
 
 func (a yardChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEventRef) error {
@@ -822,45 +832,86 @@ func (a yardChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEvent
 // because the order has no sales rep, so a reader knows why it arrived there.
 const orderRepFallbackNote = "No sales rep is on this order, so this came to the counter. "
 
+// unreachableRepNote is the same sentence for a notice whose rep route itself failed.
+const unreachableRepNote = "The sales rep could not be reached, so this came to the counter. "
+
+// orderRepFallbackRoute is one fallback channel for an order rep notice, with the body it may
+// carry. The membership model decides (the seeded channels and the derived membership rule,
+// messaging's SyncMembership): the counter channel (#sales-<branch>, BRANCH scope narrowed to the
+// OUTSIDE_SALES role) seats the sales floor alone, and the cost and margin list seats every sales
+// role, so its copy keeps the figures; #office (GLOBAL, every active staff member) and the yard
+// channel (#yard-<branch>, BRANCH, every role granted the branch) seat off list readers by
+// construction, so their copies carry the figureless words (ruling 91: a figure never reaches an
+// off list role, in cents or in words). No explicit membership write path exists for these
+// channels (only rep DMs and approvals channels seat explicit members), so the derived rule is
+// the whole membership.
+type orderRepFallbackRoute struct {
+	slug    string
+	figures bool
+}
+
+// orderRepFallbackRoutes builds the chain in order: the counter channel, then #office, then the
+// yard channel.
+func orderRepFallbackRoutes(yardSlug string) []orderRepFallbackRoute {
+	routes := []orderRepFallbackRoute{{slug: yardCounterFallbackSlug}}
+	if counter := tasks.CounterSlugForYardSlug(yardSlug); counter != "" {
+		routes = append([]orderRepFallbackRoute{{slug: counter, figures: true}}, routes...)
+	}
+	return append(routes, orderRepFallbackRoute{slug: yardSlug})
+}
+
 // postOrderRepNotice delivers a yard change on an order to the order's sales rep through the
 // messaging module's rep routing (the order's override, then its own salesperson, then the
-// customer's rep). With no rep it falls back to the branch counter and yard channels and says so in
-// the message. A rep lookup that fails is the same fallback with its own sentence: the notice must
-// arrive somewhere a person reads it.
+// customer's rep); the rep's copy carries the figures, the sentence being written for the one
+// person who must act on the invoice. With no rep, or a rep route that failed, the notice falls
+// back to the counter, office and yard channels and says so in the message, each copy worded for
+// the channel it lands in (orderRepFallbackRoute): the notice must arrive somewhere a person
+// reads it, and the figures must not arrive where an off list role reads them.
 func (a yardChatNotifier) postOrderRepNotice(ctx context.Context, ref tasks.TaskEventRef, yardSlug string) error {
-	fallback := []string{yardCounterFallbackSlug}
-	if counter := tasks.CounterSlugForYardSlug(yardSlug); counter != "" {
-		fallback = append([]string{counter}, fallback...)
-	}
-	fallback = append(fallback, yardSlug)
 	in := messaging.OrderRepNotice{
 		CustomerID: ref.CustomerID, OrderID: ref.OrderID, OrderRepUserID: ref.RepUserID,
 		EventKey: ref.EventKey, Body: ref.Summary,
-		Ref:           messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: ref.Summary},
-		FallbackSlugs: fallback, FallbackPrefix: orderRepFallbackNote,
+		Ref: messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: ref.Summary},
 	}
-	if _, err := a.svc.NotifyOrderRep(ctx, in); err != nil {
+	res, err := a.svc.NotifyOrderRep(ctx, in)
+	if err == nil && res.Kind == messaging.RouteRepDM {
+		return nil
+	}
+	prefix := orderRepFallbackNote
+	if err != nil {
 		if a.log != nil {
 			a.log.Warn("yard: order rep notice failed, sending to the counter", "order", ref.OrderID, "err", err)
 		}
-		in.OrderRepUserID, in.CustomerID = "", ""
-		return a.fallbackOrderNotice(ctx, in)
+		prefix = unreachableRepNote
 	}
-	return nil
+	return a.fallbackOrderNotice(ctx, ref, orderRepFallbackRoutes(yardSlug), prefix)
 }
 
-// fallbackOrderNotice posts the notice to the counter with a sentence that says the rep could not
-// be reached, after the rep route itself failed.
-func (a yardChatNotifier) fallbackOrderNotice(ctx context.Context, in messaging.OrderRepNotice) error {
+// fallbackOrderNotice posts the notice to the first reachable fallback channel, wording each
+// copy for the channel it lands in: the counter channel keeps the figures (its membership is the
+// sales floor, which the cost and margin list seats), the office and yard channels carry the
+// figureless words (their membership is every role). A body with no figureless twin carries its
+// own words everywhere: it names no figure to begin with.
+func (a yardChatNotifier) fallbackOrderNotice(ctx context.Context, ref tasks.TaskEventRef, routes []orderRepFallbackRoute, prefix string) error {
+	plain := ref.SummaryNoFigures
+	if plain == "" {
+		plain = ref.Summary
+	}
 	var lastErr error
-	for _, slug := range in.FallbackSlugs {
-		body := "The sales rep could not be reached, so this came to the counter. " + in.Body
-		ref := in.Ref
-		ref.Summary = body
-		if _, _, err := a.svc.PostEventToChannelSlug(ctx, slug, in.EventKey, body, ref, false); err == nil {
+	for _, r := range routes {
+		body := ref.Summary
+		if !r.figures {
+			body = plain
+		}
+		body = prefix + body
+		eref := messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: body}
+		if _, _, err := a.svc.PostEventToChannelSlug(ctx, r.slug, ref.EventKey, body, eref, false); err == nil {
 			return nil
 		} else {
 			lastErr = err
+			if a.log != nil {
+				a.log.Warn("yard: channel post failed, trying the next route", "slug", r.slug, "topic", ref.Topic, "err", err)
+			}
 		}
 	}
 	return lastErr
