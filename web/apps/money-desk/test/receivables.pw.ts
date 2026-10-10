@@ -104,6 +104,114 @@ test("one payment across two invoices: the server splits it oldest first and pos
   await expect(page.locator("[data-notice]")).not.toContainText("PAY-0102");
 });
 
+type ApplyBody = { preview: boolean; idempotency_key: string; amount_cents: number; reference: string; invoice_ids: string[] } & Record<string, unknown>;
+
+async function readyToPay(page: Page, request: Parameters<typeof openDesk>[1], reference: string): Promise<void> {
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await page.getByRole("button", { name: "Pick all open" }).click();
+  const amount = page.locator("[data-field='receive-amount']");
+  await amount.fill("$5,000.00");
+  await amount.blur();
+  await expect(page.locator("[data-applied]")).toHaveText("$5,000.00 of $5,000.00");
+  await page.locator("[data-field='receive-reference']").fill(reference);
+}
+
+test("the panel sends the route's body and nothing it computed, and every preview carries its own key", async ({ page, request }) => {
+  const sent: ApplyBody[] = [];
+  await page.route("**/api/v1/ar/payments/apply", (route) => {
+    sent.push(route.request().postDataJSON() as ApplyBody);
+    return route.continue();
+  });
+  await readyToPay(page, request, "Cheque 4471");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 applied");
+  const previews = sent.filter((b) => b.preview);
+  const posts = sent.filter((b) => !b.preview);
+  expect(previews.length).toBeGreaterThan(0);
+  expect(posts).toHaveLength(1);
+  for (const b of sent) {
+    expect(Object.keys(b).sort()).toEqual(["amount_cents", "customer_id", "idempotency_key", "invoice_ids", "method", "preview", "reference"]);
+    expect(b.idempotency_key).not.toBe("");
+  }
+  expect(posts[0]?.amount_cents).toBe(500000);
+  expect(new Set(sent.map((b) => b.idempotency_key)).size).toBe(sent.length);
+});
+
+test("an answer lost after the server applied the payment says the outcome is unknown, and pressing again reuses the key and posts once", async ({ page, request }) => {
+  const posts: ApplyBody[] = [];
+  let lose = true;
+  await page.route("**/api/v1/ar/payments/apply", async (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview) return route.continue();
+    posts.push(body);
+    if (lose) {
+      lose = false;
+      await route.fetch();
+      return route.abort("connectionreset");
+    }
+    return route.continue();
+  });
+  await readyToPay(page, request, "Cheque 4471");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await expect(page.locator("[data-error]")).toContainText("Check the account");
+  await expect(page.locator("[data-error]")).not.toContainText("Nothing was changed");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 was already applied");
+  expect(posts).toHaveLength(2);
+  expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+  await expect(page.locator("[data-notice]")).not.toContainText("PAY-0102");
+});
+
+test("a 5xx answer says the outcome is unknown and the retry carries the same key; a changed body is a different payment with a new key", async ({ page, request }) => {
+  const posts: ApplyBody[] = [];
+  let failures = 2;
+  await page.route("**/api/v1/ar/payments/apply", (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview) return route.continue();
+    posts.push(body);
+    if (failures > 0) {
+      failures -= 1;
+      return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "the receivables register is not answering right now" }) });
+    }
+    return route.continue();
+  });
+  await readyToPay(page, request, "Cheque 4471");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  expect(posts).toHaveLength(2);
+  expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+  await page.locator("[data-field='receive-reference']").fill("Cheque 4472");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 applied");
+  expect(posts).toHaveLength(3);
+  expect(posts[2]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
+});
+
+test("a worded 4xx says the payment was not recorded in the route's own words, and the next press is a new payment with a new key", async ({ page, request }) => {
+  const posts: ApplyBody[] = [];
+  let refuse = true;
+  await page.route("**/api/v1/ar/payments/apply", (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview) return route.continue();
+    posts.push(body);
+    if (refuse) {
+      refuse = false;
+      return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: "the selected invoices can take at most 96000 cents right now; refresh and retry" }) });
+    }
+    return route.continue();
+  });
+  await readyToPay(page, request, "Cheque 4471");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("The payment was not recorded. The selected invoices can take at most $960.00 right now; refresh and retry.");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 applied");
+  expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
+});
+
 test("a payment that cannot be posted is stopped in words, and the server's refusal shows beside the split", async ({ page, request }) => {
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping (demo)");
@@ -114,7 +222,7 @@ test("a payment that cannot be posted is stopped in words, and the server's refu
   await expect(page.locator("[data-error]")).toContainText("Pick the invoices the payment is for");
   await page.getByRole("checkbox", { name: "Pay INV-1002" }).click();
   await page.locator("[data-field='receive-amount']").fill("960.01");
-  await expect(page.locator("[data-preview-error]")).toHaveText("The payment is more than the selected invoices can take.");
+  await expect(page.locator("[data-preview-error]")).toHaveText("The selected invoices can take at most $960.00 right now; refresh and retry.");
   await expect(page.locator("[data-applied]")).toHaveText("Nothing to apply yet");
   await page.locator("[data-field='receive-amount']").fill("abc");
   await expect(page.locator("[data-amount-hint]")).toHaveText("Enter dollars and cents, such as $100.00.");

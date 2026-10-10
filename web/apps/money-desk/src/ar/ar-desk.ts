@@ -13,7 +13,7 @@
 import { html, type TemplateResult } from "lit";
 import type { BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
-import { canLiftHolds, refusalWords, validatePromise } from "./ar-logic.js";
+import { canLiftHolds, paymentOutcome, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import {
   renderAccount,
@@ -87,8 +87,11 @@ export class ArDesk {
   #notice = "";
   #fillPending = false;
 
-  // One key per attempt: a double press replays the first rather than writing twice.
+  // One key per payment: the key and the body it was minted for. A retry of the same body (after a lost or 5xx
+  // answer, or a double press) reuses the key so the server answers the first result and posts once; a changed
+  // body is a different payment and gets a new key; a refusal or a success ends the payment.
   #payKey = "";
+  #payBody = "";
   #promiseKey = newKey();
   #remindKey = newKey();
 
@@ -459,7 +462,6 @@ export class ArDesk {
       preview: null,
       previewError: "",
     };
-    this.#payKey = "";
     this.#host.repaint();
     const register = await this.#api.register({ chip: "PAID", customerId });
     if (this.#account === null || this.#account.customerId !== customerId) return;
@@ -506,21 +508,14 @@ export class ArDesk {
     const account = this.#account;
     if (account === null || invoiceId === "") return;
     const picked = account.picked.includes(invoiceId) ? account.picked.filter((id) => id !== invoiceId) : [...account.picked, invoiceId];
-    this.#account = { ...account, picked: this.#oldestFirstOrder(picked) };
+    this.#account = { ...account, picked };
     this.#schedulePreview(0);
     this.#host.repaint();
   }
 
-  /** The order the invoices are sent in: most overdue first, then by due date. An order, not an amount. */
-  #oldestFirstOrder(ids: readonly string[]): string[] {
-    const rows = this.#openInvoices().filter((r) => ids.includes(r.id));
-    rows.sort((a, b) => b.days_overdue - a.days_overdue || a.due_date.localeCompare(b.due_date));
-    return rows.map((r) => r.id);
-  }
-
   #pickAll(): void {
     if (this.#account === null) return;
-    this.#account = { ...this.#account, picked: this.#oldestFirstOrder(this.#openInvoices().map((r) => r.id)) };
+    this.#account = { ...this.#account, picked: this.#openInvoices().map((r) => r.id) };
     this.#schedulePreview(0);
     this.#host.repaint();
   }
@@ -539,7 +534,6 @@ export class ArDesk {
   #previewGeneration = 0;
 
   #schedulePreview(delayMs = 300): void {
-    this.#payKey = "";
     if (this.#previewTimer !== undefined) clearTimeout(this.#previewTimer);
     this.#previewTimer = setTimeout(() => void this.#askPreview(), delayMs);
   }
@@ -560,13 +554,13 @@ export class ArDesk {
       amountCents: cents,
       reference: "",
       invoiceIds: account.picked,
-      key: "",
+      key: newKey(),
       preview: true,
     });
     if (generation !== this.#previewGeneration || this.#account === null) return;
     this.#account = answer.ok
       ? { ...this.#account, preview: answer.value, previewError: "" }
-      : { ...this.#account, preview: null, previewError: refusalWords("payment", answer.error, answer.status) };
+      : { ...this.#account, preview: null, previewError: refusalWords("split", answer.error, answer.status) };
     this.#host.repaint();
   }
 
@@ -576,15 +570,20 @@ export class ArDesk {
     const cents = parseAmountToCents(account.amountText);
     const reference = this.#host.field("receive-reference").trim();
     if (cents === null || cents === 0) return this.#stop("Enter the amount received, such as $100.00.");
-    if (account.picked.length === 0) return this.#stop("Pick the invoices the payment is for. Pick all open takes them oldest first.");
+    if (account.picked.length === 0) return this.#stop("Pick the invoices the payment is for. Pick all open takes every open invoice.");
     if (reference === "") return this.#stop("Enter a reference, such as a cheque number.");
     this.#busy = true;
     this.#clearMessages();
     this.#host.repaint();
-    if (this.#payKey === "") this.#payKey = newKey();
+    const method = METHODS.find((m) => m === account.method) ?? "CHEQUE";
+    const body = JSON.stringify([account.customerId, method, cents, reference, [...account.picked].sort()]);
+    if (this.#payKey === "" || this.#payBody !== body) {
+      this.#payKey = newKey();
+      this.#payBody = body;
+    }
     const result = await this.#api.applyPayment({
       customerId: account.customerId,
-      method: METHODS.find((m) => m === account.method) ?? "CHEQUE",
+      method,
       amountCents: cents,
       reference,
       invoiceIds: account.picked,
@@ -593,11 +592,15 @@ export class ArDesk {
     });
     this.#busy = false;
     if (!result.ok) {
-      this.#fail("payment", result);
+      const outcome = paymentOutcome(result.error, result.status);
+      this.#notice = "";
+      this.#error = outcome.words;
+      // An unknown outcome keeps the key, so the retry cannot post twice; a refusal wrote nothing and ends it.
+      if (outcome.kind === "refused") this.#endPayment();
       this.#host.repaint();
       return;
     }
-    this.#payKey = "";
+    this.#endPayment();
     const r = result.value;
     const done = r.lines.filter((l) => l.outcome !== "NONE").map((l) => `${formatMoney(l.applied_cents)} on ${l.invoice_no}, balance now ${formatMoney(l.balance_after_cents)}`);
     this.#notice = `Payment ${r.payment_no ?? "recorded"} ${r.replayed ? "was already applied" : "applied"}: ${done.join("; ")}.`;
@@ -606,6 +609,11 @@ export class ArDesk {
     this.#afterFill();
     await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
     this.#host.repaint();
+  }
+
+  #endPayment(): void {
+    this.#payKey = "";
+    this.#payBody = "";
   }
 
   #stop(words: string): void {

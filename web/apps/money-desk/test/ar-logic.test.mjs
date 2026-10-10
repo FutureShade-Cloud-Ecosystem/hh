@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { canLiftHolds, lineWords, cardRange, cardTitle, holdKindWord, holdMarks, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise } from "../src/ar/ar-logic.ts";
+import { canLiftHolds, lineWords, cardRange, cardTitle, holdKindWord, holdMarks, paymentOutcome, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise } from "../src/ar/ar-logic.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
   assert.equal(parseAmountToCents("19.68"), 1968);
@@ -60,7 +60,28 @@ test("the core's own sentence is kept, and a figure in cents reads as dollars", 
   assert.ok(!payment.includes("cents"));
   assert.equal(refusalWords("payment", "", 401), "Your sign in has ended. Sign in again.");
   assert.equal(refusalWords("bounce", "payment already marked BOUNCED", 409), "Payment already marked BOUNCED.");
-  assert.equal(refusalWords("payment", "payments: transport error: x", undefined), "The server could not be reached. Nothing was changed. Try again.");
+  assert.equal(refusalWords("split", "payments: transport error: x", undefined), "The server could not be reached. Nothing was changed. Try again.");
+});
+
+test("a payment whose answer was lost or came back 5xx says the outcome is unknown and tells the person to check the account", () => {
+  for (const status of [undefined, 500, 502, 503, 504]) {
+    const outcome = paymentOutcome("payments: transport error: x", status);
+    assert.equal(outcome.kind, "unknown", String(status));
+    assert.ok(outcome.words.includes("may or may not have been recorded"), outcome.words);
+    assert.ok(outcome.words.includes("Check the account"), outcome.words);
+    assert.ok(!outcome.words.includes("Nothing was changed"), outcome.words);
+  }
+});
+
+test("a worded 4xx is a refusal in the route's own words, and says the payment was not recorded", () => {
+  const over = paymentOutcome("the selected invoices can take at most 96000 cents right now; refresh and retry", 422);
+  assert.equal(over.kind, "refused");
+  assert.equal(over.words, "The payment was not recorded. The selected invoices can take at most $960.00 right now; refresh and retry.");
+  const missing = paymentOutcome("no such invoice: 0b1c2d3e", 404);
+  assert.equal(missing.kind, "refused");
+  assert.equal(missing.words, "The payment was not recorded. No such invoice: 0b1c2d3e.");
+  assert.equal(paymentOutcome("Forbidden", 403).kind, "refused");
+  assert.ok(paymentOutcome("Forbidden", 403).words.startsWith("The payment was not recorded."));
 });
 
 test("a promise needs an amount, a date, and who promised it", () => {

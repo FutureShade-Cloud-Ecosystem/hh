@@ -519,47 +519,85 @@ async function handle(req, res) {
   if (!path.startsWith("/api/v1/ar/")) return refuse(res, 404, "not found");
   if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
 
-  // PROVISIONAL (FROM-PRINCIPAL 73): the received payment route, modelled from
-  // briefs/ITEM64-A-CORE-FOLLOWUP.md. One payment against an ordered list of the account's invoices, split
-  // oldest first (the order given) in one step; preview answers the split and writes nothing. The refusal
-  // sentences below are this stub's own words until the core's contract commit lands.
+  // The received payment route (core/internal/billing register_service.go ApplyReceivedPayment and
+  // core/internal/payments received_apply.go), its checks in the core's order and its sentences word for word:
+  // the service's three checks, then the request's, then the replay judgement (never on a preview), then the
+  // locks in id order (a missing or another account's invoice is a 404, one not open is refused), then one
+  // branch per payment, then the ceiling. Every refusal is a 422 but the 404. The split is the server's: oldest
+  // first by issue date, due date, invoice number and id whatever order the list came in, one line per named
+  // invoice, unapplied always zero. A preview takes the same walk and writes nothing, and never reads the key.
   if (method === "POST" && path === "/api/v1/ar/payments/apply") {
     const body = await readBody(req);
     if (body === null) return refuse(res, 400, "invalid JSON body");
+    const isUuid = (v) => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
+    const key = typeof body.idempotency_key === "string" ? body.idempotency_key : "";
+    const ids = Array.isArray(body.invoice_ids) ? body.invoice_ids : [];
+    const method_ = typeof body.method === "string" ? body.method.trim().toUpperCase() : "";
     const preview = body.preview === true;
-    if (!preview && (typeof body.idempotency_key !== "string" || body.idempotency_key === "")) return refuse(res, 400, "recording a payment needs an idempotency key");
-    if (!Number.isInteger(body.amount_cents) || body.amount_cents <= 0) return refuse(res, 400, "a payment amount must be greater than zero");
-    if (!Array.isArray(body.invoice_ids) || body.invoice_ids.length === 0) return refuse(res, 400, "choose at least one invoice for the payment");
-    if (!preview) {
-      const replay = world.keys.get(`apply:${body.idempotency_key}`);
-      if (replay !== undefined) return send(res, 200, { ...replay, replayed: true });
+    if (key === "") return refuse(res, 422, "recording a payment needs an idempotency key");
+    if (!Number.isInteger(body.amount_cents) || body.amount_cents <= 0) return refuse(res, 422, "a payment amount must be greater than zero");
+    if (ids.length === 0) return refuse(res, 422, "a payment must be applied to at least one invoice");
+    if (!["EFT", "CHEQUE", "CARD", "CASH"].includes(method_)) return refuse(res, 422, "tender must be one of EFT, CHEQUE, CARD, CASH");
+    if (!isUuid(body.customer_id)) return refuse(res, 422, "customer id must be a uuid");
+    if (ids.length > 100) return refuse(res, 422, "a received payment may name at most 100 invoices; record it as more than one payment");
+    const seen = new Set();
+    for (const raw of ids) {
+      if (!isUuid(raw)) return refuse(res, 422, "invoice ids must be uuids");
+      const id = raw.trim().toLowerCase();
+      if (seen.has(id)) return refuse(res, 422, `the same invoice is named twice: ${id}`);
+      seen.add(id);
     }
-    const picked = body.invoice_ids.map(invById);
-    if (picked.some((i) => i === undefined || custId(i.acct) !== body.customer_id)) return refuse(res, 400, "an invoice of another account cannot take this payment");
-    const room = picked.reduce((t, i) => t + i.balance_cents, 0);
-    if (body.amount_cents > room) return refuse(res, 400, "the payment is more than the selected invoices can take");
-    let left = body.amount_cents;
-    const lines = picked.map((inv) => {
-      const take = Math.min(left, inv.balance_cents);
-      left -= take;
+    const named = [...seen].sort();
+    const customerId = body.customer_id.trim().toLowerCase();
+    const reference = typeof body.reference === "string" ? body.reference : "";
+    const oldestFirst = (rows) =>
+      [...rows].sort((a, b) => {
+        const ra = registerRow(a);
+        const rb = registerRow(b);
+        return ra.issue_date.localeCompare(rb.issue_date) || ra.due_date.localeCompare(rb.due_date) || a.invoice_no.localeCompare(b.invoice_no) || a.id.localeCompare(b.id);
+      });
+    const lineFor = (inv, take) => {
       const after = inv.balance_cents - take;
       return {
         invoice_id: inv.id,
         invoice_no: inv.invoice_no,
         applied_cents: take,
-        outcome: take === 0 ? "NONE" : after === 0 ? "CLOSES" : "PART",
+        outcome: take > 0 && after <= 0 ? "CLOSES" : take > 0 ? "PART" : "NONE",
         balance_after_cents: after,
-        stays_open_cents: after,
+        stays_open_cents: Math.max(after, 0),
       };
-    });
-    const answer = {
-      preview,
-      amount_cents: body.amount_cents,
-      applied_cents: body.amount_cents - left,
-      unapplied_cents: left,
-      lines,
-      replayed: false,
     };
+    if (!preview) {
+      const first = world.keys.get(`apply:${key}`);
+      if (first !== undefined) {
+        if (first.fingerprint.customer !== customerId) return refuse(res, 422, "that idempotency key already recorded a payment for another account; use a new key");
+        const same =
+          first.fingerprint.amount === body.amount_cents && first.fingerprint.method === method_ && first.fingerprint.reference === reference && first.fingerprint.named.join(",") === named.join(",");
+        if (!same) return refuse(res, 422, "that idempotency key already recorded a different payment; use a new key");
+        const lines = oldestFirst(first.invoices.map((id) => invById(id))).map((inv) => {
+          const line = lineFor(inv, first.applied.get(inv.id) ?? 0);
+          return { ...line, outcome: line.applied_cents > 0 ? (inv.balance_cents === 0 ? "CLOSES" : "PART") : "NONE", balance_after_cents: inv.balance_cents, stays_open_cents: inv.balance_cents };
+        });
+        return send(res, 200, { ...first.answer, lines, replayed: true });
+      }
+    }
+    const picked = [];
+    for (const id of named) {
+      const inv = invById(id);
+      if (inv === undefined || custId(inv.acct) !== customerId) return refuse(res, 404, `no such invoice: ${id}`);
+      if (inv.balance_cents === 0) return refuse(res, 422, `invoice ${inv.invoice_no} (paid) is not open; a payment applies to a finalized or partially paid invoice`);
+      picked.push(inv);
+    }
+    if (new Set(picked.map((inv) => branchOf(inv.acct))).size > 1) return refuse(res, 422, "one payment applies to one branch's invoices; record a payment per branch");
+    const capacity = picked.reduce((t, inv) => t + inv.balance_cents, 0);
+    if (body.amount_cents > capacity) return refuse(res, 422, `the selected invoices can take at most ${capacity} cents right now; refresh and retry`);
+    let left = body.amount_cents;
+    const lines = oldestFirst(picked).map((inv) => {
+      const take = Math.min(left, inv.balance_cents);
+      left -= take;
+      return lineFor(inv, take);
+    });
+    const answer = { preview, amount_cents: body.amount_cents, applied_cents: body.amount_cents - left, unapplied_cents: left, lines, replayed: false };
     if (preview) return send(res, 200, answer);
     world.counter += 1;
     const no = `PAY-${String(100 + world.counter).padStart(4, "0")}`;
@@ -567,7 +605,7 @@ async function handle(req, res) {
       id: uuid("c", 100 + world.counter),
       no,
       acct: picked[0].acct,
-      method: body.method,
+      method: method_,
       amount_cents: body.amount_cents,
       status: "RECEIVED",
       reason: "",
@@ -576,12 +614,14 @@ async function handle(req, res) {
       allocations: lines.filter((l) => l.applied_cents > 0).map((l) => ({ invoice_n: invNumber(invById(l.invoice_id)), amount_cents: l.applied_cents })),
     };
     world.payments.push(payment);
-    for (const l of lines) {
-      const inv = invById(l.invoice_id);
-      inv.balance_cents = l.balance_after_cents;
-    }
+    for (const l of lines) invById(l.invoice_id).balance_cents = l.balance_after_cents;
     const done = { ...answer, payment_id: payment.id, payment_no: no };
-    world.keys.set(`apply:${body.idempotency_key}`, done);
+    world.keys.set(`apply:${key}`, {
+      answer: done,
+      invoices: lines.filter((l) => l.applied_cents > 0).map((l) => l.invoice_id),
+      applied: new Map(lines.map((l) => [l.invoice_id, l.applied_cents])),
+      fingerprint: { customer: customerId, amount: body.amount_cents, method: method_, reference, named },
+    });
     return send(res, 200, done);
   }
 

@@ -5,9 +5,9 @@
 // bound values are class, role, aria- and data- attributes). Form fields carry
 // data-field names and are read when the button is pressed; none is bound.
 //
-// Every figure on a screen is the server's, formatted. The one place the app
-// does bookkeeping is the apply column (ar-logic allocateOldestFirst and the
-// applied against unapplied lines), which only proposes what is posted; the
+// Every figure on a screen is the server's, formatted. The apply column and the
+// applied against unapplied lines are the received payment route's preview: the
+// server splits the payment oldest first and the app only shows its answer; the
 // server accepts or refuses every post and its balances are what show after.
 //
 // References: hh-sup/design-refs/money-desk/ receivables-home, account-open-invoices

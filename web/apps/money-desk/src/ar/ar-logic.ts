@@ -103,6 +103,25 @@ export function refusalWords(action: string, error: string, status: number | und
   return words === "" ? "The server refused that." : words;
 }
 
+/**
+ * What a recorded payment's failure means for the person. A lost answer or a 5xx leaves the outcome unknown: the
+ * server may have written the payment before the answer was lost, so the words say so and send the person to check
+ * the account before taking anything again (pressing again with nothing changed carries the same key and posts
+ * once). A worded 4xx is the route refusing with nothing written, in the route's own words.
+ */
+export type PaymentOutcome = { kind: "unknown" | "refused"; words: string };
+
+export function paymentOutcome(error: string, status: number | undefined): PaymentOutcome {
+  if (status === undefined || status >= 500) {
+    return {
+      kind: "unknown",
+      words:
+        "The server did not give a clear answer, so this payment may or may not have been recorded. Check the account's payments and invoice balances before taking the money again. Pressing Record payment again with nothing changed is safe: it is the same payment and posts once.",
+    };
+  }
+  return { kind: "refused", words: `The payment was not recorded. ${refusalWords("payment", error, status)}` };
+}
+
 export type PromiseCheck = { ok: true; promisedCents: number } | { ok: false; words: string };
 
 export function validatePromise(input: { amountText: string; date: string; by: string; note: string; balanceCents: number }): PromiseCheck {

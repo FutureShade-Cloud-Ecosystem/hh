@@ -21,7 +21,7 @@ import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
 
-const coreSource = ["billing", "till", join("platform", "authz"), join("platform", "httpx")]
+const coreSource = ["billing", "payments", "till", join("platform", "authz"), join("platform", "httpx")]
   .flatMap((dir) =>
     readdirSync(join(coreInternal, dir))
       .filter((f) => f.endsWith(".go") && !f.endsWith("_test.go"))
@@ -328,64 +328,105 @@ test("branches, the register selection, reminders, statement runs, the export an
   assert.equal(one.json.dispute.status, "OPEN");
 });
 
-// PROVISIONAL: the received payment route (FROM-PRINCIPAL 73) is modelled from briefs/ITEM64-A-CORE-FOLLOWUP.md
-// until fix/ar-payment-apply publishes its contract. These cases hold the stub to the model's own shape and
-// behaviour; they cannot hold it to the core's descriptors or sentences yet. When the contract lands, replace the
-// shape check below with holds("<the generated schema>", ...) and the sentences with `refused(...)`.
+// The received payment route (POST /api/v1/ar/payments/apply, operation paymentsApplyReceived), held to the
+// generated descriptors and to the sentences of the core's payments and billing packages. The route's rules, read
+// at source: every refusal is a 422 in words except an invoice that is not the account's, outside the caller's
+// reach or missing, which is a 404 "no such invoice: <id>"; the split is the server's, oldest first (issue date,
+// due date, invoice number, id) whatever order the list came in; the answer carries one line per named invoice,
+// oldest first; unapplied is always zero; a preview never reads the key; a replayed key answers the first result
+// when the body is the same and is refused in words when it is not.
 const APPLY = "/api/v1/ar/payments/apply";
-function appliedShape(answer) {
-  assert.equal(typeof answer.preview, "boolean");
-  for (const k of ["amount_cents", "applied_cents", "unapplied_cents"]) assert.ok(Number.isInteger(answer[k]), k);
-  assert.equal(typeof answer.replayed, "boolean");
-  for (const l of answer.lines) {
-    for (const k of ["invoice_id", "invoice_no", "outcome"]) assert.equal(typeof l[k], "string", k);
-    for (const k of ["applied_cents", "balance_after_cents", "stays_open_cents"]) assert.ok(Number.isInteger(l[k]), k);
-    assert.ok(["CLOSES", "PART", "NONE"].includes(l.outcome));
-  }
+
+async function graniteInvoices() {
+  const register = await call("GET", "/api/v1/ar/register");
+  const mine = register.json.items.filter((r) => r.account_no === "GE-100");
+  return mine.sort((a, b) => a.issue_date.localeCompare(b.issue_date) || a.due_date.localeCompare(b.due_date) || a.invoice_no.localeCompare(b.invoice_no));
 }
 
-test("PROVISIONAL apply route: the preview splits and writes nothing, the post is one payment, a retry posts once", async () => {
+test("apply route: the preview splits oldest first whatever the list order and writes nothing", async () => {
   await reset();
-  const register = await call("GET", "/api/v1/ar/register");
-  const mine = register.json.items.filter((r) => r.account_no === "GE-100").sort((a, b) => b.days_overdue - a.days_overdue);
-  const ids = mine.map((r) => r.id);
-  const body = { customer_id: mine[0].customer_id, method: "CHEQUE", amount_cents: 500000, reference: "c", invoice_ids: ids, idempotency_key: "a-1", preview: true };
-  const before = await call("GET", "/api/v1/ar/bounced");
+  const mine = await graniteInvoices();
+  const oldest = mine[0];
+  const youngest = mine[mine.length - 1];
+  const body = { customer_id: oldest.customer_id, method: "CHEQUE", amount_cents: 500000, reference: "c", invoice_ids: [youngest.id, oldest.id], idempotency_key: "p-1", preview: true };
   const preview = await call("POST", APPLY, body);
   assert.equal(preview.status, 200);
-  appliedShape(preview.json);
+  holds("BillingApplyPaymentAnswer", preview.json);
   assert.equal(preview.json.preview, true);
-  assert.deepEqual(preview.json.lines.map((l) => l.outcome), ["CLOSES", "PART"]);
-  assert.equal(preview.json.unapplied_cents, 0);
-  const untouched = await call("GET", `/api/v1/ar/register/invoices/${ids[0]}`);
-  assert.equal(untouched.json.totals.balance_cents, mine[0].balance_cents);
   assert.equal(preview.json.payment_no, undefined);
-
+  assert.equal(preview.json.unapplied_cents, 0);
+  assert.deepEqual(preview.json.lines.map((l) => l.invoice_id), [oldest.id, youngest.id], "the server's split is oldest first, not the list's order");
+  assert.deepEqual(preview.json.lines.map((l) => l.outcome), ["CLOSES", "PART"]);
+  assert.equal(preview.json.lines[0].applied_cents, oldest.balance_cents);
+  const untouched = await call("GET", `/api/v1/ar/register/invoices/${oldest.id}`);
+  assert.equal(untouched.json.totals.balance_cents, oldest.balance_cents);
+  // A preview never reads the key: the same key still applies for real afterwards.
   const posted = await call("POST", APPLY, { ...body, preview: false });
   assert.equal(posted.status, 200);
-  appliedShape(posted.json);
+  assert.equal(posted.json.replayed, false);
+});
+
+test("apply route: the post is one payment, a retry with the same body answers the first result and posts once", async () => {
+  await reset();
+  const mine = await graniteInvoices();
+  const ids = mine.map((r) => r.id);
+  const body = { customer_id: mine[0].customer_id, method: "CHEQUE", amount_cents: 500000, reference: "c", invoice_ids: ids, idempotency_key: "a-1", preview: false };
+  const posted = await call("POST", APPLY, body);
+  assert.equal(posted.status, 200);
+  holds("BillingApplyPaymentAnswer", posted.json);
   assert.ok(posted.json.payment_no);
-  const again = await call("POST", APPLY, { ...body, preview: false });
+  assert.equal(posted.json.replayed, false);
+  const again = await call("POST", APPLY, { ...body, invoice_ids: [...ids].reverse() });
+  assert.equal(again.status, 200);
+  holds("BillingApplyPaymentAnswer", again.json);
   assert.equal(again.json.replayed, true);
   assert.equal(again.json.payment_no, posted.json.payment_no);
   const one = await call("GET", `/api/v1/ar/invoices/${ids[1]}/payments`);
   assert.equal(one.json.items.filter((p) => p.payment_no === posted.json.payment_no).length, 1);
-  void before;
+  const after = await call("GET", `/api/v1/ar/register/invoices/${mine[0].id}`);
+  assert.equal(after.json.totals.balance_cents, 0);
 });
 
-test("PROVISIONAL apply route: refusals leave nothing applied", async () => {
+test("apply route: a replayed key is judged against its own body", async () => {
   await reset();
+  const mine = await graniteInvoices();
+  const other = (await call("GET", "/api/v1/ar/register")).json.items.find((r) => r.account_no === "OB-200");
+  const body = { customer_id: mine[0].customer_id, method: "CHEQUE", amount_cents: 1000, reference: "c", invoice_ids: [mine[0].id], idempotency_key: "r-1", preview: false };
+  assert.equal((await call("POST", APPLY, body)).status, 200);
+  refused(await call("POST", APPLY, { ...body, amount_cents: 2000 }), 422, "that idempotency key already recorded a different payment; use a new key");
+  refused(await call("POST", APPLY, { ...body, reference: "d" }), 422, "that idempotency key already recorded a different payment; use a new key");
+  refused(await call("POST", APPLY, { ...body, method: "CASH" }), 422, "that idempotency key already recorded a different payment; use a new key");
+  refused(await call("POST", APPLY, { ...body, customer_id: other.customer_id, invoice_ids: [other.id] }), 422, "that idempotency key already recorded a payment for another account; use a new key");
+  const still = await call("GET", `/api/v1/ar/register/invoices/${mine[0].id}`);
+  assert.equal(still.json.totals.balance_cents, mine[0].balance_cents - 1000);
+});
+
+test("apply route: refusals are the core's words and leave nothing applied", async () => {
+  await reset();
+  const mine = await graniteInvoices();
   const register = await call("GET", "/api/v1/ar/register");
-  const granite = register.json.items.filter((r) => r.account_no === "GE-100");
   const other = register.json.items.find((r) => r.account_no === "OB-200");
-  const base = { customer_id: granite[0].customer_id, method: "CASH", reference: "c", idempotency_key: "a-2", preview: false };
-  const mixed = await call("POST", APPLY, { ...base, amount_cents: 1000, invoice_ids: [granite[0].id, other.id] });
-  assert.equal(mixed.status, 400);
-  assert.equal(mixed.json.error, "an invoice of another account cannot take this payment");
-  const over = await call("POST", APPLY, { ...base, amount_cents: 99_999_999, invoice_ids: [granite[0].id] });
-  assert.equal(over.status, 400);
-  const after = await call("GET", `/api/v1/ar/register/invoices/${granite[0].id}`);
-  assert.equal(after.json.totals.balance_cents, granite[0].balance_cents);
-  const none = await call("POST", APPLY, { ...base, amount_cents: 0, invoice_ids: [granite[0].id] });
-  assert.equal(none.status, 400);
+  const base = { customer_id: mine[0].customer_id, method: "CASH", reference: "c", idempotency_key: "x-1", preview: false, amount_cents: 1000, invoice_ids: [mine[0].id] };
+  refused(await call("POST", APPLY, { ...base, idempotency_key: "" }), 422, "recording a payment needs an idempotency key");
+  refused(await call("POST", APPLY, { ...base, amount_cents: 0 }), 422, "a payment amount must be greater than zero");
+  refused(await call("POST", APPLY, { ...base, invoice_ids: [] }), 422, "a payment must be applied to at least one invoice");
+  const tender = await call("POST", APPLY, { ...base, method: "BARTER" });
+  refused(tender, 422, "tender must be one of ");
+  assert.equal(tender.json.error, "tender must be one of EFT, CHEQUE, CARD, CASH");
+  refused(await call("POST", APPLY, { ...base, customer_id: "nope" }), 422, "customer id must be a uuid");
+  refused(await call("POST", APPLY, { ...base, invoice_ids: ["nope"] }), 422, "invoice ids must be uuids");
+  refused(await call("POST", APPLY, { ...base, invoice_ids: [mine[0].id, mine[0].id] }), 422, "the same invoice is named twice: ");
+  const foreign = await call("POST", APPLY, { ...base, invoice_ids: [mine[0].id, other.id] });
+  refused(foreign, 404, "no such invoice: ");
+  assert.ok(foreign.json.error.endsWith(other.id));
+  const over = await call("POST", APPLY, { ...base, amount_cents: 99_999_999, invoice_ids: [mine[0].id] });
+  refused(over, 422, "the selected invoices can take at most ");
+  assert.ok(over.json.error.endsWith(`${mine[0].balance_cents} cents right now; refresh and retry`));
+  const after = await call("GET", `/api/v1/ar/register/invoices/${mine[0].id}`);
+  assert.equal(after.json.totals.balance_cents, mine[0].balance_cents);
+  // A paid invoice is not open.
+  assert.equal((await call("POST", APPLY, { ...base, amount_cents: mine[0].balance_cents })).status, 200);
+  const closed = await call("POST", APPLY, { ...base, idempotency_key: "x-2" });
+  refused(closed, 422, "is not open; a payment applies to a finalized or partially paid invoice");
+  assert.ok(closed.json.error.startsWith(`invoice ${mine[0].invoice_no} (paid) is not open`));
 });
