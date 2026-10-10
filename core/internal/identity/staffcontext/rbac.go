@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"time"
 )
 
 // -- A-20 RBAC domain (W1) --------------------------------------------
@@ -551,6 +552,9 @@ type ApprovalRequest struct {
 	// when the requester holds no single ERP named role, and an empty or
 	// unknown filer role reaches leadership only. It stays off the wire.
 	RequesterRole string `json:"-"`
+	// RequestedAt is the filing time the list is ordered by (newest first, id as the tie break) and the
+	// page cursor is positioned on. It is read by the list only and stays off the wire.
+	RequestedAt time.Time `json:"-"`
 }
 
 // Decide applies an approver's decision, enforcing the authority model, the

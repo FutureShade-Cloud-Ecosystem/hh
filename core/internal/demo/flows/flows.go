@@ -14,14 +14,16 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
-// The table is closed: four flows, the pair the Counter Till cycle ships
-// (D49, DECISIONS.md) plus the two personas the roles roadmap's first
-// increments mint (the Yard Team and the Driver, the logins migration 0200
-// plants and the demo populate converges onto Trenton). The table is the
-// box's whole mint set, not any one page's offer: an entry page renders the
-// flows of the roles whose screens exist there and leaves the rest coming,
-// so a row here mints a login without offering a card for it. A new flow is
-// an edit here, reviewed, never a runtime input.
+// The table is closed: the pair the Counter Till cycle ships (D49,
+// DECISIONS.md), the two personas the roles roadmap's first increments
+// mint (the Yard Team and the Driver, the logins migration 0200 plants
+// and the demo populate converges onto Trenton), and the Financial
+// Controller the roles roadmap adds. The table is the box's whole mint
+// set, not any one page's offer: an entry page renders the flows of the
+// roles whose screens exist there and leaves the rest coming, so a row
+// here mints a login without offering a card for it. A new flow is an
+// edit here, reviewed, never a runtime input: the entry page may only
+// ever offer what this file lists.
 package flows
 
 // OrgSlug is the one org a demo box holds and the only org the demo
@@ -99,7 +101,7 @@ var accounts = map[string]Account{
 		Label:          "Sales manager",
 		Role:           "sales_manager",
 	},
-	"yard-team": {
+"yard-team": {
 		Flow:           "yard-team",
 		PlatformUserID: "d0200000-0000-4000-9000-000000000002",
 		Email:          "yard.demo@dibbits.example",
@@ -114,6 +116,14 @@ var accounts = map[string]Account{
 		DisplayName:    "Driver persona (demo)",
 		Label:          "Driver",
 		Role:           "driver",
+	},
+	"financial-controller": {
+		Flow:           "financial-controller",
+		PlatformUserID: "de110000-0000-4000-9000-0000000000c1",
+		Email:          "financial.controller@" + ReservedDomain,
+		DisplayName:    "Financial controller (demo)",
+		Label:          "Financial Controller",
+		Role:           "financial_controller",
 	},
 }
 
@@ -131,8 +141,9 @@ func All() []Account {
 	return []Account{
 		accounts["sales"],
 		accounts["sales-manager"],
-		accounts["yard-team"],
+accounts["yard-team"],
 		accounts["driver"],
+		accounts["financial-controller"],
 	}
 }
 
