@@ -570,7 +570,7 @@ func TestCustomerActivity_PaymentRowsReachOnlyACallerWhoAsksForThem(t *testing.T
 	for _, txn := range []string{"INVOICE", "PAYMENT", "NSF"} {
 		if _, err := f.pool.Exec(ctx,
 			`INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, occurred_at)
-			 VALUES ($1::uuid, $2, 100, 100, 'test', gen_random_uuid(), now())`, f.customerID, txn); err != nil {
+			 VALUES ($1::uuid, $2, 100, 100, 'test', gen_random_uuid(), $3)`, f.customerID, txn, d510Now); err != nil {
 			t.Fatalf("seed %s row: %v", txn, err)
 		}
 	}
