@@ -250,6 +250,32 @@ test("a line can be added to a draft from the catalogue, and removed again", asy
   await expect(panel.locator("[data-add-line]")).toHaveCount(0);
 });
 
+test("typed dollars become cents exactly: 0.1 and 19.99 land as the server's own totals, a third decimal is refused in words", async ({ page, request }) => {
+  await openHome(page, request);
+  await draftTheGap(page);
+  const panel = page.locator("[data-draft]");
+  const line = panel.locator("[data-draft-line]");
+  await line.getByRole("button", { name: "Change" }).click();
+  // 1.005 is the float edge a multiply and a round turns into 100 cents, a price nobody typed:
+  // the boundary refuses a third decimal in words and the line keeps the server's figure.
+  await page.locator("[data-line-cost]").fill("1.005");
+  await line.getByRole("button", { name: "Save" }).click();
+  await expect(panel.locator("[data-error]")).toHaveText("Write the unit cost as dollars and cents, two decimals at most.");
+  await expect(page.locator("[data-line-editing]")).toHaveCount(1);
+  await expect(line).toContainText("$2,016.00");
+  // 0.1 and 19.99 become exactly 10 and 1999 cents, and the server's line total proves it (240 pieces).
+  await page.locator("[data-line-cost]").fill("0.1");
+  await line.getByRole("button", { name: "Save" }).click();
+  await expect(line).toContainText("$0.10");
+  await expect(line).toContainText("$24.00");
+  await line.getByRole("button", { name: "Change" }).click();
+  await page.locator("[data-line-cost]").fill("19.99");
+  await line.getByRole("button", { name: "Save" }).click();
+  await expect(line).toContainText("$19.99");
+  await expect(line).toContainText("$4,797.60");
+  await expect(panel.locator("[data-draft-total]")).toContainText("$4,797.60");
+});
+
 test("a role the gate walls out of editing is refused in the ruled words, beside the line's Save", async ({ page, request }) => {
   await openHome(page, request);
   await draftTheGap(page);

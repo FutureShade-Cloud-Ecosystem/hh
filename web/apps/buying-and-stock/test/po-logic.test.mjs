@@ -18,7 +18,7 @@ import {
   statusWord,
   validateExpectedDate,
 } from "../src/po/po-logic.ts";
-import { formatMoney, formatQty } from "../src/po/po-money.ts";
+import { costCentsFromTyped, formatMoney, formatQty } from "../src/po/po-money.ts";
 
 test("the shortfall is read from the contract's key, the one key the core writes", () => {
   const row = { sku: "A" };
@@ -96,6 +96,23 @@ test("money reads as dollars with cents, and a missing figure is a placeholder, 
   assert.equal(formatMoney(undefined), "(no figure)");
   assert.equal(formatMoney(null), "(no figure)");
   assert.equal(formatMoney(12.5), "(no figure)");
+});
+
+test("typed dollars become cents exactly through the decimal string, never a float multiply", () => {
+  // 1.005 is the float edge: Number("1.005") * 100 is 100.49999..., which a Math.round reads as
+  // 100 cents, a price the buyer never typed. The split refuses a third decimal in words instead.
+  assert.deepEqual(costCentsFromTyped("1.005"), { ok: false, words: "Write the unit cost as dollars and cents, two decimals at most." });
+  assert.deepEqual(costCentsFromTyped("0.1"), { ok: true, cents: 10 });
+  assert.deepEqual(costCentsFromTyped("19.99"), { ok: true, cents: 1999 });
+  assert.deepEqual(costCentsFromTyped("8"), { ok: true, cents: 800 });
+  assert.deepEqual(costCentsFromTyped("8.4"), { ok: true, cents: 840 });
+  assert.deepEqual(costCentsFromTyped("8.40"), { ok: true, cents: 840 });
+  assert.deepEqual(costCentsFromTyped("0.05"), { ok: true, cents: 5 });
+  // A negative passes through as negative cents: the core refuses it in its own words, which is
+  // the honest answer beside the button, rather than the app inventing a sentence the core lacks.
+  assert.deepEqual(costCentsFromTyped("-1.50"), { ok: true, cents: -150 });
+  assert.equal(costCentsFromTyped("soon").ok, false);
+  assert.equal(costCentsFromTyped(" 1.005 ").ok, false);
 });
 
 test("quantities read plainly, with the unit unless it is a piece", () => {

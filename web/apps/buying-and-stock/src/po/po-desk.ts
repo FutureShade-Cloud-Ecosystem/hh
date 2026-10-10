@@ -12,7 +12,7 @@ import type { TemplateResult } from "lit";
 import type { InventoryShortfallRow, Product, PurchasingPO, PurchasingPODetail, Result } from "@hardscapehouse/api-client";
 import { PoApi, type DeliveryMethod } from "./po-api.js";
 import { draftOf, landedWords, poRows, refusalWords, shortfallRows, validateExpectedDate } from "./po-logic.js";
-import { formatMoney, formatQty } from "./po-money.js";
+import { costCentsFromTyped, formatMoney, formatQty } from "./po-money.js";
 import { renderDesk, type DeskModel, type DraftModel, type Tab } from "./po-views.js";
 
 export interface DeskHost {
@@ -343,8 +343,14 @@ export class PoDesk {
     const body: { qty_ordered_base?: number; unit_cost_cents?: number } = {};
     if (Number.isFinite(qty) && qty !== line.qty_ordered_base) body.qty_ordered_base = qty;
     if (costText !== "") {
-      const cents = Math.round(Number(costText) * 100);
-      if (Number.isFinite(cents) && cents !== line.unit_cost_cents) body.unit_cost_cents = cents;
+      // Through the decimal string, never a float multiply: 0.1 and 19.99 land as the exact cents.
+      const check = costCentsFromTyped(costText);
+      if (!check.ok) {
+        this.#error = check.words;
+        this.#host.repaint();
+        return;
+      }
+      if (check.cents !== line.unit_cost_cents) body.unit_cost_cents = check.cents;
     }
     if (Object.keys(body).length === 0) {
       this.#error = "Nothing changed on this line yet.";
@@ -379,8 +385,14 @@ export class PoDesk {
     }
     const body: { product_id: string; qty_ordered_base: number; unit_cost_cents?: number } = { product_id: product.id, qty_ordered_base: qty };
     if (costText !== "") {
-      const cents = Math.round(Number(costText) * 100);
-      if (Number.isFinite(cents)) body.unit_cost_cents = cents;
+      // Through the decimal string, never a float multiply: 0.1 and 19.99 land as the exact cents.
+      const check = costCentsFromTyped(costText);
+      if (!check.ok) {
+        this.#error = check.words;
+        this.#host.repaint();
+        return;
+      }
+      body.unit_cost_cents = check.cents;
     }
     this.#busy = true;
     this.#clearMessages();
