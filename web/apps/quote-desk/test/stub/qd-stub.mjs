@@ -2193,6 +2193,12 @@ const server = createServer(async (request, response) => {
     posts.push({ kind: "convert", quote_id: quote.id, key: convertKey === "" ? null : convertKey });
     readBody(request, response, (body) => {
       const fulfilment = body.fulfillment === "WILL_CALL" ? "WILL_CALL" : "PICKUP";
+      // The core's own first check on the key (share_idempotency.go normalizeIdempotencyKey): a UUID,
+      // case insensitive, anything else a 400 in the same words. The desk always sends a UUID.
+      if (convertKey !== "" && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(convertKey)) {
+        respondJson(response, 400, { error: "Idempotency-Key must be a UUID" });
+        return;
+      }
       // The core's order (repository.go Convert): a keyed repeat answers the FIRST order and writes
       // nothing, whatever the status is now and whatever the multi accept switch says; the same key
       // with another fulfilment is refused in words.

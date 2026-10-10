@@ -706,6 +706,22 @@ test("an unworded 4xx convert refusal says the outcome is not known yet and the 
   expect(seen.conversions).toHaveLength(1);
 });
 
+test("the stub refuses a convert key that is not a UUID, as the core does, and makes nothing", async ({ page }) => {
+  await page.request.put("/_stub/multi-accept", { data: { on: true } });
+  // The staff routes sit behind the minted bearer, so the leg mints one the way the front door does.
+  const session = ((await (await page.request.post("/api/v1/demo/session", { data: { flow: "sales" } })).json()) as { token: string }).token;
+  const answer = await page.request.post("/api/v1/quotes/q-1003/convert", {
+    headers: { "idempotency-key": "not-a-key", Authorization: `Bearer ${session}`, "X-Org": "hh-demo" },
+    data: { fulfillment: "PICKUP" },
+  });
+  expect(answer.status()).toBe(400);
+  expect(((await answer.json()) as { error: string }).error).toBe("Idempotency-Key must be a UUID");
+  // The refusal made nothing: no conversion stands and no key is held.
+  const seen = await state(page);
+  expect(seen.conversions).toHaveLength(0);
+  expect(seen.posts.filter((p) => p.kind === "convert")).toHaveLength(1);
+});
+
 test("a fresh press of Confirm after a definite refusal mints a new convert key", async ({ page }) => {
   await arrive(page, "q-1003");
   await next(page);
