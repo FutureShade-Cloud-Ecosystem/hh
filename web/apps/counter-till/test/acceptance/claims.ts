@@ -18,7 +18,7 @@ export interface ClaimProof {
 
 export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "sign-in-roles": [
-    { file: "10-world.pw.ts", test: "the way in's data: four flows with role codes and labels" },
+    { file: "10-world.pw.ts", test: "the way in's data: six flows with role codes and labels" },
     { file: "20-sales.pw.ts", test: "the way in: two cards, the eleven coming roles untapped, and the banner" },
     { file: "30-manager.pw.ts", test: "the way in: the manager's card opens the same till under its own name" },
   ],
