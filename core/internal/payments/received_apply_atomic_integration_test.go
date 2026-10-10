@@ -239,7 +239,8 @@ func TestApplyReceived_InvoiceLocksAreTakenAscendingWhateverTheListOrder(t *test
 		var waiting int
 		if err := w.pool.QueryRow(ctx, `
 			SELECT COUNT(*) FROM pg_stat_activity
-			 WHERE wait_event_type = 'Lock' AND query LIKE '%FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE%'
+			 WHERE wait_event_type = 'Lock' AND query LIKE '%customer_id = $2::uuid%'
+			   AND query LIKE '%FOR NO KEY UPDATE%'
 			   AND pid <> pg_backend_pid()`).Scan(&waiting); err != nil {
 			t.Fatalf("watch the waiter: %v", err)
 		}
@@ -310,5 +311,70 @@ func TestApplyReceived_AReplayIsNotABearerOfTheAnswer(t *testing.T) {
 	}
 	if payments, _, _, _ := w.moneyRowCounts(t, w.otherID); payments != 0 {
 		t.Fatalf("the other account holds no payment, got %d", payments)
+	}
+}
+
+// A fenced caller does not LOCK, and so does not WAIT ON, a row it may not see (the Opus review's
+// P3-2): the account and the branch reach are folded into the locking statement itself, so a held
+// foreign row cannot stall a request that was never going to be allowed to read it. The answer is
+// unchanged, the same not found words for a missing row, another account's and an out of reach one.
+func TestApplyReceived_AFencedCallerDoesNotWaitOnARowItMayNotSee(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		foreign bool // the row is another account's, else this account's but out of reach
+	}{
+		{"another account's invoice", true},
+		{"this account's invoice outside the reach", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newApplyWorld(t)
+			ctx := context.Background()
+			king := w.invoice(t, w.customerID, "FW", 30, 10, 9000)
+			if !tc.foreign {
+				if _, err := w.pool.Exec(ctx,
+					`UPDATE invoices SET branch_id = $2::uuid WHERE id = $1::uuid`, king, applyKingston); err != nil {
+					t.Fatalf("move the invoice to Kingston: %v", err)
+				}
+			} else if _, err := w.pool.Exec(ctx,
+				`UPDATE invoices SET customer_id = $2::uuid WHERE id = $1::uuid`, king, w.otherID); err != nil {
+				t.Fatalf("move the invoice to the other account: %v", err)
+			}
+
+			// A second connection holds the row this request may not see.
+			holder, err := w.pool.Begin(ctx)
+			if err != nil {
+				t.Fatalf("begin holder: %v", err)
+			}
+			if _, err := holder.Exec(ctx, `SELECT 1 FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, king); err != nil {
+				t.Fatalf("hold the row: %v", err)
+			}
+			release := make(chan struct{})
+			go func() {
+				time.Sleep(3 * time.Second)
+				_ = holder.Rollback(ctx)
+				close(release)
+			}()
+			t.Cleanup(func() { _ = holder.Rollback(ctx) })
+
+			// The scoped apply must answer its not found WHILE the holder still holds the row.
+			done := make(chan error, 1)
+			go func() {
+				_, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+					CustomerID: w.customerID, Method: "CASH", IdempotencyKey: w.tag,
+					BranchIDs: []string{dib510Trenton}, InvoiceIDs: []string{king}, AmountCents: 9000,
+				})
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				var nse NoSuchInvoiceError
+				if !errors.As(err, &nse) || nse.InvoiceID != king {
+					t.Fatalf("the refusal is the not found refusal, got %v", err)
+				}
+			case <-time.After(1500 * time.Millisecond):
+				t.Fatal("the request waited on a row it may not see: the lock must fold the account and the reach")
+			}
+			<-release
+		})
 	}
 }

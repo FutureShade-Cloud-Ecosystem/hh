@@ -276,10 +276,11 @@ func (r *Repository) SetDefaultMethod(ctx context.Context, customerID, methodID 
 
 // lockApplyInvoicesTx takes every named invoice of a received payment FOR NO KEY UPDATE, one
 // statement per id in ascending id order (the payments counter is already held), and judges each
-// one as it lands: the account's, open, and inside a scoped caller's branch reach. A row that
-// fails any judgement answers as not found: no such invoice, the same words for a missing row,
-// another account's row and an out of reach row, so the refusal is no existence oracle across
-// the account or branch walls.
+// one as it lands: the account's, open, and inside a scoped caller's branch reach. The account and
+// the reach are FOLDED INTO the locking statement itself, so a fenced caller never locks, and never
+// waits on, a row it may not see (the Opus review's P3-2): a row that fails either answers as not
+// found, the same words for a missing row, another account's row and an out of reach row, so the
+// refusal is no existence oracle across the account or branch walls either.
 //
 // FOR NO KEY UPDATE, not FOR UPDATE, for the reason LOCK-ORDER.md writes down: this writer takes
 // no key column, and NO KEY UPDATE still conflicts with every other invoice writer's row lock
@@ -289,14 +290,20 @@ func (r *Repository) SetDefaultMethod(ctx context.Context, customerID, methodID 
 func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in ApplyRequest) ([]applyInvoiceRow, error) {
 	ids := append([]string(nil), in.InvoiceIDs...)
 	sort.Strings(ids)
-	global := in.BranchIDs == nil
+	var reach []string
+	if in.BranchIDs != nil {
+		reach = in.BranchIDs
+	}
 	rows := make([]applyInvoiceRow, 0, len(ids))
 	for _, id := range ids {
 		var row applyInvoiceRow
 		err := tx.QueryRow(ctx, `
 			SELECT id::text, invoice_no, customer_id::text, branch_id::text, status::text,
 			       issue_date, due_date, balance_cents, holdback_cents
-			  FROM invoices WHERE id = $1::uuid FOR NO KEY UPDATE`, id).
+			  FROM invoices
+			 WHERE id = $1::uuid AND customer_id = $2::uuid
+			   AND ($3::text[] IS NULL OR branch_id = ANY($3::uuid[]))
+			   FOR NO KEY UPDATE`, id, in.CustomerID, reach).
 			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
 				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -304,12 +311,6 @@ func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in Appl
 		}
 		if err != nil {
 			return nil, fmt.Errorf("apply: lock invoice %q: %w", id, err)
-		}
-		if row.CustomerID != in.CustomerID {
-			return nil, NoSuchInvoiceError{InvoiceID: id}
-		}
-		if !global && !branchInReach(in.BranchIDs, row.BranchID) {
-			return nil, NoSuchInvoiceError{InvoiceID: id}
 		}
 		if row.Status != "FINALIZED" && row.Status != "PARTIALLY_PAID" {
 			return nil, httpx.BadRequestf("invoice %s (%s) is not open; a payment applies to a finalized or partially paid invoice",
