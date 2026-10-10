@@ -1,10 +1,10 @@
 // The front door: the demo box's first screen (HH-DEMO-1 D2). One element,
 // three states, one header.
 //
-//   picker      pre-auth: "Pick a role to walk the demo.", the two live role
-//               cards, and the decided matrix's eleven other roles as coming
+//   picker      pre-auth: "Pick a role to walk the demo.", the three live role
+//               cards, and the decided matrix's ten other roles as coming
 //               rows that show their modules and never tap.
-//   home        post-auth: the role's modules as tiles. The box's two live
+//   home        post-auth: the role's modules as tiles. The box's three live
 //               modules navigate (D1 wires the routes); the manager's three
 //               not-yet-on-the-box modules open the polite coming-soon page.
 //   coming-soon a module a tile pointed at that the box does not serve yet.
@@ -73,8 +73,7 @@ type Screen = { kind: "picker" } | { kind: "home" } | { kind: "coming-soon"; mod
 const TILE_BLURBS: Record<string, string> = {
   "Counter Till": "The counter sale flow.",
   "Quote Desk": "Size the job, build and send the quote.",
-  "Manager Home": "What needs you, the approvals, the reports.",
-  "Dealer Admin": "Staff, roles, pricing rules, the audit log.",
+  "HH Drive": "The day's run, stop to proof of delivery.",
   "House Messages": "Staff channels and acknowledgements.",
 };
 
@@ -374,7 +373,7 @@ export class FrontDoorApp extends HHElement {
         color: var(--hh-danger);
       }
 
-      /* ── the coming list: one collapsed disclosure. The eleven coming
+      /* ── the coming list: one collapsed disclosure. The ten coming
          roles are honesty about scope, not a page of their own: closed they
          take one row, open they show today's list unchanged, chips muted
          as they ever were. ────────────────────────────────────────────── */
@@ -934,7 +933,7 @@ export class FrontDoorApp extends HHElement {
         </div>
         <details class="coming-card" data-testid="coming-disclosure">
           <summary>
-            <span class="coming-heading">Eleven more roles are coming</span>
+            <span class="coming-heading">Ten more roles are coming</span>
             <span class="chev" aria-hidden="true">${drawIcon(iconForId("lucide:chevron-up"), 16)}</span>
           </summary>
           <ul class="coming" aria-label="Coming roles">
