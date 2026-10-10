@@ -177,7 +177,7 @@ func (r *Repository) AccountPositionFor(ctx context.Context, asOf time.Time, cus
 		   FROM customers c
 		   LEFT JOIN invoices i
 		          ON i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')
-		  WHERE c.id = $1::uuid`, customerID, asOf).
+		  WHERE c.id = $1::uuid`, customerID, houseClock(asOf)).
 		Scan(&a.OpenBalanceCents, &a.OverdueCents, &a.CreditLimitCents); err != nil {
 		return AccountPosition{}, fmt.Errorf("billing: account position: %w", err)
 	}

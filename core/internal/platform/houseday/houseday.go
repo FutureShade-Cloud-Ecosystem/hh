@@ -68,3 +68,22 @@ func JustAfterUTCDayChange(day time.Time) time.Time {
 	d := day.UTC()
 	return time.Date(d.Year(), d.Month(), d.Day(), 0, 30, 0, 0, time.UTC)
 }
+
+// ParseDay reads a YYYY-MM-DD as that day in the house zone: the instant its house midnight begins.
+// A bare time.Parse gives midnight at Greenwich, which every house-day reader then takes for the
+// previous evening, so a date a caller names must come through here.
+func ParseDay(s string) (time.Time, error) {
+	return time.ParseInLocation("2006-01-02", s, Location())
+}
+
+// EndOfDay is the last instant of the named house day (a microsecond before the next house
+// midnight, the finest grain the database keeps). An as-of that names a day inclusively cuts both
+// a date column and a posting instant here: the house day of the answer is the day asked for, and
+// every instant of that day is at or before it.
+func EndOfDay(s string) (time.Time, error) {
+	d, err := ParseDay(s)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return d.AddDate(0, 0, 1).Add(-time.Microsecond), nil
+}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
@@ -23,12 +24,17 @@ type hh195Rig struct {
 	pool     *pgxpool.Pool
 	branchID string
 	suffix   string
+	// clock is the instant every age in this rig is read at: just after the UTC day change, when
+	// the UTC day is one ahead of the house day. Pinned, so the leg is red on a UTC reading at
+	// any wall hour and not only in the evening window.
+	clock time.Time
 }
 
 func newHH195Rig(t *testing.T) *hh195Rig {
 	t.Helper()
 	pool := intPool(t)
-	r := &hh195Rig{pool: pool, suffix: fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000)}
+	r := &hh195Rig{pool: pool, suffix: fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000),
+		clock: houseday.JustAfterUTCDayChange(time.Now())}
 	if err := pool.QueryRow(context.Background(), `SELECT id::text FROM locations WHERE loc_type='BRANCH' LIMIT 1`).Scan(&r.branchID); err != nil {
 		t.Fatalf("no seeded BRANCH (migrate the gate database first): %v", err)
 	}
@@ -51,7 +57,8 @@ func (r *hh195Rig) customer(t *testing.T, tag string) string {
 	return id
 }
 
-// doc plants one document and returns its id. cents is the balance; docType INVOICE or CREDIT_MEMO.
+// doc plants one document dueDaysAgo house days before the rig's clock (never the database's
+// CURRENT_DATE, which is the UTC day) and returns its id. cents is the balance; docType INVOICE or CREDIT_MEMO.
 func (r *hh195Rig) doc(t *testing.T, customerID, no, docType, status string, cents int64, dueDaysAgo int) string {
 	t.Helper()
 	var id string
@@ -59,9 +66,9 @@ func (r *hh195Rig) doc(t *testing.T, customerID, no, docType, status string, cen
 		INSERT INTO invoices (invoice_no, customer_id, branch_id, status, issue_date, due_date,
 		                      subtotal_cents, tax_cents, total_cents, balance_cents, finalized_at,
 		                      doc_type, source_kind, closes_order)
-		VALUES ($1||'-'||$7, $2::uuid, $3::uuid, $4, CURRENT_DATE - $5::int, CURRENT_DATE - $5::int,
+		VALUES ($1||'-'||$7, $2::uuid, $3::uuid, $4, $5::date, $5::date,
 		        $6, 0, $6, $6, now(), $8, 'ORDER', FALSE) RETURNING id::text`,
-		no, customerID, r.branchID, status, dueDaysAgo, cents, r.suffix, docType).Scan(&id); err != nil {
+		no, customerID, r.branchID, status, houseday.AddDays(func() time.Time { return r.clock }, -dueDaysAgo), cents, r.suffix, docType).Scan(&id); err != nil {
 		t.Fatalf("seed %s: %v", no, err)
 	}
 	return id
@@ -139,7 +146,7 @@ func TestIntegrationHH195R2_EscalationQueueIgnoresCreditMemos(t *testing.T) {
 	rig.doc(t, mixed, "INV-M-YOUNG", "INVOICE", "FINALIZED", 7000, 120)
 	rig.doc(t, mixed, "INV-M-OLD", "INVOICE", "FINALIZED", 1000, 100)
 
-	view, err := svc.Landing(ctx, rig.branchID, time.Time{})
+	view, err := svc.Landing(ctx, rig.branchID, rig.clock)
 	if err != nil {
 		t.Fatalf("landing: %v", err)
 	}

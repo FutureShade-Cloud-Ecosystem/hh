@@ -71,6 +71,13 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.CT_STUB_PORT ?? 4821);
 
+// The stub's clock. It reads the host's, unless a leg pins it (POST /_stub/clock with {"now"}):
+// the dealer's day the world is built on must be able to stand at the evening instant at any wall
+// hour, the same pin the drive run's stub takes, so every read of the clock below goes through
+// nowMs(). Unpinned legs see the host clock exactly as before.
+let clockOffsetMs = 0;
+const nowMs = () => Date.now() + clockOffsetMs;
+
 // The closed flow table: the two logins this release shows, with the labels
 // the cards carry and the role each minted account holds (the mint's role
 // label comes from this table, never from the roles table).
@@ -307,7 +314,7 @@ const HST_RATE_BPS = 1300; // the Ontario rate, as basis points
 // evening house time.
 const HOUSE_ZONE = "America/Toronto";
 
-function houseDay(now = new Date()) {
+function houseDay(now = new Date(nowMs())) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: HOUSE_ZONE,
     year: "numeric",
@@ -1069,7 +1076,7 @@ function base64UrlJson(value) {
 }
 
 function mintToken(flow) {
-  const issuedAtSeconds = Math.floor(Date.now() / 1000);
+  const issuedAtSeconds = Math.floor(nowMs() / 1000);
   const header = { alg: "ES256", typ: "JWT" };
   const payload = {
     iss: "hh-demo-stub",
@@ -1099,7 +1106,7 @@ function approverFromRequest(request) {
     const sub = payload.sub;
     const exp = payload.exp;
     if (typeof sub !== "string") return { present: true, account: null };
-    if (typeof exp !== "number" || !Number.isFinite(exp) || exp * 1000 <= Date.now()) {
+    if (typeof exp !== "number" || !Number.isFinite(exp) || exp * 1000 <= nowMs()) {
       return { present: true, account: null };
     }
     for (const flow of Object.keys(USERS)) {
@@ -1835,6 +1842,19 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+
+  if (request.method === "POST" && path === "/_stub/clock") {
+    // Harness-only: an optional body {"now": <epoch ms>} pins the stub's clock to that instant (it
+    // then runs on); an empty body puts it back on the host clock. A leg that pins the page's
+    // clock to the dealer's evening pins this clock to the same instant, so the world the stub
+    // builds and the day the page asks for can never disagree by the wall hour the suite ran at.
+    readBody(request, (parsed) => {
+      clockOffsetMs = parsed !== null && typeof parsed === "object" && typeof parsed.now === "number" ? parsed.now - Date.now() : 0;
+      respondJson(response, 200, { ok: true, now: nowMs() });
+    });
+    return;
+  }
+
   if (request.method === "POST" && path === "/_stub/refund-approval-limit") {
     readBody(request, (parsed) => {
       approvalLimitEnabled = parsed !== null && typeof parsed === "object" && parsed.enabled === true;
@@ -2817,7 +2837,7 @@ const server = createServer(async (request, response) => {
           requestedSupplierDeposit > 0 ? uuidFromCounter(7000 + sales.size + 1) : undefined,
         supplier_deposit_invoice_no: requestedSupplierDeposit > 0 ? nextDocNo("INV") : undefined,
         balance_cents: total - tenders.reduce((sum, leg) => sum + leg.amount_cents, 0),
-        created_at: new Date().toISOString(),
+        created_at: new Date(nowMs()).toISOString(),
         created_by: caller.userId,
         payment_id: paymentId,
         gateway_ref: gatewayRef,
@@ -3441,7 +3461,7 @@ const server = createServer(async (request, response) => {
         notes: typeof parsed.notes === "string" ? parsed.notes : "",
         status: "PARKED",
         lines,
-        created_at: new Date().toISOString(),
+        created_at: new Date(nowMs()).toISOString(),
       };
       parked.set(id, ticket);
       respondJson(response, 201, ticket);
@@ -3878,7 +3898,7 @@ function receiptView(sale) {
     changeDueCents: sale.change_due_cents ?? 0,
     depositCents: depositApplies ? sale.deposit_cents ?? 0 : 0,
     balanceCents,
-    printedAt: receiptStamp(new Date().toISOString()),
+    printedAt: receiptStamp(new Date(nowMs()).toISOString()),
   };
 }
 
