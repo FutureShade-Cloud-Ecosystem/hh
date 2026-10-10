@@ -108,24 +108,49 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 		    )`
 
 	// Insert the derived rows the user qualifies for. A non-ACTIVE user qualifies for nothing (the
-	// Go-side status guard) so it is skipped entirely.
+	// Go-side status guard) so it is skipped entirely. RETURNING hands back only the rooms that
+	// gained a row (the conflict arm answers nothing), and each of them owes the channels feed the
+	// same announce the explicit seat owes: a device holding a cursor past the room's stamped seq
+	// sees the room arrive. The bumps ride the sync's own transaction, so the seats and their
+	// announce commit together or not at all.
 	if status == "ACTIVE" {
-		if _, err := tx.Exec(ctx, `
+		rows, err := tx.Query(ctx, `
 			INSERT INTO msg_members (channel_id, user_id, role, source)
 			SELECT ch.id, $1, 'MEMBER', 'DERIVED'
 			FROM msg_channels ch
 			WHERE `+qualifies+`
-			ON CONFLICT (channel_id, user_id) DO NOTHING`, userID, isGlobal); err != nil {
+			ON CONFLICT (channel_id, user_id) DO NOTHING
+			RETURNING channel_id`, userID, isGlobal)
+		if err != nil {
 			return fmt.Errorf("insert derived members: %w", err)
+		}
+		var seated []string
+		for rows.Next() {
+			var ch string
+			if err := rows.Scan(&ch); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan seated channel: %w", err)
+			}
+			seated = append(seated, ch)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("insert derived members: %w", err)
+		}
+		for _, ch := range seated {
+			if err := r.bumpChannelSeq(ctx, tx, ch); err != nil {
+				return err
+			}
 		}
 	}
 
 	// Delete DERIVED rows the user no longer qualifies for (role/branch change, deactivation, or
 	// channel archival). EXPLICIT rows are untouched (source filter). An ACTIVE user is re-tested
 	// against `qualifies`; a non-ACTIVE user qualifies for NOTHING, so ALL their derived rows are
-	// pruned (the branch below avoids binding the now-unused $2).
+	// pruned (the branch below avoids binding the now-unused $2). Every pruned room owes the feed
+	// the same refresh bump a removal owes, on the same transaction.
 	if status == "ACTIVE" {
-		if _, err := tx.Exec(ctx, `
+		rows, err := tx.Query(ctx, `
 			DELETE FROM msg_members m
 			WHERE m.user_id = $1
 			  AND m.source = 'DERIVED'
@@ -133,13 +158,53 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 			        SELECT 1 FROM msg_channels ch
 			        WHERE ch.id = m.channel_id
 			          AND `+qualifies+`
-			      )`, userID, isGlobal); err != nil {
+			      )
+			RETURNING m.channel_id`, userID, isGlobal)
+		if err != nil {
 			return fmt.Errorf("prune derived members: %w", err)
 		}
+		var pruned []string
+		for rows.Next() {
+			var ch string
+			if err := rows.Scan(&ch); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan pruned channel: %w", err)
+			}
+			pruned = append(pruned, ch)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("prune derived members: %w", err)
+		}
+		for _, ch := range pruned {
+			if err := r.bumpChannelSeq(ctx, tx, ch); err != nil {
+				return err
+			}
+		}
 	} else {
-		if _, err := tx.Exec(ctx,
-			`DELETE FROM msg_members WHERE user_id = $1 AND source = 'DERIVED'`, userID); err != nil {
+		rows, err := tx.Query(ctx,
+			`DELETE FROM msg_members WHERE user_id = $1 AND source = 'DERIVED'
+			 RETURNING channel_id`, userID)
+		if err != nil {
 			return fmt.Errorf("prune derived members (inactive): %w", err)
+		}
+		var pruned []string
+		for rows.Next() {
+			var ch string
+			if err := rows.Scan(&ch); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan pruned channel: %w", err)
+			}
+			pruned = append(pruned, ch)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("prune derived members (inactive): %w", err)
+		}
+		for _, ch := range pruned {
+			if err := r.bumpChannelSeq(ctx, tx, ch); err != nil {
+				return err
+			}
 		}
 	}
 

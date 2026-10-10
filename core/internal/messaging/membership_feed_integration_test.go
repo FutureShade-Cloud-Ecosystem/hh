@@ -287,3 +287,99 @@ func TestIntegration_RemoveMember_Failed_Bump_Leaves_The_Member_Seated(t *testin
 		t.Fatalf("a removal whose bump failed must leave the member seated")
 	}
 }
+
+// The derived membership sync owes the channels feed the same announce
+// the explicit seat and removal owe: a derived seat or prune moves the
+// room's feed seq, in the sync's own transaction, so a device holding a
+// cursor past the room's stamped seq sees the change arrive instead of
+// missing the room class until some other write stirs the room.
+func TestIntegration_SyncMembership_Bumps_The_Feed_Seq_Of_Derived_Changes(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+
+	// Settle first: the sync is idempotent, so after it Sam's derived
+	// rows exist and a further sync changes nothing.
+	if err := repo.SyncMembership(ctx, uSamRivera); err != nil {
+		t.Fatalf("settle sam's sync: %v", err)
+	}
+
+	// The seat arm: clear Sam's derived rows (the sync's self healing
+	// re-derives exactly them), and every room that comes back must
+	// carry a higher seq than before.
+	roomRows, err := pool.Query(ctx,
+		`SELECT channel_id::text FROM msg_members WHERE user_id = $1 AND source = 'DERIVED'`, uSamRivera)
+	if err != nil {
+		t.Fatalf("read sam's derived rooms: %v", err)
+	}
+	var derived []string
+	for roomRows.Next() {
+		var ch string
+		if err := roomRows.Scan(&ch); err != nil {
+			t.Fatalf("scan derived room: %v", err)
+		}
+		derived = append(derived, ch)
+	}
+	roomRows.Close()
+	if len(derived) == 0 {
+		t.Fatalf("setup: sam must hold derived rows after the settle sync")
+	}
+	before := map[string]int64{}
+	for _, ch := range derived {
+		var seq int64
+		if err := pool.QueryRow(ctx,
+			`SELECT seq FROM msg_channels WHERE id = $1`, ch).Scan(&seq); err != nil {
+			t.Fatalf("read room seq: %v", err)
+		}
+		before[ch] = seq
+	}
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM msg_members WHERE user_id = $1 AND source = 'DERIVED'`, uSamRivera); err != nil {
+		t.Fatalf("clear sam's derived rows: %v", err)
+	}
+	if err := repo.SyncMembership(ctx, uSamRivera); err != nil {
+		t.Fatalf("resync sam: %v", err)
+	}
+	for _, ch := range derived {
+		var after int64
+		if err := pool.QueryRow(ctx,
+			`SELECT seq FROM msg_channels WHERE id = $1`, ch).Scan(&after); err != nil {
+			t.Fatalf("reread room seq: %v", err)
+		}
+		if after <= before[ch] {
+			t.Fatalf("a re-derived seat must bump the room's feed seq: room=%s before=%d after=%d", ch, before[ch], after)
+		}
+	}
+
+	// The prune arm: a DERIVED row Sam does not qualify for (the Kingston
+	// yard) is pruned by the sync, and the room's seq moves with it.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO msg_members (channel_id, user_id, role, source)
+		VALUES ($1, $2, 'MEMBER', 'DERIVED')`, chYardKingston, uSamRivera); err != nil {
+		t.Fatalf("plant sam's unqualified derived row: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx,
+			`DELETE FROM msg_members WHERE channel_id = $1 AND user_id = $2 AND source = 'DERIVED'`,
+			chYardKingston, uSamRivera)
+	})
+	var yardBefore int64
+	if err := pool.QueryRow(ctx,
+		`SELECT seq FROM msg_channels WHERE id = $1`, chYardKingston).Scan(&yardBefore); err != nil {
+		t.Fatalf("read yard seq: %v", err)
+	}
+	if err := repo.SyncMembership(ctx, uSamRivera); err != nil {
+		t.Fatalf("sync sam over the planted row: %v", err)
+	}
+	if ok, _ := repo.IsMember(ctx, chYardKingston, uSamRivera); ok {
+		t.Fatalf("the unqualified derived row must be pruned")
+	}
+	var yardAfter int64
+	if err := pool.QueryRow(ctx,
+		`SELECT seq FROM msg_channels WHERE id = $1`, chYardKingston).Scan(&yardAfter); err != nil {
+		t.Fatalf("reread yard seq: %v", err)
+	}
+	if yardAfter <= yardBefore {
+		t.Fatalf("a pruned derived row must bump the room's feed seq: before=%d after=%d", yardBefore, yardAfter)
+	}
+}
