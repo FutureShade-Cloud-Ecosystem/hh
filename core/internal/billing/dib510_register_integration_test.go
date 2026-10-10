@@ -563,3 +563,34 @@ func TestDetail_PaymentEntriesReachOnlyACallerWhoAsksForThem(t *testing.T) {
 		t.Fatalf("the rest of the timeline is unchanged, got %v", without)
 	}
 }
+
+func TestCustomerActivity_PaymentRowsReachOnlyACallerWhoAsksForThem(t *testing.T) {
+	f := newD510Fixture(t)
+	ctx := context.Background()
+	for _, txn := range []string{"INVOICE", "PAYMENT", "NSF"} {
+		if _, err := f.pool.Exec(ctx,
+			`INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, occurred_at)
+			 VALUES ($1::uuid, $2, 100, 100, 'test', gen_random_uuid(), now())`, f.customerID, txn); err != nil {
+			t.Fatalf("seed %s row: %v", txn, err)
+		}
+	}
+	repo := NewRepository(f.pool)
+	count := func(withPayments bool) map[string]int {
+		rows, err := repo.CustomerActivity(ctx, f.customerID, 10, withPayments)
+		if err != nil {
+			t.Fatalf("activity: %v", err)
+		}
+		out := map[string]int{}
+		for _, r := range rows {
+			out[r.Kind]++
+		}
+		return out
+	}
+	if got := count(true); got["PAYMENT"] != 1 || got["NSF"] != 1 || got["INVOICE"] != 1 {
+		t.Fatalf("a caller who holds the trail sees every row, got %v", got)
+	}
+	got := count(false)
+	if got["PAYMENT"] != 0 || got["NSF"] != 0 || got["INVOICE"] != 1 {
+		t.Fatalf("payment and NSF rows are absent for a caller without the trail, got %v", got)
+	}
+}

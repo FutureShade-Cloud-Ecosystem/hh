@@ -460,7 +460,7 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 		pool.Close()
 		return nil, err
 	}
-	if err := bindPaymentTrail(tops, roleGate); err != nil {
+	if err := bindPaymentTrail(money, roleGate); err != nil {
 		pool.Close()
 		return nil, err
 	}

@@ -27,6 +27,8 @@ func TestCensus_ReceivablesWorkLevelRoutes(t *testing.T) {
 		{"POST", "/api/v1/ar/reminders", "work", "money-desk"},
 		{"GET", "/api/v1/ar/payments/{id}/history", "work", "counter-till,money-desk"},
 		{"GET", "/api/v1/ar/invoices/{id}/payments", "work", "counter-till,money-desk"},
+		// The bounced queue lists payments (number, method, amount): the same trail, the same level.
+		{"GET", "/api/v1/ar/bounced", "work", "counter-till,money-desk"},
 		{"POST", "/api/v1/ar/payments/{id}/reverse", "manage", "money-desk"},
 	}
 	for _, w := range want {

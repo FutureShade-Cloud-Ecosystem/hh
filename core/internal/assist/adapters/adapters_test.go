@@ -560,3 +560,18 @@ func TestTheShippedServicesSatisfyTheSeams(t *testing.T) {
 	// A compile-time proof has no runtime body; the assertion above IS the test.
 	_ = time.Now
 }
+
+// Ruling 87: the account's activity asks the ledger for payment rows only for a caller the handler
+// stamped as holding the payment trail reads.
+func TestCustomer_ActivityAsksForPaymentsOnlyWhenTheCallerHoldsTheTrail(t *testing.T) {
+	ar := seededAR()
+	reader := NewCustomerReader(seededAccounts(), ar)
+	c := globalCaller()
+	if _, err := reader.RecentActivity(context.Background(), c, "c-1", 10); err != nil || ar.gotWithPayments {
+		t.Fatalf("a caller without the trail asked for payments: err %v, asked %v", err, ar.gotWithPayments)
+	}
+	c.PaymentTrail = true
+	if _, err := reader.RecentActivity(context.Background(), c, "c-1", 10); err != nil || !ar.gotWithPayments {
+		t.Fatalf("a caller with the trail was refused payments: err %v, asked %v", err, ar.gotWithPayments)
+	}
+}

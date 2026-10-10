@@ -523,7 +523,20 @@ func TestIntegration_ABalancedAccountSaysNothingOutstanding(t *testing.T) {
 func TestIntegration_ActivityReadsTheARLedger(t *testing.T) {
 	w := newWorld(t)
 
-	res := w.run(t, w.boss(), "customer.activity", assist.Args{"customer": w.trentonCustNo})
+	// Ruling 87: without the payment trail reads the payment row is absent, the rest unchanged.
+	noTrail := w.run(t, w.boss(), "customer.activity", assist.Args{"customer": w.trentonCustNo})
+	if len(noTrail.Items) != 2 {
+		t.Fatalf("items = %d, want the fixture's 2 non payment rows for a caller without the trail", len(noTrail.Items))
+	}
+	for _, it := range noTrail.Items {
+		if strings.HasPrefix(it.Title, "Payment ") {
+			t.Fatalf("a caller without the trail got the payment row %q", it.Title)
+		}
+	}
+
+	boss := w.boss()
+	boss.PaymentTrail = true
+	res := w.run(t, boss, "customer.activity", assist.Args{"customer": w.trentonCustNo})
 	if res.Empty {
 		t.Fatalf("headline = %q", res.Headline)
 	}

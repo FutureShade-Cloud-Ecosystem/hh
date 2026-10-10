@@ -154,11 +154,11 @@ func (p *paymentTrailReader) HoldsPaymentTrail(ctx context.Context, platformUser
 
 // bindPaymentTrail binds the register's late payment trail reader to the role gate. Both composition
 // roots call it beside wirePaymentGrant.
-func bindPaymentTrail(tops *topsSpine, gate *authz.RoleGate) error {
+func bindPaymentTrail(money *moneySpine, gate *authz.RoleGate) error {
 	reader, err := newPaymentTrailReader(gate)
 	if err != nil {
 		return err
 	}
-	tops.paymentTrail.Bind(reader)
+	money.paymentTrail.Bind(reader)
 	return nil
 }

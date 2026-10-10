@@ -288,6 +288,62 @@ func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
 	notFound("the Kingston branch manager on the Trenton invoice detail", branchManagerKgn.call("GET", detail, nil))
 	forbidden("HR on the invoice detail", hr.call("GET", detail, nil))
 
+	// 3c. The same ruling on every other surface that hands a payment's number, method, amount or
+	// applier to a money desk reader or a selling role.
+	//
+	// The bounced queue lists payments (number, method, amount): it goes the way of the two reads
+	// above, to money desk or counter till WORK, so the three excluded roles and HR meet the gate's
+	// shared body and the persona and the managers pass.
+	bounced := "/api/v1/ar/bounced"
+	allowed("the persona on the bounced queue", payRec.call("GET", bounced, nil), http.StatusOK)
+	allowed("the general manager on the bounced queue", generalManager.call("GET", bounced, nil), http.StatusOK)
+	allowed("the Trenton sales manager on the bounced queue", salesManager.call("GET", bounced, nil), http.StatusOK)
+	allowed("the Trenton branch manager on the bounced queue", branchManager.call("GET", bounced, nil), http.StatusOK)
+	forbidden("outside sales on the bounced queue", outsideSales.call("GET", bounced, nil))
+	forbidden("the yard manager on the bounced queue", yardManager.call("GET", bounced, nil))
+	forbidden("the procurement manager on the bounced queue", procurement.call("GET", bounced, nil))
+	forbidden("HR on the bounced queue", hr.call("GET", bounced, nil))
+
+	// An order's merged activity (quote desk read, which outside sales holds at work) lists "applied a
+	// payment" with the amount, method and applier: left out for a caller without the trail reads.
+	var i06Order, i06Account string
+	if err := pool.QueryRow(ctx, `
+		SELECT i.order_id::text, c.account_no FROM invoices i JOIN customers c ON c.id = i.customer_id
+		 WHERE i.id = $1::uuid`, i06).Scan(&i06Order, &i06Account); err != nil {
+		t.Fatalf("the order and account behind I06: %v", err)
+	}
+	orderActivity := "/api/v1/orders/" + i06Order + "/activity"
+	appliedPayment := func(rsp demoResponse) bool { return strings.Contains(string(rsp.body), "payment") }
+	for _, c := range []struct {
+		name string
+		cl   *tillClient
+	}{{"the persona", payRec}, {"the Trenton sales manager", salesManager}, {"the general manager", generalManager}} {
+		rsp := c.cl.call("GET", orderActivity, nil)
+		if rsp.status == http.StatusOK && !appliedPayment(rsp) {
+			t.Errorf("RED %s lost the payment events from the order activity: %s", c.name, rsp.body)
+		}
+	}
+	if rsp := outsideSales.call("GET", orderActivity, nil); rsp.status == http.StatusOK && appliedPayment(rsp) {
+		t.Errorf("RED outside sales got the payment events in the order activity: %s", rsp.body)
+	}
+
+	// The assistant's customer.activity lists the account's ledger, payments by number and amount.
+	assistRun := func(c *tillClient) demoResponse {
+		return c.call("POST", "/api/v1/assist/command", map[string]any{
+			"command": "customer.activity", "args": map[string]any{"customer": i06Account}})
+	}
+	if rsp := assistRun(payRec); rsp.status == http.StatusOK && !strings.Contains(string(rsp.body), "Payment") {
+		t.Errorf("RED the persona lost the payment rows from customer.activity: %s", rsp.body)
+	}
+	for _, c := range []struct {
+		name string
+		cl   *tillClient
+	}{{"outside sales", outsideSales}, {"the yard manager", yardManager}, {"the procurement manager", procurement}} {
+		if rsp := assistRun(c.cl); rsp.status == http.StatusOK && strings.Contains(string(rsp.body), "Payment") {
+			t.Errorf("RED %s got payment rows from customer.activity: %s", c.name, rsp.body)
+		}
+	}
+
 	// 4. The reverse stays at manage.
 	forbidden("the persona on payment reverse", payRec.call("POST", "/api/v1/ar/payments/"+paymentID+"/reverse", map[string]any{"reason": "x"}))
 }

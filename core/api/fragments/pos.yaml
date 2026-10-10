@@ -1684,11 +1684,15 @@ paths:
       operationId: tillListBouncedPayments
       tags: [staff-till]
       summary: List the bounced-payment queue
-      description: Manager-gated; the queue exposes customer financial-distress information.
+      description: >-
+        Manager-gated; the queue exposes customer financial-distress information.
+        Held to work by ruling 87, like a payment's history: the queue lists
+        payments by number, method and amount, and the payment trail is the
+        money desk's to work.
       x-role: requireManager
       x-access:
-        surfaces: [money-desk]
-        level: read
+        surfaces: [counter-till, money-desk]
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"

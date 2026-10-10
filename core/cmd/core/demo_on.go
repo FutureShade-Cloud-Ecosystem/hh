@@ -346,7 +346,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		pool.Close()
 		return nil, err
 	}
-	if err := bindPaymentTrail(tops, roleGate); err != nil {
+	if err := bindPaymentTrail(money, roleGate); err != nil {
 		pool.Close()
 		return nil, err
 	}
