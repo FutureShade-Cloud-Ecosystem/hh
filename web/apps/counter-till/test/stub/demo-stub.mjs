@@ -79,7 +79,7 @@ let clockOffsetMs = 0;
 const nowMs = () => Date.now() + clockOffsetMs;
 
 // The closed flow table, mirroring the core's (core/internal/demo/flows):
-// the Counter Till's pair plus the seven personas the roles roadmap is
+// the Counter Till's pair plus the five personas the roles roadmap is
 // bringing live. The till's entry offers a card for its own pair alone; the
 // listing still answers the whole table, as the core's route does (the
 // mint's role label comes from this table, never from the roles table).
