@@ -105,6 +105,12 @@ export const arStyles = css`
   td.late { color: var(--hh-state-stop); font-weight: 700; }
   td > span.small, td > .small { display: block; }
   tr[aria-current="true"] td { background: var(--hh-row-alt); }
+  /* The selected row's ground is the row stripe, and the stop mark's colour does not hold AA text on
+     it in brand (the visual review measured 4.01). The sheet's danger ink is the red tuned to be READ
+     as text in each half, and it holds on the stripe in both, so the selected row's late cells and
+     stop pills read in it; the unselected rows keep the state colour the marks share everywhere. */
+  tr[aria-current="true"] td.late,
+  tr[aria-current="true"] td .pill-stop { color: var(--hh-danger); }
   tfoot td { border-top: 1px solid var(--hh-text); border-bottom: 0; }
   .who { display: block; font-weight: 700; }
   .empty { padding: var(--hh-s-24) var(--hh-s-8); display: grid; gap: var(--hh-s-8); justify-items: start; }
