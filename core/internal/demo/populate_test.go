@@ -300,8 +300,8 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
 		t.Errorf("the org scope did not stamp clean: %+v", counts)
 	}
-	if counts.UsersLinked != 3 || counts.UsersUnlinked != 10 {
-		t.Errorf("linked %d / unlinked %d users, want the 3 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	if counts.UsersLinked != 4 || counts.UsersUnlinked != 10 {
+		t.Errorf("linked %d / unlinked %d users, want the 4 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
 	if counts.StaffGrants != 4 || counts.StaffGrantsBranch != 3 || counts.StaffGrantsGlobal != 1 {
 		t.Errorf("staff grants %d (branch %d, global %d), want the three branch role accounts' Trenton grants and the controller's one global grant", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
@@ -359,7 +359,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		}
 	}
 
-	// Every users row renders an invented name: the display names
+	// Every users row renders an invented name: the fourteen display names
 	// this populate and the migrations' planted set allow, exactly, and
 	// nothing else. A surname token or an unreplaced placeholder on any row
 	// fails the allowlist, without the test itself naming a token.
@@ -398,8 +398,8 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if err := nameRows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(saw) != len(allowedNames) || len(saw) != 13 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 13 invented ones (saw: %v)", len(saw), saw)
+	if len(saw) != len(allowedNames) || len(saw) != 14 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 14 invented ones (saw: %v)", len(saw), saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the

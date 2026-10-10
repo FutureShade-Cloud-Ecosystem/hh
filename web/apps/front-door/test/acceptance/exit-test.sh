@@ -270,9 +270,9 @@ echo "== the demo routes through the gate"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
 	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
-		pass "/api/v1/demo/flows answers the closed table's three flows"
+		pass "/api/v1/demo/flows answers the closed table's four flows"
 		;;
-	*) fail "/api/v1/demo/flows did not answer the three flows: $flows" ;;
+	*) fail "/api/v1/demo/flows did not answer the four flows: $flows" ;;
 esac
 
 code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
