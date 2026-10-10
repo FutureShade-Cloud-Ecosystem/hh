@@ -330,8 +330,9 @@ func TestApplyReceived_OverTheSelectedInvoicesIsRefused(t *testing.T) {
 	}
 }
 
-// The preview flag answers the same split without writing anything: the locks are taken (the split
-// is computed under them, against live balances) and rolled back with the transaction.
+// The preview flag answers the same split without writing anything: the split is computed on ONE
+// lock free read of the live balances (item 127: a preview draws no counter and no row lock), and
+// the ledger does not move.
 func TestApplyReceived_PreviewAnswersTheSplitAndWritesNothing(t *testing.T) {
 	w := newApplyWorld(t)
 	ctx := context.Background()
@@ -373,10 +374,10 @@ func TestApplyReceived_PreviewAnswersTheSplitAndWritesNothing(t *testing.T) {
 
 // A preview under a key an apply already spent answers as a PREVIEW (the delta reviews' P3): the
 // preview judges the live balances and writes nothing, so it reads no key at all, the spent key
-// included, neither before the transaction (the fast path already skips previews) nor inside it.
-// Its answer is the fresh split against the balances as they stand, not the recorded payment's
-// replay and not the different payment refusal (that judgement belongs to the real apply), and the
-// spent key still answers its own replay when the real apply asks under it again.
+// included (it never enters the writers' walk, so there is no key read at any point of it). Its
+// answer is the fresh split against the balances as they stand, not the recorded payment's replay
+// and not the different payment refusal (that judgement belongs to the real apply), and the spent
+// key still answers its own replay when the real apply asks under it again.
 func TestApplyReceived_APreviewUnderASpentKeyAnswersAsAPreview(t *testing.T) {
 	w := newApplyWorld(t)
 	ctx := context.Background()
@@ -582,4 +583,142 @@ func TestApplyReceived_AListSpanningTwoBranchesIsRefusedInWords(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("the other branch's invoice alone applies: %v", err)
 	}
+}
+
+// The preview moves no money and no FEED: beside the four money tables, neither sequence the walk
+// could draw (the payments feed and the invoices feed) moves by a preview, because a preview takes
+// no counter at all (item 127: each preview used to draw the payments counter row, so desk typing
+// queued against till payments). A feed number is spent by the statement that stamps a row; a
+// preview stamps nothing.
+func TestApplyReceived_APreviewMovesNoRowNoEventAndNoSequence(t *testing.T) {
+	w := newApplyWorld(t)
+	ctx := context.Background()
+	old := w.invoice(t, w.customerID, "SEQ", 90, 60, 20000)
+	seqState := func() (paySeq, invSeq int64) {
+		t.Helper()
+		rows, err := w.pool.Query(ctx,
+			`SELECT scope, next_value FROM scope_sequences WHERE scope IN ('payments','invoices')`)
+		if err != nil {
+			t.Fatalf("read sequences: %v", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var scope string
+			var v int64
+			if err := rows.Scan(&scope, &v); err != nil {
+				t.Fatalf("scan sequence: %v", err)
+			}
+			switch scope {
+			case "payments":
+				paySeq = v
+			case "invoices":
+				invSeq = v
+			}
+		}
+		return paySeq, invSeq
+	}
+	beforeP, beforeI := seqState()
+	beforeRows, beforeAllocs, beforeSub, beforeOutbox := w.moneyRowCounts(t, w.customerID)
+
+	if _, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ SEQ",
+		IdempotencyKey: w.tag, InvoiceIDs: []string{old}, AmountCents: 5000, Preview: true,
+	}); err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+
+	afterP, afterI := seqState()
+	if beforeP != afterP || beforeI != afterI {
+		t.Fatalf("the preview moved a sequence: payments %d->%d invoices %d->%d", beforeP, afterP, beforeI, afterI)
+	}
+	afterRows, afterAllocs, afterSub, afterOutbox := w.moneyRowCounts(t, w.customerID)
+	if beforeRows != afterRows || beforeAllocs != afterAllocs || beforeSub != afterSub || beforeOutbox != afterOutbox {
+		t.Fatalf("the preview wrote nothing: payments %d->%d allocations %d->%d subledger %d->%d outbox %d->%d",
+			beforeRows, afterRows, beforeAllocs, afterAllocs, beforeSub, afterSub, beforeOutbox, afterOutbox)
+	}
+	if b, _ := w.invoiceState(t, old); b != 20000 {
+		t.Fatalf("the previewed invoice is untouched, balance %d", b)
+	}
+}
+
+// The preview and the apply of one body (item 127): when nothing moved in between the apply
+// answers the split the preview answered, line for line, and when the balances moved between the
+// preview and the apply the apply says so in words (its own ceiling refusal names the figure the
+// moved balances leave), never a silent different split.
+func TestApplyReceived_PreviewAndApplyAgreeOnAnUnchangedBodyAndTheMovedBalancesSaySo(t *testing.T) {
+	w := newApplyWorld(t)
+	ctx := context.Background()
+
+	// The agreeing half: nothing moves between the preview and the apply.
+	oldest := w.invoice(t, w.customerID, "AGR-O", 90, 60, 10000)
+	youngest := w.invoice(t, w.customerID, "AGR-Y", 30, 10, 8000)
+	body := ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ AGREE",
+		IdempotencyKey: w.tag, InvoiceIDs: []string{oldest, youngest}, AmountCents: 15000,
+	}
+	preview, err := w.repo.ApplyReceived(ctx, applyPreview(body))
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	applied, err := w.repo.ApplyReceived(ctx, body)
+	if err != nil {
+		t.Fatalf("the apply on the unchanged body: %v", err)
+	}
+	if !preview.Preview || applied.Replayed {
+		t.Fatalf("the shapes are a preview then a fresh apply: %+v %+v", preview, applied)
+	}
+	if len(preview.Lines) != len(applied.Lines) {
+		t.Fatalf("the apply answers one line per previewed invoice: %v vs %v", preview.Lines, applied.Lines)
+	}
+	for i := range preview.Lines {
+		if preview.Lines[i] != applied.Lines[i] {
+			t.Fatalf("line %d disagrees between preview and apply: %+v vs %+v", i, preview.Lines[i], applied.Lines[i])
+		}
+	}
+	if preview.AppliedCents != applied.AppliedCents || preview.UnappliedCents != applied.UnappliedCents {
+		t.Fatalf("the totals disagree: applied %d vs %d, unapplied %d vs %d",
+			preview.AppliedCents, applied.AppliedCents, preview.UnappliedCents, applied.UnappliedCents)
+	}
+
+	// The moved half: another payment lands between the preview and the apply, and the apply of the
+	// same body refuses in words with the ceiling the moved balances leave.
+	moved := w.invoice(t, w.customerID, "MOV-O", 90, 60, 10000)
+	movedYoung := w.invoice(t, w.customerID, "MOV-Y", 30, 10, 8000)
+	ask := ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ MOVED",
+		IdempotencyKey: w.tag + "-m", InvoiceIDs: []string{moved, movedYoung}, AmountCents: 15000,
+	}
+	if _, err := w.repo.ApplyReceived(ctx, applyPreview(ask)); err != nil {
+		t.Fatalf("preview against the moved balances' starting point: %v", err)
+	}
+	if _, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "EFT", Reference: "CHQ MOVER",
+		IdempotencyKey: w.tag + "-mover", InvoiceIDs: []string{moved}, AmountCents: 8000,
+	}); err != nil {
+		t.Fatalf("the payment that moves the balances: %v", err)
+	}
+	_, err = w.repo.ApplyReceived(ctx, ask)
+	if err == nil {
+		t.Fatal("the apply of a body whose balances moved below it must refuse")
+	}
+	var bad httpx.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("the refusal is in words, got %T %v", err, err)
+	}
+	if !strings.Contains(bad.Msg, "the selected invoices can take at most 10000 cents right now") {
+		t.Fatalf("the refusal names the ceiling the moved balances leave: %q", bad.Msg)
+	}
+	var keyRows int
+	if err := w.pool.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE idempotency_key = $1`, w.tag+"-m").Scan(&keyRows); err != nil {
+		t.Fatalf("count by key: %v", err)
+	}
+	if keyRows != 0 {
+		t.Fatalf("the refused apply burned no key, found %d rows", keyRows)
+	}
+}
+
+// applyPreview answers the same request as a preview.
+func applyPreview(in ApplyRequest) ApplyRequest {
+	in.Preview = true
+	return in
 }

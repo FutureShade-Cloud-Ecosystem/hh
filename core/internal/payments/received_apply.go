@@ -20,6 +20,14 @@ package payments
 // lock order), which serialises this writer against every other payments writer (a settle, a
 // reversal, a bounce) before either touches an invoice.
 //
+// THE PREVIEW takes none of that order (item 127): it writes nothing, so it needs no place among
+// the writers, and it must never draw the payments counter, the one row every payments writer in
+// the company serialises on, because a preview is a desk's debounced keystroke and desk typing
+// must never queue a till payment. What it needs for a true split it takes in ONE lock free read
+// (readApplyInvoices in repository.go): the named invoices' balances, consistent with each other
+// because one statement is one snapshot, with the account and the branch reach judged exactly as
+// the apply's locking statement judges them.
+//
 // The settle itself is the SHIPPED settle: the split is computed under the locks here, then handed
 // to settleReceipt (the same function RecordReceipt and the portal card settle run), so there stays
 // exactly ONE implementation of applying money to an invoice. settleReceipt re-locks and re-totals
@@ -73,8 +81,11 @@ type ApplyRequest struct {
 	BranchIDs   []string
 	InvoiceIDs  []string
 	AmountCents int64
-	// Preview answers the same split without writing anything: the locks are taken, the split is
-	// computed against live balances, and the transaction rolls back.
+	// Preview answers the same split without writing anything and without taking a single row lock:
+	// no payments counter, no invoice row (item 127: a preview is a desk's debounced keystroke, and
+	// desk typing must never queue a till payment), just the one consistent read of the named
+	// invoices' balances with the account and the branch reach judged exactly as the apply judges
+	// them.
 	Preview bool
 }
 
@@ -124,14 +135,19 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	if r.pool == nil {
 		return ApplyAnswer{}, errNoDB
 	}
-	// The replay fast path, before any lock and never on a preview (a preview writes nothing, so
-	// there is nothing to replay; its key must stay unspent for the real apply that follows).
-	if !in.Preview {
-		if p, ok, err := r.receiptByKey(ctx, in.IdempotencyKey); err != nil {
-			return ApplyAnswer{}, err
-		} else if ok {
-			return r.replayAnswer(ctx, p, in)
-		}
+	// The preview never enters the writers' order at all: no counter, no row lock, just the one
+	// consistent read (previewApply below). Everything after this branch is the apply's own order,
+	// unchanged: the payments counter first, then the invoice rows.
+	if in.Preview {
+		return r.previewApply(ctx, in)
+	}
+	// The replay fast path, before any lock (a preview never reaches it: a preview writes nothing,
+	// so there is nothing to replay, and its key must stay unspent for the real apply that
+	// follows).
+	if p, ok, err := r.receiptByKey(ctx, in.IdempotencyKey); err != nil {
+		return ApplyAnswer{}, err
+	} else if ok {
+		return r.replayAnswer(ctx, p, in)
 	}
 
 	tx, err := r.pool.Begin(ctx)
@@ -152,52 +168,34 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	// visible here. Re-read the key on the transaction BEFORE the invoice judgements: a duplicate
 	// of a payment that closed its invoices must answer the first result, not trip the not open or
 	// ceiling refusal on the balances the twin already moved (the same in-transaction re-check the
-	// till's return makes after its sale lock, and QD-5's rule at counter_receipt.go). A preview
-	// makes no re-read, exactly as it takes no fast path before the transaction: it writes nothing,
-	// so no twin of it can exist and no key of it is spent; its answer is the fresh split against
-	// the live balances whatever key it rode in on (the delta reviews' P3).
-	if !in.Preview {
-		if _, _, _, ok, err := receiptByKeyOn(ctx, tx, in.IdempotencyKey); err != nil {
-			return ApplyAnswer{}, err
-		} else if ok {
-			_ = tx.Rollback(ctx)
-			existing, found, readErr := r.receiptByKey(ctx, in.IdempotencyKey)
-			if readErr != nil {
-				return ApplyAnswer{}, readErr
-			}
-			if !found {
-				return ApplyAnswer{}, fmt.Errorf("payments: apply key %q was claimed and then vanished", in.IdempotencyKey)
-			}
-			return r.replayAnswer(ctx, existing, in)
+	// till's return makes after its sale lock, and QD-5's rule at counter_receipt.go).
+	if _, _, _, ok, err := receiptByKeyOn(ctx, tx, in.IdempotencyKey); err != nil {
+		return ApplyAnswer{}, err
+	} else if ok {
+		_ = tx.Rollback(ctx)
+		existing, found, readErr := r.receiptByKey(ctx, in.IdempotencyKey)
+		if readErr != nil {
+			return ApplyAnswer{}, readErr
 		}
+		if !found {
+			return ApplyAnswer{}, fmt.Errorf("payments: apply key %q was claimed and then vanished", in.IdempotencyKey)
+		}
+		return r.replayAnswer(ctx, existing, in)
 	}
 
 	rows, err := r.lockApplyInvoicesTx(ctx, tx, in)
 	if err != nil {
 		return ApplyAnswer{}, err
 	}
-	// ONE branch per payment: the payment row carries a single branch, every subledger row is
-	// stamped with it and the GL consumer books the whole journal to it, so a list spanning two
-	// branches would move the other branch's AR with no journal behind it and put both branches'
-	// tie outs out by the other's share. The honest shape is a payment per branch.
-	for _, row := range rows[1:] {
-		if row.BranchID != rows[0].BranchID {
-			return ApplyAnswer{}, httpx.BadRequestf(
-				"one payment applies to one branch's invoices; record a payment per branch")
-		}
+	// ONE branch per payment (oneBranchPerPayment): the payment row carries a single branch, every
+	// subledger row is stamped with it and the GL consumer books the whole journal to it.
+	if err := oneBranchPerPayment(rows); err != nil {
+		return ApplyAnswer{}, err
 	}
 	lines, capacity := allocateOldestFirst(rows, in.AmountCents)
 	if in.AmountCents > capacity {
 		return ApplyAnswer{}, httpx.BadRequestf(
 			"the selected invoices can take at most %d cents right now; refresh and retry", capacity)
-	}
-
-	if in.Preview {
-		// Nothing has been written; rolling back releases the locks with the ledger untouched.
-		return ApplyAnswer{
-			Preview: true, AmountCents: in.AmountCents, AppliedCents: sumApplied(lines),
-			UnappliedCents: in.AmountCents - sumApplied(lines), Lines: lines,
-		}, nil
 	}
 
 	// The allocations handed to the shipped settle are ordered by invoice id, ascending, so the
@@ -241,6 +239,50 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 		AppliedCents: sumApplied(lines), UnappliedCents: in.AmountCents - sumApplied(lines),
 		Lines: lines,
 	}, nil
+}
+
+// previewApply answers the preview's split: the same judgements, the same walk and the same words
+// as the apply, on ONE lock free read instead of the apply's locked walk. A preview writes nothing,
+// so it needs no place among the writers, and it draws neither the payments counter (the one row
+// every payments writer in the company serialises on; a preview is a desk's debounced keystroke,
+// and desk typing must never queue a till payment, item 127) nor an invoice row (a writer's lock
+// buys its write; a preview has none). The read is one statement, so the balances the split is
+// computed against are consistent with each other, and the account and the branch reach are judged
+// in it exactly as the apply's locking statement judges them. The apply re-judges everything under
+// the locks it takes: on an unchanged body it answers this split, and when the balances moved in
+// between its own words say so (the ceiling refusal names the figure the moved balances leave).
+func (r *Repository) previewApply(ctx context.Context, in ApplyRequest) (ApplyAnswer, error) {
+	rows, err := r.readApplyInvoices(ctx, in)
+	if err != nil {
+		return ApplyAnswer{}, err
+	}
+	if err := oneBranchPerPayment(rows); err != nil {
+		return ApplyAnswer{}, err
+	}
+	lines, capacity := allocateOldestFirst(rows, in.AmountCents)
+	if in.AmountCents > capacity {
+		return ApplyAnswer{}, httpx.BadRequestf(
+			"the selected invoices can take at most %d cents right now; refresh and retry", capacity)
+	}
+	return ApplyAnswer{
+		Preview: true, AmountCents: in.AmountCents, AppliedCents: sumApplied(lines),
+		UnappliedCents: in.AmountCents - sumApplied(lines), Lines: lines,
+	}, nil
+}
+
+// oneBranchPerPayment is the branch rule both walks share, the apply's and the preview's: the
+// payment row carries a single branch, every subledger row is stamped with it and the GL consumer
+// books the whole journal to it, so a list spanning two branches would move the other branch's AR
+// with no journal behind it and put both branches' tie outs out by the other's share. The honest
+// shape is a payment per branch.
+func oneBranchPerPayment(rows []applyInvoiceRow) error {
+	for _, row := range rows[1:] {
+		if row.BranchID != rows[0].BranchID {
+			return httpx.BadRequestf(
+				"one payment applies to one branch's invoices; record a payment per branch")
+		}
+	}
+	return nil
 }
 
 // validateApply is the request check that runs before any database is consulted, the same posture
