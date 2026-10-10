@@ -336,4 +336,5 @@ go test -tags demo ./cmd/core -run 'TestDemoWorld_(Quotes|CounterTill|Controller
 The workstation short form omits the demo tag suite and the verbose demo
 world proofs step; the day gate is enough to catch the regressions a
 change is likely to bring. The two extra steps live in the same job as the
-day gate, in order, and CI runs them every push.
+day gate, in order, and CI runs them on every pull request and on every
+push to main and the cycle branches.
