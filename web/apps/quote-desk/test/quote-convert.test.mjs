@@ -143,7 +143,22 @@ test("a refusal is plain words with what to do next", () => {
   assert.doesNotMatch(credit, /^quote:/i);
   assert.match(refusalWords(409, "quote: this quote is sent"), /check its status/);
   assert.match(refusalWords(403, ""), /Ask a manager/);
-  assert.match(refusalWords(500, ""), /Nothing was created/);
+  assert.match(refusalWords(500, ""), /not known yet/);
+  assert.match(refusalWords(400, ""), /Nothing was created/);
+});
+
+test("a lost convert answer says the order's creation is not known yet", () => {
+  for (const status of [undefined, 500, 502]) {
+    const words = refusalWords(status, "bad gateway");
+    assert.match(words, /not known yet/);
+    assert.match(words, /reload/);
+    assert.doesNotMatch(words, /Nothing was created/);
+  }
+  // A later 409 after a lost answer may be the earlier attempt's own order.
+  const later = refusalWords(409, "quote: this quote is converted, only an accepted quote converts", true);
+  assert.match(later, /earlier attempt/);
+  assert.doesNotMatch(later, /Nothing was created/);
+  assert.match(refusalWords(409, "quote: this quote is sent"), /Nothing was created/);
 });
 
 test("the payment amount goes through the decimal string to integer cents", () => {

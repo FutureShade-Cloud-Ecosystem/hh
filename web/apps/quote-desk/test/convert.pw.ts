@@ -487,6 +487,37 @@ for (const answer of ["drop", "502"] as const) {
   });
 }
 
+for (const answer of ["drop", "502"] as const) {
+  test(`unknown convert outcome (${answer}): the words say the order is not known yet, never "Nothing was created", and a retry cannot make a second order`, async ({ page }) => {
+    await arrive(page, "q-1003");
+    await next(page);
+    await next(page);
+    await next(page);
+    await next(page);
+    let lost = true;
+    await page.route(/\/api\/v1\/quotes\/q-1003\/convert$/, async (route) => {
+      if (!lost) {
+        await route.continue();
+        return;
+      }
+      lost = false;
+      await route.fetch();
+      if (answer === "drop") await route.abort();
+      else await route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: "bad gateway" }) });
+    });
+    await page.getByTestId("qc-confirm").click();
+    const refusal = page.getByTestId("qc-refusal");
+    await expect(refusal).toContainText("not known yet");
+    await expect(refusal).toContainText("reload");
+    await expect(refusal).not.toContainText("Nothing was created");
+    // The retry is refused by the server (the quote already converted); it must not claim nothing was created either.
+    await page.getByTestId("qc-confirm").click();
+    await expect(refusal).toContainText("earlier attempt");
+    await expect(refusal).not.toContainText("Nothing was created");
+    expect((await state(page)).posts.filter((p) => p.kind === "convert")).toHaveLength(2);
+  });
+}
+
 test("idempotency: the same intended payment keeps its key, a fresh intended payment gets a new one", async ({ page }) => {
   await arriveCod(page);
   await refuseDoor(page, "the server could not take this just now", 2, 500);

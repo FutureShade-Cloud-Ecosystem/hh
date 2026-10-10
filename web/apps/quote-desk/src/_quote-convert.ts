@@ -237,10 +237,20 @@ export function isCodRefusal(detail: string): boolean {
 
 /**
  * The server's refusal at confirm, in plain words, with what to do next. The refusal's own sentence
- * (spoken, its module prefix peeled) stays the first thing said; the next step follows it.
+ * (spoken, its module prefix peeled) stays the first thing said; the next step follows it. Only an
+ * answer in words proves nothing was created; a lost or 5xx answer says the outcome is not known.
  */
-export function refusalWords(status: number | undefined, detail: string): string {
+export function refusalWords(status: number | undefined, detail: string, afterLostAnswer = false): string {
+  // No answer at all, or a 5xx, may follow a conversion that committed: the order's creation is not
+  // known, and only the quote's state on reload says. A retry cannot make a second order, because the
+  // core converts only from ACCEPTED.
+  if (isUnknownOutcome(status)) {
+    return "Whether the order was created is not known yet: the answer was lost. Check the quote's state on reload before anything else is done. If the quote is still accepted, convert again; the server converts a quote only once.";
+  }
   const said = spokenRefusal(detail.trim());
+  if (status === 409 && afterLostAnswer) {
+    return `${said}${said.endsWith(".") ? "" : "."} An earlier attempt whose answer was lost may have created the order. Check the quote's state on reload before converting again.`;
+  }
   const credit = /credit|limit|hold/i.test(said);
   if (status === 409 && credit) {
     return `${said}${said.endsWith(".") ? "" : "."} Nothing was created. Ask the customer to settle the account, or have a manager release the credit hold, then convert again.`;

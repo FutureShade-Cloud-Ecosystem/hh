@@ -59,6 +59,7 @@ import {
   type PayMethod,
   type Standing,
 } from "./_quote-convert.js";
+import { isUnknownOutcome } from "./_order-payment.js";
 
 type Phase = "loading" | "ready" | "no-access" | "not-ready" | "missing" | "failed";
 
@@ -329,6 +330,8 @@ export class QuoteConvert extends HHElement {
   #done: { orderId: string; orderNo: string } | null = null;
   #paid: { paymentNo: string; amountCents: number; balanceCents: number } | null = null;
   #payNote = "";
+  /** A conversion answer was lost: a later refusal may be that attempt's own order. */
+  #convertLost = false;
   /** Each load carries a number; an answer that comes back for an older one is dropped. */
   #seq = 0;
 
@@ -471,6 +474,7 @@ export class QuoteConvert extends HHElement {
     this.#done = null;
     this.#paid = null;
     this.#payNote = "";
+    this.#convertLost = false;
   }
 
   // ── the controls ─────────────────────────────────────────────────────────────
@@ -616,7 +620,8 @@ export class QuoteConvert extends HHElement {
         this.requestUpdate();
         return;
       }
-      this.#refusal = refusalWords(result.status, result.error);
+      this.#refusal = refusalWords(result.status, result.error, this.#convertLost);
+      if (isUnknownOutcome(result.status)) this.#convertLost = true;
       this.requestUpdate();
       return;
     }
