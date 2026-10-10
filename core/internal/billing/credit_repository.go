@@ -126,7 +126,7 @@ func (r *Repository) AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays
 	if bucketDays <= 0 {
 		bucketDays = 60
 	}
-	rows, err := r.pool.Query(ctx, agingSelect, asOf, bucketDays, branchID, reach.SQLArg())
+	rows, err := r.pool.Query(ctx, agingSelect, houseClock(asOf), bucketDays, branchID, reach.SQLArg())
 	if err != nil {
 		return nil, fmt.Errorf("billing: aging rows: %w", err)
 	}

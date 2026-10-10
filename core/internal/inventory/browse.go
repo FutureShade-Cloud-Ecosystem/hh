@@ -76,7 +76,7 @@ type BrowseRow struct {
 	ReservedBase  float64 `json:"reserved_base"`
 	AvailableBase float64 `json:"available_base"`
 	InTransitBase float64 `json:"in_transit_base"`
-	AvgCostCents  int64   `json:"avg_cost_cents"`
+	AvgCostCents  int64   `json:"avg_cost_cents,omitempty"`
 }
 
 // FacetValue is one selectable value and how many products carry it under the current filter.

@@ -35784,7 +35784,6 @@ components:
         - move_type
         - source_type
         - source_ref_id
-        - unit_cost_cents
         - occurred_at
       properties:
         id:
@@ -35821,6 +35820,7 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         occurred_at:
           type: string
           format: date-time
@@ -35834,7 +35834,6 @@ components:
         - on_hand_base
         - allocated_base
         - available_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -35854,7 +35853,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
-          description: The branch weighted-average unit cost
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryPendingFulfilment:
       type: object
       description: One COLLECT_LATER or DELIVERED line awaiting a stock move
@@ -36015,7 +36014,6 @@ components:
         - in_transit_base
         - available_base
         - soft_held_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -36044,6 +36042,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryBrowseRow:
       type: object
       description: One product on the browse surface, with its stock position
@@ -36066,7 +36065,6 @@ components:
         - reserved_base
         - available_base
         - in_transit_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -36108,6 +36106,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryFacetValue:
       type: object
       required:
@@ -36398,7 +36397,6 @@ components:
         - qty_base
         - qty_shipped_base
         - qty_received_base
-        - unit_cost_cents
         - ship_move_id
         - recv_move_id
       properties:
@@ -36426,6 +36424,7 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         ship_move_id:
           type: string
         recv_move_id:
@@ -36538,8 +36537,6 @@ components:
         - preferred_vendor_id
         - preferred_vendor_name
         - lead_time_days
-        - avg_cost_cents
-        - suggested_value_cents
       properties:
         product_id:
           type: string
@@ -36591,10 +36588,11 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
         suggested_value_cents:
           type: integer
           format: int64
-          description: suggested_qty_base times the branch weighted-average cost
+          description: "suggested_qty_base times the branch weighted-average cost; the same role gate as avg_cost_cents (the figure derives from it): byte-absent for a caller off the dealer's cost and margin list."
     InventoryReorderPoint:
       type: object
       description: The per (product, branch) replenishment policy row
@@ -37033,8 +37031,6 @@ components:
         - snapshot_qty_base
         - counted_qty_base
         - variance_base
-        - unit_cost_cents
-        - variance_value_cents
       properties:
         id:
           type: string
@@ -37064,9 +37060,11 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         reason_code:
           type: string
         move_id:
@@ -37142,8 +37140,6 @@ components:
         - line_count
         - counted_lines
         - variance_lines
-        - net_variance_value_cents
-        - abs_variance_value_cents
       properties:
         line_count:
           type: integer
@@ -37157,9 +37153,11 @@ components:
         net_variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         abs_variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
     InvCountSheetDetail:
       type: object
       description: A sheet plus its lines and a variance summary (the count-variance screen payload)
@@ -37183,7 +37181,6 @@ components:
         - product_id
         - location_id
         - on_hand_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -37196,6 +37193,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InvCountCreateSheetRequest:
       type: object
       required:

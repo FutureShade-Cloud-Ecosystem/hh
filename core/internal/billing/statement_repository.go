@@ -31,9 +31,9 @@ func (r *Repository) StatementLines(ctx context.Context, customerID string, asOf
 		`SELECT t.occurred_at, t.txn_type, t.amount_cents, COALESCE(i.invoice_no::text, ''), COALESCE(t.memo,'')
 		   FROM customer_transactions t
 		   LEFT JOIN invoices i ON i.id = t.source_ref_id AND t.source_type = 'invoice'
-		  WHERE t.customer_id = $1::uuid AND t.occurred_at::date <= $2::date
+		  WHERE t.customer_id = $1::uuid AND (t.occurred_at AT TIME ZONE '`+arAgingZone+`')::date <= $2::date
 		    AND ($3::uuid[] IS NULL OR t.branch_id = ANY($3::uuid[]))
-		  ORDER BY t.occurred_at, t.created_at`, customerID, asOf, reach.SQLArg())
+		  ORDER BY t.occurred_at, t.created_at`, customerID, houseClock(asOf), reach.SQLArg())
 	if err != nil {
 		return nil, fmt.Errorf("billing: statement lines: %w", err)
 	}

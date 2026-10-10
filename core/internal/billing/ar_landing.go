@@ -194,6 +194,11 @@ func DaysPastDue(due, asOf time.Time) int {
 	return int(asOfDay.Sub(dueDay) / (24 * time.Hour))
 }
 
+// houseClock is an instant read in the house zone, so every year, month and day read off it (a date
+// parameter handed to SQL, a Format) names the dealer's day. A clock left in the server's zone names
+// the UTC day, one ahead of the house day in the evening window.
+func houseClock(at time.Time) time.Time { return at.In(houseday.Location()) }
+
 // BucketFor places a days-past-due count in the policy's buckets. Boundaries are INCLUSIVE at the
 // top of each bucket: at exactly aging_escalate_days an account IS escalated, because "90 days" in
 // a collections conversation has always meant "90 or worse".

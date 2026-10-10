@@ -22,6 +22,12 @@
 // the staff routes require.
 import { expect, test, type Page, type Response, type Route } from "@playwright/test";
 
+// A leg that pins the stub's clock never leaves it pinned: the stub is one server for the whole
+// suite, and the next leg's session tokens are minted on whatever clock it holds.
+test.afterEach(async ({ request }) => {
+  await request.post("/_stub/clock", { data: {} });
+});
+
 /** The screen-side rendering of integer cents, for comparing against the app. */
 
 /** Row 955: Returns is its own surface; open it from the bar (a no-op when it is already up). */
@@ -39,13 +45,13 @@ function dollars(cents: number): string {
 }
 
 /** The dealer's day, computed the way the stub validates it, for comparison. */
-function houseDay(): string {
+function houseDay(at: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Toronto",
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
-  }).format(new Date());
+  }).format(at);
 }
 
 /** Mint a demo session as Sales and return the bearer header's value. */
@@ -350,6 +356,45 @@ test("the quantity rung is the quantity on the screen, and the requested date is
   await expect(sold).toContainText(dollars(read.total_cents as number));
   expect(read.total_cents).toBe(4520);
 });
+
+// The two hours at which the dealer's day and the UTC day disagree and agree. Each leg pins the
+// page's clock AND the stub's clock to its own instant, so it is red on wrong code at any wall
+// hour (the same pin the drive run's legs take): the stub builds its day on the pinned clock, and
+// a ring asked for in the browser's UTC day is refused in the evening hour, where the two days
+// differ, so the sale never commits. Built from the host's own date so no calendar literal is
+// written here.
+function utcAt(hours: number, minutes: number): number {
+  const at = new Date();
+  at.setUTCHours(hours, minutes, 0, 0);
+  return at.getTime();
+}
+
+for (const [label, instant, differs] of [
+  ["half past midnight UTC, the previous evening in the dealer's zone", utcAt(0, 30), true],
+  ["the middle of the dealer's afternoon", utcAt(19, 0), false],
+] as const) {
+  test(`the ring asks for the dealer's local day, not the browser's UTC day: ${label}`, async ({ page, request }) => {
+    await page.clock.install({ time: instant });
+    const pinned = await request.post("/_stub/clock", { data: { now: instant } });
+    expect(pinned.ok()).toBe(true);
+    await signIn(page, "Sales");
+    await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+    await openStep(page, "payment");
+    const ringPost = page.waitForResponse(
+      (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
+    );
+    await page.getByTestId("pos-complete-sale").click();
+    const ringResponse = await ringPost;
+    const body = (await ringResponse.request().postDataJSON()) as Record<string, unknown>;
+    const dealersDay = houseDay(new Date(instant));
+    const utcDay = new Date(instant).toISOString().slice(0, 10);
+    expect(body.requested_date).toBe(dealersDay);
+    // The leg means something only where the two days differ (and agrees where they do not).
+    expect(dealersDay !== utcDay).toBe(differs);
+    // The wrong day is not merely asserted against: the stub refuses it, so the sale commits.
+    await expect(page.getByTestId("sold-panel")).toBeVisible();
+  });
+}
 
 test("a card sale shows the simulated word on the tender and on the confirmation, and none when the rail answers false", async ({
   page,

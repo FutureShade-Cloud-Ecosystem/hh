@@ -224,6 +224,7 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 	if asOf.IsZero() {
 		asOf = s.clock()
 	}
+	asOf = houseClock(asOf)
 
 	// The caller's branch reach (branch_reach.go). A caller who reaches one branch files its run under
 	// that branch, so the run can be read back by the same reach and no other.
