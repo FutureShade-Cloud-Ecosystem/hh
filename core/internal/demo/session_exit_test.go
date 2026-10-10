@@ -77,7 +77,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, five flows, the contract's three
+	// The flow listing: the closed table, four flows, the contract's three
 	// fields, the labels the entry page renders.
 	flowsRsp := get("/api/v1/demo/flows", nil)
 	if flowsRsp.StatusCode != http.StatusOK {
@@ -101,7 +101,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		listing.Flows[2].Flow != "payables-receivables" || listing.Flows[2].Label != "Payables and Receivables" ||
 		listing.Flows[3].Flow != "procurement-manager" || listing.Flows[3].Label != "Procurement manager" ||
 		listing.Flows[4].Flow != "financial-controller" || listing.Flows[4].Label != "Financial Controller" {
-		t.Fatalf("the listing is %+v, want the flow table's five with their own labels", listing.Flows)
+		t.Fatalf("the listing is %+v, want the flow table's five rows with their own labels", listing.Flows)
 	}
 
 	// The exit pair: mint the sales flow, read the till's policy with the

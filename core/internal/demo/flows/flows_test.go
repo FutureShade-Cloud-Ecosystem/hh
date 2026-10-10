@@ -4,9 +4,11 @@ package flows
 
 import "testing"
 
-// The table is closed: the two Counter Till flows, Payables and
-// Receivables, the Procurement manager and the Financial Controller, no
-// more, and every entry carries the account facts the other lanes share.
+// The table is closed: the two Counter Till flows and the three roles
+// the roadmap added one reviewed row at a time (Payables and Receivables
+// after PR 300, the Procurement Manager after PR 303, the Financial
+// Controller), no more, and every entry carries the account facts the
+// other lanes share.
 func TestTableIsTheClosedSet(t *testing.T) {
 	all := All()
 	if len(all) != 5 {
@@ -45,6 +47,10 @@ func TestLookups(t *testing.T) {
 	a, ok = Get("payables-receivables")
 	if !ok || a.Role != "payables_receivables" || a.Label != "Payables and Receivables" {
 		t.Fatalf("Get(payables-receivables) = %+v %v", a, ok)
+	}
+	a, ok = Get("procurement-manager")
+	if !ok || a.Role != "procurement_manager" || a.Label != "Procurement manager" {
+		t.Fatalf("Get(procurement-manager) = %+v %v", a, ok)
 	}
 	a, ok = Get("financial-controller")
 	if !ok || a.Role != "financial_controller" || a.Label != "Financial Controller" {
