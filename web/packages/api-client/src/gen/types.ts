@@ -2937,6 +2937,8 @@ export type InventoryReorderResult = {
   suggested_qty_base: number;
   uom: string;
   vendor_name: string;
+  existing_draft_po_id?: string;
+  existing_draft_po_no?: string;
 };
 export type InventoryNudgeRequest = {
   product_id: string;

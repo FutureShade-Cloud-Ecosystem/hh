@@ -37086,6 +37086,13 @@ components:
           type: string
         vendor_name:
           type: string
+        existing_draft_po_id:
+          type: string
+          format: uuid
+          description: The unplaced draft this product already had at this branch before this press. A draft never covers a shortfall, so the press still drafts the full quantity; absent when there was none.
+        existing_draft_po_no:
+          type: string
+          description: The number of the draft named by existing_draft_po_id; present with it, absent without it
     InventoryNudgeRequest:
       type: object
       required:

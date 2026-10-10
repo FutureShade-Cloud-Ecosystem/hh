@@ -3474,12 +3474,14 @@ type InventoryReorderRequest struct {
 }
 
 type InventoryReorderResult struct {
-	PoId             string               `json:"po_id"`
-	PoNo             string               `json:"po_no"`
-	Draft            InventorySuggestedPO `json:"draft"`
-	SuggestedQtyBase float64              `json:"suggested_qty_base"`
-	Uom              string               `json:"uom"`
-	VendorName       string               `json:"vendor_name"`
+	PoId              string               `json:"po_id"`
+	PoNo              string               `json:"po_no"`
+	Draft             InventorySuggestedPO `json:"draft"`
+	SuggestedQtyBase  float64              `json:"suggested_qty_base"`
+	Uom               string               `json:"uom"`
+	VendorName        string               `json:"vendor_name"`
+	ExistingDraftPoId *string              `json:"existing_draft_po_id,omitempty"`
+	ExistingDraftPoNo *string              `json:"existing_draft_po_no,omitempty"`
 }
 
 type InventoryNudgeRequest struct {
