@@ -302,10 +302,22 @@ type StaffQuoteView struct {
 	// QuantityNotice is the dealer's notice that the quantities are the customer's to confirm, branch
 	// row over dealer default, so staff see the words the customer sees.
 	QuantityNotice string `json:"quantity_notice"`
+	// Declined is why and how a staff member closed this quote as lost for the customer: the reason from
+	// the closed list, the channel the customer said no by, and the note. Absent unless a staff decline is
+	// on record; it is read from the decision's audit row, the only place the decline is kept.
+	Declined *QuoteDeclineRecord `json:"declined,omitempty"`
 
 	// validUntil is the parsed form the service uses to compute Expired/EditableFields. Unexported -
 	// it never crosses the wire.
 	validUntil *time.Time
+}
+
+// QuoteDeclineRecord is the staff decline of a quote as the decision's audit row holds it.
+type QuoteDeclineRecord struct {
+	ReasonCode string    `json:"reason_code"`
+	Channel    string    `json:"channel"`
+	Note       string    `json:"note,omitempty"`
+	DeclinedAt time.Time `json:"declined_at"`
 }
 
 // Acceptance history sources.
