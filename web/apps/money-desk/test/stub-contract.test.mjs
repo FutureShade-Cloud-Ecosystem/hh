@@ -364,6 +364,25 @@ test("apply route: the preview splits oldest first whatever the list order and w
   const posted = await call("POST", APPLY, { ...body, preview: false });
   assert.equal(posted.status, 200);
   assert.equal(posted.json.replayed, false);
+  // And a preview under a SPENT key answers as a preview, never as the key's replay: the
+  // final route's preview path returns before the replay fast path is ever reached, so the
+  // key is never read and the split is judged on the live balances whatever body it rode in
+  // on (the core's APreviewUnderASpentKeyAnswersAsAPreview leg holds the same walk there).
+  const part = { customer_id: youngest.customer_id, method: "CHEQUE", amount_cents: 10000, reference: "spent", invoice_ids: [youngest.id], idempotency_key: "p-2", preview: false };
+  const spent = await call("POST", APPLY, part);
+  assert.equal(spent.status, 200);
+  assert.equal(spent.json.lines[0].outcome, "PART", "the real apply leaves the invoice open for the previews below");
+  const spentPreview = await call("POST", APPLY, { ...part, preview: true });
+  assert.equal(spentPreview.status, 200);
+  assert.equal(spentPreview.json.preview, true);
+  assert.equal(spentPreview.json.replayed, false);
+  assert.equal(spentPreview.json.payment_no, undefined);
+  assert.equal(spentPreview.json.lines[0].applied_cents, 10000, "the same body previews its own split on the live balance");
+  const otherPreview = await call("POST", APPLY, { ...part, amount_cents: 5000, method: "EFT", preview: true });
+  assert.equal(otherPreview.status, 200);
+  assert.equal(otherPreview.json.preview, true);
+  assert.equal(otherPreview.json.replayed, false);
+  assert.equal(otherPreview.json.lines[0].applied_cents, 5000, "another body under the spent key previews its own split too");
 });
 
 test("apply route: the post is one payment, a retry with the same body answers the first result and posts once", async () => {

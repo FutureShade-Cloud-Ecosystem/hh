@@ -118,6 +118,32 @@ test("one payment across two invoices: the server splits it oldest first and pos
   await expect(page.locator("[data-notice]")).not.toContainText("PAY-0102");
 });
 
+test("a preview answers while a payments writer is mid flight (the final route's preview draws no counter)", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await page.getByRole("button", { name: "Pick all open" }).click();
+  const amount = page.locator("[data-field='receive-amount']");
+  await amount.fill("$5,000.00");
+  await amount.blur();
+  await expect(page.locator("[data-applied]")).toHaveText("$5,000.00 of $5,000.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 4488");
+  // Park the next real apply, the shape of a payments writer (a till payment) settling under
+  // the payments counter while the desk keeps typing.
+  await request.post("/_stub/park-apply", { data: { ms: 4000 } });
+  await page.getByRole("button", { name: "Record payment" }).click();
+  // The writer is mid flight: the button is held and no outcome has shown.
+  await expect(page.getByRole("button", { name: "Record payment" })).toBeDisabled();
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  await expect(page.locator("[data-error]")).toHaveCount(0);
+  // Typing asks the server for a new split inside the writer's window; the final route's
+  // preview takes no counter and no row lock, so its answer must land ahead of the writer.
+  await amount.fill("$3,000.00");
+  await expect(page.locator("[data-applied]")).toHaveText("$3,000.00 of $3,000.00", { timeout: 2500 });
+  await expect(page.getByRole("button", { name: "Record payment" })).toBeDisabled();
+  // The parked writer then answers on its own clock, and the pressed payment lands once.
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 applied: $4,825.00 on INV-1001, balance now $0.00; $175.00 on INV-1002", { timeout: 15000 });
+});
+
 type ApplyBody = { preview: boolean; idempotency_key: string; amount_cents: number; reference: string; invoice_ids: string[] } & Record<string, unknown>;
 
 async function readyToPay(page: Page, request: Parameters<typeof openDesk>[1], reference: string): Promise<void> {

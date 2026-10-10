@@ -146,7 +146,15 @@ const NSF_FEE = 3500;
 
 let world;
 
+// The payments writer's park: the next real apply's ANSWER is held for the asked window, the
+// shape of a payments writer (a till payment settling under the payments counter) that a desk's
+// preview must not wait behind. A preview never touches it: the final route's preview draws no
+// counter and no row lock (core/internal/payments received_apply.go previewApply, item 127), so
+// the desk's typing answers at once while a writer is mid flight.
+let parkedApplyMs = 0;
+
 function reset(kind = "full") {
+  parkedApplyMs = 0;
   world = {
     empty: kind === "empty",
     invoices: INVOICES.map((i) => ({
@@ -541,6 +549,11 @@ async function handle(req, res) {
     reset(body?.name === "empty" ? "empty" : "full");
     return send(res, 200, { ok: true });
   }
+  if (method === "POST" && path === "/_stub/park-apply") {
+    const body = await readBody(req);
+    parkedApplyMs = Math.max(0, Number(body?.ms ?? 0));
+    return send(res, 200, { ok: true, parkedApplyMs });
+  }
   if (path === "/api/v1/demo/flows") return send(res, 200, { flows: FLOWS });
   if (method === "POST" && path === "/api/v1/demo/session") {
     const body = await readBody(req);
@@ -643,6 +656,14 @@ async function handle(req, res) {
     });
     const answer = { preview, amount_cents: body.amount_cents, applied_cents: body.amount_cents - left, unapplied_cents: left, lines, replayed: false };
     if (preview) return send(res, 200, answer);
+    // The parked writer answers late, after every refusal walk has run: the park is a writer
+    // mid flight (holding the payments counter in the core's terms), never a change in the
+    // route's judgements, and a preview in this window answers ahead of it (see parkedApplyMs).
+    if (parkedApplyMs > 0) {
+      const ms = parkedApplyMs;
+      parkedApplyMs = 0;
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    }
     world.counter += 1;
     const no = `PAY-${String(100 + world.counter).padStart(4, "0")}`;
     const payment = {
