@@ -1,7 +1,15 @@
 // The sync pull carries only the driver's own run. The runs, stops, pod and
 // attachments scopes are the driver's offline set (manifest drive-run); the
-// fence that holds each to the caller's own driver record has landed, and
-// this leg proves it against the seeded world.
+// fence that holds each to the caller's own driver record has landed.
+//
+// WHAT THESE LEGS DO NOT PROVE ON A SEEDED BOX: that the fence lets the driver's own run through.
+// A seeded run and its stops carry org_id NULL (the demo seed knows no org), the runs and stops
+// scopes filter on org_id = the caller's org, and no route the Driver may call stamps an org on an
+// existing row (the dispatch moves only draw a seq). So on this box both scopes answer nothing for
+// the driver, before and after the story's moves, and the own run presence half of the fence is
+// proved where the service creates the run (dispatch/syncscope_driver_fence_integration_test.go), not here.
+// What these legs hold is the leak half: whatever does arrive is the driver's own and carries no
+// money.
 //
 // The invariants are by id and by the run's own references, never by a field
 // name guessed: the runs scope may hold only the driver's own run ids, the
@@ -24,17 +32,15 @@ async function pullAll(page: import("@playwright/test").Page, scope: string): Pr
   return items;
 }
 
-test("the runs and stops scopes hold only the driver's own run", async ({ page }) => {
+test("the runs and stops scopes leak nothing past the driver's own run (a seeded box holds none to show)", async ({ page }) => {
   const own = await myRuns(page);
   const ownRunIds = new Set(own.map((r) => r.id as string));
   const ownStopIds = new Set(own.flatMap((r) => (r.stops as Array<{ id: string }>).map((s) => s.id)));
   const runs = await pullAll(page, "runs");
-  // The seeded world's rows are carried data: the platform keeps their seq NULL by ruling (the
-  // org-and-seq migration's own header), and the org stamp arrives only on rows the service
-  // writes, so on this box the driver's scopes answer nothing, not even the rows this story's
-  // moves updated. The emptiness is asserted rather than skipped past, so a wave that makes
-  // seeded rows syncable has to come here and say so; and whatever DOES appear below must be the
-  // driver's own, which is the fence this leg exists for.
+  // The seeded world's rows are carried data with org_id NULL (see the header), so the driver's
+  // scopes answer nothing, not even for the rows this story's moves updated. The emptiness is
+  // asserted rather than skipped past, so a wave that makes seeded rows syncable has to come here
+  // and say so; and whatever DOES appear below must be the driver's own.
   expect(runs).toHaveLength(0);
   const stops = await pullAll(page, "stops");
   expect(stops).toHaveLength(0);
