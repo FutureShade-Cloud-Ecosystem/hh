@@ -404,7 +404,7 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 		return report, err
 	}
 
-// The org, the org scope, the platform links for the role accounts
+	// The org, the org scope, the platform links for the role accounts
 	// and the staff grants that derive from them, all through the identity
 	// program itself, so the demo world is provisioned exactly the way a
 	// real dealer's is.

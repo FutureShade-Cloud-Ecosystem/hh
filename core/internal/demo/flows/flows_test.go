@@ -50,7 +50,7 @@ func TestLookups(t *testing.T) {
 	if !ok || a.Role != "inside_sales" {
 		t.Fatalf("Get(sales) = %+v %v", a, ok)
 	}
-if _, ok := Get("receivables"); ok {
+	if _, ok := Get("receivables"); ok {
 		t.Fatal("a flow outside the table answered")
 	}
 	a, ok = Get("financial-controller")

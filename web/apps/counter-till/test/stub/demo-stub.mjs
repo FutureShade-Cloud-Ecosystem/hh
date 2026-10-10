@@ -122,7 +122,7 @@ const USERS = {
     tier: 2,
     scope: "BRANCH",
   },
-"yard-team": {
+  "yard-team": {
     user_id: "demo-account-yard-team",
     email: "yard-team@demo.invalid",
     display_name: "Yard persona (demo)",

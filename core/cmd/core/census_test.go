@@ -56,7 +56,7 @@ func assertCensusAnnotated(t *testing.T, route apigen.Route) {
 		t.Fatalf("staff operation %s names unknown level %q", route.OperationID, route.Level)
 	}
 	// The named lists the gate reads (rolegate.go's listReaders): the
-// pricing editors, the cost and margin list (D10, the pricing log), the low
+	// pricing editors, the cost and margin list (D10, the pricing log), the low
 	// margin report's readers (the floor lists held to the cost list), the shortage
 	// resolvers (X11, the yard's shortage resolve route), and the PO writers (the
 	// buying route's writer list).
