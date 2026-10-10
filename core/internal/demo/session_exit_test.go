@@ -93,7 +93,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if err := json.Unmarshal([]byte(body(flowsRsp)), &listing); err != nil {
 		t.Fatalf("the flows body does not decode: %v", err)
 	}
-if len(listing.Flows) != 5 {
+	if len(listing.Flows) != 5 {
 		t.Fatalf("the listing carries %d flows, want the closed table's five", len(listing.Flows))
 	}
 	for i, want := range []struct{ flow, role, label string }{
@@ -107,7 +107,6 @@ if len(listing.Flows) != 5 {
 			listing.Flows[i].Label != want.label {
 			t.Fatalf("listing row %d is %+v, want %q/%q/%q", i, listing.Flows[i], want.flow, want.role, want.label)
 		}
-	}
 	}
 
 	// The exit pair: mint the sales flow, read the till's policy with the

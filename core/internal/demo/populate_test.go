@@ -329,7 +329,7 @@ if counts.UsersLinked != 5 || counts.UsersUnlinked != 8 {
 	// The two role accounts are exactly as the demo sign-in will resolve them.
 assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER", trentonBranchID)
-	assertRoleAccount(t, ctx, pool, controllerUserID, controllerEmail, controllerDisplayName, "FINANCIAL_CONTROLLER")
+	assertRoleAccount(t, ctx, pool, controllerUserID, controllerEmail, controllerDisplayName, "FINANCIAL_CONTROLLER", trentonBranchID)
 
 	// The personas: each holds its role, its platform link and exactly one
 	// live branch grant at its own branch, nothing more. The yard team's
