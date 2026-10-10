@@ -164,7 +164,7 @@ test("an answer lost after the server applied the payment says the outcome is un
   await expect(page.locator("[data-notice]")).not.toContainText("PAY-0102");
 });
 
-test("a 5xx answer says the outcome is unknown and the retry carries the same key; a changed body is a different payment with a new key", async ({ page, request }) => {
+test("a 5xx answer says the outcome is unknown, and every retry carries the same key whatever the form now says", async ({ page, request }) => {
   const posts: ApplyBody[] = [];
   let failures = 2;
   await page.route("**/api/v1/ar/payments/apply", (route) => {
@@ -184,11 +184,138 @@ test("a 5xx answer says the outcome is unknown and the retry carries the same ke
   await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
   expect(posts).toHaveLength(2);
   expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+  // The cheque number changes after the unknown outcome: the press still carries this payment's key,
+  // so the money can only land once. Nothing landed here (the failures were synthetic), so the changed
+  // body posts as the payment's first landing under the same key.
   await page.locator("[data-field='receive-reference']").fill("Cheque 4472");
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 applied");
   expect(posts).toHaveLength(3);
-  expect(posts[2]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
+  expect(posts[2]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+});
+
+test("a lost answer then a changed cheque number sends the same key; the route's refusal reads already recorded and the account reloads", async ({ page, request }) => {
+  const posts: ApplyBody[] = [];
+  let lose = true;
+  await page.route("**/api/v1/ar/payments/apply", async (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview) return route.continue();
+    posts.push(body);
+    if (lose) {
+      lose = false;
+      await route.fetch();
+      return route.abort("connectionreset");
+    }
+    return route.continue();
+  });
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await page.getByRole("button", { name: "Pick all open" }).click();
+  await page.locator("[data-field='receive-amount']").fill("500.00");
+  await expect(page.locator("[data-applied]")).toHaveText("$500.00 of $500.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 447");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  // The cheque number is corrected and the payment pressed again: the same key goes out, and because
+  // the first press landed, the route refuses the changed body in words; the desk reads that refusal
+  // as the payment already being recorded, says so, and reloads the account's balances.
+  await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  expect(posts).toHaveLength(2);
+  expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+  await expect(page.locator("[data-notice]")).toContainText("already recorded by the earlier press");
+  await expect(page.locator("[data-error]")).toHaveCount(0);
+  await expect(page.locator("[data-invoice-row]", { hasText: "INV-1001" })).toContainText("$4,325.00");
+  await expect(page.locator("[data-notice]")).not.toContainText("PAY-0102");
+});
+
+test("a payment recorded on another account leaves this account's pending payment key alone", async ({ page, request }) => {
+  const posts: ApplyBody[] = [];
+  let firstCustomer = "";
+  let lose = true;
+  await page.route("**/api/v1/ar/payments/apply", async (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview) return route.continue();
+    if (firstCustomer === "") firstCustomer = String(body.customer_id);
+    posts.push(body);
+    if (lose && String(body.customer_id) === firstCustomer) {
+      lose = false;
+      await route.fetch();
+      return route.abort("connectionreset");
+    }
+    return route.continue();
+  });
+  const readyFirstAccount = async (): Promise<void> => {
+    await openAccount(page, "Granite Edge Landscaping (demo)");
+    await page.getByRole("button", { name: "Clear" }).first().click();
+    await page.getByRole("checkbox", { name: "Pay INV-1002" }).click();
+    await page.locator("[data-field='receive-amount']").fill("100.00");
+    await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
+  };
+  await openDesk(page, request);
+  await readyFirstAccount();
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  // A payment on another account succeeds; it must not end the first account's pending key.
+  await page.getByRole("button", { name: "‹ Receivables" }).click();
+  await openAccount(page, "Oakline Builders (demo)");
+  await page.locator("[data-field='receive-amount']").fill("100.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 9001");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0102 applied");
+  // Back on the first account, the same body presses under the first payment's key: the route answers
+  // the replay, so the payment posts once and nothing doubles.
+  await page.getByRole("button", { name: "‹ Receivables" }).click();
+  await readyFirstAccount();
+  await page.getByRole("button", { name: "Record payment" }).click();
+  const mine = posts.filter((p) => String(p.customer_id) === firstCustomer);
+  expect(mine).toHaveLength(2);
+  expect(mine[1]?.idempotency_key).toBe(mine[0]?.idempotency_key);
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 was already applied");
+  await expect(page.locator("[data-notice]")).not.toContainText("PAY-0103");
+});
+
+test("a reload that shows the payment ends the held key, so pressing again with the same body is a new payment", async ({ page, request }) => {
+  const posts: ApplyBody[] = [];
+  let lose = true;
+  await page.route("**/api/v1/ar/payments/apply", async (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview) return route.continue();
+    posts.push(body);
+    if (lose) {
+      lose = false;
+      await route.fetch();
+      return route.abort("connectionreset");
+    }
+    return route.continue();
+  });
+  const sameBody = async (): Promise<void> => {
+    await openAccount(page, "Granite Edge Landscaping (demo)");
+    await page.getByRole("button", { name: "Clear" }).first().click();
+    await page.getByRole("checkbox", { name: "Pay INV-1002" }).click();
+    await page.locator("[data-field='receive-amount']").fill("100.00");
+    await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
+  };
+  await openDesk(page, request);
+  await sameBody();
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  // The check the words ask for: the account is reopened and the invoice's payments show the payment,
+  // so the outcome is known and the held key ends.
+  await page.getByRole("button", { name: "‹ Receivables" }).click();
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await page.locator("[data-invoice-row]", { hasText: "INV-1002" }).getByRole("button", { name: "INV-1002" }).click();
+  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0101" })).toContainText("Received");
+  // The same body pressed again is now a new payment with its own key, and it posts as its own.
+  await page.getByRole("button", { name: "Back to payment" }).click();
+  await page.getByRole("button", { name: "Clear" }).click();
+  await page.getByRole("checkbox", { name: "Pay INV-1002" }).click();
+  await page.locator("[data-field='receive-amount']").fill("100.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0102 applied: $100.00 on INV-1002");
+  expect(posts).toHaveLength(2);
+  expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
 });
 
 test("a worded 4xx says the payment was not recorded in the route's own words, and the next press is a new payment with a new key", async ({ page, request }) => {

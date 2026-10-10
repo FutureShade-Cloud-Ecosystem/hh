@@ -76,7 +76,10 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "apply-no-card": [{ file: "src/ar/ar-views.ts", source: 'placeholder="Cheque number or transfer reference"' }],
   "apply-unknown": [
     { file: RECEIVABLES, test: "an answer lost after the server applied the payment says the outcome is unknown, and pressing again reuses the key and posts once" },
-    { file: RECEIVABLES, test: "a 5xx answer says the outcome is unknown and the retry carries the same key; a changed body is a different payment with a new key" },
+    { file: RECEIVABLES, test: "a 5xx answer says the outcome is unknown, and every retry carries the same key whatever the form now says" },
+    { file: RECEIVABLES, test: "a lost answer then a changed cheque number sends the same key; the route's refusal reads already recorded and the account reloads" },
+    { file: RECEIVABLES, test: "a payment recorded on another account leaves this account's pending payment key alone" },
+    { file: RECEIVABLES, test: "a reload that shows the payment ends the held key, so pressing again with the same body is a new payment" },
   ],
   "apply-refused": [
     { file: RECEIVABLES, test: "a worded 4xx says the payment was not recorded in the route's own words, and the next press is a new payment with a new key" },

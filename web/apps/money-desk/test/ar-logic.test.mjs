@@ -84,6 +84,15 @@ test("a worded 4xx is a refusal in the route's own words, and says the payment w
   assert.ok(paymentOutcome("Forbidden", 403).words.startsWith("The payment was not recorded."));
 });
 
+test("the route's replay refusal reads as the earlier payment being recorded, in both its wordings", () => {
+  const different = paymentOutcome("that idempotency key already recorded a different payment; use a new key", 422);
+  assert.equal(different.kind, "recorded");
+  assert.ok(different.words.includes("already recorded by the earlier press"), different.words);
+  assert.ok(!different.words.includes("was not recorded"), different.words);
+  const otherAccount = paymentOutcome("that idempotency key already recorded a payment for another account; use a new key", 400);
+  assert.equal(otherAccount.kind, "recorded");
+});
+
 test("a promise needs an amount, a date, and who promised it", () => {
   const good = { amountText: "50.00", date: "2999-01-01", by: "Accounts payable", note: "", balanceCents: 96000 };
   assert.deepEqual(validatePromise(good), { ok: true, promisedCents: 5000 });

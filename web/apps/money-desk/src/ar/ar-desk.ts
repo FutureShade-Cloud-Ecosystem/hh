@@ -55,6 +55,10 @@ function newKey(): string {
   return `k-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
 
+// The clock skew allowance when a reload's payment list is matched against a held key's payment: the
+// list carries the server's received time and the key carries the browser's send time.
+const PIN_MATCH_SKEW_MS = 600_000;
+
 const METHODS: readonly PaymentMethod[] = ["CASH", "CARD", "CHEQUE", "EFT"];
 
 export class ArDesk {
@@ -87,11 +91,12 @@ export class ArDesk {
   #notice = "";
   #fillPending = false;
 
-  // One key per payment: the key and the body it was minted for. A retry of the same body (after a lost or 5xx
-  // answer, or a double press) reuses the key so the server answers the first result and posts once; a changed
-  // body is a different payment and gets a new key; a refusal or a success ends the payment.
-  #payKey = "";
-  #payBody = "";
+  // One pending payment per account: the key is minted when the payment is first sent and sent again for every
+  // retry, whatever the form now says (a corrected cheque number, another method, a changed amount, other
+  // invoices), until the outcome is known: the route answering it, or the account's own payments showing it on a
+  // reload. The route refuses a changed body under a spent key in words, so a lost answer can never post the same
+  // money twice, and a payment on another account never touches this one's key.
+  #payPins = new Map<string, { key: string; method: PaymentMethod; amountCents: number; mintedMs: number }>();
   #promiseKey = newKey();
   #remindKey = newKey();
 
@@ -167,6 +172,7 @@ export class ArDesk {
   async #reloadInvoice(): Promise<void> {
     const id = this.#account?.selectedInvoiceId;
     if (this.#account === null || id === null || id === undefined) return;
+    const customerId = this.#account.customerId;
     const [detail, payments] = await Promise.all([this.#api.invoice(id), this.#api.invoicePayments(id)]);
     if (this.#account === null || this.#account.selectedInvoiceId !== id) return;
     this.#account = {
@@ -174,6 +180,16 @@ export class ArDesk {
       detail: detail.ok ? detail.value : this.#account.detail,
       payments: payments.ok ? payments.value : this.#account.payments,
     };
+    // A reload that shows the held payment ends it: the outcome is known, so the account's next
+    // payment is a new one with its own key. The match rides the payment's own method, amount and
+    // received time (the list carries no reference), never a balance the app compared itself.
+    const pin = this.#payPins.get(customerId);
+    if (pin !== undefined && payments.ok) {
+      const shown = payments.value.items.some(
+        (p) => p.status !== "BOUNCED" && p.method === pin.method && p.payment_amount_cents === pin.amountCents && Date.parse(p.received_at) >= pin.mintedMs - PIN_MATCH_SKEW_MS,
+      );
+      if (shown) this.#payPins.delete(customerId);
+    }
   }
 
   async #loadStatement(customerId: string): Promise<void> {
@@ -576,10 +592,10 @@ export class ArDesk {
     this.#clearMessages();
     this.#host.repaint();
     const method = METHODS.find((m) => m === account.method) ?? "CHEQUE";
-    const body = JSON.stringify([account.customerId, method, cents, reference, [...account.picked].sort()]);
-    if (this.#payKey === "" || this.#payBody !== body) {
-      this.#payKey = newKey();
-      this.#payBody = body;
+    let pin = this.#payPins.get(account.customerId);
+    if (pin === undefined) {
+      pin = { key: newKey(), method, amountCents: cents, mintedMs: Date.now() };
+      this.#payPins.set(account.customerId, pin);
     }
     const result = await this.#api.applyPayment({
       customerId: account.customerId,
@@ -587,33 +603,43 @@ export class ArDesk {
       amountCents: cents,
       reference,
       invoiceIds: account.picked,
-      key: this.#payKey,
+      key: pin.key,
       preview: false,
     });
     this.#busy = false;
     if (!result.ok) {
       const outcome = paymentOutcome(result.error, result.status);
+      if (outcome.kind === "recorded") {
+        // The route's replay refusal is how it says the earlier press landed: the outcome is known,
+        // the payment is ended, and the account is reloaded so the person reads the server's balances.
+        this.#payPins.delete(account.customerId);
+        this.#endApplyForm();
+        this.#notice = outcome.words;
+        await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
+        this.#host.repaint();
+        return;
+      }
       this.#notice = "";
       this.#error = outcome.words;
-      // An unknown outcome keeps the key, so the retry cannot post twice; a refusal wrote nothing and ends it.
-      if (outcome.kind === "refused") this.#endPayment();
+      // An unknown outcome keeps the key, so no retry can post twice; a refusal wrote nothing and ends it.
+      if (outcome.kind === "refused") this.#payPins.delete(account.customerId);
       this.#host.repaint();
       return;
     }
-    this.#endPayment();
+    this.#payPins.delete(account.customerId);
     const r = result.value;
     const done = r.lines.filter((l) => l.outcome !== "NONE").map((l) => `${formatMoney(l.applied_cents)} on ${l.invoice_no}, balance now ${formatMoney(l.balance_after_cents)}`);
     this.#notice = `Payment ${r.payment_no ?? "recorded"} ${r.replayed ? "was already applied" : "applied"}: ${done.join("; ")}.`;
-    this.#previewGeneration += 1;
-    if (this.#account !== null) this.#account = { ...this.#account, amountText: "", picked: [], preview: null, previewError: "" };
-    this.#afterFill();
+    this.#endApplyForm();
     await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
     this.#host.repaint();
   }
 
-  #endPayment(): void {
-    this.#payKey = "";
-    this.#payBody = "";
+  /** Clears the apply form after a payment is resolved; the server's balances are what show now. */
+  #endApplyForm(): void {
+    this.#previewGeneration += 1;
+    if (this.#account !== null) this.#account = { ...this.#account, amountText: "", picked: [], preview: null, previewError: "" };
+    this.#afterFill();
   }
 
   #stop(words: string): void {

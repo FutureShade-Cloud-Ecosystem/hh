@@ -106,17 +106,26 @@ export function refusalWords(action: string, error: string, status: number | und
 /**
  * What a recorded payment's failure means for the person. A lost answer or a 5xx leaves the outcome unknown: the
  * server may have written the payment before the answer was lost, so the words say so and send the person to check
- * the account before taking anything again (pressing again with nothing changed carries the same key and posts
- * once). A worded 4xx is the route refusing with nothing written, in the route's own words.
+ * the account before taking anything again (the desk holds the payment's key and sends it again whatever the form
+ * now says, so pressing again cannot post the money twice). A worded 4xx is the route refusing with nothing
+ * written, in the route's own words, except its replay refusal ("that idempotency key already recorded ..."):
+ * those words mean the earlier attempt landed, so they read as the payment being recorded, not refused.
  */
-export type PaymentOutcome = { kind: "unknown" | "refused"; words: string };
+export type PaymentOutcome = { kind: "unknown" | "refused" | "recorded"; words: string };
 
 export function paymentOutcome(error: string, status: number | undefined): PaymentOutcome {
   if (status === undefined || status >= 500) {
     return {
       kind: "unknown",
       words:
-        "The server did not give a clear answer, so this payment may or may not have been recorded. Check the account's payments and invoice balances before taking the money again. Pressing Record payment again with nothing changed is safe: it is the same payment and posts once.",
+        "The server did not give a clear answer, so this payment may or may not have been recorded. Check the account's payments and invoice balances before taking the money again. Pressing Record payment again is safe whatever the form now says: this desk sends the payment's own key again, so it cannot post twice, and if the earlier press was already recorded the server will say so.",
+    };
+  }
+  if (error.includes("already recorded")) {
+    return {
+      kind: "recorded",
+      words:
+        "The payment was already recorded by the earlier press. The server refused these changed details under the same key, which is how it says the first press landed; the account now shows the server's balances.",
     };
   }
   return { kind: "refused", words: `The payment was not recorded. ${refusalWords("payment", error, status)}` };
