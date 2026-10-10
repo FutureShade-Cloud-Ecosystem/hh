@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
 var (
@@ -829,33 +831,19 @@ func (r *Repository) UserRoleCode(ctx context.Context, userID string) (string, e
 	if err != nil {
 		return "", fmt.Errorf("user role code: %w", err)
 	}
-	// The carried roles.code holds ERP codes (UPPERCASE); the rule
-	// vocabulary is canonical (lowercase). CanonicalForERPCode is the
-	// bridge the dispatch fence's moneyAllowed already uses.
-	if canonical, ok := canonicalRoleByCode[code]; ok {
-		return canonical, nil
-	}
-	return code, nil
+	return canonicalRole(code), nil
 }
 
-// canonicalRoleByCode is the local copy of the carried vocabulary's ERP-to-
-// canonical map (identity.CanonicalForERPCode reads the same one). Held
-// here so UserRoleCode can answer canonical without importing identity.
-var canonicalRoleByCode = map[string]string{
-	"GENERAL_MANAGER":      "general_manager",
-	"FINANCIAL_CONTROLLER": "financial_controller",
-	"HR":                   "hr",
-	"BRANCH_MANAGER":       "branch_manager",
-	"SALES_MANAGER":        "sales_manager",
-	"YARD_MANAGER":         "yard_manager",
-	"LOGISTICS_MANAGER":    "logistics_manager",
-	"PROCUREMENT_MANAGER":  "procurement_manager",
-	"PAYABLES_RECEIVABLES": "payables_receivables",
-	"INSIDE_SALES":         "inside_sales",
-	"OUTSIDE_SALES":        "outside_sales",
-	"YARD_TEAM":            "yard_team",
-	"DRIVERS":              "driver",
-	"SUPER_ADMIN":          "super_admin",
+// canonicalRole turns the carried roles.code (an ERP code, UPPERCASE) into
+// the rule vocabulary's canonical id (lowercase) through identity's own
+// mapping, the one the dispatch fence's moneyAllowed reads, so this module
+// keeps no table of its own. A code outside the vocabulary comes back as it
+// was read, which the cost rule refuses (fail closed).
+func canonicalRole(code string) string {
+	if canonical, ok := identity.CanonicalForERPCode(code); ok {
+		return canonical
+	}
+	return code
 }
 
 // - Feature 1: Screen-Takeover forced acknowledgement (0071) -
