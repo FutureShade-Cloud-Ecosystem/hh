@@ -143,6 +143,12 @@ DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_base?sslmode=dis
 HH_CORE_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_core_gate?sslmode=disable \
 HH_B3_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_b3_gate?sslmode=disable \
 go test ./... -count=1 -p 1 -timeout 30m
+
+The demo job also creates and migrates a fourth database, `till_b4_gate`,
+and `HH_B4_TEST_DATABASE_URL` stays unset on the untagged run by design
+(the B4 population proofs want a hand-prepared scratch shape the demo
+job cannot honestly provide; their legs skip politely without the
+variable, the posture they held before the job existed).
 ```
 
 CI's whole integration package list, in `go list` order, on one migrated and
