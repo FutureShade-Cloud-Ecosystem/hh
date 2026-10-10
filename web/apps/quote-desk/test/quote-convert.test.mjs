@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 
 import {
   awayNotice,
+  paymentNotTakenWords,
   codRefusalWords,
   convertRouteQuoteId,
   isCodRefusal,
@@ -112,10 +113,27 @@ test("a payment settled after the person left is said in plain words", () => {
   const taken = awayNotice({ orderNo: "SO-1", quoteNo: "Q-7", amountCents: 5000, paid: { paymentNo: "PAY-3" } });
   assert.match(taken, /SO-1/);
   assert.match(taken, /payment of \$50\.00 was taken/);
-  const not = awayNotice({ orderNo: "SO-1", quoteNo: "Q-7", amountCents: 5000, paid: null, said: "the payments desk is closed" });
+  const not = awayNotice({ orderNo: "SO-1", quoteNo: "Q-7", amountCents: 5000, paid: null, status: 409, said: "the payments desk is closed" });
   assert.match(not, /was not taken/);
   assert.match(not, /Nothing was charged/);
   assert.match(not, /the payments desk is closed/);
+});
+
+test("a payment whose answer was lost is an unknown outcome, never 'Nothing was charged'", () => {
+  for (const status of [undefined, 500, 502, 503]) {
+    const words = paymentNotTakenWords(status, "bad gateway", 5000);
+    assert.match(words, /could not confirm whether the payment of \$50\.00 was taken/);
+    assert.match(words, /balance/);
+    assert.match(words, /same payment key/);
+    assert.doesNotMatch(words, /Nothing was charged|counter/);
+    const away = awayNotice({ orderNo: "SO-1", quoteNo: "Q-7", amountCents: 5000, paid: null, status, said: "bad gateway" });
+    assert.match(away, /could not confirm whether the payment/);
+    assert.doesNotMatch(away, /Nothing was charged|counter/);
+  }
+  // Only an answer in words proves nothing was taken.
+  const refused = paymentNotTakenWords(409, "the payments desk is closed", 5000);
+  assert.match(refused, /was not taken: the payments desk is closed/i);
+  assert.match(refused, /Nothing was charged/);
 });
 
 test("a refusal is plain words with what to do next", () => {

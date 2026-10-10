@@ -39,6 +39,7 @@ import {
   STEP_LABEL,
   awayCodNotice,
   awayNotice,
+  paymentNotTakenWords,
   codRefusalWords,
   fulfilmentLabel,
   accountKind,
@@ -689,7 +690,7 @@ export class QuoteConvert extends HHElement {
     });
     if (seq !== this.#seq) {
       // The person left while the payment was out: the outcome is said on the desk, never dropped.
-      this.#announceAway(quoteId, awayNotice({ orderNo, quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, said: paid.ok ? "" : spokenRefusal(paid.error) }));
+      this.#announceAway(quoteId, awayNotice({ orderNo, quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, status: paid.ok ? undefined : paid.status, said: paid.ok ? "" : spokenRefusal(paid.error) }));
       return;
     }
     this.#busy = false;
@@ -697,8 +698,7 @@ export class QuoteConvert extends HHElement {
       this.#paid = paid.value;
       this.#planned = null;
     } else {
-      const said = spokenRefusal(paid.error);
-      this.#payNote = `The order exists, but the payment was not taken: ${said === "" ? "the server did not accept it" : said}${said.endsWith(".") ? "" : "."} Nothing was charged. Try the payment again, or take it at the counter.`;
+      this.#payNote = `The order exists. ${paymentNotTakenWords(paid.status, paid.error, planned.amountCents)}`;
     }
     this.requestUpdate();
   }
@@ -712,7 +712,7 @@ export class QuoteConvert extends HHElement {
       idempotencyKey: planned.key,
     });
     const said = paid.ok ? "" : spokenRefusal(paid.error);
-    this.#announceAway(quoteId, awayNotice({ orderNo, quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, said }));
+    this.#announceAway(quoteId, awayNotice({ orderNo, quoteNo, amountCents: planned.amountCents, paid: paid.ok ? paid.value : null, status: paid.ok ? undefined : paid.status, said }));
   }
 
   /**

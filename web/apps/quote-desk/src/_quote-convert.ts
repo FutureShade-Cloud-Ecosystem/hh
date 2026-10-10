@@ -3,6 +3,7 @@
 // that refuses an order, the totals, the stock. This module only routes, words and orders what the
 // server answered, and says "not reported" where a read is missing rather than guessing.
 import { moneyWord } from "./_quote-edit.js";
+import { isUnknownOutcome } from "./_order-payment.js";
 import { qtyLabel, spokenRefusal } from "./_quote-workarea.js";
 
 // ── the route ──────────────────────────────────────────────────────────────────
@@ -323,12 +324,29 @@ export function paymentKeyFor(prev: KeyedIntent | null, intent: PaymentIntent, m
 }
 
 /**
- * What the person is told when the order was made while they were on another screen and the payment
- * they typed for it was settled after they left: taken, or not taken and why.
+ * Why a payment against an existing order was not taken, in words. Only a refusal the server answered
+ * in words (a 4xx with its sentence) proves nothing was taken. No answer at all (the network dropped,
+ * the request timed out) or a 5xx may follow a write that committed, so the outcome is unknown: the
+ * words say so, send the person to check the order's balance before anything else is taken, and
+ * offer no second payment; a retry from the desk sends the same payment key and can never take it twice.
  */
-export function awayNotice(input: { orderNo: string; quoteNo: string; amountCents: number; paid: { paymentNo: string } | null; said?: string }): string {
+export function paymentNotTakenWords(status: number | undefined, detail: string, amountCents: number): string {
+  if (isUnknownOutcome(status)) {
+    return `We could not confirm whether the payment of ${moneyWord(amountCents)} was taken. Check the order's balance (reload the order) before anything else is taken. Trying again here sends the same payment key, so it can never be taken twice.`;
+  }
+  const said = spokenRefusal(detail.trim());
+  const why = said === "" ? "the server did not accept it" : said;
+  return `The payment of ${moneyWord(amountCents)} was not taken: ${why}${why.endsWith(".") ? "" : "."} Nothing was charged. Try the payment again, or take it at the counter.`;
+}
+
+/**
+ * What the person is told when the order was made while they were on another screen and the payment
+ * they typed for it was settled after they left: taken, or not taken and why, or not known.
+ */
+export function awayNotice(input: { orderNo: string; quoteNo: string; amountCents: number; paid: { paymentNo: string } | null; status?: number; said?: string }): string {
   const made = `Order ${input.orderNo} was created from quote ${input.quoteNo}`;
   if (input.paid !== null) return `${made}, and the payment of ${moneyWord(input.amountCents)} was taken (${input.paid.paymentNo}).`;
+  if (isUnknownOutcome(input.status)) return `${made}. ${paymentNotTakenWords(input.status, "", input.amountCents)}`;
   const said = (input.said ?? "").trim();
   const why = said === "" ? "the server did not accept it" : said;
   return `${made}, but the payment of ${moneyWord(input.amountCents)} was not taken: ${why}${why.endsWith(".") ? "" : "."} Nothing was charged. Take it at the counter.`;

@@ -433,7 +433,8 @@ test("idempotency: a payment whose answer was lost is retried under the same key
     await route.abort();
   });
   await page.getByTestId("qc-confirm").click();
-  await expect(page.getByTestId("qc-pay-note")).toContainText("was not taken");
+  await expect(page.getByTestId("qc-pay-note")).toContainText("could not confirm whether the payment");
+  await expect(page.getByTestId("qc-pay-note")).not.toContainText("Nothing was charged");
   await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
   await page.getByTestId("qc-retry-payment").click();
   await expect(page.getByTestId("qc-done-payment")).toContainText("taken");
@@ -444,6 +445,47 @@ test("idempotency: a payment whose answer was lost is retried under the same key
   expect(posted[1]!.key).toBe(posted[0]!.key);
   expect(seen.payments).toHaveLength(1);
 });
+
+/** The order made, a payment of 50 planned, and the payment door answering as `answer` after (or without) the write. */
+async function payAfterLostAnswer(page: Page, answer: "drop" | "502"): Promise<void> {
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-pay-amount").fill("50");
+  await next(page);
+  let lost = true;
+  await page.route(/\/order-payment$/, async (route) => {
+    if (!lost) {
+      await route.continue();
+      return;
+    }
+    lost = false;
+    await route.fetch();
+    if (answer === "drop") await route.abort();
+    else await route.fulfill({ status: 502, contentType: "application/json", body: JSON.stringify({ error: "bad gateway" }) });
+  });
+  await page.getByTestId("qc-confirm").click();
+}
+
+for (const answer of ["drop", "502"] as const) {
+  test(`unknown payment outcome (${answer}): the words say it must be checked, never "Nothing was charged", and the retry reuses the key`, async ({ page }) => {
+    await payAfterLostAnswer(page, answer);
+    const note = page.getByTestId("qc-pay-note");
+    await expect(note).toContainText("could not confirm whether the payment of $50.00 was taken");
+    await expect(note).toContainText("balance");
+    await expect(note).not.toContainText("Nothing was charged");
+    await expect(note).not.toContainText("counter");
+    await page.getByTestId("qc-retry-payment").click();
+    await expect(page.getByTestId("qc-done-payment")).toContainText("taken");
+    const seen = await state(page);
+    const posted = seen.posts.filter((p) => p.kind === "order-payment");
+    expect(posted).toHaveLength(2);
+    expect(posted[0]!.key).not.toBeNull();
+    expect(posted[1]!.key).toBe(posted[0]!.key);
+    expect(seen.payments).toHaveLength(1);
+  });
+}
 
 test("idempotency: the same intended payment keeps its key, a fresh intended payment gets a new one", async ({ page }) => {
   await arriveCod(page);
