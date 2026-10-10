@@ -139,7 +139,10 @@ func (r *Repository) ListOrderNotes(ctx context.Context, orderID string) ([]Orde
 // against the order (issued / still a draft / voided) and each payment applied to those invoices,
 // with the acting staff display names resolved in the same read. Read-only presentation, see the
 // file header for the boundary ruling.
-func (r *Repository) OrderDocumentEvents(ctx context.Context, orderID string) ([]DocEvent, error) {
+//
+// withPayments admits the payment rows (number-less, but their amount, method and applier are the
+// payment trail); without it the payments are never read.
+func (r *Repository) OrderDocumentEvents(ctx context.Context, orderID string, withPayments bool) ([]DocEvent, error) {
 	if r.pool == nil {
 		return []DocEvent{}, nil
 	}
@@ -194,6 +197,10 @@ func (r *Repository) OrderDocumentEvents(ctx context.Context, orderID string) ([
 	}
 	if err := invRows.Err(); err != nil {
 		return nil, fmt.Errorf("order: activity invoices: %w", err)
+	}
+
+	if !withPayments {
+		return out, nil
 	}
 
 	// Payments applied to the order's invoices. The actor is WHO MATCHED the money to the invoice

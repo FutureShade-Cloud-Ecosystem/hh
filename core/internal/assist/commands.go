@@ -134,7 +134,10 @@ func coreCommands() []Command {
 			Code:    "payment.lookup",
 			Title:   "Find a payment",
 			Summary: "Look up a payment by its reference, its exact amount, or the customer it came from.",
-			MaxTier: 2, // money: manager and above, matching who can already open the AR console.
+			// Money: manager and above, matching who can already open the AR console. The payment
+			// trail itself is narrower than the tier (ruling 87): runPaymentLookup also demands
+			// Caller.PaymentTrail, the handler's stamp of the role gate's own answer.
+			MaxTier: 2,
 			Args: []ArgSpec{
 				{Name: "reference", Label: "Reference", Example: "PMT-1042", Required: false},
 				{Name: "amount", Label: "Amount", Example: "1240.00", Required: false},
@@ -194,6 +197,15 @@ func coreCommands() []Command {
 // -- payment.lookup -----------------------------------------------------------------------------
 
 func runPaymentLookup(ctx context.Context, deps Deps, c Caller, a Args) (Result, error) {
+	// THE WHOLE ANSWER IS THE PAYMENT TRAIL (ruling 87): number, amount, method, received day,
+	// customer, branch. The tier floor above lets every manager reach this command, but the trail is
+	// held to the money desk, so a caller the handler did not stamp as holding the trail reads is
+	// refused here, before the arguments and before the seam, the same decision customer.activity's
+	// read makes over the same stamp. Answering empty instead would say "no such payment" to a person
+	// the money desk simply has not admitted, a confident wrong answer rather than a refusal.
+	if !c.PaymentTrail {
+		return Result{}, ErrRefused
+	}
 	if deps.Payments == nil {
 		return Result{}, errUnwired("payment lookup")
 	}

@@ -111,7 +111,9 @@ func TestAccountStatusFor_SeverityOrder(t *testing.T) {
 
 func callerAs(tier identity.Tier, scope identity.Scope) func(context.Context) (identity.StaffContext, bool) {
 	return func(context.Context) (identity.StaffContext, bool) {
-		return identity.StaffContext{UserID: "u1", Tier: tier, Scope: scope, Status: "ACTIVE"}, true
+		// A branch scoped caller holds its branch grant, as a real one does (the register's branch fence).
+		return identity.StaffContext{UserID: "u1", Tier: tier, Scope: scope, Status: "ACTIVE",
+			Branches: map[string]bool{"b1": true}}, true
 	}
 }
 
@@ -314,7 +316,7 @@ func (f *fakeRegisterStore) RegisterRows(context.Context, time.Time, int, Regist
 func (f *fakeRegisterStore) RegisterCountsFor(context.Context, time.Time, int, RegisterFilter) (RegisterCounts, error) {
 	return RegisterCounts{}, nil
 }
-func (f *fakeRegisterStore) SelectionTotals(context.Context, []string) (int64, int, error) {
+func (f *fakeRegisterStore) SelectionTotals(context.Context, []string, BranchReach) (int64, int, error) {
 	return 0, 0, nil
 }
 func (f *fakeRegisterStore) InvoiceHeader(context.Context, string) (InvoiceHeaderFacts, error) {
@@ -339,7 +341,7 @@ func (f *fakeRegisterStore) ProofFor(context.Context, string) (Proof, bool, erro
 func (f *fakeRegisterStore) OrderFactsFor(context.Context, string) (string, string, string, error) {
 	return "", "", "", nil
 }
-func (f *fakeRegisterStore) ActivityFor(context.Context, string, string) ([]ActivityEntry, error) {
+func (f *fakeRegisterStore) ActivityFor(context.Context, string, string, bool) ([]ActivityEntry, error) {
 	return nil, nil
 }
 func (f *fakeRegisterStore) PromiseFor(context.Context, string) (PromiseView, bool, error) {
@@ -525,14 +527,14 @@ func (c *capturingStore) SetRegisterPolicy(_ context.Context, p RegisterPolicy) 
 func TestDetail_AccountPositionIsAbsentForARefusedCaller(t *testing.T) {
 	store := &fakeRegisterStore{
 		policy: RegisterPolicy{AccountPositionVisibility: VisibilityManagerUp, DueSoonDays: 7},
-		header: InvoiceHeaderFacts{ID: "i1", InvoiceNo: "INV-1", CustomerID: "c1",
+		header: InvoiceHeaderFacts{ID: "i1", InvoiceNo: "INV-1", CustomerID: "c1", BranchID: "b1",
 			StoredStatus: "FINALIZED", DueDate: day(2026, time.September, 30),
 			SubtotalCents: 1000, TaxCents: 130, TotalCents: 1130, BalanceCents: 1130},
 	}
 	frontline := NewRegisterService(store).
 		WithClock(func() time.Time { return day(2026, time.August, 26) }).
 		withCaller(callerAs(identity.TierFrontline, identity.ScopeBranch))
-	d, err := frontline.Detail(context.Background(), "i1")
+	d, err := frontline.Detail(context.Background(), "i1", true)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -552,7 +554,7 @@ func TestDetail_AccountPositionIsAbsentForARefusedCaller(t *testing.T) {
 	manager := NewRegisterService(store).
 		WithClock(func() time.Time { return day(2026, time.August, 26) }).
 		withCaller(callerAs(identity.TierManager, identity.ScopeGlobal))
-	dm, err := manager.Detail(context.Background(), "i1")
+	dm, err := manager.Detail(context.Background(), "i1", true)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -564,7 +566,7 @@ func TestDetail_AccountPositionIsAbsentForARefusedCaller(t *testing.T) {
 func TestDetail_NotFoundIsNotFound(t *testing.T) {
 	store := &fakeRegisterStore{headerNF: true}
 	svc := newFakeService(t, store, day(2026, time.August, 26))
-	if _, err := svc.Detail(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.Detail(context.Background(), "nope", true); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a missing invoice is ErrNotFound, got %v", err)
 	}
 }

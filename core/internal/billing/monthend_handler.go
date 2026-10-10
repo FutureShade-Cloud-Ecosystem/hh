@@ -343,6 +343,8 @@ func (h *MonthEndHandler) writeErr(w http.ResponseWriter, r *http.Request, err e
 	switch {
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "not found")
+	case errors.Is(err, ErrBranchForbidden):
+		httpx.Error(w, http.StatusForbidden, BranchForbiddenWords)
 	case errors.Is(err, ErrAutoHoldNotConfigured):
 		// DIB-483: an unwired seam is a DEPLOY fault, not a policy one. 503 and name it, so an
 		// operator reports the right problem to the right person instead of arguing with AR.
