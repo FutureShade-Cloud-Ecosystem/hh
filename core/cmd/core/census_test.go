@@ -3,7 +3,7 @@ package main
 // The census half of the completeness contract (the PR 44 review's P2-5),
 // split out of the composition walk so it runs where the repository's CI
 // actually runs: with no gate variable, no database, no composition. The
-// document and the census are asserted here in both directions: all 616
+// document and the census are asserted here in both directions: all 626
 // staff operations carry a surface and a level in roleconfig's
 // vocabulary, no non-staff operation carries an annotation, and every
 // named list is one the gate reads. What this test cannot see is a route
@@ -32,8 +32,8 @@ func TestCensusStaffRoutesCarrySurfaceAndLevel(t *testing.T) {
 			}
 		}
 	}
-	if staff != 616 {
-		t.Fatalf("census staff operations: %d, want the document's 616", staff)
+	if staff != 626 {
+		t.Fatalf("census staff operations: %d, want the document's 626", staff)
 	}
 	t.Logf("surface and level asserted for all %d census staff operations, no database needed", staff)
 }
@@ -56,9 +56,11 @@ func assertCensusAnnotated(t *testing.T, route apigen.Route) {
 		t.Fatalf("staff operation %s names unknown level %q", route.OperationID, route.Level)
 	}
 	// The named lists the gate reads (rolegate.go's listReaders): the
-	// pricing editors, the cost and margin list (D10, the pricing log) and the low margin report's
-	// readers (the floor lists held to the cost list).
-	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility && route.List != authz.ListLowMarginReport {
+	// pricing editors, the cost and margin list (D10, the pricing log), the low
+	// margin report's readers (the floor lists held to the cost list), the shortage
+	// resolvers (X11, the yard's shortage resolve route), and the PO writers (the
+	// buying route's writer list).
+	if route.List != "" && route.List != roleconfig.SettingPricingEditors && route.List != roleconfig.SettingCostVisibility && route.List != authz.ListLowMarginReport && route.List != roleconfig.SettingShortageResolvers && route.List != authz.ListPOWriters {
 		t.Fatalf("staff operation %s names list %q, which no gate reader knows", route.OperationID, route.List)
 	}
 }

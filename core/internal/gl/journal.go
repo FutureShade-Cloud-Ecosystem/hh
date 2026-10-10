@@ -137,21 +137,52 @@ func (s *Service) CreateJournal(ctx context.Context, in CreateJournalInput) (Jou
 	} else {
 		draft.Status = StatusDraft
 	}
+	// Approvals rail (0075, ruling 108): a MANUAL journal that PARKS as DRAFT (>= threshold) files its
+	// JE_OVER_THRESHOLD request IN THE SAME TRANSACTION as the park, so the rail can post it. If the request
+	// cannot be filed, or the journal has no branch to file it under, the create fails with words and nothing
+	// is saved: a parked journal that can never post is never left behind. The card fan-out runs after the
+	// commit and stays best effort (a messaging blip never fails the write; the reconcile sweep heals it).
+	// This is the ONLY GL call site that files: the automated posting paths (posting.go / close.go /
+	// PostExternal) never park. Nil seam = shipped behavior (a bare DRAFT). NOTE (commander ruling, DIB-216
+	// #2): `threshold` is the seeded $5,000 gl_policy PLACEHOLDER (0032), BLESSED AS-IS and left a
+	// go-live-configurable POLICY ROW, not changed here.
+	// The create route is the only caller of CreateJournal, and no non manual source files its own request
+	// (the automated posting paths never come through here and never park), so a non manual journal at or
+	// over the threshold would park with no request and could never post (ruling 115). Refuse it, nothing
+	// saved. Under the threshold any source posts straight through, as before.
+	if draft.Status == StatusDraft && source != SourceManual {
+		return Journal{}, badReq("gl: only a manual journal can be parked for approval at or over the approval threshold; a %q journal at this amount cannot be created here", source)
+	}
+	if s.approvalFiler != nil && draft.Status == StatusDraft && source == SourceManual {
+		if in.BranchID == "" {
+			return Journal{}, badReq("gl: a journal at or over the approval threshold needs a branch so its approval request can be filed; choose a branch")
+		}
+		var notify func(context.Context)
+		var filingErr error
+		id, err := s.store.InsertParkedJournal(ctx, draft, func(ctx context.Context, tx pgx.Tx, journalID string) error {
+			n, ferr := s.approvalFiler.FileJEApprovalTx(ctx, tx, journalID, in.BranchID, amount, caller.UserID)
+			if ferr != nil {
+				filingErr = ferr
+				return ferr
+			}
+			notify = n
+			return nil
+		})
+		if err != nil {
+			if filingErr != nil {
+				s.log.Warn("gl: approval request could not be filed with the park; the journal was not saved", "err", filingErr)
+				return Journal{}, clientErr(503, "gl: this journal is over the approval threshold and its approval request could not be filed, so nothing was saved; try again")
+			}
+			return Journal{}, err
+		}
+		if notify != nil {
+			notify(ctx)
+		}
+		return s.GetJournal(ctx, id)
+	}
 	id, _, err := s.store.InsertJournal(ctx, draft)
 	if err != nil {
 		return Journal{}, err
-	}
-	// Approvals rail (0075): a MANUAL journal that PARKED as DRAFT (>= threshold) files a JE_OVER_THRESHOLD
-	// approval request so the rail fans out cards to eligible approvers. Best-effort + log-and-continue -
-	// the park NEVER depends on it (an identity/messaging blip must not fail a journal write). This is the
-	// ONLY GL call site that files: the automated posting paths (posting.go / close.go / PostExternal) do
-	// not go through CreateJournal, so they never file a request regardless of amount. Nil seam = shipped
-	// behavior. NOTE (commander ruling, DIB-216 #2): `threshold` is the seeded $5,000 gl_policy PLACEHOLDER
-	// (0032), BLESSED AS-IS and left a go-live-configurable POLICY ROW, not changed here.
-	if s.approvalFiler != nil && draft.Status == StatusDraft && source == SourceManual {
-		if err := s.approvalFiler.FileJEApproval(ctx, id, in.BranchID, amount, caller.UserID); err != nil {
-			s.log.Warn("gl: approvals-rail JE filing failed (journal still parked as DRAFT)", "journal_id", id, "err", err)
-		}
 	}
 	return s.GetJournal(ctx, id)
 }
@@ -172,6 +203,46 @@ func (s *Service) ApproveJournal(ctx context.Context, id string) (Journal, error
 	}
 	if j.CreatedBy != "" && j.CreatedBy == caller.UserID {
 		return Journal{}, errFourEyes
+	}
+	// A journal over the threshold is posted by this route only when the rail holds an APPROVED request for
+	// its current amount. Every other state refuses in its own words (what becomes of the request is decided
+	// in the approvals queue). A journal under the threshold with no request at all needs none. The four eyes
+	// check above stays first, so a maker is still refused as the maker whichever route they use. Unwired,
+	// the guard cannot ask and the route refuses (fail closed).
+	if s.approvalChecker == nil {
+		return Journal{}, clientErr(503, "gl: the approvals queue cannot be asked; this journal cannot be approved here")
+	}
+	amount := j.TotalCents()
+	state, serr := s.approvalChecker.JournalApprovalState(ctx, id, amount)
+	if serr != nil {
+		return Journal{}, serr
+	}
+	switch state {
+	case ApprovalApproved:
+	case ApprovalNone:
+		if threshold := s.thresholdFor(ctx, j.BranchID); threshold > 0 && amount < threshold {
+			break
+		}
+		if j.Source == SourceManual && j.SourceRefID != "" {
+			// A recurring run: it carries no branch, so no request was filed for it. Name the template so
+			// nobody hunts for a missing request; recurring runs file one after the template gains a branch.
+			name := j.SourceRefID
+			if tpl, terr := s.store.GetRecurring(ctx, j.SourceRefID); terr == nil && tpl.Name != "" {
+				name = tpl.Name
+			}
+			return Journal{}, clientErr(409, "gl: this journal came from the recurring template %q and is over the approval threshold; a recurring run cannot yet file an approval request, so it cannot be posted from here", name)
+		}
+		return Journal{}, clientErr(409, "gl: this journal is over the approval threshold and has no approval request in the approvals queue; it cannot be posted from here")
+	case ApprovalPending:
+		return Journal{}, clientErr(409, "gl: this journal has a pending approval request; decide it from the approvals queue, which posts it")
+	case ApprovalRejected:
+		return Journal{}, clientErr(409, "gl: this journal's approval request was rejected in the approvals queue; it cannot be posted from here")
+	case ApprovalDeleted:
+		return Journal{}, clientErr(409, "gl: this journal's approval request was deleted from the approvals queue; it cannot be posted from here")
+	case ApprovalAmountDiffers:
+		return Journal{}, clientErr(409, "gl: the approval for this journal in the approvals queue is for a different amount than the journal now carries; it cannot be posted from here")
+	default:
+		return Journal{}, clientErr(503, "gl: the approvals queue gave no usable answer; this journal cannot be approved here")
 	}
 	approved, err := s.store.ApproveJournal(ctx, id, caller.UserID)
 	if err != nil {
@@ -271,13 +342,16 @@ func (s *Service) RunRecurring(ctx context.Context, id string) (Journal, error) 
 	if memo == "" {
 		memo = "Recurring: " + tpl.Name
 	}
+	// SourceRefID carries the template's id: the only MANUAL journals with a source ref are recurring runs, and
+	// the approve route reads it to name the template when it refuses an over-threshold run (ruling 108).
 	draft := journalDraft{
-		Source:     SourceManual,
-		Memo:       memo,
-		Status:     StatusDraft,
-		CreatedBy:  caller.UserID,
-		OccurredAt: s.clock(),
-		Lines:      lines,
+		Source:      SourceManual,
+		SourceRefID: tpl.ID,
+		Memo:        memo,
+		Status:      StatusDraft,
+		CreatedBy:   caller.UserID,
+		OccurredAt:  s.clock(),
+		Lines:       lines,
 	}
 	id, _, err = s.store.InsertJournal(ctx, draft)
 	if err != nil {

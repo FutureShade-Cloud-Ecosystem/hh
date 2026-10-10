@@ -104,10 +104,16 @@ type planSummary struct {
 	Quotes      []string
 	QuoteLinks  []string
 	QuoteRowIDs []string
+	// The controller world (demoseed_controller.go): the id of every row the section wrote.
+	ControllerRowIDs []string
 	// The deposit world (demoseed_deposits.go): one line per order a tester can walk, and the id of
 	// every row the section wrote.
 	DepositOrders []string
 	DepositRowIDs []string
+	// The buying world (demoseed_procurement.go): one line per open purchase order, and the id of
+	// every row the section wrote.
+	ProcurementLines  []string
+	ProcurementRowIDs []string
 }
 
 // -- the catalogue of demo entities, as tables ----------------------------------------------------

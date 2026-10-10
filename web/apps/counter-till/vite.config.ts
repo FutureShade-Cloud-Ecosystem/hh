@@ -3,7 +3,7 @@
 //
 // The dev server proxies /api to a local demo stub so the app's calls to the
 // demo routes answer without a running core: the stub (test/stub/demo-stub.mjs)
-// serves the two flows and the session mint in the contract's shapes
+// serves the flows table and the session mint in the contract's shapes
 // (core/api/openapi.yaml, DemoFlowList and DemoSessionResponse). In the served
 // product no proxy exists: the app and the core share one origin and every
 // call is same-origin relative, which is why the app's ApiClient is built with

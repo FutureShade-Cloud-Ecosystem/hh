@@ -126,14 +126,30 @@ var listReaders = map[string]func(*roleconfig.Config) []string{
 	// admin) is refused beside the level, exactly as the price writes name
 	// their editors.
 	roleconfig.SettingCostVisibility: func(c *roleconfig.Config) []string { return c.CostVisibility() },
+	// The shortage resolve names the shortage resolvers list (X11): who may
+	// settle a shortage is the setting's own wall beside the yard-pick level,
+	// and the decided default names exactly the two roles the default gives
+	// the surface at work, so the default's answer is the route's old answer
+	// and a dealer's widening or narrowing is the list's to decide.
+	roleconfig.SettingShortageResolvers: func(c *roleconfig.Config) []string { return c.ShortageResolvers() },
 	// The low margin report names a list derived from the floor lists and the cost list together
 	// (roleconfig.LowMarginReportReaders): a role that clears or decides a floor, or sits above one,
 	// and may see cost. Not a stored setting, so the name is the route's own.
 	ListLowMarginReport: func(c *roleconfig.Config) []string { return c.LowMarginReportReaders() },
+	// The purchase order writes name the Procurement Manager and the General Manager, and the super
+	// admin beside them: the platform pass covers the level check alone, never a list, so the
+	// platform role that may write an order has to be on the list by name.
+	ListPOWriters: func(c *roleconfig.Config) []string {
+		return append(c.PurchaseOrderWriters(), PlatformRoleSuperAdmin)
+	},
 }
 
 // ListLowMarginReport is the x-access list name of the low margin report route.
 const ListLowMarginReport = "low_margin_report"
+
+// ListPOWriters is the x-access list name of the purchase order write routes (draft, edit, place,
+// cancel, send), roleconfig.PurchaseOrderWriters and the super admin.
+const ListPOWriters = "po_writers"
 
 // valid checks the annotation against roleconfig's vocabulary. An empty
 // surface list, an unknown surface, an unknown level, none as the level (a

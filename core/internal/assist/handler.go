@@ -26,6 +26,7 @@ package assist
 // the budget, which a user needs in order to understand a refusal.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
@@ -46,6 +47,34 @@ type Handler struct {
 	userLink identity.UserIDLinker
 	svc      *Service
 	log      *slog.Logger
+	trail    PaymentTrailReader
+}
+
+// PaymentTrailReader says whether a caller holds the payment trail reads (ruling 87). The composition
+// root supplies it over the role gate; this package names no role and no level.
+type PaymentTrailReader interface {
+	HoldsPaymentTrail(ctx context.Context, platformUserID, orgID string) (bool, error)
+}
+
+// WithPaymentTrail binds the reader. Unbound, no caller holds the trail: the commands that list
+// payments leave them out for everyone.
+func (h *Handler) WithPaymentTrail(t PaymentTrailReader) *Handler {
+	h.trail = t
+	return h
+}
+
+// callerFor is CallerFrom plus the payment trail answer, for the routes that run commands.
+func (h *Handler) callerFor(r *http.Request, sc guards.StaffCaller) (Caller, error) {
+	c := CallerFrom(r)
+	if h.trail == nil {
+		return c, nil
+	}
+	held, err := h.trail.HoldsPaymentTrail(r.Context(), sc.PlatformUserID, sc.OrgID)
+	if err != nil {
+		return Caller{}, err
+	}
+	c.PaymentTrail = held
+	return c, nil
 }
 
 func NewHandler(svc *Service, log *slog.Logger) *Handler { return &Handler{svc: svc, log: log} }
@@ -119,7 +148,12 @@ func (h *Handler) runCommand(w http.ResponseWriter, r *http.Request, caller guar
 	if !decode(w, r, &body) {
 		return
 	}
-	res, err := h.svc.RunCommand(r.Context(), CallerFrom(r), body.Command, body.Args)
+	c, err := h.callerFor(r, caller)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
+	res, err := h.svc.RunCommand(r.Context(), c, body.Command, body.Args)
 	if err != nil {
 		h.fail(w, err)
 		return
@@ -141,7 +175,11 @@ func (h *Handler) chat(w http.ResponseWriter, r *http.Request, caller guards.Sta
 		httpx.Error(w, http.StatusBadRequest, "Ask me a question and I'll have a look.")
 		return
 	}
-	c := CallerFrom(r)
+	c, err := h.callerFor(r, caller)
+	if err != nil {
+		h.fail(w, err)
+		return
+	}
 	ans, err := h.svc.Ask(r.Context(), c, body.Question, body.History)
 	if err != nil {
 		h.fail(w, err)

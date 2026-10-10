@@ -24,7 +24,12 @@ import (
 )
 
 // The sync mint's guard refuses a held order with the mandated sentence as
-// the sync engine's refused reason, with the owed figure.
+// the sync engine's refused reason. The sync door resolves any active staff
+// caller with no role check (the will_call scope's predicate reads org
+// only), so the refusal carries the words and never the owed figure: a
+// figure never reaches an off list role in words either (ruling 91). The
+// STAFF mint's refusal (willcall_pick_hold_test.go) keeps the figure: its
+// surface is dispatch-board work, held only by roles on the cost list.
 func TestSyncWillCallMint_HeldOrderRefusesAsSyncRefusal(t *testing.T) {
 	err := refuseHeldFromPickingSync(context.Background(), fakePickHoldGate{held: true, owed: 8800}, refOrderID)
 	if err == nil {
@@ -36,8 +41,10 @@ func TestSyncWillCallMint_HeldOrderRefusesAsSyncRefusal(t *testing.T) {
 	if !strings.Contains(err.Error(), pickHoldWords) {
 		t.Fatalf("the refusal's words: %v", err)
 	}
-	if !strings.Contains(err.Error(), "is owed") {
-		t.Fatalf("the refusal names the money: %v", err)
+	for _, leak := range []string{"is owed", "$", "88"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Fatalf("the sync refusal names no figure to its any-staff caller (%q): %v", leak, err)
+		}
 	}
 }
 
@@ -57,7 +64,8 @@ func TestSyncWillCallMint_NilGateAllows(t *testing.T) {
 }
 
 // The offline confirm's transactional guard refuses a held order the same
-// way, on the transaction half of the gate.
+// way, on the transaction half of the gate: the words, never the figure
+// (the confirm rides the same any-staff sync door as the mint).
 func TestSyncPickupConfirm_HeldOrderRefusesAsSyncRefusal(t *testing.T) {
 	err := refuseHeldFromPickingSyncTx(context.Background(), fakePickHoldGate{held: true, owed: 8800}, nil, refOrderID)
 	if err == nil {
@@ -65,6 +73,11 @@ func TestSyncPickupConfirm_HeldOrderRefusesAsSyncRefusal(t *testing.T) {
 	}
 	if !errors.Is(err, sync.ErrOpRefused) || !strings.Contains(err.Error(), pickHoldWords) {
 		t.Fatalf("the refusal is the sync engine's refused reason with the words: %v", err)
+	}
+	for _, leak := range []string{"is owed", "$", "88"} {
+		if strings.Contains(err.Error(), leak) {
+			t.Fatalf("the sync confirm's refusal names no figure (%q): %v", leak, err)
+		}
 	}
 }
 

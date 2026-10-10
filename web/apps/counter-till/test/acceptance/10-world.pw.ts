@@ -36,16 +36,43 @@ const TEN_PRODUCTS = [
   "DEMO-EDGE-ALU",
 ];
 
-test("the way in's data: three flows with role codes and labels", async ({ page }) => {
+test("the way in's data: eight flows with role codes and labels", async ({ page }) => {
   const flows = await page.request.get("/api/v1/demo/flows");
   expect(flows.ok()).toBe(true);
   const body = (await flows.json()) as {
     flows: Array<{ flow: string; role_code: string; label: string }>;
   };
-  expect(body.flows).toHaveLength(3);
-  expect(body.flows.map((row) => row.flow)).toEqual(["sales", "sales-manager", "yard-manager"]);
-  expect(body.flows.map((row) => row.role_code)).toEqual(["inside_sales", "sales_manager", "yard_manager"]);
-  expect(body.flows.map((row) => row.label)).toEqual(["Sales", "Sales manager", "Yard manager"]);
+  expect(body.flows).toHaveLength(8);
+  expect(body.flows.map((row) => row.flow)).toEqual([
+    "sales",
+    "sales-manager",
+    "yard-manager",
+    "yard-team",
+    "driver",
+    "payables-receivables",
+    "procurement-manager",
+    "financial-controller",
+  ]);
+  expect(body.flows.map((row) => row.role_code)).toEqual([
+    "inside_sales",
+    "sales_manager",
+    "yard_manager",
+    "yard_team",
+    "driver",
+    "payables_receivables",
+    "procurement_manager",
+    "financial_controller",
+  ]);
+  expect(body.flows.map((row) => row.label)).toEqual([
+    "Sales",
+    "Sales manager",
+    "Yard manager",
+    "Yard Team",
+    "Driver",
+    "Payables and Receivables",
+    "Procurement manager",
+    "Financial Controller",
+  ]);
   // The picture is the table itself, as the browser shows the core's answer:
   // the page loads the flows route and waits for its rows to be on the
   // screen (the test's own request never loads a page).

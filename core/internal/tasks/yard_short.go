@@ -194,7 +194,8 @@ func (s *Service) RecordSkids(ctx context.Context, in SkidInput) (YardSkidResult
 	}
 	if res.Changed {
 		key := fmt.Sprintf("yard.skids:%s:%s", task.OrderID, res.ChangeID)
-		s.notifyOrderRep(ctx, task, res.Order, key, "yard.skid_change", skidMessage(change, res))
+		s.notifyOrderRep(ctx, task, res.Order, key, "yard.skid_change",
+			skidMessage(change, res, true), skidMessage(change, res, false))
 	}
 	return res, nil
 }

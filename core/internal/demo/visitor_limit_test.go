@@ -313,9 +313,9 @@ func TestMintNeverRendersTheVisitorID(t *testing.T) {
 // The cookie hygiene leg, the fallback: a value outside the issued shape
 // is the client's word and the key takes none of it. Every malformed
 // value lands on the address key, so a stream of distinct malformed
-// values spends that one allowance: the sixth refuses, a bare mint after
-// them refuses too (the address is what they spent), and a well formed
-// id issued after still holds its own bucket.
+// values spends that one allowance: the sixth refuses, a bare mint
+// after them refuses too (the address is what they spent), and a well
+// formed id issued after still holds its own bucket.
 func TestMintFallsBackToTheAddressKeyOnAMalformedCookie(t *testing.T) {
 	minter := &fakeMinter{token: "t"}
 	m, _, _ := newTestMint(t, minter, nil)

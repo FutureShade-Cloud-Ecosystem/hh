@@ -6,12 +6,14 @@ It replaces the Counter Till's entry view as the box's first screen
 role's home with its modules as tiles, one header across the states with the
 demo badge, the role's name, Switch role and Sign out.
 
-- The three live roles are the demo mint's own (`inside_sales` to flow
+- The five live roles are the demo mint's own (`inside_sales` to flow
   `sales`, `sales_manager` to `sales-manager`, `yard_manager` to flow
-  `yard-manager`), labelled on the cards the way the demo adapter's contract
-  names them ("Sales", "Sales manager", "Yard manager"), the same rule the
-  till's entry view follows.
-- The ten other roles of ROLE-ACCESS-r3 stay visible as coming, each with
+  `yard-manager`, `payables_receivables` to flow `payables-receivables`,
+  `procurement_manager` to flow `procurement-manager`), labelled on the
+  cards the way the demo adapter's contract names them ("Sales", "Sales
+  manager", "Yard manager", "Payables and Receivables", "Procurement
+  manager"), the same rule the till's entry view follows.
+- The eight other roles of ROLE-ACCESS-r3 stay visible as coming, each with
   the modules the matrix gives it at work, manage or admin level, never
   tappable. The catalog lives in `src/roles.ts`, distilled once from the
   decided record; the record itself is read only and is not carried here.

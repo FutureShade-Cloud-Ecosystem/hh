@@ -3417,6 +3417,8 @@ type InventoryShortfallRow struct {
 	LeadTimeDays        int32   `json:"lead_time_days"`
 	AvgCostCents        *int64  `json:"avg_cost_cents,omitempty"`
 	SuggestedValueCents *int64  `json:"suggested_value_cents,omitempty"`
+	DraftPoId           *string `json:"draft_po_id,omitempty"`
+	DraftPoNo           *string `json:"draft_po_no,omitempty"`
 }
 
 type InventoryReorderPoint struct {
@@ -3472,12 +3474,14 @@ type InventoryReorderRequest struct {
 }
 
 type InventoryReorderResult struct {
-	PoId             string               `json:"po_id"`
-	PoNo             string               `json:"po_no"`
-	Draft            InventorySuggestedPO `json:"draft"`
-	SuggestedQtyBase float64              `json:"suggested_qty_base"`
-	Uom              string               `json:"uom"`
-	VendorName       string               `json:"vendor_name"`
+	PoId              string               `json:"po_id"`
+	PoNo              string               `json:"po_no"`
+	Draft             InventorySuggestedPO `json:"draft"`
+	SuggestedQtyBase  float64              `json:"suggested_qty_base"`
+	Uom               string               `json:"uom"`
+	VendorName        string               `json:"vendor_name"`
+	ExistingDraftPoId *string              `json:"existing_draft_po_id,omitempty"`
+	ExistingDraftPoNo *string              `json:"existing_draft_po_no,omitempty"`
 }
 
 type InventoryNudgeRequest struct {
@@ -3794,6 +3798,26 @@ type MessagingChannel struct {
 
 type MessagingChannelList struct {
 	Channels []MessagingChannel `json:"channels"`
+}
+
+type MessagingChannelCreate struct {
+	Kind     string  `json:"kind"`
+	Name     string  `json:"name"`
+	Topic    *string `json:"topic,omitempty"`
+	Slug     *string `json:"slug,omitempty"`
+	BranchId *string `json:"branch_id,omitempty"`
+}
+
+type MessagingDMCreate struct {
+	UserId string `json:"user_id"`
+}
+
+type MessagingChannelMember struct {
+	ChannelId string    `json:"channel_id"`
+	UserId    string    `json:"user_id"`
+	Role      string    `json:"role"`
+	Source    string    `json:"source"`
+	JoinedAt  time.Time `json:"joined_at"`
 }
 
 type MessagingMessage struct {
@@ -4584,8 +4608,8 @@ type TaskRecordSkidsRequest struct {
 type TaskRecordSkidsResult struct {
 	SkidCount            int32  `json:"skid_count"`
 	PreviousSkidCount    *int32 `json:"previous_skid_count"`
-	DepositCents         int64  `json:"deposit_cents"`
-	PreviousDepositCents int64  `json:"previous_deposit_cents"`
+	DepositCents         *int64 `json:"deposit_cents,omitempty"`
+	PreviousDepositCents *int64 `json:"previous_deposit_cents,omitempty"`
 	Changed              bool   `json:"changed"`
 	OrderNo              string `json:"order_no"`
 }
@@ -5922,6 +5946,62 @@ type PricingAuditLogRow struct {
 	BypassReason  *string   `json:"bypass_reason,omitempty"`
 }
 
+type PricingFloorPreviewRequest struct {
+	Kind          string                      `json:"kind"`
+	Id            *string                     `json:"id,omitempty"`
+	BranchId      *string                     `json:"branch_id,omitempty"`
+	Rule          *PricingRuleWrite           `json:"rule,omitempty"`
+	CustomerId    *string                     `json:"customer_id,omitempty"`
+	Override      *PricingOverrideWrite       `json:"override,omitempty"`
+	CategoryId    *string                     `json:"category_id,omitempty"`
+	Policy        *PricingCategoryPolicyWrite `json:"policy,omitempty"`
+	QuantityBreak *PricingQuantityBreakWrite  `json:"quantity_break,omitempty"`
+}
+
+type PricingFloorPreviewItem struct {
+	ProductId          string  `json:"product_id"`
+	Sku                string  `json:"sku"`
+	Name               string  `json:"name"`
+	CategoryId         *string `json:"category_id,omitempty"`
+	CustomerType       *string `json:"customer_type,omitempty"`
+	BranchId           *string `json:"branch_id,omitempty"`
+	BranchCode         *string `json:"branch_code,omitempty"`
+	BranchName         *string `json:"branch_name,omitempty"`
+	FinalCents         int64   `json:"final_cents"`
+	MarginBps          int64   `json:"margin_bps"`
+	FloorBps           int64   `json:"floor_bps"`
+	PriceUom           string  `json:"price_uom"`
+	Source             string  `json:"source"`
+	PreviousFinalCents int64   `json:"previous_final_cents"`
+	PreviousMarginBps  int64   `json:"previous_margin_bps"`
+	AlreadyUnderFloor  bool    `json:"already_under_floor"`
+}
+
+type PricingFloorPreview struct {
+	Items             []PricingFloorPreviewItem   `json:"items"`
+	Evaluated         int                         `json:"evaluated"`
+	NotGraded         int                         `json:"not_graded"`
+	NoCost            int                         `json:"no_cost"`
+	Truncated         bool                        `json:"truncated"`
+	NoCostBranches    *[]PricingFloorNoCostBranch `json:"no_cost_branches,omitempty"`
+	NotGradedBranches *int                        `json:"not_graded_branches,omitempty"`
+}
+
+type PricingFloorNoCostBranch struct {
+	BranchId   string  `json:"branch_id"`
+	BranchCode *string `json:"branch_code,omitempty"`
+	BranchName *string `json:"branch_name,omitempty"`
+	Products   int     `json:"products"`
+}
+
+type PricingFloorConfirmation struct {
+	EntityType    string   `json:"entity_type"`
+	EntityId      string   `json:"entity_id"`
+	ProductIds    []string `json:"product_ids"`
+	RefEntityType *string  `json:"ref_entity_type,omitempty"`
+	RefEntityId   *string  `json:"ref_entity_id,omitempty"`
+}
+
 type PricingLowMarginRequest struct {
 	Lines []PricingResolveRequest `json:"lines"`
 }
@@ -6509,6 +6589,28 @@ type PurchasingVendor struct {
 	IsActive         bool   `json:"is_active"`
 }
 
+type PurchasingCreateVendorRequest struct {
+	Name             string  `json:"name"`
+	PaymentTermsDays *int32  `json:"payment_terms_days,omitempty"`
+	OrderEmail       *string `json:"order_email,omitempty"`
+}
+
+type PurchasingUpdateVendorRequest struct {
+	Name             *string `json:"name,omitempty"`
+	PaymentTermsDays *int32  `json:"payment_terms_days,omitempty"`
+	OrderEmail       *string `json:"order_email,omitempty"`
+	IsActive         *bool   `json:"is_active,omitempty"`
+}
+
+type PurchasingVendorMaster struct {
+	Id               string `json:"id"`
+	VendorNo         string `json:"vendor_no"`
+	Name             string `json:"name"`
+	PaymentTermsDays int32  `json:"payment_terms_days"`
+	OrderEmail       string `json:"order_email"`
+	IsActive         bool   `json:"is_active"`
+}
+
 type PurchasingPO struct {
 	Id               string             `json:"id"`
 	PoNo             string             `json:"po_no"`
@@ -6739,6 +6841,11 @@ type PurchasingAddLineRequest struct {
 	QtyOrderedBase float64 `json:"qty_ordered_base"`
 	Uom            *string `json:"uom,omitempty"`
 	UnitCostCents  *int64  `json:"unit_cost_cents,omitempty"`
+}
+
+type PurchasingUpdateLineRequest struct {
+	QtyOrderedBase *float64 `json:"qty_ordered_base,omitempty"`
+	UnitCostCents  *int64   `json:"unit_cost_cents,omitempty"`
 }
 
 type PurchasingSetExpectedDateRequest struct {
@@ -7005,6 +7112,14 @@ type QuoteView struct {
 	UpdatedAt      time.Time               `json:"updated_at"`
 	QuantityNotice string                  `json:"quantity_notice"`
 	Acceptances    []QuoteAcceptanceRecord `json:"acceptances"`
+	Declined       *QuoteDeclineRecord     `json:"declined,omitempty"`
+}
+
+type QuoteDeclineRecord struct {
+	ReasonCode string    `json:"reason_code"`
+	Channel    string    `json:"channel"`
+	Note       *string   `json:"note,omitempty"`
+	DeclinedAt time.Time `json:"declined_at"`
 }
 
 type QuoteAcceptanceRecord struct {
@@ -7212,6 +7327,12 @@ type QuoteRelatedDocumentList struct {
 type QuoteAcceptanceSettings struct {
 	AllowMultiAccept bool `json:"allow_multi_accept"`
 	SwitchWired      bool `json:"switch_wired"`
+}
+
+type QuoteSettingsGrant struct {
+	CanReadAcceptance bool `json:"can_read_acceptance"`
+	CanReadScopeRules bool `json:"can_read_scope_rules"`
+	CanEditPolicy     bool `json:"can_edit_policy"`
 }
 
 type QuoteAcceptanceSettingsWrite struct {

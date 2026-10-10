@@ -71,7 +71,7 @@ import (
 // shapeCensusWantPages pins the page shape operation count the document
 // carries (119 at this census's cut: 114 staff lists, 3 tenant lists, the
 // sync pull and the public products list, all answered at 200). The pin is
-// the census's knowing (the same discipline as the 609 staff operation pin
+// the census's knowing (the same discipline as the 611 staff operation pin
 // in census_test.go): a page shape added or removed must move this number
 // consciously, with the live half's report (the new operation is driven,
 // or the dropped one is named) as the evidence.
@@ -97,7 +97,6 @@ const shapeCensusWantPages = 119
 //	    not declare (items is the contract's spelling).
 var shapeCensusAllowlist = map[string]string{
 	// (1) bare array (23 of the 118, the first entry the brief names).
-	"identityListApprovals":       "answers a bare JSON array (core/internal/identity/staffcontext/approvals_handler.go, listApprovals writes the ListApprovals slice directly) against the contract's IdentityApprovalPage (items, next_cursor); the fix is the owning lane's",
 	"auditListEntries":            "answers a bare JSON array (internal/audit/handler.go, (*Handler).list writes the h.svc.List rows directly) against the contract's AuditEntryPage; the fix is the owning lane's",
 	"auditReopenTransaction":      "answers a bare JSON array (internal/audit/handler.go, (*Handler).reopen writes its projected []Entry directly) against the contract's AuditEntryPage; the fix is the owning lane's",
 	"bankrecListAccounts":         "answers a bare JSON array (internal/bankrec/handler.go, (*Handler).accounts writes the h.svc.Accounts slice, nil guarded to []) against the contract's BankRecAccountPage; the fix is the owning lane's",
@@ -121,21 +120,19 @@ var shapeCensusAllowlist = map[string]string{
 	"pricingListUOMConversions":   "answers a bare JSON array (internal/pricing/w4_handler.go, (*Handler).listConversions writes the h.svc.ListConversions slice directly) against the contract's PricingUOMConversionPage; the fix is the owning lane's",
 	"productList":                 "answers a bare JSON array (internal/product/handler.go, (*Handler).list writes the h.svc.List slice directly, totals in an X-Total-Count header); the handler source carries a comment calling the bare array load bearing for the POS grid and the export callers, so this entry is the contract and the handler disagreeing on purpose (the owning lane owns the resolution (a page envelope here, or a contract amendment)) against the contract's ProductPage",
 
-	// (2) items null (13): the map (or struct) is (or holds) a nil slice
+	// (2) items null (11): the map (or struct) is (or holds) a nil slice
 	// (it marshals as null) and carries no next_cursor key.
-	"complianceListCalendar":          "answers {\"items\":null} on the empty list (internal/compliance/handler.go, Handler.calendar writes map[string]any{\"items\": items} with no nil guard) against the contract's ComplianceDeadlinePage; the fix is the owning lane's",
-	"complianceListUpcoming":          "answers {\"items\":null} (internal/compliance/handler.go, Handler.upcoming, the same unguarded map pattern as its sibling) against the contract's ComplianceDeadlinePage; the fix is the owning lane's",
-	"lienGetHoldbackAging":            "answers {\"items\":null} (internal/lien/handler.go, Handler.aging, unguarded items map) against the contract's LienAgingRowPage; the fix is the owning lane's",
-	"lienListJobDocuments":            "answers {\"items\":null} (internal/lien/handler.go, Handler.listDocuments, unguarded items map) against the contract's LienDocumentPage; the fix is the owning lane's",
-	"lienListJobs":                    "answers {\"items\":null} (internal/lien/handler.go, Handler.listJobs, unguarded items map) against the contract's LienJobPage; the fix is the owning lane's",
-	"purchasingListBills":             "answers {\"items\":null} (internal/purchasing/handler.go, Handler.listBills, unguarded items map) against the contract's PurchasingBillPage; the fix is the owning lane's",
-	"purchasingListPOs":               "answers {\"items\":null} (internal/purchasing/handler.go, Handler.listPOs, unguarded items map) against the contract's PurchasingPOPage; the fix is the owning lane's",
-	"purchasingListReceivingWorklist": "answers {\"items\":null} (internal/purchasing/handler.go, Handler.worklist, unguarded items map) against the contract's PurchasingWorklistItemPage; the fix is the owning lane's",
-	"reportingListCommissionRules":    "answers {\"items\":null} (internal/reporting/handler.go, Handler.listRules, unguarded items map) against the contract's ReportingCommissionRulePage; the fix is the owning lane's",
-	"reportingListRuns":               "answers {\"items\":null} (internal/reporting/handler.go, Handler.listRuns, unguarded items map) against the contract's ReportingRunPage; the fix is the owning lane's",
-	"reportingListSavedViews":         "answers {\"items\":null} (internal/reporting/handler.go, Handler.listSavedViews, unguarded items map) against the contract's ReportingSavedViewPage; the fix is the owning lane's",
-	"tillListBouncedPayments":         "answers {\"items\":null} (internal/till/handler.go, Handler.listBounced, unguarded items map) against the contract's TillBouncedPaymentPage; the fix is the owning lane's",
-	"tillListCreditHolds":             "answers {\"items\":null} (internal/till/handler.go, Handler.listCreditHolds, unguarded items map) against the contract's TillCreditHoldPage; the fix is the owning lane's",
+	"complianceListCalendar":       "answers {\"items\":null} on the empty list (internal/compliance/handler.go, Handler.calendar writes map[string]any{\"items\": items} with no nil guard) against the contract's ComplianceDeadlinePage; the fix is the owning lane's",
+	"complianceListUpcoming":       "answers {\"items\":null} (internal/compliance/handler.go, Handler.upcoming, the same unguarded map pattern as its sibling) against the contract's ComplianceDeadlinePage; the fix is the owning lane's",
+	"lienGetHoldbackAging":         "answers {\"items\":null} (internal/lien/handler.go, Handler.aging, unguarded items map) against the contract's LienAgingRowPage; the fix is the owning lane's",
+	"lienListJobDocuments":         "answers {\"items\":null} (internal/lien/handler.go, Handler.listDocuments, unguarded items map) against the contract's LienDocumentPage; the fix is the owning lane's",
+	"lienListJobs":                 "answers {\"items\":null} (internal/lien/handler.go, Handler.listJobs, unguarded items map) against the contract's LienJobPage; the fix is the owning lane's",
+	"purchasingListBills":          "answers {\"items\":null} (internal/purchasing/handler.go, Handler.listBills, unguarded items map) against the contract's PurchasingBillPage; the fix is the owning lane's",
+	"reportingListCommissionRules": "answers {\"items\":null} (internal/reporting/handler.go, Handler.listRules, unguarded items map) against the contract's ReportingCommissionRulePage; the fix is the owning lane's",
+	"reportingListRuns":            "answers {\"items\":null} (internal/reporting/handler.go, Handler.listRuns, unguarded items map) against the contract's ReportingRunPage; the fix is the owning lane's",
+	"reportingListSavedViews":      "answers {\"items\":null} (internal/reporting/handler.go, Handler.listSavedViews, unguarded items map) against the contract's ReportingSavedViewPage; the fix is the owning lane's",
+	"tillListBouncedPayments":      "answers {\"items\":null} (internal/till/handler.go, Handler.listBounced, unguarded items map) against the contract's TillBouncedPaymentPage; the fix is the owning lane's",
+	"tillListCreditHolds":          "answers {\"items\":null} (internal/till/handler.go, Handler.listCreditHolds, unguarded items map) against the contract's TillCreditHoldPage; the fix is the owning lane's",
 
 	// (3) no next_cursor (23): items (an array) is present, the answer
 	// object carries no next_cursor key (the modules write ad hoc maps or
@@ -166,7 +163,7 @@ var shapeCensusAllowlist = map[string]string{
 	"purchasingListVendorSKUs":         "answers items (an array, empty for the absent vendor) with no next_cursor key (internal/purchasing/vendor_order_handler.go, Handler.listVendorSKUs writes map[string]any{\"items\": items}) against the contract's PurchasingVendorSKUPage; the fix is the owning lane's",
 	"syncPull":                         "answers scope, items, tombstones and last_seq with no next_cursor key (the engine never sets the cursor (internal/sync/engine.go, Engine.Pull) and the generated response type's tag is next_cursor,omitempty (internal/platform/apigen/types.gen.go), so the nil pointer drops from the JSON) against the contract's SyncPullResponse (next_cursor a string or null); the fix is the owning lane's",
 
-	// (4) wrong key (12): the list sits under a key the contract does not
+	// (4) wrong key (11): the list sits under a key the contract does not
 	// declare (items is the contract's spelling).
 	"finstmtListSchedules":           "writes the (nil guarded) list under the key \"schedules\" (internal/finstmt/handler.go, Handler.listSchedules) against the contract's FinStmtSchedulePage (items, next_cursor); the fix is the owning lane's",
 	"inventoryBrowse":                "writes the (nil guarded) list under the key \"rows\" (beside facets and total) (internal/inventory/stock_truth_handler.go, Handler.browse writes the BrowseResult struct) against the contract's InventoryBrowsePage; the fix is the owning lane's",
@@ -175,7 +172,6 @@ var shapeCensusAllowlist = map[string]string{
 	"inventoryListReservations":      "writes the (possibly nil) list under the key \"reservations\" (internal/inventory/stock_truth_handler.go, Handler.listReservations, no nil guard) against the contract's InventoryReservationPage; the fix is the owning lane's",
 	"inventoryListTransfers":         "writes the (possibly nil) list under the key \"transfers\" (internal/inventory/stock_truth_handler.go, Handler.listTransfers, no nil guard; the observed empty answer was {\"transfers\":null}) against the contract's InventoryTransferPage; the fix is the owning lane's",
 	"inventoryListTransitDays":       "writes the (nil guarded) list under the key \"pairs\" (internal/inventory/stock_truth_handler.go, Handler.transitDays) against the contract's InventoryTransitDaysPairPage; the fix is the owning lane's",
-	"inventoryShortfall":             "writes the list under the key \"shortfall\" (beside on_order_degraded) (internal/inventory/stock_truth_handler.go, Handler.shortfall) against the contract's InventoryShortfallPage; the fix is the owning lane's",
 	"taxListEvidence":                "writes the (possibly nil) list under the key \"evidence\" (internal/tax/handler.go, Handler.listEvidence, no nil guard; the observed empty answer was {\"evidence\":null}) against the contract's TaxEvidencePage; the fix is the owning lane's",
 	"taxListProfiles":                "writes the list under the key \"profiles\" (internal/tax/handler.go, Handler.listProfiles) against the contract's TaxStatusCardProfilePage; the fix is the owning lane's",
 	"taxListRates":                   "writes the list under the key \"rates\" (internal/tax/handler.go, Handler.listRates) against the contract's TaxRatePage; the fix is the owning lane's",

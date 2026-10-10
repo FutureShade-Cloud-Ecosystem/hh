@@ -129,7 +129,7 @@ type activityNoteStore interface {
 // the till/history.go Q-044 precedent; never a money decision). Optional: a store without it simply
 // yields an activity stream with no document rows, not an error.
 type activityDocStore interface {
-	OrderDocumentEvents(ctx context.Context, orderID string) ([]DocEvent, error)
+	OrderDocumentEvents(ctx context.Context, orderID string, withPayments bool) ([]DocEvent, error)
 }
 
 // ErrNotesNotConfigured reports a store with no 0161 capability behind a notes write.
@@ -139,11 +139,16 @@ var ErrNotesNotConfigured = errors.New("order: notes store not configured")
 
 // OrderActivityFor returns the merged activity for one order, newest first.
 //
+// withPayments says whether the stream carries the payment trail (ruling 87): the "applied a payment"
+// rows with their amount, method and applier, and the tender named on a counter sale. A caller who
+// does not hold the payment trail reads gets the stream without them, absent rather than blanked; the
+// route's handler asks the payment trail reader (WithPaymentTrail) and passes its answer.
+//
 // AUTHZ is identical to the status/edit history reads (history.go): staff-gating at the route proves
 // the caller is staff but NOT that they may reach THIS order, so the trusted caller is resolved, the
 // order's owning branch loaded, and the read gated on CanAccessBranch. A MISSING order is ErrNotFound
 // (never an existence leak); an existing order in an unreachable branch is ErrForbidden.
-func (s *Service) OrderActivityFor(ctx context.Context, orderID string) (OrderActivity, error) {
+func (s *Service) OrderActivityFor(ctx context.Context, orderID string, withPayments bool) (OrderActivity, error) {
 	orderID, err := s.scopedOrderID(ctx, orderID)
 	if err != nil {
 		return OrderActivity{}, err
@@ -161,7 +166,7 @@ func (s *Service) OrderActivityFor(ctx context.Context, orderID string) (OrderAc
 				return OrderActivity{}, terr
 			}
 			for _, e := range entries {
-				summary, ok := summarizeAuditEntry(e)
+				summary, ok := summarizeAuditEntry(e, withPayments)
 				if !ok {
 					continue
 				}
@@ -192,7 +197,7 @@ func (s *Service) OrderActivityFor(ctx context.Context, orderID string) (OrderAc
 
 	// 2. Immediate documents: invoices raised against the order and payments applied to them.
 	if ds, ok := s.store.(activityDocStore); ok {
-		evs, derr := ds.OrderDocumentEvents(ctx, orderID)
+		evs, derr := ds.OrderDocumentEvents(ctx, orderID, withPayments)
 		if derr != nil {
 			return OrderActivity{}, derr
 		}
@@ -371,7 +376,7 @@ func noteSummary(channel string) string {
 // row this surface deliberately does not show: coarse HTTP.* middleware records (API framing), the
 // consequence columns of a single edit, and any action this file does not understand (unknown rows
 // are OMITTED, never rendered raw, a new backend action must arrive here with words).
-func summarizeAuditEntry(e audit.Entry) (string, bool) {
+func summarizeAuditEntry(e audit.Entry, withPayments bool) (string, bool) {
 	switch e.Action {
 	case audit.ActOrderStatusChanged:
 		oldS := auditStr(e.Changes["old_status"])
@@ -442,7 +447,7 @@ func summarizeAuditEntry(e audit.Entry) (string, bool) {
 		return "", false
 
 	case audit.ActSaleCompleted:
-		if tender := auditStr(e.Changes["reason"]); tender != "" {
+		if tender := auditStr(e.Changes["reason"]); tender != "" && withPayments {
 			return fmt.Sprintf("completed a counter sale (%s)", humanCode(tender)), true
 		}
 		return "completed a counter sale", true
@@ -479,8 +484,17 @@ func moneyStr(cents int64) string {
 
 // - HTTP (hangs off the SAME *Handler as every other order route) -
 
-func (h *Handler) orderActivity(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
-	out, err := h.svc.OrderActivityFor(r.Context(), r.PathValue("id"))
+func (h *Handler) orderActivity(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	withPayments := false
+	if h.trail != nil {
+		held, err := h.trail.HoldsPaymentTrail(r.Context(), caller.PlatformUserID, caller.OrgID)
+		if err != nil {
+			h.writeActivityErr(w, err)
+			return
+		}
+		withPayments = held
+	}
+	out, err := h.svc.OrderActivityFor(r.Context(), r.PathValue("id"), withPayments)
 	if err != nil {
 		h.writeActivityErr(w, err)
 		return

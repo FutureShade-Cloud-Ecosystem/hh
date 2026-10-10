@@ -218,6 +218,13 @@ type TaskEventRef struct {
 	DeepLink string // deep link back into the ERP
 	Summary  string // human one-liner, becomes the EVENT message body
 
+	// SummaryNoFigures is the same sentence with the money figures left out and the words kept
+	// (the count, "the skid deposit changed", "owed back on the invoice"): the body a channel
+	// whose readers are not all on the cost and margin list may carry, because a figure never
+	// reaches an off list role in words either (ruling 91). Empty means the summary itself
+	// carries no figures and the one body serves every reader.
+	SummaryNoFigures string
+
 	// Audience says WHO must read this, AudienceYard (the pickers) or AudienceCounter (the person
 	// standing in front of the customer). It exists because a shortage is useless in the yard channel:
 	// the yard already knows it is short; the counter is the one who has to tell the customer. An

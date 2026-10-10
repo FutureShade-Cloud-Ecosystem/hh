@@ -320,6 +320,33 @@ func (r *Repository) InsertJournalTx(ctx context.Context, tx pgx.Tx, d journalDr
 	return id, true, nil
 }
 
+// InsertParkedJournal inserts the journal and runs file on the same transaction, then commits both; any
+// failure rolls both back. The deferred balance trigger fires at this commit.
+func (r *Repository) InsertParkedJournal(ctx context.Context, d journalDraft, file func(ctx context.Context, tx pgx.Tx, journalID string) error) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("gl: begin park journal: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	id, _, err := r.InsertJournalTx(ctx, tx, d)
+	if err != nil {
+		return "", err
+	}
+	if err := file(ctx, tx, id); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		if isCheckViolation(err) {
+			return "", errUnbalanced
+		}
+		return "", fmt.Errorf("gl: commit parked journal: %w", err)
+	}
+	return id, nil
+}
+
 // insertJournalIn is the journal write shared by InsertJournal and InsertJournalTx: period, account and
 // counter resolution, then the header and lines, all on tx. onDup runs when the header insert loses an
 // idempotency race and returns the winner's id; found=false falls through to the original error. A

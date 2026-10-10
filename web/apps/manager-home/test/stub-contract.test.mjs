@@ -152,7 +152,7 @@ async function mint(flow) {
   return minted.json.token;
 }
 
-test("the demo way in answers the contract's shapes, three flows", async () => {
+test("the demo way in answers the contract's shapes for the flows this app's door serves", async () => {
   const flows = await (await fetch(`${base}/api/v1/demo/flows`)).json();
   holds("DemoFlowList", flows);
   assert.deepEqual(

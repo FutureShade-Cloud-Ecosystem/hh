@@ -15,7 +15,9 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.MH_STUB_PORT ?? 4959);
 
-// The real flows route lists every live role; the app offers only its own card.
+// The real flows route lists the closed table's eight logins; this app's door
+// draws a card per flow it answers here, and its test world serves the three
+// the door walks (sales, the sales manager, the yard manager).
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },

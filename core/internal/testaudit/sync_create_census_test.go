@@ -109,6 +109,14 @@ var syncCensusFenced = map[string]string{
 var syncCensusNoLoadCall = []string{
 	"billing.AgingStore",
 	"dashboard.WidgetMeasuresStore",
+	// The messaging feeds (House Messages core): each Create validates and
+	// writes through the repository field in one statement (an upsert or an
+	// INSERT..SELECT whose empty result IS the refusal), so there is no row
+	// to read back through any Load; channels is pull-only and refuses.
+	"messaging.channelsSyncStore",
+	"messaging.messagesSyncStore",
+	"messaging.acksSyncStore",
+	"messaging.notifyPrefsSyncStore",
 	"payments.PaymentMethodsStore",
 	"payments.PaymentsSyncStore",
 	"sync/readcache.Store",
