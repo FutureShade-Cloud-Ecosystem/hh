@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Money Desk: the testers' brief</title>
+<style>
+  :root { color-scheme: light; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.25rem 4rem;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 1.05rem;
+    line-height: 1.6;
+    color: #1d2733;
+    background: #f6f7f5;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.15rem; margin: 2.25rem 0 0.5rem; padding-top: 0.75rem; border-top: 1px solid #d8ddd4; }
+  p, li { margin: 0.5rem 0; }
+  ul { padding-left: 1.4rem; }
+  .lede { color: #55604f; margin-top: 0; }
+  .banner {
+    border: 1px solid #b8552f;
+    border-radius: 8px;
+    background: #fdf1ec;
+    color: #7a3418;
+    padding: 0.6rem 0.9rem;
+    margin: 0 0 1.5rem;
+  }
+</style>
+</head>
+<body>
+<main>
+
+<div class="banner">Demo box: everything on it is invented. No money is owed, paid or moved by this app, and no decision made here reaches a real book, a real branch or a real approval.</div>
+
+<h1>Money Desk: the testers' brief</h1>
+<p class="lede">One page about what the Money Desk does and what it does not do yet. If the box and this page disagree, the box is wrong and that is a bug worth reporting.</p>
+
+<h2>What this is</h2>
+<p>The Money Desk has two sides. The receivables side is for the Payables and Receivables role: it reads the book's aging, works the bounced payment the queue shows, takes a payment in against open invoices, records a promise to pay and runs a statement. The ledger side is for the Financial Controller: it decides the approvals queue, approves a parked journal, reads the journal register and the trial balance. The controller holds both sides.</p>
+
+<h2>How to sign in</h2>
+<p data-claim="sign-in-cards">On the front door, tap <strong>Payables and Receivables</strong> ("Chase overdue accounts and work the bounced payments.") or <strong>Financial Controller</strong> ("Decide approvals and keep the ledger."). Each card shows a <strong>Money Desk</strong> tile, and the tile opens the same Money Desk with no second sign in.</p>
+<p data-claim="payrec-lands">Payables and Receivables lands on the receivables side.</p>
+<p data-claim="controller-lands">The Financial Controller lands on the ledger side, Approvals and ledger, with a Receivables switch beside it. One tap opens the receivables side whole.</p>
+<p data-claim="other-cards">The Sales and Sales manager cards offer no Money Desk tile. The other nine roles on the front door are listed as Coming and cannot be tapped.</p>
+<p data-claim="own-way-in">If you open the Money Desk without the front door, its own sign in offers only the two roles that can use it.</p>
+<p data-claim="no-gm">No General Manager sign in exists on this box. Anything the screens say is the General Manager's to decide has no one to decide it here.</p>
+
+<h2>The receivables world</h2>
+<p data-claim="world-invoices">The receivables side works the book's 18 invoices, spread across the aging buckets, and one bounced payment.</p>
+<p data-claim="world-bounce">The bounced payment is the cheque for the whole of one Trenton contractor invoice, returned by the bank with the reason "Cheque returned by the bank, not sufficient funds" and a policy fee of $45.00. The payment is DEMO-PAY-B01 and the cheque reference is DEMO-CHQ-B01, which the queue's reference search finds. No allocation remains on it, so that invoice stands open for its full amount.</p>
+<p data-claim="no-seeded-hold">The seeded book plants no credit hold. A hold appears when the sweep places one, or when a payment you mark bounced meets the dealer's returned payment policy.</p>
+
+<h2>Receivables: the tiles and the register</h2>
+<p data-claim="four-tiles">The receivables home opens with four aging tiles in this order: Escalation, Late, Overdue, Current. Each figure is the server's. A tile filters the register to the accounts it counted, and tapping it again clears the filter.</p>
+<p data-claim="register">The register lists open invoices, overdue first. A row's status is a word with the day count, not a colour alone, and a promise or a dispute rides the row as a second mark. The register has filters for overdue, promised, disputed and paid, and Download CSV hands over the register.</p>
+<p data-claim="needs-you">Needs you sits beside the register and holds the bounced payment, the accounts on credit hold and the paper path item. Remind on an account, and the paper path item, chase what is overdue.</p>
+<p data-claim="payables-later">The Payables tab is marked later. There is no Payables control on this release.</p>
+
+<h2>Receivables: taking a payment</h2>
+<p data-claim="record-asks-account">Record a payment on the home asks which account first. On an invoice row it opens that account with the payment ready.</p>
+<p data-claim="apply-split">One payment can cover several invoices. Pick the invoices, type the amount and the screen shows the server's split, oldest first, with the words "closes" or "part" against each invoice and what stays open. The screen computes no figure of its own: it sends the amount, the method, the reference and the picked invoices, and draws the server's answer. Recording posts one payment, and the balances that show afterwards are the server's.</p>
+<p data-claim="apply-no-card">The desk records a payment that has already come in. It charges no card and asks for no card number: the method is a choice and the reference is a cheque number or transfer reference.</p>
+<p data-claim="apply-unknown">If the answer to Record payment is lost, or the server answers with a failure of its own, the screen says the payment may or may not have been recorded and tells you to check the account's payments and balances before taking the money again. Pressing Record payment again with nothing changed is safe: it carries the same key, so the payment posts once. Changing the amount, the method, the reference or the picked invoices makes it a different payment.</p>
+<p data-claim="apply-refused">When the server refuses a payment in words, the screen says the payment was not recorded and shows the server's own sentence, for example that the selected invoices can take at most a stated amount. A refusal writes nothing, and the next press is a new payment.</p>
+<p data-claim="paid-context">A paid invoice stays on the account for context, dimmed, and takes nothing.</p>
+<p data-claim="promise">A promise to pay is recorded against an invoice. A second promise on the same invoice is refused in the server's own words.</p>
+
+<h2>Receivables: bounced payments, statements and holds</h2>
+<p data-claim="bounced-work">A payment can be marked bounced from its invoice, with a reason, and it joins the queue. In the queue it is worked three ways: a replacement payment, a promise to pay, or a reminder to the account.</p>
+<p data-claim="statement">An account's Statement tab has none until you run it. Run a statement to read the aging strip, then send it to the AP contact. Download PDF, the Activity tab and the Contacts tab are marked later.</p>
+<p data-claim="statements-all">The Statements tab lists every account, and Run for every account runs them all.</p>
+<p data-claim="holds-payrec">The Credit holds tab lists the holds. For Payables and Receivables, Lift and Override are held. Pressing Lift says in words that releasing a hold is for the Financial Controller or the General Manager, and the bare word Forbidden is not shown. Run the sweep is refused in words as the Financial Controller's. Place a hold is marked later: the core has no route for it yet.</p>
+<p data-claim="holds-controller">The Financial Controller lifts a hold with a reason, or overrides another, and has no Place a hold button.</p>
+<p data-claim="walls-core">Approving a parked journal and releasing a credit hold are refused to Payables and Receivables by the server, in its shared refusal body. Payables and Receivables has no control for either on its screens.</p>
+
+<h2>The ledger: the approvals queue</h2>
+<p data-claim="queue-world">The controller's queue holds a below floor quote request (twelve percent asked on one quote line), two parked journals and the freight raises of both branches. One parked journal is a $7,500.00 prepaid insurance premium made by the Sales manager login, the other is a $6,200.00 inventory write-down made by the controller itself. Both sit over the $5,000.00 approval threshold. There is one freight raise in each branch.</p>
+<p data-claim="queue-screen">The queue is told apart by kind: Below floor quote request, Journal parked over the threshold, Freight above the quote. Each journal is named by its number, and the controller's own request says Filed by you.</p>
+<p data-claim="decide-floor">Choosing the floor request opens its decision. The panel reads the core's sentence in words, with the quote, line, discount asked, margin asked and floor margin as tiles, and says "One decision, one quote." The approval is spent on that one quote. The dollar tiles for the asked price, the floor and the list are not drawn yet and say later, and approving at a different price is marked later.</p>
+<p data-claim="approve-journal">Choosing a parked journal shows its amount and its lines. Deciding to approve posts the journal in the same step: the register then shows it as Posted and the trial balance carries it.</p>
+<p data-claim="own-request">The controller cannot decide its own request. The panel says so before a press, both choices are held with the words "Held: not yours to decide.", and Decide is disabled. The way out it names is the General Manager.</p>
+<p data-claim="refused-decision">A refused decision names who may decide it, the Financial Controller or the General Manager, and tells you to sign out and in again if this was not the role you meant. The bare word Forbidden is not shown, and the request stays in the queue.</p>
+<p data-claim="bare-array">A queue answer that is not the page the contract describes is refused, never half read: the screen says the approvals list was not readable and draws no rows.</p>
+<p data-claim="phone-decision">On a phone, choosing a request brings its decision into view.</p>
+
+<h2>The ledger: journals and the trial balance</h2>
+<p data-claim="journal-register">The Journals tab lists the journals with filters that carry counts, such as Pending. A journal number never wraps onto two lines. Void and Reverse are marked later.</p>
+<p data-claim="trial-balance">The Trial balance tab reads in balance with the server's totals, and takes All branches or one branch. The tie out, choosing a period and the Excel download are marked later.</p>
+
+<h2>Everywhere</h2>
+<p data-claim="phone-sideways">On a phone no screen scrolls the page sideways.</p>
+<p data-claim="empty-world">An empty world says so in words on each screen: "No invoices in this view.", "Nothing needs you right now." and "No account is on hold."</p>
+
+<h2>Where feedback goes</h2>
+<p>One channel: send everything to Colton, and he files every note with the principal in one place. What helps most: what you tapped, what you expected, and what you saw instead.</p>
+
+</main>
+</body>
+</html>

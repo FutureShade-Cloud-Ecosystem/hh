@@ -49,11 +49,16 @@ test("the front door's Financial Controller card opens the same Money Desk tile 
   await expect(page.locator("[data-card]")).toHaveCount(4);
 });
 
-for (const label of ["Sales", "Sales manager"]) {
-  test(`the front door's ${label} card offers no Money Desk tile`, async ({ page }) => {
-    await page.goto("/");
-    await page.getByRole("button", { name: label, exact: true }).click();
-    await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Money Desk", exact: true })).toHaveCount(0);
-  });
-}
+test("the front door's Sales card offers no Money Desk tile", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sales", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Money Desk", exact: true })).toHaveCount(0);
+});
+
+test("the front door's Sales manager card offers no Money Desk tile", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sales manager", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Money Desk", exact: true })).toHaveCount(0);
+});

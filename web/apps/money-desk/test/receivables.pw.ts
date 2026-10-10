@@ -415,6 +415,14 @@ test("on a phone no screen scrolls the page sideways", async ({ page, request })
   expect(await wide()).toBeLessThanOrEqual(0);
 });
 
+test("the testers' page is served beside the desk and ends with the one contact line", async ({ page }) => {
+  const answer = await page.goto("/testers.html");
+  expect(answer?.status()).toBe(200);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Money Desk: the testers' brief");
+  await expect(page.locator("main")).toContainText("send everything to Colton");
+  await expect(page.locator("[data-claim]").first()).toBeVisible();
+});
+
 test("the empty world: each screen says so in words", async ({ page, request }) => {
   await request.post("/_stub/scenario", { data: { name: "empty" } });
   await page.addInitScript(receivablesHandoff);
