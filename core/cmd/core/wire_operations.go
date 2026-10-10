@@ -539,6 +539,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithAuditTrail(auditSvc).
 		WithAudit(auditSvc).
 		WithLogger(log)
+	// The door money fence (ruling 113): the payment hold's figure and the gate's own sentence ride
+	// only to a caller on the configuration's cost and margin list (dispatch/cost_gate.go), the same
+	// rule the stock reads and the yard payloads answer through.
+	dispatchSvc.WithCostRoles(spine.roleCfg)
+	if !dispatchSvc.CostRolesWired() {
+		panic("dispatch: cost roles not wired - the payment hold would answer the door money figure to every caller")
+	}
 	dispatchHandler := dispatch.NewHandler(dispatchSvc, log).WithUserLinker(link)
 	dispatchHandler.RegisterRoutes(r, g)
 	dispatchHandler.RegisterPublicRoutes(r)

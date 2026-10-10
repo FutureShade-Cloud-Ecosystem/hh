@@ -513,21 +513,27 @@ func (s *Service) gateFor(ctx context.Context, orderID string) DispatchGateDecis
 }
 
 // PaymentHoldForStop is the driver banner's read: what does the gate say about this stop's order.
-// Fenced through the stop. Always answers, a nil gate answers "not held".
+// Fenced through the stop. Always answers, a nil gate answers "not held". The door money fence
+// (cost_gate.go) holds the figure and the gate's sentence from a caller off the cost and margin
+// list; the hold itself, its mark and its words, stays for every caller.
 func (s *Service) PaymentHoldForStop(ctx context.Context, stopID string) (StopPaymentHold, error) {
 	stop, err := s.guardStop(ctx, stopID)
 	if err != nil {
 		return StopPaymentHold{}, err
 	}
 	d := s.gateFor(ctx, stop.OrderID)
-	return StopPaymentHold{
+	hold := StopPaymentHold{
 		StopID: stop.ID, OrderID: stop.OrderID, Held: !d.Allow,
 		Reason: d.Reason, Code: d.Code, AmountDueCents: d.AmountDueCents,
-	}, nil
+	}
+	if !s.moneyAllowed(ctx) {
+		blankHoldMoney(&hold)
+	}
+	return hold, nil
 }
 
 // PaymentHoldsForRun is the same read for a whole run, the driver's day loads one banner set, not
-// one request per stop.
+// one request per stop. The door money fence applies per hold, as on the stop's read.
 func (s *Service) PaymentHoldsForRun(ctx context.Context, runID string) ([]StopPaymentHold, error) {
 	run, err := s.guardRun(ctx, runID)
 	if err != nil {
@@ -537,13 +543,18 @@ func (s *Service) PaymentHoldsForRun(ctx context.Context, runID string) ([]StopP
 	if err != nil {
 		return nil, err
 	}
+	allowed := s.moneyAllowed(ctx)
 	out := make([]StopPaymentHold, 0, len(stops))
 	for _, st := range stops {
 		d := s.gateFor(ctx, st.OrderID)
-		out = append(out, StopPaymentHold{
+		hold := StopPaymentHold{
 			StopID: st.ID, OrderID: st.OrderID, Held: !d.Allow,
 			Reason: d.Reason, Code: d.Code, AmountDueCents: d.AmountDueCents,
-		})
+		}
+		if !allowed {
+			blankHoldMoney(&hold)
+		}
+		out = append(out, hold)
 	}
 	return out, nil
 }
@@ -571,7 +582,7 @@ func (s *Service) assertGateAllowsRun(ctx context.Context, stops []Stop) error {
 		}
 		held = append(held, orDash(st.OrderNo))
 		if reason == "" {
-			reason = d.Reason
+			reason = s.holdWordsFor(ctx, d.Reason)
 		}
 	}
 	if len(held) == 0 {

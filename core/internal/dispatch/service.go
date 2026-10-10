@@ -61,6 +61,10 @@ type Service struct {
 	// (the additive lane, asserted at boot in the composition root); a wired
 	// seam that errors REFUSES (money, the closed direction).
 	pickHold PickHoldGate
+	// costRoles is the door money fence's rule (cost_gate.go): whether the
+	// caller is on the cost and margin list. Nil is REFUSE, the closed
+	// direction money takes everywhere in this module.
+	costRoles CostRoles
 	// trail is the audit READ seam (session A item 3d). Nil is an empty history, never an error.
 	trail PolicyTrailReader
 	names ActorNameResolver

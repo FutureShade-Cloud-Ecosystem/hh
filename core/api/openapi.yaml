@@ -33461,7 +33461,7 @@ components:
           description: True only when every load on the order has reached DELIVERED
     DispatchStopPaymentHold:
       type: object
-      description: The driver-facing banner payload, computed per read from the gate and never stored. reason is written for a driver to read; code is the machine handle so surfaces can style the banner without parsing prose.
+      description: The driver-facing banner payload, computed per read from the gate and never stored. reason is written for a driver to read; code is the machine handle so surfaces can style the banner without parsing prose. The hold itself reaches every caller; the figure and the gate's own sentence reach only a role on the cost and margin list, and every other caller is told the hold in words, never a figure.
       required:
         - stop_id
         - order_id
@@ -33482,6 +33482,7 @@ components:
         amount_due_cents:
           type: integer
           format: int64
+          description: Carried only to a role on the cost and margin list; absent for every other role, which is told the hold in words
     DispatchPaymentHoldPage:
       type: object
       required:

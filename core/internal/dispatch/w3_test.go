@@ -13,6 +13,7 @@ import (
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 func f64(v float64) *float64 { return &v }
@@ -315,8 +316,15 @@ func TestGate_DeniedRunIsRefusedNamingTheOrderAndTheReason(t *testing.T) {
 	gate := &fakeGate{deny: map[string]DispatchGateDecision{
 		"o-2": {Allow: false, Reason: "COD balance of $1,240.00 is outstanding.", Code: "COD_UNPAID"},
 	}}
-	s := w3Service("2026-08-06").WithARGate(gate)
-	err := s.assertGateAllowsRun(gateCtx(), []Stop{
+	// The dispatcher, a role on the cost and margin list, keeps the gate's own
+	// sentence in the refusal; the door money fence's words and the off list
+	// roles are proven in cost_gate_w3_test.go.
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := w3Service("2026-08-06").WithARGate(gate).WithCostRoles(cfg)
+	err = s.assertGateAllowsRun(doorCtx("LOGISTICS_MANAGER"), []Stop{
 		{OrderID: "o-1", OrderNo: "#SO-TRT-1"},
 		{OrderID: "o-2", OrderNo: "#SO-TRT-2"},
 	})
