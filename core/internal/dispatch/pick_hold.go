@@ -53,12 +53,13 @@ func (s *Service) PickHoldGateWired() bool { return s.pickHold != nil }
 // behind POST /api/v1/dispatch/will-call, requireStaff): nil seam allows, a
 // read that cannot be made refuses (the money direction), a held order
 // refuses with the mandated sentence. The figure is gated on the caller's
-// role on the cost and margin list (cost_gate.go): the original code's
-// rationale ("dispatch-board work, held only by roles on the cost and margin
-// list") was wrong, because requireStaff holds no role check, so a figure
-// reached an off list role (drivers, yard team, HR). The fence holds the
-// figure out for those callers, in cents and in words; the same rule governs
-// the payment hold reads and the dispatch refusal.
+// role on the cost and margin list (cost_gate.go), not on the surface level
+// the route happens to need: every staff route registers through
+// authz.RoleGateRegistrar (cmd/core/main.go), which attaches the census
+// annotation's role gate, but that gate decides who may mint a tag, and the
+// figure follows the cost list. A role that holds the dispatch board for
+// work and is off the list still reads the bare mandated sentence. The same
+// rule governs the payment hold reads and the dispatch refusal.
 func (s *Service) refuseHeldFromPicking(ctx context.Context, orderID string) error {
 	if s.pickHold == nil {
 		return nil
@@ -131,7 +132,7 @@ func refuseHeldFromPickingSyncTx(ctx context.Context, gate PickHoldGate, tx pgx.
 // resolves any active staff caller with no role check (the scope's
 // predicate reads org only), so the figure is held out in words either;
 // the STAFF door above gates the figure on the cost and margin list
-// through refuseHeldFromPicking for the same reason (N1).
+// through refuseHeldFromPicking (N1).
 func holdRefusalSync(held bool, owed int64, err error) error {
 	if err != nil {
 		return refused(fmt.Errorf("the balance hold could not be read, try again in a moment"))
