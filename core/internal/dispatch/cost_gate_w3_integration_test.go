@@ -102,6 +102,67 @@ func TestDoorMoney_BothHoldRoutesFollowTheCostList(t *testing.T) {
 	}
 }
 
+// doorClearWorld is the fence's paid counterpart: the same one stop on one
+// run, behind a gate that denies nothing, so the stop reads unheld on both
+// routes. The rule is wired exactly as in doorHoldWorld, so the only
+// difference from the held world is the gate's answer.
+func doorClearWorld(t *testing.T, wireRule bool) (*Handler, string, string) {
+	t.Helper()
+	h, ctx, orderID := w3Harness(t)
+	stop := w3Schedule(t, h, ctx, orderID, tomorrow())
+	run := seedRun(t, h, ctx, branchTRT, tomorrow(), true)
+	if _, err := h.svc.AssignStop(ctx, stop.ID, AssignInput{RunID: run.ID}); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+	h.svc.WithARGate(denyGate{orders: map[string]bool{}})
+	if wireRule {
+		cfg, err := roleconfig.Default()
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.svc.WithCostRoles(cfg)
+	}
+	return NewHandler(h.svc, nil), stop.ID, run.ID
+}
+
+// An unheld (paid) stop stays wordless on both hold routes for every off
+// list role: no reason, no code, no figure. The payment sentence is a held
+// stop's; wording a clear one would tell a driver at a customer's gate that
+// a paid order is unpaid. An on list caller reads the same clear stop with
+// nothing invented either: the gate answered allow, and allow carries no
+// sentence of its own.
+func TestDoorMoney_AnUnheldStopStaysWordlessOnBothHoldRoutes(t *testing.T) {
+	h, stopID, runID := doorClearWorld(t, true)
+	routes := map[string]struct {
+		path string
+		id   string
+		do   func(http.ResponseWriter, *http.Request)
+	}{
+		"the stop's hold": {
+			"/api/v1/dispatch/stops/" + stopID + "/payment-hold", stopID,
+			func(w http.ResponseWriter, r *http.Request) { h.stopPaymentHold(w, r, guards.StaffCaller{}) },
+		},
+		"the run's holds": {
+			"/api/v1/dispatch/runs/" + runID + "/payment-holds", runID,
+			func(w http.ResponseWriter, r *http.Request) { h.runPaymentHolds(w, r, guards.StaffCaller{}) },
+		},
+	}
+	readers := append([]string{"LOGISTICS_MANAGER"}, doorRolesOffTheList...)
+	for name, route := range routes {
+		for _, role := range readers {
+			body := doorHoldGet(t, h, role, route.path, route.id, route.do)
+			if !strings.Contains(body, `"held":false`) {
+				t.Errorf("%s as %s keeps the clear mark: %s", name, role, body)
+			}
+			for _, leak := range []string{"amount_due_cents", "reason", "code", doorMoneyWords} {
+				if strings.Contains(body, leak) {
+					t.Errorf("%s as %s: an unheld stop is a paid stop and carries no %q: %s", name, role, leak, body)
+				}
+			}
+		}
+	}
+}
+
 // No rule wired fails closed: the dispatch role itself is told the words and
 // carries no figure, the posture the composition root's boot fail-fast keeps
 // out of production.

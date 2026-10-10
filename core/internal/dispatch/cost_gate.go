@@ -18,9 +18,11 @@ package dispatch
 // THE SHAPE IS ABSENCE, NOT ZERO: a caller off the list receives the figure
 // byte-absent, never a zero that reads as "nothing owed". The hold itself
 // stays for every caller, its mark, its machine code and its words; only the
-// figure and the gate's sentence go. The fence sits in the service, where
-// this module keeps every authority decision: the payment hold reads and the
-// dispatch refusal are the three places the gate's answer meets a caller.
+// figure and the gate's sentence go. An unheld stop is wordless for every
+// caller: the fence words a hold, never a release, so a paid stop is never
+// told it needs payment. The fence sits in the service, where this module
+// keeps every authority decision: the payment hold reads and the dispatch
+// refusal are the three places the gate's answer meets a caller.
 
 import (
 	"context"
@@ -71,9 +73,17 @@ func (s *Service) moneyAllowed(ctx context.Context) bool {
 // blankHoldMoney holds the figure and the gate's sentence out of one hold for
 // a caller the rule refuses: the figure marshals byte-absent, never a zero
 // that reads as nothing owed, and the reason becomes the words a driver can
-// act on. The mark, the order and the machine code stay.
+// act on. The mark, the order and the machine code stay. An unheld stop is
+// left as the gate answered it, wordless: the gate words a refusal, never a
+// release, and the payment sentence on a paid stop would tell a driver at a
+// customer's gate that a cleared order is unpaid, on every clear stop of the
+// run.
 func blankHoldMoney(hold *StopPaymentHold) {
 	hold.AmountDueCents = 0
+	if !hold.Held {
+		hold.Reason, hold.Code = "", ""
+		return
+	}
 	hold.Reason = doorMoneyWords
 }
 

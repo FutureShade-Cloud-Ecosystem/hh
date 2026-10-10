@@ -109,6 +109,27 @@ func TestDoorMoneyShape_TheFigureIsAbsentAndTheWordsStay(t *testing.T) {
 	}
 }
 
+// An unheld stop is a paid stop: the gate words a refusal, never a release,
+// so the fence must not invent the payment sentence for one. A clear stop
+// that says "payment needed before release" tells a driver at a customer's
+// gate that a paid order is unpaid, on every clear stop of the run.
+func TestDoorMoneyShape_AnUnheldStopCarriesNoWordsForAnyone(t *testing.T) {
+	hold := StopPaymentHold{StopID: "s-1", OrderID: "o-1", Held: false}
+	blankHoldMoney(&hold)
+	body, err := json.Marshal(hold)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"held":false`) {
+		t.Errorf("the clear mark stays: %s", body)
+	}
+	for _, leak := range []string{"amount_due_cents", "reason", "code", doorMoneyWords} {
+		if strings.Contains(string(body), leak) {
+			t.Errorf("an unheld stop is a paid stop and carries no %q: %s", leak, body)
+		}
+	}
+}
+
 // The dispatch refusal, the third place the gate's answer meets a caller,
 // carries the words to a driver and the gate's own sentence to the list.
 func TestDoorMoneyRefusal_TheWordsRideTheDispatchRefusal(t *testing.T) {
