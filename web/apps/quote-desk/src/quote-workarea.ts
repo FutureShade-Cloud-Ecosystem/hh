@@ -87,7 +87,6 @@ import {
   sendChannels,
   sentConfirmation,
   spokenRefusal,
-  totalsBreakdown,
   validityDaysOf,
   validUntilFromDays,
   VALIDITY_CHOICES,
@@ -1315,6 +1314,7 @@ export class QdQuoteWorkarea extends LitElement {
     this.view = null;
     this.unreadable = "";
     this.terms = null;
+    this.serverTerms = null;
     this.glance = null;
     this.customer = null; // the card shows nothing of the old account until the new one is read
     this.addons = [];
@@ -1738,6 +1738,7 @@ export class QdQuoteWorkarea extends LitElement {
     if (ctx.id === "") {
       this.view = null;
       this.terms = null;
+      this.serverTerms = null;
       this.termsUnsaved = false;
       this.termsPending = {};
       this.glance = null;
@@ -1807,6 +1808,7 @@ export class QdQuoteWorkarea extends LitElement {
     if (terms === undefined) return this.supersededBy(ctx, seq);
     if (terms.ok) {
       // A read that was in flight when the person edited must not land over the edit: the unsaved edits ride on top.
+      this.serverTerms = terms.value;
       this.terms = { ...terms.value, ...this.termsPending };
       this.termsUnsaved = this.termsPendingCount() > 0;
     }
@@ -2438,6 +2440,9 @@ export class QdQuoteWorkarea extends LitElement {
   /** True from a terms edit until the server has answered its save: the totals card then shows local figures, labelled. */
   @state() private termsUnsaved = false;
 
+  /** The terms as the server last answered them: the totals card shows these figures and no others. */
+  private serverTerms: TermsRef | null = null;
+
   /** The edits the server has not yet answered, laid over every read until its save lands. */
   private termsPending: Partial<TermsRef> = {};
   private termsEditSeq = 0;
@@ -2512,8 +2517,14 @@ export class QdQuoteWorkarea extends LitElement {
     if (this.termsEditSeq === sent) this.termsPending = {};
     if (!result.ok) {
       this.error = spokenRefusal(quoteErrorMessage(result.status, result.error, "save the quote terms"));
+      // The refused edit leaves the screen: the boxes go back to what the server holds (edits made since stay).
+      if (this.serverTerms !== null) {
+        this.terms = { ...this.serverTerms, ...this.termsPending };
+        this.termsUnsaved = this.termsPendingCount() > 0;
+      }
       return;
     }
+    this.serverTerms = result.value;
     this.terms = { ...result.value, ...this.termsPending };
     this.termsUnsaved = this.termsPendingCount() > 0;
     if (reloadAfter) {
@@ -3527,13 +3538,10 @@ export class QdQuoteWorkarea extends LitElement {
     const v = this.view;
     const t = this.terms;
     if (v === null || t === null) return nothing;
-    const b = totalsBreakdown(
-      v.lines.map((l) => ({ line_no: l.line_no, line_total_cents: l.line_total_cents })),
-      t.lines.map((l) => ({ line_no: l.lineNo, disc_pct: l.discPct, pre_discount_total_cents: l.preDiscountTotalCents })),
-      t.deliveryFeeCents,
-      t.taxCents,
-      t.totalCents,
-    );
+    // Every figure is the server's own answer; nothing here is added up in the browser, and an edit it has not
+    // accepted yet is not shown in them.
+    const b = this.serverTerms;
+    if (b === null) return nothing;
     // The deposit is the server's figure (deposit_cents). Only while a terms edit is unsaved is the local
     // figure shown, and it is labelled as an estimate, because the server has not seen the edit yet.
     const dep = this.termsUnsaved
@@ -3543,14 +3551,10 @@ export class QdQuoteWorkarea extends LitElement {
         : null;
     const showMargin = marginPresent(this.glance) && !this.ws.costHidden;
     return html`<div class="card totals" data-testid="qb-totals">
-      <div class="trow"><span>Products</span><span class="num">${money(b.productsCents)}</span></div>
-      ${b.discountCents > 0
-        ? html`<div class="trow"><span>Discount</span><span class="num neg">-${money(b.discountCents)}</span></div>`
+      <div class="trow"><span>Subtotal</span><span class="num">${money(b.subtotalCents)}</span></div>
+      ${b.deliveryFeeCents > 0
+        ? html`<div class="trow"><span>Delivery</span><span class="num">${money(b.deliveryFeeCents)}</span></div>`
         : nothing}
-      ${b.deliveryCents > 0
-        ? html`<div class="trow"><span>Delivery</span><span class="num">${money(b.deliveryCents)}</span></div>`
-        : nothing}
-      <div class="trow sep"><span>Subtotal</span><span class="num">${money(b.subtotalCents + b.deliveryCents)}</span></div>
       <div class="trow"><span>HST</span><span class="num">${money(b.taxCents)}</span></div>
       <div class="grand">
         <span class="lbl">Quote total</span>

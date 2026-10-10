@@ -4,11 +4,8 @@
 // _quote-workarea.ts: the quote work area's pure decision tables (the `_*.ts`
 // house convention: DOM-free, unit-tested on the Node runner).
 //
-// Money is never derived here beyond display composition: line totals, tax
-// and the grand total are the SERVER's stored figures. The composers below
-// only arrange stored figures into the Products / Discount / Delivery /
-// Subtotal / HST / Total card, and the Discount row is the difference between
-// two stored figures (gross versus net), not arithmetic this client invented.
+// Money is never derived here: line totals, subtotal, delivery, tax and the grand total are the
+// SERVER's stored figures, shown as the server answered them.
 //
 // The workspace geometry delegates to the shared kit's own functions
 // (@hardscapehouse/pos-kit's _pos-workspace), reused, not forked.
@@ -47,60 +44,6 @@ export function quoteFlowSteps(view: { hasCustomer: boolean; lineCount: number; 
     complete: complete[s.id],
     current: firstOpen ? s.id === firstOpen.id : s.id === "payment",
   }));
-}
-
-// ── the totals card ────────────────────────────────────────────────────────────
-
-export interface TotalsLineIn {
-  line_no: number;
-  line_total_cents: number;
-}
-
-export interface TotalsExtraIn {
-  line_no: number;
-  disc_pct: number;
-  pre_discount_total_cents: number;
-}
-
-export interface TotalsBreakdown {
-  productsCents: number;
-  discountCents: number;
-  deliveryCents: number;
-  subtotalCents: number;
-  taxCents: number;
-  totalCents: number;
-}
-
-/**
- * totalsBreakdown: Products is the sum of each line's GROSS (the stored
- * pre-discount figure; a legacy line that never carried one is its own net).
- * Discount is Products minus Subtotal. Delivery, HST and Total are the
- * server's stored figures verbatim.
- */
-export function totalsBreakdown(
-  lines: TotalsLineIn[],
-  extras: TotalsExtraIn[],
-  deliveryFeeCents: number,
-  taxCents: number,
-  totalCents: number,
-): TotalsBreakdown {
-  const byLine = new Map(extras.map((e) => [e.line_no, e]));
-  let products = 0;
-  let subtotal = 0;
-  for (const l of lines) {
-    const e = byLine.get(l.line_no);
-    const gross = e && e.pre_discount_total_cents > 0 ? e.pre_discount_total_cents : l.line_total_cents;
-    products += gross;
-    subtotal += l.line_total_cents;
-  }
-  return {
-    productsCents: products,
-    discountCents: products - subtotal,
-    deliveryCents: deliveryFeeCents,
-    subtotalCents: subtotal,
-    taxCents,
-    totalCents,
-  };
 }
 
 // ── margin display (the server's glance, arranged, never computed) ────────────

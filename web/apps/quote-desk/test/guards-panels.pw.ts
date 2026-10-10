@@ -84,8 +84,10 @@ test("guard edit discounts read: the discounts of the quote left never show on t
   // Five percent on the sand line of Q-1001, so its terms read carries a discount that Q-1004 does not have.
   const disc = page.getByTestId("qb-line-disc").nth(1);
   await disc.fill("5");
+  const landed = page.waitForResponse((r) => r.request().method() !== "GET" && r.url().includes("/api/v1/quotes/"));
   await disc.blur();
-  await expect(page.getByTestId("qb-totals")).toContainText("Discount");
+  await landed;
+  await expect(page.getByTestId("qb-totals")).toContainText("Subtotal");
   await openQuote(page, "Q-1004");
   await quiet(page);
   // Both the work area's and the edit panel's terms reads of Q-1001 are held; the person leaves once both are out.

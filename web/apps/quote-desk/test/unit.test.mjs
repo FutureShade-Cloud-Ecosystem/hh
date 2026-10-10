@@ -27,7 +27,6 @@ import {
   sendChannels,
   sentConfirmation,
   spokenRefusal,
-  totalsBreakdown,
   validityDaysOf,
   validUntilFromDays,
   VALIDITY_CHOICES,
@@ -99,28 +98,6 @@ test("lines on the quote complete Products and open Review and Send; a sent quot
 });
 
 // ── the totals card ────────────────────────────────────────────────────────────
-
-test("the totals card composes stored figures: gross lines, the discount as their difference, delivery, tax and total verbatim", () => {
-  const b = totalsBreakdown(
-    [
-      { line_no: 1, line_total_cents: 18000 },
-      { line_no: 2, line_total_cents: 9000 },
-    ],
-    [
-      { line_no: 1, disc_pct: 10, pre_discount_total_cents: 20000 },
-      { line_no: 2, disc_pct: 0, pre_discount_total_cents: 0 },
-    ],
-    5000,
-    4160,
-    36160,
-  );
-  assert.equal(b.productsCents, 29000);
-  assert.equal(b.discountCents, 2000);
-  assert.equal(b.deliveryCents, 5000);
-  assert.equal(b.subtotalCents, 27000);
-  assert.equal(b.taxCents, 4160);
-  assert.equal(b.totalCents, 36160);
-});
 
 test("the deposit line is absent when off, and the stored percent of the stored total when on", () => {
   assert.equal(depositCents(false, 10, 36160), null);

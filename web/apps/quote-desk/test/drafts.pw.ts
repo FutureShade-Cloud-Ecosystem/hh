@@ -33,8 +33,10 @@ test("a late re-read leaves the box being typed in alone, and the blur still sav
   await read;
   await page.waitForTimeout(300);
   await expect(disc).toHaveValue("5");
+  const landed = page.waitForResponse((r) => r.request().method() !== "GET" && r.url().includes("/api/v1/quotes/"));
   await disc.blur();
-  await expect(page.getByTestId("qb-totals")).toContainText("Discount");
+  await landed;
+  await expect(page.getByTestId("qb-totals")).toContainText("Subtotal");
 });
 
 test("the edit panel keeps the figure being typed through a re-read too", async ({ page }) => {

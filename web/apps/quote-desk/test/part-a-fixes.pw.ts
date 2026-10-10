@@ -40,8 +40,10 @@ test("a quantity step that lands below the floor is the typed refusal and opens 
   await startQuote(page);
   const disc = page.getByTestId("qb-line-disc");
   await disc.fill("2");
+  const landed = page.waitForResponse((r) => r.request().method() !== "GET" && r.url().includes("/api/v1/quotes/"));
   await disc.blur();
-  await expect(page.getByTestId("qb-totals")).toContainText("Discount");
+  await landed;
+  await expect(page.getByTestId("qb-totals")).toContainText("Subtotal");
   await request.put("/_stub/floor-raise", { data: { bps: 4000 } });
   await page.getByRole("button", { name: /^Increase quantity/ }).click();
   await expect(page.locator("qd-floor-refusal").getByRole("dialog")).toBeVisible();

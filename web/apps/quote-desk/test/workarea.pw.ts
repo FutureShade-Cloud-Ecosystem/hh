@@ -111,7 +111,7 @@ test("lines are added and removed, and the core does not renumber: the remaining
   await expect(page.getByTestId("qb-line-qty")).toHaveAttribute("data-line", "2");
 });
 
-test("a discount above the floor lands and shows the discount row; below the floor is the typed refusal", async ({ page }) => {
+test("a discount above the floor lands; below the floor is the typed refusal", async ({ page }) => {
   await signIn(page);
   await newQuote(page);
   await page.getByTestId("qb-identity").locator("hos-customer-picker").getByPlaceholder("Search name or account #…").fill("Maple");
@@ -122,11 +122,13 @@ test("a discount above the floor lands and shows the discount row; below the flo
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
 
   // Five percent stays above the floor for this product and account: the
-  // write lands and the totals card gains the discount row.
+  // write lands.
   const disc = page.getByTestId("qb-line-disc");
   await disc.fill("5");
+  const landed = page.waitForResponse((r) => r.request().method() !== "GET" && r.url().includes("/api/v1/quotes/"));
   await disc.blur();
-  await expect(page.getByTestId("qb-totals")).toContainText("Discount");
+  await landed;
+  await expect(page.getByTestId("qb-totals")).toContainText("Subtotal");
   await expect(page.getByTestId("qb-error")).toHaveText("", { useInnerText: true });
 
   // Fifteen percent lands below the floor: the typed 409 arrives, the plain
@@ -263,7 +265,9 @@ test("the Sales manager clears the floor itself, and the clearing is stamped on 
   // The same fifteen percent the Sales login was refused: the manager's own
   // clearing goes through once and the line carries who cleared it.
   await disc.fill("15");
+  const landed = page.waitForResponse((r) => r.request().method() !== "GET" && r.url().includes("/api/v1/quotes/"));
   await disc.blur();
   await expect(page.getByTestId("qb-line")).toContainText("cleared by Sales manager (demo)");
-  await expect(page.getByTestId("qb-totals")).toContainText("Discount");
+  await landed;
+  await expect(page.getByTestId("qb-totals")).toContainText("Subtotal");
 });
