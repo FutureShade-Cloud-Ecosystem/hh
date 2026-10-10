@@ -14,7 +14,8 @@ package purchasing
 //     so a created or edited row reaches a synced device on its next pull, and the edit of a
 //     carried row (seq NULL, 0213's "carried rows keep seq NULL") stamps it live;
 //   - the org stamp is the caller's (the guard resolved scope, never a header), and a row another
-//     org owns is refused rather than re-stamped, exactly the load's org_mismatch posture.
+//     org owns is refused (as a 404) rather than re-stamped, the load's org_mismatch posture; a
+//     carried row (org NULL) is stamped by the first edit.
 //
 // WHAT AN EDIT MAY TOUCH, deliberately narrow: the name, the terms, the ordering email that rides
 // the record as the remit fallback (the address book the untagged send reads), and the active
@@ -97,8 +98,11 @@ func (s *Service) CreateVendor(ctx context.Context, orgID string, in CreateVendo
 	return v, nil
 }
 
-// UpdateVendor corrects the fields the body names on one vendor, or refuses: unknown vendor (404),
-// another org's row (403), a body that names nothing (400).
+// UpdateVendor corrects the fields the body names on one vendor, or refuses: unknown vendor or another org's row (one 404, so
+// the status says nothing about which ids exist), a body that names nothing (400). A carried vendor
+// (org NULL: the seed and the loads predate tenancy) is claimed for the caller's org by its first
+// edit, in the same statement as the write: refusing it would leave every carried supplier
+// uneditable, and the WHERE's org test is what keeps a second org out afterwards.
 func (s *Service) UpdateVendor(ctx context.Context, orgID, vendorID string, in UpdateVendorRequest) (VendorMaster, error) {
 	if _, err := s.caller(ctx); err != nil {
 		return VendorMaster{}, err
@@ -137,18 +141,7 @@ func (s *Service) UpdateVendor(ctx context.Context, orgID, vendorID string, in U
 		return VendorMaster{}, badReq("purchasing: the body names nothing to change")
 	}
 
-	// The org check reads before the write, and separately from it: an edit that matched no row is
-	// a 404 and an edit that matched another org's row is a refusal, and folding both into one
-	// UPDATE ... RETURNING would answer two different questions identically.
-	owner, err := s.repo.VendorOrg(ctx, vendorID)
-	if err != nil {
-		return VendorMaster{}, err
-	}
-	if owner != "" && owner != orgID {
-		return VendorMaster{}, errForbidden
-	}
-
-	v, err := s.repo.UpdateVendorMaster(ctx, vendorID, name, terms, email, in.IsActive)
+	v, err := s.repo.UpdateVendorMaster(ctx, orgID, vendorID, name, terms, email, in.IsActive)
 	if err != nil {
 		return VendorMaster{}, err
 	}

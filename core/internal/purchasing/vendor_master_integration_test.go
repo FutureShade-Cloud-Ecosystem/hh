@@ -143,8 +143,46 @@ func TestIntegration_VendorMaster_EditCorrectsTheRecordAndTheActiveSwitchHasTeet
 	// A row another org owns is not this caller's to edit.
 	_, _ = h.pool.Exec(context.Background(),
 		`UPDATE vendors SET org_id = $2 WHERE id = $1`, v.ID, uuid.NewString())
-	if _, err := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{Name: ptr("Other org row")}); !errors.Is(err, errForbidden) {
-		t.Errorf("edit another org's vendor: got %v, want the refusal", err)
+	// ... and it answers exactly as an unknown id does (one 404, no existence answer).
+	_, other := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{Name: ptr("Other org row")})
+	_, gone := h.svc.UpdateVendor(h.ctx, org, uuid.NewString(), UpdateVendorRequest{Name: ptr("Nobody")})
+	if !errors.Is(other, ErrUnknownVendor) || other.Error() != gone.Error() {
+		t.Errorf("edit another org's vendor: got %v, want the same answer as an unknown vendor (%v)", other, gone)
+	}
+}
+
+// P3-2 of the security review: a carried vendor (org NULL, the rows a load or the seed brought in
+// before tenancy) is stamped with the caller's org on the first edit, in the same statement as the
+// write, and from then on it is that org's alone: another org's buyer meets the 404 an unknown id
+// gets, and the stamp cannot be raced because the WHERE carries the org test.
+func TestIntegration_VendorMaster_ACarriedVendorIsClaimedByTheFirstEditAndFencedAfter(t *testing.T) {
+	h := newHarness(t)
+	vendorMasterCleanup(t, h)
+	org := h.orgID(t)
+	otherOrg := uuid.NewString()
+
+	v, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Carried (demo)"})
+	if err != nil {
+		t.Fatalf("create vendor: %v", err)
+	}
+	if _, err := h.pool.Exec(context.Background(), `UPDATE vendors SET org_id = NULL WHERE id = $1`, v.ID); err != nil {
+		t.Fatalf("carry the row: %v", err)
+	}
+	if _, err := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{Name: ptr("Claimed (demo)")}); err != nil {
+		t.Fatalf("first edit of a carried vendor: %v", err)
+	}
+	var stamped *string
+	if err := h.pool.QueryRow(context.Background(), `SELECT org_id::text FROM vendors WHERE id = $1`, v.ID).Scan(&stamped); err != nil ||
+		stamped == nil || *stamped != org {
+		t.Fatalf("after the first edit the org stamp reads %v (err %v), want the caller's org %s", stamped, err, org)
+	}
+	_, other := h.svc.UpdateVendor(h.ctx, otherOrg, v.ID, UpdateVendorRequest{Name: ptr("Hijack")})
+	if !errors.Is(other, ErrUnknownVendor) {
+		t.Errorf("another org's edit of the claimed row: got %v, want the unknown vendor 404", other)
+	}
+	var name string
+	if err := h.pool.QueryRow(context.Background(), `SELECT name FROM vendors WHERE id = $1`, v.ID).Scan(&name); err != nil || name != "Claimed (demo)" {
+		t.Errorf("the row reads %q (err %v) after the refused edit, want Claimed (demo)", name, err)
 	}
 }
 
