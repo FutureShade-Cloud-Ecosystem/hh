@@ -60,7 +60,7 @@ async function stubResets(page: Page): Promise<void> {
 
 async function signIn(page: Page, label: string): Promise<void> {
   await page.getByRole("button", { name: label, exact: true }).click();
-  await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
+  await expect(page.getByTestId("home-title")).toHaveText(label);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -180,7 +180,7 @@ test("a Driver sign in shows the HH Drive tile, which navigates to /drive/", asy
   // deploy image serves HH Drive under (deploy/demo/Dockerfile line 62).
   // The stub harness here serves the front door alone; the tile's href is
   // what proves the navigation target, without taking the user to a 404.
-  await expect(drive).toHaveAttribute("href", "/drive/");
+  await expect(drive).toHaveAttribute("data-href", "/drive/");
 });
 
 test("Switch role returns to the picker and clears the token", async ({ page }) => {
