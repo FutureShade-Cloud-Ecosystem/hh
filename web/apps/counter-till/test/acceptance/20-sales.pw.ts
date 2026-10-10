@@ -45,13 +45,16 @@ async function readSale(page: Page, bearer: string, orderId: string) {
   return answer.body;
 }
 
-test("the way in: three cards, the ten coming roles untapped, and the banner", async ({
+test("the way in: two cards, the ten coming roles untapped, the yard manager starts at the front door, and the banner", async ({
   page,
 }, testInfo) => {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Yard manager", exact: true })).toBeVisible();
+  // The yard manager is a flow the demo mints (the front door shows the card),
+  // but the till's entry serves the Counter Till roles only; a yard manager
+  // signs in at the front door. The page reads as two tappable cards here.
+  await expect(page.getByRole("button", { name: "Yard manager", exact: true })).toHaveCount(0);
   // The coming roles: shown, labelled Coming, and dead controls.
   for (const role of ["Outside Sales", "Yard Team", "Driver", "Branch Manager", "General Manager", "HR"]) {
     const coming = page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role });

@@ -52,6 +52,33 @@ export interface EntryView {
 }
 
 /**
+ * The role codes the till serves: the closed set whose matrix modules include
+ * the Counter Till tile. The route answers every live flow the demo mints;
+ * the till only renders the cards for these role codes, so a yard manager
+ * (whose tiles are Manager Home, Yard Pick and Receive, Dispatch, Buying and
+ * Stock, and House Messages, no Counter Till) starts at the front door, not
+ * here. The source of which roles hold the Counter Till tile is
+ * `web/apps/front-door/src/roles.ts` (`LIVE_ROLES`, filtered for
+ * `TILL_TILE`); this set is kept in step with that record by code review
+ * (the role catalog is the single answer to "who serves which module",
+ * and this constant is the till's read of that answer).
+ */
+export const TILL_ROLE_CODES: ReadonlySet<string> = new Set([
+  "inside_sales",
+  "sales_manager",
+]);
+
+/**
+ * Filter the flows the route answered down to the ones the till serves: a
+ * card renders only for a flow whose role_code is in `TILL_ROLE_CODES`. The
+ * flow's `role_code` is the route's own field, so the comparison runs
+ * against the route's data, never a hard-coded list of flow names.
+ */
+export function flowsForTheTill(flows: readonly DemoFlow[]): DemoFlow[] {
+  return flows.filter((flow) => TILL_ROLE_CODES.has(flow.role_code ?? ""));
+}
+
+/**
  * The role cards' marks and one-liners, keyed by the demo flow id. The marks
  * are the ported registry's own ids: the pos module's default mark for Sales,
  * the approvals mark for the manager. They resolve through iconForId, so a
@@ -220,16 +247,17 @@ export function renderEntry(view: EntryView): TemplateResult {
       The demo roles could not be loaded (HTTP ${view.flows.status}). Reload to try again.
     </p>`);
   }
-  if (view.flows.flows.length === 0) {
+  const tillFlows = flowsForTheTill(view.flows.flows);
+  if (tillFlows.length === 0) {
     return stage(html`<p class="notice" role="status">
-      The demo sign-in answered with no roles: there is nothing to tap.
+      The demo sign-in answered with no roles this till serves: there is nothing to tap.
     </p>`);
   }
   return stage(html`
     <h2 class="headline">Who is at the counter?</h2>
     <p class="intro">Tap a role to open the till:</p>
     <div class="cards">
-      ${view.flows.flows.map(
+      ${tillFlows.map(
         (flow) => html`
           <button
             type="button"
