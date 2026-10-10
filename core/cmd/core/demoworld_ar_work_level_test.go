@@ -41,13 +41,13 @@ const (
 	// Ruling 87's proof logins: the three money desk readers it excludes, and the managers above
 	// the persona it names as still passing (the branch manager planted twice, one at each branch,
 	// so the fence half of "each fenced to its branches" is proved with a 200 and a not found).
-	wlOutsideSalesSubject       = "hh-demo-worklevel-proof-outside-sales"
-	wlProcurementSubject        = "hh-demo-worklevel-proof-procurement-manager"
-	wlSalesManagerSubject       = "hh-demo-worklevel-proof-sales-manager"
-	wlBranchManagerSubject      = "hh-demo-worklevel-proof-branch-manager"
-	wlBranchManagerKgnSubject   = "hh-demo-worklevel-proof-branch-manager-kgn"
-	wlGeneralManagerSubject     = "hh-demo-worklevel-proof-general-manager"
-	wlKingstonBranchID          = "5d1b3f6e-0000-4000-9000-000000000002"
+	wlOutsideSalesSubject     = "hh-demo-worklevel-proof-outside-sales"
+	wlProcurementSubject      = "hh-demo-worklevel-proof-procurement-manager"
+	wlSalesManagerSubject     = "hh-demo-worklevel-proof-sales-manager"
+	wlBranchManagerSubject    = "hh-demo-worklevel-proof-branch-manager"
+	wlBranchManagerKgnSubject = "hh-demo-worklevel-proof-branch-manager-kgn"
+	wlGeneralManagerSubject   = "hh-demo-worklevel-proof-general-manager"
+	wlKingstonBranchID        = "5d1b3f6e-0000-4000-9000-000000000002"
 )
 
 func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
@@ -343,6 +343,55 @@ func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
 	}{{"outside sales", outsideSales}, {"the yard manager", yardManager}, {"the procurement manager", procurement}} {
 		if rsp := assistRun(c.cl); rsp.status == http.StatusOK && strings.Contains(string(rsp.body), "Payment") {
 			t.Errorf("RED %s got payment rows from customer.activity: %s", c.name, rsp.body)
+		}
+	}
+
+	// 3d. The assistant's payment.lookup is the payment trail in full (number, amount, method,
+	// received day, customer, branch, reference), so it goes the way of the reads above for a caller
+	// the trail reader does not admit: refused in the assistant's own refusal words, by number, by
+	// account and by amount alike, never an empty answer that would say no such payment exists. A
+	// fresh cheque with a distinctive amount gives the three searches one unambiguous row.
+	payRec.call("POST", "/api/v1/ar/register/invoices/"+i06+"/payments", map[string]any{
+		"method": "CHEQUE", "amount_cents": 12_345, "reference": "assist trail proof", "idempotency_key": uuid.NewString()}).ok(t, http.StatusOK)
+	var assistPayNo string
+	if err := pool.QueryRow(ctx, `
+		SELECT p.payment_no::text FROM payments p JOIN payment_allocations a ON a.payment_id = p.id
+		 WHERE a.invoice_id = $1::uuid AND p.status = 'RECEIVED' AND p.amount_cents = 12345
+		 ORDER BY p.created_at DESC LIMIT 1`, i06).Scan(&assistPayNo); err != nil {
+		t.Fatalf("the assistant proof cheque: %v", err)
+	}
+	assistFind := func(cl *tillClient, args map[string]any) demoResponse {
+		return cl.call("POST", "/api/v1/assist/command", map[string]any{"command": "payment.lookup", "args": args})
+	}
+	for _, shape := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"by number", map[string]any{"reference": assistPayNo}},
+		{"by account", map[string]any{"customer": i06Account}},
+		{"by amount", map[string]any{"amount": "123.45"}},
+	} {
+		for _, who := range []struct {
+			name string
+			cl   *tillClient
+		}{{"the persona", payRec}, {"the general manager", generalManager}} {
+			rsp := assistFind(who.cl, shape.args)
+			if rsp.status != http.StatusOK || !strings.Contains(string(rsp.body), assistPayNo) {
+				t.Errorf("RED %s %s answered %d without the payment, want 200 with it: %s", who.name, shape.name, rsp.status, rsp.body)
+			}
+		}
+		for _, who := range []struct {
+			name string
+			cl   *tillClient
+		}{{"the yard manager", yardManager}, {"the procurement manager", procurement}} {
+			rsp := assistFind(who.cl, shape.args)
+			if rsp.status != http.StatusForbidden || !strings.Contains(string(rsp.body), "That isn't something you can look up here.") {
+				t.Errorf("RED %s %s answered %d %q, want the assistant's refusal", who.name, shape.name, rsp.status, rsp.body)
+			}
+		}
+		if rsp := assistFind(outsideSales, shape.args); rsp.status != http.StatusForbidden ||
+			!strings.Contains(string(rsp.body), "That isn't something you can look up here.") {
+			t.Errorf("RED outside sales %s answered %d %q, want the tier floor's refusal", shape.name, rsp.status, rsp.body)
 		}
 	}
 

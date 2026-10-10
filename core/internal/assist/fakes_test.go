@@ -224,11 +224,15 @@ func (p *scriptedProvider) Complete(_ context.Context, req CompletionRequest) (R
 // -- callers ------------------------------------------------------------------------------------
 
 func leadership() Caller {
-	return Caller{UserID: "u-gm", RoleCode: "GENERAL_MANAGER", Tier: 1, Global: true, IsAdmin: true}
+	// PaymentTrail: the general manager holds the payment trail reads through the money desk, the
+	// same stamp the handler's trail reader would make for the real role.
+	return Caller{UserID: "u-gm", RoleCode: "GENERAL_MANAGER", Tier: 1, Global: true, IsAdmin: true, PaymentTrail: true}
 }
 
 func manager() Caller {
-	return Caller{UserID: "u-sm", RoleCode: "SALES_MANAGER", Tier: 2, BranchIDs: []string{"b-kel"}}
+	// PaymentTrail: a sales manager holds the trail reads through the counter till (ruling 87's
+	// matrix), so the fake manager is a caller the handler would have stamped.
+	return Caller{UserID: "u-sm", RoleCode: "SALES_MANAGER", Tier: 2, BranchIDs: []string{"b-kel"}, PaymentTrail: true}
 }
 
 func frontline() Caller {

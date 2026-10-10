@@ -360,7 +360,9 @@ func wired(stock *fakeStock, orders *fakeOrders, acc *fakeAccounts, ar *fakeAR, 
 }
 
 func manager() assist.Caller {
-	return assist.Caller{UserID: "u-3", RoleCode: "BRANCH_MANAGER", Tier: 2, BranchIDs: []string{"b-trenton"}}
+	// PaymentTrail: a branch manager holds the trail reads through the counter till (ruling 87's
+	// matrix), the stamp the handler's trail reader would make for this role.
+	return assist.Caller{UserID: "u-3", RoleCode: "BRANCH_MANAGER", Tier: 2, BranchIDs: []string{"b-trenton"}, PaymentTrail: true}
 }
 
 func TestCommands_AllFiveAnswerThroughTheRegistry(t *testing.T) {
