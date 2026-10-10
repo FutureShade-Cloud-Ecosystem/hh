@@ -1255,7 +1255,9 @@ func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID str
 // sync, so a hand removal would be undone and lie in between. A removal
 // never drops the room's last OWNER row (ErrLastOwner): the delete's own
 // predicate holds the owner count, so two concurrent removals cannot both
-// pass it. An absent row is not-found.
+// pass it. An absent row is not-found. The delete and its feed bump run
+// in ONE transaction: a failure of either leaves the member seated and
+// the feed unmoved, so the caller's error and the world always agree.
 func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID string) error {
 	if r.pool == nil {
 		return errNoDB
@@ -1272,7 +1274,12 @@ func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID 
 	if source == SourceDerived {
 		return ErrDerivedMember
 	}
-	ct, err := r.pool.Exec(ctx, `
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	ct, err := tx.Exec(ctx, `
 		DELETE FROM msg_members m
 		WHERE m.channel_id = $1 AND m.user_id = $2 AND m.source = 'EXPLICIT'
 		  AND (m.role <> 'OWNER'
@@ -1287,13 +1294,13 @@ func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID 
 		// is the room's last OWNER.
 		return ErrLastOwner
 	}
-	// The remove side has no transaction of its own: the delete has
-	// already committed on the pool when this runs, so the bump follows it
-	// on the same connection, after the fact it announces.
-	if err := r.bumpChannelSeq(ctx, r.pool, channelID); err != nil {
+	// The bump commits with the delete or not at all: the add side already
+	// holds this rule for the seat (P2-A), and this is the remove's
+	// matching half.
+	if err := r.bumpChannelSeq(ctx, tx, channelID); err != nil {
 		return err
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // personaUsersByRole resolves the ACTIVE users holding each seeded role, the

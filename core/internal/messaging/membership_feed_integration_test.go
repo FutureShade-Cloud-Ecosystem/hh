@@ -216,3 +216,74 @@ func TestIntegration_AddMember_RolledBack_Seat_Leaves_Seq_Unmoved(t *testing.T) 
 		t.Fatalf("the rolled back seat must not stand")
 	}
 }
+
+// A removal whose feed bump fails must not leave the member gone: the
+// delete and the bump commit together or not at all, so the caller's
+// error and the world always agree. Before the fix the delete committed
+// on the pool first, so a failing bump answered the caller with an error
+// while the member was already gone and the room's feed seq never moved:
+// the remaining devices got no refresh until the room changed by
+// something else.
+func TestIntegration_RemoveMember_Failed_Bump_Leaves_The_Member_Seated(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	svc := NewService(repo)
+	prev := publishDefaultRolesForTest(t)
+	defer PublishRoleConfig(prev)
+
+	sam := samCaller()
+	room, created, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+		Kind: KindTeam, Name: fmt.Sprintf("Remove rollback probe %d", time.Now().UnixNano()),
+	})
+	if err != nil || !created {
+		t.Fatalf("found room: created=%v err=%v", created, err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, room.ID)
+	})
+	if _, err := svc.AddMember(ctx, sam, room.ID, uCaseyDoyle); err != nil {
+		t.Fatalf("seat casey: %v", err)
+	}
+	var before int64
+	if err := pool.QueryRow(ctx,
+		`SELECT seq FROM msg_channels WHERE id = $1`, room.ID).Scan(&before); err != nil {
+		t.Fatalf("read room seq: %v", err)
+	}
+
+	// Block the bump itself: any update of this room's row fails, so the
+	// remove's announce step is the failing half. The room id is embedded
+	// as a literal (a function body cannot take bind args).
+	if _, err := pool.Exec(ctx, fmt.Sprintf(
+		`CREATE OR REPLACE FUNCTION feed_probe_block_bump() RETURNS trigger AS $fn$
+		 BEGIN
+		 	IF NEW.id = '%s'::uuid THEN RAISE EXCEPTION 'feed probe: bump aborted'; END IF;
+		 	RETURN NEW;
+		 END $fn$ LANGUAGE plpgsql`, room.ID)); err != nil {
+		t.Fatalf("create probe function: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DROP TRIGGER IF EXISTS feed_probe_block_bump ON msg_channels`)
+		_, _ = pool.Exec(ctx, `DROP FUNCTION IF EXISTS feed_probe_block_bump()`)
+	})
+	if _, err := pool.Exec(ctx, `CREATE TRIGGER feed_probe_block_bump
+		BEFORE UPDATE ON msg_channels
+		FOR EACH ROW EXECUTE FUNCTION feed_probe_block_bump()`); err != nil {
+		t.Fatalf("create probe trigger: %v", err)
+	}
+
+	if err := svc.RemoveMember(ctx, sam, room.ID, uCaseyDoyle); err == nil {
+		t.Fatalf("the removal's bump must fail under the probe trigger")
+	}
+	var after int64
+	if err := pool.QueryRow(ctx,
+		`SELECT seq FROM msg_channels WHERE id = $1`, room.ID).Scan(&after); err != nil {
+		t.Fatalf("reread room seq: %v", err)
+	}
+	if after != before {
+		t.Fatalf("a removal rolled back must leave the feed seq unmoved: before=%d after=%d", before, after)
+	}
+	if ok, _ := repo.IsMember(ctx, room.ID, uCaseyDoyle); !ok {
+		t.Fatalf("a removal whose bump failed must leave the member seated")
+	}
+}
