@@ -301,7 +301,7 @@ func TestDemoWorld_DriverRunPayloadsCarryNoMoney(t *testing.T) {
 	}
 	rsp.decode(t, &list)
 	if len(list.Items) == 0 || list.Items[0].Status != "DISPATCHED" {
-		t.Fatalf("the Driver's day holds no dispatched run (%d runs, first %s), there is no seeded " +
+		t.Fatalf("the Driver's day holds no dispatched run (%d runs, first %s), there is no seeded "+
 			"stop whose payload this leg could hold to the rule", len(list.Items), firstStatus(list.Items))
 	}
 	run := list.Items[0]
@@ -363,13 +363,61 @@ func firstStatus(runs []driveRun) string {
 	return runs[0].Status
 }
 
-// driveMoneyKeys is the key list the fences name: the dispatch cost gate's figure, ruling 91's
+// driveMoneyKeys is the key list the fences name (the figure's tag is on AmountDueCents in
+// dispatch/model_w3.go, the held pick ticket's and the skid answer's in tasks/yard.go and
+// tasks/yard_handler.go) and is hand copied: TestDemoWorld_DriveMoneyKeysCoverTheModelTags below
+// fails when a money looking json tag in those packages is not matched by an entry here.
+//
+// It is the list of key words the scan holds payloads to: the dispatch cost gate's figure, ruling 91's
 // deposit pair and the held pick ticket's owed figure, and the wider money words the drive run
 // app's own fence scans (helpers.ts), held here against the KEYS of the payloads the core sends.
 var driveMoneyKeys = []string{
 	"amount_due_cents", "still_owed_cents", "deposit_cents", "previous_deposit_cents",
 	"value_cents", "freight_cents", "total_cents", "unit_price", "margin", "cost", "price",
-	"cents", "currency", "dollar", "amount_due", "balance",
+	"cents", "currency", "dollar", "amount", "balance",
+}
+
+// driveMoneyTag picks the json tags that look like money from the model files.
+var driveMoneyTag = regexp.MustCompile(`json:"([a-z_]*(?:cents|deposit|owed|amount|price|cost|margin|balance|dollar|currency)[a-z_]*)`)
+
+// TestDemoWorld_DriveMoneyKeysCoverTheModelTags keeps driveMoneyKeys from drifting: every money
+// looking json tag in the dispatch and tasks models must contain an entry of the list, so a
+// renamed or new money key cannot slip past the Driver payload scan unnoticed. It reads source
+// files only and needs no database.
+func TestDemoWorld_DriveMoneyKeysCoverTheModelTags(t *testing.T) {
+	var seen int
+	for _, dir := range []string{"../../internal/dispatch", "../../internal/tasks"} {
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatalf("reading %s: %v", dir, err)
+		}
+		for _, f := range files {
+			name := f.Name()
+			if f.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			src, err := os.ReadFile(dir + "/" + name)
+			if err != nil {
+				t.Fatalf("reading %s/%s: %v", dir, name, err)
+			}
+			for _, m := range driveMoneyTag.FindAllStringSubmatch(string(src), -1) {
+				seen++
+				covered := false
+				for _, word := range driveMoneyKeys {
+					if strings.Contains(m[1], word) {
+						covered = true
+						break
+					}
+				}
+				if !covered {
+					t.Errorf("%s/%s: the json tag %q looks like money and matches no entry of driveMoneyKeys", dir, name, m[1])
+				}
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no money looking json tag found in the dispatch and tasks models, the check would pass vacuously")
+	}
 }
 
 // driveMoneyFigure is a figure formatted as money: a dollar sign, digits and two decimals, the
