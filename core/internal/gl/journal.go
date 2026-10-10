@@ -216,6 +216,15 @@ func (s *Service) ApproveJournal(ctx context.Context, id string) (Journal, error
 		if threshold := s.thresholdFor(ctx, j.BranchID); threshold > 0 && amount < threshold {
 			break
 		}
+		if j.Source == SourceManual && j.SourceRefID != "" {
+			// A recurring run: it carries no branch, so no request was filed for it. Name the template so
+			// nobody hunts for a missing request; recurring runs file one after the template gains a branch.
+			name := j.SourceRefID
+			if tpl, terr := s.store.GetRecurring(ctx, j.SourceRefID); terr == nil && tpl.Name != "" {
+				name = tpl.Name
+			}
+			return Journal{}, clientErr(409, "gl: this journal came from the recurring template %q and is over the approval threshold; a recurring run cannot yet file an approval request, so it cannot be posted from here", name)
+		}
 		return Journal{}, clientErr(409, "gl: this journal is over the approval threshold and has no approval request in the approvals queue; it cannot be posted from here")
 	case ApprovalPending:
 		return Journal{}, clientErr(409, "gl: this journal has a pending approval request; decide it from the approvals queue, which posts it")
@@ -326,13 +335,16 @@ func (s *Service) RunRecurring(ctx context.Context, id string) (Journal, error) 
 	if memo == "" {
 		memo = "Recurring: " + tpl.Name
 	}
+	// SourceRefID carries the template's id: the only MANUAL journals with a source ref are recurring runs, and
+	// the approve route reads it to name the template when it refuses an over-threshold run (ruling 108).
 	draft := journalDraft{
-		Source:     SourceManual,
-		Memo:       memo,
-		Status:     StatusDraft,
-		CreatedBy:  caller.UserID,
-		OccurredAt: s.clock(),
-		Lines:      lines,
+		Source:      SourceManual,
+		SourceRefID: tpl.ID,
+		Memo:        memo,
+		Status:      StatusDraft,
+		CreatedBy:   caller.UserID,
+		OccurredAt:  s.clock(),
+		Lines:       lines,
 	}
 	id, _, err = s.store.InsertJournal(ctx, draft)
 	if err != nil {

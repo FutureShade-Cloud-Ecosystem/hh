@@ -7,6 +7,7 @@ package gl
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -172,6 +173,9 @@ func TestAC12_RecurringRunOverTheThresholdIsRefusedByTheApproveRoute(t *testing.
 		_, err = svc.ApproveJournal(ctx, j.ID)
 		if (err == nil) != wantOK {
 			t.Errorf("recurring journal of %d: approve err=%v, want ok=%v", amount, err, wantOK)
+		}
+		if !wantOK && (err == nil || !strings.Contains(err.Error(), `recurring template "rent"`)) {
+			t.Errorf("recurring journal of %d: refusal %v does not name its template", amount, err)
 		}
 	}
 }
