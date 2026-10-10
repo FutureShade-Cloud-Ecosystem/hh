@@ -277,8 +277,8 @@ export function codRefusalWords(status: number | undefined, detail: string): str
   }
   const said = spokenRefusal(detail.trim());
   const lead = said === "" ? "The server did not accept the order and payment." : `${said}${said.endsWith(".") ? "" : "."}`;
-  if (status >= 500) {
-    return `${lead} We could not confirm whether the order was created and the payment taken. Try again: the same payment is sent with the same key, so it can never be taken twice.`;
+  if (status >= 500 || !isWordedRefusal(detail)) {
+    return `${isWordedRefusal(detail) ? `${lead} ` : ""}We could not confirm whether the order was created and the payment taken. Try again: the same payment is sent with the same key, so it can never be taken twice.`;
   }
   const reload = status === 400 || status === 409 ? " If the quote was changed since this page opened, reload the page and try again." : "";
   return `${lead} Nothing was created and nothing was taken.${reload}`;
@@ -334,14 +334,26 @@ export function paymentKeyFor(prev: KeyedIntent | null, intent: PaymentIntent, m
 }
 
 /**
+ * True when a refusal carries a sentence the server wrote. The client's own text for a bodyless answer
+ * ("HTTP 400"), a bare status phrase ("Forbidden", "Bad Request") and a proxy's page are not the
+ * server's words, so they prove nothing about whether money moved: only a sentence does.
+ */
+export function isWordedRefusal(detail: string): boolean {
+  const said = spokenRefusal((detail ?? "").trim());
+  if (said === "" || said.startsWith("<") || /^HTTP \d{3}$/i.test(said)) return false;
+  return !/^(bad request|unauthorized|forbidden|not found|conflict|gone|method not allowed|request timeout|unprocessable entity|unprocessable content|too many requests|payment required)\.?$/i.test(said);
+}
+
+/**
  * Why a payment against an existing order was not taken, in words. Only a refusal the server answered
  * in words (a 4xx with its sentence) proves nothing was taken. No answer at all (the network dropped,
  * the request timed out) or a 5xx may follow a write that committed, so the outcome is unknown: the
  * words say so, send the person to check the order's balance before anything else is taken, and
- * offer no second payment; a retry from the desk sends the same payment key and can never take it twice.
+ * offer no second payment. A 4xx with no sentence of the server's own (no body, a bare status phrase) is
+ * unknown too, because only the server's words prove nothing was taken; a retry from the desk sends the same payment key and can never take it twice.
  */
 export function paymentNotTakenWords(status: number | undefined, detail: string, amountCents: number): string {
-  if (isUnknownOutcome(status)) {
+  if (isUnknownOutcome(status) || !isWordedRefusal(detail)) {
     return `We could not confirm whether the payment of ${moneyWord(amountCents)} was taken. Check the order's balance (reload the order) before anything else is taken. Trying again here sends the same payment key, so it can never be taken twice.`;
   }
   const said = spokenRefusal(detail.trim());
@@ -356,7 +368,7 @@ export function paymentNotTakenWords(status: number | undefined, detail: string,
 export function awayNotice(input: { orderNo: string; quoteNo: string; amountCents: number; paid: { paymentNo: string } | null; status?: number; said?: string }): string {
   const made = `Order ${input.orderNo} was created from quote ${input.quoteNo}`;
   if (input.paid !== null) return `${made}, and the payment of ${moneyWord(input.amountCents)} was taken (${input.paid.paymentNo}).`;
-  if (isUnknownOutcome(input.status)) return `${made}. ${paymentNotTakenWords(input.status, "", input.amountCents)}`;
+  if (isUnknownOutcome(input.status) || !isWordedRefusal(input.said ?? "")) return `${made}. ${paymentNotTakenWords(input.status, "", input.amountCents)}`;
   const said = (input.said ?? "").trim();
   const why = said === "" ? "the server did not accept it" : said;
   return `${made}, but the payment of ${moneyWord(input.amountCents)} was not taken: ${why}${why.endsWith(".") ? "" : "."} Nothing was charged. Take it at the counter.`;

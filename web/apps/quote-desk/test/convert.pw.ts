@@ -525,6 +525,41 @@ for (const answer of ["drop", "502"] as const) {
   });
 }
 
+test("an unworded 4xx payment refusal says the outcome is unknown, never 'Nothing was charged', and the retry reuses the key", async ({ page }) => {
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await page.getByTestId("qc-pay-amount").fill("50");
+  await next(page);
+  let bare = true;
+  const keys: Array<string | undefined> = [];
+  await page.route(/\/order-payment$/, async (route) => {
+    keys.push(route.request().headers()["idempotency-key"]);
+    if (bare) {
+      bare = false;
+      await route.fulfill({ status: 400, contentType: "text/plain", body: "" });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByTestId("qc-confirm").click();
+  const note = page.getByTestId("qc-pay-note");
+  await expect(note).toContainText("could not confirm whether the payment of $50.00 was taken");
+  await expect(note).not.toContainText("Nothing was charged");
+  await expect(note).not.toContainText("counter");
+  await page.getByTestId("qc-retry-payment").click();
+  await expect(page.getByTestId("qc-done-payment")).toContainText("taken");
+  const seen = await state(page);
+  const posted = seen.posts.filter((p) => p.kind === "order-payment");
+  // The bare answer never reached the stub; the retry carries the key the first attempt used.
+  expect(posted).toHaveLength(1);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBeTruthy();
+  expect(keys[1]).toBe(keys[0]);
+  expect(seen.payments).toHaveLength(1);
+});
+
 test("a fresh press of Confirm after a definite refusal mints a new convert key", async ({ page }) => {
   await arrive(page, "q-1003");
   await next(page);

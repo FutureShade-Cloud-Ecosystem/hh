@@ -147,6 +147,23 @@ test("a refusal is plain words with what to do next", () => {
   assert.match(refusalWords(400, ""), /Nothing was created/);
 });
 
+test("an unworded 4xx refusal is an unknown outcome, never 'Nothing was charged' (FROM-PRINCIPAL 121)", () => {
+  // The client's own text for a bodyless answer, a bare status phrase, a proxy page: none is the server's sentence.
+  for (const detail of ["HTTP 400", "HTTP 422", "", "Bad Request", "Forbidden", "<html><body>400 Bad Request</body></html>"]) {
+    const words = paymentNotTakenWords(400, detail, 5000);
+    assert.match(words, /could not confirm whether the payment of \$50\.00 was taken/, detail);
+    assert.doesNotMatch(words, /Nothing was charged|counter/, detail);
+    const away = awayNotice({ orderNo: "SO-1", quoteNo: "Q-7", amountCents: 5000, paid: null, status: 400, said: detail });
+    assert.doesNotMatch(away, /Nothing was charged/, detail);
+    const cod = codRefusalWords(400, detail);
+    assert.match(cod, /could not confirm whether the order was created and the payment taken/, detail);
+    assert.doesNotMatch(cod, /Nothing was created and nothing was taken/, detail);
+  }
+  // A sentence the server wrote still proves it.
+  assert.match(paymentNotTakenWords(409, "payment: the invoice is already paid", 5000), /Nothing was charged/);
+  assert.match(codRefusalWords(409, "quote: this quote is cancelled"), /Nothing was created and nothing was taken/);
+});
+
 test("a lost convert answer says the order's creation is not known yet", () => {
   for (const status of [undefined, 500, 502]) {
     const words = refusalWords(status, "bad gateway");
