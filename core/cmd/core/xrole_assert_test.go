@@ -306,6 +306,8 @@ func xrOnList(t *testing.T, cfg *roleconfig.Config, list, role string) bool {
 		members = cfg.PricingEditors()
 	case roleconfig.SettingCostVisibility:
 		members = cfg.CostVisibility()
+	case roleconfig.SettingShortageResolvers:
+		members = cfg.ShortageResolvers()
 	case authz.ListLowMarginReport:
 		members = cfg.LowMarginReportReaders()
 	case authz.ListPOWriters:
