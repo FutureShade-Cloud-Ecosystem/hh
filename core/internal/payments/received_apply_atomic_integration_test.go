@@ -103,6 +103,66 @@ func TestApplyReceived_AFailureAfterWritesBeganRollsEverythingBack(t *testing.T)
 	}
 }
 
+// A failure AFTER the event was written leaves neither the money nor the event (item 102,
+// condition a). The outbox insert is the walk's last write, so the only write after it is the
+// commit itself: the planted failure is a DEFERRED constraint trigger on the payment row, which
+// fires at COMMIT time, after the payment, the allocations, the balance moves, the subledger rows
+// and the payment.received event are all written inside the transaction. If the event's fate were
+// not tied to the transaction's, this is the leg that would say so: the rollback must take the
+// event with the money.
+func TestApplyReceived_AFailureAfterTheEventWriteLeavesNeitherTheMoneyNorTheEvent(t *testing.T) {
+	w := newApplyWorld(t)
+	ctx := context.Background()
+	ids := sortedIDs(3)
+	a := w.invoiceWithID(t, ids[0], w.customerID, "E1", 90, 60, 10000)
+	b := w.invoiceWithID(t, ids[1], w.customerID, "E2", 60, 30, 10000)
+	c := w.invoiceWithID(t, ids[2], w.customerID, "E3", 30, 10, 10000)
+
+	fn := "apply_event_tx_" + strings.ToLower(strings.ReplaceAll(w.tag, "-", "_"))
+	if _, err := w.pool.Exec(ctx, fmt.Sprintf(
+		`CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		 BEGIN RAISE EXCEPTION 'planted failure at commit, after the event write'; END $$`, fn)); err != nil {
+		t.Fatalf("plant the failing function: %v", err)
+	}
+	if _, err := w.pool.Exec(ctx, fmt.Sprintf(
+		`CREATE CONSTRAINT TRIGGER %s AFTER INSERT ON payments DEFERRABLE INITIALLY DEFERRED
+		 FOR EACH ROW WHEN (NEW.idempotency_key = '%s') EXECUTE FUNCTION %s()`,
+		fn, w.tag, fn)); err != nil {
+		t.Fatalf("plant the deferred failing trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = w.pool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON payments`, fn))
+		_, _ = w.pool.Exec(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, fn))
+	})
+
+	_, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", IdempotencyKey: w.tag,
+		InvoiceIDs: []string{a, b, c}, AmountCents: 30000,
+	})
+	if err == nil || !strings.Contains(err.Error(), "planted failure at commit") {
+		t.Fatalf("the planted failure after the event write must surface, got %v", err)
+	}
+	// Neither the money nor the event: the event WAS written before the commit failed, and the
+	// rollback took it with everything else.
+	payments, allocations, subledger, outbox := w.moneyRowCounts(t, w.customerID)
+	if payments != 0 || allocations != 0 || subledger != 0 || outbox != 0 {
+		t.Fatalf("a failure after the event write leaves neither the money nor the event: payments %d allocations %d subledger %d outbox %d",
+			payments, allocations, subledger, outbox)
+	}
+	for _, id := range []string{a, b, c} {
+		if bal, st := w.invoiceState(t, id); bal != 10000 || st != "FINALIZED" {
+			t.Fatalf("invoice %s must be untouched, got %d %s", id, bal, st)
+		}
+	}
+	var keyRows int
+	if err := w.pool.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE idempotency_key = $1`, w.tag).Scan(&keyRows); err != nil {
+		t.Fatalf("count by key: %v", err)
+	}
+	if keyRows != 0 {
+		t.Fatalf("the failed payment burned no key, found %d rows", keyRows)
+	}
+}
+
 // The refusal for another account's invoice does not depend on where that invoice falls in the
 // sorted lock walk: first, middle or last, nothing is applied and the key is not burned.
 func TestApplyReceived_TheForeignInvoiceRefusesAtAnyPlaceInTheWalk(t *testing.T) {
