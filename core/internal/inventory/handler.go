@@ -111,6 +111,11 @@ func (h *Handler) onHand(w http.ResponseWriter, r *http.Request, _ guards.StaffC
 		h.writeErr(w, r, err)
 		return
 	}
+	// X3: the cost leg rides only for a caller the cost rule allows
+	// (cost_gate.go); it is byte-absent otherwise.
+	if !h.costAllowed(r) {
+		blankOnHandCost(rows)
+	}
 	if rows == nil {
 		rows = []OnHand{}
 	}
@@ -146,6 +151,12 @@ func (h *Handler) moves(w http.ResponseWriter, r *http.Request, _ guards.StaffCa
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
+	}
+	// X3: the move ledger prices a transfer's ship move at the branch
+	// average, so the unit cost rides only for a caller the cost rule
+	// allows (cost_gate.go); it is byte-absent otherwise.
+	if !h.costAllowed(r) {
+		blankMoveCost(rows)
 	}
 	if rows == nil {
 		rows = []StockMove{}
