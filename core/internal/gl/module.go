@@ -109,12 +109,14 @@ type DeadRequeuer interface {
 }
 
 // ApprovalFiler is GL's nil-able approvals-rail seam (0075). When CreateJournal parks a MANUAL journal as
-// DRAFT (at/over the shipped gl_policy maker-checker threshold), GL best-effort files a JE_OVER_THRESHOLD
-// approval request through this seam so the rail fans out approval cards. The adapter (main.go) wraps
-// identity.Service.FileJEApproval. Log-and-continue: parking NEVER depends on it, a rail/identity blip
-// must not fail a journal write, and nil (unwired) is byte-identical to the shipped park behavior.
+// DRAFT (at/over the shipped gl_policy maker-checker threshold), GL files a JE_OVER_THRESHOLD approval
+// request through this seam IN THE PARK'S TRANSACTION (ruling 108): the journal and its request commit
+// together, or the create fails and neither exists, so a journal is never parked that can only be posted
+// through a request that was never filed. The returned func is the card fan-out, run by GL after the commit.
+// The adapter (main.go) wraps identity.Approvals.FileJEApprovalTx. Nil (unwired) is the shipped park
+// behavior: a bare DRAFT with no request.
 type ApprovalFiler interface {
-	FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error
+	FileJEApprovalTx(ctx context.Context, tx pgx.Tx, journalID, branchID string, amountCents int64, createdBy string) (func(context.Context), error)
 }
 
 // ApprovalState is where a parked journal stands with the approvals rail.

@@ -253,12 +253,11 @@ type moneySpine struct {
 }
 
 // jeApprovalFilerAdapter satisfies gl.ApprovalFiler over the approvals
-// rail's FileJEApproval (the pin's adapter, re-pointed at the bridge).
+// rail's FileJEApprovalTx (the pin's adapter, re-pointed at the bridge).
 type jeApprovalFilerAdapter struct{ svc *identity.Approvals }
 
-func (a jeApprovalFilerAdapter) FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error {
-	_, err := a.svc.FileJEApproval(ctx, journalID, branchID, amountCents, createdBy)
-	return err
+func (a jeApprovalFilerAdapter) FileJEApprovalTx(ctx context.Context, tx pgx.Tx, journalID, branchID string, amountCents int64, createdBy string) (func(context.Context), error) {
+	return a.svc.FileJEApprovalTx(ctx, tx, journalID, branchID, amountCents, createdBy)
 }
 
 // jeStateAdapter satisfies gl.ApprovalStateChecker over identity's JournalApprovalState: the GL's approve

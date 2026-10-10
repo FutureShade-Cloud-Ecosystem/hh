@@ -555,6 +555,24 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 	if r.pool == nil {
 		return ApprovalRequest{}, errNoDB
 	}
+	return insertApproval(ctx, r.pool, req)
+}
+
+// CreateApprovalTx is CreateApproval on the caller's transaction, so a request commits or rolls back with the
+// row it is filed for (a parked journal's request, ruling 108).
+func (r *ApprovalRepository) CreateApprovalTx(ctx context.Context, tx pgx.Tx, req ApprovalRequest) (ApprovalRequest, error) {
+	if tx == nil {
+		return ApprovalRequest{}, errNoDB
+	}
+	return insertApproval(ctx, tx, req)
+}
+
+// approvalRowQuerier is the one method the insert needs, satisfied by the pool and by a transaction.
+type approvalRowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func insertApproval(ctx context.Context, q approvalRowQuerier, req ApprovalRequest) (ApprovalRequest, error) {
 	var subject any
 	if req.SubjectRef != "" {
 		subject = req.SubjectRef
@@ -587,7 +605,7 @@ func (r *ApprovalRepository) CreateApproval(ctx context.Context, req ApprovalReq
 		}
 	}
 	var id string
-	err := r.pool.QueryRow(ctx, approvalsSeqCTE+`
+	err := q.QueryRow(ctx, approvalsSeqCTE+`
 		INSERT INTO permission_approval_requests (requested_by, branch_id, policy_type, detail, subject_ref, data, status, seq)
 		VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', (SELECT next_value FROM aseq))
 		RETURNING id::text, `+requesterRoleSQL("requested_by"),

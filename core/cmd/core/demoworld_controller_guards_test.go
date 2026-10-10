@@ -265,3 +265,93 @@ func TestDemoWorld_ControllerGuards(t *testing.T) {
 		w.glApprove(j).ok(t, http.StatusConflict)
 	})
 }
+
+// create makes a journal through the real create route as the controller.
+func (w *cwGuardWorld) create(branch string, cents int64) demoResponse {
+	body := map[string]any{
+		"memo": "ruling 108 leg (demo)", "source": "MANUAL",
+		"lines": []map[string]any{
+			{"account_code": "1300", "debit_cents": cents},
+			{"account_code": "1000", "credit_cents": cents},
+		},
+	}
+	if branch != "" {
+		body["branch_id"] = branch
+	}
+	return w.controller.call("POST", "/api/v1/gl/journals", body)
+}
+
+func (w *cwGuardWorld) count(t *testing.T, query string, args ...any) int {
+	t.Helper()
+	var n int
+	if err := w.pool.QueryRow(context.Background(), query, args...).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// Ruling 108 (1): a manual journal over the threshold files its request in the park's transaction, or the
+// create fails with words and nothing is parked.
+func TestDemoWorld_ControllerParkFilesInOneTransaction(t *testing.T) {
+	w := cwNewGuardWorld(t)
+	const journals = `SELECT count(*) FROM gl_journals WHERE memo = 'ruling 108 leg (demo)'`
+	const requests = `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'JE_OVER_THRESHOLD' AND (data->>'amount_cents')::bigint = $1`
+
+	t.Run("the happy path parks the journal and files its request once", func(t *testing.T) {
+		rsp := w.create(trentonBranchID, 750_000)
+		rsp.ok(t, http.StatusCreated)
+		var j cwJournal
+		rsp.decode(t, &j)
+		if j.Status != "DRAFT" {
+			t.Fatalf("the journal reads %s, want DRAFT", j.Status)
+		}
+		if n := w.count(t, `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'JE_OVER_THRESHOLD' AND subject_ref = $1 AND status = 'PENDING'`, j.ID); n != 1 {
+			t.Errorf("the parked journal has %d pending requests, want 1", n)
+		}
+	})
+
+	t.Run("no branch to file under: the create fails with words and nothing is parked", func(t *testing.T) {
+		before := w.count(t, journals)
+		rsp := w.create("", 760_000)
+		if rsp.status != http.StatusBadRequest || !strings.Contains(string(rsp.body), "needs a branch") {
+			t.Errorf("status %d body %s, want a 400 saying the journal needs a branch", rsp.status, rsp.body)
+		}
+		if n := w.count(t, journals); n != before {
+			t.Errorf("%d journals after the refused create, want %d", n, before)
+		}
+		if n := w.count(t, requests, int64(760_000)); n != 0 {
+			t.Errorf("%d requests filed for the refused create, want 0", n)
+		}
+	})
+
+	t.Run("a forced filing failure leaves neither the journal nor a request", func(t *testing.T) {
+		ctx := context.Background()
+		for _, q := range []string{
+			`CREATE FUNCTION zz_force_je_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+			   IF NEW.policy_type = 'JE_OVER_THRESHOLD' AND NEW.data->>'amount_cents' = '777000' THEN
+			     RAISE EXCEPTION 'forced filing failure';
+			   END IF;
+			   RETURN NEW;
+			 END $$`,
+			`CREATE TRIGGER zz_force_je_fail BEFORE INSERT ON permission_approval_requests FOR EACH ROW EXECUTE FUNCTION zz_force_je_fail()`,
+		} {
+			if _, err := w.pool.Exec(ctx, q); err != nil {
+				t.Fatal(err)
+			}
+		}
+		before := w.count(t, journals)
+		rsp := w.create(trentonBranchID, 777_000)
+		if rsp.status < 400 || !strings.Contains(string(rsp.body), "nothing was saved") {
+			t.Errorf("status %d body %s, want an error saying nothing was saved", rsp.status, rsp.body)
+		}
+		if n := w.count(t, journals); n != before {
+			t.Errorf("%d journals after the failed filing, want %d: a journal was parked without its request", n, before)
+		}
+		if n := w.count(t, requests, int64(777_000)); n != 0 {
+			t.Errorf("%d requests after the failed filing, want 0", n)
+		}
+		if _, err := w.pool.Exec(ctx, `DROP TRIGGER zz_force_je_fail ON permission_approval_requests`); err != nil {
+			t.Fatal(err)
+		}
+	})
+}

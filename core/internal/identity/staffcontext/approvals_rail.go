@@ -140,6 +140,38 @@ func (s *Approvals) FileJEApproval(ctx context.Context, journalID, branchID stri
 	})
 }
 
+// jeTxCreator is the store write FileJEApprovalTx needs: the request insert on the caller's transaction.
+type jeTxCreator interface {
+	CreateApprovalTx(ctx context.Context, tx pgx.Tx, r ApprovalRequest) (ApprovalRequest, error)
+}
+
+// FileJEApprovalTx files a JE_OVER_THRESHOLD request on the caller's transaction, so the request commits or
+// rolls back with the parked journal it is for (ruling 108). It returns the card fan-out for the caller to
+// run AFTER its commit (the cards must not name a request that then rolled back). A store that cannot write on
+// a transaction fails closed.
+func (s *Approvals) FileJEApprovalTx(ctx context.Context, tx pgx.Tx, journalID, branchID string, amountCents int64, requestedBy string) (func(context.Context), error) {
+	if requestedBy == "" || branchID == "" {
+		return nil, clientErr(http.StatusBadRequest, "requested_by and branch_id are required")
+	}
+	c, ok := s.store.(jeTxCreator)
+	if !ok {
+		return nil, clientErr(http.StatusServiceUnavailable, "the approvals store cannot file a request on this transaction")
+	}
+	req, err := c.CreateApprovalTx(ctx, tx, ApprovalRequest{
+		RequestedBy: requestedBy,
+		BranchID:    branchID,
+		Policy:      PolicyJEThreshold,
+		Detail:      fmt.Sprintf("Journal entry at/over the maker-checker threshold (%d cents) awaiting approval", amountCents),
+		SubjectRef:  journalID,
+		AmountCents: amountCents,
+		Status:      ApprovalPending,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context) { s.notifyApprovalRequested(ctx, req) }, nil
+}
+
 // JEApprovalState is where a parked journal stands with its JE_OVER_THRESHOLD requests. The words are the
 // GL's own constants spelled out here so identity imports nothing from gl.
 type JEApprovalState string

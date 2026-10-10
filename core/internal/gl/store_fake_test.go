@@ -164,6 +164,18 @@ func (f *fakeStore) InsertJournal(_ context.Context, d journalDraft) (string, bo
 	return id, true, nil
 }
 
+func (f *fakeStore) InsertParkedJournal(ctx context.Context, d journalDraft, file func(ctx context.Context, tx pgx.Tx, journalID string) error) (string, error) {
+	id, _, err := f.InsertJournal(ctx, d)
+	if err != nil {
+		return "", err
+	}
+	if err := file(ctx, nil, id); err != nil {
+		delete(f.journals, id)
+		return "", err
+	}
+	return id, nil
+}
+
 func (f *fakeStore) GetJournal(_ context.Context, id string) (Journal, error) {
 	j, ok := f.journals[id]
 	if !ok {

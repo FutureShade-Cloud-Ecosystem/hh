@@ -137,21 +137,45 @@ func (s *Service) CreateJournal(ctx context.Context, in CreateJournalInput) (Jou
 	} else {
 		draft.Status = StatusDraft
 	}
+	// Approvals rail (0075, ruling 108): a MANUAL journal that PARKS as DRAFT (>= threshold) files its
+	// JE_OVER_THRESHOLD request IN THE SAME TRANSACTION as the park, so the rail can post it. If the request
+	// cannot be filed, or the journal has no branch to file it under, the create fails with words and nothing
+	// is saved: a parked journal that can never post is never left behind. The card fan-out runs after the
+	// commit and stays best effort (a messaging blip never fails the write; the reconcile sweep heals it).
+	// This is the ONLY GL call site that files: the automated posting paths (posting.go / close.go /
+	// PostExternal) never park. Nil seam = shipped behavior (a bare DRAFT). NOTE (commander ruling, DIB-216
+	// #2): `threshold` is the seeded $5,000 gl_policy PLACEHOLDER (0032), BLESSED AS-IS and left a
+	// go-live-configurable POLICY ROW, not changed here.
+	if s.approvalFiler != nil && draft.Status == StatusDraft && source == SourceManual {
+		if in.BranchID == "" {
+			return Journal{}, badReq("gl: a journal at or over the approval threshold needs a branch so its approval request can be filed; choose a branch")
+		}
+		var notify func(context.Context)
+		var filingErr error
+		id, err := s.store.InsertParkedJournal(ctx, draft, func(ctx context.Context, tx pgx.Tx, journalID string) error {
+			n, ferr := s.approvalFiler.FileJEApprovalTx(ctx, tx, journalID, in.BranchID, amount, caller.UserID)
+			if ferr != nil {
+				filingErr = ferr
+				return ferr
+			}
+			notify = n
+			return nil
+		})
+		if err != nil {
+			if filingErr != nil {
+				s.log.Warn("gl: approval request could not be filed with the park; the journal was not saved", "err", filingErr)
+				return Journal{}, clientErr(503, "gl: this journal is over the approval threshold and its approval request could not be filed, so nothing was saved; try again")
+			}
+			return Journal{}, err
+		}
+		if notify != nil {
+			notify(ctx)
+		}
+		return s.GetJournal(ctx, id)
+	}
 	id, _, err := s.store.InsertJournal(ctx, draft)
 	if err != nil {
 		return Journal{}, err
-	}
-	// Approvals rail (0075): a MANUAL journal that PARKED as DRAFT (>= threshold) files a JE_OVER_THRESHOLD
-	// approval request so the rail fans out cards to eligible approvers. Best-effort + log-and-continue -
-	// the park NEVER depends on it (an identity/messaging blip must not fail a journal write). This is the
-	// ONLY GL call site that files: the automated posting paths (posting.go / close.go / PostExternal) do
-	// not go through CreateJournal, so they never file a request regardless of amount. Nil seam = shipped
-	// behavior. NOTE (commander ruling, DIB-216 #2): `threshold` is the seeded $5,000 gl_policy PLACEHOLDER
-	// (0032), BLESSED AS-IS and left a go-live-configurable POLICY ROW, not changed here.
-	if s.approvalFiler != nil && draft.Status == StatusDraft && source == SourceManual {
-		if err := s.approvalFiler.FileJEApproval(ctx, id, in.BranchID, amount, caller.UserID); err != nil {
-			s.log.Warn("gl: approvals-rail JE filing failed (journal still parked as DRAFT)", "journal_id", id, "err", err)
-		}
 	}
 	return s.GetJournal(ctx, id)
 }
