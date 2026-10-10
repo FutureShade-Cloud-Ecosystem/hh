@@ -53,11 +53,22 @@ for (const size of SIZES) {
       await expect(page.locator("[data-draft]")).toBeVisible();
       await take("04", "draft-from-shortfall");
 
+      // The line editor: the correction open on the drafted line, then the add a line row.
+      await page.locator("[data-draft-line]").getByRole("button", { name: "Change" }).click();
+      await expect(page.locator("[data-line-editing]")).toBeVisible();
+      await take("04b", "line-editor");
+
+      await page.locator("[data-draft-line]").getByRole("button", { name: "Close" }).click();
+      await page.getByRole("button", { name: "Add a line" }).click();
+      await expect(page.locator("[data-add-line]")).toBeVisible();
+      await take("04c", "add-a-line");
+      await page.getByRole("button", { name: "Close" }).click();
+
       await page.locator("[data-field='expected']").fill("2031-03-04");
       await page.locator("[data-method='DELIVERY']").click();
       await page.getByRole("button", { name: "Save draft" }).click();
       await expect(page.locator("[data-open-draft]")).toBeVisible();
-      await take("04b", "drafted-not-placed-row-stays");
+      await take("04d", "drafted-not-placed-row-stays");
 
       await page.locator("[data-open-draft]").click();
       await page.getByRole("button", { name: "Place order" }).click();
