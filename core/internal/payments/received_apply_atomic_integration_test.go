@@ -19,10 +19,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+// sortedIDs answers n fresh random uuids in ascending text order, the order the apply locks in, so
+// a leg can place an invoice at a known position in the walk without a fixed id that a shared
+// database could already hold.
+func sortedIDs(n int) []string {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = uuid.NewString()
+	}
+	sort.Strings(ids)
+	return ids
+}
 
 // invoiceWithID plants one open invoice under an id the leg chooses, so the position of the invoice
 // in the sorted lock walk is the leg's to set.
@@ -48,9 +63,10 @@ func (w *applyWorld) invoiceWithID(t *testing.T, id, customerID, label string, i
 func TestApplyReceived_AFailureAfterWritesBeganRollsEverythingBack(t *testing.T) {
 	w := newApplyWorld(t)
 	ctx := context.Background()
-	a := w.invoiceWithID(t, "00000000-aaaa-4000-8000-0000000000a1", w.customerID, "T1", 90, 60, 10000)
-	b := w.invoiceWithID(t, "00000000-aaaa-4000-8000-0000000000a2", w.customerID, "T2", 60, 30, 10000)
-	c := w.invoiceWithID(t, "00000000-aaaa-4000-8000-0000000000a3", w.customerID, "T3", 30, 10, 10000)
+	ids := sortedIDs(3)
+	a := w.invoiceWithID(t, ids[0], w.customerID, "T1", 90, 60, 10000)
+	b := w.invoiceWithID(t, ids[1], w.customerID, "T2", 60, 30, 10000)
+	c := w.invoiceWithID(t, ids[2], w.customerID, "T3", 30, 10, 10000)
 
 	fn := "apply_atomic_" + strings.ToLower(strings.ReplaceAll(w.tag, "-", "_"))
 	if _, err := w.pool.Exec(ctx, fmt.Sprintf(
@@ -91,19 +107,21 @@ func TestApplyReceived_AFailureAfterWritesBeganRollsEverythingBack(t *testing.T)
 // sorted lock walk: first, middle or last, nothing is applied and the key is not burned.
 func TestApplyReceived_TheForeignInvoiceRefusesAtAnyPlaceInTheWalk(t *testing.T) {
 	for _, pos := range []struct {
-		name    string
-		foreign string
+		name  string
+		index int // the foreign invoice's place among the three sorted ids
 	}{
-		{"first in the walk", "00000000-bbbb-4000-8000-000000000001"},
-		{"middle of the walk", "00000000-bbbb-4000-8000-000000000050"},
-		{"last in the walk", "00000000-bbbb-4000-8000-0000000000ff"},
+		{"first in the walk", 0},
+		{"middle of the walk", 1},
+		{"last in the walk", 2},
 	} {
 		t.Run(pos.name, func(t *testing.T) {
 			w := newApplyWorld(t)
 			ctx := context.Background()
-			lo := w.invoiceWithID(t, "00000000-bbbb-4000-8000-000000000010", w.customerID, "L", 90, 60, 10000)
-			hi := w.invoiceWithID(t, "00000000-bbbb-4000-8000-000000000090", w.customerID, "H", 60, 30, 10000)
-			foreign := w.invoiceWithID(t, pos.foreign, w.otherID, "X", 30, 10, 10000)
+			ids := sortedIDs(3)
+			ours := append(append([]string{}, ids[:pos.index]...), ids[pos.index+1:]...)
+			lo := w.invoiceWithID(t, ours[0], w.customerID, "L", 90, 60, 10000)
+			hi := w.invoiceWithID(t, ours[1], w.customerID, "H", 60, 30, 10000)
+			foreign := w.invoiceWithID(t, ids[pos.index], w.otherID, "X", 30, 10, 10000)
 			_, err := w.repo.ApplyReceived(ctx, ApplyRequest{
 				CustomerID: w.customerID, Method: "CASH", IdempotencyKey: w.tag,
 				InvoiceIDs: []string{lo, hi, foreign}, AmountCents: 20000,
@@ -133,8 +151,9 @@ func TestApplyReceived_TheForeignInvoiceRefusesAtAnyPlaceInTheWalk(t *testing.T)
 func TestApplyReceived_InvoiceLocksAreTakenAscendingWhateverTheListOrder(t *testing.T) {
 	w := newApplyWorld(t)
 	ctx := context.Background()
-	low := w.invoiceWithID(t, "00000000-cccc-4000-8000-000000000001", w.customerID, "LOW", 90, 60, 10000)
-	high := w.invoiceWithID(t, "00000000-cccc-4000-8000-0000000000ff", w.customerID, "HIGH", 60, 30, 10000)
+	ids := sortedIDs(2)
+	low := w.invoiceWithID(t, ids[0], w.customerID, "LOW", 90, 60, 10000)
+	high := w.invoiceWithID(t, ids[1], w.customerID, "HIGH", 60, 30, 10000)
 
 	holder, err := w.pool.Begin(ctx)
 	if err != nil {

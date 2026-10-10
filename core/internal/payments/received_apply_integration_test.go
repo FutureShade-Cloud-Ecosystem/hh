@@ -60,6 +60,7 @@ func newApplyWorld(t *testing.T) *applyWorld {
 		c := context.Background()
 		for _, cid := range []string{w.customerID, w.otherID} {
 			_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, cid)
+			_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, cid)
 			_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, cid)
 			_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, cid)
 			_, _ = pool.Exec(c, `DELETE FROM invoices WHERE customer_id = $1::uuid`, cid)

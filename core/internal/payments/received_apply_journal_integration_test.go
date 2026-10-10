@@ -77,6 +77,7 @@ func TestApplyReceived_TheJournalPostsOnceAndTheARSliceTiesOut(t *testing.T) {
 	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM customer_transactions WHERE customer_id = $1::uuid`, customerID)
+		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'customer_id' = $1`, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM payment_allocations WHERE invoice_id IN (SELECT id FROM invoices WHERE customer_id = $1::uuid)`, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM payments WHERE customer_id = $1::uuid`, customerID)
 		_, _ = pool.Exec(c, `DELETE FROM gl_journal_lines WHERE journal_id IN (
@@ -116,7 +117,19 @@ func TestApplyReceived_TheJournalPostsOnceAndTheARSliceTiesOut(t *testing.T) {
 	glSvc := gl.NewService(gl.NewRepository(pool)).WithPaymentReader(till.NewRepository(pool))
 	d := notify.NewDispatcher(notify.NewPgOutboxStore(pool), slog.Default())
 	glSvc.RegisterPostingHandlers(d)
-	d.DrainOnce(ctx)
+	// A shared database may hold other legs' pending events ahead of this one: drain until this
+	// payment's journal exists (bounded), the way the worker's ticks would.
+	for i := 0; i < 200; i++ {
+		d.DrainOnce(ctx)
+		var posted int
+		if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM gl_journals WHERE idempotency_key = $1`,
+			"payment.received:"+ans.PaymentID).Scan(&posted); err != nil {
+			t.Fatalf("watch the journal: %v", err)
+		}
+		if posted > 0 {
+			break
+		}
+	}
 
 	// ONE journal on the deterministic key, posted, balanced, crediting AR by the payment.
 	var journalID, status string
