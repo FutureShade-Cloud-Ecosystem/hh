@@ -110,3 +110,55 @@ func wirePaymentGrant(r httpx.Registrar, g *guards.Guards, gate *authz.RoleGate,
 	posHandler.WithGrantReader(reader).RegisterGrantRoute(r, g)
 	return nil
 }
+
+// paymentTrailRoutes are the two reads ruling 87 holds to money desk WORK: a payment's history and an
+// invoice's payments. A caller holds the payment trail when the gate would admit them to both.
+var paymentTrailRoutes = []struct{ method, path string }{
+	{"GET", "/api/v1/ar/payments/{id}/history"},
+	{"GET", "/api/v1/ar/invoices/{id}/payments"},
+}
+
+// paymentTrailReader answers billing.PaymentTrailReader over the role gate. The level lives in the
+// document's annotation of those two routes, so the answer is the gate's own and moves with it; this
+// wiring names no role and no level.
+type paymentTrailReader struct {
+	gate     *authz.RoleGate
+	accesses []authz.RouteAccess
+}
+
+func newPaymentTrailReader(gate *authz.RoleGate) (*paymentTrailReader, error) {
+	if gate == nil {
+		return nil, errors.New("payment trail: the role gate is required")
+	}
+	p := &paymentTrailReader{gate: gate}
+	for _, r := range paymentTrailRoutes {
+		access, ok := authz.RouteAccessFor(r.method, r.path)
+		if !ok {
+			return nil, fmt.Errorf("payment trail: %s %s carries no staff access in the document", r.method, r.path)
+		}
+		p.accesses = append(p.accesses, access)
+	}
+	return p, nil
+}
+
+// HoldsPaymentTrail is true only when the gate would admit the caller to every trail route.
+func (p *paymentTrailReader) HoldsPaymentTrail(ctx context.Context, platformUserID, orgID string) (bool, error) {
+	for _, access := range p.accesses {
+		held, err := p.gate.Holds(ctx, platformUserID, orgID, access)
+		if err != nil || !held {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// bindPaymentTrail binds the register's late payment trail reader to the role gate. Both composition
+// roots call it beside wirePaymentGrant.
+func bindPaymentTrail(money *moneySpine, gate *authz.RoleGate) error {
+	reader, err := newPaymentTrailReader(gate)
+	if err != nil {
+		return err
+	}
+	money.paymentTrail.Bind(reader)
+	return nil
+}

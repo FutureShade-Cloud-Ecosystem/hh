@@ -171,6 +171,9 @@ type RegisterFilter struct {
 	// ignored, and the rows come from a single snapshot, so a payment landing mid-read cannot shift a
 	// row between pages. Only the export sets it; the list read is always paged.
 	All bool
+	// Reach is the caller's branches, set by the service from the stamped caller and never taken from
+	// a request. The zero value reaches nothing, so a filter built anywhere else reads an empty book.
+	Reach BranchReach
 }
 
 // RegisterPage is the register read's answer.

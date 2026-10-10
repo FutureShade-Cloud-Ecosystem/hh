@@ -96,6 +96,27 @@ func TestPaymentLookup_RefusesAnUnfilteredSearch(t *testing.T) {
 	}
 }
 
+// Ruling 87: payment.lookup's every field is the payment trail, so the command is refused for a
+// caller the handler did not stamp as holding the trail reads, before any read is made. The stamp
+// decides, not the tier: the yard manager and the procurement manager are managers the tier floor
+// lets through, and they are still refused.
+func TestPaymentLookup_IsThePaymentTrailAndRefusedWithoutIt(t *testing.T) {
+	f := seededReaders()
+	r := newTestRegistry(f)
+	noTrail := manager()
+	noTrail.PaymentTrail = false
+	if _, err := r.Run(context.Background(), noTrail, "payment.lookup", Args{"reference": "PMT-1042"}); !errors.Is(err, ErrRefused) {
+		t.Fatalf("a caller without the payment trail ran payment.lookup: %T (%v), want ErrRefused", err, err)
+	}
+	if f.calls != 0 {
+		t.Fatal("the payments read ran for a caller without the trail, the refusal must come first")
+	}
+	res := mustRun(t, r, manager(), "payment.lookup", Args{"reference": "PMT-1042"})
+	if res.Empty || len(res.Items) != 1 {
+		t.Fatalf("a caller holding the trail was refused the payment: %+v", res)
+	}
+}
+
 func TestParseAmount_ReadsWhatPeopleType(t *testing.T) {
 	for _, tc := range []struct {
 		in   string
@@ -396,8 +417,9 @@ func TestAnswersCarryTheRecordTheyAreAbout(t *testing.T) {
 
 func TestAPaymentAnswerCarriesNoRefBecauseThereIsNowhereToSendYou(t *testing.T) {
 	f := seededReaders()
+	// PaymentTrail: leadership holds the trail reads, and payment.lookup refuses without it.
 	res, err := newTestRegistry(f).Run(context.Background(),
-		Caller{UserID: "u", RoleCode: "mgr", Tier: 1, Global: true},
+		Caller{UserID: "u", RoleCode: "mgr", Tier: 1, Global: true, PaymentTrail: true},
 		"payment.lookup", Args{"reference": "PMT-1042"})
 	if err != nil {
 		t.Fatal(err)

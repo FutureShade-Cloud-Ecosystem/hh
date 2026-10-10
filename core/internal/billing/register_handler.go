@@ -52,6 +52,7 @@ type RegisterHandler struct {
 	repo     *Repository
 	log      *slog.Logger
 	branch   func(id string) string
+	trail    PaymentTrailReader
 }
 
 // NewRegisterHandler wires the handler. repo is used only for the two reads the handler itself needs
@@ -68,6 +69,14 @@ func NewRegisterHandler(svc *RegisterService, repo *Repository, log *slog.Logger
 // the branch id, ugly but true, rather than a blank where a business name belongs.
 func (h *RegisterHandler) WithBranchNamer(f func(id string) string) *RegisterHandler {
 	h.branch = f
+	return h
+}
+
+// WithPaymentTrail binds the reader that says whether a caller holds the payment trail reads. Unbound,
+// no caller does: the invoice detail then leaves the PAYMENT entries out of every timeline (the
+// least privilege answer, so an unwired composition withholds rather than shows).
+func (h *RegisterHandler) WithPaymentTrail(t PaymentTrailReader) *RegisterHandler {
+	h.trail = t
 	return h
 }
 
@@ -161,7 +170,16 @@ func (h *RegisterHandler) selection(w http.ResponseWriter, r *http.Request, call
 }
 
 func (h *RegisterHandler) detail(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	d, err := h.svc.Detail(r.Context(), r.PathValue("id"))
+	withPayments := false
+	if h.trail != nil {
+		held, err := h.trail.HoldsPaymentTrail(r.Context(), caller.PlatformUserID, caller.OrgID)
+		if err != nil {
+			h.writeErr(w, r, err)
+			return
+		}
+		withPayments = held
+	}
+	d, err := h.svc.Detail(r.Context(), r.PathValue("id"), withPayments)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -177,7 +195,7 @@ func (h *RegisterHandler) detail(w http.ResponseWriter, r *http.Request, caller 
 
 // document renders the printable invoice. It DOES NOT mark an open, see RegisterService.MarkOpened.
 func (h *RegisterHandler) document(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	d, err := h.svc.Detail(r.Context(), r.PathValue("id"))
+	d, err := h.svc.Detail(r.Context(), r.PathValue("id"), false)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -411,6 +429,8 @@ func (h *RegisterHandler) writeErr(w http.ResponseWriter, r *http.Request, err e
 	switch {
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "no such invoice")
+	case errors.Is(err, ErrBranchForbidden):
+		httpx.Error(w, http.StatusForbidden, BranchForbiddenWords)
 	case errors.As(err, &sd):
 		// Item 9 delta review P2-C: a credit memo against a deposit document is
 		// refused in words, with the stable code a client can switch on beside
