@@ -293,7 +293,7 @@ fi
 
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"procurement-manager"'*)
+	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
 		pass "/api/v1/demo/flows answers the closed table's three flows"
 		;;
 	*)

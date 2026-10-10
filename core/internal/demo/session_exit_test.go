@@ -98,8 +98,9 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	}
 	if listing.Flows[0].Flow != "sales" || listing.Flows[0].Label != "Sales" ||
 		listing.Flows[1].Flow != "sales-manager" || listing.Flows[1].Label != "Sales manager" ||
-		listing.Flows[2].Flow != "procurement-manager" || listing.Flows[2].Label != "Procurement manager" {
-		t.Fatalf("the listing is %+v, want the flow table's rows with its own labels", listing.Flows)
+		listing.Flows[2].Flow != "procurement-manager" || listing.Flows[2].Label != "Procurement manager" ||
+		listing.Flows[3].Flow != "financial-controller" || listing.Flows[3].Label != "Financial Controller" {
+		t.Fatalf("the listing is %+v, want the flow table's rows with their own labels", listing.Flows)
 	}
 
 	// The exit pair: mint the sales flow, read the till's policy with the

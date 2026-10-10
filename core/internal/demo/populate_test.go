@@ -303,8 +303,8 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if counts.UsersLinked != 3 || counts.UsersUnlinked != 10 {
 		t.Errorf("linked %d / unlinked %d users, want the 3 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	if counts.StaffGrants != 3 || counts.StaffGrantsBranch != 3 || counts.StaffGrantsGlobal != 0 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the role accounts' Trenton grants only", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	if counts.StaffGrants != 4 || counts.StaffGrantsBranch != 3 || counts.StaffGrantsGlobal != 1 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the three branch role accounts' Trenton grants and the controller's one global grant", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -330,6 +330,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES")
 	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER")
 	assertRoleAccount(t, ctx, pool, buyerUserID, buyerEmail, buyerDisplayName, "PROCUREMENT_MANAGER")
+	assertRoleAccount(t, ctx, pool, controllerUserID, controllerEmail, controllerDisplayName, "FINANCIAL_CONTROLLER")
 
 	// The real-domain planted rows are inactive, renamed, re-addressed on
 	// the reserved demo domain and carry no credential.
@@ -365,6 +366,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	allowedNames := map[string]bool{
 		salesDisplayName:                true,
 		managerDisplayName:              true,
+		controllerDisplayName:           true,
 		"Platform admin (demo)":         true,
 		"Demo teammate (demo)":          true,
 		"Homework account one (demo)":   true,
@@ -504,7 +506,8 @@ func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 		t.Errorf("role account id %s carries email %q, want %q", userID, gotEmail, email)
 	}
 	// The grant resolves: one live staff_role_grant, the account's own role,
-	// in the demo org, branch-scoped to Trenton.
+	// in the demo org, branch-scoped to Trenton (a global role's grant carries
+	// no branch: the Financial Controller reaches every branch).
 	var gotRole string
 	var gotBranch *string
 	err := pool.QueryRow(ctx, `
@@ -516,7 +519,8 @@ func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 	if err != nil {
 		t.Fatalf("role account %s resolves no staff grant: %v", email, err)
 	}
-	if gotRole != roleCode || gotBranch == nil || *gotBranch != trentonBranchID {
+	global := roleCode == "FINANCIAL_CONTROLLER"
+	if gotRole != roleCode || (global && gotBranch != nil) || (!global && (gotBranch == nil || *gotBranch != trentonBranchID)) {
 		t.Errorf("role account %s resolves role %s at branch %v, want %s at %s", email, gotRole, gotBranch, roleCode, trentonBranchID)
 	}
 }

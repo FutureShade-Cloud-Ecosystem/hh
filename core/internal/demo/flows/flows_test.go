@@ -8,13 +8,13 @@ import "testing"
 // entry carries the account facts the other lanes share.
 func TestTableIsTheClosedSet(t *testing.T) {
 	all := All()
-	if len(all) != 3 {
-		t.Fatalf("table holds %d flows, want the closed set of three", len(all))
+	if len(all) != 4 {
+		t.Fatalf("table holds %d flows, want the closed set of four", len(all))
 	}
-	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" || all[2].Flow != "procurement-manager" {
-		t.Fatalf("flow order drifted: %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow)
+	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" || all[2].Flow != "procurement-manager" || all[3].Flow != "financial-controller" {
+		t.Fatalf("flow order drifted: %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow)
 	}
-	known := map[string]bool{"inside_sales": true, "sales_manager": true, "procurement_manager": true}
+	known := map[string]bool{"inside_sales": true, "sales_manager": true, "procurement_manager": true, "financial_controller": true}
 	for _, a := range all {
 		if a.PlatformUserID == "" || a.Email == "" || a.DisplayName == "" || a.Label == "" || a.Role == "" {
 			t.Fatalf("flow %q carries an empty fact: %+v", a.Flow, a)
@@ -40,6 +40,10 @@ func TestLookups(t *testing.T) {
 	a, ok := Get("sales")
 	if !ok || a.Role != "inside_sales" {
 		t.Fatalf("Get(sales) = %+v %v", a, ok)
+	}
+	a, ok = Get("financial-controller")
+	if !ok || a.Role != "financial_controller" || a.Label != "Financial Controller" {
+		t.Fatalf("Get(financial-controller) = %+v %v", a, ok)
 	}
 	if _, ok := Get("yard-pick"); ok {
 		t.Fatal("a flow outside the table answered")

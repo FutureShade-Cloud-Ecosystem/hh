@@ -62,10 +62,12 @@ export interface EntryView {
 const FLOW_ICONS: Record<string, string> = {
   sales: "lucide:receipt",
   "sales-manager": "lucide:badge-check",
+  "financial-controller": "lucide:landmark",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
   "sales-manager": "The counter plus approvals and margins.",
+  "financial-controller": "Decide approvals and keep the ledger.",
 };
 
 export const entryStyles = css`

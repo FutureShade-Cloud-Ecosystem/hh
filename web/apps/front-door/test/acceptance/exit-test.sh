@@ -32,10 +32,12 @@
 #   the served bundle carries the picker's structure: the live card
 #     labels ("Sales", "Sales manager"), the eleven coming rows' labels, the
 #     Coming heading, and the demo badge's copy;
-#   /api/v1/demo/flows answers the closed table's flows;
+#   /api/v1/demo/flows answers the closed table's flows (the Financial
+#     Controller's has no card on the picker yet: it stays a coming row until
+#     the Money Desk app is served);
 #   POST /api/v1/demo/session without the phrase is refused by the gate, and
 #     with it mints for both flow ids the front door maps (sales,
-#     sales-manager);
+#     sales-manager) and for the controller's flow the core also mints;
 #   the gate stands down on a staff route behind a bearer and no phrase.
 #
 # Cleanup removes every process, container, network and temporary path the
@@ -267,7 +269,7 @@ done
 echo "== the demo routes through the gate"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"procurement-manager"'*)
+	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
 		pass "/api/v1/demo/flows answers the closed table's three flows"
 		;;
 	*) fail "/api/v1/demo/flows did not answer the three flows: $flows" ;;
@@ -279,7 +281,7 @@ code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
 [ "$code" = "401" ] && pass "the mint without the phrase is refused by the gate" \
 	|| fail "the mint without the phrase answered $code, want 401"
 
-for flow in sales sales-manager; do
+for flow in sales sales-manager financial-controller; do
 	mint="$(curl -s -u "demo:$PHRASE" -H 'Content-Type: application/json' \
 		-d "{\"flow\":\"$flow\"}" "$BASE/api/v1/demo/session")"
 	case "$mint" in
