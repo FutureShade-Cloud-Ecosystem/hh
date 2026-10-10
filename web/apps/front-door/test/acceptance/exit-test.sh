@@ -29,13 +29,15 @@
 #   the app builds (vite build) and the core's demo build compiles;
 #   the gate answers /healthz without a phrase;
 #   the picker page is refused without the phrase and served with it;
-#   the served bundle carries the picker's structure: the three live card
-#     labels ("Sales", "Sales manager", "Financial Controller"), the ten coming rows' labels, the
+#   the served bundle carries the picker's structure: the two live card
+#     labels ("Sales", "Sales manager"), the eleven coming rows' labels, the
 #     Coming heading, and the demo badge's copy;
-#   /api/v1/demo/flows answers the closed table's three flows;
+#   /api/v1/demo/flows answers the closed table's three flows (the third,
+#     the Financial Controller's, has no card on the picker yet: it stays a
+#     coming row until the Money Desk app is served);
 #   POST /api/v1/demo/session without the phrase is refused by the gate, and
-#     with it mints for the three flow ids the front door maps (sales,
-#     sales-manager, financial-controller);
+#     with it mints for both flow ids the front door maps (sales,
+#     sales-manager) and for the controller's flow the core also mints;
 #   the gate stands down on a staff route behind a bearer and no phrase.
 #
 # Cleanup removes every process, container, network and temporary path the
@@ -254,14 +256,13 @@ assert_in_bundle() {
 assert_in_bundle "Pick a role to walk the demo."
 assert_in_bundle "Sales"
 assert_in_bundle "Sales manager"
-assert_in_bundle "Financial Controller"
 assert_in_bundle "Coming"
 assert_in_bundle "Everything on this box is invented demo data: nothing here is real."
 assert_in_bundle "Switch role"
 assert_in_bundle "Sign out"
 for role in "Outside Sales" "Yard Team" "Yard Manager" "Logistics Manager" "Driver" \
 	"Branch Manager" "Procurement Manager" "Payables and Receivables" \
-	"General Manager" "HR"; do
+	"Financial Controller" "General Manager" "HR"; do
 	assert_in_bundle "$role"
 done
 
