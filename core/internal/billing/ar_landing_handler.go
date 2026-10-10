@@ -312,6 +312,8 @@ func (h *ARLandingHandler) writeErr(w http.ResponseWriter, r *http.Request, err 
 		httpx.Error(w, se.Status, se.Msg)
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "not found")
+	case errors.Is(err, ErrBranchForbidden):
+		httpx.Error(w, http.StatusForbidden, BranchForbiddenWords)
 	case errors.As(err, &bad):
 		httpx.Error(w, http.StatusBadRequest, bad.Error())
 	default:

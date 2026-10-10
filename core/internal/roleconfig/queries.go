@@ -126,6 +126,21 @@ func (c *Config) SeesCostAndMargin(role string) (bool, error) {
 	return false, nil
 }
 
+// PurchaseOrderWriters returns who may draft, edit, place, cancel and send a purchase order: the
+// Procurement Manager and the General Manager (the principal's ruling, row 1303). The super admin
+// is a platform role and joins the list at the gate (authz), not here. The yard manager is not on
+// it: they keep receiving against an order, which is a different door. In the role vocabulary's
+// order. Not a stored setting: the ruling fixes it, so it cannot drift from a configuration edit.
+func (c *Config) PurchaseOrderWriters() []string {
+	var out []string
+	for _, role := range roleVocabulary {
+		if role == "procurement_manager" || role == "general_manager" {
+			out = append(out, role)
+		}
+	}
+	return out
+}
+
 // LowMarginReportReaders returns who reads the low margin report (the audit the managers scan, sorted
 // by margin): the roles that clear a floor or decide one, and the roles above them, held to the cost
 // and margin list. A role is a reader when it clears the floor on its own price in its own branch

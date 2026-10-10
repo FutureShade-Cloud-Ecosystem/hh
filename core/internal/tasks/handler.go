@@ -26,6 +26,8 @@ type Handler struct {
 	userLink identity.UserIDLinker
 	svc      *Service
 	log      *slog.Logger
+	// costRoles decides who receives a yard payload's money figures (cost_gate.go).
+	costRoles CostRoles
 }
 
 func NewHandler(svc *Service, log *slog.Logger) *Handler {

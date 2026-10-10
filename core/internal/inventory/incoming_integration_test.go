@@ -203,7 +203,7 @@ func TestIntegration_ReplenishLineFor_AgreesWithTheShortfallWorklist(t *testing.
 	}
 
 	// The same product, through the WORKLIST (it is short: projected 40 < point 100).
-	wl, err := svc.ShortfallWorklist(ctx, branch1, 500)
+	wl, err := svc.ShortfallWorklist(ctx, BranchReach{Global: true}, branch1, 500)
 	if err != nil {
 		t.Fatalf("worklist: %v", err)
 	}

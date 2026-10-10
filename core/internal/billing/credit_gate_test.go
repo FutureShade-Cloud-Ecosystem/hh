@@ -119,6 +119,12 @@ func (f *fakeCreditStore) CreditPolicy(context.Context, string) (CreditPolicy, e
 func (f *fakeCreditStore) AgingRows(context.Context, time.Time, int, string) ([]AgingRow, error) {
 	return f.rows, nil
 }
+func (f *fakeCreditStore) AgingRowsIn(context.Context, time.Time, int, string, BranchReach) ([]AgingRow, error) {
+	return f.rows, nil
+}
+func (f *fakeCreditStore) ListHoldsIn(context.Context, string, BranchReach) ([]CreditHold, error) {
+	return nil, nil
+}
 func (f *fakeCreditStore) PlaceHold(_ context.Context, customerID, kind, _, _ string) (string, bool, error) {
 	if f.holdExists[customerID] {
 		return "", false, nil

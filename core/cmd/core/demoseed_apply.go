@@ -59,28 +59,55 @@ func insert(table, conflict string, pairs ...any) row {
 // renders as a read-only lookup around ONE bound parameter, so the applier still writes INSERTs only.
 type auditAnchor string
 
+// sqlExpr is a column value that is a read-only SQL expression around bound parameters, for a value
+// the plan cannot know and a seed cannot compute: a row id a migration minted, the next number of a
+// counter. Each ? in sql becomes the next bound parameter, taken from args in order, so the applier
+// still writes INSERTs only and every value is still a bound parameter. An expression with a side
+// effect (a counter mint) must guard itself so a recognised row costs nothing (glEntryNo does).
+type sqlExpr struct {
+	sql  string
+	args []any
+}
+
 // sql renders the statement. Column names come from this file's own call sites, never from input,
 // so they are interpolated; every VALUE is a bound parameter.
 func (r row) sql() string {
 	ph := make([]string, len(r.cols))
+	n := 0
+	next := func() string {
+		n++
+		return fmt.Sprintf("$%d", n)
+	}
 	for i := range r.cols {
-		ph[i] = fmt.Sprintf("$%d", i+1)
-		if _, ok := r.vals[i].(auditAnchor); ok {
-			ph[i] = fmt.Sprintf("(SELECT seq FROM audit_log WHERE id = $%d::uuid)", i+1)
+		switch v := r.vals[i].(type) {
+		case auditAnchor:
+			ph[i] = fmt.Sprintf("(SELECT seq FROM audit_log WHERE id = %s::uuid)", next())
+		case sqlExpr:
+			out := v.sql
+			for strings.Contains(out, "?") {
+				out = strings.Replace(out, "?", next(), 1)
+			}
+			ph[i] = out
+		default:
+			ph[i] = next()
 		}
 	}
 	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT %s DO NOTHING",
 		r.table, strings.Join(r.cols, ", "), strings.Join(ph, ", "), r.conflict)
 }
 
-// args is the bound parameter list, in column order.
+// args is the bound parameter list, in placeholder order.
 func (r row) args() []any {
-	out := make([]any, len(r.vals))
-	for i, v := range r.vals {
-		if a, ok := v.(auditAnchor); ok {
-			v = string(a)
+	var out []any
+	for _, v := range r.vals {
+		switch a := v.(type) {
+		case auditAnchor:
+			out = append(out, string(a))
+		case sqlExpr:
+			out = append(out, a.args...)
+		default:
+			out = append(out, v)
 		}
-		out[i] = v
 	}
 	return out
 }

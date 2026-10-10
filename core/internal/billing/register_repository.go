@@ -184,6 +184,9 @@ func registerWhere(f RegisterFilter, args []any) (string, []any) {
 		args = append(args, f.BranchID)
 		clauses = append(clauses, fmt.Sprintf("i.branch_id = $%d::uuid", len(args)))
 	}
+	// The caller's branch wall, always applied: a named branch only narrows inside it.
+	args = append(args, f.Reach.SQLArg())
+	clauses = append(clauses, fmt.Sprintf("($%d::uuid[] IS NULL OR i.branch_id = ANY($%d::uuid[]))", len(args), len(args)))
 	if f.CustomerID != "" {
 		args = append(args, f.CustomerID)
 		clauses = append(clauses, fmt.Sprintf("i.customer_id = $%d::uuid", len(args)))
@@ -232,7 +235,7 @@ func (r *Repository) RegisterRows(ctx context.Context, asOf time.Time, dueSoonDa
 	if r.pool == nil {
 		return nil, 0, errNoDB
 	}
-	args := []any{asOf, dueSoonDays}
+	args := []any{houseClock(asOf), dueSoonDays}
 	where, args := registerWhere(f, args)
 	if pred, ok := chipPredicates[f.Chip]; ok {
 		where += " AND (" + pred + ")"
@@ -305,7 +308,7 @@ func (r *Repository) RegisterCountsFor(ctx context.Context, asOf time.Time, dueS
 	// counted (the toggle governs the LIST, not the count that tells you the toggle is worth using).
 	f.Chip = ""
 	f.ShowCredits = true
-	args := []any{asOf, dueSoonDays}
+	args := []any{houseClock(asOf), dueSoonDays}
 	where, args := registerWhere(f, args)
 
 	var c RegisterCounts
@@ -334,7 +337,7 @@ func (r *Repository) RegisterCountsFor(ctx context.Context, asOf time.Time, dueS
 // one reason: the operator is about to act on that number, and the action will read the balances
 // again from this table. A figure summed on a stale row set would let somebody create a statement for
 // an amount nobody can reproduce.
-func (r *Repository) SelectionTotals(ctx context.Context, invoiceIDs []string) (int64, int, error) {
+func (r *Repository) SelectionTotals(ctx context.Context, invoiceIDs []string, reach BranchReach) (int64, int, error) {
 	if r.pool == nil {
 		return 0, 0, errNoDB
 	}
@@ -344,8 +347,9 @@ func (r *Repository) SelectionTotals(ctx context.Context, invoiceIDs []string) (
 	var sum int64
 	var n int
 	if err := r.pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(balance_cents),0), COUNT(*) FROM invoices WHERE id = ANY($1::uuid[])`,
-		invoiceIDs).Scan(&sum, &n); err != nil {
+		`SELECT COALESCE(SUM(balance_cents),0), COUNT(*) FROM invoices
+		  WHERE id = ANY($1::uuid[]) AND ($2::uuid[] IS NULL OR branch_id = ANY($2::uuid[]))`,
+		invoiceIDs, reach.SQLArg()).Scan(&sum, &n); err != nil {
 		return 0, 0, fmt.Errorf("billing: selection totals: %w", err)
 	}
 	return sum, n, nil

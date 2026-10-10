@@ -23,6 +23,7 @@ import (
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -66,13 +67,9 @@ func registerStatus(v RegisterRow, asOf time.Time, dueSoonDays int) (string, int
 	return StatusOpen, 0
 }
 
-// daysBetween is asOf − due in whole days, both truncated to their calendar day in UTC. Positive
-// means past due.
-func daysBetween(due, asOf time.Time) int {
-	d := time.Date(due.Year(), due.Month(), due.Day(), 0, 0, 0, 0, time.UTC)
-	a := time.Date(asOf.Year(), asOf.Month(), asOf.Day(), 0, 0, 0, 0, time.UTC)
-	return int(a.Sub(d).Hours() / 24)
-}
+// daysBetween is asOf − due in whole days on the house day (see DaysPastDue for the two meanings of
+// its arguments). Positive means past due.
+func daysBetween(due, asOf time.Time) int { return DaysPastDue(due, asOf) }
 
 // accountStatusFor is the line under the customer's name.
 //
@@ -130,7 +127,7 @@ type registerStore interface {
 	SetRegisterPolicy(ctx context.Context, p RegisterPolicy) (bool, error)
 	RegisterRows(ctx context.Context, asOf time.Time, dueSoonDays int, f RegisterFilter) ([]RegisterRow, int, error)
 	RegisterCountsFor(ctx context.Context, asOf time.Time, dueSoonDays int, f RegisterFilter) (RegisterCounts, error)
-	SelectionTotals(ctx context.Context, invoiceIDs []string) (int64, int, error)
+	SelectionTotals(ctx context.Context, invoiceIDs []string, reach BranchReach) (int64, int, error)
 	InvoiceHeader(ctx context.Context, invoiceID string) (InvoiceHeaderFacts, error)
 	DetailLines(ctx context.Context, invoiceID string) ([]DetailLine, error)
 	AppliedCents(ctx context.Context, invoiceID string) (int64, error)
@@ -138,7 +135,7 @@ type registerStore interface {
 	AccountPositionFor(ctx context.Context, asOf time.Time, customerID string) (AccountPosition, error)
 	ProofFor(ctx context.Context, orderID string) (Proof, bool, error)
 	OrderFactsFor(ctx context.Context, orderID string) (string, string, string, error)
-	ActivityFor(ctx context.Context, invoiceID, orderID string) ([]ActivityEntry, error)
+	ActivityFor(ctx context.Context, invoiceID, orderID string, withPayments bool) ([]ActivityEntry, error)
 	PromiseFor(ctx context.Context, invoiceID string) (PromiseView, bool, error)
 	DisputeFor(ctx context.Context, invoiceID string) (DisputeView, bool, error)
 	LastContactFor(ctx context.Context, customerID string) (*time.Time, error)
@@ -227,6 +224,11 @@ func (s *RegisterService) Policy(ctx context.Context, branchID string) (Register
 
 // Register reads one page of the book plus its chip counts.
 func (s *RegisterService) Register(ctx context.Context, f RegisterFilter) (RegisterPage, error) {
+	reach, err := s.reach(ctx).narrow(f.BranchID)
+	if err != nil {
+		return RegisterPage{}, err
+	}
+	f.Reach = reach
 	asOf := s.clock()
 	pol, err := s.store.RegisterPolicyFor(ctx, f.BranchID)
 	if err != nil {
@@ -262,13 +264,39 @@ func (s *RegisterService) Register(ctx context.Context, f RegisterFilter) (Regis
 
 // Selection sums an explicit selection server-side, the bulk bar's figure.
 func (s *RegisterService) Selection(ctx context.Context, invoiceIDs []string) (int64, int, error) {
-	return s.store.SelectionTotals(ctx, invoiceIDs)
+	return s.store.SelectionTotals(ctx, invoiceIDs, s.reach(ctx))
 }
 
-// Detail assembles the right-hand panel.
-func (s *RegisterService) Detail(ctx context.Context, invoiceID string) (InvoiceDetail, error) {
-	asOf := s.clock()
+// reach is the caller's branches, see branch_reach.go.
+func (s *RegisterService) reach(ctx context.Context) BranchReach {
+	c, ok := s.callerFrom(ctx)
+	if !ok {
+		return AllBranches
+	}
+	return reachOfCaller(c)
+}
+
+// header reads one invoice's header inside the caller's reach. An invoice in another branch is not
+// found, the same answer as one that does not exist: a distinguishable refusal would be an existence
+// oracle for another branch's documents. Every by id read and act goes through here.
+func (s *RegisterService) header(ctx context.Context, invoiceID string) (InvoiceHeaderFacts, error) {
 	h, err := s.store.InvoiceHeader(ctx, invoiceID)
+	if err != nil {
+		return InvoiceHeaderFacts{}, err
+	}
+	if !s.reach(ctx).Allows(h.BranchID) {
+		return InvoiceHeaderFacts{}, ErrNotFound
+	}
+	return h, nil
+}
+
+// Detail assembles the right-hand panel. withPayments says whether the timeline carries the PAYMENT
+// entries (payment number, method, amount and who applied it): they are the payment trail ruling 87
+// holds to money desk WORK, so the caller who asks for them is one the payment trail reader (below)
+// admitted. Without it the entries are absent, not blanked, and the rest of the timeline is unchanged.
+func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPayments bool) (InvoiceDetail, error) {
+	asOf := s.clock()
+	h, err := s.header(ctx, invoiceID)
 	if err != nil {
 		return InvoiceDetail{}, err
 	}
@@ -296,7 +324,7 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string) (Invoice
 	if err != nil {
 		return InvoiceDetail{}, err
 	}
-	activity, err := s.store.ActivityFor(ctx, invoiceID, h.OrderID)
+	activity, err := s.store.ActivityFor(ctx, invoiceID, h.OrderID, withPayments)
 	if err != nil {
 		return InvoiceDetail{}, err
 	}
@@ -371,16 +399,18 @@ func (s *RegisterService) RecordPayment(ctx context.Context, in ReceiptInput) (R
 	if in.AmountCents <= 0 {
 		return ReceiptResult{}, httpx.BadRequestf("a payment amount must be greater than zero")
 	}
+	// The branch door first: a payment against another branch's invoice is not found before the money
+	// seam is asked anything about it.
+	h, err := s.header(ctx, in.InvoiceID)
+	if err != nil {
+		return ReceiptResult{}, err
+	}
 	payable, customerID, err := s.money.PayableCentsFor(ctx, in.InvoiceID)
 	if err != nil {
 		return ReceiptResult{}, err
 	}
 	if in.AmountCents > payable {
 		return ReceiptResult{}, httpx.BadRequestf("this invoice can take at most %d cents right now; refresh and retry", payable)
-	}
-	h, err := s.store.InvoiceHeader(ctx, in.InvoiceID)
-	if err != nil {
-		return ReceiptResult{}, err
 	}
 	caller, _ := s.callerFrom(ctx)
 	res, err := s.money.RecordReceipt(ctx, ReceiptWrite{
@@ -421,7 +451,7 @@ func (s *RegisterService) SendReminder(ctx context.Context, in ReminderInput) (R
 	out := ReminderResult{Tone: tone, Skipped: map[string]string{}}
 
 	for _, id := range in.InvoiceIDs {
-		h, err := s.store.InvoiceHeader(ctx, id)
+		h, err := s.header(ctx, id)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				out.Skipped[id] = "no such invoice"
@@ -485,7 +515,7 @@ func (s *RegisterService) SendInvoice(ctx context.Context, invoiceID, key string
 	if key == "" {
 		return ReminderResult{}, httpx.BadRequestf("sending an invoice needs an idempotency key")
 	}
-	h, err := s.store.InvoiceHeader(ctx, invoiceID)
+	h, err := s.header(ctx, invoiceID)
 	if err != nil {
 		return ReminderResult{}, err
 	}
@@ -548,12 +578,12 @@ func (s *RegisterService) AddPromise(ctx context.Context, in PromiseInput) (Prom
 	if err != nil {
 		return PromiseView{}, false, httpx.BadRequestf("the promised date must be a calendar date (YYYY-MM-DD)")
 	}
-	if day.Before(truncDay(s.clock())) {
+	if today, _ := time.Parse("2006-01-02", houseday.Today(s.clock)); day.Before(today) {
 		// A promise for a date already gone is a typo, and accepting it would put a row in the
 		// worklist that is broken the moment it is written.
 		return PromiseView{}, false, httpx.BadRequestf("the promised date is already past")
 	}
-	h, err := s.store.InvoiceHeader(ctx, in.InvoiceID)
+	h, err := s.header(ctx, in.InvoiceID)
 	if err != nil {
 		return PromiseView{}, false, err
 	}
@@ -581,7 +611,7 @@ func (s *RegisterService) OpenDispute(ctx context.Context, in DisputeInput) (Dis
 	if !containsString([]string{"SHORT_DELIVERY", "DAMAGED", "PRICING", "NOT_ORDERED", "OTHER"}, reason) {
 		return DisputeView{}, false, httpx.BadRequestf("a dispute names a reason: short delivery, damaged, pricing, not ordered, or other")
 	}
-	h, err := s.store.InvoiceHeader(ctx, in.InvoiceID)
+	h, err := s.header(ctx, in.InvoiceID)
 	if err != nil {
 		return DisputeView{}, false, err
 	}
@@ -604,6 +634,11 @@ func (s *RegisterService) ResolveDispute(ctx context.Context, invoiceID, outcome
 	o := strings.ToUpper(strings.TrimSpace(outcome))
 	if !containsString([]string{"PAID", "CREDITED", "WRITTEN_OFF", "WITHDRAWN"}, o) {
 		return false, httpx.BadRequestf("closing a dispute names how it ended: paid, credited, written off, or withdrawn")
+	}
+	// The branch door first: resolving is a per invoice act like every other, and the true or false
+	// answer for an invoice in another branch would say whether it has an open dispute.
+	if _, err := s.header(ctx, invoiceID); err != nil {
+		return false, err
 	}
 	caller, _ := s.callerFrom(ctx)
 	return s.store.ResolveDispute(ctx, invoiceID, o, caller.UserID)
@@ -679,10 +714,6 @@ func containsString(list []string, want string) bool {
 	return false
 }
 
-func truncDay(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
-}
-
 // -- statements from a selection ----------------------------------------------------------------
 
 // statementRunner is the shipped statement machinery (statements.go), reached through an interface so
@@ -734,7 +765,7 @@ func (s *RegisterService) StatementsForSelection(ctx context.Context, invoiceIDs
 
 	seen := map[string]bool{}
 	for _, id := range invoiceIDs {
-		h, err := s.store.InvoiceHeader(ctx, id)
+		h, err := s.header(ctx, id)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
 				out.Skipped[id] = "no such invoice"

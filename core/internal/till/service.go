@@ -814,7 +814,8 @@ func (s *Service) MarkNSF(ctx context.Context, in NSFInput) (NSFResult, error) {
 		return NSFResult{}, errNotFound
 	}
 	if !caller.CanAccessBranch(branchID) {
-		return NSFResult{}, forbidden("till: caller cannot access branch %s", branchID)
+		// Not found, as for a payment that does not exist (no existence oracle, no branch id).
+		return NSFResult{}, errNotFound
 	}
 	// Fast idempotent guard (the store re-checks under FOR UPDATE to close the race).
 	if status == "BOUNCED" {
@@ -882,20 +883,56 @@ func (s *Service) ReleaseHold(ctx context.Context, in ReleaseHoldInput) error {
 	return nil
 }
 
-// ListCreditHolds returns credit holds filtered by status ("" = all) for the AR console.
+// ListCreditHolds returns credit holds filtered by status ("" = all) for the AR console. A caller who
+// does not reach every branch sees the holds a bounce in its own branches placed: a hold names the
+// payment that raised it, and the payment names the branch. A hold placed by the credit sweep names no
+// payment and lists on billing's hold list, which cuts by invoice.
 func (s *Service) ListCreditHolds(ctx context.Context, status string) ([]CreditHold, error) {
-	if _, err := s.caller(ctx); err != nil {
+	caller, err := s.caller(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return s.store.ListCreditHolds(ctx, status)
+	holds, err := s.store.ListCreditHolds(ctx, status)
+	if err != nil || caller.Scope == identity.ScopeGlobal {
+		return holds, err
+	}
+	bounced, err := s.store.ListBouncedPayments(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	inReach := make(map[string]bool, len(bounced))
+	for _, b := range bounced {
+		if caller.CanAccessBranch(b.BranchID) {
+			inReach[b.PaymentID] = true
+		}
+	}
+	out := holds[:0:0]
+	for _, h := range holds {
+		if inReach[h.SourcePaymentID] {
+			out = append(out, h)
+		}
+	}
+	return out, nil
 }
 
 // ListBouncedPayments returns the bounced-payment queue; gatewayRef "" = all, else an exact-ref search.
+// A caller who does not reach every branch sees the bounces of its own branches only.
 func (s *Service) ListBouncedPayments(ctx context.Context, gatewayRef string) ([]BouncedPayment, error) {
-	if _, err := s.caller(ctx); err != nil {
+	caller, err := s.caller(ctx)
+	if err != nil {
 		return nil, err
 	}
-	return s.store.ListBouncedPayments(ctx, gatewayRef)
+	items, err := s.store.ListBouncedPayments(ctx, gatewayRef)
+	if err != nil || caller.Scope == identity.ScopeGlobal {
+		return items, err
+	}
+	out := items[:0:0]
+	for _, b := range items {
+		if caller.CanAccessBranch(b.BranchID) {
+			out = append(out, b)
+		}
+	}
+	return out, nil
 }
 
 // GetNSFPolicy returns the effective NSF policy for a branch (branch row overrides the org default).

@@ -2,6 +2,7 @@ package staffcontext
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -74,8 +75,18 @@ func TestApprovalsHandler_RoutesAndRePointHalves(t *testing.T) {
 	f.approval.RequestedBy = "someone-else"
 
 	// List leg answers through the same guard.
-	if rr := do(http.MethodGet, "/api/v1/staff/approvals", ""); rr.Code != http.StatusOK {
-		t.Fatalf("list = %d, want 200 (body %s)", rr.Code, rr.Body.String())
+	list := do(http.MethodGet, "/api/v1/staff/approvals", "")
+	if list.Code != http.StatusOK {
+		t.Fatalf("list = %d, want 200 (body %s)", list.Code, list.Body.String())
+	}
+	// The contract's IdentityApprovalPage: an object whose required key items is an array, with the
+	// cursor spelled as a string or null. The list used to answer a bare array.
+	var page struct {
+		Items      []map[string]any `json:"items"`
+		NextCursor *string          `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &page); err != nil || len(page.Items) != 1 || page.NextCursor != nil {
+		t.Fatalf("list body does not decode as a one item page with a null cursor (err %v): %s", err, list.Body.String())
 	}
 
 	// Unlinked half: no linker row means no ERP id, and the surface

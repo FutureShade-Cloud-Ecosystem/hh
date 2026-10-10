@@ -194,6 +194,11 @@ func DaysPastDue(due, asOf time.Time) int {
 	return int(asOfDay.Sub(dueDay) / (24 * time.Hour))
 }
 
+// houseClock is an instant read in the house zone, so every year, month and day read off it (a date
+// parameter handed to SQL, a Format) names the dealer's day. A clock left in the server's zone names
+// the UTC day, one ahead of the house day in the evening window.
+func houseClock(at time.Time) time.Time { return at.In(houseday.Location()) }
+
 // BucketFor places a days-past-due count in the policy's buckets. Boundaries are INCLUSIVE at the
 // top of each bucket: at exactly aging_escalate_days an account IS escalated, because "90 days" in
 // a collections conversation has always meant "90 or worse".
@@ -479,10 +484,10 @@ func BuildEngagement(queue []EscalationEntry, in map[string]EngagementInput, p A
 type ARLandingStore interface {
 	ReadARLandingPolicy(ctx context.Context, branchID string) (ARLandingPolicy, error)
 	UpsertARLandingPolicy(ctx context.Context, p ARLandingPolicy) error
-	OpenInvoices(ctx context.Context, asOf time.Time, branchID string) ([]OpenInvoice, error)
+	OpenInvoices(ctx context.Context, asOf time.Time, branchID string, reach BranchReach) ([]OpenInvoice, error)
 	ActiveHoldCustomers(ctx context.Context) (map[string]bool, error)
 	EngagementFor(ctx context.Context, customerIDs []string, windowDays int, now time.Time) (map[string]EngagementInput, error)
-	OpenPaperPathFlags(ctx context.Context) ([]PaperPathEntry, error)
+	OpenPaperPathFlags(ctx context.Context, reach BranchReach) ([]PaperPathEntry, error)
 }
 
 // ARLandingService serves the landing. The clock is injected, nothing in this package calls
@@ -586,8 +591,12 @@ func (s *ARLandingService) Landing(ctx context.Context, branchID string, asOf ti
 	if asOf.IsZero() {
 		asOf = s.now()
 	}
+	reach, err := reachFromContext(ctx).narrow(branchID)
+	if err != nil {
+		return ARLanding{}, err
+	}
 	p := s.Policy(ctx, branchID)
-	invs, err := s.store.OpenInvoices(ctx, asOf, branchID)
+	invs, err := s.store.OpenInvoices(ctx, asOf, branchID, reach)
 	if err != nil {
 		return ARLanding{}, err
 	}
@@ -607,7 +616,7 @@ func (s *ARLandingService) Landing(ctx context.Context, branchID string, asOf ti
 	if out.Escalation == nil {
 		out.Escalation = []EscalationEntry{}
 	}
-	flags, err := s.store.OpenPaperPathFlags(ctx)
+	flags, err := s.store.OpenPaperPathFlags(ctx, reach)
 	if err != nil || flags == nil {
 		flags = []PaperPathEntry{}
 	}

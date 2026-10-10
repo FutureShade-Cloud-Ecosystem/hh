@@ -1,88 +1,48 @@
-// The returns flow: the framework-free state machine behind the till's
-// returns desk (the house invariant: the UI layer is thin and renders this
-// state; nothing Lit-shaped lives here). The core's routes are the authority
-// for every fact this flow holds: the lookup says which lines still have
-// something to return, the commit re-guards everything server side, and no
-// figure on the till's screen is computed here. What this flow adds to the
-// wire's facts is only the draft's own choices: which lines, how many, and
-// which refund method.
-//
-// Every server answer is validated field by field before it becomes state
-// (the demo adapter's discipline, carried): an answer that is not a readable
-// sale is a refusal in words, never a half-rendered screen.
+// The returns flow: the framework-free state machine behind the till's Returns surface. A return
+// is built like a credit: the customer first, then the lines from every order that customer holds,
+// then the refund. One way to return: there is no search by one sale's number. The core's reads are
+// the authority for every fact held here; this adds only the person's own choices (the customer, the
+// lines, the quantities, the dispositions) through the draft, and no figure is computed here.
 import {
+  staffCustomer,
   staffPayment,
   staffPos,
   staffTill,
   type ApiClient,
+  type CustomerSearchResult,
   type DemoFlow,
   type PosRefundApproval,
-  type PosReturn,
-  type PosReturnInput,
-  type PosReturnLineInput,
-  type PosReturnLookup,
+  type PosReturnAcrossInput,
+  type PosSwapInput,
   type Result,
 } from "@hardscapehouse/api-client";
 import type { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { isApproverRole, type OneTimeCredential } from "./approval.js";
 import type { RefundApprovalCapture } from "./capture.js";
+import { DEMO_CARD_TOKEN } from "../till-client.js";
+import { ReturnDraft, type DraftAnswer } from "./draft.js";
+import { filterOrders, readCustomerLines, type CustomerOrder } from "./lines.js";
+import {
+  ReplacementBasket,
+  buildSwapInput,
+  buildSwapPreviewInput,
+  readSwapPreview,
+  readSwapResult,
+  type ReplacementProduct,
+  type ShortfallTender,
+  type SwapDone,
+  type SwapPreviewRead,
+} from "./swap.js";
+import { buildNoteInput, buildPreviewInput, railAvailable, readNote, readPreview, REFUND_METHODS, type CreditNote, type CreditPreview, type DrawerState, type RefundMethod } from "./note.js";
 
-/** How the original sale was paid, as the lookup's tender field spells it. */
-export type SaleTender = "ACCOUNT" | "CASH" | "CARD" | "CHEQUE";
+/** The stepper's four steps. */
+export type ReturnStep = "customer" | "lines" | "refund" | "done";
 
-const TENDERS: readonly SaleTender[] = ["ACCOUNT", "CASH", "CARD", "CHEQUE"];
-
-/** The refund rails the contract's return input carries. */
-export type RefundMethod = "CASH" | "CARD" | "ACCOUNT_CREDIT";
-const REFUND_METHODS: readonly RefundMethod[] = ["CASH", "CARD", "ACCOUNT_CREDIT"];
-
-/** The per line reason codes the contract spells. */
-export type ReasonCode = PosReturnLineInput["reason_code"];
-const REASON_CODES: readonly ReasonCode[] = ["DAMAGED", "DEFECT", "WRONG_ITEM", "NO_LONGER_NEEDED", "OTHER"];
-
-/** The drawer at the sale's branch, as the desk's cash method needs it. */
-export type DrawerState = { kind: "unknown" } | { kind: "open"; sessionId: string } | { kind: "closed" };
-
-/** What the desk keeps of a committed return, for the receipt's words. */
-export interface RefundReceipt {
-  returnNo: string;
-  method: RefundMethod;
-  subtotalCents: number;
-  taxCents: number;
-  totalCents: number;
-  replayed: boolean;
-  /** The approver's name when a manager approved this return; null when the caller's own answer committed it. */
-  approverName: string | null;
-  /** The clerk the till is signed in as, or null when the session carries no name. */
-  clerkName: string | null;
-  /** The simulator's own flag at the time of the refund; null when the status route has not answered. */
-  cardSimulated: boolean | null;
-}
-
-/** The lookup's shape this flow holds, as the views read it. */
-export interface ReturnableLine {
-  orderLineId: string;
-  description: string;
-  qtySold: number;
-  qtyReturned: number;
-  unitPriceCents: number;
-  lineTotalCents: number;
-}
-
-export interface SaleLookup {
-  orderId: string;
-  orderNo: string;
-  branchId: string;
-  saleTender: SaleTender;
-  cardRefundable: boolean;
-  lines: ReturnableLine[];
-}
+export const STEP_ORDER: readonly ReturnStep[] = ["customer", "lines", "refund", "done"];
 
 /**
- * Who the till is signed in as, read live from custody at use: the display
- * name the session carries, the role code the mint stated (the server's own
- * word, kept by the adapter), and the role's label as the entry card showed
- * it. Null when nothing is signed in.
+ * Who the till is signed in as, read live from custody at use: the display name the session carries,
+ * the role code the mint stated, and the role's label as the entry card showed it.
  */
 export interface ClerkIdentity {
   name: string;
@@ -90,13 +50,24 @@ export interface ClerkIdentity {
   roleLabel: string | null;
 }
 
+/** What the Done step keeps of a committed note, for its words. */
+export interface DoneNote {
+  note: CreditNote;
+  /** The order number of each child return, from the lines the draft was built on. */
+  orderNos: Record<string, string>;
+  /** The approver's name when a manager approved this note; null when the clerk's own answer committed it. */
+  approverName: string | null;
+  clerkName: string | null;
+  /** The simulator's own flag at the time of the refund; null when the status route has not answered. */
+  cardSimulated: boolean | null;
+}
+
 export interface ReturnsFlowOptions {
   /** The clerk's client: the till's own session rides its header provider. */
   client: ApiClient;
   /**
-   * The approver's client: the same transport rules, and a header provider
-   * that takes the one time credential when the approval's single send runs.
-   * The clerk's client never carries the credential, so no other call can.
+   * The approver's client: the same transport rules, and a header provider that takes the one time
+   * credential when the approval's single send runs. The clerk's client never carries it.
    */
   approverClient: ApiClient;
   /** The demo adapter, for the flows list and the approver's mint. */
@@ -107,6 +78,10 @@ export interface ReturnsFlowOptions {
   clerk: () => ClerkIdentity | null;
   /** The wrapped fetch's reader for the refusal body's approval. */
   capture: RefundApprovalCapture;
+  /** The counter's product search, for the replacement goods of a swap. */
+  searchProducts: (query: string) => Promise<Result<ReplacementProduct[]>>;
+  /** The branch this login reaches, read live; null before it resolves. */
+  branchId: () => string | null;
   /** Called after every state change, so the host re-renders. */
   onChange: () => void;
 }
@@ -118,58 +93,90 @@ export class ReturnsFlow {
   readonly #credential: OneTimeCredential;
   readonly #clerk: () => ClerkIdentity | null;
   readonly #capture: RefundApprovalCapture;
+  readonly #searchProducts: ReturnsFlowOptions["searchProducts"];
+  readonly #branchId: () => string | null;
   readonly #onChange: () => void;
 
-  /** The sale number input's live value, so a re-render keeps what is typed. */
-  orderNo = "";
-  /** True while the lookup is in flight: the find control goes disabled. */
-  finding = false;
-  /** A refusal in words, shown beside the desk. */
+  step: ReturnStep = "customer";
+  /** The customer search field's live value, so a re-render keeps what is typed. */
+  term = "";
+  searching = false;
+  /** The last search's rows. */
+  matches: CustomerSearchResult[] = [];
+  /** True once a search has answered, so an empty answer reads as a miss rather than a blank. */
+  searched = false;
+  customer: CustomerSearchResult | null = null;
+  /** True while the Walk in sale entry is open on the customer step. */
+  walkInOpen = false;
+  /** The receipt or order number typed for a walk in sale: the only way its lines are found. */
+  walkInNumber = "";
+  /** The number the draft's walk in sale was found by; null for a named customer. It rides the preview and the write with no customer id. */
+  #walkInRef: string | null = null;
+  /** True while the customer's lines are being read. */
+  loading = false;
+  /** The customer's orders newest first, as the server answered. */
+  orders: CustomerOrder[] = [];
+  draft: ReturnDraft = new ReturnDraft([]);
+  /** The sales order number filter inside the line list. */
+  filter = "";
+  /** A refusal or an empty answer in words. */
   notice: string | null = null;
-  /** The found sale, or null while idle. */
-  lookup: SaleLookup | null = null;
-  /** The drawer at the sale's branch, asked once the sale is found. */
+  /** The credit so far, as the server priced the draft; null until it answers or when nothing is picked. */
+  preview: CreditPreview | null = null;
+  /** True while a preview is on the wire. */
+  previewing = false;
+  /** The preview's refusal in the server's words (a wall, an over-return), shown beside the credit. */
+  previewNotice: string | null = null;
+  #previewSeq = 0;
+
+  // ---- The swap: the credit pays a new order (10.5) --------------------------------------------
+  /** The replacement goods going out. */
+  readonly basket = new ReplacementBasket();
+  /** The tender that pays any shortfall. */
+  swapTender: ShortfallTender = "CASH";
+  productTerm = "";
+  productMatches: ReplacementProduct[] = [];
+  productSearching = false;
+  productSearched = false;
+  /** The server's figures for the draft swap: the credit, the new order, applied, leftover, shortfall. */
+  swapPreview: SwapPreviewRead | null = null;
+  swapPreviewing = false;
+  swapPreviewNotice: string | null = null;
+  /** A refusal of the ring in the server's words. */
+  swapNotice: string | null = null;
+  swapping = false;
+  /** The committed swap, once one is; the Done step then shows both documents. */
+  doneSwap: SwapDone | null = null;
+  #swapKey: string | null = null;
+  #pendingSwapInput: PosSwapInput | null = null;
+  #swapPreviewSeq = 0;
+  #productSeq = 0;
+  /** A draft refusal in words, shown beside the lines (a quantity above open, another branch). */
+  draftNotice: string | null = null;
+  /** The chosen refund rail, until the clerk picks one. */
+  method: RefundMethod | null = null;
+  /** The drawer at the note's branch, asked when the Refund step opens. */
   drawer: DrawerState = { kind: "unknown" };
   /** The card rail's simulator flag from the status route; null until it answers. */
   cardSimulated: boolean | null = null;
-  /** The chosen refund method, until the clerk picks one. */
-  method: RefundMethod | null = null;
-  /** The draft's quantity per order line id, whole units only in this desk. */
-  quantities: Record<string, number> = {};
-  reasonCode: ReasonCode = "OTHER";
-  /** The clerk's free words about the return, sent verbatim as the return's reason. */
-  note = "";
-  restock = true;
-  /** True while the return is on the wire: the desk's controls go disabled. */
+  /** True while the note is on the wire: the surface's controls go disabled. */
   submitting = false;
-  /** The committed return, when one is. */
-  receipt: RefundReceipt | null = null;
-  /**
-   * Bumped every time the draft's whole state resets (a new find, a fresh
-   * desk): the view keys the draft's fields on it, so the screen's inputs are
-   * rebuilt with the model instead of keeping what an earlier draft typed.
-   * The review round's P1: the fields are uncontrolled by design, so a reset
-   * the model performs alone would leave the last draft's words on the screen
-   * while the body carried the defaults.
-   */
-  #draftEpoch = 0;
-
-  get draftEpoch(): number {
-    return this.#draftEpoch;
-  }
-  /**
-   * The approval a 409 named: the dealer's amount and the roles that may
-   * approve. The desk shows both, and the approval's refusal never carries a
-   * figure of its own: the amount named is the dealer's threshold, exactly
-   * what the server said.
-   */
+  /** The committed note, once one is. */
+  done: DoneNote | null = null;
+  /** The approval a 409 named: the dealer's amount (judged on the note total) and the roles that may approve. */
   refusal: PosRefundApproval | null = null;
-  /** The Manager approval dialog, when the desk shows it. */
   dialogOpen = false;
-  /** The approver roles' cards inside the dialog, or null while they load. */
   approverFlows: DemoFlow[] | null = null;
-  /** True while the dialog's mint and its one send are in flight. */
   approving = false;
+  /** One key per drafted note: a retry of the same note replays, a changed draft is a new note. */
+  #pendingKey: string | null = null;
+  /** The exact body sent and, when refused for approval, sent again unchanged. */
+  #pendingInput: PosReturnAcrossInput | null = null;
+  /** Which send an approval would resend: the credit note, or the swap. */
+  #pendingKind: "note" | "swap" = "note";
+  #epoch = 0;
+  /** A search or a read that has been overtaken: its late answer is dropped. */
+  #seq = 0;
 
   constructor(options: ReturnsFlowOptions) {
     this.#client = options.client;
@@ -178,177 +185,557 @@ export class ReturnsFlow {
     this.#credential = options.credential;
     this.#clerk = options.clerk;
     this.#capture = options.capture;
+    this.#searchProducts = options.searchProducts;
+    this.#branchId = options.branchId;
     this.#onChange = options.onChange;
   }
 
-  get busy(): boolean {
-    return this.finding;
+  /** Bumped on every fresh customer or reset: the view keys its uncontrolled fields on it. */
+  get epoch(): number {
+    return this.#epoch;
   }
 
-  /** The find control is dead while the input is blank, not merely faded. */
-  get canFind(): boolean {
-    return !this.busy && this.orderNo.trim() !== "";
+  /** The customer on the draft is the house walk in account: cash or card only, no swap. */
+  get isWalkIn(): boolean {
+    return this.#walkInRef !== null;
   }
 
-  /** A method is pickable, or it is greyed with its reason in words nearby. */
-  methodAvailable(method: RefundMethod): boolean {
-    if (this.lookup === null) return false;
-    if (method === "CASH") return this.drawer.kind === "open";
-    if (method === "CARD") return this.lookup.cardRefundable;
-    return true;
+  get visibleOrders(): CustomerOrder[] {
+    return filterOrders(this.orders, this.filter);
   }
 
-  /** The line's drafted quantity, whole units, never below nothing. */
-  qtyOf(orderLineId: string): number {
-    return this.quantities[orderLineId] ?? 0;
+  /** True when the customer holds orders, but every line on them has already gone back. */
+  get nothingOpen(): boolean {
+    return this.orders.length > 0 && this.orders.every((order) => order.lines.every((line) => line.qtyOpen <= 0));
   }
 
-  get hasDraftedLines(): boolean {
-    return Object.values(this.quantities).some((qty) => qty > 0);
+  get canContinue(): boolean {
+    return this.step === "lines" && this.draft.ready && !this.loading && this.preview !== null;
   }
 
-  get canSubmit(): boolean {
-    return (
-      this.lookup !== null &&
-      this.method !== null &&
-      this.hasDraftedLines &&
-      !this.submitting &&
-      (this.method !== "CASH" || this.drawer.kind === "open")
-    );
+  setTerm(value: string): void {
+    this.term = value;
+    void this.search();
   }
 
-  setOrderNo(value: string): void {
-    this.orderNo = value;
+  /** The customer search over the existing route: two letters or more, the latest ask wins. */
+  async search(): Promise<void> {
+    const q = this.term.trim();
+    const seq = ++this.#seq;
+    if (q.length < 2) {
+      this.searching = false;
+      this.matches = [];
+      this.searched = false;
+      this.notice = null;
+      this.#onChange();
+      return;
+    }
+    this.searching = true;
+    this.notice = null;
+    this.#onChange();
+    const branchId = this.#branchId();
+    const result = await staffCustomer.customerSearch(this.#client, {
+      q,
+      limit: 20,
+      ...(branchId === null ? {} : { branch_id: branchId }),
+    });
+    if (seq !== this.#seq) return;
+    this.searching = false;
+    this.searched = true;
+    if (!result.ok || !Array.isArray(result.value)) {
+      this.matches = [];
+      this.notice = result.ok ? "The customer search answered something unreadable: nothing is listed." : `The customer search was refused: ${result.error}`;
+      this.#onChange();
+      return;
+    }
+    this.matches = result.value;
     this.#onChange();
   }
 
-  setQty(orderLineId: string, value: string): void {
-    const parsed = Number(value);
-    const qty = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
-    if (qty === 0) delete this.quantities[orderLineId];
-    else this.quantities[orderLineId] = qty;
-    this.#draftChanged();
+  /** Pick a customer and read every order they hold. The walk-in is refused by the server, in words. */
+  async chooseCustomer(customerId: string): Promise<void> {
+    const customer = this.matches.find((row) => row.id === customerId);
+    if (customer === undefined || this.loading) return;
+    const seq = ++this.#seq;
+    this.loading = true;
+    this.notice = null;
+    this.#onChange();
+    const result = await staffPos.posCustomerReturnLines(this.#client, { customer_id: customer.id });
+    if (seq !== this.#seq) return;
+    this.loading = false;
+    if (!result.ok) {
+      this.notice =
+        result.status === 422
+          ? result.error
+          : `This customer's orders could not be read: ${result.error}`;
+      this.#onChange();
+      return;
+    }
+    const orders = readCustomerLines(result.value);
+    if (orders === null) {
+      this.notice = "The answer about this customer's orders was not readable: nothing is shown rather than half of it.";
+      this.#onChange();
+      return;
+    }
+    this.customer = customer;
+    this.orders = orders;
+    this.draft = new ReturnDraft(orders);
+    this.filter = "";
+    this.draftNotice = null;
+    this.#epoch += 1;
+    this.step = "lines";
+    this.#onChange();
   }
 
-  chooseMethod(method: string): void {
-    if (!REFUND_METHODS.includes(method as RefundMethod)) return;
-    if (!this.methodAvailable(method as RefundMethod)) return;
-    this.method = method as RefundMethod;
-    this.#draftChanged();
+  /** Open or close the Walk in sale entry on the customer step. */
+  toggleWalkIn(): void {
+    if (this.loading) return;
+    this.walkInOpen = !this.walkInOpen;
+    this.notice = null;
+    this.#onChange();
   }
 
-  setReasonCode(value: string): void {
-    if (!REASON_CODES.includes(value as ReasonCode)) return;
-    this.reasonCode = value as ReasonCode;
-    this.#draftChanged();
-  }
-
-  setNote(value: string): void {
-    this.note = value;
-    this.#draftChanged();
-  }
-
-  setRestock(value: boolean): void {
-    this.restock = value;
-    this.#draftChanged();
+  setWalkInNumber(value: string): void {
+    this.walkInNumber = value;
+    this.#onChange();
   }
 
   /**
-   * A changed draft is a different return: its pending idempotency key and
-   * the refusal the last send earned belong to the draft that earned them,
-   * so both go, and the next send is a fresh one.
+   * Find a walk in sale by its receipt or order number, the only way the server answers the house
+   * walk in account (it never lists every walk in sale). A blank number is refused here in words,
+   * before the wire; everything else is the server's answer and the server's words.
+   */
+  async findWalkInSale(): Promise<void> {
+    if (this.loading) return;
+    const number = this.walkInNumber.trim();
+    if (number === "") {
+      this.notice = "Type the receipt or order number of the walk in sale: it is the only way to find one.";
+      this.#onChange();
+      return;
+    }
+    const seq = ++this.#seq;
+    this.loading = true;
+    this.notice = null;
+    this.#onChange();
+    const result = await staffPos.posCustomerReturnLines(this.#client, { number });
+    if (seq !== this.#seq) return;
+    this.loading = false;
+    if (!result.ok) {
+      this.notice = result.error;
+      this.#onChange();
+      return;
+    }
+    const orders = readCustomerLines(result.value);
+    if (orders === null) {
+      this.notice = "The answer about this sale was not readable: nothing is shown rather than half of it.";
+      this.#onChange();
+      return;
+    }
+    if (orders.length === 0) {
+      this.notice = `No walk in sale answers to ${number}: check the number on the receipt.`;
+      this.#onChange();
+      return;
+    }
+    // The server names the house row in its answer; the till never spells that id, and sends the
+    // number with no customer id on every later call.
+    const answered = result.value as unknown as { customer_id?: unknown };
+    this.#walkInRef = number;
+    this.customer = {
+      id: typeof answered.customer_id === "string" ? answered.customer_id : "",
+      name: "Walk in sale",
+      account_no: "WALK-IN",
+      customer_type: "RETAIL",
+      payment_terms_days: 0,
+      credit_limit_cents: 0,
+      open_balance_cents: 0,
+    };
+    this.orders = orders;
+    this.draft = new ReturnDraft(orders);
+    this.filter = "";
+    this.draftNotice = null;
+    this.#epoch += 1;
+    this.step = "lines";
+    this.#onChange();
+  }
+
+  setFilter(value: string): void {
+    this.filter = value;
+    this.#onChange();
+  }
+
+  setQty(orderLineId: string, raw: string): DraftAnswer {
+    const answer = this.draft.setQty(orderLineId, raw);
+    this.draftNotice = answer.ok ? null : answer.words;
+    this.#draftChanged();
+    return answer;
+  }
+
+  /** Step a line's quantity by one, capped at the open quantity by the draft's own refusal. */
+  stepQty(orderLineId: string, by: 1 | -1): DraftAnswer {
+    return this.setQty(orderLineId, String(this.draft.qtyOf(orderLineId) + by));
+  }
+
+  setDisposition(orderLineId: string, value: string): DraftAnswer {
+    const answer = this.draft.setDisposition(orderLineId, value);
+    this.draftNotice = answer.ok ? null : answer.words;
+    this.#draftChanged();
+    return answer;
+  }
+
+  /**
+   * A changed draft is a different note: its pending key, the input an approval would resend and the
+   * refusal the last send earned belong to the draft that earned them, so all three go.
    */
   #draftChanged(): void {
     this.refusal = null;
     this.#pendingKey = null;
     this.#pendingInput = null;
+    this.#swapKey = null;
+    this.#pendingSwapInput = null;
+    this.swapNotice = null;
     this.#onChange();
+    void this.#refreshPreview();
+    void this.#refreshSwapPreview();
   }
 
-  /** Find the sale by its number: the branch fenced lookup route. */
-  async findSale(): Promise<void> {
-    if (!this.canFind) return;
-    const orderNo = this.orderNo.trim();
-    this.finding = true;
-    this.notice = null;
-    this.#onChange();
-    const result = await staffPos.posLookupReturn(this.#client, { order_no: orderNo });
-    this.finding = false;
-    if (!result.ok) {
-      this.#refuseLookup(orderNo, result);
-      return;
-    }
-    const lookup = validateLookup(result.value);
-    if (lookup === null) {
-      this.lookup = null;
-      this.notice = "The answer about this sale was not a readable sale: nothing is shown rather than half of one.";
+  /**
+   * Ask the server what the draft would credit (the commit's own pricing function, nothing written).
+   * The till computes no money: the answer, or nothing, is what the screen shows. The latest ask wins.
+   */
+  async #refreshPreview(): Promise<void> {
+    const seq = ++this.#previewSeq;
+    const body =
+      this.customer === null ? null : buildPreviewInput(this.customer.id, this.draft, this.step === "refund" ? this.method : null, this.#walkInRef);
+    if (body === null) {
+      this.preview = null;
+      this.previewing = false;
+      this.previewNotice = null;
       this.#onChange();
       return;
     }
-    this.lookup = lookup;
-    this.notice = null;
-    // The new sale's story replaces the last one's whole desk, receipt
-    // included: a find is the clerk moving on.
-    this.receipt = null;
-    this.#resetDraft();
+    this.previewing = true;
     this.#onChange();
-    // The desk's side reads, in words on the screen when they fail: the
-    // drawer the cash method pays from, and the card rail's simulator flag
-    // that decides whether the card method may call itself simulated.
-    await this.#readDrawer(lookup.branchId);
+    const result = await staffPos.posPreviewReturnAcross(this.#client, body);
+    if (seq !== this.#previewSeq) return;
+    this.previewing = false;
+    if (!result.ok) {
+      this.preview = null;
+      this.previewNotice = `The credit could not be priced: ${result.error}`;
+      this.#onChange();
+      return;
+    }
+    const read = readPreview(result.value);
+    if (read === null) {
+      this.preview = null;
+      this.previewNotice = "The credit's pricing was not readable: no total is shown rather than half of one.";
+      this.#onChange();
+      return;
+    }
+    this.preview = read;
+    this.previewNotice = null;
+    this.#onChange();
+  }
+
+  /** Continue to the refund step once every picked line has its disposition. */
+  async toRefund(): Promise<void> {
+    if (!this.canContinue) return;
+    this.step = "refund";
+    this.method = null;
+    this.notice = null;
+    this.drawer = { kind: "unknown" };
+    this.cardSimulated = null;
+    this.#draftChanged();
+    // The step's side reads, in words on the screen when they fail: the drawer the cash rail pays from,
+    // and the card rail's simulator flag that decides whether the card rail may call itself simulated.
+    const branchId = this.draft.branchId;
+    if (branchId !== null) await this.#readDrawer(branchId);
     await this.#readPaymentsStatus();
     this.#onChange();
   }
 
-  /** Commit the return once. The server's answer is the receipt's facts. */
+  toLines(): void {
+    if (this.customer === null || this.submitting) return;
+    this.step = "lines";
+    this.notice = null;
+    this.#draftChanged();
+  }
+
+  railAvailable(method: RefundMethod): boolean {
+    return railAvailable(this.draft, method, this.drawer, this.isWalkIn);
+  }
+
+  chooseMethod(method: string): void {
+    if (!REFUND_METHODS.includes(method as RefundMethod)) return;
+    if (!this.railAvailable(method as RefundMethod)) return;
+    this.method = method as RefundMethod;
+    this.notice = null;
+    this.#draftChanged();
+  }
+
+  get canSubmit(): boolean {
+    return this.step === "refund" && this.method !== null && !this.submitting && !this.swapping && !this.approving && !this.dialogOpen;
+  }
+
+  /** Commit the note once. The server's answer is the Done step's facts. */
   async submit(): Promise<void> {
-    if (!this.canSubmit || this.lookup === null || this.method === null) return;
-    const input = this.#buildInput();
-    if (input === null) return;
-    this.#pendingInput = input;
+    if (!this.canSubmit || this.customer === null || this.method === null) return;
+    if (this.#pendingKey === null) this.#pendingKey = crypto.randomUUID();
+    const built = buildNoteInput({
+      customerId: this.customer.id,
+      walkInNumber: this.#walkInRef,
+      key: this.#pendingKey,
+      draft: this.draft,
+      method: this.method,
+      drawerSessionId: this.drawer.kind === "open" ? this.drawer.sessionId : "",
+    });
+    if (!built.ok) {
+      this.notice = built.words;
+      this.#onChange();
+      return;
+    }
+    this.#pendingInput = built.input;
+    this.#pendingKind = "note";
     this.submitting = true;
     this.notice = null;
     this.#onChange();
-    const result = await staffPos.posCreateReturn(this.#client, input);
+    const result = await staffPos.posCreateReturnAcross(this.#client, built.input);
     this.submitting = false;
+    if (this.customer === null) return;
     if (!result.ok) {
       if (result.status === 409 && result.error === "refund_approval_required") {
-        // The contract says a client discriminates on the error string, never
-        // on the key's presence: the approval rides the body this transport's
-        // capture kept, or the desk says the refusal without its figures.
+        // A client discriminates on the error string, never on the key's presence: the approval rides the
+        // body the transport's capture kept, or the surface says the refusal without its figures.
         const approval = this.#capture.take();
         if (approval !== null) {
           this.refusal = approval;
           this.#onChange();
           return;
         }
-        this.notice = "The refund needs a manager whose role holds the approval, but the refusal did not say which: try again or call the desk lead.";
+        this.notice = "The credit note needs a manager whose role holds the approval, but the refusal did not say which: try again or call the desk lead.";
         this.#onChange();
         return;
       }
-      this.notice = `The refund was refused: ${result.error}`;
+      this.notice = `The credit note was refused: ${result.error}`;
       this.#onChange();
       return;
     }
-    const committed = validateReturn(result.value);
-    if (committed === null) {
-      this.notice = "The refund's answer was not a readable return: the receipt waits rather than guessing.";
+    this.#finish(result.value, null);
+  }
+
+  #finish(raw: unknown, approverName: string | null): void {
+    const note = readNote(raw);
+    if (note === null) {
+      this.notice = "The credit note's answer was not readable: the receipt waits rather than guessing.";
       this.#onChange();
       return;
     }
-    // The receipt's approver line on the caller's own path (the review
-    // round's ruling): when the till is signed in as a role the demo's
-    // approver set names, the caller is the approver, and the line names them
-    // from the session, display name and role beside. It is display wording;
-    // the server's audit row holds the record, and a return whose size never
-    // reached the threshold is still a commit the caller made.
+    const orderNos: Record<string, string> = {};
+    for (const order of this.orders) orderNos[order.orderId] = order.orderNo;
     const clerk = this.#clerk();
-    const approverName =
-      clerk !== null && clerk.roleCode !== null && isApproverRole(clerk.roleCode)
+    // The approver line on the caller's own path: when the till is signed in as a role the approval names,
+    // the caller is the approver. It is display wording; the server's audit row holds the record.
+    const ownApprover =
+      approverName === null && clerk !== null && clerk.roleCode !== null && isApproverRole(clerk.roleCode)
         ? `the ${clerk.roleLabel ?? clerk.roleCode} on this till: ${clerk.name}`
-        : null;
-    this.receipt = this.#receiptFrom(committed, approverName);
+        : approverName;
+    this.done = {
+      note,
+      orderNos,
+      approverName: ownApprover,
+      clerkName: clerk?.name ?? null,
+      cardSimulated: note.method === "CARD" ? this.cardSimulated : null,
+    };
+    this.step = "done";
+    this.refusal = null;
+    this.#pendingKey = null;
     this.#pendingInput = null;
+    this.#onChange();
+  }
+
+  // ---- The swap -----------------------------------------------------------------------------
+
+  setProductTerm(value: string): void {
+    this.productTerm = value;
+    void this.#findProducts();
+  }
+
+  async #findProducts(): Promise<void> {
+    const q = this.productTerm.trim();
+    const seq = ++this.#productSeq;
+    if (q.length < 2) {
+      this.productSearching = false;
+      this.productMatches = [];
+      this.productSearched = false;
+      this.#onChange();
+      return;
+    }
+    this.productSearching = true;
+    this.#onChange();
+    const result = await this.#searchProducts(q);
+    if (seq !== this.#productSeq) return;
+    this.productSearching = false;
+    this.productSearched = true;
+    this.productMatches = result.ok ? result.value : [];
+    this.#onChange();
+  }
+
+  addReplacement(productId: string): void {
+    const product = this.productMatches.find((row) => row.productId === productId);
+    if (product === undefined || this.submitting || this.swapping) return;
+    this.basket.add(product);
+    this.#draftChanged();
+  }
+
+  setReplacementQty(productId: string, raw: string): void {
+    this.basket.setQty(productId, raw);
+    this.#draftChanged();
+  }
+
+  stepReplacement(productId: string, by: 1 | -1): void {
+    const line = this.basket.lines.find((row) => row.productId === productId);
+    if (line !== undefined) this.setReplacementQty(productId, String(line.qty + by));
+  }
+
+  chooseSwapTender(tender: string): void {
+    if (tender !== "CASH" && tender !== "ACCOUNT" && tender !== "CARD") return;
+    if (tender === "CARD" && !this.cardShortfallAvailable) return;
+    this.swapTender = tender;
+    this.#draftChanged();
+  }
+
+  /** A card shortfall rides the simulated card only where the status route says the rail is simulated. */
+  get cardShortfallAvailable(): boolean {
+    return this.cardSimulated === true;
+  }
+
+  get swapReady(): boolean {
+    return this.step === "refund" && !this.isWalkIn && this.draft.ready && this.basket.lines.length > 0 && this.swapPreview !== null;
+  }
+
+  get canRing(): boolean {
+    return this.swapReady && !this.swapping && !this.submitting && !this.approving && !this.dialogOpen;
+  }
+
+  /** The server's figures for the draft swap; nothing is computed here. The latest ask wins. */
+  async #refreshSwapPreview(): Promise<void> {
+    const seq = ++this.#swapPreviewSeq;
+    const body =
+      this.customer === null
+        ? null
+        : buildSwapPreviewInput({ customerId: this.customer.id, draft: this.draft, basket: this.basket, tender: this.swapTender });
+    if (body === null) {
+      this.swapPreview = null;
+      this.swapPreviewing = false;
+      this.swapPreviewNotice = null;
+      this.#onChange();
+      return;
+    }
+    this.swapPreviewing = true;
+    this.#onChange();
+    const result = await staffPos.posPreviewSwap(this.#client, body);
+    if (seq !== this.#swapPreviewSeq) return;
+    this.swapPreviewing = false;
+    if (!result.ok) {
+      this.swapPreview = null;
+      this.swapPreviewNotice = `The swap could not be priced: ${result.error}`;
+      this.#onChange();
+      return;
+    }
+    const read = readSwapPreview(result.value);
+    if (read === null) {
+      this.swapPreview = null;
+      this.swapPreviewNotice = "The swap's pricing was not readable: no figures are shown rather than half of them.";
+      this.#onChange();
+      return;
+    }
+    this.swapPreview = read;
+    this.swapPreviewNotice = null;
+    this.#onChange();
+  }
+
+  /** Ring the swap once: one key per drafted swap, the server's figures and words throughout. */
+  async ringSwap(): Promise<void> {
+    if (!this.canRing || this.customer === null) return;
+    if (this.#swapKey === null) this.#swapKey = crypto.randomUUID();
+    const built = buildSwapInput({
+      customerId: this.customer.id,
+      key: this.#swapKey,
+      draft: this.draft,
+      basket: this.basket,
+      tender: this.swapTender,
+      drawerSessionId: this.drawer.kind === "open" ? this.drawer.sessionId : "",
+      paymentToken: this.swapTender === "CARD" && this.cardSimulated === true ? DEMO_CARD_TOKEN : "",
+    });
+    if (!built.ok) {
+      this.swapNotice = built.words;
+      this.#onChange();
+      return;
+    }
+    this.#pendingSwapInput = built.input;
+    this.#pendingKind = "swap";
+    this.swapping = true;
+    this.swapNotice = null;
+    this.#onChange();
+    const result = await staffPos.posCreateSwap(this.#client, built.input);
+    this.swapping = false;
+    if (this.customer === null) return;
+    if (!result.ok) {
+      if (result.status === 409 && result.error === "refund_approval_required") {
+        const approval = this.#capture.take();
+        if (approval !== null) {
+          this.refusal = approval;
+          this.#onChange();
+          return;
+        }
+        this.swapNotice = "The swap needs a manager whose role holds the approval, but the refusal did not say which: try again or call the desk lead.";
+        this.#onChange();
+        return;
+      }
+      if (result.status === 409) {
+        // The credit changed while the swap was being rung: say so in the server's words, take a fresh
+        // price and a fresh key (a different swap is a different send).
+        this.swapNotice = result.error;
+        this.#swapKey = null;
+        this.#pendingSwapInput = null;
+        this.#onChange();
+        void this.#refreshSwapPreview();
+        return;
+      }
+      // 502 (the processor refused the leftover) and every 422 keep the key: the swap rolled back whole,
+      // and a retry of the same draft is a replay of nothing.
+      this.swapNotice = `The swap was refused: ${result.error}`;
+      this.#onChange();
+      return;
+    }
+    this.#finishSwap(result.value, null);
+  }
+
+  #finishSwap(raw: unknown, approverName: string | null): void {
+    const swap = readSwapResult(raw);
+    if (swap === null) {
+      this.swapNotice = "The swap's answer was not readable: the receipt waits rather than guessing.";
+      this.#onChange();
+      return;
+    }
+    const orderNos: Record<string, string> = {};
+    for (const order of this.orders) orderNos[order.orderId] = order.orderNo;
+    const clerk = this.#clerk();
+    const ownApprover =
+      approverName === null && clerk !== null && clerk.roleCode !== null && isApproverRole(clerk.roleCode)
+        ? `the ${clerk.roleLabel ?? clerk.roleCode} on this till: ${clerk.name}`
+        : approverName;
+    this.doneSwap = swap;
+    this.done = {
+      note: swap.note,
+      orderNos,
+      approverName: ownApprover,
+      clerkName: clerk?.name ?? null,
+      cardSimulated: swap.note.method === "CARD" ? this.cardSimulated : null,
+    };
+    this.step = "done";
+    this.refusal = null;
+    this.#swapKey = null;
+    this.#pendingSwapInput = null;
     this.#onChange();
   }
 
@@ -379,25 +766,21 @@ export class ReturnsFlow {
   }
 
   /**
-   * The one send with the approver's credential (D49): the dialog's card
-   * mints the approver credential through the demo adapter, the same return
-   * goes once more with it in X-Approver-Authorization, and the token lives
-   * in the one time slot for exactly that send: the slot is swept in the same
-   * breath whatever the answer turns out to be. The mint's answer local holds
-   * the token only while this method runs, and nothing of it survives the
-   * return but the approver's name, which is not a credential and rides the
-   * receipt. The clerk's session is never touched.
+   * The one send with the approver's credential: the dialog's card mints it through the demo adapter,
+   * the same note goes once more with it in X-Approver-Authorization, and the token lives in the one
+   * time slot for exactly that send, swept in the same breath whatever the answer. The clerk's session
+   * is never touched.
    */
   async approveWithFlow(flowName: string): Promise<void> {
     if (this.refusal === null || this.approving) return;
-    const input = this.#pendingInput;
+    const swap = this.#pendingKind === "swap";
+    const input = swap ? this.#pendingSwapInput : this.#pendingInput;
     if (input === null) return;
     this.approving = true;
     this.#onChange();
     const minted = await this.#account.mintApproverCredential(flowName);
-    // A sign-out mid flight blanks the desk; nothing of this approval then
-    // sends or writes onto the blanked till (the review round's P3).
-    if (this.lookup === null) {
+    // A sign out mid flight blanks the surface; nothing of this approval then sends or writes onto it.
+    if (this.customer === null) {
       this.#endApproval(null);
       return;
     }
@@ -407,145 +790,45 @@ export class ReturnsFlow {
     }
     const approverName = minted.value.approverName;
     this.#credential.set(minted.value.token);
-    let result: Result<PosReturn>;
+    let result: Result<unknown>;
     try {
-      result = await staffPos.posCreateReturn(this.#approverClient, input);
+      result =
+        this.#pendingKind === "swap"
+          ? await staffPos.posCreateSwap(this.#approverClient, input as PosSwapInput)
+          : await staffPos.posCreateReturnAcross(this.#approverClient, input as PosReturnAcrossInput);
     } finally {
       this.#credential.drop();
     }
+    if (this.customer === null) {
+      this.#endApproval(null);
+      return;
+    }
     if (!result.ok) {
-      this.#endApproval(`The refund was refused again: ${result.error}`);
+      this.#endApproval(`The credit note was refused again: ${result.error}`);
       return;
     }
-    const committed = validateReturn(result.value);
-    if (committed === null) {
-      this.#endApproval("The refund's answer was not a readable return: the receipt waits rather than guessing.");
-      return;
-    }
-    this.receipt = this.#receiptFrom(committed, approverName);
-    this.#endApproval(null);
+    this.approving = false;
+    this.dialogOpen = false;
+    this.approverFlows = null;
+    if (swap) this.#finishSwap(result.value, approverName);
+    else this.#finish(result.value, approverName);
   }
 
   #endApproval(notice: string | null): void {
     this.approving = false;
     this.dialogOpen = false;
     this.approverFlows = null;
-    if (this.lookup === null) {
-      // The desk was blanked under this approval (a sign out): write nothing
-      // on it, not even this attempt's refusal or error, and not the receipt
-      // the caller built from the send's answer, for whoever signs in next.
-      // The slot is already empty; the send's result is dropped whole.
+    if (this.customer === null) {
+      // Blanked under this approval (a sign out): write nothing on it, for whoever signs in next.
       this.refusal = null;
-      this.receipt = null;
+      this.done = null;
       this.#pendingKey = null;
       this.#pendingInput = null;
       this.#onChange();
       return;
     }
-    if (notice !== null) {
-      this.notice = notice;
-    } else {
-      // A committed approval ends the draft's story: the refusal it earned and
-      // the pending input it rode out on both go.
-      this.refusal = null;
-      this.#pendingKey = null;
-      this.#pendingInput = null;
-    }
+    if (notice !== null) this.notice = notice;
     this.#onChange();
-  }
-
-  #receiptFrom(
-    committed: { returnNo: string; method: RefundMethod; subtotalCents: number; taxCents: number; totalCents: number; replayed: boolean },
-    approverName: string | null,
-  ): RefundReceipt {
-    const clerk = this.#clerk();
-    return {
-      returnNo: committed.returnNo,
-      method: committed.method,
-      subtotalCents: committed.subtotalCents,
-      taxCents: committed.taxCents,
-      totalCents: committed.totalCents,
-      replayed: committed.replayed,
-      approverName,
-      clerkName: clerk?.name ?? null,
-      cardSimulated: committed.method === "CARD" ? this.cardSimulated : null,
-    };
-  }
-
-  /** Back to the blank desk: the receipt's story is told, the next one starts. The sale number stays typed: the next lookup is often the same sale. */
-  startAnotherReturn(): void {
-    this.lookup = null;
-    this.receipt = null;
-    this.notice = null;
-    this.method = null;
-    this.#resetDraft();
-    this.#onChange();
-  }
-
-  /**
-   * The desk blanked entirely, sale number included: sign-out's reset. The
-   * till is the next person's, and nothing of the last person's return (the
-   * draft, the refusal, the receipt, the number they were working from)
-   * belongs on the next person's screen.
-   */
-  reset(): void {
-    this.orderNo = "";
-    this.finding = false;
-    this.startAnotherReturn();
-  }
-
-  /**
-   * The one return input the desk sends, and re-sends unchanged when a
-   * manager approves it: the idempotency key is minted once per drafted
-   * return, so the approval's send is the same send the server may treat as
-   * a replay if the clerk's own attempt landed unheard. A changed draft
-   * drops the pending key: a different return is a different send.
-   */
-  #pendingKey: string | null = null;
-  /** The exact input the desk sent and, when refused for approval, sends again unchanged. */
-  #pendingInput: PosReturnInput | null = null;
-
-  #buildInput(): PosReturnInput | null {
-    if (this.lookup === null || this.method === null) return null;
-    if (this.#pendingKey === null) this.#pendingKey = crypto.randomUUID();
-    const lines: PosReturnLineInput[] = [];
-    for (const line of this.lookup.lines) {
-      const qty = this.quantities[line.orderLineId] ?? 0;
-      if (qty <= 0) continue;
-      lines.push({ order_line_id: line.orderLineId, qty_base: qty, reason_code: this.reasonCode });
-    }
-    if (lines.length === 0) return null;
-    return {
-      idempotency_key: this.#pendingKey,
-      order_id: this.lookup.orderId,
-      order_no: this.lookup.orderNo,
-      lines,
-      refund_method: this.method,
-      reason: this.note,
-      restock: this.restock,
-      // The drawer rides only the rail that pays from it: the contract
-      // describes till_session_id as the CASH refund's open drawer.
-      till_session_id: this.method === "CASH" && this.drawer.kind === "open" ? this.drawer.sessionId : "",
-    };
-  }
-
-  #resetDraft(): void {
-    this.quantities = {};
-    this.method = null;
-    this.reasonCode = "OTHER";
-    this.note = "";
-    this.restock = true;
-    this.drawer = { kind: "unknown" };
-    this.cardSimulated = null;
-    this.refusal = null;
-    this.dialogOpen = false;
-    this.approverFlows = null;
-    this.approving = false;
-    this.#pendingKey = null;
-    this.#pendingInput = null;
-    // The screen's fields are rebuilt from this: the view keys the draft on
-    // the epoch, so a reset the model performs is a reset the screen shows.
-    this.#draftEpoch += 1;
   }
 
   async #readDrawer(branchId: string): Promise<void> {
@@ -564,103 +847,62 @@ export class ReturnsFlow {
     this.cardSimulated = result.ok && typeof result.value.simulated === "boolean" ? result.value.simulated : null;
   }
 
-  #refuseLookup(orderNo: string, result: { error: string; status?: number }): void {
-    this.lookup = null;
-    this.notice =
-      result.status === 404
-        ? `No sale numbered ${orderNo} answers at this counter: check the number and try again.`
-        : `The lookup was refused: ${result.error}`;
+  /** Back to the blank first step: another customer, a clean draft, no note. */
+  startAnother(): void {
+    this.#seq += 1;
+    this.step = "customer";
+    this.term = "";
+    this.searching = false;
+    this.matches = [];
+    this.searched = false;
+    this.customer = null;
+    this.#walkInRef = null;
+    this.walkInOpen = false;
+    this.walkInNumber = "";
+    this.loading = false;
+    this.orders = [];
+    this.draft = new ReturnDraft([]);
+    this.filter = "";
+    this.notice = null;
+    this.draftNotice = null;
+    this.method = null;
+    this.#previewSeq += 1;
+    this.preview = null;
+    this.previewing = false;
+    this.previewNotice = null;
+    this.drawer = { kind: "unknown" };
+    this.cardSimulated = null;
+    this.submitting = false;
+    this.done = null;
+    this.refusal = null;
+    this.dialogOpen = false;
+    this.approverFlows = null;
+    this.approving = false;
+    this.#pendingKey = null;
+    this.#pendingInput = null;
+    this.basket.clear();
+    this.swapTender = "CASH";
+    this.productTerm = "";
+    this.productMatches = [];
+    this.productSearching = false;
+    this.productSearched = false;
+    this.#productSeq += 1;
+    this.#swapPreviewSeq += 1;
+    this.swapPreview = null;
+    this.swapPreviewing = false;
+    this.swapPreviewNotice = null;
+    this.swapNotice = null;
+    this.swapping = false;
+    this.doneSwap = null;
+    this.#swapKey = null;
+    this.#pendingSwapInput = null;
+    this.#pendingKind = "note";
+    this.#epoch += 1;
     this.#onChange();
   }
-}
 
-/** Field by field, never a cast: the lookup this flow holds, or null. */
-function validateLookup(raw: PosReturnLookup): SaleLookup | null {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const record = raw as Record<string, unknown>;
-  const orderId = record["order_id"];
-  const orderNo = record["order_no"];
-  const branchId = record["branch_id"];
-  const tender = record["sale_tender"];
-  const cardRefundable = record["card_refundable"];
-  if (typeof orderId !== "string" || orderId === "") return null;
-  if (typeof orderNo !== "string" || orderNo === "") return null;
-  if (typeof branchId !== "string" || branchId === "") return null;
-  if (typeof tender !== "string" || !TENDERS.includes(tender as SaleTender)) return null;
-  if (typeof cardRefundable !== "boolean") return null;
-  const lines = validateLines(record["lines"]);
-  if (lines === null) return null;
-  return {
-    orderId,
-    orderNo,
-    branchId,
-    saleTender: tender as SaleTender,
-    cardRefundable,
-    lines,
-  };
-}
-
-function validateLines(raw: unknown): ReturnableLine[] | null {
-  if (!Array.isArray(raw)) return null;
-  const lines: ReturnableLine[] = [];
-  for (const entry of raw) {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return null;
-    const line = entry as Record<string, unknown>;
-    const orderLineId = line["order_line_id"];
-    const description = line["description"];
-    const qtySold = line["qty_sold"];
-    const qtyReturned = line["qty_returned"];
-    const unitPriceCents = line["unit_price_cents"];
-    const lineTotalCents = line["line_total_cents"];
-    if (typeof orderLineId !== "string" || orderLineId === "") return null;
-    if (typeof description !== "string") return null;
-    if (typeof qtySold !== "number" || !Number.isFinite(qtySold)) return null;
-    if (typeof qtyReturned !== "number" || !Number.isFinite(qtyReturned)) return null;
-    if (typeof unitPriceCents !== "number" || !Number.isSafeInteger(unitPriceCents)) return null;
-    if (typeof lineTotalCents !== "number" || !Number.isSafeInteger(lineTotalCents)) return null;
-    lines.push({
-      orderLineId,
-      description,
-      qtySold,
-      qtyReturned,
-      unitPriceCents,
-      lineTotalCents,
-    });
+  /** Sign out's reset: nothing of the last person's customer, draft, refusal or note stays on the next person's till. */
+  reset(): void {
+    this.startAnother();
   }
-  return lines;
-}
-
-/** Field by field, never a cast: the committed return the receipt spells, or null. */
-function validateReturn(raw: PosReturn): {
-  returnNo: string;
-  method: RefundMethod;
-  subtotalCents: number;
-  taxCents: number;
-  totalCents: number;
-  replayed: boolean;
-} | null {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const record = raw as Record<string, unknown>;
-  const returnNo = record["return_no"];
-  const method = record["refund_method"];
-  const subtotalCents = record["subtotal_cents"];
-  const taxCents = record["tax_cents"];
-  const totalCents = record["total_cents"];
-  const replayed = record["replayed"];
-  const status = record["status"];
-  if (typeof returnNo !== "string" || returnNo === "") return null;
-  if (typeof method !== "string" || !REFUND_METHODS.includes(method as RefundMethod)) return null;
-  if (typeof subtotalCents !== "number" || !Number.isSafeInteger(subtotalCents)) return null;
-  if (typeof taxCents !== "number" || !Number.isSafeInteger(taxCents)) return null;
-  if (typeof totalCents !== "number" || !Number.isSafeInteger(totalCents)) return null;
-  if (typeof replayed !== "boolean") return null;
-  if (status !== "COMMITTED") return null;
-  return {
-    returnNo,
-    method: method as RefundMethod,
-    subtotalCents,
-    taxCents,
-    totalCents,
-    replayed,
-  };
 }

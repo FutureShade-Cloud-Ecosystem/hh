@@ -73,6 +73,13 @@ import { clearSessionState, setBranches, wirePorts, type AuthUser } from "@hards
 
 const DEMO_ORG = "hh-demo";
 
+/** The till's own pair of the closed flow table: the flows route answers every
+ * live role login the box mints, and a card for a role whose surface the
+ * server refuses here would lead into a refusal. The pair is the till's own
+ * claim, the same seam as the front door's live role list.
+ */
+const TILL_FLOWS: ReadonlySet<string> = new Set(["sales", "sales-manager"]);
+
 export class CounterTillApp extends HHElement {
   static styles = [
     baseStyles,
@@ -359,7 +366,6 @@ export class CounterTillApp extends HHElement {
   readonly #sessions = new SessionStore();
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
-  readonly #approverCredential: OneTimeCredential;
   readonly #tillClient: TillClient;
   /** The theme choice: Auto follows the system, Light and Brand pin it; tab memory only (see theme.ts). */
   readonly #theme = new ThemeController(() => this.requestUpdate());
@@ -376,6 +382,7 @@ export class CounterTillApp extends HHElement {
     return hint === "PANELS" || hint === "STEPPER" ? hint : "";
   })();
   #flowsState: FlowsState = { kind: "loading" };
+  
   /** The one flows read this element makes; the pop-out's tap waits for it. */
   #flowsLoaded: Promise<void> = Promise.resolve();
   #busy = false;
@@ -476,14 +483,11 @@ export class CounterTillApp extends HHElement {
     });
     this.#account = new DemoAccount({ client: demoClient });
     this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
-    // The approver's client exists for the one return call that may carry the
-    // approver's credential (D49): its provider takes the token out of the
-    // one time slot during that send, and taking is dropping, so the token
-    // rests nowhere before and survives nothing after. The clerk's client is
-    // a different instance and never carries the credential, so no other call
-    // this app makes can leak it. Nothing here touches storage or logs.
+    // The approver's client exists for the one credit note call that may carry the approver's credential:
+    // its provider takes the token out of the one time slot during that send, and taking is dropping, so
+    // the token rests nowhere before and survives nothing after. The clerk's client is a different
+    // instance and never carries it. Nothing here touches storage or logs.
     const approverCredential = new OneTimeCredential();
-    this.#approverCredential = approverCredential;
     const approverClient = new ApiClient({
       baseUrl: "",
       headers: async () => {
@@ -510,6 +514,13 @@ export class CounterTillApp extends HHElement {
         };
       },
       capture,
+      searchProducts: async (query) => {
+        const found = await this.#tillClient.searchProducts(query);
+        return found.ok
+          ? { ok: true, value: found.value.map((row) => ({ productId: row.productId, name: row.name, soldBy: row.soldBy })) }
+          : found;
+      },
+      branchId: () => this.#branch?.id ?? null,
       onChange: () => this.requestUpdate(),
     });
     this.#payBalance = new PayBalanceFlow({
@@ -679,9 +690,14 @@ export class CounterTillApp extends HHElement {
   /** Enter in the Pay balance find field finds, the way the Find button does. */
   readonly #onHostKey = (event: KeyboardEvent): void => {
     if (event.key !== "Enter") return;
-    const control = event
-      .composedPath()
-      .find((node): node is Element => node instanceof Element && node.getAttribute("data-field") === "pay-balance-term");
+    const path = event.composedPath();
+    const walkIn = path.find((node): node is Element => node instanceof Element && node.getAttribute("data-field") === "returns-walkin-number");
+    if (walkIn !== undefined) {
+      event.preventDefault();
+      void this.#returns.findWalkInSale();
+      return;
+    }
+    const control = path.find((node): node is Element => node instanceof Element && node.getAttribute("data-field") === "pay-balance-term");
     if (control === undefined) return;
     event.preventDefault();
     void this.#payBalance.find();
@@ -694,21 +710,20 @@ export class CounterTillApp extends HHElement {
     if (!(control instanceof HTMLInputElement) && !(control instanceof HTMLTextAreaElement)) return;
     const field = control.getAttribute("data-field");
     if (field === "pay-balance-term" && control instanceof HTMLInputElement) this.#payBalance.setTerm(control.value);
-    if (field === "order-no") this.#returns.setOrderNo(control.value);
-    if (field === "qty" && control instanceof HTMLInputElement) {
+    if (field === "returns-customer" && control instanceof HTMLInputElement) this.#returns.setTerm(control.value);
+    if (field === "returns-product" && control instanceof HTMLInputElement) this.#returns.setProductTerm(control.value);
+    if (field === "returns-replacement-qty" && control instanceof HTMLInputElement) {
+      this.#returns.setReplacementQty(control.getAttribute("data-product") ?? "", control.value);
+    }
+    if (field === "returns-walkin-number" && control instanceof HTMLInputElement) this.#returns.setWalkInNumber(control.value);
+    if (field === "returns-filter" && control instanceof HTMLInputElement) this.#returns.setFilter(control.value);
+    if (field === "returns-qty" && control instanceof HTMLInputElement) {
       const line = control.getAttribute("data-line") ?? "";
+      // A refused quantity (above what is open) leaves the draft as it was; the field is brought back
+      // to the draft's own answer after the render (#syncReturnsFields), so a refused number never
+      // sits on the screen as if it rode.
       this.#returns.setQty(line, control.value);
-      // The flow keeps whole units; the field is brought to the same answer,
-      // so a typed 1.5 never sits on the screen while a 1 rides the draft.
-      const stored = this.#returns.qtyOf(line);
-      const canonical = stored === 0 ? "" : String(stored);
-      if (control.value !== canonical) control.value = canonical;
     }
-    if (field === "note") this.#returns.setNote(control.value);
-    if (field === "restock" && control instanceof HTMLInputElement) {
-      this.#returns.setRestock(control.checked);
-    }
-    if (field === "reason-code") this.#returns.setReasonCode(control.value);
   };
 
   readonly #onCounterLayout = (event: CustomEvent<{ layout: string }>): void => {
@@ -765,31 +780,32 @@ export class CounterTillApp extends HHElement {
     if (control.getAttribute("data-action") === "pay-balance-another") {
       this.#payBalance.another();
     }
-    if (control.getAttribute("data-action") === "returns-find") {
-      void this.#returns.findSale();
+    const returnsAction = control.getAttribute("data-action") ?? "";
+    const returnsLine = control.getAttribute("data-line") ?? "";
+    if (returnsAction === "returns-customer") void this.#returns.chooseCustomer(control.getAttribute("data-customer") ?? "");
+    if (returnsAction === "returns-qty-up") this.#returns.stepQty(returnsLine, 1);
+    if (returnsAction === "returns-qty-down") this.#returns.stepQty(returnsLine, -1);
+    if (returnsAction === "returns-disposition") {
+      this.#returns.setDisposition(returnsLine, control.getAttribute("data-disposition") ?? "");
     }
-    if (control.getAttribute("data-action") === "returns-method") {
-      const method = control.getAttribute("data-method");
-      if (method !== null) this.#returns.chooseMethod(method);
-    }
-    if (control.getAttribute("data-action") === "returns-submit") {
-      void this.#returns.submit();
-    }
-    if (control.getAttribute("data-action") === "returns-another") {
-      this.#returns.startAnotherReturn();
-    }
-    if (control.getAttribute("data-action") === "returns-approve") {
-      void this.#returns.openApprovalDialog();
-    }
-    if (control.getAttribute("data-action") === "returns-approve-cancel") {
-      this.#returns.closeApprovalDialog();
-    }
-    if (control.getAttribute("data-action") === "returns-approver-flow") {
+    if (returnsAction === "returns-add-replacement") this.#returns.addReplacement(control.getAttribute("data-product") ?? "");
+    if (returnsAction === "returns-replacement-up") this.#returns.stepReplacement(control.getAttribute("data-product") ?? "", 1);
+    if (returnsAction === "returns-replacement-down") this.#returns.stepReplacement(control.getAttribute("data-product") ?? "", -1);
+    if (returnsAction === "returns-swap-tender") this.#returns.chooseSwapTender(control.getAttribute("data-tender") ?? "");
+    if (returnsAction === "returns-ring-swap") void this.#returns.ringSwap();
+    if (returnsAction === "returns-walkin") this.#returns.toggleWalkIn();
+    if (returnsAction === "returns-walkin-find") void this.#returns.findWalkInSale();
+    if (returnsAction === "returns-continue") void this.#returns.toRefund();
+    if (returnsAction === "returns-method") this.#returns.chooseMethod(control.getAttribute("data-method") ?? "");
+    if (returnsAction === "returns-submit") void this.#returns.submit();
+    if (returnsAction === "returns-approve") void this.#returns.openApprovalDialog();
+    if (returnsAction === "returns-approve-cancel") this.#returns.closeApprovalDialog();
+    if (returnsAction === "returns-approver-flow") {
       const approverFlow = control.getAttribute("data-flow");
-      if (approverFlow !== null && approverFlow !== "") {
-        void this.#returns.approveWithFlow(approverFlow);
-      }
+      if (approverFlow !== null && approverFlow !== "") void this.#returns.approveWithFlow(approverFlow);
     }
+    if (returnsAction === "returns-back-to-lines") this.#returns.toLines();
+    if (returnsAction === "returns-another") this.#returns.startAnother();
   };
 
   /**
@@ -819,7 +835,7 @@ export class CounterTillApp extends HHElement {
   async #loadFlows(): Promise<void> {
     const result = await this.#account.listFlows();
     this.#flowsState = result.ok
-      ? { kind: "ready", flows: result.value }
+      ? { kind: "ready", flows: result.value.filter((account) => TILL_FLOWS.has(account.flow ?? "")) }
       : { kind: "unavailable", status: result.status ?? null };
     this.requestUpdate();
   }
@@ -1133,6 +1149,27 @@ export class CounterTillApp extends HHElement {
     `;
   }
 
+  /**
+   * The Returns surface's fields are uncontrolled (the design system's position gate allows no
+   * value binding in a template), so the flow's own answer is carried to them here: each field
+   * names it in `data-value`. A text field is left alone while it has focus (the person is
+   * typing it); a number field is brought back whenever the typed number differs from the flow's,
+   * which is how a refused quantity returns to the one the draft kept, and "1." stays as typed.
+   */
+  #syncReturnsFields(): void {
+    const fields = this.renderRoot.querySelectorAll<HTMLInputElement>("input[data-value]");
+    for (const field of fields) {
+      const wanted = field.getAttribute("data-value") ?? "";
+      if (field.value === wanted) continue;
+      if (field.type === "number") {
+        if (field.value !== "" && wanted !== "" && Number(field.value) === Number(wanted)) continue;
+      } else if (this.shadowRoot?.activeElement === field) {
+        continue;
+      }
+      field.value = wanted;
+    }
+  }
+
   /** The widget's sender rides the property, never a template binding (the
    * design system's position gate refuses . bindings in dependents too). */
   protected override updated(): void {
@@ -1142,6 +1179,7 @@ export class CounterTillApp extends HHElement {
     if (termField instanceof HTMLInputElement && termField.value !== this.#payBalance.term && this.#payBalance.term !== "") {
       termField.value = this.#payBalance.term;
     }
+    this.#syncReturnsFields();
     const widget = this.renderRoot.querySelector("hh-feedback");
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
       widget.send = this.#feedbackSender;

@@ -27,6 +27,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dashboard"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	erpidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/invcount"
@@ -182,7 +183,14 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
 		WithGLBalanceReader(glBalanceAdapter{svc: spine.glSvc}).
 		WithAudit(auditSvc)
-	invcount.NewHandler(invcountSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	// X3, the yard fence's counts half: the negative-stock worklist's
+	// cost leg rides only for a caller on the configuration's cost and
+	// margin list (inventory/cost_gate.go carries the argument).
+	invcountHandler := invcount.NewHandler(invcountSvc, log).WithUserLinker(link).WithCostRoles(spine.roleCfg)
+	if invcountHandler == nil || !invcountHandler.CostRolesWired() {
+		panic("invcount: cost roles not wired - the negative-stock worklist would answer the cost leg to every caller")
+	}
+	invcountHandler.RegisterRoutes(r, g)
 
 	// A-16 (W6): landed cost, capitalizing through inventory.
 	landedcostSvc := landedcost.NewService(landedcost.NewRepository(pool)).
@@ -214,6 +222,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// on-order read stops reporting the constant zero.
 	inventorySvc.WithPOCreator(unionPOCreator{svc: purchasingSvc})
 	inventorySvc.WithOnOrderReader(inv470OnOrder{svc: purchasingSvc})
+	inventorySvc.WithDraftPOReader(invDraftPOs{svc: purchasingSvc})
 
 	// MSG-01 / DIB-152: the messaging hub. The stream-ticket HMAC takes
 	// its DEDICATED environment key (the A1 ruling; the HS256 secret it
@@ -282,7 +291,37 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("weights", tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("attachments", attachments.NewSyncStore(pool)); err != nil {
+	// THE DRIVER FENCE (the HH Drive fence, the role logins lane): the
+	// drive-run adapters and the attachments scope carry the role seam
+	// beside the linker, so a driver caller's pulls, loads and pushes
+	// hold to the runs assigned to the driver record linked to their
+	// login while every desk caller keeps the org scope. The seam is
+	// identity's own per-request authority resolution (the same
+	// resolution the guards ran at the door, read again here because
+	// the sync core's ScopeFilter carries the actor and the org and no
+	// role), bridged to the ERP role code the dispatch vocabulary
+	// reads. A nil pool (the wiring-shape tests) wires no seam; the boot
+	// fail-fasts below keep a real boot from serving these scopes
+	// unfenced, the same idiom the will-call pick hold gate carries.
+	var driverRole dispatch.SyncRoleResolver
+	if pool != nil {
+		staffRoles, roleErr := erpidentity.NewStaffAuthorityResolver(pool)
+		if roleErr != nil {
+			panic("sync: driver fence role resolver refused to boot: " + roleErr.Error())
+		}
+		driverRole = func(ctx context.Context, platformUserID, orgID string) (string, bool, error) {
+			a, has, err := staffRoles.ResolveStaff(ctx, platformUserID, orgID)
+			if err != nil || !has {
+				return "", has, err
+			}
+			return identity.FromAuthority(a).RoleCode, true, nil
+		}
+	}
+	attachmentsSync := attachments.NewSyncStore(pool).WithDriverStopFence(dispatch.NewDriverStopFence(pool, link, driverRole))
+	if pool != nil && !attachmentsSync.DriverStopFenceWired() {
+		panic("attachments: driver stop fence not wired - a driver login's attachments pull would answer every attachment in the org")
+	}
+	if err := syncEngine.RegisterScope("attachments", attachmentsSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -292,13 +331,23 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// adapter validates creates through the same order-read seam the
 	// module's REST surface reads; all three attribute actors through
 	// the same linker the pilot uses.
-	if err := syncEngine.RegisterScope("runs", dispatch.NewRunsSyncStore(pool, link)); err != nil {
+	// THE DRIVER FENCE: the seam is wired above the attachments scope
+	// (its block carries the argument); the boot fail-fast below keeps
+	// an unwired boot from serving the drive-run scopes unfenced, the
+	// same idiom the will-call pick hold gate carries.
+	runsSync := dispatch.NewRunsSyncStore(pool, link).WithDriverRole(driverRole)
+	stopsSync := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
+	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole)
+	if pool != nil && (!runsSync.DriverRoleWired() || !stopsSync.DriverRoleWired() || !podSync.DriverRoleWired()) {
+		panic("dispatch: driver fence role seam not wired - a driver login's sync pull would answer every run in the org")
+	}
+	if err := syncEngine.RegisterScope("runs", runsSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("stops", dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link)); err != nil {
+	if err := syncEngine.RegisterScope("stops", stopsSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("pod", dispatch.NewPODSyncStore(pool, link)); err != nil {
+	if err := syncEngine.RegisterScope("pod", podSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -313,15 +362,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// rest exactly as the module hashes its own), purchase_orders over
 	// the purchasing module's own purchasing_pos (the contract's PO
 	// surface), cycle_counts over the invcount module's own
-	// count_sheets (manual, never overwriting). The messaging trio
-	// (messages, acks, notify_prefs) stays unwired: the frozen schema
-	// gives those tables no org column (an org fence cannot be proven,
-	// and the GLOBAL channels cross orgs) and the two per-user tables
-	// composite keys with no uuid row id the engine's update and
-	// delete legs address, which is the D26 schema-shaped stop
-	// condition reported to the supervisor rather than routed around;
-	// all three routes answer the honest 501, pinned by test.
-	boardStops := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link)
+	// count_sheets (manual, never overwriting).
+	boardStops := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
 	if err := syncEngine.RegisterScope("quotes", quote.NewSyncStore(pool, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
@@ -348,6 +390,27 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("cycle_counts", invcount.NewSyncStore(pool, invCountAdapter{svc: inventorySvc}, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+
+	// The messaging feeds (House Messages core, roles roadmap Lane E):
+	// messages, acks and notify_prefs beside the pull-only channels
+	// scope registered with the reference caches below, over the
+	// messaging module's own tables. The Phase D stop (no org column on
+	// these tables, the GLOBAL channels crossing orgs, and the two
+	// per-user tables' composite keys) is closed by 0385's feed keys
+	// and by the fence the stores prove, which is stronger than an org
+	// predicate: every read resolves the caller's linked ERP user and
+	// answers only that user's own world (its channels and their
+	// messages, its own acks and prefs), so a row outside the caller's
+	// membership is the same as absent whatever org it belongs to.
+	if err := syncEngine.RegisterScope("messages", messaging.NewMessagesSyncStore(messagingRepo, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("acks", messaging.NewAcksSyncStore(messagingRepo, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("notify_prefs", messaging.NewNotifyPrefsSyncStore(messagingRepo, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -379,13 +442,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// class's org; trucks and drivers fence through the branch; the
 	// warranty pair is two projections over the one claims feed;
 	// widget_measures is the caller's own Home configuration; projects,
-	// payment_methods and aging are the tenant's reads. channels and
-	// tracking_events stay unwired: the D26 schema-shaped stops the lane
-	// reported (msg_channels carries no org column under a
-	// derived-membership model; no table carries the contractor's
-	// tracking events). tracking_events answers 501 on both routes;
-	// channels is pull-only in the registry and unwired, so its GET
-	// answers 501 while its POST meets the pull-only 400 first.
+	// payment_methods and aging are the tenant's reads. channels is the
+	// messaging module's own pull-only feed (0385 and the stores in
+	// internal/messaging/syncscope.go): the caller's rooms, membership
+	// fenced, the stronger-than-org fence the messaging feeds carry.
+	// tracking_events stays unwired (the D26 schema-shaped stop the lane
+	// reported: no table carries the contractor's tracking events), so
+	// it answers 501 on both routes.
 	if err := syncEngine.RegisterScope("products", product.NewProductsStore(pool)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
@@ -405,6 +468,9 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("vendors", purchasing.NewVendorsStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("channels", messaging.NewChannelsSyncStore(messagingRepo, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("parked_tickets", pos.NewParkedTicketsStore(pool)); err != nil {
@@ -491,6 +557,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithAuditTrail(auditSvc).
 		WithAudit(auditSvc).
 		WithLogger(log)
+	// The door money fence (ruling 113): the payment hold's figure and the gate's own sentence ride
+	// only to a caller on the configuration's cost and margin list (dispatch/cost_gate.go), the same
+	// rule the stock reads and the yard payloads answer through.
+	dispatchSvc.WithCostRoles(spine.roleCfg)
+	if !dispatchSvc.CostRolesWired() {
+		panic("dispatch: cost roles not wired - the payment hold would answer the door money figure to every caller")
+	}
 	dispatchHandler := dispatch.NewHandler(dispatchSvc, log).WithUserLinker(link)
 	dispatchHandler.RegisterRoutes(r, g)
 	dispatchHandler.RegisterPublicRoutes(r)
@@ -513,7 +586,9 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	}
 	yardTasksSvc := tasks.NewService(yardRepo).
 		WithOrderReader(orderReaderAdapter{repo: orderRepo}).
-		WithChatNotifier(yardChatNotifier{svc: messagingSvc, log: log}).
+		// N2 (PR 302 round 2): the yard notice fence asks SeesCostAndMargin
+		// for every figure decision, the same X3 rule cost_gate reads.
+		WithChatNotifier(yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}).
 		WithPickSource(newDispatchPickSource(pool, orderRepo, log)).
 		WithLogger(log)
 	yardTasksSvc.
@@ -525,7 +600,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
 	// The delivery road asks billing, the owner of the deposit documents, to release them (deposit_release.go).
 	orderSvc.WithDepositReleaser(billing.NewInvoiceWriter(pool))
-	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log}})
+	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
 	// Item 9 Opus P2-1: the yard's doors (Claim, Stage) carry the pick hold
 	// the will call doors carry, over the same billing read, with the boot
@@ -534,7 +609,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if !yardTasksSvc.PickHoldCheckWired() {
 		panic("tasks: yard pick hold check not wired - a pay before release order's task could be claimed and staged unpaid")
 	}
-	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterYardRoutes(r, g)
+	// The yard fence's money half: a held ticket's still owed figure and the skid answer's deposit
+	// pair ride only for a caller on the configuration's cost and margin list (tasks/cost_gate.go).
+	yardHandler := tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).WithCostRoles(spine.roleCfg)
+	if !yardHandler.CostRolesWired() {
+		panic("tasks: cost roles not wired - the yard payloads would answer the still owed and deposit figures to every caller")
+	}
+	yardHandler.RegisterYardRoutes(r, g)
 	tasks.NewHandler(yardTasksSvc, log).WithUserLinker(link).RegisterWeightRoutes(r, g)
 
 	// The rail's HTTP surface (the A3 ownership ruling): the staff
@@ -717,11 +798,24 @@ func (a taskChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEvent
 }
 
 // yardChatNotifier is taskChatNotifier reading ref.Audience and routing
-// accordingly: yard events to the branch yard channel, counter events to
-// the counter channel with the yard channel and #office as fallbacks.
+// accordingly: yard events to the branch yard channel, counter events to the
+// counter channel with the yard channel and #office as fallbacks.
 type yardChatNotifier struct {
-	svc *messaging.Service
-	log *slog.Logger
+	svc       yardChatMessenger
+	log       *slog.Logger
+	figuresOK func(role string) (bool, error)
+}
+
+// yardChatMessenger is the messaging seam yardChatNotifier reads: the yard
+// channel for a branch, the channel post and the order rep routing, which
+// picks the body for the rep it routes to (PR 302 round 3, P2-1).
+// *messaging.Service satisfies it; the notice fence's untagged legs
+// (yard_notice_fence_test.go) drive the routing with a double that routes as
+// messaging does, and the rep DM integration legs drive the real service.
+type yardChatMessenger interface {
+	YardSlugForBranch(ctx context.Context, branchID string) (string, error)
+	PostEventToChannelSlug(ctx context.Context, slug, eventKey, body string, ref messaging.EventRef, requiresAck bool) (messaging.Message, bool, error)
+	NotifyOrderRep(ctx context.Context, in messaging.OrderRepNotice) (messaging.OrderRepResult, error)
 }
 
 func (a yardChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEventRef) error {
@@ -761,45 +855,138 @@ func (a yardChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEvent
 // because the order has no sales rep, so a reader knows why it arrived there.
 const orderRepFallbackNote = "No sales rep is on this order, so this came to the counter. "
 
+// unreachableRepNote is the same sentence for a notice whose rep route itself failed.
+const unreachableRepNote = "The sales rep could not be reached, so this came to the counter. "
+
+// orderRepFallbackRoute is one fallback channel for an order rep notice, with the body it may
+// carry. The figures flag is decided by the cost and margin rule (N2, PR 302
+// round 2), not a hardcoded `true`: the counter channel (#sales-<branch>,
+// BRANCH scope narrowed to the OUTSIDE_SALES role) seats the sales floor
+// alone by derivation, so its figures ride only when SeesCostAndMargin says
+// yes for OUTSIDE_SALES; #office (GLOBAL, every active staff member) and the
+// yard channel (#yard-<branch>, BRANCH, every role granted the branch) seat
+// off list readers by construction, so their copies carry the figureless
+// words in every configuration (ruling 91: a figure never reaches an off
+// list role, in cents or in words). An error reading the rule fails closed
+// to the figureless copy.
+type orderRepFallbackRoute struct {
+	slug    string
+	figures bool
+}
+
+// counterAudienceRole is the canonical role id the counter channel seats
+// by derivation (the SyncMembership derived rule's auto_role on the seeded
+// #sales-<branch> channels in migration 0076 reads "OUTSIDE_SALES", the
+// ERP-coded form of `outside_sales`). The rule is asked the canonical form
+// because roleconfig.IsRole and SeesCostAndMargin answer against the
+// carried vocabulary's lowercase canonical ids. A dealer that takes the
+// counter's audience off the list flips the counter copy to figureless
+// (N2's fail open direction, closed by the rule).
+const counterAudienceRole = "outside_sales"
+
+// orderRepFallbackRoutes builds the chain in order: the counter channel, then #office, then the
+// yard channel. The figures flag is computed by the cost and margin rule
+// (N2); counterFigures may be false when the dealer takes the counter's
+// audience off the list, in which case every channel in the chain carries
+// the figureless twin.
+func orderRepFallbackRoutes(yardSlug string, counterFigures bool) []orderRepFallbackRoute {
+	routes := []orderRepFallbackRoute{{slug: yardCounterFallbackSlug}}
+	if counter := tasks.CounterSlugForYardSlug(yardSlug); counter != "" {
+		routes = append([]orderRepFallbackRoute{{slug: counter, figures: counterFigures}}, routes...)
+	}
+	return append(routes, orderRepFallbackRoute{slug: yardSlug})
+}
+
+// roleAllowed is the yard notice fence's SeesCostAndMargin read, fail closed
+// on every leg but a resolved yes. Wired at the composition root from the
+// same roleCfg the dispatch and yard fences read; the rule is the one X3
+// predicate, never a second rule that can drift.
+func roleAllowed(ask func(role string) (bool, error), role string) bool {
+	if ask == nil || role == "" {
+		return false
+	}
+	ok, err := ask(role)
+	return err == nil && ok
+}
+
 // postOrderRepNotice delivers a yard change on an order to the order's sales rep through the
 // messaging module's rep routing (the order's override, then its own salesperson, then the
-// customer's rep). With no rep it falls back to the branch counter and yard channels and says so in
-// the message. A rep lookup that fails is the same fallback with its own sentence: the notice must
-// arrive somewhere a person reads it.
+// customer's rep). N2 (PR 302 round 2) asks the cost and margin rule for
+// every figure decision, with two independent decisions:
+//   - the rep DM body: figures ride only when the role of the rep the DM goes
+//     to is on the list (messaging decides once it has resolved that rep, so
+//     an order override, the salesperson and the customer's rep are each
+//     judged on their own role); otherwise the figureless twin rides (the
+//     rep DM still happens, just without the figure, so a rep knows what
+//     changed)
+//   - the counter channel copy: figures ride only when OUTSIDE_SALES is on
+//     the list (the channel's derived audience)
+//
+// The two decisions do not bleed: a ref whose rep DM goes figureless still
+// posts the figured body to the counter when the rule admits it, because the
+// counter's audience is the cost and margin rule on OUTSIDE_SALES, not the
+// notice's rep. With no rep, the rep route failed, or the rule refused at
+// either decision point, the notice falls through to the chain. Each copy
+// is worded for the channel it lands in (orderRepFallbackRoute): the notice
+// must arrive somewhere a person reads it, and the figures must not arrive
+// where an off list role reads them. "Figureless on error or no", every
+// error path leaves the figure in the figureless twin rather than letting
+// it ride to a reader the rule has not admitted.
 func (a yardChatNotifier) postOrderRepNotice(ctx context.Context, ref tasks.TaskEventRef, yardSlug string) error {
-	fallback := []string{yardCounterFallbackSlug}
-	if counter := tasks.CounterSlugForYardSlug(yardSlug); counter != "" {
-		fallback = append([]string{counter}, fallback...)
-	}
-	fallback = append(fallback, yardSlug)
+	// The counter route's figure decision (N2, OUTSIDE_SALES today).
+	counterFigures := roleAllowed(a.figuresOK, counterAudienceRole)
+	// The rep DM's figure decision is made by messaging once it knows which
+	// rep the DM goes to (the order's override, the salesperson, then the
+	// customer's rep): it gets both bodies and the rule, never a guess here
+	// about whose DM it is.
 	in := messaging.OrderRepNotice{
 		CustomerID: ref.CustomerID, OrderID: ref.OrderID, OrderRepUserID: ref.RepUserID,
-		EventKey: ref.EventKey, Body: ref.Summary,
-		Ref:           messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: ref.Summary},
-		FallbackSlugs: fallback, FallbackPrefix: orderRepFallbackNote,
+		EventKey: ref.EventKey, Body: ref.Summary, BodyNoFigures: ref.SummaryNoFigures,
+		RoleSeesFigures: func(role string) bool { return roleAllowed(a.figuresOK, role) },
+		Ref:             messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: ref.Summary},
 	}
-	if _, err := a.svc.NotifyOrderRep(ctx, in); err != nil {
+	res, err := a.svc.NotifyOrderRep(ctx, in)
+	if err == nil && res.Kind == messaging.RouteRepDM {
+		return nil
+	}
+	prefix := orderRepFallbackNote
+	if err != nil {
 		if a.log != nil {
 			a.log.Warn("yard: order rep notice failed, sending to the counter", "order", ref.OrderID, "err", err)
 		}
-		in.OrderRepUserID, in.CustomerID = "", ""
-		return a.fallbackOrderNotice(ctx, in)
+		prefix = unreachableRepNote
 	}
-	return nil
+	return a.fallbackOrderNotice(ctx, ref, orderRepFallbackRoutes(yardSlug, counterFigures), prefix)
 }
 
-// fallbackOrderNotice posts the notice to the counter with a sentence that says the rep could not
-// be reached, after the rep route itself failed.
-func (a yardChatNotifier) fallbackOrderNotice(ctx context.Context, in messaging.OrderRepNotice) error {
+// fallbackOrderNotice posts the notice to the first reachable fallback channel, wording each
+// copy for the channel it lands in. Every channel with figures=false carries
+// ref.SummaryNoFigures (the figureless twin, computed upstream); the rest
+// carry ref.Summary verbatim. Office and yard always sit on figures=false
+// here; the counter is the only one whose figures flag the rule sets, and
+// when OUTSIDE_SALES is off the list every channel in the chain is figureless
+// (N2). A body with no figureless twin carries its own words everywhere: it
+// names no figure to begin with.
+func (a yardChatNotifier) fallbackOrderNotice(ctx context.Context, ref tasks.TaskEventRef, routes []orderRepFallbackRoute, prefix string) error {
+	plain := ref.SummaryNoFigures
+	if plain == "" {
+		plain = ref.Summary
+	}
 	var lastErr error
-	for _, slug := range in.FallbackSlugs {
-		body := "The sales rep could not be reached, so this came to the counter. " + in.Body
-		ref := in.Ref
-		ref.Summary = body
-		if _, _, err := a.svc.PostEventToChannelSlug(ctx, slug, in.EventKey, body, ref, false); err == nil {
+	for _, r := range routes {
+		body := ref.Summary
+		if !r.figures {
+			body = plain
+		}
+		body = prefix + body
+		eref := messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: body}
+		if _, _, err := a.svc.PostEventToChannelSlug(ctx, r.slug, ref.EventKey, body, eref, false); err == nil {
 			return nil
 		} else {
 			lastErr = err
+			if a.log != nil {
+				a.log.Warn("yard: channel post failed, trying the next route", "slug", r.slug, "topic", ref.Topic, "err", err)
+			}
 		}
 	}
 	return lastErr
@@ -1468,6 +1655,23 @@ func (a inv470OnOrder) OutstandingOnOrderBase(ctx context.Context, branchID stri
 	out := make([]inventory.OnOrderQty, len(rows))
 	for i, r := range rows {
 		out[i] = inventory.OnOrderQty{ProductID: r.ProductID, BranchID: r.BranchID, QtyBase: r.QtyBase}
+	}
+	return out, nil
+}
+
+// invDraftPOs satisfies inventory.DraftPOReader over purchasing's open draft read: the draft a
+// worklist row points at ("drafted, not placed"). A draft is not on order, so it is not in the
+// aggregate above; it rides beside it as a pointer.
+type invDraftPOs struct{ svc *purchasing.Service }
+
+func (a invDraftPOs) OpenDraftsFor(ctx context.Context, branchID string, productIDs []string) ([]inventory.DraftPO, error) {
+	rows, err := a.svc.OpenDraftsFor(ctx, branchID, productIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]inventory.DraftPO, len(rows))
+	for i, r := range rows {
+		out[i] = inventory.DraftPO{ProductID: r.ProductID, BranchID: r.BranchID, POID: r.POID, PONo: r.PONo}
 	}
 	return out, nil
 }

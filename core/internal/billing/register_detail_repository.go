@@ -177,7 +177,7 @@ func (r *Repository) AccountPositionFor(ctx context.Context, asOf time.Time, cus
 		   FROM customers c
 		   LEFT JOIN invoices i
 		          ON i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')
-		  WHERE c.id = $1::uuid`, customerID, asOf).
+		  WHERE c.id = $1::uuid`, customerID, houseClock(asOf)).
 		Scan(&a.OpenBalanceCents, &a.OverdueCents, &a.CreditLimitCents); err != nil {
 		return AccountPosition{}, fmt.Errorf("billing: account position: %w", err)
 	}
@@ -264,7 +264,10 @@ func (r *Repository) OrderFactsFor(ctx context.Context, orderID string) (orderNo
 // (0175), the payments applied, the delivery, and the promise/dispute rows. One UNION rather than
 // four round trips, ordered newest-first by the database so the screen never sorts money-adjacent
 // facts in JavaScript.
-func (r *Repository) ActivityFor(ctx context.Context, invoiceID, orderID string) ([]ActivityEntry, error) {
+//
+// withPayments admits the PAYMENT rows. Left out is left out in the query itself (so the forty row
+// limit counts only what the caller may see), never blanked afterwards.
+func (r *Repository) ActivityFor(ctx context.Context, invoiceID, orderID string, withPayments bool) ([]ActivityEntry, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
@@ -294,7 +297,7 @@ func (r *Repository) ActivityFor(ctx context.Context, invoiceID, orderID string)
 		      FROM payment_allocations pa
 		      JOIN payments p ON p.id = pa.payment_id
 		      LEFT JOIN users u ON u.id = COALESCE(pa.allocated_by, p.received_by)
-		     WHERE pa.invoice_id = $1::uuid
+		     WHERE pa.invoice_id = $1::uuid AND $3::bool
 		    UNION ALL
 		    -- the delivery that earned the invoice
 		    SELECT 'DELIVERED', s.pod_at, s.pod_received_by, 0, COALESCE(u.display_name,'')
@@ -312,7 +315,7 @@ func (r *Repository) ActivityFor(ctx context.Context, invoiceID, orderID string)
 		) t
 		WHERE at IS NOT NULL
 		ORDER BY at DESC
-		LIMIT 40`, invoiceID, orderID)
+		LIMIT 40`, invoiceID, orderID, withPayments)
 	if err != nil {
 		return nil, fmt.Errorf("billing: read activity: %w", err)
 	}

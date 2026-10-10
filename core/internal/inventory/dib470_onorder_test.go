@@ -32,7 +32,7 @@ type fakeShortfallStore struct {
 	err        error
 }
 
-func (f *fakeShortfallStore) ShortfallWorklist(_ context.Context, branchID string, limit int, onOrder []OnOrderQty) ([]ShortfallRow, error) {
+func (f *fakeShortfallStore) ShortfallWorklist(_ context.Context, branchID string, _ BranchReach, limit int, onOrder []OnOrderQty) ([]ShortfallRow, error) {
 	f.gotOnOrder, f.gotBranch, f.gotLimit = onOrder, branchID, limit
 	if f.err != nil {
 		return nil, f.err
@@ -107,7 +107,7 @@ func TestDIB470_BLU60_160PCOutstandingStopsTheSuggestion(t *testing.T) {
 		{ProductID: blu60, BranchID: trt470, QtyBase: 60},  // #PO-TRT-3
 	}})
 
-	wl, err := svc.ShortfallWorklist(context.Background(), trt470, 200)
+	wl, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, trt470, 200)
 	if err != nil {
 		t.Fatalf("worklist: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestDIB470_OnOrderIsSummedAcrossOpenOrders(t *testing.T) {
 		{ProductID: blu60, BranchID: trt470, QtyBase: 60},
 	}})
 
-	wl, err := svc.ShortfallWorklist(context.Background(), trt470, 200)
+	wl, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, trt470, 200)
 	if err != nil || len(wl.Rows) != 1 {
 		t.Fatalf("want one short row, got %d (err %v)", len(wl.Rows), err)
 	}
@@ -162,7 +162,7 @@ func TestDIB470_QuantitiesAreBaseUnitsNotSellUnits(t *testing.T) {
 	svc, _ := newWorklistSvc([]ShortfallRow{line})
 	svc.WithOnOrderReader(&fakeOnOrder{rows: []OnOrderQty{{ProductID: blu60, BranchID: trt470, QtyBase: 160}}})
 
-	wl, err := svc.ShortfallWorklist(context.Background(), trt470, 200)
+	wl, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, trt470, 200)
 	if err != nil || len(wl.Rows) != 1 {
 		t.Fatalf("want one row, got %d (err %v)", len(wl.Rows), err)
 	}
@@ -182,7 +182,7 @@ func TestDIB470_TheSeamIsAskedAboutTheBranchTheWorklistIsShowing(t *testing.T) {
 	seam := &fakeOnOrder{}
 	svc.WithOnOrderReader(seam)
 
-	if _, err := svc.ShortfallWorklist(context.Background(), trt470, 200); err != nil {
+	if _, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, trt470, 200); err != nil {
 		t.Fatalf("worklist: %v", err)
 	}
 	if seam.gotBranch != trt470 {
@@ -193,7 +193,7 @@ func TestDIB470_TheSeamIsAskedAboutTheBranchTheWorklistIsShowing(t *testing.T) {
 	}
 
 	// And the cross-branch worklist asks a cross-branch question.
-	if _, err := svc.ShortfallWorklist(context.Background(), "", 200); err != nil {
+	if _, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, "", 200); err != nil {
 		t.Fatalf("worklist: %v", err)
 	}
 	if seam.gotBranch != "" {
@@ -209,13 +209,13 @@ func TestDIB470_TheSeamIsAskedAboutTheBranchTheWorklistIsShowing(t *testing.T) {
 func TestDIB470_TheStoreIsHandedTheClampedLimit(t *testing.T) {
 	svc, st := newWorklistSvc(nil)
 	svc.WithOnOrderReader(&fakeOnOrder{})
-	if _, err := svc.ShortfallWorklist(context.Background(), trt470, 0); err != nil {
+	if _, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, trt470, 0); err != nil {
 		t.Fatalf("worklist: %v", err)
 	}
 	if st.gotLimit != 200 {
 		t.Fatalf("limit = %d, want the 200 default", st.gotLimit)
 	}
-	if _, err := svc.ShortfallWorklist(context.Background(), trt470, 9000); err != nil {
+	if _, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, trt470, 9000); err != nil {
 		t.Fatalf("worklist: %v", err)
 	}
 	if st.gotLimit != 200 {
@@ -232,7 +232,7 @@ func TestDIB470_OnOrderIsMatchedPerBranch(t *testing.T) {
 	// Everything is on order at TRENTON; Kingston has nothing coming.
 	svc.WithOnOrderReader(&fakeOnOrder{rows: []OnOrderQty{{ProductID: blu60, BranchID: trt470, QtyBase: 160}}})
 
-	wl, err := svc.ShortfallWorklist(context.Background(), "", 200)
+	wl, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, "", 200)
 	if err != nil {
 		t.Fatalf("worklist: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestDIB470_OnOrderIsMatchedPerBranch(t *testing.T) {
 func TestDIB470_UnboundSeamGradesWithZeroAndSaysSo(t *testing.T) {
 	svc, st := newWorklistSvc([]ShortfallRow{blu60Line()})
 
-	wl, err := svc.ShortfallWorklist(context.Background(), trt470, 200)
+	wl, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, trt470, 200)
 	if err != nil {
 		t.Fatalf("worklist: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestDIB470_ABoundSeamThatFailsIsAnError(t *testing.T) {
 	svc, _ := newWorklistSvc([]ShortfallRow{blu60Line()})
 	svc.WithOnOrderReader(&fakeOnOrder{err: errors.New("purchasing: connection refused")})
 
-	if _, err := svc.ShortfallWorklist(context.Background(), trt470, 200); err == nil {
+	if _, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, trt470, 200); err == nil {
 		t.Fatal("a failing on-order seam produced a worklist instead of an error")
 	}
 }
@@ -293,7 +293,7 @@ func TestDIB470_CreatePOFromShortfallUsesTheSameGradedRows(t *testing.T) {
 	svc, _ := newWorklistSvc([]ShortfallRow{blu60Line()})
 	svc.WithOnOrderReader(&fakeOnOrder{rows: []OnOrderQty{{ProductID: blu60, BranchID: trt470, QtyBase: 160}}})
 
-	_, _, _, err := svc.CreatePOFromShortfall(context.Background(), trt470, []string{blu60})
+	_, _, _, err := svc.CreatePOFromShortfall(context.Background(), BranchReach{Global: true}, trt470, []string{blu60})
 	if err == nil {
 		t.Fatal("a product that is no longer short was drafted onto a purchase order anyway")
 	}

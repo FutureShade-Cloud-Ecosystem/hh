@@ -67,6 +67,25 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		}
 		return rsp
 	}
+	// postWith is the burst leg's post: it carries a Cookie header the
+	// test names, so the burst mints under its own fresh visitor key and
+	// never spends the address key the earlier persona mints share.
+	postWith := func(path, body string, headers map[string]string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, base+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("build POST %s: %v", path, err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rsp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("POST %s: %v", path, err)
+		}
+		return rsp
+	}
 	body := func(rsp *http.Response) string {
 		t.Helper()
 		raw, err := io.ReadAll(rsp.Body)
@@ -77,8 +96,8 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, four flows, the contract's three
-	// fields, the labels the entry pages render.
+	// The flow listing: the closed table, seven flows, the contract's three
+	// fields, the labels the entry page renders.
 	flowsRsp := get("/api/v1/demo/flows", nil)
 	if flowsRsp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/v1/demo/flows: status %d, want 200 (body: %s)", flowsRsp.StatusCode, body(flowsRsp))
@@ -93,14 +112,17 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if err := json.Unmarshal([]byte(body(flowsRsp)), &listing); err != nil {
 		t.Fatalf("the flows body does not decode: %v", err)
 	}
-	if len(listing.Flows) != 4 {
-		t.Fatalf("the listing carries %d flows, want the closed table's four", len(listing.Flows))
+	if len(listing.Flows) != 7 {
+		t.Fatalf("the listing carries %d flows, want the closed table's seven", len(listing.Flows))
 	}
 	for i, want := range []struct{ flow, role, label string }{
 		{"sales", "inside_sales", "Sales"},
 		{"sales-manager", "sales_manager", "Sales manager"},
 		{"yard-team", "yard_team", "Yard Team"},
 		{"driver", "driver", "Driver"},
+		{"payables-receivables", "payables_receivables", "Payables and Receivables"},
+		{"procurement-manager", "procurement_manager", "Procurement manager"},
+		{"financial-controller", "financial_controller", "Financial Controller"},
 	} {
 		if listing.Flows[i].Flow != want.flow || listing.Flows[i].RoleCode != want.role ||
 			listing.Flows[i].Label != want.label {
@@ -192,6 +214,39 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	}
 	if manager.User.Tier != 2 {
 		t.Errorf("the manager tier is %d, want the resolver's answer (2)", manager.User.Tier)
+	}
+
+	// The buyer flow mints the Buying and Stock login: a branch scoped
+	// manager whose one wall the roadmap names is the vendor bill post,
+	// and the credential is the flow table's own account. The mint sits
+	// before the burst loop, on the same address key the till's pair
+	// (sales, sales-manager) just spent; the burst loop that follows
+	// carries its own fresh visitor cookie, so the five pre-burst mints
+	// on the address key (sales, sales-manager, buyer, yard, driver) do
+	// not share the burst's key and the burst still has its full
+	// DefaultBurstAllowance of unspent admissions to exercise the limit.
+	buyerRsp := post("/api/v1/demo/session", `{"flow":"procurement-manager"}`)
+	if buyerRsp.StatusCode != http.StatusOK {
+		t.Fatalf("the buyer mint: status %d, want 200 (body: %s)", buyerRsp.StatusCode, body(buyerRsp))
+	}
+	var buyer struct {
+		Token string `json:"token"`
+		User  struct {
+			UserID   string `json:"user_id"`
+			RoleCode string `json:"role_code"`
+			Tier     int    `json:"tier"`
+			Scope    string `json:"scope"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal([]byte(body(buyerRsp)), &buyer); err != nil {
+		t.Fatalf("the buyer body does not decode: %v", err)
+	}
+	if buyer.User.UserID != "de64b000-0000-4000-9000-000000000001" ||
+		buyer.User.RoleCode != "procurement_manager" || buyer.User.Scope != "BRANCH" {
+		t.Errorf("the buyer credential is %+v, want the flow table's branch scoped buyer", buyer.User)
+	}
+	if buyer.User.Tier != 2 {
+		t.Errorf("the buyer tier is %d, want the resolver's answer (2)", buyer.User.Tier)
 	}
 
 	// A flow outside the closed table is refused by the table, before the
@@ -338,11 +393,17 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 
 	// A burst from this address is refused: hammer the mint until the
 	// limit answers, and hold that everything before the refusal minted
-	// and the refusal itself did not.
+	// and the refusal itself did not. The burst carries its own fresh
+	// visitor cookie, so the five earlier persona mints on the bare
+	// address key (they posted without one) do not share the burst's
+	// key: the burst sits at allowance unspent when it starts, admits
+	// DefaultBurstAllowance mints, and the next iteration is the
+	// refusal. The address ceiling of 40 still covers the run.
+	burstCookie := "demo_visitor=" + fmt.Sprintf("%032x", uint64(time.Now().UnixNano()))
 	burstMinted := 0
 	refused := false
 	for i := 0; i < DefaultBurstAllowance*3; i++ {
-		rsp := post("/api/v1/demo/session", `{"flow":"sales"}`)
+		rsp := postWith("/api/v1/demo/session", `{"flow":"sales"}`, map[string]string{"Cookie": burstCookie})
 		raw := body(rsp)
 		if rsp.StatusCode == http.StatusOK {
 			burstMinted++
@@ -380,8 +441,8 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		`SELECT count(*) FROM audit_log WHERE action = 'DEMO_SESSION_MINTED'`).Scan(&rows); err != nil {
 		t.Fatalf("the audit read failed: %v", err)
 	}
-	if rows != 4+burstMinted {
-		t.Errorf("audit_log holds %d DEMO_SESSION_MINTED rows, want one per minted session (%d)", rows, 4+burstMinted)
+	if rows != 5+burstMinted {
+		t.Errorf("audit_log holds %d DEMO_SESSION_MINTED rows, want one per minted session (%d)", rows, 5+burstMinted)
 	}
 	var namedActors int
 	if err := pool.QueryRow(ctx, `
@@ -389,12 +450,14 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		 WHERE action = 'DEMO_SESSION_MINTED'
 		   AND entity_type = 'demo.session'
 		   AND actor_id::text IN ('de110000-0000-4000-9000-000000000001', 'de110000-0000-4000-9000-000000000002',
-		                          'd0200000-0000-4000-9000-000000000002', 'd0200000-0000-4000-9000-000000000003')`).Scan(&namedActors); err != nil {
+		                          'd0200000-0000-4000-9000-000000000002', 'd0200000-0000-4000-9000-000000000003',
+		                          'de64b000-0000-4000-9000-000000000001')`).Scan(&namedActors); err != nil {
 		t.Fatalf("the audit actor read failed: %v", err)
 	}
 	if namedActors != rows {
 		t.Errorf("%d of %d trail rows name a demo role account, want every one", namedActors, rows)
 	}
+
 	var coarseRows int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM audit_log

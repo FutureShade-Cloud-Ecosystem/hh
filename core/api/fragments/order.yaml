@@ -1422,7 +1422,7 @@ paths:
         from the same list as a short pick is required on every change; OTHER also
         needs a note. The same count again is not a change (changed is false). The
         skid deposit that follows the count is recorded, not billed; the response
-        carries it before and after. The caller must reach the task's branch (403
+        carries it before and after to a role on the cost and margin list only. The caller must reach the task's branch (403
         otherwise). Refused with 409 when the order's status cannot take it.
       x-role: requireStaff
       x-access:
@@ -2670,7 +2670,10 @@ components:
         still_owed_cents:
           type: integer
           format: int64
-          description: The money the order still owes under the hold; absent when nothing
+          description: >-
+            The money the order still owes under the hold. Carried only to a
+            role on the cost and margin list and absent for every other role
+            and when nothing is owed; the hold mark and its words stay.
 
     TaskShortage:
       type: object
@@ -2814,12 +2817,18 @@ components:
 
     TaskRecordSkidsResult:
       type: object
-      required: [skid_count, previous_skid_count, deposit_cents, previous_deposit_cents, changed, order_no]
+      required: [skid_count, previous_skid_count, changed, order_no]
       properties:
         skid_count: { type: integer, format: int32 }
         previous_skid_count: { type: [integer, "null"], format: int32 }
-        deposit_cents: { type: integer, format: int64 }
-        previous_deposit_cents: { type: integer, format: int64 }
+        deposit_cents:
+          type: integer
+          format: int64
+          description: Carried only to a role on the cost and margin list; absent for every other role
+        previous_deposit_cents:
+          type: integer
+          format: int64
+          description: Carried only to a role on the cost and margin list; absent for every other role
         changed: { type: boolean }
         order_no: { type: string }
 
