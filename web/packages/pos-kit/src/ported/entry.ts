@@ -31,7 +31,6 @@ export const COMING_ROLES: readonly string[] = [
   "Yard Team",
   "Yard Manager",
   "Logistics Manager",
-  "Driver",
   "Branch Manager",
   "Procurement Manager",
   "Payables and Receivables",
