@@ -1,0 +1,26 @@
+{
+  "name": "@hardscapehouse/buying-and-stock",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Buying and Stock: the procurement slice (shortfall, purchase orders, vendors). HosAppHeader, demo handoff, Lit 3, Vite, TypeScript, typecheck and test scripts.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/sinks.test.mjs test/po-logic.test.mjs test/stub-contract.test.mjs && playwright test && playwright test -c test/acceptance.config.ts"
+  },
+  "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
+    "@hardscapehouse/auth": "0.0.0",
+    "@hardscapehouse/design-system": "0.0.0",
+    "@hardscapehouse/pos-kit": "0.0.0",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
+  }
+}
