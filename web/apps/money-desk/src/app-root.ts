@@ -37,6 +37,10 @@ const DEMO_ORG = "hh-demo";
 // role lands on the receivables desk (src/ar); the controller reaches it from the area switch.
 const CONTROLLER_ROLE = "financial_controller";
 
+// The demo flows whose modules include the Money Desk. The core lists its whole closed table (the till's pair
+// too); the app's own way in offers only the roles that can use it, as the till's entry offers only its pair.
+const MONEY_DESK_FLOWS: readonly string[] = ["payables-receivables", "financial-controller"];
+
 export class MoneyDeskApp extends HHElement {
   static styles = [baseStyles, entryStyles, arStyles, glStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
@@ -260,7 +264,7 @@ export class MoneyDeskApp extends HHElement {
     this.requestUpdate();
     const result = await (this.#demoAccount as DemoAccount).listFlows();
     if (result.ok) {
-      this.#entryView = { flows: { kind: "ready", flows: result.value }, busy: false, message: null };
+      this.#entryView = { flows: { kind: "ready", flows: result.value.filter((f) => f.flow !== undefined && MONEY_DESK_FLOWS.includes(f.flow)) }, busy: false, message: null };
     } else {
       this.#entryView = { flows: { kind: "unavailable", status: null }, busy: false, message: null };
     }
