@@ -426,7 +426,7 @@ function shortageSheet(model: PickModel): TemplateResult | typeof nothing {
         ?disabled=${model.busy}
         aria-label="Say what happened, when the reason is Something else"
       ></textarea>
-      <p class="sheet-banner" data-sheet-banner>The line is backordered and the order's rep is told.</p>
+      <p class="sheet-banner" data-sheet-banner>When you send, the line is backordered and the order's rep is told.</p>
       <div class="actions">
         <button type="button" class="btn btn-primary big" data-action="send-shortage" data-line-no=${line.line_no} ?disabled=${model.busy} data-tap>Report short pick</button>
         <button type="button" class="btn btn-secondary big" data-action="close-sheet" ?disabled=${model.busy} data-tap>Cancel</button>

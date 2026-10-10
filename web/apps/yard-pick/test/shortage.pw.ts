@@ -56,7 +56,7 @@ test("the shortage sheet is the board's: the asked and short figures, radio rows
   // The note field is labelled on the sheet itself.
   await expect(sheet.getByPlaceholder("Note for the counter (optional)")).toBeVisible();
   // The banner says what sending does, in the board's words.
-  await expect(sheet.locator("[data-sheet-banner]")).toContainText("The line is backordered and the order's rep is told.");
+  await expect(sheet.locator("[data-sheet-banner]")).toContainText("When you send, the line is backordered and the order's rep is told.");
   await page.getByRole("button", { name: "Report short pick" }).click();
   await expect(page.locator("[data-error]")).toContainText("Give the reason.");
   await page.getByRole("radio", { name: "Not enough on the yard" }).click();

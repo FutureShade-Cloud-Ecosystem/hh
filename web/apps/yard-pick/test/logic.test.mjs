@@ -185,6 +185,13 @@ test("the screens draw the reasons as radio rows from the closed list, and no re
   assert.ok(!viewsSource.includes("<option"), "a reason select survived: the reasons are radio rows now");
 });
 
+test("the shortage sheet banner reads in future tense, telling the picker what sending does", () => {
+  assert.ok(
+    viewsSource.includes("When you send, the line is backordered and the order's rep is told."),
+    "the sheet banner uses future tense before send",
+  );
+});
+
 // ---- recording what was pulled ----
 
 test("short means the picked less the ordered, in the one place that decides it", () => {
