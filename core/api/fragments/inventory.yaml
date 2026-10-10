@@ -1269,7 +1269,7 @@ components:
     InventoryStockMove:
       type: object
       description: One immutable ledger line; corrections are compensating moves
-      required: [id, product_id, branch_id, qty_base, uom, direction, move_type, source_type, source_ref_id, unit_cost_cents, occurred_at]
+      required: [id, product_id, branch_id, qty_base, uom, direction, move_type, source_type, source_ref_id, occurred_at]
       properties:
         id: { type: string, format: uuid }
         product_id: { type: string, format: uuid }
@@ -1284,13 +1284,16 @@ components:
           enum: [RECEIPT, SHIP, COUNT, ADJUST, RETURN, TRANSFER]
         source_type: { type: string }
         source_ref_id: { type: string }
-        unit_cost_cents: { type: integer, format: int64 }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         occurred_at: { type: string, format: date-time }
 
     InventoryOnHand:
       type: object
       description: A product's on-hand and available at a branch/location; available_base may be negative, by design
-      required: [product_id, location_id, branch_id, on_hand_base, allocated_base, available_base, avg_cost_cents]
+      required: [product_id, location_id, branch_id, on_hand_base, allocated_base, available_base]
       properties:
         product_id: { type: string, format: uuid }
         location_id: { type: string, format: uuid }
@@ -1301,7 +1304,10 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
-          description: The branch weighted-average unit cost
+          description: >-
+            The branch weighted-average unit cost. Role gated by the dealer's
+            cost and margin list (X3): byte-absent for a caller off the list,
+            never a zero that reads as free.
 
     InventoryPendingFulfilment:
       type: object
@@ -1386,7 +1392,7 @@ components:
     InventoryBranchStock:
       type: object
       description: The four-bucket view of one product at one branch
-      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base, avg_cost_cents]
+      required: [product_id, branch_id, branch_code, branch_name, on_hand_base, reserved_base, in_transit_base, available_base, soft_held_base]
       properties:
         product_id: { type: string, format: uuid }
         branch_id: { type: string, format: uuid }
@@ -1405,12 +1411,18 @@ components:
         soft_held_base:
           type: number
           description: Advisory quote holds; shown but never subtracted from available_base
-        avg_cost_cents: { type: integer, format: int64 }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: >-
+            The branch weighted-average unit cost. Role gated by the dealer's
+            cost and margin list (X3): byte-absent for a caller off the list,
+            never a zero that reads as free.
 
     InventoryBrowseRow:
       type: object
       description: One product on the browse surface, with its stock position
-      required: [product_id, sku, name, manufacturer, collection, color_family, texture, product_size, sold_by, color, finish, application, is_featured, is_special_order, on_hand_base, reserved_base, available_base, in_transit_base, avg_cost_cents]
+      required: [product_id, sku, name, manufacturer, collection, color_family, texture, product_size, sold_by, color, finish, application, is_featured, is_special_order, on_hand_base, reserved_base, available_base, in_transit_base]
       properties:
         product_id: { type: string, format: uuid }
         sku: { type: string }
@@ -1430,7 +1442,13 @@ components:
         reserved_base: { type: number }
         available_base: { type: number }
         in_transit_base: { type: number }
-        avg_cost_cents: { type: integer, format: int64 }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: >-
+            The branch weighted-average unit cost. Role gated by the dealer's
+            cost and margin list (X3): byte-absent for a caller off the list,
+            never a zero that reads as free.
 
     InventoryFacetValue:
       type: object
@@ -1591,7 +1609,7 @@ components:
     InventoryTransferLine:
       type: object
       description: One product on a transfer, carrying both halves of the ship/receive pair
-      required: [id, line_no, product_id, sku, product_name, uom, qty_base, qty_shipped_base, qty_received_base, unit_cost_cents, ship_move_id, recv_move_id]
+      required: [id, line_no, product_id, sku, product_name, uom, qty_base, qty_shipped_base, qty_received_base, ship_move_id, recv_move_id]
       properties:
         id: { type: string, format: uuid }
         line_no: { type: integer, format: int32 }
@@ -1602,7 +1620,10 @@ components:
         qty_base: { type: number }
         qty_shipped_base: { type: number }
         qty_received_base: { type: number }
-        unit_cost_cents: { type: integer, format: int64 }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         ship_move_id: { type: string }
         recv_move_id: { type: string }
 
@@ -1657,7 +1678,7 @@ components:
     InventoryShortfallRow:
       type: object
       description: One line of the replenishment worklist
-      required: [product_id, sku, product_name, branch_id, branch_code, uom, on_hand_base, reserved_base, available_base, in_transit_base, on_order_base, projected_base, reorder_point_base, reorder_qty_base, order_multiple_base, suggested_qty_base, short_base, preferred_vendor_id, preferred_vendor_name, lead_time_days, avg_cost_cents, suggested_value_cents]
+      required: [product_id, sku, product_name, branch_id, branch_code, uom, on_hand_base, reserved_base, available_base, in_transit_base, on_order_base, projected_base, reorder_point_base, reorder_qty_base, order_multiple_base, suggested_qty_base, short_base, preferred_vendor_id, preferred_vendor_name, lead_time_days]
       properties:
         product_id: { type: string, format: uuid }
         sku: { type: string }
@@ -1687,11 +1708,20 @@ components:
         preferred_vendor_id: { type: string }
         preferred_vendor_name: { type: string }
         lead_time_days: { type: integer, format: int32 }
-        avg_cost_cents: { type: integer, format: int64 }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: >-
+            The branch weighted-average unit cost. Role gated by the dealer's
+            cost and margin list (X3): byte-absent for a caller off the list,
+            never a zero that reads as free.
         suggested_value_cents:
           type: integer
           format: int64
-          description: suggested_qty_base times the branch weighted-average cost
+          description: >-
+            suggested_qty_base times the branch weighted-average cost; the same
+            role gate as avg_cost_cents (the figure derives from it):
+            byte-absent for a caller off the dealer's cost and margin list.
         draft_po_id:
           type: string
           format: uuid
@@ -1948,7 +1978,7 @@ components:
     InvCountLine:
       type: object
       description: A snapshot on-hand vs counted reading, its variance, the valuation and the reason
-      required: [id, sheet_id, product_id, location_id, snapshot_qty_base, counted_qty_base, variance_base, unit_cost_cents, variance_value_cents]
+      required: [id, sheet_id, product_id, location_id, snapshot_qty_base, counted_qty_base, variance_base]
       properties:
         id: { type: string, format: uuid }
         sheet_id: { type: string, format: uuid }
@@ -1961,8 +1991,14 @@ components:
           type: [number, "null"]
           description: Null until the maker counts this line
         variance_base: { type: number }
-        unit_cost_cents: { type: integer, format: int64 }
-        variance_value_cents: { type: integer, format: int64 }
+        unit_cost_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
+        variance_value_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         reason_code: { type: string }
         move_id:
           type: string
@@ -1999,13 +2035,19 @@ components:
 
     InvCountVarianceSummary:
       type: object
-      required: [line_count, counted_lines, variance_lines, net_variance_value_cents, abs_variance_value_cents]
+      required: [line_count, counted_lines, variance_lines]
       properties:
         line_count: { type: integer, format: int32 }
         counted_lines: { type: integer, format: int32 }
         variance_lines: { type: integer, format: int32 }
-        net_variance_value_cents: { type: integer, format: int64 }
-        abs_variance_value_cents: { type: integer, format: int64 }
+        net_variance_value_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
+        abs_variance_value_cents:
+          type: integer
+          format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
 
     InvCountSheetDetail:
       type: object
@@ -2021,12 +2063,18 @@ components:
     InvCountNegativeStockRow:
       type: object
       description: One product carrying by-design negative on-hand
-      required: [product_id, location_id, on_hand_base, avg_cost_cents]
+      required: [product_id, location_id, on_hand_base]
       properties:
         product_id: { type: string, format: uuid }
         location_id: { type: string, format: uuid }
         on_hand_base: { type: number }
-        avg_cost_cents: { type: integer, format: int64 }
+        avg_cost_cents:
+          type: integer
+          format: int64
+          description: >-
+            The branch weighted-average unit cost. Role gated by the dealer's
+            cost and margin list (X3): byte-absent for a caller off the list,
+            never a zero that reads as free.
 
     InvCountCreateSheetRequest:
       type: object

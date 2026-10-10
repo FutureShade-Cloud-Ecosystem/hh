@@ -146,9 +146,10 @@ func (s *Service) ReconcileMonth(ctx context.Context, year, month int, branchID 
 
 // Handler exposes the counts HTTP surface. SCAFFOLD: routes registered, handlers answer 501.
 type Handler struct {
-	userLink identity.UserIDLinker
-	svc      *Service
-	log      *slog.Logger
+	userLink  identity.UserIDLinker
+	svc       *Service
+	log       *slog.Logger
+	costRoles CostRoles
 }
 
 // NewHandler wires the service.

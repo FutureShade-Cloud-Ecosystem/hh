@@ -27,6 +27,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dashboard"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	erpidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/invcount"
@@ -182,7 +183,14 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
 		WithGLBalanceReader(glBalanceAdapter{svc: spine.glSvc}).
 		WithAudit(auditSvc)
-	invcount.NewHandler(invcountSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	// X3, the yard fence's counts half: the negative-stock worklist's
+	// cost leg rides only for a caller on the configuration's cost and
+	// margin list (inventory/cost_gate.go carries the argument).
+	invcountHandler := invcount.NewHandler(invcountSvc, log).WithUserLinker(link).WithCostRoles(spine.roleCfg)
+	if invcountHandler == nil || !invcountHandler.CostRolesWired() {
+		panic("invcount: cost roles not wired - the negative-stock worklist would answer the cost leg to every caller")
+	}
+	invcountHandler.RegisterRoutes(r, g)
 
 	// A-16 (W6): landed cost, capitalizing through inventory.
 	landedcostSvc := landedcost.NewService(landedcost.NewRepository(pool)).
@@ -283,7 +291,37 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("weights", tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("attachments", attachments.NewSyncStore(pool)); err != nil {
+	// THE DRIVER FENCE (the HH Drive fence, the role logins lane): the
+	// drive-run adapters and the attachments scope carry the role seam
+	// beside the linker, so a driver caller's pulls, loads and pushes
+	// hold to the runs assigned to the driver record linked to their
+	// login while every desk caller keeps the org scope. The seam is
+	// identity's own per-request authority resolution (the same
+	// resolution the guards ran at the door, read again here because
+	// the sync core's ScopeFilter carries the actor and the org and no
+	// role), bridged to the ERP role code the dispatch vocabulary
+	// reads. A nil pool (the wiring-shape tests) wires no seam; the boot
+	// fail-fasts below keep a real boot from serving these scopes
+	// unfenced, the same idiom the will-call pick hold gate carries.
+	var driverRole dispatch.SyncRoleResolver
+	if pool != nil {
+		staffRoles, roleErr := erpidentity.NewStaffAuthorityResolver(pool)
+		if roleErr != nil {
+			panic("sync: driver fence role resolver refused to boot: " + roleErr.Error())
+		}
+		driverRole = func(ctx context.Context, platformUserID, orgID string) (string, bool, error) {
+			a, has, err := staffRoles.ResolveStaff(ctx, platformUserID, orgID)
+			if err != nil || !has {
+				return "", has, err
+			}
+			return identity.FromAuthority(a).RoleCode, true, nil
+		}
+	}
+	attachmentsSync := attachments.NewSyncStore(pool).WithDriverStopFence(dispatch.NewDriverStopFence(pool, link, driverRole))
+	if pool != nil && !attachmentsSync.DriverStopFenceWired() {
+		panic("attachments: driver stop fence not wired - a driver login's attachments pull would answer every attachment in the org")
+	}
+	if err := syncEngine.RegisterScope("attachments", attachmentsSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -293,13 +331,23 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// adapter validates creates through the same order-read seam the
 	// module's REST surface reads; all three attribute actors through
 	// the same linker the pilot uses.
-	if err := syncEngine.RegisterScope("runs", dispatch.NewRunsSyncStore(pool, link)); err != nil {
+	// THE DRIVER FENCE: the seam is wired above the attachments scope
+	// (its block carries the argument); the boot fail-fast below keeps
+	// an unwired boot from serving the drive-run scopes unfenced, the
+	// same idiom the will-call pick hold gate carries.
+	runsSync := dispatch.NewRunsSyncStore(pool, link).WithDriverRole(driverRole)
+	stopsSync := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
+	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole)
+	if pool != nil && (!runsSync.DriverRoleWired() || !stopsSync.DriverRoleWired() || !podSync.DriverRoleWired()) {
+		panic("dispatch: driver fence role seam not wired - a driver login's sync pull would answer every run in the org")
+	}
+	if err := syncEngine.RegisterScope("runs", runsSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("stops", dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link)); err != nil {
+	if err := syncEngine.RegisterScope("stops", stopsSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("pod", dispatch.NewPODSyncStore(pool, link)); err != nil {
+	if err := syncEngine.RegisterScope("pod", podSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -322,7 +370,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// delete legs address, which is the D26 schema-shaped stop
 	// condition reported to the supervisor rather than routed around;
 	// all three routes answer the honest 501, pinned by test.
-	boardStops := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link)
+	boardStops := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
 	if err := syncEngine.RegisterScope("quotes", quote.NewSyncStore(pool, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}

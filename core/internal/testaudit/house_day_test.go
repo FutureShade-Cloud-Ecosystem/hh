@@ -214,11 +214,6 @@ var dayAllowlisted = map[string]dayExemption{
 			"rows are filed under tomorrow in the bucket AND may fall outside the range that was asked " +
 			"for. Fixing the filter without the bucket, or either without the other, would make a " +
 			"report whose total does not equal its rows, so this file moves as one piece or not at all."},
-	"internal/billing/statement_repository.go": {[]string{kindSQLDay},
-		"DEFERRED · StatementLines cuts a customer statement at `t.occurred_at::date <= $2::date`, so " +
-			"a transaction posted after 8pm on the as-of day is missing from the statement that claims " +
-			"to cover it. Customer-facing money, so the fix wants the AR team's as-of convention " +
-			"confirmed rather than assumed."},
 
 	// ---- Go-side day boundaries ----
 	"internal/dispatch/service.go": {[]string{kindDayText},
@@ -255,10 +250,6 @@ var dayAllowlisted = map[string]dayExemption{
 		"DEFERRED · NudgeEventKey is a once-a-day idempotency key on the UTC day; its own comment says " +
 			"'tomorrow it can be raised again, which is exactly right', and at 8pm tomorrow arrives " +
 			"early and the nudge repeats."},
-	"internal/billing/register_service.go": {[]string{kindCalendar},
-		"DEFERRED · daysBetween rebuilds due and asOf as UTC midnights from their own components, which " +
-			"is ar_landing.go's defect in a second spelling. Two aging calculations that can disagree is " +
-			"its own problem; they should be one function, and that function should read the house day."},
 	"internal/compliance/store.go": {[]string{kindTruncate},
 		"DEFERRED · filterUpcoming truncates asOf at Greenwich to decide OVERDUE and the horizon " +
 			"cutoff, so a deadline due today is stamped overdue from 8pm the evening before."},
