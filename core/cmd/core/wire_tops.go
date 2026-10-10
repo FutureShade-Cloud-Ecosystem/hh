@@ -122,6 +122,7 @@ func buildSmsBelt(pool *pgxpool.Pool, log *slog.Logger) *smsBelt {
 type topsSpine struct {
 	bistrackSvc   *bistrack.Service
 	billingRepo   *billing.Repository
+	paymentTrail  *billing.LatePaymentTrail
 	notifier      notify.Notifier
 	sms           *smsBelt
 	arSweep       *messagingprovider.ARSweep
@@ -387,7 +388,10 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// receivables register mounts from here (billing's register handler,
 	// registered under the Finance unit's gates exactly as the pin did).
 	finstmtSvc := finstmt.NewService(finstmt.NewRepository(pool)).WithAudit(auditSvc)
-	finstmt.NewHandler(finstmtSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	// The payment trail reader is bound once the role gate's reader exists (bindPaymentTrail); until
+	// then the register withholds the payment entries from every caller.
+	paymentTrail := &billing.LatePaymentTrail{}
+	finstmt.NewHandler(finstmtSvc, log).WithUserLinker(link).WithPaymentTrail(paymentTrail).RegisterRoutes(r, g)
 
 	// M5 tax engine, then the W6 scaffold-owner rewire: the POS Sale leaves
 	// its stubs for the real engines (tax, stock, restock, the card
@@ -691,6 +695,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	return &topsSpine{
 		bistrackSvc:   bistrackSvc,
 		billingRepo:   billingRepo,
+		paymentTrail:  paymentTrail,
 		notifier:      notifier,
 		sms:           belt,
 		arSweep:       arSweep,

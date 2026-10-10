@@ -245,6 +245,49 @@ func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
 	forbidden("HR on the payment history", hr.call("GET", hist, nil))
 	forbidden("HR on the invoice's payments", hr.call("GET", invPays, nil))
 
+	// 3b. The third surface of the same ruling: the register's invoice detail is money desk READ, and
+	// its activity timeline lists a PAYMENT entry per allocation (number, method, amount, who applied
+	// it). Those entries are the payment trail, so they reach only a caller who holds the trail reads
+	// above: the persona and the managers see them (the Kingston manager is fenced out of the Trenton
+	// invoice altogether), the three money desk readers still open the invoice but the entries are
+	// absent from their timeline, and HR is refused at the gate.
+	// The first cheque was marked bounced above, which lifts its allocation, so the timeline needs a
+	// fresh one.
+	payRec.call("POST", "/api/v1/ar/register/invoices/"+i06+"/payments", map[string]any{
+		"method": "CHEQUE", "amount_cents": 5_000, "reference": "trail proof", "idempotency_key": uuid.NewString()}).ok(t, http.StatusOK)
+	detail := "/api/v1/ar/register/invoices/" + i06
+	hasPayment := func(rsp demoResponse) bool { return strings.Contains(string(rsp.body), `"PAYMENT"`) }
+	trailed := func(name string, c *tillClient) {
+		t.Helper()
+		rsp := c.call("GET", detail, nil)
+		if rsp.status != http.StatusOK || !hasPayment(rsp) {
+			t.Errorf("RED %s answered %d without the PAYMENT entries, want 200 with them: %s", name, rsp.status, rsp.body)
+		}
+	}
+	trailless := func(name string, c *tillClient) {
+		t.Helper()
+		rsp := c.call("GET", detail, nil)
+		if rsp.status != http.StatusOK {
+			t.Errorf("RED %s answered %d, want 200 with the rest of the timeline: %s", name, rsp.status, rsp.body)
+			return
+		}
+		if hasPayment(rsp) {
+			t.Errorf("RED %s got the payment trail in the invoice's activity: %s", name, rsp.body)
+		}
+		if !strings.Contains(string(rsp.body), `"ISSUED"`) {
+			t.Errorf("RED %s lost the rest of the timeline (no ISSUED entry): %s", name, rsp.body)
+		}
+	}
+	trailed("the persona on the invoice detail", payRec)
+	trailed("the general manager on the invoice detail", generalManager)
+	trailed("the Trenton sales manager on the invoice detail", salesManager)
+	trailed("the Trenton branch manager on the invoice detail", branchManager)
+	trailless("outside sales on the invoice detail", outsideSales)
+	trailless("the yard manager on the invoice detail", yardManager)
+	trailless("the procurement manager on the invoice detail", procurement)
+	notFound("the Kingston branch manager on the Trenton invoice detail", branchManagerKgn.call("GET", detail, nil))
+	forbidden("HR on the invoice detail", hr.call("GET", detail, nil))
+
 	// 4. The reverse stays at manage.
 	forbidden("the persona on payment reverse", payRec.call("POST", "/api/v1/ar/payments/"+paymentID+"/reverse", map[string]any{"reason": "x"}))
 }

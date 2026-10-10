@@ -135,7 +135,7 @@ type registerStore interface {
 	AccountPositionFor(ctx context.Context, asOf time.Time, customerID string) (AccountPosition, error)
 	ProofFor(ctx context.Context, orderID string) (Proof, bool, error)
 	OrderFactsFor(ctx context.Context, orderID string) (string, string, string, error)
-	ActivityFor(ctx context.Context, invoiceID, orderID string) ([]ActivityEntry, error)
+	ActivityFor(ctx context.Context, invoiceID, orderID string, withPayments bool) ([]ActivityEntry, error)
 	PromiseFor(ctx context.Context, invoiceID string) (PromiseView, bool, error)
 	DisputeFor(ctx context.Context, invoiceID string) (DisputeView, bool, error)
 	LastContactFor(ctx context.Context, customerID string) (*time.Time, error)
@@ -290,8 +290,11 @@ func (s *RegisterService) header(ctx context.Context, invoiceID string) (Invoice
 	return h, nil
 }
 
-// Detail assembles the right-hand panel.
-func (s *RegisterService) Detail(ctx context.Context, invoiceID string) (InvoiceDetail, error) {
+// Detail assembles the right-hand panel. withPayments says whether the timeline carries the PAYMENT
+// entries (payment number, method, amount and who applied it): they are the payment trail ruling 87
+// holds to money desk WORK, so the caller who asks for them is one the payment trail reader (below)
+// admitted. Without it the entries are absent, not blanked, and the rest of the timeline is unchanged.
+func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPayments bool) (InvoiceDetail, error) {
 	asOf := s.clock()
 	h, err := s.header(ctx, invoiceID)
 	if err != nil {
@@ -321,7 +324,7 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string) (Invoice
 	if err != nil {
 		return InvoiceDetail{}, err
 	}
-	activity, err := s.store.ActivityFor(ctx, invoiceID, h.OrderID)
+	activity, err := s.store.ActivityFor(ctx, invoiceID, h.OrderID, withPayments)
 	if err != nil {
 		return InvoiceDetail{}, err
 	}

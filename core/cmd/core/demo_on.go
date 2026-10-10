@@ -346,6 +346,10 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		pool.Close()
 		return nil, err
 	}
+	if err := bindPaymentTrail(tops, roleGate); err != nil {
+		pool.Close()
+		return nil, err
+	}
 
 	// The customer-quote surface over the shared audit seam: the same
 	// construction main.go makes, signing keys from the environment.
