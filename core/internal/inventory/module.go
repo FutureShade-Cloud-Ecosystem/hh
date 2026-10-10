@@ -53,7 +53,7 @@ type StockMove struct {
 	MoveType      string  `json:"move_type"`
 	SourceType    string  `json:"source_type"`
 	SourceRefID   string  `json:"source_ref_id"`
-	UnitCostCents int64   `json:"unit_cost_cents"`
+	UnitCostCents int64   `json:"unit_cost_cents,omitempty"`
 	OccurredAt    string  `json:"occurred_at"`
 }
 
@@ -65,7 +65,7 @@ type OnHand struct {
 	OnHandBase    float64 `json:"on_hand_base"`
 	AllocatedBase float64 `json:"allocated_base"`
 	AvailableBase float64 `json:"available_base"`
-	AvgCostCents  int64   `json:"avg_cost_cents"`
+	AvgCostCents  int64   `json:"avg_cost_cents,omitempty"`
 }
 
 // SaleLine is one fulfilled line the POS hands to DecrementForSaleTx (the frozen order.fulfilled shape).
@@ -262,9 +262,10 @@ func (s *Service) postEvent(ctx context.Context, e notify.Event) error {
 // Handler exposes the inventory HTTP surface (on-hand, moves, pending-fulfilment). SCAFFOLD: routes are
 // registered but every handler answers 501 until INV-CORE fills the service.
 type Handler struct {
-	userLink identity.UserIDLinker
-	svc      *Service
-	log      *slog.Logger
+	userLink  identity.UserIDLinker
+	svc       *Service
+	log       *slog.Logger
+	costRoles CostRoles
 }
 
 // NewHandler wires the service.

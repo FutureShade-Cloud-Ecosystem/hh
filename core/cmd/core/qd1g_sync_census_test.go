@@ -1301,14 +1301,19 @@ var qd1gScopesOnQuoteTables = map[string]string{
 // qd1gScopesClear are the other registered scopes, reviewed as touching
 // neither table. A scope on neither list fails the census by name.
 var qd1gScopesClear = map[string]bool{
-	"aging": true, "catalog": true, "customers": true, "cycle_counts": true,
-	"delivery_instructions": true, "delivery_stops": true, "drivers": true,
-	"inventory_lookup": true, "invoices": true, "loads": true, "parked_tickets": true,
-	"payment_methods": true, "payments": true, "pick_tasks": true, "pickups": true,
-	"pod": true, "price_matrix": true, "products": true, "projects": true,
-	"purchase_orders": true, "runs": true, "scope_items": true, "shortages": true,
-	"stops": true, "team": true, "trucks": true, "vendors": true, "warranty_board": true,
-	"warranty_claims": true, "weights": true, "will_call": true,
+	"aging": true, "catalog": true, "channels": true, "customers": true,
+	"cycle_counts": true, "delivery_instructions": true, "delivery_stops": true,
+	"drivers": true, "inventory_lookup": true, "invoices": true, "loads": true,
+	"parked_tickets": true, "payment_methods": true, "payments": true,
+	"pick_tasks": true, "pickups": true, "pod": true, "price_matrix": true,
+	"products": true, "projects": true, "purchase_orders": true, "runs": true,
+	"scope_items": true, "shortages": true, "stops": true, "team": true,
+	"trucks": true, "vendors": true, "warranty_board": true, "warranty_claims": true,
+	"weights": true, "will_call": true,
+	// The messaging feeds (House Messages core): channels, messages, acks and
+	// notify_prefs read and write the msg_* tables only, fenced per caller;
+	// no quote or approval column is anywhere in their stores.
+	"messages": true, "acks": true, "notify_prefs": true,
 }
 
 // qd1gScopesGuard reads every RegisterScope in this package's source and
