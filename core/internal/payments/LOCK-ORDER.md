@@ -10,15 +10,15 @@ Every writer that touches a payment, an invoice balance or a feed counter takes 
 
 A writer that has no use for a step skips it and keeps the order of the steps it does take.
 
-One writer sits deliberately outside the order's letter: a writer whose only touch on the invoice is a foreign key
-check, which takes the `FOR KEY SHARE` the check needs BEFORE the payments counter. That writer is the POS return
-with a cash or card refund: its `pos_returns` INSERT holds the returned sale's invoice share, and only afterwards
-does its refund rail insert the refund payment and draw the counter. The share is safe before the counter because no
-payments-walking writer's invoice lock conflicts with a key share any more (they are all `FOR NO KEY UPDATE`, see
-below), so none of them can be made to wait on the return's share while the return waits on the counter; and the
-return's own wait on the counter always ends at the holder's commit. The POS account credit's `FOR UPDATE` does
-conflict with a share, but the credit takes no payments counter, so a return and a credit cannot close a cycle
-either.
+The till's return with a cash or card refund draws the payments counter BEFORE its invoice rows: it drew the
+counter last, at its refund payment's insert, until the Opus review's P2-4 found the cycle that closed with a
+received payment apply (the return holding an owed invoice `FOR NO KEY UPDATE`, the apply holding the counter and
+waiting on that invoice, the return then waiting on the counter). It now takes step 2 before step 3 like every
+other payments writer; the `FOR KEY SHARE` its `pos_returns` insert takes later is a share, not a lock in this
+order, and conflicts with no payments-walking writer's `FOR NO KEY UPDATE`. The POS account credit writes no
+payment row and draws no payments counter, so it skips step 2 and keeps the order of the steps it takes; its
+`FOR UPDATE` on the invoice conflicts with a share, but returns of one sale are serialised by the per-sale lock
+before either.
 
 ## Why the payments counter comes first
 
@@ -62,14 +62,14 @@ conflict; the share was never something these writers needed to hold back.
 | Writer | Rows, in the order taken | Follows the order |
 |---|---|---|
 | Register `RecordPayment` (through the counter `RecordReceipt`) | payments counter (not advancing), invoice rows (`FOR NO KEY UPDATE`, the allocation order), payment insert (payments feed +1), invoice balance moves (invoices counter +1 each) | yes |
-| Register received payment apply (item 64 Lane A pay, `received_apply.go`) | payments counter (not advancing), the named invoice rows (`FOR NO KEY UPDATE`, ascending id, every one before the first balance move: the order the till's returns take, PR 277), payment insert (payments feed +1), invoice balance moves (invoices counter +1 each, in the same ascending order) | yes: the multi invoice case takes the whole set sorted, so it cannot meet a return's own sorted set head on whatever order the caller's list arrived in |
+| Register received payment apply (item 64 Lane A pay, `received_apply.go`) | payments counter (not advancing), the named invoice rows (`FOR NO KEY UPDATE`, ascending id, every one before the first balance move), payment insert (payments feed +1), invoice balance moves (invoices counter +1 each, in the same ascending order) | yes: the whole set sorted, and the till's owed return now draws the payments counter before its own invoice locks, so the two writers meet at the counter, never head on |
 | Counter `RecordReceipt` | the same, in `lockAndTotal` | yes |
 | POS pay balance take (item 9.4) | order row (`FOR NO KEY UPDATE`), payments counter (not advancing), the order's open invoice rows (`FOR NO KEY UPDATE`, ascending), the raise of an uninvoiced remainder's invoice through the desk's writer (a new invoice: invoices counter +1, item 9 review P2-2), payment insert through the till's tender (payments feed +1), invoice balance moves (invoices counter +1 each) | yes: the order row is the order's own first step, then the register settle's own sequence; the raise draws the invoices counter (step 4) before the settle's own counter draws, the same step every invoice-inserting writer takes after its invoice row locks |
 | `PayWithStamps`, `PayWithIntent`, `Pay` (portal and card settle) | the same, in `lockAndTotal` | yes |
 | `ReversePayment` | payment row, payments counter (the reversing insert and the stamp, feed +1 each), every allocated invoice row `FOR NO KEY UPDATE` ascending, contra allocations, invoice re-opens (invoices counter +1 each) | yes: among the writers that take a counter or an invoice, the payment row is first only for NSF and this one (the terminal writers `MarkDeposited` and bankrec's claim and release update payment rows but take no counter and no invoice) |
 | POS ring | stock rows, order rows, payments counter (the tender's payment insert), new invoice (invoices counter) | yes: no existing invoice |
-| POS return, cash or card refund (the till refund rail) | per-sale advisory lock, returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), payments counter (the refund payment's insert) | the one exception, safe as written above |
-| POS return to account credit | per-sale advisory lock, returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), invoice `FOR UPDATE` (ApplyCreditToInvoice), invoices counter | yes: no payments row, and the share and the FOR UPDATE are one writer's own sequence |
+| POS return, cash or card refund (the till refund rail) | per-sale advisory lock, payments counter (not advancing, drawn before the invoice rows), the owed order's invoice rows (`FOR NO KEY UPDATE`, sorted, PR 277's split), returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), refund payment insert (payments feed +1) | yes: the counter is drawn before the invoice rows, the order's own steps 2 then 3 |
+| POS return to account credit | per-sale advisory lock, the order's invoice rows (`FOR NO KEY UPDATE`, sorted, every document the account rail offsets), returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), invoice `FOR UPDATE` (ApplyCreditToInvoice), invoices counter | yes: no payments row and no payments counter, so step 2 is skipped and the rest keep their order |
 | Group and whole-order invoice writers | the order row its caller locked, invoices counter (a new invoice) | yes: no payments row, no existing invoice |
 | Quote counter door (QD-5, PR 120) | order row, `LockPaymentsSequenceTx`, existing invoice row (`FOR NO KEY UPDATE`), invoices counter | yes |
 | Till `MarkNSF` | payment row, payments counter (not advancing: the serialising lock, it writes no payments feed row), every allocated invoice row `FOR NO KEY UPDATE` ascending, invoice re-opens (invoices counter +1 each) | yes |

@@ -438,3 +438,100 @@ func TestIntegration_LockOrder_MultiInvoiceReversalBesidePOSReturn(t *testing.T)
 		})
 	}
 }
+
+// TestIntegration_LockOrder_OwedReturnBesideReceivedPaymentApply: a REAL owed cash return beside a
+// REAL received payment apply, on the same invoice. Since PR 277's split ruling the owed return
+// takes the invoice FOR NO KEY UPDATE before its refund rail draws the payments counter, while the
+// apply draws the counter before it takes the invoice: the two orders close a cycle, and Postgres
+// aborts a side (the Opus review's P2-4; on the card path that can be the return, after the
+// processor refunded). The return now draws the payments counter FIRST, before its invoice locks,
+// the payments module's one money lock order, so both sides serialise at the counter and both
+// answer. The leg parks the return inside its pos_returns insert holding the invoice (and, after
+// the fix, the counter), then applies against the same invoice: both must answer cleanly, the
+// return 201 and the apply with no error.
+func TestIntegration_LockOrder_OwedReturnBesideReceivedPaymentApply(t *testing.T) {
+	for _, size := range []int32{4, 16} {
+		t.Run(fmt.Sprintf("pool %d", size), func(t *testing.T) {
+			pool, obs := loposPools(t, size)
+			key := wiringRailDB(t, pool, map[string]string{"api_key": "lockorder-pos-not-a-secret"})
+			w := plantWiringCounter(t, pool)
+			cust := loposCustomer(t, pool, w.branchID)
+			_, mux, sg := wireFold(t, pool, key, w.branchID)
+			orderID := loposRingSale(t, mux, sg, w, cust, "CASH")
+			inv := loposSaleInvoice(t, pool, orderID)
+
+			// The owed shape: partly paid, so the return takes the invoice row (not the paid path's
+			// key share alone) and its cash rail stays inside what was paid.
+			var total int64
+			if err := pool.QueryRow(context.Background(),
+				`SELECT total_cents FROM invoices WHERE id = $1::uuid`, inv).Scan(&total); err != nil {
+				t.Fatalf("read the invoice total: %v", err)
+			}
+			if _, err := pool.Exec(context.Background(),
+				`UPDATE invoices SET status='PARTIALLY_PAID', balance_cents=$2 WHERE id=$1::uuid`,
+				inv, total/2+200); err != nil {
+				t.Fatalf("make the invoice partly paid: %v", err)
+			}
+			var lineID string
+			var qty float64
+			if err := pool.QueryRow(context.Background(),
+				`SELECT id::text, qty_base FROM order_lines WHERE order_id = $1::uuid ORDER BY line_no LIMIT 1`,
+				orderID).Scan(&lineID, &qty); err != nil {
+				t.Fatalf("read the sale's line: %v", err)
+			}
+
+			loposArmReturnWindow(t, obs)
+			retDone := make(chan int, 1)
+			retBody := make(chan string, 1)
+			go func() {
+				rec := loposPost(t, mux, sg, "/api/v1/pos/returns", map[string]any{
+					"idempotency_key": uuidKey(t), "order_id": orderID, "refund_method": "CASH",
+					"till_session_id": w.sessionID, "restock": false,
+					"lines":           []map[string]any{{"order_line_id": lineID, "qty_base": qty / 2}},
+				})
+				retBody <- rec.Body.String()
+				retDone <- rec.Code
+			}()
+			loposWait(t, obs, "return parked holding the invoice row", 1, loposParkedInReturn())
+
+			applyErr := make(chan error, 1)
+			applyID := make(chan string, 1)
+			go func() {
+				ans, err := payments.NewRepository(pool).ApplyReceived(context.Background(), payments.ApplyRequest{
+					CustomerID: cust, Method: "CHEQUE", Reference: "CHQ LOP",
+					IdempotencyKey: uuidKey(t), InvoiceIDs: []string{inv}, AmountCents: 100,
+				})
+				if err == nil {
+					applyID <- ans.PaymentID
+				}
+				applyErr <- err
+			}()
+
+			var code int
+			select {
+			case code = <-retDone:
+			case <-time.After(60 * time.Second):
+				t.Fatal("return never answered")
+			}
+			aerr := loposAnswer(t, "apply", applyErr)
+			if code != http.StatusCreated || aerr != nil {
+				t.Fatalf("NOT BOTH ANSWERED: return %d %s, apply %v", code, <-retBody, aerr)
+			}
+			var returns int
+			_ = obs.QueryRow(context.Background(),
+				`SELECT count(*) FROM pos_returns WHERE order_id = $1::uuid`, orderID).Scan(&returns)
+			if returns != 1 {
+				t.Fatalf("the return committed, found %d pos_returns rows", returns)
+			}
+			var applied int64
+			if err := obs.QueryRow(context.Background(),
+				`SELECT amount_cents FROM payment_allocations WHERE payment_id = $1::uuid`, <-applyID).
+				Scan(&applied); err != nil {
+				t.Fatalf("read the apply's allocation: %v", err)
+			}
+			if applied != 100 {
+				t.Fatalf("the apply landed its 100 cents on the invoice, found %d", applied)
+			}
+		})
+	}
+}

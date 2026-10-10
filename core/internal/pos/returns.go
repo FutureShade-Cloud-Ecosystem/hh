@@ -512,6 +512,19 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 		return Return{}, false, false, err
 	}
 	if !in.railOptional {
+		// A cash or card refund draws the payments counter when its rail writes the refund payment,
+		// and since PR 277's split it also takes the invoice rows below. The payments module's one
+		// money lock order is counter first, invoices second (every settle, received payment and
+		// reversal takes them that way), so the counter is drawn HERE, before the invoice locks: a
+		// return that held an owed invoice and then waited on the counter closed a cycle with a
+		// received payment apply holding the counter and waiting on that invoice (the Opus review's
+		// P2-4, and the same cycle against the shipped RecordReceipt). The account credit rail
+		// writes no payment row and draws no counter; its invoice locks stand alone.
+		if in.RefundMethod != RefundAccountCredit {
+			if err := s.store.LockPaymentsSequenceTx(ctx, tx); err != nil {
+				return Return{}, false, false, err
+			}
+		}
 		// The account rail offsets invoices; a cash or card return offsets them too when the order is
 		// not fully paid (the ruling's split): take them, sorted, before the first offset (P2-1).
 		if err := s.lockReturnInvoicesTx(ctx, tx, []returnOrderCtx{oc}, in.RefundMethod != RefundAccountCredit); err != nil {

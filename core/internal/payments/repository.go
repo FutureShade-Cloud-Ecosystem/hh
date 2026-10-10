@@ -731,16 +731,23 @@ RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, s
 const lockPaymentsSequenceSQL = `INSERT INTO scope_sequences (scope, next_value) VALUES ('payments', 0)
 	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value`
 
-// LockPaymentsSequenceTx takes the payments sequence row on the caller's transaction, without
-// advancing it. It is the first money lock every payments writer takes after the order row (see the
-// lock order at the top of this file), exported so a writer that settles through its own transaction,
-// the quote counter door, can take the same lock at the same place in the same order and so cannot
-// close a cycle with a settle, a reversal or a refund.
-func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error {
+// LockPaymentsSequence takes the payments sequence row on any transaction, without advancing it.
+// It is the first money lock every payments writer takes after the order row (see the lock order at
+// the top of this file), exported so a writer that settles through its own transaction, the quote
+// counter door and the till's owed return among them, can take the same lock at the same place in
+// the same order and so cannot close a cycle with a settle, a reversal, a received payment or a
+// refund.
+func LockPaymentsSequence(ctx context.Context, tx pgx.Tx) error {
 	if _, err := tx.Exec(ctx, lockPaymentsSequenceSQL); err != nil {
 		return fmt.Errorf("payments: lock payments sequence: %w", err)
 	}
 	return nil
+}
+
+// LockPaymentsSequenceTx is LockPaymentsSequence on the repository, for the writers that already
+// hold one.
+func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error {
+	return LockPaymentsSequence(ctx, tx)
 }
 
 // lockAndTotal locks + re-validates every requested invoice, sums the settled amount and captures a
