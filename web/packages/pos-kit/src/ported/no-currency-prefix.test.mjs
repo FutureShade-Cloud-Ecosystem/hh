@@ -22,8 +22,7 @@ const REPO = fileURLToPath(new URL('../../../../../', import.meta.url));
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'testdata', 'migrations']);
 // Other lanes carry their own sites and are skipped here until they land:
 //   web/apps/counter-till: the Counter Till coder on demo/till-fill
-//   web/apps/quote-desk: the Quote Desk lane
-const SKIP_PATHS = ['web/apps/counter-till', 'web/apps/quote-desk'];
+const SKIP_PATHS = ['web/apps/counter-till'];
 const SOURCE = /\.(ts|mjs|js|go|html|css|tmpl|txt)$/;
 const TESTS = /(\.test\.[a-z]+|_test\.go)$/;
 const LITERAL = /\b(CA|US)\$/;

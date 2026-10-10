@@ -17458,6 +17458,86 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/pricing/floor-preview:
+    post:
+      operationId: pricingPreviewFloor
+      tags:
+        - staff-pricing
+      summary: Name the products a proposed price would put under the margin floor
+      description: "The pricing editors' floor warning (the editors warn and may still save). Lays the proposed rule, customer price, category margin policy or quantity break over the stored pricing data and grades the existing products it can reach through the resolver and its margin gate, as a quote line would meet them. A change that names no branch is graded at every branch location, each at its own cost with its own branch-limited rules, keeping the worst per product and naming that branch in the item, so a breach only one yard makes is named. Returns the products the new price leaves under the floor, worst first, each marked when it was already under the floor before the change. A surcharge tier never changes a price under the replace rule, so a break of surcharge tiers names nothing. A change that names a customer is graded at that customer's own pricing type, so the price today is what the customer pays. Products with no cost on file (at the named branch when the change names one, else at any branch) are counted in no_cost, and products the resolver has no price to grade (no list price, no unit conversion) in not_graded; any other failure of the grading is an error answer, never a count. no_cost_branches names the yards a branch-less check found no cost on file at, with the product count: informational, it never opens the warning on its own. At most 200 products and a bounded number of product, customer type, quantity and branch combinations are graded (a combination is one resolve at one branch); the branches are graded dearest cost first, and truncated says when more existed, with not_graded_branches counting the branch gradings the cap left out. A quantity break has at most 20 tiers, and a tier starting at zero is graded at one base unit. Writes nothing: no price changes and no row in the pricing log. The request trail the server keeps of every POST still records the call itself. Refuses what the write itself would refuse (an override needs a customer, a category and a price unit)."
+      x-addition: the editors' floor warning (plan CP0-6, QD-4); no ERP source route
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: manage
+        list: pricing_editors
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingFloorPreviewRequest"
+      responses:
+        "200":
+          description: The products the proposed price leaves under the floor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingFloorPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: The proposed price is not valid against the pricing vocabulary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pricing/floor-confirmations:
+    post:
+      operationId: pricingConfirmFloorWarning
+      tags:
+        - staff-pricing
+      summary: Record in the pricing log that the editor confirmed a floor warning
+      description: "Called after the confirmed save, against the record that save wrote. Writes one pricing log row (action UPDATE, field floor_warning_confirmed) naming the actor and the products the editor was shown. Unlike the writes' own log rows, a failure to write this one is an error answer, not a silent drop. A reference pair must be complete, and its id is checked only against the two kinds the pricing module can read itself: an id that names a product or a customer is refused when the claimed kind is the other (a product id sent as a quote reference is a 400). That check is partial by design: the kinds pricing has no read for (quote, order, category) are never resolved, an id that names nothing the module can see is taken as it comes, and the product read drops inactive products, so a product reference carrying an inactive product's id is accepted."
+      x-addition: records the editor's confirmation of a floor warning (plan CP0-6, QD-4); no ERP source route
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: manage
+        list: pricing_editors
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingFloorConfirmation"
+      responses:
+        "200":
+          description: The confirmation is in the pricing log
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingStatusResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/pricing/reports/low-margin:
     post:
       operationId: pricingLowMarginReport
@@ -20855,7 +20935,7 @@ paths:
       tags:
         - staff-quote
       summary: Convert an ACCEPTED dealer quote into an order from the counter
-      description: "The counter door onto quote-to-order conversion. The body is optional: a bare POST converts with no fulfilment choice. The credit and hold gate runs inside the conversion transaction, and the selling-role check runs in the service. A 409 names the refusal (credit policy, repeat acceptance, or a state that cannot convert)."
+      description: "The counter door onto quote-to-order conversion. The body is optional: a bare POST converts with no fulfilment choice. The credit and hold gate runs inside the conversion transaction, and the selling-role check runs in the service. A 409 names the refusal (credit policy, repeat acceptance, or a state that cannot convert). An optional Idempotency-Key header (a UUID) makes a retry safe: a repeat under the same key on the same quote answers the first order and makes no second one, whatever the quote's status is by then and whatever the dealer's multi accept switch says; the same key with a different fulfilment is a 409 in words. Without a key the switch's own behaviour stands."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -20870,6 +20950,13 @@ paths:
           description: Quote id (uuid) or the visible quote number
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per conversion attempt and resent unchanged on every retry of it. Scoped to the quote.
+          schema:
+            type: string
+            format: uuid
       requestBody:
         required: false
         content:
@@ -21269,6 +21356,31 @@ paths:
                 $ref: "#/components/schemas/QuoteAcceptanceSettings"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/quotes/settings-grant:
+    get:
+      operationId: quoteSettingsGrant
+      tags:
+        - staff-quote
+      summary: Read whether the signed-in caller holds the settings panel grants
+      description: One question the Quote Desk asks before it mounts its settings panels. Each boolean uses the very predicate the refusing route uses, so the answer cannot drift from the refusal. requireStaff is the coarse first line only; the predicates that answer the grant live in the service.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The three grant booleans
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteSettingsGrant"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -44977,6 +45089,195 @@ components:
             - CATEGORY_POLICY_DISABLED
             - APPROVED_OVERRIDE
             - MANAGER_SCOPE_OVERRIDE
+    PricingFloorPreviewRequest:
+      type: object
+      description: The proposed write to grade. kind picks which of rule, override (with customer_id), policy (with category_id) or quantity_break carries it; id names the record being edited and is omitted on create.
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - rule
+            - override
+            - category_policy
+            - quantity_break
+        id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+          description: Grade against this branch's own cost and its branch-limited rules; omitted grades every branch location at its own cost with its own branch-limited rules, keeps the worst per product and names that branch in each item
+        rule:
+          $ref: "#/components/schemas/PricingRuleWrite"
+        customer_id:
+          type: string
+          format: uuid
+        override:
+          $ref: "#/components/schemas/PricingOverrideWrite"
+        category_id:
+          type: string
+          format: uuid
+        policy:
+          $ref: "#/components/schemas/PricingCategoryPolicyWrite"
+        quantity_break:
+          $ref: "#/components/schemas/PricingQuantityBreakWrite"
+    PricingFloorPreviewItem:
+      type: object
+      description: One product the proposed price leaves under the margin floor
+      required:
+        - product_id
+        - sku
+        - name
+        - final_cents
+        - margin_bps
+        - floor_bps
+        - price_uom
+        - source
+        - previous_final_cents
+        - previous_margin_bps
+        - already_under_floor
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        name:
+          type: string
+        category_id:
+          type: string
+        customer_type:
+          type: string
+          description: The customer type this was worst for; the customer's own type when the change names a customer
+        branch_id:
+          type: string
+          description: "The branch this worst grading happened at: the change's own branch when it named one, else the worst branch of those graded"
+        branch_code:
+          type: string
+          description: That branch's code, so a warning line stays short; the full name is in branch_name
+        branch_name:
+          type: string
+          description: That branch's name, so an editor who named no branch still sees which yard breaches; empty when the change named its branch
+        final_cents:
+          type: integer
+          format: int64
+          description: The unit price with the change
+        margin_bps:
+          type: integer
+          format: int64
+        floor_bps:
+          type: integer
+          format: int64
+        price_uom:
+          type: string
+        source:
+          type: string
+          enum:
+            - CUSTOMER_PRODUCT_RULE
+            - QUANTITY_BREAK
+            - CUSTOMER_CATEGORY_RULE
+            - CUSTOMER_OVERRIDE
+            - TIER_CATEGORY
+            - TIER_DEFAULT
+            - LIST
+            - PROMOTION
+        previous_final_cents:
+          type: integer
+          format: int64
+          description: The unit price today
+        previous_margin_bps:
+          type: integer
+          format: int64
+        already_under_floor:
+          type: boolean
+          description: True when the product was under the floor before the change too
+    PricingFloorPreview:
+      type: object
+      required:
+        - items
+        - evaluated
+        - not_graded
+        - no_cost
+        - truncated
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PricingFloorPreviewItem"
+        evaluated:
+          type: integer
+          description: Products graded in full at the branches the cap allowed
+        not_graded:
+          type: integer
+          description: Products the resolver had no price to grade in full (no list price, no unit conversion)
+        no_cost:
+          type: integer
+          description: Products with no cost on file (at the named branch when the change names one, else at any branch), whose margin cannot be told
+        truncated:
+          type: boolean
+          description: More products or combinations were reachable than one preview grades (200 products, a bounded number of product, customer type, quantity and branch combinations); the branches were graded dearest cost first and the rest were not graded
+        no_cost_branches:
+          type: array
+          description: The yards a branch-less check found no cost on file at, with how many products; those products were graded at the branches that carry a cost, and a quote at a yard with no cost row would never be blocked by the gate, so this is said and never a stop.
+          items:
+            $ref: "#/components/schemas/PricingFloorNoCostBranch"
+        not_graded_branches:
+          type: integer
+          description: Branch gradings the work cap left out after the dearest branches were graded first; zero unless truncated is true
+    PricingFloorNoCostBranch:
+      type: object
+      description: One branch location the branch-less check found no cost on file at, with how many products
+      required:
+        - branch_id
+        - products
+      properties:
+        branch_id:
+          type: string
+        branch_code:
+          type: string
+        branch_name:
+          type: string
+        products:
+          type: integer
+          description: Products the check graded with no cost row at this branch
+    PricingFloorConfirmation:
+      type: object
+      required:
+        - entity_type
+        - entity_id
+        - product_ids
+      properties:
+        entity_type:
+          type: string
+          enum:
+            - pricing_rule
+            - customer_override
+            - category_policy
+            - quantity_break
+        entity_id:
+          type: string
+          format: uuid
+          description: The record the confirmed save wrote (the category id for a category policy)
+        product_ids:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: string
+            format: uuid
+        ref_entity_type:
+          type: string
+          enum:
+            - product
+            - customer
+            - category
+            - quote
+            - order
+        ref_entity_id:
+          type: string
+          format: uuid
     PricingLowMarginRequest:
       type: object
       description: A batch of line contexts run through the resolver
@@ -45282,6 +45583,7 @@ components:
           type: string
         items:
           type: array
+          maxItems: 20
           items:
             $ref: "#/components/schemas/PricingQuantityBreakItem"
         version:
@@ -48401,6 +48703,34 @@ components:
           description: The acceptance history, oldest first; empty on a quote nobody has accepted
           items:
             $ref: "#/components/schemas/QuoteAcceptanceRecord"
+        declined:
+          $ref: "#/components/schemas/QuoteDeclineRecord"
+    QuoteDeclineRecord:
+      type: object
+      description: Why and how a staff member closed the quote as lost on the customer's behalf, from the decision's audit row. Absent unless a staff decline is on record. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      required:
+        - reason_code
+        - channel
+        - declined_at
+      properties:
+        reason_code:
+          type: string
+          enum:
+            - price
+            - competitor
+            - project_cancelled
+            - timing
+            - no_response
+            - other
+        channel:
+          type: string
+          description: How the customer said no (phone, text, email or in_person)
+        note:
+          type: string
+          description: What the staff member wrote; absent when nothing was written
+        declined_at:
+          type: string
+          format: date-time
     QuoteAcceptanceRecord:
       type: object
       description: "One row of a quote's acceptance history, oldest first: the customer's own acceptance, or staff accepting on the customer's behalf after the customer said yes by another channel. quantities_confirmed is false on a customer acceptance taken before the confirmation existed. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
@@ -49056,6 +49386,23 @@ components:
         switch_wired:
           type: boolean
           description: Whether the write seam is wired, so the client can render read-only
+    QuoteSettingsGrant:
+      type: object
+      description: "The answer to one question the Quote Desk asks before it mounts its settings panels: does the signed-in caller hold the grants the three panels need? Each boolean uses the very predicate the refusing route uses, so the answer cannot drift from the refusal."
+      required:
+        - can_read_acceptance
+        - can_read_scope_rules
+        - can_edit_policy
+      properties:
+        can_read_acceptance:
+          type: boolean
+          description: True when the caller may read the acceptance settings (the Sales manager or the General Manager)
+        can_read_scope_rules:
+          type: boolean
+          description: True when the caller may read the scope rules (a Tier-1 global user)
+        can_edit_policy:
+          type: boolean
+          description: True when the caller may write the quote policy (the Sales manager or the General Manager)
     QuoteAcceptanceSettingsWrite:
       type: object
       description: The multi-accept write. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).

@@ -371,3 +371,23 @@ func TestQuotePolicyFor_DerivesChipsWhenUncurated(t *testing.T) {
 		t.Fatalf("a curated set must win verbatim: %+v", p.EffectiveChips)
 	}
 }
+
+// round 14 (a): an un-curated policy answers an empty array for quick_chip_set, never null. The
+// contract says array and required; a nil slice marshals as null, which the Quote Desk's strict
+// reader refused, so a Sales caller saw the quote settings as unreadable.
+func TestQuotePolicyFor_UncuratedChipSetMarshalsAsAnEmptyArray(t *testing.T) {
+	store := newDib506Store("DRAFT")
+	store.policy.QuickChipSet = nil
+	svc := dib506Svc(store, dib506Caller(identity.TierFrontline, identity.ScopeBranch))
+	p, err := svc.QuotePolicyFor(context.Background(), qBranch)
+	if err != nil {
+		t.Fatalf("policy: %v", err)
+	}
+	raw, err := json.Marshal(p)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"quick_chip_set":[]`) {
+		t.Fatalf("an un-curated chip set must marshal as [], got %s", raw)
+	}
+}
