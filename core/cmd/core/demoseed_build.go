@@ -198,6 +198,7 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 	// them and nothing references them back, so they sit at the end where a reader looking for "what
 	// grows every deploy" finds the whole of it in one place.
 	b.today()
+	b.driverDay()
 
 	b.sum.Rows = len(b.rows)
 	for _, r := range b.rows {
@@ -1300,4 +1301,101 @@ func (b *builder) today() {
 			"created_at", at, "updated_at", at,
 		))
 	}
+}
+
+// -- §15's driver run, out for delivery ------------------------------------------------------------
+//
+// THE RUN IS OUT, AND IT IS OUT EVERY DAY. The Driver persona's walk starts at Mark loaded and the
+// core refuses Mark en route on a run that was never dispatched, so the walk needs a DISPATCHED run
+// on the dealer's current day: day-keyed whole (run row, stops, the order each stop is about), on
+// the stable crew the persona's grant reaches, carrying what the core's own dispatch would set,
+// which runs() above already states for a seeded DISPATCHED row: the status and a departure stamp.
+// The stops are READY, the state the walk opens from and the one the drive run acceptance legs were
+// written against; the stop matrix allows it and AdvanceStop is the guard that matters.
+//
+// THE RUN NUMBER CARRIES THE DAY, for the UNIQUE column, and its D prefix sorts it ahead of the
+// stable fleet's R rows on the same date, so the driver's own read (ORDER BY scheduled_date DESC,
+// run_no) answers the out-for-delivery run first, with the stable planned runs behind it for the
+// board's story.
+func (b *builder) driverDay() {
+	runID := b.dayID("driver-run")
+	departed := b.day(0).Add(7 * time.Hour)
+	b.add(insert("delivery_runs", "(id)",
+		"id", runID,
+		"run_no", fmt.Sprintf("#%sRUN-%s-D%s", demoPrefix, b.branchCode(0), b.dayStamp()),
+		"branch_id", b.branchID(0),
+		"scheduled_date", b.day(0),
+		"truck_id", demoID("truck:T1"),
+		"driver_id", demoID("driver:D1"),
+		"status", "DISPATCHED",
+		"notes", "Kingston, out for delivery (demo)",
+		"dispatched_at", departed,
+		"created_at", b.day(0).Add(-6 * time.Hour),
+		"updated_at", departed,
+	))
+	weighed := 0.0
+	for i, s := range demoDriverDayStops {
+		p := b.prod[s.Prod]
+		unit := b.unitPrice(s.Cust, s.Prod)
+		subtotal := int64(s.QtyF * float64(unit))
+		tax := taxOn(subtotal)
+		orderID := b.dayID("driver-order:" + s.Key)
+		at := b.in.Now.UTC()
+		// The order each stop is about, one row and one line, the same shape and the same reasoning
+		// as the unassigned delivery's order directly above: pointing at the stable order book would
+		// attach a stop a day to one order for as long as the box lives. Both customers hold terms,
+		// so nothing is owed at the door and the driver's payloads carry no money.
+		b.add(insert("orders", "(id)",
+			"id", orderID,
+			"order_no", fmt.Sprintf("%s%s-D%s-%s", demoPrefix, b.branchCode(0), b.dayStamp(), s.Key),
+			"customer_id", demoID("customer:"+s.Cust),
+			"branch_id", b.branchID(0),
+			"status", "CONFIRMED", "fulfillment", "DELIVERY",
+			"requested_date", b.day(0),
+			"subtotal_cents", subtotal, "tax_cents", tax, "total_cents", subtotal+tax,
+			"metadata", demoMetadata,
+			"created_at", at, "updated_at", at,
+		))
+		b.add(insert("order_lines", "(id)",
+			"id", b.dayID("driver-orderline:"+s.Key),
+			"order_id", orderID, "line_no", 1,
+			"product_id", demoID("product:"+s.Prod), "description", p.Name,
+			"qty_entered", s.Qty, "uom_entered", p.UOM, "qty_base", s.Qty,
+			"fulfilled_base", "0",
+			"unit_price_cents", unit, "price_uom", p.UOM, "line_total_cents", subtotal,
+			"metadata", demoMetadata,
+			"created_at", at, "updated_at", at,
+		))
+		// THE STOP, ON THE RUN, READY. commit_state stays the column's default, which is true of it:
+		// a stop on a run is a dispatcher's committed load (0185, and §10's own reasoning).
+		window := "AM"
+		if i > 0 {
+			window = "PM"
+		}
+		b.add(insert("delivery_stops", "(id)",
+			"id", b.dayID("driver-stop:"+s.Key),
+			"branch_id", b.branchID(0),
+			"order_id", orderID,
+			"run_id", runID,
+			"stop_no", i+1,
+			"scheduled_date", b.day(0),
+			"status", "READY",
+			"time_window", window,
+			"contact_name", s.Contact, "contact_phone", s.Phone,
+			"address_line", s.Addr, "city", s.City, "postal_code", s.Postal,
+			"latitude", s.Lat, "longitude", s.Lng,
+			"mto_class", "STANDARD", "mto_note", "",
+			"failure_reason", "",
+			"weight_kg", s.WeightKg,
+			"created_at", at, "updated_at", at,
+		))
+		b.sum.Stops["READY"]++
+		var kg float64
+		fmt.Sscanf(s.WeightKg, "%f", &kg)
+		weighed += kg
+	}
+	// The run's own fill line, so the summary's "one line per run" stays honest about the day's run
+	// too. FLAT-1's advisory capacity, read the way stops() reads it off the truck spec.
+	b.sum.RunFill = append(b.sum.RunFill,
+		fmt.Sprintf("D%s · %s %.0fkg · loaded %.0fkg · %.0f%%", b.dayStamp(), "T1", 9000.0, weighed, weighed/9000.0*100))
 }

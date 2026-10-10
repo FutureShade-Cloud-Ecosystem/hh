@@ -289,7 +289,8 @@ func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
 // list the drive run app's fence scans.
 func TestDemoWorld_DriverRunPayloadsCarryNoMoney(t *testing.T) {
 	world := bootDriveWorld(t)
-	driver := world.driver
+	driver, pool := world.driver, world.pool
+	ctx := context.Background()
 
 	// The dispatched run of the day, and its stops: the payloads under test. The precondition
 	// fails loudly on a world without the run, so the leg can never pass vacuously.
@@ -308,43 +309,46 @@ func TestDemoWorld_DriverRunPayloadsCarryNoMoney(t *testing.T) {
 		t.Fatal("the dispatched run carries no stop, the leg would pass vacuously")
 	}
 
-	// Every read the Driver's day makes of the core, held to the fence: the day itself, each
-	// seeded stop's detail, the run's detail, and both payment hold reads (the per stop banner and
-	// the run's whole set), which are exactly where the cost gate's figure would arrive.
+	// Every read the Driver's day can obtain from the core, held to the fence: the day itself
+	// (my-runs, whose items already carry each stop's whole payload shape) and the run detail.
+	// The per stop detail read and both payment hold reads are dispatch-board reads the Driver is
+	// refused by the role fence, which is the strongest shape the rule can take for them: the
+	// driver cannot even ask for the payload the cost gate's figure would arrive on.
 	type payload struct {
 		label string
 		body  []byte
 	}
 	scans := []payload{{"my-runs", rsp.body}}
 	for _, stop := range run.Stops {
-		detail := driver.call("GET", "/api/v1/dispatch/stops/"+stop.ID, nil)
-		detail.ok(t, http.StatusOK)
-		scans = append(scans, payload{fmt.Sprintf("stop %d detail", stop.StopNo), detail.body})
-
+		refused := driver.call("GET", "/api/v1/dispatch/stops/"+stop.ID, nil)
+		refused.ok(t, http.StatusForbidden)
 		hold := driver.call("GET", "/api/v1/dispatch/stops/"+stop.ID+"/payment-hold", nil)
-		hold.ok(t, http.StatusOK)
-		scans = append(scans, payload{fmt.Sprintf("stop %d payment hold", stop.StopNo), hold.body})
-
-		var h struct {
-			Held   bool   `json:"held"`
-			Reason string `json:"reason"`
-			Code   string `json:"code"`
-		}
-		hold.decode(t, &h)
-		if h.Held {
-			t.Errorf("stop %d is held (%q), the demo world's stops owe nothing at the door", stop.StopNo, h.Reason)
-		}
-		if h.Reason != "" || h.Code != "" {
-			t.Errorf("stop %d's unheld payment hold carries words (%q, code %q), an unheld stop reads wordless for every caller",
-				stop.StopNo, h.Reason, h.Code)
-		}
+		hold.ok(t, http.StatusForbidden)
 	}
 	runDetail := driver.call("GET", "/api/v1/dispatch/runs/"+run.ID, nil)
 	runDetail.ok(t, http.StatusOK)
 	scans = append(scans, payload{"run detail", runDetail.body})
 	holds := driver.call("GET", "/api/v1/dispatch/runs/"+run.ID+"/payment-holds", nil)
-	holds.ok(t, http.StatusOK)
-	scans = append(scans, payload{"run payment holds", holds.body})
+	holds.ok(t, http.StatusForbidden)
+
+	// And the world agrees with the fence: the day's stops are about orders that owe nothing, so
+	// the hold a permitted caller would read is "not held" and wordless, the gate's own facts (the
+	// open invoice balance and the credit hold) both absent for them.
+	var invoiced, held int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE i.id IS NOT NULL),
+		       count(*) FILTER (WHERE h.status = 'ACTIVE')
+		  FROM delivery_stops s
+		  JOIN orders o ON o.id = s.order_id AND o.metadata->>'demo_seed' = $1
+		  LEFT JOIN invoices i ON i.order_id = o.id
+		  LEFT JOIN credit_holds h ON h.customer_id = o.customer_id
+		 WHERE s.run_id = $2`, demoMarker, run.ID).Scan(&invoiced, &held); err != nil {
+		t.Fatalf("reading the day's orders against the gate's facts: %v", err)
+	}
+	if invoiced != 0 || held != 0 {
+		t.Errorf("the dispatched run's orders carry %d invoice rows and %d active credit holds, its stops would read held at the door",
+			invoiced, held)
+	}
 
 	for _, scan := range scans {
 		driveScanPayloadKeys(t, scan.label, scan.body)
