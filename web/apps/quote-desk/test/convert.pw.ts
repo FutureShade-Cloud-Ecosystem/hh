@@ -672,6 +672,40 @@ test("an unworded 4xx payment refusal says the outcome is unknown, never 'Nothin
   expect(seen.payments).toHaveLength(1);
 });
 
+test("an unworded 4xx convert refusal says the outcome is not known yet and the retry reuses the key (multi accept ON)", async ({ page }) => {
+  await page.request.put("/_stub/multi-accept", { data: { on: true } });
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  let bare = true;
+  const keys: Array<string | undefined> = [];
+  await page.route(/\/api\/v1\/quotes\/q-1003\/convert$/, async (route) => {
+    keys.push(route.request().headers()["idempotency-key"]);
+    if (bare) {
+      bare = false;
+      await route.fulfill({ status: 400, contentType: "text/plain", body: "" });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByTestId("qc-confirm").click();
+  const refusal = page.getByTestId("qc-refusal");
+  await expect(refusal).toContainText("not known yet");
+  await expect(refusal).not.toContainText("Nothing was created");
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  const seen = await state(page);
+  // The bare answer never reached the stub; the retry carries the key the first attempt used.
+  const posted = seen.posts.filter((p) => p.kind === "convert");
+  expect(posted).toHaveLength(1);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBeTruthy();
+  expect(keys[1]).toBe(keys[0]);
+  expect(seen.conversions).toHaveLength(1);
+});
+
 test("a fresh press of Confirm after a definite refusal mints a new convert key", async ({ page }) => {
   await arrive(page, "q-1003");
   await next(page);

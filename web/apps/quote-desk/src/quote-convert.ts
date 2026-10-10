@@ -47,6 +47,7 @@ import {
   isCashOnDemand,
   isCodRefusal,
   isConvertKeyReusedRefusal,
+  isWordedRefusal,
   parsePayAmount,
   paymentKeyFor,
   refusalWords,
@@ -617,14 +618,16 @@ export class QuoteConvert extends HHElement {
     this.#busy = true;
     this.#refusal = "";
     this.requestUpdate();
-    // One key per convert attempt: minted at the press, kept while the outcome is unknown (a lost or 5xx
-    // answer), so the retry replays the first order. While an attempt's outcome is unknown the key is
-    // kept whatever the answer says: only a success, or a re read of the quote that settles it, ends
-    // the attempt, so no refusal ever sends this quote to a fresh key and a second order.
+    // One key per convert attempt: minted at the press, kept while the outcome is unknown (a lost answer,
+    // a 5xx, or a 4xx that carries no words of the server's own), so the retry replays the first order.
+    // While an attempt's outcome is unknown the key is kept whatever the answer says: only a success,
+    // or a re read of the quote that settles it, ends the attempt, so no refusal ever sends this quote
+    // to a fresh key and a second order.
     const convertKey = this.#convertKey ?? crypto.randomUUID();
     this.#convertKey = convertKey;
     const result = await client.convertWithFulfilment(quoteId, this.#fulfilment, convertKey);
-    if (result.ok || (!isUnknownOutcome(result.status) && !this.#convertLost)) this.#convertKey = null;
+    const unknownOutcome = !result.ok && (isUnknownOutcome(result.status) || !isWordedRefusal(result.error));
+    if (result.ok || (!unknownOutcome && !this.#convertLost)) this.#convertKey = null;
     // The order exists whatever is on screen now: the quote it was made from is announced either way.
     if (result.ok) {
       this.dispatchEvent(new CustomEvent("quote-converted", { detail: { orderId: result.value.orderId, quoteId }, bubbles: true, composed: true }));
@@ -679,7 +682,7 @@ export class QuoteConvert extends HHElement {
         return;
       }
       this.#refusal = refusalWords(result.status, result.error, this.#convertLost);
-      if (isUnknownOutcome(result.status)) this.#convertLost = true;
+      if (unknownOutcome) this.#convertLost = true;
       this.requestUpdate();
       return;
     }

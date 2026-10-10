@@ -263,8 +263,8 @@ export function refusalWords(status: number | undefined, detail: string, afterLo
   // No answer at all, or a 5xx, may follow a conversion that committed: the order's creation is not
   // known, and only the quote's state on reload says. A retry cannot make a second order, because the
   // core converts only from ACCEPTED.
-  if (isUnknownOutcome(status)) {
-    return "Whether the order was created is not known yet: the answer was lost. Check the quote's state on reload before anything else is done. Convert again: the same key is sent, so the server answers the first order and never makes a second.";
+  if (isUnknownOutcome(status) || !isWordedRefusal(detail)) {
+    return "Whether the order was created is not known yet: the answer was lost, or it carried no words of the server's own. Check the quote's state on reload before anything else is done. Convert again: the same key is sent, so the server answers the first order and never makes a second.";
   }
   const said = spokenRefusal(detail.trim());
   if (status === 409 && afterLostAnswer) {

@@ -158,9 +158,12 @@ test("a refusal is plain words with what to do next", () => {
   assert.match(credit, /Nothing was created/);
   assert.doesNotMatch(credit, /^quote:/i);
   assert.match(refusalWords(409, "quote: this quote is sent"), /check its status/);
-  assert.match(refusalWords(403, ""), /Ask a manager/);
+  // A worded 403 keeps its advice; a bodyless one is an unknown outcome like every unworded 4xx.
+  assert.match(refusalWords(403, "quote: only a role that may sell on credit converts quotes"), /Ask a manager/);
   assert.match(refusalWords(500, ""), /not known yet/);
-  assert.match(refusalWords(400, ""), /Nothing was created/);
+  assert.match(refusalWords(400, ""), /not known yet/);
+  // A worded 400 is the server's own refusal of this conversion: nothing was created.
+  assert.match(refusalWords(400, "quote: fulfillment must be pickup or will-call"), /Nothing was created/);
 });
 
 test("an unworded 4xx refusal is an unknown outcome, never 'Nothing was charged' (FROM-PRINCIPAL 121)", () => {
@@ -174,6 +177,10 @@ test("an unworded 4xx refusal is an unknown outcome, never 'Nothing was charged'
     const cod = codRefusalWords(400, detail);
     assert.match(cod, /could not confirm whether the order was created and the payment taken/, detail);
     assert.doesNotMatch(cod, /Nothing was created and nothing was taken/, detail);
+    // The plain convert words say the same: only the server's own sentence proves nothing was created.
+    const convert = refusalWords(400, detail);
+    assert.match(convert, /not known yet/, detail);
+    assert.doesNotMatch(convert, /Nothing was created/, detail);
   }
   // A sentence the server wrote still proves it.
   assert.match(paymentNotTakenWords(409, "payment: the invoice is already paid", 5000), /Nothing was charged/);
