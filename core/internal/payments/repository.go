@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -270,6 +272,152 @@ func (r *Repository) SetDefaultMethod(ctx context.Context, customerID, methodID 
 		return ErrNotFound
 	}
 	return tx.Commit(ctx)
+}
+
+// lockApplyInvoicesTx takes every named invoice of a received payment FOR NO KEY UPDATE, one
+// statement per id in ascending id order (the payments counter is already held), and judges each
+// one as it lands: the account's, open, and inside a scoped caller's branch reach. The account and
+// the reach are FOLDED INTO the locking statement itself, so a fenced caller never locks, and never
+// waits on, a row it may not see (the Opus review's P3-2): a row that fails either answers as not
+// found, the same words for a missing row, another account's row and an out of reach row, so the
+// refusal is no existence oracle across the account or branch walls either.
+//
+// FOR NO KEY UPDATE, not FOR UPDATE, for the reason LOCK-ORDER.md writes down: this writer takes
+// no key column, and NO KEY UPDATE still conflicts with every other invoice writer's row lock
+// while never queuing behind a foreign key's FOR KEY SHARE (a POS return's pos_returns insert).
+// The ascending order is PR 277's (the till's returns lock their documents the same way), so a
+// received payment and a return can never meet head on, whatever order the caller's list came in.
+func (r *Repository) lockApplyInvoicesTx(ctx context.Context, tx pgx.Tx, in ApplyRequest) ([]applyInvoiceRow, error) {
+	ids := append([]string(nil), in.InvoiceIDs...)
+	sort.Strings(ids)
+	var reach []string
+	if in.BranchIDs != nil {
+		reach = in.BranchIDs
+	}
+	rows := make([]applyInvoiceRow, 0, len(ids))
+	for _, id := range ids {
+		var row applyInvoiceRow
+		err := tx.QueryRow(ctx, `
+			SELECT id::text, invoice_no, customer_id::text, branch_id::text, status::text,
+			       issue_date, due_date, balance_cents, holdback_cents
+			  FROM invoices
+			 WHERE id = $1::uuid AND customer_id = $2::uuid
+			   AND ($3::text[] IS NULL OR branch_id = ANY($3::uuid[]))
+			   FOR NO KEY UPDATE`, id, in.CustomerID, reach).
+			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
+				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, NoSuchInvoiceError{InvoiceID: id}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("apply: lock invoice %q: %w", id, err)
+		}
+		if row.Status != "FINALIZED" && row.Status != "PARTIALLY_PAID" {
+			return nil, httpx.BadRequestf("invoice %s (%s) is not open; a payment applies to a finalized or partially paid invoice",
+				row.InvoiceNo, strings.ToLower(row.Status))
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// branchInReach answers whether a branch is in a scoped caller's reach list.
+func branchInReach(reach []string, branchID string) bool {
+	for _, b := range reach {
+		if b == branchID {
+			return true
+		}
+	}
+	return false
+}
+
+// replayAnswer rebuilds the split answer for a key that already posted: the stored payment with
+// its stored allocations, and each invoice's balance read live so the desk sees what the ledger
+// says now, not what it said when the cheque first landed. The balances are the invoice's current
+// ones (a later payment may have moved them since); the outcome words read the invoice's live
+// status.
+//
+// The key is not a bearer of the answer (the till's replayIfAllowed rule, PR 277): a replay is
+// judged like a first attempt, and then against its own body. An allocated invoice outside the
+// caller's branch reach answers as not found, a key that recorded a payment for another account is
+// refused in words, and so is a key re-used for a different payment (another amount, method,
+// reference or invoice list): the desk that retries with a corrected amount must not be told
+// "replayed" with the old figure.
+func (r *Repository) replayAnswer(ctx context.Context, p Payment, in ApplyRequest) (ApplyAnswer, error) {
+	ans := ApplyAnswer{
+		PaymentID: p.ID, PaymentNo: p.PaymentNo, AmountCents: p.AmountCents,
+		AppliedCents: 0, Replayed: true,
+	}
+	if p.Allocations == nil {
+		p.Allocations = []Allocation{}
+	}
+	// The stored body: the reference and the named invoice list recorded on the row when it posted.
+	// A payment recorded before the named list rode the row reads its allocations as its named
+	// list, which is exactly what the per invoice settle names.
+	var storedRef string
+	var storedNamed []string
+	if err := r.pool.QueryRow(ctx, `
+		SELECT COALESCE(metadata->>'reference', ''),
+		       ARRAY(SELECT jsonb_array_elements_text(COALESCE(metadata->'invoice_ids', '[]'::jsonb)))
+		  FROM payments WHERE id = $1::uuid`, p.ID).Scan(&storedRef, &storedNamed); err != nil {
+		return ApplyAnswer{}, fmt.Errorf("apply: replay read payment body: %w", err)
+	}
+	if len(storedNamed) == 0 {
+		for _, a := range p.Allocations {
+			storedNamed = append(storedNamed, a.InvoiceID)
+		}
+	}
+	appliedBy := map[string]int64{}
+	for _, a := range p.Allocations {
+		appliedBy[a.InvoiceID] += a.AmountCents
+		ans.AppliedCents += a.AmountCents
+	}
+	ids := make([]string, 0, len(appliedBy))
+	for id := range appliedBy {
+		ids = append(ids, id)
+	}
+	rows := make([]applyInvoiceRow, 0, len(ids))
+	for _, id := range ids {
+		var row applyInvoiceRow
+		err := r.pool.QueryRow(ctx, `
+			SELECT id::text, invoice_no, customer_id::text, branch_id::text, status::text,
+			       issue_date, due_date, balance_cents, holdback_cents
+			  FROM invoices WHERE id = $1::uuid`, id).
+			Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
+				&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents)
+		if err != nil {
+			return ApplyAnswer{}, fmt.Errorf("apply: replay read invoice %q: %w", id, err)
+		}
+		if in.BranchIDs != nil && !branchInReach(in.BranchIDs, row.BranchID) {
+			return ApplyAnswer{}, NoSuchInvoiceError{InvoiceID: id}
+		}
+		rows = append(rows, row)
+	}
+	if p.CustomerID != in.CustomerID {
+		return ApplyAnswer{}, httpx.BadRequestf("that idempotency key already recorded a payment for another account; use a new key")
+	}
+	if !sameReplayBody(p, storedRef, storedNamed, in) {
+		return ApplyAnswer{}, httpx.BadRequestf("that idempotency key already recorded a different payment; use a new key")
+	}
+	// The zero amount walk answers the rows in the allocation's own oldest first order with their
+	// live balances; each line is then patched with what THIS payment put on it.
+	lines, _ := allocateOldestFirst(rows, 0)
+	for i := range lines {
+		take := appliedBy[lines[i].InvoiceID]
+		lines[i].AppliedCents = take
+		outcome := ApplyOutcomeNone
+		if take > 0 {
+			if rowStatus(rows, lines[i].InvoiceID) == "PAID" {
+				outcome = ApplyOutcomeCloses
+			} else {
+				outcome = ApplyOutcomePart
+			}
+		}
+		lines[i].Outcome = outcome
+	}
+	ans.Lines = lines
+	ans.UnappliedCents = ans.AmountCents - ans.AppliedCents
+	return ans, nil
 }
 
 // PayableInvoices reads the payable balance of each requested invoice, tenant-scoped, and
@@ -584,16 +732,23 @@ RETURNING id::text, payment_no::text, customer_id::text, method, amount_cents, s
 const lockPaymentsSequenceSQL = `INSERT INTO scope_sequences (scope, next_value) VALUES ('payments', 0)
 	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value`
 
-// LockPaymentsSequenceTx takes the payments sequence row on the caller's transaction, without
-// advancing it. It is the first money lock every payments writer takes after the order row (see the
-// lock order at the top of this file), exported so a writer that settles through its own transaction,
-// the quote counter door, can take the same lock at the same place in the same order and so cannot
-// close a cycle with a settle, a reversal or a refund.
-func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error {
+// LockPaymentsSequence takes the payments sequence row on any transaction, without advancing it.
+// It is the first money lock every payments writer takes after the order row (see the lock order at
+// the top of this file), exported so a writer that settles through its own transaction, the quote
+// counter door and the till's owed return among them, can take the same lock at the same place in
+// the same order and so cannot close a cycle with a settle, a reversal, a received payment or a
+// refund.
+func LockPaymentsSequence(ctx context.Context, tx pgx.Tx) error {
 	if _, err := tx.Exec(ctx, lockPaymentsSequenceSQL); err != nil {
 		return fmt.Errorf("payments: lock payments sequence: %w", err)
 	}
 	return nil
+}
+
+// LockPaymentsSequenceTx is LockPaymentsSequence on the repository, for the writers that already
+// hold one.
+func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error {
+	return LockPaymentsSequence(ctx, tx)
 }
 
 // lockAndTotal locks + re-validates every requested invoice, sums the settled amount and captures a
