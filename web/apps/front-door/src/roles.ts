@@ -12,7 +12,7 @@
 //     every name-based selector keeps reading exactly those words). The flow
 //     ids are the till's own mapping: inside_sales -> "sales",
 //     sales_manager -> "sales-manager".
-//   - The eleven others are COMING. Each shows the modules the matrix gives
+//   - The others are COMING. Each shows the modules the matrix gives
 //     that role at work, manage or admin level, by the surfaces table's own
 //     names; read cells (and none) show nothing. A coming role is never
 //     tappable.
@@ -46,6 +46,7 @@ export interface ModuleTile {
 
 /** The live roles' tiles, shared by both roles where the box serves them. */
 const TILL_TILE: ModuleTile = { name: "Counter Till", icon: "lucide:receipt", href: "/till/" };
+const BUYING_TILE: ModuleTile = { name: "Buying and Stock", icon: "lucide:package", href: "/buying-and-stock/" };
 const QUOTE_TILE: ModuleTile = { name: "Quote Desk", icon: "lucide:file-pen-line", href: "/quote/" };
 const MANAGER_HOME_TILE: ModuleTile = { name: "Manager Home", icon: "lucide:house", href: null };
 const DEALER_ADMIN_TILE: ModuleTile = { name: "Dealer Admin", icon: "lucide:settings", href: null };
@@ -57,9 +58,9 @@ const HOUSE_MESSAGES_TILE: ModuleTile = {
 
 /** A role the demo signs in today: a card on the picker, a home behind it. */
 export interface LiveRole {
-  readonly id: "inside_sales" | "sales_manager";
+  readonly id: "inside_sales" | "sales_manager" | "procurement_manager";
   /** The demo flow id the mint takes, the till's own mapping. */
-  readonly flow: "sales" | "sales-manager";
+  readonly flow: "sales" | "sales-manager" | "procurement-manager";
   /**
    * The card's label and its accessible name, alone: the demo adapter's
    * contract words, never decorated.
@@ -103,10 +104,18 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     icon: "lucide:badge-check",
     tiles: [TILL_TILE, QUOTE_TILE, MANAGER_HOME_TILE, DEALER_ADMIN_TILE, HOUSE_MESSAGES_TILE],
   },
+  {
+    id: "procurement_manager",
+    flow: "procurement-manager",
+    label: "Procurement manager",
+    line: "Buy the branch's stock and track what is incoming.",
+    icon: "lucide:package",
+    tiles: [BUYING_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
+  },
 ];
 
 /**
- * The eleven coming roles, in the till's entry view's own order, each with
+ * The ten coming roles, in the till's entry view's own order, each with
  * the modules ROLE-ACCESS-r3 gives it at work, manage or admin level (read
  * cells and none show nothing). Outside Sales has no till (rows 363 and 364);
  * HR's two are House Messages and Dealer Admin, and the matrix gives its
@@ -142,11 +151,6 @@ export const COMING_ROLES: readonly ComingRole[] = [
       "Manager Home",
       "House Messages",
     ],
-  },
-  {
-    id: "procurement_manager",
-    label: "Procurement Manager",
-    modules: ["Buying and Stock", "Manager Home", "House Messages"],
   },
   {
     id: "payables_receivables",

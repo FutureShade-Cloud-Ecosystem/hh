@@ -20,10 +20,10 @@ import { createServer } from "node:http";
 const port = Number(process.env.ROLE_STUB_PORT ?? 4969);
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
-const FLOWS = [{ flow: "procurement", role_code: "procurement_manager", label: "Procurement manager" }];
+const FLOWS = [{ flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" }];
 
 const USERS = {
-  procurement: {
+  "procurement-manager": {
     user_id: "de110000-0000-4000-9000-000000000008",
     email: "procurement.manager@hh-demo.invalid",
     display_name: "Procurement manager (demo)",

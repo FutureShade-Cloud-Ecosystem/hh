@@ -13,7 +13,7 @@ export function procurementHandoff(): void {
   const record = {
     token,
     tokenExpiresAtMs: Date.now() + 7 * 86_400_000,
-    flow: "procurement",
+    flow: "procurement-manager",
     roleLabel: "Procurement manager",
     user: { userId: "de110000-0000-4000-9000-000000000008", email: "procurement.manager@hh-demo.invalid", name: "Procurement manager (demo)" },
     roleCode: "procurement_manager",
