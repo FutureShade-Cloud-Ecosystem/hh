@@ -79,15 +79,16 @@ let clockOffsetMs = 0;
 const nowMs = () => Date.now() + clockOffsetMs;
 
 // The closed flow table, mirroring the core's (core/internal/demo/flows):
-// the Counter Till's pair plus the two personas the roles roadmap's first
-// increments mint. The till's entry offers a card for its own pair alone;
-// the listing still answers the whole table, as the core's route does (the
+// the Counter Till's pair plus the four personas the roles roadmap is
+// bringing live. The till's entry offers a card for its own pair alone; the
+// listing still answers the whole table, as the core's route does (the
 // mint's role label comes from this table, never from the roles table).
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
-{ flow: "yard-team", role_code: "yard_team", label: "Yard Team" },
+  { flow: "yard-team", role_code: "yard_team", label: "Yard Team" },
   { flow: "driver", role_code: "driver", label: "Driver" },
+  { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
 ];
 
@@ -139,6 +140,15 @@ const USERS = {
     tier: 3,
     scope: "BRANCH",
   },
+  "procurement-manager": {
+    user_id: "demo-account-procurement-manager",
+    email: "procurement-manager@demo.invalid",
+    display_name: "Procurement manager (demo)",
+    role_code: "procurement_manager",
+    role_name: "Procurement Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
   "financial-controller": {
     user_id: "demo-account-financial-controller",
     email: "financial-controller@demo.invalid",
@@ -183,7 +193,11 @@ const BRANCHES = [
 
 // Each account's grant reaches one branch: the demo logins work the Trenton
 // counter. Kingston exists so a fence is observable, never reachable.
-const ACCOUNT_BRANCH = { "demo-account-sales": TRENTON_ID, "demo-account-sales-manager": TRENTON_ID };
+const ACCOUNT_BRANCH = {
+  "demo-account-sales": TRENTON_ID,
+  "demo-account-sales-manager": TRENTON_ID,
+  "demo-account-procurement-manager": TRENTON_ID,
+};
 
 // The counter catalogue. list_cents is the retail anchor; branch_cost_cents is
 // the weighted cost the margin glance reads, per branch. The edge restraint

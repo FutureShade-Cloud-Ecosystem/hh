@@ -110,6 +110,10 @@ type planSummary struct {
 	// every row the section wrote.
 	DepositOrders []string
 	DepositRowIDs []string
+	// The buying world (demoseed_procurement.go): one line per open purchase order, and the id of
+	// every row the section wrote.
+	ProcurementLines  []string
+	ProcurementRowIDs []string
 }
 
 // -- the catalogue of demo entities, as tables ----------------------------------------------------

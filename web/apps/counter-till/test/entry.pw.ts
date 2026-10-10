@@ -44,15 +44,17 @@ test("the entry page shows the two demo role cards and the eleven coming roles",
   await expect(manager).toBeVisible();
   await expect(manager).toBeEnabled();
 
-// The stub's table, like the core's, mints five logins; the till offers a
-  // card for its own pair alone (a persona or controller card would lead into
-  // a surface the server refuses), and the rest stay in the coming list.
+// The stub's table, like the core's, mints the full closed set of logins; the
+  // till offers a card for its own pair alone (a persona, buyer or controller
+  // card would lead into a surface the server refuses), and those roles stay in
+  // the coming list.
   const listing = (await (await flows).json()) as { flows: Array<{ flow: string }> };
   expect(listing.flows.map((row) => row.flow)).toEqual([
     "sales",
     "sales-manager",
     "yard-team",
     "driver",
+    "procurement-manager",
     "financial-controller",
   ]);
   await expect(page.getByRole("button", { name: "Yard Team", exact: true })).toBeDisabled();

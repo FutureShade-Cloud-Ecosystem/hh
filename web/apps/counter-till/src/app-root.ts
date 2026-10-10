@@ -73,6 +73,13 @@ import { clearSessionState, setBranches, wirePorts, type AuthUser } from "@hards
 
 const DEMO_ORG = "hh-demo";
 
+/** The till's own pair of the closed flow table: the flows route answers every
+ * live role login the box mints, and a card for a role whose surface the
+ * server refuses here would lead into a refusal. The pair is the till's own
+ * claim, the same seam as the front door's live role list.
+ */
+const TILL_FLOWS: ReadonlySet<string> = new Set(["sales", "sales-manager"]);
+
 export class CounterTillApp extends HHElement {
   static styles = [
     baseStyles,
@@ -375,6 +382,7 @@ export class CounterTillApp extends HHElement {
     return hint === "PANELS" || hint === "STEPPER" ? hint : "";
   })();
   #flowsState: FlowsState = { kind: "loading" };
+  
   /** The one flows read this element makes; the pop-out's tap waits for it. */
   #flowsLoaded: Promise<void> = Promise.resolve();
   #busy = false;
@@ -827,7 +835,7 @@ export class CounterTillApp extends HHElement {
   async #loadFlows(): Promise<void> {
     const result = await this.#account.listFlows();
     this.#flowsState = result.ok
-      ? { kind: "ready", flows: result.value }
+      ? { kind: "ready", flows: result.value.filter((account) => TILL_FLOWS.has(account.flow ?? "")) }
       : { kind: "unavailable", status: result.status ?? null };
     this.requestUpdate();
   }

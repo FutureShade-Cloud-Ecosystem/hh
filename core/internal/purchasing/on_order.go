@@ -11,16 +11,19 @@ package purchasing
 // DIB-470 was filed because two screens disagreed about one product: the product page listed 160 PC
 // outstanding on two purchase orders while the replenishment worklist graded that product as if
 // nothing were coming. So this does not re-derive "outstanding", it composes the SAME SQL fragments
-// as IncomingForProduct (openPOLineSource / openPOLineIsOpen / openPOLineOutstanding), off the same
-// openPOStatuses set. Changing what "still coming" means now changes both, or neither.
+// as IncomingForProduct (openPOLineSource / openPOLineIsOpen / openPOLineOutstanding). The status set
+// is the one parameter they do not share: the list shows openPOStatuses, this total counts
+// onOrderStatuses.
 //
-// DRAFT IS INCLUDED, because openPOStatuses includes it, and that is a deliberate re-decision rather
-// than an inherited accident. incoming.go argues DRAFT in for the person asking "is anyone dealing
-// with this?", a draft PO for 120 is the answer that stops them raising a second one. That argument
-// is STRONGER for the worklist, whose entire job is to not suggest ordering something twice: the
-// buyer who drafted the PO this morning is the person the worklist would be telling to order it
-// again this afternoon. The cost of including it is a suggestion that is skipped while a draft sits
-// unsent; the worklist's own surface names the status, and the alternative is the shipped defect.
+// A DRAFT IS NOT ON ORDER. The aggregate counts onOrderStatuses (ORDERED and PARTIAL) and nothing
+// else, the principal's ruling (row 1303). An earlier reading counted DRAFT on the argument that the
+// buyer who drafted a PO this morning should not be told to order it again this afternoon. A draft
+// is not a promise to the vendor: it can sit unsent, be edited, or be abandoned, and while it is
+// counted the yard looks covered by an order that may never be placed, so the shortage hides until
+// the shelf is bare. The worklist keeps listing the row, and OpenDraftsFor hands the draft's id and
+// number alongside it so the screen can say "drafted, not placed" and link the draft. The product
+// incoming LIST still shows drafts, as drafts (incoming.go): the same rows, the same outstanding
+// expression, a different status set, and the difference is stated, not drifted.
 //
 // - THERE IS NO HTTP ROUTE ON THIS, DELIBERATELY -
 //
@@ -43,12 +46,22 @@ type OutstandingOnOrder struct {
 	QtyBase   float64 `json:"qty_outstanding_base"`
 }
 
+// OpenDraft is the newest draft purchase order that has an outstanding line for one product at one
+// branch: the draft the worklist row points at.
+type OpenDraft struct {
+	ProductID string `json:"product_id"`
+	BranchID  string `json:"branch_id"`
+	POID      string `json:"po_id"`
+	PONo      string `json:"po_no"`
+}
+
 // onOrderStore is the optional persistence seam for this read, discovered by type assertion off
 // *Repository, the shape incomingStore already uses here, and for the same reason: a unit test that
 // had to reach a database to prove which STATUSES count would be proving it in the one place the
 // decision is hardest to see.
 type onOrderStore interface {
 	OutstandingOnOrderBase(ctx context.Context, branchID string, productIDs []string) ([]OutstandingOnOrder, error)
+	OpenDraftsFor(ctx context.Context, branchID string, productIDs []string) ([]OpenDraft, error)
 }
 
 func (s *Service) onOrder() (onOrderStore, error) {
@@ -75,4 +88,16 @@ func (s *Service) OutstandingOnOrderBase(ctx context.Context, branchID string, p
 		return nil, err
 	}
 	return st.OutstandingOnOrderBase(ctx, branchID, productIDs)
+}
+
+// OpenDraftsFor returns, per (product, branch), the newest DRAFT purchase order with an outstanding
+// line for that product: the draft a buyer has started but not placed. It is not supply (see the
+// file header), it is the pointer a surface needs to say "drafted, not placed". Same scope rules and
+// same absence of caller authority as OutstandingOnOrderBase, for the same reason.
+func (s *Service) OpenDraftsFor(ctx context.Context, branchID string, productIDs []string) ([]OpenDraft, error) {
+	st, err := s.onOrder()
+	if err != nil {
+		return nil, err
+	}
+	return st.OpenDraftsFor(ctx, branchID, productIDs)
 }

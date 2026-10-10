@@ -14,16 +14,10 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
-// The table is closed: the pair the Counter Till cycle ships (D49,
-// DECISIONS.md), the two personas the roles roadmap's first increments
-// mint (the Yard Team and the Driver, the logins migration 0200 plants
-// and the demo populate converges onto Trenton), and the Financial
-// Controller the roles roadmap adds. The table is the box's whole mint
-// set, not any one page's offer: an entry page renders the flows of the
-// roles whose screens exist there and leaves the rest coming, so a row
-// here mints a login without offering a card for it. A new flow is an
-// edit here, reviewed, never a runtime input: the entry page may only
-// ever offer what this file lists.
+// The table is closed: the Counter Till's pair (D49, DECISIONS.md), the Financial
+// Controller and the live role logins the roles roadmap adds one reviewed row at a time.
+// A new flow is an edit here, reviewed, never a runtime input: the entry
+// page may only ever offer what this file lists.
 package flows
 
 // OrgSlug is the one org a demo box holds and the only org the demo
@@ -101,7 +95,7 @@ var accounts = map[string]Account{
 		Label:          "Sales manager",
 		Role:           "sales_manager",
 	},
-"yard-team": {
+	"yard-team": {
 		Flow:           "yard-team",
 		PlatformUserID: "d0200000-0000-4000-9000-000000000002",
 		Email:          "yard.demo@dibbits.example",
@@ -116,6 +110,17 @@ var accounts = map[string]Account{
 		DisplayName:    "Driver persona (demo)",
 		Label:          "Driver",
 		Role:           "driver",
+	},
+	// The procurement manager's login, the roles roadmap's Buying and
+	// Stock slice: the buyer's card. The id block is this lane's own, so
+	// the role lanes' rows cannot collide as they land one after another.
+	"procurement-manager": {
+		Flow:           "procurement-manager",
+		PlatformUserID: "de64b000-0000-4000-9000-000000000001",
+		Email:          "procurement.manager@" + ReservedDomain,
+		DisplayName:    "Procurement manager (demo)",
+		Label:          "Procurement manager",
+		Role:           "procurement_manager",
 	},
 	"financial-controller": {
 		Flow:           "financial-controller",
@@ -143,6 +148,7 @@ func All() []Account {
 		accounts["sales-manager"],
 accounts["yard-team"],
 		accounts["driver"],
+		accounts["procurement-manager"],
 		accounts["financial-controller"],
 	}
 }

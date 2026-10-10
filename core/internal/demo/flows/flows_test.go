@@ -4,28 +4,27 @@ package flows
 
 import "testing"
 
-// The table is closed: the Counter Till pair, the Yard Team and Driver
-// personas (migration 0200's planted logins) and the Financial Controller
-// the roles roadmap adds, no more, and every entry carries the account
-// facts the other lanes share.
+// The table is closed: exactly the listed flows, no more, and every
+// entry carries the account facts the other lanes share.
 func TestTableIsTheClosedSet(t *testing.T) {
 	all := All()
-	if len(all) != 5 {
-		t.Fatalf("table holds %d flows, want the closed set of five", len(all))
+	if len(all) != 6 {
+		t.Fatalf("table holds %d flows, want the closed set of six", len(all))
 	}
 	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" ||
 		all[2].Flow != "yard-team" || all[3].Flow != "driver" ||
-		all[4].Flow != "financial-controller" {
-		t.Fatalf("flow order drifted: %q, %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow, all[4].Flow)
+		all[4].Flow != "procurement-manager" || all[5].Flow != "financial-controller" {
+		t.Fatalf("flow order drifted: %q, %q, %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow, all[4].Flow, all[5].Flow)
 	}
-	for _, a := range all {
+	}	for _, a := range all {
 		if a.PlatformUserID == "" || a.Email == "" || a.DisplayName == "" || a.Label == "" || a.Role == "" {
 			t.Fatalf("flow %q carries an empty fact: %+v", a.Flow, a)
 		}
 		switch a.Role {
-		case "inside_sales", "sales_manager", "yard_team", "driver", "financial_controller":
+		case "inside_sales", "sales_manager", "yard_team", "driver", "procurement_manager", "financial_controller":
 		default:
-			t.Fatalf("flow %q holds role %q, want one of the table's five staff roles", a.Flow, a.Role)
+			t.Fatalf("flow %q holds role %q, want one of the table's six staff roles", a.Flow, a.Role)
+		}
 		}
 	}
 }

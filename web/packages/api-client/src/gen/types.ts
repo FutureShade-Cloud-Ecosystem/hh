@@ -2883,6 +2883,8 @@ export type InventoryShortfallRow = {
   lead_time_days: number;
   avg_cost_cents?: number;
   suggested_value_cents?: number;
+  draft_po_id?: string;
+  draft_po_no?: string;
 };
 export type InventoryReorderPoint = {
   product_id: string;
@@ -2935,6 +2937,8 @@ export type InventoryReorderResult = {
   suggested_qty_base: number;
   uom: string;
   vendor_name: string;
+  existing_draft_po_id?: string;
+  existing_draft_po_no?: string;
 };
 export type InventoryNudgeRequest = {
   product_id: string;
@@ -5624,6 +5628,25 @@ export type PurchasingVendor = {
   payment_terms_days: number;
   is_active: boolean;
 };
+export type PurchasingCreateVendorRequest = {
+  name: string;
+  payment_terms_days?: number;
+  order_email?: string;
+};
+export type PurchasingUpdateVendorRequest = {
+  name?: string;
+  payment_terms_days?: number;
+  order_email?: string;
+  is_active?: boolean;
+};
+export type PurchasingVendorMaster = {
+  id: string;
+  vendor_no: string;
+  name: string;
+  payment_terms_days: number;
+  order_email: string;
+  is_active: boolean;
+};
 export type PurchasingPO = {
   id: string;
   po_no: string;
@@ -5826,6 +5849,10 @@ export type PurchasingAddLineRequest = {
   description?: string;
   qty_ordered_base: number;
   uom?: string;
+  unit_cost_cents?: number;
+};
+export type PurchasingUpdateLineRequest = {
+  qty_ordered_base?: number;
   unit_cost_cents?: number;
 };
 export type PurchasingSetExpectedDateRequest = {

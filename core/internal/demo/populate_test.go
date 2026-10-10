@@ -300,11 +300,12 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
 		t.Errorf("the org scope did not stamp clean: %+v", counts)
 	}
-if counts.UsersLinked != 5 || counts.UsersUnlinked != 8 {
-		t.Errorf("linked %d / unlinked %d users, want the 2 demo role accounts, the 2 personas, and the controller linked (5) and the 8 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	if counts.UsersLinked != 6 || counts.UsersUnlinked != 8 {
+		t.Errorf("linked %d / unlinked %d users, want the 2 demo role accounts, the 2 personas, the buyer and the controller linked (6) and the 8 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	if counts.StaffGrants != 5 || counts.StaffGrantsBranch != 4 || counts.StaffGrantsGlobal != 1 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the four branch-scoped linked accounts' one-branch grants and the controller's one global grant", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	if counts.StaffGrants != 6 || counts.StaffGrantsBranch != 5 || counts.StaffGrantsGlobal != 1 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the five branch-scoped linked accounts' one-branch grants and the controller's one global grant", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	}
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -327,7 +328,7 @@ if counts.UsersLinked != 5 || counts.UsersUnlinked != 8 {
 	}
 
 	// The two role accounts are exactly as the demo sign-in will resolve them.
-assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES", trentonBranchID)
+	assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, controllerUserID, controllerEmail, controllerDisplayName, "FINANCIAL_CONTROLLER", trentonBranchID)
 
@@ -339,6 +340,7 @@ assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSI
 	// works, and the dispatch persona (a later increment) keeps 0200's shape.
 	assertRoleAccount(t, ctx, pool, yardUserID, yardEmail, yardDisplayName, "YARD_TEAM", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, driverUserID, driverEmail, driverDisplayName, "DRIVERS", kingstonBranchID)
+	assertRoleAccount(t, ctx, pool, buyerUserID, buyerEmail, buyerDisplayName, "PROCUREMENT_MANAGER", trentonBranchID)
 	for _, p := range []struct{ id, branch string }{
 		{yardUserID, trentonBranchID},
 		{driverUserID, kingstonBranchID},
@@ -391,7 +393,7 @@ assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSI
 		}
 	}
 
-	// Every users row renders an invented name: the thirteen display names
+	// Every users row renders an invented name: the fourteen display names
 	// this populate and the migrations' planted set allow, exactly, and
 	// nothing else. A surname token or an unreplaced placeholder on any row
 	// fails the allowlist, without the test itself naming a token.
@@ -409,6 +411,7 @@ assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSI
 		"Dispatch persona (demo)":       true,
 		"Yard persona (demo)":           true,
 		"Driver persona (demo)":         true,
+		"Procurement manager (demo)":    true,
 	}
 	nameRows, err := pool.Query(ctx, `SELECT display_name FROM users`)
 	if err != nil {
@@ -429,8 +432,8 @@ assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSI
 	if err := nameRows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(saw) != len(allowedNames) || len(saw) != 13 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 13 invented ones (saw: %v)", len(saw), saw)
+	if len(saw) != len(allowedNames) || len(saw) != 14 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 14 invented ones (saw: %v)", len(saw), saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the
