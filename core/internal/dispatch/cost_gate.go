@@ -70,17 +70,23 @@ func (s *Service) moneyAllowed(ctx context.Context) bool {
 	return err == nil && allowed
 }
 
-// blankHoldMoney holds the figure and the gate's sentence out of one hold for
-// a caller the rule refuses: the figure marshals byte-absent, never a zero
-// that reads as nothing owed, and the reason becomes the words a driver can
-// act on. The mark, the order and the machine code stay. An unheld stop is
-// left as the gate answered it, wordless: the gate words a refusal, never a
-// release, and the payment sentence on a paid stop would tell a driver at a
-// customer's gate that a cleared order is unpaid, on every clear stop of the
-// run.
+// blankHoldMoney holds the figure and the gate's sentence out of one held
+// stop for a caller the rule refuses: the figure marshals byte-absent, never
+// a zero that reads as nothing owed, and the reason becomes the words a
+// driver can act on. The mark, the order and the machine code stay. An
+// unheld stop is wordless for every caller as a separate step the call
+// sites run first (service_w3.go, N3): blankHoldMoney never sees an unheld
+// stop, and the gate's "AR" code (the wired unionARGate's audit intent) does
+// not ride a paid stop to any reader. The fence words a refusal, never a
+// release: a payment sentence on a paid stop would tell a driver at a
+// customer's gate that a cleared order is unpaid, on every clear stop.
 func blankHoldMoney(hold *StopPaymentHold) {
 	hold.AmountDueCents = 0
 	if !hold.Held {
+		// Defensive: the call sites run the unheld step first; this branch
+		// only fires if a future call site forgets that. Clearing Code here
+		// keeps N3's "wordless on a paid stop" answer uniform under any
+		// call shape.
 		hold.Reason, hold.Code = "", ""
 		return
 	}

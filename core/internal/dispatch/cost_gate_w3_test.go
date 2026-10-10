@@ -346,3 +346,66 @@ func TestDoorMoney_BothHoldReadsFailClosed(t *testing.T) {
 		}
 	}
 }
+
+// N3 (P3, cosmetic): an unheld stop reads the same shape for every role,
+// never the wire gate's Code "AR" (the unionARGate's audit intent, even on
+// allow). Off list callers already saw the unheld stop wordless via
+// blankHoldMoney's unheld branch; the wire was the on list path, where
+// blankHoldMoney was bypassed and the gate's code rode the hold. Without
+// the call site fix the on list caller would read Code "AR" on a paid stop
+// — a refusal id on an allowed order, a byte shape the off list caller
+// doesn't have. The fix runs the wordless step on every caller, the same
+// shape for both fences.
+//
+// Drawn from: cmd/core/tops_adapters.go:548 (unionARGate), which sets
+// Code "AR" even on an Allow: true decision.
+func TestDoorMoneyShape_AnUnheldStopCarriesNoCodeForAnyone(t *testing.T) {
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The wired shape: Allow true, Code "AR", the audit-intent refusal
+	// identifier the prior fence put on every allow and never cleared.
+	gate := &fakeGate{deny: nil}
+	gate.deny = map[string]DispatchGateDecision{}
+	gate.deny["o-1"] = DispatchGateDecision{Allow: true, Code: "AR"}
+	src := doorStopSource{
+		run: Run{ID: "r-1", BranchID: "b-1"},
+		stops: []Stop{{ID: "s-clear", OrderID: "o-1", BranchID: "b-1"}},
+	}
+	for _, role := range doorRolesOnTheList {
+		s := w3Service("2026-08-06").withStopSource(src).WithARGate(gate).WithCostRoles(cfg)
+		hold, err := s.PaymentHoldForStop(doorCtx(role), "s-clear")
+		if err != nil {
+			t.Fatalf("the unheld hold as %s: %v", role, err)
+		}
+		body := marshalHold(t, hold)
+		if strings.Contains(body, `"code"`) {
+			t.Errorf("the on list caller on an unheld stop must not read the gate's Code (%q): %s", "code", body)
+		}
+		// Same shape for the run read.
+		holds, err := s.PaymentHoldsForRun(doorCtx(role), "r-1")
+		if err != nil {
+			t.Fatalf("the run's holds as %s: %v", role, err)
+		}
+		for _, h := range holds {
+			body := marshalHold(t, h)
+			if strings.Contains(body, `"code"`) {
+				t.Errorf("the run's holds as %s: an unheld stop is wordless for every caller: %s", role, body)
+			}
+		}
+	}
+	// And the off list path: same shape, the bit the existing fence proved
+	// also stays.
+	for _, role := range doorRolesOffTheList {
+		s := w3Service("2026-08-06").withStopSource(src).WithARGate(gate).WithCostRoles(cfg)
+		hold, err := s.PaymentHoldForStop(doorCtx(role), "s-clear")
+		if err != nil {
+			t.Fatalf("the unheld hold as %s: %v", role, err)
+		}
+		body := marshalHold(t, hold)
+		if strings.Contains(body, `"code"`) {
+			t.Errorf("the off list caller on an unheld stop must not read the gate's Code (%q): %s", "code", body)
+		}
+	}
+}
