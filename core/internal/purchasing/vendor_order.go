@@ -356,7 +356,7 @@ func (s *Service) SendPO(ctx context.Context, poID string, in SendPORequest) (PO
 		return POSend{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return POSend{}, errForbidden
+		return POSend{}, errNotFound
 	}
 	// THE REPLAY ANSWER COMES AFTER THE FENCE, NEVER BEFORE IT (HH-181). The key index is global, so a
 	// key is only a replay for the order that minted it: for any other order it is a collision the
@@ -484,7 +484,7 @@ func (s *Service) ListPOSends(ctx context.Context, poID string) ([]POSend, error
 		return nil, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return nil, errForbidden
+		return nil, errNotFound
 	}
 	return store.ListPOSends(ctx, poID)
 }
@@ -717,7 +717,7 @@ func (s *Service) ResolveEchoedRef(ctx context.Context, ref string) (PO, error) 
 		return PO{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return PO{}, errForbidden
+		return PO{}, errNotFound
 	}
 	// THE TOTALS ARE COMPUTED, NOT LEFT AT ZERO. The header read carries no line aggregate, and a
 	// stamped `subtotal_cents: 0` would be worse than an absent one: absence is a caller who may not

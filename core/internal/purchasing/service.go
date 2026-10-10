@@ -314,7 +314,7 @@ func (s *Service) GetPO(ctx context.Context, poID string) (PODetail, error) {
 		return PODetail{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return PODetail{}, errForbidden
+		return PODetail{}, errNotFound
 	}
 	lines, err := s.repo.POLines(ctx, nil, poID, false)
 	if err != nil {
@@ -488,7 +488,7 @@ func (s *Service) mutatePO(ctx context.Context, poID string, fn func(tx pgx.Tx, 
 		return err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return errForbidden
+		return errNotFound
 	}
 	if err := fn(tx, po); err != nil {
 		return err
@@ -532,7 +532,7 @@ func (s *Service) Receive(ctx context.Context, poID string, in ReceiveRequest) (
 		return Receipt{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return Receipt{}, errForbidden
+		return Receipt{}, errNotFound
 	}
 	if err := CheckReceivable(po.Status); err != nil {
 		return Receipt{}, err
@@ -689,7 +689,7 @@ func (s *Service) GetReceipt(ctx context.Context, receiptID string) (Receipt, er
 		return Receipt{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return Receipt{}, errForbidden
+		return Receipt{}, errNotFound
 	}
 	// THE COST GATE. A receipt's value is what the stock that just landed cost us.
 	s.costLensFor(ctx, po.BranchID).stampReceipt(&rc)
@@ -722,7 +722,7 @@ func (s *Service) AttachLandedCost(ctx context.Context, receiptID string, in Lan
 		return Receipt{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return Receipt{}, errForbidden
+		return Receipt{}, errNotFound
 	}
 	if rc.LandedCostID != "" {
 		return Receipt{}, conflict("purchasing: receipt %s already carries a landed cost", rc.GRNNo)
@@ -819,7 +819,7 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 		return BillDetail{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return BillDetail{}, errForbidden
+		return BillDetail{}, errNotFound
 	}
 	if po.Status == StatusDraft || po.Status == StatusCancelled {
 		return BillDetail{}, conflict("purchasing: cannot bill a %s purchase order", po.Status)
@@ -976,7 +976,7 @@ func (s *Service) GetBill(ctx context.Context, billID string) (BillDetail, error
 		return BillDetail{}, err
 	}
 	if !caller.CanAccessBranch(b.BranchID) {
-		return BillDetail{}, errForbidden
+		return BillDetail{}, errNotFound
 	}
 	if names := s.vendorNames(ctx); names != nil {
 		b.VendorName = names[b.VendorID]
@@ -1034,7 +1034,7 @@ func (s *Service) PostBill(ctx context.Context, billID string, in PostBillReques
 		return BillDetail{}, err
 	}
 	if !caller.CanAccessBranch(bill.BranchID) {
-		return BillDetail{}, errForbidden
+		return BillDetail{}, errNotFound
 	}
 	if bill.Status != BillDraft {
 		return BillDetail{}, conflict("purchasing: bill is already %s", bill.Status)
