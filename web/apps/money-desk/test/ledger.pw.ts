@@ -167,3 +167,23 @@ test("a bare array where the contract says a page is refused, never half read", 
   await expect(page.locator("[data-error]")).toContainText("The approvals list was not readable.");
   await expect(page.locator("[data-approval-id]")).toHaveCount(0);
 });
+
+test("on a phone the two area buttons share a row and the three ledger tabs share a row", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openApprovals(page, request);
+  const tops = async (selector: string): Promise<number[]> =>
+    page.locator(selector).evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)));
+  expect(new Set(await tops("nav.areas button")).size).toBe(1);
+  expect(new Set(await tops("[data-tab-id]")).size).toBe(1);
+});
+
+test("the frame does not jump when the controller moves between the ledger and receivables", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openApprovals(page, request);
+  const left = async (selector: string): Promise<number> => Math.round((await page.locator(selector).first().boundingBox())?.x ?? -1);
+  const ledger = { switch: await left("nav.areas button"), content: await left("main h1") };
+  await page.getByRole("button", { name: "Receivables", exact: true }).click();
+  await expect(page.locator("[data-card]")).toHaveCount(4);
+  const receivables = { switch: await left("nav.areas button"), content: await left("main h1") };
+  expect(receivables).toEqual(ledger);
+});

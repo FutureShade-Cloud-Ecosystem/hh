@@ -45,8 +45,8 @@ export class MoneyDeskApp extends HHElement {
   static styles = [baseStyles, entryStyles, arStyles, glStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
-    main.gl-desk { max-width: var(--hh-content-max, 1180px); margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
-    .areas { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); max-width: var(--hh-content-max, 1180px); margin: 0 auto; padding: var(--hh-s-16) var(--hh-s-24) 0; }
+    main.gl-desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
+    .areas { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); max-width: 1440px; margin: 0 auto; padding: var(--hh-s-16) var(--hh-s-24) 0; }
   `];
 
   // The demo account surface: listFlows() and chooseFlow() over the core's

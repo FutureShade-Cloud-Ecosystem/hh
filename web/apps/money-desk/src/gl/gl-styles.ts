@@ -104,6 +104,8 @@ export const glStyles = css`
   .gl-name-narrow { display: none; }
   /* A phone shows the figures: the type column steps aside so debit and credit stay in view. */
   @media (max-width: 520px) {
+    .gl-tabs, .areas { gap: var(--hh-s-4); }
+    .gl-tab { padding: 0 var(--hh-s-12); font-size: 14px; }
     .gl-col-type, .gl-col-name { display: none; }
     .gl-name-narrow { display: block; color: var(--hh-text-dim); font-size: 12px; }
     .gl-panel { padding: var(--hh-s-16); }
