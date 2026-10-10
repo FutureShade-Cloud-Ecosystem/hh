@@ -42,7 +42,7 @@ test("every proof names a test that exists or a source line that is there", () =
 });
 
 test("the page keeps the house rules", () => {
-  assert.ok(!/[–—]/.test(page), "no em or en dash");
+  assert.ok(!new RegExp("[\u2013\u2014]").test(page), "no em or en dash");
   assert.ok(!/\b\d{4}-\d{2}-\d{2}\b/.test(page), "no calendar date");
   assert.ok(!/\b(January|February|March|April|May|June|July|August|September|October|November|December|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/.test(page), "no month or weekday");
   assert.ok(!/\b\d+\s*(seconds?|minutes?|hours?|days?|weeks?|months?|years?)\b/i.test(page), "no duration");
