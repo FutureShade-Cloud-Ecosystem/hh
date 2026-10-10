@@ -31,14 +31,15 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.FD_STUB_PORT ?? 4927);
 
-// The flow table as the front door offers it: the two live roles whose
+// The flow table as the front door offers it: the three live roles whose
 // screens this box serves, with the labels the cards carry and the role
 // each minted account holds. The core's table mints the personas the roles
 // roadmap is bringing live beside these; the front door offers a card only
-// for a role whose screens exist, so its stub answers the same pair.
+// for a role whose screens exist, so its stub answers the same three.
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "driver", role_code: "driver", label: "Driver" },
 ];
 
 const USERS = {
@@ -57,6 +58,15 @@ const USERS = {
     display_name: "Sales manager (demo)",
     role_code: "sales_manager",
     role_name: "Sales Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  driver: {
+    user_id: "demo-account-driver",
+    email: "driver@demo.invalid",
+    display_name: "Driver (demo)",
+    role_code: "driver",
+    role_name: "Driver",
     tier: 2,
     scope: "BRANCH",
   },
