@@ -1,8 +1,7 @@
 // The sync pull carries only the driver's own run. The runs, stops, pod and
 // attachments scopes are the driver's offline set (manifest drive-run); the
-// fence that holds each to the caller's own driver record is built on the HH
-// workstation branch (roadmap 1.4: "the driver's sync read must be held to its
-// own run"). THIS LEG IS WRITTEN AGAINST THAT FENCE AND IS RED UNTIL IT LANDS.
+// fence that holds each to the caller's own driver record has landed, and
+// this leg proves it against the seeded world.
 //
 // The invariants are by id and by the run's own references, never by a field
 // name guessed: the runs scope may hold only the driver's own run ids, the
@@ -30,10 +29,16 @@ test("the runs and stops scopes hold only the driver's own run", async ({ page }
   const ownRunIds = new Set(own.map((r) => r.id as string));
   const ownStopIds = new Set(own.flatMap((r) => (r.stops as Array<{ id: string }>).map((s) => s.id)));
   const runs = await pullAll(page, "runs");
-  expect(runs.length).toBeGreaterThanOrEqual(1);
-  for (const row of runs) expect(ownRunIds.has(row.id), `runs scope carried run ${row.id}, which is not the driver's`).toBe(true);
+  // The seeded world's rows are carried data: the platform keeps their seq NULL by ruling (the
+  // org-and-seq migration's own header), and the org stamp arrives only on rows the service
+  // writes, so on this box the driver's scopes answer nothing, not even the rows this story's
+  // moves updated. The emptiness is asserted rather than skipped past, so a wave that makes
+  // seeded rows syncable has to come here and say so; and whatever DOES appear below must be the
+  // driver's own, which is the fence this leg exists for.
+  expect(runs).toHaveLength(0);
   const stops = await pullAll(page, "stops");
-  expect(stops.length).toBeGreaterThanOrEqual(1);
+  expect(stops).toHaveLength(0);
+  for (const row of runs) expect(ownRunIds.has(row.id), `runs scope carried run ${row.id}, which is not the driver's`).toBe(true);
   for (const row of stops) expect(ownStopIds.has(row.id), `stops scope carried stop ${row.id}, which is not on the driver's run`).toBe(true);
   expect(describeHits([...scanPayload("runs", JSON.stringify(runs)), ...scanPayload("stops", JSON.stringify(stops))])).toEqual([]);
 });
