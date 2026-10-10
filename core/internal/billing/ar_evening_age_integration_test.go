@@ -109,3 +109,33 @@ func TestIntegrationEveningAge_TieOutBalanceCutsTheIssueDateOnTheHouseDay(t *tes
 			utcDay, at.UTC().Format(time.RFC3339), delta)
 	}
 }
+
+// An explicit day asked of the tie-out is the dealer's day, taken at its last instant (the cut the
+// GL route hands both arms). An invoice issued on that house day is counted, and one issued the next
+// house day is not, at any wall hour.
+func TestIntegrationEveningAge_TieOutBalanceCountsAnInvoiceIssuedOnTheExplicitDay(t *testing.T) {
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	ctx := context.Background()
+	n := ns(t)
+	cust := seedCustomer(t, pool, n)
+
+	const day, nextDay = "2031-03-10", "2031-03-11"
+	asOf, err := houseday.EndOfDay(day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := repo.ARBalanceCents(ctx, asOf, "")
+	if err != nil {
+		t.Fatalf("baseline AR: %v", err)
+	}
+	seedInvoice(t, pool, cust, n, invSpec{no: "AR-EXP", status: "FINALIZED", issue: day, total: 8000, balance: 8000, finalized: true})
+	seedInvoice(t, pool, cust, n, invSpec{no: "AR-EXP-NEXT", status: "FINALIZED", issue: nextDay, total: 500, balance: 500, finalized: true})
+	got, err := repo.ARBalanceCents(ctx, asOf, "")
+	if err != nil {
+		t.Fatalf("AR after seeding: %v", err)
+	}
+	if delta := got - base; delta != 8000 {
+		t.Fatalf("as of %s the tie-out moved by %d for an invoice issued that day (8000) and one issued the day after (500 must not count)", day, delta)
+	}
+}

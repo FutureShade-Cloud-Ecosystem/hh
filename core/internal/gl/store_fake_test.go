@@ -35,6 +35,7 @@ type fakeStore struct {
 	byKey         map[string]string
 	inserted      []journalDraft
 	closedPeriods map[string]bool
+	asOfSeen      time.Time         // AccountBalanceAsOf records the instant the GL arm of the tie-out cut at
 	asOfNetDebit  int64             // AccountBalanceAsOf return (the inception-to-date GL side of the tie-out)
 	tbRows        []TrialBalanceRow // TrialBalance / TrialBalanceAsOf return (the ERP side of the BisTrack static tie-out)
 	asOfRows      []TrialBalanceRow // TrialBalanceAsOf override when the test must differ from period-movement tbRows
@@ -237,7 +238,8 @@ func (f *fakeStore) ClosePeriodsForYear(_ context.Context, _ int, _, _ string) e
 func (f *fakeStore) AccountBalance(_ context.Context, _ string, _, _ int, _ string) (int64, string, error) {
 	return 0, NormalDebit, nil
 }
-func (f *fakeStore) AccountBalanceAsOf(_ context.Context, _ string, _ time.Time, _ string) (int64, string, error) {
+func (f *fakeStore) AccountBalanceAsOf(_ context.Context, _ string, at time.Time, _ string) (int64, string, error) {
+	f.asOfSeen = at
 	return f.asOfNetDebit, NormalDebit, nil
 }
 func (f *fakeStore) TrialBalance(_ context.Context, _, _ int, _ string) ([]TrialBalanceRow, error) {

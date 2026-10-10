@@ -321,7 +321,7 @@ func parseAsOf(s string) (time.Time, error) {
 	if s == "" {
 		return houseClock(time.Now()), nil
 	}
-	t, err := time.ParseInLocation("2006-01-02", s, houseday.Location())
+	t, err := houseday.ParseDay(s)
 	if err != nil {
 		return time.Time{}, httpx.BadRequestf("as_of must be YYYY-MM-DD")
 	}
