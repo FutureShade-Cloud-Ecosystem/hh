@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -113,6 +114,7 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 	// same announce the explicit seat owes: a device holding a cursor past the room's stamped seq
 	// sees the room arrive. The bumps ride the sync's own transaction, so the seats and their
 	// announce commit together or not at all.
+	var changed []string
 	if status == "ACTIVE" {
 		rows, err := tx.Query(ctx, `
 			INSERT INTO msg_members (channel_id, user_id, role, source)
@@ -137,11 +139,7 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("insert derived members: %w", err)
 		}
-		for _, ch := range seated {
-			if err := r.bumpChannelSeq(ctx, tx, ch); err != nil {
-				return err
-			}
-		}
+		changed = append(changed, seated...)
 	}
 
 	// Delete DERIVED rows the user no longer qualifies for (role/branch change, deactivation, or
@@ -176,11 +174,7 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("prune derived members: %w", err)
 		}
-		for _, ch := range pruned {
-			if err := r.bumpChannelSeq(ctx, tx, ch); err != nil {
-				return err
-			}
-		}
+		changed = append(changed, pruned...)
 	} else {
 		rows, err := tx.Query(ctx,
 			`DELETE FROM msg_members WHERE user_id = $1 AND source = 'DERIVED'
@@ -201,10 +195,20 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("prune derived members (inactive): %w", err)
 		}
-		for _, ch := range pruned {
-			if err := r.bumpChannelSeq(ctx, tx, ch); err != nil {
-				return err
-			}
+		changed = append(changed, pruned...)
+	}
+
+	// Each changed room owes the feed one bump, and each bump takes the room's row lock. The ids are
+	// bumped in ONE sorted order across seats and prunes alike, so two syncs that cross (one gaining
+	// room A and losing room B while another gains B and loses A) take their locks in the same order
+	// and cannot deadlock: a deadlock would fail the ListMyChannels read that runs the sync.
+	sort.Strings(changed)
+	for i, ch := range changed {
+		if i > 0 && ch == changed[i-1] {
+			continue
+		}
+		if err := r.bumpChannelSeq(ctx, tx, ch); err != nil {
+			return err
 		}
 	}
 
