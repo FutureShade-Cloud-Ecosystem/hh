@@ -33,6 +33,9 @@ type glStore interface {
 	InsertJournal(ctx context.Context, d journalDraft) (id string, created bool, err error)
 	// InsertJournalTx is InsertJournal inside the caller's transaction, under a savepoint (see the repository).
 	InsertJournalTx(ctx context.Context, tx pgx.Tx, d journalDraft) (id string, created bool, err error)
+	// InsertParkedJournal inserts a DRAFT and runs file on the SAME transaction before committing: if file
+	// fails, the journal is not saved. file is how a parked journal's approval request is filed atomically.
+	InsertParkedJournal(ctx context.Context, d journalDraft, file func(ctx context.Context, tx pgx.Tx, journalID string) error) (string, error)
 	GetJournal(ctx context.Context, id string) (Journal, error)
 	ListJournals(ctx context.Context, f JournalFilter) ([]Journal, error)
 	ApproveJournal(ctx context.Context, id, approverID string) (Journal, error)

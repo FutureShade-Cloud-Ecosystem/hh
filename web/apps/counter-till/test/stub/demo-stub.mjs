@@ -84,6 +84,7 @@ const nowMs = () => Date.now() + clockOffsetMs;
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
@@ -114,6 +115,15 @@ const USERS = {
     role_name: "Sales Manager",
     tier: 2,
     scope: "BRANCH",
+  },
+  "financial-controller": {
+    user_id: "demo-account-financial-controller",
+    email: "financial-controller@demo.invalid",
+    display_name: "Financial controller (demo)",
+    role_code: "financial_controller",
+    role_name: "Financial Controller",
+    tier: 1,
+    scope: "GLOBAL",
   },
 };
 
