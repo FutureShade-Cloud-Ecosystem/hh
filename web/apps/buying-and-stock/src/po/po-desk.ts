@@ -37,6 +37,9 @@ export class PoDesk {
   #placedId: string | null = null;
   #busy = false;
   #error = "";
+  // Which control the refusal answers: the panel's own error note, or the line editor's Save
+  // (the editor's refusal shows beside its Save, a screen above where the panel note sits at 390).
+  #errorAt: "panel" | "editor" = "panel";
   #notice = "";
   // The draft whose starting field values the screen has already been given.
   #seeded: string | null = null;
@@ -224,12 +227,14 @@ export class PoDesk {
 
   #clearMessages(): void {
     this.#error = "";
+    this.#errorAt = "panel";
     this.#notice = "";
   }
 
-  #fail(action: string, result: Extract<Result<unknown>, { ok: false }>): void {
+  #fail(action: string, result: Extract<Result<unknown>, { ok: false }>, at: "panel" | "editor" = "panel"): void {
     this.#notice = "";
     this.#error = refusalWords(action, result.error, result.status);
+    this.#errorAt = at;
   }
 
   async #draftFromShortfall(): Promise<void> {
@@ -347,6 +352,7 @@ export class PoDesk {
       const check = costCentsFromTyped(costText);
       if (!check.ok) {
         this.#error = check.words;
+        this.#errorAt = "editor";
         this.#host.repaint();
         return;
       }
@@ -354,6 +360,7 @@ export class PoDesk {
     }
     if (Object.keys(body).length === 0) {
       this.#error = "Nothing changed on this line yet.";
+      this.#errorAt = "editor";
       this.#host.repaint();
       return;
     }
@@ -365,7 +372,7 @@ export class PoDesk {
       this.#draft = { ...draft, po: saved.value };
       this.#editing = null;
     } else {
-      this.#fail("order", saved);
+      this.#fail("order", saved, "editor");
     }
     this.#busy = false;
     this.#host.repaint();
@@ -498,7 +505,7 @@ export class PoDesk {
       draft: this.#draft,
       placedId: this.#placedId,
       busy: this.#busy,
-      error: this.#phase === "error" || this.#error !== "" ? this.#error : "",
+      error: this.#phase === "error" || (this.#error !== "" && this.#errorAt === "panel") ? this.#error : "",
       notice: this.#notice,
       method: this.#method,
       expectedText: this.#expectedText,
@@ -508,6 +515,7 @@ export class PoDesk {
       products: this.#products,
       editing: this.#editing,
       adding: this.#adding,
+      editorError: this.#error !== "" && this.#errorAt === "editor" && this.#editing !== null ? this.#error : "",
       today: new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()),
     });
   }

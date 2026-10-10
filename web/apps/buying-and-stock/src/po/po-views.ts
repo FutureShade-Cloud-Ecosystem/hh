@@ -57,6 +57,8 @@ export interface DeskModel {
   readonly editing: string | null;
   /** The add a line row is open under the draft's lines. */
   readonly adding: boolean;
+  /** The refusal that answers the line editor's Save, shown beside it; "" when there is none. */
+  readonly editorError: string;
   /** Today, YYYY-MM-DD in the reader's own day. */
   readonly today: string;
 }
@@ -253,6 +255,7 @@ function draftLineRow(model: DeskModel, line: PurchasingPODetail["lines"][number
         <td class="pick">
           <button type="button" class="btn btn-secondary small-btn" data-action="save-line" data-line-id=${line.id} ?disabled=${model.busy}>Save</button>
           <button type="button" class="btn btn-secondary small-btn" data-action="edit-line-close" ?disabled=${model.busy}>Close</button>
+          ${model.editorError === "" ? nothing : html`<p class="alert alert-error" role="alert" data-error data-line-error>${model.editorError}</p>`}
         </td>
       </tr>
     `;

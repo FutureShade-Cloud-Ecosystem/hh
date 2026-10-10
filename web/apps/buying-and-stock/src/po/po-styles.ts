@@ -20,9 +20,12 @@ export const poStyles = css`
   .alert { border-radius: var(--hh-radius-control); padding: var(--hh-s-12) var(--hh-s-16); margin: 0 0 var(--hh-s-16); border: 1px solid var(--hh-line); background: var(--hh-card); }
   .alert-error { border-color: var(--hh-state-stop); color: var(--hh-text); border-inline-start-width: 4px; }
   .alert-ok { border-color: var(--hh-state-good); color: var(--hh-text); border-inline-start-width: 4px; }
-  .callout { margin: var(--hh-s-16) 0 0; padding: var(--hh-s-12) var(--hh-s-16); border: 1px solid var(--hh-state-watch); border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-accent) 26%, transparent); }
+  .callout { margin: var(--hh-s-16) 0 var(--hh-s-16); padding: var(--hh-s-12) var(--hh-s-16); border: 1px solid var(--hh-state-watch); border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-accent) 26%, transparent); }
   .callout strong, .alert strong { display: block; }
   .alert p { margin: var(--hh-s-4) 0 0; }
+  /* The editor's refusal answers its own Save: inside the row's actions cell, under the buttons,
+     never a screen below the footnote. */
+  [data-line-editing] .alert { margin: var(--hh-s-8) 0 0; max-width: 480px; }
 
   /* The four tiles. */
   .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--hh-s-12); margin-bottom: var(--hh-s-16); }

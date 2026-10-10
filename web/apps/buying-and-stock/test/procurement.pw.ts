@@ -301,6 +301,47 @@ test("a branch outside the caller's reach is refused in the server's own words, 
   await expect(page.locator("[data-draft]")).toHaveCount(0);
 });
 
+test("the existing draft note keeps space under it before the order's facts", async ({ page, request }) => {
+  await openHome(page, request);
+  // Another tab drafted the K08 gap after this page rendered, so this press meets the open draft.
+  const rows = await request.get("/api/v1/inventory/shortfall", { headers: { authorization: "Bearer another-tab" } });
+  const page1 = (await rows.json()) as { items: { sku: string; product_id: string; branch_id: string }[] };
+  const gap = page1.items.find((r) => r.sku === "DBS-BRUS-DIM");
+  await request.post("/api/v1/inventory/reorder-po", {
+    headers: { authorization: "Bearer another-tab" },
+    data: { product_id: gap?.product_id, branch_id: gap?.branch_id, qty_base: 0 },
+  });
+  await page.getByRole("button", { name: "Draft PO (1)" }).click();
+  const existing = page.locator("[data-existing-draft]");
+  await expect(existing).toContainText("A draft was already open: PO-TRT-142.");
+  // The facts list (Order, Vendor, Ship to) sits below the note with air between, not flush.
+  const gapPx = await page.evaluate(() => {
+    const root = document.querySelector("buying-and-stock-app")!.shadowRoot!;
+    const note = root.querySelector("[data-existing-draft]") as HTMLElement;
+    const facts = root.querySelector(".facts") as HTMLElement;
+    return facts.getBoundingClientRect().top - note.getBoundingClientRect().bottom;
+  });
+  expect(gapPx).toBeGreaterThanOrEqual(12);
+});
+
+test("at 390 the editor's refusal sits beside the Save it answers, not a screen below it", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openHome(page, request);
+  await draftTheGap(page);
+  const line = page.locator("[data-draft-line]");
+  await line.getByRole("button", { name: "Change" }).click();
+  await page.locator("[data-line-qty]").fill("0");
+  await line.getByRole("button", { name: "Save" }).click();
+  // The refusal belongs to the editor's own card: inside the row it answers, under its buttons.
+  const error = page.locator("[data-line-editing] [data-error]");
+  await expect(error).toHaveText("Line quantity must be positive.");
+  const save = await line.getByRole("button", { name: "Save" }).boundingBox();
+  const refusal = await error.boundingBox();
+  expect(save).not.toBeNull();
+  expect(refusal).not.toBeNull();
+  expect((refusal?.y ?? 1e9) - ((save?.y ?? 0) + (save?.height ?? 0))).toBeLessThanOrEqual(60);
+});
+
 test("a draft made behind the screen's back is named when the press drafts again", async ({ page, request }) => {
   await openHome(page, request);
   // Another tab drafted the K08 gap after this page rendered: the worklist here is stale, so the
