@@ -172,9 +172,11 @@ func (s *Service) CreateDM(ctx context.Context, c Caller, otherUserID string) (C
 //   - the manager rule: the room's OWNER row, or a role the matrix gives
 //     Admin on house-messages (the general manager), and nobody else;
 //   - the branch rule: on a room whose membership the branch model derives
-//     (auto_scope BRANCH, the yard and house queue rooms), a target the
-//     model would not derive in (no grant for the room's branch, not
-//     GLOBAL) is refused.
+//     (auto_scope BRANCH, the yard and house queue rooms) and on a TEAM
+//     founded naming a branch (ruling 89), a target who does not reach
+//     the room's branch (no grant for it, not GLOBAL) is refused. A TEAM
+//     founded without a branch spans branches and seats anyone the owner
+//     may reach.
 //
 // An already-seated member is a no-op that answers the row as it stands: a
 // DERIVED row is never rewritten to EXPLICIT (a rewritten row would become
@@ -193,7 +195,7 @@ func (s *Service) AddMember(ctx context.Context, c Caller, channelID, userID str
 	if err := s.assertMembershipManager(ctx, c, channelID); err != nil {
 		return ChannelMember{}, err
 	}
-	if facts.AutoScope == "BRANCH" && facts.BranchID != "" {
+	if facts.BranchID != "" && (facts.AutoScope == "BRANCH" || facts.Kind == KindTeam) {
 		reaches, err := s.repo.userReachesBranch(ctx, userID, facts.BranchID)
 		if err != nil {
 			return ChannelMember{}, err
