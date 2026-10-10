@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
 // the rule the D2 brief fixes (the live roles with the contract's labels and
-// the till's flow ids; nine coming roles, each carrying the modules the
+// the flows they mint; eight coming roles, each carrying the modules the
 // matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test
@@ -136,9 +136,9 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the four live roles with the contract's labels and the flows they mint", () => {
-  assert.equal(LIVE_ROLES.length, 4);
-  const [sales, manager, payRec, buyer] = LIVE_ROLES;
+test("the catalog holds the five live roles with the contract's labels and the flows they mint", () => {
+  assert.equal(LIVE_ROLES.length, 5);
+  const [sales, manager, yard, payRec, buyer] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
   assert.deepEqual(sales.tiles.map((tile) => tile.name), ["Counter Till", "Quote Desk"]);
@@ -148,6 +148,13 @@ test("the catalog holds the four live roles with the contract's labels and the f
     manager.tiles.map((tile) => tile.name),
     ["Counter Till", "Quote Desk", "Manager Home", "Dealer Admin", "House Messages"],
   );
+  // The Yard Team's label is the flows row's own ("Yard Team"), and its one
+  // live module is the Yard Pick app under /yard/; House Messages is not on
+  // the box yet.
+  assert.equal(yard.label, "Yard Team");
+  assert.equal(yard.flow, "yard-team");
+  assert.deepEqual(yard.tiles.map((tile) => tile.name), ["Yard Pick and Receive", "House Messages"]);
+  assert.deepEqual(yard.tiles.map((tile) => tile.href), ["/yard/", null]);
   assert.equal(buyer.label, "Procurement manager");
   assert.equal(buyer.flow, "procurement-manager");
   assert.deepEqual(
@@ -175,10 +182,9 @@ test("the catalog holds the four live roles with the contract's labels and the f
   assert.deepEqual(payRec.tiles.map((tile) => tile.href), ["/money-desk/", null, null]);
 });
 
-test("the catalog holds the nine coming roles, each with its matrix modules", () => {
+test("the catalog holds the eight coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
-    "Yard Team",
     "Yard Manager",
     "Logistics Manager",
     "Driver",

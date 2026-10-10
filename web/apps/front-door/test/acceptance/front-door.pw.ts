@@ -1,5 +1,6 @@
 // The front door's acceptance spec: the seven behaviours the D2 brief names,
-// walked in a real browser against the stubbed harness. The coming labels are
+// plus the Yard Team card's live leg, walked in a real browser against the
+// stubbed harness. The coming labels are
 // written here rather than read from the app, so a catalog that forgets a
 // role fails here and not in front of a visitor (the till's entry test's own
 // rule).
@@ -12,7 +13,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 const COMING_LABELS = [
   "Outside Sales",
-  "Yard Team",
   "Yard Manager",
   "Logistics Manager",
   "Driver",
@@ -67,7 +67,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-test("the picker renders the four live cards and the nine coming rows", async ({ page }) => {
+test("the picker renders the five live cards and the eight coming rows", async ({ page }) => {
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toBeVisible();
   await expect(sales).toBeEnabled();
@@ -88,6 +88,14 @@ test("the picker renders the four live cards and the nine coming rows", async ({
   await expect(manager).toContainText("Dealer Admin");
   await expect(manager).toContainText("House Messages");
 
+  const yard = page.getByRole("button", { name: "Yard Team", exact: true });
+  await expect(yard).toBeVisible();
+  await expect(yard).toBeEnabled();
+  await expect(yard).toContainText("Pick and stage the orders dispatched to the yard.");
+  await expect(yard).toContainText("Sign in as Yard Team");
+  await expect(yard).toContainText("Yard Pick and Receive");
+  await expect(yard).toContainText("House Messages");
+
   const payRec = page.getByRole("button", { name: "Payables and Receivables", exact: true });
   await expect(payRec).toBeVisible();
   await expect(payRec).toBeEnabled();
@@ -107,12 +115,12 @@ test("the picker renders the four live cards and the nine coming rows", async ({
   // Coming recedes: the disclosure starts collapsed and opens to today's
   // list, unchanged, its rows disabled with their muted chips.
   const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Nine more roles are coming");
+  await expect(disclosure).toContainText("Eight more roles are coming");
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).not.toBeVisible();
-  await disclosure.getByText("Nine more roles are coming").click();
+  await disclosure.getByText("Eight more roles are coming").click();
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(9);
+  await expect(coming.getByRole("listitem")).toHaveCount(8);
   for (const label of COMING_LABELS) {
     const row = coming.getByRole("listitem").filter({ hasText: label });
     await expect(row).toBeVisible();
@@ -170,6 +178,22 @@ test("a Sales manager sign in shows the five tiles", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Coming next" })).toBeVisible();
   await expect(page.getByTestId("header-word")).toHaveText("Sales manager");
   expect(await storedFlow(page)).toBe("sales-manager");
+});
+
+test("a Yard Team sign in shows the Yard Pick tile and mints the yard flow", async ({ page }) => {
+  await page.getByRole("button", { name: "Yard Team", exact: true }).click();
+  // The home names the role, and its one live tile is the Yard Pick app.
+  const yardTile = page.getByRole("button", { name: "Yard Pick and Receive", exact: true });
+  await expect(yardTile).toBeVisible();
+  await expect(yardTile).toContainText("Open the Yard Pick and Receive");
+  await expect(page.getByTestId("home-title")).toHaveText("Yard Team");
+  await expect(page.getByTestId("header-word")).toHaveText("Yard Team");
+  // House Messages is the role's other matrix module and is not on the box
+  // yet: it recedes under the coming-next word instead of a live tile.
+  await expect(page.getByRole("heading", { name: "Coming next" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toBeVisible();
+  expect(await storedFlow(page)).toBe("yard-team");
+  expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
 });
 
 test("Switch role returns to the picker and clears the token", async ({ page }) => {

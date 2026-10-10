@@ -1,19 +1,20 @@
-// The front door's shot walk, the polish round's set (HH-DEMO-1 D2 polish):
-// the four deliverable states D2 named, retaken at every viewport and in
-// both themes against the local harness (the stub and the dev server of
-// test/acceptance.config.ts) in the loaded state. The desktop light set
-// keeps D2's own names; the variants prefix the viewport or the theme, so
-// the lane's folder reads
+// The front door's shot walk, the polish round's set (HH-DEMO-1 D2 polish)
+// plus the Yard Team card's live leg: the five deliverable states, retaken
+// at every viewport and in both themes against the local harness (the stub
+// and the dev server of test/acceptance.config.ts) in the loaded state. The
+// desktop light set keeps D2's own names; the variants prefix the viewport
+// or the theme, so the lane's folder reads
 //
 //   front-door-01-picker.png            desktop, light
 //   front-door-02-sales-home.png        desktop, light
 //   front-door-03-sales-manager-home.png  desktop, light
 //   front-door-04-coming.png            desktop, light, the opened disclosure
-//   tablet-front-door-01..04.png        tablet 768, light
-//   phone-front-door-01..04.png         phone 390, light
-//   dark-front-door-01..04.png          desktop, dark
-//   dark-tablet-front-door-01..04.png   tablet 768, dark
-//   dark-phone-front-door-01..04.png    phone 390, dark
+//   front-door-05-yard-home.png         desktop, light, the Yard Team's home
+//   tablet-front-door-01..05.png        tablet 768, light
+//   phone-front-door-01..05.png         phone 390, light
+//   dark-front-door-01..05.png          desktop, dark
+//   dark-tablet-front-door-01..05.png   tablet 768, dark
+//   dark-phone-front-door-01..05.png    phone 390, dark
 //
 //   FD_APP_PORT=4926 node test/acceptance/shots.mjs <out-dir>
 //
@@ -61,7 +62,7 @@ async function walk(prefix, viewport, theme) {
 
   // The opened disclosure: the coming list's content, today's rows and
   // their muted chips.
-  await page.getByTestId("coming-disclosure").getByText("Nine more roles are coming").click();
+  await page.getByTestId("coming-disclosure").getByText("Eight more roles are coming").click();
   await page.getByRole("list", { name: "Coming roles" }).waitFor();
   await settle(page);
   await page.locator(".coming-card").screenshot({ path: join(outDir, `${prefix}front-door-04-coming.png`) });
@@ -80,6 +81,15 @@ async function walk(prefix, viewport, theme) {
   await page.getByRole("button", { name: "Manager Home", exact: true }).waitFor();
   await settle(page);
   await page.screenshot({ path: join(outDir, `${prefix}front-door-03-sales-manager-home.png`) });
+
+  // Switch role again, then the Yard Team's home: the live Yard Pick tile
+  // and House Messages under the coming-next word.
+  await page.getByRole("button", { name: "Switch role", exact: true }).click();
+  await page.getByRole("button", { name: "Yard Team", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Yard Team", exact: true }).click();
+  await page.getByRole("button", { name: "Yard Pick and Receive", exact: true }).waitFor();
+  await settle(page);
+  await page.screenshot({ path: join(outDir, `${prefix}front-door-05-yard-home.png`) });
   await page.close();
 }
 

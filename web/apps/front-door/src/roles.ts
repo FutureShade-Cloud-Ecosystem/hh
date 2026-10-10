@@ -5,17 +5,19 @@
 // read only; this branch does not carry a copy of it). The rule the D2 brief
 // gives, applied to that record once, by hand, here:
 //
-//   - The four roles whose logins the demo mints today are LIVE:
-//     inside_sales, sales_manager, payables_receivables and procurement_manager, labelled on the cards the way the demo
-//     adapter's contract names them ("Sales", "Sales manager" - the flows
+//   - The five roles whose logins the demo mints and whose screens this box
+//     serves are LIVE: inside_sales, sales_manager, yard_team,
+//     payables_receivables and procurement_manager, labelled on the cards the way the demo
+//     adapter's contract names them ("Sales", "Sales manager", "Yard Team" - the flows
 //     route's own labels, the same rule the till's entry view follows, so
 //     every name-based selector keeps reading exactly those words). The flow
-//     ids are the till's own mapping: inside_sales -> "sales",
-//     sales_manager -> "sales-manager". Payables and Receivables' flow is
+//     ids are the flows table's own: inside_sales -> "sales",
+//     sales_manager -> "sales-manager", yard_team -> "yard-team". Payables and Receivables' flow is
 //     "payables-receivables" and its one live module is the Money Desk; the
 //     Procurement manager's flow is "procurement-manager" and its one live
-//     module is Buying and Stock.
-//   - The nine others are COMING. Each shows the modules the matrix gives
+//     module is Buying and Stock; the Yard Team's one live module is the
+//     Yard Pick app.
+//   - The eight others are COMING. Each shows the modules the matrix gives
 //     that role at work, manage or admin level, by the surfaces table's own
 //     names; read cells (and none) show nothing. A coming role is never
 //     tappable.
@@ -49,6 +51,7 @@ export interface ModuleTile {
 
 /** The live roles' tiles, shared by both roles where the box serves them. */
 const TILL_TILE: ModuleTile = { name: "Counter Till", icon: "lucide:receipt", href: "/till/" };
+const YARD_TILE: ModuleTile = { name: "Yard Pick and Receive", icon: "lucide:forklift", href: "/yard/" };
 const BUYING_TILE: ModuleTile = { name: "Buying and Stock", icon: "lucide:package", href: "/buying-and-stock/" };
 const QUOTE_TILE: ModuleTile = { name: "Quote Desk", icon: "lucide:file-pen-line", href: "/quote/" };
 const MONEY_DESK_TILE: ModuleTile = { name: "Money Desk", icon: "lucide:landmark", href: "/money-desk/" };
@@ -62,9 +65,9 @@ const HOUSE_MESSAGES_TILE: ModuleTile = {
 
 /** A role the demo signs in today: a card on the picker, a home behind it. */
 export interface LiveRole {
-  readonly id: "inside_sales" | "sales_manager" | "payables_receivables" | "procurement_manager";
-  /** The demo flow id the mint takes, the till's own mapping. */
-  readonly flow: "sales" | "sales-manager" | "payables-receivables" | "procurement-manager";
+  readonly id: "inside_sales" | "sales_manager" | "yard_team" | "payables_receivables" | "procurement_manager";
+  /** The demo flow id the mint takes, the flows table's own mapping. */
+  readonly flow: "sales" | "sales-manager" | "yard-team" | "payables-receivables" | "procurement-manager";
   /**
    * The card's label and its accessible name, alone: the demo adapter's
    * contract words, never decorated.
@@ -109,6 +112,14 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     tiles: [TILL_TILE, QUOTE_TILE, MANAGER_HOME_TILE, DEALER_ADMIN_TILE, HOUSE_MESSAGES_TILE],
   },
   {
+    id: "yard_team",
+    flow: "yard-team",
+    label: "Yard Team",
+    line: "Pick and stage the orders dispatched to the yard.",
+    icon: "lucide:forklift",
+    tiles: [YARD_TILE, HOUSE_MESSAGES_TILE],
+  },
+  {
     id: "payables_receivables",
     flow: "payables-receivables",
     label: "Payables and Receivables",
@@ -127,7 +138,7 @@ export const LIVE_ROLES: readonly LiveRole[] = [
 ];
 
 /**
- * The nine coming roles, in the till's entry view's own order, each with
+ * The eight coming roles, in the till's entry view's own order, each with
  * the modules ROLE-ACCESS-r3 gives it at work, manage or admin level (read
  * cells and none show nothing). Outside Sales has no till (rows 363 and 364);
  * HR's two are House Messages and Dealer Admin, and the matrix gives its
@@ -135,7 +146,6 @@ export const LIVE_ROLES: readonly LiveRole[] = [
  */
 export const COMING_ROLES: readonly ComingRole[] = [
   { id: "outside_sales", label: "Outside Sales", modules: ["Quote Desk", "House Messages"] },
-  { id: "yard_team", label: "Yard Team", modules: ["Yard Pick and Receive", "House Messages"] },
   {
     id: "yard_manager",
     label: "Yard Manager",

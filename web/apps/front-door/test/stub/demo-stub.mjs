@@ -39,6 +39,7 @@ const port = Number(process.env.FD_STUB_PORT ?? 4927);
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "yard-team", role_code: "yard_team", label: "Yard Team" },
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
@@ -61,6 +62,15 @@ const USERS = {
     role_code: "sales_manager",
     role_name: "Sales Manager",
     tier: 2,
+    scope: "BRANCH",
+  },
+  "yard-team": {
+    user_id: "demo-account-yard-team",
+    email: "yard-team@demo.invalid",
+    display_name: "Yard persona (demo)",
+    role_code: "yard_team",
+    role_name: "Yard Team",
+    tier: 3,
     scope: "BRANCH",
   },
   "payables-receivables": {
