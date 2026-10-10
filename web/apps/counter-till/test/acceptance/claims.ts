@@ -26,8 +26,6 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: "20-sales.pw.ts", test: "the way in: two cards, the eight coming roles untapped, the yard manager and the driver start at the front door, and the banner" },
     { file: "30-manager.pw.ts", test: "beyond the till: the manager's reach past the counter's walls, and the cards come back" },
   ],
-    { file: "30-manager.pw.ts", test: "beyond the till: the manager's reach past the counter's walls, and the cards come back" },
-  ],
   "world-invented": [
     { file: "10-world.pw.ts", test: "the catalogue's ten demo products answer, every name carrying (demo)" },
     { file: "10-world.pw.ts", test: "the account picker answers the branch's demo accounts, every name carrying (demo)" },
