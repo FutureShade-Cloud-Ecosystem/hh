@@ -607,7 +607,7 @@ func TestStockTruth_ShortfallAppearsWhenTheReorderPointIsCrossed(t *testing.T) {
 	}
 
 	rowFor := func() (ShortfallRow, bool) {
-		wl, err := svc.ShortfallWorklist(ctx, branch1, 500)
+		wl, err := svc.ShortfallWorklist(ctx, BranchReach{Global: true}, branch1, 500)
 		if err != nil {
 			t.Fatalf("ShortfallWorklist: %v", err)
 		}
@@ -675,7 +675,7 @@ func TestStockTruth_ShortfallAppearsWhenTheReorderPointIsCrossed(t *testing.T) {
 func TestStockTruth_ShortfallSQLAndGoAgree(t *testing.T) {
 	pool := intPool(t)
 	svc := newIntSvc(pool)
-	wl, err := svc.ShortfallWorklist(context.Background(), "", 200)
+	wl, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, "", 200)
 	if err != nil {
 		t.Fatalf("ShortfallWorklist: %v", err)
 	}
@@ -722,7 +722,7 @@ func TestStockTruth_CreatePOFromShortfall_StubReturnsTheDraft(t *testing.T) {
 		t.Fatalf("SetReorderPoint: %v", err)
 	}
 
-	draft, poID, _, err := svc.CreatePOFromShortfall(ctx, branch1, []string{p})
+	draft, poID, _, err := svc.CreatePOFromShortfall(ctx, BranchReach{Global: true}, branch1, []string{p})
 	if err == nil {
 		t.Fatal("the unwired purchasing stub reported success, a buyer would be told their PO exists")
 	}

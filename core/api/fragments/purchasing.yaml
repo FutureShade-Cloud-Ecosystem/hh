@@ -33,6 +33,80 @@ paths:
                 $ref: "#/components/schemas/PurchasingVendorPage"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: purchasingCreateVendor
+      tags: [staff-purchasing]
+      x-addition: "the vendor create route of the roles roadmap's Buying and Stock core slice; no ERP source route"
+      summary: Create a vendor
+      description: >-
+        The vendor number is minted server side (VM- and digits, a shape the
+        load doors refuse as a legacy key) and is never accepted
+        from the caller. The record is created active under the caller's
+        org; the ordering email rides the record as the remit fallback
+        the outbound send's address book reads.
+      x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingCreateVendorRequest"
+      responses:
+        "201":
+          description: The created vendor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorMaster"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/purchasing/vendors/{vendorID}:
+    put:
+      operationId: purchasingUpdateVendor
+      tags: [staff-purchasing]
+      x-addition: "the vendor edit route of the roles roadmap's Buying and Stock core slice; no ERP source route"
+      summary: Correct one vendor's record
+      description: >-
+        Every field is optional and absent means unchanged; an empty
+        order_email clears the fallback address. The vendor number is
+        not editable. A vendor another org owns answers 404 like an unknown
+        id; a carried vendor with no org yet is claimed for the caller's org by
+        its first edit.
+      x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingUpdateVendorRequest"
+      responses:
+        "200":
+          description: The vendor after the corrections
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorMaster"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/purchasing/pos:
     get:
@@ -74,10 +148,18 @@ paths:
         The PO number is minted server-side and is never accepted from a
         caller. A USD document requires a positive fx_rate; an omitted currency
         means CAD at a rate of 1.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -131,10 +213,18 @@ paths:
         ORDERED its line set is frozen, because a purchase order is a contract
         and editing one after placement is how a three-way match is quietly
         defeated.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -156,16 +246,82 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v1/purchasing/pos/{id}/lines/{lineID}:
+    put:
+      operationId: purchasingUpdateLine
+      tags: [staff-purchasing]
+      x-addition: "the draft line correction route of the roles roadmap's Buying and Stock core slice; no ERP source route"
+      summary: Correct the quantity or the cost of one line on a draft purchase order
+      description: >-
+        Each field is optional and absent means unchanged; the product is
+        not editable through this route. Lines may only be corrected
+        while the order is DRAFT, the same freeze the add and remove
+        routes carry.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
+      x-role: requireManager
+      x-access:
+        surfaces: [buying-and-stock]
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: lineID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingUpdateLineRequest"
+      responses:
+        "200":
+          description: The purchase order after the correction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPODetail"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
       operationId: purchasingRemoveLine
       tags: [staff-purchasing]
       summary: Remove a line from a draft purchase order
+      description: >-
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -184,6 +340,11 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v1/purchasing/pos/{id}/transition:
     post:
@@ -194,10 +355,18 @@ paths:
         Operator-driven moves only (place, close, cancel). The receipt-driven
         moves to PARTIAL and RECEIVED are computed from what landed and are
         never requested here.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -266,10 +435,18 @@ paths:
         leaves no date, and a stale one left on the record is a screen that
         lies to the person planning around it. Refused on a RECEIVED, CLOSED
         or CANCELLED order.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -305,10 +482,18 @@ paths:
         RECEIVED, CLOSED or CANCELLED order, the same finished statuses the
         expected-date route refuses. Core's receiving worklist does not
         render the column yet; the DIB-573 read half is unported.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -448,10 +633,18 @@ paths:
         no transport delivered anything: status and detail carry the outcome,
         a failed send of a well-formed request is still a 200. An
         idempotency_key replays to the first send rather than sending twice.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -1319,6 +1512,45 @@ components:
         payment_terms_days: { type: integer, format: int32 }
         is_active: { type: boolean }
 
+    PurchasingCreateVendorRequest:
+      type: object
+      description: >-
+        The vendor number is minted server side. payment_terms_days
+        defaults to 30 when absent; zero is legal and means pay on
+        delivery.
+      required: [name]
+      properties:
+        name: { type: string }
+        payment_terms_days: { type: integer, format: int32 }
+        order_email: { type: string }
+
+    PurchasingUpdateVendorRequest:
+      type: object
+      description: >-
+        Every field is optional and absent means unchanged; an empty
+        order_email clears the fallback address. A body naming nothing
+        is refused.
+      properties:
+        name: { type: string }
+        payment_terms_days: { type: integer, format: int32 }
+        order_email: { type: string }
+        is_active: { type: boolean }
+
+    PurchasingVendorMaster:
+      type: object
+      description: >-
+        The vendor record as the master writes answer it: the directory
+        projection plus the ordering email on the record. order_email
+        empty is a real answer, no address on file.
+      required: [id, vendor_no, name, payment_terms_days, order_email, is_active]
+      properties:
+        id: { type: string, format: uuid }
+        vendor_no: { type: string }
+        name: { type: string }
+        payment_terms_days: { type: integer, format: int32 }
+        order_email: { type: string }
+        is_active: { type: boolean }
+
     PurchasingPO:
       type: object
       description: >-
@@ -1742,6 +1974,16 @@ components:
         description: { type: string }
         qty_ordered_base: { type: number }
         uom: { type: string }
+        unit_cost_cents: { type: integer, format: int64 }
+
+    PurchasingUpdateLineRequest:
+      type: object
+      description: >-
+        The correction of one line already on a draft: the quantity or the
+        cost, each optional and absent meaning unchanged. A body naming
+        neither is refused. The product is not editable through this route.
+      properties:
+        qty_ordered_base: { type: number }
         unit_cost_cents: { type: integer, format: int64 }
 
     PurchasingSetExpectedDateRequest:

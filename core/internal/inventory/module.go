@@ -165,6 +165,8 @@ type Service struct {
 	// in purchasing's fence). nil → the leg is ZERO and the worklist says the figure is degraded,
 	// rather than quietly grading against a number nobody measured. See on_order_seam.go.
 	onOrder OnOrderReader
+	// draftPOs points a worklist row at the draft a buyer started for it (draft_po_seam.go).
+	draftPOs DraftPOReader
 }
 
 // NewService wires the repository. Optional deps are injected via the With* methods.

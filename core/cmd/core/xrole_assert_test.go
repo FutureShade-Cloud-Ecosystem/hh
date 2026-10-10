@@ -308,6 +308,8 @@ func xrOnList(t *testing.T, cfg *roleconfig.Config, list, role string) bool {
 		members = cfg.CostVisibility()
 	case authz.ListLowMarginReport:
 		members = cfg.LowMarginReportReaders()
+	case authz.ListPOWriters:
+		members = cfg.PurchaseOrderWriters()
 	default:
 		t.Fatalf("route names list %q, which this suite cannot read", list)
 	}
