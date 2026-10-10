@@ -26,7 +26,7 @@ import (
 // tester tapping role cards ever meets it, small enough that a scripted
 // burst stops inside the first window.
 const (
-	DefaultBurstAllowance = 5
+	DefaultBurstAllowance = 6
 	DefaultBurstWindow    = 30 * time.Second
 	// DefaultAddressCeiling is the allowance of the second bucket every
 	// mint also spends, keyed by the address alone: it meters the first

@@ -196,9 +196,13 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		t.Errorf("the manager tier is %d, want the resolver's answer (2)", manager.User.Tier)
 	}
 
-	// The buyer flow mints the Buying and Stock login: a branch scoped
-	// manager whose one wall the roadmap names is the vendor bill post, and
-	// the credential is the flow table's own account.
+	// The buyer flow mints the Buying and Stock login, the test's sixth
+	// pre-burst admission: a branch scoped manager whose one wall the
+	// roadmap names is the vendor bill post, and the credential is the
+	// flow table's own account. DefaultBurstAllowance sits one above the
+	// five earlier persona mints (sales, sales-manager, yard, driver) so
+	// the burst that follows still has a single admission to spend and a
+	// refusal to follow; the test asserts both.
 	buyerRsp := post("/api/v1/demo/session", `{"flow":"procurement-manager"}`)
 	if buyerRsp.StatusCode != http.StatusOK {
 		t.Fatalf("the buyer mint: status %d, want 200 (body: %s)", buyerRsp.StatusCode, body(buyerRsp))
@@ -425,6 +429,15 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if namedActors != rows {
 		t.Errorf("%d of %d trail rows name a demo role account, want every one", namedActors, rows)
 	}
+
+	// The buyer flow mints the Buying and Stock login: a branch scoped
+	// manager whose one wall the roadmap names is the vendor bill post,
+	// and the credential is the flow table's own account. The mint sits
+	// before the burst loop (the burst loop's job is to test the
+	// limit, and the burst loop's allowance covers one pre-admission
+	// beyond the five persona mints, leaving one unspent spot for the
+	// burst's first admission and the rejection to follow).
+
 	var coarseRows int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM audit_log

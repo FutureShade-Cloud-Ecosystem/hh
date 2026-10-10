@@ -313,9 +313,9 @@ func TestMintNeverRendersTheVisitorID(t *testing.T) {
 // The cookie hygiene leg, the fallback: a value outside the issued shape
 // is the client's word and the key takes none of it. Every malformed
 // value lands on the address key, so a stream of distinct malformed
-// values spends that one allowance: the sixth refuses, a bare mint after
-// them refuses too (the address is what they spent), and a well formed
-// id issued after still holds its own bucket.
+// values spends that one allowance: the seventh refuses, a bare mint
+// after them refuses too (the address is what they spent), and a well
+// formed id issued after still holds its own bucket.
 func TestMintFallsBackToTheAddressKeyOnAMalformedCookie(t *testing.T) {
 	minter := &fakeMinter{token: "t"}
 	m, _, _ := newTestMint(t, minter, nil)
@@ -334,6 +334,10 @@ func TestMintFallsBackToTheAddressKeyOnAMalformedCookie(t *testing.T) {
 		strings.Repeat("A", 32),
 		strings.Repeat("z", 32),
 		strings.Repeat("f", 33),
+		// The sixth distinct malformed value lands on the same address
+		// key the earlier five spent, and the allowance DefaultBurstAllowance
+		// of six still admits it. The seventh on the same key refuses.
+		strings.Repeat("q", 32),
 	}
 	for i, v := range values {
 		if rsp := mintWith(v); rsp.Code != http.StatusOK {
@@ -342,7 +346,7 @@ func TestMintFallsBackToTheAddressKeyOnAMalformedCookie(t *testing.T) {
 		}
 	}
 	if rsp := mintWith(""); rsp.Code != http.StatusTooManyRequests {
-		t.Fatalf("a sixth distinct malformed value answered %d, want 429: distinct malformed values buy no distinct buckets", rsp.Code)
+		t.Fatalf("a seventh distinct malformed value answered %d, want 429: distinct malformed values buy no distinct buckets", rsp.Code)
 	}
 	if rsp := postSession(t, m, `{"flow":"sales"}`); rsp.Code != http.StatusTooManyRequests {
 		t.Fatalf("a bare mint after the malformed ones answered %d, want 429: the malformed mints spent the address key", rsp.Code)
