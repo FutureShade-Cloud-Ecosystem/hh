@@ -401,6 +401,33 @@ test("apply route: a replayed key is judged against its own body", async () => {
   assert.equal(still.json.totals.balance_cents, mine[0].balance_cents - 1000);
 });
 
+test("apply route: the split and the ceiling subtract the retained holdback, as the core's walk does", async () => {
+  await reset();
+  const register = await call("GET", "/api/v1/ar/register");
+  const held = register.json.items.find((r) => r.invoice_no === "INV-1008");
+  assert.equal(held.holdback_cents, 30000, "the world plants a retained holdback on this invoice");
+  const detail = await call("GET", `/api/v1/ar/register/invoices/${held.id}`);
+  assert.equal(detail.json.totals.holdback_cents, 30000);
+  assert.equal(detail.json.totals.payable_cents, held.balance_cents - 30000, "payable is the balance less the retained holdback");
+  const payable = held.balance_cents - 30000;
+  const body = { customer_id: held.customer_id, method: "CHEQUE", reference: "c", invoice_ids: [held.id], idempotency_key: "h-1", preview: false };
+  // The ceiling counts the payable, never the balance.
+  const over = await call("POST", APPLY, { ...body, amount_cents: payable + 1 });
+  refused(over, 422, "the selected invoices can take at most ");
+  assert.ok(over.json.error.endsWith(`${payable} cents right now; refresh and retry`), over.json.error);
+  // The full payable leaves the retained holdback owing: the line stays PART, with nothing further payable on the invoice.
+  const posted = await call("POST", APPLY, { ...body, amount_cents: payable });
+  assert.equal(posted.status, 200);
+  const line = posted.json.lines[0];
+  assert.equal(line.applied_cents, payable);
+  assert.equal(line.outcome, "PART");
+  assert.equal(line.balance_after_cents, 30000);
+  assert.equal(line.stays_open_cents, 0);
+  const spent = await call("POST", APPLY, { ...body, idempotency_key: "h-2", amount_cents: 100 });
+  refused(spent, 422, "the selected invoices can take at most ");
+  assert.ok(spent.json.error.endsWith("0 cents right now; refresh and retry"), spent.json.error);
+});
+
 test("apply route: refusals are the core's words and leave nothing applied", async () => {
   await reset();
   const mine = await graniteInvoices();

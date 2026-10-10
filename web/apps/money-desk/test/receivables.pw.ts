@@ -20,6 +20,20 @@ test("the way in with no handoff offers the role cards", async ({ page, request 
   await expect(page.locator("[data-flow]").first()).toContainText("Payables and Receivables");
 });
 
+test("the way in builds the role code from the session's own code, never from the role's display name", async ({ page, request }) => {
+  await request.post("/_stub/reset");
+  // A renamed role display name must not move the landing: the session's own role code decides it.
+  await page.route("**/api/v1/demo/session", async (route) => {
+    const answer = await route.fetch();
+    const body = await answer.json();
+    body.user.role_name = "Chief Book Keeper";
+    return route.fulfill({ response: answer, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  });
+  await page.goto("/");
+  await page.locator("[data-flow='financial-controller']").click();
+  await expect(page.getByRole("button", { name: "Approvals and ledger" })).toBeVisible();
+});
+
 test("the desk opens on the register: four tiles, the rows overdue first, Needs you, and later marked in words", async ({ page, request }) => {
   await openDesk(page, request);
   await expect(page.getByRole("heading", { name: "Receivables", exact: true })).toBeVisible();

@@ -287,7 +287,9 @@ export class MoneyDeskApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
-        this.#roleCode = result.value.identity.roleName.toLowerCase().replace(/ /g, "_");
+        // The session's own role code decides the landing and the walls, never the display name:
+        // a renamed role must not move the controller off the ledger or widen the holds.
+        this.#roleCode = result.value.roleCode;
         this.#userName = this.#sessions.current?.user.name ?? "";
         this.#ar = this.#newDesk();
         void this.#ar.load();

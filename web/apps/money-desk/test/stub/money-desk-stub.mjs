@@ -113,7 +113,8 @@ const ACCOUNTS = [
   { n: 5, name: "Cedar Ridge Contractors (demo)", no: "CR-500", terms: 30, limit: 4_000_000 },
 ];
 
-// One row per invoice: account, how many days past due (negative is not yet due), the total.
+// One row per invoice: account, how many days past due (negative is not yet due), the total, and the
+// legally retained holdback (the core's walk pays balance less holdback, so one invoice carries one).
 const INVOICES = [
   { n: 1, acct: 1, late: 104, total: 482_500 },
   { n: 2, acct: 1, late: 12, total: 96_000 },
@@ -122,7 +123,7 @@ const INVOICES = [
   { n: 5, acct: 3, late: 18, total: 88_750 },
   { n: 6, acct: 3, late: -9, total: 154_000 },
   { n: 7, acct: 4, late: 5, total: 62_300 },
-  { n: 8, acct: 5, late: -20, total: 301_000 },
+  { n: 8, acct: 5, late: -20, total: 301_000, holdback: 30_000 },
   { n: 9, acct: 5, late: 33, total: 74_900 },
   { n: 10, acct: 1, late: 171, total: 231_640, paid: true },
 ];
@@ -141,6 +142,7 @@ function reset(kind = "full") {
       late: i.late,
       total_cents: i.total,
       balance_cents: i.paid === true ? 0 : i.total,
+      holdback_cents: i.holdback ?? 0,
       promise: null,
       disputed: i.n === 4,
       payments: [],
@@ -248,6 +250,7 @@ function registerRow(inv) {
     disputed: inv.disputed === true,
     account: position(a.n),
   };
+  if (inv.holdback_cents > 0) row.holdback_cents = inv.holdback_cents;
   if (inv.promise !== null) {
     row.promised_date = inv.promise.promised_date;
     row.promised_cents = inv.promise.promised_cents;
@@ -392,9 +395,9 @@ function detail(inv) {
       tax_cents: 0,
       total_cents: inv.total_cents,
       applied_cents: inv.total_cents - inv.balance_cents,
-      holdback_cents: 0,
+      holdback_cents: inv.holdback_cents,
       balance_cents: inv.balance_cents,
-      payable_cents: inv.balance_cents,
+      payable_cents: Math.max(inv.balance_cents - inv.holdback_cents, 0),
     },
     activity,
     reminder_tones: ["FRIENDLY", "FIRM", "FINAL"],
@@ -578,6 +581,11 @@ async function handle(req, res) {
         const rb = registerRow(b);
         return ra.issue_date.localeCompare(rb.issue_date) || ra.due_date.localeCompare(rb.due_date) || a.invoice_no.localeCompare(b.invoice_no) || a.id.localeCompare(b.id);
       });
+    // The core's walk (received_apply.go allocateOldestFirst): each invoice's payable is its balance
+    // less the retained holdback, floored at zero, and that payable is both what a payment can take
+    // and what the ceiling counts; an invoice whose retained holdback keeps a balance stays PART
+    // however much of its payable it paid, and stays_open is the balance's payable remainder.
+    const payableOf = (inv) => Math.max(inv.balance_cents - inv.holdback_cents, 0);
     const lineFor = (inv, take) => {
       const after = inv.balance_cents - take;
       return {
@@ -586,7 +594,7 @@ async function handle(req, res) {
         applied_cents: take,
         outcome: take > 0 && after <= 0 ? "CLOSES" : take > 0 ? "PART" : "NONE",
         balance_after_cents: after,
-        stays_open_cents: Math.max(after, 0),
+        stays_open_cents: Math.max(after - inv.holdback_cents, 0),
       };
     };
     if (!preview) {
@@ -598,7 +606,7 @@ async function handle(req, res) {
         if (!same) return refuse(res, 422, "that idempotency key already recorded a different payment; use a new key");
         const lines = oldestFirst(first.invoices.map((id) => invById(id))).map((inv) => {
           const line = lineFor(inv, first.applied.get(inv.id) ?? 0);
-          return { ...line, outcome: line.applied_cents > 0 ? (inv.balance_cents === 0 ? "CLOSES" : "PART") : "NONE", balance_after_cents: inv.balance_cents, stays_open_cents: inv.balance_cents };
+          return { ...line, outcome: line.applied_cents > 0 ? (inv.balance_cents === 0 ? "CLOSES" : "PART") : "NONE", balance_after_cents: inv.balance_cents, stays_open_cents: payableOf(inv) };
         });
         return send(res, 200, { ...first.answer, lines, replayed: true });
       }
@@ -611,11 +619,11 @@ async function handle(req, res) {
       picked.push(inv);
     }
     if (new Set(picked.map((inv) => branchOf(inv.acct))).size > 1) return refuse(res, 422, "one payment applies to one branch's invoices; record a payment per branch");
-    const capacity = picked.reduce((t, inv) => t + inv.balance_cents, 0);
+    const capacity = picked.reduce((t, inv) => t + payableOf(inv), 0);
     if (body.amount_cents > capacity) return refuse(res, 422, `the selected invoices can take at most ${capacity} cents right now; refresh and retry`);
     let left = body.amount_cents;
     const lines = oldestFirst(picked).map((inv) => {
-      const take = Math.min(left, inv.balance_cents);
+      const take = Math.min(left, payableOf(inv));
       left -= take;
       return lineFor(inv, take);
     });
