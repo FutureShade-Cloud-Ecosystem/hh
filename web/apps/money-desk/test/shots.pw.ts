@@ -74,6 +74,7 @@ for (const size of SIZES) {
       await boss.setViewportSize(size);
       await boss.addInitScript(receivablesHandoff as (who: string) => void, "controller");
       await boss.goto("/");
+      await boss.getByRole("button", { name: "Receivables", exact: true }).click();
       await expect(boss.locator("[data-card]")).toHaveCount(4);
       await brandOn(boss);
       await boss.getByRole("button", { name: "Credit holds", exact: true }).click();
