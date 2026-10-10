@@ -96,7 +96,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, six flows, the contract's three
+	// The flow listing: the closed table, seven flows, the contract's three
 	// fields, the labels the entry page renders.
 	flowsRsp := get("/api/v1/demo/flows", nil)
 	if flowsRsp.StatusCode != http.StatusOK {
