@@ -35,6 +35,9 @@ const stubPort = process.env.QD_STUB_PORT ?? String(20000 + slot + 1);
 export default defineConfig({
   testDir: "./test",
   testMatch: "**/*.pw.ts",
+  // The prefixed handoff leg has its own config (test/front-door-prefixed.config.ts): the same stub served
+  // under /quote/, so the main run leaves it out.
+  testIgnore: "**/front-door-prefixed.pw.ts",
   // The stub holds the quote world in memory (draft quotes, their lines, the
   // workspace rows), so the suite runs its tests in order, one worker, and
   // each test reads only what it itself caused.

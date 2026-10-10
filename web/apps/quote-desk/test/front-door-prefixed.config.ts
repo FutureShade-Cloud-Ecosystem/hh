@@ -22,7 +22,7 @@ const stubPort = process.env.QD_PREFIXED_STUB_PORT ?? String(20000 + slot + 1);
 
 export default defineConfig({
   testDir: ".",
-  testMatch: ["front-door-prefixed.spec.ts"],
+  testMatch: ["front-door-prefixed.pw.ts"],
   use: {
     baseURL: `http://127.0.0.1:${appPort}/quote/`,
     channel: "chrome",
