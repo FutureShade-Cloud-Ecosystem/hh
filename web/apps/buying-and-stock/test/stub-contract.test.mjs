@@ -310,6 +310,10 @@ test("the line editor's refusals are the core's sentences, and the freeze once p
   const id = made.json.po_id;
   const lineId = (await call("GET", `/api/v1/purchasing/pos/${id}`)).json.lines[0].id;
   refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${lineId}`, {}), 400, "the body names nothing to change");
+  // The core's order (service.go:447 then :452): the empty change body is refused before the
+  // path's shapes are looked at, so no figures and a broken id answers 400, never 404 or 422.
+  refused(await call("PUT", `/api/v1/purchasing/pos/not-a-uuid/lines/${lineId}`, {}), 400, "the body names nothing to change");
+  refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${"-".repeat(36)}`, {}), 400, "the body names nothing to change");
   refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${lineId}`, { qty_ordered_base: 0 }), 400, "line quantity must be positive");
   refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${lineId}`, { unit_cost_cents: -1 }), 400, "line unit cost cannot be negative");
   refused(await call("POST", `/api/v1/purchasing/pos/${id}/lines`, { product_id: "", qty_ordered_base: 10 }), 400, "line 0 needs a product_id", "line %d needs a product_id");

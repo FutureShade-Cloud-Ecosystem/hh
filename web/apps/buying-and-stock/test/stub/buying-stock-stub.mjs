@@ -478,6 +478,13 @@ async function handle(req, res) {
   }
   const line = path.match(/^\/api\/v1\/purchasing\/pos\/([^/]+)\/lines\/([^/]+)$/);
   if (line && (method === "DELETE" || method === "PUT")) {
+    // The core's UpdateLine reads the body before the path (service.go:447 then :452): an empty
+    // change body is refused first, whatever the ids look like. RemoveLine has no body to read.
+    const body = method === "PUT" ? await readBody(req) : null;
+    if (method === "PUT" && body === null) return refuse(res, 400, "invalid_json");
+    if (method === "PUT" && body.qty_ordered_base === undefined && body.unit_cost_cents === undefined) {
+      return refuse(res, 400, "the body names nothing to change");
+    }
     // The core's checkLinePath: an order id that is not a uuid names no order; a line id that is
     // not one is a request that cannot be right, 422 in words.
     if (!isUuid(line[1])) return refuse(res, 404, "not found");
@@ -491,11 +498,6 @@ async function handle(req, res) {
       return json(res, poDetail(po));
     }
     // PUT: correct the quantity or the cost (purchasing/service.go UpdateLine, its own words and order).
-    const body = await readBody(req);
-    if (body === null) return refuse(res, 400, "invalid_json");
-    if (body.qty_ordered_base === undefined && body.unit_cost_cents === undefined) {
-      return refuse(res, 400, "the body names nothing to change");
-    }
     if (body.qty_ordered_base !== undefined && body.qty_ordered_base <= 0) return refuse(res, 400, "line quantity must be positive");
     if (body.qty_ordered_base !== undefined && body.qty_ordered_base > MAX_LINE_QTY) {
       return refuse(res, 422, `line quantity is beyond what an order line can hold (${MAX_LINE_QTY} at most)`);
