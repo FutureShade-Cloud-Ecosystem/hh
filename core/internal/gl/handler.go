@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -382,7 +383,10 @@ func (h *Handler) tieOut(w http.ResponseWriter, r *http.Request, _ guards.StaffC
 	}
 	asOf := time.Now()
 	if v := r.URL.Query().Get("as_of"); v != "" {
-		if t, err := time.Parse("2006-01-02", v); err == nil {
+		// An explicit day is the dealer's day, cut at its last instant: the AR arm reads the house day
+		// of this instant and the GL arm cuts posted_at at it, so both sides close the same day. A
+		// bare time.Parse (midnight at Greenwich) is the previous evening to the AR arm.
+		if t, err := houseday.EndOfDay(v); err == nil {
 			asOf = t
 		}
 	}

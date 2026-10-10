@@ -524,16 +524,6 @@ export async function openParked(page: Page) {
   return dialog;
 }
 
-/**
- * The returns desk's per line quantity inputs. The desk labels each input
- * with the line's description as the core answered it, and a line a rung sale
- * carries no description word, so the tests find the inputs by their role in
- * the desk rather than by the line's name.
- */
-export function returnLineInputs(page: Page) {
-  return page.getByTestId("returns").getByRole("spinbutton");
-}
-
 function shotDir(testInfo: TestInfo): string {
   // Outside Playwright's own output directory: a later leg's run start would
   // sweep the earlier leg's screenshots away with the rest of its artifacts.

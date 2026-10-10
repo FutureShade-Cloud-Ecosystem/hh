@@ -11767,6 +11767,173 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: messagingCreateChannel
+      tags:
+        - staff-messaging
+      summary: Found a TEAM or TOPIC channel, idempotently on its slug
+      description: "The caller becomes the channel's owner. A replay with the same slug (or the slug derived from the same name) answers 200 with the existing channel, never a duplicate room, and only for a caller who already holds a row in that room (the founder, a derived member): a name or slug collision with any other room is refused with 409 and seats nobody, the branch wall reads the existing room's own branch (403), and a room of another kind (a DM, an APPROVAL or BRANCH room) is never answered here. Slugs in the system namespaces (dm-, rep-, approvals-, chosen or derived) are refused with 400. A channel naming a branch the caller does not reach is refused with 403; BRANCH, DM and APPROVAL kinds are structural or system-provisioned and are refused with 400."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelCreate"
+      responses:
+        "200":
+          description: The channel already existed and the caller is already in it (the idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "201":
+          description: The channel as founded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/dms:
+    post:
+      operationId: messagingCreateDM
+      tags:
+        - staff-messaging
+      summary: Open, or find, the direct message channel with one other staffer
+      description: "The pair's channel is found when it exists (whoever opened it, including a seeded pair) and created exactly once otherwise; a replay answers 200 with the same room. A direct message is reached only through this route: its slug namespace is closed to caller founded rooms, and a slug of the pair already held by a room of another kind is refused with 409 rather than converged on. Naming the caller's own id is 400; a user who is not an active staffer is 404."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingDMCreate"
+      responses:
+        "200":
+          description: The pair's channel already existed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "201":
+          description: The direct message channel as opened
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/members:
+    post:
+      operationId: messagingAddChannelMember
+      tags:
+        - staff-messaging
+      summary: Seat one staffer in a channel the caller belongs to
+      description: "The row is explicit and idempotent: an already-seated member answers the row as it stands, and a DERIVED row is never rewritten. A caller who is not a member of the channel is refused with 403 (the module's channel-scoping wall, which also keeps anyone from seating themselves into a room they hold no row in); a direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and on a room whose membership the branch model derives, a target who reaches neither the room's branch nor every branch is 403. A user who is not an active staffer is 404 or 403."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingDMCreate"
+      responses:
+        "200":
+          description: The membership row as seated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannelMember"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/members/{userID}:
+    delete:
+      operationId: messagingRemoveChannelMember
+      tags:
+        - staff-messaging
+      summary: Drop one explicit member row from a channel the caller belongs to
+      description: A DERIVED member row is the role and branch model's and is refused with 409 (the next membership sync would re-derive it); only explicit rows are hand-removable. A direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and a removal never drops the room's last OWNER row (409, a channel keeps its owner).
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: userID
+          in: path
+          required: true
+          description: The member being removed
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The removal echo
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/messaging/channels/{id}/messages:
     get:
       operationId: messagingListMessages
@@ -35940,7 +36107,6 @@ components:
         - move_type
         - source_type
         - source_ref_id
-        - unit_cost_cents
         - occurred_at
       properties:
         id:
@@ -35977,6 +36143,7 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         occurred_at:
           type: string
           format: date-time
@@ -35990,7 +36157,6 @@ components:
         - on_hand_base
         - allocated_base
         - available_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -36010,7 +36176,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
-          description: The branch weighted-average unit cost
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryPendingFulfilment:
       type: object
       description: One COLLECT_LATER or DELIVERED line awaiting a stock move
@@ -36171,7 +36337,6 @@ components:
         - in_transit_base
         - available_base
         - soft_held_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -36200,6 +36365,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryBrowseRow:
       type: object
       description: One product on the browse surface, with its stock position
@@ -36222,7 +36388,6 @@ components:
         - reserved_base
         - available_base
         - in_transit_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -36264,6 +36429,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryFacetValue:
       type: object
       required:
@@ -36554,7 +36720,6 @@ components:
         - qty_base
         - qty_shipped_base
         - qty_received_base
-        - unit_cost_cents
         - ship_move_id
         - recv_move_id
       properties:
@@ -36582,6 +36747,7 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         ship_move_id:
           type: string
         recv_move_id:
@@ -36694,8 +36860,6 @@ components:
         - preferred_vendor_id
         - preferred_vendor_name
         - lead_time_days
-        - avg_cost_cents
-        - suggested_value_cents
       properties:
         product_id:
           type: string
@@ -36747,10 +36911,11 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
         suggested_value_cents:
           type: integer
           format: int64
-          description: suggested_qty_base times the branch weighted-average cost
+          description: "suggested_qty_base times the branch weighted-average cost; the same role gate as avg_cost_cents (the figure derives from it): byte-absent for a caller off the dealer's cost and margin list."
         draft_po_id:
           type: string
           format: uuid
@@ -37196,8 +37361,6 @@ components:
         - snapshot_qty_base
         - counted_qty_base
         - variance_base
-        - unit_cost_cents
-        - variance_value_cents
       properties:
         id:
           type: string
@@ -37227,9 +37390,11 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         reason_code:
           type: string
         move_id:
@@ -37305,8 +37470,6 @@ components:
         - line_count
         - counted_lines
         - variance_lines
-        - net_variance_value_cents
-        - abs_variance_value_cents
       properties:
         line_count:
           type: integer
@@ -37320,9 +37483,11 @@ components:
         net_variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         abs_variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
     InvCountSheetDetail:
       type: object
       description: A sheet plus its lines and a variance summary (the count-variance screen payload)
@@ -37346,7 +37511,6 @@ components:
         - product_id
         - location_id
         - on_hand_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -37359,6 +37523,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InvCountCreateSheetRequest:
       type: object
       required:
@@ -37833,6 +37998,65 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MessagingChannel"
+    MessagingChannelCreate:
+      type: object
+      description: "One caller-founded channel. Slug is optional: an empty slug is derived from the name, so the same founding twice converges on one room. BranchID optionally scopes a TEAM channel to one yard the caller reaches."
+      required:
+        - kind
+        - name
+      properties:
+        kind:
+          type: string
+          enum:
+            - TEAM
+            - TOPIC
+        name:
+          type: string
+        topic:
+          type: string
+        slug:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+    MessagingDMCreate:
+      type: object
+      description: Names the other staffer (the DM and member-add bodies share the shape)
+      required:
+        - user_id
+      properties:
+        user_id:
+          type: string
+          format: uuid
+    MessagingChannelMember:
+      type: object
+      description: One membership row. DERIVED rows are the role and branch model's and are never hand-removable; EXPLICIT rows are the seat this surface writes.
+      required:
+        - channel_id
+        - user_id
+        - role
+        - source
+        - joined_at
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+            - MEMBER
+            - OWNER
+        source:
+          type: string
+          enum:
+            - DERIVED
+            - EXPLICIT
+        joined_at:
+          type: string
+          format: date-time
     MessagingMessage:
       type: object
       description: "One post. author_id is empty for a system EVENT message. ref carries the structured MessagingEventRef for EVENT messages and MessagingApprovalRef for APPROVAL cards. thread_root_id is empty for a top-level message. superseded_by non-empty means a newer fact about the same record auto-resolved this message (last write wins): it renders as superseded and never requires an ack."

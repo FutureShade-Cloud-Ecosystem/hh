@@ -27,6 +27,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dashboard"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/dispatch"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
+	erpidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/invcount"
@@ -182,7 +183,14 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithRuleResolver(glRuleAdapter{svc: spine.glSvc}).
 		WithGLBalanceReader(glBalanceAdapter{svc: spine.glSvc}).
 		WithAudit(auditSvc)
-	invcount.NewHandler(invcountSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	// X3, the yard fence's counts half: the negative-stock worklist's
+	// cost leg rides only for a caller on the configuration's cost and
+	// margin list (inventory/cost_gate.go carries the argument).
+	invcountHandler := invcount.NewHandler(invcountSvc, log).WithUserLinker(link).WithCostRoles(spine.roleCfg)
+	if invcountHandler == nil || !invcountHandler.CostRolesWired() {
+		panic("invcount: cost roles not wired - the negative-stock worklist would answer the cost leg to every caller")
+	}
+	invcountHandler.RegisterRoutes(r, g)
 
 	// A-16 (W6): landed cost, capitalizing through inventory.
 	landedcostSvc := landedcost.NewService(landedcost.NewRepository(pool)).
@@ -283,7 +291,37 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("weights", tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("attachments", attachments.NewSyncStore(pool)); err != nil {
+	// THE DRIVER FENCE (the HH Drive fence, the role logins lane): the
+	// drive-run adapters and the attachments scope carry the role seam
+	// beside the linker, so a driver caller's pulls, loads and pushes
+	// hold to the runs assigned to the driver record linked to their
+	// login while every desk caller keeps the org scope. The seam is
+	// identity's own per-request authority resolution (the same
+	// resolution the guards ran at the door, read again here because
+	// the sync core's ScopeFilter carries the actor and the org and no
+	// role), bridged to the ERP role code the dispatch vocabulary
+	// reads. A nil pool (the wiring-shape tests) wires no seam; the boot
+	// fail-fasts below keep a real boot from serving these scopes
+	// unfenced, the same idiom the will-call pick hold gate carries.
+	var driverRole dispatch.SyncRoleResolver
+	if pool != nil {
+		staffRoles, roleErr := erpidentity.NewStaffAuthorityResolver(pool)
+		if roleErr != nil {
+			panic("sync: driver fence role resolver refused to boot: " + roleErr.Error())
+		}
+		driverRole = func(ctx context.Context, platformUserID, orgID string) (string, bool, error) {
+			a, has, err := staffRoles.ResolveStaff(ctx, platformUserID, orgID)
+			if err != nil || !has {
+				return "", has, err
+			}
+			return identity.FromAuthority(a).RoleCode, true, nil
+		}
+	}
+	attachmentsSync := attachments.NewSyncStore(pool).WithDriverStopFence(dispatch.NewDriverStopFence(pool, link, driverRole))
+	if pool != nil && !attachmentsSync.DriverStopFenceWired() {
+		panic("attachments: driver stop fence not wired - a driver login's attachments pull would answer every attachment in the org")
+	}
+	if err := syncEngine.RegisterScope("attachments", attachmentsSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -293,13 +331,23 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// adapter validates creates through the same order-read seam the
 	// module's REST surface reads; all three attribute actors through
 	// the same linker the pilot uses.
-	if err := syncEngine.RegisterScope("runs", dispatch.NewRunsSyncStore(pool, link)); err != nil {
+	// THE DRIVER FENCE: the seam is wired above the attachments scope
+	// (its block carries the argument); the boot fail-fast below keeps
+	// an unwired boot from serving the drive-run scopes unfenced, the
+	// same idiom the will-call pick hold gate carries.
+	runsSync := dispatch.NewRunsSyncStore(pool, link).WithDriverRole(driverRole)
+	stopsSync := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
+	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole)
+	if pool != nil && (!runsSync.DriverRoleWired() || !stopsSync.DriverRoleWired() || !podSync.DriverRoleWired()) {
+		panic("dispatch: driver fence role seam not wired - a driver login's sync pull would answer every run in the org")
+	}
+	if err := syncEngine.RegisterScope("runs", runsSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("stops", dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link)); err != nil {
+	if err := syncEngine.RegisterScope("stops", stopsSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("pod", dispatch.NewPODSyncStore(pool, link)); err != nil {
+	if err := syncEngine.RegisterScope("pod", podSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -314,15 +362,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// rest exactly as the module hashes its own), purchase_orders over
 	// the purchasing module's own purchasing_pos (the contract's PO
 	// surface), cycle_counts over the invcount module's own
-	// count_sheets (manual, never overwriting). The messaging trio
-	// (messages, acks, notify_prefs) stays unwired: the frozen schema
-	// gives those tables no org column (an org fence cannot be proven,
-	// and the GLOBAL channels cross orgs) and the two per-user tables
-	// composite keys with no uuid row id the engine's update and
-	// delete legs address, which is the D26 schema-shaped stop
-	// condition reported to the supervisor rather than routed around;
-	// all three routes answer the honest 501, pinned by test.
-	boardStops := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link)
+	// count_sheets (manual, never overwriting).
+	boardStops := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
 	if err := syncEngine.RegisterScope("quotes", quote.NewSyncStore(pool, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
@@ -349,6 +390,27 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("cycle_counts", invcount.NewSyncStore(pool, invCountAdapter{svc: inventorySvc}, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+
+	// The messaging feeds (House Messages core, roles roadmap Lane E):
+	// messages, acks and notify_prefs beside the pull-only channels
+	// scope registered with the reference caches below, over the
+	// messaging module's own tables. The Phase D stop (no org column on
+	// these tables, the GLOBAL channels crossing orgs, and the two
+	// per-user tables' composite keys) is closed by 0385's feed keys
+	// and by the fence the stores prove, which is stronger than an org
+	// predicate: every read resolves the caller's linked ERP user and
+	// answers only that user's own world (its channels and their
+	// messages, its own acks and prefs), so a row outside the caller's
+	// membership is the same as absent whatever org it belongs to.
+	if err := syncEngine.RegisterScope("messages", messaging.NewMessagesSyncStore(messagingRepo, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("acks", messaging.NewAcksSyncStore(messagingRepo, link)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("notify_prefs", messaging.NewNotifyPrefsSyncStore(messagingRepo, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -380,13 +442,13 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// class's org; trucks and drivers fence through the branch; the
 	// warranty pair is two projections over the one claims feed;
 	// widget_measures is the caller's own Home configuration; projects,
-	// payment_methods and aging are the tenant's reads. channels and
-	// tracking_events stay unwired: the D26 schema-shaped stops the lane
-	// reported (msg_channels carries no org column under a
-	// derived-membership model; no table carries the contractor's
-	// tracking events). tracking_events answers 501 on both routes;
-	// channels is pull-only in the registry and unwired, so its GET
-	// answers 501 while its POST meets the pull-only 400 first.
+	// payment_methods and aging are the tenant's reads. channels is the
+	// messaging module's own pull-only feed (0385 and the stores in
+	// internal/messaging/syncscope.go): the caller's rooms, membership
+	// fenced, the stronger-than-org fence the messaging feeds carry.
+	// tracking_events stays unwired (the D26 schema-shaped stop the lane
+	// reported: no table carries the contractor's tracking events), so
+	// it answers 501 on both routes.
 	if err := syncEngine.RegisterScope("products", product.NewProductsStore(pool)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
@@ -406,6 +468,9 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("vendors", purchasing.NewVendorsStore(pool)); err != nil {
+		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+	if err := syncEngine.RegisterScope("channels", messaging.NewChannelsSyncStore(messagingRepo, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("parked_tickets", pos.NewParkedTicketsStore(pool)); err != nil {
