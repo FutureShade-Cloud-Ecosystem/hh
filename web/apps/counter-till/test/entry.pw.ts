@@ -52,7 +52,7 @@ test("the entry page shows the two demo role cards and the eleven coming roles",
   const listing = (await (await flows).json()) as { flows: Array<{ flow: string }> };
   expect(listing.flows.map((row) => row.flow)).toEqual(["sales", "sales-manager", "payables-receivables", "procurement-manager", "financial-controller"]);
   await expect(page.getByRole("button", { name: "Payables and Receivables", exact: true })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Procurement manager", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Procurement Manager", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Financial Controller", exact: true })).toBeDisabled();
 
   const coming = page.getByRole("list", { name: "Coming roles" });
