@@ -12,10 +12,15 @@ package purchasing
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 )
 
 // vendorMasterCleanup removes the vendors this file mints, by the number prefix the mint draws.
@@ -23,7 +28,7 @@ func vendorMasterCleanup(t *testing.T, h *harness) {
 	t.Helper()
 	t.Cleanup(func() {
 		_, _ = h.pool.Exec(context.Background(),
-			`DELETE FROM vendors WHERE vendor_no LIKE 'V-01%' AND vendor_no <> 'V-0100'`)
+			`DELETE FROM vendors WHERE vendor_no ~ '^(V|VM)-[0-9]+$' AND vendor_no <> 'V-0100'`)
 	})
 }
 
@@ -38,8 +43,8 @@ func TestIntegration_VendorMaster_CreateMintsTheNumberAndStampsTheOrg(t *testing
 	if err != nil {
 		t.Fatalf("create vendor: %v", err)
 	}
-	if v.ID == "" || !strings.HasPrefix(v.VendorNo, "V-0") {
-		t.Fatalf("the created vendor reads %+v, want a minted V-0xxx number", v)
+	if v.ID == "" || !strings.HasPrefix(v.VendorNo, "VM-0") {
+		t.Fatalf("the created vendor reads %+v, want a minted VM-0xxx number", v)
 	}
 	if !v.IsActive || v.PaymentTermsDays != 30 {
 		t.Errorf("a created vendor reads terms %d active %v, want the 30 day active default", v.PaymentTermsDays, v.IsActive)
@@ -230,6 +235,67 @@ func TestIntegration_VendorMaster_AnApostropheAddressSavesOnCreateAndEdit(t *tes
 		city != "Trenton" || email != first {
 		t.Errorf("after the merge the remit reads city %q email %q (err %v), want Trenton and %q", city, email, err, first)
 	}
+}
+
+// P3-2 of the Opus review: the minted number and the load's keys must not share a key space. Two
+// halves: a create whose minted number is already taken answers a 409 in words (never the raw
+// 23505 as a 500), and the load refuses a legacy key in the mint's shape, so a later load item can
+// never take the ON CONFLICT arm and overwrite a staff made vendor.
+func TestIntegration_VendorMaster_ATakenMintedNumberIsA409InWords(t *testing.T) {
+	h := newHarness(t)
+	vendorMasterCleanup(t, h)
+	org := h.orgID(t)
+
+	first, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Mint probe (demo)"})
+	if err != nil {
+		t.Fatalf("create vendor: %v", err)
+	}
+	// Plant a row at the number the mint will draw next, as a load would have.
+	var prefix string
+	var n int
+	for i := len(first.VendorNo); i > 0; i-- {
+		if c := first.VendorNo[i-1]; c < '0' || c > '9' {
+			prefix = first.VendorNo[:i]
+			n, _ = strconv.Atoi(first.VendorNo[i:])
+			break
+		}
+	}
+	next := fmt.Sprintf("%s%0*d", prefix, len(first.VendorNo)-len(prefix), n+1)
+	if _, err := h.pool.Exec(context.Background(),
+		`INSERT INTO vendors (vendor_no, name, payment_terms_days, is_active) VALUES ($1, 'Planted by a load', 30, TRUE)`, next); err != nil {
+		t.Fatalf("plant %s: %v", next, err)
+	}
+	_, err = h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Collides (demo)"})
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != http.StatusConflict || !strings.Contains(ce.msg, "vendor number") {
+		t.Fatalf("a create whose minted number %s is taken = %v, want a 409 in words naming the vendor number", next, err)
+	}
+	// The sequence has moved, so a retry succeeds: the 409 says so.
+	if _, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Retry (demo)"}); err != nil {
+		t.Errorf("the retry after the 409: %v", err)
+	}
+}
+
+func TestIntegration_VendorMaster_TheLoadRefusesAKeyInTheMintsShape(t *testing.T) {
+	h := newHarness(t)
+	vendorMasterCleanup(t, h)
+	e := vendorLoadSetup(t)
+	t.Cleanup(func() { _, _ = e.pool.Exec(context.Background(), `DELETE FROM vendors WHERE vendor_no = 'VM-0101'`) })
+	item := vendItem("VM-0101", "Loaded under a minted number", nil)
+	item.DerivedKey = "4442a800-0000-4000-8000-0000000000f1"
+	r, err := e.door.UpsertBatch(context.Background(), load.Batch{OrgID: fxVendorOrgID, SourceSystem: fxVendorSource,
+		BatchID: "b-vend-mint", Caller: fxVendorActorID, Items: []load.Item{item}})
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if o := vendorOutcome(t, r, "VM-0101"); o.Status != load.OutcomeRefused || o.Field != "legacy_id" {
+		t.Fatalf("a load key in the mint's shape answered %+v, want refused naming legacy_id", o)
+	}
+	var n int
+	if err := e.pool.QueryRow(context.Background(), `SELECT count(*) FROM vendors WHERE vendor_no = 'VM-0101'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("the refused item wrote %d rows (err %v), want none", n, err)
+	}
+	_ = h
 }
 
 func ptr[T any](v T) *T { return &v }

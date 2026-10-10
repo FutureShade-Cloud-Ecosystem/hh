@@ -1008,6 +1008,12 @@ func (r *Repository) InsertVendorMaster(ctx context.Context, orgID, name string,
 		VALUES (next_vendor_no(), $1, $2, $3::jsonb, TRUE, $4::uuid, (SELECT next_value FROM vseq))
 		RETURNING id::text, vendor_no::text, name, payment_terms_days, COALESCE(remit_address->>'email',''), is_active`,
 		name, terms, remit, orgID).Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.OrderEmail, &v.IsActive)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		// The minted number is already a row (planted by a hand or a load): the sequence has moved
+		// on, so a retry draws the next one. Said in words, never the raw constraint as a 500.
+		return VendorMaster{}, conflict("purchasing: the vendor number the mint drew is already taken, try again")
+	}
 	if err != nil {
 		return VendorMaster{}, fmt.Errorf("purchasing: insert vendor: %w", err)
 	}

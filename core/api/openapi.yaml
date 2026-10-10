@@ -19031,7 +19031,7 @@ paths:
         - staff-purchasing
       x-addition: the vendor create route of the roles roadmap's Buying and Stock core slice; no ERP source route
       summary: Create a vendor
-      description: The vendor number is minted server side and is never accepted from the caller. The record is created active under the caller's org; the ordering email rides the record as the remit fallback the outbound send's address book reads.
+      description: The vendor number is minted server side (VM- and digits, a shape the load doors refuse as a legacy key) and is never accepted from the caller. The record is created active under the caller's org; the ordering email rides the record as the remit fallback the outbound send's address book reads.
       x-role: requireManager
       x-access:
         surfaces:
@@ -19058,6 +19058,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/purchasing/vendors/{vendorID}:
     put:
       operationId: purchasingUpdateVendor
