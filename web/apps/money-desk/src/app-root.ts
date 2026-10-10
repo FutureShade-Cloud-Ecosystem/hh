@@ -102,6 +102,14 @@ export class MoneyDeskApp extends HHElement {
       new ArApi(this.#staffClient),
       {
         repaint: () => this.requestUpdate(),
+        reveal: (selector) => {
+          // A payment's outcome words sit in the page's banner, far above the Record payment button
+          // on a phone: bring the banner into view and put the screen reader's reading position on it.
+          const el = this.renderRoot.querySelector<HTMLElement>(selector);
+          if (el === null) return;
+          el.scrollIntoView({ block: "center", behavior: "smooth" });
+          el.focus({ preventScroll: true });
+        },
         field: (name, key) => {
           const scope = key === undefined ? "" : `[data-key="${key}"]`;
           const found = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[data-field="${name}"]${scope}`);

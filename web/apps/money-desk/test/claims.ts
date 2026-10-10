@@ -80,6 +80,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: RECEIVABLES, test: "a lost answer then a changed cheque number sends the same key; the route's refusal reads already recorded and the account reloads" },
     { file: RECEIVABLES, test: "a payment recorded on another account leaves this account's pending payment key alone" },
     { file: RECEIVABLES, test: "a reload that shows the payment ends the held key, so pressing again with the same body is a new payment" },
+    { file: RECEIVABLES, test: "on a phone the unknown outcome message is in view and focused when it appears" },
   ],
   "apply-refused": [
     { file: RECEIVABLES, test: "a worded 4xx says the payment was not recorded in the route's own words, and the next press is a new payment with a new key" },

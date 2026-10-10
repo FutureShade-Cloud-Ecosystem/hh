@@ -339,6 +339,30 @@ test("a worded 4xx says the payment was not recorded in the route's own words, a
   expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
 });
 
+test("on a phone the unknown outcome message is in view and focused when it appears", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/api/v1/ar/payments/apply", (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview) return route.continue();
+    return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "the receivables register is not answering right now" }) });
+  });
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await page.getByRole("button", { name: "Pick all open" }).click();
+  await page.locator("[data-field='receive-amount']").fill("100.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 447");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  const banner = page.locator("[data-error]");
+  await expect(banner).toContainText("may or may not have been recorded");
+  await expect(banner).toBeInViewport({ ratio: 0.5 });
+  const focused = await page.evaluate(() => {
+    let el: Element | null = document.activeElement;
+    while (el instanceof Element && el.shadowRoot !== null) el = el.shadowRoot.activeElement;
+    return el === null ? "" : el.getAttribute("data-error") ?? "other";
+  });
+  expect(focused).toBe("");
+});
+
 test("a payment that cannot be posted is stopped in words, and the server's refusal shows beside the split", async ({ page, request }) => {
   await openDesk(page, request);
   await openAccount(page, "Granite Edge Landscaping (demo)");

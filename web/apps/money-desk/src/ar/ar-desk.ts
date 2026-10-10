@@ -36,6 +36,8 @@ import {
 export interface DeskHost {
   /** Asks the root to repaint. */
   readonly repaint: () => void;
+  /** Brings the first element matching the selector into view and focuses it. */
+  readonly reveal: (selector: string) => void;
   /** The text of a form field the screen carries, or "" when it is not on screen. */
   readonly field: (name: string, key?: string) => string;
   /** Sets a form field's text; the screens bind no value, so a fill goes through here. */
@@ -398,8 +400,13 @@ export class ArDesk {
     this.#host.setField("receive-amount", text);
   }
 
-  /** After each paint: the fills the screens cannot bind, and the read only fields. */
+  /** After each paint: a message the desk asked to bring into view, then the fills and read only fields. */
   afterRender(): void {
+    if (this.#reveal !== "") {
+      const selector = this.#reveal;
+      this.#reveal = "";
+      this.#host.reveal(selector);
+    }
     const account = this.#account;
     if (account === null) return;
     if (this.#fillPending) {
@@ -409,6 +416,9 @@ export class ArDesk {
     this.#host.setField("received-at", account.branchName);
     this.#host.setField("taken-by", this.#who.userName);
   }
+
+  /** The message the next paint must bring into view: a payment's outcome words on a phone sit far above the button that was pressed. */
+  #reveal = "";
 
   #afterFill(): void {
     this.#fillPending = true;
@@ -585,9 +595,9 @@ export class ArDesk {
     if (account === null || this.#busy) return;
     const cents = parseAmountToCents(account.amountText);
     const reference = this.#host.field("receive-reference").trim();
-    if (cents === null || cents === 0) return this.#stop("Enter the amount received, such as $100.00.");
-    if (account.picked.length === 0) return this.#stop("Pick the invoices the payment is for. Pick all open takes every open invoice.");
-    if (reference === "") return this.#stop("Enter a reference, such as a cheque number.");
+    if (cents === null || cents === 0) return this.#stopApply("Enter the amount received, such as $100.00.");
+    if (account.picked.length === 0) return this.#stopApply("Pick the invoices the payment is for. Pick all open takes every open invoice.");
+    if (reference === "") return this.#stopApply("Enter a reference, such as a cheque number.");
     this.#busy = true;
     this.#clearMessages();
     this.#host.repaint();
@@ -615,6 +625,7 @@ export class ArDesk {
         this.#payPins.delete(account.customerId);
         this.#endApplyForm();
         this.#notice = outcome.words;
+        this.#reveal = "[data-notice]";
         await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
         this.#host.repaint();
         return;
@@ -623,6 +634,7 @@ export class ArDesk {
       this.#error = outcome.words;
       // An unknown outcome keeps the key, so no retry can post twice; a refusal wrote nothing and ends it.
       if (outcome.kind === "refused") this.#payPins.delete(account.customerId);
+      this.#reveal = "[data-error]";
       this.#host.repaint();
       return;
     }
@@ -646,6 +658,12 @@ export class ArDesk {
     this.#notice = "";
     this.#error = words;
     this.#host.repaint();
+  }
+
+  /** A stop on the apply path: its words show in the page's banner, which a phone must bring into view. */
+  #stopApply(words: string): void {
+    this.#reveal = "[data-error]";
+    this.#stop(words);
   }
 
   async #recordPromise(): Promise<void> {

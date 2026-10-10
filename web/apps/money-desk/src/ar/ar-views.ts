@@ -101,9 +101,12 @@ export interface DeskModel {
 // ---- small parts -------------------------------------------------------------------------------
 
 function messages(model: DeskModel): TemplateResult {
+  // tabindex lets the desk move focus to a message when it appears: role=alert announces it, and
+  // focus puts a screen reader's reading position and the phone's viewport on it (a payment's
+  // unknown outcome or refusal shows here, far above the Record payment button on a phone).
   return html`
-    ${model.error !== "" ? html`<p class="alert alert-error" role="alert" data-error>${model.error}</p>` : nothing}
-    ${model.notice !== "" ? html`<p class="alert alert-ok" role="status" data-notice>${model.notice}</p>` : nothing}
+    ${model.error !== "" ? html`<p class="alert alert-error" role="alert" data-error tabindex="-1">${model.error}</p>` : nothing}
+    ${model.notice !== "" ? html`<p class="alert alert-ok" role="status" data-notice tabindex="-1">${model.notice}</p>` : nothing}
   `;
 }
 
