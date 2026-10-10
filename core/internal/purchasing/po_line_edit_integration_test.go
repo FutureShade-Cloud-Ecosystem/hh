@@ -131,6 +131,13 @@ func TestIntegration_POLineEdit_ANonUUIDLineAndAnAbsurdQuantityAre422(t *testing
 	want422("edit with a non uuid line id", err)
 	_, err = h.svc.RemoveLine(h.ctx, poID, "not-a-uuid")
 	want422("remove with a non uuid line id", err)
+	// Shapes the old loose check passed and the uuid cast refused (the Opus review's P3-1).
+	for _, bad := range []string{"0000000000000000000000000000000000", "------------------------------------"} {
+		_, err = h.svc.UpdateLine(h.ctx, poID, bad, UpdateLineParams{QtyOrderedBase: ptr(2.0)})
+		want422("edit with line id "+bad, err)
+		_, err = h.svc.RemoveLine(h.ctx, poID, bad)
+		want422("remove with line id "+bad, err)
+	}
 	_, err = h.svc.UpdateLine(h.ctx, poID, lineID, UpdateLineParams{QtyOrderedBase: ptr(1e30)})
 	want422("edit to a quantity beyond the column", err)
 	_, err = h.svc.UpdateLine(h.ctx, poID, lineID, UpdateLineParams{QtyOrderedBase: ptr(1e15)})

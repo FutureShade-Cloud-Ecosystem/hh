@@ -186,12 +186,34 @@ func validTerms(days *int, def int) (int, error) {
 	return *days, nil
 }
 
-// isUUIDString is the shape check the create's org stamp and the edit's path parameter share: a
-// loose one (length and alphabet), because the database's uuid cast is the authority on shape, and
-// this guard exists so a nonsense string becomes a 400 here rather than a 500 out of the driver.
+// isUUIDString is the shape check the line doors, the vendor edit's path parameter and the create's
+// org stamp share, and it is EXACT: the 8-4-4-4-12 form or 32 hex digits, nothing else, because
+// anything looser (the first version took any 32 to 36 hex digits and dashes) passes strings the
+// database's uuid cast refuses, and the refusal comes back as a 500.
 func isUUIDString(s string) bool {
-	if len(s) < 32 || len(s) > 36 {
-		return false
+	switch len(s) {
+	case 36:
+		for i := 0; i < len(s); i++ {
+			if i == 8 || i == 13 || i == 18 || i == 23 {
+				if s[i] != '-' {
+					return false
+				}
+			} else if !isHexDigit(s[i]) {
+				return false
+			}
+		}
+		return true
+	case 32:
+		for i := 0; i < len(s); i++ {
+			if !isHexDigit(s[i]) {
+				return false
+			}
+		}
+		return true
 	}
-	return strings.Trim(s, "0123456789abcdefABCDEF-") == ""
+	return false
+}
+
+func isHexDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
 }
