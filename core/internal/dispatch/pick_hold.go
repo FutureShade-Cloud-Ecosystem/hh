@@ -95,15 +95,17 @@ func refuseHeldFromPickingSyncTx(ctx context.Context, gate PickHoldGate, tx pgx.
 }
 
 // holdRefusalSync shapes the guard's answer as the sync engine's refused
-// reason: the mandated sentence, with the owed figure when there is one.
+// reason: the mandated sentence, never the owed figure. The sync door
+// resolves any active staff caller with no role check (the scope's
+// predicate reads org only), and a figure never reaches an off list role in
+// words either (ruling 91); the STAFF door's refusal above keeps the
+// figure, its surface being dispatch-board work, held only by roles on the
+// cost and margin list.
 func holdRefusalSync(held bool, owed int64, err error) error {
 	if err != nil {
 		return refused(fmt.Errorf("the balance hold could not be read, try again in a moment"))
 	}
 	if held {
-		if owed > 0 {
-			return refused(fmt.Errorf("%s (%s is owed)", pickHoldWords, money(owed)))
-		}
 		return refused(fmt.Errorf("%s", pickHoldWords))
 	}
 	return nil
