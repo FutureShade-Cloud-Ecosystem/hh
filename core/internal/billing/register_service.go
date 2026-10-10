@@ -23,6 +23,7 @@ import (
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
@@ -154,6 +155,25 @@ type registerStore interface {
 type receiptWriter interface {
 	RecordReceipt(ctx context.Context, in ReceiptWrite) (ReceiptResult, error)
 	PayableCentsFor(ctx context.Context, invoiceID string) (int64, string, error)
+	// ApplyReceived is the one received payment the server allocates across invoices (the money
+	// seam's own walk, oldest first, one transaction), the replacement for the app splitting a
+	// cheque into per invoice slices.
+	ApplyReceived(ctx context.Context, in ApplyReceivedCommand) (payments.ApplyAnswer, error)
+}
+
+// ApplyReceivedCommand is the register's request to the money seam's received payment walk.
+type ApplyReceivedCommand struct {
+	CustomerID     string
+	Method         string
+	Reference      string
+	IdempotencyKey string
+	InvoiceIDs     []string
+	AmountCents    int64
+	Preview        bool
+	// BranchIDs is the caller's branch reach as the service resolves it: nil for a global caller,
+	// the caller's branches otherwise. The seam answers an invoice outside it as not found.
+	BranchIDs  []string
+	ReceivedBy string
 }
 
 // ReceiptWrite is the register's request to the money seam.
@@ -429,6 +449,68 @@ func (s *RegisterService) RecordPayment(ctx context.Context, in ReceiptInput) (R
 		}
 	}
 	return res, nil
+}
+
+// ApplyReceivedPayment records ONE received payment (amount, method, reference) against a list of
+// the account's open invoices and lets the money seam's own walk split it oldest first. The caller
+// names the money and the invoices; the server computes the split, in one transaction, so no part
+// of a cheque is ever held in a browser. A preview answers the same split without writing.
+//
+// The refusal words an operator reads (the ceiling, the not open document, the invoice that is not
+// the account's) are the seam's; this method adds only the caller's facts: who took the payment and
+// which branches the caller reaches.
+func (s *RegisterService) ApplyReceivedPayment(ctx context.Context, in ApplyPaymentInput) (payments.ApplyAnswer, error) {
+	if s.money == nil {
+		return payments.ApplyAnswer{}, errors.New("billing: recording payments is not wired on this deployment")
+	}
+	if in.IdempotencyKey == "" {
+		return payments.ApplyAnswer{}, httpx.BadRequestf("recording a payment needs an idempotency key")
+	}
+	if in.AmountCents <= 0 {
+		return payments.ApplyAnswer{}, httpx.BadRequestf("a payment amount must be greater than zero")
+	}
+	if len(in.InvoiceIDs) == 0 {
+		return payments.ApplyAnswer{}, httpx.BadRequestf("a payment must be applied to at least one invoice")
+	}
+	caller, _ := s.callerFrom(ctx)
+	res, err := s.money.ApplyReceived(ctx, ApplyReceivedCommand{
+		CustomerID:     in.CustomerID,
+		Method:         strings.ToUpper(strings.TrimSpace(in.Method)),
+		Reference:      in.Reference,
+		IdempotencyKey: in.IdempotencyKey,
+		InvoiceIDs:     in.InvoiceIDs,
+		AmountCents:    in.AmountCents,
+		Preview:        in.Preview,
+		BranchIDs:      callerBranchReach(caller),
+		ReceivedBy:     caller.UserID,
+	})
+	if err != nil {
+		return payments.ApplyAnswer{}, err
+	}
+	// A promise the close kept stops being a promise, exactly as the per invoice settle treats one:
+	// only on a genuinely new posting, never on a replay (its rows were settled the first time).
+	if !res.Replayed && !res.Preview {
+		for _, line := range res.Lines {
+			if line.Outcome == payments.ApplyOutcomeCloses {
+				_, _ = s.store.SettlePromise(ctx, line.InvoiceID, "KEPT", "paid in full")
+			}
+		}
+	}
+	return res, nil
+}
+
+// callerBranchReach answers the caller's branch reach as the money seam reads it: nil for a global
+// caller (every branch), the caller's branch ids otherwise, and an empty non-nil list for a scoped
+// caller with no grants, which reaches nothing, fail closed.
+func callerBranchReach(caller identity.StaffContext) []string {
+	if caller.Scope == identity.ScopeGlobal {
+		return nil
+	}
+	ids := make([]string, 0, len(caller.Branches))
+	for b := range caller.Branches {
+		ids = append(ids, b)
+	}
+	return ids
 }
 
 // SendReminder chases one or more documents with one tone.

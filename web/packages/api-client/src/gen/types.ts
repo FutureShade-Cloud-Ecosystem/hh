@@ -423,6 +423,33 @@ export type BillingReceiptResult = {
   status: "RECEIVED" | "DEPOSITED" | "BOUNCED" | "REFUNDED" | "VOID" | "PENDING";
   replayed: boolean;
 };
+export type BillingApplyPaymentInput = {
+  customer_id: string;
+  method: "CASH" | "CARD" | "CHEQUE" | "EFT";
+  amount_cents: number;
+  reference: string;
+  invoice_ids: string[];
+  idempotency_key: string;
+  preview?: boolean;
+};
+export type BillingApplyPaymentLine = {
+  invoice_id: string;
+  invoice_no: string;
+  applied_cents: number;
+  outcome: "CLOSES" | "PART" | "NONE";
+  balance_after_cents: number;
+  stays_open_cents: number;
+};
+export type BillingApplyPaymentAnswer = {
+  preview: boolean;
+  payment_id?: string;
+  payment_no?: string;
+  amount_cents: number;
+  applied_cents: number;
+  unapplied_cents: number;
+  lines: BillingApplyPaymentLine[];
+  replayed: boolean;
+};
 export type BillingReminderInput = {
   invoice_ids: string[];
   tone: "FRIENDLY" | "FIRM" | "FINAL";
