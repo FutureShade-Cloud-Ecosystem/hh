@@ -18,15 +18,17 @@ import type {
   PurchasingPO,
   PurchasingPODetail,
 } from "@hardscapehouse/api-client";
-import { dateWords, deliveryWord, draftOf, isPlaced, refusalWords, relativeDay, statusTone, statusWord } from "./po-logic.js";
+import { dateWords, deliveryWord, draftOf, isPlaced, refusalWords, relativeDay, statusTone, statusWord, type DraftMarker } from "./po-logic.js";
 import { formatMoney, formatQty } from "./po-money.js";
 
 export type Tab = "orders" | "incoming";
 
-/** The draft being worked: the order the core made, and the worklist row it came from. */
+/** The draft being worked: the order the core made, the worklist row it came from, and the draft
+ * the core said was already open when this one was pressed (null when there was none). */
 export interface DraftModel {
   readonly po: PurchasingPODetail;
   readonly row: InventoryShortfallRow | null;
+  readonly existingDraft: DraftMarker | null;
 }
 
 export interface DeskModel {
@@ -310,6 +312,9 @@ function draftPanel(model: DeskModel, draft: DraftModel): TemplateResult {
         <h2>New purchase order from the shortfall</h2>
         ${pill(po.status)}
       </div>
+      ${draft.existingDraft === null
+        ? nothing
+        : html`<p class="callout" data-existing-draft><strong>A draft was already open: <button type="button" class="link-inline" data-action="open-draft" data-open-draft data-po-id=${draft.existingDraft.id}>${draft.existingDraft.no}</button>.</strong> Drafted, not placed; a draft never covers the shortfall, so this press drafted the full quantity again.</p>`}
       <dl class="facts">
         <dt>Order</dt>
         <dd data-po-no>${po.po_no}</dd>

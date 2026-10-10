@@ -275,6 +275,28 @@ test("a branch outside the caller's reach is refused in the server's own words, 
   await expect(page.locator("[data-draft]")).toHaveCount(0);
 });
 
+test("a draft made behind the screen's back is named when the press drafts again", async ({ page, request }) => {
+  await openHome(page, request);
+  // Another tab drafted the K08 gap after this page rendered: the worklist here is stale, so the
+  // press drafts the full quantity again, and the core's answer names the draft already open.
+  const rows = await request.get("/api/v1/inventory/shortfall", { headers: { authorization: "Bearer another-tab" } });
+  const page1 = (await rows.json()) as { items: { sku: string; product_id: string; branch_id: string }[] };
+  const gap = page1.items.find((r) => r.sku === "DBS-BRUS-DIM");
+  await request.post("/api/v1/inventory/reorder-po", {
+    headers: { authorization: "Bearer another-tab" },
+    data: { product_id: gap?.product_id, branch_id: gap?.branch_id, qty_base: 0 },
+  });
+  await page.getByRole("button", { name: "Draft PO (1)" }).click();
+  const panel = page.locator("[data-draft]");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator("[data-po-no]")).toHaveText("PO-TRT-143");
+  const existing = panel.locator("[data-existing-draft]");
+  await expect(existing).toContainText("A draft was already open: PO-TRT-142.");
+  await expect(existing).toContainText("Drafted, not placed");
+  await existing.locator("[data-open-draft]").click();
+  await expect(panel.locator("[data-po-no]")).toHaveText("PO-TRT-142");
+});
+
 test("a draft does not cover the shortfall: the K08 row stays, reading drafted not placed, with the draft's link", async ({ page, request }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openHome(page, request);

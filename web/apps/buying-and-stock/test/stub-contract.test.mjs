@@ -176,6 +176,27 @@ test("the shortfall read is fenced to the caller's reach, in the core's words", 
   refused(await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: BRANCH, qty_base: 0 }), 403, "you do not have access to that branch");
 });
 
+test("the quick reorder names the draft that was already open, and still drafts the full quantity", async () => {
+  await reset();
+  const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.items;
+  const gap = rows.find((r) => r.sku === "DBS-BRUS-DIM");
+  const first = await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: BRANCH, qty_base: 0 });
+  assert.equal(first.status, 200);
+  // No draft was open before this press: the pointer is absent, not empty.
+  assert.equal(first.json.existing_draft_po_id, undefined);
+  assert.equal(first.json.existing_draft_po_no, undefined);
+  // A draft never covers a shortfall, so the next press drafts again; the core reads the open
+  // draft BEFORE the new one is made, and the answer names it (the two keys come together).
+  const second = await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: BRANCH, qty_base: 0 });
+  assert.equal(second.status, 200);
+  holds("InventoryReorderResult", second.json);
+  assert.equal(second.json.existing_draft_po_id, first.json.po_id);
+  assert.equal(second.json.existing_draft_po_no, first.json.po_no);
+  const po = await call("GET", `/api/v1/purchasing/pos/${second.json.po_id}`);
+  assert.equal(po.json.status, "DRAFT");
+  assert.notEqual(po.json.id, first.json.po_id);
+});
+
 test("the PO register answers in the contract's shapes, and a PO reads with its lines", async () => {
   await reset();
   const list = await call("GET", "/api/v1/purchasing/pos");
@@ -297,6 +318,27 @@ test("the line editor's refusals are the core's sentences, and the freeze once p
   refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${lineId}`, { qty_ordered_base: 10 }), 409, "cannot edit the lines of a ORDERED purchase order", "cannot edit the lines of a %s purchase order");
   refused(await call("POST", `/api/v1/purchasing/pos/${id}/lines`, { product_id: gap.product_id, qty_ordered_base: 10 }), 409, "cannot edit the lines of a ORDERED purchase order", "cannot edit the lines of a %s purchase order");
   refused(await call("DELETE", `/api/v1/purchasing/pos/${id}/lines/${lineId}`), 409, "cannot edit the lines of a ORDERED purchase order", "cannot edit the lines of a %s purchase order");
+});
+
+test("a line id that is not a uuid, or a quantity no line can hold, is refused in words", async () => {
+  await reset();
+  const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.items;
+  const gap = rows.find((r) => r.sku === "DBS-BRUS-DIM");
+  const made = await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: BRANCH, qty_base: 0 });
+  const id = made.json.po_id;
+  const lineId = (await call("GET", `/api/v1/purchasing/pos/${id}`)).json.lines[0].id;
+  // The core's checkLinePath: an order id that is not a uuid names no order (404); a line id that
+  // is not one cannot be right (422, in words), whatever its shape, and it never reaches the rows.
+  refused(await call("PUT", `/api/v1/purchasing/pos/not-a-uuid/lines/${lineId}`, { qty_ordered_base: 10 }), 404, "not found");
+  refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${"-".repeat(36)}`, { qty_ordered_base: 10 }), 422, "line id must be a uuid");
+  refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${"0".repeat(34)}`, { qty_ordered_base: 10 }), 422, "line id must be a uuid");
+  refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${"0".repeat(33)}`, { qty_ordered_base: 10 }), 422, "line id must be a uuid");
+  refused(await call("DELETE", `/api/v1/purchasing/pos/${id}/lines/${"0".repeat(34)}`), 422, "line id must be a uuid");
+  const po = await call("GET", `/api/v1/purchasing/pos/${id}`);
+  assert.equal(po.json.line_count, 1, "a refused shape changed nothing");
+  // The ceiling the core states (numeric(19,4) overflows past 1e12): both doors say so in words.
+  refused(await call("PUT", `/api/v1/purchasing/pos/${id}/lines/${lineId}`, { qty_ordered_base: 1e12 + 1 }), 422, "line quantity is beyond what an order line can hold (1000000000000 at most)", "quantity is beyond what an order line can hold (%.0f at most)");
+  refused(await call("POST", `/api/v1/purchasing/pos/${id}/lines`, { product_id: gap.product_id, qty_ordered_base: 1e12 + 1 }), 422, "line 0 quantity is beyond what an order line can hold (1000000000000 at most)", "quantity is beyond what an order line can hold (%.0f at most)");
 });
 
 test("the gate's refusal is the shared Forbidden body, and a bill cannot be posted", async () => {

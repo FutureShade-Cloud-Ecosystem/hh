@@ -130,7 +130,7 @@ export class PoDesk {
       await this.#readVendorCodes(detail.value.vendor_id);
       const first = detail.value.lines[0];
       const row = first === undefined ? null : (this.#shortfall.find((r) => r.product_id === first.product_id) ?? null);
-      this.#draft = { po: detail.value, row };
+      this.#draft = { po: detail.value, row, existingDraft: null };
       this.#method = detail.value.delivery_method ?? "UNKNOWN";
       this.#expectedText = (detail.value.expected_at ?? "").slice(0, 10);
       this.#seeded = null;
@@ -262,8 +262,11 @@ export class PoDesk {
     this.#method = detail.value.delivery_method ?? "UNKNOWN";
     this.#expectedText = (detail.value.expected_at ?? "").slice(0, 10);
     await this.#reload();
-    // The row as the core now reads it: it carries the draft that does not cover it.
-    this.#draft = { po: detail.value, row: this.#shortfall.find((r) => r.product_id === row.product_id) ?? row };
+    // The row as the core now reads it: it carries the draft that does not cover it. When the core
+    // named a draft that was already open before this press, the panel says so in the row's words.
+    const existing = made.value.existing_draft_po_id;
+    const existingDraft = existing === undefined || existing === "" ? null : { id: existing, no: made.value.existing_draft_po_no ?? "" };
+    this.#draft = { po: detail.value, row: this.#shortfall.find((r) => r.product_id === row.product_id) ?? row, existingDraft };
     this.#busy = false;
     this.#host.repaint();
   }

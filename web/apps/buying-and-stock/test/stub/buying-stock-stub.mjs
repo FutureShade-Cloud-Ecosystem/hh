@@ -52,6 +52,26 @@ function uuid(kind, n) {
   return `${kind}0000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 }
 
+// The core's isUUIDString, exactly: the 8-4-4-4-12 form or 32 hex digits, nothing looser, because
+// anything looser reaches the database's uuid cast and comes back a 500.
+function isUuid(value) {
+  if (typeof value !== "string") return false;
+  const hex = (ch) => /[0-9a-fA-F]/.test(ch);
+  if (value.length === 36) {
+    for (let i = 0; i < 36; i += 1) {
+      if (i === 8 || i === 13 || i === 18 || i === 23) {
+        if (value[i] !== "-") return false;
+      } else if (!hex(value[i])) return false;
+    }
+    return true;
+  }
+  if (value.length === 32) return [...value].every(hex);
+  return false;
+}
+
+// The ceiling the core states on every line door: numeric(19,4) overflows past 1e12.
+const MAX_LINE_QTY = 1e12;
+
 const NOW_ISO = () => new Date().toISOString();
 
 // ---- the world ---------------------------------------------------------------------------------
@@ -396,6 +416,9 @@ async function handle(req, res) {
     if (qty <= 0) {
       return refuse(res, 400, `nothing to order for ${row.sku}, its replenishment quantity is zero and its position is above the reorder point`);
     }
+    // The draft already open for this product at this branch, read BEFORE the new draft is made
+    // (the core's rule): the answer names it, so a surface can say a draft was already open.
+    const existing = world.pos.find((o) => o.status === "DRAFT" && o.lines.some((l) => l.product === p.n));
     const n = world.counter++;
     const po = {
       id: uuid("c", n),
@@ -415,6 +438,7 @@ async function handle(req, res) {
       suggested_qty_base: row.suggested_qty_base,
       uom: p.uom,
       vendor_name: row.preferred_vendor_name,
+      ...(existing === undefined ? {} : { existing_draft_po_id: existing.id, existing_draft_po_no: existing.no }),
     });
   }
 
@@ -454,6 +478,10 @@ async function handle(req, res) {
   }
   const line = path.match(/^\/api\/v1\/purchasing\/pos\/([^/]+)\/lines\/([^/]+)$/);
   if (line && (method === "DELETE" || method === "PUT")) {
+    // The core's checkLinePath: an order id that is not a uuid names no order; a line id that is
+    // not one is a request that cannot be right, 422 in words.
+    if (!isUuid(line[1])) return refuse(res, 404, "not found");
+    if (!isUuid(line[2])) return refuse(res, 422, "line id must be a uuid");
     const po = world.pos.find((p) => p.id === line[1]);
     if (po === undefined) return refuse(res, 404, "not found");
     const target = po.lines.find((l) => l.id === line[2]);
@@ -462,13 +490,16 @@ async function handle(req, res) {
       po.lines = po.lines.filter((l) => l.id !== line[2]);
       return json(res, poDetail(po));
     }
-    // PUT: correct the quantity or the cost (purchasing/service.go UpdateLine, its own words).
+    // PUT: correct the quantity or the cost (purchasing/service.go UpdateLine, its own words and order).
     const body = await readBody(req);
     if (body === null) return refuse(res, 400, "invalid_json");
     if (body.qty_ordered_base === undefined && body.unit_cost_cents === undefined) {
       return refuse(res, 400, "the body names nothing to change");
     }
     if (body.qty_ordered_base !== undefined && body.qty_ordered_base <= 0) return refuse(res, 400, "line quantity must be positive");
+    if (body.qty_ordered_base !== undefined && body.qty_ordered_base > MAX_LINE_QTY) {
+      return refuse(res, 422, `line quantity is beyond what an order line can hold (${MAX_LINE_QTY} at most)`);
+    }
     if (body.unit_cost_cents !== undefined && body.unit_cost_cents < 0) return refuse(res, 400, "line unit cost cannot be negative");
     if (po.status !== "DRAFT") return refuse(res, 409, `cannot edit the lines of a ${po.status} purchase order`);
     if (target === undefined) return refuse(res, 404, "not found");
@@ -486,6 +517,9 @@ async function handle(req, res) {
     // assigned after the insert).
     if (!body.product_id) return refuse(res, 400, "line 0 needs a product_id");
     if (!(body.qty_ordered_base > 0)) return refuse(res, 400, "line 0 quantity must be greater than zero");
+    if (body.qty_ordered_base > MAX_LINE_QTY) {
+      return refuse(res, 422, `line 0 quantity is beyond what an order line can hold (${MAX_LINE_QTY} at most)`);
+    }
     if (body.unit_cost_cents !== undefined && body.unit_cost_cents < 0) return refuse(res, 400, "line 0 unit cost cannot be negative");
     if (po.status !== "DRAFT") return refuse(res, 409, `cannot edit the lines of a ${po.status} purchase order`);
     const p = PRODUCTS.find((x) => uuid("f", x.n) === body.product_id);
