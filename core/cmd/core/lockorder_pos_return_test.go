@@ -205,6 +205,34 @@ func loposArmCounterWindow(t *testing.T, obs *pgxpool.Pool) {
 	})
 }
 
+// loposSeedPaymentsCounter seeds the payments counter row before a leg parks a writer in the
+// counter window. The window is an AFTER UPDATE trigger on scope_sequences, and no migration
+// plants any scope row, so on a freshly migrated database the first writer's counter statement
+// takes its INSERT arm, the trigger never fires and the leg waits out its barrier (the delta 3
+// review's P3-1). The seed mirrors the lock statement's own INSERT arm, at 0, so the first real
+// draw still hands out feed number 1.
+func loposSeedPaymentsCounter(t *testing.T) {
+	t.Helper()
+	dsn := os.Getenv(coreDBEnvVar)
+	if dsn == "" {
+		return // loposPools skips the leg itself when the scratch database is not set
+	}
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse gate url: %v", err)
+	}
+	cfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("open seed pool: %v", err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO scope_sequences (scope, next_value) VALUES ('payments', 0) ON CONFLICT (scope) DO NOTHING`); err != nil {
+		t.Fatalf("seed the payments counter row: %v", err)
+	}
+}
+
 // loposWait blocks until `want` sessions of the gate database match cond, or fails the leg. The
 // observer pool reads pg_stat_activity; nothing sleeps on a guess.
 func loposWait(t *testing.T, obs *pgxpool.Pool, what string, want int, cond string) {
@@ -653,8 +681,12 @@ func loposRingBody(t *testing.T, w wiringCounter, customerID string) map[string]
 // statement, the one counter row every payments writer serialises on, and requires a preview on
 // ANOTHER account's invoice to answer while the tender is still parked, the same parked-session
 // witness the paid-sale return leg uses instead of a timing guess. On the old shape the preview
-// took the counter itself and answered only after the tender's whole park had ended.
+// took the counter itself and answered only after the tender's whole park had ended. The leg seeds
+// the payments counter row first: the park rides an AFTER UPDATE trigger on scope_sequences, and
+// no migration plants the row, so on a freshly migrated database the tender's first counter
+// statement would take its INSERT arm and never park (the delta 3 review's P3-1).
 func TestIntegration_LockOrder_APreviewDoesNotWaitOnThePaymentsCounter(t *testing.T) {
+	loposSeedPaymentsCounter(t)
 	for _, size := range []int32{4, 16} {
 		t.Run(fmt.Sprintf("pool %d", size), func(t *testing.T) {
 			pool, obs := loposPools(t, size)
