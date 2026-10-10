@@ -152,19 +152,24 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	// visible here. Re-read the key on the transaction BEFORE the invoice judgements: a duplicate
 	// of a payment that closed its invoices must answer the first result, not trip the not open or
 	// ceiling refusal on the balances the twin already moved (the same in-transaction re-check the
-	// till's return makes after its sale lock, and QD-5's rule at counter_receipt.go).
-	if _, _, _, ok, err := receiptByKeyOn(ctx, tx, in.IdempotencyKey); err != nil {
-		return ApplyAnswer{}, err
-	} else if ok {
-		_ = tx.Rollback(ctx)
-		existing, found, readErr := r.receiptByKey(ctx, in.IdempotencyKey)
-		if readErr != nil {
-			return ApplyAnswer{}, readErr
+	// till's return makes after its sale lock, and QD-5's rule at counter_receipt.go). A preview
+	// makes no re-read, exactly as it takes no fast path before the transaction: it writes nothing,
+	// so no twin of it can exist and no key of it is spent; its answer is the fresh split against
+	// the live balances whatever key it rode in on (the delta reviews' P3).
+	if !in.Preview {
+		if _, _, _, ok, err := receiptByKeyOn(ctx, tx, in.IdempotencyKey); err != nil {
+			return ApplyAnswer{}, err
+		} else if ok {
+			_ = tx.Rollback(ctx)
+			existing, found, readErr := r.receiptByKey(ctx, in.IdempotencyKey)
+			if readErr != nil {
+				return ApplyAnswer{}, readErr
+			}
+			if !found {
+				return ApplyAnswer{}, fmt.Errorf("payments: apply key %q was claimed and then vanished", in.IdempotencyKey)
+			}
+			return r.replayAnswer(ctx, existing, in)
 		}
-		if !found {
-			return ApplyAnswer{}, fmt.Errorf("payments: apply key %q was claimed and then vanished", in.IdempotencyKey)
-		}
-		return r.replayAnswer(ctx, existing, in)
 	}
 
 	rows, err := r.lockApplyInvoicesTx(ctx, tx, in)

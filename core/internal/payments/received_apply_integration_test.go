@@ -371,6 +371,67 @@ func TestApplyReceived_PreviewAnswersTheSplitAndWritesNothing(t *testing.T) {
 	}
 }
 
+// A preview under a key an apply already spent answers as a PREVIEW (the delta reviews' P3): the
+// preview judges the live balances and writes nothing, so it reads no key at all, the spent key
+// included, neither before the transaction (the fast path already skips previews) nor inside it.
+// Its answer is the fresh split against the balances as they stand, not the recorded payment's
+// replay and not the different payment refusal (that judgement belongs to the real apply), and the
+// spent key still answers its own replay when the real apply asks under it again.
+func TestApplyReceived_APreviewUnderASpentKeyAnswersAsAPreview(t *testing.T) {
+	w := newApplyWorld(t)
+	ctx := context.Background()
+	inv := w.invoice(t, w.customerID, "K1", 90, 60, 30000)
+	first, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ SPENT",
+		IdempotencyKey: w.tag, InvoiceIDs: []string{inv}, AmountCents: 10000,
+	})
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	beforeP, beforeA, beforeS, beforeO := w.moneyRowCounts(t, w.customerID)
+
+	same, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ SPENT",
+		IdempotencyKey: w.tag, InvoiceIDs: []string{inv}, AmountCents: 10000, Preview: true,
+	})
+	if err != nil {
+		t.Fatalf("preview under the spent key, same body: %v", err)
+	}
+	if !same.Preview || same.Replayed || same.PaymentID != "" || same.PaymentNo != "" {
+		t.Fatalf("the preview under a spent key answers as a preview, not the payment's replay: %+v", same)
+	}
+	if len(same.Lines) != 1 || same.Lines[0].AppliedCents != 10000 || same.Lines[0].Outcome != ApplyOutcomePart {
+		t.Fatalf("the preview split is judged on the live balance (20000 remains): %v", same.Lines)
+	}
+
+	other, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "EFT", Reference: "CHQ OTHER",
+		IdempotencyKey: w.tag, InvoiceIDs: []string{inv}, AmountCents: 5000, Preview: true,
+	})
+	if err != nil {
+		t.Fatalf("preview under the spent key, another body: %v", err)
+	}
+	if !other.Preview || other.Replayed || other.PaymentID != "" || other.PaymentNo != "" {
+		t.Fatalf("a preview under a spent key judges the body, not the key: %+v", other)
+	}
+	if len(other.Lines) != 1 || other.Lines[0].AppliedCents != 5000 {
+		t.Fatalf("the other body previews its own split: %v", other.Lines)
+	}
+
+	afterP, afterA, afterS, afterO := w.moneyRowCounts(t, w.customerID)
+	if beforeP != afterP || beforeA != afterA || beforeS != afterS || beforeO != afterO {
+		t.Fatalf("the previews under the spent key wrote nothing: payments %d->%d allocations %d->%d subledger %d->%d outbox %d->%d",
+			beforeP, afterP, beforeA, afterA, beforeS, afterS, beforeO, afterO)
+	}
+	again, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ SPENT",
+		IdempotencyKey: w.tag, InvoiceIDs: []string{inv}, AmountCents: 10000,
+	})
+	if err != nil || !again.Replayed || again.PaymentID != first.PaymentID {
+		t.Fatalf("the spent key still answers its own replay to the real apply: %v %+v", err, again)
+	}
+}
+
 // Two applies against the same invoice serialise: the payments counter row is taken before any
 // invoice row (the one money lock order), so the two never interleave their rows. The leg's amounts
 // fit only once: whichever apply lands second must refuse on the ceiling, never a deadlock, and the
