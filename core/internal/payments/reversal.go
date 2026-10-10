@@ -97,6 +97,10 @@ type ReverseInput struct {
 	// IsManager is resolved by the caller from the identity context. The service refuses without it
 	// rather than trusting a role string travelling through this package.
 	IsManager bool
+	// CanAccessBranch is the caller's branch reach, resolved by the caller from the identity context: a
+	// payment in a branch it does not reach is not found, the same answer as a missing id. Nil means an
+	// internal caller with no branch to be fenced to; every HTTP door sets it.
+	CanAccessBranch func(branchID string) bool
 }
 
 // ReversePayment posts a reversing entry for a settled payment.
@@ -137,6 +141,10 @@ func (r *Repository) ReversePayment(ctx context.Context, in ReverseInput, now ti
 			return Reversal{}, ErrNotFound
 		}
 		return Reversal{}, fmt.Errorf("reverse: lock payment: %w", err)
+	}
+	// The branch door, before anything about the payment is revealed: not found, as for a missing id.
+	if in.CanAccessBranch != nil && !in.CanAccessBranch(branchID) {
+		return Reversal{}, ErrNotFound
 	}
 	if alreadyReversed {
 		return Reversal{}, ErrAlreadyReversed

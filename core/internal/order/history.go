@@ -202,6 +202,7 @@ func auditStr(v any) string {
 type Handler struct {
 	svc      *Service
 	userLink identity.UserIDLinker
+	trail    PaymentTrailReader
 }
 
 // NewHandler wires the order service for the staff-gated history route.

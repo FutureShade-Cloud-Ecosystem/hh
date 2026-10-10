@@ -71,17 +71,24 @@ const (
 	managerEmail       = "sales.manager@hh-demo.invalid"
 	managerDisplayName = "Sales manager (demo)"
 
-	// The procurement manager's account, the Buying and Stock role login
-	// (the roles roadmap's first procurement increment). Same id block as
-	// the flow table's row, reconciled by copy the same way.
+// Payables and Receivables, the third role account (global, tier two):
+	// the flow table's row for the receivables desk, minted by the roles
+	// roadmap's first increment (PR 300).
+	payRecUserID      = "de110000-0000-4000-9000-0000000000a1"
+	payRecPlatformID  = "de110000-0000-4000-9000-0000000000a1"
+	payRecEmail       = "payables.receivables@hh-demo.invalid"
+	payRecDisplayName = "Payables and Receivables (demo)"
+
+	// The procurement manager's account, the fourth role login (branch,
+	// tier two): the Buying and Stock row the roles roadmap added next
+	// (PR 303). Same id block as the flow table's row, reconciled by copy.
 	buyerUserID      = "de64b000-0000-4000-9000-000000000001"
 	buyerPlatformID  = "de64b000-0000-4000-9000-000000000001"
 	buyerEmail       = "procurement.manager@hh-demo.invalid"
 	buyerDisplayName = "Procurement manager (demo)"
 
-	// The Financial Controller, the fourth role account (global, tier one):
-	// the flow table's fourth row, minted by the roles roadmap's first
-	// increment for the approvals queue and the general ledger.
+	// The Financial Controller, the fifth role account (global, tier one):
+	// the flow table's row for the approvals queue and the general ledger.
 	controllerUserID      = "de110000-0000-4000-9000-0000000000c1"
 	controllerPlatformID  = "de110000-0000-4000-9000-0000000000c1"
 	controllerEmail       = "financial.controller@hh-demo.invalid"
@@ -92,6 +99,7 @@ const (
 	// through identity.Populate, branch-scoped to the one branch below.
 	salesRoleCode      = "INSIDE_SALES"
 	managerRoleCode    = "SALES_MANAGER"
+payRecRoleCode     = "PAYABLES_RECEIVABLES"
 	buyerRoleCode      = "PROCUREMENT_MANAGER"
 	controllerRoleCode = "FINANCIAL_CONTROLLER"
 
@@ -363,7 +371,7 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	pop, err := identity.Populate(ctx, tx, identity.PopulateConfig{
 		OrgSlug:   demoOrgSlug,
 		OrgName:   demoOrgName,
-		Directory: staticDirectory{salesEmail: salesPlatformID, managerEmail: managerPlatformID, buyerEmail: buyerPlatformID, controllerEmail: controllerPlatformID},
+Directory: staticDirectory{salesEmail: salesPlatformID, managerEmail: managerPlatformID, payRecEmail: payRecPlatformID, buyerEmail: buyerPlatformID, controllerEmail: controllerPlatformID},
 	})
 	if err != nil {
 		return report, fmt.Errorf("demo-populate: identity populate: %w", err)
@@ -428,6 +436,7 @@ func insertRoleAccounts(ctx context.Context, tx pgx.Tx) (int, error) {
 	for _, u := range []struct{ id, email, name string }{
 		{salesUserID, salesEmail, salesDisplayName},
 		{managerUserID, managerEmail, managerDisplayName},
+{payRecUserID, payRecEmail, payRecDisplayName},
 		{buyerUserID, buyerEmail, buyerDisplayName},
 		{controllerUserID, controllerEmail, controllerDisplayName},
 	} {
@@ -456,6 +465,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 	for _, a := range []struct{ userID, roleCode string }{
 		{salesUserID, salesRoleCode},
 		{managerUserID, managerRoleCode},
+		{payRecUserID, payRecRoleCode},
 		{buyerUserID, buyerRoleCode},
 		{controllerUserID, controllerRoleCode},
 	} {
@@ -470,7 +480,13 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		}
 		roles += int(tag.RowsAffected())
 	}
-	for _, userID := range []string{salesUserID, managerUserID, buyerUserID, controllerUserID} {
+// Payables and Receivables and the Financial Controller are global roles,
+// so the staff grants derived for them carry no branch and their reach
+// is every branch; the Trenton rows below are inert for them (reach
+// follows the role's scope, never user_branch_grants) and are written
+// only so the accounts have the same shape as the others. The buyer is
+// branch scoped, so its Trenton row is its real grant.
+	for _, userID := range []string{salesUserID, managerUserID, payRecUserID, buyerUserID, controllerUserID} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_branch_grants (user_id, branch_id)
 			SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
@@ -487,6 +503,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 	for _, a := range []struct{ userID, roleCode string }{
 		{salesUserID, salesRoleCode},
 		{managerUserID, managerRoleCode},
+		{payRecUserID, payRecRoleCode},
 		{buyerUserID, buyerRoleCode},
 		{controllerUserID, controllerRoleCode},
 	} {
@@ -502,7 +519,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 			return 0, 0, fmt.Errorf("demo-populate: refusing: the roles catalog holds no %s row, the %s account would reach nothing", a.roleCode, a.userID)
 		}
 	}
-	for _, userID := range []string{salesUserID, managerUserID, buyerUserID, controllerUserID} {
+	for _, userID := range []string{salesUserID, managerUserID, payRecUserID, buyerUserID, controllerUserID} {
 		var n int
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM user_branch_grants

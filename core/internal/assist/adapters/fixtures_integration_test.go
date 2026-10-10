@@ -27,6 +27,7 @@
 package adapters
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -45,6 +46,12 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
+
+// trailYes answers that the caller holds the payment trail reads, the stamp the composition's role
+// gate reader makes for the managers these fixtures log in as.
+type trailYes struct{}
+
+func (trailYes) HoldsPaymentTrail(context.Context, string, string) (bool, error) { return true, nil }
 
 func TestFixtures431B_ForTheWalkthrough(t *testing.T) {
 	dir := os.Getenv("ASSIST431B_FIXTURE_DIR")
@@ -95,9 +102,12 @@ func TestFixtures431B_ForTheWalkthrough(t *testing.T) {
 	// Guards-swap carry note (HH-3.2 fold): the pass-through stubs became the
 	// kit's real Guards; the branch-fence shots below carry their own
 	// stamped contexts through the direct-handler drives the file uses.
+	// trailYes stands where the composition's role gate reader stands: the branch manager the
+	// fixtures log in as holds the payment trail reads (ruling 87's matrix), and payment.lookup
+	// is refused without that stamp.
 	mux := http.NewServeMux()
 	sg := testkit.NewStaffGuards(t)
-	assist.NewHandler(svc, nil).RegisterRoutes(mux, sg.Guards)
+	assist.NewHandler(svc, nil).WithPaymentTrail(trailYes{}).RegisterRoutes(mux, sg.Guards)
 
 	// The two callers. Same role, same tier, DIFFERENT branch, which is the whole point of the
 	// refused shot: nothing about the two requests differs except who is asking.

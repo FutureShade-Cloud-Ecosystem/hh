@@ -23,11 +23,12 @@ import (
 // they do against the real *Repository.
 type activityFakeStore struct {
 	*fakeStore
-	notes     []OrderNote
-	keys      map[string]string // order|idempotency_key → note id (the 0161 unique index)
-	lastDraft NoteDraft
-	docs      []DocEvent
-	editCalls int
+	notes           []OrderNote
+	keys            map[string]string // order|idempotency_key → note id (the 0161 unique index)
+	lastDraft       NoteDraft
+	docs            []DocEvent
+	editCalls       int
+	gotWithPayments bool
 }
 
 // actBase is the pinned test clock: every fake timestamp derives from it, so this file mixes NO
@@ -85,7 +86,8 @@ func (f *activityFakeStore) ListOrderNotes(_ context.Context, orderID string) ([
 	return out, nil
 }
 
-func (f *activityFakeStore) OrderDocumentEvents(context.Context, string) ([]DocEvent, error) {
+func (f *activityFakeStore) OrderDocumentEvents(_ context.Context, _ string, withPayments bool) ([]DocEvent, error) {
+	f.gotWithPayments = withPayments
 	return f.docs, nil
 }
 
@@ -176,7 +178,7 @@ func TestSummarizeAuditEntry_Table(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := summarizeAuditEntry(actEntry("e", tc.action, 1, "2026-08-20T12:00:00Z", tc.changes))
+			got, ok := summarizeAuditEntry(actEntry("e", tc.action, 1, "2026-08-20T12:00:00Z", tc.changes), true)
 			if tc.want == "" {
 				if ok {
 					t.Fatalf("row must be omitted, got %q", got)
@@ -204,7 +206,7 @@ func TestSummarizeAuditEntry_NeverAPIFraming(t *testing.T) {
 		actEntry("3", audit.ActSaleCompleted, 3, "2026-08-20T12:00:00Z", map[string]any{"reason": "ON_ACCOUNT"}),
 	}
 	for _, e := range rows {
-		s, ok := summarizeAuditEntry(e)
+		s, ok := summarizeAuditEntry(e, true)
 		if !ok {
 			t.Fatalf("expected a summary for %s", e.Action)
 		}
@@ -253,7 +255,7 @@ func TestOrderActivity_MergesNewestFirst(t *testing.T) {
 	svc := activitySvc(store, trail)
 	ctx := ctxWith(context.Background(), globalStaff(histActor))
 
-	out, err := svc.OrderActivityFor(ctx, histOrder)
+	out, err := svc.OrderActivityFor(ctx, histOrder, true)
 	if err != nil {
 		t.Fatalf("OrderActivityFor: %v", err)
 	}
@@ -299,7 +301,7 @@ func TestOrderActivity_SameInstantOrdersBySeq(t *testing.T) {
 		},
 	}}
 	svc := activitySvc(store, trail)
-	out, err := svc.OrderActivityFor(ctxWith(context.Background(), globalStaff(histActor)), histOrder)
+	out, err := svc.OrderActivityFor(ctxWith(context.Background(), globalStaff(histActor)), histOrder, true)
 	if err != nil {
 		t.Fatalf("OrderActivityFor: %v", err)
 	}
@@ -313,7 +315,7 @@ func TestOrderActivity_EmptyIsNotAnError(t *testing.T) {
 	store := newActivityStore(mkDetail(histOrder, histCust, "DRAFT"))
 	store.branches = map[string]string{histOrder: histBranchA}
 	svc := activitySvc(store, &fakeTrail{byEntity: map[string][]audit.Entry{}})
-	out, err := svc.OrderActivityFor(ctxWith(context.Background(), globalStaff(histActor)), histOrder)
+	out, err := svc.OrderActivityFor(ctxWith(context.Background(), globalStaff(histActor)), histOrder, true)
 	if err != nil {
 		t.Fatalf("empty activity must not error: %v", err)
 	}
@@ -330,14 +332,14 @@ func TestOrderActivity_BranchScope(t *testing.T) {
 	svc := activitySvc(store, &fakeTrail{byEntity: map[string][]audit.Entry{}})
 
 	if _, err := svc.OrderActivityFor(
-		ctxWith(context.Background(), staffAt(histActor, histBranchB)), histOrder); !errors.Is(err, ErrForbidden) {
+		ctxWith(context.Background(), staffAt(histActor, histBranchB)), histOrder, true); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-branch read err = %v, want ErrForbidden", err)
 	}
 	if _, err := svc.OrderActivityFor(
-		ctxWith(context.Background(), globalStaff(histActor)), "99999999-9999-4999-8999-999999999999"); !errors.Is(err, ErrNotFound) {
+		ctxWith(context.Background(), globalStaff(histActor)), "99999999-9999-4999-8999-999999999999", true); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing order err = %v, want ErrNotFound", err)
 	}
-	if _, err := svc.OrderActivityFor(context.Background(), histOrder); !errors.Is(err, ErrUnauthorized) {
+	if _, err := svc.OrderActivityFor(context.Background(), histOrder, true); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("unauthenticated err = %v, want ErrUnauthorized", err)
 	}
 }
@@ -480,5 +482,28 @@ func TestEditOrderNote_StampsEditorAndGuards(t *testing.T) {
 	// A blank correction is refused with instructions, not stored.
 	if _, err := svc.EditOrderNote(editor, histOrder, n.ID, "   ", ""); !isBadRequest(err) {
 		t.Fatalf("blank correction err = %v, want BadRequestError", err)
+	}
+}
+
+// Ruling 87: the stream asks the store for payments only for a caller who holds the trail, and the
+// tender named on a counter sale goes with them (the sale row itself stays).
+func TestOrderActivity_PaymentsReachOnlyACallerWhoAsksForThem(t *testing.T) {
+	store := newActivityStore(mkDetail(histOrder, histCust, "CONFIRMED"))
+	store.branches = map[string]string{histOrder: histBranchA}
+	trail := &fakeTrail{byEntity: map[string][]audit.Entry{
+		"pos.sale|" + histOrder: {
+			actEntry("a4", audit.ActSaleCompleted, 4, "2026-08-20T12:10:00Z", map[string]any{"reason": "CASH"}),
+		},
+	}}
+	svc := activitySvc(store, trail)
+	ctx := ctxWith(context.Background(), globalStaff(histActor))
+
+	with, err := svc.OrderActivityFor(ctx, histOrder, true)
+	if err != nil || !store.gotWithPayments || with.Rows[0].Summary != "completed a counter sale (cash)" {
+		t.Fatalf("with the trail: err %v, asked %v, row %+v", err, store.gotWithPayments, with.Rows)
+	}
+	without, err := svc.OrderActivityFor(ctx, histOrder, false)
+	if err != nil || store.gotWithPayments || len(without.Rows) != 1 || without.Rows[0].Summary != "completed a counter sale" {
+		t.Fatalf("without the trail: err %v, asked %v, rows %+v", err, store.gotWithPayments, without.Rows)
 	}
 }

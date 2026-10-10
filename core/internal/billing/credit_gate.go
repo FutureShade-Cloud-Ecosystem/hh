@@ -153,9 +153,11 @@ type EvaluationResult struct {
 type creditStore interface {
 	CreditPolicy(ctx context.Context, branchID string) (CreditPolicy, error)
 	AgingRows(ctx context.Context, asOf time.Time, bucketDays int, branchID string) ([]AgingRow, error)
+	AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays int, branchID string, reach BranchReach) ([]AgingRow, error)
 	PlaceHold(ctx context.Context, customerID, kind, reason string, placedBy string) (string, bool, error)
 	ActiveHold(ctx context.Context, customerID string) (CreditHold, bool, error)
 	ListHolds(ctx context.Context, status string) ([]CreditHold, error)
+	ListHoldsIn(ctx context.Context, status string, reach BranchReach) ([]CreditHold, error)
 	OverrideHold(ctx context.Context, holdID, reason string, until time.Time, actorID string) error
 	ReleaseHold(ctx context.Context, holdID, reason, actorID string) (string, error)
 	OrderDispatchFacts(ctx context.Context, orderID string) (DispatchFacts, error)
@@ -215,18 +217,24 @@ func (s *CreditService) WithClock(now func() time.Time) *CreditService {
 	return s
 }
 
-// Aging returns the AR aging worklist as of a date, for the month-end view.
+// Aging returns the AR aging worklist as of a date, for the month-end view, inside the caller's
+// branch reach (branch_reach.go). A branch named outside the reach is refused.
 func (s *CreditService) Aging(ctx context.Context, asOf time.Time, branchID string) ([]AgingRow, error) {
+	reach, err := reachFromContext(ctx).narrow(branchID)
+	if err != nil {
+		return nil, err
+	}
 	pol, err := s.store.CreditPolicy(ctx, branchID)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.AgingRows(ctx, asOf, pol.AgingBucketDays, branchID)
+	return s.store.AgingRowsIn(ctx, asOf, pol.AgingBucketDays, branchID, reach)
 }
 
-// ListHolds returns credit holds filtered by status ("" = all).
+// ListHolds returns credit holds filtered by status ("" = all), for the accounts in the caller's
+// branch reach.
 func (s *CreditService) ListHolds(ctx context.Context, status string) ([]CreditHold, error) {
-	return s.store.ListHolds(ctx, status)
+	return s.store.ListHoldsIn(ctx, status, reachFromContext(ctx))
 }
 
 // Evaluate is the nightly sweep (registered as the 'ar.credit_hold_sweep' JobFunc, schedule in 0104).

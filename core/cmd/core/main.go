@@ -460,6 +460,10 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 		pool.Close()
 		return nil, err
 	}
+	if err := bindPaymentTrail(money, roleGate); err != nil {
+		pool.Close()
+		return nil, err
+	}
 
 	// The customer-quote surface (HH-3.6 C5, THE AUDIT RE-POINT SITE): the
 	// store over the shared pool, the signing keys over the environment

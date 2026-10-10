@@ -120,7 +120,7 @@ func TestIntegrationARReminder_NoTransportIsNotADeliveredSendOrAFlag(t *testing.
 	if _, _, err := svc.SweepPaperPath(ctx); err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
-	flags, err := repo.OpenPaperPathFlags(ctx)
+	flags, err := repo.OpenPaperPathFlags(ctx, AllBranches)
 	if err != nil {
 		t.Fatalf("open flags: %v", err)
 	}

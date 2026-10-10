@@ -139,7 +139,10 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithAuditTrail(auditSvc).
 		WithReorderPricing(pricingSvc).
 		WithReorderInventory(inventorySvc)
-	orderHandler := order.NewHandler(orderSvc).WithUserLinker(link)
+	// The payment trail reader is bound once the role gate's reader exists (bindPaymentTrail); until
+	// then the order activity and the register withhold the payments from every caller.
+	paymentTrail := &billing.LatePaymentTrail{}
+	orderHandler := order.NewHandler(orderSvc).WithUserLinker(link).WithPaymentTrail(paymentTrail)
 	orderHandler.RegisterRoutes(r, g)
 	orderHandler.RegisterTransitionRoutes(r, g)
 	orderHandler.RegisterEditRoutes(r, g)
@@ -236,6 +239,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	})
 
 	return &moneySpine{
+		paymentTrail:    paymentTrail,
 		glSvc:           glSvc,
 		inventorySvc:    inventorySvc,
 		orderSvc:        orderSvc,
@@ -260,6 +264,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 // instances at the pin and a second construction would strand a setter on
 // an instance nobody serves.
 type moneySpine struct {
+	paymentTrail    *billing.LatePaymentTrail
 	glSvc           *gl.Service
 	inventorySvc    *inventory.Service
 	orderSvc        *order.Service
