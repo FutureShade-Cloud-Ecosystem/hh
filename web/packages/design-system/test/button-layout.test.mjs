@@ -33,8 +33,8 @@ const page = (css) => `<!doctype html><meta charset="utf-8"><style>${css}
 test('a plain button keeps its own text alignment; only .btn is centred by the flex rule', { skip: skip || undefined }, async () => {
   const cdp = await launchBrowser(binary);
   try {
-    const html = page(baseStyles.cssText);
-    await cdp.navigate(`data:text/html;base64,${Buffer.from(html).toString('base64')}`);
+    const doc = page(baseStyles.cssText);
+    await cdp.navigate(`data:text/html;base64,${Buffer.from(doc).toString('base64')}`);
     const out = await cdp.evaluate(`(() => {
       const labelOffset = (id) => {
         const b = document.getElementById(id);

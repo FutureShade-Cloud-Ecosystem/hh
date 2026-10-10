@@ -71,7 +71,7 @@ test('the action button stays on the sheet classes, so the controls read as one 
 
 // The button with an icon (decision log row 990): the plus beside "New quote"
 // was drawn larger and higher than the label. The sheet states the fix once:
-// the button is a centred inline flex row at the design system's icon gap and
+// the .btn is a centred inline flex row at the design system's icon gap and
 // the icon is the label's own size (1em). The bounds themselves are measured
 // in the Quote Desk's real-browser leg.
 test('a button with an icon draws it before the label, and the sheet centres the pair at the label size', () => {
@@ -79,10 +79,12 @@ test('a button with an icon draws it before the label, and the sheet centres the
   assert.match(markup, /<button type="button" class="btn btn-primary"[^>]*>\s*(<!--[^>]*-->)*\s*<svg\b[^>]*class="icon"/);
   assert.ok(markup.indexOf('<svg') < markup.indexOf('New quote'), 'the icon comes before the label');
   const sheet = String(baseStyles.cssText ?? baseStyles);
-  const btn = sheet.match(/\n\s*button\s*\{[^}]*\}/);
-  assert.ok(btn !== null, 'the sheet carries the button rule');
+  const btn = sheet.match(/\n\s*\.btn\s*\{[^}]*\}/);
+  assert.ok(btn !== null, 'the sheet carries the .btn rule');
+  const bare = sheet.match(/\n\s*button\s*\{[^}]*\}/);
+  assert.ok(bare !== null && !/display\s*:|justify-content\s*:/.test(bare[0]), 'a bare button rule sets no flex layout: the author keeps the text alignment');
   for (const decl of ['display: inline-flex', 'align-items: center', 'justify-content: center', 'gap: var(--hh-s-8)']) {
-    assert.ok(btn[0].includes(decl), `the button rule states ${decl}`);
+    assert.ok(btn[0].includes(decl), `the .btn rule states ${decl}`);
   }
   assert.match(sheet, /\.btn \.icon\s*\{[^}]*width: 1em;[^}]*height: 1em;/, 'the icon is the label size');
 });
