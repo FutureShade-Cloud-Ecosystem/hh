@@ -324,6 +324,37 @@ func TestDemoWorld_ControllerParkFilesInOneTransaction(t *testing.T) {
 		}
 	})
 
+	t.Run("a non manual source over the threshold is refused and nothing is saved", func(t *testing.T) {
+		for _, source := range []string{"ADJUSTMENT", "INVOICE"} {
+			journalsBefore, requestsBefore := w.count(t, journals), w.count(t, requests, int64(780_000))
+			rsp := w.controller.call("POST", "/api/v1/gl/journals", map[string]any{
+				"branch_id": trentonBranchID, "memo": "ruling 108 leg (demo)", "source": source,
+				"lines": []map[string]any{
+					{"account_code": "1300", "debit_cents": 780_000},
+					{"account_code": "1000", "credit_cents": 780_000},
+				},
+			})
+			if rsp.status != http.StatusBadRequest || !strings.Contains(string(rsp.body), "manual") {
+				t.Errorf("%s: status %d body %s, want a 400 saying only a manual journal can be parked", source, rsp.status, rsp.body)
+			}
+			if n := w.count(t, journals); n != journalsBefore {
+				t.Errorf("%s: %d journals after the refused create, want %d", source, n, journalsBefore)
+			}
+			if n := w.count(t, requests, int64(780_000)); n != requestsBefore {
+				t.Errorf("%s: %d requests after the refused create, want %d", source, n, requestsBefore)
+			}
+		}
+		// Under the threshold a non manual source still posts straight through, as before.
+		rsp := w.controller.call("POST", "/api/v1/gl/journals", map[string]any{
+			"branch_id": trentonBranchID, "memo": "ruling 108 leg (demo)", "source": "ADJUSTMENT",
+			"lines": []map[string]any{
+				{"account_code": "1300", "debit_cents": 1_000},
+				{"account_code": "1000", "credit_cents": 1_000},
+			},
+		})
+		rsp.ok(t, http.StatusCreated)
+	})
+
 	t.Run("a forced filing failure leaves neither the journal nor a request", func(t *testing.T) {
 		ctx := context.Background()
 		for _, q := range []string{

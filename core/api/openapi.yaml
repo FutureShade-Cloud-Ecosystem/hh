@@ -7290,7 +7290,7 @@ paths:
       tags:
         - staff-gl
       summary: Create a balanced manual journal (posts below the policy threshold, parks as DRAFT at or over it)
-      description: "Maker-checker: a journal whose debit total is below the gl_policy approval threshold posts immediately; at or over the threshold it is parked as DRAFT (surfaced as derived_status PENDING_APPROVAL) and a JE_OVER_THRESHOLD approval request is filed on the approvals rail in the same transaction as the park. A journal at or over the threshold needs a branch_id to file under (bad request when it has none), and when the request cannot be filed the create fails (service unavailable) and nothing is saved. An unbalanced body is refused with an unprocessable-entity error."
+      description: "Maker-checker: a journal whose debit total is below the gl_policy approval threshold posts immediately; at or over the threshold it is parked as DRAFT (surfaced as derived_status PENDING_APPROVAL) and a JE_OVER_THRESHOLD approval request is filed on the approvals rail in the same transaction as the park. A journal at or over the threshold needs a branch_id to file under (bad request when it has none) and must be a manual journal (a journal of any other source at or over the threshold is a bad request and nothing is saved), and when the request cannot be filed the create fails (service unavailable) and nothing is saved. An unbalanced body is refused with an unprocessable-entity error."
       x-role: requireManager
       x-access:
         surfaces:

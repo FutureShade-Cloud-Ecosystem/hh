@@ -146,6 +146,13 @@ func (s *Service) CreateJournal(ctx context.Context, in CreateJournalInput) (Jou
 	// PostExternal) never park. Nil seam = shipped behavior (a bare DRAFT). NOTE (commander ruling, DIB-216
 	// #2): `threshold` is the seeded $5,000 gl_policy PLACEHOLDER (0032), BLESSED AS-IS and left a
 	// go-live-configurable POLICY ROW, not changed here.
+	// The create route is the only caller of CreateJournal, and no non manual source files its own request
+	// (the automated posting paths never come through here and never park), so a non manual journal at or
+	// over the threshold would park with no request and could never post (ruling 115). Refuse it, nothing
+	// saved. Under the threshold any source posts straight through, as before.
+	if draft.Status == StatusDraft && source != SourceManual {
+		return Journal{}, badReq("gl: only a manual journal can be parked for approval at or over the approval threshold; a %q journal at this amount cannot be created here", source)
+	}
 	if s.approvalFiler != nil && draft.Status == StatusDraft && source == SourceManual {
 		if in.BranchID == "" {
 			return Journal{}, badReq("gl: a journal at or over the approval threshold needs a branch so its approval request can be filed; choose a branch")

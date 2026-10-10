@@ -79,16 +79,23 @@ func TestCreateJournal_ParkBridge_FiresOnlyOnManualPark(t *testing.T) {
 		t.Fatalf("filer must NOT fire below threshold, got %d", len(filer.calls))
 	}
 
-	// (c) NON-manual source over threshold via CreateJournal → filer does NOT fire (SourceManual only).
+	// (c) NON-manual source over threshold via CreateJournal -> refused (ruling 115), nothing saved, the filer
+	// never asked; under the threshold the same source posts straight through.
 	f = newFakeStore()
 	f.policy.JEApprovalThresholdCents = 500000
 	filer = &fakeApprovalFiler{}
-	if _, err := newTestServiceAs(f, maker).WithApprovalFiler(filer).
-		CreateJournal(ctx, CreateJournalInput{BranchID: "b1", Source: SourceAdjustment, Lines: over}); err != nil {
-		t.Fatalf("create non-manual: %v", err)
+	_, err = newTestServiceAs(f, maker).WithApprovalFiler(filer).
+		CreateJournal(ctx, CreateJournalInput{BranchID: "b1", Source: SourceAdjustment, Lines: over})
+	var bad badRequestError
+	if !errors.As(err, &bad) || !strings.Contains(err.Error(), "only a manual journal") {
+		t.Fatalf("non-manual over threshold: err %v, want a bad request saying only a manual journal can be parked", err)
 	}
-	if len(filer.calls) != 0 {
-		t.Fatalf("filer must fire ONLY for the SourceManual create path, got %d", len(filer.calls))
+	if len(filer.calls) != 0 || len(f.journals) != 0 {
+		t.Fatalf("non-manual over threshold: %d filings, %d journals, want none", len(filer.calls), len(f.journals))
+	}
+	if j, err := newTestServiceAs(f, maker).WithApprovalFiler(filer).
+		CreateJournal(ctx, CreateJournalInput{BranchID: "b1", Source: SourceAdjustment, Lines: balancedLines()}); err != nil || j.Status != StatusPosted {
+		t.Fatalf("non-manual under threshold: %v status %s, want POSTED", err, j.Status)
 	}
 
 	// (d) ruling 108: a filing failure fails the create, nothing is parked, no card goes out.
@@ -116,7 +123,6 @@ func TestCreateJournal_ParkBridge_FiresOnlyOnManualPark(t *testing.T) {
 	filer = &fakeApprovalFiler{}
 	_, err = newTestServiceAs(f, maker).WithApprovalFiler(filer).
 		CreateJournal(ctx, CreateJournalInput{Source: SourceManual, Lines: over})
-	var bad badRequestError
 	if !errors.As(err, &bad) || !strings.Contains(err.Error(), "needs a branch") {
 		t.Fatalf("no branch: err %v, want a bad request saying the journal needs a branch", err)
 	}
