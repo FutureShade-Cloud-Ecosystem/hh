@@ -42,10 +42,10 @@ test("the way in's data: two flows with role codes and labels", async ({ page })
   const body = (await flows.json()) as {
     flows: Array<{ flow: string; role_code: string; label: string }>;
   };
-  expect(body.flows).toHaveLength(2);
-  expect(body.flows.map((row) => row.flow)).toEqual(["sales", "sales-manager"]);
-  expect(body.flows.map((row) => row.role_code)).toEqual(["inside_sales", "sales_manager"]);
-  expect(body.flows.map((row) => row.label)).toEqual(["Sales", "Sales manager"]);
+  expect(body.flows).toHaveLength(3);
+  expect(body.flows.map((row) => row.flow)).toEqual(["sales", "sales-manager", "payables-receivables"]);
+  expect(body.flows.map((row) => row.role_code)).toEqual(["inside_sales", "sales_manager", "payables_receivables"]);
+  expect(body.flows.map((row) => row.label)).toEqual(["Sales", "Sales manager", "Payables and Receivables"]);
   // The picture is the table itself, as the browser shows the core's answer:
   // the page loads the flows route and waits for its two rows to be on the
   // screen (the test's own request never loads a page).

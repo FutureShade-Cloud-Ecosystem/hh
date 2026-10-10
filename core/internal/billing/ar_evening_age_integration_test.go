@@ -72,7 +72,7 @@ func TestIntegrationEveningAge_StatementLinesFileAnEveningUnderTheHouseDay(t *te
 	if err != nil {
 		t.Fatalf("as_of: %v", err)
 	}
-	lines, err := NewRepository(rig.pool).StatementLines(context.Background(), cust, asOf)
+	lines, err := NewRepository(rig.pool).StatementLines(context.Background(), cust, asOf, AllBranches)
 	if err != nil {
 		t.Fatalf("statement lines: %v", err)
 	}

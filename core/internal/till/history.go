@@ -227,7 +227,9 @@ func (s *Service) PaymentHistory(ctx context.Context, paymentID string) (Payment
 		return PaymentHistory{}, errNotFound
 	}
 	if !caller.CanAccessBranch(h.BranchID) {
-		return PaymentHistory{}, forbidden("till: caller cannot access branch %s", h.BranchID)
+		// Not found, the answer for a record that does not exist: a distinguishable refusal (and a branch
+		// id in its words) would tell a caller which ids are real in another branch.
+		return PaymentHistory{}, errNotFound
 	}
 	if h.Status == "BOUNCED" {
 		h.Reversed = true
@@ -342,7 +344,7 @@ func (s *Service) InvoicePayments(ctx context.Context, invoiceID string) (Invoic
 		return InvoicePayments{}, errNotFound
 	}
 	if !caller.CanAccessBranch(out.BranchID) {
-		return InvoicePayments{}, forbidden("till: caller cannot access branch %s", out.BranchID)
+		return InvoicePayments{}, errNotFound
 	}
 	return out, nil
 }

@@ -300,11 +300,11 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
 		t.Errorf("the org scope did not stamp clean: %+v", counts)
 	}
-	if counts.UsersLinked != 4 || counts.UsersUnlinked != 10 {
-		t.Errorf("linked %d / unlinked %d users, want the 4 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	if counts.UsersLinked != 5 || counts.UsersUnlinked != 10 {
+		t.Errorf("linked %d / unlinked %d users, want the 5 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	if counts.StaffGrants != 4 || counts.StaffGrantsBranch != 3 || counts.StaffGrantsGlobal != 1 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the three branch role accounts' Trenton grants and the controller's one global grant", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	if counts.StaffGrants != 5 || counts.StaffGrantsBranch != 3 || counts.StaffGrantsGlobal != 2 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the three branch role accounts' Trenton grants (sales, manager, buyer) and the one global grant each of Payables and Receivables and the Financial Controller", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -329,6 +329,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	// The two role accounts are exactly as the demo sign-in will resolve them.
 	assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES")
 	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER")
+	assertRoleAccount(t, ctx, pool, payRecUserID, payRecEmail, payRecDisplayName, "PAYABLES_RECEIVABLES")
 	assertRoleAccount(t, ctx, pool, buyerUserID, buyerEmail, buyerDisplayName, "PROCUREMENT_MANAGER")
 	assertRoleAccount(t, ctx, pool, controllerUserID, controllerEmail, controllerDisplayName, "FINANCIAL_CONTROLLER")
 
@@ -366,6 +367,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	allowedNames := map[string]bool{
 		salesDisplayName:                true,
 		managerDisplayName:              true,
+		payRecDisplayName:               true,
 		controllerDisplayName:           true,
 		"Platform admin (demo)":         true,
 		"Demo teammate (demo)":          true,
@@ -398,8 +400,12 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if err := nameRows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if len(saw) != len(allowedNames) || len(saw) != 14 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 14 invented ones (saw: %v)", len(saw), saw)
+// 15 since taking in PR 303: the two Counter Till accounts, the planted
+	// demo teammates, and the three roadmap personas (Payables and Receivables
+	// and the Procurement Manager and the Financial Controller), each one
+	// invented name.
+	if len(saw) != len(allowedNames) || len(saw) != 15 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 15 invented ones (saw: %v)", len(saw), saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the
@@ -507,7 +513,7 @@ func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 	}
 	// The grant resolves: one live staff_role_grant, the account's own role,
 	// in the demo org, branch-scoped to Trenton (a global role's grant carries
-	// no branch: the Financial Controller reaches every branch).
+	// no branch: Payables and Receivables and the Financial Controller reach every branch).
 	var gotRole string
 	var gotBranch *string
 	err := pool.QueryRow(ctx, `
@@ -519,7 +525,7 @@ func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 	if err != nil {
 		t.Fatalf("role account %s resolves no staff grant: %v", email, err)
 	}
-	global := roleCode == "FINANCIAL_CONTROLLER"
+	global := roleCode == "PAYABLES_RECEIVABLES" || roleCode == "FINANCIAL_CONTROLLER"
 	if gotRole != roleCode || (global && gotBranch != nil) || (!global && (gotBranch == nil || *gotBranch != trentonBranchID)) {
 		t.Errorf("role account %s resolves role %s at branch %v, want %s at %s", email, gotRole, gotBranch, roleCode, trentonBranchID)
 	}
