@@ -25,17 +25,19 @@ package purchasing
 //	status  DRAFT / ORDERED / PARTIAL     , RECEIVED, CLOSED and CANCELLED are done with
 //	qty     qty_ordered_base > qty_received_base
 //
-// DRAFT is INCLUDED, deliberately, and it is the one arguable call. A draft is not yet a promise to
-// the vendor, so counting it as supply would be optimistic, but the person asking "is more coming?"
-// is asking whether anyone has ALREADY started dealing with it, and "there is a draft PO for 120 of
-// these" is the answer that stops them raising a second one. The status rides on every line so the
-// surface can say `draft` rather than pretending it is ordered.
+// DRAFT is INCLUDED in this LIST, deliberately: the person asking "is more coming?" is asking whether
+// anyone has ALREADY started dealing with it, and "there is a draft PO for 120 of these" is the
+// answer that stops them raising a second one. The status rides on every line so the surface can
+// say `draft` rather than pretending it is ordered. It is NOT included in the on order TOTAL the
+// worklist grades with (on_order.go): a draft is not a promise to the vendor, so it never covers a
+// shortfall (onOrderStatuses).
 //
 // DIB-470 UPDATE. The last clause of that paragraph used to read "and the DIB-72 replenishment
 // arithmetic is untouched by this read". It is no longer true, and the change was deliberate: the
 // worklist now grades against the SAME rows through the aggregate in on_order.go, because it was
 // grading against migration-0011 receiving documents and therefore against a constant zero. The
-// DRAFT argument above carries over and gets stronger there, see on_order.go's header.
+// two reads share the rows and the outstanding expression; they differ in ONE thing, the status
+// set, on purpose, see on_order.go's header.
 //
 // EXPECTED_AT IS NULLABLE AND STAYS NULLABLE. A PO raised without a promised date reports an empty
 // string, and the surface says "expected date TBC" rather than inventing one. Nothing in this file
@@ -50,9 +52,16 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
-// The PO statuses that still have something coming. Written once, here, so the definition of "on
-// order" cannot drift between the read and its tests.
+// The PO statuses the incoming LIST shows: everything not finished and not abandoned, DRAFT included,
+// the status riding on every line so a surface says "draft" rather than pretend the order is placed.
+// Written once, here, so the definition cannot drift between the read and its tests.
 var openPOStatuses = []string{StatusDraft, StatusOrdered, StatusPartial}
+
+// The PO statuses that count as ON ORDER, supply the replenishment worklist may grade a position
+// with: a PLACED order only. A draft is a buyer's note to self, not a promise to the vendor, so it
+// never covers a shortfall (the principal's ruling, row 1303); the row carries the draft's id and
+// number instead (OpenDraftsFor) so the screen can say "drafted, not placed".
+var onOrderStatuses = []string{StatusOrdered, StatusPartial}
 
 // BranchReach is a caller's branch authority projected onto a read.
 //

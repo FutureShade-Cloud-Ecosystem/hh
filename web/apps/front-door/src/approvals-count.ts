@@ -1,8 +1,8 @@
 // The count behind the Quote Desk tile's note. It is the number the Quote
 // Desk's Approvals tab shows: pending rows of the margin below minimum kind
-// only. The core answers a bare array and the contract says a page object, so
-// both shapes are read, every row field checked, and a page cursor is followed
-// to its end.
+// only. The core answers the contract's page object (items, next_cursor); a
+// bare array is refused as unreadable, every row field is checked, and a page
+// cursor is followed to its end.
 
 /** The kind the Quote Desk's Approvals tab lists. */
 export const MARGIN_POLICY = "MARGIN_BELOW_MINIMUM";
@@ -24,13 +24,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Read either shape. Null when the answer is not readable; one bad row refuses the page. */
+/** Read the contract's page. Null when the answer is not readable; one bad row refuses the page. */
 export function readApprovalsPage(value: unknown): ApprovalsPage | null {
   let rows: unknown[];
   let nextCursor: string | undefined;
-  if (Array.isArray(value)) {
-    rows = value;
-  } else if (isRecord(value) && Array.isArray(value["items"])) {
+  if (isRecord(value) && Array.isArray(value["items"])) {
     rows = value["items"];
     const cursor = value["next_cursor"];
     if (cursor !== undefined && cursor !== null) {

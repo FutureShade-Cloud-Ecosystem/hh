@@ -4,22 +4,23 @@ package flows
 
 import "testing"
 
-// The table is closed: exactly the two Counter Till flows, no more, and
-// every entry carries the account facts the other lanes share.
-func TestTableIsTheClosedPair(t *testing.T) {
+// The table is closed: exactly the listed flows, no more, and every
+// entry carries the account facts the other lanes share.
+func TestTableIsTheClosedSet(t *testing.T) {
 	all := All()
-	if len(all) != 2 {
-		t.Fatalf("table holds %d flows, want the closed pair", len(all))
+	if len(all) != 4 {
+		t.Fatalf("table holds %d flows, want the closed set of four", len(all))
 	}
-	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" {
-		t.Fatalf("flow order drifted: %q, %q", all[0].Flow, all[1].Flow)
+	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" || all[2].Flow != "procurement-manager" || all[3].Flow != "financial-controller" {
+		t.Fatalf("flow order drifted: %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow)
 	}
+	known := map[string]bool{"inside_sales": true, "sales_manager": true, "procurement_manager": true, "financial_controller": true}
 	for _, a := range all {
 		if a.PlatformUserID == "" || a.Email == "" || a.DisplayName == "" || a.Label == "" || a.Role == "" {
 			t.Fatalf("flow %q carries an empty fact: %+v", a.Flow, a)
 		}
-		if a.Role != "inside_sales" && a.Role != "sales_manager" {
-			t.Fatalf("flow %q holds role %q, want a Counter Till staff role", a.Flow, a.Role)
+		if !known[a.Role] {
+			t.Fatalf("flow %q holds role %q, want a staff role the table lists", a.Flow, a.Role)
 		}
 	}
 }
@@ -39,6 +40,10 @@ func TestLookups(t *testing.T) {
 	a, ok := Get("sales")
 	if !ok || a.Role != "inside_sales" {
 		t.Fatalf("Get(sales) = %+v %v", a, ok)
+	}
+	a, ok = Get("financial-controller")
+	if !ok || a.Role != "financial_controller" || a.Label != "Financial Controller" {
+		t.Fatalf("Get(financial-controller) = %+v %v", a, ok)
 	}
 	if _, ok := Get("yard-pick"); ok {
 		t.Fatal("a flow outside the table answered")

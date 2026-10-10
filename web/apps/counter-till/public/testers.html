@@ -55,7 +55,7 @@
 <h2>How to sign in</h2>
 <p data-claim="sign-in-roles">Signing in is a tap: tap <strong>Sales</strong> or <strong>Sales manager</strong> and the till opens under that role's name.</p>
 <p data-claim="coming-eleven">Two roles work in this release. The other eleven are listed as <em>Coming</em> and cannot be tapped: Outside Sales, Yard Team, Yard Manager, Logistics Manager, Driver, Branch Manager, Procurement Manager, Payables and Receivables, Financial Controller, General Manager, and HR.</p>
-<p class="note">What the two working roles do differently is the big refund (below), and the manager's wider reach, which has no screen of its own in this release.</p>
+<p class="note">What the two working roles do differently is the manager's wider reach, which has no screen of its own in this release.</p>
 
 <h2>The demo world</h2>
 <p>The box carries one invented dealer, Hardscape House (demo), with two branches, Trenton and Kingston, and the counter works Trenton. Every product and account on it is invented for the demo.</p>
@@ -83,17 +83,16 @@
 
 <h2>Tenders and receipts</h2>
 <p data-claim="cash-change">Cash asks how much was tendered; the change due is the ring's own answer, stated on the confirmation and shown on the receipt. Before the sale is rung the till states no change figure, even with an amount typed.</p>
-<p data-claim="simulated">Cards are simulated. A card sale says <em>Simulated card: no card was charged</em>, and a card refund says that nothing reached a card. No card number is ever typed anywhere: there is no field for one.</p>
+<p data-claim="simulated">Cards are simulated. A card sale says <em>Simulated card: no card was charged</em>. No card number is ever typed anywhere: there is no field for one.</p>
 <p data-claim="account-balance">An account sale bills the customer's account: the receipt names the invoice, and the account's card in the Customer step shows the fresh balance.</p>
 
 <h2>Refunds</h2>
-<p data-claim="return-within">The returns desk finds a sale by its number. A refund commits for the clerk, and a cash refund comes out of the drawer: the drawer's expected cash drops by it.</p>
-<p data-claim="refund-any-size">This demo dealer has no refund approval limit, so a refund of any size commits at the counter for the clerk. Try a large one, such as sixty wall blocks: nothing is refused.</p>
-<p data-claim="refund-no-dialog">No manager has to walk over. There is no approval dialog, and the receipt names the clerk who rang the refund and no approver. The till stays the clerk's.</p>
-<p data-claim="manager-own">Signed in as the Sales manager, the same refund completes at once, and the receipt says <em>Approved by the Sales manager on this till</em> beside the manager's own name.</p>
+<p data-claim="return-customer-first">The returns desk starts with the customer, like a new order. Find the customer, and every order they hold is listed with its lines, grouped by order and job. Pick lines from several orders into one credit, choose for each line whether it goes back to stock, is damaged, or comes back as nothing returned, and watch the credit so far. Then choose how it goes back (card where the sale was paid by card, on the account, or cash from the drawer) and record it: one credit note, each order's return named with its number, and for cash the drawer's expected cash drops by the note's total. A credit note over the dealer's approval amount, where a dealer sets one, asks for a manager's card; this demo dealer sets none.</p>
 
 <h2>The walls</h2>
-<p data-claim="other-branch">One branch never sees another's. A sale that belongs to Kingston is refused at this counter before any money moves, whichever of the three refund ways is tried, even though the sale number is real; the cash and account rails name the branch fence, and the card rail refuses a seeded card sale first for its missing card reference.</p>
+<p data-claim="return-walk-in">A sale rung with no customer can be returned too: on the first step choose Walk in sale and type its receipt or order number. Walk in sales are never listed, only found by their number, and they go back to cash or card, never to an account.</p>
+<p data-claim="return-swap">The swap: on the Refund step, add the replacement goods and the credit pays for them. The screen shows the credit, the new order total with tax, what the credit pays, and either what goes back by the original way the sale was paid or what is still to pay. Ring the swap and one credit note and one new order are recorded, each naming the other, with a receipt line for each.</p>
+<p data-claim="other-branch">One branch never sees another's. A sale that belongs to Kingston is refused at this counter before any money moves, whichever of the three refund ways is tried, even though the sale is real; the cash and account rails name the branch fence, and the card rail refuses a seeded card sale first for its missing card reference. A credit note covers one branch only.</p>
 <p data-claim="role-matrix">Each role reaches only its own screens. Beyond the till, the matrix holds on this box too: through browser tools, the manager's sign-in reaches dispatch reads that the clerk's is refused, though no screen for them exists in this release.</p>
 <p data-claim="credit-refused">The credit gate refuses an account sale in words, to both logins: an account over its limit, or on a hold, cannot carry a sale on account. On the zero limit walk-up account you will meet the shape refusal instead, the same words to both logins: this account cannot carry a sale on account at all, so the till answers in the server's own words, <em>This account cannot carry $6.72 on account. Pay in full now, or take a deposit with the balance due later.</em>, and nothing is rung; the ticket stands. Credit exceptions belong to leadership, and no leadership login exists in this release, so nobody on this box can release a hold.</p>
 <p data-claim="parked-branch">A ticket can be parked and picked up again by anyone at the same counter, whatever role they signed in as. The parked list is this branch's own: a ticket parked at Kingston never shows at Trenton.</p>

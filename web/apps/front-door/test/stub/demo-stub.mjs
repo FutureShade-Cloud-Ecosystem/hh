@@ -31,11 +31,13 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.FD_STUB_PORT ?? 4927);
 
-// The closed flow table: the two logins this release shows, with the labels
+// The closed flow table: the logins this release shows, with the labels
 // the cards carry and the role each minted account holds.
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
+  { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
 ];
 
 const USERS = {
@@ -57,6 +59,24 @@ const USERS = {
     tier: 2,
     scope: "BRANCH",
   },
+  "procurement-manager": {
+    user_id: "demo-account-procurement-manager",
+    email: "procurement-manager@demo.invalid",
+    display_name: "Procurement manager (demo)",
+    role_code: "procurement_manager",
+    role_name: "Procurement Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  "financial-controller": {
+    user_id: "demo-account-financial-controller",
+    email: "financial-controller@demo.invalid",
+    display_name: "Financial controller (demo)",
+    role_code: "financial_controller",
+    role_name: "Financial Controller",
+    tier: 1,
+    scope: "GLOBAL",
+  },
 };
 
 // The armed refusal: a test points the stub at a failure (the gate's 401, the
@@ -66,7 +86,6 @@ let refusal = null;
 let lastOrg = "";
 let mints = 0;
 let pendingApprovalCount = 3;
-let approvalsShape = "array";
 let extraApprovals = 0;
 let approvalsDelayMs = 0;
 
@@ -178,7 +197,6 @@ const server = createServer(async (request, response) => {
     lastOrg = "";
     mints = 0;
     pendingApprovalCount = 3;
-    approvalsShape = "array";
     extraApprovals = 0;
     approvalsDelayMs = 0;
     sendJson(response, 200, { reset: true });
@@ -225,8 +243,6 @@ const server = createServer(async (request, response) => {
       return;
     }
     pendingApprovalCount = Math.max(0, body.count);
-    // shape "array" is the bare array the core really sends; "page" is the contract's page object.
-    approvalsShape = body.shape === "page" ? "page" : "array";
     // extra rows that are not pending margin requests and must not be counted.
     extraApprovals = typeof body.extra === "number" ? Math.max(0, body.extra) : 0;
     approvalsDelayMs = typeof body.delayMs === "number" ? Math.max(0, body.delayMs) : 0;
@@ -249,19 +265,15 @@ const server = createServer(async (request, response) => {
       items.push(row(`other-${i + 1}`, "CREDIT_LIMIT_EXCEEDED", "PENDING"));
       items.push(row(`decided-${i + 1}`, "MARGIN_BELOW_MINIMUM", "APPROVED"));
     }
-    if (approvalsShape === "page") {
-      // Two pages, so the cursor is followed: the first holds one row.
-      const cursor = url.searchParams.get("cursor");
-      if (items.length > 1 && cursor === null) {
-        sendJson(response, 200, { items: items.slice(0, 1), next_cursor: "p2", limit: 1 });
-      } else if (items.length > 1) {
-        sendJson(response, 200, { items: items.slice(1), next_cursor: null, limit: 20 });
-      } else {
-        sendJson(response, 200, { items, next_cursor: null, limit: 20 });
-      }
-      return;
+    // The contract's page, over two pages when there is more than one row so the cursor is followed.
+    const cursor = url.searchParams.get("cursor");
+    if (items.length > 1 && cursor === null) {
+      sendJson(response, 200, { items: items.slice(0, 1), next_cursor: "p2", limit: 1 });
+    } else if (items.length > 1) {
+      sendJson(response, 200, { items: items.slice(1), next_cursor: null, limit: 20 });
+    } else {
+      sendJson(response, 200, { items, next_cursor: null, limit: 20 });
     }
-    sendJson(response, 200, items);
     return;
   }
 

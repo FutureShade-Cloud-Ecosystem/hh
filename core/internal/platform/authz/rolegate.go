@@ -130,10 +130,20 @@ var listReaders = map[string]func(*roleconfig.Config) []string{
 	// (roleconfig.LowMarginReportReaders): a role that clears or decides a floor, or sits above one,
 	// and may see cost. Not a stored setting, so the name is the route's own.
 	ListLowMarginReport: func(c *roleconfig.Config) []string { return c.LowMarginReportReaders() },
+	// The purchase order writes name the Procurement Manager and the General Manager, and the super
+	// admin beside them: the platform pass covers the level check alone, never a list, so the
+	// platform role that may write an order has to be on the list by name.
+	ListPOWriters: func(c *roleconfig.Config) []string {
+		return append(c.PurchaseOrderWriters(), PlatformRoleSuperAdmin)
+	},
 }
 
 // ListLowMarginReport is the x-access list name of the low margin report route.
 const ListLowMarginReport = "low_margin_report"
+
+// ListPOWriters is the x-access list name of the purchase order write routes (draft, edit, place,
+// cancel, send), roleconfig.PurchaseOrderWriters and the super admin.
+const ListPOWriters = "po_writers"
 
 // valid checks the annotation against roleconfig's vocabulary. An empty
 // surface list, an unknown surface, an unknown level, none as the level (a
