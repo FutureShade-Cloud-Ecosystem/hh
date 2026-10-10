@@ -171,6 +171,16 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 	if err != nil {
 		return ApplyAnswer{}, err
 	}
+	// ONE branch per payment: the payment row carries a single branch, every subledger row is
+	// stamped with it and the GL consumer books the whole journal to it, so a list spanning two
+	// branches would move the other branch's AR with no journal behind it and put both branches'
+	// tie outs out by the other's share. The honest shape is a payment per branch.
+	for _, row := range rows[1:] {
+		if row.BranchID != rows[0].BranchID {
+			return ApplyAnswer{}, httpx.BadRequestf(
+				"one payment applies to one branch's invoices; record a payment per branch")
+		}
+	}
 	lines, capacity := allocateOldestFirst(rows, in.AmountCents)
 	if in.AmountCents > capacity {
 		return ApplyAnswer{}, httpx.BadRequestf(

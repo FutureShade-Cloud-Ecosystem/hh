@@ -460,3 +460,65 @@ func TestApplyReceived_AnotherBranchsInvoiceIsNotFound(t *testing.T) {
 		t.Fatalf("a global reach applies the same invoice: %v", err)
 	}
 }
+
+// One payment applies to ONE branch's invoices (the Opus review's P2-3). The payment row carries a
+// single branch, every subledger row is stamped with it and the GL consumer books the whole journal
+// to it, so a global caller naming invoices of two branches of one account would move the other
+// branch's AR with no journal behind it: both branches' tie outs go out by the other's share. The
+// list is refused in words; a payment per branch is the honest shape.
+func TestApplyReceived_AListSpanningTwoBranchesIsRefusedInWords(t *testing.T) {
+	w := newApplyWorld(t)
+	ctx := context.Background()
+	trenton := w.invoice(t, w.customerID, "T1", 90, 60, 4000)
+	king := w.invoice(t, w.customerID, "K1", 60, 30, 6000)
+	if _, err := w.pool.Exec(ctx,
+		`UPDATE invoices SET branch_id = $2::uuid WHERE id = $1::uuid`, king, applyKingston); err != nil {
+		t.Fatalf("move invoice to Kingston: %v", err)
+	}
+
+	_, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ XB",
+		IdempotencyKey: w.tag, InvoiceIDs: []string{trenton, king}, AmountCents: 10000,
+	})
+	if err == nil {
+		t.Fatal("a list spanning two branches must be refused")
+	}
+	var bad httpx.BadRequestError
+	if !errors.As(err, &bad) {
+		t.Fatalf("the refusal is in words, got %T %v", err, err)
+	}
+	if !strings.Contains(bad.Msg, "one payment applies to one branch's invoices") {
+		t.Fatalf("the refusal names the rule: %q", bad.Msg)
+	}
+	payments, allocations, subledger, outbox := w.moneyRowCounts(t, w.customerID)
+	if payments != 0 || allocations != 0 || subledger != 0 || outbox != 0 {
+		t.Fatalf("the refused list writes nothing: %d %d %d %d", payments, allocations, subledger, outbox)
+	}
+	if b, _ := w.invoiceState(t, trenton); b != 4000 {
+		t.Fatalf("the Trenton invoice is untouched, balance %d", b)
+	}
+	if b, _ := w.invoiceState(t, king); b != 6000 {
+		t.Fatalf("the Kingston invoice is untouched, balance %d", b)
+	}
+	var keyRows int
+	if err := w.pool.QueryRow(ctx, `SELECT COUNT(*) FROM payments WHERE idempotency_key = $1`, w.tag).Scan(&keyRows); err != nil {
+		t.Fatalf("count by key: %v", err)
+	}
+	if keyRows != 0 {
+		t.Fatalf("the refused list burned no key, found %d rows", keyRows)
+	}
+
+	// Each branch's invoices alone are one payment each, the shape the desk is told to use.
+	if _, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ XB",
+		IdempotencyKey: w.tag + "-t", InvoiceIDs: []string{trenton}, AmountCents: 4000,
+	}); err != nil {
+		t.Fatalf("one branch's invoice alone applies: %v", err)
+	}
+	if _, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CHEQUE", Reference: "CHQ XB",
+		IdempotencyKey: w.tag + "-k", InvoiceIDs: []string{king}, AmountCents: 6000,
+	}); err != nil {
+		t.Fatalf("the other branch's invoice alone applies: %v", err)
+	}
+}
