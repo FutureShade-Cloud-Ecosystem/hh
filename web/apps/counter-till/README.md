@@ -17,15 +17,33 @@ names. The terminal works in both its modes: the
 linear flow (the Customer, Items, Payment and Summary accordion) and the
 detached multi-card layout (the counter view menu's layout pick, persisted on
 the workspace row, with the pop-out opening the same till on a second window
-against the same branch drawer). The returns desk stays beside it: the
-original sale found by its number through the branch fenced lookup route, its
-lines with what is still returnable, the three refund rails (cash from the
-drawer, card to the simulator, account credit), and the refund above the
-dealer's approval amount: refused to the clerk with the amount and the
-approver roles named, completed by a manager's own credential entered at the
-clerk's till through the Manager approval dialog, the token held in memory
-for the one call and dropped, the receipt naming the approver and the clerk,
-and the till still the clerk's.
+against the same branch drawer). The Returns surface is built like a credit, the
+customer first (item 10): a stepper (Customer, Lines, Refund, Done), the customer
+search over the customers search route (the walk-in is not a returns customer,
+and the server says so in words), then every order the customer holds from
+`GET /api/v1/pos/returns/customer-lines`, grouped by order and job, each line
+with the quantity still open, a quantity stepper capped at it, and three
+dispositions (each line's own disposition rides the preview and the write) (return to stock, damaged, nothing returned). Lines from several
+orders go into one draft (one branch per credit note); the sales order number
+only filters the list. There is no search by one sale's number. The Refund step
+chooses the rail (card where every order was paid by card, on the account,
+cash from the open drawer) and commits ONE credit note through
+`POST /api/v1/pos/returns-across` under one idempotency key; a note over the
+dealer's approval amount (judged on the note total) is refused with the amount
+and roles named and completes through a manager's own credential entered at the
+clerk's till, the token held in memory for the one call and dropped. The Done
+step names the note, each order's return with its number and the server's
+figures, and a receipt line per return. A walk in sale (no customer) is found through the first step's Walk in sale entry by its
+receipt or order number only (the server never lists walk in sales) and goes back to cash or
+card. With a rail chosen, the preview carries the server's cash or card part and the part that
+comes off an open invoice for an order not fully paid, in its words. The swap sits beside the rails: add the
+replacement goods (the counter's own product search, in each product's sell
+unit), and `POST /api/v1/pos/swaps/preview` answers the credit, the new order
+total, what the credit pays, the leftover (back by the original tender) and any
+shortfall; "Ring the swap" sends `POST /api/v1/pos/swaps` under one key, and the
+Done step shows the credit note and the new order naming each other. The server
+says in its words when the credit changed (409) or the processor refused the
+leftover (502). The till computes none of it.
 
 Money on the counter is integer cents throughout. The figures the core states
 (line prices from the pricing resolve, the committed sale's and return's own
@@ -44,7 +62,8 @@ The app calls the core's routes on its own origin. Without a core, a local
 stub serves the same shapes: the contract's `DemoFlowList` and
 `DemoSessionResponse`; the counter routes the sale screen speaks, from
 `Branch` and `TillSessionDetail` to `PosSaleView`; and the returns desk's
-routes, `PosReturnLookup`, `PosReturn`, the approval refusal's 409,
+read, `PosCustomerLines` (its 422 for the house walk-in), the credit note write
+`PosReturnNote` (its approval 409),
 `TillOpenLookup`, `TillZReport`, and `PaymentConfigStatus`:
 
 ```
@@ -86,26 +105,21 @@ stock glance and the empty add-ons strip; the pricing resolve in the
 contract's breakdown shape; the signatures, the relief assessment and the
 rendered receipt document.
 
-The stub also serves `GET /_stub/state`, a harness-only peek at its own
-ledgers (the api requests it has sighted and whether any carried the approver
-header, the returns posts' idempotency keys in send order, the last return
-body verbatim, and who each committed return named as clerk and approver): no
-contract path shares the namespace, and the app never calls it.
-
 The suite runs one worker, in order: the stub holds the demo world in memory
 (an open drawer, committed sales, parked tickets), so each test reads only
 what it itself caused. `test/entry.pw.ts` holds the way in (W6's screens);
 `test/sale.pw.ts` holds the sale at the counter (W7's screens, including the
 committed sale read back through `GET /api/v1/pos/sales/{id}` and compared
-against every figure on screen); `test/returns.pw.ts` holds the returns desk
-(W8's screens, the approval dialog and the one time credential included);
+against every figure on screen); `test/returns.pw.ts` holds the returns surface
+(item 10's customer and lines steps); `src/returns/*.test.mjs` hold the draft's
+rules as unit tests;
 `test/scans.pw.ts` holds the two source scans (no money arithmetic outside
 the one named money helper, and no card path) as tests, so the CI keeps them
 green and not just a report.
 
 The stub is a development and test double only: the real routes are the core's
 (the mint is the demo build's, the pricing is the engine's, the returns rules
-are RT-B's), and nothing in the app knows the stub exists.
+are the core's), and nothing in the app knows the stub exists.
 
 ## The acceptance run and the testers' page (W9)
 
