@@ -49,10 +49,42 @@ func (s *Service) WithPickHoldGate(g PickHoldGate) *Service { s.pickHold = g; re
 // composition root's boot assertion's fact).
 func (s *Service) PickHoldGateWired() bool { return s.pickHold != nil }
 
-// refuseHeldFromPicking guards one will call door: nil seam allows, a read
-// that cannot be made refuses (the money direction), a held order refuses
-// with the mandated sentence.
+// refuseHeldFromPicking guards the STAFF will call door (the rack tag mint
+// behind POST /api/v1/dispatch/will-call, requireStaff): nil seam allows, a
+// read that cannot be made refuses (the money direction), a held order
+// refuses with the mandated sentence. The figure is gated on the caller's
+// role on the cost and margin list (cost_gate.go): the original code's
+// rationale ("dispatch-board work, held only by roles on the cost and margin
+// list") was wrong, because requireStaff holds no role check, so a figure
+// reached an off list role (drivers, yard team, HR). The fence holds the
+// figure out for those callers, in cents and in words; the same rule governs
+// the payment hold reads and the dispatch refusal.
 func (s *Service) refuseHeldFromPicking(ctx context.Context, orderID string) error {
+	if s.pickHold == nil {
+		return nil
+	}
+	held, owed, err := s.pickHold.HeldFromPicking(ctx, orderID)
+	if err != nil {
+		return conflictf("dispatch: the balance hold could not be read, try again in a moment")
+	}
+	if held {
+		if owed > 0 && s.moneyAllowed(ctx) {
+			return conflictf("dispatch: %s (%s is owed)", pickHoldWords, money(owed))
+		}
+		return conflictf("dispatch: %s", pickHoldWords)
+	}
+	return nil
+}
+
+// refuseHeldFromPickingPublic is the CUSTOMER'S OWN CONFIRM door: the
+// public self confirmation reads a token whose holder sees the order's own
+// balance, so the figure is the customer's own money and rides (the bare
+// mandated sentence alone would tell the same customer holding their phone
+// that a paid order is paid, which is the same defect the staff fence fixes
+// a different way). No staff context exists on this path (willcall.go
+// states so explicitly); moneyAllowed would refuse on that ground, which
+// is why the two doors take separate helpers rather than sharing one.
+func (s *Service) refuseHeldFromPickingPublic(ctx context.Context, orderID string) error {
 	if s.pickHold == nil {
 		return nil
 	}
@@ -97,10 +129,9 @@ func refuseHeldFromPickingSyncTx(ctx context.Context, gate PickHoldGate, tx pgx.
 // holdRefusalSync shapes the guard's answer as the sync engine's refused
 // reason: the mandated sentence, never the owed figure. The sync door
 // resolves any active staff caller with no role check (the scope's
-// predicate reads org only), and a figure never reaches an off list role in
-// words either (ruling 91); the STAFF door's refusal above keeps the
-// figure, its surface being dispatch-board work, held only by roles on the
-// cost and margin list.
+// predicate reads org only), so the figure is held out in words either;
+// the STAFF door above gates the figure on the cost and margin list
+// through refuseHeldFromPicking for the same reason (N1).
 func holdRefusalSync(held bool, owed int64, err error) error {
 	if err != nil {
 		return refused(fmt.Errorf("the balance hold could not be read, try again in a moment"))
