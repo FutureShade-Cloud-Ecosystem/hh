@@ -19,7 +19,6 @@ const COMING_ROLES = [
   "Logistics Manager",
   "Driver",
   "Branch Manager",
-  "Procurement Manager",
   "Payables and Receivables",
   "Financial Controller",
   "General Manager",

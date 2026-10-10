@@ -123,17 +123,17 @@ var shapeCensusAllowlist = map[string]string{
 
 	// (2) items null (11): the map (or struct) is (or holds) a nil slice
 	// (it marshals as null) and carries no next_cursor key.
-	"complianceListCalendar":          "answers {\"items\":null} on the empty list (internal/compliance/handler.go, Handler.calendar writes map[string]any{\"items\": items} with no nil guard) against the contract's ComplianceDeadlinePage; the fix is the owning lane's",
-	"complianceListUpcoming":          "answers {\"items\":null} (internal/compliance/handler.go, Handler.upcoming, the same unguarded map pattern as its sibling) against the contract's ComplianceDeadlinePage; the fix is the owning lane's",
-	"lienGetHoldbackAging":            "answers {\"items\":null} (internal/lien/handler.go, Handler.aging, unguarded items map) against the contract's LienAgingRowPage; the fix is the owning lane's",
-	"lienListJobDocuments":            "answers {\"items\":null} (internal/lien/handler.go, Handler.listDocuments, unguarded items map) against the contract's LienDocumentPage; the fix is the owning lane's",
-	"lienListJobs":                    "answers {\"items\":null} (internal/lien/handler.go, Handler.listJobs, unguarded items map) against the contract's LienJobPage; the fix is the owning lane's",
-	"purchasingListBills":             "answers {\"items\":null} (internal/purchasing/handler.go, Handler.listBills, unguarded items map) against the contract's PurchasingBillPage; the fix is the owning lane's",
-	"reportingListCommissionRules":    "answers {\"items\":null} (internal/reporting/handler.go, Handler.listRules, unguarded items map) against the contract's ReportingCommissionRulePage; the fix is the owning lane's",
-	"reportingListRuns":               "answers {\"items\":null} (internal/reporting/handler.go, Handler.listRuns, unguarded items map) against the contract's ReportingRunPage; the fix is the owning lane's",
-	"reportingListSavedViews":         "answers {\"items\":null} (internal/reporting/handler.go, Handler.listSavedViews, unguarded items map) against the contract's ReportingSavedViewPage; the fix is the owning lane's",
-	"tillListBouncedPayments":         "answers {\"items\":null} (internal/till/handler.go, Handler.listBounced, unguarded items map) against the contract's TillBouncedPaymentPage; the fix is the owning lane's",
-	"tillListCreditHolds":             "answers {\"items\":null} (internal/till/handler.go, Handler.listCreditHolds, unguarded items map) against the contract's TillCreditHoldPage; the fix is the owning lane's",
+	"complianceListCalendar":       "answers {\"items\":null} on the empty list (internal/compliance/handler.go, Handler.calendar writes map[string]any{\"items\": items} with no nil guard) against the contract's ComplianceDeadlinePage; the fix is the owning lane's",
+	"complianceListUpcoming":       "answers {\"items\":null} (internal/compliance/handler.go, Handler.upcoming, the same unguarded map pattern as its sibling) against the contract's ComplianceDeadlinePage; the fix is the owning lane's",
+	"lienGetHoldbackAging":         "answers {\"items\":null} (internal/lien/handler.go, Handler.aging, unguarded items map) against the contract's LienAgingRowPage; the fix is the owning lane's",
+	"lienListJobDocuments":         "answers {\"items\":null} (internal/lien/handler.go, Handler.listDocuments, unguarded items map) against the contract's LienDocumentPage; the fix is the owning lane's",
+	"lienListJobs":                 "answers {\"items\":null} (internal/lien/handler.go, Handler.listJobs, unguarded items map) against the contract's LienJobPage; the fix is the owning lane's",
+	"purchasingListBills":          "answers {\"items\":null} (internal/purchasing/handler.go, Handler.listBills, unguarded items map) against the contract's PurchasingBillPage; the fix is the owning lane's",
+	"reportingListCommissionRules": "answers {\"items\":null} (internal/reporting/handler.go, Handler.listRules, unguarded items map) against the contract's ReportingCommissionRulePage; the fix is the owning lane's",
+	"reportingListRuns":            "answers {\"items\":null} (internal/reporting/handler.go, Handler.listRuns, unguarded items map) against the contract's ReportingRunPage; the fix is the owning lane's",
+	"reportingListSavedViews":      "answers {\"items\":null} (internal/reporting/handler.go, Handler.listSavedViews, unguarded items map) against the contract's ReportingSavedViewPage; the fix is the owning lane's",
+	"tillListBouncedPayments":      "answers {\"items\":null} (internal/till/handler.go, Handler.listBounced, unguarded items map) against the contract's TillBouncedPaymentPage; the fix is the owning lane's",
+	"tillListCreditHolds":          "answers {\"items\":null} (internal/till/handler.go, Handler.listCreditHolds, unguarded items map) against the contract's TillCreditHoldPage; the fix is the owning lane's",
 
 	// (3) no next_cursor (23): items (an array) is present, the answer
 	// object carries no next_cursor key (the modules write ad hoc maps or
