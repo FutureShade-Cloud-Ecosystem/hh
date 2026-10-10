@@ -280,8 +280,15 @@ func (r *Repository) EnsureRepDMChannel(ctx context.Context, userID string) (str
 // must be the system's (kind TEAM, auto_scope set: every seeded system room carries auto_scope and
 // no caller founded room ever does). A caller shaped house- row therefore cannot be picked whatever
 // its name sorts like, and the house- family is reserved against caller founding beside the other
-// system families, so the route cannot write one either. A new branch needs only its house-<name>
-// channel row seeded, with no Go change.
+// system families, so the route cannot write one either.
+//
+// The naming contract for a new branch's house room: its slug is exactly house-<lower(locations.code)>
+// (a branch coded NWB is house-nwb), unless BranchYardSlug's map names the branch (TRT is
+// house-trenton, KGN is house-kingston). The room must be a TEAM row naming the branch with auto_scope
+// set. It is NOT named by the city, as 0136's comment on the derivation reads; 0136 cannot be edited,
+// and the two seeded rooms are the only ones the map renames. A house room seeded under any other name
+// is skipped and its inbound lands in #house-unassigned (never dropped). No Go change is needed for a
+// new branch once its room is seeded under that name.
 //
 // A branch with no house channel, and an inbound with no branch at all, falls back to the GLOBAL
 // #house-unassigned floor. The fallback is the point: an inbound customer message is NEVER dropped
