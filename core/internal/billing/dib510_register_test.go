@@ -15,6 +15,7 @@ import (
 	"time"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 func day(y int, m time.Month, d int) time.Time {
@@ -73,10 +74,12 @@ func TestRegisterStatus_DisputeOutranksLateness(t *testing.T) {
 
 func TestDaysBetween_IsWholeCalendarDaysAndInclusiveOfToday(t *testing.T) {
 	// Two instants on the same calendar day are zero days apart however far apart their clocks are -
-	// an invoice is never "0.6 days late".
+	// an invoice is never "0.6 days late". The due date is a calendar date and the clock is read on
+	// the house day, so the clock here is early in the house morning, not at midnight UTC (which is
+	// the previous evening in the yard).
 	if got := daysBetween(
 		time.Date(2026, time.August, 26, 23, 59, 0, 0, time.UTC),
-		time.Date(2026, time.August, 26, 0, 1, 0, 0, time.UTC)); got != 0 {
+		time.Date(2026, time.August, 26, 0, 1, 0, 0, houseday.Location())); got != 0 {
 		t.Fatalf("same day must be 0, got %d", got)
 	}
 	if got := daysBetween(day(2026, time.August, 25), day(2026, time.August, 26)); got != 1 {
