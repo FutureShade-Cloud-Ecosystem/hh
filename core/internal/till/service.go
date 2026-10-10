@@ -814,7 +814,8 @@ func (s *Service) MarkNSF(ctx context.Context, in NSFInput) (NSFResult, error) {
 		return NSFResult{}, errNotFound
 	}
 	if !caller.CanAccessBranch(branchID) {
-		return NSFResult{}, forbidden("till: caller cannot access branch %s", branchID)
+		// Not found, as for a payment that does not exist (no existence oracle, no branch id).
+		return NSFResult{}, errNotFound
 	}
 	// Fast idempotent guard (the store re-checks under FOR UPDATE to close the race).
 	if status == "BOUNCED" {

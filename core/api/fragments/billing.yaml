@@ -420,7 +420,7 @@ paths:
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -447,7 +447,7 @@ paths:
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -745,7 +745,7 @@ paths:
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -958,7 +958,7 @@ paths:
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:

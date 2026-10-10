@@ -144,14 +144,14 @@ type StatementOutbox interface {
 type statementStore interface {
 	CreditPolicy(ctx context.Context, branchID string) (CreditPolicy, error)
 	AgingRowsIn(ctx context.Context, asOf time.Time, bucketDays int, branchID string, reach BranchReach) ([]AgingRow, error)
-	CustomerInReach(ctx context.Context, customerID string, reach BranchReach) (bool, error)
-	StatementLines(ctx context.Context, customerID string, asOf time.Time) ([]StatementLine, error)
+	StatementLines(ctx context.Context, customerID string, asOf time.Time, reach BranchReach) ([]StatementLine, error)
 	BranchHeader(ctx context.Context, branchID string) (StatementHeader, error)
 	CreateRun(ctx context.Context, mode, branchID string, asOf time.Time, actorID string) (string, error)
 	SaveStatement(ctx context.Context, runID string, s Statement, notice *StatementNotice, outbox StatementOutbox) (string, error)
 	FinishRun(ctx context.Context, runID, status string, generated, queued int, runErr string) error
 	GetRun(ctx context.Context, runID string) (StatementRun, []Statement, error)
 	LatestStatement(ctx context.Context, customerID string) (Statement, bool, error)
+	LatestStatementIn(ctx context.Context, customerID string, reach BranchReach) (Statement, bool, error)
 }
 
 // statementNoticeAccountant is the OPTIONAL store capability that records 0148's notice counts.
@@ -279,7 +279,7 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 	var generated, queued int
 	out := make([]Statement, 0, len(rows))
 	for _, r := range rows {
-		lines, err := s.store.StatementLines(ctx, r.CustomerID, asOf)
+		lines, err := s.store.StatementLines(ctx, r.CustomerID, asOf, reach)
 		if err != nil {
 			_ = s.store.FinishRun(ctx, runID, "FAILED", generated, queued, err.Error())
 			return StatementRun{}, nil, err
@@ -371,16 +371,12 @@ func (s *StatementService) GetRun(ctx context.Context, runID string) (StatementR
 	return run, sts, nil
 }
 
-// LatestStatement returns the most recent statement for an account (the portal's "your statement"),
-// for an account the caller's branch reach touches.
+// LatestStatement returns the most recent statement for an account (the portal's "your statement")
+// that the caller's branch reach may read: for a caller who does not reach every branch, the newest
+// statement of a run filed under a branch it reaches. A statement made for the whole book carries the
+// whole account's lines and is not its to read.
 func (s *StatementService) LatestStatement(ctx context.Context, customerID string) (Statement, bool, error) {
-	if reach := reachFromContext(ctx); !reach.Global {
-		in, err := s.store.CustomerInReach(ctx, customerID, reach)
-		if err != nil || !in {
-			return Statement{}, false, err
-		}
-	}
-	return s.store.LatestStatement(ctx, customerID)
+	return s.store.LatestStatementIn(ctx, customerID, reachFromContext(ctx))
 }
 
 // -- rendering -----------------------------------------------------------------------------------

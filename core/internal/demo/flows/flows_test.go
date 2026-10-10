@@ -4,9 +4,9 @@ package flows
 
 import "testing"
 
-// The table is closed: the two Counter Till flows, the Financial Controller
-// and Payables and Receivables, no more, and every entry carries the account
-// facts the other lanes share.
+// The table is closed: the two Counter Till flows, Payables and
+// Receivables, and the Financial Controller, no more, and every entry
+// carries the account facts the other lanes share.
 func TestTableIsTheClosedSet(t *testing.T) {
 	all := All()
 	if len(all) != 4 {

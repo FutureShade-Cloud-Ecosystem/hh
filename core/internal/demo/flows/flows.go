@@ -15,10 +15,10 @@
 //     to the reserved domain.
 //
 // The table is closed: four flows, the pair the Counter Till cycle ships
-// (D49, DECISIONS.md) and the Financial Controller and Payables and
-// Receivables the roles roadmap adds.
-// A new flow is an edit here, reviewed, never a runtime input: the entry
-// page may only ever offer what this file lists.
+// (D49, DECISIONS.md) and Payables and Receivables and the Financial
+// Controller the roles roadmap adds. A new flow is an edit here, reviewed,
+// never a runtime input: the entry page may only ever offer what this file
+// lists.
 package flows
 
 // OrgSlug is the one org a demo box holds and the only org the demo

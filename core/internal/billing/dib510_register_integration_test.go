@@ -505,7 +505,7 @@ func TestDetail_AppliedIsTheAllocationAggregateNotTotalMinusBalance(t *testing.T
 		t.Fatalf("seed allocation: %v", err)
 	}
 
-	d, err := f.service(d510Manager()).Detail(ctx, id)
+	d, err := f.service(d510Manager()).Detail(ctx, id, true)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -520,5 +520,77 @@ func TestDetail_AppliedIsTheAllocationAggregateNotTotalMinusBalance(t *testing.T
 	}
 	if d.Totals.TotalCents != 100000 {
 		t.Fatalf("the total is the stored column, got %d", d.Totals.TotalCents)
+	}
+}
+
+// -- ruling 87: the timeline's payment entries ----------------------------------------------------
+
+func TestDetail_PaymentEntriesReachOnlyACallerWhoAsksForThem(t *testing.T) {
+	f := newD510Fixture(t)
+	ctx := context.Background()
+	id := f.invoice(t, "TRAIL", "PARTIALLY_PAID", -20, 100000, 60000, "INVOICE")
+	var payID string
+	if err := f.pool.QueryRow(ctx,
+		`INSERT INTO payments (payment_no, customer_id, method, amount_cents, status, branch_id)
+		 VALUES (nextval('payment_no_seq')::text, $1::uuid, 'CHEQUE', 40000, 'RECEIVED', $2::uuid)
+		 RETURNING id::text`, f.customerID, trentonBranch).Scan(&payID); err != nil {
+		t.Fatalf("seed payment: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx,
+		`INSERT INTO payment_allocations (payment_id, invoice_id, amount_cents) VALUES ($1::uuid,$2::uuid,40000)`,
+		payID, id); err != nil {
+		t.Fatalf("seed allocation: %v", err)
+	}
+	kinds := func(withPayments bool) map[string]int {
+		d, err := f.service(d510Manager()).Detail(ctx, id, withPayments)
+		if err != nil {
+			t.Fatalf("detail: %v", err)
+		}
+		out := map[string]int{}
+		for _, e := range d.Activity {
+			out[e.Kind]++
+		}
+		return out
+	}
+	if got := kinds(true); got["PAYMENT"] != 1 {
+		t.Fatalf("a caller who holds the trail sees the payment entry once, got %v", got)
+	}
+	without := kinds(false)
+	if _, present := without["PAYMENT"]; present {
+		t.Fatalf("the payment entry is absent for a caller who does not hold the trail, got %v", without)
+	}
+	if without["ISSUED"] != 1 {
+		t.Fatalf("the rest of the timeline is unchanged, got %v", without)
+	}
+}
+
+func TestCustomerActivity_PaymentRowsReachOnlyACallerWhoAsksForThem(t *testing.T) {
+	f := newD510Fixture(t)
+	ctx := context.Background()
+	for _, txn := range []string{"INVOICE", "PAYMENT", "NSF"} {
+		if _, err := f.pool.Exec(ctx,
+			`INSERT INTO customer_transactions (customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, occurred_at)
+			 VALUES ($1::uuid, $2, 100, 100, 'test', gen_random_uuid(), $3)`, f.customerID, txn, d510Now); err != nil {
+			t.Fatalf("seed %s row: %v", txn, err)
+		}
+	}
+	repo := NewRepository(f.pool)
+	count := func(withPayments bool) map[string]int {
+		rows, err := repo.CustomerActivity(ctx, f.customerID, 10, withPayments)
+		if err != nil {
+			t.Fatalf("activity: %v", err)
+		}
+		out := map[string]int{}
+		for _, r := range rows {
+			out[r.Kind]++
+		}
+		return out
+	}
+	if got := count(true); got["PAYMENT"] != 1 || got["NSF"] != 1 || got["INVOICE"] != 1 {
+		t.Fatalf("a caller who holds the trail sees every row, got %v", got)
+	}
+	got := count(false)
+	if got["PAYMENT"] != 0 || got["NSF"] != 0 || got["INVOICE"] != 1 {
+		t.Fatalf("payment and NSF rows are absent for a caller without the trail, got %v", got)
 	}
 }

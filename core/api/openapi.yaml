@@ -1314,7 +1314,7 @@ paths:
       x-access:
         surfaces:
           - money-desk
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1346,7 +1346,7 @@ paths:
       x-access:
         surfaces:
           - money-desk
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1683,7 +1683,7 @@ paths:
       x-access:
         surfaces:
           - money-desk
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1925,7 +1925,7 @@ paths:
       x-access:
         surfaces:
           - money-desk
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -16615,12 +16615,13 @@ paths:
       tags:
         - staff-till
       summary: List the bounced-payment queue
-      description: Manager-gated; the queue exposes customer financial-distress information.
+      description: "Manager-gated; the queue exposes customer financial-distress information. Held to work by ruling 87, like a payment's history: the queue lists payments by number, method and amount, and the payment trail is the money desk's to work."
       x-role: requireManager
       x-access:
         surfaces:
+          - counter-till
           - money-desk
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -16653,7 +16654,7 @@ paths:
       x-access:
         surfaces:
           - money-desk
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -16686,12 +16687,13 @@ paths:
       tags:
         - staff-till
       summary: Read who took a payment and which invoices it was applied to
-      description: The path key may be the payment's id or the human payment number printed on the receipt. For a BOUNCED payment the historical applications are reconstructed from the audit trail and flagged reversed_by_nsf.
+      description: "The path key may be the payment's id or the human payment number printed on the receipt. For a BOUNCED payment the historical applications are reconstructed from the audit trail and flagged reversed_by_nsf. Held to work by ruling 87: a customer's payment trail is the money desk's to work, not a money desk reader's to browse."
       x-role: requireStaff
       x-access:
         surfaces:
           - counter-till
-        level: read
+          - money-desk
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -16719,12 +16721,13 @@ paths:
       tags:
         - staff-till
       summary: Read which payments and credits settled an invoice, attributed
-      description: The path key may be the invoice's id or the human invoice number.
+      description: "The path key may be the invoice's id or the human invoice number. Held to work by ruling 87, like a payment's history: the payment trail is the money desk's to work."
       x-role: requireStaff
       x-access:
         surfaces:
           - counter-till
-        level: read
+          - money-desk
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id

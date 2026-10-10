@@ -341,7 +341,7 @@ func (f *fakeRegisterStore) ProofFor(context.Context, string) (Proof, bool, erro
 func (f *fakeRegisterStore) OrderFactsFor(context.Context, string) (string, string, string, error) {
 	return "", "", "", nil
 }
-func (f *fakeRegisterStore) ActivityFor(context.Context, string, string) ([]ActivityEntry, error) {
+func (f *fakeRegisterStore) ActivityFor(context.Context, string, string, bool) ([]ActivityEntry, error) {
 	return nil, nil
 }
 func (f *fakeRegisterStore) PromiseFor(context.Context, string) (PromiseView, bool, error) {
@@ -534,7 +534,7 @@ func TestDetail_AccountPositionIsAbsentForARefusedCaller(t *testing.T) {
 	frontline := NewRegisterService(store).
 		WithClock(func() time.Time { return day(2026, time.August, 26) }).
 		withCaller(callerAs(identity.TierFrontline, identity.ScopeBranch))
-	d, err := frontline.Detail(context.Background(), "i1")
+	d, err := frontline.Detail(context.Background(), "i1", true)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -554,7 +554,7 @@ func TestDetail_AccountPositionIsAbsentForARefusedCaller(t *testing.T) {
 	manager := NewRegisterService(store).
 		WithClock(func() time.Time { return day(2026, time.August, 26) }).
 		withCaller(callerAs(identity.TierManager, identity.ScopeGlobal))
-	dm, err := manager.Detail(context.Background(), "i1")
+	dm, err := manager.Detail(context.Background(), "i1", true)
 	if err != nil {
 		t.Fatalf("detail: %v", err)
 	}
@@ -566,7 +566,7 @@ func TestDetail_AccountPositionIsAbsentForARefusedCaller(t *testing.T) {
 func TestDetail_NotFoundIsNotFound(t *testing.T) {
 	store := &fakeRegisterStore{headerNF: true}
 	svc := newFakeService(t, store, day(2026, time.August, 26))
-	if _, err := svc.Detail(context.Background(), "nope"); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.Detail(context.Background(), "nope", true); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a missing invoice is ErrNotFound, got %v", err)
 	}
 }

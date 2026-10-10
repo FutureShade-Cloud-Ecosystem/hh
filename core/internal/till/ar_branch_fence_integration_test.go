@@ -7,6 +7,7 @@ package till
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -91,5 +92,48 @@ func TestIntegration_BouncedQueueAndHoldsFollowTheCallersBranches(t *testing.T) 
 	}
 	if !sawHold {
 		t.Fatalf("a global caller must see the hold branch B's bounce placed")
+	}
+}
+
+// A record in another branch answers exactly as a record that does not exist: no 403 against 404 to tell
+// them apart and no branch id in the body (the security review's P2-4).
+func TestIntegration_AnotherBranchsPaymentRecordsAreNotFoundNotForbidden(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	branchA, userID := seedBranchUser(t, pool)
+	var branchB string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE loc_type = 'BRANCH' AND id <> $1::uuid LIMIT 1`, branchA).Scan(&branchB); err != nil {
+		t.Skipf("the seed has one branch only: %v", err)
+	}
+	svc := realSvc(pool)
+	scoped := managerCtx(userID, branchA)
+
+	payB, invB, _, cleanup := seedNSFCase(t, pool, branchB, 22000)
+	t.Cleanup(cleanup)
+	missing := "00000000-0000-4000-8000-00000000dead"
+
+	_, errMissingHist := svc.PaymentHistory(scoped, missing)
+	_, errOtherHist := svc.PaymentHistory(scoped, payB)
+	_, errMissingInv := svc.InvoicePayments(scoped, missing)
+	_, errOtherInv := svc.InvoicePayments(scoped, invB)
+	_, errMissingNSF := svc.MarkNSF(scoped, NSFInput{PaymentID: missing, Reason: "x"})
+	_, errOtherNSF := svc.MarkNSF(scoped, NSFInput{PaymentID: payB, Reason: "x"})
+	for name, pair := range map[string][2]error{
+		"payment history":  {errMissingHist, errOtherHist},
+		"invoice payments": {errMissingInv, errOtherInv},
+		"mark payment NSF": {errMissingNSF, errOtherNSF},
+	} {
+		if pair[0] == nil || pair[1] == nil || pair[0].Error() != pair[1].Error() {
+			t.Errorf("%s: a missing id answers %v, another branch's record answers %v, want the same answer", name, pair[0], pair[1])
+		}
+		if pair[1] != nil && strings.Contains(pair[1].Error(), branchB) {
+			t.Errorf("%s: the refusal names the other branch's id: %v", name, pair[1])
+		}
+	}
+	// The record is untouched by the refused bounce.
+	var status string
+	_ = pool.QueryRow(ctx, `SELECT status FROM payments WHERE id = $1::uuid`, payB).Scan(&status)
+	if status != "RECEIVED" {
+		t.Errorf("the refused bounce changed the payment to %s", status)
 	}
 }

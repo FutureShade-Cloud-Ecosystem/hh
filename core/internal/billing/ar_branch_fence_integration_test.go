@@ -157,10 +157,10 @@ func TestARFence_AnInvoiceInAnotherBranchIsNotFoundNotForbidden(t *testing.T) {
 	w := newARFenceWorld(t)
 	svc := w.registerService(arTrentonOnly())
 
-	if _, err := svc.Detail(arTrentonOnly(), w.dualKingston); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.Detail(arTrentonOnly(), w.dualKingston, true); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("a Kingston invoice read by a Trenton caller must be not found, got %v", err)
 	}
-	if _, err := svc.Detail(arTrentonOnly(), w.dualTrenton); err != nil {
+	if _, err := svc.Detail(arTrentonOnly(), w.dualTrenton, true); err != nil {
 		t.Fatalf("the caller's own branch invoice must read: %v", err)
 	}
 
@@ -173,7 +173,7 @@ func TestARFence_AnInvoiceInAnotherBranchIsNotFoundNotForbidden(t *testing.T) {
 		t.Fatalf("a promise on another branch's invoice must be not found, got %v", err)
 	}
 
-	if _, err := svc.Detail(arGlobalPayRec(), w.dualKingston); err != nil {
+	if _, err := svc.Detail(arGlobalPayRec(), w.dualKingston, true); err != nil {
 		t.Fatalf("a global caller reads any branch's invoice: %v", err)
 	}
 }

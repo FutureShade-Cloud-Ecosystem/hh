@@ -304,7 +304,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		t.Errorf("linked %d / unlinked %d users, want the 4 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
 	if counts.StaffGrants != 4 || counts.StaffGrantsBranch != 2 || counts.StaffGrantsGlobal != 2 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the two counter accounts' Trenton grants and the two global grants of Payables and Receivables and the controller", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+		t.Errorf("staff grants %d (branch %d, global %d), want the two counter accounts' Trenton grants and the one global grant each of Payables and Receivables and the Financial Controller", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -398,6 +398,9 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if err := nameRows.Err(); err != nil {
 		t.Fatal(err)
 	}
+	// 14 since the merge of PR 300: the two Counter Till accounts, the planted
+	// demo teammates, and both roadmap personas (Payables and Receivables and
+	// the Financial Controller), each one invented name.
 	if len(saw) != len(allowedNames) || len(saw) != 14 {
 		t.Errorf("the users rows render %d distinct display names, want exactly the 14 invented ones (saw: %v)", len(saw), saw)
 	}
@@ -507,8 +510,7 @@ func assertRoleAccount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, us
 	}
 	// The grant resolves: one live staff_role_grant, the account's own role,
 	// in the demo org, branch-scoped to Trenton (a global role's grant carries
-	// no branch: Payables and Receivables and the Financial Controller reach
-	// every branch).
+	// no branch: Payables and Receivables and the Financial Controller reach every branch).
 	var gotRole string
 	var gotBranch *string
 	err := pool.QueryRow(ctx, `

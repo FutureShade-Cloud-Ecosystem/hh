@@ -71,22 +71,22 @@ const (
 	managerEmail       = "sales.manager@hh-demo.invalid"
 	managerDisplayName = "Sales manager (demo)"
 
-	// Payables and Receivables, a role account (global, tier two): a flow
-	// table row minted by the roles roadmap for the receivables desk.
+	// Payables and Receivables, the third role account (global, tier two):
+	// the flow table's row for the receivables desk, minted by the roles
+	// roadmap's first increment.
 	payRecUserID      = "de110000-0000-4000-9000-0000000000a1"
 	payRecPlatformID  = "de110000-0000-4000-9000-0000000000a1"
 	payRecEmail       = "payables.receivables@hh-demo.invalid"
 	payRecDisplayName = "Payables and Receivables (demo)"
 
-	// The Financial Controller, a role account (global, tier one): a flow
-	// table row minted by the roles roadmap for the approvals queue and the
-	// general ledger.
+	// The Financial Controller, the fourth role account (global, tier one):
+	// the flow table's row for the approvals queue and the general ledger.
 	controllerUserID      = "de110000-0000-4000-9000-0000000000c1"
 	controllerPlatformID  = "de110000-0000-4000-9000-0000000000c1"
 	controllerEmail       = "financial.controller@hh-demo.invalid"
 	controllerDisplayName = "Financial controller (demo)"
 
-	// The roles behind the role accounts, resolved by code against the
+	// The roles behind the accounts, resolved by code against the
 	// roles catalog 0015 plants. staff_role_grant rows derive from these
 	// through identity.Populate, branch-scoped to the one branch below.
 	salesRoleCode      = "INSIDE_SALES"
@@ -469,6 +469,10 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		}
 		roles += int(tag.RowsAffected())
 	}
+	// Payables and Receivables and the Financial Controller are global roles, so the staff grants
+	// derived for them carry no branch and their reach is every branch; the Trenton rows below are
+	// inert for them (reach follows the role's scope, never user_branch_grants) and are written only
+	// so the accounts have the same shape as the others.
 	for _, userID := range []string{salesUserID, managerUserID, payRecUserID, controllerUserID} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_branch_grants (user_id, branch_id)
