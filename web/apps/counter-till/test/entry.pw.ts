@@ -44,7 +44,7 @@ test("the entry page shows the two demo role cards and the eleven coming roles",
   await expect(manager).toBeVisible();
   await expect(manager).toBeEnabled();
 
-// The stub's table, like the core's, mints the full closed set of seven
+  // The stub's table, like the core's, mints the full closed set of seven
   // logins (sales, sales manager, the Yard Team, the Driver, Payables and
   // Receivables, the Procurement Manager, the Financial Controller); the
   // till offers a card for its own pair alone (any other card would lead
