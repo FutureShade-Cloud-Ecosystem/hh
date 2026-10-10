@@ -10,8 +10,10 @@ nothing the gate cares about has.
 ## The whole untagged core suite, with the demo job's database variables
 
 The untagged suite is the day gate. It runs once, in foreground, with the
-demo job's three variables set on its side. The `-p 1` keeps two packages
-from racing one another's fixture cleanups on one shared database. The
+demo job's three database variables set on its side (`DATABASE_URL`,
+`HH_CORE_TEST_DATABASE_URL`, `HH_B3_TEST_DATABASE_URL`; `HH_B4_TEST_DATABASE_URL`
+stays unset by design, see below). The `-p 1` keeps two packages from
+racing one another's fixture cleanups on one shared database. The
 targeted runs are not enough: cross-module gates, tablegate's census
 included, catch what they miss.
 
@@ -24,10 +26,14 @@ go test ./... -count=1 -p 1 -timeout 30m
 
 The ports come from the local CI service; the `postgres:postgres` user and
 password come from the demo job's `postgres:16-alpine` fixture, and the
-three databases are `till_base` (empty, as the demo job's service leaves
-it), `till_core_gate` (migrated) and `till_b3_gate` (migrated). The
-demo job's first runs are read, not relied on, but the database variables
-are the same.
+four databases the demo job raises are `till_base` (empty, as the demo
+job's service leaves it), `till_core_gate` (migrated), `till_b3_gate`
+(migrated) and `till_b4_gate` (migrated, but with `HH_B4_TEST_DATABASE_URL`
+deliberately unset in the untagged run: the B4 population proofs want a
+hand-prepared scratch shape the demo job cannot honestly provide, so their
+legs skip politely without the variable, the posture they held before this
+job existed). The demo job's first runs are read, not relied on, but the
+database variables are the same.
 
 ## CI's whole integration package list, in `go list` order
 
@@ -300,3 +306,34 @@ The order is the order a CI test runs them in: build and vet first, then
 the day gates, then the contract and the web loops, then the gates on the
 change itself. A red at any step is the verdict; a green at every step
 is the only honest signal the change is ready to leave.
+
+The day gate above is one of three the demo job runs in sequence. The
+second is the demo tag suite, against the same `till_base` and
+`till_core_gate` plus a fresh `hh_demo_world_proof` database, with
+`HH_TILL_DEMO_TEST_DATABASE_URL` set on it:
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_base?sslmode=disable \
+HH_CORE_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_core_gate?sslmode=disable \
+HH_TILL_DEMO_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/hh_demo_world_proof?sslmode=disable \
+go test -tags demo ./... -count=1 -p 1 -timeout 30m
+```
+
+The third is the verbose demo world proofs step, run alone, that fails if
+any of `TestDemoWorld_Quotes`, `TestDemoWorld_CounterTill`,
+`TestDemoWorld_Controller`, `TestDemoWorld_ControllerGuards`,
+`TestDemoWorld_ControllerApprovalsCursor`,
+`TestDemoWorld_ControllerParkFilesInOneTransaction` or
+`TestDemoWorld_ControllerRecurringRunRefusedOverTheThreshold` SKIPs:
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_base?sslmode=disable \
+HH_CORE_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/till_core_gate?sslmode=disable \
+HH_TILL_DEMO_TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:<port>/hh_demo_world_proof?sslmode=disable \
+go test -tags demo ./cmd/core -run 'TestDemoWorld_(Quotes|CounterTill|Controller|ControllerGuards|ControllerApprovalsCursor|ControllerParkFilesInOneTransaction|ControllerRecurringRunRefusedOverTheThreshold)$' -count=1 -v -timeout 30m
+```
+
+The workstation short form omits the demo tag suite and the verbose demo
+world proofs step; the day gate is enough to catch the regressions a
+change is likely to bring. The two extra steps live in the same job as the
+day gate, in order, and CI runs them every push.
