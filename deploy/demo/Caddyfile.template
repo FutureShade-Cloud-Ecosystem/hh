@@ -88,6 +88,15 @@ handle /drive/* {
 	file_server
 }
 
+handle /yard/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /yard/index.html
+	file_server
+}
+
 handle /q/* {
 	basic_auth {
 		demo __GATE_HASH__
