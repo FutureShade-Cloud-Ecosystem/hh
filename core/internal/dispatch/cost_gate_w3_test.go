@@ -87,7 +87,9 @@ func TestDoorMoneyFailsClosed(t *testing.T) {
 }
 
 // The shape is absence, not zero: the refused caller's hold keeps its mark,
-// its code and its words, and the figure is byte-absent.
+// its code and its words, and the figure is byte-absent. This leg pins the
+// helper itself and cannot go red on a call site regression; the reads'
+// legs above (and the integration routes) are what carry the behavior.
 func TestDoorMoneyShape_TheFigureIsAbsentAndTheWordsStay(t *testing.T) {
 	hold := StopPaymentHold{
 		StopID: "s-1", OrderID: "o-1", Held: true,
