@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
-// the rule the D2 brief fixes (the live roles with the contract's labels and
-// the flows' ids; eight coming roles, each carrying the modules the
+// the rule the D2 brief fixes (the six live roles with the contract's labels
+// and the flows' ids; seven coming roles, each carrying the modules the
 // matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test
@@ -136,9 +136,9 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the five live roles with the contract's labels and the flows they mint", () => {
-  assert.equal(LIVE_ROLES.length, 5);
-  const [sales, manager, yard, payRec, buyer] = LIVE_ROLES;
+test("the catalog holds the six live roles with the contract's labels and the flows they mint", () => {
+  assert.equal(LIVE_ROLES.length, 6);
+  const [sales, manager, yard, payRec, buyer, driver] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
   assert.deepEqual(sales.tiles.map((tile) => tile.name), ["Counter Till", "Quote Desk"]);
@@ -186,14 +186,19 @@ test("the catalog holds the five live roles with the contract's labels and the f
   assert.equal(payRec.flow, "payables-receivables");
   assert.deepEqual(payRec.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
   assert.deepEqual(payRec.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", null]);
+  // The driver: HH Drive is its live landing; House Messages is the closed
+  // module behind the chipped nav.
+  assert.equal(driver.label, "Driver");
+  assert.equal(driver.flow, "driver");
+  assert.deepEqual(driver.tiles.map((tile) => tile.name), ["HH Drive", "House Messages"]);
+  assert.deepEqual(driver.tiles.map((tile) => tile.href), ["/drive/", null]);
 });
 
-test("the catalog holds the eight coming roles, each with its matrix modules", () => {
+test("the catalog holds the seven coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
     "Yard Team",
     "Logistics Manager",
-    "Driver",
     "Branch Manager",
     "Financial Controller",
     "General Manager",
@@ -201,8 +206,8 @@ test("the catalog holds the eight coming roles, each with its matrix modules", (
   ];
   assert.deepEqual(COMING_ROLES.map((role) => role.label), labels);
   // Every coming role shows at least the modules the matrix gives it at work
-  // level or above; HR's two and Driver's two are the smallest rows, the
-  // Branch manager's five the widest.
+  // level or above; HR's two are the smallest rows, the Branch manager's
+  // five the widest.
   for (const role of COMING_ROLES) {
     assert.ok(role.modules.length >= 2, `${role.label} shows its modules`);
     assert.ok(role.modules.length <= 5, `${role.label} carries no invented module`);

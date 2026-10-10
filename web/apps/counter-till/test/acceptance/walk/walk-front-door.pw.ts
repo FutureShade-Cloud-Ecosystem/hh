@@ -13,8 +13,8 @@
 //
 // What the walk holds, in order:
 //
-//   the picker renders: the five live role cards with their calls to act,
-//     the demo badge, and the eight coming roles in their disclosure;
+//   the picker renders: the six live role cards with their calls to act,
+//     the demo badge, and the seven coming roles in their disclosure;
 //   a Sales sign in lands on the Sales home: the role's name as the title,
 //     the two live module tiles, the header word;
 //   the Counter Till tile opens the till signed in as Sales, no second
@@ -64,6 +64,9 @@ async function expectPicker(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Yard manager", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Payables and Receivables", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Procurement manager", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Driver", exact: true })).toBeVisible();
 }
 
 /**
@@ -118,9 +121,9 @@ test("the front door walk: pick a role, open each module signed in, Switch role,
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toContainText("Sign in as Sales");
   const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Eight more roles are coming");
-  await disclosure.getByText("Eight more roles are coming").click();
-  await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("listitem")).toHaveCount(8);
+  await expect(disclosure).toContainText("Seven more roles are coming");
+  await disclosure.getByText("Seven more roles are coming").click();
+  await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("listitem")).toHaveCount(7);
 
   // ── Sales signs in, and the home shows the two live tiles ───────────────
   await signInFrontDoor(page, "Sales");

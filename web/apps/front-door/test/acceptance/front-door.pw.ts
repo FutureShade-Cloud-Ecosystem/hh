@@ -14,7 +14,6 @@ const COMING_LABELS = [
   "Outside Sales",
   "Yard Team",
   "Logistics Manager",
-  "Driver",
   "Branch Manager",
   "Financial Controller",
   "General Manager",
@@ -58,7 +57,7 @@ async function stubResets(page: Page): Promise<void> {
 
 async function signIn(page: Page, label: string): Promise<void> {
   await page.getByRole("button", { name: label, exact: true }).click();
-  await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
+  await expect(page.getByTestId("home-title")).toHaveText(label);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -66,7 +65,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-test("the picker renders the five live cards and the eight coming rows", async ({ page }) => {
+test("the picker renders the six live cards and the seven coming rows", async ({ page }) => {
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toBeVisible();
   await expect(sales).toBeEnabled();
@@ -115,15 +114,24 @@ test("the picker renders the five live cards and the eight coming rows", async (
   await expect(buyer).toContainText("Manager Home");
   await expect(buyer).toContainText("House Messages");
 
+  // The driver's card is live with HH Drive as its first tile: the role's
+  // own line, the live HH Drive tile, and the closed House Messages module.
+  const driver = page.getByRole("button", { name: "Driver", exact: true });
+  await expect(driver).toBeVisible();
+  await expect(driver).toBeEnabled();
+  await expect(driver).toContainText("The day's run, stop to proof of delivery.");
+  await expect(driver).toContainText("Sign in as Driver");
+  await expect(driver).toContainText("HH Drive");
+
   // Coming recedes: the disclosure starts collapsed and opens to today's
   // list, unchanged, its rows disabled with their muted chips.
   const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Eight more roles are coming");
+  await expect(disclosure).toContainText("Seven more roles are coming");
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).not.toBeVisible();
-  await disclosure.getByText("Eight more roles are coming").click();
+  await disclosure.getByText("Seven more roles are coming").click();
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(8);
+  await expect(coming.getByRole("listitem")).toHaveCount(7);
   for (const label of COMING_LABELS) {
     const row = coming.getByRole("listitem").filter({ hasText: label });
     await expect(row).toBeVisible();
@@ -181,6 +189,35 @@ test("a Sales manager sign in shows the five tiles", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Coming next" })).toBeVisible();
   await expect(page.getByTestId("header-word")).toHaveText("Sales manager");
   expect(await storedFlow(page)).toBe("sales-manager");
+});
+
+test("a Driver sign in shows the HH Drive tile, which navigates to /drive/", async ({ page }) => {
+  await signIn(page, "Driver");
+  // The driver's two tiles: HH Drive (live, opens /drive/) and House Messages
+  // (closed, the polite coming-soon page).
+  const drive = page.getByRole("button", { name: "HH Drive", exact: true });
+  await expect(drive).toBeVisible();
+  await expect(drive).toContainText("Open the HH Drive");
+  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toBeVisible();
+  await expect(page.getByTestId("header-word")).toHaveText("Driver");
+  expect(await storedFlow(page)).toBe("driver");
+  // The HH Drive tile carries the box's /drive/ prefix, the same one the
+  // deploy image serves HH Drive under (deploy/demo/Dockerfile line 62).
+  // The stub harness here serves the front door alone; the tile's href is
+  // what proves the navigation target, without taking the user to a 404.
+  await expect(drive).toHaveAttribute("data-href", "/drive/");
+});
+
+test("the Payables and Receivables and Procurement manager tiles carry their one line", async ({ page }) => {
+  await signIn(page, "Payables and Receivables");
+  await expect(page.getByRole("button", { name: "Money Desk", exact: true })).toContainText(
+    "Receivables, payables and the bounced payment queue.",
+  );
+  await page.getByRole("button", { name: "Switch role" }).click();
+  await signIn(page, "Procurement manager");
+  await expect(page.getByRole("button", { name: "Buying and Stock", exact: true })).toContainText(
+    "Draft and place orders, and see what is on the way.",
+  );
 });
 
 test("Switch role returns to the picker and clears the token", async ({ page }) => {

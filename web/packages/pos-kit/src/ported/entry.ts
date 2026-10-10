@@ -4,7 +4,7 @@
 // pair of the box's flow table, which mints more logins than any one app
 // offers cards for) wearing the ported token sheet's surfaces and borders,
 // an icon from the ported icon registry and one line of what the role opens,
-// then the other nine roles of the decided matrix as coming: shown in a
+// then the other eight roles of the decided matrix as coming: shown in a
 // ruled card, labelled Coming, and not tappable, because their screens do not
 // exist in this release. When the flows route answers nothing (a default-build
 // core or a non-demo box), there are no cards at all and the page says so
@@ -30,7 +30,6 @@ export const COMING_ROLES: readonly string[] = [
   "Outside Sales",
   "Yard Team",
   "Logistics Manager",
-  "Driver",
   "Branch Manager",
   "Payables and Receivables",
   "Financial Controller",

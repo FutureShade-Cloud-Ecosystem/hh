@@ -216,6 +216,14 @@ type posStore interface {
 	SetReturnOffset(ctx context.Context, tx pgx.Tx, returnID string, offsetCents int64) error
 	// LockInvoicesTx takes the invoices a return may touch, sorted, before any credit offset (P2-1).
 	LockInvoicesTx(ctx context.Context, tx pgx.Tx, invoiceIDs []string) error
+	// LockPaymentsSequenceTx takes the payments sequence row BEFORE the invoice locks a cash or card
+	// return takes, and only when lockReturnInvoicesTx has decided invoice rows will be taken at all:
+	// the payments module's one money lock order (its counter first, invoices second) says a return
+	// that takes an invoice row must hold the counter first (a return that held an owed invoice and
+	// then waited on the counter closed a cycle with a received payment apply holding the counter and
+	// waiting on that invoice, the Opus review's P2-4), and a return that takes no invoice row must
+	// not hold the one counter every payments writer serialises on (the delta reviews' P2).
+	LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error
 	// SumUnbookedCardRefundsTx counts the processor refunds a rolled back transaction left unbooked (D5).
 	SumUnbookedCardRefundsTx(ctx context.Context, tx pgx.Tx, orderID, exceptRefundKey string) (int64, error)
 	// RecordUnbookedCardRefunds and MarkCardRefundsBooked keep the record of processor refunds a

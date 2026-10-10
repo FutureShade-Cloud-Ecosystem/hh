@@ -42,6 +42,7 @@ const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
   { flow: "yard-manager", role_code: "yard_manager", label: "Yard manager" },
+  { flow: "driver", role_code: "driver", label: "Driver" },
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
@@ -101,6 +102,15 @@ const USERS = {
     role_name: "Financial Controller",
     tier: 1,
     scope: "GLOBAL",
+  },
+  driver: {
+    user_id: "demo-account-driver",
+    email: "driver@demo.invalid",
+    display_name: "Driver (demo)",
+    role_code: "driver",
+    role_name: "Driver",
+    tier: 3,
+    scope: "BRANCH",
   },
 };
 
