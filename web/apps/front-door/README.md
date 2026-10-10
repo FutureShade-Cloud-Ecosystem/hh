@@ -34,10 +34,9 @@ demo badge, the role's name, Switch role and Sign out.
 - The icons come from the ported registry (the one registry: the Counter
   Till's `src/ported/_icon-consumer.ts` and `_icon-registry.ts`, imported
   across the app boundary). No second registry lives here.
-- The Counter Till hangs off `/till/`, the Quote Desk off `/quote/` and the
-  Buying and Stock app off `/buying-and-stock/`; the demo image serves
-  those three. The Money Desk tile points at `/money-desk/`, which the
-  image does not serve yet (its wiring lands with the Money Desk app).
+- The Counter Till hangs off `/till/`, the Quote Desk off `/quote/`, the
+  Buying and Stock app off `/buying-and-stock/` and the Money Desk off
+  `/money-desk/`; the demo image serves those four.
   The manager's three tiles whose apps are not on the box yet open the
   polite coming-soon page.
 
