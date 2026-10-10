@@ -882,10 +882,11 @@ export class QdClient {
 
   /**
    * The guided surface's conversion: the chosen fulfilment rides explicitly, both of the contract's
-   * two values (Pickup and Will-call both ride the request).
+   * two values (Pickup and Will-call both ride the request). The Idempotency-Key is one UUID per convert
+   * attempt, resent unchanged on every retry, so the core answers the first order and never makes a second.
    */
-  async convertWithFulfilment(quoteId: string, fulfillment: "PICKUP" | "WILL_CALL"): Promise<Result<{ orderId: string; orderNo: string }>> {
-    const result = await staffQuote.quoteConvertQuote(this.#client, quoteId, { fulfillment });
+  async convertWithFulfilment(quoteId: string, fulfillment: "PICKUP" | "WILL_CALL", idempotencyKey: string): Promise<Result<{ orderId: string; orderNo: string }>> {
+    const result = await staffQuote.quoteConvertQuote(this.#client, quoteId, { fulfillment }, { idempotencyKey });
     if (!result.ok) return result;
     const record = result.value as unknown;
     if (!isRecord(record)) return err("the conversion answer is not readable");

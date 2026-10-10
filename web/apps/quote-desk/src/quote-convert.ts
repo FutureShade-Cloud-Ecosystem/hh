@@ -332,6 +332,8 @@ export class QuoteConvert extends HHElement {
   #payNote = "";
   /** A conversion answer was lost: a later refusal may be that attempt's own order. */
   #convertLost = false;
+  /** The Idempotency-Key of the convert attempt whose outcome is not known yet; null between attempts. */
+  #convertKey: string | null = null;
   /** Each load carries a number; an answer that comes back for an older one is dropped. */
   #seq = 0;
 
@@ -475,6 +477,7 @@ export class QuoteConvert extends HHElement {
     this.#paid = null;
     this.#payNote = "";
     this.#convertLost = false;
+    this.#convertKey = null;
   }
 
   // ── the controls ─────────────────────────────────────────────────────────────
@@ -597,7 +600,12 @@ export class QuoteConvert extends HHElement {
     this.#busy = true;
     this.#refusal = "";
     this.requestUpdate();
-    const result = await client.convertWithFulfilment(quoteId, this.#fulfilment);
+    // One key per convert attempt: minted at the press, kept while the outcome is unknown (a lost or 5xx
+    // answer), so the retry replays the first order; a definite answer ends the attempt.
+    const convertKey = this.#convertKey ?? crypto.randomUUID();
+    this.#convertKey = convertKey;
+    const result = await client.convertWithFulfilment(quoteId, this.#fulfilment, convertKey);
+    if (result.ok || !isUnknownOutcome(result.status)) this.#convertKey = null;
     // The order exists whatever is on screen now: the quote it was made from is announced either way.
     if (result.ok) {
       this.dispatchEvent(new CustomEvent("quote-converted", { detail: { orderId: result.value.orderId, quoteId }, bubbles: true, composed: true }));

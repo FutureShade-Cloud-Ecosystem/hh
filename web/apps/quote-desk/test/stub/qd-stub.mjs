@@ -999,6 +999,8 @@ function effectivePolicy(branchId) {
 // The dealer's one acceptance switch, and the scope rule table (seven rules,
 // the reference's own set, wording fixed: only the switch is writable).
 const acceptance = { allow_multi_accept: false, switch_wired: true };
+/** The orders made under a convert Idempotency-Key, by quote and key (the core keeps them on the conversion's audit row). */
+const convertKeys = new Map();
 const SCOPE_RULES = [
   ["SURFACE_NEEDS_BASE", "Granular base for the paved area", ["PAVER", "PATIO"], ["BASE"]],
   ["SURFACE_NEEDS_BEDDING", "Bedding course under the units", ["PAVER", "PATIO"], ["BEDDING"]],
@@ -1211,6 +1213,14 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
+  // The dealer's multi accept switch (the core's allow_quote_multi_accept): on, a converted quote converts again.
+  if (path === "/_stub/multi-accept" && request.method === "PUT") {
+    readBody(request, response, (body) => {
+      acceptance.allow_multi_accept = body.on === true;
+      respondJson(response, 200, { allow_multi_accept: acceptance.allow_multi_accept });
+    });
+    return;
+  }
   // The payment door refuses its next `count` posts with this answer and writes nothing.
   if (path === "/_stub/door-refusal" && request.method === "PUT") {
     readBody(request, response, (body) => {
@@ -1416,6 +1426,7 @@ const server = createServer(async (request, response) => {
     policyWrites.length = 0;
     decisions.length = 0;
     conversions.length = 0;
+    convertKeys.clear();
     payments.length = 0;
     paymentsByKey.clear();
     posts.length = 0;
@@ -2175,9 +2186,26 @@ const server = createServer(async (request, response) => {
       respondJson(response, 404, { error: "no quote with that id" });
       return;
     }
-    posts.push({ kind: "convert", quote_id: quote.id, key: null });
+    const convertKey = String(request.headers["idempotency-key"] ?? "").toLowerCase();
+    posts.push({ kind: "convert", quote_id: quote.id, key: convertKey === "" ? null : convertKey });
     readBody(request, response, (body) => {
-      if (quote.status !== "ACCEPTED") {
+      const fulfilment = body.fulfillment === "WILL_CALL" ? "WILL_CALL" : "PICKUP";
+      // The core's order (repository.go Convert): a keyed repeat answers the FIRST order and writes
+      // nothing, whatever the status is now and whatever the multi accept switch says; the same key
+      // with another fulfilment is refused in words.
+      if (convertKey !== "") {
+        const first = convertKeys.get(`${quote.id}:${convertKey}`);
+        if (first !== undefined) {
+          if (first.fulfilment !== fulfilment) {
+            respondJson(response, 409, { error: "quote: this idempotency key was used for a different conversion; use a new key for a new conversion" });
+            return;
+          }
+          respondJson(response, 201, { order_id: first.order.id, order_no: first.order.order_no });
+          return;
+        }
+      }
+      // A converted quote converts again only when the dealer switched multi accept on (DIB-491).
+      if (quote.status !== "ACCEPTED" && !(quote.status === "CONVERTED" && acceptance.allow_multi_accept)) {
         respondJson(response, 409, { error: `quote: this quote is ${quote.status.toLowerCase()}, only an accepted quote converts` });
         return;
       }
@@ -2191,9 +2219,10 @@ const server = createServer(async (request, response) => {
         return;
       }
       quote.status = "CONVERTED";
-      quote.fulfilment = body.fulfillment === "WILL_CALL" ? "WILL_CALL" : "PICKUP";
+      quote.fulfilment = fulfilment;
       conversions.push({ quote_id: quote.id, fulfillment: body.fulfillment ?? null });
       const order = newOrder(quote, "COUNTER");
+      if (convertKey !== "") convertKeys.set(`${quote.id}:${convertKey}`, { order, fulfilment });
       respondJson(response, 201, { order_id: order.id, order_no: order.order_no });
     });
     return;

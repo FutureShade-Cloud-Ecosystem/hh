@@ -245,7 +245,7 @@ export function refusalWords(status: number | undefined, detail: string, afterLo
   // known, and only the quote's state on reload says. A retry cannot make a second order, because the
   // core converts only from ACCEPTED.
   if (isUnknownOutcome(status)) {
-    return "Whether the order was created is not known yet: the answer was lost. Check the quote's state on reload before anything else is done. If the quote is still accepted, convert again; the server converts a quote only once.";
+    return "Whether the order was created is not known yet: the answer was lost. Check the quote's state on reload before anything else is done. Convert again: the same key is sent, so the server answers the first order and never makes a second.";
   }
   const said = spokenRefusal(detail.trim());
   if (status === 409 && afterLostAnswer) {

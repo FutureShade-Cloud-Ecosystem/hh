@@ -488,7 +488,9 @@ for (const answer of ["drop", "502"] as const) {
 }
 
 for (const answer of ["drop", "502"] as const) {
-  test(`unknown convert outcome (${answer}): the words say the order is not known yet, never "Nothing was created", and a retry cannot make a second order`, async ({ page }) => {
+  test(`unknown convert outcome (${answer}) with multi accept ON: the words say not known yet, the retry sends the same key, and one order is made`, async ({ page }) => {
+    // The dealer's switch ON: without a key a second convert makes a second order (DIB-491).
+    await page.request.put("/_stub/multi-accept", { data: { on: true } });
     await arrive(page, "q-1003");
     await next(page);
     await next(page);
@@ -510,13 +512,43 @@ for (const answer of ["drop", "502"] as const) {
     await expect(refusal).toContainText("not known yet");
     await expect(refusal).toContainText("reload");
     await expect(refusal).not.toContainText("Nothing was created");
-    // The retry is refused by the server (the quote already converted); it must not claim nothing was created either.
+    await expect(refusal).not.toContainText("converts a quote only once");
+    // The retry: the same key, so the core answers the first order and makes no second.
     await page.getByTestId("qc-confirm").click();
-    await expect(refusal).toContainText("earlier attempt");
-    await expect(refusal).not.toContainText("Nothing was created");
-    expect((await state(page)).posts.filter((p) => p.kind === "convert")).toHaveLength(2);
+    await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+    const seen = await state(page);
+    const posted = seen.posts.filter((p) => p.kind === "convert");
+    expect(posted).toHaveLength(2);
+    expect(posted[0]!.key).not.toBeNull();
+    expect(posted[1]!.key).toBe(posted[0]!.key);
+    expect(seen.conversions).toHaveLength(1);
   });
 }
+
+test("a fresh press of Confirm after a definite refusal mints a new convert key", async ({ page }) => {
+  await arrive(page, "q-1003");
+  await next(page);
+  await next(page);
+  await next(page);
+  await next(page);
+  const keys: Array<string | undefined> = [];
+  await page.route(/\/api\/v1\/quotes\/q-1003\/convert$/, async (route) => {
+    keys.push(route.request().headers()["idempotency-key"]);
+    if (keys.length === 1) {
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "quote: this quote is sent, only an accepted quote converts" }) });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-refusal")).toContainText("Nothing was created");
+  await page.getByTestId("qc-confirm").click();
+  await expect(page.getByTestId("qc-done-order")).toContainText("SO-");
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).toBeTruthy();
+  expect(keys[1]).toBeTruthy();
+  expect(keys[1]).not.toBe(keys[0]);
+});
 
 test("idempotency: the same intended payment keeps its key, a fresh intended payment gets a new one", async ({ page }) => {
   await arriveCod(page);
