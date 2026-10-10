@@ -29,12 +29,12 @@
 #   the app builds (vite build) and the core's demo build compiles;
 #   the gate answers /healthz without a phrase;
 #   the picker page is refused without the phrase and served with it;
-#   the served bundle carries the picker's structure: the two live card
+#   the served bundle carries the picker's structure: the live card
 #     labels ("Sales", "Sales manager"), the eleven coming rows' labels, the
 #     Coming heading, and the demo badge's copy;
-#   /api/v1/demo/flows answers the closed table's three flows (the third,
-#     the Financial Controller's, has no card on the picker yet: it stays a
-#     coming row until the Money Desk app is served);
+#   /api/v1/demo/flows answers the closed table's flows (the Financial
+#     Controller's has no card on the picker yet: it stays a coming row until
+#     the Money Desk app is served);
 #   POST /api/v1/demo/session without the phrase is refused by the gate, and
 #     with it mints for both flow ids the front door maps (sales,
 #     sales-manager) and for the controller's flow the core also mints;
@@ -269,10 +269,10 @@ done
 echo "== the demo routes through the gate"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"financial-controller"'*)
-		pass "/api/v1/demo/flows answers the closed table's three flows"
+	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
+		pass "/api/v1/demo/flows answers the closed table's four flows"
 		;;
-	*) fail "/api/v1/demo/flows did not answer the three flows: $flows" ;;
+	*) fail "/api/v1/demo/flows did not answer the four flows: $flows" ;;
 esac
 
 code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \

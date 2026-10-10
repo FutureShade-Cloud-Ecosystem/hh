@@ -3417,6 +3417,8 @@ type InventoryShortfallRow struct {
 	LeadTimeDays        int32   `json:"lead_time_days"`
 	AvgCostCents        *int64  `json:"avg_cost_cents,omitempty"`
 	SuggestedValueCents *int64  `json:"suggested_value_cents,omitempty"`
+	DraftPoId           *string `json:"draft_po_id,omitempty"`
+	DraftPoNo           *string `json:"draft_po_no,omitempty"`
 }
 
 type InventoryReorderPoint struct {
@@ -3472,12 +3474,14 @@ type InventoryReorderRequest struct {
 }
 
 type InventoryReorderResult struct {
-	PoId             string               `json:"po_id"`
-	PoNo             string               `json:"po_no"`
-	Draft            InventorySuggestedPO `json:"draft"`
-	SuggestedQtyBase float64              `json:"suggested_qty_base"`
-	Uom              string               `json:"uom"`
-	VendorName       string               `json:"vendor_name"`
+	PoId              string               `json:"po_id"`
+	PoNo              string               `json:"po_no"`
+	Draft             InventorySuggestedPO `json:"draft"`
+	SuggestedQtyBase  float64              `json:"suggested_qty_base"`
+	Uom               string               `json:"uom"`
+	VendorName        string               `json:"vendor_name"`
+	ExistingDraftPoId *string              `json:"existing_draft_po_id,omitempty"`
+	ExistingDraftPoNo *string              `json:"existing_draft_po_no,omitempty"`
 }
 
 type InventoryNudgeRequest struct {
@@ -6585,6 +6589,28 @@ type PurchasingVendor struct {
 	IsActive         bool   `json:"is_active"`
 }
 
+type PurchasingCreateVendorRequest struct {
+	Name             string  `json:"name"`
+	PaymentTermsDays *int32  `json:"payment_terms_days,omitempty"`
+	OrderEmail       *string `json:"order_email,omitempty"`
+}
+
+type PurchasingUpdateVendorRequest struct {
+	Name             *string `json:"name,omitempty"`
+	PaymentTermsDays *int32  `json:"payment_terms_days,omitempty"`
+	OrderEmail       *string `json:"order_email,omitempty"`
+	IsActive         *bool   `json:"is_active,omitempty"`
+}
+
+type PurchasingVendorMaster struct {
+	Id               string `json:"id"`
+	VendorNo         string `json:"vendor_no"`
+	Name             string `json:"name"`
+	PaymentTermsDays int32  `json:"payment_terms_days"`
+	OrderEmail       string `json:"order_email"`
+	IsActive         bool   `json:"is_active"`
+}
+
 type PurchasingPO struct {
 	Id               string             `json:"id"`
 	PoNo             string             `json:"po_no"`
@@ -6815,6 +6841,11 @@ type PurchasingAddLineRequest struct {
 	QtyOrderedBase float64 `json:"qty_ordered_base"`
 	Uom            *string `json:"uom,omitempty"`
 	UnitCostCents  *int64  `json:"unit_cost_cents,omitempty"`
+}
+
+type PurchasingUpdateLineRequest struct {
+	QtyOrderedBase *float64 `json:"qty_ordered_base,omitempty"`
+	UnitCostCents  *int64   `json:"unit_cost_cents,omitempty"`
 }
 
 type PurchasingSetExpectedDateRequest struct {

@@ -14,8 +14,8 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
-// The table is closed: three flows, the pair the Counter Till cycle ships
-// (D49, DECISIONS.md) and the Financial Controller the roles roadmap adds.
+// The table is closed: the Counter Till's pair (D49, DECISIONS.md), the Financial
+// Controller and the live role logins the roles roadmap adds one reviewed row at a time.
 // A new flow is an edit here, reviewed, never a runtime input: the entry
 // page may only ever offer what this file lists.
 package flows
@@ -92,6 +92,17 @@ var accounts = map[string]Account{
 		Label:          "Sales manager",
 		Role:           "sales_manager",
 	},
+	// The procurement manager's login, the roles roadmap's Buying and
+	// Stock slice: the buyer's card. The id block is this lane's own, so
+	// the role lanes' rows cannot collide as they land one after another.
+	"procurement-manager": {
+		Flow:           "procurement-manager",
+		PlatformUserID: "de64b000-0000-4000-9000-000000000001",
+		Email:          "procurement.manager@" + ReservedDomain,
+		DisplayName:    "Procurement manager (demo)",
+		Label:          "Procurement manager",
+		Role:           "procurement_manager",
+	},
 	"financial-controller": {
 		Flow:           "financial-controller",
 		PlatformUserID: "de110000-0000-4000-9000-0000000000c1",
@@ -116,6 +127,7 @@ func All() []Account {
 	return []Account{
 		accounts["sales"],
 		accounts["sales-manager"],
+		accounts["procurement-manager"],
 		accounts["financial-controller"],
 	}
 }

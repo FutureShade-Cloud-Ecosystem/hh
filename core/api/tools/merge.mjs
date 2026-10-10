@@ -32,6 +32,8 @@ const knownListKeys = new Set([
   "delivery_date_committers",
   // derived from the floor lists and the cost list (roleconfig.LowMarginReportReaders), not a setting
   "low_margin_report",
+  // the purchase order writers (roleconfig.PurchaseOrderWriters plus the super admin at the gate), not a setting
+  "po_writers",
 ]);
 
 // All state is declared before any check runs, so a faulty map entry is
