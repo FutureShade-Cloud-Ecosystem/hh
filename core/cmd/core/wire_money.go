@@ -22,6 +22,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
@@ -181,6 +182,13 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// service runs, from the same configuration: the store is built on the
 	// operations wire, so the configuration is published for it (P2-4).
 	quote.PublishRoleConfig(roleCfg)
+	// The messaging membership wall reads the same configuration's Admin
+	// cell on house-messages (who may manage a room's members beside the
+	// room's owner): the service is built on the operations wire the role
+	// configuration does not pass, so it is published for it here, beside
+	// the quote door's publish. Nothing published means the wall knows no
+	// admin and fails closed to owner-only.
+	messaging.PublishRoleConfig(roleCfg)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).

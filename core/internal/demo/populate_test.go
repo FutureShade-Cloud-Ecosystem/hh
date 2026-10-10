@@ -210,7 +210,7 @@ func seedAndPopulate(t *testing.T, bin, dsn string) (first, second string) {
 // it exists (after the first populate run); system_settings joins because
 // the populate converges the org_name row (the receipt's letterhead row)
 // onto the invented demo name.
-var worldTables = []string{"users", "user_roles", "user_branch_grants", "staff_role_grant", "payment_config", "org", "system_settings", "demo_box"}
+var worldTables = []string{"users", "user_roles", "user_branch_grants", "staff_role_grant", "payment_config", "org", "system_settings", "msg_channels", "msg_members", "demo_box"}
 
 // migratedWorldTables is worldTables before the populate has run, when no
 // demo_box table exists yet.
