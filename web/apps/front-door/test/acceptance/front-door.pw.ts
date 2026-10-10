@@ -197,6 +197,18 @@ test("a Driver sign in shows the HH Drive tile, which navigates to /drive/", asy
   await expect(drive).toHaveAttribute("data-href", "/drive/");
 });
 
+test("the Payables and Receivables and Procurement manager tiles carry their one line", async ({ page }) => {
+  await signIn(page, "Payables and Receivables");
+  await expect(page.getByRole("button", { name: "Money Desk", exact: true })).toContainText(
+    "Receivables, payables and the bounced payment queue.",
+  );
+  await page.getByRole("button", { name: "Switch role" }).click();
+  await signIn(page, "Procurement manager");
+  await expect(page.getByRole("button", { name: "Buying and Stock", exact: true })).toContainText(
+    "Draft and place orders, and see what is on the way.",
+  );
+});
+
 test("Switch role returns to the picker and clears the token", async ({ page }) => {
   await signIn(page, "Sales manager");
   await page.getByRole("button", { name: "Switch role", exact: true }).click();
