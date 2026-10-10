@@ -32,9 +32,11 @@ demo badge, the role's name, Switch role and Sign out.
 - The icons come from the ported registry (the one registry: the Counter
   Till's `src/ported/_icon-consumer.ts` and `_icon-registry.ts`, imported
   across the app boundary). No second registry lives here.
-- The Counter Till hangs off `/till/` and the Quote Desk off `/quote/`; the
-  demo image's wiring of those routes is D1's. The manager's three tiles
-  whose apps are not on the box yet open the polite coming-soon page.
+- The Counter Till hangs off `/till/`, the Quote Desk off `/quote/`, the
+  Money Desk off `/money-desk/` and the Buying and Stock app off
+  `/buying-and-stock/`; the demo image's wiring of those routes is D1's.
+  The manager's three tiles whose apps are not on the box yet open the
+  polite coming-soon page.
 
 The app is demo-lane scaffolding, not a catalog frontend: it takes no entry
 in `manifest.yaml` (that list is generated from the role catalog, and the
