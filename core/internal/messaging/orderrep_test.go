@@ -105,3 +105,46 @@ func TestNotifyOrderRep_AssignedRepNeverGetsTheFallbackWords(t *testing.T) {
 		t.Fatalf("the rep reads the notice as written, not the fallback sentence: %q", got)
 	}
 }
+
+// The figured body goes only to the rep the notice is routed to, judged on that rep's own role: an
+// override rep beats the salesperson, so the salesperson's role does not decide the override rep's copy.
+func TestNotifyOrderRep_TheBodyFollowsTheRoleOfTheRepTheNoticeGoesTo(t *testing.T) {
+	svc, f := routingFixture(t)
+	ctx := context.Background()
+	f.setRoleCode(uSam, "sales_manager")
+	f.setRoleCode(uCasey, "driver")
+	listed := func(role string) bool { return role == "sales_manager" }
+	notice := func(key, salesperson string, pred func(string) bool) OrderRepNotice {
+		return OrderRepNotice{CustomerID: custAcme, OrderID: orderSplit, OrderRepUserID: salesperson, EventKey: key,
+			Body: "figured $1.00", BodyNoFigures: "plain", RoleSeesFigures: pred}
+	}
+	body := func(res OrderRepResult) string { return f.events[len(f.events)-1].Body }
+
+	res, err := svc.NotifyOrderRep(ctx, notice("k1", uSam, listed))
+	if err != nil || res.RepUserID != uSam || body(res) != "figured $1.00" {
+		t.Fatalf("a listed salesperson keeps the figures: %+v %q %v", res, body(res), err)
+	}
+	res, err = svc.NotifyOrderRep(ctx, notice("k2", uCasey, listed))
+	if err != nil || res.RepUserID != uCasey || body(res) != "plain" {
+		t.Fatalf("an unlisted salesperson reads the plain words: %+v %q %v", res, body(res), err)
+	}
+	f.setAssignment(custAcme, orderSplit, uCasey, AssignManual)
+	res, err = svc.NotifyOrderRep(ctx, notice("k3", uSam, listed))
+	if err != nil || res.RepUserID != uCasey || res.Level != LevelOrder || body(res) != "plain" {
+		t.Fatalf("an unlisted override rep reads the plain words whatever the salesperson's role: %+v %q %v", res, body(res), err)
+	}
+	res, err = svc.NotifyOrderRep(ctx, notice("k4", uSam, nil))
+	if err != nil || body(res) != "plain" {
+		t.Fatalf("no predicate is fail closed: %q %v", body(res), err)
+	}
+	f.w5().assignments = nil
+	f.setAssignment(custAcme, orderSplit, uSam, AssignManual)
+	res, err = svc.NotifyOrderRep(ctx, notice("k5", uCasey, listed))
+	if err != nil || res.RepUserID != uSam || body(res) != "figured $1.00" {
+		t.Fatalf("a listed override rep keeps the figures whatever the salesperson's role: %+v %q %v", res, body(res), err)
+	}
+	res, err = svc.NotifyOrderRep(ctx, OrderRepNotice{CustomerID: custAcme, OrderID: orderSplit, EventKey: "k6", Body: "no figures here"})
+	if err != nil || body(res) != "no figures here" {
+		t.Fatalf("a notice with no figureless twin goes as written: %q %v", body(res), err)
+	}
+}

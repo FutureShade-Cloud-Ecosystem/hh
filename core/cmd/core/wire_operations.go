@@ -807,16 +807,15 @@ type yardChatNotifier struct {
 }
 
 // yardChatMessenger is the messaging seam yardChatNotifier reads: the yard
-// channel for a branch, the channel post, the order rep routing, and (N2,
-// PR 302 round 2) the user's role code so the rep DM fence can ask the rule
-// rather than hardcoding `figures: true`. *messaging.Service satisfies it;
-// the notice fence's untagged legs (yard_notice_fence_test.go) drive the
-// routing with a double.
+// channel for a branch, the channel post and the order rep routing, which
+// picks the body for the rep it routes to (PR 302 round 3, P2-1).
+// *messaging.Service satisfies it; the notice fence's untagged legs
+// (yard_notice_fence_test.go) drive the routing with a double that routes as
+// messaging does, and the rep DM integration legs drive the real service.
 type yardChatMessenger interface {
 	YardSlugForBranch(ctx context.Context, branchID string) (string, error)
 	PostEventToChannelSlug(ctx context.Context, slug, eventKey, body string, ref messaging.EventRef, requiresAck bool) (messaging.Message, bool, error)
 	NotifyOrderRep(ctx context.Context, in messaging.OrderRepNotice) (messaging.OrderRepResult, error)
-	UserRoleCode(ctx context.Context, userID string) (string, error)
 }
 
 func (a yardChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEventRef) error {
@@ -914,9 +913,12 @@ func roleAllowed(ask func(role string) (bool, error), role string) bool {
 // messaging module's rep routing (the order's override, then its own salesperson, then the
 // customer's rep). N2 (PR 302 round 2) asks the cost and margin rule for
 // every figure decision, with two independent decisions:
-//   - the rep DM body: figures ride only when the rep's own role is on the list;
-//     otherwise the figureless twin rides (the rep DM still happens, just
-//     without the figure, so a paying rep knows what changed)
+//   - the rep DM body: figures ride only when the role of the rep the DM goes
+//     to is on the list (messaging decides once it has resolved that rep, so
+//     an order override, the salesperson and the customer's rep are each
+//     judged on their own role); otherwise the figureless twin rides (the
+//     rep DM still happens, just without the figure, so a rep knows what
+//     changed)
 //   - the counter channel copy: figures ride only when OUTSIDE_SALES is on
 //     the list (the channel's derived audience)
 //
@@ -933,28 +935,15 @@ func roleAllowed(ask func(role string) (bool, error), role string) bool {
 func (a yardChatNotifier) postOrderRepNotice(ctx context.Context, ref tasks.TaskEventRef, yardSlug string) error {
 	// The counter route's figure decision (N2, OUTSIDE_SALES today).
 	counterFigures := roleAllowed(a.figuresOK, counterAudienceRole)
-	// The rep DM's figure decision: figure only when the rep's own role is
-	// on the list. Looked up before NotifyOrderRep so the body the rep DM
-	// writes is set exactly once.
-	var repFiguresAllowed bool
-	if ref.RepUserID != "" {
-		repRole, err := a.svc.UserRoleCode(ctx, ref.RepUserID)
-		if err == nil {
-			repFiguresAllowed = roleAllowed(a.figuresOK, repRole)
-		}
-	}
-	repBody := ref.Summary
-	if !repFiguresAllowed {
-		// Figureless on error or no (N2): the rep DM still gets the notice,
-		// just without the figure, so the rep can act on what changed.
-		if plain := ref.SummaryNoFigures; plain != "" {
-			repBody = plain
-		}
-	}
+	// The rep DM's figure decision is made by messaging once it knows which
+	// rep the DM goes to (the order's override, the salesperson, then the
+	// customer's rep): it gets both bodies and the rule, never a guess here
+	// about whose DM it is.
 	in := messaging.OrderRepNotice{
 		CustomerID: ref.CustomerID, OrderID: ref.OrderID, OrderRepUserID: ref.RepUserID,
-		EventKey: ref.EventKey, Body: repBody,
-		Ref: messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: repBody},
+		EventKey: ref.EventKey, Body: ref.Summary, BodyNoFigures: ref.SummaryNoFigures,
+		RoleSeesFigures: func(role string) bool { return roleAllowed(a.figuresOK, role) },
+		Ref:             messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: ref.Summary},
 	}
 	res, err := a.svc.NotifyOrderRep(ctx, in)
 	if err == nil && res.Kind == messaging.RouteRepDM {

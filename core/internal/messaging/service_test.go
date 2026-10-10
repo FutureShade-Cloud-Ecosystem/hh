@@ -13,6 +13,7 @@ import (
 // scripted results so channel-scoping authz, unread math, thread replies, and event routing can be
 // proven without a live Postgres.
 type fakeStore struct {
+	roleCodes   map[string]string          // userID -> canonical role code
 	members     map[string]map[string]bool // channelID -> userID -> isMember
 	exists      map[string]bool            // channelID -> exists
 	channels    map[string][]Channel       // userID -> channels
@@ -242,10 +243,17 @@ func (f *fakeStore) UserDisplayName(_ context.Context, userID string) (string, e
 	return f.displayNames[userID], nil
 }
 
-// UserRoleCode returns an empty code; the legs that drive SeesCostAndMargin
-// ride figuresOK directly (no role lookup needed in the service legs).
-func (f *fakeStore) UserRoleCode(_ context.Context, _ string) (string, error) {
-	return "", nil
+// UserRoleCode answers the canonical role code planted with setRoleCode, an
+// empty code for a user without one (the real query's answer for no role).
+func (f *fakeStore) UserRoleCode(_ context.Context, userID string) (string, error) {
+	return f.roleCodes[userID], nil
+}
+
+func (f *fakeStore) setRoleCode(userID, code string) {
+	if f.roleCodes == nil {
+		f.roleCodes = map[string]string{}
+	}
+	f.roleCodes[userID] = code
 }
 
 // The channel/DM/member seams' base double: honest minimums (a slug always

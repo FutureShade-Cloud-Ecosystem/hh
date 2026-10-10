@@ -77,15 +77,6 @@ func NewService(repo *Repository) *Service { return &Service{repo: repo} }
 // WithRealtime attaches the SSE hub (FR-7). Optional, poll fallback works without it.
 func (s *Service) WithRealtime(rt realtime) *Service { s.rt = rt; return s }
 
-// UserRoleCode reads the rep's own role code (one) for the PR 302 N2 yard
-// notice fence, an empty string when the user has no active role or the
-// store is unwired. The fence calls SeesCostAndMargin on whatever this
-// returns; an empty return is fail closed (figureless), the same shape
-// cost_gate.go posts on the dispatch side.
-func (s *Service) UserRoleCode(ctx context.Context, userID string) (string, error) {
-	return s.repo.UserRoleCode(ctx, userID)
-}
-
 const (
 	// maxBody bounds a single message so a client can't post an unbounded blob.
 	maxBody = 8 * 1024

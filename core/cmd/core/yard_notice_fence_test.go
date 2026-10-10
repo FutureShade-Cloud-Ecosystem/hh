@@ -28,25 +28,24 @@ import (
 // slugs the way a missing channel would, and a per-user role code so the
 // rep DM fence's UserRoleCode call has something to read.
 type fakeYardChat struct {
-	yardSlug  string
-	repKind   string // messaging.RouteRepDM, RouteNone, or "" with repErr set
-	repErr    error
-	repUserID string // last NotifyOrderRep's OrderRepUserID, so roleByRepUser reads it back
-	fail      map[string]error
-	posts     []fakeChannelPost
-	// roleByUser lets a test pin a specific user's role. Empty means
-	// "look up by repUserID, fall through to defaultRole".
+	yardSlug string
+	repKind  string // messaging.RouteRepDM, RouteNone, or "" with repErr set
+	repErr   error
+	fail     map[string]error
+	posts    []fakeChannelPost
+	// The double routes the way messaging.NotifyOrderRep does: an order
+	// override rep first, then the notice's salesperson, then the customer's
+	// rep, and no rep at all is RouteNone. dmUser and dmBody record where the
+	// DM went and the words it carried.
+	overrideRep string
+	customerRep string
+	// roleByUser answers the role lookup in the canonical form the real
+	// UserRoleCode returns ("outside_sales", not the ERP "OUTSIDE_SALES");
+	// a user not listed has no role (empty, fail closed).
 	roleByUser map[string]string
-	// roleErr is the error UserRoleCode returns (fail closed leg).
-	roleErr error
-	// defaultRole is the role the fake answers for an unmatched user
-	// ("OUTSIDE_SALES" by default, the seeded counter audience).
-	defaultRole string
-	// captureNotifyOrderRep, when set, is called with the notice the
-	// notifier hands to NotifyOrderRep. Used by the N2 legs to assert the
-	// exact body the rep DM receives (the figureless twin when the rule
-	// says no).
-	captureNotifyOrderRep func(messaging.OrderRepNotice)
+	dmUser     string
+	dmBody     string
+	dmCalls    int
 }
 
 type fakeChannelPost struct {
@@ -59,17 +58,29 @@ func (f *fakeYardChat) YardSlugForBranch(_ context.Context, _ string) (string, e
 }
 
 func (f *fakeYardChat) NotifyOrderRep(_ context.Context, in messaging.OrderRepNotice) (messaging.OrderRepResult, error) {
-	if f.captureNotifyOrderRep != nil {
-		f.captureNotifyOrderRep(in)
-	}
 	if f.repErr != nil {
 		return messaging.OrderRepResult{}, f.repErr
 	}
-	f.repUserID = in.OrderRepUserID
-	if f.repKind == messaging.RouteRepDM {
-		return messaging.OrderRepResult{Kind: f.repKind, RepUserID: in.OrderRepUserID}, nil
+	if f.repKind != messaging.RouteRepDM {
+		return messaging.OrderRepResult{Kind: f.repKind}, nil
 	}
-	return messaging.OrderRepResult{Kind: f.repKind}, nil
+	rep := f.overrideRep
+	if rep == "" {
+		rep = in.OrderRepUserID
+	}
+	if rep == "" {
+		rep = f.customerRep
+	}
+	body := in.Body
+	if in.BodyNoFigures != "" {
+		body = in.BodyNoFigures
+		if in.RoleSeesFigures != nil && f.roleByUser[rep] != "" && in.RoleSeesFigures(f.roleByUser[rep]) {
+			body = in.Body
+		}
+	}
+	f.dmCalls++
+	f.dmUser, f.dmBody = rep, body
+	return messaging.OrderRepResult{Kind: messaging.RouteRepDM, RepUserID: rep}, nil
 }
 
 func (f *fakeYardChat) PostEventToChannelSlug(_ context.Context, slug, _ string, body string, _ messaging.EventRef, _ bool) (messaging.Message, bool, error) {
@@ -78,20 +89,6 @@ func (f *fakeYardChat) PostEventToChannelSlug(_ context.Context, slug, _ string,
 	}
 	f.posts = append(f.posts, fakeChannelPost{slug: slug, body: body})
 	return messaging.Message{}, true, nil
-}
-
-// UserRoleCode answers the role lookup the rep DM fence reads (N2).
-func (f *fakeYardChat) UserRoleCode(_ context.Context, userID string) (string, error) {
-	if f.roleErr != nil {
-		return "", f.roleErr
-	}
-	if r, ok := f.roleByUser[userID]; ok {
-		return r, nil
-	}
-	if userID == f.repUserID {
-		return f.defaultRole, nil
-	}
-	return "", nil
 }
 
 // defaultFiguresOK reads roleconfig.Default() so the test factory wires a
@@ -127,7 +124,7 @@ func fenceRef() tasks.TaskEventRef {
 }
 
 func TestOrderRepNotice_RepDMCarriesTheFiguresAndNothingIsPostedToAChannel(t *testing.T) {
-	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM, defaultRole: "OUTSIDE_SALES"}
+	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM, roleByUser: map[string]string{"u-rep-1": "outside_sales"}}
 	n := newNotifier(t, chat)
 	if err := n.PostTaskEvent(context.Background(), fenceRef()); err != nil {
 		t.Fatalf("the rep route delivers: %v", err)
@@ -292,7 +289,7 @@ func TestOrderRepNotice_RepDMRoleOffListFigureless(t *testing.T) {
 	// The rep's role looks up as an empty string (UserRoleCode answered
 	// nothing): every decision for a rule reads empty as off list; the
 	// figureless twin rides.
-	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM, defaultRole: ""}
+	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM}
 	n := newNotifier(t, chat)
 	if err := n.PostTaskEvent(context.Background(), fenceRefWithRep()); err != nil {
 		t.Fatalf("the rep route delivers: %v", err)
@@ -302,7 +299,7 @@ func TestOrderRepNotice_RepDMRoleOffListFigureless(t *testing.T) {
 	}
 	// NotifyOrderRep was called with the figureless body (because the
 	// rep role was off list). The fake records the call indirectly through
-	// chat.repUserID; re-running with a getter would test the same path
+	// chat.dmUser; re-running with a getter would test the same path
 	// twice. The structural assertion above is enough: the figure never
 	// makes it past the helper that picks the body, and a fence that
 	// picked the figured body when the rule said no would still send no
@@ -315,7 +312,7 @@ func TestOrderRepNotice_RepDMRoleOffListFigureless(t *testing.T) {
 // sentence to a reader whose clearance the rule could not answer.
 func TestOrderRepNotice_FigurelessWhenRuleErrors(t *testing.T) {
 	broken := func(string) (bool, error) { return true, errors.New("config unavailable") }
-	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM, defaultRole: "OUTSIDE_SALES"}
+	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM, roleByUser: map[string]string{"u-rep-1": "outside_sales"}}
 	n := yardChatNotifier{svc: chat, figuresOK: broken}
 	if err := n.PostTaskEvent(context.Background(), fenceRefWithRep()); err != nil {
 		t.Fatalf("the rep route delivers: %v", err)
@@ -336,11 +333,7 @@ func TestOrderRepNotice_RepDMFigurelessBodyWhenRuleDisallows(t *testing.T) {
 	// The rep is OFFSIDE_SALES on the list (no), but the rule asserts no:
 	// every role refused, the rep DM body is the figureless twin.
 	refused := func(string) (bool, error) { return false, nil }
-	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteNone, defaultRole: "OUTSIDE_SALES"}
-	var sent messaging.OrderRepNotice
-	chat.captureNotifyOrderRep = func(in messaging.OrderRepNotice) {
-		sent = in
-	}
+	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteNone, roleByUser: map[string]string{"u-rep-1": "outside_sales"}}
 	n := yardChatNotifier{svc: chat, figuresOK: refused}
 	if err := n.PostTaskEvent(context.Background(), fenceRefWithRep()); err != nil {
 		t.Fatalf("the fallback delivers: %v", err)
@@ -356,31 +349,27 @@ func TestOrderRepNotice_RepDMFigurelessBodyWhenRuleDisallows(t *testing.T) {
 			t.Errorf("the rule refused: counter is figureless (%q in %q)", leak, chat.posts[0].body)
 		}
 	}
-	_ = sent // reserved for the rep DM leg
 }
 
 // N2 (P3): the rep DM body the messaging call receives is the figureless
 // twin when the rule says no for the rep's role, even though the rep DM
 // route itself is alive.
 func TestOrderRepNotice_RepDMReceivesFigurelessBodyWhenRuleOffList(t *testing.T) {
-	off := map[string]bool{"OUTSIDE_SALES": true}
+	off := map[string]bool{"outside_sales": true}
 	refused := func(role string) (bool, error) {
 		if role == "" || off[role] {
 			return false, nil
 		}
 		return true, nil
 	}
-	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM, defaultRole: "OUTSIDE_SALES"}
-	var sent messaging.OrderRepNotice
-	chat.captureNotifyOrderRep = func(in messaging.OrderRepNotice) {
-		sent = in
-	}
+	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM, roleByUser: map[string]string{"u-rep-1": "outside_sales"}}
 	n := yardChatNotifier{svc: chat, figuresOK: refused}
 	if err := n.PostTaskEvent(context.Background(), fenceRefWithRep()); err != nil {
 		t.Fatalf("the rep route delivers: %v", err)
 	}
-	// The rep DM was called with the figureless body.
-	if !strings.Contains(sent.Body, "skid deposit changed") && !strings.Contains(sent.Body, "Skid count on order") {
+	// The rep DM went out with the figureless body.
+	sent := messaging.OrderRepNotice{Body: chat.dmBody}
+	if chat.dmCalls != 1 || !strings.Contains(sent.Body, "skid deposit changed") {
 		t.Fatalf("the rep DM body was the figureless twin: %q", sent.Body)
 	}
 	for _, leak := range []string{"$", "100.00", "150.00"} {
