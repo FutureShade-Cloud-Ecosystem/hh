@@ -539,7 +539,7 @@ func (s *Service) PaymentHoldsForRun(ctx context.Context, runID string) ([]StopP
 	if err != nil {
 		return nil, err
 	}
-	stops, err := s.repo.ListStopsForRun(ctx, run.ID)
+	stops, err := s.stopSource.ListStopsForRun(ctx, run.ID)
 	if err != nil {
 		return nil, err
 	}

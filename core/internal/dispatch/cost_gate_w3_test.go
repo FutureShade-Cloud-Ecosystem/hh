@@ -3,10 +3,13 @@ package dispatch
 // cost_gate_w3_test.go, the door money fence's rule, shape and posture: the
 // payment hold's figure and the gate's own sentence ride only to a role on
 // the cost and margin list, and every other caller is told the hold in words,
-// never a figure. The route level proof per role on both payment hold reads
-// is the integration leg (cost_gate_w3_integration_test.go); this file proves
-// the rule against the real configuration, the byte-absent shape, the
-// fail-closed posture and the dispatch refusal's words without a database.
+// never a figure. The reads themselves (PaymentHoldForStop,
+// PaymentHoldsForRun) are driven here through the stopRunSource double, so
+// CI's databaseless ci job carries them; the integration leg
+// (cost_gate_w3_integration_test.go) proves the same per role through the
+// real handlers and queries, and this file also proves the rule against the
+// real configuration, the byte-absent shape, the fail-closed posture and the
+// dispatch refusal's words without a database.
 
 import (
 	"context"
@@ -178,3 +181,166 @@ func TestCostRolesWired(t *testing.T) {
 type doorCostRoles func(string) (bool, error)
 
 func (f doorCostRoles) SeesCostAndMargin(role string) (bool, error) { return f(role) }
+
+// doorStopSource is the in-memory double the untagged read legs resolve
+// through: one run, its stops, and nothing else. The branch fence in
+// guardStop and guardRun still runs on top of it (a global caller passes).
+type doorStopSource struct {
+	run   Run
+	stops []Stop
+}
+
+func (d doorStopSource) GetStop(_ context.Context, id string) (Stop, error) {
+	for _, st := range d.stops {
+		if st.ID == id {
+			return st, nil
+		}
+	}
+	return Stop{}, ErrNotFound
+}
+
+func (d doorStopSource) GetRun(_ context.Context, id string) (Run, error) {
+	if d.run.ID == id {
+		return d.run, nil
+	}
+	return Run{}, ErrNotFound
+}
+
+func (d doorStopSource) ListStopsForRun(_ context.Context, runID string) ([]Stop, error) {
+	if d.run.ID != runID {
+		return nil, ErrNotFound
+	}
+	return d.stops, nil
+}
+
+// doorReadWorld is the reads' proof world: one run carrying a held stop
+// (the gate refusing it naming the figure in cents and in words) and a
+// clear stop, behind the real cost rule.
+func doorReadService(roles CostRoles) *Service {
+	gate := &fakeGate{deny: map[string]DispatchGateDecision{
+		"o-held": {
+			Allow: false, Code: "COD_UNPAID", AmountDueCents: 124000,
+			Reason: "COD balance of $1,240.00 is outstanding on this order.",
+		},
+	}}
+	src := doorStopSource{
+		run: Run{ID: "r-1", BranchID: "b-1"},
+		stops: []Stop{
+			{ID: "s-held", OrderID: "o-held", BranchID: "b-1"},
+			{ID: "s-clear", OrderID: "o-clear", BranchID: "b-1"},
+		},
+	}
+	return w3Service("2026-08-06").withStopSource(src).WithARGate(gate).WithCostRoles(roles)
+}
+
+// marshalHold renders one hold the way the route does, so the legs assert
+// the wire shape (byte absence) and not the struct.
+func marshalHold(t *testing.T, hold StopPaymentHold) string {
+	t.Helper()
+	body, err := json.Marshal(hold)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+// Both hold reads fence the door money for every off list role and keep it
+// for the list, driven through the reads themselves so CI's databaseless ci
+// job carries them (the dispatch package is not in CI's integration list;
+// the integration legs are local evidence only).
+func TestDoorMoney_BothHoldReadsFollowTheCostList(t *testing.T) {
+	cfg, err := roleconfig.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, role := range doorRolesOffTheList {
+		s := doorReadService(cfg)
+		hold, err := s.PaymentHoldForStop(doorCtx(role), "s-held")
+		if err != nil {
+			t.Fatalf("the stop's hold as %s: %v", role, err)
+		}
+		body := marshalHold(t, hold)
+		for _, leak := range []string{"amount_due_cents", "124000", "1,240", "COD balance"} {
+			if strings.Contains(body, leak) {
+				t.Errorf("the stop's hold as %s must not carry the figure in any shape (%q): %s", role, leak, body)
+			}
+		}
+		for _, want := range []string{doorMoneyWords, `"held":true`, `"code":"COD_UNPAID"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("the stop's hold as %s keeps the hold, its code and its words (%q): %s", role, want, body)
+			}
+		}
+		holds, err := s.PaymentHoldsForRun(doorCtx(role), "r-1")
+		if err != nil {
+			t.Fatalf("the run's holds as %s: %v", role, err)
+		}
+		if len(holds) != 2 {
+			t.Fatalf("the run's holds as %s: %d holds, want the run's two stops", role, len(holds))
+		}
+		for _, h := range holds {
+			body := marshalHold(t, h)
+			if h.StopID == "s-clear" {
+				if body != `{"stop_id":"s-clear","order_id":"o-clear","held":false}` {
+					t.Errorf("the run's holds as %s: a clear stop is wordless, the gate's own answer: %s", role, body)
+				}
+				continue
+			}
+			for _, leak := range []string{"amount_due_cents", "124000", "1,240", "COD balance"} {
+				if strings.Contains(body, leak) {
+					t.Errorf("the run's holds as %s must not carry the figure in any shape (%q): %s", role, leak, body)
+				}
+			}
+			if !strings.Contains(body, doorMoneyWords) || !strings.Contains(body, `"held":true`) {
+				t.Errorf("the run's holds as %s keep the held mark and the words: %s", role, body)
+			}
+		}
+	}
+	for _, role := range doorRolesOnTheList {
+		s := doorReadService(cfg)
+		hold, err := s.PaymentHoldForStop(doorCtx(role), "s-held")
+		if err != nil {
+			t.Fatalf("the stop's hold as %s: %v", role, err)
+		}
+		body := marshalHold(t, hold)
+		if !strings.Contains(body, `"amount_due_cents":124000`) || !strings.Contains(body, "COD balance") {
+			t.Errorf("the stop's hold as %s is on the list and keeps the figure and the gate's sentence: %s", role, body)
+		}
+		holds, err := s.PaymentHoldsForRun(doorCtx(role), "r-1")
+		if err != nil {
+			t.Fatalf("the run's holds as %s: %v", role, err)
+		}
+		for _, h := range holds {
+			body := marshalHold(t, h)
+			if h.StopID == "s-held" && !strings.Contains(body, `"amount_due_cents":124000`) {
+				t.Errorf("the run's holds as %s keep the figure on the held stop: %s", role, body)
+			}
+		}
+	}
+}
+
+// No rule wired fails closed on both reads: the dispatch role itself is told
+// the words and carries no figure.
+func TestDoorMoney_BothHoldReadsFailClosed(t *testing.T) {
+	s := doorReadService(nil)
+	hold, err := s.PaymentHoldForStop(doorCtx("LOGISTICS_MANAGER"), "s-held")
+	if err != nil {
+		t.Fatalf("the stop's hold: %v", err)
+	}
+	body := marshalHold(t, hold)
+	if strings.Contains(body, "amount_due_cents") || strings.Contains(body, "COD balance") {
+		t.Errorf("the stop's hold with no rule wired must hold the figure from everyone: %s", body)
+	}
+	if !strings.Contains(body, doorMoneyWords) {
+		t.Errorf("the stop's hold with no rule wired still tells the hold in words: %s", body)
+	}
+	holds, err := s.PaymentHoldsForRun(doorCtx("LOGISTICS_MANAGER"), "r-1")
+	if err != nil {
+		t.Fatalf("the run's holds: %v", err)
+	}
+	for _, h := range holds {
+		body := marshalHold(t, h)
+		if strings.Contains(body, "amount_due_cents") || strings.Contains(body, "COD balance") {
+			t.Errorf("the run's holds with no rule wired must hold the figure from everyone: %s", body)
+		}
+	}
+}
