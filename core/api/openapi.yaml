@@ -7290,7 +7290,7 @@ paths:
       tags:
         - staff-gl
       summary: Create a balanced manual journal (posts below the policy threshold, parks as DRAFT at or over it)
-      description: "Maker-checker: a journal whose debit total is below the gl_policy approval threshold posts immediately; at or over the threshold it is parked as DRAFT (surfaced as derived_status PENDING_APPROVAL) and a JE_OVER_THRESHOLD approval request is filed on the approvals rail. An unbalanced body is refused with an unprocessable-entity error."
+      description: "Maker-checker: a journal whose debit total is below the gl_policy approval threshold posts immediately; at or over the threshold it is parked as DRAFT (surfaced as derived_status PENDING_APPROVAL) and a JE_OVER_THRESHOLD approval request is filed on the approvals rail in the same transaction as the park. A journal at or over the threshold needs a branch_id to file under (bad request when it has none) and must be a manual journal (a journal of any other source at or over the threshold is a bad request and nothing is saved), and when the request cannot be filed the create fails (service unavailable) and nothing is saved. An unbalanced body is refused with an unprocessable-entity error."
       x-role: requireManager
       x-access:
         surfaces:
@@ -7360,7 +7360,7 @@ paths:
       tags:
         - staff-gl
       summary: Approve and post a parked DRAFT (the checker half of maker-checker)
-      description: "Four-eyes: the approver must differ from the journal's creator; a creator attempting to approve their own journal is refused as forbidden. Approving a journal that is no longer DRAFT conflicts."
+      description: "Four-eyes: the approver must differ from the journal's creator; a creator attempting to approve their own journal is refused as forbidden. Approving a journal that is no longer DRAFT conflicts. A journal over the approval threshold is posted by this route only when the approvals queue holds an approved request for the journal's current amount. Every other state conflicts, each with its own sentence: a pending request (\"gl: this journal has a pending approval request; decide it from the approvals queue, which posts it\"), a rejected request, a deleted request, an approved request for a different amount, and no request at all. Deciding the request in the queue is the way to post such a journal (the decision posts the journal and stamps the request in one transaction). A journal under the threshold with no request is approved by this route as before. The journal id is matched without regard to letter case. A journal made by a recurring run carries no request (a run files none yet), so at or over the threshold the conflict names its recurring template. When the queue cannot be asked the route answers 503."
       x-role: requireManager
       x-access:
         surfaces:
@@ -9082,7 +9082,7 @@ paths:
       tags:
         - staff-identity
       summary: List the approval requests the caller may see
-      description: A GLOBAL caller sees every branch; a scoped caller sees only their granted branches.
+      description: "A GLOBAL caller sees every branch; a scoped caller sees only their granted branches. With kind, the list is narrowed to one policy kind and only for a kind the caller could decide (the dealer's configured approvers): an unknown kind is a 400, a kind the caller holds no decide authority over is a 403."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -9100,6 +9100,12 @@ paths:
           description: Filter by approval status
           schema:
             $ref: "#/components/schemas/IdentityApprovalStatus"
+        - name: kind
+          in: query
+          required: false
+          description: Narrow the list to one policy kind the caller decides
+          schema:
+            $ref: "#/components/schemas/IdentityPolicyType"
       responses:
         "200":
           description: The page of approval requests
@@ -9107,6 +9113,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IdentityApprovalPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -11755,6 +11763,173 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: messagingCreateChannel
+      tags:
+        - staff-messaging
+      summary: Found a TEAM or TOPIC channel, idempotently on its slug
+      description: "The caller becomes the channel's owner. A replay with the same slug (or the slug derived from the same name) answers 200 with the existing channel, never a duplicate room, and only for a caller who already holds a row in that room (the founder, a derived member): a name or slug collision with any other room is refused with 409 and seats nobody, the branch wall reads the existing room's own branch (403), and a room of another kind (a DM, an APPROVAL or BRANCH room) is never answered here. Slugs in the system namespaces (dm-, rep-, approvals-, chosen or derived) are refused with 400. A channel naming a branch the caller does not reach is refused with 403; BRANCH, DM and APPROVAL kinds are structural or system-provisioned and are refused with 400."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelCreate"
+      responses:
+        "200":
+          description: The channel already existed and the caller is already in it (the idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "201":
+          description: The channel as founded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/dms:
+    post:
+      operationId: messagingCreateDM
+      tags:
+        - staff-messaging
+      summary: Open, or find, the direct message channel with one other staffer
+      description: "The pair's channel is found when it exists (whoever opened it, including a seeded pair) and created exactly once otherwise; a replay answers 200 with the same room. A direct message is reached only through this route: its slug namespace is closed to caller founded rooms, and a slug of the pair already held by a room of another kind is refused with 409 rather than converged on. Naming the caller's own id is 400; a user who is not an active staffer is 404."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingDMCreate"
+      responses:
+        "200":
+          description: The pair's channel already existed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "201":
+          description: The direct message channel as opened
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/members:
+    post:
+      operationId: messagingAddChannelMember
+      tags:
+        - staff-messaging
+      summary: Seat one staffer in a channel the caller belongs to
+      description: "The row is explicit and idempotent: an already-seated member answers the row as it stands, and a DERIVED row is never rewritten. A caller who is not a member of the channel is refused with 403 (the module's channel-scoping wall, which also keeps anyone from seating themselves into a room they hold no row in); a direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and on a room whose membership the branch model derives, a target who reaches neither the room's branch nor every branch is 403. A user who is not an active staffer is 404 or 403."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingDMCreate"
+      responses:
+        "200":
+          description: The membership row as seated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannelMember"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/members/{userID}:
+    delete:
+      operationId: messagingRemoveChannelMember
+      tags:
+        - staff-messaging
+      summary: Drop one explicit member row from a channel the caller belongs to
+      description: A DERIVED member row is the role and branch model's and is refused with 409 (the next membership sync would re-derive it); only explicit rows are hand-removable. A direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and a removal never drops the room's last OWNER row (409, a channel keeps its owner).
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: userID
+          in: path
+          required: true
+          description: The member being removed
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The removal echo
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/messaging/channels/{id}/messages:
     get:
       operationId: messagingListMessages
@@ -15524,6 +15699,255 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/pos/returns/customer-lines:
+    get:
+      operationId: posCustomerReturnLines
+      tags:
+        - staff-pos
+      summary: Read one customer's every sales order with its returnable lines
+      description: "The pre-return read of the returns-across flow: every sales order the customer holds, till rings and quote conversions alike, newest first, bounded by limit. Each line's open quantity is the same netting the commit guard reads, so the screen and the guard cannot disagree. A scoped caller sees only the branches their resolved authority reaches, the other branches' orders simply absent; naming an unreachable branch is the wall's 403. The house WALK-IN account is answered only through the number filter, never as a list of every walk in sale, and the filter never leaves that account's own orders."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: customer_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: The customer; leave it out with a number to read the WALK-IN house account's sale (the till carries no id for it); neither is a 400
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: number
+          in: query
+          required: false
+          schema:
+            type: string
+          description: A receipt or order number (an order number or an invoice number, with or without the hash, or the bare digits a branch's numbers end in) narrowing the answer to that order; required for the WALK-IN account
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The customer's orders with their returnable lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosCustomerLines"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: The house WALK-IN account asked without a receipt or order number (its sales are never listed)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/returns-across:
+    post:
+      operationId: posCreateReturnAcross
+      tags:
+        - staff-pos
+      summary: Commit one credit note across several orders of one customer (idempotent; 200 on a replay)
+      description: "The credit note across orders: several orders of ONE customer at ONE branch returned in ONE transaction, each order keeping its own return number and its own journal, the note holding the totals summed over its children. The approval threshold judges the note total. Idempotent on the note's own key; keys in the reserved rreq: namespace are refused. No restocking fee rides this flow."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/XApproverAuthorization"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosReturnAcrossInput"
+      responses:
+        "201":
+          description: The committed note (200 with the same body on an idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnNote"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/PosRefundApprovalRequired"
+        "422":
+          description: "A well-formed note the shape refuses: account credit for the house WALK-IN account (it goes back to cash or card), another customer's order, an order of another branch, one order twice, or an over-return on any order (the whole note refuses)."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The approver credential could not be checked, or the dealer's role configuration is not wired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/returns/preview:
+    post:
+      operationId: posPreviewReturnAcross
+      tags:
+        - staff-pos
+      summary: Preview the credit of a draft note across orders, priced exactly as the commit prices it
+      description: "The credit so far: the draft note's lines (order, order line, quantity) priced by the commit's own pricing function, per line, per order and for the note, money and tax. Nothing is written and no lock is taken. The same shape rules and walls as the commit answer in the commit's own words (the branch wall, one branch, one customer, the house WALK-IN account, an over-return, a line sent twice)."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: read
+        reason: prices a draft credit note through the commit's own pricing function and writes nothing
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosReturnPreviewInput"
+      responses:
+        "200":
+          description: The credit the note would book
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosReturnPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: A well-formed draft the shape refuses, in the commit's words.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/swaps:
+    post:
+      operationId: posCreateSwap
+      tags:
+        - staff-pos
+      summary: Ring a swap, a credit note across orders and a new order in one move (idempotent; 200 on a replay)
+      description: "The goods coming back (orders and lines, as the credit note takes them) and the goods going out (the new order's lines) in ONE transaction. The credit is spent on the new order; what the new order does not take goes back by the original tender (leftover_method, which the server derives and refuses to differ from); what it takes beyond the credit is paid by tender (CASH default, CARD, CHEQUE, ACCOUNT). Every source order's invoice must be paid: a swap spends credit already in hand. The credit note and the new order carry the swap's id and point at each other. The approval threshold judges the credit note total. Idempotent on the swap's key; the figures are the server's, see the swap preview."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/XApproverAuthorization"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosSwapInput"
+      responses:
+        "201":
+          description: The committed swap (200 with the same body on an idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSwapResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "402":
+          description: The card shortfall was declined
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/PosRefundApprovalRequired"
+        "422":
+          description: "A well-formed swap the shape refuses: a source order with an open invoice, the house WALK-IN account, a leftover rail that is not the original tender, an over-return, a priced line the ring refuses."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          description: The processor refused the leftover refund; nothing was booked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The approver credential could not be checked, or the dealer's role configuration is not wired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pos/swaps/preview:
+    post:
+      operationId: posPreviewSwap
+      tags:
+        - staff-pos
+      summary: Preview a swap's server figures, writing nothing
+      description: The credit (priced as the commit prices it), the new order (priced as the ring prices it), the part of the credit spent on it, the leftover going back and the shortfall to collect, with the same walls and words as the swap.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - counter-till
+        level: read
+        reason: prices a draft swap through the commit's own pricing functions and writes nothing
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PosSwapInput"
+      responses:
+        "200":
+          description: The swap's figures
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PosSwapPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: A well-formed draft the shape refuses, in the swap's words
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pos/returns/pickups:
     get:
       operationId: posListReturnPickups
@@ -30210,13 +30634,21 @@ components:
           type: boolean
     DashboardProfile:
       type: string
-      description: The five layout job shapes; the role-code-to-profile mapping is data, not code
+      description: The five layout job shapes plus the manager refinements (one profile per manager role, manager.<role>, born from its base shape's rows); the role-code-to-profile mapping is data, not code
       enum:
         - counter
         - yard
         - driver
         - manager
         - admin
+        - manager.branch
+        - manager.sales
+        - manager.yard
+        - manager.logistics
+        - manager.procurement
+        - manager.payables
+        - manager.controller
+        - manager.general
     DashboardKind:
       type: string
       description: How a tile or measure's number is classified so the client formats it without guessing
@@ -35517,7 +35949,6 @@ components:
         - move_type
         - source_type
         - source_ref_id
-        - unit_cost_cents
         - occurred_at
       properties:
         id:
@@ -35554,6 +35985,7 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         occurred_at:
           type: string
           format: date-time
@@ -35567,7 +35999,6 @@ components:
         - on_hand_base
         - allocated_base
         - available_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -35587,7 +36018,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
-          description: The branch weighted-average unit cost
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryPendingFulfilment:
       type: object
       description: One COLLECT_LATER or DELIVERED line awaiting a stock move
@@ -35748,7 +36179,6 @@ components:
         - in_transit_base
         - available_base
         - soft_held_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -35777,6 +36207,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryBrowseRow:
       type: object
       description: One product on the browse surface, with its stock position
@@ -35799,7 +36230,6 @@ components:
         - reserved_base
         - available_base
         - in_transit_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -35841,6 +36271,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryFacetValue:
       type: object
       required:
@@ -36131,7 +36562,6 @@ components:
         - qty_base
         - qty_shipped_base
         - qty_received_base
-        - unit_cost_cents
         - ship_move_id
         - recv_move_id
       properties:
@@ -36159,6 +36589,7 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         ship_move_id:
           type: string
         recv_move_id:
@@ -36271,8 +36702,6 @@ components:
         - preferred_vendor_id
         - preferred_vendor_name
         - lead_time_days
-        - avg_cost_cents
-        - suggested_value_cents
       properties:
         product_id:
           type: string
@@ -36324,10 +36753,11 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
         suggested_value_cents:
           type: integer
           format: int64
-          description: suggested_qty_base times the branch weighted-average cost
+          description: "suggested_qty_base times the branch weighted-average cost; the same role gate as avg_cost_cents (the figure derives from it): byte-absent for a caller off the dealer's cost and margin list."
     InventoryReorderPoint:
       type: object
       description: The per (product, branch) replenishment policy row
@@ -36766,8 +37196,6 @@ components:
         - snapshot_qty_base
         - counted_qty_base
         - variance_base
-        - unit_cost_cents
-        - variance_value_cents
       properties:
         id:
           type: string
@@ -36797,9 +37225,11 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         reason_code:
           type: string
         move_id:
@@ -36875,8 +37305,6 @@ components:
         - line_count
         - counted_lines
         - variance_lines
-        - net_variance_value_cents
-        - abs_variance_value_cents
       properties:
         line_count:
           type: integer
@@ -36890,9 +37318,11 @@ components:
         net_variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         abs_variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
     InvCountSheetDetail:
       type: object
       description: A sheet plus its lines and a variance summary (the count-variance screen payload)
@@ -36916,7 +37346,6 @@ components:
         - product_id
         - location_id
         - on_hand_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -36929,6 +37358,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InvCountCreateSheetRequest:
       type: object
       required:
@@ -37403,6 +37833,65 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MessagingChannel"
+    MessagingChannelCreate:
+      type: object
+      description: "One caller-founded channel. Slug is optional: an empty slug is derived from the name, so the same founding twice converges on one room. BranchID optionally scopes a TEAM channel to one yard the caller reaches."
+      required:
+        - kind
+        - name
+      properties:
+        kind:
+          type: string
+          enum:
+            - TEAM
+            - TOPIC
+        name:
+          type: string
+        topic:
+          type: string
+        slug:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+    MessagingDMCreate:
+      type: object
+      description: Names the other staffer (the DM and member-add bodies share the shape)
+      required:
+        - user_id
+      properties:
+        user_id:
+          type: string
+          format: uuid
+    MessagingChannelMember:
+      type: object
+      description: One membership row. DERIVED rows are the role and branch model's and are never hand-removable; EXPLICIT rows are the seat this surface writes.
+      required:
+        - channel_id
+        - user_id
+        - role
+        - source
+        - joined_at
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+            - MEMBER
+            - OWNER
+        source:
+          type: string
+          enum:
+            - DERIVED
+            - EXPLICIT
+        joined_at:
+          type: string
+          format: date-time
     MessagingMessage:
       type: object
       description: "One post. author_id is empty for a system EVENT message. ref carries the structured MessagingEventRef for EVENT messages and MessagingApprovalRef for APPROVAL cards. thread_root_id is empty for a top-level message. superseded_by non-empty means a newer fact about the same record auto-resolved this message (last write wins): it renders as superseded and never requires an ack."
@@ -40313,6 +40802,10 @@ components:
         - status
         - replayed
       properties:
+        swap_id:
+          type: string
+          format: uuid
+          description: Present when the sale is the new order of a swap
         order_id:
           type: string
           format: uuid
@@ -41756,6 +42249,13 @@ components:
             - WRONG_ITEM
             - NO_LONGER_NEEDED
             - OTHER
+        disposition:
+          type: string
+          enum:
+            - RESTOCK
+            - DAMAGED
+            - NO_RETURN
+          description: What became of the goods. RESTOCK puts them back on the shelf, DAMAGED writes them off, NO_RETURN leaves them with the customer (the money reversal only). Goods that never left the shelf are credit only whatever is asked. Absent, the return's restock flag decides (true RESTOCK, false NO_RETURN).
     PosPickupInput:
       type: object
       description: The optional logistics pickup block on a return
@@ -41836,6 +42336,18 @@ components:
         - status
         - replayed
       properties:
+        invoice_offset_cents:
+          type: integer
+          format: int64
+          description: The part of an order that is not fully paid that came off its open invoice; the rail moved the rest
+        payment_note:
+          type: string
+          description: The split in words, when there was one
+        applied_cents:
+          type: integer
+          format: int64
+          description: A swap child; the part of the total spent on the new order
+          the rail moved the rest: null
         return_id:
           type: string
           format: uuid
@@ -41945,6 +42457,8 @@ components:
         - invoice_id
         - sale_tender
         - card_refundable
+        - returnable
+        - not_returnable_reason
         - lines
       properties:
         order_id:
@@ -41971,10 +42485,564 @@ components:
         card_refundable:
           type: boolean
           description: The original CARD capture carried a gateway reference
+        returnable:
+          type: boolean
+          description: Whether the order can be returned now
+        not_returnable_reason:
+          type: string
+          description: In words, why not (an order a quote became has no live finalised invoice yet); empty when returnable
         lines:
           type: array
           items:
             $ref: "#/components/schemas/PosReturnableLine"
+    PosReturnAcrossInput:
+      type: object
+      description: The idempotent credit-note-across-orders body. One customer, one branch, one refund rail; each line may carry its own disposition, and the whole-note restock flag stands for lines that name none; the drawer (till_session_id) is needed only by a CASH refund. No fee field, the flow carries no restocking fee.
+      required:
+        - idempotency_key
+        - orders
+        - refund_method
+        - reason
+      properties:
+        idempotency_key:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+          description: The customer; empty with a number is the WALK-IN house account
+        number:
+          type: string
+          description: The receipt or order number the sale was found by; with an empty customer_id it makes the note the walk-in's
+        orders:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PosReturnAcrossOrder"
+        refund_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+        reason:
+          type: string
+        restock:
+          type: boolean
+        till_session_id:
+          type: string
+          format: uuid
+          description: "CASH refunds: the open drawer"
+    PosReturnAcrossOrder:
+      type: object
+      description: One order's share of a returns-across note, the order id and its returned lines.
+      required:
+        - order_id
+        - lines
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PosReturnLineInput"
+    PosReturnPreviewInput:
+      type: object
+      description: The draft of a returns-across note, without a key or a drawer. With a refund_method of CASH or CARD the answer carries, per order, the split the commit will make on an order that is not fully paid.
+      required:
+        - orders
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+          description: The customer; empty with a number is the WALK-IN house account
+        number:
+          type: string
+          description: The receipt or order number the sale was found by; with an empty customer_id it makes the draft the walk-in's
+        refund_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+        orders:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PosReturnAcrossOrder"
+    PosReturnPreviewLine:
+      type: object
+      required:
+        - order_line_id
+        - qty_base
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+      properties:
+        order_line_id:
+          type: string
+          format: uuid
+        qty_base:
+          type: number
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+    PosReturnPreviewOrder:
+      type: object
+      required:
+        - order_id
+        - order_no
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+        - lines
+      properties:
+        rail_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: what goes back in cash or card"
+        invoice_offset_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: what comes off the order's open invoice"
+        rail_note:
+          type: string
+          description: The split in words, empty when nothing is split
+        order_id:
+          type: string
+          format: uuid
+        order_no:
+          type: string
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosReturnPreviewLine"
+    PosReturnPreview:
+      type: object
+      description: "The credit so far of a draft note: the figures the commit would book, priced by the commit's own function."
+      required:
+        - customer_id
+        - branch_id
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+        - orders
+      properties:
+        rail_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: the sum of what goes back in cash or card"
+        invoice_offset_cents:
+          type: integer
+          format: int64
+          description: "With a refund_method: the sum of what comes off the open invoices"
+        customer_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+          description: The note total with tax
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosReturnPreviewOrder"
+    PosSwapInput:
+      type: object
+      description: "The idempotent swap body: one customer, the orders and lines coming back, the lines going out. The new order's branch is the credit note's one branch; the shortfall tender defaults to CASH."
+      required:
+        - idempotency_key
+        - customer_id
+        - orders
+        - till_session_id
+        - lines
+      properties:
+        idempotency_key:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        orders:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PosReturnAcrossOrder"
+        reason:
+          type: string
+        leftover_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+          description: Optional; must be the original tender when named
+        till_session_id:
+          type: string
+          format: uuid
+        sale_type:
+          type: string
+          enum:
+            - COLLECT_NOW
+            - COLLECT_LATER
+            - DELIVERED
+          default: COLLECT_NOW
+        tender:
+          type: string
+          enum:
+            - ACCOUNT
+            - CASH
+            - CARD
+            - CHEQUE
+          description: The shortfall's tender
+        payment_token:
+          type: string
+          description: "CARD shortfall only: client-tokenized; never a PAN"
+        card_type:
+          type: string
+          enum:
+            - DEBIT
+            - CREDIT
+            - PREPAID
+            - UNKNOWN
+        signature_ref:
+          type: string
+        requested_date:
+          type: string
+          format: date
+        notes:
+          type: string
+        po_job_ref:
+          type: string
+          maxLength: 64
+        salesperson_id:
+          type: string
+        job_address:
+          type: string
+          maxLength: 200
+        job_reference:
+          type: string
+          maxLength: 64
+        relief:
+          $ref: "#/components/schemas/PosReliefDecision"
+        discount:
+          $ref: "#/components/schemas/PosDiscountInput"
+        lines:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PosLineInput"
+    PosSwapNewOrder:
+      type: object
+      required:
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+      properties:
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+    PosSwapPreview:
+      type: object
+      description: The server's figures for a draft swap (applied + leftover = credit; applied + shortfall = new order total)
+      required:
+        - credit
+        - new_order
+        - applied_cents
+        - leftover_cents
+        - shortfall_cents
+        - leftover_method
+      properties:
+        credit:
+          $ref: "#/components/schemas/PosReturnPreview"
+        new_order:
+          $ref: "#/components/schemas/PosSwapNewOrder"
+        applied_cents:
+          type: integer
+          format: int64
+          description: The part of the credit spent on the new order
+        leftover_cents:
+          type: integer
+          format: int64
+          description: The part going back by the original tender
+        shortfall_cents:
+          type: integer
+          format: int64
+          description: The part of the new order the tender pays
+        leftover_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+    PosSwapResult:
+      type: object
+      description: The committed swap, returned verbatim on an idempotent replay; both documents carry swap_id
+      required:
+        - swap_id
+        - note
+        - sale
+        - credit_cents
+        - applied_cents
+        - leftover_cents
+        - shortfall_cents
+        - leftover_method
+        - replayed
+      properties:
+        swap_id:
+          type: string
+          format: uuid
+        note:
+          $ref: "#/components/schemas/PosReturnNote"
+        sale:
+          $ref: "#/components/schemas/PosSale"
+        credit_cents:
+          type: integer
+          format: int64
+        applied_cents:
+          type: integer
+          format: int64
+        leftover_cents:
+          type: integer
+          format: int64
+        shortfall_cents:
+          type: integer
+          format: int64
+        leftover_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+        replayed:
+          type: boolean
+    PosReturnNote:
+      type: object
+      description: The committed credit note across orders, returned verbatim on an idempotent replay. The totals are summed over the children; each child keeps its own return number.
+      required:
+        - note_id
+        - note_no
+        - customer_id
+        - branch_id
+        - refund_method
+        - subtotal_cents
+        - tax_cents
+        - total_cents
+        - returns
+        - replayed
+      properties:
+        swap_id:
+          type: string
+          format: uuid
+          description: Present when the note is the credit of a swap
+        note_id:
+          type: string
+          format: uuid
+        note_no:
+          type: string
+        customer_id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+        refund_method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - ACCOUNT_CREDIT
+        subtotal_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        total_cents:
+          type: integer
+          format: int64
+        returns:
+          type: array
+          description: The note's children, one per order, each its own committed return
+          items:
+            $ref: "#/components/schemas/PosReturn"
+        replayed:
+          type: boolean
+    PosCustomerLine:
+      type: object
+      description: "One line of one order in the customer lines read: the open quantity is the commit guard's own netting (qty sold less every returned qty), the money and tax already returned ride the same sums, and the shelf state says whether the goods ever left the shelf (NOT_FULFILLED, PARTIALLY_FULFILLED, FULFILLED)."
+      required:
+        - order_line_id
+        - product_id
+        - sku
+        - description
+        - qty_sold
+        - qty_returned
+        - qty_open
+        - unit_price_cents
+        - line_total_cents
+        - tax_cents
+        - money_returned_cents
+        - tax_returned_cents
+        - shelf_state
+      properties:
+        order_line_id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        description:
+          type: string
+        qty_sold:
+          type: number
+        qty_returned:
+          type: number
+        qty_open:
+          type: number
+        unit_price_cents:
+          type: integer
+          format: int64
+        line_total_cents:
+          type: integer
+          format: int64
+        tax_cents:
+          type: integer
+          format: int64
+        money_returned_cents:
+          type: integer
+          format: int64
+        tax_returned_cents:
+          type: integer
+          format: int64
+        shelf_state:
+          type: string
+          enum:
+            - NOT_FULFILLED
+            - PARTIALLY_FULFILLED
+            - FULFILLED
+    PosCustomerOrder:
+      type: object
+      description: "One order of the customer lines read. Source names where it came from: TILL, a committed ring whose facts ride beside it, or QUOTE, an order a quote became (an order like any other, carrying no till facts)."
+      required:
+        - order_id
+        - order_no
+        - branch_id
+        - branch_name
+        - created_at
+        - job_label
+        - source
+        - sale_type
+        - tender
+        - fulfilment_state
+        - invoice_id
+        - card_refundable
+        - lines
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        order_no:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+        branch_name:
+          type: string
+          description: The branch's name
+          so the one branch refusal can name the branches: null
+        created_at:
+          type: string
+          format: date-time
+        job_label:
+          type: string
+          description: The job address
+          else the job reference: null
+          else the customer's PO or job reference: null
+        source:
+          type: string
+          enum:
+            - TILL
+            - QUOTE
+        sale_type:
+          type: string
+          enum:
+            - ""
+            - COLLECT_NOW
+            - COLLECT_LATER
+            - DELIVERED
+            - COD
+        tender:
+          type: string
+          enum:
+            - ""
+            - ACCOUNT
+            - CASH
+            - CARD
+            - CHEQUE
+          description: The original ring's tender; empty on a quote conversion
+        fulfilment_state:
+          type: string
+          description: The order's own ladder word
+          CONFIRMED through FULFILLED: null
+        invoice_id:
+          type: string
+          description: The order's live invoice id; empty when it has none
+        card_refundable:
+          type: boolean
+          description: The original CARD capture carried a gateway reference
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosCustomerLine"
+    PosCustomerLines:
+      type: object
+      description: The customer lines read's answer. The orders are newest first and bounded by the limit; no cursor rides the envelope (a narrower branch query is the reader's own drill down).
+      required:
+        - customer_id
+        - items
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PosCustomerOrder"
     PosReturnPickup:
       type: object
       description: One row on the logistics pickup queue

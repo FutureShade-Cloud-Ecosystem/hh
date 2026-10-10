@@ -32,10 +32,10 @@
 #   the served bundle carries the picker's structure: the three live card
 #     labels ("Sales", "Sales manager", "Payables and Receivables"), the ten coming rows' labels, the
 #     Coming heading, and the demo badge's copy;
-#   /api/v1/demo/flows answers the closed table's three flows;
+#   /api/v1/demo/flows answers the closed table's four flows;
 #   POST /api/v1/demo/session without the phrase is refused by the gate, and
-#     with it mints for the three flow ids the front door maps (sales,
-#     sales-manager, payables-receivables);
+#     with it mints for the four flow ids the front door maps (sales,
+#     sales-manager, payables-receivables, financial-controller);
 #   the gate stands down on a staff route behind a bearer and no phrase.
 #
 # Cleanup removes every process, container, network and temporary path the
@@ -268,10 +268,10 @@ done
 echo "== the demo routes through the gate"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"payables-receivables"'*)
-		pass "/api/v1/demo/flows answers the closed table's three flows"
+	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"payables-receivables"'*'"flow":"financial-controller"'*)
+		pass "/api/v1/demo/flows answers the closed table's four flows"
 		;;
-	*) fail "/api/v1/demo/flows did not answer the three flows: $flows" ;;
+	*) fail "/api/v1/demo/flows did not answer the four flows: $flows" ;;
 esac
 
 code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
@@ -280,7 +280,7 @@ code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
 [ "$code" = "401" ] && pass "the mint without the phrase is refused by the gate" \
 	|| fail "the mint without the phrase answered $code, want 401"
 
-for flow in sales sales-manager payables-receivables; do
+for flow in sales sales-manager payables-receivables financial-controller; do
 	mint="$(curl -s -u "demo:$PHRASE" -H 'Content-Type: application/json' \
 		-d "{\"flow\":\"$flow\"}" "$BASE/api/v1/demo/session")"
 	case "$mint" in

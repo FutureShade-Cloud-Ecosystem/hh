@@ -22,6 +22,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
@@ -102,7 +103,8 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	glSvc := gl.NewService(gl.NewRepository(pool)).
 		WithDeadRequeuer(outboxStore).
 		WithAudit(auditSvc).
-		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals})
+		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
+		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
 	gl.NewHandler(glSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
 
@@ -110,8 +112,18 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithAudit(auditSvc)
 	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
 	productSvc.WithStock(productStockReader{svc: inventorySvc}).WithBranchStock(inventorySvc).WithListPrices(pricingSvc)
-	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterRoutes(r, g)
-	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterStockTruthRoutes(r, g)
+	// X3, the yard fence: the stock reads' cost legs (on hand, branch
+	// stock, browse, the replenishment worklist) ride only for a caller
+	// on the configuration's cost and margin list, the same rule the
+	// quote and till reads answer through. Both route bundles carry the
+	// rule, and the boot fail-fast keeps an unwired boot from handing
+	// the yard team every branch's costs.
+	inventoryHandler := inventory.NewHandler(inventorySvc, log).WithUserLinker(link).WithCostRoles(roleCfg)
+	if !inventoryHandler.CostRolesWired() {
+		panic("inventory: cost roles not wired - the stock reads would answer the cost legs to every caller")
+	}
+	inventoryHandler.RegisterRoutes(r, g)
+	inventoryHandler.RegisterStockTruthRoutes(r, g)
 
 	// The order lifecycle: base service, audit seams, reorder seams (pricing
 	// and inventory are in-batch), actor names. The customer-tier seam
@@ -171,6 +183,13 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// service runs, from the same configuration: the store is built on the
 	// operations wire, so the configuration is published for it (P2-4).
 	quote.PublishRoleConfig(roleCfg)
+	// The messaging membership wall reads the same configuration's Admin
+	// cell on house-messages (who may manage a room's members beside the
+	// room's owner): the service is built on the operations wire the role
+	// configuration does not pass, so it is published for it here, beside
+	// the quote door's publish. Nothing published means the wall knows no
+	// admin and fails closed to owner-only.
+	messaging.PublishRoleConfig(roleCfg)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
@@ -226,6 +245,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		pricingSvc:      pricingSvc,
 		quoteStaffSvc:   quoteStaffSvc,
 		quoteAutomation: quoteAutomation,
+		roleCfg:         roleCfg,
 	}
 }
 
@@ -249,15 +269,30 @@ type moneySpine struct {
 	pricingSvc      *pricing.Service
 	quoteStaffSvc   *quote.StaffService
 	quoteAutomation *quote.AutomationService
+	// roleCfg rides the spine for the operations wiring's role-gated
+	// reads (the counts' X3 cost gate), the same configuration the
+	// money-side reads already gate through here.
+	roleCfg *roleconfig.Config
 }
 
 // jeApprovalFilerAdapter satisfies gl.ApprovalFiler over the approvals
-// rail's FileJEApproval (the pin's adapter, re-pointed at the bridge).
+// rail's FileJEApprovalTx (the pin's adapter, re-pointed at the bridge).
 type jeApprovalFilerAdapter struct{ svc *identity.Approvals }
 
-func (a jeApprovalFilerAdapter) FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error {
-	_, err := a.svc.FileJEApproval(ctx, journalID, branchID, amountCents, createdBy)
-	return err
+func (a jeApprovalFilerAdapter) FileJEApprovalTx(ctx context.Context, tx pgx.Tx, journalID, branchID string, amountCents int64, createdBy string) (func(context.Context), error) {
+	return a.svc.FileJEApprovalTx(ctx, tx, journalID, branchID, amountCents, createdBy)
+}
+
+// jeStateAdapter satisfies gl.ApprovalStateChecker over identity's JournalApprovalState: the GL's approve
+// route asks where a journal stands with the rail, and the two modules' state words are the same strings.
+type jeStateAdapter struct{ svc *identity.Approvals }
+
+func (a jeStateAdapter) JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (gl.ApprovalState, error) {
+	st, err := a.svc.JournalApprovalState(ctx, journalID, amountCents)
+	if err != nil {
+		return "", err
+	}
+	return gl.ApprovalState(st), nil
 }
 
 // jeDeciderAdapter satisfies the rail's JEDecider over gl's

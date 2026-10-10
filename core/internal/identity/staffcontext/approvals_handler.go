@@ -23,6 +23,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -102,15 +107,38 @@ func (h *ApprovalsHandler) listApprovals(w http.ResponseWriter, r *http.Request,
 		httpx.Error(w, http.StatusUnauthorized, "no caller")
 		return
 	}
-	list, err := h.svc.ListApprovals(r.Context(), caller, r.URL.Query().Get("status"))
+	list, err := h.svc.ListApprovalsByKind(r.Context(), caller, r.URL.Query().Get("status"), PolicyType(r.URL.Query().Get("kind")))
 	if err != nil {
 		writeApprovalErr(w, r, err)
 		return
 	}
-	if list == nil {
-		list = []ApprovalRequest{}
+	// The contract's IdentityApprovalPage: the list is ordered (newest first, id as the tie break), the
+	// cursor is the id of the last row of the page before, and a page of limit rows carries next_cursor
+	// while more follow.
+	p, perr := httpx.ParseCursorPage(r)
+	if perr != nil {
+		httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
+		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, list)
+	start := 0
+	if p.Cursor != "" {
+		at, id, ok := parseApprovalCursor(p.Cursor)
+		if !ok {
+			httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
+			return
+		}
+		// Positional: the page starts at the first row strictly after the (requested_at, id) pair under the
+		// list's own order, so the row the cursor names may have left the list since (decided, tombstoned)
+		// and the walk neither fails nor skips nor repeats a row.
+		start = sort.Search(len(list), func(i int) bool { return approvalAfter(list[i], at, id) })
+	}
+	page := list[start:]
+	next := ""
+	if len(page) > p.Limit {
+		page = page[:p.Limit]
+		next = approvalCursor(page[len(page)-1])
+	}
+	httpx.WriteCursorPage(w, page, next, p.Limit)
 }
 
 type decideApprovalRequest struct {
@@ -154,4 +182,37 @@ func writeApprovalErr(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	}
 	httpx.Error(w, http.StatusInternalServerError, "internal error")
+}
+
+// approvalCursor is the keyset position of a row under the list's order (requested_at descending, id
+// ascending): its filing time to the microsecond Postgres keeps, and its id.
+func approvalCursor(a ApprovalRequest) string {
+	return a.RequestedAt.UTC().Format(approvalCursorTime) + "|" + a.ID
+}
+
+const approvalCursorTime = "2006-01-02T15:04:05.000000Z07:00"
+
+// parseApprovalCursor reads a cursor key back into its pair; anything else is malformed.
+func parseApprovalCursor(key string) (time.Time, string, bool) {
+	ts, id, ok := strings.Cut(key, "|")
+	if !ok {
+		return time.Time{}, "", false
+	}
+	at, err := time.Parse(approvalCursorTime, ts)
+	if err != nil {
+		return time.Time{}, "", false
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return time.Time{}, "", false
+	}
+	return at, id, true
+}
+
+// approvalAfter reports whether a row sorts strictly after the pair under requested_at DESC, id ASC.
+func approvalAfter(a ApprovalRequest, at time.Time, id string) bool {
+	rt := a.RequestedAt.UTC().Truncate(time.Microsecond)
+	if rt.Equal(at) {
+		return a.ID > id
+	}
+	return rt.Before(at)
 }

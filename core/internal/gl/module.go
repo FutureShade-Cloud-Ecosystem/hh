@@ -109,12 +109,36 @@ type DeadRequeuer interface {
 }
 
 // ApprovalFiler is GL's nil-able approvals-rail seam (0075). When CreateJournal parks a MANUAL journal as
-// DRAFT (at/over the shipped gl_policy maker-checker threshold), GL best-effort files a JE_OVER_THRESHOLD
-// approval request through this seam so the rail fans out approval cards. The adapter (main.go) wraps
-// identity.Service.FileJEApproval. Log-and-continue: parking NEVER depends on it, a rail/identity blip
-// must not fail a journal write, and nil (unwired) is byte-identical to the shipped park behavior.
+// DRAFT (at/over the shipped gl_policy maker-checker threshold), GL files a JE_OVER_THRESHOLD approval
+// request through this seam IN THE PARK'S TRANSACTION (ruling 108): the journal and its request commit
+// together, or the create fails and neither exists, so a journal is never parked that can only be posted
+// through a request that was never filed. The returned func is the card fan-out, run by GL after the commit.
+// The adapter (main.go) wraps identity.Approvals.FileJEApprovalTx. Nil (unwired) is the shipped park
+// behavior: a bare DRAFT with no request.
 type ApprovalFiler interface {
-	FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error
+	FileJEApprovalTx(ctx context.Context, tx pgx.Tx, journalID, branchID string, amountCents int64, createdBy string) (func(context.Context), error)
+}
+
+// ApprovalState is where a parked journal stands with the approvals rail.
+type ApprovalState string
+
+const (
+	ApprovalNone          ApprovalState = "none"           // no JE_OVER_THRESHOLD request exists for the journal
+	ApprovalPending       ApprovalState = "pending"        // a request is waiting for its decision
+	ApprovalRejected      ApprovalState = "rejected"       // the request was declined
+	ApprovalDeleted       ApprovalState = "deleted"        // the request was tombstoned (soft deleted)
+	ApprovalAmountDiffers ApprovalState = "amount_differs" // approved, but for another amount than the journal now carries
+	ApprovalApproved      ApprovalState = "approved"       // approved for the journal's current amount
+)
+
+// ApprovalStateChecker is the rail read the GL's own approve route asks before it posts: where does this
+// journal stand with its JE_OVER_THRESHOLD request, given the amount the journal carries now. A journal over
+// the threshold is posted by this route only on ApprovalApproved, an APPROVED request for its current
+// amount; every other state refuses in its own words, and what happens to the request is decided in the
+// approvals queue and not here. An unwired checker refuses the route: a money guard that cannot ask does
+// not post.
+type ApprovalStateChecker interface {
+	JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (ApprovalState, error)
 }
 
 // NoopCostBasis is the dormant W5 cost-basis seam: it always reports "no cost basis" (found=false) so the
@@ -165,19 +189,20 @@ func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: po
 // Service is the GL domain seam. It owns the journal lifecycle, the posting consumer, tie-out, and close.
 // Sibling seams are injected via the With* builder options (main.go wires the real adapters).
 type Service struct {
-	repo          *Repository
-	store         glStore
-	invoices      InvoiceReader
-	taxSplits     TaxSplitReader
-	ar            ARSubledger
-	payments      PaymentReader
-	costBasis     CostBasis
-	dead          DeadRequeuer
-	audit         audit.Recorder
-	approvalFiler ApprovalFiler // 0075: nil-able JE park → approvals-rail filing seam
-	log           *slog.Logger
-	now           func() time.Time
-	callerFrom    func(context.Context) (identity.StaffContext, bool)
+	repo            *Repository
+	store           glStore
+	invoices        InvoiceReader
+	taxSplits       TaxSplitReader
+	ar              ARSubledger
+	payments        PaymentReader
+	costBasis       CostBasis
+	dead            DeadRequeuer
+	audit           audit.Recorder
+	approvalFiler   ApprovalFiler        // 0075: nil-able JE park → approvals-rail filing seam
+	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
+	log             *slog.Logger
+	now             func() time.Time
+	callerFrom      func(context.Context) (identity.StaffContext, bool)
 }
 
 // NewService wires the repository. Optional deps are injected via the With* methods. The repository is the
@@ -273,6 +298,12 @@ func (s *Service) WithDeadRequeuer(d DeadRequeuer) *Service { s.dead = d; return
 // park behaves exactly as today (no rail filing). Chainable.
 func (s *Service) WithApprovalFiler(f ApprovalFiler) *Service { s.approvalFiler = f; return s }
 
+// WithApprovalStateChecker injects the request-state read the approve route consults. Chainable.
+func (s *Service) WithApprovalStateChecker(c ApprovalStateChecker) *Service {
+	s.approvalChecker = c
+	return s
+}
+
 // - provider surface (bankrec + finstmt + boot depend on these) -
 
 // PostExternal posts a caller-built balanced journal through the GL, idempotent on in.IdempotencyKey, and
@@ -326,7 +357,7 @@ func (s *Service) RegisterPostingHandlers(d *notify.Dispatcher) {
 }
 
 // PostedTopics is the frozen set of outbox topics the GL posting consumer owns (the W5 eight + the two
-// W7 POS-return topics + the deposit release, 0374).
+// W7 POS-return topics + the deposit release, 0374 + the damaged goods write off, 0378).
 var PostedTopics = []string{
 	"ar.invoice.finalized",
 	"payment.received",
@@ -339,6 +370,7 @@ var PostedTopics = []string{
 	"pos.return.committed",
 	"order.returned",
 	"deposit.released",
+	"pos.return.written_off",
 }
 
 // postEvent is the single outbox handler for all eight posted topics. It resolves the mapped posting rules,

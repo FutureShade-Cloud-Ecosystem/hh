@@ -14,6 +14,7 @@ import (
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"log/slog"
 	"net/http"
@@ -313,16 +314,18 @@ func callerBranch(c identity.StaffContext) string {
 	return ""
 }
 
-// parseAsOf reads a YYYY-MM-DD date, defaulting to now.
+// parseAsOf reads a YYYY-MM-DD date, defaulting to now. The answer is an instant read in the house
+// zone: now itself, or noon of the named house day (noon so that every reader of the day, a SQL date
+// parameter or the house day of the clock, names the day that was asked for and not its neighbour).
 func parseAsOf(s string) (time.Time, error) {
 	if s == "" {
-		return time.Now(), nil
+		return houseClock(time.Now()), nil
 	}
-	t, err := time.Parse("2006-01-02", s)
+	t, err := houseday.ParseDay(s)
 	if err != nil {
 		return time.Time{}, httpx.BadRequestf("as_of must be YYYY-MM-DD")
 	}
-	return t, nil
+	return t.Add(12 * time.Hour), nil
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
