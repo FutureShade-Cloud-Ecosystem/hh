@@ -277,11 +277,19 @@ test("a skid count needs a whole number and a reason, and OTHER a note", () => {
 
 test("a refusal in the core's words is shown as it came, capped and stopped", () => {
   assert.equal(yardError("line 1 is short, give the reason (CONDENSED_SKIDS)", 400, "fallback"), "Line 1 is short, give the reason (CONDENSED_SKIDS).");
-  assert.equal(yardError("tasks: branch out of scope", 403, "fallback"), "You are not allowed to do that on this yard.");
+  assert.equal(yardError("tasks: branch out of scope", 403, "fallback"), "Branch out of scope.");
   assert.equal(yardError("anything", 500, "the fallback"), "the fallback");
   assert.equal(yardError("", undefined, "the fallback"), "the fallback");
   assert.equal(yardError("x", 401, "f"), "Your sign in has ended. Sign out and sign in again.");
   assert.equal(yardError("x", 404, "f"), "That is no longer on the board.");
+});
+
+test("a 403 that carries the server's own sentence shows it; only an empty one gets the generic words, which name who works here", () => {
+  assert.equal(yardError("a branch-scoped caller must name a reachable branch_id", 403, "fallback"), "A branch-scoped caller must name a reachable branch_id.");
+  assert.equal(yardError("only the yard manager may do that.", 403, "fallback"), "Only the yard manager may do that.");
+  assert.equal(yardError("", 403, "fallback"), "You are not allowed to do that on this yard. Only the Yard Team and the Yard Manager work here.");
+  // The bare gate body keeps the wall's words, never the generic ones.
+  assert.equal(yardError("Forbidden", 403, "fallback"), "That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
 });
 
 test("the role gate's bare Forbidden body is answered with the wall's plain words", () => {

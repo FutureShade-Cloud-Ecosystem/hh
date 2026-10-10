@@ -481,8 +481,16 @@ export function yardError(
     // The gate's bare body is the one 403 with no sentence: a list wall. It
     // is answered with the wall's own words naming who may, never shown as
     // the bare "Forbidden" the gate writes.
-    if (plainSentence(error) === FORBIDDEN_BODY) return wallWords(words.wall ?? RESOLVE_WALL_NAMES);
-    return "You are not allowed to do that on this yard.";
+    const plain = plainSentence(error);
+    if (plain === FORBIDDEN_BODY) return wallWords(words.wall ?? RESOLVE_WALL_NAMES);
+    // A 403 that carries the server's own sentence shows it: it names who may
+    // act. Only a refusal with no words gets the generic ones, and those name
+    // the two roles the matrix admits to the yard surface.
+    if (plain !== "") {
+      const cased = plain.charAt(0).toUpperCase() + plain.slice(1);
+      return /[.!?]$/.test(cased) ? cased : `${cased}.`;
+    }
+    return `You are not allowed to do that on this yard. Only ${RESOLVE_WALL_NAMES.map((n) => `the ${n}`).join(" and ")} work here.`;
   }
   if (status === 404) return words.notFound ?? "That is no longer on the board.";
   const plain = plainSentence(error);
