@@ -52,12 +52,20 @@ func staffCtx(userID, role string, tier identity.Tier, scope identity.Scope, bra
 // testHandler wires a handler over fakes, with the guards as pass-throughs, the guards themselves
 // are the identity package's own tested code, and stubbing them here keeps these tests about the
 // assistant.
-// Guards-swap carry note (HH-3.2 fold): the pass-through mux became a
-// direct mux over the guarded handler signatures; the do() helper still
-// stamps the context the guard's adapter would produce.
-func testHandler(t *testing.T, svc *Service) *http.ServeMux {
+// allHoldTheTrail is the handler's trail reader as the wired world answers it for the managers these
+// fixtures log in as (ruling 87's matrix: the general, sales and branch managers hold the trail
+// reads). A leg that needs a trail-less caller binds trailFor(map[string]bool{}) or builds its own
+// handler with WithPaymentTrail(trailReader{hold: false}).
+type trailReader struct{ hold bool }
+
+func (r trailReader) HoldsPaymentTrail(context.Context, string, string) (bool, error) {
+	return r.hold, nil
+}
+
+// testHandlerTrail is testHandler with an explicit payment trail answer, for the legs that vary it.
+func testHandlerTrail(t *testing.T, svc *Service, hold bool) *http.ServeMux {
 	t.Helper()
-	h := NewHandler(svc, nil)
+	h := NewHandler(svc, nil).WithPaymentTrail(trailReader{hold: hold})
 	direct := func(fn func(http.ResponseWriter, *http.Request, guards.StaffCaller)) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) { fn(w, r, guards.StaffCaller{}) }
 	}
@@ -74,6 +82,10 @@ func testHandler(t *testing.T, svc *Service) *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/assist/admin/settings", direct(h.getSettings))
 	mux.HandleFunc("PUT /api/v1/assist/admin/settings", direct(h.putSetting))
 	return mux
+}
+
+func testHandler(t *testing.T, svc *Service) *http.ServeMux {
+	return testHandlerTrail(t, svc, true)
 }
 
 func do(t *testing.T, mux *http.ServeMux, method, path string, body string, sc identity.StaffContext) (*httptest.ResponseRecorder, map[string]any) {
@@ -226,6 +238,37 @@ func TestHandler_FourSituationsGetFourStatuses(t *testing.T) {
 				t.Fatalf("the user is shown an internal error string: %q", msg)
 			}
 		})
+	}
+}
+
+// TestHandler_PaymentLookupIsRefusedWithoutTheTrail, ruling 87 through the HTTP door. A manager
+// passes the tier floor, and the trail reader's no is the answer the door hands back: the gate's
+// shared 403 body, the same words the tier floor uses, never a 200 that lists payments and never an
+// empty answer that would say no such payment exists.
+func TestHandler_PaymentLookupIsRefusedWithoutTheTrail(t *testing.T) {
+	rd := seededReaders()
+	svc := NewService(NewRegistry(rd.deps(), nil), NewStubProvider(), &fakeLedger{}, newFakeLimits(), StaticSettings{}, nil)
+	mux := testHandlerTrail(t, svc, false)
+	managerSC := staffCtx("u-sm", "SALES_MANAGER", identity.TierManager, identity.ScopeBranch, "b-kel")
+
+	w, body := do(t, mux, "POST", "/api/v1/assist/command",
+		`{"command":"payment.lookup","args":{"reference":"PMT-1042"}}`, managerSC)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("a manager without the payment trail ran payment.lookup: %d %s, want 403", w.Code, w.Body.String())
+	}
+	if msg, _ := body["error"].(string); msg != "That isn't something you can look up here." {
+		t.Fatalf("the refusal's words = %q, want the gate's shared sentence", msg)
+	}
+	if rd.calls != 0 {
+		t.Fatal("the payments read ran for a caller the trail reader refuses")
+	}
+
+	// The same handler with the trail held answers, so the refusal is the stamp's, not the wiring's.
+	mux = testHandlerTrail(t, svc, true)
+	w, _ = do(t, mux, "POST", "/api/v1/assist/command",
+		`{"command":"payment.lookup","args":{"reference":"PMT-1042"}}`, managerSC)
+	if w.Code != http.StatusOK {
+		t.Fatalf("a manager holding the trail was refused payment.lookup: %d %s", w.Code, w.Body.String())
 	}
 }
 

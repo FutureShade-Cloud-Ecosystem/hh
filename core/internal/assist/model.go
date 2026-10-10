@@ -61,6 +61,9 @@ type Caller struct {
 	Global    bool     // identity.ScopeGlobal, reaches every branch
 	BranchIDs []string // the caller's granted branches; ignored when Global
 	IsAdmin   bool     // tier-1 GLOBAL: the tech-admin surfaces' gate
+	// PaymentTrail is the role gate's answer to "does this caller hold the payment trail reads"
+	// (ruling 87), set by the handler. False means the reads that list payments leave them out.
+	PaymentTrail bool
 }
 
 // HasRole reports whether the caller has any assigned role at all.

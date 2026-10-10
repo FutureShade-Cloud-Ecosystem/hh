@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -154,6 +155,9 @@ type Handler struct {
 	// registerSender is the DIB-510 receivables register's delivery port (dib510_register_mount.go).
 	// Optional and nil by default, see WithRegisterSender for why unbound is the honest shipped state.
 	registerSender RegisterSender
+	// paymentTrail says whether a caller holds the payment trail reads (ruling 87); the register's
+	// invoice detail shows the payment entries of its timeline to those callers alone.
+	paymentTrail billing.PaymentTrailReader
 }
 
 // NewHandler wires the service.
