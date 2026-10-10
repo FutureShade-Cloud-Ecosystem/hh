@@ -53,7 +53,12 @@ export type StateIconName = keyof typeof STATE_ICONS;
  * expression inside a raw-text element's body (title, textarea, style, script
  * are read as text by the template parser), and a raw-markup path to put the
  * label there is exactly what this package refuses. role stays img, so the
- * accessible name is carried either way. */
+ * accessible name is carried either way.
+ *
+ * The paths are built with the svg tag, not html: a template made with html
+ * is parsed as HTML even when it is slotted into an svg, so its paths would
+ * be HTMLUnknownElements and paint nothing. test/browser.test.mjs holds the
+ * namespace in a real page. */
 export function icon(name: StateIconName, label?: string): Template {
   const paths = STATE_ICONS[name].paths;
   return html`<svg
