@@ -1,7 +1,7 @@
 // The Counter Till's exit test, run against the stubbed harness (the stub
 // serves the demo routes' contract shapes; the vite dev server proxies /api
 // to it). This is W6's slice of the plan's screen 1: two cards, a tapped card
-// lands on the till with the Demo banner and the role's name, the ten
+// lands on the till with the Demo banner and the role's name, the eleven
 // other roles show as coming and cannot be tapped, sign out returns to the
 // cards, and against a flows route that answers there are no cards at all.
 // The suite also holds the org header: the stub echoes the X-Org it received
@@ -19,6 +19,7 @@ const COMING_ROLES = [
   "Logistics Manager",
   "Driver",
   "Branch Manager",
+  "Procurement Manager",
   "Payables and Receivables",
   "Financial Controller",
   "General Manager",
@@ -29,7 +30,7 @@ function flowsCall(page: Page): Promise<Response> {
   return page.waitForResponse((response) => response.url().endsWith("/api/v1/demo/flows"));
 }
 
-test("the entry page shows the two demo role cards and the ten coming roles", async ({ page }) => {
+test("the entry page shows the two demo role cards and the eleven coming roles", async ({ page }) => {
   const flows = flowsCall(page);
   await page.goto("/");
   // The demo org rides on the flows call: it is the client configuration's
@@ -45,7 +46,7 @@ test("the entry page shows the two demo role cards and the ten coming roles", as
 
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(10);
+  await expect(coming.getByRole("listitem")).toHaveCount(11);
   for (const role of COMING_ROLES) {
     const control = coming.getByRole("button", { name: role, exact: true });
     await expect(control).toBeVisible();
