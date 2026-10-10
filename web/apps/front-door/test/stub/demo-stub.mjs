@@ -97,7 +97,7 @@ const USERS = {
     display_name: "Driver (demo)",
     role_code: "driver",
     role_name: "Driver",
-    tier: 2,
+    tier: 3,
     scope: "BRANCH",
   },
 };
