@@ -334,7 +334,8 @@ paths:
           description: >-
             The payment is refused in words with nothing applied: an amount over
             the selected invoices' payable, an invoice that is not open, an empty
-            or oversized list, the same invoice named twice, a list spanning
+            or oversized list, the same invoice named twice, a customer id or
+            invoice id that is not a uuid, a list spanning
             more than one branch, or a key already
             spent on another account's payment or on a different payment
           content:

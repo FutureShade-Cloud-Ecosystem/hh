@@ -67,3 +67,57 @@ func TestApplyReceived_AnInvoiceNamedTwiceInAnySpellingIsRefusedInWords(t *testi
 		t.Fatalf("the invoice is untouched, balance %d", b)
 	}
 }
+
+// The account id is validated and canonicalised exactly like the invoice ids (the delta reviews'
+// P3): a malformed customer_id used to reach the lock statement's uuid cast and surface the 22P02
+// as the route's raw 500, and an upper case spelling posted a payment whose exact retry was then
+// refused as another account's, because the stored id is lower case and was compared raw. The id is
+// parsed and re-spelled at the entry with the invoice ids, so a non uuid is refused in words in
+// both the preview and the apply, and every spelling of one account id behaves exactly like the
+// canonical one, its own replay included.
+func TestApplyReceived_TheCustomerIDIsValidatedAndCanonicalisedLikeTheInvoiceIDs(t *testing.T) {
+	w := newApplyWorld(t)
+	ctx := context.Background()
+	inv := w.invoice(t, w.customerID, "CID", 90, 60, 10000)
+
+	for _, preview := range []bool{false, true} {
+		shape := "apply"
+		if preview {
+			shape = "preview"
+		}
+		t.Run("a malformed customer id in a "+shape, func(t *testing.T) {
+			_, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+				CustomerID: "not-a-uuid", Method: "CASH",
+				IdempotencyKey: w.tag + "-bad-" + shape, InvoiceIDs: []string{inv}, AmountCents: 100, Preview: preview,
+			})
+			var bad httpx.BadRequestError
+			if !errors.As(err, &bad) {
+				t.Fatalf("a malformed customer id is refused in words, never a raw 500, got %T %v", err, err)
+			}
+			if !strings.Contains(bad.Msg, "customer id must be a uuid") {
+				t.Fatalf("the refusal names the customer id: %q", bad.Msg)
+			}
+		})
+	}
+	if payments, _, _, _ := w.moneyRowCounts(t, w.customerID); payments != 0 {
+		t.Fatalf("a malformed customer id writes nothing, found %d payment rows", payments)
+	}
+
+	first, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: strings.ToUpper(w.customerID), Method: "CASH",
+		IdempotencyKey: w.tag + "-upper", InvoiceIDs: []string{inv}, AmountCents: 100,
+	})
+	if err != nil || first.Replayed || first.PaymentID == "" {
+		t.Fatalf("an upper case customer id posts like the canonical one: %v %+v", err, first)
+	}
+	retry, err := w.repo.ApplyReceived(ctx, ApplyRequest{
+		CustomerID: w.customerID, Method: "CASH",
+		IdempotencyKey: w.tag + "-upper", InvoiceIDs: []string{inv}, AmountCents: 100,
+	})
+	if err != nil || !retry.Replayed || retry.PaymentID != first.PaymentID {
+		t.Fatalf("the exact retry under the same key answers the first payment whatever the spelling: %v %+v", err, retry)
+	}
+	if payments, _, _, _ := w.moneyRowCounts(t, w.customerID); payments != 1 {
+		t.Fatalf("one payment row for the upper case id and its retry, found %d", payments)
+	}
+}

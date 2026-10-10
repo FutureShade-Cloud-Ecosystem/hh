@@ -245,10 +245,12 @@ func (r *Repository) ApplyReceived(ctx context.Context, in ApplyRequest) (ApplyA
 
 // validateApply is the request check that runs before any database is consulted, the same posture
 // validateReceipt holds: a malformed request is malformed with or without a pool behind it. It
-// answers the request with its invoice ids NORMALISED, each trimmed and re-spelled in the canonical
-// form, so the rest of the walk (the duplicate refusal, the sort, the locks, the stored body) sees
-// one spelling per invoice: uuid.Parse accepts upper case, braces, the urn prefix, the undashed
-// form and Postgres folds them all onto the same row, so the raw strings cannot be the identity.
+// answers the request with its account id and its invoice ids NORMALISED, each trimmed and
+// re-spelled in the canonical form, so the rest of the walk (the replay body, the duplicate
+// refusal, the sort, the locks, the stored body) sees one spelling per id: uuid.Parse accepts
+// upper case, braces, the urn prefix, the undashed form and Postgres folds them all onto the same
+// row, so the raw strings cannot be the identity, and a malformed account id must be refused here
+// in words, never left to the lock statement's uuid cast to surface as the route's 500.
 func validateApply(in ApplyRequest) (ApplyRequest, error) {
 	if in.IdempotencyKey == "" {
 		return ApplyRequest{}, httpx.BadRequestf("recording a payment needs an idempotency key")
@@ -259,6 +261,11 @@ func validateApply(in ApplyRequest) (ApplyRequest, error) {
 	if in.AmountCents <= 0 {
 		return ApplyRequest{}, httpx.BadRequestf("a payment amount must be greater than zero")
 	}
+	cu, err := uuid.Parse(strings.TrimSpace(in.CustomerID))
+	if err != nil {
+		return ApplyRequest{}, httpx.BadRequestf("customer id must be a uuid")
+	}
+	in.CustomerID = cu.String()
 	if len(in.InvoiceIDs) == 0 {
 		return ApplyRequest{}, httpx.BadRequestf("a payment must be applied to at least one invoice")
 	}

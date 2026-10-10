@@ -171,6 +171,42 @@ func TestApplyRoute_AnswersTheServersSplitPerInvoice(t *testing.T) {
 	}
 }
 
+// A malformed customer_id is refused in words at the route, 422, never the raw 500 the lock
+// statement's uuid cast used to surface (the delta reviews' P3): the id is validated and
+// canonicalised at the walk's entry together with the invoice ids.
+func TestApplyRoute_AMalformedCustomerIDIsRefusedInWords(t *testing.T) {
+	w := newApplyRouteWorld(t)
+	open := w.invoice(t, w.customerID, "MCF", 90, 60, 10000, "")
+
+	for _, preview := range []bool{false, true} {
+		shape := "apply"
+		if preview {
+			shape = "preview"
+		}
+		t.Run(shape, func(t *testing.T) {
+			code, body := decodeApply(t, w.post(t, applyGlobalCaller(), map[string]any{
+				"customer_id": "not-a-uuid", "method": "CHEQUE", "amount_cents": 100,
+				"invoice_ids": []string{open}, "idempotency_key": w.tag + "-cid-" + shape, "preview": preview,
+			}))
+			if code != http.StatusUnprocessableEntity {
+				t.Fatalf("a malformed customer id answers 422, got %d body %v", code, body)
+			}
+			words, _ := body["error"].(string)
+			if !strings.Contains(words, "customer id must be a uuid") {
+				t.Fatalf("the refusal names the customer id in words: %q", words)
+			}
+		})
+	}
+	var payRows int
+	if err := w.pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM payments WHERE customer_id = $1::uuid`, w.customerID).Scan(&payRows); err != nil {
+		t.Fatalf("count payments: %v", err)
+	}
+	if payRows != 0 {
+		t.Fatalf("a malformed customer id leaves nothing applied, found %d payment rows", payRows)
+	}
+}
+
 // Every refusal is in words and leaves nothing applied: another account's invoice, an invoice
 // outside a scoped caller's branch reach (the same no such invoice as a missing one, no existence
 // leak across the branch wall), an amount over the selected invoices, an invoice that is not open,
