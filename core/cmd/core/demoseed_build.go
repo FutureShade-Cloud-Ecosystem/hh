@@ -1310,8 +1310,12 @@ func (b *builder) today() {
 // on the dealer's current day: day-keyed whole (run row, stops, the order each stop is about), on
 // the stable crew the persona's grant reaches, carrying what the core's own dispatch would set,
 // which runs() above already states for a seeded DISPATCHED row: the status and a departure stamp.
-// The stops are READY, the state the walk opens from and the one the drive run acceptance legs were
-// written against; the stop matrix allows it and AdvanceStop is the guard that matters.
+// The run row matches the dispatch (DISPATCHED, departure stamped); its stops do NOT: they are
+// seeded READY on a dispatched run, a state the core cannot reach by its own routes (DispatchRun
+// moves every READY stop to LOADED in the same act, and AssignStop refuses a stop onto a run that
+// is not PLANNED). It is seeded on purpose, so the walk can start at Mark loaded, the state the
+// drive run acceptance legs were written against; the stop matrix allows the move and AdvanceStop
+// is the guard that matters.
 //
 // THE RUN NUMBER CARRIES THE DAY, for the UNIQUE column, and its D prefix sorts it ahead of the
 // stable fleet's R rows on the same date, so the driver's own read (ORDER BY scheduled_date DESC,

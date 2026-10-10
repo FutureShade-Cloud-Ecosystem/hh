@@ -811,7 +811,8 @@ var demoApprovals = []approvalSpec{
 // whole (the run row, its two stops and the order each stop is about), sits on the stable crew
 // (truck T1, driver D1, Kingston, the branch the persona's grant reaches) and carries what the
 // core's own dispatch would set: DISPATCHED, with a departure stamp. Its stops are seeded READY,
-// the state the walk starts from, which the stop matrix allows on a dispatched run and which the
+// which is seeded, not core reachable (the core's dispatch loads every stop as it sends the run
+// out): it is there so the walk can start at Mark loaded, which the stop matrix allows and the
 // drive run acceptance legs were written against. The stable fleet's R4 and R5 stay exactly as
 // they are: a planned present and a planned future for the board, beside a present that is out on
 // the road.
