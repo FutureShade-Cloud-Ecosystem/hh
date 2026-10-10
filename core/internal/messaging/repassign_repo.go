@@ -273,10 +273,15 @@ func (r *Repository) EnsureRepDMChannel(ctx context.Context, userID string) (str
 	return channelID, nil
 }
 
-// BranchHouseSlug returns the house-queue channel slug for a branch (DIB-271). It resolves the channel
-// by BRANCH ID rather than by deriving a name from the branch code (which is what BranchYardSlug does
-// and why that function carries a hard-coded trt/kgn map): a new branch then needs only its
-// house-<name> channel row seeded, with no Go change.
+// BranchHouseSlug returns the house-queue channel slug for a branch (DIB-271). The house channel is
+// picked by WHAT MAKES IT ONE, never by a slug pattern a caller can found into: the slug is the
+// branch's own house name, derived through the same branch map the yard rooms resolve through
+// (yard-trenton to house-trenton, so one branch to name mapping serves both families), and the row
+// must be the system's (kind TEAM, auto_scope set: every seeded system room carries auto_scope and
+// no caller founded room ever does). A caller shaped house- row therefore cannot be picked whatever
+// its name sorts like, and the house- family is reserved against caller founding beside the other
+// system families, so the route cannot write one either. A new branch needs only its house-<name>
+// channel row seeded, with no Go change.
 //
 // A branch with no house channel, and an inbound with no branch at all, falls back to the GLOBAL
 // #house-unassigned floor. The fallback is the point: an inbound customer message is NEVER dropped
@@ -288,11 +293,19 @@ func (r *Repository) BranchHouseSlug(ctx context.Context, branchID string) (stri
 	if branchID == "" {
 		return houseSlugUnassigned, nil
 	}
+	yard, err := r.BranchYardSlug(ctx, branchID)
+	if err != nil {
+		if errors.Is(err, errNotFound) {
+			return houseSlugUnassigned, nil
+		}
+		return "", err
+	}
+	house := "house-" + strings.TrimPrefix(yard, "yard-")
 	var slug string
-	err := r.pool.QueryRow(ctx, `
+	err = r.pool.QueryRow(ctx, `
 		SELECT slug::text FROM msg_channels
-		WHERE branch_id = $1 AND slug LIKE 'house-%' AND is_archived = FALSE
-		ORDER BY slug LIMIT 1`, branchID).Scan(&slug)
+		WHERE slug = $1 AND branch_id = $2 AND kind = 'TEAM' AND auto_scope IS NOT NULL AND is_archived = FALSE`,
+		house, branchID).Scan(&slug)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return houseSlugUnassigned, nil

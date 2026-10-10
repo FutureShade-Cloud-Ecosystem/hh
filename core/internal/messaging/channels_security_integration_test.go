@@ -100,25 +100,63 @@ func TestIntegration_CreateChannel_Collision_BranchWall_Runs_On_The_Existing_Row
 		t.Fatalf("sync sam: %v", err)
 	}
 
-	// payments-kingston: TEAM, auto_scope BRANCH, granted Kingston. The
-	// request names no branch; the wall must read the room's own.
+	// sales-kingston: TEAM, auto_scope BRANCH, granted Kingston, a family
+	// outside the reserved system namespaces. The request names no branch;
+	// the wall must read the room's own.
 	if _, _, err := svc.CreateChannel(ctx, samCaller(), CreateChannelInput{
-		Kind: KindTeam, Name: "Payments Kingston",
+		Kind: KindTeam, Name: "Sales Kingston",
 	}); !errors.Is(err, ErrNotInBranch) {
-		t.Fatalf("founding the Kingston payments room from Trenton must answer the branch wall, got %v", err)
+		t.Fatalf("founding the Kingston sales room from Trenton must answer the branch wall, got %v", err)
 	}
-	if _, _, ok := memberRow(ctx, t, pool, chPaymentsKingston, uSamRivera); ok {
+	var chSalesKingston string
+	if err := pool.QueryRow(ctx,
+		`SELECT id::text FROM msg_channels WHERE slug = 'sales-kingston'`).Scan(&chSalesKingston); err != nil {
+		t.Fatalf("resolve the seeded Kingston sales room: %v", err)
+	}
+	if _, _, ok := memberRow(ctx, t, pool, chSalesKingston, uSamRivera); ok {
 		t.Fatalf("the refused founding must leave the caller a non member")
 	}
 
-	// yard-kingston: a BRANCH kind room, another kind than the request: the
-	// collision is refused in words whatever the caller's reach.
+	// The reserved branch families answer their own wall first: the
+	// payments and yard namespaces are closed to caller founding (any
+	// case, chosen or derived), so a founding that names one is refused
+	// as reserved before any collision is consulted, and the caller is
+	// left a non member of the seeded rooms.
+	for _, name := range []string{"Payments Kingston", "Yard Kingston"} {
+		if _, _, err := svc.CreateChannel(ctx, samCaller(), CreateChannelInput{
+			Kind: KindTeam, Name: name,
+		}); !errors.Is(err, ErrReservedSlug) {
+			t.Fatalf("founding %q must be refused as a reserved system family, got %v", name, err)
+		}
+	}
+	if _, _, ok := memberRow(ctx, t, pool, chPaymentsKingston, uSamRivera); ok {
+		t.Fatalf("the refused founding must leave the caller a non member of the payments room")
+	}
+	if _, _, ok := memberRow(ctx, t, pool, chYardKingston, uSamRivera); ok {
+		t.Fatalf("the refused founding must leave the caller a non member of the yard room")
+	}
+
+	// A BRANCH kind room, another kind than the request, on a slug outside
+	// the reserved families (only a hand written row can arrange that
+	// today: the seeded BRANCH rooms all live in the reserved yard
+	// family): the collision is refused in words whatever the caller's
+	// reach.
+	var handBranch string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO msg_channels (kind, branch_id, slug, name, tier)
+		VALUES ('BRANCH', $1, 'depot-kingston', 'Hand planted depot room', 'STANDARD')
+		RETURNING id::text`, branchKingston).Scan(&handBranch); err != nil {
+		t.Fatalf("plant hand branch room: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM msg_channels WHERE id = $1`, handBranch)
+	})
 	if _, _, err := svc.CreateChannel(ctx, samCaller(), CreateChannelInput{
-		Kind: KindTeam, Name: "Yard Kingston",
+		Kind: KindTeam, Name: "depot-kingston",
 	}); !errors.Is(err, ErrChannelSlugTaken) {
 		t.Fatalf("founding a BRANCH room's slug must answer the collision, got %v", err)
 	}
-	if _, _, ok := memberRow(ctx, t, pool, chYardKingston, uSamRivera); ok {
+	if _, _, ok := memberRow(ctx, t, pool, handBranch, uSamRivera); ok {
 		t.Fatalf("the refused founding must leave the caller a non member")
 	}
 }

@@ -88,7 +88,8 @@ func TestIntegration_AddMember_Bumps_The_Channels_Feed_Seq(t *testing.T) {
 // a left room is not announced to the device that left it, the feed is
 // membership-fenced and carries no leave tombstones; the cached room dies
 // on the device's next full refresh. This leg pins the refresh half.
-func TestIntegration_RemoveMember_Refreshes_The_Room_Row(t *testing.T) {	ctx := context.Background()
+func TestIntegration_RemoveMember_Refreshes_The_Room_Row(t *testing.T) {
+	ctx := context.Background()
 	pool := intPool(t)
 	repo := NewRepository(pool)
 	svc := NewService(repo)

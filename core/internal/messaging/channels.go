@@ -43,8 +43,9 @@ var (
 	// collision is refused in words, never answered with the foreign room.
 	ErrChannelSlugTaken = errors.New("messaging: a channel with that name or slug already exists")
 	// ErrReservedSlug: caller chosen names may not squat the system
-	// namespaces (dm-, rep-, approvals-); a room founded there would capture
-	// a later system provision that converges on the same slug.
+	// namespaces (dm-, rep-, approvals-, house-, payments-, yard-, and the
+	// bare payments floor); a room founded there would capture a later
+	// system convergence on the same slug.
 	ErrReservedSlug = errors.New("messaging: that slug prefix is reserved for system channels")
 	// ErrMembershipFixed: a DM's membership is its two parties and an
 	// APPROVAL channel's is its owner; neither is hand-manageable, a
