@@ -222,6 +222,7 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 	if asOf.IsZero() {
 		asOf = s.clock()
 	}
+	asOf = houseClock(asOf)
 
 	pol, err := s.store.CreditPolicy(ctx, branchID)
 	if err != nil {

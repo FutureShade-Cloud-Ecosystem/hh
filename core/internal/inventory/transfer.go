@@ -80,7 +80,7 @@ type TransferLine struct {
 	QtyBase         float64 `json:"qty_base"`
 	QtyShippedBase  float64 `json:"qty_shipped_base"`
 	QtyReceivedBase float64 `json:"qty_received_base"`
-	UnitCostCents   int64   `json:"unit_cost_cents"`
+	UnitCostCents   int64   `json:"unit_cost_cents,omitempty"`
 	ShipMoveID      string  `json:"ship_move_id"`
 	RecvMoveID      string  `json:"recv_move_id"`
 }

@@ -51,7 +51,7 @@ type BranchStock struct {
 	// SoftHeldBase is the advisory (quote) holds. Shown so a clerk can see interest without it
 	// gating a sale, it is NOT subtracted from AvailableBase.
 	SoftHeldBase float64 `json:"soft_held_base"`
-	AvgCostCents int64   `json:"avg_cost_cents"`
+	AvgCostCents int64   `json:"avg_cost_cents,omitempty"`
 }
 
 // QuoteAvailabilityReader is the seam a quote surface consumes. Declared HERE as documentation of
