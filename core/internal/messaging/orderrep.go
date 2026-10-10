@@ -45,6 +45,14 @@ type OrderRepNotice struct {
 	EventKey       string
 	Body           string
 	Ref            EventRef
+	// BodyNoFigures and RoleSeesFigures let the caller hand over two bodies and a role predicate so
+	// the choice is made here, once the rep is known (the precedence below is the only copy). Body
+	// is the figured words, BodyNoFigures the same words with the figures left out. The figured body
+	// goes only to a rep whose own role RoleSeesFigures admits; no predicate, an unreadable role or
+	// a refusal sends BodyNoFigures. With no BodyNoFigures the notice names no figure and Body goes
+	// as it is.
+	BodyNoFigures   string
+	RoleSeesFigures func(role string) bool
 	// FallbackSlugs are the channels to try, in order, when the order has no rep; empty means write
 	// nothing. FallbackPrefix is put in front of Body there, so a reader knows why it arrived.
 	FallbackSlugs  []string
@@ -88,17 +96,35 @@ func (s *Service) NotifyOrderRep(ctx context.Context, in OrderRepNotice) (OrderR
 	if err != nil {
 		return OrderRepResult{}, fmt.Errorf("order rep: ensure dm: %w", err)
 	}
+	body := s.bodyForRep(ctx, in, rep)
 	ref := in.Ref
-	ref.Summary = in.Body
+	ref.Summary = body
 	if in.OrderID != "" && ref.Entity == "" {
 		ref.Entity = "order:" + in.OrderID
 	}
-	m, inserted, err := s.postEventToChannelID(ctx, channelID, in.EventKey, in.Body, ref, EventOpts{Priority: PriorityNormal})
+	m, inserted, err := s.postEventToChannelID(ctx, channelID, in.EventKey, body, ref, EventOpts{Priority: PriorityNormal})
 	if err != nil {
 		return OrderRepResult{}, fmt.Errorf("order rep: post: %w", err)
 	}
 	_ = m
 	return OrderRepResult{Kind: RouteRepDM, Level: level, RepUserID: rep, ChannelID: channelID, Inserted: inserted}, nil
+}
+
+// bodyForRep picks the words for the rep the notice goes to: the figured body only for a rep whose
+// role the caller's predicate admits, fail closed on every other leg (no predicate, no role found,
+// an unreadable role).
+func (s *Service) bodyForRep(ctx context.Context, in OrderRepNotice, rep string) string {
+	if in.BodyNoFigures == "" {
+		return in.Body
+	}
+	if in.RoleSeesFigures == nil {
+		return in.BodyNoFigures
+	}
+	role, err := s.repo.UserRoleCode(ctx, rep)
+	if err != nil || role == "" || !in.RoleSeesFigures(role) {
+		return in.BodyNoFigures
+	}
+	return in.Body
 }
 
 // orderNoticeFallback delivers a rep-less order notice to the first reachable fallback channel.

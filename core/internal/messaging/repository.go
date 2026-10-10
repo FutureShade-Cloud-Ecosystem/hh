@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
 var (
@@ -797,6 +799,51 @@ func (r *Repository) UserDisplayName(ctx context.Context, userID string) (string
 		return "", fmt.Errorf("user display name: %w", err)
 	}
 	return name, nil
+}
+
+// UserRoleCode reads one role code for one user, the first active role row
+// (a hold on the role table scopes it, the same way the SyncMembership derived
+// rule reads it; a user who has no active role reads back an empty code). The
+// PR 302 N2 yard notice fence reads this to ask SeesCostAndMargin for the
+// rep's own role, the same X3 rule cost_gate already asks everywhere. The
+// returned code is the CANONICAL form (lowercase, the staff_role.id shape)
+// not the ERP code (UPPERCASE): the rule vocabulary's SeesCostAndMargin
+// answers against the canonical, the same conversion identity.bridge makes
+// at the dispatch door. An empty answer is fail closed: the figures ride
+// only when the rule says yes for a known role, and the brief's "figureless
+// on error or no" stays a safety net on top of the empty-code path.
+func (r *Repository) UserRoleCode(ctx context.Context, userID string) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var code string
+	err := r.pool.QueryRow(ctx, `
+		SELECT ro.code::text
+		FROM users u
+		JOIN user_roles ur ON ur.user_id = u.id
+		JOIN roles ro ON ro.id = ur.role_id
+		WHERE u.id = $1 AND u.status = 'ACTIVE'
+		ORDER BY ur.created_at ASC
+		LIMIT 1`, userID).Scan(&code)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("user role code: %w", err)
+	}
+	return canonicalRole(code), nil
+}
+
+// canonicalRole turns the carried roles.code (an ERP code, UPPERCASE) into
+// the rule vocabulary's canonical id (lowercase) through identity's own
+// mapping, the one the dispatch fence's moneyAllowed reads, so this module
+// keeps no table of its own. A code outside the vocabulary comes back as it
+// was read, which the cost rule refuses (fail closed).
+func canonicalRole(code string) string {
+	if canonical, ok := identity.CanonicalForERPCode(code); ok {
+		return canonical
+	}
+	return code
 }
 
 // - Feature 1: Screen-Takeover forced acknowledgement (0071) -
