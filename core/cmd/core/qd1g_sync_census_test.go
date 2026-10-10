@@ -416,7 +416,7 @@ func qd1gTombstoned(t *testing.T, c *qd1gCensus, id string) bool {
 // the list route admitted the caller at all (its wall).
 func qd1gRestApprovalList(t *testing.T, c *qd1gCensus, who qd1gRole, ids []string) (out map[string]bool, wall bool) {
 	t.Helper()
-	code, body := qd1bCall(t, c.q, http.MethodGet, "/api/v1/staff/approvals", who.sub, nil)
+	code, body := qd1bCall(t, c.q, http.MethodGet, "/api/v1/staff/approvals?limit=200", who.sub, nil)
 	out = map[string]bool{}
 	if code == http.StatusForbidden {
 		return out, false

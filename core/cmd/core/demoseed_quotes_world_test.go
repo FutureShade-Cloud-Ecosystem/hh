@@ -560,7 +560,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	requestID := demoID("floorrequest:FR1")
 	listed := func(c *tillClient) bool {
 		t.Helper()
-		rsp := c.call("GET", "/api/v1/staff/approvals?status=PENDING", nil)
+		rsp := c.call("GET", "/api/v1/staff/approvals?status=PENDING&limit=200", nil)
 		if rsp.status == http.StatusForbidden {
 			return false
 		}
