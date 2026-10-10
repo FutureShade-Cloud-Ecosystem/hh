@@ -1,7 +1,8 @@
 // The entry view: the tap-a-role chooser, staged to the till's own polish
 // (the train review's P3-5): a centered column with a headline and a one-line
-// intro, one card per flow the demo routes list (the real table holds Sales
-// and Sales manager) wearing the ported token sheet's surfaces and borders,
+// intro, one card per flow the app hands the view (the till hands its own
+// pair of the box's flow table, which mints more logins than any one app
+// offers cards for) wearing the ported token sheet's surfaces and borders,
 // an icon from the ported icon registry and one line of what the role opens,
 // then the other ten roles of the decided matrix as coming: shown in a
 // ruled card, labelled Coming, and not tappable, because their screens do not

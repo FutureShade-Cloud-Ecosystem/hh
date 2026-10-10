@@ -34,7 +34,8 @@
 #     manager"), the nine coming rows' labels (the Financial Controller among
 #     them until its app is served), the Coming heading, and the demo badge's
 #     copy;
-#   /api/v1/demo/flows answers the closed table's five flows;
+#   /api/v1/demo/flows answers the closed table's seven flows, the
+#     four the front door maps among them in order;
 #   POST /api/v1/demo/session without the phrase is refused by the gate, and
 #     with it mints for the four flow ids the front door maps (sales,
 #     sales-manager, payables-receivables, procurement-manager) and for the
@@ -273,10 +274,10 @@ done
 echo "== the demo routes through the gate"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
-		pass "/api/v1/demo/flows answers the closed table's five flows"
+	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
+		pass "/api/v1/demo/flows answers the seven flows, the four the front door maps among them"
 		;;
-	*) fail "/api/v1/demo/flows did not answer the five flows: $flows" ;;
+	*) fail "/api/v1/demo/flows did not answer the seven flows, the four the front door maps among them: $flows" ;;
 esac
 
 code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
