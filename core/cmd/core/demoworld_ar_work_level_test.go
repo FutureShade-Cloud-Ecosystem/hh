@@ -2,12 +2,15 @@
 
 package main
 
-// demoworld_ar_work_level_test.go: ruling 77 (a), proved through the real routes and the real role gate.
+// demoworld_ar_work_level_test.go: rulings 77 (a) and 87, proved through the real routes and the real
+// role gate.
 //
 // Payables and Receivables holds the money desk at WORK. Roadmap 2.8 has it mark a payment bounced and
 // work the queue, run statements and send reminders, and read a payment's history, so those routes are
-// served at work (history and an invoice's payments also on the money desk surface at read); a payment
-// reverse stays at manage.
+// served at work; a payment reverse stays at manage. Ruling 87 then holds the payment trail (a
+// payment's history and an invoice's payments) to money desk WORK: the persona and the managers above
+// it keep them, each fenced to their branches, while the money desk readers with no counter till
+// (outside sales, the yard manager, the procurement manager) lose them.
 //
 // Each route is walked four ways: the persona is let through; a selling role (the demo Sales login,
 // money desk read) and the yard manager (money desk read) are refused the work routes in the gate's
@@ -34,6 +37,16 @@ import (
 const (
 	wlYardManagerSubject = "hh-demo-worklevel-proof-yard-manager"
 	wlHRSubject          = "hh-demo-worklevel-proof-hr"
+	// Ruling 87's proof logins: the three money desk readers it excludes, and the managers above
+	// the persona it names as still passing (the branch manager planted twice, one at each branch,
+	// so the fence half of "each fenced to its branches" is proved with a 200 and a not found).
+	wlOutsideSalesSubject       = "hh-demo-worklevel-proof-outside-sales"
+	wlProcurementSubject        = "hh-demo-worklevel-proof-procurement-manager"
+	wlSalesManagerSubject       = "hh-demo-worklevel-proof-sales-manager"
+	wlBranchManagerSubject      = "hh-demo-worklevel-proof-branch-manager"
+	wlBranchManagerKgnSubject   = "hh-demo-worklevel-proof-branch-manager-kgn"
+	wlGeneralManagerSubject     = "hh-demo-worklevel-proof-general-manager"
+	wlKingstonBranchID          = "5d1b3f6e-0000-4000-9000-000000000002"
 )
 
 func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
@@ -68,27 +81,36 @@ func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM org WHERE slug = $1`, demoOrgSlug).Scan(&orgID); err != nil {
 		t.Fatalf("the demo org: %v", err)
 	}
-	for _, p := range []struct{ subject, role, email string }{
-		{wlYardManagerSubject, "yard_manager", "worklevel.proof.yard.manager@hh-demo.invalid"},
-		{wlHRSubject, "hr", "worklevel.proof.hr@hh-demo.invalid"},
+	for _, p := range []struct{ subject, role, email, branch string }{
+		{wlYardManagerSubject, "yard_manager", "worklevel.proof.yard.manager@hh-demo.invalid", trentonBranchID},
+		{wlHRSubject, "hr", "worklevel.proof.hr@hh-demo.invalid", ""},
+		{wlOutsideSalesSubject, "outside_sales", "worklevel.proof.outside.sales@hh-demo.invalid", trentonBranchID},
+		{wlProcurementSubject, "procurement_manager", "worklevel.proof.procurement@hh-demo.invalid", trentonBranchID},
+		{wlSalesManagerSubject, "sales_manager", "worklevel.proof.sales.manager@hh-demo.invalid", trentonBranchID},
+		{wlBranchManagerSubject, "branch_manager", "worklevel.proof.branch.manager@hh-demo.invalid", trentonBranchID},
+		{wlBranchManagerKgnSubject, "branch_manager", "worklevel.proof.branch.manager.kgn@hh-demo.invalid", wlKingstonBranchID},
+		{wlGeneralManagerSubject, "general_manager", "worklevel.proof.general.manager@hh-demo.invalid", ""},
 	} {
 		if _, err := pool.Exec(ctx, `
 			WITH u AS (
 			  INSERT INTO users (email, display_name, status, org_id, platform_user_id)
 			  VALUES ($4, $5, 'ACTIVE', $1, $2) RETURNING id)
-			INSERT INTO user_branch_grants (user_id, branch_id, org_id) SELECT id, $3, $1 FROM u`,
-			orgID, p.subject, trentonBranchID, p.email, p.role+" (work level proof)"); err != nil {
+			INSERT INTO user_branch_grants (user_id, branch_id, org_id)
+			SELECT id, COALESCE(NULLIF($6, '')::uuid, $3::uuid), $1 FROM u`,
+			orgID, p.subject, trentonBranchID, p.email, p.role+" (work level proof)", p.branch); err != nil {
 			t.Fatalf("plant the %s login: %v", p.role, err)
 		}
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO staff_role_grant (platform_user_id, role_id, org_id, branch_id) VALUES ($1, $2, $3, $4)`,
-			p.subject, p.role, orgID, trentonBranchID); err != nil {
+			INSERT INTO staff_role_grant (platform_user_id, role_id, org_id, branch_id) VALUES ($1, $2, $3, NULLIF($4, '')::uuid)`,
+			p.subject, p.role, orgID, p.branch); err != nil {
 			t.Fatalf("plant the %s grant: %v", p.role, err)
 		}
 	}
 
 	appwrite := newAppwriteFake(t)
-	for _, s := range []string{prPayRecSubject, qwSalesUserID, wlYardManagerSubject, wlHRSubject} {
+	for _, s := range []string{prPayRecSubject, qwSalesUserID, wlYardManagerSubject, wlHRSubject,
+		wlOutsideSalesSubject, wlProcurementSubject, wlSalesManagerSubject, wlBranchManagerSubject,
+		wlBranchManagerKgnSubject, wlGeneralManagerSubject} {
 		appwrite.setTeam(s, "org:"+demoOrgSlug)
 	}
 	keys := testkit.NewKeys(t)
@@ -116,6 +138,12 @@ func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
 	sales := as(qwSalesUserID, "Sales")
 	yardManager := as(wlYardManagerSubject, "Yard manager")
 	hr := as(wlHRSubject, "HR")
+	outsideSales := as(wlOutsideSalesSubject, "Outside sales")
+	procurement := as(wlProcurementSubject, "Procurement manager")
+	salesManager := as(wlSalesManagerSubject, "Sales manager")
+	branchManager := as(wlBranchManagerSubject, "Branch manager at Trenton")
+	branchManagerKgn := as(wlBranchManagerKgnSubject, "Branch manager at Kingston")
+	generalManager := as(wlGeneralManagerSubject, "General manager")
 
 	forbidden := func(name string, rsp demoResponse) {
 		t.Helper()
@@ -180,16 +208,40 @@ func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
 		}
 	}
 
-	// 3. The reads: served on the money desk at read. The persona reads both; the yard manager (money
-	// desk read, no counter) now does too; HR (neither surface) is refused.
+	// 3. The reads, at ruling 87's level: the payment trail is held to money desk WORK, so the
+	// persona (money desk work) and the general manager (money desk manage, global) read both; the
+	// sales manager and the branch manager pass the level through counter till manage, fenced to
+	// their branches (the cheque and I06 sit at Trenton, so the Trenton pair reads them and a
+	// Kingston only branch manager finds no such payment); outside sales, the yard manager and the
+	// procurement manager (money desk read, no counter till) are refused both in the gate's shared
+	// body, as is HR (neither surface).
 	hist := "/api/v1/ar/payments/" + paymentID + "/history"
 	invPays := "/api/v1/ar/invoices/" + i06 + "/payments"
 	allowed("the persona on the payment history", payRec.call("GET", hist, nil), http.StatusOK)
 	allowed("the persona on the invoice's payments", payRec.call("GET", invPays, nil), http.StatusOK)
-	if rsp := yardManager.call("GET", hist, nil); rsp.status == http.StatusForbidden &&
-		strings.TrimSpace(string(rsp.body)) == strings.TrimSpace(string(authz.BodyForbidden)) {
-		t.Errorf("RED a money desk reader was refused the payment history: %s", rsp.body)
+	allowed("the general manager on the payment history", generalManager.call("GET", hist, nil), http.StatusOK)
+	allowed("the general manager on the invoice's payments", generalManager.call("GET", invPays, nil), http.StatusOK)
+	allowed("the Trenton sales manager on the Trenton payment history", salesManager.call("GET", hist, nil), http.StatusOK)
+	allowed("the Trenton sales manager on the Trenton invoice's payments", salesManager.call("GET", invPays, nil), http.StatusOK)
+	allowed("the Trenton branch manager on the Trenton payment history", branchManager.call("GET", hist, nil), http.StatusOK)
+	allowed("the Trenton branch manager on the Trenton invoice's payments", branchManager.call("GET", invPays, nil), http.StatusOK)
+	notFound := func(name string, rsp demoResponse) {
+		t.Helper()
+		if rsp.status == http.StatusForbidden &&
+			strings.TrimSpace(string(rsp.body)) == strings.TrimSpace(string(authz.BodyForbidden)) {
+			t.Errorf("RED %s answered the gate's refusal, want the branch fence's not found: %s", name, rsp.body)
+			return
+		}
+		allowed(name, rsp, http.StatusNotFound)
 	}
+	notFound("the Kingston branch manager on the Trenton payment history", branchManagerKgn.call("GET", hist, nil))
+	notFound("the Kingston branch manager on the Trenton invoice's payments", branchManagerKgn.call("GET", invPays, nil))
+	forbidden("outside sales on the payment history", outsideSales.call("GET", hist, nil))
+	forbidden("outside sales on the invoice's payments", outsideSales.call("GET", invPays, nil))
+	forbidden("the yard manager on the payment history", yardManager.call("GET", hist, nil))
+	forbidden("the yard manager on the invoice's payments", yardManager.call("GET", invPays, nil))
+	forbidden("the procurement manager on the payment history", procurement.call("GET", hist, nil))
+	forbidden("the procurement manager on the invoice's payments", procurement.call("GET", invPays, nil))
 	forbidden("HR on the payment history", hr.call("GET", hist, nil))
 	forbidden("HR on the invoice's payments", hr.call("GET", invPays, nil))
 
