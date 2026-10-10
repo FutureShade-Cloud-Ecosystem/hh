@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -65,7 +66,9 @@ func TestIntegration_StatementNotices_EnqueuedRowsAndZeroSends(t *testing.T) {
 	q := &sqlNoticeQueue{}
 	svc := NewStatementService(rig.repo).WithOutbox(NewStatementNoticeOutbox(q, StatementNoticeTopic))
 
-	asOf := time.Now()
+	// Pinned inside the evening window, where the UTC day and the house day differ at any wall hour, and
+	// the want below is derived independently of the code under test (houseday, not houseClock).
+	asOf := houseday.JustAfterUTCDayChange(time.Now())
 	run, statements, err := svc.GenerateRun(ctx, RunModeInterim, "", asOf, "", rig.customerID)
 	if err != nil {
 		t.Fatalf("statement run: %v", err)
@@ -119,11 +122,11 @@ func TestIntegration_StatementNotices_EnqueuedRowsAndZeroSends(t *testing.T) {
 	if got["amount_cents"] != float64(137000) {
 		t.Fatalf("payload amount_cents = %v, want 137000", got["amount_cents"])
 	}
-	// The ref names the dealer's day of the run's as-of clock, never the test process's own zone:
-	// read bare, the want rides the runner's zone and the guard's pinned clock turns it against the
-	// payload exactly when the runner sits nearer Greenwich than the house.
-	if got["invoice_no"] != StatementRef(houseClock(asOf).Format("2006-01-02")) {
-		t.Fatalf("payload invoice_no = %v, want %q", got["invoice_no"], StatementRef(houseClock(asOf).Format("2006-01-02")))
+	// The ref names the dealer's day of the run's as-of clock, never the UTC day and never the test
+	// process's own zone.
+	wantRef := StatementRef(houseday.Today(func() time.Time { return asOf }))
+	if got["invoice_no"] != wantRef {
+		t.Fatalf("payload invoice_no = %v, want %q", got["invoice_no"], wantRef)
 	}
 	// -- THE CONSENT RULE. UNION-W4 dropped the pre-resolved `to` fast path because a number captured
 	// at enqueue time skipped the consent check at delivery time. This producer must give a future

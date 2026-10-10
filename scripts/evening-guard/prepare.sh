@@ -33,6 +33,9 @@ goroot="$(go env GOROOT)"
 src="$goroot/src/time/time.go"
 anchor='sec, nsec, mono := runtimeNow()'
 grep -qF "$anchor" "$src" || { echo "prepare.sh: the toolchain's time.Now no longer reads '$anchor'; update this script" >&2; exit 1; }
+# A toolchain resolved into the module cache is read only, and cp -a keeps those modes, so the
+# copy from an earlier run into this directory can be unremovable as-is; make it writable first.
+chmod -R u+w "$dir/toolchain" 2>/dev/null || true
 rm -rf "$dir/toolchain"
 cp -a "$goroot" "$dir/toolchain"
 copy="$dir/toolchain"
