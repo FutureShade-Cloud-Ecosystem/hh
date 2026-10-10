@@ -73,6 +73,8 @@ type Screen = { kind: "picker" } | { kind: "home" } | { kind: "coming-soon"; mod
 const TILE_BLURBS: Record<string, string> = {
   "Counter Till": "The counter sale flow.",
   "Quote Desk": "Size the job, build and send the quote.",
+  "Manager Home": "What needs you, the approvals, the reports.",
+  "Dealer Admin": "Staff, roles, pricing rules, the audit log.",
   "HH Drive": "The day's run, stop to proof of delivery.",
   "House Messages": "Staff channels and acknowledgements.",
 };
