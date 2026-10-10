@@ -1179,8 +1179,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BillingApplyPaymentAnswer"
-        "400":
-          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
