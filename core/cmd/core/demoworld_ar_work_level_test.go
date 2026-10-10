@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -174,6 +175,7 @@ func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
 		t.Fatalf("the recorded cheque: %v", err)
 	}
 	c01 := demoID("customer:C01")
+	c04 := demoID("customer:C04")
 	i08 := demoID("invoice:I08")
 
 	// 1. The work routes: refused for a selling role and the yard manager, with a payment id that
@@ -346,4 +348,49 @@ func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
 
 	// 4. The reverse stays at manage.
 	forbidden("the persona on payment reverse", payRec.call("POST", "/api/v1/ar/payments/"+paymentID+"/reverse", map[string]any{"reason": "x"}))
+
+	// 5. Ruling 81, end to end: the counter's standing is the account's whole position.
+	// Account C04 owes only at Kingston (every open invoice of it is raised there) and carries an
+	// active hold; the account is made visible to a Trenton till by clearing its home branch, and the
+	// Trenton sales login, who holds no Kingston grant, asks the till's own standing route (the
+	// pos service, the account door and billing's aging read, wired as the composition wires them).
+	// It must read the hold and the whole past due figure, never "clear" for want of a Trenton invoice.
+	if _, err := pool.Exec(ctx, `UPDATE customers SET home_branch_id = NULL WHERE id = $1::uuid`, c04); err != nil {
+		t.Fatalf("clear the account's home branch: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO credit_holds (customer_id, status, reason)
+		SELECT $1::uuid, 'ACTIVE', 'standing proof'
+		 WHERE NOT EXISTS (SELECT 1 FROM credit_holds WHERE customer_id = $1::uuid AND status = 'ACTIVE')`, c04); err != nil {
+		t.Fatalf("hold the account: %v", err)
+	}
+	var elsewhere, openCents int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FILTER (WHERE branch_id <> $2::uuid), COALESCE(SUM(balance_cents), 0)
+		  FROM invoices WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`,
+		c04, trentonBranchID).Scan(&elsewhere, &openCents); err != nil {
+		t.Fatalf("the account's open invoices: %v", err)
+	}
+	var atTrenton int64
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM invoices WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')
+		   AND branch_id = $2::uuid`, c04, trentonBranchID).Scan(&atTrenton); err != nil {
+		t.Fatalf("the account's Trenton invoices: %v", err)
+	}
+	if elsewhere == 0 || atTrenton != 0 || openCents <= 0 {
+		t.Fatalf("the proof needs an account owing only elsewhere: %d elsewhere, %d at Trenton, %d open", elsewhere, atTrenton, openCents)
+	}
+	standing := sales.call("GET", "/api/v1/pos/account-standing?branch_id="+trentonBranchID+"&customer_id="+c04, nil)
+	standing.ok(t, http.StatusOK)
+	var got struct {
+		Standing     string `json:"standing"`
+		PastDueCents int64  `json:"past_due_cents"`
+		OnHold       bool   `json:"on_hold"`
+	}
+	if err := json.Unmarshal(standing.body, &got); err != nil {
+		t.Fatalf("decode the standing: %v: %s", err, standing.body)
+	}
+	if got.Standing != "on_hold" || !got.OnHold || got.PastDueCents != openCents {
+		t.Errorf("RED the Trenton till read %+v for an account held and owing %d only at Kingston, want on hold with the whole past due", got, openCents)
+	}
 }
