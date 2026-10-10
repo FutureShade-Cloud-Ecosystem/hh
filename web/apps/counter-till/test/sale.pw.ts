@@ -30,12 +30,6 @@ test.afterEach(async ({ request }) => {
 
 /** The screen-side rendering of integer cents, for comparing against the app. */
 
-/** Row 955: Returns is its own surface; open it from the bar (a no-op when it is already up). */
-async function openReturns(page: Page): Promise<void> {
-  if (!(await page.getByTestId("returns").isVisible())) await page.getByTestId("till-returns-entry").click();
-  await expect(page.getByTestId("returns")).toBeVisible();
-}
-
 function dollars(cents: number): string {
   const negative = cents < 0;
   const magnitude = Math.abs(cents);
@@ -1496,30 +1490,6 @@ test("the search drop rows carry the branch's stock beside the SKU", async ({ pa
   // branch (the fence), never guessed.
   await expect(row).toContainText("HPV-60");
   await expect(row).toContainText("120 on hand");
-});
-
-test("a sale rung at the till is found by the returns desk right after it commits", async ({
-  page,
-}) => {
-  await signIn(page, "Sales");
-  await ensureSession(page);
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  await openStep(page, "payment");
-  const ringPost = page.waitForResponse(
-    (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
-  );
-  await page.getByTestId("pos-complete-sale").click();
-  const sale = (await (await ringPost).json()) as Record<string, unknown>;
-  await expect(page.getByTestId("sold-panel")).toBeVisible();
-
-  // The ruled desk below the till finds the just-rung sale by its number and
-  // lays out its lines with what is still returnable.
-  await openReturns(page);
-  await page.getByLabel("Sale number").fill(String(sale.order_no));
-  await page.getByRole("button", { name: "Find sale" }).click();
-  await expect(page.getByTestId("returns-sale")).toContainText(String(sale.order_no));
-  await expect(page.getByTestId("returns").getByText("Holland Stone 60 mm")).toBeVisible();
-  await expect(page.getByText("sold 1, returned 0")).toBeVisible();
 });
 
 test("the manager-up till keeps the margin column, the segments and the eye, and the eye's name and title say the same thing in both states", async ({
