@@ -636,7 +636,7 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 	q := `SELECT id::text, requested_by::text, branch_id::text, policy_type, detail,
 	             COALESCE(subject_ref,''), COALESCE((data->>'amount_cents')::bigint, 0),
 	             COALESCE(data->>'line_id',''),
-	             status, COALESCE(decided_by::text,''), ` + requesterRoleSQL("requested_by") + `
+	             status, COALESCE(decided_by::text,''), ` + requesterRoleSQL("requested_by") + `, requested_at
 	      FROM permission_approval_requests WHERE deleted_at IS NULL AND ($1 = '' OR status = $1)`
 	args := []any{status}
 	if branches != nil {
@@ -654,7 +654,7 @@ func (r *ApprovalRepository) ListApprovals(ctx context.Context, status string, b
 		var a ApprovalRequest
 		var policy, st string
 		if err := rows.Scan(&a.ID, &a.RequestedBy, &a.BranchID, &policy, &a.Detail,
-			&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy, &a.RequesterRole); err != nil {
+			&a.SubjectRef, &a.AmountCents, &a.LineID, &st, &a.DecidedBy, &a.RequesterRole, &a.RequestedAt); err != nil {
 			return nil, err
 		}
 		a.Policy = PolicyType(policy)
