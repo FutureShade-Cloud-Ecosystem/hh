@@ -927,7 +927,7 @@ func roleAllowed(ask func(role string) (bool, error), role string) bool {
 // either decision point, the notice falls through to the chain. Each copy
 // is worded for the channel it lands in (orderRepFallbackRoute): the notice
 // must arrive somewhere a person reads it, and the figures must not arrive
-// where an off list role reads them. "Figureless on error or no" — every
+// where an off list role reads them. "Figureless on error or no", every
 // error path leaves the figure in the figureless twin rather than letting
 // it ride to a reader the rule has not admitted.
 func (a yardChatNotifier) postOrderRepNotice(ctx context.Context, ref tasks.TaskEventRef, yardSlug string) error {

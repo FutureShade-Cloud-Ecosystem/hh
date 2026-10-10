@@ -346,8 +346,8 @@ func TestOrderRepNotice_RepDMFigurelessBodyWhenRuleDisallows(t *testing.T) {
 		t.Fatalf("the fallback delivers: %v", err)
 	}
 	// The rep route answered RouteNone so messaging isn't called; the
-	// fallback chain runs. The rep DM is a different shape — see the leg
-	// below for that.
+	// fallback chain runs. The rep DM is a different shape (see the leg
+	// below for that).
 	if len(chat.posts) != 1 || chat.posts[0].slug != "sales-trenton" {
 		t.Fatalf("the chain ran with the rule refused: %+v", chat.posts)
 	}

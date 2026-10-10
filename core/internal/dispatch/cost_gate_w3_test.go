@@ -353,8 +353,9 @@ func TestDoorMoney_BothHoldReadsFailClosed(t *testing.T) {
 // blankHoldMoney's unheld branch; the wire was the on list path, where
 // blankHoldMoney was bypassed and the gate's code rode the hold. Without
 // the call site fix the on list caller would read Code "AR" on a paid stop
-// — a refusal id on an allowed order, a byte shape the off list caller
-// doesn't have. The fix runs the wordless step on every caller, the same
+// without the fix the on list caller would read Code "AR" on a paid stop
+// (a refusal id on an allowed order, a byte shape the off list caller
+// doesn't have). The fix runs the wordless step on every caller, the same
 // shape for both fences.
 //
 // Drawn from: cmd/core/tops_adapters.go:548 (unionARGate), which sets
