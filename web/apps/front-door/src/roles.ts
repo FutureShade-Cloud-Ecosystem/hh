@@ -6,22 +6,29 @@
 // gives, applied to that record once, by hand, here:
 //
 //   - The five roles whose logins the demo mints today are LIVE:
-//     inside_sales, sales_manager, payables_receivables, procurement_manager
-//     and driver, labelled on the cards the way the demo adapter's contract
-//     names them ("Sales", "Sales manager", "Payables and Receivables",
-//     "Procurement manager", "Driver" - the flows route's own labels, the
-//     same rule the till's entry view follows, so every name-based selector
-//     keeps reading exactly those words). The flow ids are the till's own
-//     mapping: inside_sales -> "sales", sales_manager -> "sales-manager",
-//     payables_receivables -> "payables-receivables",
-//     procurement_manager -> "procurement-manager", driver -> "driver".
-//     Payables and Receivables' one live module is the Money Desk; the
-//     Procurement manager's one live module is Buying and Stock; the
-//     Driver's one live module is HH Drive.
+//     inside_sales, sales_manager, payables_receivables, procurement_manager and driver, labelled on the cards the way the
+//     demo adapter's contract names them ("Sales", "Sales manager" - the flows
+//     route's own labels, the same rule the till's entry view follows, so
+//     every name-based selector keeps reading exactly those words). The flow
+//     ids are the till's own mapping: inside_sales -> "sales",
+//     sales_manager -> "sales-manager". Payables and Receivables' flow is
+//     "payables-receivables" and its one live module is the Money Desk; the
+//     Procurement manager's flow is "procurement-manager" and its one live
+//     module is Buying and Stock; the Driver's flow is "driver" and its one
+//     live module is HH Drive.
 //   - The eight others are COMING. Each shows the modules the matrix gives
 //     that role at work, manage or admin level, by the surfaces table's own
 //     names; read cells (and none) show nothing. A coming role is never
 //     tappable.
+//   - The manager's five tiles are the brief's own list: the two live
+//     modules of the box plus Manager Home, Dealer Admin and House Messages,
+//     the modules the matrix gives him at work or manage level, shown as the
+//     modules he will see and never navigable to nothing (they open the
+//     polite coming-soon page).
+//
+// A module the matrix gives a live role but the box does not serve yet is a
+// coming tile for that role, not a silent omission: the chips and the tiles
+// tell the same story.
 //
 // A role goes live by the steps in web/apps/_role-template/ROLE-GOES-LIVE.md
 // (the flow row, the populate account, the move from COMING_ROLES to
@@ -47,9 +54,13 @@ const BUYING_TILE: ModuleTile = { name: "Buying and Stock", icon: "lucide:packag
 const QUOTE_TILE: ModuleTile = { name: "Quote Desk", icon: "lucide:file-pen-line", href: "/quote/" };
 const MONEY_DESK_TILE: ModuleTile = { name: "Money Desk", icon: "lucide:landmark", href: "/money-desk/" };
 const DRIVE_TILE: ModuleTile = { name: "HH Drive", icon: "lucide:truck", href: "/drive/" };
-const HOUSE_MESSAGES_TILE: ModuleTile = { name: "House Messages", icon: "lucide:message-square", href: null };
 const MANAGER_HOME_TILE: ModuleTile = { name: "Manager Home", icon: "lucide:house", href: null };
 const DEALER_ADMIN_TILE: ModuleTile = { name: "Dealer Admin", icon: "lucide:settings", href: null };
+const HOUSE_MESSAGES_TILE: ModuleTile = {
+  name: "House Messages",
+  icon: "lucide:message-square",
+  href: null,
+};
 
 /** A role the demo signs in today: a card on the picker, a home behind it. */
 export interface LiveRole {
