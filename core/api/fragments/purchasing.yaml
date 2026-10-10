@@ -75,7 +75,9 @@ paths:
       description: >-
         Every field is optional and absent means unchanged; an empty
         order_email clears the fallback address. The vendor number is
-        not editable. A vendor another org owns is refused.
+        not editable. A vendor another org owns answers 404 like an unknown
+        id; a carried vendor with no org yet is claimed for the caller's org by
+        its first edit.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
@@ -242,6 +244,11 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v1/purchasing/pos/{id}/lines/{lineID}:
     put:
@@ -291,6 +298,11 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
       operationId: purchasingRemoveLine
       tags: [staff-purchasing]
@@ -326,6 +338,11 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v1/purchasing/pos/{id}/transition:
     post:

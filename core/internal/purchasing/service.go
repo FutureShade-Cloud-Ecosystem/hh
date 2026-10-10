@@ -286,6 +286,9 @@ func validateLine(l AddLineParams, lineNo int) error {
 	if l.QtyOrderedBase <= 0 {
 		return badReq("purchasing: line %d quantity must be greater than zero", lineNo)
 	}
+	if l.QtyOrderedBase > maxLineQty {
+		return unprocessable("purchasing: line %d quantity is beyond what an order line can hold (%.0f at most)", lineNo, maxLineQty)
+	}
 	// AN EMPTY UOM MEANS "the product's BASE unit", resolved in SQL by InsertPOLine, it is not a
 	// missing field. DIB-461 found the shipped consequence of requiring one here: inventory's
 	// POCreator seam (the DIB-72 create-PO handoff) speaks BASE QUANTITIES and carries no unit,
@@ -397,8 +400,29 @@ func (s *Service) AddLine(ctx context.Context, poID string, in AddLineParams) (P
 	return s.GetPO(ctx, poID)
 }
 
+// maxLineQty is the ceiling on one line's quantity: the column is numeric(19,4), which overflows
+// at 1e15, and a quantity near that is a typo in any yard. Past it the door answers in words
+// rather than letting the driver's overflow become a 500.
+const maxLineQty = 1e12
+
+// checkLinePath refuses a path whose ids are not uuids before any statement runs: an order id that
+// is not one names no order (404), a line id that is not one is a request that cannot be right
+// (422, in words), and neither may reach the database's uuid cast as a 500.
+func checkLinePath(poID, lineID string) error {
+	if !isUUIDString(poID) {
+		return errNotFound
+	}
+	if !isUUIDString(lineID) {
+		return unprocessable("purchasing: line id must be a uuid")
+	}
+	return nil
+}
+
 // RemoveLine deletes a line from a DRAFT purchase order.
 func (s *Service) RemoveLine(ctx context.Context, poID, lineID string) (PODetail, error) {
+	if err := checkLinePath(poID, lineID); err != nil {
+		return PODetail{}, err
+	}
 	if err := s.mutatePO(ctx, poID, func(tx pgx.Tx, po PO) error {
 		if !CanEditLines(po.Status) {
 			return conflict("purchasing: cannot edit the lines of a %s purchase order", po.Status)
@@ -423,8 +447,14 @@ func (s *Service) UpdateLine(ctx context.Context, poID, lineID string, in Update
 	if in.QtyOrderedBase == nil && in.UnitCostCents == nil {
 		return PODetail{}, badReq("purchasing: the body names nothing to change")
 	}
+	if err := checkLinePath(poID, lineID); err != nil {
+		return PODetail{}, err
+	}
 	if in.QtyOrderedBase != nil && *in.QtyOrderedBase <= 0 {
 		return PODetail{}, badReq("purchasing: line quantity must be positive")
+	}
+	if in.QtyOrderedBase != nil && *in.QtyOrderedBase > maxLineQty {
+		return PODetail{}, unprocessable("purchasing: line quantity is beyond what an order line can hold (%.0f at most)", maxLineQty)
 	}
 	if in.UnitCostCents != nil && *in.UnitCostCents < 0 {
 		return PODetail{}, badReq("purchasing: line unit cost cannot be negative")

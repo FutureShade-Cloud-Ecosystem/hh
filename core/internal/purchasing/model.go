@@ -409,6 +409,10 @@ func clientErr(status int, format string, a ...any) error {
 
 func badReq(format string, a ...any) error { return clientErr(http.StatusBadRequest, format, a...) }
 
+func unprocessable(format string, a ...any) error {
+	return clientErr(http.StatusUnprocessableEntity, format, a...)
+}
+
 func conflict(format string, a ...any) error { return clientErr(http.StatusConflict, format, a...) }
 
 var (
