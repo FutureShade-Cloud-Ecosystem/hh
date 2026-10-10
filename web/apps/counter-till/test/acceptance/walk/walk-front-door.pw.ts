@@ -14,7 +14,7 @@
 // What the walk holds, in order:
 //
 //   the picker renders: the two live role cards with their calls to act,
-//     the demo badge, and the eleven coming roles in their disclosure;
+//     the demo badge, and the coming roles in their disclosure;
 //   a Sales sign in lands on the Sales home: the role's name as the title,
 //     the two live module tiles, the header word;
 //   the Counter Till tile opens the till signed in as Sales, no second
@@ -117,9 +117,9 @@ test("the front door walk: pick a role, open each module signed in, Switch role,
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toContainText("Sign in as Sales");
   const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Ten more roles are coming");
-  await disclosure.getByText("Ten more roles are coming").click();
-  await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("listitem")).toHaveCount(10);
+  await expect(disclosure).toContainText("Nine more roles are coming");
+  await disclosure.getByText("Nine more roles are coming").click();
+  await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("listitem")).toHaveCount(9);
 
   // ── Sales signs in, and the home shows the two live tiles ───────────────
   await signInFrontDoor(page, "Sales");

@@ -21,6 +21,7 @@ package quote
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -96,6 +97,18 @@ func (s *StaffService) ConvertQuote(ctx context.Context, idOrNo string, opt Conv
 	}
 	if !identity.CanSellOnCredit(caller) {
 		return ConvertResult{}, &NotSellingRoleError{RoleCode: caller.RoleCode}
+	}
+	key, err := normalizeIdempotencyKey(opt.IdempotencyKey)
+	if err != nil {
+		return ConvertResult{}, err
+	}
+	opt.IdempotencyKey = key
+	if key != "" {
+		if s.auditTx == nil {
+			// A keyed conversion with no trail to carry the key could not be replayed safely.
+			return ConvertResult{}, errors.New("quote convert: an idempotency key needs the audit trail")
+		}
+		opt.keyAudit = s.auditTx
 	}
 	rGlobal, rBranches := callerBranchScope(caller)
 	quoteID, err := s.store.ResolveQuoteID(ctx, idOrNo, rGlobal, rBranches)
