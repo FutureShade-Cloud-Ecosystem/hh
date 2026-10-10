@@ -464,3 +464,15 @@ func (r *Repository) convertHoldsTx(ctx context.Context, tx pgx.Tx, quoteID, ord
 	}
 	return nil
 }
+
+// replayedOrder reads the number and fulfilment of the order a keyed conversion made, for the replay
+// (convert_idempotency.go). It runs on the conversion's transaction, under the quote row lock.
+func replayedOrder(ctx context.Context, tx pgx.Tx, orderID string) (ConvertResult, string, error) {
+	out := ConvertResult{OrderID: orderID}
+	var fulfillment string
+	if err := tx.QueryRow(ctx, `SELECT order_no::text, fulfillment FROM orders WHERE id = $1::uuid`, orderID).
+		Scan(&out.OrderNo, &fulfillment); err != nil {
+		return ConvertResult{}, "", fmt.Errorf("read the keyed conversion's order: %w", err)
+	}
+	return out, fulfillment, nil
+}
