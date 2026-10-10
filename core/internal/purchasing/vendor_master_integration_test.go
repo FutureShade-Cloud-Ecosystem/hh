@@ -148,6 +148,52 @@ func TestIntegration_VendorMaster_EditCorrectsTheRecordAndTheActiveSwitchHasTeet
 	}
 }
 
+// An address with an apostrophe is a legal local part (mail.ParseAddress accepts it), so the
+// create and the edit both have to carry it: the email rides the statement as a bound parameter,
+// never as text built into it, and reads back byte for byte.
+func TestIntegration_VendorMaster_AnApostropheAddressSavesOnCreateAndEdit(t *testing.T) {
+	h := newHarness(t)
+	vendorMasterCleanup(t, h)
+	org := h.orgID(t)
+
+	const first = "o'brien@example.com"
+	v, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Apostrophe create (demo)", OrderEmail: first})
+	if err != nil {
+		t.Fatalf("create with an apostrophe address: %v", err)
+	}
+	if v.OrderEmail != first {
+		t.Errorf("the created vendor reads %q, want %q", v.OrderEmail, first)
+	}
+
+	const second = "d'arcy+orders@example.com"
+	edited, err := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{OrderEmail: ptr(second)})
+	if err != nil {
+		t.Fatalf("edit with an apostrophe address: %v", err)
+	}
+	if edited.OrderEmail != second {
+		t.Errorf("the edited vendor reads %q, want %q", edited.OrderEmail, second)
+	}
+	var stored string
+	if err := h.pool.QueryRow(context.Background(),
+		`SELECT remit_address->>'email' FROM vendors WHERE id = $1`, v.ID).Scan(&stored); err != nil || stored != second {
+		t.Errorf("the stored remit email reads %q (err %v), want %q", stored, err, second)
+	}
+	// The edit merges only the email key: a key another hand planted survives it.
+	if _, err := h.pool.Exec(context.Background(),
+		`UPDATE vendors SET remit_address = remit_address || '{"city":"Trenton"}'::jsonb WHERE id = $1`, v.ID); err != nil {
+		t.Fatalf("plant a sibling key: %v", err)
+	}
+	if _, err := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{OrderEmail: ptr(first)}); err != nil {
+		t.Fatalf("second edit: %v", err)
+	}
+	var city, email string
+	if err := h.pool.QueryRow(context.Background(),
+		`SELECT remit_address->>'city', remit_address->>'email' FROM vendors WHERE id = $1`, v.ID).Scan(&city, &email); err != nil ||
+		city != "Trenton" || email != first {
+		t.Errorf("after the merge the remit reads city %q email %q (err %v), want Trenton and %q", city, email, err, first)
+	}
+}
+
 func ptr[T any](v T) *T { return &v }
 
 // orgID plants one throwaway org anchor row and answers its id, because an org row on this gate
