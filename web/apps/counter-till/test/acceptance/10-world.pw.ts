@@ -36,16 +36,16 @@ const TEN_PRODUCTS = [
   "DEMO-EDGE-ALU",
 ];
 
-test("the way in's data: two flows with role codes and labels", async ({ page }) => {
+test("the way in's data: the flows with role codes and labels", async ({ page }) => {
   const flows = await page.request.get("/api/v1/demo/flows");
   expect(flows.ok()).toBe(true);
   const body = (await flows.json()) as {
     flows: Array<{ flow: string; role_code: string; label: string }>;
   };
-  expect(body.flows).toHaveLength(3);
-  expect(body.flows.map((row) => row.flow)).toEqual(["sales", "sales-manager", "payables-receivables"]);
-  expect(body.flows.map((row) => row.role_code)).toEqual(["inside_sales", "sales_manager", "payables_receivables"]);
-  expect(body.flows.map((row) => row.label)).toEqual(["Sales", "Sales manager", "Payables and Receivables"]);
+  expect(body.flows).toHaveLength(4);
+  expect(body.flows.map((row) => row.flow)).toEqual(["sales", "sales-manager", "payables-receivables", "financial-controller"]);
+  expect(body.flows.map((row) => row.role_code)).toEqual(["inside_sales", "sales_manager", "payables_receivables", "financial_controller"]);
+  expect(body.flows.map((row) => row.label)).toEqual(["Sales", "Sales manager", "Payables and Receivables", "Financial Controller"]);
   // The picture is the table itself, as the browser shows the core's answer:
   // the page loads the flows route and waits for its two rows to be on the
   // screen (the test's own request never loads a page).

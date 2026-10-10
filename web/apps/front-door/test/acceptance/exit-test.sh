@@ -29,9 +29,9 @@
 #   the app builds (vite build) and the core's demo build compiles;
 #   the gate answers /healthz without a phrase;
 #   the picker page is refused without the phrase and served with it;
-#   the served bundle carries the picker's structure: the three live card
-#     labels ("Sales", "Sales manager", "Payables and Receivables"), the ten coming rows' labels, the
-#     Coming heading, and the demo badge's copy;
+#   the served bundle carries the picker's structure: the four live card
+#     labels ("Sales", "Sales manager", "Payables and Receivables", "Financial
+#     Controller"), the nine coming rows' labels, the Coming heading, and the demo badge's copy;
 #   /api/v1/demo/flows answers the closed table's four flows;
 #   POST /api/v1/demo/session without the phrase is refused by the gate, and
 #     with it mints for the four flow ids the front door maps (sales,
@@ -255,13 +255,13 @@ assert_in_bundle "Pick a role to walk the demo."
 assert_in_bundle "Sales"
 assert_in_bundle "Sales manager"
 assert_in_bundle "Payables and Receivables"
+assert_in_bundle "Financial Controller"
 assert_in_bundle "Coming"
 assert_in_bundle "Everything on this box is invented demo data: nothing here is real."
 assert_in_bundle "Switch role"
 assert_in_bundle "Sign out"
 for role in "Outside Sales" "Yard Team" "Yard Manager" "Logistics Manager" "Driver" \
-	"Branch Manager" "Procurement Manager" \
-	"Financial Controller" "General Manager" "HR"; do
+	"Branch Manager" "Procurement Manager" "General Manager" "HR"; do
 	assert_in_bundle "$role"
 done
 

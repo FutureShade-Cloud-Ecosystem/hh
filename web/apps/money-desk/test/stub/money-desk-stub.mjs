@@ -17,7 +17,11 @@ const glWorld = createGlWorld();
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
+// The core's closed table, in its order: the till's pair, then the two Money Desk roles. The till's two sign in
+// here only so the cross app card legs can show the front door offers them no Money Desk tile.
 const FLOWS = [
+  { flow: "sales", role_code: "inside_sales", label: "Sales" },
+  { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
 ];
@@ -29,6 +33,24 @@ const BRANCHES = [
 const branchOf = (n) => (n <= 3 ? BRANCHES[0].id : BRANCHES[1].id);
 
 const USERS = {
+  sales: {
+    user_id: "de110000-0000-4000-9000-000000000001",
+    email: "sales@hh-demo.invalid",
+    display_name: "Sales (demo)",
+    role_code: "inside_sales",
+    role_name: "Inside Sales",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  "sales-manager": {
+    user_id: "de110000-0000-4000-9000-000000000002",
+    email: "sales.manager@hh-demo.invalid",
+    display_name: "Sales manager (demo)",
+    role_code: "sales_manager",
+    role_name: "Sales Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
   "payables-receivables": {
     user_id: "de110000-0000-4000-9000-000000000007",
     email: "payables.receivables@hh-demo.invalid",

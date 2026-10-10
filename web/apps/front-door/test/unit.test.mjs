@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
-// the rule the D2 brief fixes (two live roles with the contract's labels and
-// the till's flow ids; ten coming roles, each carrying the modules the
+// the rule the D2 brief fixes (four live roles with the contract's labels and
+// the till's flow ids; nine coming roles, each carrying the modules the
 // matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test
@@ -136,9 +136,9 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the three live roles with the contract's labels and the flows", () => {
-  assert.equal(LIVE_ROLES.length, 3);
-  const [sales, manager, payRec] = LIVE_ROLES;
+test("the catalog holds the four live roles with the contract's labels and the flows", () => {
+  assert.equal(LIVE_ROLES.length, 4);
+  const [sales, manager, payRec, controller] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
   assert.deepEqual(sales.tiles.map((tile) => tile.name), ["Counter Till", "Quote Desk"]);
@@ -163,9 +163,16 @@ test("the catalog holds the three live roles with the contract's labels and the 
   assert.equal(payRec.flow, "payables-receivables");
   assert.deepEqual(payRec.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
   assert.deepEqual(payRec.tiles.map((tile) => tile.href), ["/money-desk/", null, null]);
+  // The Financial Controller's one live module is the same Money Desk tile, on the same path.
+  assert.equal(controller.id, "financial_controller");
+  assert.equal(controller.label, "Financial Controller");
+  assert.equal(controller.flow, "financial-controller");
+  assert.deepEqual(controller.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
+  assert.deepEqual(controller.tiles.map((tile) => tile.href), ["/money-desk/", null, null]);
+  assert.equal(controller.tiles[0], payRec.tiles[0], "both roles open the one Money Desk tile");
 });
 
-test("the catalog holds the ten coming roles, each with its matrix modules", () => {
+test("the catalog holds the nine coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
     "Yard Team",
@@ -174,7 +181,6 @@ test("the catalog holds the ten coming roles, each with its matrix modules", () 
     "Driver",
     "Branch Manager",
     "Procurement Manager",
-    "Financial Controller",
     "General Manager",
     "HR",
   ];
