@@ -11,10 +11,14 @@
 //
 // TWO MONEY CARRYING SHAPES ARE HELD DIFFERENTLY, and only here: the held
 // ticket's still_owed_cents and the skid answer's deposit figures are
-// contract-declared money the core really sends, so the wire shape is held
-// to the descriptor with those fields EXPECTED, and the projection that
-// drops them is proven in payload.test.mjs. Every other shape is held to
-// the descriptor and to the money scan both.
+// contract-declared money the core sends to a caller on its cost and margin
+// list (the yard manager is on it), so that caller's wire shape is held to
+// the descriptor with those fields EXPECTED, while every caller off the
+// list (the yard persona this app signs in) receives them byte-absent, the
+// core's own fence (core/internal/tasks/cost_gate.go, ruling 91), held
+// here per persona. The projection that drops them is proven in
+// payload.test.mjs. Every other shape is held to the descriptor and to the
+// money scan both.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -70,8 +74,8 @@ after(() => {
   child?.kill();
 });
 
-async function call(method, path, { body } = {}) {
-  const headers = { Authorization: "Bearer stub-token", "X-Org": "hh-demo" };
+async function call(method, path, { body, token } = {}) {
+  const headers = { Authorization: `Bearer ${token ?? "stub-token"}`, "X-Org": "hh-demo" };
   let payload;
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";
@@ -190,12 +194,12 @@ test("the pick queue answers the core's page and entry shapes, field by field", 
   for (const entry of res.json.items) {
     holdsShape("TaskPickQueueEntry", entry);
     holds("Task", entry.task);
-    // A held order's ticket is the one shape on this read that carries
-    // contract-declared money (still_owed_cents): held to the descriptor with
-    // that field expected, never to the money scan, and dropped by the app's
-    // projection (payload.test.mjs proves the drop).
-    if (entry.ticket?.held_from_picking === true) holdsWire("TaskPickTicket", entry.ticket, ["$.still_owed_cents"]);
-    else if (entry.ticket !== undefined) holds("TaskPickTicket", entry.ticket);
+    // A held order's ticket is the one shape on this read that can carry
+    // contract-declared money (still_owed_cents): the plain holds with its
+    // money scan is the proof the default caller (the yard persona, off the
+    // cost list) receives it byte-absent; the yard manager's leg below holds
+    // the kept half.
+    holds("TaskPickTicket", entry.ticket);
     for (const line of entry.ticket?.lines ?? []) holds("TaskPickLine", line);
     // The queue carries only OPEN shortages, the decorate() rule.
     for (const s of entry.shortages ?? []) {
@@ -256,14 +260,62 @@ test("recording a short pick answers the recorded lines and the ticket holds the
   }
 });
 
-test("the skid answer carries the contract's deposit figures, and nothing else beyond them", async () => {
+test("the skid answer keeps the count for the yard persona, and the deposit figures are byte-absent", async () => {
   await reset();
   const res = await call("PUT", "/api/v1/yard/picks/0a000000-0000-4000-9000-000000000040/skids", { body: { skid_count: 15, reason: "CONDENSED_SKIDS" } });
   assert.equal(res.status, 200);
-  holdsWire("TaskRecordSkidsResult", res.json, ["$.deposit_cents", "$.previous_deposit_cents"]);
+  // The plain holds with its money scan is the proof the default caller (the
+  // yard persona, off the cost list) receives neither deposit figure; the
+  // yard manager's leg below holds the kept half.
+  holds("TaskRecordSkidsResult", res.json);
   assert.equal(res.json.skid_count, 15);
   assert.equal(res.json.previous_skid_count, null);
   assert.equal(res.json.changed, true);
+  assert.equal("deposit_cents" in res.json, false, "the deposit figure must be byte-absent, never a zero");
+  assert.equal("previous_deposit_cents" in res.json, false, "the previous deposit figure must be byte-absent, never a zero");
+});
+
+test("the money fence follows the cost list: the yard persona receives no figure, the yard manager keeps them", async () => {
+  await reset();
+  // The yard persona, off the cost and margin list (the core's default,
+  // roleconfig/default.json): the held ticket keeps its words and its mark,
+  // and the owed figure is byte-absent (ruling 91: absence, not zero).
+  const minted = await call("POST", "/api/v1/demo/session", { body: { flow: "yard-team" } });
+  assert.equal(minted.status, 200);
+  const queue = await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`, { token: minted.json.token });
+  assert.equal(queue.status, 200);
+  const held = queue.json.items.find((e) => e.ticket?.held_from_picking === true);
+  assert.ok(held, "the world holds no held ticket to fence");
+  assert.equal(held.ticket.hold_words, "Balance due");
+  assert.equal("still_owed_cents" in held.ticket, false, "the owed figure must be byte-absent, never a zero");
+  // The yard manager, on the cost and margin list: the same reads keep every
+  // figure, the contract's declared money held to the descriptor.
+  const manager = await call("POST", "/api/v1/demo/session", { body: { flow: "yard-manager" } });
+  assert.equal(manager.status, 200);
+  const managerQueue = await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`, { token: manager.json.token });
+  assert.equal(managerQueue.status, 200);
+  const managerHeld = managerQueue.json.items.find((e) => e.ticket?.held_from_picking === true);
+  assert.ok(managerHeld, "the manager's queue holds no held ticket");
+  holdsWire("TaskPickTicket", managerHeld.ticket, ["$.still_owed_cents"]);
+  assert.equal(managerHeld.ticket.still_owed_cents, 43210);
+  const managerDetail = await call("GET", `/api/v1/yard/picks/${held.task.id}`, { token: manager.json.token });
+  assert.equal(managerDetail.status, 200);
+  holdsWire("TaskPickTicket", managerDetail.json.ticket, ["$.still_owed_cents"]);
+  const managerSkids = await call("PUT", `/api/v1/yard/picks/${held.task.id}/skids`, {
+    body: { skid_count: 2, reason: "CONDENSED_SKIDS" },
+    token: manager.json.token,
+  });
+  assert.equal(managerSkids.status, 200);
+  holdsWire("TaskRecordSkidsResult", managerSkids.json, ["$.deposit_cents", "$.previous_deposit_cents"]);
+  // The yard persona's skid answer on the same world: byte-absent again.
+  const yardSkids = await call("PUT", `/api/v1/yard/picks/0a000000-0000-4000-9000-000000000040/skids`, {
+    body: { skid_count: 3, reason: "CONDENSED_SKIDS" },
+    token: minted.json.token,
+  });
+  assert.equal(yardSkids.status, 200);
+  holds("TaskRecordSkidsResult", yardSkids.json);
+  assert.equal("deposit_cents" in yardSkids.json, false);
+  assert.equal("previous_deposit_cents" in yardSkids.json, false);
 });
 
 test("a shortage report and its resolve answer the shortage shape", async () => {

@@ -10,6 +10,10 @@
 // is the rep's, not the yard's. The app never reads that channel; the leg
 // reads it through the stub's own control endpoint, the double of the rep's
 // API read the acceptance leg makes against the image.
+//
+// The yard payloads' money (the held ticket's still_owed_cents and the skid
+// answer's deposit pair) is fenced by the caller's role the way the core
+// fences it as merged with PR 302: see COST_LIST below.
 import { createServer } from "node:http";
 
 const port = Number(process.env.YARD_STUB_PORT ?? 4959);
@@ -34,7 +38,74 @@ const USERS = {
     tier: 3,
     scope: "BRANCH",
   },
+  // The yard manager's persona, minted ahead of the core's flow table: the
+  // closed table gains the yard manager's login with the Manager Home app
+  // (PR 298), while the core's yard routes already answer a yard_manager
+  // caller by role today, and that caller is on the cost and margin list
+  // below, so the fence's kept half needs the persona here. The flows
+  // listing above stays the core's table, so no card or listing claims the
+  // login before its app lands.
+  "yard-manager": {
+    user_id: "demo-account-yard-manager",
+    email: "yard-manager@demo.invalid",
+    display_name: "Yard manager (demo)",
+    role_code: "yard_manager",
+    role_name: "Yard Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
 };
+
+// The yard money fence, the double of the core's (core/internal/tasks/
+// cost_gate.go, merged with PR 302 under ruling 91): the figures a yard
+// payload carries about what a customer owes ride only to a caller on the
+// configuration's cost and margin list, the core's own default
+// (core/internal/roleconfig/default.json, settings.cost_visibility). The
+// yard manager is on that list; the yard team is not.
+//
+// THE SHAPE IS ABSENCE, NOT ZERO: a caller off the list receives each
+// figure byte-absent, never a zero that reads as "nothing owed". The ticket
+// keeps its hold mark and its words; the skid answer keeps its count.
+const COST_LIST = new Set([
+  "inside_sales",
+  "outside_sales",
+  "sales_manager",
+  "yard_manager",
+  "logistics_manager",
+  "branch_manager",
+  "procurement_manager",
+  "payables_receivables",
+  "financial_controller",
+  "general_manager",
+]);
+
+// The caller the yard routes answer, read from the bearer the mint issued
+// (the token's sub names the persona). The node legs' fixed stub-token and
+// any token the stub cannot read are the yard persona, the app's own caller.
+function callerRole(req) {
+  const token = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
+  const parts = token.split(".");
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+      const user = Object.values(USERS).find((u) => u.user_id === payload.sub);
+      if (user !== undefined) return user.role_code;
+    } catch {
+      /* not the stub's token shape */
+    }
+  }
+  return "yard_team";
+}
+
+// blankTicketMoney, the double of the core's (tasks/cost_gate.go): the owed
+// figure is held out of the ticket for a caller the cost list refuses. The
+// hold mark and its words stay.
+function blankTicketMoney(ticket, allowed) {
+  if (allowed) return ticket;
+  const out = { ...ticket };
+  delete out.still_owed_cents;
+  return out;
+}
 
 // A token with the shape the app reads an expiry from: three parts, the
 // middle one base64url JSON carrying sub and exp. The signature is a stub.
@@ -287,10 +358,10 @@ function taskOut(task) {
   return out;
 }
 
-function entryOut(task, openOnly = false) {
+function entryOut(task, openOnly = false, moneyAllowed = true) {
   const shortages = world.shortages.filter((s) => s.task_id === task.id && (openOnly ? s.resolved_at === "" : true));
   const picked = world.picked.get(task.id) ?? [];
-  const entry = { task: taskOut(task), ticket: ticketFor(task) };
+  const entry = { task: taskOut(task), ticket: blankTicketMoney(ticketFor(task), moneyAllowed) };
   if (shortages.length > 0) entry.shortages = shortages.map(shortageOut);
   if (picked.length > 0) entry.picked = picked.map(pickedOut);
   return entry;
@@ -430,7 +501,8 @@ async function handle(req, res) {
     }
     const page = sorted.slice(start, start + limit);
     const next = start + limit < sorted.length ? String(start + limit) : "";
-    return json(res, { items: page.map((t) => entryOut(findTask(t.id), true)), next_cursor: next, limit });
+    const allowed = COST_LIST.has(callerRole(req));
+    return json(res, { items: page.map((t) => entryOut(findTask(t.id), true, allowed)), next_cursor: next, limit });
   }
 
   const pickMatch = /^\/api\/v1\/yard\/picks\/([^/]+)(?:\/([a-z-]+))?$/.exec(path);
@@ -438,11 +510,12 @@ async function handle(req, res) {
     const task = findTask(pickMatch[1]);
     if (!task) return notFound(res);
     const action = pickMatch[2] ?? "";
-    if (req.method === "GET" && action === "") return json(res, entryOut(task));
+    const allowed = COST_LIST.has(callerRole(req));
+    if (req.method === "GET" && action === "") return json(res, entryOut(task, false, allowed));
     if (req.method === "POST" && action === "stage") return stage(res, task, body ?? {});
     if (req.method === "POST" && action === "shortages") return reportShortage(res, task, body ?? {});
     if (req.method === "PUT" && action === "lines") return recordPick(res, task, body ?? {});
-    if (req.method === "PUT" && action === "skids") return recordSkids(res, task, body ?? {});
+    if (req.method === "PUT" && action === "skids") return recordSkids(res, task, body ?? {}, allowed);
     return notFound(res);
   }
 
@@ -583,7 +656,7 @@ function pickedSeq() {
 }
 
 
-function recordSkids(res, task, input) {
+function recordSkids(res, task, input, moneyAllowed = true) {
   if (input.skid_count === undefined || input.skid_count === null) {
     return refuse(res, 400, "skid_count is required, zero is an answer");
   }
@@ -602,16 +675,21 @@ function recordSkids(res, task, input) {
   const after = count;
   const changed = before !== after;
   world.skids.set(task.id, after);
-  // The skid deposit is the office's money; it rides the core's answer (the
-  // contract declares it) and the app's projection drops it.
-  return json(res, {
+  // The skid deposit is the office's money: it rides the core's answer (the
+  // contract declares it) for a caller on the cost list alone, byte-absent
+  // for every other caller (COST_LIST above); the app's projection drops it
+  // either way.
+  const answer = {
     skid_count: after,
     previous_skid_count: before,
-    deposit_cents: changed ? 4500 * after : 4500 * (before ?? 0),
-    previous_deposit_cents: before === null ? 0 : 4500 * before,
     changed,
     order_no: ticket.order_no,
-  });
+  };
+  if (moneyAllowed) {
+    answer.deposit_cents = changed ? 4500 * after : 4500 * (before ?? 0);
+    answer.previous_deposit_cents = before === null ? 0 : 4500 * before;
+  }
+  return json(res, answer);
 }
 
 
