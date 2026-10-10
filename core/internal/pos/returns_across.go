@@ -414,18 +414,12 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 		ocs[i] = child.oc
 	}
 	if !in.railOptional {
-		// The single return's own counter rule (returns.go, the Opus P2-4 fix) holds for the note
-		// too: a cash or card note's rail writes a refund payment and draws the payments counter,
-		// and the note takes these invoice rows first, so the counter is drawn HERE, before them.
-		// A note that held an owed invoice and then waited on the counter closed the same cycle
-		// with a received payment apply holding the counter and waiting on that invoice (the delta
-		// reviews' P1: the P2-4 fix had covered only the single return path). The account credit
-		// rail writes no payment row and draws no counter.
-		if in.RefundMethod != RefundAccountCredit {
-			if err := s.store.LockPaymentsSequenceTx(ctx, tx); err != nil {
-				return ReturnNote{}, false, false, err
-			}
-		}
+		// The single return's own counter rule (returns.go) holds for the note too, through the
+		// same helper: lockReturnInvoicesTx draws the payments counter itself, before the rows, and
+		// only when it will take any. A note that held an owed invoice and then waited on the
+		// counter closed the cycle with a received payment apply (the delta reviews' P1), and a
+		// note of fully paid sales with no deposit documents locks no invoice and must not hold the
+		// counter at all (the delta reviews' P2).
 		if err := s.lockReturnInvoicesTx(ctx, tx, ocs, in.RefundMethod != RefundAccountCredit); err != nil {
 			return ReturnNote{}, false, false, err
 		}

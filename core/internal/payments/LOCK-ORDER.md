@@ -11,16 +11,19 @@ Every writer that touches a payment, an invoice balance or a feed counter takes 
 A writer that has no use for a step skips it and keeps the order of the steps it does take.
 
 The till's returns with a cash or card refund, the single return and the credit note across orders alike, draw
-the payments counter BEFORE their invoice rows: both drew the counter last, at the refund payment's insert, until
-the Opus review's P2-4 found the cycle that closed with a received payment apply (the return holding an owed
-invoice `FOR NO KEY UPDATE`, the apply holding the counter and waiting on that invoice, the return then waiting on
-the counter); the delta reviews' P1 found the note path (`returnAcrossInTx`) still on the old order after the
-single return's fix, aborted at its child's payment insert the same way. Both paths now take step 2 before step 3
-like every other payments writer; the `FOR KEY SHARE` a `pos_returns` insert takes later is a share, not a lock in
-this order, and conflicts with no payments-walking writer's `FOR NO KEY UPDATE`. The POS account credit writes no
-payment row and draws no payments counter, so it skips step 2 and keeps the order of the steps it does take; its
-`FOR UPDATE` on the invoice conflicts with a share, but returns of one sale are serialised by the per-sale lock
-before either.
+the payments counter BEFORE their invoice rows, and ONLY when `lockReturnInvoicesTx` has decided invoice rows will
+be taken at all (an owed order's own invoice, or a paid order's deposit documents): both drew the counter last, at
+the refund payment's insert, until the Opus review's P2-4 found the cycle that closed with a received payment
+apply (the return holding an owed invoice `FOR NO KEY UPDATE`, the apply holding the counter and waiting on that
+invoice, the return then waiting on the counter); the delta reviews' P1 found the note path (`returnAcrossInTx`)
+still on the old order after the single return's fix, aborted at its child's payment insert the same way, and
+their P2 found the counter drawn by every cash or card return for its whole transaction, a paid sale's included,
+which held the one counter row every payments writer serialises on for no cycle it could close. A return on a
+fully paid sale with no deposit document locks no invoice, never draws the counter, and its later `FOR KEY SHARE`
+(the `pos_returns` foreign key) is a share, not a lock in this order, conflicting with no payments-walking
+writer's `FOR NO KEY UPDATE`. The POS account credit writes no payment row and draws no payments counter, so it
+skips step 2 and keeps the order of the steps it does take; its `FOR UPDATE` on the invoice conflicts with a
+share, but returns of one sale are serialised by the per-sale lock before either.
 
 ## Why the payments counter comes first
 
@@ -44,6 +47,15 @@ now taken FOR NO KEY UPDATE, which does not conflict with a key share, so a sett
 the writers a settle can still queue behind (an account credit, a reversal, a bounce) hold their rows for the length
 of local statements only. The settle-beside-settle leg is the guard for the rule itself: two settles naming the same
 invoices in opposite orders serialise at the counter instead of deadlocking on the rows.
+
+What an owed card return costs under this order: a cash or card return that takes invoice rows (an owed order's, or a
+paid order's deposit documents) holds the payments counter from before those rows to commit, and the card rail runs
+its processor call (`RefundCard`, the external round trip) inside that window, after the locks and before the refund
+payment's insert. Every payments writer in the company (every settle, apply, reversal, pay balance take and till
+tender) queues behind one owed card refund's processor call. That is the price of keeping the owed path cycle free,
+and it is why the counter is drawn only when invoice rows will be taken: a card return on a fully paid sale with no
+deposit document holds no counter through its processor call at all, and draws the counter only at its refund
+payment's insert, a local statement's length.
 
 ## Why the invoice rows are FOR NO KEY UPDATE
 
@@ -70,8 +82,8 @@ conflict; the share was never something these writers needed to hold back.
 | `PayWithStamps`, `PayWithIntent`, `Pay` (portal and card settle) | the same, in `lockAndTotal` | yes |
 | `ReversePayment` | payment row, payments counter (the reversing insert and the stamp, feed +1 each), every allocated invoice row `FOR NO KEY UPDATE` ascending, contra allocations, invoice re-opens (invoices counter +1 each) | yes: among the writers that take a counter or an invoice, the payment row is first only for NSF and this one (the terminal writers `MarkDeposited` and bankrec's claim and release update payment rows but take no counter and no invoice) |
 | POS ring | stock rows, order rows, payments counter (the tender's payment insert), new invoice (invoices counter) | yes: no existing invoice |
-| POS return, cash or card refund (the till refund rail) | per-sale advisory lock, payments counter (not advancing, drawn before the invoice rows), the owed order's invoice rows (`FOR NO KEY UPDATE`, sorted, PR 277's split), returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), refund payment insert (payments feed +1) | yes: the counter is drawn before the invoice rows, the order's own steps 2 then 3 |
-| POS credit note across orders, cash or card refund (`returnAcrossInTx`) | per-sale advisory locks in ascending order id, payments counter (not advancing, drawn before the invoice rows), every child's owed invoice rows (`FOR NO KEY UPDATE`, sorted), the note header, per child: returned order lines, invoice `FOR KEY SHARE`, refund payment insert (payments feed +1) | yes: the note draws the counter before its invoice rows exactly as the single return does (the delta reviews' P1: the note path was the one writer left on the old order) |
+| POS return, cash or card refund (the till refund rail) | per-sale advisory lock, payments counter (not advancing, drawn inside `lockReturnInvoicesTx` only when invoice rows will be taken), the owed order's invoice rows (`FOR NO KEY UPDATE`, sorted, PR 277's split), returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), refund payment insert (payments feed +1) | yes: the counter is drawn before the invoice rows the return takes, the order's own steps 2 then 3, and a paid sale's return (no invoice row) draws no counter at all (the delta reviews' P2) |
+| POS credit note across orders, cash or card refund (`returnAcrossInTx`) | per-sale advisory locks in ascending order id, payments counter (not advancing, drawn inside `lockReturnInvoicesTx` only when invoice rows will be taken), every child's owed invoice rows (`FOR NO KEY UPDATE`, sorted), the note header, per child: returned order lines, invoice `FOR KEY SHARE`, refund payment insert (payments feed +1) | yes: the note draws the counter before its invoice rows exactly as the single return does (the delta reviews' P1: the note path was the one writer left on the old order), and a note of fully paid sales with no deposit documents draws no counter either |
 | POS return to account credit | per-sale advisory lock, the order's invoice rows (`FOR NO KEY UPDATE`, sorted, every document the account rail offsets), returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), invoice `FOR UPDATE` (ApplyCreditToInvoice), invoices counter | yes: no payments row and no payments counter, so step 2 is skipped and the rest keep their order |
 | Group and whole-order invoice writers | the order row its caller locked, invoices counter (a new invoice) | yes: no payments row, no existing invoice |
 | Quote counter door (QD-5, PR 120) | order row, `LockPaymentsSequenceTx`, existing invoice row (`FOR NO KEY UPDATE`), invoices counter | yes |
@@ -122,6 +134,9 @@ REAL POS return over HTTP), each at pool 4 and pool 16, each parked in a widened
   settle as the parked side (cmd/core, red before the `FOR NO KEY UPDATE`)
 - the owed cash return and the owed cash credit note across orders, each beside a received payment apply on the
   same invoice (cmd/core, red before each path drew the counter: the single return, then the note)
+- a paid sale's cash return parked in its transaction beside an apply on an unrelated invoice: the apply answers
+  while the return is still parked (cmd/core, red while every cash or card return held the counter whatever it
+  locked)
 - the multi-invoice `ReversePayment` against a real POS cash return on the sale's invoice (cmd/core, red before
   the reversal's `FOR NO KEY UPDATE`)
 
