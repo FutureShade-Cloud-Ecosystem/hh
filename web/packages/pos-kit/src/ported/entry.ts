@@ -250,7 +250,7 @@ export function renderEntry(view: EntryView): TemplateResult {
   const tillFlows = flowsForTheTill(view.flows.flows);
   if (tillFlows.length === 0) {
     return stage(html`<p class="notice" role="status">
-      The demo sign-in answered with no roles this till serves: there is nothing to tap.
+      The demo sign-in answered with no roles: there is nothing to tap.
     </p>`);
   }
   return stage(html`
