@@ -167,7 +167,7 @@ func TestIntegration_OrderActivity_EndToEnd(t *testing.T) {
 		t.Fatalf("AddOrderNote: %v", err)
 	}
 
-	out, err := svc.OrderActivityFor(readCtx, ord)
+	out, err := svc.OrderActivityFor(readCtx, ord, true)
 	if err != nil {
 		t.Fatalf("OrderActivityFor: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestIntegration_OrderActivity_BranchScope(t *testing.T) {
 	// kingston != trenton (0003 seeds); any other seeded branch works for the denial.
 	outsider := ctxWith(ctx, staffAt(staffID, "5d1b3f6e-0000-4000-9000-000000000002"))
 
-	if _, err := svc.OrderActivityFor(outsider, ord); !errors.Is(err, ErrForbidden) {
+	if _, err := svc.OrderActivityFor(outsider, ord, true); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("cross-branch activity err = %v, want ErrForbidden", err)
 	}
 	if _, err := svc.AddOrderNote(outsider, ord, "phone", "should not land", "d492-scope-key"); !errors.Is(err, ErrForbidden) {

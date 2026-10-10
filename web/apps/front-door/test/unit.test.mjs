@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
-// the rule the D2 brief fixes (two live roles with the contract's labels and
-// the till's flow ids; eleven coming roles, each carrying the modules the
+// the rule the D2 brief fixes (the live roles with the contract's labels and
+// the till's flow ids; nine coming roles, each carrying the modules the
 // matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test
@@ -136,9 +136,9 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the two live roles with the contract's labels and the till's flows", () => {
-  assert.equal(LIVE_ROLES.length, 2);
-  const [sales, manager] = LIVE_ROLES;
+test("the catalog holds the four live roles with the contract's labels and the flows they mint", () => {
+  assert.equal(LIVE_ROLES.length, 4);
+  const [sales, manager, payRec, buyer] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
   assert.deepEqual(sales.tiles.map((tile) => tile.name), ["Counter Till", "Quote Desk"]);
@@ -148,7 +148,13 @@ test("the catalog holds the two live roles with the contract's labels and the ti
     manager.tiles.map((tile) => tile.name),
     ["Counter Till", "Quote Desk", "Manager Home", "Dealer Admin", "House Messages"],
   );
-  // The box's two live modules navigate; the manager's three not-yet modules do not.
+  assert.equal(buyer.label, "Procurement manager");
+  assert.equal(buyer.flow, "procurement-manager");
+  assert.deepEqual(
+    buyer.tiles.map((tile) => tile.name),
+    ["Buying and Stock", "Manager Home", "House Messages"],
+  );
+  // The box's live modules navigate; the not-yet modules do not.
   assert.deepEqual(
     sales.tiles.map((tile) => tile.href),
     ["/till/", "/quote/"],
@@ -157,9 +163,19 @@ test("the catalog holds the two live roles with the contract's labels and the ti
     manager.tiles.map((tile) => tile.href),
     ["/till/", "/quote/", null, null, null],
   );
+  assert.deepEqual(
+    buyer.tiles.map((tile) => tile.href),
+    ["/buying-and-stock/", null, null],
+  );
+  // Payables and Receivables' one live module is the Money Desk; its Manager
+  // Home and House Messages tiles are not on the box yet.
+  assert.equal(payRec.label, "Payables and Receivables");
+  assert.equal(payRec.flow, "payables-receivables");
+  assert.deepEqual(payRec.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
+  assert.deepEqual(payRec.tiles.map((tile) => tile.href), ["/money-desk/", null, null]);
 });
 
-test("the catalog holds the eleven coming roles, each with its matrix modules", () => {
+test("the catalog holds the nine coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
     "Yard Team",
@@ -167,8 +183,6 @@ test("the catalog holds the eleven coming roles, each with its matrix modules", 
     "Logistics Manager",
     "Driver",
     "Branch Manager",
-    "Procurement Manager",
-    "Payables and Receivables",
     "Financial Controller",
     "General Manager",
     "HR",
@@ -210,12 +224,13 @@ import { countMarginApprovals, readApprovalsPage } from "../src/approvals-count.
 const row = (policy_type, status) => ({ id: "a", requested_by: "u", branch_id: "b", policy_type, detail: "d", status });
 const pageOf = (pages) => async (cursor) => ({ ok: true, value: pages[cursor ?? ""] });
 
-test("the count reads the core's bare array", async () => {
-  const n = await countMarginApprovals(pageOf({ "": [row("MARGIN_BELOW_MINIMUM", "PENDING"), row("MARGIN_BELOW_MINIMUM", "PENDING")] }));
+test("the count reads the contract's page object, and a bare array is not a page", async () => {
+  const n = await countMarginApprovals(pageOf({ "": { items: [row("MARGIN_BELOW_MINIMUM", "PENDING"), row("MARGIN_BELOW_MINIMUM", "PENDING")], next_cursor: null } }));
   assert.equal(n, 2);
+  assert.equal(await countMarginApprovals(pageOf({ "": [row("MARGIN_BELOW_MINIMUM", "PENDING")] })), null);
 });
 
-test("the count reads the contract's page object and follows every cursor", async () => {
+test("the count follows every cursor", async () => {
   const n = await countMarginApprovals(
     pageOf({
       "": { items: [row("MARGIN_BELOW_MINIMUM", "PENDING")], next_cursor: "c2" },
@@ -229,12 +244,15 @@ test("the count reads the contract's page object and follows every cursor", asyn
 test("the count is the margin kind and pending only", async () => {
   const n = await countMarginApprovals(
     pageOf({
-      "": [
-        row("MARGIN_BELOW_MINIMUM", "PENDING"),
-        row("MARGIN_BELOW_MINIMUM", "APPROVED"),
-        row("CREDIT_LIMIT_EXCEEDED", "PENDING"),
-        row("FREIGHT_ABOVE_QUOTE", "PENDING"),
-      ],
+      "": {
+        items: [
+          row("MARGIN_BELOW_MINIMUM", "PENDING"),
+          row("MARGIN_BELOW_MINIMUM", "APPROVED"),
+          row("CREDIT_LIMIT_EXCEEDED", "PENDING"),
+          row("FREIGHT_ABOVE_QUOTE", "PENDING"),
+        ],
+        next_cursor: null,
+      },
     }),
   );
   assert.equal(n, 1);
@@ -242,7 +260,7 @@ test("the count is the margin kind and pending only", async () => {
 
 test("an unreadable answer, a bad row, a failed page or a repeated cursor yields no count", async () => {
   assert.equal(await countMarginApprovals(pageOf({ "": "nope" })), null);
-  assert.equal(await countMarginApprovals(pageOf({ "": [{ policy_type: 1, status: "PENDING" }] })), null);
+  assert.equal(await countMarginApprovals(pageOf({ "": { items: [{ policy_type: 1, status: "PENDING" }], next_cursor: null } })), null);
   assert.equal(await countMarginApprovals(async () => ({ ok: false })), null);
   assert.equal(
     await countMarginApprovals(pageOf({ "": { items: [], next_cursor: "x" }, x: { items: [], next_cursor: "x" } })),

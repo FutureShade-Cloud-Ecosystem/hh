@@ -38,7 +38,10 @@ func (r *Repository) InvoiceForGL(ctx context.Context, invoiceID string) (gl.Inv
 // ARBalanceCents returns the AR subledger balance as-of asOf for the 1100 tie-out. It sums the SAME two
 // sources the 0034 v_ar_aging view unions, open invoice balances + non-invoice AR customer_transactions
 // (NSF / ADJUSTMENT / CREDIT_MEMO / WRITE_OFF), so the aging grand total ties to this figure by
-// construction. branchID "" = consolidated (all branches).
+// construction. branchID "" = consolidated (all branches). The issue date arm cuts on the house day of
+// the as-of (an invoice joins the dealer's books on the dealer's calendar, never the server zone's
+// reading of the date); the transaction arm stays on the raw instant, because a payment or an NSF is
+// an instant and not a day.
 func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchID string) (int64, error) {
 	if r.pool == nil {
 		return 0, errNoDB
@@ -52,9 +55,9 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 		       AND ($2 = '' OR branch_id = $2::uuid))
 		 + (SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
 		     WHERE txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF') AND source_type <> 'invoice'
-		       AND created_at <= $1
+		       AND created_at <= $3
 		       AND ($2 = '' OR branch_id = $2::uuid))`,
-		asOf, branchID,
+		houseClock(asOf), branchID, asOf,
 	).Scan(&sum)
 	if err != nil {
 		return 0, fmt.Errorf("billing: AR balance as-of %s: %w", asOf.Format(time.RFC3339), err)

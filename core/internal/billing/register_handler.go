@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"log/slog"
 	"net/http"
@@ -52,6 +53,7 @@ type RegisterHandler struct {
 	repo     *Repository
 	log      *slog.Logger
 	branch   func(id string) string
+	trail    PaymentTrailReader
 }
 
 // NewRegisterHandler wires the handler. repo is used only for the two reads the handler itself needs
@@ -71,6 +73,14 @@ func (h *RegisterHandler) WithBranchNamer(f func(id string) string) *RegisterHan
 	return h
 }
 
+// WithPaymentTrail binds the reader that says whether a caller holds the payment trail reads. Unbound,
+// no caller does: the invoice detail then leaves the PAYMENT entries out of every timeline (the
+// least privilege answer, so an unwired composition withholds rather than shows).
+func (h *RegisterHandler) WithPaymentTrail(t PaymentTrailReader) *RegisterHandler {
+	h.trail = t
+	return h
+}
+
 // RegisterRoutes self-registers the register's routes. See the header for the gating rule.
 func (h *RegisterHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// reads + the per-invoice acts a counter genuinely performs
@@ -81,6 +91,7 @@ func (h *RegisterHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/ar/register/invoices/{id}", g.RequireStaff(h.staff(h.detail)))
 	r.Handle("GET /api/v1/ar/register/invoices/{id}/document", g.RequireStaff(h.staff(h.document)))
 	r.Handle("POST /api/v1/ar/register/invoices/{id}/payments", g.RequireStaff(h.staff(h.recordPayment)))
+	r.Handle("POST /api/v1/ar/payments/apply", g.RequireStaff(h.staff(h.applyReceived)))
 	r.Handle("POST /api/v1/ar/register/invoices/{id}/send", g.RequireStaff(h.staff(h.sendInvoice)))
 	r.Handle("POST /api/v1/ar/register/invoices/{id}/promise", g.RequireStaff(h.staff(h.addPromise)))
 	r.Handle("POST /api/v1/ar/register/invoices/{id}/dispute", g.RequireStaff(h.staff(h.openDispute)))
@@ -161,7 +172,16 @@ func (h *RegisterHandler) selection(w http.ResponseWriter, r *http.Request, call
 }
 
 func (h *RegisterHandler) detail(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	d, err := h.svc.Detail(r.Context(), r.PathValue("id"))
+	withPayments := false
+	if h.trail != nil {
+		held, err := h.trail.HoldsPaymentTrail(r.Context(), caller.PlatformUserID, caller.OrgID)
+		if err != nil {
+			h.writeErr(w, r, err)
+			return
+		}
+		withPayments = held
+	}
+	d, err := h.svc.Detail(r.Context(), r.PathValue("id"), withPayments)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -177,7 +197,7 @@ func (h *RegisterHandler) detail(w http.ResponseWriter, r *http.Request, caller 
 
 // document renders the printable invoice. It DOES NOT mark an open, see RegisterService.MarkOpened.
 func (h *RegisterHandler) document(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	d, err := h.svc.Detail(r.Context(), r.PathValue("id"))
+	d, err := h.svc.Detail(r.Context(), r.PathValue("id"), false)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -255,6 +275,25 @@ func (h *RegisterHandler) recordPayment(w http.ResponseWriter, r *http.Request, 
 	// what the ledger says, not what the client expected the ledger to become.
 	if hdr, hErr := h.repo.InvoiceHeader(r.Context(), in.InvoiceID); hErr == nil {
 		res.BalanceCents = hdr.BalanceCents
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// applyReceived records ONE received payment (amount, method, reference) against a list of the
+// account's open invoices. The server allocates it oldest first in one transaction and answers the
+// split per invoice; the money and the split are never the caller's to compute. The route is the
+// replacement for the app splitting one cheque into a request per invoice, which was neither atomic
+// nor one payment row.
+func (h *RegisterHandler) applyReceived(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ApplyPaymentInput
+	if err := decode(r, &in); err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	res, err := h.svc.ApplyReceivedPayment(r.Context(), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
@@ -408,9 +447,17 @@ func decode(r *http.Request, v any) error {
 func (h *RegisterHandler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var bad httpx.BadRequestError
 	var sd *SupplierDepositNotCreditable
+	var nsi payments.NoSuchInvoiceError
 	switch {
+	case errors.As(err, &nsi):
+		// A missing invoice, another account's, and one outside a scoped caller's branch reach all
+		// answer the same 404: no existence leak across the account or branch walls, the posture
+		// the till's pay balance door holds.
+		httpx.Error(w, http.StatusNotFound, "no such invoice: "+nsi.InvoiceID)
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "no such invoice")
+	case errors.Is(err, ErrBranchForbidden):
+		httpx.Error(w, http.StatusForbidden, BranchForbiddenWords)
 	case errors.As(err, &sd):
 		// Item 9 delta review P2-C: a credit memo against a deposit document is
 		// refused in words, with the stable code a client can switch on beside

@@ -105,6 +105,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// A-08 Price Change Log, batch price updates, CSV imports, append-only change log.
 	h.registerBatchRoutes(r, g)
 
+	// CP0-6: the pricing editors' floor warning (preview, then the confirmation in the log).
+	h.registerFloorRoutes(r, g)
+
 	// The price-file import (0198): upload → map → PREVIEW → apply. Its preview is behind the READ
 	// guard on purpose and its apply behind the write guard, pricefile_handler.go argues both.
 	h.registerPriceFileRoutes(r, g)

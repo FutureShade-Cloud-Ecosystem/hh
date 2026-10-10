@@ -200,12 +200,17 @@ func (w *world) teardown(ctx context.Context) {
 // A tier-3 caller would have the money commands refused before an adapter was reached, which would
 // make the cross-branch test pass for the wrong reason, the most dangerous kind of green.
 
+// PaymentTrail sits on the two branch managers below (and is set on the global caller at the legs
+// that need it): a branch manager holds the trail reads through the counter till, so the callers
+// here carry the stamp the handler's trail reader would make. boss() stays trail-less because the
+// activity leg's first half needs a caller the trail reader refuses.
+
 func (w *world) trenton() assist.Caller {
-	return assist.Caller{UserID: "u-trt", RoleCode: "BRANCH_MANAGER", Tier: 2, BranchIDs: []string{w.trentonID}}
+	return assist.Caller{UserID: "u-trt", RoleCode: "BRANCH_MANAGER", Tier: 2, BranchIDs: []string{w.trentonID}, PaymentTrail: true}
 }
 
 func (w *world) kingston() assist.Caller {
-	return assist.Caller{UserID: "u-kgn", RoleCode: "BRANCH_MANAGER", Tier: 2, BranchIDs: []string{w.kingstonID}}
+	return assist.Caller{UserID: "u-kgn", RoleCode: "BRANCH_MANAGER", Tier: 2, BranchIDs: []string{w.kingstonID}, PaymentTrail: true}
 }
 
 func (w *world) boss() assist.Caller {
@@ -324,6 +329,7 @@ func TestIntegration_AScopedUserCannotReachAnotherBranch(t *testing.T) {
 func TestIntegration_AGlobalCallerReachesEveryBranch(t *testing.T) {
 	w := newWorld(t)
 	gm := w.boss()
+	gm.PaymentTrail = true // the general manager holds the trail reads; payment.lookup refuses without it
 
 	res := w.run(t, gm, "stock.lookup", assist.Args{"product": w.stockedSKU})
 	if len(res.Items) != 2 {
@@ -351,7 +357,7 @@ func TestIntegration_AGlobalCallerReachesEveryBranch(t *testing.T) {
 // assigned a branch; a fence that renders that as "no filter" hands them the company.
 func TestIntegration_ACallerWithNoBranchGrantsReadsNothing(t *testing.T) {
 	w := newWorld(t)
-	nobody := assist.Caller{UserID: "u-new", RoleCode: "BRANCH_MANAGER", Tier: 2} // no BranchIDs at all
+	nobody := assist.Caller{UserID: "u-new", RoleCode: "BRANCH_MANAGER", Tier: 2, PaymentTrail: true} // no BranchIDs at all; the trail is not what this leg fences
 
 	if res := w.run(t, nobody, "order.lookup", assist.Args{"order_no": w.trentonOrderNo}); !res.Empty {
 		t.Fatalf("a caller with no branch grants read an order: %q", res.Headline)
@@ -523,7 +529,20 @@ func TestIntegration_ABalancedAccountSaysNothingOutstanding(t *testing.T) {
 func TestIntegration_ActivityReadsTheARLedger(t *testing.T) {
 	w := newWorld(t)
 
-	res := w.run(t, w.boss(), "customer.activity", assist.Args{"customer": w.trentonCustNo})
+	// Ruling 87: without the payment trail reads the payment row is absent, the rest unchanged.
+	noTrail := w.run(t, w.boss(), "customer.activity", assist.Args{"customer": w.trentonCustNo})
+	if len(noTrail.Items) != 2 {
+		t.Fatalf("items = %d, want the fixture's 2 non payment rows for a caller without the trail", len(noTrail.Items))
+	}
+	for _, it := range noTrail.Items {
+		if strings.HasPrefix(it.Title, "Payment ") {
+			t.Fatalf("a caller without the trail got the payment row %q", it.Title)
+		}
+	}
+
+	boss := w.boss()
+	boss.PaymentTrail = true
+	res := w.run(t, boss, "customer.activity", assist.Args{"customer": w.trentonCustNo})
 	if res.Empty {
 		t.Fatalf("headline = %q", res.Headline)
 	}
@@ -557,6 +576,7 @@ func TestIntegration_ANewAccountWithNoMovementsSaysSo(t *testing.T) {
 func TestIntegration_PaymentLookupInAllThreeShapes(t *testing.T) {
 	w := newWorld(t)
 	gm := w.boss()
+	gm.PaymentTrail = true // the general manager holds the trail reads; payment.lookup refuses without it
 
 	t.Run("by payment number", func(t *testing.T) {
 		res := w.run(t, gm, "payment.lookup", assist.Args{"reference": w.trentonPayNo})

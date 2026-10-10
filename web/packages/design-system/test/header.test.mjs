@@ -30,13 +30,19 @@ const actionButton = (markup, action) => {
   return m === null ? null : m[0];
 };
 
-test('the header renders the brand lockup: the HH mark, the product name with its accent word, the house line', () => {
+test('the header renders the brand lockup: the measured badge H, the product name with its accent word, the house line', () => {
   const markup = visible(renderKit(HosAppHeader));
   assert.ok(markup.includes('class="brand"'), 'the lockup div is present');
   assert.ok(markup.includes('role="img"'), 'the lockup is one image');
   assert.ok(markup.includes('aria-label="HH Yard, a Hardscape House product"'), 'the lockup names itself');
   assert.ok(markup.includes('aria-hidden="true"'), 'the mark is hidden from assistive tech');
-  assert.ok(markup.includes('>HH<'), 'the mark is the plain text HH');
+  // The mark is the badge's own geometry (decision log rows 953 and 968):
+  // mark.svg inlined, one path carrying currentColor, at the badge's
+  // measured viewBox; the plain text letter pair is gone.
+  assert.ok(markup.includes('viewBox="0 0 3000 3000"'), 'the mark svg carries the badge viewBox');
+  assert.ok(markup.includes('fill="currentColor"'), 'the mark path carries currentColor');
+  assert.ok(markup.includes('M644.94 465.17 H1386.06'), 'the mark path is the measured H geometry');
+  assert.ok(!markup.includes('>HH<'), 'the plain text HH is gone from the mark');
   assert.ok(markup.includes('HH Yard'), 'the product name reads HH Yard');
   assert.ok(markup.includes('a Hardscape House product'), 'the house line is present');
   assert.ok(markup.includes('class="accent"'), 'the accent word carries the gold-as-ink class');

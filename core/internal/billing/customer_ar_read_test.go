@@ -24,7 +24,7 @@ type arFake struct {
 	actCalled bool
 }
 
-func (f *arFake) CustomerActivity(_ context.Context, customerID string, limit int) ([]ARActivity, error) {
+func (f *arFake) CustomerActivity(_ context.Context, customerID string, limit int, _ bool) ([]ARActivity, error) {
 	f.gotID, f.gotLimit, f.actCalled = customerID, limit, true
 	return f.activity, f.actErr
 }
@@ -110,7 +110,7 @@ func TestCustomerActivity_PassesThroughAndBoundsTheLimit(t *testing.T) {
 		{Kind: "PAYMENT", Reference: "PMT-1", AmountCents: -1000, OccurredAt: arAt},
 	})
 
-	rows, err := svc.CustomerActivity(context.Background(), "c-1", 5)
+	rows, err := svc.CustomerActivity(context.Background(), "c-1", 5, true)
 	if err != nil {
 		t.Fatalf("CustomerActivity: %v", err)
 	}
@@ -123,13 +123,13 @@ func TestCustomerActivity_PassesThroughAndBoundsTheLimit(t *testing.T) {
 
 	// An absurd limit is capped rather than forwarded, a chat answer with 5000 ledger lines in it
 	// is not an answer, and an unbounded LIMIT is an unbounded query.
-	if _, err := svc.CustomerActivity(context.Background(), "c-1", 5000); err != nil {
+	if _, err := svc.CustomerActivity(context.Background(), "c-1", 5000, true); err != nil {
 		t.Fatal(err)
 	}
 	if f.gotLimit != 10 {
 		t.Fatalf("limit = %d for an out-of-range request, want the default 10", f.gotLimit)
 	}
-	if _, err := svc.CustomerActivity(context.Background(), "c-1", 0); err != nil {
+	if _, err := svc.CustomerActivity(context.Background(), "c-1", 0, true); err != nil {
 		t.Fatal(err)
 	}
 	if f.gotLimit != 10 {
@@ -139,7 +139,7 @@ func TestCustomerActivity_PassesThroughAndBoundsTheLimit(t *testing.T) {
 
 func TestCustomerActivity_EmptyIsAnAnswerNotAnError(t *testing.T) {
 	svc, _ := newARSvc(nil, nil)
-	rows, err := svc.CustomerActivity(context.Background(), "c-1", 10)
+	rows, err := svc.CustomerActivity(context.Background(), "c-1", 10, true)
 	if err != nil {
 		t.Fatalf("an account with no movements is an ANSWER: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestCustomerActivity_EmptyIsAnAnswerNotAnError(t *testing.T) {
 
 func TestCustomerActivity_AStoreWithoutTheSeamSaysSo(t *testing.T) {
 	svc := NewCreditService(&fakeCreditStore{}) // no activity seam
-	_, err := svc.CustomerActivity(context.Background(), "c-1", 10)
+	_, err := svc.CustomerActivity(context.Background(), "c-1", 10, true)
 	if !errors.Is(err, ErrCustomerActivityNotConfigured) {
 		t.Fatalf("err = %v, want ErrCustomerActivityNotConfigured", err)
 	}

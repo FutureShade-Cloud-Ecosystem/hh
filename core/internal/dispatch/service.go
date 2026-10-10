@@ -61,6 +61,16 @@ type Service struct {
 	// (the additive lane, asserted at boot in the composition root); a wired
 	// seam that errors REFUSES (money, the closed direction).
 	pickHold PickHoldGate
+	// costRoles is the door money fence's rule (cost_gate.go): whether the
+	// caller is on the cost and margin list. Nil is REFUSE, the closed
+	// direction money takes everywhere in this module.
+	costRoles CostRoles
+	// stopSource is the narrow read seam behind guardStop, guardRun and the
+	// payment hold reads' stops list (cost_gate_w3_test.go names it): one
+	// stop, one run, one run's stops. It is the repository; the door money
+	// fence's untagged legs override it with a double so CI's databaseless
+	// job carries the two hold reads the integration legs cover today.
+	stopSource stopRunSource
 	// trail is the audit READ seam (session A item 3d). Nil is an empty history, never an error.
 	trail PolicyTrailReader
 	names ActorNameResolver
@@ -84,11 +94,27 @@ type Service struct {
 func NewService(repo *Repository) *Service {
 	return &Service{
 		repo:       repo,
+		stopSource: repo,
 		log:        slog.Default(),
 		now:        time.Now,
 		callerFrom: identity.StaffContextFromContext,
 	}
 }
+
+// stopRunSource is the repository's stop and run read seam: everything the
+// payment hold reads and their guards resolve through (one stop, one run, one
+// run's stops). *Repository satisfies it, and NewService wires exactly that;
+// tests substitute an in-memory double (withStopSource) so the reads are
+// driven in the untagged suite, the one CI's ci job runs with no database.
+type stopRunSource interface {
+	GetStop(ctx context.Context, id string) (Stop, error)
+	GetRun(ctx context.Context, id string) (Run, error)
+	ListStopsForRun(ctx context.Context, runID string) ([]Stop, error)
+}
+
+// withStopSource overrides the stop and run read seam for a test double. The
+// repository stays the production source; nothing outside a test calls this.
+func (s *Service) withStopSource(src stopRunSource) *Service { s.stopSource = src; return s }
 
 // WithOrders injects the order authority seam (branch/status validation at scheduling).
 func (s *Service) WithOrders(r OrderReader) *Service { s.orders = r; return s }
@@ -469,7 +495,7 @@ func (s *Service) guardStop(ctx context.Context, stopID string) (Stop, error) {
 	if err != nil {
 		return Stop{}, err
 	}
-	stop, err := s.repo.GetStop(ctx, stopID)
+	stop, err := s.stopSource.GetStop(ctx, stopID)
 	if err != nil {
 		return Stop{}, err
 	}
@@ -485,7 +511,7 @@ func (s *Service) guardRun(ctx context.Context, runID string) (Run, error) {
 	if err != nil {
 		return Run{}, err
 	}
-	run, err := s.repo.GetRun(ctx, runID)
+	run, err := s.stopSource.GetRun(ctx, runID)
 	if err != nil {
 		return Run{}, err
 	}

@@ -24,6 +24,7 @@ import (
 type RunsSyncStore struct {
 	pool *pgxpool.Pool
 	link syncLinker
+	role SyncRoleResolver
 }
 
 // NewRunsSyncStore wires the adapter; a nil linker is legal only where
@@ -31,6 +32,29 @@ type RunsSyncStore struct {
 // linker the composition root already holds.
 func NewRunsSyncStore(pool *pgxpool.Pool, link syncLinker) *RunsSyncStore {
 	return &RunsSyncStore{pool: pool, link: link}
+}
+
+// WithDriverRole wires the driver fence's role seam (identity's
+// resolver, bridged to the role code). Production wires it; the
+// composition test in cmd/core pins that it did.
+func (s *RunsSyncStore) WithDriverRole(role SyncRoleResolver) *RunsSyncStore {
+	s.role = role
+	return s
+}
+
+// DriverRoleWired answers whether the driver fence's role seam is
+// wired, the leg the composition test pins so an unwired boot cannot
+// ship the fence's desk half silently.
+func (s *RunsSyncStore) DriverRoleWired() bool { return s.role != nil }
+
+// driverFence resolves the caller's driver arm over the pool. Every
+// caller resolves it BEFORE a transaction opens (Create, Write, Delete)
+// or with none held (Pull, FindApplied, Load) and passes the answer
+// down: the loader runs inside an open transaction and must not ask
+// the pool for a second connection (the pool-cycle rule the create
+// census keeps).
+func (s *RunsSyncStore) driverFence(ctx context.Context, f sync.ScopeFilter) (driverFence, error) {
+	return resolveDriverFence(ctx, s.pool, s.link, s.role, f)
 }
 
 // runsSyncQuery is the board's own run columns plus the two sync legs
@@ -90,26 +114,40 @@ func runStateOf(r syncRunRow) (sync.RowState, error) {
 // runScopePredicate is the WHERE predicate every runs adapter query
 // runs under. The org stamp is never absent (the middleware resolves
 // it); a tenant filter is refused earlier at the route (runs is an org
-// scope) and the adapter fails closed on one anyway.
-func runScopePredicate(f sync.ScopeFilter) (string, []any, bool) {
+// scope) and the adapter fails closed on one anyway. A driver caller
+// carries the driver arm beside the org: their runs alone, or nothing
+// at all when their login links to no driver record (the empty feed is
+// MyRuns' "you are not set up as a driver" said to a sync pull).
+func runScopePredicate(f sync.ScopeFilter, d driverFence) (string, []any, bool) {
 	if f.Tenant || f.OrgID == "" {
 		return "", nil, false
 	}
-	return "r.org_id = $1::uuid", []any{f.OrgID}, true
+	switch {
+	case !d.driver:
+		return "r.org_id = $1::uuid", []any{f.OrgID}, true
+	case d.driverID == "":
+		return "FALSE", nil, true
+	default:
+		return "r.org_id = $1::uuid AND r.driver_id = $2::uuid", []any{f.OrgID, d.driverID}, true
+	}
 }
 
 // Pull returns the page of run changes past since, live rows and
 // tombstones in seq order, at most limit rows total, under the org
-// predicate.
+// predicate and the driver arm.
 func (s *RunsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, limit int) ([]sync.Entity, []sync.Tombstone, error) {
-	where, args, ok := runScopePredicate(f)
+	d, err := s.driverFence(ctx, f)
+	if err != nil {
+		return nil, nil, err
+	}
+	where, args, ok := runScopePredicate(f, d)
 	if !ok {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
 	q := runsSyncQuery + `
-		WHERE ` + where + ` AND r.seq IS NOT NULL AND r.seq > $2
+		WHERE ` + where + ` AND r.seq IS NOT NULL AND r.seq > ` + syncPH(len(args)+1) + `
 		ORDER BY r.seq ASC
-		LIMIT $3`
+		LIMIT ` + syncPH(len(args)+2)
 	args = append(args, since, limit)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -144,12 +182,16 @@ func (s *RunsSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int6
 // keeps it); the delete leg dedups through the engine's
 // already-tombstoned arm, the design note in syncscope.go's header.
 func (s *RunsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key string) (sync.RowState, bool, error) {
-	where, args, ok := runScopePredicate(f)
+	d, err := s.driverFence(ctx, f)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	where, args, ok := runScopePredicate(f, d)
 	if !ok {
 		return sync.RowState{}, false, nil
 	}
 	q := runsSyncQuery + `
-		WHERE ` + where + ` AND r.idempotency_key = $2::uuid
+		WHERE ` + where + ` AND r.idempotency_key = ` + syncPH(len(args)+1) + `::uuid
 		LIMIT 1`
 	args = append(args, key)
 	r, err := scanSyncRun(s.pool.QueryRow(ctx, q, args...))
@@ -166,7 +208,11 @@ func (s *RunsSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key
 // Load reads one run by id under the org predicate; a row outside the
 // caller's org is the same as an absent one (existence never leaks).
 func (s *RunsSyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	return s.load(ctx, s.pool, f, id)
+	d, err := s.driverFence(ctx, f)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
+	return s.load(ctx, s.pool, f, d, id)
 }
 
 // runsQuerier is the read surface a pool and a transaction share, so one
@@ -180,13 +226,13 @@ type runsQuerier interface {
 // transaction, so the read rides the connection it already holds instead
 // of asking the shared pool for a second one (connection starvation by
 // second acquisition when pool-size callers do this together).
-func (s *RunsSyncStore) load(ctx context.Context, db runsQuerier, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	where, args, ok := runScopePredicate(f)
+func (s *RunsSyncStore) load(ctx context.Context, db runsQuerier, f sync.ScopeFilter, d driverFence, id string) (sync.RowState, bool, error) {
+	where, args, ok := runScopePredicate(f, d)
 	if !ok || !looksLikeUUID(id) {
 		return sync.RowState{}, false, nil
 	}
 	q := runsSyncQuery + `
-		WHERE r.id = $2::uuid AND ` + where
+		WHERE r.id = ` + syncPH(len(args)+1) + `::uuid AND ` + where
 	args = append(args, id)
 	r, err := scanSyncRun(db.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -255,7 +301,11 @@ func branchInOrg(ctx context.Context, q interface {
 // whole (inside the caller's org as the caller's own fact, outside it
 // as not-found so existence never leaks).
 func (s *RunsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key string, fields map[string]any) (sync.RowState, error) {
-	if _, _, ok := runScopePredicate(f); !ok {
+	d, err := s.driverFence(ctx, f)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if _, _, ok := runScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	if err := runCreateFields(fields); err != nil {
@@ -279,6 +329,12 @@ func (s *RunsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key stri
 	}
 	if driverID != "" && !looksLikeUUID(driverID) {
 		return sync.RowState{}, fmt.Errorf("dispatch: driver_id must be a uuid: %w", sync.ErrOpRefused)
+	}
+	// A held driver's writes land on their own runs alone: a run for a
+	// colleague's driver record, or for none, would be a row the driver
+	// can never read back (and a colleague's day written onto).
+	if d.driver && (d.driverID == "" || driverID != d.driverID) {
+		return sync.RowState{}, refused(fmt.Errorf("a driver opens runs for themselves"))
 	}
 	if err := s.crewInBranch(ctx, branchID, truckID, driverID); err != nil {
 		return sync.RowState{}, err
@@ -313,7 +369,7 @@ func (s *RunsSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key stri
 		// WHERE it is taken: inside the caller's org the collision is
 		// the caller's own fact, outside it the answer is not-found so
 		// existence never leaks across the scope boundary.
-		if _, own, _ := s.load(ctx, tx, f, id); own {
+		if _, own, _ := s.load(ctx, tx, f, d, id); own {
 			return sync.RowState{}, sync.ErrRowExists
 		}
 		return sync.RowState{}, sync.ErrRowNotFound
@@ -375,7 +431,11 @@ func (s *RunsSyncStore) crewInBranch(ctx context.Context, branchID, truckID, dri
 // cancelled stop, the settled-set precondition every closer shares.
 // The narrower REST rule keeps its own door; this one is the replay's.
 func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key string, fields map[string]any) (sync.RowState, error) {
-	if _, _, ok := runScopePredicate(f); !ok {
+	d, err := s.driverFence(ctx, f)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if _, _, ok := runScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	if err := runWriteFields(fields); err != nil {
@@ -397,10 +457,11 @@ func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key s
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var from, truckID, driverID, fromNotes string
+	arm, armArg := d.leg(runDriverCol, 3)
 	if err := tx.QueryRow(ctx,
 		`SELECT status, COALESCE(truck_id::text,''), COALESCE(driver_id::text,''), notes FROM delivery_runs
-		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL FOR UPDATE`,
-		id, f.OrgID).Scan(&from, &truckID, &driverID, &fromNotes); err != nil {
+		 WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+arm+` FOR UPDATE`,
+		id, f.OrgID, armArg).Scan(&from, &truckID, &driverID, &fromNotes); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
@@ -463,6 +524,10 @@ func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key s
 	if err != nil {
 		return sync.RowState{}, err
 	}
+	// The guarded UPDATE carries the driver arm the locked pre-image
+	// already enforced, so the move cannot land on a row the fence took
+	// away between the two statements.
+	setArm, setArg := d.leg(runDriverCol, 10)
 	var updated bool
 	err = tx.QueryRow(ctx, `
 		UPDATE delivery_runs SET
@@ -473,9 +538,9 @@ func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key s
 			updated_at      = now(),
 			seq             = $7,
 			idempotency_key = $8::uuid
-		WHERE id = $1::uuid AND org_id = $2::uuid AND status = $9
+		WHERE id = $1::uuid AND org_id = $2::uuid AND status = $9`+setArm+`
 		RETURNING (deleted_at IS NOT NULL)`,
-		id, f.OrgID, to, at, hasNotes, notes, seq, key, from).Scan(&updated)
+		id, f.OrgID, to, at, hasNotes, notes, seq, key, from, setArg).Scan(&updated)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}
@@ -498,7 +563,11 @@ func (s *RunsSyncStore) Write(ctx context.Context, f sync.ScopeFilter, id, key s
 // dedups after the delete, and the delete itself is idempotent through
 // the engine's already-tombstoned arm (syncscope.go's header).
 func (s *RunsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key string) (sync.RowState, error) {
-	if _, _, ok := runScopePredicate(f); !ok {
+	d, err := s.driverFence(ctx, f)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if _, _, ok := runScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
 	}
 	_ = key
@@ -511,14 +580,15 @@ func (s *RunsSyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key 
 	if err != nil {
 		return sync.RowState{}, err
 	}
+	delArm, delArg := d.leg(runDriverCol, 4)
 	var deleted bool
 	err = tx.QueryRow(ctx, `
 		UPDATE delivery_runs SET
 			deleted_at = now(),
 			updated_at = now(),
 			seq        = $3
-		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL
-		RETURNING (deleted_at IS NOT NULL)`, id, f.OrgID, seq).Scan(&deleted)
+		WHERE id = $1::uuid AND org_id = $2::uuid AND deleted_at IS NULL`+delArm+`
+		RETURNING (deleted_at IS NOT NULL)`, id, f.OrgID, seq, delArg).Scan(&deleted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return sync.RowState{}, sync.ErrRowNotFound
 	}

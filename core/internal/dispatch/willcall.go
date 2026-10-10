@@ -358,8 +358,13 @@ func (s *Service) confirmWillCall(ctx context.Context, w WillCall, typedName str
 	}
 	// Item 9.3: a held order's goods do not leave through the self
 	// confirmation either, whatever live token predates the reopened balance
-	// (an NSF bounce can re-owe an order after its tag was minted).
-	if err := s.refuseHeldFromPicking(ctx, w.OrderID); err != nil {
+	// (an NSF bounce can re-owe an order after its tag was minted). The
+	// PUBLIC door keeps the figure: the customer holding the token is
+	// reading the order's own balance, not an internal surface, and the bare
+	// mandated sentence would tell a paying customer nothing they can act
+	// on. Same predicate as the staff door, with the figure decision made
+	// by the public helper rather than the cost gate.
+	if err := s.refuseHeldFromPickingPublic(ctx, w.OrderID); err != nil {
 		return PublicWillCall{}, err
 	}
 	ref, err := s.sig.CaptureTyped(ctx, TypedAttestation{

@@ -279,6 +279,19 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 		}
 		return ConvertResult{}, fmt.Errorf("convert quote %q: load: %w", quoteID, err)
 	}
+	// FROM-PRINCIPAL 121: a keyed repeat answers the FIRST order and writes nothing, whatever the quote's
+	// status is now and whatever the multi accept switch says. It runs under the lock just taken and
+	// before every status check, because a request that timed out at the client may have committed
+	// after the client looked again (convert_idempotency.go).
+	if opt.IdempotencyKey != "" {
+		prior, found, ferr := r.findKeyedConversion(ctx, tx, quoteID, opt.IdempotencyKey, opt.Fulfillment)
+		if ferr != nil {
+			return ConvertResult{}, ferr
+		}
+		if found {
+			return prior, nil
+		}
+	}
 	if status != "ACCEPTED" {
 		// DIB-491 (D-097): a CONVERTED quote may be converted AGAIN, minting a duplicate order -
 		// but only when the dealer has switched multi-accept ON. The switch is read on THIS
@@ -363,6 +376,11 @@ func (r *Repository) Convert(ctx context.Context, customerID, quoteID string, op
 	if err := r.recordAcceptProvenanceTx(ctx, tx, quoteID, quoteNo, res.OrderID, res.OrderNo, origin, actorID); err != nil {
 		return ConvertResult{}, err
 	}
+	if opt.IdempotencyKey != "" {
+		if err := recordKeyedConversion(ctx, tx, opt, quoteID, status, res); err != nil {
+			return ConvertResult{}, err
+		}
+	}
 
 	// W5 seam 3, SOFT becomes HARD, in this transaction.
 	//
@@ -445,4 +463,16 @@ func (r *Repository) convertHoldsTx(ctx context.Context, tx pgx.Tx, quoteID, ord
 		}
 	}
 	return nil
+}
+
+// replayedOrder reads the number and fulfilment of the order a keyed conversion made, for the replay
+// (convert_idempotency.go). It runs on the conversion's transaction, under the quote row lock.
+func replayedOrder(ctx context.Context, tx pgx.Tx, orderID string) (ConvertResult, string, error) {
+	out := ConvertResult{OrderID: orderID}
+	var fulfillment string
+	if err := tx.QueryRow(ctx, `SELECT order_no::text, fulfillment FROM orders WHERE id = $1::uuid`, orderID).
+		Scan(&out.OrderNo, &fulfillment); err != nil {
+		return ConvertResult{}, "", fmt.Errorf("read the keyed conversion's order: %w", err)
+	}
+	return out, fulfillment, nil
 }

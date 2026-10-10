@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
 var (
@@ -107,24 +111,46 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 		    )`
 
 	// Insert the derived rows the user qualifies for. A non-ACTIVE user qualifies for nothing (the
-	// Go-side status guard) so it is skipped entirely.
+	// Go-side status guard) so it is skipped entirely. RETURNING hands back only the rooms that
+	// gained a row (the conflict arm answers nothing), and each of them owes the channels feed the
+	// same announce the explicit seat owes: a device holding a cursor past the room's stamped seq
+	// sees the room arrive. The bumps ride the sync's own transaction, so the seats and their
+	// announce commit together or not at all.
+	var changed []string
 	if status == "ACTIVE" {
-		if _, err := tx.Exec(ctx, `
+		rows, err := tx.Query(ctx, `
 			INSERT INTO msg_members (channel_id, user_id, role, source)
 			SELECT ch.id, $1, 'MEMBER', 'DERIVED'
 			FROM msg_channels ch
 			WHERE `+qualifies+`
-			ON CONFLICT (channel_id, user_id) DO NOTHING`, userID, isGlobal); err != nil {
+			ON CONFLICT (channel_id, user_id) DO NOTHING
+			RETURNING channel_id`, userID, isGlobal)
+		if err != nil {
 			return fmt.Errorf("insert derived members: %w", err)
 		}
+		var seated []string
+		for rows.Next() {
+			var ch string
+			if err := rows.Scan(&ch); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan seated channel: %w", err)
+			}
+			seated = append(seated, ch)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("insert derived members: %w", err)
+		}
+		changed = append(changed, seated...)
 	}
 
 	// Delete DERIVED rows the user no longer qualifies for (role/branch change, deactivation, or
 	// channel archival). EXPLICIT rows are untouched (source filter). An ACTIVE user is re-tested
 	// against `qualifies`; a non-ACTIVE user qualifies for NOTHING, so ALL their derived rows are
-	// pruned (the branch below avoids binding the now-unused $2).
+	// pruned (the branch below avoids binding the now-unused $2). Every pruned room owes the feed
+	// the same refresh bump a removal owes, on the same transaction.
 	if status == "ACTIVE" {
-		if _, err := tx.Exec(ctx, `
+		rows, err := tx.Query(ctx, `
 			DELETE FROM msg_members m
 			WHERE m.user_id = $1
 			  AND m.source = 'DERIVED'
@@ -132,13 +158,59 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 			        SELECT 1 FROM msg_channels ch
 			        WHERE ch.id = m.channel_id
 			          AND `+qualifies+`
-			      )`, userID, isGlobal); err != nil {
+			      )
+			RETURNING m.channel_id`, userID, isGlobal)
+		if err != nil {
 			return fmt.Errorf("prune derived members: %w", err)
 		}
+		var pruned []string
+		for rows.Next() {
+			var ch string
+			if err := rows.Scan(&ch); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan pruned channel: %w", err)
+			}
+			pruned = append(pruned, ch)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("prune derived members: %w", err)
+		}
+		changed = append(changed, pruned...)
 	} else {
-		if _, err := tx.Exec(ctx,
-			`DELETE FROM msg_members WHERE user_id = $1 AND source = 'DERIVED'`, userID); err != nil {
+		rows, err := tx.Query(ctx,
+			`DELETE FROM msg_members WHERE user_id = $1 AND source = 'DERIVED'
+			 RETURNING channel_id`, userID)
+		if err != nil {
 			return fmt.Errorf("prune derived members (inactive): %w", err)
+		}
+		var pruned []string
+		for rows.Next() {
+			var ch string
+			if err := rows.Scan(&ch); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan pruned channel: %w", err)
+			}
+			pruned = append(pruned, ch)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("prune derived members (inactive): %w", err)
+		}
+		changed = append(changed, pruned...)
+	}
+
+	// Each changed room owes the feed one bump, and each bump takes the room's row lock. The ids are
+	// bumped in ONE sorted order across seats and prunes alike, so two syncs that cross (one gaining
+	// room A and losing room B while another gains B and loses A) take their locks in the same order
+	// and cannot deadlock: a deadlock would fail the ListMyChannels read that runs the sync.
+	sort.Strings(changed)
+	for i, ch := range changed {
+		if i > 0 && ch == changed[i-1] {
+			continue
+		}
+		if err := r.bumpChannelSeq(ctx, tx, ch); err != nil {
+			return err
 		}
 	}
 
@@ -284,7 +356,8 @@ func (r *Repository) UpsertNotificationPrefs(ctx context.Context, p Notification
 		      escalation_override = EXCLUDED.escalation_override,
 		      muted = EXCLUDED.muted,
 		      mode = EXCLUDED.mode,
-		      updated_at = now()
+		      updated_at = now(),
+		      seq = nextval(pg_get_serial_sequence('msg_notification_prefs', 'seq'))
 		RETURNING desktop_enabled, escalation_override, muted, mode, updated_at`,
 		p.ChannelID, p.UserID, p.DesktopEnabled, p.EscalationOverride, p.Muted, p.Mode).
 		Scan(&out.DesktopEnabled, &out.EscalationOverride, &out.Muted, &out.Mode, &out.UpdatedAt)
@@ -555,9 +628,11 @@ func (r *Repository) InsertEventMessage(ctx context.Context, channelID, eventKey
 // - Approvals rail (0075) -
 // EnsureApprovalChannel lazily + idempotently provisions the caller-approver's dedicated APPROVAL
 // channel (slug approvals-<username>, sole member the approver) and returns its id. Idempotent two ways:
-// the channel upserts on its unique slug (a second call returns the same id), and the member row upserts
+// the channel converges on its unique slug (a second call returns the same id), and the member row upserts
 // on the (channel_id, user_id) PK. The member is EXPLICIT so the FR-1 derived-membership prune never
-// garbage-collects it. Returns the channel id.
+// garbage-collects it. A row of another kind already holding the slug (a squat the founding walls
+// refuse but a hand written row can still plant) is NEVER adopted: the provision refuses loudly
+// rather than seating the approver OWNER in a room they do not own. Returns the channel id.
 func (r *Repository) EnsureApprovalChannel(ctx context.Context, userID string) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
@@ -585,12 +660,36 @@ func (r *Repository) EnsureApprovalChannel(ctx context.Context, userID string) (
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var channelID string
-	// DO UPDATE (not DO NOTHING) so RETURNING always yields the id, whether the row is new or pre-existing.
-	if err := tx.QueryRow(ctx, `
+	// DO NOTHING (not DO UPDATE): RETURNING yields the id on the fresh arm
+	// alone, and the conflict arm below decides whether the row this
+	// provision converges on is its own (idempotent re-run) or a squat.
+	err = tx.QueryRow(ctx, `
 		INSERT INTO msg_channels (kind, slug, name, topic, tier)
 		VALUES ('APPROVAL', $1, $2, 'Your approval requests', 'STANDARD')
-		ON CONFLICT (slug) DO UPDATE SET updated_at = now()
-		RETURNING id::text`, slug, "Approvals, "+handle).Scan(&channelID); err != nil {
+		ON CONFLICT (slug) DO NOTHING
+		RETURNING id::text`, slug, "Approvals, "+handle).Scan(&channelID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var kind string
+		kerr := tx.QueryRow(ctx,
+			`SELECT kind FROM msg_channels WHERE slug = $1`, slug).Scan(&kind)
+		if errors.Is(kerr, pgx.ErrNoRows) {
+			return "", errNotFound // the conflicting row vanished mid-flight
+		}
+		if kerr != nil {
+			return "", fmt.Errorf("load conflicting approval channel: %w", kerr)
+		}
+		if kind != KindApproval {
+			// The slug embeds this approver's own user id and this
+			// provision is its only rightful writer: a row of another
+			// kind is a squat, and seating the approver into it would
+			// hand the squatter the room's cards and the OWNER pen.
+			return "", fmt.Errorf("ensure approval channel: %w", ErrChannelSlugTaken)
+		}
+		if err := tx.QueryRow(ctx,
+			`SELECT id::text FROM msg_channels WHERE slug = $1`, slug).Scan(&channelID); err != nil {
+			return "", fmt.Errorf("load approval channel: %w", err)
+		}
+	} else if err != nil {
 		return "", fmt.Errorf("ensure approval channel: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -645,7 +744,8 @@ func (r *Repository) StampApprovalStatus(ctx context.Context, approvalID, status
 	}
 	ct, err := r.pool.Exec(ctx, `
 		UPDATE msg_messages
-		SET ref = jsonb_set(ref, '{status}', to_jsonb($2::text), true)
+		SET ref = jsonb_set(ref, '{status}', to_jsonb($2::text), true),
+		    seq = nextval(pg_get_serial_sequence('msg_messages', 'seq'))
 		WHERE kind = 'APPROVAL' AND event_key = $1`, approvalCardKey(approvalID), status)
 	if err != nil {
 		return 0, fmt.Errorf("stamp approval status: %w", err)
@@ -701,6 +801,51 @@ func (r *Repository) UserDisplayName(ctx context.Context, userID string) (string
 	return name, nil
 }
 
+// UserRoleCode reads one role code for one user, the first active role row
+// (a hold on the role table scopes it, the same way the SyncMembership derived
+// rule reads it; a user who has no active role reads back an empty code). The
+// PR 302 N2 yard notice fence reads this to ask SeesCostAndMargin for the
+// rep's own role, the same X3 rule cost_gate already asks everywhere. The
+// returned code is the CANONICAL form (lowercase, the staff_role.id shape)
+// not the ERP code (UPPERCASE): the rule vocabulary's SeesCostAndMargin
+// answers against the canonical, the same conversion identity.bridge makes
+// at the dispatch door. An empty answer is fail closed: the figures ride
+// only when the rule says yes for a known role, and the brief's "figureless
+// on error or no" stays a safety net on top of the empty-code path.
+func (r *Repository) UserRoleCode(ctx context.Context, userID string) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var code string
+	err := r.pool.QueryRow(ctx, `
+		SELECT ro.code::text
+		FROM users u
+		JOIN user_roles ur ON ur.user_id = u.id
+		JOIN roles ro ON ro.id = ur.role_id
+		WHERE u.id = $1 AND u.status = 'ACTIVE'
+		ORDER BY ur.created_at ASC
+		LIMIT 1`, userID).Scan(&code)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("user role code: %w", err)
+	}
+	return canonicalRole(code), nil
+}
+
+// canonicalRole turns the carried roles.code (an ERP code, UPPERCASE) into
+// the rule vocabulary's canonical id (lowercase) through identity's own
+// mapping, the one the dispatch fence's moneyAllowed reads, so this module
+// keeps no table of its own. A code outside the vocabulary comes back as it
+// was read, which the cost rule refuses (fail closed).
+func canonicalRole(code string) string {
+	if canonical, ok := identity.CanonicalForERPCode(code); ok {
+		return canonical
+	}
+	return code
+}
+
 // - Feature 1: Screen-Takeover forced acknowledgement (0071) -
 // unackedPollLimit bounds one kiosk poll: the kiosk only ever shows the single newest un-acked
 // message, so a small ceiling is plenty and keeps the anti-join response light.
@@ -721,7 +866,8 @@ func (r *Repository) AckMessage(ctx context.Context, channelID, messageID, userI
 		INSERT INTO msg_acks (message_id, user_id, method)
 		SELECT m.id, $2, $4 FROM msg_messages m WHERE m.id = $1 AND m.channel_id = $3
 		ON CONFLICT (message_id, user_id) DO UPDATE
-		  SET method = EXCLUDED.method, acked_at = now()
+		  SET method = EXCLUDED.method, acked_at = now(),
+		      seq = nextval(pg_get_serial_sequence('msg_acks', 'seq'))
 		RETURNING message_id::text, user_id::text, method, acked_at`,
 		messageID, userID, channelID, method).
 		Scan(&a.MessageID, &a.UserID, &a.Method, &a.AckedAt)
@@ -778,12 +924,20 @@ func (r *Repository) UnackedRequiresAck(ctx context.Context, userID string) ([]M
 
 // ChannelIDBySlug resolves a stable channel slug to its id (used by the FR-3 consumer to route an
 // event to e.g. #yard-trenton). Returns errNotFound when the slug is unknown.
+//
+// Every system post and route by slug goes through here (the consumer's yard, house and payments
+// posts, the task notifier's counter, yard and #office, the escalations mirror, the portal bridge,
+// the order notice fallbacks), so the lookup resolves ONLY a system row: one carrying the auto_scope
+// marker every seeded system room has and no caller founded room ever gets (no Go insert writes it).
+// A caller room that squats a name the system derives from branch facts can then never receive a
+// system post, whatever family the reservation list names. The marker is enough here, unlike the
+// house pick, because a slug is unique: the lookup is by exact name, never "the first of a family".
 func (r *Repository) ChannelIDBySlug(ctx context.Context, slug string) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
 	}
 	var id string
-	err := r.pool.QueryRow(ctx, `SELECT id::text FROM msg_channels WHERE slug = $1 AND is_archived = FALSE`, slug).Scan(&id)
+	err := r.pool.QueryRow(ctx, `SELECT id::text FROM msg_channels WHERE slug = $1 AND auto_scope IS NOT NULL AND is_archived = FALSE`, slug).Scan(&id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", errNotFound
@@ -863,6 +1017,902 @@ func clampExport(n int) int {
 	default:
 		return n
 	}
+}
+
+// - Channel create, DM create, membership writes -
+
+// channelCols is the channel projection the create paths return (the same
+// columns ListChannelsForUser selects, minus the per-caller unread legs).
+const channelCols = `id::text, kind, COALESCE(branch_id::text,''), COALESCE(slug::text,''),
+	name, topic, tier, is_archived, created_at`
+
+func scanChannel(row pgx.Row) (Channel, error) {
+	var c Channel
+	if err := row.Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
+		&c.IsArchived, &c.CreatedAt); err != nil {
+		return Channel{}, err
+	}
+	return c, nil
+}
+
+// userActive resolves one staff row's status: found+ACTIVE, found+other
+// (ErrUserNotActive), or absent (errNotFound). The users read is the
+// module's existing attribution seam (EnsureApprovalChannel reads the same
+// columns through the identity-is-SoT allowance repository.go carries).
+func (r *Repository) userActive(ctx context.Context, userID string) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	var status string
+	if err := r.pool.QueryRow(ctx, `SELECT status FROM users WHERE id = $1`, userID).Scan(&status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errNotFound
+		}
+		return fmt.Errorf("resolve user: %w", err)
+	}
+	if status != "ACTIVE" {
+		return ErrUserNotActive
+	}
+	return nil
+}
+
+// CreateChannel inserts one caller-founded channel idempotently: the slug's
+// unique index is the convergence point, so a second founding of the same
+// room reports the existing row (created false). On the conflict arm
+// NOTHING is written: no seat (nobody is ever seated as owner of an
+// existing channel), and not even the updated_at touch the old DO UPDATE
+// arm made on a row the caller does not own. The room is reported as it
+// stands and the SERVICE runs the walls (kind, branch, membership) that
+// decide whether it is answered or refused; this method only converges.
+// The founder is seated as OWNER, EXPLICIT, on the fresh arm alone, so the
+// derived prune never drops them out of their own room.
+func (r *Repository) CreateChannel(ctx context.Context, in CreateChannelInput, ownerUserID string) (Channel, bool, error) {
+	if r.pool == nil {
+		return Channel{}, false, errNoDB
+	}
+	// A named branch must be a real branch root: a branch that does not exist
+	// names no channel, and 404 leaks nothing a caller could use.
+	if in.BranchID != "" {
+		var ok bool
+		if err := r.pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM locations WHERE id = $1 AND loc_type = 'BRANCH')`,
+			in.BranchID).Scan(&ok); err != nil {
+			return Channel{}, false, fmt.Errorf("resolve branch: %w", err)
+		}
+		if !ok {
+			return Channel{}, false, errNotFound
+		}
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Channel{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var c Channel
+	err = tx.QueryRow(ctx, `
+		INSERT INTO msg_channels (kind, branch_id, slug, name, topic, tier)
+		VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, 'STANDARD')
+		ON CONFLICT (slug) DO NOTHING
+		RETURNING `+channelCols,
+		in.Kind, in.BranchID, in.Slug, in.Name, in.Topic).
+		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
+			&c.IsArchived, &c.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The slug already holds a room (a row returned by DO NOTHING is
+		// always a fresh insert, so no row means the conflict arm). Report
+		// the room as it stands; the walls live in the service.
+		existing, cerr := scanChannel(tx.QueryRow(ctx,
+			`SELECT `+channelCols+` FROM msg_channels WHERE slug = $1`, in.Slug))
+		if cerr != nil {
+			if errors.Is(cerr, pgx.ErrNoRows) {
+				return Channel{}, false, errNotFound // the conflicting row vanished mid-flight
+			}
+			return Channel{}, false, fmt.Errorf("load conflicting channel: %w", cerr)
+		}
+		return existing, false, nil
+	}
+	if err != nil {
+		return Channel{}, false, fmt.Errorf("create channel: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO msg_members (channel_id, user_id, role, source)
+		VALUES ($1, $2, 'OWNER', 'EXPLICIT')
+		ON CONFLICT (channel_id, user_id) DO NOTHING`, c.ID, ownerUserID); err != nil {
+		return Channel{}, false, fmt.Errorf("seat channel owner: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Channel{}, false, err
+	}
+	return c, true, nil
+}
+
+// dmPairSlug is the STABLE, PAIR-UNIQUE handle for a direct message channel
+// (the two user ids in sorted order, the same discipline
+// approvalChannelSlug and repDMSlug carry: the handle must be unique per
+// pair no matter what display names change later).
+func dmPairSlug(aUserID, bUserID string) string {
+	if aUserID > bUserID {
+		aUserID, bUserID = bUserID, aUserID
+	}
+	return "dm-" + aUserID + "-" + bUserID
+}
+
+// CreateDM finds the DM channel a pair of staffers already shares (even a
+// seeded one, whose slug is NULL) or creates it exactly once, seating both
+// parties EXPLICIT. The pre-lookup covers the seeded NULL-slug pairs; the
+// deterministic slug's unique index is the race backstop (two simultaneous
+// openings converge on one row). The conflict arm never touches the row it
+// lands on (no updated_at write), refuses a slug squatted by a room of
+// another kind, and seats only the pair the slug itself names.
+func (r *Repository) CreateDM(ctx context.Context, aUserID, bUserID string) (Channel, bool, error) {
+	if r.pool == nil {
+		return Channel{}, false, errNoDB
+	}
+	if err := r.userActive(ctx, aUserID); err != nil {
+		return Channel{}, false, err
+	}
+	if err := r.userActive(ctx, bUserID); err != nil {
+		return Channel{}, false, err
+	}
+	var aName, bName string
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(display_name,'') FROM users WHERE id = $1`, aUserID).Scan(&aName); err != nil {
+		return Channel{}, false, fmt.Errorf("resolve caller: %w", err)
+	}
+	if err := r.pool.QueryRow(ctx,
+		`SELECT COALESCE(display_name,'') FROM users WHERE id = $1`, bUserID).Scan(&bName); err != nil {
+		return Channel{}, false, fmt.Errorf("resolve counterpart: %w", err)
+	}
+	// The seeded demo DMs carry no slug, so the pair lookup is by shape: a
+	// live DM channel whose members are exactly the two staffers.
+	var existing string
+	if err := r.pool.QueryRow(ctx, `
+		SELECT ch.id::text
+		FROM msg_channels ch
+		JOIN msg_members ma ON ma.channel_id = ch.id AND ma.user_id = $1
+		JOIN msg_members mb ON mb.channel_id = ch.id AND mb.user_id = $2
+		WHERE ch.kind = 'DM' AND ch.is_archived = FALSE
+		  AND (SELECT count(*) FROM msg_members m WHERE m.channel_id = ch.id) = 2
+		LIMIT 1`, aUserID, bUserID).Scan(&existing); err == nil {
+		c, cerr := scanChannel(r.pool.QueryRow(ctx,
+			`SELECT `+channelCols+` FROM msg_channels WHERE id = $1`, existing))
+		if cerr != nil && !errors.Is(cerr, pgx.ErrNoRows) {
+			return Channel{}, false, fmt.Errorf("load pair dm: %w", cerr)
+		}
+		if cerr == nil {
+			return c, false, nil
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Channel{}, false, fmt.Errorf("find pair dm: %w", err)
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Channel{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var c Channel
+	err = tx.QueryRow(ctx, `
+		INSERT INTO msg_channels (kind, slug, name, topic, tier)
+		VALUES ('DM', $1, $2, '', 'STANDARD')
+		ON CONFLICT (slug) DO NOTHING
+		RETURNING `+channelCols,
+		dmPairSlug(aUserID, bUserID), aName+", "+bName).
+		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier,
+			&c.IsArchived, &c.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The pair's slug already holds a row (only a committed row can
+		// hold it, so it is visible here). A room of another kind squatting
+		// the DM namespace is refused, never converged on; a DM row is the
+		// pair's own room and is answered with both parties reseated (the
+		// seat upsert cannot name anyone the slug does not).
+		existing, cerr := scanChannel(tx.QueryRow(ctx,
+			`SELECT `+channelCols+` FROM msg_channels WHERE slug = $1`, dmPairSlug(aUserID, bUserID)))
+		if cerr != nil {
+			if errors.Is(cerr, pgx.ErrNoRows) {
+				return Channel{}, false, errNotFound // the conflicting row vanished mid-flight
+			}
+			return Channel{}, false, fmt.Errorf("load pair dm by slug: %w", cerr)
+		}
+		if existing.Kind != KindDM {
+			return Channel{}, false, ErrChannelSlugTaken
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO msg_members (channel_id, user_id, role, source)
+			VALUES ($1, $2, 'OWNER', 'EXPLICIT'), ($1, $3, 'MEMBER', 'EXPLICIT')
+			ON CONFLICT (channel_id, user_id) DO NOTHING`, existing.ID, aUserID, bUserID); err != nil {
+			return Channel{}, false, fmt.Errorf("seat dm parties: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Channel{}, false, err
+		}
+		return existing, false, nil
+	}
+	if err != nil {
+		return Channel{}, false, fmt.Errorf("create dm: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO msg_members (channel_id, user_id, role, source)
+		VALUES ($1, $2, 'OWNER', 'EXPLICIT'), ($1, $3, 'MEMBER', 'EXPLICIT')
+		ON CONFLICT (channel_id, user_id) DO NOTHING`, c.ID, aUserID, bUserID); err != nil {
+		return Channel{}, false, fmt.Errorf("seat dm parties: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Channel{}, false, err
+	}
+	return c, true, nil
+}
+
+// channelFactsRow is the membership walls' read of one room: its kind
+// (DM and APPROVAL rooms have fixed membership), its branch and its
+// auto_scope (a BRANCH-scoped room's membership belongs to the branch
+// model, so a target it would not derive in is refused).
+type channelFactsRow struct {
+	Kind      string
+	BranchID  string
+	AutoScope string
+}
+
+// channelFacts reads one room's kind, branch and auto_scope. An unknown
+// room is not-found (the member wall has usually answered before this
+// runs, but the read stands on its own).
+func (r *Repository) channelFacts(ctx context.Context, channelID string) (channelFactsRow, error) {
+	if r.pool == nil {
+		return channelFactsRow{}, errNoDB
+	}
+	var f channelFactsRow
+	err := r.pool.QueryRow(ctx, `
+		SELECT kind, COALESCE(branch_id::text,''), COALESCE(auto_scope,'')
+		FROM msg_channels WHERE id = $1`, channelID).
+		Scan(&f.Kind, &f.BranchID, &f.AutoScope)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return channelFactsRow{}, errNotFound
+	}
+	if err != nil {
+		return channelFactsRow{}, fmt.Errorf("channel facts: %w", err)
+	}
+	return f, nil
+}
+
+// memberRole reads one member row's role (the manager wall: the room's
+// OWNER manages it). An absent row reads as an empty role; the member wall
+// has already refused a caller with no row by the time this runs.
+func (r *Repository) memberRole(ctx context.Context, channelID, userID string) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var role string
+	err := r.pool.QueryRow(ctx,
+		`SELECT role FROM msg_members WHERE channel_id = $1 AND user_id = $2`,
+		channelID, userID).Scan(&role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("member role: %w", err)
+	}
+	return role, nil
+}
+
+// userReachesBranch reports whether one user reaches a branch: granted it,
+// or GLOBAL-scoped through any role (the same facts SyncMembership's
+// qualify predicate reads, mirroring StaffContext.CanAccessBranch). It is
+// the add-target wall on rooms the branch model derives membership for.
+func (r *Repository) userReachesBranch(ctx context.Context, userID, branchID string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var reaches bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM user_branch_grants g WHERE g.user_id = $1 AND g.branch_id = $2)
+		    OR EXISTS(SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+		              WHERE ur.user_id = $1 AND ro.scope = 'GLOBAL')`,
+		userID, branchID).Scan(&reaches)
+	if err != nil {
+		return false, fmt.Errorf("user reaches branch: %w", err)
+	}
+	return reaches, nil
+}
+
+// AddChannelMember seats one staff member EXPLICIT in a channel
+// (idempotent). An already-seated member answers the row AS IT STANDS: the
+// insert's conflict arm writes nothing, so a DERIVED row is never
+// rewritten to EXPLICIT (a rewritten row would become hand-removable,
+// contradicting the DERIVED removal refusal). The unknown-user and
+// inactive-user refusals run before anything is written.
+func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID string) (ChannelMember, error) {
+	if r.pool == nil {
+		return ChannelMember{}, errNoDB
+	}
+	if err := r.userActive(ctx, userID); err != nil {
+		return ChannelMember{}, err
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return ChannelMember{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var m ChannelMember
+	err = tx.QueryRow(ctx, `
+		INSERT INTO msg_members (channel_id, user_id, role, source)
+		VALUES ($1, $2, 'MEMBER', 'EXPLICIT')
+		ON CONFLICT (channel_id, user_id) DO NOTHING
+		RETURNING channel_id::text, user_id::text, role, source, joined_at`,
+		channelID, userID).
+		Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Already seated (and the fresh arm of a live caller is the only
+		// other way to reach this point with no row): answer the row as it
+		// stands, whatever its source.
+		err = tx.QueryRow(ctx, `
+			SELECT channel_id::text, user_id::text, role, source, joined_at
+			FROM msg_members WHERE channel_id = $1 AND user_id = $2`,
+			channelID, userID).
+			Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ChannelMember{}, errNotFound // no such channel
+		}
+		if err != nil {
+			return ChannelMember{}, fmt.Errorf("read seated member: %w", err)
+		}
+		return m, nil
+	}
+	if err != nil {
+		return ChannelMember{}, fmt.Errorf("add channel member: %w", err)
+	}
+	// The fresh seat bumps the channel's feed seq INSIDE the seat's own
+	// transaction: a device holding a cursor past the room's stamped seq
+	// (every device that synced before this seat) must see the room arrive
+	// through the channels feed, and the bump commits with the seat or not
+	// at all. The read-back arm (an already-seated member) changed nothing
+	// and bumps nothing.
+	if err := r.bumpChannelSeq(ctx, tx, channelID); err != nil {
+		return ChannelMember{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ChannelMember{}, err
+	}
+	return m, nil
+}
+
+// RemoveChannelMember drops one member row. A DERIVED row is refused
+// (ErrDerivedMember): the role and branch model re-derives it on the next
+// sync, so a hand removal would be undone and lie in between. A removal
+// never drops the room's last OWNER row (ErrLastOwner): the delete's own
+// predicate holds the owner count, so two concurrent removals cannot both
+// pass it. An absent row is not-found. The delete and its feed bump run
+// in ONE transaction: a failure of either leaves the member seated and
+// the feed unmoved, so the caller's error and the world always agree.
+func (r *Repository) RemoveChannelMember(ctx context.Context, channelID, userID string) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	var source string
+	if err := r.pool.QueryRow(ctx,
+		`SELECT source FROM msg_members WHERE channel_id = $1 AND user_id = $2`,
+		channelID, userID).Scan(&source); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errNotFound
+		}
+		return fmt.Errorf("resolve member: %w", err)
+	}
+	if source == SourceDerived {
+		return ErrDerivedMember
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	ct, err := tx.Exec(ctx, `
+		DELETE FROM msg_members m
+		WHERE m.channel_id = $1 AND m.user_id = $2 AND m.source = 'EXPLICIT'
+		  AND (m.role <> 'OWNER'
+		       OR (SELECT count(*) FROM msg_members o
+		           WHERE o.channel_id = $1 AND o.role = 'OWNER') > 1)`,
+		channelID, userID)
+	if err != nil {
+		return fmt.Errorf("remove channel member: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		// The row is EXPLICIT (read above) and survived the predicate: it
+		// is the room's last OWNER.
+		return ErrLastOwner
+	}
+	// The bump commits with the delete or not at all: the add side already
+	// holds this rule for the seat (P2-A), and this is the remove's
+	// matching half.
+	if err := r.bumpChannelSeq(ctx, tx, channelID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// personaUsersByRole resolves the ACTIVE users holding each seeded role, the
+// identity tables read through the attribution seam this file already carries
+// (the users/roles/user_roles reads the derived-membership rule itself runs
+// on). The persona seeding (personaseed.go) keys off this: roles, never user
+// ids, so a persona whose rows land later gets its rooms the next seed.
+func (r *Repository) personaUsersByRole(ctx context.Context) (map[string][]string, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT ro.code::text, u.id::text
+		FROM users u
+		JOIN user_roles ur ON ur.user_id = u.id
+		JOIN roles ro ON ro.id = ur.role_id
+		WHERE u.status = 'ACTIVE'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var code, uid string
+		if err := rows.Scan(&code, &uid); err != nil {
+			return nil, err
+		}
+		out[code] = append(out[code], uid)
+	}
+	return out, rows.Err()
+}
+
+// - The sync feeds (0385): per-caller reads and the stamped writes -
+//
+// Every feed query here is fenced to ONE user's own world: the channels and
+// messages feeds join the caller's membership, the acks and prefs feeds bind
+// user_id to the caller. That fence is stronger than an org predicate on
+// these tables (which carry no org column; the GLOBAL channels cross orgs by
+// design), and it is the fence the stores in syncscope.go serve.
+
+// channelFeedRow is the channels feed's projection (the channel's intrinsic
+// facts; the per-caller unread legs are read-projections, not feed facts).
+type channelFeedRow struct {
+	ID         string    `json:"id"`
+	Kind       string    `json:"kind"`
+	BranchID   string    `json:"branch_id,omitempty"`
+	Slug       string    `json:"slug,omitempty"`
+	Name       string    `json:"name"`
+	Topic      string    `json:"topic"`
+	Tier       string    `json:"tier"`
+	IsArchived bool      `json:"is_archived"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// messageFeedRow is the messages feed's projection, the REST Message shape
+// minus the reply-count read projection.
+type messageFeedRow struct {
+	ID           string          `json:"id"`
+	ChannelID    string          `json:"channel_id"`
+	AuthorID     string          `json:"author_id,omitempty"`
+	AuthorName   string          `json:"author_name,omitempty"`
+	Kind         string          `json:"kind"`
+	Body         string          `json:"body"`
+	Ref          json.RawMessage `json:"ref,omitempty"`
+	ThreadRootID string          `json:"thread_root_id,omitempty"`
+	RequiresAck  bool            `json:"requires_ack,omitempty"`
+	Priority     string          `json:"priority,omitempty"`
+	StateKey     string          `json:"state_key,omitempty"`
+	SupersededBy string          `json:"superseded_by,omitempty"`
+	SupersededAt *time.Time      `json:"superseded_at,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+}
+
+// ackFeedRow is the acks feed's projection (the caller's own rows only).
+type ackFeedRow struct {
+	ID        string    `json:"id"`
+	MessageID string    `json:"message_id"`
+	UserID    string    `json:"user_id"`
+	Method    string    `json:"method"`
+	AckedAt   time.Time `json:"acked_at"`
+}
+
+// prefsFeedRow is the notify_prefs feed's projection (the caller's own rows).
+type prefsFeedRow struct {
+	ID                 string    `json:"id"`
+	ChannelID          string    `json:"channel_id"`
+	UserID             string    `json:"user_id"`
+	DesktopEnabled     bool      `json:"desktop_enabled"`
+	EscalationOverride bool      `json:"escalation_override"`
+	Muted              bool      `json:"muted"`
+	Mode               string    `json:"mode"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+// syncChannelsPage returns the caller's channels past since, in seq order.
+func (r *Repository) syncChannelsPage(ctx context.Context, userID string, since int64, limit int) ([]channelFeedRow, []int64, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT ch.id::text, ch.kind, COALESCE(ch.branch_id::text,''), COALESCE(ch.slug::text,''),
+		       ch.name, ch.topic, ch.tier, ch.is_archived, ch.created_at, ch.seq
+		FROM msg_members mem
+		JOIN msg_channels ch ON ch.id = mem.channel_id
+		WHERE mem.user_id = $1 AND ch.seq > $2
+		  AND ch.deleted_at IS NULL AND ch.is_archived = FALSE
+		ORDER BY ch.seq ASC
+		LIMIT $3`, userID, since, limit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sync channels page: %w", err)
+	}
+	defer rows.Close()
+	var out []channelFeedRow
+	var seqs []int64
+	for rows.Next() {
+		var c channelFeedRow
+		var seq int64
+		if err := rows.Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic,
+			&c.Tier, &c.IsArchived, &c.CreatedAt, &seq); err != nil {
+			return nil, nil, fmt.Errorf("sync channels scan: %w", err)
+		}
+		out = append(out, c)
+		seqs = append(seqs, seq)
+	}
+	return out, seqs, rows.Err()
+}
+
+// syncChannelLoad reads one channel under the caller's membership fence.
+func (r *Repository) syncChannelLoad(ctx context.Context, userID, channelID string) (channelFeedRow, int64, bool, error) {
+	var c channelFeedRow
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT ch.id::text, ch.kind, COALESCE(ch.branch_id::text,''), COALESCE(ch.slug::text,''),
+		       ch.name, ch.topic, ch.tier, ch.is_archived, ch.created_at, ch.seq
+		FROM msg_members mem
+		JOIN msg_channels ch ON ch.id = mem.channel_id
+		WHERE mem.user_id = $1 AND ch.id = $2::uuid
+		  AND ch.deleted_at IS NULL AND ch.is_archived = FALSE`,
+		userID, channelID).
+		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier, &c.IsArchived, &c.CreatedAt, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return channelFeedRow{}, 0, false, nil
+	}
+	if err != nil {
+		return channelFeedRow{}, 0, false, fmt.Errorf("sync channel load: %w", err)
+	}
+	return c, seq, true, nil
+}
+
+// syncMessagesPage returns the messages of the caller's channels past since.
+func (r *Repository) syncMessagesPage(ctx context.Context, userID string, since int64, limit int) ([]messageFeedRow, []int64, []bool, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.id::text, m.channel_id::text, COALESCE(m.author_id::text,''), COALESCE(u.display_name,''),
+		       m.kind, m.body, m.ref, COALESCE(m.thread_root_id::text,''),
+		       m.requires_ack, COALESCE(m.priority,''), COALESCE(m.state_key,''),
+		       COALESCE(m.superseded_by::text,''), m.superseded_at, m.created_at, m.seq,
+		       (m.deleted_at IS NOT NULL)
+		FROM msg_messages m
+		JOIN msg_members mem ON mem.channel_id = m.channel_id AND mem.user_id = $1
+		LEFT JOIN users u ON u.id = m.author_id
+		WHERE m.seq > $2
+		ORDER BY m.seq ASC
+		LIMIT $3`, userID, since, limit)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("sync messages page: %w", err)
+	}
+	defer rows.Close()
+	var out []messageFeedRow
+	var seqs []int64
+	var deleted []bool
+	for rows.Next() {
+		var m messageFeedRow
+		var ref []byte
+		var seq int64
+		var del bool
+		if err := rows.Scan(&m.ID, &m.ChannelID, &m.AuthorID, &m.AuthorName, &m.Kind, &m.Body,
+			&ref, &m.ThreadRootID, &m.RequiresAck, &m.Priority, &m.StateKey,
+			&m.SupersededBy, &m.SupersededAt, &m.CreatedAt, &seq, &del); err != nil {
+			return nil, nil, nil, fmt.Errorf("sync messages scan: %w", err)
+		}
+		if len(ref) > 0 && string(ref) != "{}" {
+			m.Ref = json.RawMessage(ref)
+		}
+		if del {
+			m.Body = "" // a tombstone never carries content
+		}
+		out = append(out, m)
+		seqs = append(seqs, seq)
+		deleted = append(deleted, del)
+	}
+	return out, seqs, deleted, rows.Err()
+}
+
+// syncMessageLoad reads one message under the caller's membership fence.
+func (r *Repository) syncMessageLoad(ctx context.Context, userID, messageID string) (messageFeedRow, int64, bool, error) {
+	var m messageFeedRow
+	var ref []byte
+	var seq int64
+	var del bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT m.id::text, m.channel_id::text, COALESCE(m.author_id::text,''), COALESCE(u.display_name,''),
+		       m.kind, m.body, m.ref, COALESCE(m.thread_root_id::text,''),
+		       m.requires_ack, COALESCE(m.priority,''), COALESCE(m.state_key,''),
+		       COALESCE(m.superseded_by::text,''), m.superseded_at, m.created_at, m.seq,
+		       (m.deleted_at IS NOT NULL)
+		FROM msg_messages m
+		JOIN msg_members mem ON mem.channel_id = m.channel_id AND mem.user_id = $1
+		LEFT JOIN users u ON u.id = m.author_id
+		WHERE m.id = $2::uuid`,
+		userID, messageID).
+		Scan(&m.ID, &m.ChannelID, &m.AuthorID, &m.AuthorName, &m.Kind, &m.Body,
+			&ref, &m.ThreadRootID, &m.RequiresAck, &m.Priority, &m.StateKey,
+			&m.SupersededBy, &m.SupersededAt, &m.CreatedAt, &seq, &del)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return messageFeedRow{}, 0, false, nil
+	}
+	if err != nil {
+		return messageFeedRow{}, 0, false, fmt.Errorf("sync message load: %w", err)
+	}
+	if len(ref) > 0 && string(ref) != "{}" {
+		m.Ref = json.RawMessage(ref)
+	}
+	if del {
+		m.Body = ""
+	}
+	return m, seq, true, nil
+}
+
+// syncMessageFindApplied resolves one idempotency key to the caller's own
+// message (the fence holds even for a row the caller has since left).
+func (r *Repository) syncMessageFindApplied(ctx context.Context, userID, key string) (string, int64, bool, error) {
+	var id string
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT m.id::text, m.seq FROM msg_messages m
+		JOIN msg_members mem ON mem.channel_id = m.channel_id AND mem.user_id = $1
+		WHERE m.idempotency_key = $2::uuid`, userID, key).Scan(&id, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, fmt.Errorf("sync message find-applied: %w", err)
+	}
+	return id, seq, true, nil
+}
+
+// syncMessageCreate writes one offline post through the module's own rules
+// (membership, the same-channel thread root) stamping the client key; the
+// identity column stamps the seq. A refused precondition answers
+// errNotFound, exactly like the REST thread-root guard.
+func (r *Repository) syncMessageCreate(ctx context.Context, authorID, channelID, body, threadRootID, key string) (string, int64, error) {
+	member, err := r.IsMember(ctx, channelID, authorID)
+	if err != nil {
+		return "", 0, err
+	}
+	if !member {
+		return "", 0, fmt.Errorf("%w: not a channel member", errNotFound)
+	}
+	var id string
+	var seq int64
+	err = r.pool.QueryRow(ctx, `
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, thread_root_id, idempotency_key)
+		SELECT $1, $2, 'TEXT', $3, NULLIF($4,'')::uuid, $5::uuid
+		WHERE $4 = '' OR EXISTS (
+		        SELECT 1 FROM msg_messages root
+		        WHERE root.id = $4::uuid AND root.channel_id = $1 AND root.thread_root_id IS NULL)
+		RETURNING id::text, seq`,
+		channelID, authorID, body, threadRootID, key).Scan(&id, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, fmt.Errorf("%w: thread root not in channel", errNotFound)
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("sync message create: %w", err)
+	}
+	return id, seq, nil
+}
+
+// syncAcksPage returns the caller's own ack rows past since.
+func (r *Repository) syncAcksPage(ctx context.Context, userID string, since int64, limit int) ([]ackFeedRow, []int64, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT a.id::text, a.message_id::text, a.user_id::text, a.method, a.acked_at, a.seq,
+		       (a.deleted_at IS NOT NULL) AS deleted
+		FROM msg_acks a
+		WHERE a.user_id = $1 AND a.seq > $2 AND a.deleted_at IS NULL
+		ORDER BY a.seq ASC
+		LIMIT $3`, userID, since, limit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sync acks page: %w", err)
+	}
+	defer rows.Close()
+	var out []ackFeedRow
+	var seqs []int64
+	for rows.Next() {
+		var a ackFeedRow
+		var seq int64
+		var deleted bool
+		if err := rows.Scan(&a.ID, &a.MessageID, &a.UserID, &a.Method, &a.AckedAt, &seq, &deleted); err != nil {
+			return nil, nil, fmt.Errorf("sync acks scan: %w", err)
+		}
+		if deleted {
+			continue // a tombstone never carries a projection
+		}
+		out = append(out, a)
+		seqs = append(seqs, seq)
+	}
+	return out, seqs, rows.Err()
+}
+
+// syncAckLoad reads one ack under the caller's own-row fence.
+func (r *Repository) syncAckLoad(ctx context.Context, userID, ackID string) (ackFeedRow, int64, bool, error) {
+	var a ackFeedRow
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT a.id::text, a.message_id::text, a.user_id::text, a.method, a.acked_at, a.seq
+		FROM msg_acks a
+		WHERE a.user_id = $1 AND a.id = $2::uuid AND a.deleted_at IS NULL`,
+		userID, ackID).Scan(&a.ID, &a.MessageID, &a.UserID, &a.Method, &a.AckedAt, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ackFeedRow{}, 0, false, nil
+	}
+	if err != nil {
+		return ackFeedRow{}, 0, false, fmt.Errorf("sync ack load: %w", err)
+	}
+	return a, seq, true, nil
+}
+
+// syncAckFindApplied resolves one idempotency key to the caller's own ack.
+func (r *Repository) syncAckFindApplied(ctx context.Context, userID, key string) (string, int64, bool, error) {
+	var id string
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT id::text, seq FROM msg_acks
+		WHERE user_id = $1 AND idempotency_key = $2::uuid`, userID, key).Scan(&id, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, fmt.Errorf("sync ack find-applied: %w", err)
+	}
+	return id, seq, true, nil
+}
+
+// syncAckCreate records the caller's acknowledgement of one message through
+// the module's own rules: the write binds to (message, its channel, the
+// caller's membership), idempotent on the upsert, method validated at the
+// adapter. The key column records the latest applied key; a fresh seq is
+// drawn on both arms so the feed refreshes the row.
+func (r *Repository) syncAckCreate(ctx context.Context, userID, messageID, method, key string) (string, int64, error) {
+	var id string
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO msg_acks (message_id, user_id, method, idempotency_key, seq)
+		SELECT m.id, $2, $3, $4::uuid, nextval(pg_get_serial_sequence('msg_acks', 'seq'))
+		FROM msg_messages m
+		WHERE m.id = $1 AND EXISTS (
+		        SELECT 1 FROM msg_members mem
+		        WHERE mem.channel_id = m.channel_id AND mem.user_id = $2)
+		ON CONFLICT (message_id, user_id) DO UPDATE
+		  SET method = EXCLUDED.method, acked_at = now(),
+		      idempotency_key = EXCLUDED.idempotency_key,
+		      seq = nextval(pg_get_serial_sequence('msg_acks', 'seq'))
+		RETURNING id::text, seq`,
+		messageID, userID, method, key).Scan(&id, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, fmt.Errorf("%w: message absent or not in a channel the caller belongs to", errNotFound)
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("sync ack create: %w", err)
+	}
+	return id, seq, nil
+}
+
+// syncPrefsPage returns the caller's own pref rows past since.
+func (r *Repository) syncPrefsPage(ctx context.Context, userID string, since int64, limit int) ([]prefsFeedRow, []int64, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT p.id::text, p.channel_id::text, p.user_id::text,
+		       p.desktop_enabled, p.escalation_override, p.muted, p.mode,
+		       p.updated_at, p.seq, (p.deleted_at IS NOT NULL) AS deleted
+		FROM msg_notification_prefs p
+		WHERE p.user_id = $1 AND p.seq > $2 AND p.deleted_at IS NULL
+		ORDER BY p.seq ASC
+		LIMIT $3`, userID, since, limit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("sync prefs page: %w", err)
+	}
+	defer rows.Close()
+	var out []prefsFeedRow
+	var seqs []int64
+	for rows.Next() {
+		var p prefsFeedRow
+		var seq int64
+		var deleted bool
+		if err := rows.Scan(&p.ID, &p.ChannelID, &p.UserID, &p.DesktopEnabled, &p.EscalationOverride,
+			&p.Muted, &p.Mode, &p.UpdatedAt, &seq, &deleted); err != nil {
+			return nil, nil, fmt.Errorf("sync prefs scan: %w", err)
+		}
+		if deleted {
+			continue // a tombstone never carries a projection
+		}
+		out = append(out, p)
+		seqs = append(seqs, seq)
+	}
+	return out, seqs, rows.Err()
+}
+
+// syncPrefsLoad reads one pref row under the caller's own-row fence.
+func (r *Repository) syncPrefsLoad(ctx context.Context, userID, prefID string) (prefsFeedRow, int64, bool, error) {
+	var p prefsFeedRow
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT p.id::text, p.channel_id::text, p.user_id::text,
+		       p.desktop_enabled, p.escalation_override, p.muted, p.mode, p.updated_at, p.seq
+		FROM msg_notification_prefs p
+		WHERE p.user_id = $1 AND p.id = $2::uuid AND p.deleted_at IS NULL`,
+		userID, prefID).
+		Scan(&p.ID, &p.ChannelID, &p.UserID, &p.DesktopEnabled, &p.EscalationOverride, &p.Muted, &p.Mode, &p.UpdatedAt, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return prefsFeedRow{}, 0, false, nil
+	}
+	if err != nil {
+		return prefsFeedRow{}, 0, false, fmt.Errorf("sync prefs load: %w", err)
+	}
+	return p, seq, true, nil
+}
+
+// syncPrefsFindApplied resolves one idempotency key to the caller's own row.
+func (r *Repository) syncPrefsFindApplied(ctx context.Context, userID, key string) (string, int64, bool, error) {
+	var id string
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		SELECT id::text, seq FROM msg_notification_prefs
+		WHERE user_id = $1 AND idempotency_key = $2::uuid`, userID, key).Scan(&id, &seq)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, fmt.Errorf("sync prefs find-applied: %w", err)
+	}
+	return id, seq, true, nil
+}
+
+// syncPrefsWrite upserts the caller's prefs for one channel with the client
+// key stamped and a fresh seq on both arms (a pref row has no create act
+// distinct from its write; the adapter runs the module's own merge and
+// escalation rules first).
+func (r *Repository) syncPrefsWrite(ctx context.Context, p NotificationPrefs, key string) (string, int64, error) {
+	p = applyMode(p, ModeOf(p))
+	var id string
+	var seq int64
+	err := r.pool.QueryRow(ctx, `
+		INSERT INTO msg_notification_prefs
+		  (channel_id, user_id, desktop_enabled, escalation_override, muted, mode,
+		   updated_at, idempotency_key, seq)
+		VALUES ($1, $2, $3, $4, $5, $6, now(), $7::uuid,
+		        nextval(pg_get_serial_sequence('msg_notification_prefs', 'seq')))
+		ON CONFLICT (channel_id, user_id) DO UPDATE
+		  SET desktop_enabled = EXCLUDED.desktop_enabled,
+		      escalation_override = EXCLUDED.escalation_override,
+		      muted = EXCLUDED.muted,
+		      mode = EXCLUDED.mode,
+		      updated_at = now(),
+		      idempotency_key = EXCLUDED.idempotency_key,
+		      seq = nextval(pg_get_serial_sequence('msg_notification_prefs', 'seq'))
+		RETURNING id::text, seq`,
+		p.ChannelID, p.UserID, p.DesktopEnabled, p.EscalationOverride, p.Muted, p.Mode, key).
+		Scan(&id, &seq)
+	if err != nil {
+		return "", 0, fmt.Errorf("sync prefs write: %w", err)
+	}
+	return id, seq, nil
+}
+
+// dbExecer is the least both the pool and an open transaction satisfy, so
+// a feed bump can run inside the write it belongs to.
+type dbExecer interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+// bumpChannelSeq draws a fresh channels-feed seq for one room, the tell a
+// membership change owes every device that caches the room. The querier is
+// the caller's: the add passes its OPEN TRANSACTION, so the bump commits
+// with the seat (a seat rolled back leaves the seq unmoved; a bump that
+// committed alone would let a device advance past a seat that never
+// landed, the very miss the bump exists to fix).
+func (r *Repository) bumpChannelSeq(ctx context.Context, q dbExecer, channelID string) error {
+	if _, err := q.Exec(ctx,
+		`UPDATE msg_channels SET seq = nextval(pg_get_serial_sequence('msg_channels', 'seq'))
+		 WHERE id = $1`, channelID); err != nil {
+		return fmt.Errorf("bump channel seq: %w", err)
+	}
+	return nil
 }
 
 // - Feature B: retention archival (0070) -

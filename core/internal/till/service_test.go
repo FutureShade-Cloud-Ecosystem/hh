@@ -1757,9 +1757,10 @@ func TestPaymentHistory_BranchScope(t *testing.T) {
 	svc := newTestSvc(store, nil)
 	pid := store.seedPayment(PaymentRow{Method: MethodCash, AmountCents: 1000, Status: PaymentReceived, BranchID: kingston})
 
-	// A Kingston payment is invisible to Trenton-scoped staff (403), visible to Kingston staff.
+	// A Kingston payment is invisible to Trenton-scoped staff (not found, the answer for a payment that
+	// does not exist: the security review's P2-4), visible to Kingston staff.
 	_, err := svc.PaymentHistory(ctxWith(context.Background(), staffAt("u-sarah", trenton)), pid)
-	wantStatus(t, err, 403)
+	wantStatus(t, err, 404)
 
 	h, err := svc.PaymentHistory(ctxWith(context.Background(), staffAt("u-kim", kingston)), pid)
 	if err != nil {

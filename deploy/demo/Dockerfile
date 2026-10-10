@@ -54,6 +54,11 @@ WORKDIR /src/web/apps/front-door
 RUN npx vite build --outDir /out/root
 WORKDIR /src/web/apps/counter-till
 RUN npx vite build --mode demo --base=/till/ --outDir /out/till --emptyOutDir
+# Buying and Stock, the procurement slice: a staff app, so the demo mode
+# compiles the front door's handoff in, under its own prefix.
+RUN mkdir -p /out/buying-and-stock
+WORKDIR /src/web/apps/buying-and-stock
+RUN npx vite build --mode demo --base=/buying-and-stock/ --outDir /out/buying-and-stock --emptyOutDir
 WORKDIR /src/web/apps/public-desk
 RUN npx vite build --base=/q/ --outDir /out/q --emptyOutDir
 # HH Drive, the driver's run app: a staff app, so the demo mode compiles the
@@ -81,6 +86,7 @@ COPY --from=core-build /out/core /usr/local/bin/core
 COPY --from=caddy /usr/bin/caddy /usr/local/bin/caddy
 COPY --from=web-build /out/root /srv/app
 COPY --from=web-build /out/till /srv/app/till
+COPY --from=web-build /out/buying-and-stock /srv/app/buying-and-stock
 COPY --from=web-build /out/q /srv/app/q
 COPY --from=web-build /out/quote /srv/app/quote
 COPY --from=web-build /out/drive /srv/app/drive
