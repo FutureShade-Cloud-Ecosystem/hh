@@ -116,17 +116,28 @@ func (s *Service) caller(ctx context.Context) (identity.StaffContext, error) {
 	return c, nil
 }
 
-// NotAdminError is the refusal a non-admin gets at a dealer-curation write. Typed so the handler
-// can answer 403 with the sentence (the quote NotSettingsAdminError posture).
-type NotAdminError struct{ RoleCode string }
+// NotAdminError is the refusal a non-admin gets at a dealer-curation gate. Typed so the handler
+// can answer 403 with the sentence (the quote NotSettingsAdminError posture). Read and write
+// gates share the type so callers that branch on it keep one shape; Read selects the read
+// refusal's words at the broadening-with-another-profile gate, and the flag stays on the type
+// for the audit (the same way RoleCode does).
+type NotAdminError struct {
+	RoleCode string
+	Read     bool
+}
 
 // Error names the people the IsAdmin() gate admits (the four Tier-1 GLOBAL roles), never the
 // caller's role code: the person reading the words is the one refused, and the role code stays on
 // the type alone for the audit (the NotSettingsAdminError posture the Quote Desk decided). The
 // gate is s.Tier == TierLeadership && s.Scope == ScopeGlobal (staffcontext/rbac.go); the four
 // roles it admits are GENERAL_MANAGER (label "General Manager"), FINANCIAL_CONTROLLER
-// ("Financial Controller"), HR ("HR") and SUPER_ADMIN ("Platform Administrator").
+// ("Financial Controller"), HR ("HR") and SUPER_ADMIN ("Platform Administrator"). Read=true
+// carries the read refusal's words for a frontline caller asking to read another profile's rows,
+// the read half of the same admin act as a write.
 func (e *NotAdminError) Error() string {
+	if e.Read {
+		return "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator see another profile's dealer screen settings"
+	}
 	return "settings: only the General Manager, the Financial Controller, HR or the Platform Administrator change the dealer screen settings"
 }
 
@@ -195,7 +206,7 @@ func (s *Service) Config(ctx context.Context, surfaceID, branchID string, opts .
 			return SurfaceConfig{}, err
 		}
 		if !caller.IsAdmin() {
-			return SurfaceConfig{}, &NotAdminError{RoleCode: caller.RoleCode}
+			return SurfaceConfig{}, &NotAdminError{RoleCode: caller.RoleCode, Read: true}
 		}
 		itemsProfile = o.profile
 	}

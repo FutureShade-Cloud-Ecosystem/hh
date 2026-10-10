@@ -442,9 +442,8 @@ func TestARChangeStr_MissingAndRoundTrippedValues(t *testing.T) {
 // Controller, HR and Platform Administrator), the refusal names those four so the reader sees who
 // may act instead of "limited to administrators", and the caller's role code never reaches the
 // words; the package prefix is "billing:" to match the convention the settings kit carries.
-// Red-first witness (captured in /home/colton/Desktop/FBHQ/hh-sup/reports/ADMIN-REFUSAL-WORDING-REPORT.md):
-// this test fails on main with the old "is limited to administrators, ask a tech admin" message,
-// passes on this branch.
+// Red-first witness: this test fails on main with the old "is limited to administrators, ask a
+// tech admin" message, passes here.
 func TestSetPolicy_RefusesNonAdminWithTheFourRolesNamedExactly(t *testing.T) {
 	frontlineCtx := func() context.Context {
 		return identity.ContextWithStaff(context.Background(), identity.StaffContext{
