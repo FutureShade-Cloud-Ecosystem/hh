@@ -111,6 +111,23 @@ func (s *Service) branchPositionReader() (branchPositionReader, error) {
 	return pr, nil
 }
 
+// fenceNamedBranch answers a branch the caller named: itself when it is in the reach, the 403 in
+// words when it is not, and "" for an unnamed one (the caller of an all-branches read applies the
+// reach set itself). One rule for the reorder controls and the worklist.
+func fenceNamedBranch(reach BranchReach, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" || reach.Global {
+		return requested, nil
+	}
+	for _, b := range reach.BranchIDs {
+		if b == requested {
+			return requested, nil
+		}
+	}
+	return "", clientError{status: http.StatusForbidden,
+		msg: "inventory: you do not have access to that branch"}
+}
+
 // resolveBranch decides which yard a reorder control acts on.
 //
 // AN EMPTY branch_id MEANS "MY YARD", and it is the ordinary case rather than a shortcut. A
@@ -128,18 +145,8 @@ func (s *Service) branchPositionReader() (branchPositionReader, error) {
 //	                  the answer depend on map iteration order.
 //	no grants       → refused: there is no yard to act on.
 func resolveBranch(reach BranchReach, requested string) (string, error) {
-	requested = strings.TrimSpace(requested)
-	if requested != "" {
-		if reach.Global {
-			return requested, nil
-		}
-		for _, b := range reach.BranchIDs {
-			if b == requested {
-				return requested, nil
-			}
-		}
-		return "", clientError{status: http.StatusForbidden,
-			msg: "inventory: you do not have access to that branch"}
+	if requested = strings.TrimSpace(requested); requested != "" {
+		return fenceNamedBranch(reach, requested)
 	}
 	if reach.Global || len(reach.BranchIDs) != 1 {
 		return "", badReq("inventory: branch_id is required, your access spans more than one branch")

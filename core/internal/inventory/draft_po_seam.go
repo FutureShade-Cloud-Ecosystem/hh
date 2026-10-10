@@ -35,7 +35,7 @@ func (s *Service) WithDraftPOReader(r DraftPOReader) *Service { s.draftPOs = r; 
 // seam leaves the rows as they are: the pointer is a convenience on top of a worklist that is
 // already right without it. A bound seam that FAILS is an error, not a silent gap: a row with no
 // pointer reads "nothing drafted", and the buyer would draft a second order for it.
-func (s *Service) attachDrafts(ctx context.Context, branchID string, rows []ShortfallRow) error {
+func (s *Service) attachDrafts(ctx context.Context, reach BranchReach, branchID string, rows []ShortfallRow) error {
 	if s.draftPOs == nil || len(rows) == 0 {
 		return nil
 	}
@@ -50,6 +50,11 @@ func (s *Service) attachDrafts(ctx context.Context, branchID string, rows []Shor
 	type key struct{ product, branch string }
 	byRow := make(map[key]DraftPO, len(drafts))
 	for _, d := range drafts {
+		// The pointer read carries the caller's reach too: a draft at a branch outside it is never
+		// matched, whatever the seam answered for an all-branches question.
+		if !reach.covers(d.BranchID) {
+			continue
+		}
 		byRow[key{d.ProductID, d.BranchID}] = d
 	}
 	for i := range rows {

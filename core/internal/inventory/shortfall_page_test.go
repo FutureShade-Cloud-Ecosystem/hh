@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"io"
 	"log/slog"
 	"net/http"
@@ -34,6 +35,16 @@ func (f *fakeDraftReader) OpenDraftsFor(_ context.Context, branchID string, prod
 	return f.rows, f.err
 }
 
+// globalShortfallReq is a worklist read stamped as the guards stamp a global caller: the handler
+// resolves the branch through the caller's reach (P1-1), so an unstamped request reaches nothing.
+func globalShortfallReq(target string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, target, nil)
+	return r.WithContext(identity.ContextWithStaff(r.Context(), identity.StaffContext{
+		UserID: "u-global", RoleCode: "PROCUREMENT_MANAGER", Tier: identity.TierLeadership,
+		Scope: identity.ScopeGlobal, Status: identity.StatusActive,
+	}))
+}
+
 func TestShortfallRead_AnswersTheContractsPage(t *testing.T) {
 	line := blu60Line()
 	svc, _ := newWorklistSvc([]ShortfallRow{line})
@@ -41,7 +52,7 @@ func TestShortfallRead_AnswersTheContractsPage(t *testing.T) {
 	h := NewHandler(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	rec := httptest.NewRecorder()
-	h.shortfall(rec, httptest.NewRequest(http.MethodGet, "/api/v1/inventory/shortfall?branch_id="+trt470, nil), guards.StaffCaller{})
+	h.shortfall(rec, globalShortfallReq("/api/v1/inventory/shortfall?branch_id="+trt470), guards.StaffCaller{})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("the read answered %d: %s", rec.Code, rec.Body.String())
 	}
@@ -72,7 +83,7 @@ func TestShortfallRead_AnEmptyListIsAnEmptyArray(t *testing.T) {
 	svc, _ := newWorklistSvc(nil)
 	h := NewHandler(svc, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	rec := httptest.NewRecorder()
-	h.shortfall(rec, httptest.NewRequest(http.MethodGet, "/api/v1/inventory/shortfall", nil), guards.StaffCaller{})
+	h.shortfall(rec, globalShortfallReq("/api/v1/inventory/shortfall"), guards.StaffCaller{})
 	var keys map[string]json.RawMessage
 	_ = json.Unmarshal(rec.Body.Bytes(), &keys)
 	if got := string(keys["items"]); got != "[]" {
@@ -87,7 +98,7 @@ func TestShortfallRows_CarryTheDraftThatHasNotBeenPlaced(t *testing.T) {
 	drafts := &fakeDraftReader{rows: []DraftPO{{ProductID: blu60, BranchID: trt470, POID: "d1", PONo: "PO-TRT-142"}}}
 	svc.WithDraftPOReader(drafts)
 
-	wl, err := svc.ShortfallWorklist(context.Background(), trt470, 200)
+	wl, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, trt470, 200)
 	if err != nil {
 		t.Fatalf("worklist: %v", err)
 	}
@@ -113,7 +124,7 @@ func TestShortfallRows_CarryTheDraftThatHasNotBeenPlaced(t *testing.T) {
 func TestShortfallRows_WithNoDraftOmitTheFields(t *testing.T) {
 	svc, _ := newWorklistSvc([]ShortfallRow{blu60Line()})
 	svc.WithDraftPOReader(&fakeDraftReader{})
-	wl, err := svc.ShortfallWorklist(context.Background(), trt470, 200)
+	wl, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, trt470, 200)
 	if err != nil || len(wl.Rows) != 1 {
 		t.Fatalf("worklist: %d rows, err %v", len(wl.Rows), err)
 	}
@@ -131,7 +142,7 @@ func TestShortfallRows_WithNoDraftOmitTheFields(t *testing.T) {
 func TestShortfallRows_AFailingDraftReadIsAnErrorNotASilentGap(t *testing.T) {
 	svc, _ := newWorklistSvc([]ShortfallRow{blu60Line()})
 	svc.WithDraftPOReader(&fakeDraftReader{err: errors.New("purchasing down")})
-	if _, err := svc.ShortfallWorklist(context.Background(), trt470, 200); err == nil {
+	if _, err := svc.ShortfallWorklist(context.Background(), BranchReach{Global: true}, trt470, 200); err == nil {
 		t.Error("a draft read that failed was swallowed, the buyer would draft a second order for a row that already has one")
 	}
 }

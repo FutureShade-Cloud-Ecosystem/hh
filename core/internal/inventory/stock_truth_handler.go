@@ -580,7 +580,7 @@ func (h *Handler) cancelTransfer(w http.ResponseWriter, r *http.Request, _ guard
 // - DIB-72 replenishment -
 
 func (h *Handler) shortfall(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
-	wl, err := h.svc.ShortfallWorklist(r.Context(), r.URL.Query().Get("branch_id"), intParam(r, "limit", 0))
+	wl, err := h.svc.ShortfallWorklist(r.Context(), reachFromRequest(r), r.URL.Query().Get("branch_id"), intParam(r, "limit", 0))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -657,7 +657,7 @@ func (h *Handler) createPOFromShortfall(w http.ResponseWriter, r *http.Request, 
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	draft, poID, poNo, err := h.svc.CreatePOFromShortfall(r.Context(), req.BranchID, req.ProductIDs)
+	draft, poID, poNo, err := h.svc.CreatePOFromShortfall(r.Context(), reachFromRequest(r), req.BranchID, req.ProductIDs)
 	if err != nil {
 		// The draft rides along even on the 503 the stub returns, so the surface can show the buyer
 		// exactly what would have been ordered instead of an empty error toast.

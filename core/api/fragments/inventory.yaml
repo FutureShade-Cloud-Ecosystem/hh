@@ -715,7 +715,10 @@ paths:
         - name: branch_id
           in: query
           required: false
-          description: Omitted means all branches
+          description: >-
+            Omitted means every branch in the caller's reach (all branches for a
+            global caller, the granted ones for a branch scoped caller). A
+            branch outside the reach answers 403.
           schema: { type: string }
       responses:
         "200":

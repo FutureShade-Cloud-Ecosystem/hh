@@ -27,7 +27,7 @@ func TestStockTruth_ShortfallReadsALineWithNoPreferredVendor(t *testing.T) {
 	}, ""); err != nil {
 		t.Fatalf("SetReorderPoint: %v", err)
 	}
-	wl, err := svc.ShortfallWorklist(ctx, branch1, 500)
+	wl, err := svc.ShortfallWorklist(ctx, BranchReach{Global: true}, branch1, 500)
 	if err != nil {
 		t.Fatalf("a line with no preferred vendor failed the whole worklist: %v", err)
 	}

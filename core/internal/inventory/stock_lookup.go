@@ -75,6 +75,19 @@ func (r BranchReach) branchFilter() any {
 	return r.BranchIDs
 }
 
+// covers reports whether one branch is inside the reach.
+func (r BranchReach) covers(branchID string) bool {
+	if r.Global {
+		return true
+	}
+	for _, b := range r.BranchIDs {
+		if b == branchID {
+			return true
+		}
+	}
+	return false
+}
+
 // reachesNothing reports the short-circuit case: a scoped caller with no grants. Answered without a
 // round trip, the same way ResolveOrderID short-circuits its own version of this.
 func (r BranchReach) reachesNothing() bool { return !r.Global && len(r.BranchIDs) == 0 }

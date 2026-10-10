@@ -196,11 +196,11 @@ func TestIntegration_CostGate_TheStockReadsHoldCostOutByRole(t *testing.T) {
 	// the replenishment worklist: avg_cost_cents and the suggested
 	// value it derives from are both cost information (value over
 	// suggested qty names the branch average), and both hold out.
-	yardShort := rowsOf(t, costGateGet(t, w.h.shortfall, withQuery(w.yard, "branch_id", branch1)), "shortfall")
+	yardShort := rowsOf(t, costGateGet(t, w.h.shortfall, withQuery(w.yard, "branch_id", branch1)), "items")
 	if costKeyPresent(yardShort, "avg_cost_cents") || costKeyPresent(yardShort, "suggested_value_cents") {
 		t.Errorf("the yard caller's shortfall row carries a cost leg: %v", yardShort[0])
 	}
-	clerkShort := rowsOf(t, costGateGet(t, w.h.shortfall, withQuery(w.clerk, "branch_id", branch1)), "shortfall")
+	clerkShort := rowsOf(t, costGateGet(t, w.h.shortfall, withQuery(w.clerk, "branch_id", branch1)), "items")
 	if !costKeyPresent(clerkShort, "avg_cost_cents") || !costKeyPresent(clerkShort, "suggested_value_cents") {
 		t.Errorf("the counter caller's shortfall row lost a cost leg: %v", clerkShort[0])
 	}
