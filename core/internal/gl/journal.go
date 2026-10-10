@@ -173,19 +173,36 @@ func (s *Service) ApproveJournal(ctx context.Context, id string) (Journal, error
 	if j.CreatedBy != "" && j.CreatedBy == caller.UserID {
 		return Journal{}, errFourEyes
 	}
-	// One way to post a parked journal that has a request: an approved request, through the queue. Any other
-	// state of that request (pending, rejected, tombstoned) holds the journal, and what happens to it is
-	// decided there. The four eyes check above stays first, so a maker is still refused as the maker whichever
-	// route they use. Unwired, the guard cannot ask and the route refuses (fail closed).
-	if s.pendingChecker == nil {
+	// A journal over the threshold is posted by this route only when the rail holds an APPROVED request for
+	// its current amount. Every other state refuses in its own words (what becomes of the request is decided
+	// in the approvals queue). A journal under the threshold with no request at all needs none. The four eyes
+	// check above stays first, so a maker is still refused as the maker whichever route they use. Unwired,
+	// the guard cannot ask and the route refuses (fail closed).
+	if s.approvalChecker == nil {
 		return Journal{}, clientErr(503, "gl: the approvals queue cannot be asked; this journal cannot be approved here")
 	}
-	held, herr := s.pendingChecker.HasBlockingJEApproval(ctx, id)
-	if herr != nil {
-		return Journal{}, herr
+	amount := j.TotalCents()
+	state, serr := s.approvalChecker.JournalApprovalState(ctx, id, amount)
+	if serr != nil {
+		return Journal{}, serr
 	}
-	if held {
-		return Journal{}, clientErr(409, "gl: this journal has an approval request; it is decided from the approvals queue, which posts it")
+	switch state {
+	case ApprovalApproved:
+	case ApprovalNone:
+		if threshold := s.thresholdFor(ctx, j.BranchID); threshold > 0 && amount < threshold {
+			break
+		}
+		return Journal{}, clientErr(409, "gl: this journal is over the approval threshold and has no approval request in the approvals queue; it cannot be posted from here")
+	case ApprovalPending:
+		return Journal{}, clientErr(409, "gl: this journal has a pending approval request; decide it from the approvals queue, which posts it")
+	case ApprovalRejected:
+		return Journal{}, clientErr(409, "gl: this journal's approval request was rejected in the approvals queue; it cannot be posted from here")
+	case ApprovalDeleted:
+		return Journal{}, clientErr(409, "gl: this journal's approval request was deleted from the approvals queue; it cannot be posted from here")
+	case ApprovalAmountDiffers:
+		return Journal{}, clientErr(409, "gl: the approval for this journal in the approvals queue is for a different amount than the journal now carries; it cannot be posted from here")
+	default:
+		return Journal{}, clientErr(503, "gl: the approvals queue gave no usable answer; this journal cannot be approved here")
 	}
 	approved, err := s.store.ApproveJournal(ctx, id, caller.UserID)
 	if err != nil {

@@ -140,22 +140,34 @@ func (s *Approvals) FileJEApproval(ctx context.Context, journalID, branchID stri
 	})
 }
 
-// blockingJEChecker is the store read HasBlockingJEApproval needs. The repository has it; a store that
-// lacks it cannot answer, and the answer is then an error, never "nothing holds the journal".
-type blockingJEChecker interface {
-	HasBlockingJEApproval(ctx context.Context, journalID string) (bool, error)
+// JEApprovalState is where a parked journal stands with its JE_OVER_THRESHOLD requests. The words are the
+// GL's own constants spelled out here so identity imports nothing from gl.
+type JEApprovalState string
+
+const (
+	JEApprovalNone          JEApprovalState = "none"
+	JEApprovalPending       JEApprovalState = "pending"
+	JEApprovalRejected      JEApprovalState = "rejected"
+	JEApprovalDeleted       JEApprovalState = "deleted"
+	JEApprovalAmountDiffers JEApprovalState = "amount_differs"
+	JEApprovalApproved      JEApprovalState = "approved"
+)
+
+// jeStateChecker is the store read JournalApprovalState needs. The repository has it; a store that lacks it
+// cannot answer, and the answer is then an error, never "no request".
+type jeStateChecker interface {
+	JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (JEApprovalState, error)
 }
 
-// HasBlockingJEApproval reports whether the approvals queue holds a parked journal: any JE_OVER_THRESHOLD
-// request for it in a state other than approved (pending, rejected, tombstoned). The GL's approve route asks
-// it so a journal with a request is posted only by an approved request. A store that cannot answer fails
-// closed.
-func (s *Approvals) HasBlockingJEApproval(ctx context.Context, journalID string) (bool, error) {
-	c, ok := s.store.(blockingJEChecker)
+// JournalApprovalState says where a parked journal stands with the rail, given the amount the journal
+// carries now. The GL's approve route asks it so a journal over the threshold is posted there only on an
+// APPROVED request for that amount. A store that cannot answer fails closed.
+func (s *Approvals) JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (JEApprovalState, error) {
+	c, ok := s.store.(jeStateChecker)
 	if !ok {
-		return false, clientErr(http.StatusServiceUnavailable, "approvals: the store cannot say whether a journal is held")
+		return "", clientErr(http.StatusServiceUnavailable, "approvals: the store cannot say where a journal stands")
 	}
-	return c.HasBlockingJEApproval(ctx, journalID)
+	return c.JournalApprovalState(ctx, journalID, amountCents)
 }
 
 // FileFreightApproval files a FREIGHT_ABOVE_QUOTE request for a parked freight raise and fans out

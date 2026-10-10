@@ -764,26 +764,41 @@ func (r *ApprovalRepository) HasApprovedOverride(ctx context.Context, requestedB
 	return ok, nil
 }
 
-// HasBlockingJEApproval reports whether a JE_OVER_THRESHOLD request for this journal holds it: any request
-// in a state other than approved, a rejected one and a tombstoned one included (an approved request has
-// already posted the journal). The subject_ref is TEXT and the id is compared as a uuid, so the letter case
-// of the id cannot hide a request. Tombstones are counted on purpose: deleting the request must not free
-// the journal for the GL's own route.
-func (r *ApprovalRepository) HasBlockingJEApproval(ctx context.Context, journalID string) (bool, error) {
+// JournalApprovalState says where a journal stands with its JE_OVER_THRESHOLD requests, given the amount the
+// journal carries now. Tombstoned requests are read on purpose: deleting a request must not free the journal
+// for the GL's own route. The id is compared as a uuid, so its letter case cannot hide a request. Precedence
+// when several requests exist: an APPROVED live request for this amount, then a PENDING one, then an
+// APPROVED one for another amount, then a REJECTED live one, then a tombstoned one, then none.
+func (r *ApprovalRepository) JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (JEApprovalState, error) {
 	if r.pool == nil {
-		return false, errNoDB
+		return "", errNoDB
 	}
-	var ok bool
+	var approvedHere, pending, approvedOther, rejected, deleted bool
 	err := r.pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM permission_approval_requests
-			WHERE policy_type = 'JE_OVER_THRESHOLD'
-			  AND lower(subject_ref) = $1::uuid::text
-			  AND NOT (status = 'APPROVED' AND deleted_at IS NULL))`, journalID).Scan(&ok)
+		SELECT COALESCE(bool_or(deleted_at IS NULL AND status = 'APPROVED' AND COALESCE((data->>'amount_cents')::bigint, -1) = $2), false),
+		       COALESCE(bool_or(deleted_at IS NULL AND status = 'PENDING'), false),
+		       COALESCE(bool_or(deleted_at IS NULL AND status = 'APPROVED' AND COALESCE((data->>'amount_cents')::bigint, -1) <> $2), false),
+		       COALESCE(bool_or(deleted_at IS NULL AND status = 'REJECTED'), false),
+		       COALESCE(bool_or(deleted_at IS NOT NULL), false)
+		FROM permission_approval_requests
+		WHERE policy_type = 'JE_OVER_THRESHOLD' AND lower(subject_ref) = $1::uuid::text`,
+		journalID, amountCents).Scan(&approvedHere, &pending, &approvedOther, &rejected, &deleted)
 	if err != nil {
-		return false, fmt.Errorf("check held journal request: %w", err)
+		return "", fmt.Errorf("check journal request state: %w", err)
 	}
-	return ok, nil
+	switch {
+	case approvedHere:
+		return JEApprovalApproved, nil
+	case pending:
+		return JEApprovalPending, nil
+	case approvedOther:
+		return JEApprovalAmountDiffers, nil
+	case rejected:
+		return JEApprovalRejected, nil
+	case deleted:
+		return JEApprovalDeleted, nil
+	}
+	return JEApprovalNone, nil
 }
 
 // FloorRequestFor answers the caller's open quote floor request for one

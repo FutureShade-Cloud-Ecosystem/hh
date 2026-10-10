@@ -148,10 +148,23 @@ func (w *cwGuardWorld) glApprove(id string) demoResponse {
 	return w.controller.call("POST", "/api/v1/gl/journals/"+id+"/approve", nil)
 }
 
-// refusedAndParked asserts the GL route refused with the 409 naming the approvals queue and wrote nothing.
-func (w *cwGuardWorld) refusedAndParked(t *testing.T, what, journalID string, rsp demoResponse) {
+// The words each state of the journal's request is refused in (one phrase from each sentence).
+const (
+	cwWordsPending   = "pending approval request"
+	cwWordsRejected  = "was rejected"
+	cwWordsDeleted   = "was deleted"
+	cwWordsDiffers   = "different amount"
+	cwWordsNoRequest = "has no approval request"
+)
+
+// refusedAndParked asserts the GL route refused with the 409 in the state's own words, naming the approvals
+// queue, and wrote nothing.
+func (w *cwGuardWorld) refusedAndParked(t *testing.T, what, journalID, words string, rsp demoResponse) {
 	t.Helper()
 	rsp.ok(t, http.StatusConflict)
+	if !strings.Contains(string(rsp.body), words) {
+		t.Errorf("%s: the refusal does not carry its own words %q: %s", what, words, rsp.body)
+	}
 	if !strings.Contains(string(rsp.body), "approvals queue") {
 		t.Errorf("%s: the refusal does not say where it is decided: %s", what, rsp.body)
 	}
@@ -165,8 +178,8 @@ func TestDemoWorld_ControllerGuards(t *testing.T) {
 
 	t.Run("upper case id on the GL route is refused while a request is pending", func(t *testing.T) {
 		j, req := w.park(t)
-		w.refusedAndParked(t, "lower case", j, w.glApprove(j))
-		w.refusedAndParked(t, "upper case", j, w.glApprove(strings.ToUpper(j)))
+		w.refusedAndParked(t, "lower case", j, cwWordsPending, w.glApprove(j))
+		w.refusedAndParked(t, "upper case", j, cwWordsPending, w.glApprove(strings.ToUpper(j)))
 		if got := w.requestStatus(t, req); got != "PENDING" {
 			t.Errorf("the request reads %s after the refused routes, want PENDING", got)
 		}
@@ -178,8 +191,8 @@ func TestDemoWorld_ControllerGuards(t *testing.T) {
 		if got := w.requestStatus(t, req); got != "REJECTED" {
 			t.Fatalf("the request reads %s after the reject, want REJECTED", got)
 		}
-		w.refusedAndParked(t, "after reject, lower case", j, w.glApprove(j))
-		w.refusedAndParked(t, "after reject, upper case", j, w.glApprove(strings.ToUpper(j)))
+		w.refusedAndParked(t, "after reject, lower case", j, cwWordsRejected, w.glApprove(j))
+		w.refusedAndParked(t, "after reject, upper case", j, cwWordsRejected, w.glApprove(strings.ToUpper(j)))
 		// The other route that could post it: deciding the rejected request again as an approval.
 		w.decide(req, true).ok(t, http.StatusConflict)
 		if got := w.journalStatus(t, j); got != "DRAFT" {
@@ -192,7 +205,7 @@ func TestDemoWorld_ControllerGuards(t *testing.T) {
 		if _, err := w.pool.Exec(context.Background(), `UPDATE permission_approval_requests SET deleted_at = now() WHERE id = $1::uuid`, req); err != nil {
 			t.Fatal(err)
 		}
-		w.refusedAndParked(t, "after tombstone", j, w.glApprove(j))
+		w.refusedAndParked(t, "after tombstone", j, cwWordsDeleted, w.glApprove(j))
 	})
 
 	t.Run("a tombstoned rejected request does not free the journal", func(t *testing.T) {
@@ -201,7 +214,7 @@ func TestDemoWorld_ControllerGuards(t *testing.T) {
 		if _, err := w.pool.Exec(context.Background(), `UPDATE permission_approval_requests SET deleted_at = now() WHERE id = $1::uuid`, req); err != nil {
 			t.Fatal(err)
 		}
-		w.refusedAndParked(t, "after reject and tombstone", j, w.glApprove(j))
+		w.refusedAndParked(t, "after reject and tombstone", j, cwWordsDeleted, w.glApprove(j))
 	})
 
 	t.Run("the rail's own approve posts once and repeats change nothing", func(t *testing.T) {
@@ -219,14 +232,36 @@ func TestDemoWorld_ControllerGuards(t *testing.T) {
 		}
 	})
 
-	t.Run("a journal that never had a request still posts through the GL route", func(t *testing.T) {
+	t.Run("a journal over the threshold with no request at all is refused", func(t *testing.T) {
 		j, req := w.park(t)
 		if _, err := w.pool.Exec(context.Background(), `DELETE FROM permission_approval_requests WHERE id = $1::uuid`, req); err != nil {
+			t.Fatal(err)
+		}
+		w.refusedAndParked(t, "no request, lower case", j, cwWordsNoRequest, w.glApprove(j))
+		w.refusedAndParked(t, "no request, upper case", j, cwWordsNoRequest, w.glApprove(strings.ToUpper(j)))
+	})
+
+	t.Run("an approved request for a different amount does not post the journal", func(t *testing.T) {
+		j, req := w.park(t)
+		// The rail holds an APPROVED request, but for 700000; the journal carries 750000.
+		if _, err := w.pool.Exec(context.Background(),
+			`UPDATE permission_approval_requests SET status = 'APPROVED', decided_by = $2::uuid, data = jsonb_set(data, '{amount_cents}', '700000') WHERE id = $1::uuid`,
+			req, cwControllerUserID); err != nil {
+			t.Fatal(err)
+		}
+		w.refusedAndParked(t, "approved for another amount", j, cwWordsDiffers, w.glApprove(j))
+	})
+
+	t.Run("an approved request for the journal's current amount posts it once", func(t *testing.T) {
+		j, req := w.park(t)
+		if _, err := w.pool.Exec(context.Background(),
+			`UPDATE permission_approval_requests SET status = 'APPROVED', decided_by = $2::uuid WHERE id = $1::uuid`, req, cwControllerUserID); err != nil {
 			t.Fatal(err)
 		}
 		w.glApprove(j).ok(t, http.StatusOK)
 		if got := w.journalStatus(t, j); got != "POSTED" {
 			t.Errorf("the journal reads %s, want POSTED", got)
 		}
+		w.glApprove(j).ok(t, http.StatusConflict)
 	})
 }

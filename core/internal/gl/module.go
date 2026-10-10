@@ -117,14 +117,26 @@ type ApprovalFiler interface {
 	FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error
 }
 
-// PendingApprovalChecker is the rail read the GL's own approve route asks before it posts: is this parked
-// journal held by the approvals queue, that is, does any JE_OVER_THRESHOLD request exist for it in a state
-// other than approved (pending, rejected or tombstoned all hold it). A journal over the threshold is posted
-// one way only, by an approved request (the rail posts it in the same transaction that stamps the request);
-// the queue's decision, a reject included, is decided there and not here. An unwired checker refuses the
-// route: a money guard that cannot ask does not post.
-type PendingApprovalChecker interface {
-	HasBlockingJEApproval(ctx context.Context, journalID string) (bool, error)
+// ApprovalState is where a parked journal stands with the approvals rail.
+type ApprovalState string
+
+const (
+	ApprovalNone          ApprovalState = "none"           // no JE_OVER_THRESHOLD request exists for the journal
+	ApprovalPending       ApprovalState = "pending"        // a request is waiting for its decision
+	ApprovalRejected      ApprovalState = "rejected"       // the request was declined
+	ApprovalDeleted       ApprovalState = "deleted"        // the request was tombstoned (soft deleted)
+	ApprovalAmountDiffers ApprovalState = "amount_differs" // approved, but for another amount than the journal now carries
+	ApprovalApproved      ApprovalState = "approved"       // approved for the journal's current amount
+)
+
+// ApprovalStateChecker is the rail read the GL's own approve route asks before it posts: where does this
+// journal stand with its JE_OVER_THRESHOLD request, given the amount the journal carries now. A journal over
+// the threshold is posted by this route only on ApprovalApproved, an APPROVED request for its current
+// amount; every other state refuses in its own words, and what happens to the request is decided in the
+// approvals queue and not here. An unwired checker refuses the route: a money guard that cannot ask does
+// not post.
+type ApprovalStateChecker interface {
+	JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (ApprovalState, error)
 }
 
 // NoopCostBasis is the dormant W5 cost-basis seam: it always reports "no cost basis" (found=false) so the
@@ -175,20 +187,20 @@ func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: po
 // Service is the GL domain seam. It owns the journal lifecycle, the posting consumer, tie-out, and close.
 // Sibling seams are injected via the With* builder options (main.go wires the real adapters).
 type Service struct {
-	repo           *Repository
-	store          glStore
-	invoices       InvoiceReader
-	taxSplits      TaxSplitReader
-	ar             ARSubledger
-	payments       PaymentReader
-	costBasis      CostBasis
-	dead           DeadRequeuer
-	audit          audit.Recorder
-	approvalFiler  ApprovalFiler          // 0075: nil-able JE park → approvals-rail filing seam
-	pendingChecker PendingApprovalChecker // the approve route refuses a journal the approvals queue holds; unwired, it refuses every journal
-	log            *slog.Logger
-	now            func() time.Time
-	callerFrom     func(context.Context) (identity.StaffContext, bool)
+	repo            *Repository
+	store           glStore
+	invoices        InvoiceReader
+	taxSplits       TaxSplitReader
+	ar              ARSubledger
+	payments        PaymentReader
+	costBasis       CostBasis
+	dead            DeadRequeuer
+	audit           audit.Recorder
+	approvalFiler   ApprovalFiler        // 0075: nil-able JE park → approvals-rail filing seam
+	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
+	log             *slog.Logger
+	now             func() time.Time
+	callerFrom      func(context.Context) (identity.StaffContext, bool)
 }
 
 // NewService wires the repository. Optional deps are injected via the With* methods. The repository is the
@@ -284,9 +296,9 @@ func (s *Service) WithDeadRequeuer(d DeadRequeuer) *Service { s.dead = d; return
 // park behaves exactly as today (no rail filing). Chainable.
 func (s *Service) WithApprovalFiler(f ApprovalFiler) *Service { s.approvalFiler = f; return s }
 
-// WithPendingApprovalChecker injects the held-by-the-queue read the approve route consults. Chainable.
-func (s *Service) WithPendingApprovalChecker(c PendingApprovalChecker) *Service {
-	s.pendingChecker = c
+// WithApprovalStateChecker injects the request-state read the approve route consults. Chainable.
+func (s *Service) WithApprovalStateChecker(c ApprovalStateChecker) *Service {
+	s.approvalChecker = c
 	return s
 }
 

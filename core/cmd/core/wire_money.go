@@ -103,7 +103,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithDeadRequeuer(outboxStore).
 		WithAudit(auditSvc).
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
-		WithPendingApprovalChecker(approvals)
+		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
 	gl.NewHandler(glSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
 
@@ -259,6 +259,18 @@ type jeApprovalFilerAdapter struct{ svc *identity.Approvals }
 func (a jeApprovalFilerAdapter) FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error {
 	_, err := a.svc.FileJEApproval(ctx, journalID, branchID, amountCents, createdBy)
 	return err
+}
+
+// jeStateAdapter satisfies gl.ApprovalStateChecker over identity's JournalApprovalState: the GL's approve
+// route asks where a journal stands with the rail, and the two modules' state words are the same strings.
+type jeStateAdapter struct{ svc *identity.Approvals }
+
+func (a jeStateAdapter) JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (gl.ApprovalState, error) {
+	st, err := a.svc.JournalApprovalState(ctx, journalID, amountCents)
+	if err != nil {
+		return "", err
+	}
+	return gl.ApprovalState(st), nil
 }
 
 // jeDeciderAdapter satisfies the rail's JEDecider over gl's

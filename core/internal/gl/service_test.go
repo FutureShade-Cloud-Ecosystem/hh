@@ -93,15 +93,20 @@ func TestAC4_MakerChecker(t *testing.T) {
 	}
 }
 
-// The approve route's money guard fails closed: a journal the approvals queue holds, a queue that cannot be
-// asked, and an unwired guard all refuse, and nothing is posted.
-func TestAC4_ApproveRefusesWhenTheQueueHoldsOrCannotBeAsked(t *testing.T) {
+// The approve route's money guard: only an approved request for the journal's amount posts a journal over
+// the threshold; every other state, a failed read and an unwired guard refuse, and nothing is posted.
+func TestAC4_ApproveRefusesEveryStateButApproved(t *testing.T) {
 	ctx := context.Background()
 	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}
-	for name, guard := range map[string]PendingApprovalChecker{
-		"held":      fakeHold{held: true},
-		"read fail": fakeHold{err: errors.New("db down")},
-		"unwired":   nil,
+	for name, guard := range map[string]ApprovalStateChecker{
+		"pending":        fakeHold{state: ApprovalPending},
+		"rejected":       fakeHold{state: ApprovalRejected},
+		"deleted":        fakeHold{state: ApprovalDeleted},
+		"amount differs": fakeHold{state: ApprovalAmountDiffers},
+		"none":           fakeHold{state: ApprovalNone},
+		"unknown word":   fakeHold{state: "other"},
+		"read fail":      fakeHold{err: errors.New("db down")},
+		"unwired":        nil,
 	} {
 		f := newFakeStore()
 		f.policy.JEApprovalThresholdCents = 500000
@@ -114,12 +119,59 @@ func TestAC4_ApproveRefusesWhenTheQueueHoldsOrCannotBeAsked(t *testing.T) {
 			t.Fatalf("%s: create: %v", name, err)
 		}
 		svc := newTestServiceAs(f, checker)
-		svc.pendingChecker = guard
+		svc.approvalChecker = guard
 		if _, err := svc.ApproveJournal(ctx, j.ID); err == nil {
 			t.Errorf("%s: the approve route posted the journal", name)
 		}
 		if got, _ := f.GetJournal(ctx, j.ID); got.Status != StatusDraft {
 			t.Errorf("%s: the journal reads %s, want DRAFT", name, got.Status)
+		}
+	}
+}
+
+// Under the threshold a journal with no request needs none (a recurring run's small accrual); at or over
+// it, no request refuses.
+func TestAC4_ApproveNoRequestNeedsNoneOnlyUnderTheThreshold(t *testing.T) {
+	ctx := context.Background()
+	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}
+	for amount, wantOK := range map[int64]bool{100000: true, 500000: false, 600000: false} {
+		f := newFakeStore()
+		f.policy.JEApprovalThresholdCents = 500000
+		f.journals["j-x"] = &Journal{ID: "j-x", Status: StatusDraft, CreatedBy: "u-maker", Lines: []JournalLine{{DebitCents: amount}, {CreditCents: amount}}}
+		svc := newTestServiceAs(f, checker)
+		svc.approvalChecker = fakeHold{state: ApprovalNone}
+		_, err := svc.ApproveJournal(ctx, "j-x")
+		if (err == nil) != wantOK {
+			t.Errorf("amount %d with no request: err=%v, want ok=%v", amount, err, wantOK)
+		}
+	}
+}
+
+// A recurring run lands a DRAFT with no branch and files no request (a filing needs a branch), so under the
+// ruling the GL route refuses it when it is at or over the threshold: the run is stranded until a branch
+// carrying path exists. Under the threshold it posts as before.
+func TestAC12_RecurringRunOverTheThresholdIsRefusedByTheApproveRoute(t *testing.T) {
+	ctx := context.Background()
+	maker := identity.StaffContext{UserID: "u-maker", RoleCode: "FINANCIAL_CONTROLLER", Tier: identity.TierLeadership}
+	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "GENERAL_MANAGER", Tier: identity.TierLeadership}
+	for amount, wantOK := range map[int64]bool{100000: true, 600000: false} {
+		f := newFakeStore()
+		f.policy.JEApprovalThresholdCents = 500000
+		f.recurring = &RecurringTemplate{ID: "t1", Name: "rent", Lines: []JournalLineInput{
+			{AccountCode: "1000", DebitCents: amount}, {AccountCode: "4000", CreditCents: amount}}}
+		filer := &fakeApprovalFiler{}
+		j, err := newTestServiceAs(f, maker).WithApprovalFiler(filer).RunRecurring(ctx, "t1")
+		if err != nil {
+			t.Fatalf("run recurring: %v", err)
+		}
+		if len(filer.calls) != 0 {
+			t.Fatalf("a recurring run filed %d requests; it carries no branch to file under", len(filer.calls))
+		}
+		svc := newTestServiceAs(f, checker)
+		svc.approvalChecker = fakeHold{state: ApprovalNone}
+		_, err = svc.ApproveJournal(ctx, j.ID)
+		if (err == nil) != wantOK {
+			t.Errorf("recurring journal of %d: approve err=%v, want ok=%v", amount, err, wantOK)
 		}
 	}
 }
