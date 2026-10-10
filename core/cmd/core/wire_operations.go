@@ -586,7 +586,9 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	}
 	yardTasksSvc := tasks.NewService(yardRepo).
 		WithOrderReader(orderReaderAdapter{repo: orderRepo}).
-		WithChatNotifier(yardChatNotifier{svc: messagingSvc, log: log}).
+		// N2 (PR 302 round 2): the yard notice fence asks SeesCostAndMargin
+		// for every figure decision, the same X3 rule cost_gate reads.
+		WithChatNotifier(yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}).
 		WithPickSource(newDispatchPickSource(pool, orderRepo, log)).
 		WithLogger(log)
 	yardTasksSvc.
@@ -598,7 +600,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
 	// The delivery road asks billing, the owner of the deposit documents, to release them (deposit_release.go).
 	orderSvc.WithDepositReleaser(billing.NewInvoiceWriter(pool))
-	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log}})
+	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
 	// Item 9 Opus P2-1: the yard's doors (Claim, Stage) carry the pick hold
 	// the will call doors carry, over the same billing read, with the boot
@@ -799,18 +801,22 @@ func (a taskChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEvent
 // accordingly: yard events to the branch yard channel, counter events to the
 // counter channel with the yard channel and #office as fallbacks.
 type yardChatNotifier struct {
-	svc yardChatMessenger
-	log *slog.Logger
+	svc       yardChatMessenger
+	log       *slog.Logger
+	figuresOK func(role string) (bool, error)
 }
 
 // yardChatMessenger is the messaging seam yardChatNotifier reads: the yard
-// channel for a branch, the channel post, and the order rep routing.
-// *messaging.Service satisfies it; the notice fence's untagged legs
-// (yard_notice_fence_test.go) drive the routing with a double.
+// channel for a branch, the channel post, the order rep routing, and (N2,
+// PR 302 round 2) the user's role code so the rep DM fence can ask the rule
+// rather than hardcoding `figures: true`. *messaging.Service satisfies it;
+// the notice fence's untagged legs (yard_notice_fence_test.go) drive the
+// routing with a double.
 type yardChatMessenger interface {
 	YardSlugForBranch(ctx context.Context, branchID string) (string, error)
 	PostEventToChannelSlug(ctx context.Context, slug, eventKey, body string, ref messaging.EventRef, requiresAck bool) (messaging.Message, bool, error)
 	NotifyOrderRep(ctx context.Context, in messaging.OrderRepNotice) (messaging.OrderRepResult, error)
+	UserRoleCode(ctx context.Context, userID string) (string, error)
 }
 
 func (a yardChatNotifier) PostTaskEvent(ctx context.Context, ref tasks.TaskEventRef) error {
@@ -854,42 +860,101 @@ const orderRepFallbackNote = "No sales rep is on this order, so this came to the
 const unreachableRepNote = "The sales rep could not be reached, so this came to the counter. "
 
 // orderRepFallbackRoute is one fallback channel for an order rep notice, with the body it may
-// carry. The membership model decides (the seeded channels and the derived membership rule,
-// messaging's SyncMembership): the counter channel (#sales-<branch>, BRANCH scope narrowed to the
-// OUTSIDE_SALES role) seats the sales floor alone, and the cost and margin list seats every sales
-// role, so its copy keeps the figures; #office (GLOBAL, every active staff member) and the yard
-// channel (#yard-<branch>, BRANCH, every role granted the branch) seat off list readers by
-// construction, so their copies carry the figureless words (ruling 91: a figure never reaches an
-// off list role, in cents or in words). No explicit membership write path exists for these
-// channels (only rep DMs and approvals channels seat explicit members), so the derived rule is
-// the whole membership.
+// carry. The figures flag is decided by the cost and margin rule (N2, PR 302
+// round 2), not a hardcoded `true`: the counter channel (#sales-<branch>,
+// BRANCH scope narrowed to the OUTSIDE_SALES role) seats the sales floor
+// alone by derivation, so its figures ride only when SeesCostAndMargin says
+// yes for OUTSIDE_SALES; #office (GLOBAL, every active staff member) and the
+// yard channel (#yard-<branch>, BRANCH, every role granted the branch) seat
+// off list readers by construction, so their copies carry the figureless
+// words in every configuration (ruling 91: a figure never reaches an off
+// list role, in cents or in words). An error reading the rule fails closed
+// to the figureless copy.
 type orderRepFallbackRoute struct {
 	slug    string
 	figures bool
 }
 
+// counterAudienceRole is the canonical role id the counter channel seats
+// by derivation (the SyncMembership derived rule's auto_role on the seeded
+// #sales-<branch> channels in migration 0076 reads "OUTSIDE_SALES", the
+// ERP-coded form of `outside_sales`). The rule is asked the canonical form
+// because roleconfig.IsRole and SeesCostAndMargin answer against the
+// carried vocabulary's lowercase canonical ids. A dealer that takes the
+// counter's audience off the list flips the counter copy to figureless
+// (N2's fail open direction, closed by the rule).
+const counterAudienceRole = "outside_sales"
+
 // orderRepFallbackRoutes builds the chain in order: the counter channel, then #office, then the
-// yard channel.
-func orderRepFallbackRoutes(yardSlug string) []orderRepFallbackRoute {
+// yard channel. The figures flag is computed by the cost and margin rule
+// (N2); counterFigures may be false when the dealer takes the counter's
+// audience off the list, in which case every channel in the chain carries
+// the figureless twin.
+func orderRepFallbackRoutes(yardSlug string, counterFigures bool) []orderRepFallbackRoute {
 	routes := []orderRepFallbackRoute{{slug: yardCounterFallbackSlug}}
 	if counter := tasks.CounterSlugForYardSlug(yardSlug); counter != "" {
-		routes = append([]orderRepFallbackRoute{{slug: counter, figures: true}}, routes...)
+		routes = append([]orderRepFallbackRoute{{slug: counter, figures: counterFigures}}, routes...)
 	}
 	return append(routes, orderRepFallbackRoute{slug: yardSlug})
 }
 
+// roleAllowed is the yard notice fence's SeesCostAndMargin read, fail closed
+// on every leg but a resolved yes. Wired at the composition root from the
+// same roleCfg the dispatch and yard fences read; the rule is the one X3
+// predicate, never a second rule that can drift.
+func roleAllowed(ask func(role string) (bool, error), role string) bool {
+	if ask == nil || role == "" {
+		return false
+	}
+	ok, err := ask(role)
+	return err == nil && ok
+}
+
 // postOrderRepNotice delivers a yard change on an order to the order's sales rep through the
 // messaging module's rep routing (the order's override, then its own salesperson, then the
-// customer's rep); the rep's copy carries the figures, the sentence being written for the one
-// person who must act on the invoice. With no rep, or a rep route that failed, the notice falls
-// back to the counter, office and yard channels and says so in the message, each copy worded for
-// the channel it lands in (orderRepFallbackRoute): the notice must arrive somewhere a person
-// reads it, and the figures must not arrive where an off list role reads them.
+// customer's rep). N2 (PR 302 round 2) asks the cost and margin rule for
+// every figure decision, with two independent decisions:
+//   - the rep DM body: figures ride only when the rep's own role is on the list;
+//     otherwise the figureless twin rides (the rep DM still happens, just
+//     without the figure, so a paying rep knows what changed)
+//   - the counter channel copy: figures ride only when OUTSIDE_SALES is on
+//     the list (the channel's derived audience)
+//
+// The two decisions do not bleed: a ref whose rep DM goes figureless still
+// posts the figured body to the counter when the rule admits it, because the
+// counter's audience is the cost and margin rule on OUTSIDE_SALES, not the
+// notice's rep. With no rep, the rep route failed, or the rule refused at
+// either decision point, the notice falls through to the chain. Each copy
+// is worded for the channel it lands in (orderRepFallbackRoute): the notice
+// must arrive somewhere a person reads it, and the figures must not arrive
+// where an off list role reads them. "Figureless on error or no" — every
+// error path leaves the figure in the figureless twin rather than letting
+// it ride to a reader the rule has not admitted.
 func (a yardChatNotifier) postOrderRepNotice(ctx context.Context, ref tasks.TaskEventRef, yardSlug string) error {
+	// The counter route's figure decision (N2, OUTSIDE_SALES today).
+	counterFigures := roleAllowed(a.figuresOK, counterAudienceRole)
+	// The rep DM's figure decision: figure only when the rep's own role is
+	// on the list. Looked up before NotifyOrderRep so the body the rep DM
+	// writes is set exactly once.
+	var repFiguresAllowed bool
+	if ref.RepUserID != "" {
+		repRole, err := a.svc.UserRoleCode(ctx, ref.RepUserID)
+		if err == nil {
+			repFiguresAllowed = roleAllowed(a.figuresOK, repRole)
+		}
+	}
+	repBody := ref.Summary
+	if !repFiguresAllowed {
+		// Figureless on error or no (N2): the rep DM still gets the notice,
+		// just without the figure, so the rep can act on what changed.
+		if plain := ref.SummaryNoFigures; plain != "" {
+			repBody = plain
+		}
+	}
 	in := messaging.OrderRepNotice{
 		CustomerID: ref.CustomerID, OrderID: ref.OrderID, OrderRepUserID: ref.RepUserID,
-		EventKey: ref.EventKey, Body: ref.Summary,
-		Ref: messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: ref.Summary},
+		EventKey: ref.EventKey, Body: repBody,
+		Ref: messaging.EventRef{Topic: ref.Topic, Entity: ref.Entity, DeepLink: ref.DeepLink, Summary: repBody},
 	}
 	res, err := a.svc.NotifyOrderRep(ctx, in)
 	if err == nil && res.Kind == messaging.RouteRepDM {
@@ -902,14 +967,17 @@ func (a yardChatNotifier) postOrderRepNotice(ctx context.Context, ref tasks.Task
 		}
 		prefix = unreachableRepNote
 	}
-	return a.fallbackOrderNotice(ctx, ref, orderRepFallbackRoutes(yardSlug), prefix)
+	return a.fallbackOrderNotice(ctx, ref, orderRepFallbackRoutes(yardSlug, counterFigures), prefix)
 }
 
 // fallbackOrderNotice posts the notice to the first reachable fallback channel, wording each
-// copy for the channel it lands in: the counter channel keeps the figures (its membership is the
-// sales floor, which the cost and margin list seats), the office and yard channels carry the
-// figureless words (their membership is every role). A body with no figureless twin carries its
-// own words everywhere: it names no figure to begin with.
+// copy for the channel it lands in. Every channel with figures=false carries
+// ref.SummaryNoFigures (the figureless twin, computed upstream); the rest
+// carry ref.Summary verbatim. Office and yard always sit on figures=false
+// here; the counter is the only one whose figures flag the rule sets, and
+// when OUTSIDE_SALES is off the list every channel in the chain is figureless
+// (N2). A body with no figureless twin carries its own words everywhere: it
+// names no figure to begin with.
 func (a yardChatNotifier) fallbackOrderNotice(ctx context.Context, ref tasks.TaskEventRef, routes []orderRepFallbackRoute, prefix string) error {
 	plain := ref.SummaryNoFigures
 	if plain == "" {

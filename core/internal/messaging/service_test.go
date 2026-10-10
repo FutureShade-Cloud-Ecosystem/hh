@@ -242,6 +242,12 @@ func (f *fakeStore) UserDisplayName(_ context.Context, userID string) (string, e
 	return f.displayNames[userID], nil
 }
 
+// UserRoleCode returns an empty code; the legs that drive SeesCostAndMargin
+// ride figuresOK directly (no role lookup needed in the service legs).
+func (f *fakeStore) UserRoleCode(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
 // The channel/DM/member seams' base double: honest minimums (a slug always
 // converges on one channel, members seat idempotently). The route-level
 // double in channels_admin_route_test.go wraps this with the recording the

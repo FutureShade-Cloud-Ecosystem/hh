@@ -799,6 +799,65 @@ func (r *Repository) UserDisplayName(ctx context.Context, userID string) (string
 	return name, nil
 }
 
+// UserRoleCode reads one role code for one user, the first active role row
+// (a hold on the role table scopes it, the same way the SyncMembership derived
+// rule reads it; a user who has no active role reads back an empty code). The
+// PR 302 N2 yard notice fence reads this to ask SeesCostAndMargin for the
+// rep's own role, the same X3 rule cost_gate already asks everywhere. The
+// returned code is the CANONICAL form (lowercase, the staff_role.id shape)
+// not the ERP code (UPPERCASE): the rule vocabulary's SeesCostAndMargin
+// answers against the canonical, the same conversion identity.bridge makes
+// at the dispatch door. An empty answer is fail closed: the figures ride
+// only when the rule says yes for a known role, and the brief's "figureless
+// on error or no" stays a safety net on top of the empty-code path.
+func (r *Repository) UserRoleCode(ctx context.Context, userID string) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var code string
+	err := r.pool.QueryRow(ctx, `
+		SELECT ro.code::text
+		FROM users u
+		JOIN user_roles ur ON ur.user_id = u.id
+		JOIN roles ro ON ro.id = ur.role_id
+		WHERE u.id = $1 AND u.status = 'ACTIVE'
+		ORDER BY ur.created_at ASC
+		LIMIT 1`, userID).Scan(&code)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("user role code: %w", err)
+	}
+	// The carried roles.code holds ERP codes (UPPERCASE); the rule
+	// vocabulary is canonical (lowercase). CanonicalForERPCode is the
+	// bridge the dispatch fence's moneyAllowed already uses.
+	if canonical, ok := canonicalRoleByCode[code]; ok {
+		return canonical, nil
+	}
+	return code, nil
+}
+
+// canonicalRoleByCode is the local copy of the carried vocabulary's ERP-to-
+// canonical map (identity.CanonicalForERPCode reads the same one). Held
+// here so UserRoleCode can answer canonical without importing identity.
+var canonicalRoleByCode = map[string]string{
+	"GENERAL_MANAGER":      "general_manager",
+	"FINANCIAL_CONTROLLER": "financial_controller",
+	"HR":                   "hr",
+	"BRANCH_MANAGER":       "branch_manager",
+	"SALES_MANAGER":        "sales_manager",
+	"YARD_MANAGER":         "yard_manager",
+	"LOGISTICS_MANAGER":    "logistics_manager",
+	"PROCUREMENT_MANAGER":  "procurement_manager",
+	"PAYABLES_RECEIVABLES": "payables_receivables",
+	"INSIDE_SALES":         "inside_sales",
+	"OUTSIDE_SALES":        "outside_sales",
+	"YARD_TEAM":            "yard_team",
+	"DRIVERS":              "driver",
+	"SUPER_ADMIN":          "super_admin",
+}
+
 // - Feature 1: Screen-Takeover forced acknowledgement (0071) -
 // unackedPollLimit bounds one kiosk poll: the kiosk only ever shows the single newest un-acked
 // message, so a small ceiling is plenty and keeps the anti-join response light.
