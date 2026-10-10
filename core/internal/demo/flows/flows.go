@@ -14,8 +14,8 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
-// The table is closed: the Counter Till's pair (D49, DECISIONS.md) plus
-// the live role logins the roles roadmap adds one reviewed row at a time.
+// The table is closed: the Counter Till's pair (D49, DECISIONS.md), the Financial
+// Controller and the live role logins the roles roadmap adds one reviewed row at a time.
 // A new flow is an edit here, reviewed, never a runtime input: the entry
 // page may only ever offer what this file lists.
 package flows
@@ -103,6 +103,14 @@ var accounts = map[string]Account{
 		Label:          "Procurement manager",
 		Role:           "procurement_manager",
 	},
+	"financial-controller": {
+		Flow:           "financial-controller",
+		PlatformUserID: "de110000-0000-4000-9000-0000000000c1",
+		Email:          "financial.controller@" + ReservedDomain,
+		DisplayName:    "Financial controller (demo)",
+		Label:          "Financial Controller",
+		Role:           "financial_controller",
+	},
 }
 
 // Get returns the account one flow name stands for. The second return is
@@ -120,6 +128,7 @@ func All() []Account {
 		accounts["sales"],
 		accounts["sales-manager"],
 		accounts["procurement-manager"],
+		accounts["financial-controller"],
 	}
 }
 

@@ -340,12 +340,12 @@ func TestIntegration_BranchFence_ScopedCallerCannotReachAnotherBranch(t *testing
 		WithVendors(itVendors{pool: h.pool}).
 		withCaller(scopedCaller(h.user, branchKGN))
 
-	if _, err := scoped.GetPO(h.ctx, po.ID); !errors.Is(err, errForbidden) {
-		t.Fatalf("a Kingston-scoped caller reading a Trenton PO = %v, want forbidden", err)
+	if _, err := scoped.GetPO(h.ctx, po.ID); !errors.Is(err, errNotFound) {
+		t.Fatalf("a Kingston-scoped caller reading a Trenton PO = %v, want not found (the same answer as a missing PO)", err)
 	}
 	_, err := scoped.Receive(h.ctx, po.ID, ReceiveRequest{Lines: []ReceiveLineParams{{POLineID: po.Lines[0].ID, QtyBase: 1}}})
-	if !errors.Is(err, errForbidden) {
-		t.Fatalf("a Kingston-scoped caller receiving a Trenton PO = %v, want forbidden", err)
+	if !errors.Is(err, errNotFound) {
+		t.Fatalf("a Kingston-scoped caller receiving a Trenton PO = %v, want not found (the same answer as a missing PO)", err)
 	}
 	if got := h.onHand(t, product, branchTRT); got != 0 {
 		t.Fatalf("a forbidden receipt moved stock: on-hand = %v", got)

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 	"github.com/jackc/pgx/v5"
@@ -36,6 +37,17 @@ const vendorSeqCTE = `WITH vseq AS (
 	ON CONFLICT (scope) DO UPDATE SET next_value = scope_sequences.next_value + 1
 	RETURNING next_value
 ) `
+
+// vendorNoInMintShape reports a vendor number the staff create route mints (next_vendor_no, 0386:
+// VM- and digits). The load keys vendors by their number with ON CONFLICT DO UPDATE, so a load item
+// in that shape could overwrite a staff made vendor; the shape is therefore refused at the door.
+func vendorNoInMintShape(no string) bool {
+	rest, ok := strings.CutPrefix(strings.ToUpper(strings.TrimSpace(no)), "VM-")
+	if !ok || rest == "" {
+		return false
+	}
+	return strings.Trim(rest, "0123456789") == ""
+}
 
 // VendorLoadWriter is the load doors' supplier writer, the one write
 // path a load batch's supplier items run through: the vendor record
@@ -55,6 +67,10 @@ func (VendorLoadWriter) Apply(ctx context.Context, tx pgx.Tx, in load.Write) (st
 	if name == "" {
 		return "", &load.Refusal{Code: "field_required", Field: "name",
 			Detail: "the record names no supplier name"}
+	}
+	if vendorNoInMintShape(in.LegacyID) {
+		return "", &load.Refusal{Code: "record_shape", Field: "legacy_id",
+			Detail: fmt.Sprintf("supplier legacy key %s is in the shape the vendor create mints (VM- and digits); the load cannot carry it", in.LegacyID)}
 	}
 	if len(in.Refs) > 0 {
 		return "", &load.Refusal{Code: load.ReasonWrongReference, Field: in.Refs[0].Kind,

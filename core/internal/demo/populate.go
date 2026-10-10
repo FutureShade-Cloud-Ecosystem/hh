@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/jackc/pgx/v5"
@@ -78,12 +79,21 @@ const (
 	buyerEmail       = "procurement.manager@hh-demo.invalid"
 	buyerDisplayName = "Procurement manager (demo)"
 
+	// The Financial Controller, the fourth role account (global, tier one):
+	// the flow table's fourth row, minted by the roles roadmap's first
+	// increment for the approvals queue and the general ledger.
+	controllerUserID      = "de110000-0000-4000-9000-0000000000c1"
+	controllerPlatformID  = "de110000-0000-4000-9000-0000000000c1"
+	controllerEmail       = "financial.controller@hh-demo.invalid"
+	controllerDisplayName = "Financial controller (demo)"
+
 	// The roles behind the accounts, resolved by code against the
 	// roles catalog 0015 plants. staff_role_grant rows derive from these
 	// through identity.Populate, branch-scoped to the one branch below.
-	salesRoleCode   = "INSIDE_SALES"
-	managerRoleCode = "SALES_MANAGER"
-	buyerRoleCode   = "PROCUREMENT_MANAGER"
+	salesRoleCode      = "INSIDE_SALES"
+	managerRoleCode    = "SALES_MANAGER"
+	buyerRoleCode      = "PROCUREMENT_MANAGER"
+	controllerRoleCode = "FINANCIAL_CONTROLLER"
 
 	// Trenton, the till's branch (migration 0003's root branch; 0060
 	// cites the same id). Every grant the demo world carries points here.
@@ -214,6 +224,11 @@ type Report struct {
 	StaffGrantsInserted  int64
 	PaymentConfigCreated int
 	DemoBoxCreated       bool
+	// The persona inboxes (House Messages): memberships materialized for the
+	// persona roles and rep DM channels ensured for the sales floor, the
+	// messaging module's own seeding keyed by role.
+	PersonaMemberships int
+	PersonaRepChannels int
 }
 
 // staticDirectory is the populate's PlatformDirectory: it answers exactly
@@ -348,7 +363,7 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	pop, err := identity.Populate(ctx, tx, identity.PopulateConfig{
 		OrgSlug:   demoOrgSlug,
 		OrgName:   demoOrgName,
-		Directory: staticDirectory{salesEmail: salesPlatformID, managerEmail: managerPlatformID, buyerEmail: buyerPlatformID},
+		Directory: staticDirectory{salesEmail: salesPlatformID, managerEmail: managerPlatformID, buyerEmail: buyerPlatformID, controllerEmail: controllerPlatformID},
 	})
 	if err != nil {
 		return report, fmt.Errorf("demo-populate: identity populate: %w", err)
@@ -378,6 +393,26 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 		return report, fmt.Errorf("demo-populate: commit: %w", err)
 	}
 
+	// The personas' House Messages inboxes, seeded BY ROLE after the
+	// transactional world commits (the seeding's every statement converges
+	// on its own rows, so it needs no share of the all-or-nothing
+	// transaction above): every persona role's derived membership in its
+	// branch's rooms, and the sales floor's rep DM channels, the path a yard
+	// short pick's notice reaches the order's rep through. Keyed by role, so
+	// a persona whose rows land on a later branch gets its rooms the next
+	// time this populate runs.
+	seedPool, err := db.Connect(ctx, databaseURL)
+	if err != nil {
+		return report, fmt.Errorf("demo-populate: persona seed connect: %w", err)
+	}
+	seeded, err := messaging.SeedPersonaInboxes(ctx, seedPool)
+	seedPool.Close()
+	report.PersonaMemberships = seeded.MembershipsSynced
+	report.PersonaRepChannels = seeded.RepChannelsSeeded
+	if err != nil {
+		return report, fmt.Errorf("demo-populate: persona inboxes: %w", err)
+	}
+
 	writeReport(opt.Out, report)
 	return report, nil
 }
@@ -394,6 +429,7 @@ func insertRoleAccounts(ctx context.Context, tx pgx.Tx) (int, error) {
 		{salesUserID, salesEmail, salesDisplayName},
 		{managerUserID, managerEmail, managerDisplayName},
 		{buyerUserID, buyerEmail, buyerDisplayName},
+		{controllerUserID, controllerEmail, controllerDisplayName},
 	} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO users (id, email, display_name, status)
@@ -421,6 +457,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		{salesUserID, salesRoleCode},
 		{managerUserID, managerRoleCode},
 		{buyerUserID, buyerRoleCode},
+		{controllerUserID, controllerRoleCode},
 	} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_roles (user_id, role_id)
@@ -433,7 +470,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		}
 		roles += int(tag.RowsAffected())
 	}
-	for _, userID := range []string{salesUserID, managerUserID, buyerUserID} {
+	for _, userID := range []string{salesUserID, managerUserID, buyerUserID, controllerUserID} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_branch_grants (user_id, branch_id)
 			SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
@@ -451,6 +488,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		{salesUserID, salesRoleCode},
 		{managerUserID, managerRoleCode},
 		{buyerUserID, buyerRoleCode},
+		{controllerUserID, controllerRoleCode},
 	} {
 		var n int
 		if err := tx.QueryRow(ctx, `
@@ -464,7 +502,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 			return 0, 0, fmt.Errorf("demo-populate: refusing: the roles catalog holds no %s row, the %s account would reach nothing", a.roleCode, a.userID)
 		}
 	}
-	for _, userID := range []string{salesUserID, managerUserID, buyerUserID} {
+	for _, userID := range []string{salesUserID, managerUserID, buyerUserID, controllerUserID} {
 		var n int
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM user_branch_grants
@@ -674,6 +712,7 @@ func writeReport(out io.Writer, r Report) {
 	fmt.Fprintf(out, "  payment config   %d created (merchant %s, simulator, no host, surcharges off)\n",
 		r.PaymentConfigCreated, demoMerchantID)
 	fmt.Fprintf(out, "  demo_box         row created: %v\n", r.DemoBoxCreated)
+	fmt.Fprintf(out, "  persona inboxes  %d memberships, %d rep channels\n", r.PersonaMemberships, r.PersonaRepChannels)
 	if r.createdNothing() {
 		fmt.Fprintln(out, "  the demo world was already complete, this run wrote nothing.")
 	}

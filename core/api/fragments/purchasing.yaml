@@ -39,7 +39,8 @@ paths:
       x-addition: "the vendor create route of the roles roadmap's Buying and Stock core slice; no ERP source route"
       summary: Create a vendor
       description: >-
-        The vendor number is minted server side and is never accepted
+        The vendor number is minted server side (VM- and digits, a shape the
+        load doors refuse as a legacy key) and is never accepted
         from the caller. The record is created active under the caller's
         org; the ordering email rides the record as the remit fallback
         the outbound send's address book reads.
@@ -65,6 +66,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /api/v1/purchasing/vendors/{vendorID}:
     put:
@@ -75,7 +77,9 @@ paths:
       description: >-
         Every field is optional and absent means unchanged; an empty
         order_email clears the fallback address. The vendor number is
-        not editable. A vendor another org owns is refused.
+        not editable. A vendor another org owns answers 404 like an unknown
+        id; a carried vendor with no org yet is claimed for the caller's org by
+        its first edit.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
@@ -242,6 +246,11 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v1/purchasing/pos/{id}/lines/{lineID}:
     put:
@@ -291,6 +300,11 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
     delete:
       operationId: purchasingRemoveLine
       tags: [staff-purchasing]
@@ -326,6 +340,11 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /api/v1/purchasing/pos/{id}/transition:
     post:

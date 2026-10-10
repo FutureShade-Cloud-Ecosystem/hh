@@ -12,10 +12,15 @@ package purchasing
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/load"
 )
 
 // vendorMasterCleanup removes the vendors this file mints, by the number prefix the mint draws.
@@ -23,7 +28,7 @@ func vendorMasterCleanup(t *testing.T, h *harness) {
 	t.Helper()
 	t.Cleanup(func() {
 		_, _ = h.pool.Exec(context.Background(),
-			`DELETE FROM vendors WHERE vendor_no LIKE 'V-01%' AND vendor_no <> 'V-0100'`)
+			`DELETE FROM vendors WHERE vendor_no ~ '^(V|VM)-[0-9]+$' AND vendor_no <> 'V-0100'`)
 	})
 }
 
@@ -38,8 +43,8 @@ func TestIntegration_VendorMaster_CreateMintsTheNumberAndStampsTheOrg(t *testing
 	if err != nil {
 		t.Fatalf("create vendor: %v", err)
 	}
-	if v.ID == "" || !strings.HasPrefix(v.VendorNo, "V-0") {
-		t.Fatalf("the created vendor reads %+v, want a minted V-0xxx number", v)
+	if v.ID == "" || !strings.HasPrefix(v.VendorNo, "VM-0") {
+		t.Fatalf("the created vendor reads %+v, want a minted VM-0xxx number", v)
 	}
 	if !v.IsActive || v.PaymentTermsDays != 30 {
 		t.Errorf("a created vendor reads terms %d active %v, want the 30 day active default", v.PaymentTermsDays, v.IsActive)
@@ -143,9 +148,154 @@ func TestIntegration_VendorMaster_EditCorrectsTheRecordAndTheActiveSwitchHasTeet
 	// A row another org owns is not this caller's to edit.
 	_, _ = h.pool.Exec(context.Background(),
 		`UPDATE vendors SET org_id = $2 WHERE id = $1`, v.ID, uuid.NewString())
-	if _, err := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{Name: ptr("Other org row")}); !errors.Is(err, errForbidden) {
-		t.Errorf("edit another org's vendor: got %v, want the refusal", err)
+	// ... and it answers exactly as an unknown id does (one 404, no existence answer).
+	_, other := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{Name: ptr("Other org row")})
+	_, gone := h.svc.UpdateVendor(h.ctx, org, uuid.NewString(), UpdateVendorRequest{Name: ptr("Nobody")})
+	if !errors.Is(other, ErrUnknownVendor) || other.Error() != gone.Error() {
+		t.Errorf("edit another org's vendor: got %v, want the same answer as an unknown vendor (%v)", other, gone)
 	}
+}
+
+// P3-2 of the security review: a carried vendor (org NULL, the rows a load or the seed brought in
+// before tenancy) is stamped with the caller's org on the first edit, in the same statement as the
+// write, and from then on it is that org's alone: another org's buyer meets the 404 an unknown id
+// gets, and the stamp cannot be raced because the WHERE carries the org test.
+func TestIntegration_VendorMaster_ACarriedVendorIsClaimedByTheFirstEditAndFencedAfter(t *testing.T) {
+	h := newHarness(t)
+	vendorMasterCleanup(t, h)
+	org := h.orgID(t)
+	otherOrg := uuid.NewString()
+
+	v, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Carried (demo)"})
+	if err != nil {
+		t.Fatalf("create vendor: %v", err)
+	}
+	if _, err := h.pool.Exec(context.Background(), `UPDATE vendors SET org_id = NULL WHERE id = $1`, v.ID); err != nil {
+		t.Fatalf("carry the row: %v", err)
+	}
+	if _, err := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{Name: ptr("Claimed (demo)")}); err != nil {
+		t.Fatalf("first edit of a carried vendor: %v", err)
+	}
+	var stamped *string
+	if err := h.pool.QueryRow(context.Background(), `SELECT org_id::text FROM vendors WHERE id = $1`, v.ID).Scan(&stamped); err != nil ||
+		stamped == nil || *stamped != org {
+		t.Fatalf("after the first edit the org stamp reads %v (err %v), want the caller's org %s", stamped, err, org)
+	}
+	_, other := h.svc.UpdateVendor(h.ctx, otherOrg, v.ID, UpdateVendorRequest{Name: ptr("Hijack")})
+	if !errors.Is(other, ErrUnknownVendor) {
+		t.Errorf("another org's edit of the claimed row: got %v, want the unknown vendor 404", other)
+	}
+	var name string
+	if err := h.pool.QueryRow(context.Background(), `SELECT name FROM vendors WHERE id = $1`, v.ID).Scan(&name); err != nil || name != "Claimed (demo)" {
+		t.Errorf("the row reads %q (err %v) after the refused edit, want Claimed (demo)", name, err)
+	}
+}
+
+// An address with an apostrophe is a legal local part (mail.ParseAddress accepts it), so the
+// create and the edit both have to carry it: the email rides the statement as a bound parameter,
+// never as text built into it, and reads back byte for byte.
+func TestIntegration_VendorMaster_AnApostropheAddressSavesOnCreateAndEdit(t *testing.T) {
+	h := newHarness(t)
+	vendorMasterCleanup(t, h)
+	org := h.orgID(t)
+
+	const first = "o'brien@example.com"
+	v, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Apostrophe create (demo)", OrderEmail: first})
+	if err != nil {
+		t.Fatalf("create with an apostrophe address: %v", err)
+	}
+	if v.OrderEmail != first {
+		t.Errorf("the created vendor reads %q, want %q", v.OrderEmail, first)
+	}
+
+	const second = "d'arcy+orders@example.com"
+	edited, err := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{OrderEmail: ptr(second)})
+	if err != nil {
+		t.Fatalf("edit with an apostrophe address: %v", err)
+	}
+	if edited.OrderEmail != second {
+		t.Errorf("the edited vendor reads %q, want %q", edited.OrderEmail, second)
+	}
+	var stored string
+	if err := h.pool.QueryRow(context.Background(),
+		`SELECT remit_address->>'email' FROM vendors WHERE id = $1`, v.ID).Scan(&stored); err != nil || stored != second {
+		t.Errorf("the stored remit email reads %q (err %v), want %q", stored, err, second)
+	}
+	// The edit merges only the email key: a key another hand planted survives it.
+	if _, err := h.pool.Exec(context.Background(),
+		`UPDATE vendors SET remit_address = remit_address || '{"city":"Trenton"}'::jsonb WHERE id = $1`, v.ID); err != nil {
+		t.Fatalf("plant a sibling key: %v", err)
+	}
+	if _, err := h.svc.UpdateVendor(h.ctx, org, v.ID, UpdateVendorRequest{OrderEmail: ptr(first)}); err != nil {
+		t.Fatalf("second edit: %v", err)
+	}
+	var city, email string
+	if err := h.pool.QueryRow(context.Background(),
+		`SELECT remit_address->>'city', remit_address->>'email' FROM vendors WHERE id = $1`, v.ID).Scan(&city, &email); err != nil ||
+		city != "Trenton" || email != first {
+		t.Errorf("after the merge the remit reads city %q email %q (err %v), want Trenton and %q", city, email, err, first)
+	}
+}
+
+// P3-2 of the Opus review: the minted number and the load's keys must not share a key space. Two
+// halves: a create whose minted number is already taken answers a 409 in words (never the raw
+// 23505 as a 500), and the load refuses a legacy key in the mint's shape, so a later load item can
+// never take the ON CONFLICT arm and overwrite a staff made vendor.
+func TestIntegration_VendorMaster_ATakenMintedNumberIsA409InWords(t *testing.T) {
+	h := newHarness(t)
+	vendorMasterCleanup(t, h)
+	org := h.orgID(t)
+
+	first, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Mint probe (demo)"})
+	if err != nil {
+		t.Fatalf("create vendor: %v", err)
+	}
+	// Plant a row at the number the mint will draw next, as a load would have.
+	var prefix string
+	var n int
+	for i := len(first.VendorNo); i > 0; i-- {
+		if c := first.VendorNo[i-1]; c < '0' || c > '9' {
+			prefix = first.VendorNo[:i]
+			n, _ = strconv.Atoi(first.VendorNo[i:])
+			break
+		}
+	}
+	next := fmt.Sprintf("%s%0*d", prefix, len(first.VendorNo)-len(prefix), n+1)
+	if _, err := h.pool.Exec(context.Background(),
+		`INSERT INTO vendors (vendor_no, name, payment_terms_days, is_active) VALUES ($1, 'Planted by a load', 30, TRUE)`, next); err != nil {
+		t.Fatalf("plant %s: %v", next, err)
+	}
+	_, err = h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Collides (demo)"})
+	var ce clientError
+	if !errors.As(err, &ce) || ce.status != http.StatusConflict || !strings.Contains(ce.msg, "vendor number") {
+		t.Fatalf("a create whose minted number %s is taken = %v, want a 409 in words naming the vendor number", next, err)
+	}
+	// The sequence has moved, so a retry succeeds: the 409 says so.
+	if _, err := h.svc.CreateVendor(h.ctx, org, CreateVendorRequest{Name: "Retry (demo)"}); err != nil {
+		t.Errorf("the retry after the 409: %v", err)
+	}
+}
+
+func TestIntegration_VendorMaster_TheLoadRefusesAKeyInTheMintsShape(t *testing.T) {
+	h := newHarness(t)
+	vendorMasterCleanup(t, h)
+	e := vendorLoadSetup(t)
+	t.Cleanup(func() { _, _ = e.pool.Exec(context.Background(), `DELETE FROM vendors WHERE vendor_no = 'VM-0101'`) })
+	item := vendItem("VM-0101", "Loaded under a minted number", nil)
+	item.DerivedKey = "4442a800-0000-4000-8000-0000000000f1"
+	r, err := e.door.UpsertBatch(context.Background(), load.Batch{OrgID: fxVendorOrgID, SourceSystem: fxVendorSource,
+		BatchID: "b-vend-mint", Caller: fxVendorActorID, Items: []load.Item{item}})
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if o := vendorOutcome(t, r, "VM-0101"); o.Status != load.OutcomeRefused || o.Field != "legacy_id" {
+		t.Fatalf("a load key in the mint's shape answered %+v, want refused naming legacy_id", o)
+	}
+	var n int
+	if err := e.pool.QueryRow(context.Background(), `SELECT count(*) FROM vendors WHERE vendor_no = 'VM-0101'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("the refused item wrote %d rows (err %v), want none", n, err)
+	}
+	_ = h
 }
 
 func ptr[T any](v T) *T { return &v }

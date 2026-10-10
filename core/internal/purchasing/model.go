@@ -409,9 +409,17 @@ func clientErr(status int, format string, a ...any) error {
 
 func badReq(format string, a ...any) error { return clientErr(http.StatusBadRequest, format, a...) }
 
+func unprocessable(format string, a ...any) error {
+	return clientErr(http.StatusUnprocessableEntity, format, a...)
+}
+
 func conflict(format string, a ...any) error { return clientErr(http.StatusConflict, format, a...) }
 
 var (
+	// errNotFound is also the answer for a PO outside the caller's branch reach on every id door
+	// (read, mutate, send, document, costs, lines, receiving): an out of reach order and a missing
+	// one are the same answer, so the status cannot be used to probe which ids exist. errForbidden
+	// is kept for a branch the caller names outright (branch_id) and for the role wall.
 	errNotFound     = clientError{status: http.StatusNotFound, msg: "purchasing: not found"}
 	errNoDB         = clientError{status: http.StatusServiceUnavailable, msg: "purchasing: database not configured"}
 	errUnauthorized = clientError{status: http.StatusUnauthorized, msg: "purchasing: authentication required"}

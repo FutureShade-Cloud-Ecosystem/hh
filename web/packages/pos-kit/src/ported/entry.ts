@@ -62,11 +62,13 @@ const FLOW_ICONS: Record<string, string> = {
   sales: "lucide:receipt",
   "sales-manager": "lucide:badge-check",
   "procurement-manager": "lucide:package",
+  "financial-controller": "lucide:landmark",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
   "sales-manager": "The counter plus approvals and margins.",
   "procurement-manager": "Buy the branch's stock.",
+  "financial-controller": "Decide approvals and keep the ledger.",
 };
 
 export const entryStyles = css`

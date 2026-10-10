@@ -112,3 +112,42 @@ func TestIntegration_POLineEdit_RefusedOncePlaced(t *testing.T) {
 		t.Errorf("the placed line reads %v at %d behind the refusal, want 10 at 90", po.Lines[0].QtyOrderedBase, po.Lines[0].UnitCostCents)
 	}
 }
+
+// P3-3 of the security review: a line id that is not a uuid, and a quantity beyond what the column
+// can hold, are refused in words as 422 on the edit and the remove, never a 500 out of the uuid
+// cast or the numeric overflow.
+func TestIntegration_POLineEdit_ANonUUIDLineAndAnAbsurdQuantityAre422(t *testing.T) {
+	h := newHarness(t)
+	poID, lineID := draftWithLine(t, h, 10, 90)
+
+	want422 := func(what string, err error) {
+		t.Helper()
+		var ce clientError
+		if !errors.As(err, &ce) || ce.status != http.StatusUnprocessableEntity || ce.msg == "" {
+			t.Errorf("%s: got %v, want a 422 in words", what, err)
+		}
+	}
+	_, err := h.svc.UpdateLine(h.ctx, poID, "not-a-uuid", UpdateLineParams{QtyOrderedBase: ptr(2.0)})
+	want422("edit with a non uuid line id", err)
+	_, err = h.svc.RemoveLine(h.ctx, poID, "not-a-uuid")
+	want422("remove with a non uuid line id", err)
+	// Shapes the old loose check passed and the uuid cast refused (the Opus review's P3-1).
+	for _, bad := range []string{"0000000000000000000000000000000000", "------------------------------------"} {
+		_, err = h.svc.UpdateLine(h.ctx, poID, bad, UpdateLineParams{QtyOrderedBase: ptr(2.0)})
+		want422("edit with line id "+bad, err)
+		_, err = h.svc.RemoveLine(h.ctx, poID, bad)
+		want422("remove with line id "+bad, err)
+	}
+	_, err = h.svc.UpdateLine(h.ctx, poID, lineID, UpdateLineParams{QtyOrderedBase: ptr(1e30)})
+	want422("edit to a quantity beyond the column", err)
+	_, err = h.svc.UpdateLine(h.ctx, poID, lineID, UpdateLineParams{QtyOrderedBase: ptr(1e15)})
+	want422("edit to a quantity at the column's edge", err)
+	_, err = h.svc.AddLine(h.ctx, poID, AddLineParams{ProductID: h.prodAny(t), QtyOrderedBase: 1e30, UOM: "PC", UnitCostCents: 1})
+	want422("add a line beyond the column", err)
+
+	// A big but legal quantity still saves.
+	po, err := h.svc.UpdateLine(h.ctx, poID, lineID, UpdateLineParams{QtyOrderedBase: ptr(5000000.0)})
+	if err != nil || po.Lines[0].QtyOrderedBase != 5000000 {
+		t.Errorf("a large legal quantity: got %v (err %v), want 5000000", po.Lines, err)
+	}
+}

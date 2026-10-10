@@ -77,7 +77,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, three flows, the contract's three
+	// The flow listing: the closed table, four flows, the contract's three
 	// fields, the labels the entry page renders.
 	flowsRsp := get("/api/v1/demo/flows", nil)
 	if flowsRsp.StatusCode != http.StatusOK {
@@ -93,13 +93,14 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if err := json.Unmarshal([]byte(body(flowsRsp)), &listing); err != nil {
 		t.Fatalf("the flows body does not decode: %v", err)
 	}
-	if len(listing.Flows) != 3 {
-		t.Fatalf("the listing carries %d flows, want the closed table's three", len(listing.Flows))
+	if len(listing.Flows) != 4 {
+		t.Fatalf("the listing carries %d flows, want the closed table's four", len(listing.Flows))
 	}
 	if listing.Flows[0].Flow != "sales" || listing.Flows[0].Label != "Sales" ||
 		listing.Flows[1].Flow != "sales-manager" || listing.Flows[1].Label != "Sales manager" ||
-		listing.Flows[2].Flow != "procurement-manager" || listing.Flows[2].Label != "Procurement manager" {
-		t.Fatalf("the listing is %+v, want the flow table's rows with its own labels", listing.Flows)
+		listing.Flows[2].Flow != "procurement-manager" || listing.Flows[2].Label != "Procurement manager" ||
+		listing.Flows[3].Flow != "financial-controller" || listing.Flows[3].Label != "Financial Controller" {
+		t.Fatalf("the listing is %+v, want the flow table's rows with their own labels", listing.Flows)
 	}
 
 	// The exit pair: mint the sales flow, read the till's policy with the

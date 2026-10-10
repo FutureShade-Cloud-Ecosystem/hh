@@ -2937,6 +2937,8 @@ export type InventoryReorderResult = {
   suggested_qty_base: number;
   uom: string;
   vendor_name: string;
+  existing_draft_po_id?: string;
+  existing_draft_po_no?: string;
 };
 export type InventoryNudgeRequest = {
   product_id: string;
@@ -3207,6 +3209,23 @@ export type MessagingChannel = {
 };
 export type MessagingChannelList = {
   channels: MessagingChannel[];
+};
+export type MessagingChannelCreate = {
+  kind: "TEAM" | "TOPIC";
+  name: string;
+  topic?: string;
+  slug?: string;
+  branch_id?: string;
+};
+export type MessagingDMCreate = {
+  user_id: string;
+};
+export type MessagingChannelMember = {
+  channel_id: string;
+  user_id: string;
+  role: "MEMBER" | "OWNER";
+  source: "DERIVED" | "EXPLICIT";
+  joined_at: string;
 };
 export type MessagingMessage = {
   id: string;

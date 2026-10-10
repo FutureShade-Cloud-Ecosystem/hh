@@ -4,7 +4,8 @@
 --
 -- A vendor number mint for staff created vendors. The seeded set carries word slugs (V-TECHO,
 -- V-UNILOCK, migration 0057 and the dibbits seed); the mint draws zero padded numerics from a
--- sequence, which cannot collide with any of them, and the number is minted server side in the
+-- sequence behind the prefix VM-, which cannot collide with any of them and which the load doors
+-- refuse as a legacy key (vendorload.go), so the mint and a load never share a key, and the number is minted server side in the
 -- INSERT, never accepted from the caller, the same rule the branch scoped PO number states (0120).
 --
 -- A plain SEQUENCE rather than 0120's per branch counter TABLE, on purpose: a vendor is org wide,
@@ -14,5 +15,5 @@
 CREATE SEQUENCE vendor_no_seq START 101;
 
 CREATE FUNCTION next_vendor_no() RETURNS text AS $$
-  SELECT 'V-' || lpad(nextval('vendor_no_seq')::text, 4, '0')
+  SELECT 'VM-' || lpad(nextval('vendor_no_seq')::text, 4, '0')
 $$ LANGUAGE sql;

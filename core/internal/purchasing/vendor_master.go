@@ -14,7 +14,8 @@ package purchasing
 //     so a created or edited row reaches a synced device on its next pull, and the edit of a
 //     carried row (seq NULL, 0213's "carried rows keep seq NULL") stamps it live;
 //   - the org stamp is the caller's (the guard resolved scope, never a header), and a row another
-//     org owns is refused rather than re-stamped, exactly the load's org_mismatch posture.
+//     org owns is refused (as a 404) rather than re-stamped, the load's org_mismatch posture; a
+//     carried row (org NULL) is stamped by the first edit.
 //
 // WHAT AN EDIT MAY TOUCH, deliberately narrow: the name, the terms, the ordering email that rides
 // the record as the remit fallback (the address book the untagged send reads), and the active
@@ -97,8 +98,11 @@ func (s *Service) CreateVendor(ctx context.Context, orgID string, in CreateVendo
 	return v, nil
 }
 
-// UpdateVendor corrects the fields the body names on one vendor, or refuses: unknown vendor (404),
-// another org's row (403), a body that names nothing (400).
+// UpdateVendor corrects the fields the body names on one vendor, or refuses: unknown vendor or another org's row (one 404, so
+// the status says nothing about which ids exist), a body that names nothing (400). A carried vendor
+// (org NULL: the seed and the loads predate tenancy) is claimed for the caller's org by its first
+// edit, in the same statement as the write: refusing it would leave every carried supplier
+// uneditable, and the WHERE's org test is what keeps a second org out afterwards.
 func (s *Service) UpdateVendor(ctx context.Context, orgID, vendorID string, in UpdateVendorRequest) (VendorMaster, error) {
 	if _, err := s.caller(ctx); err != nil {
 		return VendorMaster{}, err
@@ -137,18 +141,7 @@ func (s *Service) UpdateVendor(ctx context.Context, orgID, vendorID string, in U
 		return VendorMaster{}, badReq("purchasing: the body names nothing to change")
 	}
 
-	// The org check reads before the write, and separately from it: an edit that matched no row is
-	// a 404 and an edit that matched another org's row is a refusal, and folding both into one
-	// UPDATE ... RETURNING would answer two different questions identically.
-	owner, err := s.repo.VendorOrg(ctx, vendorID)
-	if err != nil {
-		return VendorMaster{}, err
-	}
-	if owner != "" && owner != orgID {
-		return VendorMaster{}, errForbidden
-	}
-
-	v, err := s.repo.UpdateVendorMaster(ctx, vendorID, name, terms, email, in.IsActive)
+	v, err := s.repo.UpdateVendorMaster(ctx, orgID, vendorID, name, terms, email, in.IsActive)
 	if err != nil {
 		return VendorMaster{}, err
 	}
@@ -193,12 +186,34 @@ func validTerms(days *int, def int) (int, error) {
 	return *days, nil
 }
 
-// isUUIDString is the shape check the create's org stamp and the edit's path parameter share: a
-// loose one (length and alphabet), because the database's uuid cast is the authority on shape, and
-// this guard exists so a nonsense string becomes a 400 here rather than a 500 out of the driver.
+// isUUIDString is the shape check the line doors, the vendor edit's path parameter and the create's
+// org stamp share, and it is EXACT: the 8-4-4-4-12 form or 32 hex digits, nothing else, because
+// anything looser (the first version took any 32 to 36 hex digits and dashes) passes strings the
+// database's uuid cast refuses, and the refusal comes back as a 500.
 func isUUIDString(s string) bool {
-	if len(s) < 32 || len(s) > 36 {
-		return false
+	switch len(s) {
+	case 36:
+		for i := 0; i < len(s); i++ {
+			if i == 8 || i == 13 || i == 18 || i == 23 {
+				if s[i] != '-' {
+					return false
+				}
+			} else if !isHexDigit(s[i]) {
+				return false
+			}
+		}
+		return true
+	case 32:
+		for i := 0; i < len(s); i++ {
+			if !isHexDigit(s[i]) {
+				return false
+			}
+		}
+		return true
 	}
-	return strings.Trim(s, "0123456789abcdefABCDEF-") == ""
+	return false
+}
+
+func isHexDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
 }

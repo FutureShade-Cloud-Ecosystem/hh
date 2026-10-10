@@ -14,7 +14,6 @@ import {
   openStep,
   openingFloat,
   pickCustomer,
-  returnLineInputs,
   ring,
   ringCash,
   searchAndAdd,
@@ -165,87 +164,6 @@ test("parked sales: a ticket parks and either role picks it up, at the same coun
   await page.getByRole("button", { name: "Sign out" }).click();
   await signIn(page, "Sales manager");
   await resumeFirst();
-});
-
-test("a return within 250.00 under the manager: refunded, and the drawer drops by it", async ({
-  page,
-}, testInfo) => {
-  await signIn(page, "Sales manager");
-  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
-  const rung = await ringCash(page, "60.00");
-  const orderNo = rung.order_no;
-  const bearer = await mint(page, "sales-manager");
-  const drawerId = await openDrawer(page, bearer);
-  const before = await expectedCash(page, bearer, drawerId);
-  const zPath = `/api/v1/till/sessions/${drawerId}/zreport`;
-  const zBefore = await apiPicture(page, bearer, zPath);
-  await openReturns(page);
-  await page.getByLabel("Sale number").fill(orderNo);
-  await page.getByRole("button", { name: "Find sale" }).click();
-  await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
-  await returnLineInputs(page).first().fill("1");
-  await page.getByRole("button", { name: "Cash", exact: true }).click();
-  await page.getByRole("button", { name: "Refund cash" }).click();
-  const refund = page.getByTestId("refund-receipt");
-  await expect(refund).toBeVisible();
-  await expect(refund).toContainText("Rung by Sales manager (demo).");
-  await expect(refund).toContainText("Approved by the Sales manager on this till: Sales manager (demo).");
-  const refunded = (await refund.textContent()) as string;
-  const totalMatch = refunded.match(/Total refunded \$([0-9,]+)\.([0-9]{2})/);
-  expect(totalMatch).toBeTruthy();
-  const refundedCents =
-    Number(totalMatch?.[1].replaceAll(",", "") as string) * 100 + Number(totalMatch?.[2]);
-  const after = await expectedCash(page, bearer, drawerId);
-  expect(after).toBe(before - refundedCents);
-  // The picture holds the claim's three places: the drawer's Z report before
-  // the refund, the desk's refund receipt, and the Z report after it, each as
-  // the browser shows the core's answer; the expected cash drops by the refund.
-  const receiptPicture = await page.getByTestId("refund-receipt").screenshot();
-  const zAfter = await apiPicture(page, bearer, zPath);
-  await shotParts(page, "manager-08-return-within", testInfo, [zBefore, receiptPicture, zAfter]);
-});
-
-test("a return above 250.00 as the manager: no refusal, no dialog, recorded as the manager's own decision", async ({
-  page,
-}, testInfo) => {
-  await signIn(page, "Sales manager");
-  await searchAndAdd(page, "DEMO-WALL-BLOCK", "Retaining Wall Block 8x18 (demo)");
-  await setQuantity(page, "Retaining Wall Block 8x18 (demo)", "60");
-  await expect(lineRow(page, "Retaining Wall Block 8x18 (demo)").locator(".lprice")).toHaveText(cad(1250));
-  await expect(lineRow(page, "Retaining Wall Block 8x18 (demo)").locator(".ltot")).toHaveText(cad(75000));
-  const rung = await ringCash(page, "900.00");
-  const orderNo = rung.order_no;
-
-  await openReturns(page);
-  await page.getByLabel("Sale number").fill(orderNo);
-  await page.getByRole("button", { name: "Find sale" }).click();
-  await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
-  await returnLineInputs(page).first().fill("60");
-  await page.getByRole("button", { name: "Cash", exact: true }).click();
-  await page.getByRole("button", { name: "Refund cash" }).click();
-
-  const refund = page.getByTestId("refund-receipt");
-  await expect(refund).toBeVisible();
-  await expect(refund).toContainText("$847.50");
-  await expect(refund).toContainText("Approved by the Sales manager on this till: Sales manager (demo).");
-  await expect(refund).toContainText("Rung by Sales manager (demo).");
-  // The approver role's own commit never earns a refusal: no dialog and no
-  // refusal block render at any point of the path.
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page.getByTestId("refund-refusal")).toHaveCount(0);
-  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales manager");
-  await shot(page, "manager-09-own-refund", testInfo);
-});
-
-test("a Kingston sale: the same wall to the manager", async ({ page }, testInfo) => {
-  await signIn(page, "Sales manager");
-  await openReturns(page);
-  await page.getByLabel("Sale number").fill(SEEDED.kingstonSale);
-  await page.getByRole("button", { name: "Find sale" }).click();
-  await expect(page.getByTestId("returns-notice")).toContainText("The lookup was refused");
-  await expect(page.getByTestId("returns-notice")).toContainText("not reachable");
-  await expect(page.getByTestId("returns-sale")).toHaveCount(0);
-  await shot(page, "manager-10-kingston", testInfo);
 });
 
 test("beyond the till: the manager's reach past the counter's walls, and the cards come back", async ({

@@ -219,7 +219,7 @@ func (s *Service) POCostsFor(ctx context.Context, poID string) (POCosts, error) 
 		return POCosts{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return POCosts{}, errForbidden
+		return POCosts{}, errNotFound
 	}
 	lines, err := orders.POLinesFor(ctx, poID)
 	if err != nil {

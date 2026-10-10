@@ -24,8 +24,11 @@
 //   GET  /api/v1/pos/parked                 -> PosParkedTicketPage
 //   POST /api/v1/pos/parked/{id}/resume     -> PosParkedTicket
 //   DELETE /api/v1/pos/parked/{id}          -> PosParkedDiscard
-//   GET  /api/v1/pos/returns/lookup         -> PosReturnLookup
-//   POST /api/v1/pos/returns                -> PosReturn (409 PosRefundApprovalRequired)
+//   GET  /api/v1/pos/returns/customer-lines -> PosCustomerLines (422 for the house WALK-IN)
+//   POST /api/v1/pos/returns/preview        -> PosReturnPreview (the commit's own pricing, nothing written)
+//   POST /api/v1/pos/swaps/preview          -> PosSwapPreview (the credit, the new order, applied, leftover, shortfall)
+//   POST /api/v1/pos/swaps                  -> PosSwapResult (409 changed, 502 processor, 409 approval on the note total)
+//   POST /api/v1/pos/returns-across         -> PosReturnNote (409 PosRefundApprovalRequired on the note total)
 //   GET  /api/v1/pos/policy                 -> PosPolicy
 //   GET  /api/v1/pos/workspace              -> PosWorkspacePrefs (PUT writes, DELETE resets)
 //   GET  /api/v1/pos/hotkeys                -> PosHotkeys (the shipped default: no keys)
@@ -49,11 +52,10 @@
 // minted bearer the way the core's middleware does (the token's own sub
 // claim), hold the demo org header beside it, and refuse a call without
 // either, so the app's header plumbing is exercised exactly as it would be
-// against the real server. The returns desk's routes and the Z report answer
-// the bearer alone and read the account back out of the token this stub
-// minted itself, because the refusal rules they stand in for (the approval
-// above the amount) are answered per role: what the real core resolves from
-// the verified token, this stub reads from its own mint.
+// against the real server. The returns desk's customer lines read and the Z
+// report answer the bearer alone and read the account back out of the token
+// this stub minted itself: what the real core resolves from the verified
+// token, this stub reads from its own mint.
 //
 // The mint answers a JWT-shaped token so the app's expiry read (the token's
 // exp claim) sees the same shape the real mint issues: three segments, a
@@ -83,6 +85,7 @@ const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
+  { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
@@ -122,6 +125,15 @@ const USERS = {
     role_name: "Procurement Manager",
     tier: 2,
     scope: "BRANCH",
+  },
+  "financial-controller": {
+    user_id: "demo-account-financial-controller",
+    email: "financial-controller@demo.invalid",
+    display_name: "Financial controller (demo)",
+    role_code: "financial_controller",
+    role_name: "Financial Controller",
+    tier: 1,
+    scope: "GLOBAL",
   },
 };
 
@@ -313,7 +325,6 @@ const WALK_IN = {
   on_hold: false,
 };
 
-let previewCalls = 0; // how many previews the stub has answered (the legs read it through /_stub/state)
 /** 26600 reads $266.00, the way the contract's refusal sentence speaks. */
 function dollarsWord(cents) {
   return `$${(cents / 100).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -670,7 +681,144 @@ const SALES = {
       },
     ],
   },
+  // Walk in sales (ruling A): found only by a receipt or order number. One cash, one card.
+  "CT-3001": {
+    order_id: uuid(3001),
+    order_no: "CT-3001",
+    branch_id: BRANCH_ID,
+    customer_id: uuid(100009),
+    invoice_id: uuid(4001),
+    sale_tender: "CASH",
+    card_refundable: false,
+    lines: [
+      { order_line_id: uuid(13011), product_id: uuid(50002), description: "Wall block, charcoal, each", qty_sold: 4, unit_price_cents: 6000, line_total_cents: 24000, tax_cents: 0 },
+    ],
+  },
+  "CT-3002": {
+    order_id: uuid(3002),
+    order_no: "CT-3002",
+    branch_id: BRANCH_ID,
+    customer_id: uuid(100009),
+    invoice_id: uuid(4002),
+    sale_tender: "CARD",
+    card_refundable: true,
+    lines: [
+      { order_line_id: uuid(13021), product_id: uuid(50003), description: "Garden edger, grey, each", qty_sold: 3, unit_price_cents: 8900, line_total_cents: 26700, tax_cents: 0 },
+    ],
+  },
+  // Orders not fully paid (the cash or card split): half paid, and not paid at all.
+  "CT-3003": {
+    order_id: uuid(3003),
+    order_no: "CT-3003",
+    branch_id: BRANCH_ID,
+    customer_id: uuid(100007),
+    invoice_id: uuid(4003),
+    sale_tender: "CASH",
+    card_refundable: false,
+    paid_cents: 5000,
+    lines: [
+      { order_line_id: uuid(13031), product_id: uuid(50002), description: "Wall block, charcoal, each", qty_sold: 2, unit_price_cents: 6000, line_total_cents: 12000, tax_cents: 0 },
+    ],
+  },
+  "CT-3004": {
+    order_id: uuid(3004),
+    order_no: "CT-3004",
+    branch_id: BRANCH_ID,
+    customer_id: uuid(100007),
+    invoice_id: uuid(4004),
+    sale_tender: "CASH",
+    card_refundable: false,
+    paid_cents: 0,
+    lines: [
+      { order_line_id: uuid(13041), product_id: uuid(50002), description: "Wall block, charcoal, each", qty_sold: 1, unit_price_cents: 6000, line_total_cents: 6000, tax_cents: 0 },
+    ],
+  },
 };
+
+// The customer lines read's world (item 10.1's contract, field for field): every order a customer
+// holds, newest first, each line with its open quantity read off the same returned counts the old
+// return path kept. Tax is zero in this world, so the money returned is the unit price times the
+// quantity returned. The second branch exists to show the one branch per credit note rule.
+const BRANCH_ID_2 = "5d1b3f6e-0000-4000-9000-000000000002";
+const BRANCH_NAMES = { [BRANCH_ID]: "Trenton", [BRANCH_ID_2]: "Kingston" };
+// The canonical house WALK-IN row (migration 0029), the id the till names in its Walk in sale entry.
+const WALK_IN_ID = "a1900000-0000-4000-9000-000000000001";
+
+const CUSTOMER_ORDER_FACTS = {
+  "CT-1001": { created_at: "2026-10-03T15:20:00Z", job_label: "Marina Road patio", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-1002": { created_at: "2026-10-01T09:05:00Z", job_label: "Front walk", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-1003": { created_at: "2026-10-05T10:00:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-1004": { created_at: "2026-10-06T10:00:00Z", job_label: "Garden steps", source: "QUOTE", sale_type: "" },
+  "CT-2001": { created_at: "2026-10-04T11:40:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-2002": { created_at: "2026-10-02T13:10:00Z", job_label: "Garden wall", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-3001": { created_at: "2026-10-07T09:00:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-3002": { created_at: "2026-10-07T09:30:00Z", job_label: "", source: "TILL", sale_type: "COLLECT_NOW" },
+  "CT-3003": { created_at: "2026-10-07T10:00:00Z", job_label: "Back steps", source: "TILL", sale_type: "COLLECT_LATER" },
+  "CT-3004": { created_at: "2026-10-07T10:30:00Z", job_label: "Side path", source: "TILL", sale_type: "COLLECT_LATER" },
+};
+
+function customerOrderOf(customerId, orderNo, over = {}) {
+  return { ...SALES[orderNo], ...CUSTOMER_ORDER_FACTS[orderNo], customer_id: customerId, fulfilment_state: "FULFILLED", ...over };
+}
+
+const CUSTOMER_ORDERS = {
+  "c-maple-ridge": [customerOrderOf("c-maple-ridge", "CT-1001"), customerOrderOf("c-maple-ridge", "CT-1002")],
+  "c-fenwick": [
+    customerOrderOf("c-fenwick", "CT-2001"),
+    customerOrderOf("c-fenwick", "CT-2002", { branch_id: BRANCH_ID_2, source: "QUOTE", sale_tender: "", sale_type: "" }),
+  ],
+  "c-harbour": [],
+  // An account with no terms and no credit line: the account rail is refused in the core's words.
+  "c-retail": [
+    // An order a quote became with no live invoice yet: the read marks it blocked, with the core's words.
+    customerOrderOf("c-retail", "CT-1004", {
+      sale_tender: "",
+      returnable: false,
+      not_returnable_reason: "no invoice has been raised for this order yet, so there is nothing to refund against",
+    }),
+    customerOrderOf("c-retail", "CT-1003"),
+    customerOrderOf("c-retail", "CT-3003"),
+    customerOrderOf("c-retail", "CT-3004"),
+  ],
+  [WALK_IN_ID]: [customerOrderOf(WALK_IN_ID, "CT-3001"), customerOrderOf(WALK_IN_ID, "CT-3002")],
+};
+
+function customerOrderView(order) {
+  return {
+    order_id: order.order_id,
+    order_no: order.order_no,
+    branch_id: order.branch_id,
+    branch_name: BRANCH_NAMES[order.branch_id] ?? "",
+    created_at: order.created_at,
+    job_label: order.job_label,
+    source: order.source,
+    sale_type: order.sale_type,
+    tender: order.sale_tender,
+    fulfilment_state: order.fulfilment_state,
+    invoice_id: order.returnable === false ? "" : order.invoice_id,
+    card_refundable: order.card_refundable,
+    returnable: order.returnable !== false,
+    not_returnable_reason: order.returnable === false ? order.not_returnable_reason : "",
+    lines: order.lines.map((line) => {
+      const returned = RETURNED_QTY.get(line.order_line_id) ?? 0;
+      return {
+        order_line_id: line.order_line_id,
+        product_id: line.product_id,
+        sku: `SKU-${line.product_id.slice(-5)}`,
+        description: line.description,
+        qty_sold: line.qty_sold,
+        qty_returned: returned,
+        qty_open: line.qty_sold - returned,
+        unit_price_cents: line.unit_price_cents,
+        line_total_cents: line.line_total_cents,
+        tax_cents: line.tax_cents,
+        money_returned_cents: returned * line.unit_price_cents,
+        tax_returned_cents: 0,
+        shelf_state: "FULFILLED",
+      };
+    }),
+  };
+}
 
 // The drawer's world: one open session at the returns branch, with its opening
 // float and the cash that has moved through it. The Z report's expected cash
@@ -686,36 +834,50 @@ const DRAWER = {
   cash_out_cents: 0,
 };
 
-// The returns committed in this stub's life, keyed by the request's
-// idempotency key (a replay answers the stored return again and moves the
-// drawer nothing), plus the returned quantity netted per line for the
-// lookup's still-returnable counts.
-const RETURNS_BY_KEY = new Map();
-const RETURNED_QTY = new Map();
+// The returned quantity netted per line, which the customer lines read answers as qty_returned and
+// qty_open. The write path that grows it is rebuilt with the refund step; one line is seeded
+// partly returned so the screens show an open quantity below the quantity sold.
+const RETURNED_QTY = new Map([[uuid(11012), 2]]);
+function reseedReturns() {
+  RETURNED_QTY.clear();
+  RETURNED_QTY.set(uuid(11012), 2);
+  NOTES_BY_KEY.clear();
+  NOTE_META.clear();
+  CARD_REFUNDED.clear();
+  PAYOUTS.clear();
+  OFFSETS.clear();
+  PREVIEW_BODIES.length = 0;
+  SWAPS_BY_KEY.clear();
+  SWAP_KEYS_SEEN.length = 0;
+  LAST_SWAP_BODY = null;
+  swapFailure = null;
+  DRAWER.cash_in_cents = 0;
+  NOTE_KEYS_SEEN.length = 0;
+  LAST_NOTE_BODY = null;
+  SIGHTINGS.length = 0;
+  DRAWER.cash_out_cents = 0;
+  approvalLimitEnabled = false;
+}
 
-// What the harness's tests read back (the peek route below): every api
-// request's path and whether it carried the approver's header, the returns
-// posts' idempotency keys in send order, the last return body verbatim, and
-// who each committed return names as its clerk and its approver. Test
-// scaffolding only, on a route no contract path shares.
+// What the harness's peek route reads back: every note body the write route saw (keys in send order,
+// the last body verbatim), who each committed note names as clerk and approver, and whether the
+// approver's header rode each api call.
 const SIGHTINGS = [];
-const KEYS_SEEN = [];
-let LAST_RETURN_BODY = null;
-const RETURN_META = new Map();
+const NOTE_KEYS_SEEN = [];
+let LAST_NOTE_BODY = null;
+const NOTE_META = new Map();
+const CARD_REFUNDED = new Map();
+const PREVIEW_BODIES = [];
+const NOTES_BY_KEY = new Map();
+let NOTE_SEQ = 0;
+let RETURN_SEQ = 0;
 
-// The approval above which a refund needs a manager, and the roles that hold
-// the approval, as a dealer that keeps the rule sets them (D49's 250.00 and
-// its two approver roles). The demo dealer's configuration turns the rule off
-// (refund_approval_limit_enabled false, decision log rows 1047 and 1073), so
-// the stub starts in the demo's mode: no refund asks for an approval. Setting
-// CT_REFUND_APPROVAL_LIMIT=on starts it the other way, and the harness-only
-// POST /_stub/refund-approval-limit flips it mid run, which is how the suite
-// keeps the approval path under test for a dealer where the rule applies.
+// The approval above which a refund needs a manager, judged on the NOTE total (ruling Q3), and the
+// roles that hold it. The demo dealer's configuration turns the rule off, so the stub starts that
+// way; POST /_stub/refund-approval-limit flips it for the legs that exercise the approval path.
 const APPROVAL_AMOUNT_CENTS = 25000;
 const APPROVER_ROLES = ["sales_manager", "branch_manager"];
 let approvalLimitEnabled = process.env.CT_REFUND_APPROVAL_LIMIT === "on";
-
-let RETURN_SEQ = 0;
 
 // ---------------------------------------------------------------------------
 // The pricing stand-in: the same waterfall-shaped table the ring and the two
@@ -1069,158 +1231,408 @@ function readBody(request, respond) {
 }
 
 // ---------------------------------------------------------------------------
-// The returns world's own rules: what a return refuses, and how it commits.
+// The credit note across orders: the core's returns_across.go, in the same order of refusals
+// (note level 400s, the house WALK-IN, the replay, then each order through the single return's own
+// guards, one customer, one branch, the approval on the note total), then one commit.
 // ---------------------------------------------------------------------------
 
-// What the return's own rails refuse before any money moves, in the
-// contract's envelope. The approval refusal names itself in the error string
-// and carries the requirement under the approval key: the amount and the
-// approver roles, present exactly on that refusal (the contract's own words),
-// so the desk can name both. A verified approver's credential turns the same
-// return into the approver's decision, committed as one.
-function returnsRefusal(caller, body, approver) {
-  if (body === null || typeof body !== "object") {
-    return { status: 400, body: { error: "the return's body is not readable" } };
-  }
-  const key = body.idempotency_key;
-  if (typeof key !== "string" || key === "") {
-    return { status: 400, body: { error: "the return carries no idempotency key" } };
-  }
-  const sale = saleFromInput(body);
-  if (sale === undefined) {
-    return { status: 404, body: { error: "no sale with that number answers at this counter" } };
-  }
-  if (!Array.isArray(body.lines) || body.lines.length === 0) {
-    return { status: 400, body: { error: "the return carries no lines" } };
-  }
-  if (!["CASH", "CARD", "ACCOUNT_CREDIT"].includes(body.refund_method)) {
-    return { status: 400, body: { error: "the refund method is not one of the rails" } };
-  }
-  for (const line of body.lines) {
-    const saleLine = sale.lines.find((row) => row.order_line_id === line.order_line_id);
-    if (saleLine === undefined) {
-      return { status: 400, body: { error: "the return names a line the sale does not carry" } };
-    }
-    const returnable = saleLine.qty_sold - (RETURNED_QTY.get(saleLine.order_line_id) ?? 0);
-    if (!Number.isInteger(line.qty_base) || line.qty_base <= 0 || line.qty_base > returnable) {
-      return { status: 409, body: { error: "the return asks for more than the line still has to return" } };
-    }
-  }
-  if (body.refund_method === "CARD" && !sale.card_refundable) {
-    return { status: 409, body: { error: "the sale was not paid by card, so there is no capture to reverse" } };
-  }
-  if (body.refund_method === "CASH" && body.till_session_id !== DRAWER.session_id) {
-    // The returns desk names the returns world's own drawer; the ported
-    // surface's return modal names the counter world's open drawer at the
-    // caller's branch. Either way the rule is the same: a cash refund comes
-    // out of an open drawer, named.
-    const counterDrawer = drawers.get(callerBranch);
-    if (body.till_session_id !== counterDrawer?.id) {
-      return { status: 409, body: { error: "the drawer named is not the open one" } };
-    }
-  }
-  const totalCents = returnTotal(sale, body.lines);
-  if (approvalLimitEnabled && totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
-    return {
-      status: 409,
-      body: {
-        error: "refund_approval_required",
-        approval: { amount_cents: APPROVAL_AMOUNT_CENTS, approvers: APPROVER_ROLES },
-      },
-    };
-  }
-  return null;
-}
-
-// The refund's total: the returned lines' own totals by their quantities, in
-// a world whose tax is zero. Stub-side arithmetic, standing in the core's
-// shoes; the app computes nothing.
-function returnTotal(sale, lines) {
-  let total = 0;
-  for (const line of lines) {
-    const saleLine = sale.lines.find((row) => row.order_line_id === line.order_line_id);
-    total += saleLine.unit_price_cents * line.qty_base;
-  }
-  return total;
-}
-
-// A sale committed at the counter world, shaped for the returns desk's reads
-// (the desk's lookup lines carry the returnable quantities and the per-line
-// figures; the committed sale's own lines carry the same fields).
-function committedSaleAsReturnable(sale) {
-  return {
-    order_id: sale.order_id,
-    order_no: sale.order_no,
-    branch_id: sale.branch_id,
-    customer_id: sale.customer_id,
-    invoice_id: sale.invoice_id,
-    sale_tender: sale.tender,
-    card_refundable: sale.tender === "CARD",
-    // The desk reads the quantity as `qty_sold`; the counter's own line
-    // carries it as the quantity entered.
-    lines: sale.lines.map((line) => ({ ...line, qty_sold: line.qty_entered })),
-  };
-}
-
-function saleFromInput(body) {
-  if (typeof body.order_no === "string" && SALES[body.order_no] !== undefined) return SALES[body.order_no];
-  if (typeof body.order_id === "string") {
-    return Object.values(SALES).find((row) => row.order_id === body.order_id);
-  }
-  // A sale the counter world just rung answers the desk too: the demo world's
-  // two halves are one shop floor for the people standing at it.
-  if (typeof body.order_no === "string") {
-    const committed = sales.get(body.order_no) ?? [...sales.values()].find((row) => row.order_no === body.order_no);
-    if (committed !== undefined) return committedSaleAsReturnable(committed);
-  }
-  if (typeof body.order_id === "string") {
-    const committed = [...sales.values()].find((row) => row.order_id === body.order_id);
-    if (committed !== undefined) return committedSaleAsReturnable(committed);
+function orderById(orderId) {
+  for (const held of Object.values(CUSTOMER_ORDERS)) {
+    const found = held.find((row) => row.order_id === orderId);
+    if (found !== undefined) return found;
   }
   return undefined;
 }
 
-// The commit, as the core's would be: the refund's total is the returned
-// lines' own totals (this world carries no tax), the cash rail moves the
-// drawer's cash out counter, and the idempotency key makes a replay answer
-// the stored return without a second movement. The approver, verified by the
-// caller of this function, is recorded beside the clerk for the harness's
-// peek route: the response body's shape carries neither, by the contract.
-function commitReturn(caller, body, approver) {
-  const key = body.idempotency_key;
-  const replay = RETURNS_BY_KEY.get(key);
-  if (replay !== undefined) return { ...replay, replayed: true };
-  const sale = saleFromInput(body);
-  RETURN_SEQ += 1;
-  const subtotalCents = returnTotal(sale, body.lines);
-  for (const line of body.lines) {
-    const saleLine = sale.lines.find((row) => row.order_line_id === line.order_line_id);
-    RETURNED_QTY.set(saleLine.order_line_id, (RETURNED_QTY.get(saleLine.order_line_id) ?? 0) + line.qty_base);
+function refuse(status, error, extra = {}) {
+  return { status, body: { error, ...extra } };
+}
+
+const NAME_THE_CUSTOMER = "pos: name the customer, or give the receipt or order number of a walk-in sale";
+
+// The customer a write or a preview is for: the named one, or, with an empty customer, the house walk in row
+// when a receipt or order number rides along. Null when neither is given.
+function effectiveCustomer(body) {
+  const named = typeof body.customer_id === "string" ? body.customer_id.trim() : "";
+  if (named !== "") return named;
+  return normalizeSaleRef(body.number ?? "") === "" ? null : WALK_IN_ID;
+}
+
+// A receipt or order number as the core reads it: an order number or an invoice number, with or without
+// the hash, or the bare digits a branch's numbers end in.
+function normalizeSaleRef(raw) {
+  return String(raw).trim().replace(/^#/, "").toLowerCase();
+}
+
+function saleRefMatches(order, number) {
+  const orderNo = order.order_no.toLowerCase();
+  const invoiceNo = `inv-${orderNo}`;
+  if (number === orderNo || number === invoiceNo) return true;
+  return /^[0-9]+$/.test(number) && orderNo.endsWith(number);
+}
+
+// Cash or card only up to what was actually paid on the order's invoice, less earlier cash or card
+// payouts; the rest comes off the open invoice (the principal's ruling), in the core's words.
+const PAYOUTS = new Map();
+const OFFSETS = new Map();
+
+function railSplit(order, method, total) {
+  if ((method !== "CASH" && method !== "CARD") || order.paid_cents === undefined) return { rail: total, offset: 0, note: "" };
+  const invoiceTotal = order.lines.reduce((sum, row) => sum + row.line_total_cents, 0);
+  const balance = invoiceTotal - order.paid_cents - (OFFSETS.get(order.order_id) ?? 0);
+  const avail = Math.max(order.paid_cents - (PAYOUTS.get(order.order_id) ?? 0), 0);
+  let rail = total;
+  let offset = 0;
+  if (avail < total) {
+    rail = avail;
+    offset = total - avail;
+    if (offset > balance) {
+      rail += offset - balance;
+      offset = balance;
+    }
+  }
+  let note = "";
+  if (offset > 0 && rail === 0) {
+    note = `This order is not paid yet: nothing can go back in cash or card; the whole ${centsWords(offset)} comes off the open invoice`;
+  } else if (offset > 0) {
+    note = `This order is not fully paid: up to ${centsWords(rail)} can go back in cash or card; the rest, ${centsWords(offset)}, comes off the open invoice`;
+  }
+  return { rail, offset, note };
+}
+
+function centsWords(cents) {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+// The shape, wall and guard rules shared by the commit and the preview, in the core's words and order
+// (checkNoteShape, then each order through the walls and the line guard). `commit` adds the rail,
+// the replay, the 10.4 account and card refusals and the approval, which the preview never judges.
+function noteRefusal(caller, body, approver, commit = true, allowWalkIn = true) {
+  if (body === null || typeof body !== "object") return refuse(400, "the request body is not JSON");
+  if (commit) {
+    if (typeof body.idempotency_key !== "string" || body.idempotency_key === "") {
+      return refuse(400, "idempotency_key (client UUID) is required");
+    }
+    if (body.idempotency_key.startsWith("rreq:")) return refuse(400, "idempotency_key: the rreq: prefix is reserved");
+  }
+  if (!Array.isArray(body.orders) || body.orders.length === 0) return refuse(400, "pos: a return note needs at least one order");
+  if (commit && !["CASH", "CARD", "ACCOUNT_CREDIT"].includes(body.refund_method)) return refuse(400, "pos: refund_method must be CASH, CARD or ACCOUNT_CREDIT");
+  const customerId = effectiveCustomer(body);
+  if (customerId === null) return refuse(400, NAME_THE_CUSTOMER);
+  if (customerId === WALK_IN_ID && !allowWalkIn) {
+    return refuse(422, "pos: a swap is rung for a customer's own account, not the WALK-IN house account; return the walk-in sale to the card it was paid on or in cash, and ring the new order apart");
+  }
+  const seen = new Set();
+  for (const entry of body.orders) {
+    if (typeof entry.order_id !== "string" || entry.order_id === "") return refuse(400, "pos: every order on a return note needs an order_id");
+    if (seen.has(entry.order_id)) return refuse(422, `pos: order ${entry.order_id} appears twice on one note`);
+    seen.add(entry.order_id);
+    if (!Array.isArray(entry.lines) || entry.lines.length === 0) return refuse(422, `pos: order ${entry.order_id} carries no return lines`);
+    for (const asked of entry.lines) {
+      if (typeof asked.order_line_id !== "string" || asked.order_line_id === "" || !(asked.qty_base > 0)) {
+        return refuse(422, "pos: every return line needs an order_line_id and a positive qty_base");
+      }
+    }
+  }
+  if (commit && NOTES_BY_KEY.has(body.idempotency_key)) return null;
+  if (commit && body.refund_method === "ACCOUNT_CREDIT" && customerId === WALK_IN_ID) {
+    return refuse(422, "pos: the WALK-IN house account holds no credit; refund this walk-in sale to the card it was paid on or in cash");
+  }
+  if (commit && body.refund_method === "ACCOUNT_CREDIT") {
+    const account = CUSTOMERS.find((row) => row.id === customerId);
+    if (account === undefined || account.payment_terms_days <= 0 || account.credit_limit_cents <= 0) {
+      return refuse(
+        422,
+        "pos: this account cannot spend a credit (it has no credit terms or no credit line); refund to the card it was paid on or in cash, or set the account up with terms and a credit line first",
+      );
+    }
+  }
+  let branchId = null;
+  let totalCents = 0;
+  for (const entry of body.orders) {
+    const order = orderById(entry.order_id);
+    if (order === undefined) return refuse(404, `pos: no sale ${entry.order_id}`);
+    if (order.returnable === false) return refuse(422, `pos: ${order.not_returnable_reason}`);
+    if (commit && body.refund_method === "CASH" && body.till_session_id !== DRAWER.session_id) {
+      return refuse(422, "pos: a cash refund needs the open drawer at the sale's branch");
+    }
+    if (commit && body.refund_method === "CARD" && !order.card_refundable) {
+      return refuse(422, `pos: order ${order.order_no} has no card capture to reverse`);
+    }
+    if (order.customer_id !== customerId) {
+      return refuse(422, `pos: order ${order.order_no} belongs to another customer, not the note's customer`);
+    }
+    if (branchId !== null && branchId !== order.branch_id) {
+      return refuse(422, `pos: a return note covers one branch, order ${order.order_no} sits in another`);
+    }
+    branchId = order.branch_id;
+    const named = new Set();
+    let orderCents = 0;
+    for (const asked of entry.lines) {
+      if (named.has(asked.order_line_id)) {
+        return refuse(422, `pos: line ${asked.order_line_id} appears twice on order ${order.order_no}, send it once with the whole quantity`);
+      }
+      named.add(asked.order_line_id);
+      if (asked.disposition !== undefined && !["RESTOCK", "DAMAGED", "NO_RETURN"].includes(asked.disposition)) {
+        return refuse(400, "pos: disposition must be RESTOCK, DAMAGED or NO_RETURN");
+      }
+      const line = order.lines.find((row) => row.order_line_id === asked.order_line_id);
+      if (line === undefined) return refuse(422, `pos: line ${asked.order_line_id} does not belong to order ${order.order_no}`);
+      const open = line.qty_sold - (RETURNED_QTY.get(line.order_line_id) ?? 0);
+      if (asked.qty_base > open + 1e-6) {
+        return refuse(422, `pos: over-return on line ${asked.order_line_id}, ${asked.qty_base.toFixed(4)} requested but only ${open.toFixed(4)} returnable`);
+      }
+      orderCents += line.unit_price_cents * asked.qty_base;
+    }
+    if (commit && (body.refund_method === "CASH" || body.refund_method === "CARD")) {
+      const split = railSplit(order, body.refund_method, orderCents);
+      if (split.rail === 0 && split.offset > 0) return refuse(422, `pos: ${split.note}`);
+    }
+    if (commit && body.refund_method === "CARD") {
+      const captured = order.lines.reduce((sum, row) => sum + row.line_total_cents, 0);
+      const refunded = CARD_REFUNDED.get(order.order_id) ?? 0;
+      if (refunded + orderCents > captured) {
+        return refuse(
+          422,
+          `pos: a card refund of ${centsWords(orderCents)} would take the card past what the original capture holds (${centsWords(captured)} captured, ${centsWords(refunded)} already refunded); refund the rest in cash or to the account`,
+        );
+      }
+    }
+    totalCents += orderCents;
+  }
+  if (commit && approvalLimitEnabled && totalCents > APPROVAL_AMOUNT_CENTS && !APPROVER_ROLES.includes(caller.account.role_code) && !approver.present) {
+    return refuse(409, "refund_approval_required", { approval: { amount_cents: APPROVAL_AMOUNT_CENTS, approvers: APPROVER_ROLES } });
+  }
+  return null;
+}
+
+// The preview: the commit's own figures per line, per order and for the note (this world carries no
+// tax), nothing written.
+function previewNote(body, method = null) {
+  const orders = [];
+  let railSum = 0;
+  let offsetSum = 0;
+  let subtotal = 0;
+  let branchId = "";
+  for (const entry of body.orders) {
+    const order = orderById(entry.order_id);
+    branchId = order.branch_id;
+    const lines = entry.lines.map((asked) => {
+      const line = order.lines.find((row) => row.order_line_id === asked.order_line_id);
+      const total = line.unit_price_cents * asked.qty_base;
+      return { order_line_id: asked.order_line_id, qty_base: asked.qty_base, subtotal_cents: total, tax_cents: 0, total_cents: total };
+    });
+    const orderTotal = lines.reduce((sum, row) => sum + row.total_cents, 0);
+    subtotal += orderTotal;
+    const entryOut = { order_id: order.order_id, order_no: order.order_no, subtotal_cents: orderTotal, tax_cents: 0, total_cents: orderTotal, lines };
+    if (method === "CASH" || method === "CARD") {
+      const split = railSplit(order, method, orderTotal);
+      entryOut.rail_cents = split.rail;
+      entryOut.invoice_offset_cents = split.offset;
+      entryOut.rail_note = split.note;
+      railSum += split.rail;
+      offsetSum += split.offset;
+    }
+    orders.push(entryOut);
+  }
+  const out = { customer_id: effectiveCustomer(body), branch_id: branchId, subtotal_cents: subtotal, tax_cents: 0, total_cents: subtotal, orders };
+  if (method === "CASH" || method === "CARD") {
+    out.rail_cents = railSum;
+    out.invoice_offset_cents = offsetSum;
+  }
+  return out;
+}
+
+function commitNote(caller, body, approver, swap = null) {
+  const replay = NOTES_BY_KEY.get(body.idempotency_key);
+  if (replay !== undefined) return { status: 200, body: { ...replay, replayed: true } };
+  NOTE_SEQ += 1;
+  const returns = [];
+  let subtotal = 0;
+  let railTotal = 0;
+  let branchId = "";
+  for (const entry of body.orders) {
+    const order = orderById(entry.order_id);
+    branchId = order.branch_id;
+    RETURN_SEQ += 1;
+    let childTotal = 0;
+    for (const asked of entry.lines) {
+      const line = order.lines.find((row) => row.order_line_id === asked.order_line_id);
+      RETURNED_QTY.set(line.order_line_id, (RETURNED_QTY.get(line.order_line_id) ?? 0) + asked.qty_base);
+      childTotal += line.unit_price_cents * asked.qty_base;
+      if (body.refund_method === "CARD") CARD_REFUNDED.set(order.order_id, (CARD_REFUNDED.get(order.order_id) ?? 0) + line.unit_price_cents * asked.qty_base);
+    }
+    subtotal += childTotal;
+    const split = railSplit(order, body.refund_method, childTotal);
+    PAYOUTS.set(order.order_id, (PAYOUTS.get(order.order_id) ?? 0) + split.rail);
+    OFFSETS.set(order.order_id, (OFFSETS.get(order.order_id) ?? 0) + split.offset);
+    railTotal += split.rail;
+    let applied;
+    if (swap !== null) {
+      applied = Math.min(childTotal, swap.remaining);
+      swap.remaining -= applied;
+    }
+    returns.push({
+      return_id: uuid(40000 + RETURN_SEQ),
+      return_no: `CT-R-${100 + RETURN_SEQ}`,
+      order_id: order.order_id,
+      invoice_id: order.invoice_id,
+      refund_method: body.refund_method,
+      subtotal_cents: childTotal,
+      tax_cents: 0,
+      total_cents: childTotal,
+      ...(applied === undefined ? {} : { applied_cents: applied }),
+      ...(split.offset > 0 ? { invoice_offset_cents: split.offset, payment_note: split.note } : {}),
+      pickup_status: "NONE",
+      status: "COMMITTED",
+      replayed: false,
+    });
   }
   const answer = {
-    return_id: uuid(40000 + RETURN_SEQ),
-    return_no: `CT-R-${100 + RETURN_SEQ}`,
-    order_id: sale.order_id,
-    invoice_id: sale.invoice_id,
+    ...(swap === null ? {} : { swap_id: swap.swapId }),
+    note_id: uuid(60000 + NOTE_SEQ),
+    note_no: `CT-CN-${100 + NOTE_SEQ}`,
+    customer_id: effectiveCustomer(body),
+    branch_id: branchId,
     refund_method: body.refund_method,
-    subtotal_cents: subtotalCents,
+    subtotal_cents: subtotal,
     tax_cents: 0,
-    total_cents: subtotalCents,
-    pickup_status: "NONE",
-    status: "COMMITTED",
+    total_cents: subtotal,
+    returns,
     replayed: false,
   };
-  RETURNS_BY_KEY.set(key, answer);
-  RETURN_META.set(key, {
+  NOTES_BY_KEY.set(body.idempotency_key, answer);
+  NOTE_META.set(body.idempotency_key, {
     clerk: caller.account.user_id,
     approver: approver.present && approver.account !== null ? approver.account.user_id : null,
   });
-  // Only the returns world's own drawer counts its cash here: a refund out of
-  // the counter world's drawer moves that world, which keeps its own counters.
   if (body.refund_method === "CASH" && body.till_session_id === DRAWER.session_id) {
-    DRAWER.cash_out_cents += answer.total_cents;
+    DRAWER.cash_out_cents += swap === null ? railTotal : subtotal - swap.applied;
   }
-  return answer;
+  return { status: 201, body: answer };
+}
+
+// ---------------------------------------------------------------------------
+// The swap: the core's swap.go, one function for the preview and the ring (swapFigures). The credit is
+// the note's own preview, the new order is priced from the stub's catalogue at the customer's price
+// with the stub's flat tax, applied = min(credit, total), leftover = credit - applied, shortfall =
+// total - applied, and the leftover goes back by the original tender (Q7).
+// ---------------------------------------------------------------------------
+
+const SWAPS_BY_KEY = new Map();
+const SWAP_KEYS_SEEN = [];
+let LAST_SWAP_BODY = null;
+let SWAP_SEQ = 0;
+// One shot harness switch for the two failures a till must say in words: "changed" (409) and "processor" (502).
+let swapFailure = null;
+
+function swapFigures(caller, body, approver, commit) {
+  if (body === null || typeof body !== "object") return refuse(400, "the request body is not JSON");
+  if (!Array.isArray(body.lines) || body.lines.length === 0) return refuse(422, "pos: a sale needs at least one line");
+  const saleType = body.sale_type ?? "COLLECT_NOW";
+  if (!["COLLECT_NOW", "COLLECT_LATER", "DELIVERED"].includes(saleType)) {
+    return refuse(422, `pos: a swap rings a collect now, collect later or delivered order, not ${saleType}`);
+  }
+  const tender = body.tender ?? "CASH";
+  if (!["CASH", "CARD", "CHEQUE", "ACCOUNT"].includes(tender)) return refuse(400, "pos: tender must be CASH, CARD, CHEQUE or ACCOUNT");
+  // The credit through the note's own shape, walls and guard (preview mode: no rail yet).
+  const shape = noteRefusal(caller, { ...body, refund_method: "CASH", idempotency_key: "swap-preview" }, approver, false, false);
+  if (shape !== null) return shape;
+  const credit = previewNote(body);
+  const customer = customerFor(body.customer_id);
+  let newSub = 0;
+  for (const asked of body.lines) {
+    const resolved = resolveLine(body.customer_id, asked.product_id, credit.branch_id);
+    if (resolved === null || customer === null) return refuse(422, `pos: product ${asked.product_id} is not sold here`);
+    newSub += lineTotalCents(resolved.customer_cents, asked.qty_entered);
+  }
+  const newTax = taxCents(newSub);
+  const newTotal = newSub + newTax;
+  const applied = Math.min(credit.total_cents, newTotal);
+  const leftover = credit.total_cents - applied;
+  const shortfall = newTotal - applied;
+  let method = "";
+  let uniform = true;
+  for (const [index, entry] of body.orders.entries()) {
+    const order = orderById(entry.order_id);
+    if (order.invoice_status === "OPEN") {
+      return refuse(422, `pos: order ${order.order_no} still has an open invoice, so its return is not credit in hand; return it as a credit note first, then ring the new order`);
+    }
+    const m = order.sale_tender === "CASH" ? "CASH" : order.sale_tender === "CARD" ? "CARD" : order.sale_tender === "" || order.sale_tender === "ACCOUNT" ? "ACCOUNT_CREDIT" : "";
+    if (m === "") {
+      if (leftover > 0) return refuse(422, `pos: order ${order.order_no} was paid by ${order.sale_tender.toLowerCase()}, which has no refund rail; return it as a credit note and ring the new order apart`);
+    }
+    if (index === 0) method = m || "ACCOUNT_CREDIT";
+    else if (m !== method) uniform = false;
+  }
+  if (leftover > 0) {
+    if (!uniform) return refuse(422, "pos: these orders were paid by different tenders and the leftover goes back by the original tender; swap them one tender at a time");
+    if (body.leftover_method && body.leftover_method !== method) {
+      return refuse(422, `pos: the leftover goes back by the original tender, ${method}, not ${body.leftover_method}`);
+    }
+  }
+  if (commit) {
+    // The note's own rail checks and the approval, judged on the note total, the way the note's commit does.
+    const railed = noteRefusal(caller, { ...body, refund_method: leftover > 0 ? method : "ACCOUNT_CREDIT", idempotency_key: body.idempotency_key }, approver, true, false);
+    if (railed !== null && !(leftover === 0 && railed.status === 422)) return railed;
+  }
+  return {
+    ok: true,
+    figures: { credit, newSub, newTax, newTotal, applied, leftover, shortfall, method: method || "ACCOUNT_CREDIT", tender, saleType },
+  };
+}
+
+function swapPreviewBody(f) {
+  return {
+    credit: f.credit,
+    new_order: { subtotal_cents: f.newSub, tax_cents: f.newTax, total_cents: f.newTotal },
+    applied_cents: f.applied,
+    leftover_cents: f.leftover,
+    shortfall_cents: f.shortfall,
+    leftover_method: f.method,
+  };
+}
+
+function commitSwap(caller, body, approver, f) {
+  const replay = SWAPS_BY_KEY.get(body.idempotency_key);
+  if (replay !== undefined) return { status: 200, body: { ...replay, replayed: true } };
+  SWAP_SEQ += 1;
+  const swapId = uuid(70000 + SWAP_SEQ);
+  const noted = commitNote(
+    caller,
+    { ...body, idempotency_key: `swap:${body.idempotency_key}`, refund_method: f.method },
+    approver,
+    { swapId, remaining: f.applied, applied: f.applied },
+  );
+  const sale = {
+    swap_id: swapId,
+    order_id: uuid(80000 + SWAP_SEQ),
+    order_no: `CT-S-${200 + SWAP_SEQ}`,
+    invoice_id: uuid(81000 + SWAP_SEQ),
+    invoice_no: `CT-INV-${300 + SWAP_SEQ}`,
+    tender: f.tender,
+    sale_type: f.saleType,
+    subtotal_cents: f.newSub,
+    tax_cents: f.newTax,
+    total_cents: f.newTotal,
+    tax_reason_code: "STD_ON_HST_13",
+    status: "COMMITTED",
+    replayed: false,
+  };
+  if (f.tender === "CASH" && body.till_session_id === DRAWER.session_id) DRAWER.cash_in_cents += f.shortfall;
+  const answer = {
+    swap_id: swapId,
+    note: noted.body,
+    sale,
+    credit_cents: f.credit.total_cents,
+    applied_cents: f.applied,
+    leftover_cents: f.leftover,
+    shortfall_cents: f.shortfall,
+    leftover_method: f.method,
+    replayed: false,
+  };
+  SWAPS_BY_KEY.set(body.idempotency_key, answer);
+  return { status: 201, body: answer };
 }
 
 // ---------------------------------------------------------------------------
@@ -1373,14 +1785,10 @@ function sawOrg(request) {
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
   const path = url.pathname;
-  // Every api request is sighted for the harness's peek route: the path, and
-  // whether the approver's header rode it. The credential's whole claim
-  // (one send, the approver's client alone) is asserted against this ledger.
+  // Every api request is sighted for the harness's peek route: the path, and whether the approver's
+  // header rode it (the credential's whole claim, one send and the approver's client alone).
   if (path.startsWith("/api/")) {
-    SIGHTINGS.push({
-      path,
-      approverHeader: (request.headers["x-approver-authorization"] ?? "") !== "",
-    });
+    SIGHTINGS.push({ path, approverHeader: (request.headers["x-approver-authorization"] ?? "") !== "" });
   }
   if (request.method === "GET" && path === "/healthz") {
     respondJson(response, 200, { ok: true });
@@ -1396,6 +1804,20 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "POST" && path === "/_stub/swap-failure") {
+    // Harness-only: the next swap ring fails once, as "changed" (409) or "processor" (502).
+    readBody(request, (parsed) => {
+      swapFailure = parsed !== null && typeof parsed === "object" && ["changed", "processor"].includes(parsed.mode) ? parsed.mode : null;
+      respondJson(response, 200, { swapFailure });
+    });
+    return;
+  }
+  if (request.method === "POST" && path === "/_stub/reseed-returns") {
+    // Harness-only: put the returns world back as it started (a leg that commits a note leaves it changed).
+    reseedReturns();
+    respondJson(response, 200, { ok: true });
+    return;
+  }
   // Harness-only: the yard's acknowledgement and the finance signature, the
   // two halves stages 2 and 3 carry. The stub world performs them the way the
   // yard app and the money desk will (the ladder's own moves), so the till's
@@ -1430,15 +1852,17 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "GET" && path === "/_stub/state") {
-    // Harness-only: the tests' read back of this stub's ledgers. No contract
-    // path shares the namespace, and the app never calls it.
+    // Harness-only: the tests' read back of this stub's ledgers. No contract path shares the
+    // namespace, and the app never calls it.
     respondJson(response, 200, {
-      keys: KEYS_SEEN,
-      lastReturnBody: LAST_RETURN_BODY,
+      keys: NOTE_KEYS_SEEN,
+      lastNoteBody: LAST_NOTE_BODY,
+      previewBodies: PREVIEW_BODIES,
+      swapKeys: SWAP_KEYS_SEEN,
+      lastSwapBody: LAST_SWAP_BODY,
       sightings: SIGHTINGS,
-      previewCalls,
       approvalLimitEnabled,
-      returns: [...RETURN_META.entries()].map(([key, meta]) => ({ key, ...meta })),
+      notes: [...NOTE_META.entries()].map(([key, meta]) => ({ key, ...meta })),
     });
     return;
   }
@@ -1456,8 +1880,6 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && path === "/_stub/refund-approval-limit") {
-    // Harness-only: switches the stub between the demo dealer's configuration
-    // (no approval threshold) and a dealer that keeps the 250.00 rule.
     readBody(request, (parsed) => {
       approvalLimitEnabled = parsed !== null && typeof parsed === "object" && parsed.enabled === true;
       respondJson(response, 200, { approvalLimitEnabled });
@@ -1498,38 +1920,45 @@ const server = createServer(async (request, response) => {
   // The returns desk's routes and the Z report: staff routes that answer the
   // bearer alone (the reader above), ahead of the counter's own gate, because
   // their suite's own reads carry no org header.
-  if (request.method === "GET" && path === "/api/v1/pos/returns/lookup") {
+  if (request.method === "GET" && path === "/api/v1/pos/returns/customer-lines") {
     const caller = callerFromRequest(request);
     if (caller === null) {
       respondJson(response, 401, { error: "no usable staff credential" });
       return;
     }
-    const orderNo = url.searchParams.get("order_no");
-    const orderId = url.searchParams.get("order_id");
-    const sale =
-      (typeof orderNo === "string" && orderNo !== "" && saleFromInput({ order_no: orderNo })) ||
-      (typeof orderId === "string" && orderId !== "" && saleFromInput({ order_id: orderId })) ||
-      undefined;
-    if (sale === undefined) {
-      // The real lookup is branch fenced; this stub does NOT check the
-      // caller's branch (known gap, no test relies on it). Only a sale it
-      // does not know answers 404.
-      respondJson(response, 404, { error: "no sale with that number answers at this counter" });
+    // The core's own order of refusals: customer_id first (400), then the house WALK-IN (422 in
+    // words), then the branch wall (403 naming the branch). Orders answer newest first, bounded.
+    // A named customer is that customer (the spelled out walk in id still works). An EMPTY customer with a
+    // number is the house walk in row, as the ring treats an empty customer; neither is a 400 in words.
+    let customerId = (url.searchParams.get("customer_id") ?? "").trim();
+    if (customerId === "") {
+      if (normalizeSaleRef(url.searchParams.get("number") ?? "") === "") {
+        respondJson(response, 400, { error: NAME_THE_CUSTOMER });
+        return;
+      }
+      customerId = WALK_IN_ID;
+    }
+    // Ruling A: the house WALK-IN row is answered only through a receipt or order number, never listed.
+    const number = normalizeSaleRef(url.searchParams.get("number") ?? "");
+    if (customerId === WALK_IN_ID && number === "") {
+      respondJson(response, 422, {
+        error: "pos: walk-in sales are never listed; find the sale by the receipt or order number, and it goes back to the card it was paid on or in cash",
+      });
       return;
     }
-    respondJson(response, 200, {
-      order_id: sale.order_id,
-      order_no: sale.order_no,
-      branch_id: sale.branch_id,
-      customer_id: sale.customer_id,
-      invoice_id: sale.invoice_id,
-      sale_tender: sale.sale_tender,
-      card_refundable: sale.card_refundable,
-      lines: sale.lines.map((line) => ({
-        ...line,
-        qty_returned: RETURNED_QTY.get(line.order_line_id) ?? 0,
-      })),
-    });
+    const branchId = (url.searchParams.get("branch_id") ?? "").trim();
+    if (branchId !== "" && branchId !== BRANCH_ID && branchId !== BRANCH_ID_2) {
+      respondJson(response, 403, { error: `pos: branch ${branchId} is not one your grant reaches` });
+      return;
+    }
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 25, 1), 100);
+    // The number filter sits inside the customer's own orders, so it can never reach another's.
+    const held = (CUSTOMER_ORDERS[customerId] ?? []).filter((order) => number === "" || saleRefMatches(order, number));
+    const items = held
+      .filter((order) => branchId === "" || order.branch_id === branchId)
+      .slice(0, limit)
+      .map(customerOrderView);
+    respondJson(response, 200, { customer_id: customerId, items });
     return;
   }
   if (
@@ -1560,16 +1989,95 @@ const server = createServer(async (request, response) => {
     });
     return;
   }
-  if (request.method === "POST" && path === "/api/v1/pos/returns") {
+  if (request.method === "POST" && (path === "/api/v1/pos/swaps/preview" || path === "/api/v1/pos/swaps")) {
     const caller = callerFromRequest(request);
     if (caller === null) {
       respondJson(response, 401, { error: "no usable staff credential" });
       return;
     }
-    // The approver's credential beside the clerk's bearer, verified the way
-    // the real rule verifies it: the same mint, an account whose role holds
-    // the approval, a person other than the clerk. A header that is present
-    // and not valid is refused before anything else is judged.
+    const commit = path === "/api/v1/pos/swaps";
+    const approver = approverFromRequest(request);
+    if (
+      approver.present &&
+      (approver.account === null ||
+        !APPROVER_ROLES.includes(approver.account.role_code) ||
+        approver.account.user_id === caller.account.user_id)
+    ) {
+      respondJson(response, 403, { error: "the approver credential does not name an approver other than the clerk" });
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(await readRawBody(request));
+    } catch {
+      respondJson(response, 400, { error: "the request body is not JSON" });
+      return;
+    }
+    if (!commit) {
+      PREVIEW_BODIES.push(body);
+      const figured = swapFigures(caller, body, approver, false);
+      if (figured.ok !== true) {
+        respondJson(response, figured.status, figured.body);
+        return;
+      }
+      respondJson(response, 200, swapPreviewBody(figured.figures));
+      return;
+    }
+    if (body !== null && typeof body === "object" && typeof body.idempotency_key === "string") {
+      SWAP_KEYS_SEEN.push(body.idempotency_key);
+      LAST_SWAP_BODY = body;
+    }
+    if (body !== null && typeof body === "object" && typeof body.idempotency_key === "string" && SWAPS_BY_KEY.has(body.idempotency_key)) {
+      respondJson(response, 200, { ...SWAPS_BY_KEY.get(body.idempotency_key), replayed: true });
+      return;
+    }
+    const figured = swapFigures(caller, body, approver, true);
+    if (figured.ok !== true) {
+      respondJson(response, figured.status, figured.body);
+      return;
+    }
+    if (swapFailure === "changed") {
+      swapFailure = null;
+      respondJson(response, 409, { error: "pos: the swap's figures changed while it was being rung; review the swap and ring it again" });
+      return;
+    }
+    if (swapFailure === "processor") {
+      swapFailure = null;
+      respondJson(response, 502, { error: "pos: card refund failed, the processor refused the refund" });
+      return;
+    }
+    const committed = commitSwap(caller, body, approver, figured.figures);
+    respondJson(response, committed.status, committed.body);
+    return;
+  }
+  if (request.method === "POST" && path === "/api/v1/pos/returns/preview") {
+    const caller = callerFromRequest(request);
+    if (caller === null) {
+      respondJson(response, 401, { error: "no usable staff credential" });
+      return;
+    }
+    let body;
+    try {
+      body = JSON.parse(await readRawBody(request));
+    } catch {
+      respondJson(response, 400, { error: "the request body is not JSON" });
+      return;
+    }
+    PREVIEW_BODIES.push(body);
+    const refusal = noteRefusal(caller, body, { present: false, account: null }, false);
+    if (refusal !== null) {
+      respondJson(response, refusal.status, refusal.body);
+      return;
+    }
+    respondJson(response, 200, previewNote(body, body.refund_method ?? null));
+    return;
+  }
+  if (request.method === "POST" && path === "/api/v1/pos/returns-across") {
+    const caller = callerFromRequest(request);
+    if (caller === null) {
+      respondJson(response, 401, { error: "no usable staff credential" });
+      return;
+    }
     const approver = approverFromRequest(request);
     if (
       approver.present &&
@@ -1588,15 +2096,16 @@ const server = createServer(async (request, response) => {
       return;
     }
     if (body !== null && typeof body === "object" && typeof body.idempotency_key === "string") {
-      KEYS_SEEN.push(body.idempotency_key);
-      LAST_RETURN_BODY = body;
+      NOTE_KEYS_SEEN.push(body.idempotency_key);
+      LAST_NOTE_BODY = body;
     }
-    const refusal = returnsRefusal(caller, body, approver);
+    const refusal = noteRefusal(caller, body, approver);
     if (refusal !== null) {
       respondJson(response, refusal.status, refusal.body);
       return;
     }
-    respondJson(response, 201, commitReturn(caller, body, approver));
+    const committed = commitNote(caller, body, approver);
+    respondJson(response, committed.status, committed.body);
     return;
   }
 
@@ -1915,7 +2424,6 @@ const server = createServer(async (request, response) => {
         return;
       }
       const tax = taxCents(subtotal);
-      previewCalls += 1;
       respondJson(response, 200, {
         subtotal_cents: subtotal,
         tax_cents: tax,

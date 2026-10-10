@@ -715,7 +715,10 @@ paths:
         - name: branch_id
           in: query
           required: false
-          description: Omitted means all branches
+          description: >-
+            Omitted means every branch in the caller's reach (all branches for a
+            global caller, the granted ones for a branch scoped caller). A
+            branch outside the reach answers 403.
           schema: { type: string }
       responses:
         "200":
@@ -1824,6 +1827,15 @@ components:
           description: The quantity the replenishment arithmetic proposed, whether or not the caller overrode it
         uom: { type: string }
         vendor_name: { type: string }
+        existing_draft_po_id:
+          type: string
+          format: uuid
+          description: >-
+            The unplaced draft this product already had at this branch before this press. A draft never
+            covers a shortfall, so the press still drafts the full quantity; absent when there was none.
+        existing_draft_po_no:
+          type: string
+          description: The number of the draft named by existing_draft_po_id; present with it, absent without it
 
     InventoryNudgeRequest:
       type: object

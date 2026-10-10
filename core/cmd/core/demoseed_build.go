@@ -187,6 +187,8 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 	b.freightApprovals()
 	// The quote world, after the customers and products it prices and before the day-keyed rows.
 	b.quoteWorld()
+	// The Financial Controller's parked journals, after the quote world's makers it shares.
+	b.controllerWorld()
 	// The CP-03 island's missing lines, beside the quote world because they are documents too, and
 	// after the products their foreign keys name (demoseed_island.go argues the whole case).
 	b.islandLines()

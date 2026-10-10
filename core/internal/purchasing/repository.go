@@ -12,6 +12,7 @@ package purchasing
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -987,26 +988,6 @@ func (r *Repository) POLineBriefs(ctx context.Context, tx pgx.Tx, poID string, l
 // other table access so the tablegate's file scoped census reads them beside the PO writes that
 // stamp the same 0213 seq) -
 
-// VendorOrg answers the org a vendor row is stamped with, "" for a carried row (0213: carried rows
-// keep org_id NULL) and ErrUnknownVendor for no row at all.
-func (r *Repository) VendorOrg(ctx context.Context, vendorID string) (string, error) {
-	if r.pool == nil {
-		return "", errNoDB
-	}
-	var owner *string
-	err := r.pool.QueryRow(ctx, `SELECT org_id::text FROM vendors WHERE id = $1::uuid`, vendorID).Scan(&owner)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrUnknownVendor
-	}
-	if err != nil {
-		return "", fmt.Errorf("purchasing: vendor org read: %w", err)
-	}
-	if owner == nil {
-		return "", nil
-	}
-	return *owner, nil
-}
-
 // InsertVendorMaster mints the number, draws the seq and inserts, in ONE statement: the number and
 // the seq are both minted by the database, so a rolled back create burns neither.
 func (r *Repository) InsertVendorMaster(ctx context.Context, orgID, name string, terms int, email string) (VendorMaster, error) {
@@ -1015,7 +996,11 @@ func (r *Repository) InsertVendorMaster(ctx context.Context, orgID, name string,
 	}
 	remit := "{}"
 	if email != "" {
-		remit = fmt.Sprintf(`{"email":%q}`, email)
+		blob, err := json.Marshal(map[string]string{"email": email})
+		if err != nil {
+			return VendorMaster{}, fmt.Errorf("purchasing: encode remit address: %w", err)
+		}
+		remit = string(blob)
 	}
 	var v VendorMaster
 	err := r.pool.QueryRow(ctx, vendorSeqCTE+`
@@ -1023,6 +1008,12 @@ func (r *Repository) InsertVendorMaster(ctx context.Context, orgID, name string,
 		VALUES (next_vendor_no(), $1, $2, $3::jsonb, TRUE, $4::uuid, (SELECT next_value FROM vseq))
 		RETURNING id::text, vendor_no::text, name, payment_terms_days, COALESCE(remit_address->>'email',''), is_active`,
 		name, terms, remit, orgID).Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.OrderEmail, &v.IsActive)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		// The minted number is already a row (planted by a hand or a load): the sequence has moved
+		// on, so a retry draws the next one. Said in words, never the raw constraint as a 500.
+		return VendorMaster{}, conflict("purchasing: the vendor number the mint drew is already taken, try again")
+	}
 	if err != nil {
 		return VendorMaster{}, fmt.Errorf("purchasing: insert vendor: %w", err)
 	}
@@ -1032,29 +1023,38 @@ func (r *Repository) InsertVendorMaster(ctx context.Context, orgID, name string,
 // UpdateVendorMaster applies the named corrections in one statement that also draws a fresh seq, so
 // the edit reaches a synced device. The email arm merges (or removes) only the email key: the remit
 // blob is free form and other hands may have planted keys in it, so no edit here replaces the lot.
-func (r *Repository) UpdateVendorMaster(ctx context.Context, vendorID string, name *string, terms *int, email *string, isActive *bool) (VendorMaster, error) {
+//
+// THE ORG TEST LIVES IN THE WHERE, not in a read before it: a row stamped with another org matches
+// nothing and answers ErrUnknownVendor, the same 404 an unknown id gets, and a carried row (org_id
+// NULL, 0213) is claimed for the caller's org in the same statement, so two orgs editing one carried
+// row cannot both win.
+func (r *Repository) UpdateVendorMaster(ctx context.Context, orgID, vendorID string, name *string, terms *int, email *string, isActive *bool) (VendorMaster, error) {
 	if r.pool == nil {
 		return VendorMaster{}, errNoDB
 	}
-	remit := "remit_address"
-	switch {
-	case email != nil && *email == "":
-		remit = `(remit_address - 'email')`
-	case email != nil:
-		remit = fmt.Sprintf(`(remit_address || '{"email":%q}'::jsonb)`, *email)
+	// The email rides as a bound parameter on every arm, never as statement text: $5 says whether
+	// the body named the email at all, $6 is the address ('' clears it).
+	setEmail, address := email != nil, ""
+	if setEmail {
+		address = *email
 	}
 	var v VendorMaster
 	err := r.pool.QueryRow(ctx, vendorSeqCTE+`
 		UPDATE vendors SET
 			name = COALESCE($2, name),
 			payment_terms_days = COALESCE($3, payment_terms_days),
-			remit_address = `+remit+`,
+			remit_address = CASE
+				WHEN NOT $5::boolean THEN remit_address
+				WHEN $6::text = '' THEN remit_address - 'email'
+				ELSE remit_address || jsonb_build_object('email', $6::text)
+			END,
 			is_active = COALESCE($4, is_active),
+			org_id = COALESCE(org_id, $7::uuid),
 			updated_at = now(),
 			seq = (SELECT next_value FROM vseq)
-		WHERE id = $1::uuid
+		WHERE id = $1::uuid AND (org_id IS NULL OR org_id = $7::uuid)
 		RETURNING id::text, vendor_no::text, name, payment_terms_days, COALESCE(remit_address->>'email',''), is_active`,
-		vendorID, name, terms, isActive).Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.OrderEmail, &v.IsActive)
+		vendorID, name, terms, isActive, setEmail, address, orgID).Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.OrderEmail, &v.IsActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return VendorMaster{}, ErrUnknownVendor
 	}

@@ -89,17 +89,18 @@ func TestIntegration_HH181_ABranchScopedBuyerReadsOnlyTheirBranch(t *testing.T) 
 			t.Errorf("list POs at Kingston: got %v, want the branch fence's refusal", err)
 		}
 
-		// One PO, Kingston's id: refused, never read.
-		if _, err := h.svc.GetPO(h.ctx, poKGN); !errors.Is(err, errForbidden) {
+		// One PO, Kingston's id: refused, never read, and answered exactly as a missing PO is (no
+		// existence oracle: see TestIntegration_P22_AnOutOfReachPOAnswersAsAMissingOne).
+		if _, err := h.svc.GetPO(h.ctx, poKGN); !errors.Is(err, errNotFound) {
 			t.Errorf("read the Kingston PO: got %v, want the branch fence's refusal", err)
 		}
 		// The send history door beside it, same refusal.
-		if _, err := h.svc.ListPOSends(h.ctx, poKGN); !errors.Is(err, errForbidden) {
+		if _, err := h.svc.ListPOSends(h.ctx, poKGN); !errors.Is(err, errNotFound) {
 			t.Errorf("read the Kingston PO's sends: got %v, want the branch fence's refusal", err)
 		}
 		// The send itself, with a replay key: the fence answers before the replay lookup does
 		// (HH-181's own ordering, vendor_order.go).
-		if _, err := h.svc.SendPO(h.ctx, poKGN, SendPORequest{IdempotencyKey: "fence-replay-key"}); !errors.Is(err, errForbidden) {
+		if _, err := h.svc.SendPO(h.ctx, poKGN, SendPORequest{IdempotencyKey: "fence-replay-key"}); !errors.Is(err, errNotFound) {
 			t.Errorf("send the Kingston PO under a replay key: got %v, want the fence before the replay", err)
 		}
 
@@ -170,17 +171,17 @@ func TestIntegration_HH181_TheFenceHoldsForTheWriteDoorsToo(t *testing.T) {
 		// mutatePO (add a line, remove a line, place, receive) fences on the loaded PO's branch
 		// before any mutation runs: the load-bearing leg for a buyer who cannot act on another
 		// branch's order, not only read it.
-		if _, err := h.svc.AddLine(h.ctx, poKGN, AddLineParams{ProductID: h.prodAny(t), QtyOrderedBase: 5, UOM: "PC", UnitCostCents: 100}); !errors.Is(err, errForbidden) {
+		if _, err := h.svc.AddLine(h.ctx, poKGN, AddLineParams{ProductID: h.prodAny(t), QtyOrderedBase: 5, UOM: "PC", UnitCostCents: 100}); !errors.Is(err, errNotFound) {
 			t.Errorf("add a line to the Kingston PO: got %v, want the branch fence's refusal", err)
 		}
-		if _, err := h.svc.RemoveLine(h.ctx, poKGN, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, errForbidden) {
+		if _, err := h.svc.RemoveLine(h.ctx, poKGN, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, errNotFound) {
 			t.Errorf("remove a line on the Kingston PO: got %v, want the branch fence's refusal", err)
 		}
 		// CANCELLED is a legal move for this PO, so the only thing standing between a Trenton buyer
 		// and cancelling Kingston's order is the fence: the refusal AND the status still ORDERED
 		// after it, because a fence refused only at the response read would leave the mutation
 		// committed behind the 403.
-		if _, err := h.svc.Transition(h.ctx, poKGN, StatusCancelled); !errors.Is(err, errForbidden) {
+		if _, err := h.svc.Transition(h.ctx, poKGN, StatusCancelled); !errors.Is(err, errNotFound) {
 			t.Errorf("cancel the Kingston PO: got %v, want the branch fence's refusal", err)
 		}
 		if got := statusOf(); got != StatusOrdered {
@@ -188,14 +189,71 @@ func TestIntegration_HH181_TheFenceHoldsForTheWriteDoorsToo(t *testing.T) {
 		}
 		// The correctable fields ride the same fence (incoming.go: both resolve through GetPO and
 		// branchFence before they write).
-		if _, err := h.svc.SetExpectedDate(h.ctx, poKGN, "2026-08-19"); !errors.Is(err, errForbidden) {
+		if _, err := h.svc.SetExpectedDate(h.ctx, poKGN, "2026-08-19"); !errors.Is(err, errNotFound) {
 			t.Errorf("set the Kingston PO's expected date: got %v, want the branch fence's refusal", err)
 		}
-		if _, err := h.svc.SetDeliveryMethod(h.ctx, poKGN, "PICKUP"); !errors.Is(err, errForbidden) {
+		if _, err := h.svc.SetDeliveryMethod(h.ctx, poKGN, "PICKUP"); !errors.Is(err, errNotFound) {
 			t.Errorf("set the Kingston PO's arrival: got %v, want the branch fence's refusal", err)
 		}
 		if got := statusOf(); got != StatusOrdered {
 			t.Errorf("the Kingston PO reads %s after the refused corrections, want ORDERED", got)
+		}
+	})
+}
+
+// P2-2 of the security review: an id door answers a PO out of the caller's reach exactly as it
+// answers a PO that does not exist, so a buyer cannot tell the two apart by status or by body. A
+// branch the caller NAMES outright stays a 403 (the question itself is out of reach).
+func TestIntegration_P22_AnOutOfReachPOAnswersAsAMissingOne(t *testing.T) {
+	h := newHarness(t)
+	_, poKGN, _, _ := fenceWorld(t, h)
+	missing := "00000000-0000-4000-8000-0000000000aa"
+
+	asRole(t, h, procurementAt(h.user, branchTRT), func() {
+		doors := map[string]func(id string) error{
+			"read":  func(id string) error { _, err := h.svc.GetPO(h.ctx, id); return err },
+			"sends": func(id string) error { _, err := h.svc.ListPOSends(h.ctx, id); return err },
+			"send": func(id string) error {
+				_, err := h.svc.SendPO(h.ctx, id, SendPORequest{IdempotencyKey: "p22-key"})
+				return err
+			},
+			"document": func(id string) error { _, err := h.svc.PODocumentFor(h.ctx, id); return err },
+			"costs":    func(id string) error { _, err := h.svc.POCostsFor(h.ctx, id); return err },
+			"add line": func(id string) error {
+				_, err := h.svc.AddLine(h.ctx, id, AddLineParams{ProductID: h.prodAny(t), QtyOrderedBase: 5, UOM: "PC", UnitCostCents: 100})
+				return err
+			},
+			"edit line": func(id string) error {
+				_, err := h.svc.UpdateLine(h.ctx, id, "00000000-0000-0000-0000-000000000000", UpdateLineParams{QtyOrderedBase: ptr(2.0)})
+				return err
+			},
+			"remove line": func(id string) error {
+				_, err := h.svc.RemoveLine(h.ctx, id, "00000000-0000-0000-0000-000000000000")
+				return err
+			},
+			"cancel":   func(id string) error { _, err := h.svc.Transition(h.ctx, id, StatusCancelled); return err },
+			"date":     func(id string) error { _, err := h.svc.SetExpectedDate(h.ctx, id, "2026-08-19"); return err },
+			"delivery": func(id string) error { _, err := h.svc.SetDeliveryMethod(h.ctx, id, "PICKUP"); return err },
+			"receive": func(id string) error {
+				_, err := h.svc.Receive(h.ctx, id, ReceiveRequest{Lines: []ReceiveLineParams{{POLineID: "00000000-0000-0000-0000-000000000000", QtyBase: 1}}})
+				return err
+			},
+		}
+		for name, door := range doors {
+			gone, away := door(missing), door(poKGN)
+			var ceGone, ceAway clientError
+			if !errors.As(gone, &ceGone) || !errors.As(away, &ceAway) {
+				t.Errorf("%s: missing PO = %v, out of reach PO = %v, want client errors", name, gone, away)
+				continue
+			}
+			if ceGone.status != 404 || ceAway.status != 404 || ceGone.msg != ceAway.msg {
+				t.Errorf("%s: missing PO answers %d %q, out of reach PO answers %d %q, want the same 404 body",
+					name, ceGone.status, ceGone.msg, ceAway.status, ceAway.msg)
+			}
+		}
+		// A branch named outright stays a refusal of the question.
+		if _, err := h.svc.ListPOs(h.ctx, branchKGN, ""); !errors.Is(err, errForbidden) {
+			t.Errorf("list POs at a named Kingston: got %v, want 403", err)
 		}
 	})
 }
