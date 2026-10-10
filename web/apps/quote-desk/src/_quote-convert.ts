@@ -260,9 +260,10 @@ export function convertedStopWords(quoteNo: string, orderNo: string | null): str
  * answer in words proves nothing was created; a lost or 5xx answer says the outcome is not known.
  */
 export function refusalWords(status: number | undefined, detail: string, afterLostAnswer = false): string {
-  // No answer at all, or a 5xx, may follow a conversion that committed: the order's creation is not
-  // known, and only the quote's state on reload says. A retry cannot make a second order, because the
-  // core converts only from ACCEPTED.
+  // No answer at all, a 5xx, or a 4xx with no words of the server's own, may follow a conversion that
+  // committed: the order's creation is not known, and only the quote's state on reload says. The retry's
+  // one key is what makes a second order impossible: the core answers the first order for a repeated
+  // key whatever the multi accept switch says.
   if (isUnknownOutcome(status) || !isWordedRefusal(detail)) {
     return "Whether the order was created is not known yet: the answer was lost, or it carried no words of the server's own. Check the quote's state on reload before anything else is done. Convert again: the same key is sent, so the server answers the first order and never makes a second.";
   }
