@@ -169,7 +169,10 @@ func TestApplyReceived_TheJournalPostsOnceAndTheARSliceTiesOut(t *testing.T) {
 	}
 
 	// The retry: a redelivered copy of the same event, exactly the row the outbox would hand the
-	// consumer again, posts nothing. The key holds; the journal stays one.
+	// consumer again, posts nothing. The key holds; the journal stays one. The final count is BY
+	// THE PAYMENT (source_ref_id), not by the idempotency key: a consumer that booked a
+	// redelivery under any other key would pass a key scoped count while doubling the payment's
+	// journals (the delta reviews' finding); what the books carry is the payment's journals.
 	if _, err := pool.Exec(ctx,
 		`INSERT INTO events_outbox (topic, payload) VALUES ('payment.received', jsonb_build_object(
 		   'payment_id', $1::text, 'customer_id', $2::text, 'amount_cents', 35000, 'method', 'CHEQUE',
@@ -180,11 +183,11 @@ func TestApplyReceived_TheJournalPostsOnceAndTheARSliceTiesOut(t *testing.T) {
 	d.DrainOnce(ctx)
 	var journals int
 	if err := pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM gl_journals WHERE idempotency_key = $1`,
-		"payment.received:"+ans.PaymentID).Scan(&journals); err != nil {
-		t.Fatalf("count journals: %v", err)
+		`SELECT COUNT(*) FROM gl_journals WHERE source_ref_id = $1::uuid`,
+		ans.PaymentID).Scan(&journals); err != nil {
+		t.Fatalf("count the payment's journals: %v", err)
 	}
 	if journals != 1 {
-		t.Fatalf("a redelivered payment.received posts nothing, found %d journals", journals)
+		t.Fatalf("a redelivered payment.received posts nothing: the payment holds one journal, found %d", journals)
 	}
 }
