@@ -420,7 +420,6 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 			controllerEmail: controllerPlatformID,
 		},
 	})
-	})
 	if err != nil {
 		return report, fmt.Errorf("demo-populate: identity populate: %w", err)
 	}

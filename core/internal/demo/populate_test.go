@@ -306,7 +306,6 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if counts.StaffGrants != 6 || counts.StaffGrantsBranch != 5 || counts.StaffGrantsGlobal != 1 {
 		t.Errorf("staff grants %d (branch %d, global %d), want the five branch-scoped linked accounts' one-branch grants and the controller's one global grant", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
-	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
 	}

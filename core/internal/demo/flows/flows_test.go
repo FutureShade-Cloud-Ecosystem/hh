@@ -16,7 +16,7 @@ func TestTableIsTheClosedSet(t *testing.T) {
 		all[4].Flow != "procurement-manager" || all[5].Flow != "financial-controller" {
 		t.Fatalf("flow order drifted: %q, %q, %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow, all[4].Flow, all[5].Flow)
 	}
-	}	for _, a := range all {
+	for _, a := range all {
 		if a.PlatformUserID == "" || a.Email == "" || a.DisplayName == "" || a.Label == "" || a.Role == "" {
 			t.Fatalf("flow %q carries an empty fact: %+v", a.Flow, a)
 		}
@@ -24,7 +24,6 @@ func TestTableIsTheClosedSet(t *testing.T) {
 		case "inside_sales", "sales_manager", "yard_team", "driver", "procurement_manager", "financial_controller":
 		default:
 			t.Fatalf("flow %q holds role %q, want one of the table's six staff roles", a.Flow, a.Role)
-		}
 		}
 	}
 }

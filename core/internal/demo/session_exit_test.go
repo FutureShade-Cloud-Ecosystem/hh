@@ -77,8 +77,8 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, four flows, the contract's three
-// fields, the labels the entry page renders.
+	// The flow listing: the closed table, six flows, the contract's three
+	// fields, the labels the entry page renders.
 	flowsRsp := get("/api/v1/demo/flows", nil)
 	if flowsRsp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/v1/demo/flows: status %d, want 200 (body: %s)", flowsRsp.StatusCode, body(flowsRsp))
@@ -108,7 +108,6 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 			listing.Flows[i].Label != want.label {
 			t.Fatalf("listing row %d is %+v, want %q/%q/%q", i, listing.Flows[i], want.flow, want.role, want.label)
 		}
-	}
 	}
 
 	// The exit pair: mint the sales flow, read the till's policy with the
@@ -412,7 +411,6 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	}
 	if rows != 5+burstMinted {
 		t.Errorf("audit_log holds %d DEMO_SESSION_MINTED rows, want one per minted session (%d)", rows, 5+burstMinted)
-	}
 	}
 	var namedActors int
 	if err := pool.QueryRow(ctx, `

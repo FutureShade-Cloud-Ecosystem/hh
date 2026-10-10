@@ -146,7 +146,7 @@ func All() []Account {
 	return []Account{
 		accounts["sales"],
 		accounts["sales-manager"],
-accounts["yard-team"],
+		accounts["yard-team"],
 		accounts["driver"],
 		accounts["procurement-manager"],
 		accounts["financial-controller"],
