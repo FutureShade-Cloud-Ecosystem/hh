@@ -49,6 +49,9 @@ type store interface {
 	ApprovalChannelIDs(ctx context.Context, approvalID string) ([]string, error)
 	PostApprovalEcho(ctx context.Context, channelID, approvalID, body string, ref EventRef) (Message, bool, error)
 	UserDisplayName(ctx context.Context, userID string) (string, error)
+	// PR 302 N2: the yard notice fence looks up the rep's own role to ask
+	// SeesCostAndMargin about it (the same X3 rule cost_gate reads).
+	UserRoleCode(ctx context.Context, userID string) (string, error)
 	// Channel create, DM create, membership writes (the house's own surfaces).
 	CreateChannel(ctx context.Context, in CreateChannelInput, ownerUserID string) (Channel, bool, error)
 	CreateDM(ctx context.Context, aUserID, bUserID string) (Channel, bool, error)
