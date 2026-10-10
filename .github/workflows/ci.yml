@@ -321,7 +321,7 @@ jobs:
         run: go test -tags demo ./... -count=1 -p 1 -timeout 30m
       # The step above runs quiet, so a skipped world proof would hide in it.
       # This one runs the world proofs alone, verbosely, and fails unless each
-      # PASS and neither SKIPs, so the log shows them passing. It reuses the
+      # PASS, and none SKIPs, so the log shows them passing. It reuses the
       # fresh database from the step before the suite: the proofs build and
       # drop their own databases beside it, so a second run does not collide.
       # The -timeout 30m matches the suite steps, and -v's ok line keeps
