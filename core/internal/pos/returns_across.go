@@ -414,6 +414,12 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 		ocs[i] = child.oc
 	}
 	if !in.railOptional {
+		// The single return's own counter rule (returns.go) holds for the note too, through the
+		// same helper: lockReturnInvoicesTx draws the payments counter itself, before the rows, and
+		// only when it will take any. A note that held an owed invoice and then waited on the
+		// counter closed the cycle with a received payment apply (the delta reviews' P1), and a
+		// note of fully paid sales with no deposit documents locks no invoice and must not hold the
+		// counter at all (the delta reviews' P2).
 		if err := s.lockReturnInvoicesTx(ctx, tx, ocs, in.RefundMethod != RefundAccountCredit); err != nil {
 			return ReturnNote{}, false, false, err
 		}

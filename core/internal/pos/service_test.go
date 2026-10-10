@@ -515,6 +515,11 @@ func (f *fakeStore) LockInvoicesTx(_ context.Context, _ pgx.Tx, ids []string) er
 	return nil
 }
 
+func (f *fakeStore) LockPaymentsSequenceTx(_ context.Context, _ pgx.Tx) error {
+	f.log("lock payments sequence")
+	return nil
+}
+
 func (f *fakeStore) SumUnbookedCardRefundsTx(_ context.Context, _ pgx.Tx, orderID, except string) (int64, error) {
 	var sum int64
 	for _, u := range f.unbookedRefunds {

@@ -205,6 +205,34 @@ func loposArmCounterWindow(t *testing.T, obs *pgxpool.Pool) {
 	})
 }
 
+// loposSeedPaymentsCounter seeds the payments counter row before a leg parks a writer in the
+// counter window. The window is an AFTER UPDATE trigger on scope_sequences, and no migration
+// plants any scope row, so on a freshly migrated database the first writer's counter statement
+// takes its INSERT arm, the trigger never fires and the leg waits out its barrier (the delta 3
+// review's P3-1). The seed mirrors the lock statement's own INSERT arm, at 0, so the first real
+// draw still hands out feed number 1.
+func loposSeedPaymentsCounter(t *testing.T) {
+	t.Helper()
+	dsn := os.Getenv(coreDBEnvVar)
+	if dsn == "" {
+		return // loposPools skips the leg itself when the scratch database is not set
+	}
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse gate url: %v", err)
+	}
+	cfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("open seed pool: %v", err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO scope_sequences (scope, next_value) VALUES ('payments', 0) ON CONFLICT (scope) DO NOTHING`); err != nil {
+		t.Fatalf("seed the payments counter row: %v", err)
+	}
+}
+
 // loposWait blocks until `want` sessions of the gate database match cond, or fails the leg. The
 // observer pool reads pg_stat_activity; nothing sleeps on a guess.
 func loposWait(t *testing.T, obs *pgxpool.Pool, what string, want int, cond string) {
@@ -434,6 +462,399 @@ func TestIntegration_LockOrder_MultiInvoiceReversalBesidePOSReturn(t *testing.T)
 				code, <-retBody, rerr, returns)
 			if code != http.StatusCreated || rerr != nil {
 				t.Fatalf("NOT BOTH ANSWERED: return %d, reversal %v", code, rerr)
+			}
+		})
+	}
+}
+
+// TestIntegration_LockOrder_OwedReturnBesideReceivedPaymentApply: a REAL owed cash return beside a
+// REAL received payment apply, on the same invoice. Since PR 277's split ruling the owed return
+// takes the invoice FOR NO KEY UPDATE before its refund rail draws the payments counter, while the
+// apply draws the counter before it takes the invoice: the two orders close a cycle, and Postgres
+// aborts a side (the Opus review's P2-4; on the card path that can be the return, after the
+// processor refunded). The return now draws the payments counter FIRST, before its invoice locks,
+// the payments module's one money lock order, so both sides serialise at the counter and both
+// answer. The leg parks the return inside its pos_returns insert holding the invoice (and, after
+// the fix, the counter), then applies against the same invoice: both must answer cleanly, the
+// return 201 and the apply with no error.
+func TestIntegration_LockOrder_OwedReturnBesideReceivedPaymentApply(t *testing.T) {
+	for _, size := range []int32{4, 16} {
+		t.Run(fmt.Sprintf("pool %d", size), func(t *testing.T) {
+			pool, obs := loposPools(t, size)
+			key := wiringRailDB(t, pool, map[string]string{"api_key": "lockorder-pos-not-a-secret"})
+			w := plantWiringCounter(t, pool)
+			cust := loposCustomer(t, pool, w.branchID)
+			_, mux, sg := wireFold(t, pool, key, w.branchID)
+			orderID := loposRingSale(t, mux, sg, w, cust, "CASH")
+			inv := loposSaleInvoice(t, pool, orderID)
+
+			// The owed shape: partly paid, so the return takes the invoice row (not the paid path's
+			// key share alone) and its cash rail stays inside what was paid.
+			var total int64
+			if err := pool.QueryRow(context.Background(),
+				`SELECT total_cents FROM invoices WHERE id = $1::uuid`, inv).Scan(&total); err != nil {
+				t.Fatalf("read the invoice total: %v", err)
+			}
+			if _, err := pool.Exec(context.Background(),
+				`UPDATE invoices SET status='PARTIALLY_PAID', balance_cents=$2 WHERE id=$1::uuid`,
+				inv, total/2+200); err != nil {
+				t.Fatalf("make the invoice partly paid: %v", err)
+			}
+			var lineID string
+			var qty float64
+			if err := pool.QueryRow(context.Background(),
+				`SELECT id::text, qty_base FROM order_lines WHERE order_id = $1::uuid ORDER BY line_no LIMIT 1`,
+				orderID).Scan(&lineID, &qty); err != nil {
+				t.Fatalf("read the sale's line: %v", err)
+			}
+
+			loposArmReturnWindow(t, obs)
+			retDone := make(chan int, 1)
+			retBody := make(chan string, 1)
+			go func() {
+				rec := loposPost(t, mux, sg, "/api/v1/pos/returns", map[string]any{
+					"idempotency_key": uuidKey(t), "order_id": orderID, "refund_method": "CASH",
+					"till_session_id": w.sessionID, "restock": false,
+					"lines":           []map[string]any{{"order_line_id": lineID, "qty_base": qty / 2}},
+				})
+				retBody <- rec.Body.String()
+				retDone <- rec.Code
+			}()
+			loposWait(t, obs, "return parked holding the invoice row", 1, loposParkedInReturn())
+
+			applyErr := make(chan error, 1)
+			applyID := make(chan string, 1)
+			go func() {
+				ans, err := payments.NewRepository(pool).ApplyReceived(context.Background(), payments.ApplyRequest{
+					CustomerID: cust, Method: "CHEQUE", Reference: "CHQ LOP",
+					IdempotencyKey: uuidKey(t), InvoiceIDs: []string{inv}, AmountCents: 100,
+				})
+				if err == nil {
+					applyID <- ans.PaymentID
+				}
+				applyErr <- err
+			}()
+
+			var code int
+			select {
+			case code = <-retDone:
+			case <-time.After(60 * time.Second):
+				t.Fatal("return never answered")
+			}
+			aerr := loposAnswer(t, "apply", applyErr)
+			if code != http.StatusCreated || aerr != nil {
+				t.Fatalf("NOT BOTH ANSWERED: return %d %s, apply %v", code, <-retBody, aerr)
+			}
+			var returns int
+			_ = obs.QueryRow(context.Background(),
+				`SELECT count(*) FROM pos_returns WHERE order_id = $1::uuid`, orderID).Scan(&returns)
+			if returns != 1 {
+				t.Fatalf("the return committed, found %d pos_returns rows", returns)
+			}
+			var applied int64
+			if err := obs.QueryRow(context.Background(),
+				`SELECT amount_cents FROM payment_allocations WHERE payment_id = $1::uuid`, <-applyID).
+				Scan(&applied); err != nil {
+				t.Fatalf("read the apply's allocation: %v", err)
+			}
+			if applied != 100 {
+				t.Fatalf("the apply landed its 100 cents on the invoice, found %d", applied)
+			}
+		})
+	}
+}
+
+// TestIntegration_LockOrder_APaidSaleReturnDoesNotHoldThePaymentsCounter: the cost side of the
+// counter fix (the delta reviews' P2). A cash or card return draws the payments counter only when
+// it will take invoice rows: an owed order's, or a paid order's deposit documents. A return on a
+// fully PAID sale with no deposit document locks no invoice at all, so it must never hold the one
+// counter row every payments writer serialises on: a paid sale's return parked in its transaction
+// must not delay an unrelated apply by a millisecond of its park. The leg parks the return inside
+// its pos_returns insert (the 2 second window), starts an apply on ANOTHER invoice of another
+// account, and requires the apply to answer while the return is still parked (the parked session
+// is still in pg_stat_activity when the apply answers), the witness the house pattern uses instead
+// of a timing guess.
+func TestIntegration_LockOrder_APaidSaleReturnDoesNotHoldThePaymentsCounter(t *testing.T) {
+	for _, size := range []int32{4, 16} {
+		t.Run(fmt.Sprintf("pool %d", size), func(t *testing.T) {
+			pool, obs := loposPools(t, size)
+			key := wiringRailDB(t, pool, map[string]string{"api_key": "lockorder-pos-not-a-secret"})
+			w := plantWiringCounter(t, pool)
+			cust := loposCustomer(t, pool, w.branchID)
+			other := loposCustomer(t, pool, w.branchID)
+			_, mux, sg := wireFold(t, pool, key, w.branchID)
+			orderID := loposRingSale(t, mux, sg, w, cust, "CASH")
+			inv := loposSaleInvoice(t, pool, orderID)
+			unrelated := loposInvoice(t, pool, other, w.branchID, 1_000_000)
+			var lineID string
+			var qty float64
+			if err := pool.QueryRow(context.Background(),
+				`SELECT id::text, qty_base FROM order_lines WHERE order_id = $1::uuid ORDER BY line_no LIMIT 1`,
+				orderID).Scan(&lineID, &qty); err != nil {
+				t.Fatalf("read the sale's line: %v", err)
+			}
+			// The paid shape: nothing owed and no deposit document, so the return takes no invoice
+			// row and its cash rail refunds what was paid.
+			loposStatus(t, pool, inv, "PAID")
+
+			loposArmReturnWindow(t, obs)
+			retDone := make(chan int, 1)
+			retBody := make(chan string, 1)
+			go func() {
+				rec := loposPost(t, mux, sg, "/api/v1/pos/returns", map[string]any{
+					"idempotency_key": uuidKey(t), "order_id": orderID, "refund_method": "CASH",
+					"till_session_id": w.sessionID, "restock": false,
+					"lines":           []map[string]any{{"order_line_id": lineID, "qty_base": qty / 2}},
+				})
+				retBody <- rec.Body.String()
+				retDone <- rec.Code
+			}()
+			loposWait(t, obs, "the paid sale's return parked in its pos_returns insert", 1, loposParkedInReturn())
+
+			applyErr := make(chan error, 1)
+			go func() {
+				_, err := payments.NewRepository(pool).ApplyReceived(context.Background(), payments.ApplyRequest{
+					CustomerID: other, Method: "CHEQUE", Reference: "CHQ UNREL",
+					IdempotencyKey: uuidKey(t), InvoiceIDs: []string{unrelated}, AmountCents: 100,
+				})
+				applyErr <- err
+			}()
+			aerr := loposAnswer(t, "the apply beside a parked paid sale's return", applyErr)
+			if aerr != nil {
+				t.Fatalf("the apply on the unrelated invoice: %v", aerr)
+			}
+			// The witness: the apply answered while the return was still parked in its 2 second
+			// window. A return that held the counter would have queued the apply behind the whole
+			// park, and the parked session would already be gone.
+			var parked int
+			if err := obs.QueryRow(context.Background(),
+				`SELECT count(*) FROM pg_stat_activity
+				  WHERE datname = current_database() AND pid <> pg_backend_pid() AND `+loposParkedInReturn()).
+				Scan(&parked); err != nil {
+				t.Fatalf("observer: %v", err)
+			}
+			if parked != 1 {
+				t.Fatalf("the apply answered only after the parked return moved on (parked sessions now %d): a paid sale's return must not hold the payments counter", parked)
+			}
+			var code int
+			select {
+			case code = <-retDone:
+			case <-time.After(60 * time.Second):
+				t.Fatal("return never answered")
+			}
+			if code != http.StatusCreated {
+				t.Fatalf("the return itself answers 201, got %d %s", code, <-retBody)
+			}
+			var applied int64
+			if err := obs.QueryRow(context.Background(),
+				`SELECT COALESCE(SUM(amount_cents),0) FROM payment_allocations WHERE invoice_id = $1::uuid`, unrelated).
+				Scan(&applied); err != nil {
+				t.Fatalf("read the apply's allocation: %v", err)
+			}
+			if applied != 100 {
+				t.Fatalf("the apply landed its 100 cents on the unrelated invoice, found %d", applied)
+			}
+		})
+	}
+}
+
+// loposRingBody builds one CASH sale body for the ring legs (loposRingSale fatals from inside its
+// own call, so a goroutine that must not touch t after the request is built posts this instead).
+func loposRingBody(t *testing.T, w wiringCounter, customerID string) map[string]any {
+	t.Helper()
+	return map[string]any{
+		"idempotency_key": uuidKey(t),
+		"branch_id":       w.branchID,
+		"till_session_id": w.sessionID,
+		"sale_type":       "COLLECT_NOW",
+		"customer_id":     customerID,
+		"tender":          "CASH",
+		"lines":           []map[string]any{{"product_id": w.productID, "qty_entered": 2.0, "uom_entered": w.uom, "cost_cents": 0}},
+	}
+}
+
+// TestIntegration_LockOrder_APreviewDoesNotWaitOnThePaymentsCounter: the desk's PREVIEW of a
+// received payment draws no payments counter and no invoice row lock (the money desk review's
+// P3-4 and item 127): a preview writes nothing, so it needs no place in the writers' order, and a
+// debounced keystroke at the desk must never queue behind a till payment. The leg parks a REAL
+// till tender (a CASH ring through the registered sale route) inside its payments counter
+// statement, the one counter row every payments writer serialises on, and requires a preview on
+// ANOTHER account's invoice to answer while the tender is still parked, the same parked-session
+// witness the paid-sale return leg uses instead of a timing guess. On the old shape the preview
+// took the counter itself and answered only after the tender's whole park had ended. The leg seeds
+// the payments counter row first: the park rides an AFTER UPDATE trigger on scope_sequences, and
+// no migration plants the row, so on a freshly migrated database the tender's first counter
+// statement would take its INSERT arm and never park (the delta 3 review's P3-1).
+func TestIntegration_LockOrder_APreviewDoesNotWaitOnThePaymentsCounter(t *testing.T) {
+	loposSeedPaymentsCounter(t)
+	for _, size := range []int32{4, 16} {
+		t.Run(fmt.Sprintf("pool %d", size), func(t *testing.T) {
+			pool, obs := loposPools(t, size)
+			key := wiringRailDB(t, pool, map[string]string{"api_key": "lockorder-pos-not-a-secret"})
+			w := plantWiringCounter(t, pool)
+			cust := loposCustomer(t, pool, w.branchID)
+			desk := loposCustomer(t, pool, w.branchID)
+			_, mux, sg := wireFold(t, pool, key, w.branchID)
+			deskInv := loposInvoice(t, pool, desk, w.branchID, 1_000_000)
+
+			loposArmCounterWindow(t, obs)
+			if _, err := obs.Exec(context.Background(), `INSERT INTO lopos_flag VALUES (2) ON CONFLICT DO NOTHING`); err != nil {
+				t.Fatalf("arm the tender's counter window: %v", err)
+			}
+			tenderDone := make(chan int, 1)
+			tenderBody := make(chan string, 1)
+			go func() {
+				rec := loposPost(t, mux, sg, "/api/v1/pos/sales", loposRingBody(t, w, cust))
+				tenderBody <- rec.Body.String()
+				tenderDone <- rec.Code
+			}()
+			loposWait(t, obs, "the till tender parked holding the payments counter row", 1, loposParkedInCounter())
+
+			previewErr := make(chan error, 1)
+			go func() {
+				_, err := payments.NewRepository(pool).ApplyReceived(context.Background(), payments.ApplyRequest{
+					CustomerID: desk, Method: "CHEQUE", Reference: "CHQ PREVIEW COUNTER",
+					IdempotencyKey: uuidKey(t), InvoiceIDs: []string{deskInv}, AmountCents: 100, Preview: true,
+				})
+				previewErr <- err
+			}()
+			perr := loposAnswer(t, "the preview beside the parked till tender", previewErr)
+			if perr != nil {
+				t.Fatalf("the preview: %v", perr)
+			}
+			// The witness: the preview answered while the tender was still parked in its counter
+			// window. A preview that drew the counter would have queued behind the whole park, and
+			// the parked session would already be gone when the preview answered.
+			var parked int
+			if err := obs.QueryRow(context.Background(),
+				`SELECT count(*) FROM pg_stat_activity
+				  WHERE datname = current_database() AND pid <> pg_backend_pid() AND `+loposParkedInCounter()).
+				Scan(&parked); err != nil {
+				t.Fatalf("observer: %v", err)
+			}
+			if parked != 1 {
+				t.Fatalf("the preview answered only after the parked till tender moved on (parked sessions now %d): a preview must not wait on the payments counter", parked)
+			}
+			var code int
+			select {
+			case code = <-tenderDone:
+			case <-time.After(60 * time.Second):
+				t.Fatal("the till tender never answered")
+			}
+			if code != http.StatusCreated && code != http.StatusOK {
+				t.Fatalf("the till tender itself answers, got %d %s", code, <-tenderBody)
+			}
+			// And the preview left nothing behind: no payment row for the desk's account.
+			var payRows int
+			if err := obs.QueryRow(context.Background(),
+				`SELECT count(*) FROM payments WHERE customer_id = $1::uuid`, desk).Scan(&payRows); err != nil {
+				t.Fatalf("count the desk's payments: %v", err)
+			}
+			if payRows != 0 {
+				t.Fatalf("the preview wrote no payment row, found %d", payRows)
+			}
+		})
+	}
+}
+
+// TestIntegration_LockOrder_OwedNoteReturnBesideReceivedPaymentApply: the note path of the same
+// pair (the delta reviews' P1: 3d75fb90 fixed only the single return). A credit note over one owed
+// order takes the same invoice rows through lockReturnInvoicesTx, and each child's refund rail
+// draws the payments counter at its refund payment insert: the note held the owed invoice FOR NO
+// KEY UPDATE and then waited on the counter a received payment apply holds, the apply waiting on
+// that invoice, so Postgres aborted the note at its payment insert (40P01; on the card rail, after
+// the processor refunded). The note now draws the payments counter before its invoice rows, the
+// same one money lock order, so both serialise at the counter and both answer. The leg parks the
+// note inside its child's pos_returns insert (after the invoice locks, before the rail), then
+// applies against the same invoice: both must answer cleanly, the note 201 and the apply landed.
+func TestIntegration_LockOrder_OwedNoteReturnBesideReceivedPaymentApply(t *testing.T) {
+	for _, size := range []int32{4, 16} {
+		t.Run(fmt.Sprintf("pool %d", size), func(t *testing.T) {
+			pool, obs := loposPools(t, size)
+			key := wiringRailDB(t, pool, map[string]string{"api_key": "lockorder-pos-not-a-secret"})
+			w := plantWiringCounter(t, pool)
+			cust := loposCustomer(t, pool, w.branchID)
+			_, mux, sg := wireFold(t, pool, key, w.branchID)
+			orderID := loposRingSale(t, mux, sg, w, cust, "CASH")
+			inv := loposSaleInvoice(t, pool, orderID)
+
+			// The owed shape again: partly paid, so the note's child takes the invoice row and its
+			// cash rail stays inside what was paid.
+			var total int64
+			if err := pool.QueryRow(context.Background(),
+				`SELECT total_cents FROM invoices WHERE id = $1::uuid`, inv).Scan(&total); err != nil {
+				t.Fatalf("read the invoice total: %v", err)
+			}
+			if _, err := pool.Exec(context.Background(),
+				`UPDATE invoices SET status='PARTIALLY_PAID', balance_cents=$2 WHERE id=$1::uuid`,
+				inv, total/2+200); err != nil {
+				t.Fatalf("make the invoice partly paid: %v", err)
+			}
+			var lineID string
+			var qty float64
+			if err := pool.QueryRow(context.Background(),
+				`SELECT id::text, qty_base FROM order_lines WHERE order_id = $1::uuid ORDER BY line_no LIMIT 1`,
+				orderID).Scan(&lineID, &qty); err != nil {
+				t.Fatalf("read the sale's line: %v", err)
+			}
+
+			loposArmReturnWindow(t, obs)
+			noteDone := make(chan int, 1)
+			noteBody := make(chan string, 1)
+			go func() {
+				rec := loposPost(t, mux, sg, "/api/v1/pos/returns-across", map[string]any{
+					"idempotency_key": uuidKey(t), "customer_id": cust, "refund_method": "CASH",
+					"till_session_id": w.sessionID, "restock": false,
+					"orders": []map[string]any{{
+						"order_id": orderID,
+						"lines":    []map[string]any{{"order_line_id": lineID, "qty_base": qty / 2}},
+					}},
+				})
+				noteBody <- rec.Body.String()
+				noteDone <- rec.Code
+			}()
+			loposWait(t, obs, "note parked holding the invoice row", 1, loposParkedInReturn())
+
+			applyErr := make(chan error, 1)
+			applyID := make(chan string, 1)
+			go func() {
+				ans, err := payments.NewRepository(pool).ApplyReceived(context.Background(), payments.ApplyRequest{
+					CustomerID: cust, Method: "CHEQUE", Reference: "CHQ LOPN",
+					IdempotencyKey: uuidKey(t), InvoiceIDs: []string{inv}, AmountCents: 100,
+				})
+				if err == nil {
+					applyID <- ans.PaymentID
+				}
+				applyErr <- err
+			}()
+
+			var code int
+			select {
+			case code = <-noteDone:
+			case <-time.After(60 * time.Second):
+				t.Fatal("note never answered")
+			}
+			aerr := loposAnswer(t, "apply", applyErr)
+			if code != http.StatusCreated || aerr != nil {
+				t.Fatalf("NOT BOTH ANSWERED: note %d %s, apply %v", code, <-noteBody, aerr)
+			}
+			var notes int
+			_ = obs.QueryRow(context.Background(),
+				`SELECT count(*) FROM return_notes WHERE customer_id = $1::uuid`, cust).Scan(&notes)
+			var returns int
+			_ = obs.QueryRow(context.Background(),
+				`SELECT count(*) FROM pos_returns WHERE order_id = $1::uuid`, orderID).Scan(&returns)
+			if notes != 1 || returns != 1 {
+				t.Fatalf("the note committed, found %d return_notes rows and %d pos_returns rows", notes, returns)
+			}
+			var applied int64
+			if err := obs.QueryRow(context.Background(),
+				`SELECT amount_cents FROM payment_allocations WHERE payment_id = $1::uuid`, <-applyID).
+				Scan(&applied); err != nil {
+				t.Fatalf("read the apply's allocation: %v", err)
+			}
+			if applied != 100 {
+				t.Fatalf("the apply landed its 100 cents on the invoice, found %d", applied)
 			}
 		})
 	}

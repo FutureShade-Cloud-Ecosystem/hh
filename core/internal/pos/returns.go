@@ -514,6 +514,12 @@ func (s *Service) returnInTx(ctx context.Context, tx pgx.Tx, plan *returnPlan) (
 	if !in.railOptional {
 		// The account rail offsets invoices; a cash or card return offsets them too when the order is
 		// not fully paid (the ruling's split): take them, sorted, before the first offset (P2-1).
+		// lockReturnInvoicesTx draws the payments counter itself, and only when it will take invoice
+		// rows: the payments module's one money lock order is counter first, invoices second (every
+		// settle, received payment and reversal takes them that way), so a return that takes an
+		// invoice row must hold the counter before it (the Opus review's P2-4), while a return on a
+		// fully paid sale with no deposit document locks no invoice and must not hold the one counter
+		// row every payments writer serialises on at all (the delta reviews' P2).
 		if err := s.lockReturnInvoicesTx(ctx, tx, []returnOrderCtx{oc}, in.RefundMethod != RefundAccountCredit); err != nil {
 			return Return{}, false, false, err
 		}
@@ -1227,6 +1233,16 @@ func (s *Service) resolveConverted(ctx context.Context, oc returnOrderCtx) (retu
 // rail offsets invoices, so only it takes these locks: a cash or card return touches an invoice by its
 // foreign key share alone, and a stronger lock there would queue it against a multi invoice reversal
 // that draws the payments counter first (lockorder_pos_return_test.go).
+//
+// A cash or card return (owedOnly) that will take ANY of these rows draws the payments counter first,
+// inside this helper and before the locks: its rail writes a refund payment, which draws the counter,
+// and the payments module's one money lock order is counter first, invoices second, so holding an
+// invoice row while waiting on the counter closed the cycle the Opus review's P2-4 and the delta
+// reviews' P1 found on the two return paths. The draw is gated on the rows existing because the one
+// counter row serialises every payments writer in the company: a return on a fully paid sale with no
+// deposit document locks no invoice and never needs the counter, so it must not hold one for its
+// transaction's length (the delta reviews' P2), and the account credit rail (not owedOnly) writes no
+// payment row and draws no counter at all.
 func (s *Service) lockReturnInvoicesTx(ctx context.Context, tx pgx.Tx, ocs []returnOrderCtx, owedOnly bool) error {
 	seen := map[string]bool{}
 	var ids []string
@@ -1252,6 +1268,11 @@ func (s *Service) lockReturnInvoicesTx(ctx context.Context, tx pgx.Tx, ocs []ret
 		add(oc.InvoiceID)
 		for _, d := range docs {
 			add(d)
+		}
+	}
+	if owedOnly && len(ids) > 0 {
+		if err := s.store.LockPaymentsSequenceTx(ctx, tx); err != nil {
+			return err
 		}
 	}
 	sort.Strings(ids)
