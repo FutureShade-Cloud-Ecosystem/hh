@@ -32,7 +32,7 @@
 # role app joins by one build line below, one COPY line and one handle block
 # in the Caddyfile template (web/apps/_role-template/ROLE-GOES-LIVE.md).
 
-FROM golang:1.27-alpine AS core-build
+FROM golang:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa AS core-build
 WORKDIR /src/core
 COPY core/go.mod core/go.sum ./
 RUN go mod download

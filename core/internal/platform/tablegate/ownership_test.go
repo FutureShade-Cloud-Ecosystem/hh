@@ -13,8 +13,8 @@ import "strings"
 //   - The objects: core/db/migrations holds 208 .sql migration files plus
 //     its README.md. Stripping
 //     SQL comments and value literals and matching CREATE TABLE (with its
-//     UNLOGGED and IF NOT EXISTS spellings) counts 272 CREATE TABLE
-//     statements, 272 distinct tables, none created twice. Matching CREATE
+//     UNLOGGED and IF NOT EXISTS spellings) counts 273 CREATE TABLE
+//     statements, 273 distinct tables, none created twice. Matching CREATE
 //     VIEW (plain, OR REPLACE, MATERIALIZED) counts 16 CREATE VIEW
 //     statements over 12 distinct views (v_stock_balance_drift,
 //     v_ar_aging, v_stock_on_hand and msg_unread_effective are each
@@ -24,8 +24,8 @@ import "strings"
 //     by core/internal/demo/populate.go's writeDemoBox, whose own comment
 //     states no migration is ever written for it, and it is owned by demo.
 //     Together with the information_schema catalog (stated below), the
-//     map carries 286 keys: 272 + 12 + demo_box + information_schema. The
-//     directory's 209 entries are 208 .sql migration files plus
+//     map carries 287 keys: 273 + 12 + demo_box + information_schema. The
+//     directory's 210 entries are 209 .sql migration files plus
 //     README.md. Every number here was counted at source by the check's
 //     author and the count script's output is recorded in the item
 //     report; the round 1 brief's by-eye figure of 276 CREATE TABLE
@@ -568,6 +568,9 @@ var ownedObjects = map[string]string{
 	"report_templates":                "reporting",         // 0143_reporting_templates
 	"return_request_lines":            "pos",               // 0045_portal_return_requests
 	"return_requests":                 "pos",               // 0045_portal_return_requests
+	"pos_swaps":                       "pos",               // 0380_pos_swaps (the credit note and the new order, linked)
+	"pos_card_refund_attempts":        "pos",               // 0379_pos_card_refund_attempts (a card refund whose booking rolled back)
+	"return_notes":                    "pos",               // 0377_return_notes (the credit note across orders)
 	"review_status":                   "compliance",        // 0038_lien_holdback_compliance
 	"roles":                           "identity",          // 0004_identity_rbac_scaffold
 	"run_no_sequences":                "dispatch",          // 0090_dispatch_core

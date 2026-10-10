@@ -281,7 +281,7 @@ func (r *Repository) UpdateLineGuarded(ctx context.Context, w lineEditWrite, hoo
 		`UPDATE order_lines
 		    SET qty_entered = $3::decimal, qty_base = $4::decimal,
 		        unit_price_cents = $5, price_uom = $6, line_total_cents = $7, updated_at = now()
-		  WHERE order_id = $1 AND line_no = $2 AND fulfilled_base <= $4::decimal
+		  WHERE order_id = $1 AND line_no = $2 AND fulfilled_base + released_base <= $4::decimal
 		  RETURNING %s`, editLineColumns),
 		w.OrderID, w.LineNo, w.QtyEntered, w.QtyBase, w.UnitPriceCents, w.PriceUOM, w.LineTotalCents))
 	if err != nil {

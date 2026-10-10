@@ -266,3 +266,5 @@ func (f *fakeStore) AllocationPolicy(_ context.Context, _ pgx.Tx, branchID strin
 	p, ok := f.policies[branchID]
 	return p, ok, nil
 }
+
+func (f *fakeStore) LockBalances(_ context.Context, _ pgx.Tx, _ string, _ []string) error { return nil }

@@ -258,6 +258,33 @@ func (r *Repository) InsertPOLine(ctx context.Context, tx pgx.Tx, poID string, l
 	return id, nil
 }
 
+// UpdatePOLine corrects the quantity or the cost of one line on its draft, then stamps the header
+// seq exactly as the add and the remove do: the line set is the order's meaning, and a device's
+// pull must see the header move. A line that is not on this order is a 404 (errNotFound), never a
+// silent no-op that reads back as success.
+func (r *Repository) UpdatePOLine(ctx context.Context, tx pgx.Tx, poID, lineID string, in UpdateLineParams) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	tag, err := r.q(tx).Exec(ctx, `
+		UPDATE purchasing_po_lines SET
+			qty_ordered_base = COALESCE($3, qty_ordered_base),
+			unit_cost_cents = COALESCE($4, unit_cost_cents),
+			updated_at = now()
+		WHERE id = $1 AND po_id = $2`,
+		lineID, poID, in.QtyOrderedBase, in.UnitCostCents)
+	if err != nil {
+		return fmt.Errorf("purchasing: update po line: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errNotFound
+	}
+	if err := bumpPOHeaderSeq(ctx, r.q(tx), poID); err != nil {
+		return err
+	}
+	return nil
+}
+
 // bumpPOHeaderSeq stamps the purchase_orders scope's seq on the PO's
 // header row (0213): a line change changes the order's meaning (its
 // line count, its totals), and a device's pull must see the header
@@ -954,4 +981,85 @@ func (r *Repository) POLineBriefs(ctx context.Context, tx pgx.Tx, poID string, l
 		out[b.ID] = b
 	}
 	return out, rows.Err()
+}
+
+// - the vendor master writes (vendor_master.go's repository half; they sit here with the module's
+// other table access so the tablegate's file scoped census reads them beside the PO writes that
+// stamp the same 0213 seq) -
+
+// VendorOrg answers the org a vendor row is stamped with, "" for a carried row (0213: carried rows
+// keep org_id NULL) and ErrUnknownVendor for no row at all.
+func (r *Repository) VendorOrg(ctx context.Context, vendorID string) (string, error) {
+	if r.pool == nil {
+		return "", errNoDB
+	}
+	var owner *string
+	err := r.pool.QueryRow(ctx, `SELECT org_id::text FROM vendors WHERE id = $1::uuid`, vendorID).Scan(&owner)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrUnknownVendor
+	}
+	if err != nil {
+		return "", fmt.Errorf("purchasing: vendor org read: %w", err)
+	}
+	if owner == nil {
+		return "", nil
+	}
+	return *owner, nil
+}
+
+// InsertVendorMaster mints the number, draws the seq and inserts, in ONE statement: the number and
+// the seq are both minted by the database, so a rolled back create burns neither.
+func (r *Repository) InsertVendorMaster(ctx context.Context, orgID, name string, terms int, email string) (VendorMaster, error) {
+	if r.pool == nil {
+		return VendorMaster{}, errNoDB
+	}
+	remit := "{}"
+	if email != "" {
+		remit = fmt.Sprintf(`{"email":%q}`, email)
+	}
+	var v VendorMaster
+	err := r.pool.QueryRow(ctx, vendorSeqCTE+`
+		INSERT INTO vendors (vendor_no, name, payment_terms_days, remit_address, is_active, org_id, seq)
+		VALUES (next_vendor_no(), $1, $2, $3::jsonb, TRUE, $4::uuid, (SELECT next_value FROM vseq))
+		RETURNING id::text, vendor_no::text, name, payment_terms_days, COALESCE(remit_address->>'email',''), is_active`,
+		name, terms, remit, orgID).Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.OrderEmail, &v.IsActive)
+	if err != nil {
+		return VendorMaster{}, fmt.Errorf("purchasing: insert vendor: %w", err)
+	}
+	return v, nil
+}
+
+// UpdateVendorMaster applies the named corrections in one statement that also draws a fresh seq, so
+// the edit reaches a synced device. The email arm merges (or removes) only the email key: the remit
+// blob is free form and other hands may have planted keys in it, so no edit here replaces the lot.
+func (r *Repository) UpdateVendorMaster(ctx context.Context, vendorID string, name *string, terms *int, email *string, isActive *bool) (VendorMaster, error) {
+	if r.pool == nil {
+		return VendorMaster{}, errNoDB
+	}
+	remit := "remit_address"
+	switch {
+	case email != nil && *email == "":
+		remit = `(remit_address - 'email')`
+	case email != nil:
+		remit = fmt.Sprintf(`(remit_address || '{"email":%q}'::jsonb)`, *email)
+	}
+	var v VendorMaster
+	err := r.pool.QueryRow(ctx, vendorSeqCTE+`
+		UPDATE vendors SET
+			name = COALESCE($2, name),
+			payment_terms_days = COALESCE($3, payment_terms_days),
+			remit_address = `+remit+`,
+			is_active = COALESCE($4, is_active),
+			updated_at = now(),
+			seq = (SELECT next_value FROM vseq)
+		WHERE id = $1::uuid
+		RETURNING id::text, vendor_no::text, name, payment_terms_days, COALESCE(remit_address->>'email',''), is_active`,
+		vendorID, name, terms, isActive).Scan(&v.ID, &v.VendorNo, &v.Name, &v.PaymentTermsDays, &v.OrderEmail, &v.IsActive)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return VendorMaster{}, ErrUnknownVendor
+	}
+	if err != nil {
+		return VendorMaster{}, fmt.Errorf("purchasing: update vendor: %w", err)
+	}
+	return v, nil
 }

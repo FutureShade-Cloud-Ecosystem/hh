@@ -163,12 +163,16 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 	b.customers()
 	b.products()
 	b.pricing()
+	// The buyer's supplier set, before the stock section whose reorder points name them.
+	b.procurementVendors()
 	b.stock()
 	b.orderBook()
 	b.invoices()
 	b.counterSales()
 	// Item 9.9: two deposit sales a tester can walk, after the counter sales whose trio they follow.
 	b.depositSales()
+	// The buying world (demoseed_procurement.go), after the products its lines name.
+	b.procurementWorld()
 	b.fleet()
 	b.runs()
 	if err := b.stops(); err != nil {
@@ -344,6 +348,7 @@ func (b *builder) stock() {
 					"branch_id", b.branchID(i),
 					"reorder_point_base", rp[i],
 					"reorder_qty_base", rp[i],
+					"preferred_vendor_id", demoID("procurement-vendor:"+reorderVendor[p.Key]),
 					"lead_time_days", 7,
 					"is_active", true,
 					"notes", "Seeded demo reorder point.",

@@ -12,6 +12,7 @@ package pos
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,6 +125,20 @@ func depositSaleReturnLeg(t *testing.T, leg depositLeg) {
 		in.TillSessionID = openTill(t, pool, branchID)
 	}
 	ret, err := svc.Return(ctx, in)
+	if refund == RefundCash {
+		// The principal's ruling (FROM-PRINCIPAL 47): nothing was paid on either document of this
+		// unpaid account sale, so no cash or card goes back at all, in the ruling's words. This leg
+		// used to pin the gap (the cash paid out and both documents stayed open); it now pins the
+		// refusal, and that nothing was booked.
+		if err == nil || !strings.Contains(err.Error(), "This order is not paid yet") {
+			t.Fatalf("a cash refund of an unpaid account sale must be refused in words, got %v", err)
+		}
+		var n int
+		if qerr := pool.QueryRow(ctx, `SELECT count(*) FROM pos_returns WHERE order_id = $1`, out.OrderID).Scan(&n); qerr != nil || n != 0 {
+			t.Fatalf("the refused cash refund booked %d returns (%v)", n, qerr)
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("the return: %v", err)
 	}

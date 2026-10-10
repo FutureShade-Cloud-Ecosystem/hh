@@ -92,7 +92,7 @@ func (r *Repository) ShortfallWorklist(ctx context.Context, branchID string, lim
 		  FROM graded g
 		  JOIN products  p ON p.id = g.product_id
 		  JOIN locations l ON l.id = g.branch_id
-		  LEFT JOIN vendors v ON v.id = g.preferred_vendor_id::uuid
+		  LEFT JOIN vendors v ON v.id = NULLIF(g.preferred_vendor_id, '')::uuid
 		  LEFT JOIN product_branch_costs pbc
 		         ON pbc.product_id = g.product_id AND pbc.branch_id = g.branch_id
 		 WHERE g.projected < g.reorder_point_base

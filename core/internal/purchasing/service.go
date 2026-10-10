@@ -410,6 +410,36 @@ func (s *Service) RemoveLine(ctx context.Context, poID, lineID string) (PODetail
 	return s.GetPO(ctx, poID)
 }
 
+// UpdateLine corrects the quantity or the cost of one line on a DRAFT purchase order, the leg of
+// the line editor add and remove never had: a buyer who mistypes a quantity could remove the line
+// and retype it, losing the description and the line number, or place a wrong order.
+//
+// THE EDIT IS DELIBERATELY NARROW: the quantity and the cost, the two figures a vendor's
+// confirmation corrects, and nothing else. The PRODUCT is not editable (that is a different line;
+// remove this one and add it), and once the order is placed the freeze is the one CanEditLines
+// already states, because a purchase order is a contract and editing one after placement is how a
+// three-way match is quietly defeated (the add route's own words).
+func (s *Service) UpdateLine(ctx context.Context, poID, lineID string, in UpdateLineParams) (PODetail, error) {
+	if in.QtyOrderedBase == nil && in.UnitCostCents == nil {
+		return PODetail{}, badReq("purchasing: the body names nothing to change")
+	}
+	if in.QtyOrderedBase != nil && *in.QtyOrderedBase <= 0 {
+		return PODetail{}, badReq("purchasing: line quantity must be positive")
+	}
+	if in.UnitCostCents != nil && *in.UnitCostCents < 0 {
+		return PODetail{}, badReq("purchasing: line unit cost cannot be negative")
+	}
+	if err := s.mutatePO(ctx, poID, func(tx pgx.Tx, po PO) error {
+		if !CanEditLines(po.Status) {
+			return conflict("purchasing: cannot edit the lines of a %s purchase order", po.Status)
+		}
+		return s.repo.UpdatePOLine(ctx, tx, poID, lineID, in)
+	}); err != nil {
+		return PODetail{}, err
+	}
+	return s.GetPO(ctx, poID)
+}
+
 // Transition performs an operator-driven lifecycle move, checked against the matrix in lifecycle.go.
 func (s *Service) Transition(ctx context.Context, poID, to string) (PODetail, error) {
 	to = strings.ToUpper(strings.TrimSpace(to))

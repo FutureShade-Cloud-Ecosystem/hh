@@ -342,6 +342,12 @@ func (a posStockAdapter) DecrementForSaleTx(ctx context.Context, tx pgx.Tx, in p
 	})
 }
 
+// LockStockTx satisfies pos.StockLocker: the swap takes the branch's balance rows of every product its
+// two halves move, sorted, ahead of both.
+func (a posStockAdapter) LockStockTx(ctx context.Context, tx pgx.Tx, branchID string, productIDs []string) error {
+	return a.svc.LockStockTx(ctx, tx, branchID, productIDs)
+}
+
 // posRestockAdapter satisfies pos.StockRestocker over *inventory.Service (the posStockAdapter mirror for
 // the W7 return restock): one RETURN move per line at the current weighted average, inside the return tx.
 type posRestockAdapter struct{ svc *inventory.Service }

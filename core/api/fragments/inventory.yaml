@@ -699,8 +699,11 @@ paths:
       summary: List the replenishment worklist, worst shortfall first
       description: >-
         Graded on the projected position (available plus in transit plus on
-        order), not on-hand. on_order_degraded is true when the on-order leg
-        was not measured; it is always present rather than omitted when false.
+        order), not on-hand. On order counts placed orders only (ORDERED and
+        PARTIAL): a draft never covers a shortfall, so a row with a draft
+        stays here and names it in draft_po_id and draft_po_no. on_order_degraded
+        is true when the on-order leg was not measured; it is always present
+        rather than omitted when false.
       x-role: requireStaff
       x-access:
         surfaces: [buying-and-stock]
@@ -820,10 +823,18 @@ paths:
         refused. When the purchasing seam is unbound the answer is 503 with
         the draft carried alongside the error, so the surface can show what
         would have been ordered.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -856,10 +867,18 @@ paths:
         qty_base of zero means use the replenishment suggestion. Always a
         DRAFT, never an ordered PO. The same 503-with-draft posture as
         shortfall/create-po applies when purchasing is unbound.
+        Walled to the po_writers list: the Procurement Manager, the General
+        Manager and the super admin; every other role is refused with the
+        shared forbidden body.
       x-role: requireManager
       x-access:
         surfaces: [buying-and-stock]
-        level: manage
+        level: read
+        list: po_writers
+        reason: >-
+          The po_writers list is the wall, not the level: the General Manager reads the buying
+          surface and may still write an order, which a manage level cannot say without
+          admitting every manage seat on the surface.
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1673,6 +1692,16 @@ components:
           type: integer
           format: int64
           description: suggested_qty_base times the branch weighted-average cost
+        draft_po_id:
+          type: string
+          format: uuid
+          description: >-
+            The newest draft purchase order a buyer has started for this product at this branch,
+            unplaced. A draft never covers a shortfall, so the row stays on the worklist beside it;
+            absent when there is none. Placing the draft takes the row off the worklist.
+        draft_po_no:
+          type: string
+          description: The number of the draft named by draft_po_id; present with it, absent without it
 
     InventoryReorderPoint:
       type: object
