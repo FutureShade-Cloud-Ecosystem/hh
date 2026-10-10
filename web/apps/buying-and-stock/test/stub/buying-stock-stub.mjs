@@ -214,8 +214,19 @@ function readBody(req) {
   });
 }
 
-// What this stub's tests can switch: a role the gate walls out of ordering.
+// What this stub's tests can switch: a role the gate walls out of ordering, and the caller's
+// reach taken away (a scoped buyer with no grants: the core's reach set reads nothing and every
+// named branch is out of reach, the fence's own 403 in words).
 let walled = false;
+let fenced = false;
+const reach = () => (fenced ? [] : [BRANCH]);
+
+// The core's fenceNamedBranch: a branch the caller named outside its reach is refused in words;
+// an unnamed one is left to the caller (the reach set applies itself).
+function outOfReach(branchId) {
+  const named = String(branchId ?? "").trim();
+  return named !== "" && !reach().includes(named);
+}
 
 async function handle(req, res) {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
@@ -226,10 +237,15 @@ async function handle(req, res) {
   if (method === "POST" && path === "/_stub/reset") {
     reset();
     walled = false;
+    fenced = false;
     return json(res, { ok: true });
   }
   if (method === "POST" && path === "/_stub/wall") {
     walled = true;
+    return json(res, { ok: true });
+  }
+  if (method === "POST" && path === "/_stub/fence") {
+    fenced = true;
     return json(res, { ok: true });
   }
   if (method === "POST" && path === "/_stub/receive") {
@@ -256,7 +272,11 @@ async function handle(req, res) {
 
   // ---- reads ----
   if (method === "GET" && path === "/api/v1/inventory/shortfall") {
-    const rows = PRODUCTS.filter((p) => p.unmanaged !== true).map(productRow).filter((r) => r.short_base > 0);
+    if (outOfReach(url.searchParams.get("branch_id"))) return refuse(res, 403, "you do not have access to that branch");
+    // The unnamed read answers the reach set (the caller's branches only), the core's rule.
+    const rows = PRODUCTS.filter((p) => p.unmanaged !== true)
+      .map(productRow)
+      .filter((r) => r.short_base > 0 && reach().includes(r.branch_id));
     rows.sort((a, b) => b.short_base - a.short_base);
     return json(res, { items: rows, on_order_degraded: false, next_cursor: null });
   }
@@ -363,6 +383,12 @@ async function handle(req, res) {
     const body = await readBody(req);
     if (body === null) return refuse(res, 400, "invalid_json");
     if (!body.product_id) return refuse(res, 400, "inventory: product_id is required".replace(/^[a-z]+: /, ""));
+    // The core fences the named branch first (resolveBranch), so the answer for a branch outside
+    // the reach never depends on that branch's stock.
+    if (outOfReach(body.branch_id)) return refuse(res, 403, "you do not have access to that branch");
+    if (String(body.branch_id ?? "").trim() === "" && reach().length !== 1) {
+      return refuse(res, 400, "branch_id is required, your access spans more than one branch");
+    }
     const p = PRODUCTS.find((x) => uuid("f", x.n) === body.product_id);
     const row = p === undefined ? undefined : productRow(p);
     if (row === undefined) return refuse(res, 400, "this product has no replenishment line at this branch, set its reorder point and preferred vendor first");

@@ -157,6 +157,25 @@ test("the shortfall worklist: the contract's key, and each row in the contract's
   assert.ok(res.json.items.every((r) => r.short_base > 0), "a listed row is always short");
 });
 
+test("the shortfall read is fenced to the caller's reach, in the core's words", async () => {
+  await reset();
+  // The caller holds one branch (Trenton). A branch named outside that reach is refused in words
+  // on both reads that name one (the core's fenceNamedBranch: the worklist and the reorder control).
+  const other = "b0000000-0000-4000-8000-000000000002";
+  refused(await call("GET", `/api/v1/inventory/shortfall?branch_id=${other}`), 403, "you do not have access to that branch");
+  const rows = (await call("GET", "/api/v1/inventory/shortfall")).json.items;
+  const gap = rows.find((r) => r.sku === "DBS-BRUS-DIM");
+  refused(await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: other, qty_base: 0 }), 403, "you do not have access to that branch");
+  assert.equal((await call("GET", `/api/v1/inventory/shortfall?branch_id=${BRANCH}`)).status, 200);
+  // A scoped caller with no grants reads nothing on the unnamed read (the reach set), and the
+  // branch it names is out of reach: the fence switch is that caller.
+  await fetch(`${base}/_stub/fence`, { method: "POST" });
+  const empty = await call("GET", "/api/v1/inventory/shortfall");
+  assert.equal(empty.status, 200);
+  assert.deepEqual(empty.json.items, []);
+  refused(await call("POST", "/api/v1/inventory/reorder-po", { product_id: gap.product_id, branch_id: BRANCH, qty_base: 0 }), 403, "you do not have access to that branch");
+});
+
 test("the PO register answers in the contract's shapes, and a PO reads with its lines", async () => {
   await reset();
   const list = await call("GET", "/api/v1/purchasing/pos");

@@ -84,6 +84,13 @@ test("a 403 names who may do the move; the server's own sentence is otherwise ke
   assert.equal(refusalWords("order", "boom", 500), "The server hit a problem. Nothing was changed. Try again.");
 });
 
+test("the branch fence's 403 reads in the server's own words, not the role wall's", () => {
+  // The core's fenceNamedBranch: a named branch outside the caller's reach is refused in words
+  // (reorder_actions.go), unlike the role gate's wordless Forbidden, which the wall words explain.
+  assert.equal(refusalWords("order", "you do not have access to that branch", 403), "You do not have access to that branch.");
+  assert.equal(refusalWords("load", "you do not have access to that branch", 403), "You do not have access to that branch.");
+});
+
 test("money reads as dollars with cents, and a missing figure is a placeholder, never a zero", () => {
   assert.equal(formatMoney(201600), "$2,016.00");
   assert.equal(formatMoney(undefined), "(no figure)");

@@ -264,6 +264,17 @@ test("a role the gate walls out of editing is refused in the ruled words, beside
   await expect(page.locator("[data-line-editing]")).toHaveCount(1);
 });
 
+test("a branch outside the caller's reach is refused in the server's own words, beside the Draft button", async ({ page, request }) => {
+  await openHome(page, request);
+  // The buyer's grants were taken away after the worklist rendered: the branch the row names is
+  // now outside the reach, and the fence's own sentence reads in red, not the role wall's words.
+  await request.post("/_stub/fence");
+  await page.getByRole("button", { name: "Draft PO (1)" }).click();
+  const error = page.locator("[data-worklist] [data-error]");
+  await expect(error).toHaveText("You do not have access to that branch.");
+  await expect(page.locator("[data-draft]")).toHaveCount(0);
+});
+
 test("a draft does not cover the shortfall: the K08 row stays, reading drafted not placed, with the draft's link", async ({ page, request }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openHome(page, request);

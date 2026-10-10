@@ -119,11 +119,15 @@ function sentence(text: string): string {
 
 /**
  * A refusal or failure as the words a person reads. A 403 from the role gate
- * names who may do the move; the server's own sentence is otherwise kept, only
- * capitalised and ended.
+ * names who may do the move; a 403 that carries the server's own sentence (the
+ * branch fence's words) reads as it is, capitalised and ended.
  */
 export function refusalWords(action: string, error: string, status: number | undefined): string {
   if (status === 403) {
+    // The role gate's body is the wordless "Forbidden"; the branch fence's 403 carries its own
+    // sentence, which says what actually went wrong and must not be swapped for the wall's words.
+    const words = sentence(error);
+    if (words !== "" && words !== "Forbidden.") return words;
     return WHO_MAY[action] ?? "Your role may not do that. Ask the General Manager.";
   }
   if (status === 401) return "Your sign in has ended. Sign in again.";
