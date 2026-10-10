@@ -192,6 +192,17 @@ test("the shortage sheet banner reads in future tense, telling the picker what s
   );
 });
 
+test("the stage hint says the ref is generated for you, not made up", () => {
+  assert.ok(
+    viewsSource.includes("The ref is generated for you if you leave it blank."),
+    "the stage hint names the action accurately",
+  );
+  assert.ok(
+    !viewsSource.includes("The ref is made up for you"),
+    "the old 'made up' wording is gone",
+  );
+});
+
 // ---- recording what was pulled ----
 
 test("short means the picked less the ordered, in the one place that decides it", () => {

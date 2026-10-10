@@ -481,7 +481,7 @@ function stageCard(): TemplateResult {
       <h3>Stage this pick</h3>
       <span class="field-label">Where did you put it?</span>
       <input class="text-field" type="text" autocomplete="off" data-field="stage-where" placeholder="Bay 3" aria-label="The stage location" />
-      <p class="hint">A spot nobody can find is worse than an unstaged pick. The ref is made up for you if you leave it blank.</p>
+      <p class="hint">A spot nobody can find is worse than an unstaged pick. The ref is generated for you if you leave it blank.</p>
       <div class="actions">
         <button type="button" class="btn btn-primary big" data-action="stage" data-tap>Stage</button>
         <button type="button" class="btn btn-secondary big" data-action="close-stage" data-tap>Not yet</button>

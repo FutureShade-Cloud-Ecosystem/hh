@@ -26,6 +26,7 @@ async function readyToStage(page: import("@playwright/test").Page): Promise<void
 test("the stage form demands a spot before it will stage", async ({ page }) => {
   await readyToStage(page);
   await expect(page.locator("[data-stage-form]")).toContainText("Where did you put it?");
+  await expect(page.locator("[data-stage-form]")).toContainText("The ref is generated for you if you leave it blank.");
   await page.getByRole("button", { name: "Stage", exact: true }).click();
   await expect(page.locator("[data-error]")).toContainText("Where did you put it? A stage location is required.");
 });
