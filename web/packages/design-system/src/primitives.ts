@@ -66,10 +66,14 @@ export const baseStyles = css`
     border-radius: var(--hh-radius-control);
     border: 1px solid transparent;
     cursor: pointer;
-    /* One line, centred both ways: a button that carries an icon beside its
-       label draws the two on the same centre line at the design system's icon
-       gap, the icon at the label's own size (1em of the button's font), so the
-       mark is never larger than or higher than the word. */
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
