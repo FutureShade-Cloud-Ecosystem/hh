@@ -67,6 +67,25 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		}
 		return rsp
 	}
+	// postWith is the burst leg's post: it carries a Cookie header the
+	// test names, so the burst mints under its own fresh visitor key and
+	// never spends the address key the earlier persona mints share.
+	postWith := func(path, body string, headers map[string]string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, base+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("build POST %s: %v", path, err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rsp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("POST %s: %v", path, err)
+		}
+		return rsp
+	}
 	body := func(rsp *http.Response) string {
 		t.Helper()
 		raw, err := io.ReadAll(rsp.Body)
@@ -196,13 +215,15 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		t.Errorf("the manager tier is %d, want the resolver's answer (2)", manager.User.Tier)
 	}
 
-	// The buyer flow mints the Buying and Stock login, the test's sixth
-	// pre-burst admission: a branch scoped manager whose one wall the
-	// roadmap names is the vendor bill post, and the credential is the
-	// flow table's own account. DefaultBurstAllowance sits one above the
-	// five earlier persona mints (sales, sales-manager, yard, driver) so
-	// the burst that follows still has a single admission to spend and a
-	// refusal to follow; the test asserts both.
+	// The buyer flow mints the Buying and Stock login: a branch scoped
+	// manager whose one wall the roadmap names is the vendor bill post,
+	// and the credential is the flow table's own account. The mint sits
+	// before the burst loop, on the same address key the till's pair
+	// (sales, sales-manager) just spent; the burst loop that follows
+	// carries its own fresh visitor cookie, so the five pre-burst mints
+	// on the address key (sales, sales-manager, buyer, yard, driver) do
+	// not share the burst's key and the burst still has its full
+	// DefaultBurstAllowance of unspent admissions to exercise the limit.
 	buyerRsp := post("/api/v1/demo/session", `{"flow":"procurement-manager"}`)
 	if buyerRsp.StatusCode != http.StatusOK {
 		t.Fatalf("the buyer mint: status %d, want 200 (body: %s)", buyerRsp.StatusCode, body(buyerRsp))
@@ -371,11 +392,17 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 
 	// A burst from this address is refused: hammer the mint until the
 	// limit answers, and hold that everything before the refusal minted
-	// and the refusal itself did not.
+	// and the refusal itself did not. The burst carries its own fresh
+	// visitor cookie, so the five earlier persona mints on the bare
+	// address key (they posted without one) do not share the burst's
+	// key: the burst sits at allowance unspent when it starts, admits
+	// DefaultBurstAllowance mints, and the next iteration is the
+	// refusal. The address ceiling of 40 still covers the run.
+	burstCookie := "demo_visitor=" + fmt.Sprintf("%032x", uint64(time.Now().UnixNano()))
 	burstMinted := 0
 	refused := false
 	for i := 0; i < DefaultBurstAllowance*3; i++ {
-		rsp := post("/api/v1/demo/session", `{"flow":"sales"}`)
+		rsp := postWith("/api/v1/demo/session", `{"flow":"sales"}`, map[string]string{"Cookie": burstCookie})
 		raw := body(rsp)
 		if rsp.StatusCode == http.StatusOK {
 			burstMinted++
@@ -429,14 +456,6 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if namedActors != rows {
 		t.Errorf("%d of %d trail rows name a demo role account, want every one", namedActors, rows)
 	}
-
-	// The buyer flow mints the Buying and Stock login: a branch scoped
-	// manager whose one wall the roadmap names is the vendor bill post,
-	// and the credential is the flow table's own account. The mint sits
-	// before the burst loop (the burst loop's job is to test the
-	// limit, and the burst loop's allowance covers one pre-admission
-	// beyond the five persona mints, leaving one unspent spot for the
-	// burst's first admission and the rejection to follow).
 
 	var coarseRows int
 	if err := pool.QueryRow(ctx, `
