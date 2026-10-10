@@ -173,16 +173,19 @@ func (s *Service) ApproveJournal(ctx context.Context, id string) (Journal, error
 	if j.CreatedBy != "" && j.CreatedBy == caller.UserID {
 		return Journal{}, errFourEyes
 	}
-	// One way to approve a parked journal that has a request: through the queue. The four eyes check above
-	// stays first, so a maker is still refused as the maker whichever route they use.
-	if s.pendingChecker != nil {
-		pending, perr := s.pendingChecker.HasPendingJEApproval(ctx, id)
-		if perr != nil {
-			return Journal{}, perr
-		}
-		if pending {
-			return Journal{}, clientErr(409, "gl: this journal has a pending approval request; decide it from the approvals queue, which posts it")
-		}
+	// One way to post a parked journal that has a request: an approved request, through the queue. Any other
+	// state of that request (pending, rejected, tombstoned) holds the journal, and what happens to it is
+	// decided there. The four eyes check above stays first, so a maker is still refused as the maker whichever
+	// route they use. Unwired, the guard cannot ask and the route refuses (fail closed).
+	if s.pendingChecker == nil {
+		return Journal{}, clientErr(503, "gl: the approvals queue cannot be asked; this journal cannot be approved here")
+	}
+	held, herr := s.pendingChecker.HasBlockingJEApproval(ctx, id)
+	if herr != nil {
+		return Journal{}, herr
+	}
+	if held {
+		return Journal{}, clientErr(409, "gl: this journal has an approval request; it is decided from the approvals queue, which posts it")
 	}
 	approved, err := s.store.ApproveJournal(ctx, id, caller.UserID)
 	if err != nil {

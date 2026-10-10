@@ -292,3 +292,14 @@ func equalIDs(got, want []string) bool {
 	}
 	return true
 }
+
+// A store that cannot say whether a journal is held fails closed: an error, never "nothing holds it".
+func TestHasBlockingJEApproval_StoreWithoutTheReadFailsClosed(t *testing.T) {
+	held, err := NewApprovals(nil).HasBlockingJEApproval(context.Background(), "5d1b3f6e-0000-4000-9000-000000000001")
+	if err == nil || held {
+		t.Fatalf("held=%v err=%v, want an error and not held", held, err)
+	}
+	if status, ok := ApprovalErrorStatus(err); !ok || status != http.StatusServiceUnavailable {
+		t.Errorf("status %d ok=%v, want 503", status, ok)
+	}
+}

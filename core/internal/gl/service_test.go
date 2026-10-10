@@ -93,6 +93,37 @@ func TestAC4_MakerChecker(t *testing.T) {
 	}
 }
 
+// The approve route's money guard fails closed: a journal the approvals queue holds, a queue that cannot be
+// asked, and an unwired guard all refuse, and nothing is posted.
+func TestAC4_ApproveRefusesWhenTheQueueHoldsOrCannotBeAsked(t *testing.T) {
+	ctx := context.Background()
+	checker := identity.StaffContext{UserID: "u-checker", RoleCode: "BRANCH_MANAGER", Tier: identity.TierManager}
+	for name, guard := range map[string]PendingApprovalChecker{
+		"held":      fakeHold{held: true},
+		"read fail": fakeHold{err: errors.New("db down")},
+		"unwired":   nil,
+	} {
+		f := newFakeStore()
+		f.policy.JEApprovalThresholdCents = 500000
+		maker := identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager}
+		j, err := newTestServiceAs(f, maker).CreateJournal(ctx, CreateJournalInput{Memo: "big", Lines: []JournalLineInput{
+			{AccountCode: "1000", DebitCents: 600000},
+			{AccountCode: "4000", CreditCents: 600000},
+		}})
+		if err != nil {
+			t.Fatalf("%s: create: %v", name, err)
+		}
+		svc := newTestServiceAs(f, checker)
+		svc.pendingChecker = guard
+		if _, err := svc.ApproveJournal(ctx, j.ID); err == nil {
+			t.Errorf("%s: the approve route posted the journal", name)
+		}
+		if got, _ := f.GetJournal(ctx, j.ID); got.Status != StatusDraft {
+			t.Errorf("%s: the journal reads %s, want DRAFT", name, got.Status)
+		}
+	}
+}
+
 // AC10, an account referenced by a DRAFT journal cannot be deactivated (409); with no draft refs it flips
 // inactive.
 func TestAC10_DeactivateAccountInUse(t *testing.T) {

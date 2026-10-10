@@ -764,8 +764,12 @@ func (r *ApprovalRepository) HasApprovedOverride(ctx context.Context, requestedB
 	return ok, nil
 }
 
-// HasPendingJEApproval reports whether a JE_OVER_THRESHOLD request for this journal is still PENDING.
-func (r *ApprovalRepository) HasPendingJEApproval(ctx context.Context, journalID string) (bool, error) {
+// HasBlockingJEApproval reports whether a JE_OVER_THRESHOLD request for this journal holds it: any request
+// in a state other than approved, a rejected one and a tombstoned one included (an approved request has
+// already posted the journal). The subject_ref is TEXT and the id is compared as a uuid, so the letter case
+// of the id cannot hide a request. Tombstones are counted on purpose: deleting the request must not free
+// the journal for the GL's own route.
+func (r *ApprovalRepository) HasBlockingJEApproval(ctx context.Context, journalID string) (bool, error) {
 	if r.pool == nil {
 		return false, errNoDB
 	}
@@ -773,10 +777,11 @@ func (r *ApprovalRepository) HasPendingJEApproval(ctx context.Context, journalID
 	err := r.pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM permission_approval_requests
-			WHERE policy_type = 'JE_OVER_THRESHOLD' AND status = 'PENDING'
-			  AND deleted_at IS NULL AND subject_ref = $1)`, journalID).Scan(&ok)
+			WHERE policy_type = 'JE_OVER_THRESHOLD'
+			  AND lower(subject_ref) = $1::uuid::text
+			  AND NOT (status = 'APPROVED' AND deleted_at IS NULL))`, journalID).Scan(&ok)
 	if err != nil {
-		return false, fmt.Errorf("check pending journal request: %w", err)
+		return false, fmt.Errorf("check held journal request: %w", err)
 	}
 	return ok, nil
 }

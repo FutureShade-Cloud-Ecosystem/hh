@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -139,20 +140,22 @@ func (s *Approvals) FileJEApproval(ctx context.Context, journalID, branchID stri
 	})
 }
 
-// pendingJEChecker is the optional store read HasPendingJEApproval needs. The repository has it; a test
-// double that predates it answers no pending request, which is the shipped behaviour.
-type pendingJEChecker interface {
-	HasPendingJEApproval(ctx context.Context, journalID string) (bool, error)
+// blockingJEChecker is the store read HasBlockingJEApproval needs. The repository has it; a store that
+// lacks it cannot answer, and the answer is then an error, never "nothing holds the journal".
+type blockingJEChecker interface {
+	HasBlockingJEApproval(ctx context.Context, journalID string) (bool, error)
 }
 
-// HasPendingJEApproval reports whether a parked journal has a JE_OVER_THRESHOLD request still PENDING. The
-// GL's approve route asks it so a journal with a request is approved only by deciding that request.
-func (s *Approvals) HasPendingJEApproval(ctx context.Context, journalID string) (bool, error) {
-	c, ok := s.store.(pendingJEChecker)
+// HasBlockingJEApproval reports whether the approvals queue holds a parked journal: any JE_OVER_THRESHOLD
+// request for it in a state other than approved (pending, rejected, tombstoned). The GL's approve route asks
+// it so a journal with a request is posted only by an approved request. A store that cannot answer fails
+// closed.
+func (s *Approvals) HasBlockingJEApproval(ctx context.Context, journalID string) (bool, error) {
+	c, ok := s.store.(blockingJEChecker)
 	if !ok {
-		return false, nil
+		return false, clientErr(http.StatusServiceUnavailable, "approvals: the store cannot say whether a journal is held")
 	}
-	return c.HasPendingJEApproval(ctx, journalID)
+	return c.HasBlockingJEApproval(ctx, journalID)
 }
 
 // FileFreightApproval files a FREIGHT_ABOVE_QUOTE request for a parked freight raise and fans out

@@ -117,13 +117,14 @@ type ApprovalFiler interface {
 	FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error
 }
 
-// PendingApprovalChecker is the rail read the GL's own approve route asks before it posts: does this parked
-// journal have a JE_OVER_THRESHOLD request still PENDING on the approvals queue. A journal over the threshold
-// is approved one way only, by deciding its request (the rail posts it in the same transaction that stamps
-// the request); posting it here would leave the request PENDING and a later decide on it failing. Nil
-// (unwired) keeps the route as it was.
+// PendingApprovalChecker is the rail read the GL's own approve route asks before it posts: is this parked
+// journal held by the approvals queue, that is, does any JE_OVER_THRESHOLD request exist for it in a state
+// other than approved (pending, rejected or tombstoned all hold it). A journal over the threshold is posted
+// one way only, by an approved request (the rail posts it in the same transaction that stamps the request);
+// the queue's decision, a reject included, is decided there and not here. An unwired checker refuses the
+// route: a money guard that cannot ask does not post.
 type PendingApprovalChecker interface {
-	HasPendingJEApproval(ctx context.Context, journalID string) (bool, error)
+	HasBlockingJEApproval(ctx context.Context, journalID string) (bool, error)
 }
 
 // NoopCostBasis is the dormant W5 cost-basis seam: it always reports "no cost basis" (found=false) so the
@@ -184,7 +185,7 @@ type Service struct {
 	dead           DeadRequeuer
 	audit          audit.Recorder
 	approvalFiler  ApprovalFiler          // 0075: nil-able JE park → approvals-rail filing seam
-	pendingChecker PendingApprovalChecker // nil-able: the approve route refuses a journal whose request is pending
+	pendingChecker PendingApprovalChecker // the approve route refuses a journal the approvals queue holds; unwired, it refuses every journal
 	log            *slog.Logger
 	now            func() time.Time
 	callerFrom     func(context.Context) (identity.StaffContext, bool)
@@ -283,7 +284,7 @@ func (s *Service) WithDeadRequeuer(d DeadRequeuer) *Service { s.dead = d; return
 // park behaves exactly as today (no rail filing). Chainable.
 func (s *Service) WithApprovalFiler(f ApprovalFiler) *Service { s.approvalFiler = f; return s }
 
-// WithPendingApprovalChecker injects the pending-request read the approve route consults. Chainable.
+// WithPendingApprovalChecker injects the held-by-the-queue read the approve route consults. Chainable.
 func (s *Service) WithPendingApprovalChecker(c PendingApprovalChecker) *Service {
 	s.pendingChecker = c
 	return s
