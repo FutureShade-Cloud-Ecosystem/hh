@@ -399,8 +399,8 @@ func TestIntegration_Item5_TheSendReplayIsKeyedToItsOrderAndFencedByBranch(t *te
 	// even with a real key in hand.
 	outsider := NewService(NewRepository(h.pool)).
 		withCaller(scopedCaller(h.user, branchKGN))
-	if _, err := outsider.SendPO(h.ctx, first.ID, SendPORequest{IdempotencyKey: key}); !errors.Is(err, errForbidden) {
-		t.Fatalf("a Kingston-scoped caller quoting a Trenton order's key = %v, want the 403 fence", err)
+	if _, err := outsider.SendPO(h.ctx, first.ID, SendPORequest{IdempotencyKey: key}); !errors.Is(err, errNotFound) {
+		t.Fatalf("a Kingston-scoped caller quoting a Trenton order's key = %v, want the same answer as a missing order (404)", err)
 	}
 }
 

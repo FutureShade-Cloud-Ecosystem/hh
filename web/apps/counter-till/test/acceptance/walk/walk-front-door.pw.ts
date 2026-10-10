@@ -14,7 +14,7 @@
 // What the walk holds, in order:
 //
 //   the picker renders: the two live role cards with their calls to act,
-//     the demo badge, and the eleven coming roles in their disclosure;
+//     the demo badge, and the nine coming roles in their disclosure;
 //   a Sales sign in lands on the Sales home: the role's name as the title,
 //     the two live module tiles, the header word;
 //   the Counter Till tile opens the till signed in as Sales, no second

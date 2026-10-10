@@ -14,11 +14,12 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
-// The table is closed: four flows, the pair the Counter Till cycle ships
-// (D49, DECISIONS.md) and Payables and Receivables and the Financial
-// Controller the roles roadmap adds. A new flow is an edit here, reviewed,
-// never a runtime input: the entry page may only ever offer what this file
-// lists.
+// The table is closed: five flows, the pair the Counter Till cycle ships
+// (D49, DECISIONS.md), Payables and Receivables and the Financial
+// Controller the roles roadmap's receivables increment adds, and the
+// Procurement manager its Buying and Stock slice adds, one reviewed row at
+// a time. A new flow is an edit here, reviewed, never a runtime input:
+// the entry page may only ever offer what this file lists.
 package flows
 
 // OrgSlug is the one org a demo box holds and the only org the demo
@@ -93,6 +94,10 @@ var accounts = map[string]Account{
 		Label:          "Sales manager",
 		Role:           "sales_manager",
 	},
+	// Payables and Receivables, the receivables desk's login, and the
+	// procurement manager, the Buying and Stock slice's: the buyer's card.
+	// Each lane's id block is its own, so the role lanes' rows cannot
+	// collide as they land one after another.
 	"payables-receivables": {
 		Flow:           "payables-receivables",
 		PlatformUserID: "de110000-0000-4000-9000-0000000000a1",
@@ -100,6 +105,14 @@ var accounts = map[string]Account{
 		DisplayName:    "Payables and Receivables (demo)",
 		Label:          "Payables and Receivables",
 		Role:           "payables_receivables",
+	},
+	"procurement-manager": {
+		Flow:           "procurement-manager",
+		PlatformUserID: "de64b000-0000-4000-9000-000000000001",
+		Email:          "procurement.manager@" + ReservedDomain,
+		DisplayName:    "Procurement manager (demo)",
+		Label:          "Procurement manager",
+		Role:           "procurement_manager",
 	},
 	"financial-controller": {
 		Flow:           "financial-controller",
@@ -126,6 +139,7 @@ func All() []Account {
 		accounts["sales"],
 		accounts["sales-manager"],
 		accounts["payables-receivables"],
+		accounts["procurement-manager"],
 		accounts["financial-controller"],
 	}
 }

@@ -17,12 +17,14 @@ const glWorld = createGlWorld();
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
-// The core's closed table, in its order: the till's pair, then the two Money Desk roles. The till's two sign in
-// here only so the cross app card legs can show the front door offers them no Money Desk tile.
+// The core's closed table, in its order: the till's pair, Payables and Receivables, the Procurement
+// manager, then the Money Desk's controller. The till's two and the buyer sign in here only so the
+// way in's filter and the cross app card legs mean something against the core's whole table.
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
+  { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
 ];
 
@@ -59,6 +61,15 @@ const USERS = {
     role_name: "Payables and Receivables",
     tier: 2,
     scope: "GLOBAL",
+  },
+  "procurement-manager": {
+    user_id: "de64b000-0000-4000-9000-000000000001",
+    email: "procurement.manager@hh-demo.invalid",
+    display_name: "Procurement manager (demo)",
+    role_code: "procurement_manager",
+    role_name: "Procurement manager",
+    tier: 2,
+    scope: "BRANCH",
   },
   "financial-controller": {
     user_id: "de110000-0000-4000-9000-000000000008",

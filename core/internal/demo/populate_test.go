@@ -300,11 +300,11 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
 		t.Errorf("the org scope did not stamp clean: %+v", counts)
 	}
-	if counts.UsersLinked != 4 || counts.UsersUnlinked != 10 {
-		t.Errorf("linked %d / unlinked %d users, want the 4 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	if counts.UsersLinked != 5 || counts.UsersUnlinked != 10 {
+		t.Errorf("linked %d / unlinked %d users, want the 5 demo role accounts linked and the 10 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	if counts.StaffGrants != 4 || counts.StaffGrantsBranch != 2 || counts.StaffGrantsGlobal != 2 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the two counter accounts' Trenton grants and the one global grant each of Payables and Receivables and the Financial Controller", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	if counts.StaffGrants != 5 || counts.StaffGrantsBranch != 3 || counts.StaffGrantsGlobal != 2 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the three branch role accounts' Trenton grants and the one global grant each of Payables and Receivables and the Financial Controller", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -330,6 +330,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES")
 	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER")
 	assertRoleAccount(t, ctx, pool, payRecUserID, payRecEmail, payRecDisplayName, "PAYABLES_RECEIVABLES")
+	assertRoleAccount(t, ctx, pool, buyerUserID, buyerEmail, buyerDisplayName, "PROCUREMENT_MANAGER")
 	assertRoleAccount(t, ctx, pool, controllerUserID, controllerEmail, controllerDisplayName, "FINANCIAL_CONTROLLER")
 
 	// The real-domain planted rows are inactive, renamed, re-addressed on
@@ -359,7 +360,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		}
 	}
 
-	// Every users row renders an invented name: the thirteen display names
+	// Every users row renders an invented name: the fifteen display names
 	// this populate and the migrations' planted set allow, exactly, and
 	// nothing else. A surname token or an unreplaced placeholder on any row
 	// fails the allowlist, without the test itself naming a token.
@@ -378,6 +379,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		"Dispatch persona (demo)":       true,
 		"Yard persona (demo)":           true,
 		"Driver persona (demo)":         true,
+		"Procurement manager (demo)":    true,
 	}
 	nameRows, err := pool.Query(ctx, `SELECT display_name FROM users`)
 	if err != nil {
@@ -398,11 +400,11 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if err := nameRows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	// 14 since the merge of PR 300: the two Counter Till accounts, the planted
-	// demo teammates, and both roadmap personas (Payables and Receivables and
-	// the Financial Controller), each one invented name.
-	if len(saw) != len(allowedNames) || len(saw) != 14 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 14 invented ones (saw: %v)", len(saw), saw)
+	// 15 since the merge of PR 303: the two Counter Till accounts, the planted
+	// demo teammates, and the three roadmap personas (Payables and Receivables,
+	// the Procurement manager and the Financial Controller), each one invented name.
+	if len(saw) != len(allowedNames) || len(saw) != 15 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 15 invented ones (saw: %v)", len(saw), saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the

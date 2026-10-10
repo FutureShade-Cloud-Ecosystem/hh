@@ -31,12 +31,13 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.FD_STUB_PORT ?? 4927);
 
-// The closed flow table: the two logins this release shows, with the labels
+// The closed flow table: the logins this release shows, with the labels
 // the cards carry and the role each minted account holds.
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
+  { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
 ];
 
@@ -67,6 +68,15 @@ const USERS = {
     role_name: "Payables and Receivables",
     tier: 2,
     scope: "GLOBAL",
+  },
+  "procurement-manager": {
+    user_id: "demo-account-procurement-manager",
+    email: "procurement-manager@demo.invalid",
+    display_name: "Procurement manager (demo)",
+    role_code: "procurement_manager",
+    role_name: "Procurement Manager",
+    tier: 2,
+    scope: "BRANCH",
   },
   "financial-controller": {
     user_id: "demo-account-financial-controller",

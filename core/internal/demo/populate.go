@@ -10,7 +10,7 @@
 // writer of the demo_box row the demo boot guard reads, and it refuses
 // before any write unless the database is already a demo database in
 // shape: one org (hh-demo, which this populate itself provisions), no user
-// outside the migrations' planted set and the two role accounts this file
+// outside the migrations' planted set and the role accounts this file
 // defines, and no payment configuration but this file's own.
 //
 // IDEMPOTENCE, the demoseed_apply discipline: every insert carries an
@@ -55,7 +55,7 @@ const (
 	demoOrgName = "Hardscape House (demo)"
 )
 
-// The two role accounts the demo sign-in mints for (the Counter Till's
+// The role accounts the demo sign-in mints for (the Counter Till's
 // pair, D49). The ids and the platform ids are pinned literals in code:
 // they are part of the contract the demo module's flow table codes
 // against, so a tester's "Sales" tap resolves this row, at this org, with
@@ -73,13 +73,21 @@ const (
 
 	// Payables and Receivables, the third role account (global, tier two):
 	// the flow table's row for the receivables desk, minted by the roles
-	// roadmap's first increment.
+	// roadmap's first receivables increment.
 	payRecUserID      = "de110000-0000-4000-9000-0000000000a1"
 	payRecPlatformID  = "de110000-0000-4000-9000-0000000000a1"
 	payRecEmail       = "payables.receivables@hh-demo.invalid"
 	payRecDisplayName = "Payables and Receivables (demo)"
 
-	// The Financial Controller, the fourth role account (global, tier one):
+	// The procurement manager's account, the Buying and Stock role login
+	// (the roles roadmap's first procurement increment). Same id block as
+	// the flow table's row, reconciled by copy the same way.
+	buyerUserID      = "de64b000-0000-4000-9000-000000000001"
+	buyerPlatformID  = "de64b000-0000-4000-9000-000000000001"
+	buyerEmail       = "procurement.manager@hh-demo.invalid"
+	buyerDisplayName = "Procurement manager (demo)"
+
+	// The Financial Controller, the fifth role account (global, tier one):
 	// the flow table's row for the approvals queue and the general ledger.
 	controllerUserID      = "de110000-0000-4000-9000-0000000000c1"
 	controllerPlatformID  = "de110000-0000-4000-9000-0000000000c1"
@@ -92,6 +100,7 @@ const (
 	salesRoleCode      = "INSIDE_SALES"
 	managerRoleCode    = "SALES_MANAGER"
 	payRecRoleCode     = "PAYABLES_RECEIVABLES"
+	buyerRoleCode      = "PROCUREMENT_MANAGER"
 	controllerRoleCode = "FINANCIAL_CONTROLLER"
 
 	// Trenton, the till's branch (migration 0003's root branch; 0060
@@ -231,7 +240,7 @@ type Report struct {
 }
 
 // staticDirectory is the populate's PlatformDirectory: it answers exactly
-// the two demo role accounts and nothing else. identity.Populate's linkage
+// the demo role accounts and nothing else. identity.Populate's linkage
 // pass counts every other row as unmatched and leaves it unlinked, never
 // guessed, so the migration-planted rows keep no platform identity on the
 // demo box and derive no staff grants.
@@ -311,7 +320,7 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 		return report, err
 	}
 
-	// The two role accounts. Inserted first so identity.Populate's stamping
+	// The role accounts. Inserted first so identity.Populate's stamping
 	// pass reaches them in the same run.
 	usersCreated, err := insertRoleAccounts(ctx, tx)
 	report.UsersCreated = usersCreated
@@ -355,14 +364,14 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 		return report, err
 	}
 
-	// The org, the org scope, the platform links for the two role accounts
+	// The org, the org scope, the platform links for the role accounts
 	// and the staff grants that derive from them, all through the identity
 	// program itself, so the demo world is provisioned exactly the way a
 	// real dealer's is.
 	pop, err := identity.Populate(ctx, tx, identity.PopulateConfig{
 		OrgSlug:   demoOrgSlug,
 		OrgName:   demoOrgName,
-		Directory: staticDirectory{salesEmail: salesPlatformID, managerEmail: managerPlatformID, payRecEmail: payRecPlatformID, controllerEmail: controllerPlatformID},
+		Directory: staticDirectory{salesEmail: salesPlatformID, managerEmail: managerPlatformID, payRecEmail: payRecPlatformID, buyerEmail: buyerPlatformID, controllerEmail: controllerPlatformID},
 	})
 	if err != nil {
 		return report, fmt.Errorf("demo-populate: identity populate: %w", err)
@@ -416,7 +425,7 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	return report, nil
 }
 
-// insertRoleAccounts writes the two demo role accounts, idempotently. The
+// insertRoleAccounts writes the demo role accounts, idempotently. The
 // rows carry no password hash (the core has no password route; the demo
 // sign-in mints its sessions from the flow table, never from a secret) and
 // no platform id yet: the platform id arrives through identity.Populate's
@@ -428,6 +437,7 @@ func insertRoleAccounts(ctx context.Context, tx pgx.Tx) (int, error) {
 		{salesUserID, salesEmail, salesDisplayName},
 		{managerUserID, managerEmail, managerDisplayName},
 		{payRecUserID, payRecEmail, payRecDisplayName},
+		{buyerUserID, buyerEmail, buyerDisplayName},
 		{controllerUserID, controllerEmail, controllerDisplayName},
 	} {
 		tag, err := tx.Exec(ctx, `
@@ -456,6 +466,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		{salesUserID, salesRoleCode},
 		{managerUserID, managerRoleCode},
 		{payRecUserID, payRecRoleCode},
+		{buyerUserID, buyerRoleCode},
 		{controllerUserID, controllerRoleCode},
 	} {
 		tag, err := tx.Exec(ctx, `
@@ -473,7 +484,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 	// derived for them carry no branch and their reach is every branch; the Trenton rows below are
 	// inert for them (reach follows the role's scope, never user_branch_grants) and are written only
 	// so the accounts have the same shape as the others.
-	for _, userID := range []string{salesUserID, managerUserID, payRecUserID, controllerUserID} {
+	for _, userID := range []string{salesUserID, managerUserID, payRecUserID, buyerUserID, controllerUserID} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_branch_grants (user_id, branch_id)
 			SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
@@ -491,6 +502,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		{salesUserID, salesRoleCode},
 		{managerUserID, managerRoleCode},
 		{payRecUserID, payRecRoleCode},
+		{buyerUserID, buyerRoleCode},
 		{controllerUserID, controllerRoleCode},
 	} {
 		var n int
@@ -505,7 +517,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 			return 0, 0, fmt.Errorf("demo-populate: refusing: the roles catalog holds no %s row, the %s account would reach nothing", a.roleCode, a.userID)
 		}
 	}
-	for _, userID := range []string{salesUserID, managerUserID, payRecUserID, controllerUserID} {
+	for _, userID := range []string{salesUserID, managerUserID, payRecUserID, buyerUserID, controllerUserID} {
 		var n int
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM user_branch_grants

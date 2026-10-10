@@ -571,7 +571,7 @@ func TestSendPO_AReplayKeyDoesNotAnswerForACallerOutsideTheBranch(t *testing.T) 
 	sender := &recordingSender{live: true, delivered: true}
 	got, err := sendSvcAs(outsider, orderedPO(), sends, sender, DefaultPolicy()).
 		SendPO(context.Background(), "po-1", SendPORequest{IdempotencyKey: "k-1"})
-	if !errors.Is(err, errForbidden) {
+	if !errors.Is(err, errNotFound) {
 		t.Fatalf("err = %v, a caller outside the branch was answered through the replay instead of the fence", err)
 	}
 	if got.ID == "send-0" {

@@ -494,7 +494,7 @@ func (s *Service) PODocumentFor(ctx context.Context, poID string) (PODocument, e
 		return PODocument{}, err
 	}
 	if !caller.CanAccessBranch(po.BranchID) {
-		return PODocument{}, errForbidden
+		return PODocument{}, errNotFound
 	}
 	return s.buildPODocument(ctx, po, s.costLensFor(ctx, po.BranchID))
 }
