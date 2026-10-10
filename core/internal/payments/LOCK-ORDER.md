@@ -57,6 +57,12 @@ and it is why the counter is drawn only when invoice rows will be taken: a card 
 deposit document holds no counter through its processor call at all, and draws the counter only at its refund
 payment's insert, a local statement's length.
 
+The received payment apply's PREVIEW draws no counter either (item 127): each preview used to take the counter and
+the invoice row locks before rolling back, so every debounced keystroke at the desk briefly serialised against
+every payments writer, the till's tenders included. A preview writes nothing, so it needs no place in this order at
+all; its split is computed on one lock free snapshot read (`readApplyInvoices`), and the apply re-judges everything
+under the locks it takes, refusing in words on the ceiling the moved balances leave whenever the two disagree.
+
 ## Why the invoice rows are FOR NO KEY UPDATE
 
 A `FOR UPDATE` on an invoice conflicts with every row lock, including the `FOR KEY SHARE` a foreign key check takes
@@ -77,6 +83,7 @@ conflict; the share was never something these writers needed to hold back.
 |---|---|---|
 | Register `RecordPayment` (through the counter `RecordReceipt`) | payments counter (not advancing), invoice rows (`FOR NO KEY UPDATE`, the allocation order), payment insert (payments feed +1), invoice balance moves (invoices counter +1 each) | yes |
 | Register received payment apply (item 64 Lane A pay, `received_apply.go`) | payments counter (not advancing), the named invoice rows (`FOR NO KEY UPDATE`, ascending id, every one before the first balance move), payment insert (payments feed +1), invoice balance moves (invoices counter +1 each, in the same ascending order) | yes: the whole set sorted, and the till's owed return now draws the payments counter before its own invoice locks, so the two writers meet at the counter, never head on |
+| The same route's PREVIEW (item 127, `previewApply` / `readApplyInvoices`) | nothing: one lock free statement reads the named invoices' balances (one snapshot, so the split is consistent), the account and the branch reach folded into the WHERE exactly as the apply's locking statement folds them | yes, by taking none of the order: a preview writes nothing, so it draws no counter and no invoice row, and a desk's debounced keystroke never queues a till payment; on an unchanged body the apply answers the preview's split, and when the balances moved in between the apply's own ceiling refusal says so in words |
 | Counter `RecordReceipt` | the same, in `lockAndTotal` | yes |
 | POS pay balance take (item 9.4) | order row (`FOR NO KEY UPDATE`), payments counter (not advancing), the order's open invoice rows (`FOR NO KEY UPDATE`, ascending), the raise of an uninvoiced remainder's invoice through the desk's writer (a new invoice: invoices counter +1, item 9 review P2-2), payment insert through the till's tender (payments feed +1), invoice balance moves (invoices counter +1 each) | yes: the order row is the order's own first step, then the register settle's own sequence; the raise draws the invoices counter (step 4) before the settle's own counter draws, the same step every invoice-inserting writer takes after its invoice row locks |
 | `PayWithStamps`, `PayWithIntent`, `Pay` (portal and card settle) | the same, in `lockAndTotal` | yes |
@@ -137,6 +144,9 @@ REAL POS return over HTTP), each at pool 4 and pool 16, each parked in a widened
 - a paid sale's cash return parked in its transaction beside an apply on an unrelated invoice: the apply answers
   while the return is still parked (cmd/core, red while every cash or card return held the counter whatever it
   locked)
+- a received payment PREVIEW beside a REAL till tender parked inside its payments counter statement: the preview
+  answers while the tender is still parked (cmd/core, red while each preview drew the counter; item 127, the
+  money desk review's P3-4)
 - the multi-invoice `ReversePayment` against a real POS cash return on the sale's invoice (cmd/core, red before
   the reversal's `FOR NO KEY UPDATE`)
 

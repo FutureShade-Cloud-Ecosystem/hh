@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
-// the rule the D2 brief fixes (four live roles with the contract's labels and
-// the till's flow ids; nine coming roles, each carrying the modules the
+// the rule the D2 brief fixes (five live roles with the contract's labels and
+// the till's flow ids; eight coming roles, each carrying the modules the
 // matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test
@@ -136,9 +136,9 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the four live roles with the contract's labels and the flows", () => {
-  assert.equal(LIVE_ROLES.length, 4);
-  const [sales, manager, payRec, controller] = LIVE_ROLES;
+test("the catalog holds the five live roles with the contract's labels and the flows they mint", () => {
+  assert.equal(LIVE_ROLES.length, 5);
+  const [sales, manager, payRec, buyer, controller] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
   assert.deepEqual(sales.tiles.map((tile) => tile.name), ["Counter Till", "Quote Desk"]);
@@ -148,7 +148,13 @@ test("the catalog holds the four live roles with the contract's labels and the f
     manager.tiles.map((tile) => tile.name),
     ["Counter Till", "Quote Desk", "Manager Home", "Dealer Admin", "House Messages"],
   );
-  // The box's two live modules navigate; the manager's three not-yet modules do not.
+  assert.equal(buyer.label, "Procurement manager");
+  assert.equal(buyer.flow, "procurement-manager");
+  assert.deepEqual(
+    buyer.tiles.map((tile) => tile.name),
+    ["Buying and Stock", "Manager Home", "House Messages"],
+  );
+  // The box's live modules navigate; the not-yet modules do not.
   assert.deepEqual(
     sales.tiles.map((tile) => tile.href),
     ["/till/", "/quote/"],
@@ -156,6 +162,10 @@ test("the catalog holds the four live roles with the contract's labels and the f
   assert.deepEqual(
     manager.tiles.map((tile) => tile.href),
     ["/till/", "/quote/", null, null, null],
+  );
+  assert.deepEqual(
+    buyer.tiles.map((tile) => tile.href),
+    ["/buying-and-stock/", null, null],
   );
   // Payables and Receivables' one live module is the Money Desk; its Manager
   // Home and House Messages tiles are not on the box yet.
@@ -172,7 +182,7 @@ test("the catalog holds the four live roles with the contract's labels and the f
   assert.equal(controller.tiles[0], payRec.tiles[0], "both roles open the one Money Desk tile");
 });
 
-test("the catalog holds the nine coming roles, each with its matrix modules", () => {
+test("the catalog holds the eight coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
     "Yard Team",
@@ -180,7 +190,6 @@ test("the catalog holds the nine coming roles, each with its matrix modules", ()
     "Logistics Manager",
     "Driver",
     "Branch Manager",
-    "Procurement Manager",
     "General Manager",
     "HR",
   ];

@@ -205,6 +205,34 @@ func loposArmCounterWindow(t *testing.T, obs *pgxpool.Pool) {
 	})
 }
 
+// loposSeedPaymentsCounter seeds the payments counter row before a leg parks a writer in the
+// counter window. The window is an AFTER UPDATE trigger on scope_sequences, and no migration
+// plants any scope row, so on a freshly migrated database the first writer's counter statement
+// takes its INSERT arm, the trigger never fires and the leg waits out its barrier (the delta 3
+// review's P3-1). The seed mirrors the lock statement's own INSERT arm, at 0, so the first real
+// draw still hands out feed number 1.
+func loposSeedPaymentsCounter(t *testing.T) {
+	t.Helper()
+	dsn := os.Getenv(coreDBEnvVar)
+	if dsn == "" {
+		return // loposPools skips the leg itself when the scratch database is not set
+	}
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse gate url: %v", err)
+	}
+	cfg.MaxConns = 1
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("open seed pool: %v", err)
+	}
+	defer pool.Close()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO scope_sequences (scope, next_value) VALUES ('payments', 0) ON CONFLICT (scope) DO NOTHING`); err != nil {
+		t.Fatalf("seed the payments counter row: %v", err)
+	}
+}
+
 // loposWait blocks until `want` sessions of the gate database match cond, or fails the leg. The
 // observer pool reads pg_stat_activity; nothing sleeps on a guess.
 func loposWait(t *testing.T, obs *pgxpool.Pool, what string, want int, cond string) {
@@ -625,6 +653,105 @@ func TestIntegration_LockOrder_APaidSaleReturnDoesNotHoldThePaymentsCounter(t *t
 			}
 			if applied != 100 {
 				t.Fatalf("the apply landed its 100 cents on the unrelated invoice, found %d", applied)
+			}
+		})
+	}
+}
+
+// loposRingBody builds one CASH sale body for the ring legs (loposRingSale fatals from inside its
+// own call, so a goroutine that must not touch t after the request is built posts this instead).
+func loposRingBody(t *testing.T, w wiringCounter, customerID string) map[string]any {
+	t.Helper()
+	return map[string]any{
+		"idempotency_key": uuidKey(t),
+		"branch_id":       w.branchID,
+		"till_session_id": w.sessionID,
+		"sale_type":       "COLLECT_NOW",
+		"customer_id":     customerID,
+		"tender":          "CASH",
+		"lines":           []map[string]any{{"product_id": w.productID, "qty_entered": 2.0, "uom_entered": w.uom, "cost_cents": 0}},
+	}
+}
+
+// TestIntegration_LockOrder_APreviewDoesNotWaitOnThePaymentsCounter: the desk's PREVIEW of a
+// received payment draws no payments counter and no invoice row lock (the money desk review's
+// P3-4 and item 127): a preview writes nothing, so it needs no place in the writers' order, and a
+// debounced keystroke at the desk must never queue behind a till payment. The leg parks a REAL
+// till tender (a CASH ring through the registered sale route) inside its payments counter
+// statement, the one counter row every payments writer serialises on, and requires a preview on
+// ANOTHER account's invoice to answer while the tender is still parked, the same parked-session
+// witness the paid-sale return leg uses instead of a timing guess. On the old shape the preview
+// took the counter itself and answered only after the tender's whole park had ended. The leg seeds
+// the payments counter row first: the park rides an AFTER UPDATE trigger on scope_sequences, and
+// no migration plants the row, so on a freshly migrated database the tender's first counter
+// statement would take its INSERT arm and never park (the delta 3 review's P3-1).
+func TestIntegration_LockOrder_APreviewDoesNotWaitOnThePaymentsCounter(t *testing.T) {
+	loposSeedPaymentsCounter(t)
+	for _, size := range []int32{4, 16} {
+		t.Run(fmt.Sprintf("pool %d", size), func(t *testing.T) {
+			pool, obs := loposPools(t, size)
+			key := wiringRailDB(t, pool, map[string]string{"api_key": "lockorder-pos-not-a-secret"})
+			w := plantWiringCounter(t, pool)
+			cust := loposCustomer(t, pool, w.branchID)
+			desk := loposCustomer(t, pool, w.branchID)
+			_, mux, sg := wireFold(t, pool, key, w.branchID)
+			deskInv := loposInvoice(t, pool, desk, w.branchID, 1_000_000)
+
+			loposArmCounterWindow(t, obs)
+			if _, err := obs.Exec(context.Background(), `INSERT INTO lopos_flag VALUES (2) ON CONFLICT DO NOTHING`); err != nil {
+				t.Fatalf("arm the tender's counter window: %v", err)
+			}
+			tenderDone := make(chan int, 1)
+			tenderBody := make(chan string, 1)
+			go func() {
+				rec := loposPost(t, mux, sg, "/api/v1/pos/sales", loposRingBody(t, w, cust))
+				tenderBody <- rec.Body.String()
+				tenderDone <- rec.Code
+			}()
+			loposWait(t, obs, "the till tender parked holding the payments counter row", 1, loposParkedInCounter())
+
+			previewErr := make(chan error, 1)
+			go func() {
+				_, err := payments.NewRepository(pool).ApplyReceived(context.Background(), payments.ApplyRequest{
+					CustomerID: desk, Method: "CHEQUE", Reference: "CHQ PREVIEW COUNTER",
+					IdempotencyKey: uuidKey(t), InvoiceIDs: []string{deskInv}, AmountCents: 100, Preview: true,
+				})
+				previewErr <- err
+			}()
+			perr := loposAnswer(t, "the preview beside the parked till tender", previewErr)
+			if perr != nil {
+				t.Fatalf("the preview: %v", perr)
+			}
+			// The witness: the preview answered while the tender was still parked in its counter
+			// window. A preview that drew the counter would have queued behind the whole park, and
+			// the parked session would already be gone when the preview answered.
+			var parked int
+			if err := obs.QueryRow(context.Background(),
+				`SELECT count(*) FROM pg_stat_activity
+				  WHERE datname = current_database() AND pid <> pg_backend_pid() AND `+loposParkedInCounter()).
+				Scan(&parked); err != nil {
+				t.Fatalf("observer: %v", err)
+			}
+			if parked != 1 {
+				t.Fatalf("the preview answered only after the parked till tender moved on (parked sessions now %d): a preview must not wait on the payments counter", parked)
+			}
+			var code int
+			select {
+			case code = <-tenderDone:
+			case <-time.After(60 * time.Second):
+				t.Fatal("the till tender never answered")
+			}
+			if code != http.StatusCreated && code != http.StatusOK {
+				t.Fatalf("the till tender itself answers, got %d %s", code, <-tenderBody)
+			}
+			// And the preview left nothing behind: no payment row for the desk's account.
+			var payRows int
+			if err := obs.QueryRow(context.Background(),
+				`SELECT count(*) FROM payments WHERE customer_id = $1::uuid`, desk).Scan(&payRows); err != nil {
+				t.Fatalf("count the desk's payments: %v", err)
+			}
+			if payRows != 0 {
+				t.Fatalf("the preview wrote no payment row, found %d", payRows)
 			}
 		})
 	}

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/jackc/pgx/v5"
 )
@@ -122,4 +123,24 @@ func (r *Repository) ReplayKeyedAcceptance(ctx context.Context, in acceptWrite) 
 		return AcceptanceResult{}, false, fmt.Errorf("lock quote for keyed replay: %w", err)
 	}
 	return r.findKeyedAcceptance(ctx, tx, in)
+}
+
+// keyedConversionOrderID reads the order id the conversion row of this quote under the key recorded
+// (convert_idempotency.go), or found=false. It must run under the quote row lock.
+func keyedConversionOrderID(ctx context.Context, tx rowQuerier, quoteID, key string) (string, bool, error) {
+	var orderID string
+	err := tx.QueryRow(ctx, `
+		SELECT al.changes->>'source_order_id'
+		  FROM audit_log al
+		 WHERE al.entity_type = 'quote' AND al.entity_id = $1::uuid AND al.action = $2
+		   AND al.changes->>'client_id' = $3 AND al.changes->>'source_order_id' IS NOT NULL
+		 ORDER BY al.seq
+		 LIMIT 1`, quoteID, audit.ActQuoteChanged, key).Scan(&orderID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("look up conversion by idempotency key: %w", err)
+	}
+	return orderID, true, nil
 }

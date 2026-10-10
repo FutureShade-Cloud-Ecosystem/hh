@@ -70,13 +70,16 @@ type Account struct {
 	Role string
 }
 
-// accounts is the closed table. The platform user ids, the emails and
-// the display names are the populate's rows, reconciled against the
-// populate's pushed branch: the mint's token sub and the membership
-// source's answers must name the users rows the populate creates. The
-// agreement is by copy today (the populate holds its own copies of these
-// values); it becomes by construction when the populate imports this
-// table, a named stitch for the demo image's lane.
+// accounts is the closed table. The Counter Till pair's platform user
+// ids, emails and display names are the populate's rows, reconciled
+// against the populate's pushed branch: the mint's token sub and the
+// membership source's answers must name the users rows the populate
+// creates. The persona rows name the logins migration 0200 plants: the
+// same ids the demoseed resolves by those emails, and the display names
+// the populate's renames leave on them. The agreement is by copy today
+// (the populate holds its own copies of these values); it becomes by
+// construction when the populate imports this table, a named stitch for
+// the demo image's lane.
 var accounts = map[string]Account{
 	"sales": {
 		Flow:           "sales",
@@ -93,6 +96,22 @@ var accounts = map[string]Account{
 		DisplayName:    "Sales manager (demo)",
 		Label:          "Sales manager",
 		Role:           "sales_manager",
+	},
+	"yard-team": {
+		Flow:           "yard-team",
+		PlatformUserID: "d0200000-0000-4000-9000-000000000002",
+		Email:          "yard.demo@dibbits.example",
+		DisplayName:    "Yard persona (demo)",
+		Label:          "Yard Team",
+		Role:           "yard_team",
+	},
+	"driver": {
+		Flow:           "driver",
+		PlatformUserID: "d0200000-0000-4000-9000-000000000003",
+		Email:          "driver.demo@dibbits.example",
+		DisplayName:    "Driver persona (demo)",
+		Label:          "Driver",
+		Role:           "driver",
 	},
 	// Payables and Receivables, the roles roadmap's first receivables
 	// increment, PR 300. The id block is the lane's own, so the role
@@ -135,11 +154,13 @@ func Get(flow string) (Account, bool) {
 }
 
 // All returns every account in the table, ordered by flow name so the
-// entry page and the populate see one stable order.
+// entry pages and the populate see one stable order.
 func All() []Account {
 	return []Account{
 		accounts["sales"],
 		accounts["sales-manager"],
+		accounts["yard-team"],
+		accounts["driver"],
 		accounts["payables-receivables"],
 		accounts["procurement-manager"],
 		accounts["financial-controller"],

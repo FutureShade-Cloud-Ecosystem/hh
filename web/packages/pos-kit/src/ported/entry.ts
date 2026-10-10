@@ -1,9 +1,10 @@
 // The entry view: the tap-a-role chooser, staged to the till's own polish
 // (the train review's P3-5): a centered column with a headline and a one-line
-// intro, one card per flow the demo routes list (the real table holds Sales
-// and Sales manager) wearing the ported token sheet's surfaces and borders,
+// intro, one card per flow the app hands the view (the till hands its own
+// pair of the box's flow table, which mints more logins than any one app
+// offers cards for) wearing the ported token sheet's surfaces and borders,
 // an icon from the ported icon registry and one line of what the role opens,
-// then the other eleven roles of the decided matrix as coming: shown in a
+// then the other ten roles of the decided matrix as coming: shown in a
 // ruled card, labelled Coming, and not tappable, because their screens do not
 // exist in this release. When the flows route answers nothing (a default-build
 // core or a non-demo box), there are no cards at all and the page says so
@@ -32,7 +33,6 @@ export const COMING_ROLES: readonly string[] = [
   "Logistics Manager",
   "Driver",
   "Branch Manager",
-  "Procurement Manager",
   "Payables and Receivables",
   "Financial Controller",
   "General Manager",
@@ -63,12 +63,14 @@ const FLOW_ICONS: Record<string, string> = {
   sales: "lucide:receipt",
   "sales-manager": "lucide:badge-check",
   "payables-receivables": "lucide:landmark",
+  "procurement-manager": "lucide:package",
   "financial-controller": "lucide:landmark",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
   "sales-manager": "The counter plus approvals and margins.",
   "payables-receivables": "Chase overdue accounts and work the bounced payments.",
+  "procurement-manager": "Buy the branch's stock.",
   "financial-controller": "Decide approvals and keep the ledger.",
 };
 

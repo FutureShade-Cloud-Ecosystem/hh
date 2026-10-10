@@ -49,7 +49,9 @@ const DEFAULT_SUB = 'a Hardscape House product';
 const styles = css`
   header {
     display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    /* The left cell takes the room its brand and the Demo pill need on one row (a longer role word in the middle
+       must not push the pill under the logo); where the screen is too narrow for that, the pill wraps as before. */
+    grid-template-columns: minmax(max-content, 1fr) auto minmax(0, 1fr);
     align-items: center;
     gap: var(--hh-s-12);
     box-sizing: border-box;
@@ -63,11 +65,12 @@ const styles = css`
     align-items: center;
     gap: var(--hh-s-12);
   }
-  /* The brand lockup, the ERP shell's own: the HH mark at the left, the
-     product name with the house line under it. Gold is a fill, never an ink,
-     so the mark's "HH" is the near-black ink the gold fill carries; the
-     accent word takes the gold-as-ink token, which is dark gold in the light
-     theme. */
+  /* The brand lockup, the front door's own: the Hardscape House badge at
+     the left, the product name with the house line under it. The badge is
+     the yellow square ground (the badge yellow IS --hh-accent), square
+     cornered as the source colourways are, carrying mark.svg's measured H
+     inlined in the ink a gold fill carries (--hh-accent-ink, through
+     currentColor), in both themes (decision log rows 953 and 968). */
   .brand {
     display: flex;
     align-items: center;
@@ -78,14 +81,13 @@ const styles = css`
     width: 30px;
     height: 30px;
     flex: none;
-    display: grid;
-    place-items: center;
-    border-radius: var(--hh-radius-control);
     background: var(--hh-accent);
     color: var(--hh-accent-ink);
-    font-size: var(--hh-s-12);
-    font-weight: 800;
-    letter-spacing: -0.02em;
+  }
+  .brand-mark svg {
+    width: 100%;
+    height: 100%;
+    display: block;
   }
   .brand-names {
     display: flex;
@@ -139,6 +141,11 @@ const styles = css`
     align-items: center;
     gap: var(--hh-s-8);
   }
+  @media (max-width: 1280px) {
+    header {
+      grid-template-columns: 1fr auto 1fr;
+    }
+  }
   @media (max-width: 480px) {
     header {
       grid-template-columns: 1fr;
@@ -155,8 +162,11 @@ const styles = css`
     .who {
       justify-self: center;
     }
+    /* The phone's narrowest screens: the cluster wraps onto a second row rather than reaching past the edge. */
     .controls {
       justify-self: center;
+      flex-wrap: wrap;
+      justify-content: center;
     }
   }
   /* The compact layout is opt in (the compact attribute) and narrow only: an
@@ -347,7 +357,14 @@ export class HosAppHeader extends HHElement {
       <header>
         <div class="demo-banner-cell">
           <div class="brand" role="img" aria-label=${`HH ${product}, ${sub}`}>
-            <span class="brand-mark" aria-hidden="true">HH</span>
+            <span class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 3000 3000">
+                <path
+                  fill="currentColor"
+                  d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"
+                />
+              </svg>
+            </span>
             <span class="brand-names">
               <span class="brand-product">HH <span class="accent">${product}</span></span>
               <span class="brand-sub">${sub}</span>

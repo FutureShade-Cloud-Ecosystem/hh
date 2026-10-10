@@ -49,47 +49,74 @@ func reasonSentence(code, note string) string {
 
 // standingSentence says what the order's money now means: nothing, an invoice that needs bringing
 // down, or money owed back or due on an order that has been paid. depositOnly keeps the sentence to
-// the skid deposit, whose owed and due figures are carried on the facts.
-func standingSentence(f YardOrderFacts, deposit bool) string {
+// the skid deposit, whose owed and due figures are carried on the facts. figures false leaves the
+// figures out and keeps the words ("owed back on the invoice", "needs to come down"), the body a
+// channel whose readers are not all on the cost and margin list may carry: a figure never reaches
+// an off list role in words either (ruling 91).
+func standingSentence(f YardOrderFacts, deposit, figures bool) string {
 	switch {
 	case f.PaidCents > 0 && f.OwedBackCents > 0:
+		if !figures {
+			return fmt.Sprintf(" The order is already paid: money was taken on invoice %s, and some is now owed back to the customer.", f.InvoiceNo)
+		}
 		return fmt.Sprintf(" The order is already paid: %s was taken on invoice %s, and %s is now owed back to the customer.",
 			dollars(f.PaidCents), f.InvoiceNo, dollars(f.OwedBackCents))
 	case f.PaidCents > 0 && f.DueCents > 0:
+		if !figures {
+			return fmt.Sprintf(" The order is already paid: money was taken on invoice %s, and some is now due from the customer.", f.InvoiceNo)
+		}
 		return fmt.Sprintf(" The order is already paid: %s was taken on invoice %s, and %s is now due from the customer.",
 			dollars(f.PaidCents), f.InvoiceNo, dollars(f.DueCents))
 	case f.PaidCents > 0:
+		if !figures {
+			return fmt.Sprintf(" The order is already paid: money was taken on invoice %s, and nothing further is owed either way.", f.InvoiceNo)
+		}
 		return fmt.Sprintf(" The order is already paid: %s was taken on invoice %s, and nothing further is owed either way.",
 			dollars(f.PaidCents), f.InvoiceNo)
 	case f.InvoiceNo != "" && !deposit && f.InvoicedCents != f.TotalAfterCents:
+		if !figures {
+			return fmt.Sprintf(" Invoice %s no longer matches the order total and needs to come down.", f.InvoiceNo)
+		}
 		return fmt.Sprintf(" Invoice %s was raised for %s and now needs to come down to %s.",
 			f.InvoiceNo, dollars(f.InvoicedCents), dollars(f.TotalAfterCents))
 	}
 	return ""
 }
 
-// shortPickMessage is the body for one changed or still-short line.
-func shortPickMessage(f YardOrderFacts, e YardLineEffect) string {
+// shortPickMessage is the body for one changed or still-short line. figures false leaves the
+// order's figures out and keeps the words, the body a channel whose readers are not all on the
+// cost and margin list may carry.
+func shortPickMessage(f YardOrderFacts, e YardLineEffect, figures bool) string {
 	head := fmt.Sprintf("order %s, line %d (%s)", f.OrderNo, e.LineNo, e.Description)
 	if backordered, _ := strconv.ParseFloat(e.QtyBackordered, 64); backordered <= 0 {
-		return fmt.Sprintf("Pick restored on %s: now picked in full, %s %s of %s %s ordered. The order total is %s.%s",
-			head, e.QtyPicked, e.UOM, e.QtyOrdered, e.UOM, dollars(f.TotalAfterCents), standingSentence(f, false))
+		total := fmt.Sprintf("The order total is %s.", dollars(f.TotalAfterCents))
+		if !figures {
+			total = "The order total changed."
+		}
+		return fmt.Sprintf("Pick restored on %s: now picked in full, %s %s of %s %s ordered. %s%s",
+			head, e.QtyPicked, e.UOM, e.QtyOrdered, e.UOM, total, standingSentence(f, false, figures))
 	}
 	was := ""
-	if f.TotalBeforeCents != f.TotalAfterCents {
+	if f.TotalBeforeCents != f.TotalAfterCents && figures {
 		was = fmt.Sprintf(" (was %s)", dollars(f.TotalBeforeCents))
 	}
 	reason := ""
 	if e.Reason != "" {
 		reason = " " + reasonSentence(e.Reason, e.Note)
 	}
-	return fmt.Sprintf("Short pick on %s: ordered %s %s, picked %s %s, %s %s on backorder.%s The order total is now %s%s.%s",
+	total := fmt.Sprintf("The order total is now %s", dollars(f.TotalAfterCents))
+	if !figures {
+		total = "The order total changed"
+	}
+	return fmt.Sprintf("Short pick on %s: ordered %s %s, picked %s %s, %s %s on backorder.%s %s%s.%s",
 		head, e.QtyOrdered, e.UOM, e.QtyPicked, e.UOM, e.QtyBackordered, e.UOM,
-		reason, dollars(f.TotalAfterCents), was, standingSentence(f, false))
+		reason, total, was, standingSentence(f, false, figures))
 }
 
-// skidMessage is the body for a changed skid count.
-func skidMessage(in YardSkidChange, r YardSkidResult) string {
+// skidMessage is the body for a changed skid count. figures false leaves the deposit and invoice
+// figures out and keeps the words (the count, "the skid deposit changed", "owed back on the
+// invoice"), the body a channel whose readers are not all on the cost and margin list may carry.
+func skidMessage(in YardSkidChange, r YardSkidResult, figures bool) string {
 	f := r.Order
 	var what string
 	if r.CountBefore == nil {
@@ -99,28 +126,36 @@ func skidMessage(in YardSkidChange, r YardSkidResult) string {
 	}
 	s := what + " " + reasonSentence(in.Reason, in.Note)
 	if r.DepositBeforeCents > 0 || r.DepositAfterCents > 0 {
-		s += fmt.Sprintf(" The skid deposit is now %s (was %s).", dollars(r.DepositAfterCents), dollars(r.DepositBeforeCents))
+		if figures {
+			s += fmt.Sprintf(" The skid deposit is now %s (was %s).", dollars(r.DepositAfterCents), dollars(r.DepositBeforeCents))
+		} else {
+			s += " The skid deposit changed."
+		}
 	}
-	return s + standingSentence(f, true)
+	return s + standingSentence(f, true, figures)
 }
 
-// notifyOrderRep posts one notice addressed to the order's rep. Best effort by the module's
-// doctrine: a messaging blip is logged and never fails a yard write.
-func (s *Service) notifyOrderRep(ctx context.Context, t Task, f YardOrderFacts, key, topic, summary string) bool {
+// notifyOrderRep posts one notice addressed to the order's rep, in two bodies: the summary with
+// its figures, for the rep's own copy and any channel whose readers are all on the cost and
+// margin list, and the same words with the figures left out, for every other channel the routing
+// may reach (ruling 91: a figure never reaches an off list role, in words either). Best effort by
+// the module's doctrine: a messaging blip is logged and never fails a yard write.
+func (s *Service) notifyOrderRep(ctx context.Context, t Task, f YardOrderFacts, key, topic, summary, summaryNoFigures string) bool {
 	if s.notifier == nil {
 		return false
 	}
 	ref := TaskEventRef{
-		EventKey:   key,
-		BranchID:   firstNonEmpty(f.BranchID, t.BranchID),
-		Topic:      topic,
-		Entity:     "order:" + t.OrderID,
-		DeepLink:   "/app/orders/" + t.OrderID,
-		Summary:    summary,
-		Audience:   AudienceOrderRep,
-		OrderID:    t.OrderID,
-		CustomerID: f.CustomerID,
-		RepUserID:  f.SalespersonID,
+		EventKey:         key,
+		BranchID:         firstNonEmpty(f.BranchID, t.BranchID),
+		Topic:            topic,
+		Entity:           "order:" + t.OrderID,
+		DeepLink:         "/app/orders/" + t.OrderID,
+		Summary:          summary,
+		SummaryNoFigures: summaryNoFigures,
+		Audience:         AudienceOrderRep,
+		OrderID:          t.OrderID,
+		CustomerID:       f.CustomerID,
+		RepUserID:        f.SalespersonID,
 	}
 	if err := s.notifier.PostTaskEvent(ctx, ref); err != nil {
 		if s.log != nil {
@@ -149,6 +184,7 @@ func (s *Service) noticeShortPicks(ctx context.Context, taskID string, lines []P
 			continue
 		}
 		key := fmt.Sprintf("yard.short:%s:%d:%d", t.OrderID, e.LineNo, e.Revision)
-		s.notifyOrderRep(ctx, t, res.Order, key, "yard.short_pick", shortPickMessage(res.Order, e))
+		s.notifyOrderRep(ctx, t, res.Order, key, "yard.short_pick",
+			shortPickMessage(res.Order, e, true), shortPickMessage(res.Order, e, false))
 	}
 }

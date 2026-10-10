@@ -331,6 +331,60 @@ func branchInReach(reach []string, branchID string) bool {
 	return false
 }
 
+// readApplyInvoices is the PREVIEW's read: every named invoice of a received payment in ONE
+// statement, with the account and the branch reach folded into the WHERE exactly as the apply's
+// locking statement folds them (so a fenced caller is answered, and never delayed, the same not
+// found, no existence leak across the account or branch walls), and with no lock clause at all:
+// a preview writes nothing, so it draws neither the payments counter nor an invoice row, and a
+// desk's debounced keystroke never queues a till payment (item 127). One statement is one
+// snapshot, so the balances the split is computed against are consistent with each other without
+// a single row lock. The judgements run in the same ascending id order the apply locks in, over
+// the rows the statement returned, so the refusal a preview surfaces is the refusal the apply
+// would surface.
+func (r *Repository) readApplyInvoices(ctx context.Context, in ApplyRequest) ([]applyInvoiceRow, error) {
+	ids := append([]string(nil), in.InvoiceIDs...)
+	sort.Strings(ids)
+	var reach []string
+	if in.BranchIDs != nil {
+		reach = in.BranchIDs
+	}
+	found := make(map[string]applyInvoiceRow, len(ids))
+	rows, err := r.pool.Query(ctx, `
+		SELECT id::text, invoice_no, customer_id::text, branch_id::text, status::text,
+		       issue_date, due_date, balance_cents, holdback_cents
+		  FROM invoices
+		 WHERE id = ANY($1::uuid[]) AND customer_id = $2::uuid
+		   AND ($3::text[] IS NULL OR branch_id = ANY($3::uuid[]))`, ids, in.CustomerID, reach)
+	if err != nil {
+		return nil, fmt.Errorf("apply preview: read invoices: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var row applyInvoiceRow
+		if err := rows.Scan(&row.InvoiceID, &row.InvoiceNo, &row.CustomerID, &row.BranchID, &row.Status,
+			&row.IssueDate, &row.DueDate, &row.BalanceCents, &row.HoldbackCents); err != nil {
+			return nil, fmt.Errorf("apply preview: scan invoice: %w", err)
+		}
+		found[row.InvoiceID] = row
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("apply preview: read invoices: %w", err)
+	}
+	ordered := make([]applyInvoiceRow, 0, len(ids))
+	for _, id := range ids {
+		row, ok := found[id]
+		if !ok {
+			return nil, NoSuchInvoiceError{InvoiceID: id}
+		}
+		if row.Status != "FINALIZED" && row.Status != "PARTIALLY_PAID" {
+			return nil, httpx.BadRequestf("invoice %s (%s) is not open; a payment applies to a finalized or partially paid invoice",
+				row.InvoiceNo, strings.ToLower(row.Status))
+		}
+		ordered = append(ordered, row)
+	}
+	return ordered, nil
+}
+
 // replayAnswer rebuilds the split answer for a key that already posted: the stored payment with
 // its stored allocations, and each invoice's balance read live so the desk sees what the ledger
 // says now, not what it said when the cheque first landed. The balances are the invoice's current
