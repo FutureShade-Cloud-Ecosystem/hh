@@ -580,7 +580,7 @@ func (h *Handler) cancelTransfer(w http.ResponseWriter, r *http.Request, _ guard
 // - DIB-72 replenishment -
 
 func (h *Handler) shortfall(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
-	wl, err := h.svc.ShortfallWorklist(r.Context(), r.URL.Query().Get("branch_id"), intParam(r, "limit", 0))
+	wl, err := h.svc.ShortfallWorklist(r.Context(), reachFromRequest(r), r.URL.Query().Get("branch_id"), intParam(r, "limit", 0))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -594,9 +594,18 @@ func (h *Handler) shortfall(w http.ResponseWriter, r *http.Request, _ guards.Sta
 	// on_order_degraded is ALWAYS present rather than omitted when false: a flag that appears only in
 	// the broken case is one a client forgets to read. It is false on every wired deployment, so the
 	// surface renders nothing for it, see DIB-470.
+	//
+	// The page is the contract's InventoryShortfallPage: the list under `items` (an array, never
+	// null: nothing short is an ordinary answer), the cursor key present and null (the worklist is
+	// one bounded page), the same envelope every list carries.
+	rows := wl.Rows
+	if rows == nil {
+		rows = []ShortfallRow{}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"shortfall":         wl.Rows,
+		"items":             rows,
 		"on_order_degraded": wl.OnOrderDegraded,
+		"next_cursor":       nil,
 	})
 }
 
@@ -648,7 +657,7 @@ func (h *Handler) createPOFromShortfall(w http.ResponseWriter, r *http.Request, 
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	draft, poID, poNo, err := h.svc.CreatePOFromShortfall(r.Context(), req.BranchID, req.ProductIDs)
+	draft, poID, poNo, err := h.svc.CreatePOFromShortfall(r.Context(), reachFromRequest(r), req.BranchID, req.ProductIDs)
 	if err != nil {
 		// The draft rides along even on the 503 the stub returns, so the surface can show the buyer
 		// exactly what would have been ordered instead of an empty error toast.

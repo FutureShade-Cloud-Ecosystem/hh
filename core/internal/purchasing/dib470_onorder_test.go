@@ -18,6 +18,12 @@ type fakeOnOrderStore struct {
 	rows        []OutstandingOnOrder
 	gotBranch   string
 	gotProducts []string
+	drafts      []OpenDraft
+}
+
+func (f *fakeOnOrderStore) OpenDraftsFor(_ context.Context, branchID string, productIDs []string) ([]OpenDraft, error) {
+	f.gotBranch, f.gotProducts = branchID, productIDs
+	return f.drafts, nil
 }
 
 func (f *fakeOnOrderStore) OutstandingOnOrderBase(_ context.Context, branchID string, productIDs []string) ([]OutstandingOnOrder, error) {
@@ -57,24 +63,34 @@ func TestDIB470_TheAggregateAndTheIncomingListAreTheSameREAD(t *testing.T) {
 	}
 }
 
-// TestDIB470_DraftCountsAsStillComing, the status set is the shipped DIB-460 one, and DRAFT is in
-// it. The worklist's job is to not suggest ordering something twice, and the buyer who drafted the
-// PO this morning is the person it would otherwise tell to order it again this afternoon.
-func TestDIB470_DraftCountsAsStillComing(t *testing.T) {
-	want := map[string]bool{StatusDraft: true, StatusOrdered: true, StatusPartial: true}
-	if len(openPOStatuses) != len(want) {
-		t.Fatalf("the open-status set is %v", openPOStatuses)
+// TestDIB470_OnlyAPlacedOrderIsOnOrder, the status set the aggregate counts is ORDERED and PARTIAL,
+// written out longhand. A draft never covers a shortfall (the principal's ruling, row 1303): it is
+// not a promise to the vendor, so the worklist must keep listing a row a draft was started for. The
+// incoming LIST keeps its own set, DRAFT included, and the two are different sets on purpose.
+func TestDIB470_OnlyAPlacedOrderIsOnOrder(t *testing.T) {
+	want := map[string]bool{StatusOrdered: true, StatusPartial: true}
+	if len(onOrderStatuses) != len(want) {
+		t.Fatalf("the on-order set is %v, want exactly ORDERED and PARTIAL", onOrderStatuses)
 	}
-	for _, s := range openPOStatuses {
+	for _, s := range onOrderStatuses {
 		if !want[s] {
-			t.Errorf("%s counts as still coming, a finished or abandoned order is not supply", s)
+			t.Errorf("%s counts as on order, only a placed order is supply", s)
 		}
 	}
-	for _, done := range []string{StatusReceived, StatusClosed, StatusCancelled} {
-		for _, s := range openPOStatuses {
-			if s == done {
-				t.Errorf("%s is counted as still coming", done)
+	for _, not := range []string{StatusDraft, StatusReceived, StatusClosed, StatusCancelled} {
+		for _, s := range onOrderStatuses {
+			if s == not {
+				t.Errorf("%s is counted as on order", not)
 			}
+		}
+	}
+	if !strings.Contains(outstandingOnOrderSQL, "$2::text[]") {
+		t.Error("the aggregate no longer takes its status set as a parameter")
+	}
+	// The draft pointer is built from the same fragments, so "outstanding" means one thing.
+	for _, frag := range []string{openPOLineSource, openPOLineIsOpen} {
+		if !strings.Contains(openDraftsSQL, frag) {
+			t.Errorf("the draft pointer no longer shares the open-line fragment %q", frag)
 		}
 	}
 }

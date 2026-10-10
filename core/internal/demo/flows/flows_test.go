@@ -4,23 +4,26 @@ package flows
 
 import "testing"
 
-// The table is closed: the two Counter Till flows, Payables and
-// Receivables, and the Financial Controller, no more, and every entry
-// carries the account facts the other lanes share.
+// The table is closed: the two Counter Till flows and the three roles
+// the roadmap added one reviewed row at a time (Payables and Receivables
+// after PR 300, the Procurement Manager after PR 303, the Financial
+// Controller), no more, and every entry carries the account facts the
+// other lanes share.
 func TestTableIsTheClosedSet(t *testing.T) {
 	all := All()
-	if len(all) != 4 {
-		t.Fatalf("table holds %d flows, want the closed four", len(all))
+	if len(all) != 5 {
+		t.Fatalf("table holds %d flows, want the closed five", len(all))
 	}
-	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" || all[2].Flow != "payables-receivables" || all[3].Flow != "financial-controller" {
-		t.Fatalf("flow order drifted: %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow)
+	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" || all[2].Flow != "payables-receivables" || all[3].Flow != "procurement-manager" || all[4].Flow != "financial-controller" {
+		t.Fatalf("flow order drifted: %q, %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow, all[4].Flow)
 	}
+	known := map[string]bool{"inside_sales": true, "sales_manager": true, "payables_receivables": true, "procurement_manager": true, "financial_controller": true}
 	for _, a := range all {
 		if a.PlatformUserID == "" || a.Email == "" || a.DisplayName == "" || a.Label == "" || a.Role == "" {
 			t.Fatalf("flow %q carries an empty fact: %+v", a.Flow, a)
 		}
-		if a.Role != "inside_sales" && a.Role != "sales_manager" && a.Role != "payables_receivables" && a.Role != "financial_controller" {
-			t.Fatalf("flow %q holds role %q, want a role the table mints", a.Flow, a.Role)
+		if !known[a.Role] {
+			t.Fatalf("flow %q holds role %q, want a staff role the table lists", a.Flow, a.Role)
 		}
 	}
 }
@@ -44,6 +47,10 @@ func TestLookups(t *testing.T) {
 	a, ok = Get("payables-receivables")
 	if !ok || a.Role != "payables_receivables" || a.Label != "Payables and Receivables" {
 		t.Fatalf("Get(payables-receivables) = %+v %v", a, ok)
+	}
+	a, ok = Get("procurement-manager")
+	if !ok || a.Role != "procurement_manager" || a.Label != "Procurement manager" {
+		t.Fatalf("Get(procurement-manager) = %+v %v", a, ok)
 	}
 	a, ok = Get("financial-controller")
 	if !ok || a.Role != "financial_controller" || a.Label != "Financial Controller" {

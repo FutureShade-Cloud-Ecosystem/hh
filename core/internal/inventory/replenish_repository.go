@@ -52,7 +52,7 @@ const inboundTransferQty = `
 // onOrder is the DIB-470 seam's answer, outstanding purchase-order base quantity per (product,
 // branch). A nil slice is a legitimate call and means "nothing on order, or nobody could say"; the
 // service is what knows which of those two it was, and what tells the surface.
-func (r *Repository) ShortfallWorklist(ctx context.Context, branchID string, limit int, onOrder []OnOrderQty) ([]ShortfallRow, error) {
+func (r *Repository) ShortfallWorklist(ctx context.Context, branchID string, reach BranchReach, limit int, onOrder []OnOrderQty) ([]ShortfallRow, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
@@ -76,6 +76,7 @@ func (r *Repository) ShortfallWorklist(ctx context.Context, branchID string, lim
 		    LEFT JOIN LATERAL (`+inboundTransferQty+`) tr ON TRUE
 		    LEFT JOIN LATERAL (`+seamOnOrderQty+`) po ON TRUE
 		   WHERE rp.is_active AND ($1 = '' OR rp.branch_id = $1::uuid)
+		     AND ($6::uuid[] IS NULL OR rp.branch_id = ANY($6::uuid[]))
 		), graded AS (
 		  SELECT lines.*,
 		         (on_hand - reserved) AS available,
@@ -92,12 +93,12 @@ func (r *Repository) ShortfallWorklist(ctx context.Context, branchID string, lim
 		  FROM graded g
 		  JOIN products  p ON p.id = g.product_id
 		  JOIN locations l ON l.id = g.branch_id
-		  LEFT JOIN vendors v ON v.id = g.preferred_vendor_id::uuid
+		  LEFT JOIN vendors v ON v.id = NULLIF(g.preferred_vendor_id, '')::uuid
 		  LEFT JOIN product_branch_costs pbc
 		         ON pbc.product_id = g.product_id AND pbc.branch_id = g.branch_id
 		 WHERE g.projected < g.reorder_point_base
 		 ORDER BY (g.reorder_point_base - g.projected) DESC, p.sku
-		 LIMIT $2`, branchID, limit, ooProduct, ooBranch, ooQty)
+		 LIMIT $2`, branchID, limit, ooProduct, ooBranch, ooQty, reach.branchFilter())
 	if err != nil {
 		return nil, err
 	}

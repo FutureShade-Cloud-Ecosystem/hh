@@ -45,10 +45,11 @@ var tablesTheSeedWrites = []string{
 	"permission_approval_requests", "pos_parked_tickets",
 	"pos_sale", "pos_signature", "pricing_list_prices", "pricing_rules", "product_branch_costs",
 	"product_images",
-	"product_reorder_points", "product_uoms", "products", "quantity_break_headers",
+	"product_reorder_points", "product_uoms", "products", "purchasing_po_lines",
+	"purchasing_pos", "quantity_break_headers",
 	"quantity_break_items", "quote_lines", "stock_balances", "stock_moves", "task_events",
 	"task_shortages",
-	"tasks", "will_call_pickups",
+	"tasks", "vendors", "will_call_pickups",
 }
 
 // dayKeyedTables is the subset of the census that §15 adds to on each NEW calendar day. Every other
