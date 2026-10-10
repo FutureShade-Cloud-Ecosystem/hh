@@ -463,3 +463,18 @@ test("on a phone every worklist figure is on screen, none hidden behind a sidewa
   const box = await row.locator("[data-field-short]").boundingBox();
   expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
 });
+
+test("on a phone the incoming row keeps the PO, the vendor and the expected date, and hides how it is coming and the line count", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openHome(page, request);
+  const row = page.locator("[data-incoming-row]", { hasText: "PO-TRT-141" });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("Techo Bloc (demo)");
+  await expect(row.locator("[data-expected]")).toBeVisible();
+  // The two wide screen columns are hidden on a phone, and the testers' page says so.
+  await expect(row.locator("td.opt2")).toHaveCount(2);
+  await expect(row.locator("td.opt2").first()).toBeHidden();
+  await expect(row.locator("td.opt2").nth(1)).toBeHidden();
+  const sideways = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(await sideways()).toBeLessThanOrEqual(0);
+});
