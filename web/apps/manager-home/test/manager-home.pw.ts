@@ -192,6 +192,15 @@ test("the way in speaks for this app, never for the till", async ({ page }) => {
   await expect(page.getByText("Who is at the counter?")).toHaveCount(0);
 });
 
+test("a failed mint says so in plain words, never the server's raw word", async ({ request, page }) => {
+  await useScenario(request, "mint-refused");
+  await page.goto("/");
+  await page.locator("[data-flow='yard-manager']").click();
+  const notice = page.locator(".notice-line[role='status']");
+  await expect(notice).toHaveText("Demo sign-in refused. Try again in a moment.");
+  await expect(notice).not.toContainText("internal");
+});
+
 test("the landing never scrolls sideways at 390 px", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.addInitScript(managerHandoff);

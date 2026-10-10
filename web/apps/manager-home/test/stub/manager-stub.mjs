@@ -456,6 +456,8 @@ async function handle(req, res) {
       const { flow } = JSON.parse(body.toString("utf8"));
       const account = USERS[flow];
       if (!account) return notFound(res);
+      // A mint the server fails with its one word body, the way a core answers an internal error.
+      if (scenario === "mint-refused") return refuse(res, 500, "internal");
       return json(res, { token: mintToken(account.user_id), user: account, flow });
     } catch {
       return refuse(res, 400, "bad request");
