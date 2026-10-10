@@ -111,8 +111,18 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithAudit(auditSvc)
 	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
 	productSvc.WithStock(productStockReader{svc: inventorySvc}).WithBranchStock(inventorySvc).WithListPrices(pricingSvc)
-	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterRoutes(r, g)
-	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterStockTruthRoutes(r, g)
+	// X3, the yard fence: the stock reads' cost legs (on hand, branch
+	// stock, browse, the replenishment worklist) ride only for a caller
+	// on the configuration's cost and margin list, the same rule the
+	// quote and till reads answer through. Both route bundles carry the
+	// rule, and the boot fail-fast keeps an unwired boot from handing
+	// the yard team every branch's costs.
+	inventoryHandler := inventory.NewHandler(inventorySvc, log).WithUserLinker(link).WithCostRoles(roleCfg)
+	if !inventoryHandler.CostRolesWired() {
+		panic("inventory: cost roles not wired - the stock reads would answer the cost legs to every caller")
+	}
+	inventoryHandler.RegisterRoutes(r, g)
+	inventoryHandler.RegisterStockTruthRoutes(r, g)
 
 	// The order lifecycle: base service, audit seams, reorder seams (pricing
 	// and inventory are in-batch), actor names. The customer-tier seam
@@ -234,6 +244,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		pricingSvc:      pricingSvc,
 		quoteStaffSvc:   quoteStaffSvc,
 		quoteAutomation: quoteAutomation,
+		roleCfg:         roleCfg,
 	}
 }
 
@@ -257,6 +268,10 @@ type moneySpine struct {
 	pricingSvc      *pricing.Service
 	quoteStaffSvc   *quote.StaffService
 	quoteAutomation *quote.AutomationService
+	// roleCfg rides the spine for the operations wiring's role-gated
+	// reads (the counts' X3 cost gate), the same configuration the
+	// money-side reads already gate through here.
+	roleCfg *roleconfig.Config
 }
 
 // jeApprovalFilerAdapter satisfies gl.ApprovalFiler over the approvals
