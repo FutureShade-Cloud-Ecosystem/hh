@@ -28,12 +28,16 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
@@ -45,6 +49,80 @@ import (
 // literal is repeated here on purpose: if the populate ever moves it, the driver's day stops
 // resolving and this proof goes red, which is the point.
 const driverPersonaUserID = "d0200000-0000-4000-9000-000000000003"
+
+// driveWorld is the booted demo world plus the Driver persona's client on the real served
+// surface. Both proofs in this file boot it the same way a demo box does.
+type driveWorld struct {
+	pool   *pgxpool.Pool
+	driver *tillClient
+}
+
+// bootDriveWorld builds the world in the order a demo box builds it (the frozen migrations, the
+// first apply, the real demo populate, the second apply) and hands back the Driver persona's
+// client on the full registered surface.
+func bootDriveWorld(t *testing.T) *driveWorld {
+	t.Helper()
+	dsn := os.Getenv(tillDemoDBEnvVar)
+	if dsn == "" {
+		t.Skip(tillDemoDBEnvVar + " is not set: the demo world proof needs its own throwaway local Postgres")
+	}
+	requireLocalDSN(t, dsn)
+	ctx := context.Background()
+
+	rawKey := make([]byte, 32)
+	if _, err := rand.Read(rawKey); err != nil {
+		t.Fatalf("generate vault key: %v", err)
+	}
+	vaultKeyHex := hex.EncodeToString(rawKey)
+
+	pool, testDSN := qwFreshDB(t, ctx, dsn, "demoworld_driverrun")
+	t.Setenv("DATABASE_URL", testDSN)
+	t.Setenv("CORE_DATABASE_URL", testDSN)
+	t.Setenv("PAYMENT_VAULT_KEY", vaultKeyHex)
+	t.Setenv("APP_ENV", "dev")
+	if _, created := driveApplyAt(t, qwClock); created == 0 {
+		t.Fatal("the first apply created nothing on a fresh database")
+	}
+	now := qwClock
+	if _, err := demo.RunPopulate(ctx, demo.Options{Getenv: os.Getenv, Now: &now}); err != nil {
+		t.Fatalf("demo populate: %v", err)
+	}
+	if _, created := driveApplyAt(t, qwClock); created == 0 {
+		t.Fatal("the second apply created nothing, the world never landed")
+	}
+
+	// The real served surface, and the Driver persona's credential on it.
+	appwrite := newAppwriteFake(t)
+	appwrite.setTeam(driverPersonaUserID, "org:"+demoOrgSlug)
+	keys := testkit.NewKeys(t)
+	acceptKey := make([]byte, 32)
+	if _, err := rand.Read(acceptKey); err != nil {
+		t.Fatalf("generate acceptance key: %v", err)
+	}
+	env := &compEnv{
+		keys:   keys,
+		minter: &testkit.Minter{Keys: keys, Clock: testkit.NewClock()},
+		keySrv: testkit.NewKeyServer(t, keys), appwrite: appwrite, dsn: testDSN,
+	}
+	values := map[string]string{
+		"CORE_TOKEN_ISSUER":      testkit.KitIssuer,
+		"CORE_STAFF_AUDIENCE":    testkit.KitStaffAud,
+		"CORE_TENANT_AUDIENCE":   testkit.KitTenantAud,
+		"CORE_JWKS_URL":          env.keySrv.URL(),
+		"CORE_DATABASE_URL":      testDSN,
+		"CORE_APPWRITE_ENDPOINT": appwrite.server.URL,
+		"CORE_APPWRITE_PROJECT":  "fx-appwrite-project",
+		"CORE_APPWRITE_API_KEY":  "fx-appwrite-key-placeholder",
+		customerquote.EnvKeyID:   "fx-accept-sign-key",
+		customerquote.EnvKey:     hex.EncodeToString(acceptKey),
+	}
+	env.getenv = func(k string) string { return values[k] }
+	rec, _ := registeredSurface(t, env)
+	return &driveWorld{
+		pool:   pool,
+		driver: &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, driverPersonaUserID), who: "Driver"},
+	}
+}
 
 // driveApplyAt runs `demoseed -apply` the way the entrypoint does, at the caller's clock. The
 // quote world's qwApply pins the shared qwClock; the second day's deploy needs its own instant,
@@ -94,65 +172,9 @@ type driveStop struct {
 // TestDemoWorld_DriverRunOutForDelivery walks the Driver's delivery day, end to end, on the seed
 // day and again on the next day's deploy, through the core's real routes as the Driver persona.
 func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
-	dsn := os.Getenv(tillDemoDBEnvVar)
-	if dsn == "" {
-		t.Skip(tillDemoDBEnvVar + " is not set: the demo world proof needs its own throwaway local Postgres")
-	}
-	requireLocalDSN(t, dsn)
+	world := bootDriveWorld(t)
+	pool, driver := world.pool, world.driver
 	ctx := context.Background()
-
-	rawKey := make([]byte, 32)
-	if _, err := rand.Read(rawKey); err != nil {
-		t.Fatalf("generate vault key: %v", err)
-	}
-	vaultKeyHex := hex.EncodeToString(rawKey)
-
-	// The world, in the order a demo box builds it: migrate, first apply (no role logins yet), the
-	// real demo populate (the Driver persona's login, grant and driver link), second apply.
-	pool, testDSN := qwFreshDB(t, ctx, dsn, "demoworld_driverrun")
-	t.Setenv("DATABASE_URL", testDSN)
-	t.Setenv("CORE_DATABASE_URL", testDSN)
-	t.Setenv("PAYMENT_VAULT_KEY", vaultKeyHex)
-	t.Setenv("APP_ENV", "dev")
-	if _, created := driveApplyAt(t, qwClock); created == 0 {
-		t.Fatal("the first apply created nothing on a fresh database")
-	}
-	now := qwClock
-	if _, err := demo.RunPopulate(ctx, demo.Options{Getenv: os.Getenv, Now: &now}); err != nil {
-		t.Fatalf("demo populate: %v", err)
-	}
-	if _, created := driveApplyAt(t, qwClock); created == 0 {
-		t.Fatal("the second apply created nothing, the world never landed")
-	}
-
-	// The real served surface, and the Driver persona's credential on it.
-	appwrite := newAppwriteFake(t)
-	appwrite.setTeam(driverPersonaUserID, "org:"+demoOrgSlug)
-	keys := testkit.NewKeys(t)
-	acceptKey := make([]byte, 32)
-	if _, err := rand.Read(acceptKey); err != nil {
-		t.Fatalf("generate acceptance key: %v", err)
-	}
-	env := &compEnv{
-		keys:   keys,
-		minter: &testkit.Minter{Keys: keys, Clock: testkit.NewClock()},
-		keySrv: testkit.NewKeyServer(t, keys), appwrite: appwrite, dsn: testDSN,
-	}
-	values := map[string]string{
-		"CORE_TOKEN_ISSUER":      testkit.KitIssuer,
-		"CORE_STAFF_AUDIENCE":    testkit.KitStaffAud,
-		"CORE_TENANT_AUDIENCE":   testkit.KitTenantAud,
-		"CORE_JWKS_URL":          env.keySrv.URL(),
-		"CORE_DATABASE_URL":      testDSN,
-		"CORE_APPWRITE_ENDPOINT": appwrite.server.URL,
-		"CORE_APPWRITE_PROJECT":  "fx-appwrite-project",
-		"CORE_APPWRITE_API_KEY":  "fx-appwrite-key-placeholder",
-		customerquote.EnvKeyID:   "fx-accept-sign-key",
-		customerquote.EnvKey:     hex.EncodeToString(acceptKey),
-	}
-	env.getenv = func(k string) string { return values[k] }
-	rec, _ := registeredSurface(t, env)
-	driver := &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, driverPersonaUserID), who: "Driver"}
 
 	// The driver record the persona reaches, so the walk's refusals can name the linkage it
 	// depended on rather than leaving a reader to infer it.
@@ -253,4 +275,134 @@ func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
 		t.Fatal("the next day's apply created nothing, the Driver's run would go dark after the first day")
 	}
 	walkTheDay("the next day", nextDay)
+}
+
+// -- the money half (ruling 91) -------------------------------------------------------------------
+//
+// TestDemoWorld_DriverRunPayloadsCarryNoMoney proves the Driver's payloads on the seeded stops of
+// the dispatched run carry no money: no owed amount, no deposit pair, no door money. The keys are
+// the ones the core's own fence names: the dispatch cost gate's figure (amount_due_cents, the
+// byte-absent-not-zero shape cost_gate.go rules), and ruling 91's pair (deposit_cents and
+// previous_deposit_cents, the skid answer) with the held pick ticket's still_owed_cents beside
+// them. The sweep half of the ruling rides along: no key of ANY cents shape and no money word as a
+// key anywhere in the driver's own reads, and no figure formatted as money in any value, the same
+// list the drive run app's fence scans.
+func TestDemoWorld_DriverRunPayloadsCarryNoMoney(t *testing.T) {
+	world := bootDriveWorld(t)
+	driver := world.driver
+
+	// The dispatched run of the day, and its stops: the payloads under test. The precondition
+	// fails loudly on a world without the run, so the leg can never pass vacuously.
+	rsp := driver.call("GET", "/api/v1/dispatch/my-runs?date="+qwClock.In(houseday.Location()).Format("2006-01-02"), nil)
+	rsp.ok(t, http.StatusOK)
+	var list struct {
+		Items []driveRun `json:"items"`
+	}
+	rsp.decode(t, &list)
+	if len(list.Items) == 0 || list.Items[0].Status != "DISPATCHED" {
+		t.Fatalf("the Driver's day holds no dispatched run (%d runs, first %s), there is no seeded " +
+			"stop whose payload this leg could hold to the rule", len(list.Items), firstStatus(list.Items))
+	}
+	run := list.Items[0]
+	if len(run.Stops) == 0 {
+		t.Fatal("the dispatched run carries no stop, the leg would pass vacuously")
+	}
+
+	// Every read the Driver's day makes of the core, held to the fence: the day itself, each
+	// seeded stop's detail, the run's detail, and both payment hold reads (the per stop banner and
+	// the run's whole set), which are exactly where the cost gate's figure would arrive.
+	type payload struct {
+		label string
+		body  []byte
+	}
+	scans := []payload{{"my-runs", rsp.body}}
+	for _, stop := range run.Stops {
+		detail := driver.call("GET", "/api/v1/dispatch/stops/"+stop.ID, nil)
+		detail.ok(t, http.StatusOK)
+		scans = append(scans, payload{fmt.Sprintf("stop %d detail", stop.StopNo), detail.body})
+
+		hold := driver.call("GET", "/api/v1/dispatch/stops/"+stop.ID+"/payment-hold", nil)
+		hold.ok(t, http.StatusOK)
+		scans = append(scans, payload{fmt.Sprintf("stop %d payment hold", stop.StopNo), hold.body})
+
+		var h struct {
+			Held   bool   `json:"held"`
+			Reason string `json:"reason"`
+			Code   string `json:"code"`
+		}
+		hold.decode(t, &h)
+		if h.Held {
+			t.Errorf("stop %d is held (%q), the demo world's stops owe nothing at the door", stop.StopNo, h.Reason)
+		}
+		if h.Reason != "" || h.Code != "" {
+			t.Errorf("stop %d's unheld payment hold carries words (%q, code %q), an unheld stop reads wordless for every caller",
+				stop.StopNo, h.Reason, h.Code)
+		}
+	}
+	runDetail := driver.call("GET", "/api/v1/dispatch/runs/"+run.ID, nil)
+	runDetail.ok(t, http.StatusOK)
+	scans = append(scans, payload{"run detail", runDetail.body})
+	holds := driver.call("GET", "/api/v1/dispatch/runs/"+run.ID+"/payment-holds", nil)
+	holds.ok(t, http.StatusOK)
+	scans = append(scans, payload{"run payment holds", holds.body})
+
+	for _, scan := range scans {
+		driveScanPayloadKeys(t, scan.label, scan.body)
+	}
+}
+
+// firstStatus names the first run's status for the refusal above, or none.
+func firstStatus(runs []driveRun) string {
+	if len(runs) == 0 {
+		return "no runs"
+	}
+	return runs[0].Status
+}
+
+// driveMoneyKeys is the key list the fences name: the dispatch cost gate's figure, ruling 91's
+// deposit pair and the held pick ticket's owed figure, and the wider money words the drive run
+// app's own fence scans (helpers.ts), held here against the KEYS of the payloads the core sends.
+var driveMoneyKeys = []string{
+	"amount_due_cents", "still_owed_cents", "deposit_cents", "previous_deposit_cents",
+	"value_cents", "freight_cents", "total_cents", "unit_price", "margin", "cost", "price",
+	"cents", "currency", "dollar", "amount_due", "balance",
+}
+
+// driveMoneyFigure is a figure formatted as money: a dollar sign, digits and two decimals, the
+// same shape the app's fence matches.
+var driveMoneyFigure = regexp.MustCompile(`\$[ ]?[0-9][0-9,]*\.[0-9]{2}\b`)
+
+// driveScanPayloadKeys walks one JSON payload the core sent the Driver and fails naming the read,
+// the key and the path for every money key or money figure it finds.
+func driveScanPayloadKeys(t *testing.T, label string, body []byte) {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal(body, &v); err != nil {
+		t.Fatalf("%s: the payload does not decode as JSON: %v", label, err)
+	}
+	var walk func(path string, v any)
+	walk = func(path string, v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, child := range x {
+				lower := strings.ToLower(k)
+				for _, word := range driveMoneyKeys {
+					if strings.Contains(lower, word) {
+						t.Errorf("%s: the key %s at %s carries the money word %q, the Driver's payloads carry no money",
+							label, k, path, word)
+					}
+				}
+				walk(path+"."+k, child)
+			}
+		case []any:
+			for i, child := range x {
+				walk(fmt.Sprintf("%s[%d]", path, i), child)
+			}
+		case string:
+			if driveMoneyFigure.MatchString(x) {
+				t.Errorf("%s: the value at %s is a money figure (%q)", label, path, x)
+			}
+		}
+	}
+	walk("$", v)
 }
