@@ -3,6 +3,9 @@
 // sale on account, tender and receipt, parked sales, a return within 250.00,
 // a return above it that commits with no approval at the demo dealer, a
 // Kingston sale refused, and beyond the till.
+// The Driver card is live on the front door, so the till's entry serves
+// the two Counter Till roles only: the Driver row is gone from the
+// coming list.
 // Driven against the demo image's own app and core; every figure the screen
 // shows is held against what the core answers through its own reads, and a
 // screenshot names every screen.
@@ -44,14 +47,19 @@ async function readSale(page: Page, bearer: string, orderId: string) {
   return answer.body;
 }
 
-test("the way in: two cards, the ten coming roles untapped, and the banner", async ({
+test("the way in: two cards, the nine coming roles untapped, the driver starts at the front door, and the banner", async ({
   page,
 }, testInfo) => {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
-  // The coming roles: shown, labelled Coming, and dead controls.
-  for (const role of ["Outside Sales", "Yard Team", "Driver", "Branch Manager", "General Manager", "HR"]) {
+  // The Driver is a flow the demo mints (the front door shows the card), but
+  // the till's entry serves the matrix's Counter Till roles only; the driver
+  // signs in at the front door, so the Driver card never renders here.
+  await expect(page.getByRole("button", { name: "Driver", exact: true })).toHaveCount(0);
+  // The coming roles: shown, labelled Coming, and dead controls. Driver is
+  // no longer among them: the role's card lives on the front door now.
+  for (const role of ["Outside Sales", "Yard Team", "Branch Manager", "General Manager", "HR"]) {
     const coming = page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role });
     await expect(coming).toBeDisabled();
   }
