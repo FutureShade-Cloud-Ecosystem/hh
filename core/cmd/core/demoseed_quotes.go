@@ -86,7 +86,8 @@ var quotePersonaEmails = []string{personaQuoteSales, personaQuoteManager}
 // resolvablePersonaEmails is everything resolvePersonas asks the database for.
 func resolvablePersonaEmails() []string {
 	out := append([]string{}, demoPersonaEmails...)
-	return append(out, quotePersonaEmails...)
+	out = append(out, quotePersonaEmails...)
+	return append(out, controllerPersonaEmails...)
 }
 
 // demoFloorBps is the margin floor the world's two categories carry (the PAVER and BULK policy rows

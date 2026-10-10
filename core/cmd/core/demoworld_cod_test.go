@@ -128,7 +128,7 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		WITH u AS (
 		  INSERT INTO users (email, display_name, status, org_id, platform_user_id)
-		  VALUES ('financial.controller@hh-demo.invalid', 'Financial controller (COD proof)', 'ACTIVE', $1, $2) RETURNING id)
+		  VALUES ('financial.controller.cod@hh-demo.invalid', 'Financial controller (COD proof)', 'ACTIVE', $1, $2) RETURNING id)
 		INSERT INTO user_branch_grants (user_id, branch_id, org_id) SELECT id, $3, $1 FROM u`,
 		orgID, codFinSubject, trentonBranchID); err != nil {
 		t.Fatalf("plant the Financial controller login: %v", err)

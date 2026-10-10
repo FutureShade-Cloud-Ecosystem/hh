@@ -50,6 +50,8 @@ func testInput(t *testing.T) planInput {
 			// world's owners). Present here so every invariant in this file runs over the quote rows.
 			personaQuoteSales:   "9e70a000-0000-4000-9000-00000000ad11",
 			personaQuoteManager: "9e70a000-0000-4000-9000-00000000ad12",
+			// The controller login the populate plants beside them (the parked journals' decider).
+			personaController: "9e70a000-0000-4000-9000-00000000ad13",
 		},
 		// A stub sealer: these tests are about the plan's shape, and the real sealer's AES nonce is
 		// random by design (see TestPlan_OnlyTheSealedBytesDifferBetweenRuns for that half).
@@ -773,6 +775,10 @@ func TestPlan_BuildsWithoutAnyDemoLogins(t *testing.T) {
 	}
 	// The quote world exists only while both demo role logins resolve (demoseed_quotes.go).
 	for _, id := range linkedSum.QuoteRowIDs {
+		personBound[id] = true
+	}
+	// The controller world likewise (demoseed_controller.go).
+	for _, id := range linkedSum.ControllerRowIDs {
 		personBound[id] = true
 	}
 	if len(linked)-len(bare) != len(personBound) {

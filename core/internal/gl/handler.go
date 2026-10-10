@@ -141,7 +141,9 @@ func pathID(w http.ResponseWriter, r *http.Request) (string, bool) {
 		httpx.Error(w, http.StatusBadRequest, "invalid id")
 		return "", false
 	}
-	return id, true
+	// One canonical value for everything downstream: a uuid column compares case blind but a text column
+	// (an approval request's subject_ref) does not, so the lower case form is what every read and write sees.
+	return strings.ToLower(id), true
 }
 
 // - chart of accounts -
