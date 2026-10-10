@@ -40,7 +40,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     PICKER,
   ],
   "own-way-in": [{ file: RECEIVABLES, test: "the way in with no handoff offers the role cards" }],
-  "no-gm": [{ file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed five" }],
+  "no-gm": [{ file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of seven" }],
   "world-invoices": [{ file: `${CORE}demoworld_payables_receivables_test.go`, source: "want the 18 across the aging buckets" }],
   "world-bounce": [
     { file: `${CORE}demoseed_payables_receivables.go`, source: '{"B01", "I08", 12, 9, "Cheque returned by the bank, not sufficient funds", 4_500}' },
