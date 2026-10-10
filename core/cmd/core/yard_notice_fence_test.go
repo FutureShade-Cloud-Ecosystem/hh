@@ -281,66 +281,88 @@ func TestOrderRepNotice_CounterAudienceRoleOffList_CounterCopiesGoFigureless(t *
 	}
 }
 
-// N2 (P3): the rep DM carries the figures only when the rep's own role is
-// on the cost and margin list. A rep with role OUTSIDE_SALES on the default
-// list keeps the figures (the existing leg's behaviour); a rep whose role
-// reads back empty or off list rides the figureless twin.
-func TestOrderRepNotice_RepDMRoleOffListFigureless(t *testing.T) {
-	// The rep's role looks up as an empty string (UserRoleCode answered
-	// nothing): every decision for a rule reads empty as off list; the
-	// figureless twin rides.
-	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM}
-	n := newNotifier(t, chat)
-	if err := n.PostTaskEvent(context.Background(), fenceRefWithRep()); err != nil {
-		t.Fatalf("the rep route delivers: %v", err)
+// repDMBodyLeg drives one rep DM through the double and returns the body the
+// DM carried. The double answers the role in the canonical form the real
+// UserRoleCode returns ("outside_sales", never the ERP "OUTSIDE_SALES"), and
+// the decision runs in the double exactly as it does in messaging, over the
+// notice's own two bodies and role predicate.
+func repDMBodyLeg(t *testing.T, role string, figuresOK func(string) (bool, error)) (string, *fakeYardChat) {
+	t.Helper()
+	users := map[string]string{}
+	if role != "" {
+		users["u-rep-1"] = role
 	}
-	if len(chat.posts) != 0 {
-		t.Fatalf("a delivered rep notice posts to no channel (the figure went straight to the rep DM): %+v", chat.posts)
-	}
-	// NotifyOrderRep was called with the figureless body (because the
-	// rep role was off list). The fake records the call indirectly through
-	// chat.dmUser; re-running with a getter would test the same path
-	// twice. The structural assertion above is enough: the figure never
-	// makes it past the helper that picks the body, and a fence that
-	// picked the figured body when the rule said no would still send no
-	// channel post (the rep DM is direct), so the next leg below proves
-	// the body the rep DM received.
-}
-
-// N2 (P3): the fence fails closed when SeesCostAndMargin errors. The
-// figureless twin rides every channel and the rep DM, never a figured
-// sentence to a reader whose clearance the rule could not answer.
-func TestOrderRepNotice_FigurelessWhenRuleErrors(t *testing.T) {
-	broken := func(string) (bool, error) { return true, errors.New("config unavailable") }
-	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM, roleByUser: map[string]string{"u-rep-1": "outside_sales"}}
-	n := yardChatNotifier{svc: chat, figuresOK: broken}
+	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM, roleByUser: users}
+	n := yardChatNotifier{svc: chat, figuresOK: figuresOK}
 	if err := n.PostTaskEvent(context.Background(), fenceRefWithRep()); err != nil {
 		t.Fatalf("the rep route delivers: %v", err)
 	}
 	if len(chat.posts) != 0 {
 		t.Fatalf("a delivered rep notice posts to no channel: %+v", chat.posts)
 	}
-	// The rep DM happened (it returned true from NotifyOrderRep); the
-	// figure never made it past the body's figureless twin, on a rule
-	// error. Verified by the next leg.
+	if chat.dmCalls != 1 || chat.dmUser != "u-rep-1" {
+		t.Fatalf("one DM to the rep: calls %d, to %q", chat.dmCalls, chat.dmUser)
+	}
+	return chat.dmBody, chat
 }
 
-// N2 (P3): the body the rep DM actually receives is the figureless twin
-// whenever the rule says no or errors. Driven through NotifyOrderRep with a
-// recording fake (the body field on the OrderRepNotice) so the leg names
-// the exact body, not just the side effect.
+func wantRepDMFigureless(t *testing.T, body string) {
+	t.Helper()
+	for _, leak := range []string{"$", "100.00", "150.00"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("the rep DM must be figureless (%q in %q)", leak, body)
+		}
+	}
+	if !strings.Contains(body, "The skid deposit changed.") {
+		t.Errorf("the figureless rep DM keeps the words: %q", body)
+	}
+}
+
+// N2 (P3): a rep whose role is off the cost and margin list gets the
+// figureless twin as the DM body, not only "no channel post".
+func TestOrderRepNotice_RepDMRoleOffListFigureless(t *testing.T) {
+	body, _ := repDMBodyLeg(t, "driver", defaultFiguresOK(t))
+	wantRepDMFigureless(t, body)
+}
+
+// A rep whose role reads back empty (no active role) is judged off the list.
+func TestOrderRepNotice_RepDMRoleUnknownFigureless(t *testing.T) {
+	body, _ := repDMBodyLeg(t, "", defaultFiguresOK(t))
+	wantRepDMFigureless(t, body)
+}
+
+// Ruling 91's other half: a rep on the list keeps the figures in the DM. A
+// fence that made every rep figureless would pass every leg above and fail here.
+func TestOrderRepNotice_RepDMListedRepKeepsTheFigures(t *testing.T) {
+	body, _ := repDMBodyLeg(t, "outside_sales", defaultFiguresOK(t))
+	for _, want := range []string{"$100.00", "$150.00"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("a listed rep keeps the figures (%q missing from %q)", want, body)
+		}
+	}
+}
+
+// N2 (P3): the fence fails closed when SeesCostAndMargin errors. The
+// figureless twin rides the rep DM, never a figured sentence to a reader whose
+// clearance the rule could not answer, even for a role the list would admit.
+func TestOrderRepNotice_FigurelessWhenRuleErrors(t *testing.T) {
+	broken := func(string) (bool, error) { return true, errors.New("config unavailable") }
+	body, _ := repDMBodyLeg(t, "outside_sales", broken)
+	wantRepDMFigureless(t, body)
+}
+
+// N2 (P3): with every role refused and no rep to DM, the whole fallback chain
+// is figureless.
 func TestOrderRepNotice_RepDMFigurelessBodyWhenRuleDisallows(t *testing.T) {
-	// The rep is OFFSIDE_SALES on the list (no), but the rule asserts no:
-	// every role refused, the rep DM body is the figureless twin.
+	// Every role refused: with no rep to DM the chain runs and every copy
+	// is the figureless twin.
 	refused := func(string) (bool, error) { return false, nil }
 	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteNone, roleByUser: map[string]string{"u-rep-1": "outside_sales"}}
 	n := yardChatNotifier{svc: chat, figuresOK: refused}
 	if err := n.PostTaskEvent(context.Background(), fenceRefWithRep()); err != nil {
 		t.Fatalf("the fallback delivers: %v", err)
 	}
-	// The rep route answered RouteNone so messaging isn't called; the
-	// fallback chain runs. The rep DM is a different shape (see the leg
-	// below for that).
+	// The rep route answered RouteNone, so the fallback chain runs.
 	if len(chat.posts) != 1 || chat.posts[0].slug != "sales-trenton" {
 		t.Fatalf("the chain ran with the rule refused: %+v", chat.posts)
 	}
@@ -351,30 +373,9 @@ func TestOrderRepNotice_RepDMFigurelessBodyWhenRuleDisallows(t *testing.T) {
 	}
 }
 
-// N2 (P3): the rep DM body the messaging call receives is the figureless
-// twin when the rule says no for the rep's role, even though the rep DM
-// route itself is alive.
+// N2 (P3): a dealer that takes the rep's own role off the list sends that rep
+// the figureless twin, though the role is the one the default list admits.
 func TestOrderRepNotice_RepDMReceivesFigurelessBodyWhenRuleOffList(t *testing.T) {
-	off := map[string]bool{"outside_sales": true}
-	refused := func(role string) (bool, error) {
-		if role == "" || off[role] {
-			return false, nil
-		}
-		return true, nil
-	}
-	chat := &fakeYardChat{yardSlug: "yard-trenton", repKind: messaging.RouteRepDM, roleByUser: map[string]string{"u-rep-1": "outside_sales"}}
-	n := yardChatNotifier{svc: chat, figuresOK: refused}
-	if err := n.PostTaskEvent(context.Background(), fenceRefWithRep()); err != nil {
-		t.Fatalf("the rep route delivers: %v", err)
-	}
-	// The rep DM went out with the figureless body.
-	sent := messaging.OrderRepNotice{Body: chat.dmBody}
-	if chat.dmCalls != 1 || !strings.Contains(sent.Body, "skid deposit changed") {
-		t.Fatalf("the rep DM body was the figureless twin: %q", sent.Body)
-	}
-	for _, leak := range []string{"$", "100.00", "150.00"} {
-		if strings.Contains(sent.Body, leak) {
-			t.Errorf("the rep DM body must be figureless when the rep role is off the list (%q in %q)", leak, sent.Body)
-		}
-	}
+	body, _ := repDMBodyLeg(t, counterAudienceRole, counterAudienceRoleOut())
+	wantRepDMFigureless(t, body)
 }
