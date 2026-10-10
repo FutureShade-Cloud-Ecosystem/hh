@@ -75,6 +75,12 @@ type ReorderResult struct {
 	// VendorName is the "usual vendor" the draft went to, named so the buyer can tell at a glance
 	// that it went to the right one.
 	VendorName string `json:"vendor_name"`
+	// ExistingDraftPOID and ExistingDraftPONo name the unplaced draft this product already had at
+	// this branch BEFORE this press (the Opus review's P3-3). A draft never covers a shortfall, so the
+	// press still drafts the full quantity; these let the surface say "a draft is already open" in
+	// the same words the worklist row uses. Absent when there was none.
+	ExistingDraftPOID string `json:"existing_draft_po_id,omitempty"`
+	ExistingDraftPONo string `json:"existing_draft_po_no,omitempty"`
 }
 
 // replenishReader is the optional persistence seam for the single-line replenishment read, resolved
@@ -111,6 +117,23 @@ func (s *Service) branchPositionReader() (branchPositionReader, error) {
 	return pr, nil
 }
 
+// fenceNamedBranch answers a branch the caller named: itself when it is in the reach, the 403 in
+// words when it is not, and "" for an unnamed one (the caller of an all-branches read applies the
+// reach set itself). One rule for the reorder controls and the worklist.
+func fenceNamedBranch(reach BranchReach, requested string) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" || reach.Global {
+		return requested, nil
+	}
+	for _, b := range reach.BranchIDs {
+		if b == requested {
+			return requested, nil
+		}
+	}
+	return "", clientError{status: http.StatusForbidden,
+		msg: "inventory: you do not have access to that branch"}
+}
+
 // resolveBranch decides which yard a reorder control acts on.
 //
 // AN EMPTY branch_id MEANS "MY YARD", and it is the ordinary case rather than a shortcut. A
@@ -128,18 +151,8 @@ func (s *Service) branchPositionReader() (branchPositionReader, error) {
 //	                  the answer depend on map iteration order.
 //	no grants       → refused: there is no yard to act on.
 func resolveBranch(reach BranchReach, requested string) (string, error) {
-	requested = strings.TrimSpace(requested)
-	if requested != "" {
-		if reach.Global {
-			return requested, nil
-		}
-		for _, b := range reach.BranchIDs {
-			if b == requested {
-				return requested, nil
-			}
-		}
-		return "", clientError{status: http.StatusForbidden,
-			msg: "inventory: you do not have access to that branch"}
+	if requested = strings.TrimSpace(requested); requested != "" {
+		return fenceNamedBranch(reach, requested)
 	}
 	if reach.Global || len(reach.BranchIDs) != 1 {
 		return "", badReq("inventory: branch_id is required, your access spans more than one branch")
@@ -210,6 +223,21 @@ func (s *Service) CreateReorderPO(ctx context.Context, reach BranchReach, in Reo
 		}},
 	}
 	res := ReorderResult{Draft: draft, Suggested: line.SuggestedQtyBase, UOM: line.UOM, VendorName: line.PreferredVendorName}
+	// Read BEFORE the new draft is made, so the pointer names the draft that was already open, never
+	// the one this press creates. An unbound seam leaves it absent; a bound seam that fails is an
+	// error, as it is on the worklist: silence would read as "nothing drafted".
+	if s.draftPOs != nil {
+		open, err := s.draftPOs.OpenDraftsFor(ctx, in.BranchID, []string{in.ProductID})
+		if err != nil {
+			return ReorderResult{}, err
+		}
+		for _, d := range open {
+			if d.ProductID == in.ProductID && d.BranchID == in.BranchID {
+				res.ExistingDraftPOID, res.ExistingDraftPONo = d.POID, d.PONo
+				break
+			}
+		}
+	}
 
 	creator := s.poCreator
 	if creator == nil {

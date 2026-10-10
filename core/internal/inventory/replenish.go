@@ -30,6 +30,7 @@ package inventory
 import (
 	"context"
 	"math"
+	"strings"
 )
 
 // ShortfallRow is one line of the replenishment worklist.
@@ -66,6 +67,12 @@ type ShortfallRow struct {
 	AvgCostCents        int64  `json:"avg_cost_cents,omitempty"`
 	// SuggestedValueCents is suggested_qty × the branch weighted-average, what saying yes costs.
 	SuggestedValueCents int64 `json:"suggested_value_cents,omitempty"`
+
+	// DraftPOID and DraftPONo point at the newest draft purchase order a buyer has started for this
+	// product at this branch, unplaced. A draft never covers a shortfall, so the row is still here;
+	// these let a screen say "drafted, not placed" and link the draft. Absent when there is none.
+	DraftPOID string `json:"draft_po_id,omitempty"`
+	DraftPONo string `json:"draft_po_no,omitempty"`
 }
 
 // ReorderPoint is the per (product, branch) replenishment policy row.
@@ -89,7 +96,7 @@ type ReorderPoint struct {
 // useful together: "nothing is short" means one thing when on-order was measured and a weaker thing
 // when it was not. DIB-470.
 type Worklist struct {
-	Rows []ShortfallRow `json:"shortfall"`
+	Rows []ShortfallRow `json:"items"`
 	// OnOrderDegraded is true when no OnOrderReader is bound, i.e. every on_order_base on these rows
 	// is a ZERO NOBODY MEASURED rather than a measured nothing. The surface says so; see the seam.
 	OnOrderDegraded bool `json:"on_order_degraded"`
@@ -155,7 +162,7 @@ func SuggestQty(reorderPointBase, projectedBase, reorderQtyBase, multipleBase fl
 // assertion off the base store like every other optional read in this package, so a unit test can
 // state what the worklist GRADES without reaching a database.
 type shortfallStore interface {
-	ShortfallWorklist(ctx context.Context, branchID string, limit int, onOrder []OnOrderQty) ([]ShortfallRow, error)
+	ShortfallWorklist(ctx context.Context, branchID string, reach BranchReach, limit int, onOrder []OnOrderQty) ([]ShortfallRow, error)
 }
 
 func (s *Service) shortfallStore() (shortfallStore, error) {
@@ -167,13 +174,26 @@ func (s *Service) shortfallStore() (shortfallStore, error) {
 }
 
 // ShortfallWorklist returns the replenishment lines whose projected position has fallen below their
-// reorder point, worst first (deepest shortfall relative to the point). branchID "" = all branches.
+// reorder point, worst first (deepest shortfall relative to the point).
+//
+// THE CALLER'S REACH IS THE FENCE (the Opus review's P1-1): branchID "" reads every branch the reach
+// holds (all of them for a global caller, only the grants for a scoped one, nothing for a scoped
+// caller with no grants), a named branch out of reach is a 403 in words, and the reach goes into the
+// SQL as a branch set so the shortfall predicate, the ORDER BY and the LIMIT all run inside it. The
+// draft pointers ride the same reach, so a row never carries another branch's draft PO.
 //
 // The ON-ORDER leg is read through the DIB-470 seam and handed to the query, rather than computed
 // inside it: purchase orders are purchasing's rows. It goes IN to the SQL, instead of being merged
 // onto the rows afterwards, because the shortfall predicate, the ORDER BY and the LIMIT all run in
 // SQL, and a position that the ranking could not see would page and sort on the wrong number.
-func (s *Service) ShortfallWorklist(ctx context.Context, branchID string, limit int) (Worklist, error) {
+func (s *Service) ShortfallWorklist(ctx context.Context, reach BranchReach, branchID string, limit int) (Worklist, error) {
+	branchID, err := fenceNamedBranch(reach, branchID)
+	if err != nil {
+		return Worklist{}, err
+	}
+	if reach.reachesNothing() {
+		return Worklist{}, nil
+	}
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
@@ -187,8 +207,11 @@ func (s *Service) ShortfallWorklist(ctx context.Context, branchID string, limit 
 	if err != nil {
 		return Worklist{}, err
 	}
-	rows, err := st.ShortfallWorklist(ctx, branchID, limit, onOrder)
+	rows, err := st.ShortfallWorklist(ctx, branchID, reach, limit, onOrder)
 	if err != nil {
+		return Worklist{}, err
+	}
+	if err := s.attachDrafts(ctx, reach, branchID, rows); err != nil {
 		return Worklist{}, err
 	}
 	return Worklist{Rows: rows, OnOrderDegraded: degraded}, nil
@@ -289,9 +312,15 @@ func (StubPOCreator) CreateDraftPO(context.Context, SuggestedPO) (string, string
 // purchasing seam. Rows are grouped by (branch, vendor), one PO per vendor per branch, which is
 // what a buyer actually sends, and a row with no preferred vendor is REFUSED rather than silently
 // dropped or lumped onto someone else's order.
-func (s *Service) CreatePOFromShortfall(ctx context.Context, branchID string, productIDs []string) (SuggestedPO, string, string, error) {
-	if branchID == "" {
+func (s *Service) CreatePOFromShortfall(ctx context.Context, reach BranchReach, branchID string, productIDs []string) (SuggestedPO, string, string, error) {
+	if strings.TrimSpace(branchID) == "" {
 		return SuggestedPO{}, "", "", badReq("inventory: branch_id is required")
+	}
+	// The reach is checked BEFORE the worklist is read, so the answer for a branch out of reach never
+	// depends on that branch's stock (a 400 "none of the selected products is short" against a 403).
+	branchID, err := fenceNamedBranch(reach, branchID)
+	if err != nil {
+		return SuggestedPO{}, "", "", err
 	}
 	if len(productIDs) == 0 {
 		return SuggestedPO{}, "", "", badReq("inventory: select at least one shortfall line")
@@ -299,7 +328,7 @@ func (s *Service) CreatePOFromShortfall(ctx context.Context, branchID string, pr
 	// The SAME read the screen showed, seam and all, so the quantity a buyer confirms is the
 	// quantity they were looking at, and a product that is only short because on-order is missing
 	// is short in both places or in neither.
-	wl, err := s.ShortfallWorklist(ctx, branchID, 500)
+	wl, err := s.ShortfallWorklist(ctx, reach, branchID, 500)
 	if err != nil {
 		return SuggestedPO{}, "", "", err
 	}
