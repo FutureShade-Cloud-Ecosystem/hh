@@ -5,7 +5,7 @@
 //               cards, and the decided matrix's seven other roles as coming
 //               rows that show their modules and never tap.
 //   home        post-auth: the role's modules as tiles. The box's live
-//               modules navigate (D1 wires the routes); the manager's three
+//               modules navigate (D1 wires the routes); the manager's two
 //               not-yet-on-the-box modules open the polite coming-soon page.
 //   coming-soon a module a tile pointed at that the box does not serve yet.
 //
