@@ -3796,6 +3796,26 @@ type MessagingChannelList struct {
 	Channels []MessagingChannel `json:"channels"`
 }
 
+type MessagingChannelCreate struct {
+	Kind     string  `json:"kind"`
+	Name     string  `json:"name"`
+	Topic    *string `json:"topic,omitempty"`
+	Slug     *string `json:"slug,omitempty"`
+	BranchId *string `json:"branch_id,omitempty"`
+}
+
+type MessagingDMCreate struct {
+	UserId string `json:"user_id"`
+}
+
+type MessagingChannelMember struct {
+	ChannelId string    `json:"channel_id"`
+	UserId    string    `json:"user_id"`
+	Role      string    `json:"role"`
+	Source    string    `json:"source"`
+	JoinedAt  time.Time `json:"joined_at"`
+}
+
 type MessagingMessage struct {
 	Id           string     `json:"id"`
 	ChannelId    string     `json:"channel_id"`

@@ -26,6 +26,9 @@ import (
 //	slug = payments / payments-%  the DIB-449 channels (0152). Scoping by slug rather than by "every
 //	                            channel that happens to hold a rollup" means a future rollup class in
 //	                            another channel cannot silently inflate a tile that says "payments".
+//	                            The payments family is reserved against caller founding (model.go),
+//	                            so only system seeded rows can ever hold these slugs: a caller
+//	                            founded room in the family is refused before the insert runs.
 //	branch predicate            the caller's grants, plus the GLOBAL channel (branch_id IS NULL).
 //
 // COALESCE on the ref fields, not a cast that can fail: a root written before its first recompute

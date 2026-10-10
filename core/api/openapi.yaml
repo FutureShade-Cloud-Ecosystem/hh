@@ -7290,7 +7290,7 @@ paths:
       tags:
         - staff-gl
       summary: Create a balanced manual journal (posts below the policy threshold, parks as DRAFT at or over it)
-      description: "Maker-checker: a journal whose debit total is below the gl_policy approval threshold posts immediately; at or over the threshold it is parked as DRAFT (surfaced as derived_status PENDING_APPROVAL) and a JE_OVER_THRESHOLD approval request is filed on the approvals rail. An unbalanced body is refused with an unprocessable-entity error."
+      description: "Maker-checker: a journal whose debit total is below the gl_policy approval threshold posts immediately; at or over the threshold it is parked as DRAFT (surfaced as derived_status PENDING_APPROVAL) and a JE_OVER_THRESHOLD approval request is filed on the approvals rail in the same transaction as the park. A journal at or over the threshold needs a branch_id to file under (bad request when it has none) and must be a manual journal (a journal of any other source at or over the threshold is a bad request and nothing is saved), and when the request cannot be filed the create fails (service unavailable) and nothing is saved. An unbalanced body is refused with an unprocessable-entity error."
       x-role: requireManager
       x-access:
         surfaces:
@@ -7360,7 +7360,7 @@ paths:
       tags:
         - staff-gl
       summary: Approve and post a parked DRAFT (the checker half of maker-checker)
-      description: "Four-eyes: the approver must differ from the journal's creator; a creator attempting to approve their own journal is refused as forbidden. Approving a journal that is no longer DRAFT conflicts."
+      description: "Four-eyes: the approver must differ from the journal's creator; a creator attempting to approve their own journal is refused as forbidden. Approving a journal that is no longer DRAFT conflicts. A journal over the approval threshold is posted by this route only when the approvals queue holds an approved request for the journal's current amount. Every other state conflicts, each with its own sentence: a pending request (\"gl: this journal has a pending approval request; decide it from the approvals queue, which posts it\"), a rejected request, a deleted request, an approved request for a different amount, and no request at all. Deciding the request in the queue is the way to post such a journal (the decision posts the journal and stamps the request in one transaction). A journal under the threshold with no request is approved by this route as before. The journal id is matched without regard to letter case. A journal made by a recurring run carries no request (a run files none yet), so at or over the threshold the conflict names its recurring template. When the queue cannot be asked the route answers 503."
       x-role: requireManager
       x-access:
         surfaces:
@@ -11763,6 +11763,173 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: messagingCreateChannel
+      tags:
+        - staff-messaging
+      summary: Found a TEAM or TOPIC channel, idempotently on its slug
+      description: "The caller becomes the channel's owner. A replay with the same slug (or the slug derived from the same name) answers 200 with the existing channel, never a duplicate room, and only for a caller who already holds a row in that room (the founder, a derived member): a name or slug collision with any other room is refused with 409 and seats nobody, the branch wall reads the existing room's own branch (403), and a room of another kind (a DM, an APPROVAL or BRANCH room) is never answered here. Slugs in the system namespaces (dm-, rep-, approvals-, chosen or derived) are refused with 400. A channel naming a branch the caller does not reach is refused with 403; BRANCH, DM and APPROVAL kinds are structural or system-provisioned and are refused with 400."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelCreate"
+      responses:
+        "200":
+          description: The channel already existed and the caller is already in it (the idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "201":
+          description: The channel as founded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/dms:
+    post:
+      operationId: messagingCreateDM
+      tags:
+        - staff-messaging
+      summary: Open, or find, the direct message channel with one other staffer
+      description: "The pair's channel is found when it exists (whoever opened it, including a seeded pair) and created exactly once otherwise; a replay answers 200 with the same room. A direct message is reached only through this route: its slug namespace is closed to caller founded rooms, and a slug of the pair already held by a room of another kind is refused with 409 rather than converged on. Naming the caller's own id is 400; a user who is not an active staffer is 404."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingDMCreate"
+      responses:
+        "200":
+          description: The pair's channel already existed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "201":
+          description: The direct message channel as opened
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/members:
+    post:
+      operationId: messagingAddChannelMember
+      tags:
+        - staff-messaging
+      summary: Seat one staffer in a channel the caller belongs to
+      description: "The row is explicit and idempotent: an already-seated member answers the row as it stands, and a DERIVED row is never rewritten. A caller who is not a member of the channel is refused with 403 (the module's channel-scoping wall, which also keeps anyone from seating themselves into a room they hold no row in); a direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and on a room whose membership the branch model derives, a target who reaches neither the room's branch nor every branch is 403. A user who is not an active staffer is 404 or 403."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingDMCreate"
+      responses:
+        "200":
+          description: The membership row as seated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannelMember"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/members/{userID}:
+    delete:
+      operationId: messagingRemoveChannelMember
+      tags:
+        - staff-messaging
+      summary: Drop one explicit member row from a channel the caller belongs to
+      description: A DERIVED member row is the role and branch model's and is refused with 409 (the next membership sync would re-derive it); only explicit rows are hand-removable. A direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and a removal never drops the room's last OWNER row (409, a channel keeps its owner).
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: userID
+          in: path
+          required: true
+          description: The member being removed
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The removal echo
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/messaging/channels/{id}/messages:
     get:
       operationId: messagingListMessages
@@ -37669,6 +37836,65 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MessagingChannel"
+    MessagingChannelCreate:
+      type: object
+      description: "One caller-founded channel. Slug is optional: an empty slug is derived from the name, so the same founding twice converges on one room. BranchID optionally scopes a TEAM channel to one yard the caller reaches."
+      required:
+        - kind
+        - name
+      properties:
+        kind:
+          type: string
+          enum:
+            - TEAM
+            - TOPIC
+        name:
+          type: string
+        topic:
+          type: string
+        slug:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+    MessagingDMCreate:
+      type: object
+      description: Names the other staffer (the DM and member-add bodies share the shape)
+      required:
+        - user_id
+      properties:
+        user_id:
+          type: string
+          format: uuid
+    MessagingChannelMember:
+      type: object
+      description: One membership row. DERIVED rows are the role and branch model's and are never hand-removable; EXPLICIT rows are the seat this surface writes.
+      required:
+        - channel_id
+        - user_id
+        - role
+        - source
+        - joined_at
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+            - MEMBER
+            - OWNER
+        source:
+          type: string
+          enum:
+            - DERIVED
+            - EXPLICIT
+        joined_at:
+          type: string
+          format: date-time
     MessagingMessage:
       type: object
       description: "One post. author_id is empty for a system EVENT message. ref carries the structured MessagingEventRef for EVENT messages and MessagingApprovalRef for APPROVAL cards. thread_root_id is empty for a top-level message. superseded_by non-empty means a newer fact about the same record auto-resolved this message (last write wins): it renders as superseded and never requires an ack."

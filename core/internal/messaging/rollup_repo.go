@@ -198,7 +198,8 @@ func (r *Repository) UpdateEventBody(ctx context.Context, messageID, body string
 	var m Message
 	err = r.pool.QueryRow(ctx, `
 		UPDATE msg_messages
-		SET body = $2, ref = $3
+		SET body = $2, ref = $3,
+		    seq = nextval(pg_get_serial_sequence('msg_messages', 'seq'))
 		WHERE id = $1 AND kind = 'EVENT' AND author_id IS NULL
 		RETURNING id::text, channel_id::text, kind, body, COALESCE(thread_root_id::text,''),
 		          (SELECT COUNT(*) FROM msg_messages c WHERE c.thread_root_id = msg_messages.id AND c.deleted_at IS NULL),

@@ -4,22 +4,22 @@ package flows
 
 import "testing"
 
-// The table is closed: the two Counter Till flows and Payables and
-// Receivables, no more, and every entry carries the account facts the
-// other lanes share.
+// The table is closed: the two Counter Till flows, Payables and
+// Receivables, and the Financial Controller, no more, and every entry
+// carries the account facts the other lanes share.
 func TestTableIsTheClosedSet(t *testing.T) {
 	all := All()
-	if len(all) != 3 {
-		t.Fatalf("table holds %d flows, want the closed three", len(all))
+	if len(all) != 4 {
+		t.Fatalf("table holds %d flows, want the closed four", len(all))
 	}
-	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" || all[2].Flow != "payables-receivables" {
-		t.Fatalf("flow order drifted: %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow)
+	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" || all[2].Flow != "payables-receivables" || all[3].Flow != "financial-controller" {
+		t.Fatalf("flow order drifted: %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow)
 	}
 	for _, a := range all {
 		if a.PlatformUserID == "" || a.Email == "" || a.DisplayName == "" || a.Label == "" || a.Role == "" {
 			t.Fatalf("flow %q carries an empty fact: %+v", a.Flow, a)
 		}
-		if a.Role != "inside_sales" && a.Role != "sales_manager" && a.Role != "payables_receivables" {
+		if a.Role != "inside_sales" && a.Role != "sales_manager" && a.Role != "payables_receivables" && a.Role != "financial_controller" {
 			t.Fatalf("flow %q holds role %q, want a role the table mints", a.Flow, a.Role)
 		}
 	}
@@ -44,6 +44,10 @@ func TestLookups(t *testing.T) {
 	a, ok = Get("payables-receivables")
 	if !ok || a.Role != "payables_receivables" || a.Label != "Payables and Receivables" {
 		t.Fatalf("Get(payables-receivables) = %+v %v", a, ok)
+	}
+	a, ok = Get("financial-controller")
+	if !ok || a.Role != "financial_controller" || a.Label != "Financial Controller" {
+		t.Fatalf("Get(financial-controller) = %+v %v", a, ok)
 	}
 	if _, ok := Get("yard-pick"); ok {
 		t.Fatal("a flow outside the table answered")

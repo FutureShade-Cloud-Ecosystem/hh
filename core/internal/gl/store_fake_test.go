@@ -36,6 +36,7 @@ type fakeStore struct {
 	accounts      map[string]Account
 	draftRefs     map[string]int
 	journals      map[string]*Journal
+	recurring     *RecurringTemplate // the template GetRecurring answers; nil = not found
 	byKey         map[string]string
 	inserted      []journalDraft
 	closedPeriods map[string]bool
@@ -164,6 +165,18 @@ func (f *fakeStore) InsertJournal(_ context.Context, d journalDraft) (string, bo
 	return id, true, nil
 }
 
+func (f *fakeStore) InsertParkedJournal(ctx context.Context, d journalDraft, file func(ctx context.Context, tx pgx.Tx, journalID string) error) (string, error) {
+	id, _, err := f.InsertJournal(ctx, d)
+	if err != nil {
+		return "", err
+	}
+	if err := file(ctx, nil, id); err != nil {
+		delete(f.journals, id)
+		return "", err
+	}
+	return id, nil
+}
+
 func (f *fakeStore) GetJournal(_ context.Context, id string) (Journal, error) {
 	j, ok := f.journals[id]
 	if !ok {
@@ -267,6 +280,9 @@ func (f *fakeStore) UpsertTieout(_ context.Context, sub, code, branch string, su
 
 func (f *fakeStore) ListRecurring(_ context.Context) ([]RecurringTemplate, error) { return nil, nil }
 func (f *fakeStore) GetRecurring(_ context.Context, _ string) (RecurringTemplate, error) {
+	if f.recurring != nil {
+		return *f.recurring, nil
+	}
 	return RecurringTemplate{}, errNotFound
 }
 
@@ -313,9 +329,24 @@ func (f fakeTaxSplit) TaxSplit(_ context.Context, _ string) (int64, int64, int64
 
 var testCaller = identity.StaffContext{UserID: "u-maker", RoleCode: "SALES_MANAGER", Tier: identity.TierManager, Scope: identity.ScopeBranch}
 
+// fakeHold is the approvals queue seen from the approve route: state is the answer (the zero value means an
+// approved request for the journal's amount), err makes the read fail.
+type fakeHold struct {
+	state ApprovalState
+	err   error
+}
+
+func (h fakeHold) JournalApprovalState(context.Context, string, int64) (ApprovalState, error) {
+	if h.state == "" {
+		return ApprovalApproved, h.err
+	}
+	return h.state, h.err
+}
+
 func newTestService(f *fakeStore) *Service {
 	holder := testCaller
 	return NewService(nil).
+		WithApprovalStateChecker(fakeHold{}).
 		withStore(f).
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).
 		withCaller(func(_ context.Context) (identity.StaffContext, bool) { return holder, holder.UserID != "" })
@@ -324,6 +355,7 @@ func newTestService(f *fakeStore) *Service {
 // newTestServiceAs wires a service whose caller is the given StaffContext (four-eyes / controller tests).
 func newTestServiceAs(f *fakeStore, caller identity.StaffContext) *Service {
 	return NewService(nil).
+		WithApprovalStateChecker(fakeHold{}).
 		withStore(f).
 		withClock(func() time.Time { return time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC) }).
 		withCaller(func(_ context.Context) (identity.StaffContext, bool) { return caller, caller.UserID != "" })

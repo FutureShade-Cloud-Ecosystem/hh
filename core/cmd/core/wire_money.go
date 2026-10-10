@@ -22,6 +22,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
@@ -102,7 +103,8 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	glSvc := gl.NewService(gl.NewRepository(pool)).
 		WithDeadRequeuer(outboxStore).
 		WithAudit(auditSvc).
-		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals})
+		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
+		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
 	gl.NewHandler(glSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
 
@@ -184,6 +186,13 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// service runs, from the same configuration: the store is built on the
 	// operations wire, so the configuration is published for it (P2-4).
 	quote.PublishRoleConfig(roleCfg)
+	// The messaging membership wall reads the same configuration's Admin
+	// cell on house-messages (who may manage a room's members beside the
+	// room's owner): the service is built on the operations wire the role
+	// configuration does not pass, so it is published for it here, beside
+	// the quote door's publish. Nothing published means the wall knows no
+	// admin and fails closed to owner-only.
+	messaging.PublishRoleConfig(roleCfg)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
@@ -272,12 +281,23 @@ type moneySpine struct {
 }
 
 // jeApprovalFilerAdapter satisfies gl.ApprovalFiler over the approvals
-// rail's FileJEApproval (the pin's adapter, re-pointed at the bridge).
+// rail's FileJEApprovalTx (the pin's adapter, re-pointed at the bridge).
 type jeApprovalFilerAdapter struct{ svc *identity.Approvals }
 
-func (a jeApprovalFilerAdapter) FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error {
-	_, err := a.svc.FileJEApproval(ctx, journalID, branchID, amountCents, createdBy)
-	return err
+func (a jeApprovalFilerAdapter) FileJEApprovalTx(ctx context.Context, tx pgx.Tx, journalID, branchID string, amountCents int64, createdBy string) (func(context.Context), error) {
+	return a.svc.FileJEApprovalTx(ctx, tx, journalID, branchID, amountCents, createdBy)
+}
+
+// jeStateAdapter satisfies gl.ApprovalStateChecker over identity's JournalApprovalState: the GL's approve
+// route asks where a journal stands with the rail, and the two modules' state words are the same strings.
+type jeStateAdapter struct{ svc *identity.Approvals }
+
+func (a jeStateAdapter) JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (gl.ApprovalState, error) {
+	st, err := a.svc.JournalApprovalState(ctx, journalID, amountCents)
+	if err != nil {
+		return "", err
+	}
+	return gl.ApprovalState(st), nil
 }
 
 // jeDeciderAdapter satisfies the rail's JEDecider over gl's

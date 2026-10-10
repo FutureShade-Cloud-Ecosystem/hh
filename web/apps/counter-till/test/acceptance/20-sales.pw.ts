@@ -25,7 +25,6 @@ import {
   openStep,
   openingFloat,
   pickCustomer,
-  returnLineInputs,
   ring,
   ringCash,
   searchAndAdd,
@@ -385,140 +384,154 @@ test("parked sales: the branch's list, a park and a pickup, never the other bran
   await expect(again).not.toContainText(SEEDED.kingstonTicket);
 });
 
-test("a return within 250.00: refunded in cash, and the drawer's expected cash drops by it", async ({
+test("a two order return: lines from both orders, one credit note in cash, and the drawer drops by its total", async ({
   page,
 }, testInfo) => {
+  // Item 10: a return is built like a credit, the customer first. Two sales are rung to the same
+  // account (one per ticket), then Returns lists both orders under the customer and one draft takes
+  // a line from each, each with its own disposition, then the Refund step in cash and the Done step:
+  // one credit note, each order's return with its number, and the drawer's expected cash drops by the
+  // note's total, the server's figure read off the Done step.
   await signIn(page, "Sales");
+  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
+  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
+  const first = await ringCash(page, "20.00");
+  await page.goto("/");
+  await signIn(page, "Sales");
+  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
   await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
-  const rung = await ringCash(page, "60.00");
-  const orderNo = rung.order_no;
+  const second = await ringCash(page, "60.00");
+
+  await openReturns(page);
+  await page.getByLabel("Search name or account number").fill("Bay Ridge");
+  await page.getByRole("button", { name: /Bay Ridge Landscaping \(demo\)/ }).click();
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "lines");
+  const orderOne = page.getByTestId("returns-order").filter({ hasText: first.order_no });
+  const orderTwo = page.getByTestId("returns-order").filter({ hasText: second.order_no });
+  await expect(orderOne).toHaveCount(1);
+  await expect(orderTwo).toHaveCount(1);
+  await orderOne.getByRole("button", { name: "Return to stock" }).first().click();
+  await orderTwo.getByRole("button", { name: "Return to stock" }).first().click();
+  await expect(orderOne.getByTestId("returns-line").first()).toHaveAttribute("data-picked", "true");
+  await expect(orderTwo.getByTestId("returns-line").first()).toHaveAttribute("data-picked", "true");
+  await expect(page.getByTestId("returns-credit-count")).toHaveText("2 lines from 2 orders");
+  // The credit so far is the server's preview (the commit's own pricing), money with tax.
+  const totalOf = (text: string): number => {
+    const match = text.match(/\$([0-9,]+)\.([0-9]{2})/);
+    expect(match).toBeTruthy();
+    return Number(match?.[1].replaceAll(",", "") as string) * 100 + Number(match?.[2]);
+  };
+  await expect(page.getByTestId("returns-credit-total")).toBeVisible();
+  const previewed = totalOf((await page.getByTestId("returns-credit-total").textContent()) as string);
+  expect(previewed).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "Continue to the refund" })).toBeEnabled();
+  await shot(page, "sales-08-return-two-orders", testInfo);
+
   const bearer = await mint(page, "sales");
   const drawerId = await openDrawer(page, bearer);
   const before = await expectedCash(page, bearer, drawerId);
-  const zPath = `/api/v1/till/sessions/${drawerId}/zreport`;
-  const zBefore = await apiPicture(page, bearer, zPath);
-  await openReturns(page);
-  await page.getByLabel("Sale number").fill(orderNo);
-  await page.getByRole("button", { name: "Find sale" }).click();
-  await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
-  // The seeded card sale beside it: the desk cannot send its refund by card
-  // at all, the method greyed with its reason in words (the page's advice to
-  // refund such a sale in cash or to the account).
-  await page.getByLabel("Sale number").fill(SEEDED.trentonCardSale);
-  await page.getByRole("button", { name: "Find sale" }).click();
-  await expect(page.getByTestId("returns-sale")).toContainText(SEEDED.trentonCardSale);
-  await expect(page.getByRole("button", { name: "Card", exact: true })).toBeDisabled();
-  await expect(page.getByTestId("returns")).toContainText(
-    "No card refund: this sale was not paid by card",
-  );
-  // Back to the rung sale for this screen's own return.
-  await page.getByLabel("Sale number").fill(orderNo);
-  await page.getByRole("button", { name: "Find sale" }).click();
-  await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
-  await returnLineInputs(page).first().fill("1");
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
   await page.getByRole("button", { name: "Cash", exact: true }).click();
-  await page.getByRole("button", { name: "Refund cash" }).click();
-  const refund = page.getByTestId("refund-receipt");
-  await expect(refund).toBeVisible();
-  await expect(refund).toContainText("cash, from the drawer");
-  await expect(refund).toContainText("Rung by Sales (demo).");
-  const refunded = await refund.textContent();
-  const totalMatch = refunded?.match(/Total refunded \$([0-9,]+)\.([0-9]{2})/);
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  const done = page.getByTestId("returns-done");
+  await expect(done).toContainText("Credit note recorded");
+  await expect(done.getByTestId("returns-done-return")).toHaveCount(2);
+  await expect(done).toContainText(first.order_no);
+  await expect(done).toContainText(second.order_no);
+  await expect(done).toContainText("Rung by Sales (demo).");
+  const totalText = (await done.getByTestId("returns-note-total").textContent()) as string;
+  const totalMatch = totalText.match(/\$([0-9,]+)\.([0-9]{2})/);
   expect(totalMatch).toBeTruthy();
   // The string goes to cents through its parts, never through a float multiply.
-  const refundedCents =
-    Number(totalMatch?.[1].replaceAll(",", "") as string) * 100 + Number(totalMatch?.[2]);
-  const after = await expectedCash(page, bearer, drawerId);
-  expect(after).toBe(before - refundedCents);
-  // The picture holds the claim's three places: the drawer's Z report before
-  // the refund, the desk's refund receipt, and the Z report after it, each as
-  // the browser shows the core's answer; the expected cash drops by the refund.
-  const receiptPicture = await page.getByTestId("refund-receipt").screenshot();
-  const zAfter = await apiPicture(page, bearer, zPath);
-  await shotParts(page, "sales-08-return-within", testInfo, [zBefore, receiptPicture, zAfter]);
+  const creditedCents = Number(totalMatch?.[1].replaceAll(",", "") as string) * 100 + Number(totalMatch?.[2]);
+  // The commit books exactly what the preview priced.
+  expect(creditedCents).toBe(previewed);
+  expect(await expectedCash(page, bearer, drawerId)).toBe(before - creditedCents);
+  await shot(page, "sales-09-credit-note-done", testInfo);
 });
 
-test("a return above 250.00 at the demo dealer: no approval threshold, so the clerk's own refund commits with no refusal and no dialog", async ({
+test("a swap: the credit pays a new order, the leftover goes back by cash, both documents name each other", async ({
   page,
 }, testInfo) => {
-  // The demo dealer's configuration turns the refund approval threshold off
-  // (refund_approval_limit_enabled false, decision log rows 1047 and 1073): a
-  // refund of any size commits as the clerk, with nobody approving it.
+  // Item 10, the swap: a cash sale is rung to the Bay Ridge account, then Returns takes its line back to
+  // stock and the replacement goods (the server prices them) are paid by the credit. The leftover goes back
+  // by the original tender, cash from the drawer, so the drawer's expected cash drops by exactly the
+  // leftover the Done step states. The figures are the server's: the preview before and the commit after
+  // must say the same new order total.
   await signIn(page, "Sales");
-  // A sale whose refund would have crossed the old 250.00 amount: sixty wall blocks.
-  await searchAndAdd(page, "DEMO-WALL-BLOCK", "Retaining Wall Block 8x18 (demo)");
-  await setQuantity(page, "Retaining Wall Block 8x18 (demo)", "60");
-  await expect(lineRow(page, "Retaining Wall Block 8x18 (demo)").locator(".ltot")).toHaveText(cad(75000));
-  await expect(lineRow(page, "Retaining Wall Block 8x18 (demo)").locator(".lprice")).toHaveText(cad(1250));
-  const rung = await ringCash(page, "900.00");
-  const orderNo = rung.order_no;
+  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
+  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
+  await setQuantity(page, "Holland Paver, Charcoal (demo)", "40");
+  const rung = await ringCash(page, "400.00");
+  const bearer = await mint(page, "sales");
+  const drawerId = await openDrawer(page, bearer);
+  const before = await expectedCash(page, bearer, drawerId);
 
   await openReturns(page);
-  await page.getByLabel("Sale number").fill(orderNo);
-  await page.getByRole("button", { name: "Find sale" }).click();
-  await expect(page.getByTestId("returns-sale")).toContainText(orderNo);
-  await returnLineInputs(page).first().fill("60");
-  await page.getByRole("button", { name: "Cash", exact: true }).click();
-  const bearer0 = await mint(page, "sales");
-  const payoutsOf = async (): Promise<number> => {
-    const drawer = await openDrawer(page, bearer0);
-    const read = await staffGet(page, bearer0, `/api/v1/till/sessions/${drawer}`);
-    const rows = read.body.movements as Array<{ movement_type: string; amount_cents: number }>;
-    return rows.filter((m) => m.movement_type === "PAID_OUT" && m.amount_cents === 84750).length;
+  await page.getByLabel("Search name or account number").fill("Bay Ridge");
+  await page.getByRole("button", { name: /Bay Ridge Landscaping \(demo\)/ }).click();
+  const order = page.getByTestId("returns-order").filter({ hasText: rung.order_no });
+  await expect(order).toHaveCount(1);
+  await order.getByRole("button", { name: "Return to stock" }).first().click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await page.getByLabel("Search replacement goods").fill("Aluminum");
+  await page.getByTestId("returns-products").getByRole("button", { name: /Aluminum Edging 8ft/ }).first().click();
+  const swap = page.getByTestId("returns-swap");
+  await expect(swap.getByTestId("swap-new-total")).toBeVisible();
+  const centsOf = (text: string): number => {
+    const match = text.match(/\$([0-9,]+)\.([0-9]{2})/);
+    expect(match).toBeTruthy();
+    return Number(match?.[1].replaceAll(",", "") as string) * 100 + Number(match?.[2]);
   };
-  const payoutsBefore = await payoutsOf();
-  await page.getByRole("button", { name: "Refund cash" }).click();
-
-  const refund = page.getByTestId("refund-receipt");
-  await expect(refund).toBeVisible();
-  await expect(refund).toContainText("$847.50");
-  await expect(refund).toContainText("Rung by Sales (demo).");
-  // No refusal, no dialog and no approver line at any point of the path.
-  await expect(refund).not.toContainText("Approved by");
-  await expect(page.getByTestId("refund-refusal")).toHaveCount(0);
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  // The till is still the clerk's.
-  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
-  // The refund went through once, on the first send: the core holds exactly
-  // one return for the sale (its line fully returned) and exactly one drawer
-  // movement paying it out of the shared drawer.
-  const bearer2 = await mint(page, "sales");
-  const lookupPath = `/api/v1/pos/returns/lookup?order_no=${encodeURIComponent(orderNo)}`;
-  const after = await staffGet(page, bearer2, lookupPath);
-  expect(after.status).toBe(200);
-  const afterLines = after.body.lines as Array<{ qty_sold: number; qty_returned: number }>;
-  expect(afterLines).toHaveLength(1);
-  expect(afterLines[0].qty_sold).toBe(60);
-  expect(afterLines[0].qty_returned).toBe(60);
-  const drawerId = await openDrawer(page, bearer2);
-  const detailPath = `/api/v1/till/sessions/${drawerId}`;
-  const detail = await staffGet(page, bearer2, detailPath);
-  const movements = detail.body.movements as Array<{
-    movement_type: string;
-    amount_cents: number;
-    reference: string;
-  }>;
-  const payouts = movements.filter((m) => m.movement_type === "PAID_OUT" && m.amount_cents === 84750);
-  expect(payouts.length - payoutsBefore, "exactly one drawer movement carries the refund").toBe(1);
-  // The picture holds the three places the claim lives: the receipt naming
-  // the clerk alone, the sale's lines read back with the single return, and
-  // the drawer's own record with the single payout.
-  const receiptPicture = await page.getByTestId("refund-receipt").screenshot();
-  const lookupPicture = await apiPicture(page, bearer2, lookupPath);
-  const detailPicture = await apiPicture(page, bearer2, detailPath);
-  await shotParts(page, "sales-09-committed", testInfo, [receiptPicture, lookupPicture, detailPicture]);
+  const newTotal = centsOf((await swap.getByTestId("swap-new-total").textContent()) as string);
+  const leftover = centsOf((await swap.getByTestId("swap-leftover").textContent()) as string);
+  expect(newTotal).toBeGreaterThan(0);
+  expect(leftover).toBeGreaterThan(0);
+  await shot(page, "sales-10-swap-preview", testInfo);
+  await page.getByRole("button", { name: "Ring the swap" }).click();
+  const done = page.getByTestId("returns-done");
+  await expect(done).toContainText("Swap rung");
+  await expect(done.getByTestId("returns-swap-link")).toContainText("point at each other");
+  await expect(done.getByTestId("returns-done-return")).toHaveCount(1);
+  expect(centsOf((await done.getByTestId("returns-swap-sale").textContent()) as string)).toBe(newTotal);
+  expect(await expectedCash(page, bearer, drawerId)).toBe(before - leftover);
+  await shot(page, "sales-11-swap-done", testInfo);
 });
 
-test("a Kingston sale: refused in words before anything lays out", async ({ page }, testInfo) => {
+test("a walk in return: found by its receipt number, cash or card only, and the drawer drops by its total", async ({
+  page,
+}, testInfo) => {
+  // Item 10, ruling A: a walk in sale (rung with no customer) is a returns customer found only by its
+  // receipt or order number. The account rail is not offered (it goes back to cash or card), and a cash
+  // refund moves the drawer's expected cash by exactly the note's total, the server's figure on Done.
   await signIn(page, "Sales");
+  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
+  const rung = await ringCash(page, "60.00");
+  const bearer = await mint(page, "sales");
+  const drawerId = await openDrawer(page, bearer);
+  const before = await expectedCash(page, bearer, drawerId);
+
   await openReturns(page);
-  await page.getByLabel("Sale number").fill(SEEDED.kingstonSale);
-  await page.getByRole("button", { name: "Find sale" }).click();
-  await expect(page.getByTestId("returns-notice")).toContainText("The lookup was refused");
-  await expect(page.getByTestId("returns-notice")).toContainText("not reachable");
-  await expect(page.getByTestId("returns-sale")).toHaveCount(0);
-  await expect(page.getByTestId("refund-refusal")).toHaveCount(0);
-  await shot(page, "sales-10-kingston", testInfo);
+  await page.getByRole("button", { name: "Walk in sale" }).click();
+  await page.getByLabel("Receipt or order number").fill(rung.order_no);
+  await page.getByRole("button", { name: "Find the sale" }).click();
+  await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "lines");
+  const order = page.getByTestId("returns-order").filter({ hasText: rung.order_no });
+  await expect(order).toHaveCount(1);
+  await order.getByRole("button", { name: "Return to stock" }).first().click();
+  await page.getByRole("button", { name: "Continue to the refund" }).click();
+  await expect(page.getByRole("button", { name: "On the account", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Cash", exact: true }).click();
+  await page.getByRole("button", { name: "Record the credit note" }).click();
+  const done = page.getByTestId("returns-done");
+  await expect(done).toContainText("Credit note recorded");
+  const totalText = (await done.getByTestId("returns-note-total").textContent()) as string;
+  const totalMatch = totalText.match(/\$([0-9,]+)\.([0-9]{2})/);
+  expect(totalMatch).toBeTruthy();
+  // The string goes to cents through its parts, never through a float multiply.
+  const creditedCents = Number(totalMatch?.[1].replaceAll(",", "") as string) * 100 + Number(totalMatch?.[2]);
+  expect(await expectedCash(page, bearer, drawerId)).toBe(before - creditedCents);
+  await shot(page, "sales-12-walk-in-return-done", testInfo);
 });
 
 test("beyond the till: sign out, a reload, and a fresh page each leave the till nobody's", async ({

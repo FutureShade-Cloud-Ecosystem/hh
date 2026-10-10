@@ -60,6 +60,7 @@ func refuseForeignUser(ctx context.Context, tx pgx.Tx) error {
 	plantedIDs[strings.ToLower(salesUserID)] = true
 	plantedIDs[strings.ToLower(managerUserID)] = true
 	plantedIDs[strings.ToLower(payRecUserID)] = true
+	plantedIDs[strings.ToLower(controllerUserID)] = true
 	plantedEmails := make(map[string]bool, len(plantedUserEmails))
 	for _, e := range plantedUserEmails {
 		plantedEmails[strings.ToLower(e)] = true

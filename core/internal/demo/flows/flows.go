@@ -14,10 +14,11 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
-// The table is closed: three flows, the pair the Counter Till cycle ships
-// (D49, DECISIONS.md) and Payables and Receivables the roles roadmap adds.
-// A new flow is an edit here, reviewed, never a runtime input: the entry
-// page may only ever offer what this file lists.
+// The table is closed: four flows, the pair the Counter Till cycle ships
+// (D49, DECISIONS.md) and Payables and Receivables and the Financial
+// Controller the roles roadmap adds. A new flow is an edit here, reviewed,
+// never a runtime input: the entry page may only ever offer what this file
+// lists.
 package flows
 
 // OrgSlug is the one org a demo box holds and the only org the demo
@@ -100,6 +101,14 @@ var accounts = map[string]Account{
 		Label:          "Payables and Receivables",
 		Role:           "payables_receivables",
 	},
+	"financial-controller": {
+		Flow:           "financial-controller",
+		PlatformUserID: "de110000-0000-4000-9000-0000000000c1",
+		Email:          "financial.controller@" + ReservedDomain,
+		DisplayName:    "Financial controller (demo)",
+		Label:          "Financial Controller",
+		Role:           "financial_controller",
+	},
 }
 
 // Get returns the account one flow name stands for. The second return is
@@ -117,6 +126,7 @@ func All() []Account {
 		accounts["sales"],
 		accounts["sales-manager"],
 		accounts["payables-receivables"],
+		accounts["financial-controller"],
 	}
 }
 
