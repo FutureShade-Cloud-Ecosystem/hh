@@ -4,7 +4,7 @@
 
 # buying-and-stock: Buying and Stock
 
-Audience: internal   Roles: procurement_manager, yard_manager, branch_manager   Devices: desktop, tablet   Environment: office
+Audience: internal   Roles: procurement_manager, yard_manager   Devices: desktop, tablet   Environment: office
 Kit: list-detail   Brand: fb-tokens   Shell: hh-work
 Offline: read_cache_plus_outbox. Scopes: purchase_orders, vendors, inventory_lookup, cycle_counts. Conflict policy: purchase_orders server_wins, cycle_counts manual. Why this mode: a buyer drafts at a desk and sometimes counts on a tablet in the racks, so the draft and the count must survive a dead spot, but placing an order with a vendor is a commitment and resolves online. A cycle count is `manual` for the same reason a shortage is: two people counting the same rack is a disagreement to show, not an average to compute.
 
