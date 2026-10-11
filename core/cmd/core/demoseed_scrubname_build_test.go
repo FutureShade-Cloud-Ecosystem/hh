@@ -137,3 +137,37 @@ func TestDefaultBuildCarriesNoProductApplicationRepair(t *testing.T) {
 		}
 	}
 }
+
+// driverOrgRepairSignatures are the org stamp repair's load-bearing literals: the two guarded
+// UPDATEs and the plan's own words about them. The insert-side stamp (driverOrgStamp in
+// demoseed_build.go) is an INSERT-time subselect every build compiles, like every other row the
+// shared seed writes; the REPAIR is the demo build's write alone.
+var driverOrgRepairSignatures = []string{
+	`UPDATE delivery_runs
+	   SET org_id = (SELECT id FROM org WHERE slug = $1::citext), updated_at = $2
+	 WHERE id = $3::uuid AND org_id IS NULL
+	   AND EXISTS (SELECT 1 FROM org WHERE slug = $1::citext)`,
+	`UPDATE delivery_stops
+	   SET org_id = (SELECT id FROM org WHERE slug = $1::citext), updated_at = $2
+	 WHERE id = $3::uuid AND org_id IS NULL
+	   AND EXISTS (SELECT 1 FROM org WHERE slug = $1::citext)`,
+	"take the demo org with -apply",
+}
+
+// TestDefaultBuildCarriesNoDriverOrgRepair holds the same gate for the org stamp repair: the
+// default binary carries none of it, and the demo binary carries all three markers or this test
+// has stopped probing.
+func TestDefaultBuildCarriesNoDriverOrgRepair(t *testing.T) {
+	def := buildCoreBinary(t, "core-default-orgrepair", "")
+	for _, sig := range driverOrgRepairSignatures {
+		if bytes.Contains(def, []byte(sig)) {
+			t.Errorf("the default build carries the org stamp repair's %q; the repair must compile only into the demo build", sig)
+		}
+	}
+	demo := buildCoreBinary(t, "core-demo-orgrepair", "-tags=demo")
+	for _, sig := range driverOrgRepairSignatures {
+		if !bytes.Contains(demo, []byte(sig)) {
+			t.Errorf("the demo build has lost the org stamp repair's %q, so the default leg above passes vacuously", sig)
+		}
+	}
+}

@@ -4,9 +4,10 @@
 // pair of the box's flow table, which mints more logins than any one app
 // offers cards for) wearing the ported token sheet's surfaces and borders,
 // an icon from the ported icon registry and one line of what the role opens,
-// then the other eight roles of the decided matrix as coming: shown in a
+// then the other six roles of the decided matrix as coming: shown in a
 // ruled card, labelled Coming, and not tappable, because their screens do not
-// exist in this release. When the flows route answers nothing (a default-build
+// exist in this release (the roles with a live card at the front door are
+// not listed here). When the flows route answers nothing (a default-build
 // core or a non-demo box), there are no cards at all and the page says so
 // plainly, on the same stage.
 //
@@ -28,10 +29,8 @@ import { drawIcon, iconForId } from "./_icon-consumer.js";
  */
 export const COMING_ROLES: readonly string[] = [
   "Outside Sales",
-  "Yard Team",
   "Logistics Manager",
   "Branch Manager",
-  "Payables and Receivables",
   "Financial Controller",
   "General Manager",
   "HR",

@@ -13,8 +13,8 @@
 //
 // What the walk holds, in order:
 //
-//   the picker renders: the six live role cards with their calls to act,
-//     the demo badge, and the seven coming roles in their disclosure;
+//   the picker renders: the seven live role cards with their calls to act,
+//     the demo badge, and the six coming roles in their disclosure;
 //   a Sales sign in lands on the Sales home: the role's name as the title,
 //     the two live module tiles, the header word;
 //   the Counter Till tile opens the till signed in as Sales, no second
@@ -67,6 +67,7 @@ async function expectPicker(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Payables and Receivables", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Procurement manager", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Driver", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Yard Team", exact: true })).toBeVisible();
 }
 
 /**
@@ -121,9 +122,9 @@ test("the front door walk: pick a role, open each module signed in, Switch role,
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toContainText("Sign in as Sales");
   const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Seven more roles are coming");
-  await disclosure.getByText("Seven more roles are coming").click();
-  await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("listitem")).toHaveCount(7);
+  await expect(disclosure).toContainText("Six more roles are coming");
+  await disclosure.getByText("Six more roles are coming").click();
+  await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("listitem")).toHaveCount(6);
 
   // ── Sales signs in, and the home shows the two live tiles ───────────────
   await signInFrontDoor(page, "Sales");

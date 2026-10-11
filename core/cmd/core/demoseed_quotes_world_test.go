@@ -33,6 +33,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
@@ -198,6 +199,40 @@ func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables
 	return out
 }
 
+// qwDriverDayIDs are the Driver's day-keyed run and stop ids on the pinned clock's day: the rows
+// the seed's org stamp addresses. The stamp cannot land on the first apply (the org row does not
+// exist until the populate provisions it), so it lands on the first apply AFTER the populate, which
+// in this world is the one that adds the quotes. The fingerprints around that apply keep these rows
+// in, minus the three columns the stamp itself moves (see qwDriverStampColumns), and the assertion
+// below checks the stamp landed on exactly them, so the exception is named and held, not a hole.
+func qwDriverDayIDs() []string {
+	stamp := qwClock.In(houseday.Location()).Format("20060102")
+	ids := []string{demoID(dayKey(stamp, "driver-run"))}
+	ids = append(ids, driverDayStopIDs(stamp)...)
+	return ids
+}
+
+// qwDriverStampColumns are the only columns the org stamp moves on a Driver day row: the org it
+// sets, the updated_at it bumps, and the row version (xmin) any update changes.
+var qwDriverStampColumns = []string{"org_id", "updated_at", "row_version"}
+
+// qwFingerprintStamped fingerprints one delivery table with the day-keyed Driver rows named by
+// except kept in, but with qwDriverStampColumns removed from those rows alone. Every other column of
+// those rows, and every column of every other row, still counts, so a status, a date or a driver id
+// moving on them is seen.
+func qwFingerprintStamped(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string, except []string) string {
+	t.Helper()
+	var sum string
+	if err := pool.QueryRow(ctx, `
+		SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
+		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN to_jsonb(r) - $2::text[] ELSE to_jsonb(r) END::text AS line
+		          FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r) s`,
+		except, qwDriverStampColumns).Scan(&sum); err != nil {
+		t.Fatalf("fingerprint %s: %v", table, err)
+	}
+	return sum
+}
+
 func qwCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, q string, args ...any) int {
 	t.Helper()
 	var n int
@@ -300,17 +335,49 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	}
 
 	// 3. the second apply: now the logins resolve, so the quote world is added, and nothing else moves.
-	before := qwFingerprint(t, ctx, pool, qwOtherWorldTables)
+	// The Driver's day-keyed rows stay in the two delivery fingerprints with only the org stamp's
+	// columns taken out (see qwDriverStampColumns): the stamp they take on this apply is the one
+	// intended movement beside the quote world, checked by name below instead of hiding inside
+	// "nothing else moved".
+	driverDayIDs := qwDriverDayIDs()
+	fingerprint := func() map[string]string {
+		out := map[string]string{}
+		for _, table := range qwOtherWorldTables {
+			if table == "delivery_runs" || table == "delivery_stops" {
+				out[table] = qwFingerprintStamped(t, ctx, pool, table, driverDayIDs)
+				continue
+			}
+			out[table] = qwFingerprint(t, ctx, pool, []string{table})[table]
+		}
+		return out
+	}
+	before := fingerprint()
 	proposed, created := qwApply(t)
 	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 + controllerWorldRows // quotes, lines, links, acceptances, audit rows, events, log rows, request, and the controller world the same apply adds
 	if created != wantQuoteRows {
 		t.Fatalf("the second apply created %d rows, want exactly the quote world's %d (proposed %d)", created, wantQuoteRows, proposed)
 	}
-	after := qwFingerprint(t, ctx, pool, qwOtherWorldTables)
+	after := fingerprint()
 	for table, sum := range before {
 		if after[table] != sum {
 			t.Errorf("%s changed across the apply that adds the quotes, nothing else in the world may move", table)
 		}
+	}
+	// The named exception, held to its bounds: every day-keyed Driver row now carries the demo org
+	// (the stamp the first apply could not run), and the two fingerprints above prove nothing else
+	// moved to get it: no other row of those tables, and no other column of these.
+	var runsStamped, stopsStamped int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM delivery_runs WHERE id = ANY($1::uuid[]) AND org_id = (SELECT id FROM org WHERE slug = $2)`,
+		driverDayIDs, demoOrgSlug).Scan(&runsStamped); err != nil {
+		t.Fatalf("reading the stamped run: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM delivery_stops WHERE id = ANY($1::uuid[]) AND org_id = (SELECT id FROM org WHERE slug = $2)`,
+		driverDayIDs, demoOrgSlug).Scan(&stopsStamped); err != nil {
+		t.Fatalf("reading the stamped stops: %v", err)
+	}
+	if runsStamped != 1 || stopsStamped != len(driverDayIDs)-1 {
+		t.Errorf("the org stamp left %d of 1 run and %d of %d stops stamped, want the day's whole Driver set",
+			runsStamped, stopsStamped, len(driverDayIDs)-1)
 	}
 	census := map[string]int{"quotes": 4, "quote_lines": 9, "quote_share_links": 3, "quote_acceptances": 2,
 		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 1 + 2}
