@@ -387,27 +387,33 @@ async function fillCheque(page: Page): Promise<void> {
   await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
 }
 
-for (const status of [401, 403]) {
-  test(`a ${status} on the retry after a lost answer is the gate's answer: the key is kept, the words stay unknown, and the next press carries it`, async ({ page, request }) => {
-    const posts: ApplyBody[] = [];
-    await lostFirstPress(page, posts, { statuses: [status] });
-    await openDesk(page, request);
-    await openAccount(page, "Granite Edge Landscaping (demo)");
-    await fillCheque(page);
-    await page.getByRole("button", { name: "Record payment" }).click();
-    await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
-    await page.getByRole("button", { name: "Record payment" }).click();
-    await expect(page.locator("[data-error]")).toContainText("The earlier press may or may not have been recorded");
-    await expect(page.locator("[data-error]")).not.toContainText("was not recorded");
-    await expect(page.locator("[data-error]")).toContainText(status === 401 ? "Your sign in has ended. Sign in again." : "Your role may not do that.");
-    await page.getByRole("button", { name: "Record payment" }).click();
-    await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 was already applied");
-    expect(posts).toHaveLength(3);
-    expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
-    expect(posts[2]?.idempotency_key).toBe(posts[0]?.idempotency_key);
-    await expect(page.locator("[data-notice]")).not.toContainText("PAY-0102");
-  });
+async function gateAnswersTheRetry(status: 401 | 403, page: Page, request: Parameters<typeof openDesk>[1]): Promise<void> {
+  const posts: ApplyBody[] = [];
+  await lostFirstPress(page, posts, { statuses: [status] });
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("The earlier press may or may not have been recorded");
+  await expect(page.locator("[data-error]")).not.toContainText("was not recorded");
+  await expect(page.locator("[data-error]")).toContainText(status === 401 ? "Your sign in has ended. Sign in again." : "Your role may not do that.");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 was already applied");
+  expect(posts).toHaveLength(3);
+  expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+  expect(posts[2]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+  await expect(page.locator("[data-notice]")).not.toContainText("PAY-0102");
 }
+
+test("a 401 on the retry after a lost answer is the gate's answer: the key is kept, the words stay unknown, and the next press carries it", async ({ page, request }) => {
+  await gateAnswersTheRetry(401, page, request);
+});
+
+test("a 403 on the retry after a lost answer is the gate's answer: the key is kept, the words stay unknown, and the next press carries it", async ({ page, request }) => {
+  await gateAnswersTheRetry(403, page, request);
+});
 
 test("a first press answered 401 wrote nothing: it is refused in words and the next press is a new payment", async ({ page, request }) => {
   const posts: ApplyBody[] = [];
