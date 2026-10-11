@@ -79,13 +79,15 @@ let clockOffsetMs = 0;
 const nowMs = () => Date.now() + clockOffsetMs;
 
 // The closed flow table, mirroring the core's (core/internal/demo/flows):
-// the Counter Till's pair plus the five personas the roles roadmap is
-// bringing live. The till's entry offers a card for its own pair alone; the
-// listing still answers the whole table, as the core's route does (the
-// mint's role label comes from this table, never from the roles table).
+// the Counter Till's pair, the yard manager, and the personas and roles the
+// roles roadmap brought live. The till's entry offers a card for its own
+// pair alone; the listing still answers the whole table, as the core's route
+// does (the mint's role label comes from this table, never from the roles
+// table).
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "yard-manager", role_code: "yard_manager", label: "Yard manager" },
   { flow: "yard-team", role_code: "yard_team", label: "Yard Team" },
   { flow: "driver", role_code: "driver", label: "Driver" },
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
@@ -120,6 +122,15 @@ const USERS = {
     display_name: "Sales manager (demo)",
     role_code: "sales_manager",
     role_name: "Sales Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  "yard-manager": {
+    user_id: "demo-account-yard-manager",
+    email: "yard-manager@demo.invalid",
+    display_name: "Yard manager (demo)",
+    role_code: "yard_manager",
+    role_name: "Yard manager",
     tier: 2,
     scope: "BRANCH",
   },
@@ -206,6 +217,7 @@ const BRANCHES = [
 const ACCOUNT_BRANCH = {
   "demo-account-sales": TRENTON_ID,
   "demo-account-sales-manager": TRENTON_ID,
+  "demo-account-yard-manager": TRENTON_ID,
   "demo-account-procurement-manager": TRENTON_ID,
 };
 

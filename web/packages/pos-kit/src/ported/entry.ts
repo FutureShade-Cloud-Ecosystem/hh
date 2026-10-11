@@ -4,7 +4,7 @@
 // pair of the box's flow table, which mints more logins than any one app
 // offers cards for) wearing the ported token sheet's surfaces and borders,
 // an icon from the ported icon registry and one line of what the role opens,
-// then the other nine roles of the decided matrix as coming: shown in a
+// then the other eight roles of the decided matrix as coming: shown in a
 // ruled card, labelled Coming, and not tappable, because their screens do not
 // exist in this release. When the flows route answers nothing (a default-build
 // core or a non-demo box), there are no cards at all and the page says so
@@ -29,7 +29,6 @@ import { drawIcon, iconForId } from "./_icon-consumer.js";
 export const COMING_ROLES: readonly string[] = [
   "Outside Sales",
   "Yard Team",
-  "Yard Manager",
   "Logistics Manager",
   "Branch Manager",
   "Payables and Receivables",
@@ -61,6 +60,7 @@ export interface EntryView {
 const FLOW_ICONS: Record<string, string> = {
   sales: "lucide:receipt",
   "sales-manager": "lucide:badge-check",
+  "yard-manager": "lucide:warehouse",
   "payables-receivables": "lucide:landmark",
   "procurement-manager": "lucide:package",
   "financial-controller": "lucide:landmark",
@@ -68,6 +68,7 @@ const FLOW_ICONS: Record<string, string> = {
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
   "sales-manager": "The counter plus approvals and margins.",
+  "yard-manager": "The yard: picks, shortages and deliveries.",
   "payables-receivables": "Chase overdue accounts and work the bounced payments.",
   "procurement-manager": "Buy the branch's stock.",
   "financial-controller": "Decide approvals and keep the ledger.",
@@ -224,16 +225,17 @@ export function renderEntry(view: EntryView): TemplateResult {
       The demo roles could not be loaded (HTTP ${view.flows.status}). Reload to try again.
     </p>`);
   }
-  if (view.flows.flows.length === 0) {
-    return stage(html`<p class="notice" role="status">
-      The demo sign-in answered with no roles: there is nothing to tap.
-    </p>`);
-  }
-  return stage(html`
-    <h2 class="headline">Who is at the counter?</h2>
-    <p class="intro">Tap a role to open the till:</p>
-    <div class="cards">
-      ${view.flows.flows.map(
+	const tillFlows = view.flows.flows;
+	if (tillFlows.length === 0) {
+		return stage(html`<p class="notice" role="status">
+			The demo sign-in answered with no roles: there is nothing to tap.
+		</p>`);
+	}
+	return stage(html`
+		<h2 class="headline">Who is at the counter?</h2>
+		<p class="intro">Tap a role to open the till:</p>
+		<div class="cards">
+			${tillFlows.map(
         (flow) => html`
           <button
             type="button"

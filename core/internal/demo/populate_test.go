@@ -300,11 +300,11 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
 		t.Errorf("the org scope did not stamp clean: %+v", counts)
 	}
-	if counts.UsersLinked != 7 || counts.UsersUnlinked != 8 {
-		t.Errorf("linked %d / unlinked %d users, want the 7 demo role accounts (sales, manager, payables-receivables, buyer, controller, yard, driver) linked and the 8 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	if counts.UsersLinked != 8 || counts.UsersUnlinked != 8 {
+		t.Errorf("linked %d / unlinked %d users, want the 8 demo role accounts (sales, manager, yard-manager, payables-receivables, buyer, controller, yard, driver) linked and the 8 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	if counts.StaffGrants != 7 || counts.StaffGrantsBranch != 5 || counts.StaffGrantsGlobal != 2 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the five branch-scoped linked accounts' one-branch grants (sales, manager, buyer, yard, driver) and the two global grants (Payables and Receivables, Financial Controller)", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	if counts.StaffGrants != 8 || counts.StaffGrantsBranch != 6 || counts.StaffGrantsGlobal != 2 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the six branch-scoped linked accounts' one-branch grants (sales, manager, yard manager, buyer, yard, driver) and the two global grants (Payables and Receivables, Financial Controller)", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -326,9 +326,10 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		t.Errorf("%d user row(s) sit outside the reserved domains", outside)
 	}
 
-	// The two role accounts are exactly as the demo sign-in will resolve them.
+	// The role accounts are exactly as the demo sign-in will resolve them.
 	assertRoleAccount(t, ctx, pool, salesUserID, salesEmail, salesDisplayName, "INSIDE_SALES", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, managerUserID, managerEmail, managerDisplayName, "SALES_MANAGER", trentonBranchID)
+	assertRoleAccount(t, ctx, pool, yardMgrUserID, yardMgrEmail, yardMgrDisplayName, "YARD_MANAGER", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, payRecUserID, payRecEmail, payRecDisplayName, "PAYABLES_RECEIVABLES", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, buyerUserID, buyerEmail, buyerDisplayName, "PROCUREMENT_MANAGER", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, controllerUserID, controllerEmail, controllerDisplayName, "FINANCIAL_CONTROLLER", trentonBranchID)
@@ -393,13 +394,14 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		}
 	}
 
-	// Every users row renders an invented name: the fourteen display names
+	// Every users row renders an invented name: the sixteen display names
 	// this populate and the migrations' planted set allow, exactly, and
 	// nothing else. A surname token or an unreplaced placeholder on any row
 	// fails the allowlist, without the test itself naming a token.
 	allowedNames := map[string]bool{
 		salesDisplayName:                true,
 		managerDisplayName:              true,
+		yardMgrDisplayName:              true,
 		payRecDisplayName:               true,
 		controllerDisplayName:           true,
 		"Platform admin (demo)":         true,
@@ -433,12 +435,12 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	if err := nameRows.Err(); err != nil {
 		t.Fatal(err)
 	}
-// 15 since taking in PR 303: the two Counter Till accounts, the planted
-	// demo teammates, and the three roadmap personas (Payables and Receivables
-	// and the Procurement Manager and the Financial Controller), each one
-	// invented name.
-	if len(saw) != len(allowedNames) || len(saw) != 15 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 15 invented ones (saw: %v)", len(saw), saw)
+	// 16 since this merge: the Counter Till accounts, the yard manager, the
+	// planted demo teammates, and the roadmap personas (Payables and
+	// Receivables and the Procurement Manager and the Financial Controller),
+	// each one invented name.
+	if len(saw) != len(allowedNames) || len(saw) != 16 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 16 invented ones (saw: %v)", len(saw), saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the

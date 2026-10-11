@@ -4,30 +4,32 @@ package flows
 
 import "testing"
 
-// The table is closed: the two Counter Till flows, the two Yard personas
-// migration 0200 plants, and the three roles the roadmap added one
-// reviewed row at a time (Payables and Receivables after PR 300, the
-// Procurement Manager after PR 303, the Financial Controller), no more,
-// and every entry carries the account facts the other lanes share.
+// The table is closed: the two Counter Till flows, Manager Home's yard
+// manager, the two Yard personas migration 0200 plants, and the three
+// roles the roadmap added one reviewed row at a time (Payables and
+// Receivables after PR 300, the Procurement Manager after PR 303, the
+// Financial Controller), no more, and every entry carries the account
+// facts the other lanes share.
 func TestTableIsTheClosedSet(t *testing.T) {
 	all := All()
-	if len(all) != 7 {
-		t.Fatalf("table holds %d flows, want the closed set of seven", len(all))
+	if len(all) != 8 {
+		t.Fatalf("table holds %d flows, want the closed set of eight", len(all))
 	}
 	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" ||
-		all[2].Flow != "yard-team" || all[3].Flow != "driver" ||
-		all[4].Flow != "payables-receivables" ||
-		all[5].Flow != "procurement-manager" || all[6].Flow != "financial-controller" {
-		t.Fatalf("flow order drifted: %q, %q, %q, %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow, all[4].Flow, all[5].Flow, all[6].Flow)
+		all[2].Flow != "yard-manager" || all[3].Flow != "yard-team" ||
+		all[4].Flow != "driver" ||
+		all[5].Flow != "payables-receivables" ||
+		all[6].Flow != "procurement-manager" || all[7].Flow != "financial-controller" {
+		t.Fatalf("flow order drifted: %q, %q, %q, %q, %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow, all[4].Flow, all[5].Flow, all[6].Flow, all[7].Flow)
 	}
 	for _, a := range all {
 		if a.PlatformUserID == "" || a.Email == "" || a.DisplayName == "" || a.Label == "" || a.Role == "" {
 			t.Fatalf("flow %q carries an empty fact: %+v", a.Flow, a)
 		}
 		switch a.Role {
-		case "inside_sales", "sales_manager", "yard_team", "driver", "payables_receivables", "procurement_manager", "financial_controller":
+		case "inside_sales", "sales_manager", "yard_manager", "yard_team", "driver", "payables_receivables", "procurement_manager", "financial_controller":
 		default:
-			t.Fatalf("flow %q holds role %q, want one of the table's seven staff roles", a.Flow, a.Role)
+			t.Fatalf("flow %q holds role %q, want one of the table's eight staff roles", a.Flow, a.Role)
 		}
 	}
 }
@@ -53,6 +55,10 @@ func TestLookups(t *testing.T) {
 	a, ok := Get("sales")
 	if !ok || a.Role != "inside_sales" {
 		t.Fatalf("Get(sales) = %+v %v", a, ok)
+	}
+	a, ok = Get("yard-manager")
+	if !ok || a.Role != "yard_manager" || a.Label != "Yard manager" {
+		t.Fatalf("Get(yard-manager) = %+v %v", a, ok)
 	}
 	a, ok = Get("payables-receivables")
 	if !ok || a.Role != "payables_receivables" || a.Label != "Payables and Receivables" {

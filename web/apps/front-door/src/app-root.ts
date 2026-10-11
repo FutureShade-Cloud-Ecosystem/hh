@@ -1,11 +1,11 @@
 // The front door: the demo box's first screen (HH-DEMO-1 D2). One element,
 // three states, one header.
 //
-//   picker      pre-auth: "Pick a role to walk the demo.", the five live role
-//               cards, and the decided matrix's eight other roles as coming
+//   picker      pre-auth: "Pick a role to walk the demo.", the six live role
+//               cards, and the decided matrix's seven other roles as coming
 //               rows that show their modules and never tap.
-//   home        post-auth: the role's modules as tiles. The box's five live
-//               modules navigate (D1 wires the routes); the manager's three
+//   home        post-auth: the role's modules as tiles. The box's live
+//               modules navigate (D1 wires the routes); the manager's two
 //               not-yet-on-the-box modules open the polite coming-soon page.
 //   coming-soon a module a tile pointed at that the box does not serve yet.
 //
@@ -377,7 +377,7 @@ export class FrontDoorApp extends HHElement {
         color: var(--hh-danger);
       }
 
-      /* ── the coming list: one collapsed disclosure. The eight coming
+      /* ── the coming list: one collapsed disclosure. The seven coming
          roles are honesty about scope, not a page of their own: closed they
          take one row, open they show today's list unchanged, chips muted
          as they ever were. ────────────────────────────────────────────── */
@@ -937,7 +937,7 @@ export class FrontDoorApp extends HHElement {
         </div>
         <details class="coming-card" data-testid="coming-disclosure">
           <summary>
-            <span class="coming-heading">Eight more roles are coming</span>
+            <span class="coming-heading">Seven more roles are coming</span>
             <span class="chev" aria-hidden="true">${drawIcon(iconForId("lucide:chevron-up"), 16)}</span>
           </summary>
           <ul class="coming" aria-label="Coming roles">

@@ -35,10 +35,13 @@ const port = Number(process.env.FD_STUB_PORT ?? 4927);
 // this box serves, with the labels the cards carry and the role each minted
 // account holds. The core's table mints the personas the roles roadmap is
 // bringing live beside these; the front door offers a card only for a role
-// whose screens exist, so its stub answers the same set.
+// whose screens exist, so its stub answers the same set (the financial
+// controller's mint exists for the money lanes' tests while its card is
+// still coming).
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "yard-manager", role_code: "yard_manager", label: "Yard manager" },
   { flow: "driver", role_code: "driver", label: "Driver" },
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
@@ -61,6 +64,15 @@ const USERS = {
     display_name: "Sales manager (demo)",
     role_code: "sales_manager",
     role_name: "Sales Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
+  "yard-manager": {
+    user_id: "demo-account-yard-manager",
+    email: "yard-manager@demo.invalid",
+    display_name: "Yard manager (demo)",
+    role_code: "yard_manager",
+    role_name: "Yard manager",
     tier: 2,
     scope: "BRANCH",
   },
