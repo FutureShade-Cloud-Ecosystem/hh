@@ -127,11 +127,17 @@ export function paymentOutcome(error: string, status: number | undefined, heldKe
     };
   }
   if (heldKey && (status === 401 || status === 403)) {
-    // The gate answered before the payment route saw the request, so it says nothing about the earlier press:
-    // the key is kept and the outcome stays unknown.
+    // The gate answered before the payment route saw the request, so it says nothing about the earlier
+    // press: the key is kept and the outcome stays unknown. The 401's own sentence already says to sign
+    // in, so its press instruction follows it; the 403 names who may record the payment, and its press
+    // instruction waits for a role that can (the same role pressing again draws the same 403).
+    const press =
+      status === 401
+        ? "Then press Record payment"
+        : "Press Record payment again only once you are signed in with a role that can record it";
     return {
       kind: "unknown",
-      words: `The earlier press may or may not have been recorded. ${refusalWords("payment", error, status)} Then press Record payment: this desk sends the same key again, and the server will say if the earlier press was already recorded.`,
+      words: `The earlier press may or may not have been recorded. ${refusalWords("payment", error, status)} ${press}: this desk sends the same key again, and the server will say if the earlier press was already recorded.`,
     };
   }
   if (error.includes("already recorded a different payment")) {

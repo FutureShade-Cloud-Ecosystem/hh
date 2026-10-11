@@ -515,6 +515,11 @@ async function gateAnswersTheRetry(status: 401 | 403, page: Page, request: Param
   await expect(page.locator("[data-error]")).toContainText("The earlier press may or may not have been recorded");
   await expect(page.locator("[data-error]")).not.toContainText("was not recorded");
   await expect(page.locator("[data-error]")).toContainText(status === 401 ? "Your sign in has ended. Sign in again." : "Your role may not do that.");
+  // The press instruction waits for what the gate asked: signing in for a 401, a role that may record
+  // the payment for a 403 (the same role pressing again would only draw the same 403).
+  await expect(page.locator("[data-error]")).toContainText(
+    status === 401 ? "Sign in again. Then press Record payment" : "Press Record payment again only once you are signed in with a role that can record it",
+  );
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 was already applied");
   expect(posts).toHaveLength(3);

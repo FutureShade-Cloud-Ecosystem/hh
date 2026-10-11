@@ -200,3 +200,13 @@ test("a 401 or 403 on a press while the account holds a key is the gate's answer
     assert.equal(paymentOutcome("unauthorized", status).kind, "refused", String(status));
   }
 });
+
+test("the held key's gate words say when to press: after signing in for a 401, only with a role that may for a 403", () => {
+  const signIn = paymentOutcome("unauthorized", 401, true);
+  assert.ok(signIn.words.includes("Sign in again. Then press Record payment"), signIn.words);
+  const role = paymentOutcome("forbidden", 403, true);
+  // The 403 names who may record the payment and never tells the same role to press again as is.
+  assert.ok(role.words.includes("Your role may not do that. Ask the General Manager or the Financial Controller."), role.words);
+  assert.ok(role.words.includes("Press Record payment again only once you are signed in with a role that can record it"), role.words);
+  assert.ok(!role.words.includes("Financial Controller. Then press"), role.words);
+});
