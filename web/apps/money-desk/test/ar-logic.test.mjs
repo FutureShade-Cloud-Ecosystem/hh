@@ -70,6 +70,9 @@ test("a payment whose answer was lost or came back 5xx says the outcome is unkno
     assert.ok(outcome.words.includes("may or may not have been recorded"), outcome.words);
     assert.ok(outcome.words.includes("Check the account"), outcome.words);
     assert.ok(!outcome.words.includes("Nothing was changed"), outcome.words);
+    // The promise is only what is true: pressing again sends the same payment under the same key.
+    assert.ok(outcome.words.includes("to send the same payment"), outcome.words);
+    assert.ok(!outcome.words.includes("whatever the form now says"), outcome.words);
   }
 });
 
@@ -84,12 +87,14 @@ test("a worded 4xx is a refusal in the route's own words, and says the payment w
   assert.ok(paymentOutcome("Forbidden", 403).words.startsWith("The payment was not recorded."));
 });
 
-test("the route's replay refusal reads as the earlier payment being recorded, in both its wordings", () => {
-  const different = paymentOutcome("that idempotency key already recorded a different payment; use a new key", 422);
-  assert.equal(different.kind, "recorded");
-  assert.ok(different.words.includes("already recorded by the earlier press"), different.words);
-  assert.ok(!different.words.includes("was not recorded"), different.words);
-  const otherAccount = paymentOutcome("that idempotency key already recorded a payment for another account; use a new key", 400);
+test("the replay refusal for a different payment says both things: the earlier press recorded, this one not", () => {
+  const different = paymentOutcome("that idempotency key already recorded a different payment; use a new key", 422, true);
+  assert.equal(different.kind, "recorded-other");
+  assert.ok(different.words.startsWith("This payment was not recorded."), different.words);
+  assert.ok(different.words.includes("The earlier press was recorded as a different payment."), different.words);
+  assert.ok(different.words.includes("press Record payment to record this one"), different.words);
+  // The other replay wording (another account, reachable only by tampered storage) keeps its reading.
+  const otherAccount = paymentOutcome("that idempotency key already recorded a payment for another account; use a new key", 422);
   assert.equal(otherAccount.kind, "recorded");
 });
 

@@ -106,23 +106,24 @@ export function refusalWords(action: string, error: string, status: number | und
 /**
  * What a recorded payment's failure means for the person. A lost answer or a 5xx leaves the outcome unknown: the
  * server may have written the payment before the answer was lost, so the words say so and send the person to check
- * the account before taking anything again (the desk holds the payment's key and sends it again whatever the form
- * now says, so pressing again cannot post the money twice). A worded 422 is the route refusing with nothing
- * written, in the route's own words, except its replay refusal ("that idempotency key already recorded ..."):
- * those words mean the earlier attempt landed, so they read as the payment being recorded, not refused. A 401 or a
- * 403 is the gate's answer, not the route's: when the account already holds a key from an earlier press it leaves
+ * the account before taking anything again (the desk holds the payment's key and sends it again, so pressing
+ * again sends the same payment and cannot post the money twice). A worded 422 is the route refusing with nothing
+ * written, in the route's own words, except its replay refusals ("that idempotency key already recorded ..."):
+ * "a different payment" means the earlier attempt landed and THIS form's payment was not recorded (both things
+ * said, the form kept for a fresh press), and the other wording means the key's payment is another account's. A
+ * 401 or a 403 is the gate's answer, not the route's: when the account already holds a key from an earlier press it leaves
  * the outcome unknown and the key kept. The same holds for every other 4xx while a key is held (a 404, a 408, a
  * 429): the payment route's own refusals all answer 422 in its words, so any other status is not its answer for
  * the held key and never ends it.
  */
-export type PaymentOutcome = { kind: "unknown" | "refused" | "recorded"; words: string };
+export type PaymentOutcome = { kind: "unknown" | "refused" | "recorded" | "recorded-other"; words: string };
 
 export function paymentOutcome(error: string, status: number | undefined, heldKey = false): PaymentOutcome {
   if (status === undefined || status >= 500) {
     return {
       kind: "unknown",
       words:
-        "The server did not give a clear answer, so this payment may or may not have been recorded. Check the account's payments and invoice balances before taking the money again. Pressing Record payment again is safe whatever the form now says: this desk sends the payment's own key again, so it cannot post twice, and if the earlier press was already recorded the server will say so.",
+        "The server did not give a clear answer, so this payment may or may not have been recorded. Check the account's payments and invoice balances before taking the money again. Press Record payment again to send the same payment: this desk sends the payment's own key, and if the earlier press was already recorded the server will say so.",
     };
   }
   if (heldKey && (status === 401 || status === 403)) {
@@ -131,6 +132,15 @@ export function paymentOutcome(error: string, status: number | undefined, heldKe
     return {
       kind: "unknown",
       words: `The earlier press may or may not have been recorded. ${refusalWords("payment", error, status)} Then press Record payment: this desk sends the same key again, and the server will say if the earlier press was already recorded.`,
+    };
+  }
+  if (error.includes("already recorded a different payment")) {
+    // The route's own answer for the held key: the earlier press landed as a different payment, and this
+    // form's payment was not recorded. Both things are true and both are said.
+    return {
+      kind: "recorded-other",
+      words:
+        "This payment was not recorded. The earlier press was recorded as a different payment. Check the account, then press Record payment to record this one.",
     };
   }
   if (error.includes("already recorded")) {

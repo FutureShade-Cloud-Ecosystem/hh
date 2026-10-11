@@ -612,6 +612,19 @@ export class ArDesk {
         this.#host.repaint();
         return;
       }
+      if (outcome.kind === "recorded-other") {
+        // The route's refusal is its own answer for the held key: the earlier press landed as a different
+        // payment and THIS form's payment was not recorded. The key ends; the form stays filled so this
+        // cheque can be pressed again as a new payment, and the account reloads so the check the words
+        // ask for reads the server's balances.
+        this.#payPins.delete(account.customerId);
+        this.#notice = "";
+        this.#error = outcome.words;
+        this.#reveal = "[data-error]";
+        await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
+        this.#host.repaint();
+        return;
+      }
       this.#notice = "";
       this.#error = outcome.words;
       // An unknown outcome keeps the key, so no retry can post twice; a refusal wrote nothing and ends it.

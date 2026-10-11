@@ -77,7 +77,9 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "apply-unknown": [
     { file: RECEIVABLES, test: "an answer lost after the server applied the payment says the outcome is unknown, and pressing again reuses the key and posts once" },
     { file: RECEIVABLES, test: "a 5xx answer says the outcome is unknown, and every retry carries the same key whatever the form now says" },
-    { file: RECEIVABLES, test: "a lost answer then a changed cheque number sends the same key; the route's refusal reads already recorded and the account reloads" },
+    { file: RECEIVABLES, test: "a lost answer then a changed cheque number sends the same key; the refusal keeps the form and the next press records the cheque" },
+    { file: RECEIVABLES, test: "a held key re-used for a different payment: the error words say both, the form is kept, and the next press records the new cheque" },
+    { file: RECEIVABLES, test: "the same re-use from a duplicated tab: the copied key refuses the new cheque in the error words, and the next press records it" },
     { file: RECEIVABLES, test: "a payment recorded on another account leaves this account's pending payment key alone" },
     { file: RECEIVABLES, test: "opening the invoice's payments after a lost answer never ends the held key: the next press carries it and reads already applied, with one payment" },
     { file: RECEIVABLES, test: "a 401 on the retry after a lost answer is the gate's answer: the key is kept, the words stay unknown, and the next press carries it" },
