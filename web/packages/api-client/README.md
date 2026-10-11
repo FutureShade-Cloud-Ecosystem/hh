@@ -110,8 +110,8 @@ so the generator needs its install first: `npm --prefix core/api/tools ci`.
 - The int64 bound: the contract declares 650 int64 fields
   (`grep -c 'format: int64' core/api/openapi.yaml`), and every one of them is
   typed `number` here. The count is the whole contract, not only the money
-  and sequence fields: a walk of the YAML finds 580 object properties (516
-  named `*_cents`, 6 named `*seq`, and 58 others such as `size_bytes` and the
+  and sequence fields: a walk of the YAML finds 640 object properties (550
+  named `*_cents`, 6 named `*seq`, and 84 others such as `size_bytes` and the
   `*_bps` rates), 7 parameters, 1 array item, and 2 `additionalProperties`.
   TypeScript's `number` is an IEEE 754 double, exact for integers up to 2^53;
   that is 9,007,199,254,740,992, far above any figure the dealer modules
