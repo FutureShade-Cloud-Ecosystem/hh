@@ -82,15 +82,15 @@ const (
 
 	// Payables and Receivables, the third role account (global, tier two):
 	// the flow table's row for the receivables desk, minted by the roles
-	// roadmap's first receivables increment.
+	// roadmap's first increment (PR 300).
 	payRecUserID      = "de110000-0000-4000-9000-0000000000a1"
 	payRecPlatformID  = "de110000-0000-4000-9000-0000000000a1"
 	payRecEmail       = "payables.receivables@hh-demo.invalid"
 	payRecDisplayName = "Payables and Receivables (demo)"
 
-	// The procurement manager's account, the Buying and Stock role login
-	// (the roles roadmap's first procurement increment). Same id block as
-	// the flow table's row, reconciled by copy the same way.
+	// The procurement manager's account, the fourth role login (branch,
+	// tier two): the Buying and Stock row the roles roadmap added next
+	// (PR 303). Same id block as the flow table's row, reconciled by copy.
 	buyerUserID      = "de64b000-0000-4000-9000-000000000001"
 	buyerPlatformID  = "de64b000-0000-4000-9000-000000000001"
 	buyerEmail       = "procurement.manager@hh-demo.invalid"

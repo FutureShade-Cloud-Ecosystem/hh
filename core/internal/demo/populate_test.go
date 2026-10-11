@@ -437,7 +437,7 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	}
 	// 16 since this merge: the Counter Till accounts, the yard manager, the
 	// planted demo teammates, and the roadmap personas (Payables and
-	// Receivables, the Procurement Manager and the Financial Controller),
+	// Receivables and the Procurement Manager and the Financial Controller),
 	// each one invented name.
 	if len(saw) != len(allowedNames) || len(saw) != 16 {
 		t.Errorf("the users rows render %d distinct display names, want exactly the 16 invented ones (saw: %v)", len(saw), saw)
