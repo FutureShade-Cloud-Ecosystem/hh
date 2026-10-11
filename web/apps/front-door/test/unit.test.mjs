@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
-// the rule the D2 brief fixes (the six live roles with the contract's labels
-// and the flows' ids; seven coming roles, each carrying the modules the
+// the rule the D2 brief fixes (the seven live roles with the contract's
+// labels and the flows they mint; six coming roles, each carrying the modules
 // matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test
@@ -136,9 +136,9 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the six live roles with the contract's labels and the flows they mint", () => {
-  assert.equal(LIVE_ROLES.length, 6);
-  const [sales, manager, yard, payRec, buyer, driver] = LIVE_ROLES;
+test("the catalog holds the seven live roles with the contract's labels and the flows they mint", () => {
+  assert.equal(LIVE_ROLES.length, 7);
+  const [sales, manager, yardManager, yardTeam, payRec, buyer, driver] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
   assert.deepEqual(sales.tiles.map((tile) => tile.name), ["Counter Till", "Quote Desk"]);
@@ -148,6 +148,27 @@ test("the catalog holds the six live roles with the contract's labels and the fl
     manager.tiles.map((tile) => tile.name),
     ["Counter Till", "Quote Desk", "Manager Home", "Dealer Admin", "House Messages"],
   );
+  // The yard manager: Manager Home is its live landing, the Yard Pick app its
+  // live pick app and Buying and Stock the live buying app; the two modules
+  // the matrix gives it that the box does not serve yet open the coming-soon
+  // page.
+  assert.equal(yardManager.label, "Yard manager");
+  assert.equal(yardManager.flow, "yard-manager");
+  assert.deepEqual(
+    yardManager.tiles.map((tile) => tile.name),
+    ["Manager Home", "Yard Pick", "Dispatch and Load Building", "Buying and Stock", "House Messages"],
+  );
+  assert.deepEqual(
+    yardManager.tiles.map((tile) => tile.href),
+    ["/home/", "/yard/", null, "/buying-and-stock/", null],
+  );
+  // The Yard Team's label is the flows row's own ("Yard Team"), and its one
+  // live module is the Yard Pick app under /yard/; House Messages is not on
+  // the box yet.
+  assert.equal(yardTeam.label, "Yard Team");
+  assert.equal(yardTeam.flow, "yard-team");
+  assert.deepEqual(yardTeam.tiles.map((tile) => tile.name), ["Yard Pick", "House Messages"]);
+  assert.deepEqual(yardTeam.tiles.map((tile) => tile.href), ["/yard/", null]);
   assert.equal(buyer.label, "Procurement manager");
   assert.equal(buyer.flow, "procurement-manager");
   assert.deepEqual(
@@ -162,19 +183,6 @@ test("the catalog holds the six live roles with the contract's labels and the fl
   assert.deepEqual(
     manager.tiles.map((tile) => tile.href),
     ["/till/", "/quote/", "/home/", null, null],
-  );
-  // The yard manager: Manager Home is its live landing and Buying and Stock
-  // the live buying app; the three modules the matrix gives it that the box
-  // does not serve yet open the coming-soon page.
-  assert.equal(yard.label, "Yard manager");
-  assert.equal(yard.flow, "yard-manager");
-  assert.deepEqual(
-    yard.tiles.map((tile) => tile.name),
-    ["Manager Home", "Yard Pick and Receive", "Dispatch and Load Building", "Buying and Stock", "House Messages"],
-  );
-  assert.deepEqual(
-    yard.tiles.map((tile) => tile.href),
-    ["/home/", null, null, "/buying-and-stock/", null],
   );
   assert.deepEqual(
     buyer.tiles.map((tile) => tile.href),
@@ -194,10 +202,9 @@ test("the catalog holds the six live roles with the contract's labels and the fl
   assert.deepEqual(driver.tiles.map((tile) => tile.href), ["/drive/", null]);
 });
 
-test("the catalog holds the seven coming roles, each with its matrix modules", () => {
+test("the catalog holds the six coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
-    "Yard Team",
     "Logistics Manager",
     "Branch Manager",
     "Financial Controller",
