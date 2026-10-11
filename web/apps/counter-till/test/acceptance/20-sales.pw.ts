@@ -47,7 +47,7 @@ async function readSale(page: Page, bearer: string, orderId: string) {
   return answer.body;
 }
 
-test("the way in: two cards, the nine coming roles untapped, the driver starts at the front door, and the banner", async ({
+test("the way in: two cards, the seven coming roles untapped, the driver starts at the front door, and the banner", async ({
   page,
 }, testInfo) => {
   await page.goto("/");
@@ -59,9 +59,14 @@ test("the way in: two cards, the nine coming roles untapped, the driver starts a
   await expect(page.getByRole("button", { name: "Driver", exact: true })).toHaveCount(0);
   // The coming roles: shown, labelled Coming, and dead controls. Driver is
   // no longer among them: the role's card lives on the front door now.
-  for (const role of ["Outside Sales", "Yard Team", "Branch Manager", "General Manager", "HR"]) {
+  for (const role of ["Outside Sales", "Branch Manager", "General Manager", "HR"]) {
     const coming = page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role });
     await expect(coming).toBeDisabled();
+  }
+  // The Yard Team and Payables and Receivables have live cards on the front
+  // door, so the till's list drops them, as it dropped the Driver.
+  for (const role of ["Yard Team", "Payables and Receivables"]) {
+    await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role })).toHaveCount(0);
   }
   await shot(page, "sales-01-way-in", testInfo);
 });
