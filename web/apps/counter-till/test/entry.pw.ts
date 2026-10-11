@@ -1,9 +1,14 @@
 // The Counter Till's exit test, run against the stubbed harness (the stub
 // serves the demo routes' contract shapes; the vite dev server proxies /api
 // to it). This is W6's slice of the plan's screen 1: two cards, a tapped card
-// lands on the till with the Demo banner and the role's name, the seven
-// other roles show as coming and cannot be tapped, sign out returns to the
-// cards, and against a flows route that answers there are no cards at all.
+// lands on the till with the Demo banner and the role's name, the six coming
+// roles show as coming and cannot be tapped, sign out returns to the cards,
+// and against a flows route that answers there are no cards at all. The yard
+// manager's, the Yard Team's and the Driver's flows are in the stub's flows
+// list (the same list the front door reads), but the till's entry view serves
+// the decided matrix's Counter Till roles only, so none of their cards render
+// here: they sign in at the front door, where the picker has the matrix's
+// full set.
 // The suite also holds the org header: the stub echoes the X-Org it received
 // back as x-stub-saw-org, so a wrong org in the app's client configuration
 // fails right here.
@@ -14,7 +19,6 @@ import { expect, test, type Page, type Response } from "@playwright/test";
 // carried the list from the app would pass on an app that forgot a role.
 const COMING_ROLES = [
   "Outside Sales",
-  "Yard Manager",
   "Logistics Manager",
   "Branch Manager",
   "Financial Controller",
@@ -26,7 +30,7 @@ function flowsCall(page: Page): Promise<Response> {
   return page.waitForResponse((response) => response.url().endsWith("/api/v1/demo/flows"));
 }
 
-test("the entry page shows the two demo role cards and the seven coming roles, with no driver card", async ({
+test("the entry page shows the two till role cards and the six coming roles, with no yard manager, yard team or driver card", async ({
   page,
 }) => {
   const flows = flowsCall(page);
@@ -41,19 +45,25 @@ test("the entry page shows the two demo role cards and the seven coming roles, w
   const manager = page.getByRole("button", { name: "Sales manager", exact: true });
   await expect(manager).toBeVisible();
   await expect(manager).toBeEnabled();
+  // The yard manager is in the stub's flow list (the front door reads it),
+  // but the till's entry serves the matrix's Counter Till roles only.
+  const yardManager = page.getByRole("button", { name: "Yard manager", exact: true });
+  await expect(yardManager).toHaveCount(0);
 
-  // The stub's table, like the core's, mints the full closed set of seven
-  // logins (sales, sales manager, the Yard Team, the Driver, Payables and
-  // Receivables, the Procurement Manager, the Financial Controller); the
-  // till offers a card for its own pair alone (any other card would lead
-  // into a surface the server refuses). The Financial Controller stays in
-  // the coming list; the Yard Team, the Driver, Payables and Receivables and
-  // the Procurement Manager have their own apps behind the front door's
-  // cards, so the till lists them nowhere.
+  // The stub's table, like the core's, mints the full closed set of eight
+  // logins (sales, sales manager, the yard manager, the Yard Team, the
+  // Driver, Payables and Receivables, the Procurement Manager, the Financial
+  // Controller); the till offers a card for its own pair alone (any other
+  // card would lead into a surface the server refuses). The Financial
+  // Controller stays in the coming list; the yard manager (Manager Home is
+  // its app), the Yard Team, the Driver, Payables and Receivables and the
+  // Procurement Manager have their own apps behind the front door's cards,
+  // so the till lists them nowhere.
   const listing = (await (await flows).json()) as { flows: Array<{ flow: string }> };
   expect(listing.flows.map((row) => row.flow)).toEqual([
     "sales",
     "sales-manager",
+    "yard-manager",
     "yard-team",
     "driver",
     "payables-receivables",
@@ -71,7 +81,7 @@ test("the entry page shows the two demo role cards and the seven coming roles, w
 
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(7);
+  await expect(coming.getByRole("listitem")).toHaveCount(6);
   for (const role of COMING_ROLES) {
     const control = coming.getByRole("button", { name: role, exact: true });
     await expect(control).toBeVisible();

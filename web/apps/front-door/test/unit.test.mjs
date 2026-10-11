@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
-// the rule the D2 brief fixes (the live roles with the contract's labels and
-// the flows they mint; seven coming roles, each carrying the modules the
+// the rule the D2 brief fixes (the seven live roles with the contract's
+// labels and the flows they mint; six coming roles, each carrying the modules
 // matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test
@@ -136,9 +136,9 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the six live roles with the contract's labels and the flows they mint", () => {
-  assert.equal(LIVE_ROLES.length, 6);
-  const [sales, manager, yard, payRec, buyer, driver] = LIVE_ROLES;
+test("the catalog holds the seven live roles with the contract's labels and the flows they mint", () => {
+  assert.equal(LIVE_ROLES.length, 7);
+  const [sales, manager, yardManager, yardTeam, payRec, buyer, driver] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
   assert.deepEqual(sales.tiles.map((tile) => tile.name), ["Counter Till", "Quote Desk"]);
@@ -148,13 +148,27 @@ test("the catalog holds the six live roles with the contract's labels and the fl
     manager.tiles.map((tile) => tile.name),
     ["Counter Till", "Quote Desk", "Manager Home", "Dealer Admin", "House Messages"],
   );
+  // The yard manager: Manager Home is its live landing, the Yard Pick app its
+  // live pick app and Buying and Stock the live buying app; the two modules
+  // the matrix gives it that the box does not serve yet open the coming-soon
+  // page.
+  assert.equal(yardManager.label, "Yard manager");
+  assert.equal(yardManager.flow, "yard-manager");
+  assert.deepEqual(
+    yardManager.tiles.map((tile) => tile.name),
+    ["Manager Home", "Yard Pick and Receive", "Dispatch and Load Building", "Buying and Stock", "House Messages"],
+  );
+  assert.deepEqual(
+    yardManager.tiles.map((tile) => tile.href),
+    ["/home/", "/yard/", null, "/buying-and-stock/", null],
+  );
   // The Yard Team's label is the flows row's own ("Yard Team"), and its one
   // live module is the Yard Pick app under /yard/; House Messages is not on
   // the box yet.
-  assert.equal(yard.label, "Yard Team");
-  assert.equal(yard.flow, "yard-team");
-  assert.deepEqual(yard.tiles.map((tile) => tile.name), ["Yard Pick and Receive", "House Messages"]);
-  assert.deepEqual(yard.tiles.map((tile) => tile.href), ["/yard/", null]);
+  assert.equal(yardTeam.label, "Yard Team");
+  assert.equal(yardTeam.flow, "yard-team");
+  assert.deepEqual(yardTeam.tiles.map((tile) => tile.name), ["Yard Pick and Receive", "House Messages"]);
+  assert.deepEqual(yardTeam.tiles.map((tile) => tile.href), ["/yard/", null]);
   assert.equal(buyer.label, "Procurement manager");
   assert.equal(buyer.flow, "procurement-manager");
   assert.deepEqual(
@@ -168,18 +182,18 @@ test("the catalog holds the six live roles with the contract's labels and the fl
   );
   assert.deepEqual(
     manager.tiles.map((tile) => tile.href),
-    ["/till/", "/quote/", null, null, null],
+    ["/till/", "/quote/", "/home/", null, null],
   );
   assert.deepEqual(
     buyer.tiles.map((tile) => tile.href),
-    ["/buying-and-stock/", null, null],
+    ["/buying-and-stock/", "/home/", null],
   );
   // Payables and Receivables' one live module is the Money Desk; its Manager
-  // Home and House Messages tiles are not on the box yet.
+  // Home tile opens at /home/ and its House Messages tile is not on the box yet.
   assert.equal(payRec.label, "Payables and Receivables");
   assert.equal(payRec.flow, "payables-receivables");
   assert.deepEqual(payRec.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
-  assert.deepEqual(payRec.tiles.map((tile) => tile.href), ["/money-desk/", null, null]);
+  assert.deepEqual(payRec.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", null]);
   // The driver: HH Drive is its live landing; House Messages is the closed
   // module behind the chipped nav.
   assert.equal(driver.label, "Driver");
@@ -188,10 +202,9 @@ test("the catalog holds the six live roles with the contract's labels and the fl
   assert.deepEqual(driver.tiles.map((tile) => tile.href), ["/drive/", null]);
 });
 
-test("the catalog holds the seven coming roles, each with its matrix modules", () => {
+test("the catalog holds the six coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
-    "Yard Manager",
     "Logistics Manager",
     "Branch Manager",
     "Financial Controller",
@@ -200,28 +213,17 @@ test("the catalog holds the seven coming roles, each with its matrix modules", (
   ];
   assert.deepEqual(COMING_ROLES.map((role) => role.label), labels);
   // Every coming role shows at least the modules the matrix gives it at work
-  // level or above; HR's two are the smallest rows, the Branch manager's and
-  // the Yard manager's five the widest.
+  // level or above; HR's two are the smallest rows, the Branch manager's
+  // five the widest.
   for (const role of COMING_ROLES) {
     assert.ok(role.modules.length >= 2, `${role.label} shows its modules`);
     assert.ok(role.modules.length <= 5, `${role.label} carries no invented module`);
   }
   // Spot checks against the matrix's cells (ROLE-ACCESS-r3 as row 1156
-  // amended it): Outside Sales has no till, the Yard manager's till and desk
-  // are removed; the general manager's admin cells include Dealer Admin; HR's
-  // are House Messages and Dealer Admin.
+  // amended it): Outside Sales has no till; the general manager's admin cells
+  // include Dealer Admin; HR's are House Messages and Dealer Admin.
   const outside = COMING_ROLES.find((role) => role.id === "outside_sales");
   assert.equal(outside.modules.includes("Counter Till"), false);
-  const yardManager = COMING_ROLES.find((role) => role.id === "yard_manager");
-  assert.equal(yardManager.modules.includes("Counter Till"), false, "the yard manager's till cell is removed");
-  assert.equal(yardManager.modules.includes("Quote Desk"), false, "the yard manager's desk cell is removed");
-  assert.deepEqual(yardManager.modules, [
-    "Yard Pick and Receive",
-    "Dispatch and Load Building",
-    "Buying and Stock",
-    "Manager Home",
-    "House Messages",
-  ]);
   const general = COMING_ROLES.find((role) => role.id === "general_manager");
   assert.deepEqual(general.modules, ["Money Desk", "Manager Home", "House Messages", "Dealer Admin"]);
   const hr = COMING_ROLES.find((role) => role.id === "hr");

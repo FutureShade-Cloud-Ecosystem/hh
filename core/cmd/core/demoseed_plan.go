@@ -654,6 +654,47 @@ var demoScans = []scanSpec{
 	{"SC7", "O03", "", demoPrefix + "LOAD-0059", "RECEIVED", 1, 30, "Supplier drop, awaiting a stop"},
 }
 
+// -- §12b the yard manager's receiving difference (Needs-you · purchasing.receiving_differences) ----
+//
+// ONE PARTIAL PURCHASE ORDER AT TRENTON, with one line still short: the board the yard manager's
+// landing draws carries exactly this row (a PO that landed part of what was ordered), and without
+// it the receiving difference source counts zero everywhere (no other seed writes purchasing_pos),
+// the "Receiving · short" view lands empty on the demo box, and the open value the cost gate lets
+// a yard manager read has no row to ride. The vendor is an invented demo vendor; the numbers are
+// the seed's own (20 ordered, 18 landed: 2 CYD of mulch short at $27.00, $54.00 still open).
+type poSpec struct {
+	Key        string
+	Branch     int
+	VendorKey  string
+	VendorNo   string
+	VendorName string
+	PONo       string
+	Status     string
+	// one line per (product, ordered, received): a short line is what makes the difference.
+	Lines      []poLineSpec
+	AgeHours   int // the receipt's age: a difference is as old as its latest receipt
+	ExpectedIn int // days from now the rest is expected
+}
+
+type poLineSpec struct {
+	Prod     string
+	Qty      string // qty_ordered_base
+	Received string // qty_received_base
+	UnitCost int64  // cents, the buying price
+}
+
+var demoPurchaseOrders = []poSpec{
+	{
+		Key: "PB1", Branch: 1, VendorKey: "V1", VendorNo: demoPrefix + "V-01",
+		VendorName: "Northland Stone Supply (demo)", PONo: demoPrefix + "PO-77", Status: "PARTIAL",
+		Lines: []poLineSpec{
+			{Prod: "P09", Qty: "20.0000", Received: "18.0000", UnitCost: 2700},
+			{Prod: "P07", Qty: "10.0000", Received: "10.0000", UnitCost: 2100},
+		},
+		AgeHours: 3, ExpectedIn: 1,
+	},
+}
+
 // -- §13 the counter's parked tickets (Needs-you · pos.parked) ------------------------------------
 //
 // MEASURED, NOT ASSUMED. The Needs-you widget's pos.parked source calls pos.Service.ListParked per

@@ -36,16 +36,17 @@ const TEN_PRODUCTS = [
   "DEMO-EDGE-ALU",
 ];
 
-test("the way in's data: seven flows with role codes and labels", async ({ page }) => {
+test("the way in's data: eight flows with role codes and labels", async ({ page }) => {
   const flows = await page.request.get("/api/v1/demo/flows");
   expect(flows.ok()).toBe(true);
   const body = (await flows.json()) as {
     flows: Array<{ flow: string; role_code: string; label: string }>;
   };
-  expect(body.flows).toHaveLength(7);
+  expect(body.flows).toHaveLength(8);
   expect(body.flows.map((row) => row.flow)).toEqual([
     "sales",
     "sales-manager",
+    "yard-manager",
     "yard-team",
     "driver",
     "payables-receivables",
@@ -55,6 +56,7 @@ test("the way in's data: seven flows with role codes and labels", async ({ page 
   expect(body.flows.map((row) => row.role_code)).toEqual([
     "inside_sales",
     "sales_manager",
+    "yard_manager",
     "yard_team",
     "driver",
     "payables_receivables",
@@ -64,6 +66,7 @@ test("the way in's data: seven flows with role codes and labels", async ({ page 
   expect(body.flows.map((row) => row.label)).toEqual([
     "Sales",
     "Sales manager",
+    "Yard manager",
     "Yard Team",
     "Driver",
     "Payables and Receivables",
@@ -76,6 +79,7 @@ test("the way in's data: seven flows with role codes and labels", async ({ page 
   await page.goto("/api/v1/demo/flows");
   await expect(page.locator("body")).toContainText('"sales-manager"');
   await expect(page.locator("body")).toContainText('"inside_sales"');
+  await expect(page.locator("body")).toContainText('"yard-manager"');
   await shot(page, "00-world-flows", test.info());
 });
 

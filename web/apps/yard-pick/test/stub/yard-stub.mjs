@@ -18,14 +18,18 @@ import { createServer } from "node:http";
 
 const port = Number(process.env.YARD_STUB_PORT ?? 4959);
 
-// The flow table as the core's stands after the roles personas PR (274):
-// the till's pair plus the Yard Team and the Driver. The app offers only its
-// own card.
+// The flow table as the core's stands after the Manager Home merge (PR 298,
+// main 04194fb2): the till's pair, the yard's two, the Driver and the office
+// roles, in the table's own order. The app offers only its own card.
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "yard-manager", role_code: "yard_manager", label: "Yard manager" },
   { flow: "yard-team", role_code: "yard_team", label: "Yard Team" },
   { flow: "driver", role_code: "driver", label: "Driver" },
+  { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
+  { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
+  { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
 ];
 
 const USERS = {
@@ -38,13 +42,12 @@ const USERS = {
     tier: 3,
     scope: "BRANCH",
   },
-  // The yard manager's persona, minted ahead of the core's flow table: the
-  // closed table gains the yard manager's login with the Manager Home app
-  // (PR 298), while the core's yard routes already answer a yard_manager
-  // caller by role today, and that caller is on the cost and margin list
-  // below, so the fence's kept half needs the persona here. The flows
-  // listing above stays the core's table, so no card or listing claims the
-  // login before its app lands.
+  // The yard manager's persona: the core's closed table mints the login with
+  // the Manager Home app (PR 298, on main), the core's yard routes answer a
+  // yard_manager caller by role today, and that caller is on the cost and
+  // margin list below, so the fence's kept half needs the persona here. The
+  // app offers only its own card, so no other card or listing claims the
+  // login here.
   "yard-manager": {
     user_id: "demo-account-yard-manager",
     email: "yard-manager@demo.invalid",

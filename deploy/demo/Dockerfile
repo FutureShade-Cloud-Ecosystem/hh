@@ -49,7 +49,7 @@ RUN npm ci
 # The builds run from inside each app's directory so npm puts the
 # workspace root's binaries on PATH (vite is hoisted there). Every app lands
 # in /out under the name of its prefix, so the final stage copies one tree.
-RUN mkdir -p /out/till /out/q /out/quote /out/drive /out/yard
+RUN mkdir -p /out/till /out/q /out/quote /out/drive /out/home /out/yard
 WORKDIR /src/web/apps/front-door
 RUN npx vite build --outDir /out/root
 WORKDIR /src/web/apps/counter-till
@@ -65,6 +65,10 @@ RUN npx vite build --base=/q/ --outDir /out/q --emptyOutDir
 # front door's handoff in, under its own prefix.
 WORKDIR /src/web/apps/drive-run
 RUN npx vite build --mode demo --base=/drive/ --outDir /out/drive --emptyOutDir
+# Manager Home, every manager role's landing: a staff app built the same way
+# (demo mode, own prefix), so a manager's front door tile hands off into it.
+WORKDIR /src/web/apps/manager-home
+RUN npx vite build --mode demo --base=/home/ --outDir /out/home --emptyOutDir
 # Yard Pick, the Yard Team's pick app: a staff app, the same shape as HH Drive.
 WORKDIR /src/web/apps/yard-pick
 RUN npx vite build --mode demo --base=/yard/ --outDir /out/yard --emptyOutDir
@@ -90,6 +94,7 @@ COPY --from=web-build /out/buying-and-stock /srv/app/buying-and-stock
 COPY --from=web-build /out/q /srv/app/q
 COPY --from=web-build /out/quote /srv/app/quote
 COPY --from=web-build /out/drive /srv/app/drive
+COPY --from=web-build /out/home /srv/app/home
 COPY --from=web-build /out/yard /srv/app/yard
 COPY core/db/migrations /srv/core/db/migrations
 COPY deploy/demo/Caddyfile.template /srv/templates/Caddyfile.template

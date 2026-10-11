@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The demo box's front door: the role picker landing that replaces the till's chooser as the first screen. Pick a role, land on that role's home with its modules as tiles, one header across the states with the demo badge, the role's name, Switch role and Sign out. The other seven roles of the decided matrix stay visible as coming, never tappable.",
+  "description": "The demo box's front door: the role picker landing that replaces the till's chooser as the first screen. Pick a role, land on that role's home with its modules as tiles, one header across the states with the demo badge, the role's name, Switch role and Sign out. The other six roles of the decided matrix stay visible as coming, never tappable.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
