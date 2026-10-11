@@ -165,6 +165,23 @@ test("lifting and overriding a hold are the controller's and the general manager
   assert.equal(canLiftHolds("payables_receivables"), false);
 });
 
+test("a 4xx that is not the payment route's own refusal keeps a held key: the outcome stays unknown", () => {
+  // The route's own refusals all answer 422 in its words (the AR register maps its bad request errors
+  // there); a 404 is its no existence leak answer, which its replay walk can also give for a payment
+  // that landed, and every other 4xx (408, 413, 429, a proxy's 400) is not the route's answer at all.
+  for (const status of [400, 404, 405, 408, 409, 413, 429]) {
+    const held = paymentOutcome("not found", status, true);
+    assert.equal(held.kind, "unknown", String(status));
+    assert.ok(held.words.startsWith("The earlier press may or may not have been recorded."), held.words);
+    assert.ok(held.words.includes("sends the same key"), held.words);
+    assert.ok(!held.words.includes("was not recorded"), held.words);
+  }
+  // The route's own worded refusal still ends the key while one is held, and with no key held the
+  // same statuses keep their long standing reading.
+  assert.equal(paymentOutcome("the selected invoices can take at most 96000 cents right now; refresh and retry", 422, true).kind, "refused");
+  assert.equal(paymentOutcome("no such invoice: 0b1c2d3e", 404, false).kind, "refused");
+});
+
 test("a 401 or 403 on a press while the account holds a key is the gate's answer: unknown, never not recorded", () => {
   for (const status of [401, 403]) {
     const held = paymentOutcome("unauthorized", status, true);

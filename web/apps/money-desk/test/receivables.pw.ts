@@ -434,6 +434,41 @@ test("a first press answered 401 wrote nothing: it is refused in words and the n
   expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
 });
 
+test("a 4xx that is not the payment route's own refusal never ends the held key: a 404 on the retry keeps it and the next press replays once", async ({ page, request }) => {
+  const posts: ApplyBody[] = [];
+  let answered404 = false;
+  await page.route("**/api/v1/ar/payments/apply", async (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview) return route.continue();
+    posts.push(body);
+    if (posts.length === 1) {
+      await route.fetch();
+      return route.abort("connectionreset");
+    }
+    if (!answered404) {
+      answered404 = true;
+      return route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: "not found" }) });
+    }
+    return route.continue();
+  });
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  // The retry is answered 404 by something that is not the payment route's own answer for this key
+  // (a proxy, or the route's no existence leak answer, which its replay walk can also give for a
+  // payment that landed): the outcome stays unknown and the key is kept.
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("The earlier press may or may not have been recorded");
+  await expect(page.locator("[data-error]")).not.toContainText("The payment was not recorded");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 was already applied");
+  expect(posts).toHaveLength(3);
+  expect(posts[2]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+  await expect(page.locator("[data-notice]")).not.toContainText("PAY-0102");
+});
+
 test("the held key survives a page reload: a lost answer, a reload, and the next press carries the same key", async ({ page, request }) => {
   const posts: ApplyBody[] = [];
   await lostFirstPress(page, posts);

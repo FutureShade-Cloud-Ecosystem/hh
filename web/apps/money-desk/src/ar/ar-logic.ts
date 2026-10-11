@@ -107,11 +107,13 @@ export function refusalWords(action: string, error: string, status: number | und
  * What a recorded payment's failure means for the person. A lost answer or a 5xx leaves the outcome unknown: the
  * server may have written the payment before the answer was lost, so the words say so and send the person to check
  * the account before taking anything again (the desk holds the payment's key and sends it again whatever the form
- * now says, so pressing again cannot post the money twice). A worded 4xx is the route refusing with nothing
+ * now says, so pressing again cannot post the money twice). A worded 422 is the route refusing with nothing
  * written, in the route's own words, except its replay refusal ("that idempotency key already recorded ..."):
  * those words mean the earlier attempt landed, so they read as the payment being recorded, not refused. A 401 or a
  * 403 is the gate's answer, not the route's: when the account already holds a key from an earlier press it leaves
- * the outcome unknown and the key kept.
+ * the outcome unknown and the key kept. The same holds for every other 4xx while a key is held (a 404, a 408, a
+ * 429): the payment route's own refusals all answer 422 in its words, so any other status is not its answer for
+ * the held key and never ends it.
  */
 export type PaymentOutcome = { kind: "unknown" | "refused" | "recorded"; words: string };
 
@@ -136,6 +138,18 @@ export function paymentOutcome(error: string, status: number | undefined, heldKe
       kind: "recorded",
       words:
         "The payment was already recorded by the earlier press. The server refused these changed details under the same key, which is how it says the first press landed; the account now shows the server's balances.",
+    };
+  }
+  if (heldKey && status !== 422) {
+    // The payment route's own refusals of a payment all answer 422 in its words (the AR register maps
+    // its bad request errors there); a 404 is its no existence leak answer, which its replay walk can
+    // also give for a payment that landed, and every other 4xx (408, 413, 429, a proxy's answer) is
+    // not the route's answer for this key at all. None of them says what happened to the earlier
+    // press, so the key is kept and the outcome stays unknown.
+    return {
+      kind: "unknown",
+      words:
+        "The earlier press may or may not have been recorded. This answer does not say what happened to it. Check the account's payments and invoice balances before taking the money again. Press Record payment again to send the same payment: this desk sends the same key, and the server will say if the earlier press was already recorded.",
     };
   }
   return { kind: "refused", words: `The payment was not recorded. ${refusalWords("payment", error, status)}` };
