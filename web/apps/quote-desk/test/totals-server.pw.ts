@@ -25,7 +25,14 @@ async function startQuote(page: Page): Promise<void> {
 }
 
 test("the Subtotal is the server's figure, not the browser's sum of the lines", async ({ page }) => {
+  // The card paints the server's answer to a terms read, so only the reads are rewritten: the
+  // save's own PUT (which also repaints) passes through untouched, and every re-read after it
+  // carries the server's figure again, so the Subtotal shown is never a browser sum of the lines.
   await page.route("**/api/v1/quotes/*/terms", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
     const response = await route.fetch();
     const body = (await response.json()) as Record<string, unknown>;
     body.subtotal_cents = 987654;
@@ -34,6 +41,9 @@ test("the Subtotal is the server's figure, not the browser's sum of the lines", 
   await startQuote(page);
   await expect(page.getByTestId("qb-totals")).toContainText("$9,876.54");
   await expect(page.getByTestId("qb-totals")).not.toContainText("Products");
+  // No handler outlives the test: a /terms exchange still inside the handler when the page and
+  // context close has its response disposed under it and fails the run (the CI flake this guards).
+  await page.unrouteAll({ behavior: "wait" });
 });
 
 test("a delivery fee the server refused leaves the screen, the box and the deposit estimate", async ({ page }) => {
