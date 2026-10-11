@@ -46,7 +46,7 @@ var tablesTheSeedWrites = []string{
 	"pos_sale", "pos_signature", "pricing_list_prices", "pricing_rules", "product_branch_costs",
 	"product_images",
 	"product_reorder_points", "product_uoms", "products", "purchasing_po_lines",
-	"purchasing_pos", "quantity_break_headers",
+	"purchasing_pos", "purchasing_receipts", "quantity_break_headers",
 	"quantity_break_items", "quote_lines", "stock_balances", "stock_moves", "task_events",
 	"task_shortages",
 	"tasks", "vendors", "will_call_pickups",
@@ -653,11 +653,10 @@ func TestIntegration_TheNeedsQueueHasSomethingToCount(t *testing.T) {
 
 // TestIntegration_TheYardManagersNeedsCountsMatchTheSeed reads the three sources of the yard
 // manager's landing (0381) through the adapters the composition root registers, over the seeded
-// demo world, and compares each to the plan: the open shortages (SH1 and SH2 open, SH3 resolved) and
-// the stale picks (the PUSHED picks past their accept deadline), counted from demoShortages and
-// demoTasks rather than typed. The receiving differences source has no rows in this world (the demo
-// seed plants no purchase orders), so its count is zero here and the module's own integration test
-// carries the positive case.
+// demo world, and compares each to the plan: the open shortages (SH1 and SH2 open, SH3 resolved),
+// the stale picks (the PUSHED picks past their accept deadline), and the receiving differences (the
+// PARTIAL purchase orders with a short line), counted from demoShortages, demoTasks and
+// demoPurchaseOrders rather than typed.
 func TestIntegration_TheYardManagersNeedsCountsMatchTheSeed(t *testing.T) {
 	ctx := context.Background()
 	pool := freshMigratedDB(t, "yardneeds")
@@ -667,6 +666,12 @@ func TestIntegration_TheYardManagersNeedsCountsMatchTheSeed(t *testing.T) {
 	for _, s := range demoShortages {
 		if s.Resolution == "" {
 			wantShortages++
+		}
+	}
+	wantDifferences := 0
+	for _, po := range demoPurchaseOrders {
+		if po.Status == "PARTIAL" && len(po.Lines) > 0 {
+			wantDifferences++
 		}
 	}
 	wantStale := 0
@@ -690,7 +695,7 @@ func TestIntegration_TheYardManagersNeedsCountsMatchTheSeed(t *testing.T) {
 	}{
 		{"open shortages", w6bOpenShortages(tasksSvc), wantShortages},
 		{"stale picks", w6bStalePicks(pool), wantStale},
-		{"receiving differences", w6bReceivingDifferences(purchasingSvc), 0},
+		{"receiving differences", w6bReceivingDifferences(purchasingSvc), wantDifferences},
 	} {
 		m, err := tc.src(ctx, scope)
 		if err != nil {

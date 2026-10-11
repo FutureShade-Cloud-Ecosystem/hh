@@ -96,8 +96,10 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, seven flows, the contract's three
-	// fields, the labels the entry page renders.
+	// The flow listing: the closed table, eight flows, the contract's three
+	// fields, the labels the entry page renders. The yard-manager flow
+	// (Manager Home's first per-role landing) shows on the front door's
+	// picker, never on the till's own entry.
 	flowsRsp := get("/api/v1/demo/flows", nil)
 	if flowsRsp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/v1/demo/flows: status %d, want 200 (body: %s)", flowsRsp.StatusCode, body(flowsRsp))
@@ -112,12 +114,13 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if err := json.Unmarshal([]byte(body(flowsRsp)), &listing); err != nil {
 		t.Fatalf("the flows body does not decode: %v", err)
 	}
-	if len(listing.Flows) != 7 {
-		t.Fatalf("the listing carries %d flows, want the closed table's seven", len(listing.Flows))
+	if len(listing.Flows) != 8 {
+		t.Fatalf("the listing carries %d flows, want the closed table's eight", len(listing.Flows))
 	}
 	for i, want := range []struct{ flow, role, label string }{
 		{"sales", "inside_sales", "Sales"},
 		{"sales-manager", "sales_manager", "Sales manager"},
+		{"yard-manager", "yard_manager", "Yard manager"},
 		{"yard-team", "yard_team", "Yard Team"},
 		{"driver", "driver", "Driver"},
 		{"payables-receivables", "payables_receivables", "Payables and Receivables"},

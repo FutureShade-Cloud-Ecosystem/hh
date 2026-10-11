@@ -97,6 +97,15 @@ handle /drive/* {
 	file_server
 }
 
+handle /home/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /home/index.html
+	file_server
+}
+
 handle /q/* {
 	basic_auth {
 		demo __GATE_HASH__
