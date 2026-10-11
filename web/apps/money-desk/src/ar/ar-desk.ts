@@ -57,10 +57,6 @@ function newKey(): string {
   return `k-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
 
-// The clock skew allowance when a reload's payment list is matched against a held key's payment: the
-// list carries the server's received time and the key carries the browser's send time.
-const PIN_MATCH_SKEW_MS = 600_000;
-
 const METHODS: readonly PaymentMethod[] = ["CASH", "CARD", "CHEQUE", "EFT"];
 
 export class ArDesk {
@@ -95,10 +91,10 @@ export class ArDesk {
 
   // One pending payment per account: the key is minted when the payment is first sent and sent again for every
   // retry, whatever the form now says (a corrected cheque number, another method, a changed amount, other
-  // invoices), until the outcome is known: the route answering it, or the account's own payments showing it on a
-  // reload. The route refuses a changed body under a spent key in words, so a lost answer can never post the same
+  // invoices), until the outcome is known: the payment route's own answer (recorded, its refusal, or "already
+  // recorded"). A payments list, a reload or a sign out never ends it. The route refuses a changed body under a spent key in words, so a lost answer can never post the same
   // money twice, and a payment on another account never touches this one's key.
-  #payPins = new Map<string, { key: string; method: PaymentMethod; amountCents: number; mintedMs: number }>();
+  #payPins = new Map<string, { key: string }>();
   #promiseKey = newKey();
   #remindKey = newKey();
 
@@ -174,7 +170,6 @@ export class ArDesk {
   async #reloadInvoice(): Promise<void> {
     const id = this.#account?.selectedInvoiceId;
     if (this.#account === null || id === null || id === undefined) return;
-    const customerId = this.#account.customerId;
     const [detail, payments] = await Promise.all([this.#api.invoice(id), this.#api.invoicePayments(id)]);
     if (this.#account === null || this.#account.selectedInvoiceId !== id) return;
     this.#account = {
@@ -182,16 +177,6 @@ export class ArDesk {
       detail: detail.ok ? detail.value : this.#account.detail,
       payments: payments.ok ? payments.value : this.#account.payments,
     };
-    // A reload that shows the held payment ends it: the outcome is known, so the account's next
-    // payment is a new one with its own key. The match rides the payment's own method, amount and
-    // received time (the list carries no reference), never a balance the app compared itself.
-    const pin = this.#payPins.get(customerId);
-    if (pin !== undefined && payments.ok) {
-      const shown = payments.value.items.some(
-        (p) => p.status !== "BOUNCED" && p.method === pin.method && p.payment_amount_cents === pin.amountCents && Date.parse(p.received_at) >= pin.mintedMs - PIN_MATCH_SKEW_MS,
-      );
-      if (shown) this.#payPins.delete(customerId);
-    }
   }
 
   async #loadStatement(customerId: string): Promise<void> {
@@ -604,7 +589,7 @@ export class ArDesk {
     const method = METHODS.find((m) => m === account.method) ?? "CHEQUE";
     let pin = this.#payPins.get(account.customerId);
     if (pin === undefined) {
-      pin = { key: newKey(), method, amountCents: cents, mintedMs: Date.now() };
+      pin = { key: newKey() };
       this.#payPins.set(account.customerId, pin);
     }
     const result = await this.#api.applyPayment({

@@ -315,47 +315,50 @@ test("a payment recorded on another account leaves this account's pending paymen
   await expect(page.locator("[data-notice]")).not.toContainText("PAY-0103");
 });
 
-test("a reload that shows the payment ends the held key, so pressing again with the same body is a new payment", async ({ page, request }) => {
+test("opening the invoice's payments after a lost answer never ends the held key: the next press carries it and reads already applied, with one payment", async ({ page, request }) => {
   const posts: ApplyBody[] = [];
-  let lose = true;
+  let sent = 0;
   await page.route("**/api/v1/ar/payments/apply", async (route) => {
     const body = route.request().postDataJSON() as ApplyBody;
     if (body.preview) return route.continue();
     posts.push(body);
-    if (lose) {
-      lose = false;
+    sent += 1;
+    if (sent === 2) {
       await route.fetch();
       return route.abort("connectionreset");
     }
     return route.continue();
   });
-  const sameBody = async (): Promise<void> => {
-    await openAccount(page, "Granite Edge Landscaping (demo)");
+  const tenByCheque = async (reference: string): Promise<void> => {
     await page.getByRole("button", { name: "Clear" }).first().click();
     await page.getByRole("checkbox", { name: "Pay INV-1002" }).click();
-    await page.locator("[data-field='receive-amount']").fill("100.00");
-    await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
+    await page.locator("[data-field='receive-amount']").fill("10.00");
+    await page.locator("[data-field='receive-reference']").fill(reference);
   };
   await openDesk(page, request);
-  await sameBody();
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await tenByCheque("Cheque 1");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 applied: $10.00 on INV-1002");
+  // The second cheque of the same method and amount on the same invoice: its answer is lost after the stub wrote it.
+  await tenByCheque("Cheque 2");
   await page.getByRole("button", { name: "Record payment" }).click();
   await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
-  // The check the words ask for: the account is reopened and the invoice's payments show the payment,
-  // so the outcome is known and the held key ends.
-  await page.getByRole("button", { name: "‹ Receivables" }).click();
-  await openAccount(page, "Granite Edge Landscaping (demo)");
+  // The check the words ask for: the invoice's payments are opened. The list carries no key and no
+  // reference, so it cannot say which press wrote what; it never ends the held key.
   await page.locator("[data-invoice-row]", { hasText: "INV-1002" }).getByRole("button", { name: "INV-1002" }).click();
-  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0101" })).toContainText("Received");
-  // The same body pressed again is now a new payment with its own key, and it posts as its own.
+  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0102" })).toContainText("Received");
   await page.getByRole("button", { name: "Back to payment" }).click();
-  await page.getByRole("button", { name: "Clear" }).click();
-  await page.getByRole("checkbox", { name: "Pay INV-1002" }).click();
-  await page.locator("[data-field='receive-amount']").fill("100.00");
-  await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
+  await tenByCheque("Cheque 2");
   await page.getByRole("button", { name: "Record payment" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("PAY-0102 applied: $100.00 on INV-1002");
-  expect(posts).toHaveLength(2);
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0102 was already applied");
+  expect(posts).toHaveLength(3);
+  expect(posts[2]?.idempotency_key).toBe(posts[1]?.idempotency_key);
   expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
+  await page.locator("[data-invoice-row]", { hasText: "INV-1002" }).getByRole("button", { name: "INV-1002" }).click();
+  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0101" })).toHaveCount(1);
+  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0102" })).toHaveCount(1);
+  await expect(page.locator("[data-payment-row]", { hasText: "PAY-0103" })).toHaveCount(0);
 });
 
 test("a worded 4xx says the payment was not recorded in the route's own words, and the next press is a new payment with a new key", async ({ page, request }) => {
