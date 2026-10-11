@@ -143,16 +143,16 @@ func (r *Repository) LookupAccountScoped(ctx context.Context, ref string, reach 
 	// they see it escaped under `ESCAPE '\'`, and a typed '%' or '_' matches text instead of widening
 	// into a wildcard that could resolve the LIMIT 1 onto a different account.
 	if s, ok, err := scan(`SELECT `+cols+` FROM customers c
-	                        WHERE ` + fence + ` AND c.account_no = $1::citext`, ref); ok || err != nil {
+	                        WHERE `+fence+` AND c.account_no = $1::citext`, ref); ok || err != nil {
 		return s, ok, err
 	}
 	pattern := likeutil.EscapeLikePattern(ref)
 	if s, ok, err := scan(`SELECT `+cols+` FROM customers c
-	                        WHERE ` + fence + ` AND c.name ILIKE $1 || '%' ESCAPE '\'
+	                        WHERE `+fence+` AND c.name ILIKE $1 || '%' ESCAPE '\'
 	                        ORDER BY c.name LIMIT 1`, pattern); ok || err != nil {
 		return s, ok, err
 	}
 	return scan(`SELECT `+cols+` FROM customers c
-	              WHERE ` + fence + ` AND c.name ILIKE '%' || $1 || '%' ESCAPE '\'
+	              WHERE `+fence+` AND c.name ILIKE '%' || $1 || '%' ESCAPE '\'
 	              ORDER BY c.name LIMIT 1`, pattern)
 }
