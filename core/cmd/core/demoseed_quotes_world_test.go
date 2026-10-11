@@ -202,9 +202,9 @@ func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables
 // qwDriverDayIDs are the Driver's day-keyed run and stop ids on the pinned clock's day: the rows
 // the seed's org stamp addresses. The stamp cannot land on the first apply (the org row does not
 // exist until the populate provisions it), so it lands on the first apply AFTER the populate, which
-// in this world is the one that adds the quotes. The fingerprints around that apply leave exactly
-// these rows out of the two delivery tables and the assertion below checks the stamp landed on
-// exactly them, so the exception is named and held, not a hole.
+// in this world is the one that adds the quotes. The fingerprints around that apply keep these rows
+// in, minus the three columns the stamp itself moves (see qwDriverStampColumns), and the assertion
+// below checks the stamp landed on exactly them, so the exception is named and held, not a hole.
 func qwDriverDayIDs() []string {
 	stamp := qwClock.In(houseday.Location()).Format("20060102")
 	ids := []string{demoID(dayKey(stamp, "driver-run"))}
@@ -212,16 +212,22 @@ func qwDriverDayIDs() []string {
 	return ids
 }
 
-// qwFingerprintExcept fingerprints one table with named rows left out, for the delivery tables'
-// day-keyed Driver rows (see qwDriverDayIDs).
-func qwFingerprintExcept(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string, except []string) string {
+// qwDriverStampColumns are the only columns the org stamp moves on a Driver day row: the org it
+// sets, the updated_at it bumps, and the row version (xmin) any update changes.
+var qwDriverStampColumns = []string{"org_id", "updated_at", "row_version"}
+
+// qwFingerprintStamped fingerprints one delivery table with the day-keyed Driver rows named by
+// except kept in, but with qwDriverStampColumns removed from those rows alone. Every other column of
+// those rows, and every column of every other row, still counts, so a status, a date or a driver id
+// moving on them is seen.
+func qwFingerprintStamped(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string, except []string) string {
 	t.Helper()
 	var sum string
 	if err := pool.QueryRow(ctx, `
 		SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
-		  FROM (SELECT to_jsonb(r)::text AS line
-		          FROM (SELECT *, xmin::text AS row_version FROM `+table+` WHERE id::text <> ALL($1::text[])) r) s`,
-		except).Scan(&sum); err != nil {
+		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN to_jsonb(r) - $2::text[] ELSE to_jsonb(r) END::text AS line
+		          FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r) s`,
+		except, qwDriverStampColumns).Scan(&sum); err != nil {
 		t.Fatalf("fingerprint %s: %v", table, err)
 	}
 	return sum
@@ -329,15 +335,16 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	}
 
 	// 3. the second apply: now the logins resolve, so the quote world is added, and nothing else moves.
-	// The Driver's day-keyed rows leave the two delivery fingerprints: the org stamp they take on
-	// this apply is the one intended movement beside the quote world (see qwDriverDayIDs), checked
-	// by name below instead of hiding inside "nothing else moved".
+	// The Driver's day-keyed rows stay in the two delivery fingerprints with only the org stamp's
+	// columns taken out (see qwDriverStampColumns): the stamp they take on this apply is the one
+	// intended movement beside the quote world, checked by name below instead of hiding inside
+	// "nothing else moved".
 	driverDayIDs := qwDriverDayIDs()
 	fingerprint := func() map[string]string {
 		out := map[string]string{}
 		for _, table := range qwOtherWorldTables {
 			if table == "delivery_runs" || table == "delivery_stops" {
-				out[table] = qwFingerprintExcept(t, ctx, pool, table, driverDayIDs)
+				out[table] = qwFingerprintStamped(t, ctx, pool, table, driverDayIDs)
 				continue
 			}
 			out[table] = qwFingerprint(t, ctx, pool, []string{table})[table]
@@ -357,8 +364,8 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		}
 	}
 	// The named exception, held to its bounds: every day-keyed Driver row now carries the demo org
-	// (the stamp the first apply could not run), and the two fingerprints above prove no OTHER row
-	// of those tables moved to get it.
+	// (the stamp the first apply could not run), and the two fingerprints above prove nothing else
+	// moved to get it: no other row of those tables, and no other column of these.
 	var runsStamped, stopsStamped int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM delivery_runs WHERE id = ANY($1::uuid[]) AND org_id = (SELECT id FROM org WHERE slug = $2)`,
 		driverDayIDs, demoOrgSlug).Scan(&runsStamped); err != nil {
