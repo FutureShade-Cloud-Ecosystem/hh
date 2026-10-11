@@ -230,7 +230,7 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")"
 # The apps the box serves, each under its own prefix behind the one phrase
 # gate (the front door at /, the counter till at /till/, the public desk at
 # /q/ and at /quote.html where the server's emailed share link lands, HH
-# Drive at /drive/, the Quote Desk at /quote/ whenever web/apps/quote-desk
+# Drive at /drive/, Yard Pick at /yard/, the Quote Desk at /quote/ whenever web/apps/quote-desk
 # exists in this tree).
 page_has() {
 	# path, marker, label
@@ -250,6 +250,7 @@ page_has /till/ ct-app-root "the counter till at /till/"
 page_has /buying-and-stock/ buying-and-stock-app "Buying and Stock at /buying-and-stock/"
 page_has /drive/ drive-run-app "HH Drive at /drive/"
 page_has /home/ manager-home-app "Manager Home at /home/"
+page_has /yard/ yard-pick-app "Yard Pick at /yard/"
 page_has /money-desk/ money-desk-app "the Money Desk at /money-desk/"
 page_has /q/ pd-quote-public "the public desk at /q/"
 page_has "/quote.html?t=x" pd-quote-public "the public desk at /quote.html"
@@ -257,12 +258,13 @@ page_gated /till/ "the counter till at /till/"
 page_gated /buying-and-stock/ "Buying and Stock at /buying-and-stock/"
 page_gated /drive/ "HH Drive at /drive/"
 page_gated /home/ "Manager Home at /home/"
+page_gated /yard/ "Yard Pick at /yard/"
 page_gated /money-desk/ "the Money Desk at /money-desk/"
 page_gated /q/ "the public desk at /q/"
 page_gated /quote/ "the /quote/ prefix"
 # Never indexed, gate open or shut (decision log row 981): the header rides the
 # refusal, a served page, an asset-less prefix and the unauthenticated health leg.
-for hp in / /healthz /till/; do
+for hp in / /healthz /till/ /yard/; do
 	for auth in "" "demo:$PHRASE"; do
 		if [ -n "$auth" ]; then who="with"; else who="without"; fi
 		if [ -n "$auth" ]; then hdrs="$(curl -sI -u "$auth" "$BASE$hp")"; else hdrs="$(curl -sI "$BASE$hp")"; fi
@@ -297,9 +299,17 @@ else
 	fail "HH Drive's script asset did not resolve under /drive/ (found: ${asset:-none})"
 fi
 
+# Yard Pick's script asset resolves under its own prefix too.
+asset="$(curl -s -u "demo:$PHRASE" "$BASE/yard/" | sed -n 's/.*src="\(\/yard\/assets\/[^"]*\.js\)".*/\1/p' | head -1)"
+if [ -n "$asset" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' -u "demo:$PHRASE" "$BASE$asset")" = "200" ]; then
+	pass "Yard Pick's script asset resolves under /yard/"
+else
+	fail "Yard Pick's script asset did not resolve under /yard/ (found: ${asset:-none})"
+fi
+
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
+*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
 		pass "/api/v1/demo/flows answers the closed table's eight flows"
 		;;
 	*)

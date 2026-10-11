@@ -106,6 +106,15 @@ handle /home/* {
 	file_server
 }
 
+handle /yard/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /yard/index.html
+	file_server
+}
+
 handle /money-desk/* {
 	basic_auth {
 		demo __GATE_HASH__
