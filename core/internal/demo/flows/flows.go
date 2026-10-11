@@ -14,12 +14,12 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
-// The table is closed: the Counter Till's pair (D49, DECISIONS.md) and the
-// live role logins the roles roadmap adds one reviewed row at a time
-// (Payables and Receivables and the Procurement Manager and the Financial
-// Controller after PRs 300 and 303). A new flow is an edit here, reviewed,
-// never a runtime input: the entry page may only ever offer what this file
-// lists.
+// The table is closed: the Counter Till's pair (D49, DECISIONS.md), the
+// Manager Home app's yard manager, and the live role logins the roles
+// roadmap adds one reviewed row at a time (the yard personas, Payables and
+// Receivables and the Procurement Manager and the Financial Controller
+// after PRs 300 and 303). A new flow is an edit here, reviewed, never a
+// runtime input: the entry page may only ever offer what this file lists.
 package flows
 
 // OrgSlug is the one org a demo box holds and the only org the demo
@@ -97,6 +97,16 @@ var accounts = map[string]Account{
 		Label:          "Sales manager",
 		Role:           "sales_manager",
 	},
+	// The yard manager, Manager Home's first per-role landing (roadmap 2.3):
+	// the demo persona whose card opens the manager.yard profile.
+	"yard-manager": {
+		Flow:           "yard-manager",
+		PlatformUserID: "de110000-0000-4000-9000-000000000003",
+		Email:          "yard.manager@" + ReservedDomain,
+		DisplayName:    "Yard manager (demo)",
+		Label:          "Yard manager",
+		Role:           "yard_manager",
+	},
 	"yard-team": {
 		Flow:           "yard-team",
 		PlatformUserID: "d0200000-0000-4000-9000-000000000002",
@@ -159,6 +169,7 @@ func All() []Account {
 	return []Account{
 		accounts["sales"],
 		accounts["sales-manager"],
+		accounts["yard-manager"],
 		accounts["yard-team"],
 		accounts["driver"],
 		accounts["payables-receivables"],

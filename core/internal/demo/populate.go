@@ -56,10 +56,11 @@ const (
 )
 
 // The role accounts the demo sign-in mints for (the Counter Till's
-// pair, D49). The ids and the platform ids are pinned literals in code:
-// they are part of the contract the demo module's flow table codes
-// against, so a tester's "Sales" tap resolves this row, at this org, with
-// this grant, and nothing else on the box.
+// pair, D49, Manager Home's yard manager, and the roles the roadmap
+// added one reviewed row at a time). The ids and the platform ids are
+// pinned literals in code: they are part of the contract the demo
+// module's flow table codes against, so a tester's "Sales" tap resolves
+// this row, at this org, with this grant, and nothing else on the box.
 const (
 	salesUserID      = "de110000-0000-4000-9000-000000000001"
 	salesPlatformID  = "de110000-0000-4000-9000-000000000001"
@@ -70,6 +71,14 @@ const (
 	managerPlatformID  = "de110000-0000-4000-9000-000000000002"
 	managerEmail       = "sales.manager@hh-demo.invalid"
 	managerDisplayName = "Sales manager (demo)"
+
+	// The yard manager, Manager Home's first per-role landing (roadmap 2.3):
+	// its needs-you queue counts the open shortages the demoseed plants at
+	// Trenton, the one branch every demo grant reaches.
+	yardMgrUserID      = "de110000-0000-4000-9000-000000000003"
+	yardMgrPlatformID  = "de110000-0000-4000-9000-000000000003"
+	yardMgrEmail       = "yard.manager@hh-demo.invalid"
+	yardMgrDisplayName = "Yard manager (demo)"
 
 	// Payables and Receivables, the third role account (global, tier two):
 	// the flow table's row for the receivables desk, minted by the roles
@@ -99,6 +108,7 @@ const (
 	// through identity.Populate, branch-scoped to the one branch below.
 	salesRoleCode      = "INSIDE_SALES"
 	managerRoleCode    = "SALES_MANAGER"
+	yardMgrRoleCode    = "YARD_MANAGER"
 	payRecRoleCode     = "PAYABLES_RECEIVABLES"
 	buyerRoleCode      = "PROCUREMENT_MANAGER"
 	controllerRoleCode = "FINANCIAL_CONTROLLER"
@@ -272,9 +282,10 @@ type Report struct {
 }
 
 // staticDirectory is the populate's PlatformDirectory: it answers exactly
-// the demo role accounts this file creates, the two personas migration 0200
-// plants, the Financial Controller the controller lane adds and the
-// Procurement Manager the procurement lane adds, and nothing else.
+// the demo role accounts this file creates (Manager Home's yard manager
+// among them), the two personas migration 0200 plants, the Financial
+// Controller the controller lane adds and the Procurement Manager the
+// procurement lane adds, and nothing else.
 // identity.Populate's linkage pass counts every other row as unmatched and
 // leaves it unlinked, never guessed, so the remaining migration-planted
 // rows keep no platform identity on the demo box and derive no staff grants.
@@ -422,6 +433,7 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 		Directory: staticDirectory{
 			salesEmail:      salesPlatformID,
 			managerEmail:    managerPlatformID,
+			yardMgrEmail:    yardMgrPlatformID,
 			yardEmail:       yardUserID,
 			driverEmail:     driverUserID,
 			payRecEmail:     payRecPlatformID,
@@ -492,6 +504,7 @@ func insertRoleAccounts(ctx context.Context, tx pgx.Tx) (int, error) {
 	for _, u := range []struct{ id, email, name string }{
 		{salesUserID, salesEmail, salesDisplayName},
 		{managerUserID, managerEmail, managerDisplayName},
+		{yardMgrUserID, yardMgrEmail, yardMgrDisplayName},
 		{payRecUserID, payRecEmail, payRecDisplayName},
 		{buyerUserID, buyerEmail, buyerDisplayName},
 		{controllerUserID, controllerEmail, controllerDisplayName},
@@ -521,6 +534,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 	for _, a := range []struct{ userID, roleCode string }{
 		{salesUserID, salesRoleCode},
 		{managerUserID, managerRoleCode},
+		{yardMgrUserID, yardMgrRoleCode},
 		{payRecUserID, payRecRoleCode},
 		{buyerUserID, buyerRoleCode},
 		{controllerUserID, controllerRoleCode},
@@ -536,11 +550,13 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		}
 		roles += int(tag.RowsAffected())
 	}
-	// Payables and Receivables and the Financial Controller are global roles, so the staff grants
-	// derived for them carry no branch and their reach is every branch; the Trenton rows below are
-	// inert for them (reach follows the role's scope, never user_branch_grants) and are written only
-	// so the accounts have the same shape as the others.
-	for _, userID := range []string{salesUserID, managerUserID, payRecUserID, buyerUserID, controllerUserID} {
+	// Payables and Receivables and the Financial Controller are global roles,
+	// so the staff grants derived for them carry no branch and their reach
+	// is every branch; the Trenton rows below are inert for them (reach
+	// follows the role's scope, never user_branch_grants) and are written
+	// only so the accounts have the same shape as the others. The buyer is
+	// branch scoped, so its Trenton row is its real grant.
+	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_branch_grants (user_id, branch_id)
 			SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
@@ -557,6 +573,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 	for _, a := range []struct{ userID, roleCode string }{
 		{salesUserID, salesRoleCode},
 		{managerUserID, managerRoleCode},
+		{yardMgrUserID, yardMgrRoleCode},
 		{payRecUserID, payRecRoleCode},
 		{buyerUserID, buyerRoleCode},
 		{controllerUserID, controllerRoleCode},
@@ -573,7 +590,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 			return 0, 0, fmt.Errorf("demo-populate: refusing: the roles catalog holds no %s row, the %s account would reach nothing", a.roleCode, a.userID)
 		}
 	}
-	for _, userID := range []string{salesUserID, managerUserID, payRecUserID, buyerUserID, controllerUserID} {
+	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID} {
 		var n int
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM user_branch_grants

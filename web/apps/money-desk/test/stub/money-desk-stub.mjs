@@ -17,13 +17,14 @@ const glWorld = createGlWorld();
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
-// The core's closed table, in its order: the till's pair, the Yard Team and the Driver, Payables and
-// Receivables, the Procurement manager, then the Money Desk's controller. The till's two, the yard
-// pair and the buyer sign in here only so the way in's filter and the cross app card legs mean
-// something against the core's whole table.
+// The core's closed table, in its order: the till's pair, the Yard manager, the Yard Team and the
+// Driver, Payables and Receivables, the Procurement manager, then the Money Desk's controller. The
+// till's two, the yard pair and the buyer sign in here only so the way in's filter and the cross app
+// card legs mean something against the core's whole table.
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "yard-manager", role_code: "yard_manager", label: "Yard manager" },
   { flow: "yard-team", role_code: "yard_team", label: "Yard Team" },
   { flow: "driver", role_code: "driver", label: "Driver" },
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },

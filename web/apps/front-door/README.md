@@ -6,15 +6,16 @@ It replaces the Counter Till's entry view as the box's first screen
 role's home with its modules as tiles, one header across the states with the
 demo badge, the role's name, Switch role and Sign out.
 
-- The six live roles are the demo mint's own (`inside_sales` to flow
-  `sales`, `sales_manager` to flow `sales-manager`, `payables_receivables`
-  to flow `payables-receivables`, `procurement_manager` to flow
-  `procurement-manager`, `driver` to flow `driver`, `financial_controller`
-  to flow `financial-controller`), labelled on the cards the way the demo
-  adapter's contract names them ("Sales", "Sales manager", "Payables and
-  Receivables", "Procurement manager", "Driver", "Financial Controller"),
-  the same rule the till's entry view follows.
-- The seven other roles of ROLE-ACCESS-r3 stay visible as coming, each with
+- The seven live roles are the demo mint's own (`inside_sales` to flow
+  `sales`, `sales_manager` to flow `sales-manager`, `yard_manager` to flow
+  `yard-manager`, `payables_receivables` to flow `payables-receivables`,
+  `procurement_manager` to flow `procurement-manager`, `driver` to flow
+  `driver`, `financial_controller` to flow `financial-controller`),
+  labelled on the cards the way the demo adapter's contract names them
+  ("Sales", "Sales manager", "Yard manager", "Payables and Receivables",
+  "Procurement manager", "Driver", "Financial Controller"), the same rule
+  the till's entry view follows.
+- The six other roles of ROLE-ACCESS-r3 stay visible as coming, each with
   the modules the matrix gives it at work, manage or admin level, never
   tappable. The catalog lives in `src/roles.ts`, distilled once from the
   decided record; the record itself is read only and is not carried here.
@@ -35,9 +36,9 @@ demo badge, the role's name, Switch role and Sign out.
   Till's `src/ported/_icon-consumer.ts` and `_icon-registry.ts`, imported
   across the app boundary). No second registry lives here.
 - The Counter Till hangs off `/till/`, the Quote Desk off `/quote/`, the
-  Buying and Stock app off `/buying-and-stock/` and the Money Desk off
-  `/money-desk/`; the demo image serves those four.
-  The manager's three tiles whose apps are not on the box yet open the
+  Buying and Stock app off `/buying-and-stock/`, Manager Home off `/home/`
+  and the Money Desk off `/money-desk/`; the demo image serves those five.
+  The manager's two tiles whose apps are not on the box yet open the
   polite coming-soon page.
 
 The app is demo-lane scaffolding, not a catalog frontend: it takes no entry

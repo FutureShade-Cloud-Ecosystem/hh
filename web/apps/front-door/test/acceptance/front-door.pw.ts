@@ -13,7 +13,6 @@ import { expect, test, type Page } from "@playwright/test";
 const COMING_LABELS = [
   "Outside Sales",
   "Yard Team",
-  "Yard Manager",
   "Logistics Manager",
   "Branch Manager",
   "General Manager",
@@ -65,7 +64,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-test("the picker renders the six live cards and the seven coming rows", async ({ page }) => {
+test("the picker renders the seven live cards and the six coming rows", async ({ page }) => {
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toBeVisible();
   await expect(sales).toBeEnabled();
@@ -85,6 +84,18 @@ test("the picker renders the six live cards and the seven coming rows", async ({
   await expect(manager).toContainText("Manager Home");
   await expect(manager).toContainText("Dealer Admin");
   await expect(manager).toContainText("House Messages");
+
+  // The yard manager's card is live with the first Manager Home slice: its
+  // own line, the live Manager Home tile, Buying and Stock's live tile, and
+  // the three modules the matrix gives the role that this box does not serve
+  // yet, never a silent omission.
+  const yard = page.getByRole("button", { name: "Yard manager", exact: true });
+  await expect(yard).toBeVisible();
+  await expect(yard).toBeEnabled();
+  await expect(yard).toContainText("The yard: picks, shortages and deliveries.");
+  await expect(yard).toContainText("Sign in as Yard manager");
+  await expect(yard).toContainText("Manager Home");
+  await expect(yard).toContainText("Yard Pick and Receive");
 
   const payRec = page.getByRole("button", { name: "Payables and Receivables", exact: true });
   await expect(payRec).toBeVisible();
@@ -120,12 +131,12 @@ test("the picker renders the six live cards and the seven coming rows", async ({
   // Coming recedes: the disclosure starts collapsed and opens to today's
   // list, unchanged, its rows disabled with their muted chips.
   const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Seven more roles are coming");
+  await expect(disclosure).toContainText("Six more roles are coming");
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).not.toBeVisible();
-  await disclosure.getByText("Seven more roles are coming").click();
+  await disclosure.getByText("Six more roles are coming").click();
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(7);
+  await expect(coming.getByRole("listitem")).toHaveCount(6);
   for (const label of COMING_LABELS) {
     const row = coming.getByRole("listitem").filter({ hasText: label });
     await expect(row).toBeVisible();

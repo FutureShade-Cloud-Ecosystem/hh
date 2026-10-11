@@ -27,7 +27,7 @@
 #   each app serves under its own prefix behind the phrase gate (refused
 #     without, served with): the front door at /, the till at /till/, the
 #     public desk at /q/ and /quote.html, /quote/ per the desk being present;
-#   /api/v1/demo/flows answers the closed table's seven flows;
+#   /api/v1/demo/flows answers the closed table's eight flows;
 #   POST /api/v1/demo/session without the phrase is refused by the gate,
 #     and with the phrase mints a token;
 #   GET /api/v1/quotes with a valid demo bearer and no phrase answers 200
@@ -249,12 +249,14 @@ page_has / fd-app-root "the front door at /"
 page_has /till/ ct-app-root "the counter till at /till/"
 page_has /buying-and-stock/ buying-and-stock-app "Buying and Stock at /buying-and-stock/"
 page_has /drive/ drive-run-app "HH Drive at /drive/"
+page_has /home/ manager-home-app "Manager Home at /home/"
 page_has /money-desk/ money-desk-app "the Money Desk at /money-desk/"
 page_has /q/ pd-quote-public "the public desk at /q/"
 page_has "/quote.html?t=x" pd-quote-public "the public desk at /quote.html"
 page_gated /till/ "the counter till at /till/"
 page_gated /buying-and-stock/ "Buying and Stock at /buying-and-stock/"
 page_gated /drive/ "HH Drive at /drive/"
+page_gated /home/ "Manager Home at /home/"
 page_gated /money-desk/ "the Money Desk at /money-desk/"
 page_gated /q/ "the public desk at /q/"
 page_gated /quote/ "the /quote/ prefix"
@@ -297,11 +299,11 @@ fi
 
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
-		pass "/api/v1/demo/flows answers the closed table's seven flows"
+	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
+		pass "/api/v1/demo/flows answers the closed table's eight flows"
 		;;
 	*)
-		fail "/api/v1/demo/flows did not answer the seven flows: $flows"
+		fail "/api/v1/demo/flows did not answer the eight flows: $flows"
 		;;
 esac
 
