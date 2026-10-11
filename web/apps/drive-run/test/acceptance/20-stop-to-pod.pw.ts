@@ -31,10 +31,14 @@ test("a stop goes loaded, en route, and to proof of delivery with a name and a p
   await expect(page.locator(".signed")).toContainText("Signed by Receiving clerk");
   await shot(page, "22-delivered", testInfo);
 
-  // The core's own record agrees with the screen.
-  const record = await staff(page, "GET", `/api/v1/dispatch/stops/${target.id}`);
+  // The core's own record agrees with the screen. The per stop detail read is a dispatch-board
+  // read the Driver is refused (the census gates it to that surface alone), so the record is the
+  // run's own read, whose stops carry the same facts.
+  const record = await staff(page, "GET", `/api/v1/dispatch/runs/${before.id}`);
   expect(record.status).toBe(200);
-  expect(record.body.status).toBe("DELIVERED");
-  expect(record.body.pod_received_by).toBe("Receiving clerk");
-  expect(record.body.photos).toHaveLength(1);
+  const moved = (record.body.stops as Array<{ id: string; status: string; pod_received_by: string; photo_count: number }>)
+    .find((s) => s.id === target.id);
+  expect(moved?.status).toBe("DELIVERED");
+  expect(moved?.pod_received_by).toBe("Receiving clerk");
+  expect(moved?.photo_count).toBe(1);
 });
