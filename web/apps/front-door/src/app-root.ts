@@ -72,7 +72,7 @@ type Screen = { kind: "picker" } | { kind: "home" } | { kind: "coming-soon"; mod
 /** The tile's one line of what the module is, keyed by the module's name. */
 const TILE_BLURBS: Record<string, string> = {
   "Counter Till": "The counter sale flow.",
-  "Yard Pick and Receive": "Pull the picks, count the skids, stage what is done.",
+  "Yard Pick": "Pull the picks, count the skids, stage what is done.",
   "Quote Desk": "Size the job, build and send the quote.",
   "Money Desk": "Receivables, payables and the bounced payment queue.",
   "Buying and Stock": "Draft and place orders, and see what is on the way.",

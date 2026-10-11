@@ -69,7 +69,11 @@ const HOUSE_MESSAGES_TILE: ModuleTile = {
   icon: "lucide:message-square",
   href: null,
 };
-const YARD_PICK_TILE: ModuleTile = { name: "Yard Pick and Receive", icon: "lucide:forklift", href: "/yard/" };
+// The tile says what it opens: the app under /yard/ serves the pick half, so
+// the tile carries the app's own short name, not the matrix surface's fuller
+// one ("Yard Pick and Receive", the receive half's module name, which the
+// coming chips and the buying desk's prose keep using).
+const YARD_PICK_TILE: ModuleTile = { name: "Yard Pick", icon: "lucide:forklift", href: "/yard/" };
 const DISPATCH_TILE: ModuleTile = { name: "Dispatch and Load Building", icon: "lucide:route", href: null };
 const BUYING_AND_STOCK_TILE: ModuleTile = { name: "Buying and Stock", icon: "lucide:boxes", href: null };
 
