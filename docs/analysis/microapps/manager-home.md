@@ -4,7 +4,7 @@
 
 # manager-home: Manager Home
 
-Audience: internal   Roles: branch_manager, sales_manager, yard_manager, logistics_manager, procurement_manager, general_manager, financial_controller   Devices: desktop, tablet, phone   Environment: office
+Audience: internal   Roles: branch_manager, sales_manager, yard_manager, logistics_manager, procurement_manager, payables_receivables, general_manager, financial_controller, super_admin   Devices: desktop, tablet, phone   Environment: office
 Kit: dashboard   Brand: fb-tokens   Shell: hh-work
 Offline: read_cache_only. Scopes: widget_measures, approvals, warranty_board. Conflict policy: approvals server_wins. Why read cache only: a dashboard is a read, and the one write on it (deciding an approval) must not queue. The shipped decision path enforces separation of duties and re-resolves the approver's authority from the database on every request, so a queued decision would be a decision made against authority nobody re-checked (`backend/internal/identity/rbac.go`, `ApprovalRequest.Decide` and `StaffContext`).
 
