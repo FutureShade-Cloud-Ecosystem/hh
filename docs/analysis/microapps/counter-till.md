@@ -4,7 +4,7 @@
 
 # counter-till: Counter Till
 
-Audience: internal   Roles: inside_sales, sales_manager, branch_manager   Devices: desktop, tablet, kiosk   Environment: counter
+Audience: internal   Roles: inside_sales, sales_manager, branch_manager, general_manager   Devices: desktop, tablet, kiosk   Environment: counter
 Kit: scan-and-confirm   Brand: fb-tokens   Shell: hh-work
 Offline: read_cache_only (DECISIONS.md D5: the till has no outbox). Scopes: customers, products, price_matrix, parked_tickets, invoices, warranty_claims, all cached for reading; nothing queues, and a parked ticket edited with no signal is held in interaction state until the signal returns. Why this mode and not an outbox: the till commits money, and the two gates that decide whether it may (the margin floor and the credit or COD check) resolve server side in `backend/internal/identity/rbac.go` (`CheckMarginAt`, `CheckCredit`). A queued tender would be a promise the gate never saw. Reads (a customer, a price, a parked ticket) cache; a tender does not queue.
 
