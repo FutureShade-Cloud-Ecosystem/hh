@@ -1305,6 +1305,24 @@ func (b *builder) today() {
 
 // -- §15's driver run, out for delivery ------------------------------------------------------------
 //
+// demoOrgSlug is the org the demo populate provisions (internal/demo's own constant, repeated here
+// on purpose: that package's is unexported, and if the populate ever changes slug the box's own
+// refusal does too, so this literal drifting goes red at the world proof, not silently). The demo
+// populate refuses any database holding another org, and the box's entrypoint refuses a database
+// holding any org but this one, so on every database this seed may lawfully write, the slug names
+// exactly one row.
+const demoOrgSlug = "hh-demo"
+
+// driverOrgStamp is the org_id value on the Driver's day-keyed run and stops: the org row read at
+// apply time, the same shape the core's own inserts use (dispatch's InsertRun and AssignStop read
+// the org off the branch location; on a demo box locations carry no org, so the seed reads the one
+// org the box holds instead). A database without the row (a plain staging copy, or a fresh demo box's
+// FIRST apply, which runs before the populate provisions the org) answers NULL, and the seed-repair
+// pass stamps the row once the row exists: see demoseed_repair_demo.go.
+func driverOrgStamp() sqlExpr {
+	return sqlExpr{sql: `(SELECT id FROM org WHERE slug = ?::citext)`, args: []any{demoOrgSlug}}
+}
+
 // THE RUN IS OUT, AND IT IS OUT EVERY DAY. The Driver persona's walk starts at Mark loaded and the
 // core refuses Mark en route on a run that was never dispatched, so the walk needs a DISPATCHED run
 // on the dealer's current day: day-keyed whole (run row, stops, the order each stop is about), on
@@ -1328,13 +1346,14 @@ func (b *builder) driverDay() {
 		"id", runID,
 		"run_no", fmt.Sprintf("#%sRUN-%s-D%s", demoPrefix, b.branchCode(0), b.dayStamp()),
 		"branch_id", b.branchID(0),
+		"org_id", driverOrgStamp(),
 		"scheduled_date", b.day(0),
 		"truck_id", demoID("truck:T1"),
 		"driver_id", demoID("driver:D1"),
 		"status", "DISPATCHED",
 		"notes", "Kingston, out for delivery (demo)",
 		"dispatched_at", departed,
-		"created_at", b.day(0).Add(-6 * time.Hour),
+		"created_at", b.day(0).Add(-6*time.Hour),
 		"updated_at", departed,
 	))
 	weighed := 0.0
@@ -1379,6 +1398,7 @@ func (b *builder) driverDay() {
 		b.add(insert("delivery_stops", "(id)",
 			"id", b.dayID("driver-stop:"+s.Key),
 			"branch_id", b.branchID(0),
+			"org_id", driverOrgStamp(),
 			"order_id", orderID,
 			"run_id", runID,
 			"stop_no", i+1,

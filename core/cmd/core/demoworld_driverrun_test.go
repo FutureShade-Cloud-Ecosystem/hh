@@ -263,6 +263,31 @@ func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
 		if closed.Status != "COMPLETED" {
 			t.Fatalf("%s: Complete run left %s %s, want COMPLETED", label, run.RunNo, closed.Status)
 		}
+
+		// The sync legs the offline pull predicates on: the demo org on the row (the seed's own stamp,
+		// read off the org row the populate provisions, never a constant) and the seq the walk's own
+		// moves just drew. Both must sit on the run AND on its stops, or the driver's sync scopes
+		// answer nothing for the day and the offline half of the run goes dark on the demo box.
+		var orgID string
+		if err := pool.QueryRow(ctx, `SELECT id::text FROM org WHERE slug = $1`, demoOrgSlug).Scan(&orgID); err != nil {
+			t.Fatalf("%s: reading the demo org the populate provisions: %v", label, err)
+		}
+		var runsStamped, stopsStamped int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM delivery_runs WHERE id = $1 AND org_id = $2 AND seq IS NOT NULL`,
+			run.ID, orgID).Scan(&runsStamped); err != nil {
+			t.Fatalf("%s: reading the run's sync legs: %v", label, err)
+		}
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM delivery_stops WHERE run_id = $1 AND org_id = $2 AND seq IS NOT NULL`,
+			run.ID, orgID).Scan(&stopsStamped); err != nil {
+			t.Fatalf("%s: reading the stops' sync legs: %v", label, err)
+		}
+		if runsStamped != 1 || stopsStamped != len(run.Stops) {
+			t.Fatalf("%s: the walked run %s is not in the driver's sync scopes: %d of 1 run and %d of %d stops carry "+
+				"the demo org and a seq, so an offline pull answers the day as empty",
+				label, run.RunNo, runsStamped, stopsStamped, len(run.Stops))
+		}
 	}
 
 	// The seed day.
