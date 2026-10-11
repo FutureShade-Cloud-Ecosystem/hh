@@ -47,23 +47,31 @@ async function readSale(page: Page, bearer: string, orderId: string) {
   return answer.body;
 }
 
-test("the way in: two cards, the eight coming roles untapped, the yard manager and the driver start at the front door, and the banner", async ({
+test("the way in: two cards, the six coming roles untapped, the yard manager, the yard team and the driver start at the front door, and the banner", async ({
   page,
 }, testInfo) => {
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
-  // The yard manager and the Driver are flows the demo mints (the front door
-  // shows both cards), but the till's entry serves the matrix's Counter Till
-  // roles only; both sign in at the front door, so neither card renders here.
+  // The yard manager, the Yard Team and the Driver are flows the demo mints
+  // (the front door shows the cards), but the till's entry serves the
+  // matrix's Counter Till roles only; they sign in at the front door, so no
+  // card of theirs renders here.
   await expect(page.getByRole("button", { name: "Yard manager", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Yard Team", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Driver", exact: true })).toHaveCount(0);
-  // The coming roles: shown, labelled Coming, and dead controls. Neither the
-  // yard manager nor the Driver is among them: both cards live on the front
-  // door now.
-  for (const role of ["Outside Sales", "Yard Team", "Branch Manager", "General Manager", "HR"]) {
+  // The coming roles: shown, labelled Coming, and dead controls. The yard
+  // manager, the Yard Team and the Driver are not among them: their cards
+  // live on the front door now.
+  for (const role of ["Outside Sales", "Branch Manager", "General Manager", "HR"]) {
     const coming = page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role });
     await expect(coming).toBeDisabled();
+  }
+  // The yard manager, the Yard Team and Payables and Receivables have live
+  // cards on the front door, so the till's list drops them, as it dropped
+  // the Driver.
+  for (const role of ["Yard manager", "Yard Team", "Payables and Receivables"]) {
+    await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role })).toHaveCount(0);
   }
   await shot(page, "sales-01-way-in", testInfo);
 });

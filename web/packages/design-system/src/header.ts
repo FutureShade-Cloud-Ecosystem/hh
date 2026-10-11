@@ -34,6 +34,11 @@
 // colour, gap and radius is a token except the lockup's own geometry (the
 // 30px mark, the 56px bar), which has no token and keeps the front door's
 // literal shape.
+//
+// One host knob: --hh-header-control-min sets the floor of the Switch role and
+// Sign out buttons. Unset, they keep their own height (44 px on the compact
+// phone layout, content height elsewhere); an app with a taller target floor
+// sets it on the element (tokens.css defines it as zero, and each read carries a zero fallback, so a page that loads the header without tokens.css computes the same rules).
 
 import { css, html, nothing, type PropertyValues, type TemplateResult as Template } from 'lit';
 import { defineElement, HHElement } from './base.js';
@@ -206,7 +211,7 @@ const styles = css`
       flex: 1 1 auto;
     }
     :host([compact]) .controls button {
-      min-height: 44px;
+      min-height: max(44px, var(--hh-header-control-min, 0px));
       padding: 0 var(--hh-s-8);
       font-size: 13px;
       white-space: nowrap;
@@ -221,7 +226,7 @@ const styles = css`
     }
   }
   .controls button {
-    min-height: 0;
+    min-height: var(--hh-header-control-min, 0px);
     padding: 7px 12px;
     font-size: 11px;
     line-height: normal;
