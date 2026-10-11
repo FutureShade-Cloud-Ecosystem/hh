@@ -1,7 +1,7 @@
 // The held payment keys: one record per user in the tab's session storage, one entry per account.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HeldKeys } from "../src/ar/held-keys.ts";
+import { HeldKeys, newKey } from "../src/ar/held-keys.ts";
 
 function storage() {
   const map = new Map();
@@ -41,4 +41,19 @@ test("a record that is not ours reads as no keys, and no user id holds in memory
   none.set("acct-1", "key-a");
   assert.equal(none.get("acct-1"), "key-a");
   assert.equal(new HeldKeys("", s).get("acct-1"), undefined);
+});
+
+test("a key is a uuid even where randomUUID is missing (a plain http origin), from getRandomValues", () => {
+  const real = globalThis.crypto;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  try {
+    Object.defineProperty(globalThis, "crypto", { value: { getRandomValues: (a) => real.getRandomValues(a) }, configurable: true });
+    const keys = new Set(Array.from({ length: 50 }, () => newKey()));
+    assert.equal(keys.size, 50);
+    for (const k of keys) assert.match(k, uuid);
+    Object.defineProperty(globalThis, "crypto", { value: undefined, configurable: true });
+    assert.match(newKey(), /^k-\d+-\d+$/);
+  } finally {
+    Object.defineProperty(globalThis, "crypto", { value: real, configurable: true });
+  }
 });

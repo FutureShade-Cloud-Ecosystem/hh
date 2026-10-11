@@ -19,8 +19,10 @@ const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
 // The core's closed table, in its order: the till's pair, the Yard manager, the Yard Team and the
 // Driver, Payables and Receivables, the Procurement manager, then the Money Desk's controller. The
-// till's two, the yard pair and the buyer sign in here only so the way in's filter and the cross app
-// card legs mean something against the core's whole table.
+// table is listed whole so the way in's filter and the cross app card legs mean something against it. The
+// stub mints a session for the Sales pair, Payables and Receivables, the Procurement manager and the
+// Financial Controller; the yard manager, the Yard Team and the Driver are rows only, and the mint answers
+// them 404.
 const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
@@ -581,7 +583,7 @@ async function handle(req, res) {
   // invoice, unapplied always zero. A preview takes the same walk and writes nothing, and never reads the key.
   if (method === "POST" && path === "/api/v1/ar/payments/apply") {
     const body = await readBody(req);
-    if (body === null) return refuse(res, 400, "invalid JSON body");
+    if (body === null) return refuse(res, 422, "the request body must be JSON");
     const isUuid = (v) => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
     const key = typeof body.idempotency_key === "string" ? body.idempotency_key : "";
     const ids = Array.isArray(body.invoice_ids) ? body.invoice_ids : [];
@@ -721,7 +723,7 @@ async function handle(req, res) {
     const inv = invById(m[1]);
     if (!inv) return refuse(res, 404, "not found");
     const body = await readBody(req);
-    if (body === null) return refuse(res, 400, "invalid JSON body");
+    if (body === null) return refuse(res, 422, "the request body must be JSON");
     if (typeof body.idempotency_key !== "string" || body.idempotency_key === "") return refuse(res, 400, "recording a payment needs an idempotency key");
     if (!Number.isInteger(body.amount_cents) || body.amount_cents <= 0) return refuse(res, 400, "a payment amount must be greater than zero");
     const replay = world.keys.get(body.idempotency_key);
@@ -754,7 +756,7 @@ async function handle(req, res) {
     const inv = invById(m[1]);
     if (!inv) return refuse(res, 404, "not found");
     const body = await readBody(req);
-    if (body === null) return refuse(res, 400, "invalid JSON body");
+    if (body === null) return refuse(res, 422, "the request body must be JSON");
     if (typeof body.idempotency_key !== "string" || body.idempotency_key === "") return refuse(res, 400, "recording a promise needs an idempotency key");
     if (!Number.isInteger(body.promised_cents) || body.promised_cents <= 0) return refuse(res, 400, "a promise names an amount greater than zero");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.promised_date))) return refuse(res, 400, "the promised date must be a calendar date (YYYY-MM-DD)");
@@ -795,7 +797,7 @@ async function handle(req, res) {
     const p = world.payments.find((x) => x.id === m[1]);
     if (!p) return refuse(res, 404, "not found");
     const body = await readBody(req);
-    if (body === null) return refuse(res, 400, "invalid JSON body");
+    if (body === null) return refuse(res, 422, "the request body must be JSON");
     if (p.status === "BOUNCED") return refuse(res, 409, "payment already marked BOUNCED");
     p.status = "BOUNCED";
     p.reason = String(body.reason ?? "");
@@ -923,7 +925,7 @@ async function handle(req, res) {
 
   if (method === "POST" && path === "/api/v1/ar/register/statements") {
     const body = await readBody(req);
-    if (body === null) return refuse(res, 400, "invalid JSON body");
+    if (body === null) return refuse(res, 422, "the request body must be JSON");
     if (!Array.isArray(body.invoice_ids) || body.invoice_ids.length === 0) return refuse(res, 400, "choose at least one invoice");
     const custs = new Set();
     for (const id of body.invoice_ids) {

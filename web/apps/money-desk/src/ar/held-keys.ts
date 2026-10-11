@@ -8,6 +8,24 @@
 // other user is signed in.
 import { ThrowSafeMirror, type StorageLike } from "@hardscapehouse/auth";
 
+/**
+ * A fresh random key. randomUUID needs a secure context, so on a plain http origin that is not localhost the
+ * key is a version 4 UUID built from getRandomValues, which every context has; the time and Math.random form is
+ * only the last resort when no crypto object exists at all.
+ */
+export function newKey(): string {
+  const c = globalThis.crypto;
+  if (c !== undefined && typeof c.randomUUID === "function") return c.randomUUID();
+  if (c !== undefined && typeof c.getRandomValues === "function") {
+    const b = c.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6]! & 0x0f) | 0x40;
+    b[8] = (b[8]! & 0x3f) | 0x80;
+    const hex = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return `k-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+}
+
 const KEY_PREFIX = "hh-money-desk.held-payment-keys.v1.";
 
 export class HeldKeys {

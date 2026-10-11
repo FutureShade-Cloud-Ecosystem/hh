@@ -476,3 +476,14 @@ test("apply route: refusals are the core's words and leave nothing applied", asy
   refused(closed, 422, "is not open; a payment applies to a finalized or partially paid invoice");
   assert.ok(closed.json.error.startsWith(`invoice ${mine[0].invoice_no} (paid) is not open`));
 });
+
+test("a body that is not JSON is the core's 422 on every route that reads one", async () => {
+  await reset();
+  for (const path of ["/api/v1/ar/payments/apply", "/api/v1/ar/register/statements"]) {
+    const res = await fetch(`${base}${path}`, { method: "POST", headers: { Authorization: "Bearer stub-token", "X-Org": "hh-demo", "Content-Type": "application/json" }, body: "{not json" });
+    assert.equal(res.status, 422, path);
+    const json = await res.json();
+    assert.ok(JSON.stringify(json).includes("the request body must be JSON"), path);
+  }
+  assert.ok(coreSource.includes("the request body must be JSON"));
+});

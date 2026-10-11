@@ -13,7 +13,7 @@
 import { html, type TemplateResult } from "lit";
 import type { BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
-import { HeldKeys } from "./held-keys.js";
+import { HeldKeys, newKey } from "./held-keys.js";
 import { canLiftHolds, paymentOutcome, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import {
@@ -51,12 +51,6 @@ export interface DeskWho {
   readonly userId: string;
   readonly roleCode: string;
   readonly userName: string;
-}
-
-function newKey(): string {
-  const c = globalThis.crypto;
-  if (c !== undefined && typeof c.randomUUID === "function") return c.randomUUID();
-  return `k-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
 
 const METHODS: readonly PaymentMethod[] = ["CASH", "CARD", "CHEQUE", "EFT"];
