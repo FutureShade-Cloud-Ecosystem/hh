@@ -156,7 +156,7 @@ test("the catalog holds the seven live roles with the contract's labels and the 
   assert.equal(yardManager.flow, "yard-manager");
   assert.deepEqual(
     yardManager.tiles.map((tile) => tile.name),
-    ["Manager Home", "Yard Pick and Receive", "Dispatch and Load Building", "Buying and Stock", "House Messages"],
+    ["Manager Home", "Yard Pick", "Dispatch and Load Building", "Buying and Stock", "House Messages"],
   );
   assert.deepEqual(
     yardManager.tiles.map((tile) => tile.href),
@@ -167,7 +167,7 @@ test("the catalog holds the seven live roles with the contract's labels and the 
   // the box yet.
   assert.equal(yardTeam.label, "Yard Team");
   assert.equal(yardTeam.flow, "yard-team");
-  assert.deepEqual(yardTeam.tiles.map((tile) => tile.name), ["Yard Pick and Receive", "House Messages"]);
+  assert.deepEqual(yardTeam.tiles.map((tile) => tile.name), ["Yard Pick", "House Messages"]);
   assert.deepEqual(yardTeam.tiles.map((tile) => tile.href), ["/yard/", null]);
   assert.equal(buyer.label, "Procurement manager");
   assert.equal(buyer.flow, "procurement-manager");

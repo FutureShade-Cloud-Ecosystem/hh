@@ -96,14 +96,14 @@ test("the picker renders the seven live cards and the six coming rows", async ({
   await expect(yardManager).toContainText("The yard: picks, shortages and deliveries.");
   await expect(yardManager).toContainText("Sign in as Yard manager");
   await expect(yardManager).toContainText("Manager Home");
-  await expect(yardManager).toContainText("Yard Pick and Receive");
+  await expect(yardManager).toContainText("Yard Pick");
 
   const yard = page.getByRole("button", { name: "Yard Team", exact: true });
   await expect(yard).toBeVisible();
   await expect(yard).toBeEnabled();
   await expect(yard).toContainText("Pick and stage the orders dispatched to the yard.");
   await expect(yard).toContainText("Sign in as Yard Team");
-  await expect(yard).toContainText("Yard Pick and Receive");
+  await expect(yard).toContainText("Yard Pick");
   await expect(yard).toContainText("House Messages");
 
   const payRec = page.getByRole("button", { name: "Payables and Receivables", exact: true });
@@ -202,9 +202,9 @@ test("a Sales manager sign in shows the five tiles", async ({ page }) => {
 test("a Yard Team sign in shows the Yard Pick tile and mints the yard flow", async ({ page }) => {
   await page.getByRole("button", { name: "Yard Team", exact: true }).click();
   // The home names the role, and its one live tile is the Yard Pick app.
-  const yardTile = page.getByRole("button", { name: "Yard Pick and Receive", exact: true });
+  const yardTile = page.getByRole("button", { name: "Yard Pick", exact: true });
   await expect(yardTile).toBeVisible();
-  await expect(yardTile).toContainText("Open the Yard Pick and Receive");
+  await expect(yardTile).toContainText("Open the Yard Pick");
   await expect(page.getByTestId("home-title")).toHaveText("Yard Team");
   await expect(page.getByTestId("header-word")).toHaveText("Yard Team");
   // House Messages is the role's other matrix module and is not on the box

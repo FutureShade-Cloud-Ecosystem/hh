@@ -87,7 +87,7 @@ async function walk(prefix, viewport, theme) {
   await page.getByRole("button", { name: "Switch role", exact: true }).click();
   await page.getByRole("button", { name: "Yard Team", exact: true }).waitFor();
   await page.getByRole("button", { name: "Yard Team", exact: true }).click();
-  await page.getByRole("button", { name: "Yard Pick and Receive", exact: true }).waitFor();
+  await page.getByRole("button", { name: "Yard Pick", exact: true }).waitFor();
   await settle(page);
   await page.screenshot({ path: join(outDir, `${prefix}front-door-05-yard-home.png`) });
   await page.close();
