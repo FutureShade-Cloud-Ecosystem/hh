@@ -637,6 +637,9 @@ export class ArDesk {
     const r = result.value;
     const done = r.lines.filter((l) => l.outcome !== "NONE").map((l) => `${formatMoney(l.applied_cents)} on ${l.invoice_no}, balance now ${formatMoney(l.balance_after_cents)}`);
     this.#notice = `Payment ${r.payment_no ?? "recorded"} ${r.replayed ? "was already applied" : "applied"}: ${done.join("; ")}.`;
+    // The notice carries the only words saying the money is recorded, so a phone brings it into view as
+    // the error branches do (after the unknown outcome's exit this is the screen's one honest sentence).
+    this.#reveal = "[data-notice]";
     this.#endApplyForm();
     await Promise.all([this.#reloadAccount(), this.#reloadBook()]);
     this.#host.repaint();

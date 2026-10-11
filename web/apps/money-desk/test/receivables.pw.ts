@@ -673,6 +673,34 @@ test("a worded 4xx says the payment was not recorded in the route's own words, a
   expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
 });
 
+test("on a phone the already applied notice after a replay is brought into view", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const posts: ApplyBody[] = [];
+  let lose = true;
+  await page.route("**/api/v1/ar/payments/apply", async (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview) return route.continue();
+    posts.push(body);
+    if (lose) {
+      lose = false;
+      await route.fetch();
+      return route.abort("connectionreset");
+    }
+    return route.continue();
+  });
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  // The usual way out of the unknown state: the next press replays and the notice carries the only
+  // words saying the money is recorded, so it is brought into view as the error branches are.
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 was already applied");
+  expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+  await expect(page.locator("[data-notice]")).toBeInViewport({ ratio: 0.5 });
+});
+
 test("on a phone the unknown outcome message is in view and focused when it appears", async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route("**/api/v1/ar/payments/apply", (route) => {
