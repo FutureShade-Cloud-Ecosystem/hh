@@ -1,0 +1,27 @@
+{
+  "name": "@hardscapehouse/yard-pick",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Yard Pick: the yard team's pick app, phone and tablet first (roadmap row 1199). The pick queue, claim, record lines, skids, short pick and stage. No cost anywhere.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test 'test/*.test.mjs' && playwright test",
+    "acceptance": "playwright test --config test/acceptance.config.ts"
+  },
+  "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
+    "@hardscapehouse/auth": "0.0.0",
+    "@hardscapehouse/design-system": "0.0.0",
+    "@hardscapehouse/pos-kit": "0.0.0",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
+  }
+}

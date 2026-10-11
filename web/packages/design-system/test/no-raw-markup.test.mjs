@@ -319,14 +319,15 @@ test('the walk finds this package and names the workspace packages it must also 
   // on a share link token) and this Quote Desk (web/apps/quote-desk, which
   // joins at the merge of the shared header element) follow: all the apps'
   // sources are scanned by the gates below. The role app template
-  // (web/apps/_role-template) is the last, and each role app copied from it
-  // joins this list deliberately. The comparison is over the sorted names
-  // because the enumeration is a readdir over the workspace's directories,
-  // whose order is the filesystem's and not a contract: the fact this lock
-  // holds is which packages the gate scans, not the order it met them in.
+  // (web/apps/_role-template) and each role app copied from it join this
+  // list deliberately; the Yard Pick app (web/apps/yard-pick) is the first
+  // of those copies. The comparison is over the sorted names because the
+  // enumeration is a readdir over the workspace's directories, whose order
+  // is the filesystem's and not a contract: the fact this lock holds is
+  // which packages the gate scans, not the order it met them in.
   assert.deepEqual(
     dependentPackages().map((d) => d.name).sort(),
-    ['@hardscapehouse/buying-and-stock', '@hardscapehouse/counter-till', '@hardscapehouse/drive-run', '@hardscapehouse/front-door', '@hardscapehouse/manager-home', '@hardscapehouse/public-desk', '@hardscapehouse/quote-desk', '@hardscapehouse/role-template'],
+    ['@hardscapehouse/buying-and-stock', '@hardscapehouse/counter-till', '@hardscapehouse/drive-run', '@hardscapehouse/front-door', '@hardscapehouse/manager-home', '@hardscapehouse/public-desk', '@hardscapehouse/quote-desk', '@hardscapehouse/role-template', '@hardscapehouse/yard-pick'],
     'a package now depends on @hardscapehouse/design-system; its sources are scanned below, and this lock must name it deliberately',
   );
 });
