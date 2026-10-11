@@ -361,6 +361,140 @@ test("opening the invoice's payments after a lost answer never ends the held key
   await expect(page.locator("[data-payment-row]", { hasText: "PAY-0103" })).toHaveCount(0);
 });
 
+/** One account, INV-1002 only, $100.00 by cheque; the first press's answer is lost after the stub wrote the payment. */
+async function lostFirstPress(page: Page, posts: ApplyBody[], gate?: { statuses: number[] }): Promise<void> {
+  const statuses = gate === undefined ? [] : [...gate.statuses];
+  await page.route("**/api/v1/ar/payments/apply", async (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview) return route.continue();
+    posts.push(body);
+    if (posts.length === 1) {
+      await route.fetch();
+      return route.abort("connectionreset");
+    }
+    const status = statuses.shift();
+    if (status !== undefined) {
+      return route.fulfill({ status, contentType: "application/json", body: JSON.stringify({ error: status === 401 ? "unauthorized" : "forbidden" }) });
+    }
+    return route.continue();
+  });
+}
+
+async function fillCheque(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Clear" }).first().click();
+  await page.getByRole("checkbox", { name: "Pay INV-1002" }).click();
+  await page.locator("[data-field='receive-amount']").fill("100.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 4471");
+}
+
+for (const status of [401, 403]) {
+  test(`a ${status} on the retry after a lost answer is the gate's answer: the key is kept, the words stay unknown, and the next press carries it`, async ({ page, request }) => {
+    const posts: ApplyBody[] = [];
+    await lostFirstPress(page, posts, { statuses: [status] });
+    await openDesk(page, request);
+    await openAccount(page, "Granite Edge Landscaping (demo)");
+    await fillCheque(page);
+    await page.getByRole("button", { name: "Record payment" }).click();
+    await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+    await page.getByRole("button", { name: "Record payment" }).click();
+    await expect(page.locator("[data-error]")).toContainText("The earlier press may or may not have been recorded");
+    await expect(page.locator("[data-error]")).not.toContainText("was not recorded");
+    await expect(page.locator("[data-error]")).toContainText(status === 401 ? "Your sign in has ended. Sign in again." : "Your role may not do that.");
+    await page.getByRole("button", { name: "Record payment" }).click();
+    await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 was already applied");
+    expect(posts).toHaveLength(3);
+    expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+    expect(posts[2]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+    await expect(page.locator("[data-notice]")).not.toContainText("PAY-0102");
+  });
+}
+
+test("a first press answered 401 wrote nothing: it is refused in words and the next press is a new payment", async ({ page, request }) => {
+  const posts: ApplyBody[] = [];
+  await page.route("**/api/v1/ar/payments/apply", (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    if (body.preview) return route.continue();
+    posts.push(body);
+    if (posts.length === 1) return route.fulfill({ status: 401, contentType: "application/json", body: JSON.stringify({ error: "unauthorized" }) });
+    return route.continue();
+  });
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("The payment was not recorded. Your sign in has ended.");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 applied");
+  expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
+});
+
+test("the held key survives a page reload: a lost answer, a reload, and the next press carries the same key", async ({ page, request }) => {
+  const posts: ApplyBody[] = [];
+  await lostFirstPress(page, posts);
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await page.reload();
+  await expect(page.locator("[data-card]")).toHaveCount(4);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 was already applied");
+  expect(posts).toHaveLength(2);
+  expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+  await expect(page.locator("[data-notice]")).not.toContainText("PAY-0102");
+});
+
+test("the held key survives a sign out and a sign in of the same user", async ({ page, request }) => {
+  const posts: ApplyBody[] = [];
+  await lostFirstPress(page, posts);
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await page.locator("[data-action='sign-out']").click();
+  await page.locator("[data-flow='payables-receivables']").click();
+  await expect(page.locator("[data-card]")).toHaveCount(4);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 was already applied");
+  expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+});
+
+test("held keys are never shared across users: another user starts with none, and the first user's key is left untouched", async ({ page, request }) => {
+  const posts: ApplyBody[] = [];
+  await lostFirstPress(page, posts);
+  await openDesk(page, request);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  await page.locator("[data-action='sign-out']").click();
+  await page.locator("[data-flow='financial-controller']").click();
+  await page.getByRole("button", { name: "Receivables", exact: true }).click();
+  await expect(page.locator("[data-card]")).toHaveCount(4);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0102 applied");
+  expect(posts).toHaveLength(2);
+  expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
+  // The first user signs in again and still holds the first key: the route answers its replay.
+  await page.locator("[data-action='sign-out']").click();
+  await page.locator("[data-flow='payables-receivables']").click();
+  await expect(page.locator("[data-card]")).toHaveCount(4);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 was already applied");
+  expect(posts).toHaveLength(3);
+  expect(posts[2]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+});
+
 test("a worded 4xx says the payment was not recorded in the route's own words, and the next press is a new payment with a new key", async ({ page, request }) => {
   const posts: ApplyBody[] = [];
   let refuse = true;

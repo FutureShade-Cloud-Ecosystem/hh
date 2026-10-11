@@ -109,16 +109,26 @@ export function refusalWords(action: string, error: string, status: number | und
  * the account before taking anything again (the desk holds the payment's key and sends it again whatever the form
  * now says, so pressing again cannot post the money twice). A worded 4xx is the route refusing with nothing
  * written, in the route's own words, except its replay refusal ("that idempotency key already recorded ..."):
- * those words mean the earlier attempt landed, so they read as the payment being recorded, not refused.
+ * those words mean the earlier attempt landed, so they read as the payment being recorded, not refused. A 401 or a
+ * 403 is the gate's answer, not the route's: when the account already holds a key from an earlier press it leaves
+ * the outcome unknown and the key kept.
  */
 export type PaymentOutcome = { kind: "unknown" | "refused" | "recorded"; words: string };
 
-export function paymentOutcome(error: string, status: number | undefined): PaymentOutcome {
+export function paymentOutcome(error: string, status: number | undefined, heldKey = false): PaymentOutcome {
   if (status === undefined || status >= 500) {
     return {
       kind: "unknown",
       words:
         "The server did not give a clear answer, so this payment may or may not have been recorded. Check the account's payments and invoice balances before taking the money again. Pressing Record payment again is safe whatever the form now says: this desk sends the payment's own key again, so it cannot post twice, and if the earlier press was already recorded the server will say so.",
+    };
+  }
+  if (heldKey && (status === 401 || status === 403)) {
+    // The gate answered before the payment route saw the request, so it says nothing about the earlier press:
+    // the key is kept and the outcome stays unknown.
+    return {
+      kind: "unknown",
+      words: `The earlier press may or may not have been recorded. ${refusalWords("payment", error, status)} Then press Record payment: this desk sends the same key again, and the server will say if the earlier press was already recorded.`,
     };
   }
   if (error.includes("already recorded")) {

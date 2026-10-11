@@ -134,7 +134,7 @@ export class MoneyDeskApp extends HHElement {
           URL.revokeObjectURL(url);
         },
       },
-      { roleCode: this.#roleCode, userName: this.#userName },
+      { roleCode: this.#roleCode, userName: this.#userName, userId: this.#sessions.current?.user.userId ?? "" },
     );
   }
 

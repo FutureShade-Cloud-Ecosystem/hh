@@ -164,3 +164,17 @@ test("lifting and overriding a hold are the controller's and the general manager
   assert.equal(canLiftHolds("general_manager"), true);
   assert.equal(canLiftHolds("payables_receivables"), false);
 });
+
+test("a 401 or 403 on a press while the account holds a key is the gate's answer: unknown, never not recorded", () => {
+  for (const status of [401, 403]) {
+    const held = paymentOutcome("unauthorized", status, true);
+    assert.equal(held.kind, "unknown", String(status));
+    assert.ok(held.words.startsWith("The earlier press may or may not have been recorded."), held.words);
+    assert.ok(held.words.includes(refusalWords("payment", "unauthorized", status)), held.words);
+    assert.ok(held.words.includes("sends the same key"), held.words);
+    assert.ok(!held.words.includes("was not recorded"), held.words);
+    // With no key held, nothing earlier can have landed: the gate's refusal is a known answer.
+    assert.equal(paymentOutcome("unauthorized", status, false).kind, "refused", String(status));
+    assert.equal(paymentOutcome("unauthorized", status).kind, "refused", String(status));
+  }
+});

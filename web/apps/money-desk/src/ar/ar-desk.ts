@@ -13,6 +13,7 @@
 import { html, type TemplateResult } from "lit";
 import type { BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
+import { HeldKeys } from "./held-keys.js";
 import { canLiftHolds, paymentOutcome, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import {
@@ -47,6 +48,7 @@ export interface DeskHost {
 }
 
 export interface DeskWho {
+  readonly userId: string;
   readonly roleCode: string;
   readonly userName: string;
 }
@@ -92,9 +94,10 @@ export class ArDesk {
   // One pending payment per account: the key is minted when the payment is first sent and sent again for every
   // retry, whatever the form now says (a corrected cheque number, another method, a changed amount, other
   // invoices), until the outcome is known: the payment route's own answer (recorded, its refusal, or "already
-  // recorded"). A payments list, a reload or a sign out never ends it. The route refuses a changed body under a spent key in words, so a lost answer can never post the same
-  // money twice, and a payment on another account never touches this one's key.
-  #payPins = new Map<string, { key: string }>();
+  // recorded"). A payments list, a reload, a sign out and a sign in of the same user never end it; another user
+  // never sees it. The route refuses a changed body under a spent key in words, so a lost answer can never post
+  // the same money twice, and a payment on another account never touches this one's key.
+  readonly #payPins: HeldKeys;
   #promiseKey = newKey();
   #remindKey = newKey();
 
@@ -102,6 +105,7 @@ export class ArDesk {
     this.#api = api;
     this.#host = host;
     this.#who = who;
+    this.#payPins = new HeldKeys(who.userId);
   }
 
   // ---- loads ----------------------------------------------------------------------------------
@@ -587,23 +591,22 @@ export class ArDesk {
     this.#clearMessages();
     this.#host.repaint();
     const method = METHODS.find((m) => m === account.method) ?? "CHEQUE";
-    let pin = this.#payPins.get(account.customerId);
-    if (pin === undefined) {
-      pin = { key: newKey() };
-      this.#payPins.set(account.customerId, pin);
-    }
+    // A key already held is an earlier press whose outcome is still unknown.
+    const heldKey = this.#payPins.get(account.customerId);
+    const key = heldKey ?? newKey();
+    if (heldKey === undefined) this.#payPins.set(account.customerId, key);
     const result = await this.#api.applyPayment({
       customerId: account.customerId,
       method,
       amountCents: cents,
       reference,
       invoiceIds: account.picked,
-      key: pin.key,
+      key,
       preview: false,
     });
     this.#busy = false;
     if (!result.ok) {
-      const outcome = paymentOutcome(result.error, result.status);
+      const outcome = paymentOutcome(result.error, result.status, heldKey !== undefined);
       if (outcome.kind === "recorded") {
         // The route's replay refusal is how it says the earlier press landed: the outcome is known,
         // the payment is ended, and the account is reloaded so the person reads the server's balances.
