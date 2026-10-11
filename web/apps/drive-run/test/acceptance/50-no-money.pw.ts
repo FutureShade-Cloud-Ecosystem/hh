@@ -8,13 +8,12 @@ import { expect, myRuns, staff, test } from "./helpers.js";
 test("the driver's reads carry no money field and no money figure", async ({ page }) => {
   const runs = await myRuns(page);
   expect(runs.length).toBeGreaterThanOrEqual(1);
+  // The reads the Driver can actually obtain: the day itself, and the run's own read (whose stops
+  // carry each stop's whole payload). The per stop detail read is a dispatch-board read the Driver
+  // is refused by the census, so its payload cannot arrive at all.
   const hits = [...scanPayload("my-runs", JSON.stringify(runs))];
-  for (const stop of runs[0].stops) {
-    const detail = await staff(page, "GET", `/api/v1/dispatch/stops/${stop.id}`);
-    expect(detail.status).toBe(200);
-    hits.push(...scanPayload(`stop ${stop.stop_no}`, JSON.stringify(detail.body)));
-  }
   const run = await staff(page, "GET", `/api/v1/dispatch/runs/${runs[0].id}`);
+  expect(run.status).toBe(200);
   hits.push(...scanPayload("run", JSON.stringify(run.body)));
   expect(describeHits(hits)).toEqual([]);
 });

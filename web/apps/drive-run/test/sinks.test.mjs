@@ -57,3 +57,23 @@ test("no em or en dash anywhere this app writes", () => {
   walk(appDir);
   assert.deepEqual(offenders, []);
 });
+
+// The per stop detail read (GET /api/v1/dispatch/stops/{id}) is a dispatch-board read the
+// census holds to that surface alone: the Driver is refused it (the acceptance money leg
+// asserts the 403), and the run's own read carries each stop's whole payload anyway (the
+// address, the lines that come off the truck, the delivery instructions and the contact).
+// The app's one door to the core must not hold a call to it: a screen that used it would
+// be a screen whose every record read fails. The scan is over every source, so a future
+// screen cannot reintroduce it anywhere but the stub, which mirrors the core's whole
+// surface and keeps the route.
+test("no source of the app calls the per stop read the Driver is refused", () => {
+  const offenders = [];
+  for (const path of sources(srcDir)) {
+    const rel = relative(srcDir, path);
+    const lines = readFileSync(path, "utf8").split("\n");
+    lines.forEach((line, index) => {
+      if (line.includes("dispatchGetStop")) offenders.push(`${rel}:${index + 1}: ${line.trim()}`);
+    });
+  }
+  assert.deepEqual(offenders, []);
+});
