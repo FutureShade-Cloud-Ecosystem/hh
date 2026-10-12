@@ -183,7 +183,7 @@ test("the runtime code paths write no token, no PIN, no password, no handle into
     account.setClock(now);
     const sessions = new SessionStore({ now }); // the mirror resolves to the global fake
     assert.equal(sessions.degraded, false, "the swapped-in global storage must probe as working");
-    const controller = new AuthController({ account, sessions });
+    const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
     const signedIn = await controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
     assert.equal(signedIn.ok, true, `the fixture sign-in must succeed for the capture to be real: ${signedIn.ok ? "" : signedIn.error}`);
 

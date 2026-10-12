@@ -27,25 +27,40 @@
 // the post-M8 bug class the spec's R-4 exists to prevent." What the server
 // cannot enforce, this package does not ship.
 //
-// The platform sign-in seam is the narrow AccountSurface below: the Appwrite
+// The platform sign-in seam is the narrow AccountSurface below: the FB Console
 // account operations this package needs (createEmailPasswordSession,
-// createOAuth2Session, getSession, plus the JWT mint and the session delete
-// that custody requires). The Appwrite Web SDK is the one dependency real
-// login cannot avoid, so it lives behind this seam in the consuming shell's
-// adapter; this package takes no npm dependency on it and vendors no fake of
-// it (src/testing.ts carries a fake of THIS interface, with obviously fake
-// values, for tests). Sign-in methods confirmed for the first release:
-// Google plus the house sign-in through the Console bridge; device unlock is
-// in scope (src/lock.ts). getSession is the reload's re-sign-in: the
-// issuer's own session is an httpOnly cookie script cannot read, so the
-// platform answers for the sign-in while this package holds nothing to
-// trade.
+// createOAuth2Session, getSession, deleteSession) and the exchange, which
+// trades the signed-in FB Console account for the core's own session token
+// (POST /api/v1/auth/exchange). The Appwrite Web SDK is the one dependency
+// real login cannot avoid, so it lives behind this seam in an adapter
+// (src/appwrite-adapter.ts, a separate entry, for the browser; the Tauri
+// shells forward to their Rust side); the package root takes no npm
+// dependency on it and vendors no fake of it (src/testing.ts carries a fake
+// of THIS interface, with obviously fake values, for tests). Sign-in methods
+// for the first release: the FutureBuild house sign-in (email and password)
+// and Google, both directly against FB Console's HH project; device unlock
+// is in scope (src/lock.ts). The bearer is always the core's token from the
+// exchange. An FB Console JWT is minted inside an adapter for one exchange
+// attempt and never reaches this package, custody or any storage.
+// getSession is the reload's re-sign-in: FB Console's own session is an
+// httpOnly first party cookie script cannot read, so the platform answers
+// for the sign-in while this package holds nothing to trade.
 import { err, ok, type HeaderProvider, type Result } from "@hardscapehouse/api-client";
 import type { DeviceLockHandle } from "./lock.js";
 import type { SessionStore } from "./session.js";
 
 function asMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** The display profile an exchange answer names, read field by field; custody refuses what it cannot use. */
+function profileOf(answer: ExchangeAnswer): AccountUser {
+  const user = answer.user as Partial<ExchangeUser> | null;
+  return {
+    userId: user?.user_id as string,
+    email: user?.email as string,
+    name: user?.display_name as string,
+  };
 }
 
 /** The caller class a header provider is built for: the core's authz middleware requires X-Org on staff routes and refuses it on tenant routes. */
@@ -112,7 +127,7 @@ export function authHeaderProvider(options: AuthHeaderProviderOptions): HeaderPr
   };
 }
 
-/** The OAuth2 providers the first release confirms: Google (the Console bridge carries it). */
+/** The OAuth2 providers the first release confirms: Google, through FB Console's own OAuth provider. */
 export type OAuth2Provider = "google";
 
 /** The account identity, as the adapter resolves it from the platform. */
@@ -123,17 +138,63 @@ export interface AccountUser {
 }
 
 /**
- * The Appwrite account surface this package needs, as a narrow injected
- * interface. The consuming shell's adapter maps these onto the Appwrite Web
- * SDK (the one integration point a shell wires, recorded in the README); the
- * SDK's dependency lives there, not here.
+ * The user block of the core's exchange answer, in the core's snake case
+ * (POST /api/v1/auth/exchange). This package reads user_id, email and
+ * display_name into the display profile and keeps no role state: roles are
+ * the server's (see the NO ROLE PICKER note above). The rest rides along
+ * untouched for the host that wants it.
+ */
+export interface ExchangeUser {
+  user_id: string;
+  email: string;
+  display_name: string;
+  role_code: string;
+  role_name: string;
+  tier: number;
+  scope: string;
+}
+
+/** The core's exchange answer: its own session token, the expiry in milliseconds, and the user block. */
+export interface ExchangeAnswer {
+  token: string;
+  expiresAtMs: number;
+  user: ExchangeUser;
+}
+
+/**
+ * Why an exchange did not produce a token. The codes are the shells
+ * contract's (shared/AUTH-SHELL-CONTRACT.md): the core's 400, 401, 403, 429
+ * and 503, no network, and `no_session` when FB Console no longer holds the
+ * session that a JWT must be minted from. Only unauthorized, forbidden and
+ * no_session end a session; the rest never do.
+ */
+export type ExchangeRefusalCode =
+  | "bad_request"
+  | "unauthorized"
+  | "forbidden"
+  | "rate_limited"
+  | "unavailable"
+  | "offline"
+  | "no_session";
+
+/** A typed answer, never a throw: the token, or the code of the refusal. */
+export type ExchangeResult = { ok: true; answer: ExchangeAnswer } | { ok: false; code: ExchangeRefusalCode };
+
+const ENDS_SESSION: ReadonlySet<ExchangeRefusalCode> = new Set(["unauthorized", "forbidden", "no_session"]);
+
+/**
+ * The account surface this package needs, as a narrow injected interface.
+ * An adapter maps these onto the FB Console account (the Appwrite Web SDK in
+ * a browser, the Rust side in a Tauri shell), the one integration point a
+ * host wires, recorded in the README; the SDK's dependency lives there, not
+ * here.
  */
 export interface AccountSurface {
   /**
-   * The house sign-in (email plus password through the Console bridge).
-   * Resolves the signed-in user. The platform's own session stays on the
-   * issuer side (an httpOnly cookie script cannot read); nothing session
-   * shaped is handed to this package but the user.
+   * The house sign-in (FB Console email and password). Resolves the
+   * signed-in user. The platform's own session stays on the issuer side (an
+   * httpOnly cookie script cannot read); nothing session shaped is handed to
+   * this package but the user.
    */
   createEmailPasswordSession(email: string, password: string): Promise<AccountUser>;
   /** The Google flow; the platform navigates to redirectTo and returns through it. */
@@ -141,15 +202,34 @@ export interface AccountSurface {
   /**
    * The current platform session's user, when one exists. The reload's
    * re-sign-in: the issuer's session cookie, unreadable to script, answers
-   * here, so the shell can restore a session from the issuer while this
+   * here, so the host can restore a session from the issuer while this
    * package holds nothing to trade.
    */
   getSession(): Promise<AccountUser>;
-  /** Mint the short-lived JWT the transport presents; custody holds it in memory only. */
-  createJWT(): Promise<{ jwt: string; expiresAtMs: number }>;
+  /**
+   * Trade the signed-in FB Console account for the core's session token for
+   * one organisation. Every attempt mints its own FB Console JWT inside the
+   * adapter and drops it at the end of the attempt; an adapter never holds
+   * or reuses one, and never lets one out. Resolves a typed refusal rather
+   * than throwing.
+   */
+  exchange(org: string): Promise<ExchangeResult>;
   /** End the platform session. */
   deleteSession(): Promise<void>;
 }
+
+/** The two timer functions the refresh uses, injected so tests do not wait. */
+export interface RefreshTimers {
+  setTimeout(callback: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+}
+
+/** The refresh fires this long before the token expires, unless the window is too short to afford it. */
+export const DEFAULT_REFRESH_LEAD_MS = 60_000;
+/** The first wait after a refresh the core could not answer (429, 503, offline); it doubles up to the cap. */
+export const DEFAULT_REFRESH_BACKOFF_MS = 15_000;
+const MAX_REFRESH_BACKOFF_MS = 300_000;
+const MIN_REFRESH_DELAY_MS = 1_000;
 
 export interface AdoptSessionInput {
   token: string;
@@ -239,12 +319,37 @@ export class SignOutCounter {
  * narrow DeviceLockHandle and the counter as a shared SignOutCounter, so
  * the lock can tell a sign-out (the counter moves) from the bound user's
  * own token refreshing or expiring mid prompt (nothing moves).
+ *
+ * The bearer is the core's exchange answer, nothing else: the sign-in and the
+ * resume ask AccountSurface.exchange(org) and adopt its token and expiry, so
+ * an FB Console JWT never reaches custody. While a session is live the
+ * controller re-exchanges before the token expires (a lead of a minute by
+ * default, capped at half the window so a short window never hammers), on
+ * the injected clock and timers. The refresh answers to the same generation
+ * guard as every other act, so a sign-out that lands while a refresh is in
+ * flight wins: the late answer adopts nothing and arms nothing. What a
+ * refresh does with each answer: a new token is adopted; unauthorized,
+ * forbidden or no_session ends the session (the same path as signOut(),
+ * which deletes the platform session and clears custody); a person other
+ * than the signed-in one ends it too; rate limited, unavailable, bad
+ * request, offline and a thrown adapter keep the session, keep the current
+ * token until it expires, and try again after a doubling backoff. A
+ * controller built without an active organisation never arms a refresh and
+ * refuses to sign in (the demo apps adopt a mint and have nothing to
+ * refresh).
  */
 export class AuthController {
   readonly #account: AccountSurface;
   readonly #sessions: SessionStore;
   readonly #lock: DeviceLockHandle | null;
   readonly #signOuts: SignOutCounter;
+  readonly #activeOrg: (() => string | null | undefined) | null;
+  readonly #now: () => number;
+  readonly #timers: RefreshTimers;
+  readonly #refreshLeadMs: number;
+  readonly #refreshBackoffBaseMs: number;
+  #refreshBackoffMs: number;
+  #refreshTimer: unknown = null;
   #generation = 0;
   #signIns = 0;
   /** The newest submit's number and the promise its own flow resolves when its outcome is decided; what a stale sign-in waits on. */
@@ -257,11 +362,53 @@ export class AuthController {
     lock?: DeviceLockHandle;
     /** The sign-out counter the lock reads across its prompts; a fresh private one when omitted. */
     signOuts?: SignOutCounter;
+    /** The active organisation the exchange is asked for. Without it the controller neither signs in nor refreshes. */
+    activeOrg?: () => string | null | undefined;
+    /** The clock the refresh is timed on; Date.now when omitted. */
+    now?: () => number;
+    /** The timers the refresh is armed on; the platform's when omitted. */
+    timers?: RefreshTimers;
+    /** How long before expiry the refresh fires; a minute when omitted. */
+    refreshLeadMs?: number;
+    /** The first wait after an unanswered refresh; it doubles up to a cap. */
+    refreshBackoffMs?: number;
   }) {
     this.#account = deps.account;
     this.#sessions = deps.sessions;
     this.#lock = deps.lock ?? null;
     this.#signOuts = deps.signOuts ?? new SignOutCounter();
+    this.#activeOrg = deps.activeOrg ?? null;
+    this.#now = deps.now ?? Date.now;
+    this.#timers = deps.timers ?? {
+      setTimeout: (callback, ms) => {
+        const handle = globalThis.setTimeout(callback, ms);
+        // A waiting refresh must not keep a Node process (a test run, a tool) alive; browsers return a number.
+        (handle as { unref?: () => void }).unref?.();
+        return handle;
+      },
+      clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof globalThis.setTimeout>),
+    };
+    this.#refreshLeadMs = deps.refreshLeadMs ?? DEFAULT_REFRESH_LEAD_MS;
+    this.#refreshBackoffBaseMs = deps.refreshBackoffMs ?? DEFAULT_REFRESH_BACKOFF_MS;
+    this.#refreshBackoffMs = this.#refreshBackoffBaseMs;
+  }
+
+  /** The active organisation, or null when none is wired or set. */
+  #org(): string | null {
+    if (this.#activeOrg === null) return null;
+    const org = this.#activeOrg();
+    return typeof org === "string" && org.trim() !== "" ? org : null;
+  }
+
+  /** One exchange attempt as a typed result: a throwing adapter reads as unavailable, never as a refusal that ends a session. */
+  async #callExchange(org: string): Promise<ExchangeResult> {
+    try {
+      const result = await this.#account.exchange(org);
+      if (result !== null && typeof result === "object" && (result.ok === true || result.ok === false)) return result;
+    } catch {
+      // fall through: the adapter broke its contract, which says nothing about the person
+    }
+    return { ok: false, code: "unavailable" };
   }
 
   /**
@@ -295,6 +442,8 @@ export class AuthController {
   }
 
   async #signInFlow(email: string, password: string, signIns: number): Promise<Result<AccountUser>> {
+    const org = this.#org();
+    if (org === null) return err("sign-in failed: no active organisation is set, so there is nothing to sign in to");
     const signOuts = this.#signOuts.count;
     let user: AccountUser;
     try {
@@ -306,25 +455,102 @@ export class AuthController {
       return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
     }
     if (this.#signIns !== signIns) return this.#staleSignIn(signIns, user);
-    let minted: { jwt: string; expiresAtMs: number };
-    try {
-      minted = await this.#account.createJWT();
-    } catch (error) {
-      return err(`sign-in failed minting the token: ${asMessage(error)}`);
-    }
+    const exchanged = await this.#callExchange(org);
     if (this.#signOuts.count !== signOuts) {
       return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
     }
     if (this.#signIns !== signIns) return this.#staleSignIn(signIns, user);
+    if (!exchanged.ok) {
+      // A refusal that ends sessions leaves no platform session behind for a
+      // person the core will not serve. The delete is only for the newest
+      // submit, which the checks above established.
+      if (ENDS_SESSION.has(exchanged.code)) await this.#deleteQuietly();
+      return err(`sign-in failed: the exchange was refused (${exchanged.code})`);
+    }
+    const profile = profileOf(exchanged.answer);
     const adopted = this.#sessions.adopt({
-      token: minted.jwt,
-      tokenExpiresAtMs: minted.expiresAtMs,
-      user,
+      token: exchanged.answer.token,
+      tokenExpiresAtMs: exchanged.answer.expiresAtMs,
+      user: profile,
     });
-    if (!adopted) return err("sign-in failed: the platform returned an unusable session");
+    if (!adopted) return err("sign-in failed: the exchange returned an unusable session");
     this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
-    this.#lock?.disengageUnlessBoundTo(user.userId);
-    return ok({ ...user });
+    this.#armRefresh(exchanged.answer.expiresAtMs);
+    this.#lock?.disengageUnlessBoundTo(profile.userId);
+    return ok({ ...profile });
+  }
+
+  async #deleteQuietly(): Promise<void> {
+    try {
+      await this.#account.deleteSession();
+    } catch {
+      // already gone
+    }
+  }
+
+  /** Cancel the pending refresh, if any. */
+  #disarmRefresh(): void {
+    if (this.#refreshTimer !== null) {
+      this.#timers.clearTimeout(this.#refreshTimer);
+      this.#refreshTimer = null;
+    }
+  }
+
+  /**
+   * Arm the one pending refresh for a token that expires at expiresAtMs, and
+   * reset the backoff: every adoption is a fresh start. The lead never
+   * exceeds half the window, and the wait never drops under a second.
+   */
+  #armRefresh(expiresAtMs: number): void {
+    this.#disarmRefresh();
+    this.#refreshBackoffMs = this.#refreshBackoffBaseMs;
+    if (this.#activeOrg === null) return;
+    const windowMs = expiresAtMs - this.#now();
+    const lead = Math.min(this.#refreshLeadMs, windowMs / 2);
+    this.#scheduleRefresh(Math.max(windowMs - lead, MIN_REFRESH_DELAY_MS));
+  }
+
+  #scheduleRefresh(delayMs: number): void {
+    this.#disarmRefresh();
+    this.#refreshTimer = this.#timers.setTimeout(() => {
+      this.#refreshTimer = null;
+      void this.#refresh();
+    }, delayMs);
+  }
+
+  /** The refresh: one exchange for the person already signed in, judged by the rules in the class comment. */
+  async #refresh(): Promise<void> {
+    const generation = this.#generation;
+    const org = this.#org();
+    const subject = this.#sessions.profile?.userId ?? null;
+    if (org === null || subject === null) return; // nothing to refresh for
+    const result = await this.#callExchange(org);
+    if (this.#generation !== generation) return; // a sign-out or another adoption won the race
+    if (result.ok) {
+      const profile = profileOf(result.answer);
+      if (profile.userId !== subject) {
+        await this.signOut(); // never replace one person's session with another's
+        return;
+      }
+      const adopted = this.#sessions.adopt({
+        token: result.answer.token,
+        tokenExpiresAtMs: result.answer.expiresAtMs,
+        user: profile,
+      });
+      if (adopted) {
+        this.#generation += 1;
+        this.#armRefresh(result.answer.expiresAtMs);
+        return;
+      }
+    } else if (ENDS_SESSION.has(result.code)) {
+      await this.signOut();
+      return;
+    }
+    // Rate limited, unavailable, bad request, offline, or an answer custody
+    // would not take: the session stays, and the next try waits longer.
+    const wait = this.#refreshBackoffMs;
+    this.#refreshBackoffMs = Math.min(wait * 2, MAX_REFRESH_BACKOFF_MS);
+    this.#scheduleRefresh(wait);
   }
 
   /**
@@ -361,7 +587,7 @@ export class AuthController {
 
   /**
    * Adopt a session established out of band (the Google callback through the
-   * Console bridge, or a resume's minted token), the ERP's adoptSession
+   * FB Console OAuth redirect, or a resume's exchanged token), the ERP's adoptSession
    * posture: custody takes the token into private memory and the display
    * profile into the mirror, nothing else. A null or non-object user is
    * unusable input like any other: adopt returns false and adopts nothing,
@@ -377,6 +603,7 @@ export class AuthController {
     });
     if (adopted) {
       this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
+      this.#armRefresh(input.tokenExpiresAtMs);
       this.#lock?.disengageUnlessBoundTo(user.userId);
     }
     return adopted;
@@ -414,9 +641,10 @@ export class AuthController {
    */
   async resume(): Promise<Result<AccountUser>> {
     const generation = this.#generation;
-    let user: AccountUser;
+    const org = this.#org();
+    if (org === null) return err("no platform session to resume: no active organisation is set");
     try {
-      user = await this.#account.getSession();
+      await this.#account.getSession(); // proves the platform still holds a session; the exchange names the person
     } catch (error) {
       if (this.#generation === generation) this.#failSignedOut();
       return err(`no platform session to resume: ${asMessage(error)}`);
@@ -424,28 +652,28 @@ export class AuthController {
     if (this.#generation !== generation) {
       return err("resume cancelled: sign-out or another adoption landed while the resume was in flight, so nothing was adopted");
     }
-    let minted: { jwt: string; expiresAtMs: number };
-    try {
-      minted = await this.#account.createJWT();
-    } catch (error) {
+    const exchanged = await this.#callExchange(org);
+    if (!exchanged.ok) {
       if (this.#generation === generation) this.#failSignedOut();
-      return err(`the token refresh failed: ${asMessage(error)}`);
+      return err(`the token exchange failed (${exchanged.code})`);
     }
     if (this.#generation !== generation) {
       return err("resume cancelled: sign-out or another adoption landed while the resume was in flight, so nothing was adopted");
     }
+    const profile = profileOf(exchanged.answer);
     const adopted = this.#sessions.adopt({
-      token: minted.jwt,
-      tokenExpiresAtMs: minted.expiresAtMs,
-      user,
+      token: exchanged.answer.token,
+      tokenExpiresAtMs: exchanged.answer.expiresAtMs,
+      user: profile,
     });
     if (!adopted) {
-      if (this.#generation === generation) this.#failSignedOut();
+      this.#failSignedOut();
       return err("the platform returned an unusable session");
     }
     this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
-    this.#lock?.disengageUnlessBoundTo(user.userId);
-    return ok({ ...user });
+    this.#armRefresh(exchanged.answer.expiresAtMs);
+    this.#lock?.disengageUnlessBoundTo(profile.userId);
+    return ok({ ...profile });
   }
 
   /**
@@ -462,6 +690,7 @@ export class AuthController {
    * signed in.
    */
   #failSignedOut(): void {
+    this.#disarmRefresh();
     this.#sessions.clear();
     this.#lock?.disengage();
   }
@@ -487,6 +716,7 @@ export class AuthController {
    * wiring.
    */
   async signOut(): Promise<void> {
+    this.#disarmRefresh();
     this.#generation += 1;
     this.#signOuts.bump();
     try {
@@ -500,6 +730,7 @@ export class AuthController {
     // guard and for the sign-in's sign-out counter alike.
     this.#generation += 1;
     this.#signOuts.bump();
+    this.#disarmRefresh();
     this.#sessions.clear();
     this.#lock?.disengage();
   }
