@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -25,19 +26,27 @@ func lazyPool(t *testing.T, conns int) *pgxpool.Pool {
 }
 
 // A lock holder needs one connection for the lock and one for the store, so
-// a pool of one wedges every keyed push. The constructor refuses it at boot,
-// loudly, rather than leave the first push to hang.
-func TestPgKeyLedgerRefusesAPoolOfOneConnection(t *testing.T) {
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatalf("NewPgKeyLedger accepted a pool of one connection")
+// a pool of one would wedge every keyed push. Wiring tests build the
+// production wiring over a one connection pool on purpose (the card rail
+// leg), so construction must not panic; the first keyed push fails fast
+// instead of hanging, and serve refuses the pool at boot.
+func TestPgKeyLedgerOnAPoolOfOneFailsFastAndNeverHangs(t *testing.T) {
+	led := NewPgKeyLedger(lazyPool(t, 1))
+	release, err := led.Lock(context.Background(), ScopeFilter{OrgID: "o"}, "scope", "k")
+	if !errors.Is(err, ErrLedgerPoolTooSmall) || release != nil {
+		t.Fatalf("Lock on a pool of one: release %v err %v, want ErrLedgerPoolTooSmall", release != nil, err)
+	}
+}
+
+func TestRequireLedgerPoolRefusesFewerThanTwoConnections(t *testing.T) {
+	if err := RequireLedgerPool(lazyPool(t, 1)); !errors.Is(err, ErrLedgerPoolTooSmall) {
+		t.Fatalf("a pool of one: %v, want ErrLedgerPoolTooSmall", err)
+	}
+	for _, n := range []int{2, 3, 4} {
+		if err := RequireLedgerPool(lazyPool(t, n)); err != nil {
+			t.Fatalf("a pool of %d: %v", n, err)
 		}
-		if msg, _ := r.(string); msg == "" {
-			t.Fatalf("panic %v is not the boot refusal message", r)
-		}
-	}()
-	NewPgKeyLedger(lazyPool(t, 1))
+	}
 }
 
 func TestPgKeyLedgerHolderCapIsHalfThePool(t *testing.T) {
