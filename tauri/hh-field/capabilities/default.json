@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Field main window: the core's default window permissions only.",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "Field main window: the core's default window permissions and the two keychain commands, allowed by name. App commands are declared in build.rs; core:default does not cover them.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-keychain-set",
+    "allow-keychain-get"
+  ]
 }

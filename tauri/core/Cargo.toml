@@ -6,6 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
 # keyring 3.6 with its pure Rust Secret Service path (zbus, no libsecret and
 # no libdbus headers). Desktop Linux only: Android has no keyring backend in
 # this crate, so the core reports that plainly (see keychain.rs).

@@ -21,8 +21,8 @@
     } catch (e) { out.sql = { ok: false, error: String(e) }; }
     try {
       var v = "value-" + Date.now();
-      await inv("keychain_set", { name: "probe4", value: v });
-      var back = await inv("keychain_get", { name: "probe4" });
+      await inv("keychain_set", { slot: "probe", value: v });
+      var back = await inv("keychain_get", { slot: "probe" });
       out.keychain = { ok: back === v };
     } catch (e) { out.keychain = { ok: false, error: String(e) }; }
     // Let the front door render, then record whether its role picker is on

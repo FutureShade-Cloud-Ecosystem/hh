@@ -1,15 +1,17 @@
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
-const KEYCHAIN_SERVICE: &str = "ai.futurebuild.hh.field.probe4";
+use hh_shell_core::keychain::{self, Slot};
+
+const KEYCHAIN_SERVICE: &str = "ai.futurebuild.hh.field";
 
 #[tauri::command]
-fn keychain_set(name: String, value: String) -> Result<(), String> {
-    hh_shell_core::keychain::set(KEYCHAIN_SERVICE, &name, &value)
+fn keychain_set(slot: Slot, value: String) -> Result<(), String> {
+    keychain::set(KEYCHAIN_SERVICE, slot.name(), &value)
 }
 
 #[tauri::command]
-fn keychain_get(name: String) -> Result<String, String> {
-    hh_shell_core::keychain::get(KEYCHAIN_SERVICE, &name)
+fn keychain_get(slot: Slot) -> Result<String, String> {
+    keychain::get(KEYCHAIN_SERVICE, slot.name())
 }
 
 // PROBE SCAFFOLDING, removed when the real shell lands: compiled only with
