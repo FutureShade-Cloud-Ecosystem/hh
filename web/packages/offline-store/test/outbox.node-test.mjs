@@ -496,7 +496,7 @@ test("the sent mark is durable before the first request leaves, in the same atom
   await outbox.enqueue(pick(1));
   await outbox.enqueue(pick(2));
   let inside;
-  const spying = { ...transport, push: async (scope, ops) => ((inside = await rows(sql)), transport.push(scope, ops)) };
+  const spying = { ...transport, push: async (scope, ops) => ((inside = await marks(sql)), transport.push(scope, ops)) };
   await outbox.replay(spying);
   assert.deepEqual(inside.map((r) => [r.sent, r.attempts]), [[1, 1], [1, 1]], "the mark must exist while the request is out");
 });

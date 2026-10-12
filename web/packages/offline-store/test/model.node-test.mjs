@@ -5,7 +5,9 @@
 // prints the path, so it replays exactly.
 //
 // Invariants (the plan's B.3 guarantees 1 to 4, seen from the device):
-//   I1 order      the server first applies operations in the order they were enqueued
+//   I1 order      the server first applies operations in the order they were enqueued; while a scope is
+//                 parked by a refusal, only the order within each scope is promised (the rows of the other
+//                 scopes carry on, and the parked scope's rows go out later, in their own order)
 //   I2 once       no operation is applied by the server twice
 //   I3 conflicts  a closed conflict or rejection always has its card, and a card is only ever dismissed by the user
 //   I4 money      nothing is queued for a money scope, and every attempt is refused
@@ -59,6 +61,8 @@ async function newWorld(seed) {
     trace: [],
     online: false,
     index: new Map(),
+    scopeOf: new Map(),
+    relaxed: false,
     dismissed: new Set(),
     maxCards: 0,
     prevRows: new Map(),
@@ -87,7 +91,10 @@ const pickOne = (rng, list) => list[Math.floor(rng() * list.length)];
 async function enqueueOk(world, input) {
   const res = await world.store.enqueue(input);
   if (res.ok) {
-    if (!res.duplicate) world.index.set(res.key, world.index.size);
+    if (!res.duplicate) {
+      world.index.set(res.key, world.index.size);
+      world.scopeOf.set(res.key, input.scope);
+    }
   }
   return res;
 }
@@ -145,12 +152,17 @@ const ACTIONS = [
     else if (k === 2) w.server.failNext("afterApply", 1 + Math.floor(w.rng() * 3));
     else if (k === 3) w.server.failNext("dropResponse");
     else if (k === 4) w.server.failNext("malformed", pickOne(w.rng, ["short", "reordered", "foreign"]));
-    else w.server.failNext("status", pickOne(w.rng, [400, 403, 404]));
+    else {
+      const status = pickOne(w.rng, [400, 403, 404]);
+      if (status !== 404) w.relaxed = true; // a 400 or 403 may park a scope; a 404 is a fault
+      w.server.failNext("status", status);
+    }
   }],
   // A refusal on the heels of an attempt the server may have applied: the case a plain draw rarely lines up.
   [5, "an ambiguous attempt, then a refusal", async (w) => {
     if (w.rng() < 0.5) w.server.failNext("afterApply", 1 + Math.floor(w.rng() * 3));
     else w.server.failNext("dropResponse");
+    w.relaxed = true;
     w.server.failNext("status", pickOne(w.rng, [400, 403, 400]));
   }],
   [4, "session expires on the server", async (w) => {
@@ -213,12 +225,17 @@ async function quiesce(w) {
 
 async function check(w, pre, action) {
   const { server, store } = w;
-  // I1 order
+  // I1 order: always within a scope; across scopes until a scope has been parked in this walk
+  if ((await store.outbox.health()).stalls.length > 0) w.relaxed = true;
   let last = -1;
+  const lastIn = new Map();
   for (const key of server.appliedOrder) {
     const i = w.index.get(key);
     assert.notEqual(i, undefined, `I1: the server applied unknown key ${key}`);
-    assert.ok(i > last, `I1: ${key} (enqueue ${i}) was applied after enqueue ${last}`);
+    const scope = w.scopeOf.get(key);
+    assert.ok(i > (lastIn.get(scope) ?? -1), `I1: ${key} (enqueue ${i}) was applied after a later enqueue of ${scope}`);
+    lastIn.set(scope, i);
+    if (!w.relaxed) assert.ok(i > last, `I1: ${key} (enqueue ${i}) was applied after enqueue ${last}`);
     last = i;
   }
   // I2 once

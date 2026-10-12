@@ -176,10 +176,10 @@ test("a push fault still lets the pull run, so reads do not go stale behind a st
   assert.equal((await store.list("pick_tasks")).rows.length, 9);
 });
 
-test("a request level refusal of one scope does not stall the outbox or the pull", async () => {
+test("a request level refusal of one scope parks it: it does not stall the other scope or the pull, and loses nothing", async () => {
   const r = await rig();
   const { store, server } = r;
-  const refused = (await store.enqueue(pick(1))).key;
+  const parked = (await store.enqueue(pick(1))).key;
   const short = (await store.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(2), short_by: 1 } })).key;
   const transport = { ...r.transport, push: async (scope, ops) => (scope === "pick_tasks" ? err("scope refused", 403) : r.transport.push(scope, ops)) };
   const runner = new SyncRunner({ store, transport, machine });
@@ -187,20 +187,21 @@ test("a request level refusal of one scope does not stall the outbox or the pull
   assert.deepEqual(server.appliedOrder, [short], "the shortage behind the refused pick must be sent");
   assert.ok(server.requests.some((q) => q.kind === "pull"), "the pull must run");
   assert.equal((await store.list("pick_tasks")).rows.length, 9);
-  const cards = await store.cards.listOpen();
-  assert.deepEqual(cards.map((c) => [c.clientId, c.kind]), [[refused, "rejected"]]);
-  assert.match(cards[0].error, /403/);
-  assert.equal(runner.state, "conflict", "the card waits for a person");
-  assert.deepEqual(await store.outbox.pending(), []);
+  assert.deepEqual(await store.cards.listOpen(), [], "parked work makes no card");
+  assert.equal(runner.state, "idle");
+  assert.deepEqual((await store.outbox.pending()).map((row) => row.key), [parked], "the work is kept");
+  const { stalls } = await store.outbox.health();
+  assert.deepEqual(stalls.map((x) => [x.kind, x.scope, x.status]), [["scope_refused", "pick_tasks", 403]]);
 });
 
 test("a standing push fault rests in idle, and the store's public state says the writes are stuck", async () => {
   const { runner, store, server } = await rig();
   await store.enqueue(pick(1));
   await store.enqueue(pick(2));
+  server.failNext("status", 503);
   await runner.dispatch({ type: "ONLINE" });
   assert.equal(runner.state, "idle");
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 2; i++) {
     server.failNext("status", 503);
     await runner.request();
     assert.equal(runner.state, "idle", "the machine rests as before; the stuck signal is the store's");
