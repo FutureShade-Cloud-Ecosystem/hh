@@ -68,6 +68,8 @@ export class FakeWorker implements WorkerLike {
   onmessage: ((event: { data: WorkerReply }) => void) | null = null;
   onerror: ((event: { message?: string }) => void) | null = null;
   terminated = false;
+  /** While true the worker swallows requests and never replies (a hung or dead worker). */
+  silent = false;
   readonly initCalls: string[] = [];
   readonly #handle: (request: WorkerRequest) => Promise<WorkerReply>;
 
@@ -80,7 +82,13 @@ export class FakeWorker implements WorkerLike {
   }
 
   postMessage(request: WorkerRequest): void {
+    if (this.silent) return;
     void this.#handle(request).then((reply) => this.onmessage?.({ data: reply }));
+  }
+
+  /** The worker dies: the browser fires `error` on it. */
+  die(message = "worker crashed"): void {
+    this.onerror?.({ message });
   }
 
   terminate(): void {

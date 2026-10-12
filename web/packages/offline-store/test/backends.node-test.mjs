@@ -140,3 +140,62 @@ test("opfs backend: the lock is handed back when the previous owner closes", asy
   const again = await createOpfsBackend({ dbName: "hh", locks, createWorker: () => new FakeWorker(nodeSqliteExecutor()) });
   assert.equal(again.ownership(), "owner");
 });
+
+// ---- the worker settle guarantee ------------------------------------------------------------
+
+async function ownerWith(worker, extra = {}) {
+  const locks = new FakeLocks();
+  const states = [];
+  const backend = await createOpfsBackend({ dbName: "hh", locks, createWorker: () => worker, onOwnership: (s) => states.push(s), ...extra });
+  return { backend, locks, states };
+}
+
+test("opfs backend: a worker that dies rejects the call in flight, and every later call, instead of hanging", async () => {
+  const worker = new FakeWorker(nodeSqliteExecutor());
+  const { backend } = await ownerWith(worker);
+  await backend.sql.run("CREATE TABLE t (x INTEGER)");
+  worker.silent = true;
+  const inFlight = backend.sql.run("INSERT INTO t (x) VALUES (1)");
+  worker.die("out of memory");
+  await assert.rejects(inFlight, /worker failed.*out of memory/);
+  await assert.rejects(backend.sql.run("INSERT INTO t (x) VALUES (2)"), /worker/);
+  await assert.rejects(backend.sql.atomic([{ sql: "SELECT 1" }]), /worker/);
+  await assert.rejects(backend.sql.all("SELECT 1"), /worker/);
+});
+
+test("opfs backend: ownership reflects a dead worker, tells the shell, and gives the lock back", async () => {
+  const worker = new FakeWorker(nodeSqliteExecutor());
+  const { backend, locks, states } = await ownerWith(worker);
+  assert.equal(backend.ownership(), "owner");
+  worker.die();
+  assert.equal(backend.ownership(), "read_cache_only");
+  assert.deepEqual(states, ["owner", "read_cache_only"]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(locks.held(), [], "a tab with a dead worker must not keep the store from the next tab");
+  assert.equal(worker.terminated, true);
+  await backend.close();
+});
+
+test("opfs backend: a call the worker never answers times out and counts as a dead worker", async () => {
+  const worker = new FakeWorker(nodeSqliteExecutor());
+  const { backend, states } = await ownerWith(worker, { callTimeoutMs: 20 });
+  worker.silent = true;
+  await assert.rejects(backend.sql.run("CREATE TABLE t (x INTEGER)"), /timed out/);
+  assert.equal(backend.ownership(), "read_cache_only");
+  assert.deepEqual(states, ["owner", "read_cache_only"]);
+  worker.silent = false;
+  await assert.rejects(backend.sql.run("CREATE TABLE t (x INTEGER)"), /worker/);
+});
+
+test("opfs backend: a store over a dead worker refuses writes as read only instead of stalling", async () => {
+  const { OfflineStore } = await import("../src/store.ts");
+  const { scopeBookFor } = await import("../src/scopes.ts");
+  const { baseRig, pick } = await import("./_rig.mjs");
+  const worker = new FakeWorker(nodeSqliteExecutor());
+  const { backend } = await ownerWith(worker);
+  const store = await OfflineStore.open({ backend, scopes: scopeBookFor(["yard-pick", "drive-run"]) });
+  worker.die();
+  const res = await store.enqueue(pick(1));
+  assert.deepEqual({ ok: res.ok, reason: res.reason }, { ok: false, reason: "read_only" });
+  assert.deepEqual(await store.replay((await baseRig()).transport), { kind: "read_only" });
+});
