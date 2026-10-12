@@ -48,7 +48,6 @@ var notYetRegistered = map[string]string{
 	"identityGoogleCallback":        "the D38 sign-in-methods leave-behind: the staff Google sign-in surface stays unregistered until HH-4.2 lands one",
 	"identityGoogleStart":           "the D38 sign-in-methods leave-behind: the staff Google sign-in surface stays unregistered until HH-4.2 lands one",
 	"identityListRoles":             "no implementation lane assigned for the staff identity admin surface",
-	"identityListStaff":             "no implementation lane assigned for the staff identity admin surface",
 	"identityLogin":                 "the D38 sign-in-methods leave-behind: the staff sign-in surface stays unregistered until HH-4.2 lands one",
 	"identityPing":                  "no implementation lane assigned for the staff identity admin surface",
 	"listPlatformKeys":              "operator launcher surface (D4); no implementation lane assigned",

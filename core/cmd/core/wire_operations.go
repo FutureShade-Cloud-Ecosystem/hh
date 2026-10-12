@@ -624,6 +624,10 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// on it reads the scaffold tables).
 	identity.NewApprovalsHandler(spine.approvals, link).RegisterRoutes(r, g)
 
+	// The staff roster read (identityListStaff): the identity package answers it over its own tables and
+	// the route sits behind the manager tier. Read only; FB Console issues users (D38).
+	identity.NewStaffRosterHandler(erpidentity.NewStaffRosterReader(pool)).RegisterRoutes(r, g)
+
 	// SWARM-W3-B: payments (F-1's assignment to this batch). The gateway
 	// selector is fail-closed at boot exactly as at the pin (DIB-416):
 	// live-without-credentials refuses, production on a non-live gateway
