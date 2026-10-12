@@ -110,6 +110,41 @@ test("a 403 that is not the margin sentence is a fault in its own words, with no
   await expect(dialog(page).getByRole("dialog", { name: "Action blocked" })).toHaveCount(0);
 });
 
+// The stub answers the policy check as the core does (RULES-HQ item 5): bounds, a malformed branch, the
+// caller's grants, and only an unused approved request as an override. Driven by request, with the
+// bearer the desk itself sent.
+test("the stub's policy check refuses and clears as the core does", async ({ page }) => {
+  let bearer = "";
+  page.on("request", (r) => {
+    const auth = r.headers()["authorization"];
+    if (auth !== undefined && auth.startsWith("Bearer ")) bearer = auth;
+  });
+  await signIn(page);
+  await openQuote(page, "Q-1001");
+  expect(bearer).not.toBe("");
+  const TRENTON = "6f1c2b3a-0000-4000-8000-000000000001";
+  const ask = async (data: Record<string, unknown>) => {
+    const res = await page.request.post("/api/v1/staff/policy/check", { data, headers: { authorization: bearer, "x-org": "hh-demo" } });
+    return { status: res.status(), body: await res.json() };
+  };
+  const below = { price_cents: 10000, cost_cents: 9000, branch_id: TRENTON };
+
+  expect((await ask({ ...below, branch_id: "abc" })).status).toBe(400);
+  expect((await ask({ ...below, price_cents: -1 })).status).toBe(400);
+  expect((await ask({ ...below, cost_cents: 2_000_000_000_000 })).status).toBe(400);
+  expect((await ask({ ...below, branch_id: "6f1c2b3a-0000-4000-8000-000000000002" })).status).toBe(403);
+  expect((await ask(below)).status).toBe(403);
+
+  // An approved, unused request of this seller clears the check ...
+  await page.request.post("/_stub/plant-approval", { data: { quote_id: "q-1001", line_no: 1, requested_by_flow: "sales", status: "APPROVED" } });
+  const cleared = await ask(below);
+  expect(cleared.status).toBe(200);
+  expect(cleared.body.override).toBe(true);
+  // ... and once a line write has used it up it does not.
+  await page.request.post("/_stub/plant-approval", { data: { quote_id: "q-1001", line_no: 1, requested_by_flow: "sales", status: "APPROVED", used: true } });
+  expect((await ask(below)).status).toBe(403);
+});
+
 test("Tab stays inside the open dialog", async ({ page }) => {
   await signIn(page);
   await openQuote(page, "Q-1001");
