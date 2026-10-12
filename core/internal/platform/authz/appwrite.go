@@ -96,6 +96,7 @@ func OrgTeamID(slug string) (string, bool) {
 		return "", false
 	}
 	id := orgTeamPrefix + slug
+	// Guards a future widening of orgSlugPattern; today the pattern's 32 character cap already keeps the id within the limit.
 	if len(id) > maxTeamIDLen {
 		return "", false
 	}
