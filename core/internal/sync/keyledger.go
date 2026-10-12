@@ -47,22 +47,37 @@ import (
 //     already applied and must not apply again; it answers applied from the
 //     row's current state, found by the entity id stored beside the hash
 //     (the server assigned id of a create is known to no one else).
-//   - A key applied before the ledger existed has no stored hash. It is
-//     treated as a plain replay (applied with the row's current seq, as
-//     before the ledger) whatever body arrives, and the replay stores
-//     nothing: the engine cannot know that the body in hand is the one
-//     that first applied. This is the migration's documented seam, and it
-//     closes by itself as old keys age out of every client outbox.
+//   - A key applied before the ledger existed has no stored hash, and the
+//     ledger cannot bind it: the engine cannot know that the body in hand
+//     is the one that first applied, so it stores nothing for it. While the
+//     owning module still dedups that key (the row still holds it) it is a
+//     plain replay, applied with the row's current seq whatever body
+//     arrives, as before the ledger. Once the row has moved on the module no
+//     longer finds the key and it applies again, which is the behaviour
+//     before the ledger, unchanged. This is the migration's documented seam;
+//     it closes by itself as old keys age out of every client outbox.
+//   - A key is one key whatever its letter case: the engine canonicalizes
+//     it once (lower case uuid text) before the lock, the lookup, the
+//     module's dedup and the remember, so every one of them sees one
+//     spelling and the two spellings share one lock.
 //   - Two pushes of one key race: find, apply and remember are separate
 //     statements, so without serialization both bodies could apply. The
 //     engine takes the ledger's per slot Lock around all three, so the
 //     second push sees the first one's hash (or its refusal) before it
-//     applies anything.
-//   - A ledger write that fails after the module applied is an operational
-//     fault: the push fails whole, and the client retries it whole, where
-//     the applied key dedups as a legacy key (no hash) while its row still
-//     holds it. The guarantee is therefore weakest for exactly one key per
-//     ledger fault, never silently wrong for a key that was stored.
+//     applies anything. A holder keeps a pool connection for the whole
+//     push, so the Postgres ledger caps holders at half the pool and
+//     refuses a pool of fewer than two connections at construction.
+//     Pushes of one hot key queue behind one another by design.
+//   - The ledger write after the module's commit runs on a context detached
+//     from the request: a client that drops its connection cancels the
+//     request context but not the binding. What can still leave one applied
+//     key unbound is a fault of the ledger write itself (the database
+//     refusing it) or the process dying between the module's commit and the
+//     insert. Then the push fails whole, the client retries it whole, and
+//     the retry sees the applied key with no hash (a legacy key, above)
+//     while the row still holds it. The guarantee is weakest for exactly
+//     that one key per such fault, never silently wrong for a key that was
+//     stored.
 
 // ErrKeyReused is the refusal for a key reused with a different body. The
 // reason word leads the message so a client can branch on it: it is the
