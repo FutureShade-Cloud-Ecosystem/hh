@@ -497,22 +497,8 @@ jobs:
           # KIT_TEST_DATABASE_URL).
         run: |
           set -euo pipefail
-          # The suite's recorded-red packages stay out of this run, each
-          # with its verified failure and its owning lane to find in
-          # docs/BLOCKERS.md (the HH-191 entry, its round 2 correction
-          # and the round 3 correction after it): nothing in the list is
-          # this job's regression, every one of them is red on main
-          # against the same databases this job builds. Read the
-          # corrections before working from the entry: the dispatch
-          # package has a 403 class beside the bearer 401s; and the sync package is
-          # green only on a gate sync alone has used (on the job's own
-          # gate after a green run it is red with the same 23-row
-          # failure it is excluded for), so reproduce it on a fresh gate
-          # or inside a full run, never on the job's spent gate. A
-          # package rejoins the run when its lane lands the fix and
-          # drops its line here; the vet step above keeps every excluded
-          # package compiling under the tag in the meantime.
-          red='internal/(dispatch)$'
+          # No package is left out: every recorded-red package has landed its
+          # fix and rejoined the run (docs/BLOCKERS.md keeps the history).
           # -p 1 for the same reason the ci job's untagged run carries
           # it: the module packages share the gate database, and
           # serialized packages cannot race one another's fixture
@@ -525,7 +511,7 @@ jobs:
           # every package's elapsed time, so growth shows in this log
           # before it bites.
           go test -tags integration -p 1 -count=1 -timeout 30m \
-            $(go list ./... | grep -Ev "/$red")
+            $(go list ./...)
       - name: Evening guard, the date sensitive integration packages
         # The integration half of item 55's guard: the same date sensitive packages as the ci
         # job's guard step, under the integration tag, rerun against a database whose own
