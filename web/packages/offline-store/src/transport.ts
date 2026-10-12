@@ -2,11 +2,13 @@
 // shell hands in one built on the api-client (transport-api.ts); the tests
 // hand in the fake server's. A refusal or a transport failure arrives as a
 // Result error, never a throw: an error with no status never reached the
-// server (offline), a 401 is an expired session, a 400, 403 or 501 is the
-// core's own standing verdict on that request (the same answer comes on every
-// retry, so retrying whole can never help), and any other status, 404 and 413
-// included (they come from a hop in front of the core, never from the core),
-// is an operational fault.
+// server (offline), a 401 is an expired session, a 400, 403 or 501 is a
+// standing verdict on that request or its scope (from the core, or for a 400
+// possibly from a hop; the same answer comes on every retry, so retrying whole
+// can never help; the outbox tells the one 400 about a body, `invalid_json`,
+// from every other, which is about the scope), and any other status, 404 and
+// 413 included (they come from a hop in front of the core, never from the
+// core), is an operational fault.
 import type { Result, SyncPullResponse, SyncPushOperation, SyncPushResponse } from "@hardscapehouse/api-client";
 
 export interface SyncTransport {
