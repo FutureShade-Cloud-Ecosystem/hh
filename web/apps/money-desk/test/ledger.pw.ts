@@ -112,7 +112,7 @@ test("it reads the trial balance in balance, with the server's totals", async ({
   await expect(page.locator("[data-total-debit]")).toHaveText("$37,025.00");
   await expect(page.locator("[data-total-credit]")).toHaveText("$37,025.00");
   // The branch is chosen from the route's own branch_id, and what the core does not draw yet says so.
-  await page.getByRole("button", { name: /^Kingston/ }).click();
+  await page.getByRole("button", { name: /^Julian/ }).click();
   await expect(page.locator("[data-trial]")).toContainText("No posted journals yet.");
   await page.getByRole("button", { name: "All branches" }).click();
   await expect(page.locator("[data-total-debit]")).toHaveText("$37,025.00");

@@ -1,7 +1,7 @@
 // The resolve leg: a shortage the yard team flagged, resolved end to end
 // through the core's own resolve route, with the queue's count dropping
-// after it. The seed's two open shortages live on one Trenton pick: the
-// Granular A shortfall ("Only 8 yards left in the bin") and the HPB dust
+// after it. The seed's two open shortages live on one Point Loma pick: the
+// Class 2 Base Rock shortfall ("Only 8 yards left in the bin") and the HPB dust
 // one ("Pile is down to fines").
 import { test, expect } from "@playwright/test";
 
@@ -15,7 +15,7 @@ test("a shortage resolves end to end and the count drops", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Shortages · open" })).toBeVisible();
 
   // The view lists what the yard flagged, with the resolver words beside it. Both seeded
-  // shortages are here, on the one Trenton pick, in the queue's own order.
+  // shortages are here, on the one Point Loma pick, in the queue's own order.
   await expect(page.locator(".shortage[data-shortage]")).toContainText("Only 8 yards left in the bin");
   await expect(page.locator(".shortage[data-shortage]")).toContainText("Pile is down to fines");
   await expect(page.locator("[data-test='resolver-words']")).toHaveText(

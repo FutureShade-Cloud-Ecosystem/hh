@@ -16,8 +16,8 @@ export const IDS = {
   controller: "de110000-0000-4000-9000-000000000008",
   sales: "de110000-0000-4000-9000-000000000001",
   manager: "de110000-0000-4000-9000-000000000002",
-  trenton: "b0000000-0000-4000-8000-000000000001",
-  kingston: "b0000000-0000-4000-8000-000000000002",
+  pointLoma: "b0000000-0000-4000-8000-000000000001",
+  julian: "b0000000-0000-4000-8000-000000000002",
   fr1: "2f6a1c00-0000-4000-9000-0000000000f1",
   j1Request: "2f6a1c00-0000-4000-9000-0000000000a1",
   j2Request: "2f6a1c00-0000-4000-9000-0000000000a2",
@@ -75,16 +75,16 @@ function fresh() {
       {
         id: IDS.fr1,
         requested_by: IDS.sales,
-        branch_id: IDS.trenton,
+        branch_id: IDS.pointLoma,
         policy_type: "MARGIN_BELOW_MINIMUM",
-        detail: "quote DEMO-TRT-Q1 line 1 (62e4ad55-5a14-5945-80ee-866864a6c774): 12 percent discount, resulting margin 1630 bps against the 2000 bps floor",
+        detail: "quote DEMO-PLM-Q1 line 1 (62e4ad55-5a14-5945-80ee-866864a6c774): 12 percent discount, resulting margin 1630 bps against the 2000 bps floor",
         subject_ref: "5c7d0e0a-0000-4000-9000-000000000001",
         status: "PENDING",
       },
       {
         id: IDS.j1Request,
         requested_by: IDS.manager,
-        branch_id: IDS.trenton,
+        branch_id: IDS.pointLoma,
         policy_type: "JE_OVER_THRESHOLD",
         detail: "Journal entry at/over the maker-checker threshold (750000 cents) awaiting approval",
         subject_ref: IDS.j1,
@@ -94,7 +94,7 @@ function fresh() {
       {
         id: IDS.j2Request,
         requested_by: IDS.controller,
-        branch_id: IDS.trenton,
+        branch_id: IDS.pointLoma,
         policy_type: "JE_OVER_THRESHOLD",
         detail: "Journal entry at/over the maker-checker threshold (620000 cents) awaiting approval",
         subject_ref: IDS.j2,
@@ -104,44 +104,44 @@ function fresh() {
       {
         id: IDS.freight1,
         requested_by: "de110000-0000-4000-9000-0000000000d1",
-        branch_id: IDS.kingston,
+        branch_id: IDS.julian,
         policy_type: "FREIGHT_ABOVE_QUOTE",
-        detail: "Freight on DEMO-KGN-O01 for Contractor account (demo) is being raised above the delivery the customer was quoted.",
+        detail: "Freight on DEMO-JUL-O01 for Contractor account (demo) is being raised above the delivery the customer was quoted.",
         subject_ref: "6b2c0000-0000-4000-9000-0000000000b1",
         status: "PENDING",
       },
       {
         id: IDS.freight2,
         requested_by: "de110000-0000-4000-9000-0000000000d1",
-        branch_id: IDS.trenton,
+        branch_id: IDS.pointLoma,
         policy_type: "FREIGHT_ABOVE_QUOTE",
-        detail: "Freight on DEMO-TRT-O03 for Builder account (demo) is being raised above the delivery the customer was quoted.",
+        detail: "Freight on DEMO-PLM-O03 for Builder account (demo) is being raised above the delivery the customer was quoted.",
         subject_ref: "6b2c0000-0000-4000-9000-0000000000b2",
         status: "PENDING",
       },
     ],
     journals: [
-      journal(IDS.j1, 5, "MANUAL", "Insurance premium paid ahead for the year (demo)", "DRAFT", IDS.trenton, IDS.manager, 30, [
+      journal(IDS.j1, 5, "MANUAL", "Insurance premium paid ahead for the year (demo)", "DRAFT", IDS.pointLoma, IDS.manager, 30, [
         ["1300", 750000, 0],
         ["1000", 0, 750000],
       ]),
-      journal(IDS.j2, 6, "MANUAL", "Inventory write-down after the cycle count (demo)", "DRAFT", IDS.trenton, IDS.controller, 12, [
+      journal(IDS.j2, 6, "MANUAL", "Inventory write-down after the cycle count (demo)", "DRAFT", IDS.pointLoma, IDS.controller, 12, [
         ["5200", 620000, 0],
         ["1200", 0, 620000],
       ]),
-      journal("7a1e0000-0000-4000-9000-000000000004", 4, "ADJUSTMENT", "Till over/short", "POSTED", IDS.trenton, IDS.manager, 200, [
+      journal("7a1e0000-0000-4000-9000-000000000004", 4, "ADJUSTMENT", "Till over/short", "POSTED", IDS.pointLoma, IDS.manager, 200, [
         ["1000", 2500, 0],
         ["5200", 0, 2500],
       ]),
-      journal("7a1e0000-0000-4000-9000-000000000003", 3, "PAYMENT", "Payment received", "POSTED", IDS.trenton, null, 300, [
+      journal("7a1e0000-0000-4000-9000-000000000003", 3, "PAYMENT", "Payment received", "POSTED", IDS.pointLoma, null, 300, [
         ["1000", 500000, 0],
         ["1100", 0, 500000],
       ]),
-      journal("7a1e0000-0000-4000-9000-000000000002", 2, "INVOICE", "Invoice posted", "POSTED", IDS.trenton, null, 400, [
+      journal("7a1e0000-0000-4000-9000-000000000002", 2, "INVOICE", "Invoice posted", "POSTED", IDS.pointLoma, null, 400, [
         ["1100", 1200000, 0],
         ["4000", 0, 1200000],
       ]),
-      journal("7a1e0000-0000-4000-9000-000000000001", 1, "MANUAL", "Opening balances", "POSTED", IDS.trenton, IDS.manager, 500, [
+      journal("7a1e0000-0000-4000-9000-000000000001", 1, "MANUAL", "Opening balances", "POSTED", IDS.pointLoma, IDS.manager, 500, [
         ["1000", 2000000, 0],
         ["3000", 0, 2000000],
       ]),
@@ -194,8 +194,8 @@ export function createGlWorld() {
   };
 
   const branches = () => [
-    { id: IDS.kingston, code: "KGN", name: "Kingston", address: { line1: "1 Demo Road", city: "Kingston", province: "ON", postal: "K7K 0A1", country: "CA" }, is_default: false, is_system_default: false, is_active: true },
-    { id: IDS.trenton, code: "TRT", name: "Trenton", address: { line1: "2 Demo Road", city: "Trenton", province: "ON", postal: "K8V 0A1", country: "CA" }, is_default: true, is_system_default: true, is_active: true },
+    { id: IDS.julian, code: "JUL", name: "Julian", address: { line1: "1 Demo Road", city: "Julian", province: "CA", postal: "92036", country: "US" }, is_default: false, is_system_default: false, is_active: true },
+    { id: IDS.pointLoma, code: "PLM", name: "Point Loma", address: { line1: "2 Demo Road", city: "Point Loma", province: "CA", postal: "92106", country: "US" }, is_default: true, is_system_default: true, is_active: true },
   ];
 
   /** The caller, read from the stub token's subject. */
@@ -227,7 +227,7 @@ export function createGlWorld() {
     const caller = callerOf(req);
     if (req.method === "GET" && path === "/api/v1/staff/approvals") {
       const wanted = url.searchParams.get("status");
-      const rows = world.approvals.filter((a) => (wanted === null || wanted === "" || a.status === wanted) && (caller.global || a.branch_id === IDS.trenton));
+      const rows = world.approvals.filter((a) => (wanted === null || wanted === "" || a.status === wanted) && (caller.global || a.branch_id === IDS.pointLoma));
       // The contract's page: items, next_cursor (the id of the last row of the page) and the limit.
       const limit = Number(url.searchParams.get("limit") ?? 20) || 20;
       const cursor = url.searchParams.get("cursor");

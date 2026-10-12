@@ -78,19 +78,19 @@ const NOW_ISO = () => new Date().toISOString();
 
 const VENDORS = [
   { n: 1, no: "V-ALC", name: "Alcli (demo)", terms: 30 },
-  { n: 2, no: "V-TEC", name: "Techo Bloc (demo)", terms: 30 },
-  { n: 3, no: "V-UNI", name: "Unilock (demo)", terms: 45 },
-  { n: 4, no: "V-RYM", name: "Rymar (demo)", terms: 30 },
+  { n: 2, no: "V-TEC", name: "Stoneview (demo)", terms: 30 },
+  { n: 3, no: "V-UNI", name: "Alderco (demo)", terms: 45 },
+  { n: 4, no: "V-RYM", name: "Bluff (demo)", terms: 30 },
 ];
 
 // The managed lines: what the worklist grades. Quantities are base units.
 const PRODUCTS = [
-  { n: 1, sku: "DBS-RYMAR-TURF", name: "Rymar Artificial Turf 40mm", uom: "pc", vendor: 4, onHand: 1200, reserved: 900, point: 600, reorderQty: 600, multiple: 600, cost: 3100, lead: 7 },
-  { n: 2, sku: "DBS-BRUS-DIM", name: "Brussels Dimensional", uom: "pc", vendor: 1, onHand: 160, reserved: 200, point: 200, reorderQty: 240, multiple: 240, cost: 840, lead: 5 },
+  { n: 1, sku: "GLS-BLUFF-TURF", name: "Bluff Artificial Turf 40mm", uom: "pc", vendor: 4, onHand: 1200, reserved: 900, point: 600, reorderQty: 600, multiple: 600, cost: 3100, lead: 7 },
+  { n: 2, sku: "DBS-BRUS-DIM", name: "Slate Dimensional", uom: "pc", vendor: 1, onHand: 160, reserved: 200, point: 200, reorderQty: 240, multiple: 240, cost: 840, lead: 5 },
   { n: 3, sku: "DBS-AGG-34CLEAR", name: "3/4 Clear Stone", uom: "T", vendor: 1, onHand: 12, reserved: 0, point: 20, reorderQty: 10, multiple: 10, cost: 2500, lead: 3 },
   // Stocked lines the open orders buy that are not on the worklist: the seeded orders do not cover the gap.
-  { n: 4, sku: "TB-PAVER-60", name: "Techo Bloc Paver 60mm", uom: "pc", vendor: 2, onHand: 5000, reserved: 0, point: 100, reorderQty: 100, multiple: 100, cost: 82_000, lead: 4, unmanaged: true },
-  { n: 5, sku: "UNI-WALL-CAP", name: "Unilock Wall Cap", uom: "pc", vendor: 3, onHand: 800, reserved: 0, point: 100, reorderQty: 100, multiple: 100, cost: 24_000, lead: 4, unmanaged: true },
+  { n: 4, sku: "TB-PAVER-60", name: "Stoneview Paver 60mm", uom: "pc", vendor: 2, onHand: 5000, reserved: 0, point: 100, reorderQty: 100, multiple: 100, cost: 82_000, lead: 4, unmanaged: true },
+  { n: 5, sku: "UNI-WALL-CAP", name: "Alderco Wall Cap", uom: "pc", vendor: 3, onHand: 800, reserved: 0, point: 100, reorderQty: 100, multiple: 100, cost: 24_000, lead: 4, unmanaged: true },
   { n: 6, sku: "ALC-STEP-48", name: "Alcli Step 48in", uom: "pc", vendor: 1, onHand: 90, reserved: 0, point: 10, reorderQty: 10, multiple: 10, cost: 2500, lead: 4, unmanaged: true },
 ];
 
@@ -121,7 +121,7 @@ function productRow(p) {
     sku: p.sku,
     product_name: p.name,
     branch_id: BRANCH,
-    branch_code: "TRT",
+    branch_code: "PLM",
     uom: p.uom,
     on_hand_base: p.onHand,
     reserved_base: p.reserved,
@@ -148,7 +148,7 @@ function reset() {
   for (const s of SEEDED_POS) {
     world.pos.push({
       id: uuid("c", s.n),
-      no: `PO-TRT-${s.n}`,
+      no: `PO-PLM-${s.n}`,
       vendor: s.vendor,
       status: s.status,
       expect: s.expect === null ? null : dayOffset(s.expect),
@@ -333,7 +333,7 @@ async function handle(req, res) {
   }
   if (method === "GET" && path === "/api/v1/branches") {
     return json(res, [
-      { id: BRANCH, code: "TRT", name: "Trenton yard", address: { line1: "1 Yard Road", city: "Trenton", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
+      { id: BRANCH, code: "PLM", name: "Loma yard", address: { line1: "1 Yard Road", city: "Point Loma", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
     ]);
   }
   const skus = path.match(/^\/api\/v1\/purchasing\/vendors\/([^/]+)\/skus$/);
@@ -422,7 +422,7 @@ async function handle(req, res) {
     const n = world.counter++;
     const po = {
       id: uuid("c", n),
-      no: `PO-TRT-${n}`,
+      no: `PO-PLM-${n}`,
       vendor: p.vendor,
       status: "DRAFT",
       expect: null,

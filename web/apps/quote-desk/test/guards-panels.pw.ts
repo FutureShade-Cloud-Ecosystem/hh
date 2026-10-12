@@ -78,7 +78,7 @@ test("guard edit read order: an older read of the quote answered late does not u
 });
 
 test("guard edit discounts read: the discounts of the quote left never show on the quote now open", async ({ page }) => {
-  await seed(page, { customer_id: "c-fenwick", lines: [{ p: "p-holland-60", q: 3 }, { p: "p-polymer-sand", q: 2 }] });
+  await seed(page, { customer_id: "c-fenwick", lines: [{ p: "p-charcoal-60", q: 3 }, { p: "p-polymer-sand", q: 2 }] });
   await signIn(page);
   await openQuote(page, "Q-1001");
   // Five percent on the sand line of Q-1001, so its terms read carries a discount that Q-1004 does not have.
@@ -357,7 +357,7 @@ test("guard assist reading flag: a read that ends on the quote left does not fre
   await first.asked;
   await openQuote(page, "Q-1003");
   const second = await hold(page, /\/api\/v1\/quote-assist\/extract$/, { method: "POST", match: () => true });
-  await assist(page).locator("#jobtext").fill("20 sf holland stone");
+  await assist(page).locator("#jobtext").fill("20 sf charcoal stone");
   await assist(page).getByRole("button", READ).click();
   await second.asked;
   await expect(assist(page).locator('[data-action="read"]')).toBeDisabled();
@@ -378,7 +378,7 @@ test("guard assist adding flag: an add that ends on the quote left does not free
   await assist(page).getByTestId("qa-confirm").click();
   await first.asked;
   await openQuote(page, "Q-1003");
-  await assist(page).locator("#jobtext").fill("20 sf holland stone");
+  await assist(page).locator("#jobtext").fill("20 sf charcoal stone");
   await assist(page).getByRole("button", READ).click();
   await assist(page).getByTestId("qa-proposal").first().locator('[data-field="tick"]').check();
   const second = await hold(page, /\/api\/v1\/quotes\/q-1003\/lines$/, { method: "POST" });

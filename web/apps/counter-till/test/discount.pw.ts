@@ -55,10 +55,10 @@ async function addLine(page: Page, query: string, hit: string): Promise<void> {
   await page.getByTestId("pos-scan-input").fill("");
 }
 
-/** Ten of the Holland stone: 40.00 at the rule price, so a ten percent discount is a clean 4.00. */
-async function tenHolland(page: Page): Promise<void> {
-  await addLine(page, "holland", "Holland Stone 60 mm");
-  const qty = page.getByLabel("Quantity: Holland Stone 60 mm", { exact: true });
+/** Ten of the Charcoal stone: 40.00 at the rule price, so a ten percent discount is a clean 4.00. */
+async function tenCharcoal(page: Page): Promise<void> {
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
+  const qty = page.getByLabel("Quantity: Charcoal Stone 60 mm", { exact: true });
   await qty.fill("10");
   await qty.press("Enter");
   await expect(page.getByTestId("pos-line-row").first().locator(".ltot")).toContainText("$40.00");
@@ -119,7 +119,7 @@ for (const layout of ["stepper", "panels"] as const) {
     });
     await signIn(page, layout);
     await ensureSession(page);
-    await tenHolland(page);
+    await tenCharcoal(page);
 
     // The dialog will not apply without a value and without the manager who said yes.
     await openStep(page, "items");
@@ -172,7 +172,7 @@ for (const layout of ["stepper", "panels"] as const) {
     });
     const paid = sold.getByTestId("sold-discount");
     await expect(paid).toHaveCount(2);
-    await expect(paid.nth(0)).toContainText("Holland Stone 60 mm");
+    await expect(paid.nth(0)).toContainText("Charcoal Stone 60 mm");
     await expect(paid.nth(0)).toContainText("Discount approved by Sales Manager");
     await expect(paid.nth(0)).toContainText("-$4.00");
     await expect(paid.nth(1)).toContainText("Whole ticket");
@@ -183,7 +183,7 @@ for (const layout of ["stepper", "panels"] as const) {
     // discounts that came off, then the subtotal they leave.
     const lines = sold.getByTestId("sold-line");
     await expect(lines).toHaveCount(1);
-    await expect(lines.first()).toContainText("Holland Stone 60 mm");
+    await expect(lines.first()).toContainText("Charcoal Stone 60 mm");
     await expect(lines.first()).toContainText("$40.00");
     await expect(sold.getByTestId("sold-subtotal")).toContainText("$34.00");
     // PR 253 review P3-1: the tax the sale carried, so the card adds up to what was paid.
@@ -194,7 +194,7 @@ for (const layout of ["stepper", "panels"] as const) {
 test("a discount the ring refuses says so in its words, and removing it puts the plain total back", async ({ page }) => {
   await signIn(page, "stepper");
   await ensureSession(page);
-  await tenHolland(page);
+  await tenCharcoal(page);
   // More than the whole line: the ring's own refusal reads in the total row, no figure guessed.
   await giveDiscount(page, () => page.getByTestId("pos-line-discount").click(), "amount", "500", "Sales manager · Sales Manager");
   await openPaymentStep(page, "stepper");
@@ -214,7 +214,7 @@ test("when the managers cannot be read the dialog says so and applies nothing", 
   await page.route("**/api/v1/pos/discount-approvers**", (route) => route.fulfill({ status: 500, body: "{}" }));
   await signIn(page, "stepper");
   await ensureSession(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "items");
   await page.getByTestId("pos-line-discount").click();
   await expect(page.getByTestId("discount-approvers-failed")).toContainText("could not be read");
@@ -238,7 +238,7 @@ test.describe("review screens", () => {
         await ensureSession(page);
         const control = page.getByTestId("theme-control");
         if (theme === "dark") await control.click();
-        await tenHolland(page);
+        await tenCharcoal(page);
         const name = `${layout === "stepper" ? "steps" : "panels"}-${theme}`;
         // The dialog, filled and ready.
         await openStep(page, "items");
@@ -264,10 +264,10 @@ test("a manager's yes is for the line and quantity it was given: change either a
 }) => {
   await signIn(page, "stepper");
   await ensureSession(page);
-  await tenHolland(page);
+  await tenCharcoal(page);
   await giveDiscount(page, () => page.getByTestId("pos-line-discount").click(), "percent", "10", "Sales manager · Sales Manager");
   await expect(page.getByTestId("pos-line-discount-chip")).toContainText("10% off ($4.00)");
-  const qty = page.getByLabel("Quantity: Holland Stone 60 mm", { exact: true });
+  const qty = page.getByLabel("Quantity: Charcoal Stone 60 mm", { exact: true });
   await qty.fill("100");
   await qty.press("Enter");
   await expect(page.getByTestId("pos-line-discount-chip")).toHaveCount(0);
@@ -289,7 +289,7 @@ test("a manager's yes is for the line and quantity it was given: change either a
 test("a ticket discount cannot take the whole ticket: the dialog says the rule and will not apply past it", async ({ page }) => {
   await signIn(page, "stepper");
   await ensureSession(page);
-  await tenHolland(page);
+  await tenCharcoal(page);
   await openPaymentStep(page, "stepper");
   await page.getByTestId("pos-ticket-discount").click();
   await expect(page.getByTestId("discount-ticket-rule")).toContainText(
@@ -319,7 +319,7 @@ test("the Summary shows line discounts on their lines, the ticket discount row, 
 }) => {
   await signIn(page, "stepper");
   await ensureSession(page);
-  await tenHolland(page);
+  await tenCharcoal(page);
   await openStep(page, "items");
   await page.getByTestId("pos-line-discount").click();
   await page.getByTestId("discount-value").fill("10");
@@ -353,7 +353,7 @@ test("the Summary shows line discounts on their lines, the ticket discount row, 
 test("a stale discount refusal re-reads the prices and drops the discount in words", async ({ page }) => {
   await signIn(page, "stepper");
   await ensureSession(page);
-  await tenHolland(page);
+  await tenCharcoal(page);
   await openStep(page, "items");
   await page.getByTestId("pos-line-discount").click();
   await page.getByTestId("discount-value").fill("10");
@@ -399,7 +399,7 @@ test("a stale discount refusal re-reads the prices and drops the discount in wor
 test("an earlier red banner clears on a fresh discount and on a completed sale", async ({ page }) => {
   await signIn(page, "stepper");
   await ensureSession(page);
-  await tenHolland(page);
+  await tenCharcoal(page);
   await openStep(page, "items");
   const give = async () => {
     await page.getByTestId("pos-line-discount").click();
@@ -410,7 +410,7 @@ test("an earlier red banner clears on a fresh discount and on a completed sale",
   };
   await give();
   // Nudging the quantity removes the discount, in words (a red banner).
-  const qty = page.getByLabel("Quantity: Holland Stone 60 mm", { exact: true });
+  const qty = page.getByLabel("Quantity: Charcoal Stone 60 mm", { exact: true });
   await qty.fill("9");
   await qty.press("Enter");
   const banner = page.locator("#till-message");

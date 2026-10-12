@@ -103,7 +103,7 @@ const FLOWS = [
 // real mint carries the resolver's live tier, so the stub says the same. The
 // accounts are demo labels on reserved domains, not people. Each account's
 // grant reaches its own branch only (the
-// demo world's Trenton), which is the branch fence the core's middleware
+// demo world's Point Loma), which is the branch fence the core's middleware
 // holds: the stub reads the same grant from the token's account, so one branch
 // never answers for another.
 const USERS = {
@@ -188,42 +188,42 @@ const USERS = {
 // from nothing: the numbers below are counters, not calendar facts.
 // ---------------------------------------------------------------------------
 
-const TRENTON_ID = "6f1c2b3a-0000-4000-8000-000000000001";
-const KINGSTON_ID = "6f1c2b3a-0000-4000-8000-000000000002";
+const POINT_LOMA_ID = "6f1c2b3a-0000-4000-8000-000000000001";
+const JULIAN_ID = "6f1c2b3a-0000-4000-8000-000000000002";
 
 const BRANCHES = [
   {
-    id: TRENTON_ID,
-    code: "TRE",
-    name: "Trenton",
-    address: { line1: "12 Riverside Yard Road", city: "Trenton", province: "Ontario", postal: "K8V 0A1", country: "Canada" },
+    id: POINT_LOMA_ID,
+    code: "PLM",
+    name: "Point Loma",
+    address: { line1: "12 Riverside Yard Road", city: "Point Loma", province: "CA", postal: "92106", country: "US" },
     is_default: true,
     is_system_default: true,
     is_active: true,
   },
   {
-    id: KINGSTON_ID,
-    code: "KGN",
-    name: "Kingston",
-    address: { line1: "8 Cataquoui Yard Road", city: "Kingston", province: "Ontario", postal: "K7M 0A2", country: "Canada" },
+    id: JULIAN_ID,
+    code: "JUL",
+    name: "Julian",
+    address: { line1: "8 Quarry Gate Road", city: "Julian", province: "CA", postal: "92036", country: "US" },
     is_default: false,
     is_system_default: false,
     is_active: true,
   },
 ];
 
-// Each account's grant reaches one branch: the demo logins work the Trenton
-// counter. Kingston exists so a fence is observable, never reachable.
+// Each account's grant reaches one branch: the demo logins work the Point Loma
+// counter. Julian exists so a fence is observable, never reachable.
 const ACCOUNT_BRANCH = {
-  "demo-account-sales": TRENTON_ID,
-  "demo-account-sales-manager": TRENTON_ID,
-  "demo-account-yard-manager": TRENTON_ID,
-  "demo-account-procurement-manager": TRENTON_ID,
+  "demo-account-sales": POINT_LOMA_ID,
+  "demo-account-sales-manager": POINT_LOMA_ID,
+  "demo-account-yard-manager": POINT_LOMA_ID,
+  "demo-account-procurement-manager": POINT_LOMA_ID,
 };
 
 // The counter catalogue. list_cents is the retail anchor; branch_cost_cents is
 // the weighted cost the margin glance reads, per branch. The edge restraint
-// carries no cost at Trenton on purpose: a glance line with no cost stays
+// carries no cost at Point Loma on purpose: a glance line with no cost stays
 // byte-absent in the real answer, and the till shows the explicit placeholder
 // there, never a fake margin. sold_by is the unit the counter rings in.
 // The demo dealer's curated hot list: the quick-pick tiles, in tap order.
@@ -231,16 +231,16 @@ const HOT_LIST_SKUS = ["HPV-60", "PSN-100", "WAT-STD"];
 
 const PRODUCTS = [
   {
-    product_id: "p-holland-60",
+    product_id: "p-charcoal-60",
     sku: "HPV-60",
     category: "Pavers",
-    name: "Holland Stone 60 mm",
-    description: "The Holland paver, 60 mm, per square foot",
-    aliases: ["holland paver", "holland stone"],
+    name: "Charcoal Stone 60 mm",
+    description: "The Charcoal paver, 60 mm, per square foot",
+    aliases: ["charcoal paver", "charcoal stone"],
     base_uom: "sf",
     sold_by: "sf",
     list_cents: 400,
-    branch_cost_cents: { [TRENTON_ID]: 276, [KINGSTON_ID]: 268 },
+    branch_cost_cents: { [POINT_LOMA_ID]: 276, [JULIAN_ID]: 268 },
   },
   {
     product_id: "p-polymer-sand",
@@ -252,7 +252,7 @@ const PRODUCTS = [
     base_uom: "bag",
     sold_by: "bag",
     list_cents: 1400,
-    branch_cost_cents: { [TRENTON_ID]: 980, [KINGSTON_ID]: 1010 },
+    branch_cost_cents: { [POINT_LOMA_ID]: 980, [JULIAN_ID]: 1010 },
   },
   {
     product_id: "p-edge-8",
@@ -264,7 +264,7 @@ const PRODUCTS = [
     base_uom: "pc",
     sold_by: "pc",
     list_cents: 3200,
-    branch_cost_cents: { [KINGSTON_ID]: 2450 },
+    branch_cost_cents: { [JULIAN_ID]: 2450 },
   },
   {
     product_id: "p-wall-std",
@@ -276,7 +276,7 @@ const PRODUCTS = [
     base_uom: "pc",
     sold_by: "pc",
     list_cents: 5200,
-    branch_cost_cents: { [TRENTON_ID]: 3900, [KINGSTON_ID]: 3860 },
+    branch_cost_cents: { [POINT_LOMA_ID]: 3900, [JULIAN_ID]: 3860 },
   },
   {
     product_id: "p-clear-stone",
@@ -288,7 +288,7 @@ const PRODUCTS = [
     base_uom: "yd",
     sold_by: "yd",
     list_cents: 3800,
-    branch_cost_cents: { [TRENTON_ID]: 2900, [KINGSTON_ID]: 2950 },
+    branch_cost_cents: { [POINT_LOMA_ID]: 2900, [JULIAN_ID]: 2950 },
   },
 ];
 
@@ -338,7 +338,7 @@ const CUSTOMERS = [
   {
     id: "c-retail",
     account_no: "C07",
-    name: "Lachance Retail",
+    name: "Homeowner B Retail",
     customer_type: "RETAIL",
     payment_terms_days: 0,
     credit_limit_cents: 0,
@@ -431,8 +431,8 @@ function owingStill(order) {
 function seedOwingOrders() {
   addOwing({
     order_id: uuidFromCounter(4901),
-    order_no: "DEMO-TRT-D01",
-    branch_id: TRENTON_ID,
+    order_no: "DEMO-PLM-D01",
+    branch_id: POINT_LOMA_ID,
     customer_id: "c-fenwick",
     customer_name: "Fenwick Builders Ltd",
     account_line: "C02 · Builder · on account",
@@ -442,12 +442,12 @@ function seedOwingOrders() {
     order_total_cents: 191359,
     held: false,
     payments: [{ payment_id: uuidFromCounter(4911), method: "CARD", amount_cents: 50000 }],
-    lines: [{ description: "Holland Stone 60 mm", qty: "200 sf", line_total_cents: 169359 }],
+    lines: [{ description: "Charcoal Stone 60 mm", qty: "200 sf", line_total_cents: 169359 }],
   });
   addOwing({
     order_id: uuidFromCounter(4902),
-    order_no: "DEMO-TRT-D02",
-    branch_id: TRENTON_ID,
+    order_no: "DEMO-PLM-D02",
+    branch_id: POINT_LOMA_ID,
     customer_id: "c-cod",
     customer_name: "Cash On Demand Landscaping",
     account_line: "C10 · Contractor · Cash On Demand",
@@ -460,25 +460,25 @@ function seedOwingOrders() {
   });
 }
 
-// Parked tickets, by id. Kingston's pre-seeded ticket proves the fence: a
-// Trenton login lists parked tickets for its own branch and never this one.
+// Parked tickets, by id. Julian's pre-seeded ticket proves the fence: a
+// Point Loma login lists parked tickets for its own branch and never this one.
 const parked = new Map();
 
-function seedParkedKingstonTicket() {
+function seedParkedJulianTicket() {
   const id = uuidFromCounter(9001);
   parked.set(id, {
     id,
     ticket_no: "PARK-9001",
-    branch_id: KINGSTON_ID,
+    branch_id: JULIAN_ID,
     customer_id: "c-maple-ridge",
     sale_type: "COLLECT_NOW",
-    notes: "Parked at the Kingston counter",
+    notes: "Parked at the Julian counter",
     status: "PARKED",
-    lines: [{ product_id: "p-holland-60", qty_entered: 40, uom_entered: "sf" }],
+    lines: [{ product_id: "p-charcoal-60", qty_entered: 40, uom_entered: "sf" }],
     created_at: "2026-01-01T00:00:00Z",
   });
 }
-seedParkedKingstonTicket();
+seedParkedJulianTicket();
 seedOwingOrders();
 
 // ---------------------------------------------------------------------------
@@ -589,7 +589,7 @@ function orderStatusOf(orderId) {
 // fenced, and a fenced sale is an invisible one) answers not found.
 //
 // BRANCH_ID is this world's own demo branch, no relation to the counter
-// world's Trenton and Kingston above: the returns desk reads the drawer for
+// world's Point Loma and Julian above: the returns desk reads the drawer for
 // the branch the found sale names, so this one answers its drawer and its Z
 // report, and the counter's routes keep fencing by the login's own grant.
 // ---------------------------------------------------------------------------
@@ -609,7 +609,7 @@ const SALES = {
       {
         order_line_id: uuid(11011),
         product_id: uuid(50001),
-        description: "Holland paver, bevelled, each",
+        description: "Charcoal paver, bevelled, each",
         qty_sold: 2,
         unit_price_cents: 6000,
         line_total_cents: 12000,
@@ -785,7 +785,7 @@ const SALES = {
 // return path kept. Tax is zero in this world, so the money returned is the unit price times the
 // quantity returned. The second branch exists to show the one branch per credit note rule.
 const BRANCH_ID_2 = "5d1b3f6e-0000-4000-9000-000000000002";
-const BRANCH_NAMES = { [BRANCH_ID]: "Trenton", [BRANCH_ID_2]: "Kingston" };
+const BRANCH_NAMES = { [BRANCH_ID]: "Point Loma", [BRANCH_ID_2]: "Julian" };
 // The canonical house WALK-IN row (migration 0029), the id the till names in its Walk in sale entry.
 const WALK_IN_ID = "a1900000-0000-4000-9000-000000000001";
 
@@ -1704,7 +1704,7 @@ function tillSessionDetail(row) {
 
 // The demo world's standing stock per branch: one number, the same read the
 // catalogue list answers, so the counter's own branch shows what it holds.
-const ON_HAND_BY_BRANCH = { [TRENTON_ID]: 120, [KINGSTON_ID]: 80 };
+const ON_HAND_BY_BRANCH = { [POINT_LOMA_ID]: 120, [JULIAN_ID]: 80 };
 
 function counterHit(product, branchId) {
   return {
@@ -2349,7 +2349,7 @@ const server = createServer(async (request, response) => {
   // The margin glance: cost against the SAME engine revenue, per line. A line
   // with no cost at this branch stays byte-absent in its position (the empty
   // object), which is exactly the placeholder case the till renders; the edge
-  // restraint carries no Trenton cost on purpose, so the demo shows a real
+  // restraint carries no Point Loma cost on purpose, so the demo shows a real
   // unknown beside real margins. Both demo logins are answered: the
   // configuration's cost and margin list puts the sales roles inside the
   // glance, and the till renders whatever arrives either way.
@@ -3539,7 +3539,7 @@ const server = createServer(async (request, response) => {
   }
 
   // The parked list: fenced to the caller's own branch before any filter the
-  // query asks for, so Kingston's tickets never reach the Trenton counter,
+  // query asks for, so Julian's tickets never reach the Point Loma counter,
   // whichever branch the query names.
   if (request.method === "GET" && path === "/api/v1/pos/parked") {
     const items = [...parked.values()].filter(
@@ -3734,7 +3734,7 @@ const server = createServer(async (request, response) => {
     }
     respondJson(response, 200, {
       product_id: product.product_id,
-      on_hand: { [TRENTON_ID]: 120, [KINGSTON_ID]: 80 },
+      on_hand: { [POINT_LOMA_ID]: 120, [JULIAN_ID]: 80 },
       base_uom: product.base_uom,
       sell_uom: product.sold_by,
       sell_factor: 1,
@@ -3856,7 +3856,7 @@ const server = createServer(async (request, response) => {
 
 // The letterhead's org line: the invented trading name the demo database's
 // own settings row carries (the populate's convergence).
-const RECEIPT_ORG_NAME = "Hardscape House (demo)";
+const RECEIPT_ORG_NAME = "Gable Landscape Supply";
 
 // The fulfilment words the receipt prints, the core's own map keyed on the
 // contract's sale types: the paper speaks the counter's words, never the

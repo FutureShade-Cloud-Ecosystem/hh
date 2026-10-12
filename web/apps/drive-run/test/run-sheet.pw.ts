@@ -20,11 +20,11 @@ test("the landing is today's run: the run, its crew line and its stops in stop o
   await expect(run.locator("[data-progress]")).toHaveText("3 stops left · 0 delivered");
   const stops = page.locator("[data-stop]");
   await expect(stops).toHaveCount(3);
-  await expect(stops.nth(0)).toContainText("Northline Hardscapes Ltd (demo)");
-  await expect(stops.nth(0)).toContainText("95 Bagot St, Kingston, K7L 3E7");
+  await expect(stops.nth(0)).toContainText("Summit Ridge Builders");
+  await expect(stops.nth(0)).toContainText("418 Oak Hollow Road, Julian, 92036");
   await expect(stops.nth(0)).toContainText("AM");
   await expect(stops.nth(0).locator("[data-stop-no]")).toHaveText("1");
-  await expect(stops.nth(2)).toContainText("County of Hastings (demo)");
+  await expect(stops.nth(2)).toContainText("Valley Municipal Works");
   await expect(stops.nth(0).locator("[data-stop-status]")).toHaveText("Ready");
 });
 
@@ -93,10 +93,10 @@ test("a stop opens to its detail: where, who to call, how to get in, what is on 
   await page.locator("[data-stop]").first().click();
   await expect(page.getByRole("heading", { name: "Stop 1" })).toBeVisible();
   const detail = page.locator("[data-stop-detail]");
-  await expect(detail).toContainText("Northline Hardscapes Ltd (demo)");
+  await expect(detail).toContainText("Summit Ridge Builders");
   await expect(detail).toContainText("SO-1001");
-  await expect(detail.getByRole("link", { name: "Open in maps" })).toHaveAttribute("href", /openstreetmap\.org\/search\?query=95%20Bagot/);
-  await expect(detail.getByRole("link", { name: "613-555-0101" })).toHaveAttribute("href", "tel:613-555-0101");
+  await expect(detail.getByRole("link", { name: "Open in maps" })).toHaveAttribute("href", /openstreetmap\.org\/search\?query=418%20Oak/);
+  await expect(detail.getByRole("link", { name: "619-555-0101" })).toHaveAttribute("href", "tel:619-555-0101");
   await expect(detail).toContainText("Gate code on the paperwork.");
   const lines = page.locator("[data-cargo] [data-line]");
   await expect(lines).toHaveCount(2);

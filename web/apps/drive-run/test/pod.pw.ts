@@ -14,7 +14,7 @@ test("proof of delivery opens with the name to type and the confirmation unticke
   await takeFirstStopEnRoute(page);
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Proof of delivery" })).toBeVisible();
-  await expect(page.locator("[data-pod]")).toContainText("Stop 1 · Northline Hardscapes Ltd (demo) · SO-1001");
+  await expect(page.locator("[data-pod]")).toContainText("Stop 1 · Summit Ridge Builders · SO-1001");
   await expect(page.getByLabel("Full name of the person receiving")).toHaveValue("Site contact (demo)");
   await expect(page.getByRole("checkbox")).not.toBeChecked();
   await expect(page.locator(".confirm")).toContainText("not a captured signature image");
@@ -37,7 +37,7 @@ test("signing sends the core's POD shape and the stop reads delivered", async ({
   await expect(page.getByRole("heading", { name: "Stop 1" })).toBeVisible();
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
   await expect(page.locator(".signed")).toContainText("Signed by Receiving clerk");
-  await expect(page.getByRole("status")).toContainText("Delivery to Northline Hardscapes Ltd (demo) is signed for.");
+  await expect(page.getByRole("status")).toContainText("Delivery to Summit Ridge Builders is signed for.");
   const pod = (await stubLog(request)).filter((c) => c.path.endsWith("/pod"));
   expect(pod).toHaveLength(1);
   expect(pod[0].method).toBe("POST");

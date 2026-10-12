@@ -266,12 +266,12 @@ test("compare scores alternates read only: the current line, a priced alternate,
   await expect(page.getByTestId("qe-compare")).toBeVisible();
   await expect(page.getByTestId("qe-compare")).toContainText("Current line");
   const search = page.getByTestId("qe-compare").locator('[data-field="cmp-search"]');
-  await search.fill("holland");
+  await search.fill("charcoal");
   await page.getByTestId("qe-compare").getByRole("option").first().click();
   await search.fill("edge");
   await page.getByTestId("qe-compare").getByRole("option").first().click();
   await page.getByTestId("qe-compare").getByRole("button", { name: "Score" }).click();
-  await expect(page.getByTestId("qe-compare")).toContainText("HPV-60 · Holland Stone 60 mm");
+  await expect(page.getByTestId("qe-compare")).toContainText("HPV-60 · Charcoal Stone 60 mm");
   await expect(page.getByTestId("qe-compare")).toContainText("cannot be priced in this unit");
   await expect(page.getByTestId("qe-compare")).toContainText("Comparison only");
   await page.getByTestId("qe-compare").getByRole("button", { name: "Close" }).click();
@@ -335,10 +335,10 @@ test("the compare table words its basis, not the raw enum", async ({ page }) => 
   await openQuote(page, "Sent");
   await panel(page).getByTestId("qe-line").first().getByRole("button", { name: "Compare" }).click();
   const search = page.getByTestId("qe-compare").locator('[data-field="cmp-search"]');
-  await search.fill("holland");
+  await search.fill("charcoal");
   await page.getByTestId("qe-compare").getByRole("option").first().click();
   await page.getByTestId("qe-compare").getByRole("button", { name: "Score" }).click();
-  await expect(page.getByTestId("qe-compare")).toContainText("HPV-60 · Holland Stone 60 mm");
+  await expect(page.getByTestId("qe-compare")).toContainText("HPV-60 · Charcoal Stone 60 mm");
   const text = await page.getByTestId("qe-compare").innerText();
   expect(text).not.toMatch(/\b[A-Z]+_[A-Z_]+\b/);
 });

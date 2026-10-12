@@ -84,7 +84,7 @@ const FLOWS = [
 // login user block (core/api/openapi.yaml, IdentityUser). The tiers are the
 // core resolver's own: 1 leadership, 2 manager, 3 frontline. The accounts are
 // demo labels on reserved domains, never people. Each account's grant reaches
-// its own branch only (the demo world's Trenton).
+// its own branch only (the demo world's Point Loma).
 const USERS = {
   sales: {
     user_id: "demo-account-sales",
@@ -111,14 +111,14 @@ const USERS = {
 // identity is an invented label on a reserved domain, never a real one.
 // ---------------------------------------------------------------------------
 
-const TRENTON_ID = "6f1c2b3a-0000-4000-8000-000000000001";
+const POINT_LOMA_ID = "6f1c2b3a-0000-4000-8000-000000000001";
 
 const BRANCHES = [
   {
-    id: TRENTON_ID,
-    code: "TRE",
-    name: "Trenton",
-    address: { line1: "12 Riverside Yard Road", city: "Trenton", province: "Ontario", postal: "K8V 0A1", country: "Canada" },
+    id: POINT_LOMA_ID,
+    code: "PLM",
+    name: "Point Loma",
+    address: { line1: "12 Riverside Yard Road", city: "Point Loma", province: "CA", postal: "92106", country: "US" },
     is_default: true,
     is_system_default: true,
     is_active: true,
@@ -126,28 +126,28 @@ const BRANCHES = [
 ];
 
 const ACCOUNT_BRANCH = {
-  "demo-account-sales": TRENTON_ID,
-  "demo-account-sales-manager": TRENTON_ID,
+  "demo-account-sales": POINT_LOMA_ID,
+  "demo-account-sales-manager": POINT_LOMA_ID,
 };
 
 // The catalogue: list_cents is the retail anchor, branch_cost_cents the
 // weighted cost the margin glance reads, floor_bps the category margin floor
-// the discount decision reads. Holland's rule price for the contractor
+// the discount decision reads. Charcoal's rule price for the contractor
 // account sits below the Pavers floor on purpose: the plan's ruled mark (a
 // customer's own rule price under the floor is accepted and marked) has to be
 // reachable, and that is the one line that carries it.
 const PRODUCTS = [
   {
-    product_id: "p-holland-60",
+    product_id: "p-charcoal-60",
     sku: "HPV-60",
     category: "Pavers",
-    name: "Holland Stone 60 mm",
-    description: "The Holland paver, 60 mm, per square foot",
-    aliases: ["holland paver", "holland stone"],
+    name: "Charcoal Stone 60 mm",
+    description: "The Charcoal paver, 60 mm, per square foot",
+    aliases: ["charcoal paver", "charcoal stone"],
     base_uom: "sf",
     sold_by: "sf",
     list_cents: 400,
-    branch_cost_cents: { [TRENTON_ID]: 276 },
+    branch_cost_cents: { [POINT_LOMA_ID]: 276 },
     floor_bps: 2500,
     featured: true,
   },
@@ -161,7 +161,7 @@ const PRODUCTS = [
     base_uom: "bag",
     sold_by: "bag",
     list_cents: 1400,
-    branch_cost_cents: { [TRENTON_ID]: 980 },
+    branch_cost_cents: { [POINT_LOMA_ID]: 980 },
     floor_bps: 1000,
     featured: true,
   },
@@ -175,7 +175,7 @@ const PRODUCTS = [
     base_uom: "pc",
     sold_by: "pc",
     list_cents: 3200,
-    branch_cost_cents: { [TRENTON_ID]: 2100 },
+    branch_cost_cents: { [POINT_LOMA_ID]: 2100 },
     floor_bps: 1200,
     featured: false,
   },
@@ -189,7 +189,7 @@ const PRODUCTS = [
     base_uom: "pc",
     sold_by: "pc",
     list_cents: 5200,
-    branch_cost_cents: { [TRENTON_ID]: 3400 },
+    branch_cost_cents: { [POINT_LOMA_ID]: 3400 },
     floor_bps: 1200,
     featured: true,
   },
@@ -203,7 +203,7 @@ const PRODUCTS = [
     base_uom: "yd",
     sold_by: "yd",
     list_cents: 3800,
-    branch_cost_cents: { [TRENTON_ID]: 2500 },
+    branch_cost_cents: { [POINT_LOMA_ID]: 2500 },
     floor_bps: 1000,
     featured: false,
   },
@@ -213,7 +213,7 @@ const productById = new Map(PRODUCTS.map((p) => [p.product_id, p]));
 
 // The account customers. The percent is the account's own pricing rule: the
 // first contractor account's is the eighteen percent the plan's demo world
-// names, and that rule is what puts Holland under the Pavers floor.
+// names, and that rule is what puts Charcoal under the Pavers floor.
 const CUSTOMERS = [
   {
     // the core's own uuid, the id the search answers and the pricing routes carry, so a
@@ -277,7 +277,7 @@ const CUSTOMERS = [
   {
     id: "c-cod-terms",
     account_no: "C10",
-    name: "Cash On Demand customer (demo)",
+    name: "Cash On Demand customer",
     customer_type: "CONTRACTOR",
     payment_terms_days: 0,
     credit_limit_cents: 500000,
@@ -461,15 +461,15 @@ function paymentKeyOf(quoteId, key) {
 // for the core; nothing in the app imports any of it.
 // ---------------------------------------------------------------------------
 
-const BELLEVILLE_ID = "6f1c2b3a-0000-4000-8000-000000000002";
+const JULIAN_ID = "6f1c2b3a-0000-4000-8000-000000000002";
 const seamSwitches = { aiConfigured: false, seamWired: true };
 const followPlans = new Map(); // quote id -> plan row
 const followEvents = new Map(); // quote id -> events
 const lapsedHolds = new Map(); // quote id -> expired hold rows
 const approvalCards = new Map(); // request id -> the card the server wrote
-const stockByProduct = new Map(); // product id -> { trenton, belleville }
+const stockByProduct = new Map(); // product id -> { point-loma, julian }
 const productApps = {
-  "p-holland-60": ["PAVER"],
+  "p-charcoal-60": ["PAVER"],
   "p-polymer-sand": ["JOINTING"],
   "p-edge-8": ["EDGING"],
   "p-wall-std": ["WALL"],
@@ -483,28 +483,28 @@ function resetSeamWorld() {
   lapsedHolds.clear();
   approvalCards.clear();
   stockByProduct.clear();
-  for (const product of PRODUCTS) stockByProduct.set(product.product_id, { trenton: 400, belleville: 400 });
+  for (const product of PRODUCTS) stockByProduct.set(product.product_id, { pointLoma: 400, julian: 400 });
   // One short product on purpose: the seeded accepted quote asks for three of it.
-  stockByProduct.set("p-clear-stone", { trenton: 2, belleville: 60 });
+  stockByProduct.set("p-clear-stone", { pointLoma: 2, julian: 60 });
 }
 resetSeamWorld();
 
 function branchStockRow(productId, branchId, caller) {
-  const stock = stockByProduct.get(productId) ?? { trenton: 0, belleville: 0 };
-  const here = branchId === TRENTON_ID;
-  const available = here ? stock.trenton : stock.belleville;
+  const stock = stockByProduct.get(productId) ?? { pointLoma: 0, julian: 0 };
+  const here = branchId === POINT_LOMA_ID;
+  const available = here ? stock.pointLoma : stock.julian;
   const product = productById.get(productId);
   return {
     product_id: productId,
     branch_id: branchId,
-    branch_code: here ? "TRE" : "BEL",
-    branch_name: here ? "Trenton" : "Belleville",
+    branch_code: here ? "PLM" : "JUL",
+    branch_name: here ? "Point Loma" : "Julian",
     on_hand_base: available,
     reserved_base: 0,
     in_transit_base: 0,
     available_base: available,
     soft_held_base: 0,
-    ...(switches.callerOnCostList && product !== undefined ? { avg_cost_cents: product.branch_cost_cents[TRENTON_ID] ?? 0 } : {}),
+    ...(switches.callerOnCostList && product !== undefined ? { avg_cost_cents: product.branch_cost_cents[POINT_LOMA_ID] ?? 0 } : {}),
   };
 }
 
@@ -655,7 +655,7 @@ function marginBps(unitCents, costCents) {
 function floorDecision(caller, product, customer, discPct) {
   const ruleCents = ruleUnitCents(product, customer);
   const unitCents = netUnitCents(ruleCents, discPct);
-  const costCents = product.branch_cost_cents[TRENTON_ID] ?? 0;
+  const costCents = product.branch_cost_cents[POINT_LOMA_ID] ?? 0;
   const margin = marginBps(unitCents, costCents);
   const floorBps = product.floor_bps + switches.floorRaiseBps;
   if (margin >= floorBps) return null;
@@ -686,7 +686,7 @@ function newLine(product, customer, qty, opts = {}) {
   const discPct = opts.discPct ?? 0;
   const ruleCents = ruleUnitCents(product, customer);
   const unitCents = discPct > 0 ? netUnitCents(ruleCents, discPct) : ruleCents;
-  const costCents = product.branch_cost_cents[TRENTON_ID] ?? 0;
+  const costCents = product.branch_cost_cents[POINT_LOMA_ID] ?? 0;
   const qtyNumber = Number(qty);
   return {
     line_no: opts.lineNo,
@@ -727,7 +727,7 @@ function seedQuote(status, customerId, ownerFlow, lines, terms = {}, fixed = nul
     // whichever form (core uuid or short label) the caller seeded with
     customer_id: customer.id,
     customer_name: customer.name,
-    branch_id: TRENTON_ID,
+    branch_id: POINT_LOMA_ID,
     status,
     valid_until: "",
     expired: false,
@@ -772,7 +772,7 @@ function seedWorld() {
   invoiceCounter = 3000;
   paymentCounter = 4000;
   seedQuote("DRAFT", "c-maple-ridge", "sales", [
-    { p: "p-holland-60", q: 120 },
+    { p: "p-charcoal-60", q: 120 },
     { p: "p-polymer-sand", q: 2 },
   ]);
   seedQuote("SENT", "c-fenwick", "sales-manager", [{ p: "p-wall-std", q: 10 }]);
@@ -781,7 +781,7 @@ function seedWorld() {
   // own seeded quotes keep their numbers (the first dynamic seed stays 1004):
   // a credit customer's converted quote with its order (the deposit path),
   // and a cash customer's accepted quote (the one action).
-  const converted = seedQuote("CONVERTED", "c-maple-ridge", "sales", [{ p: "p-holland-60", q: 10 }], {}, { id: "q-2101", quoteNo: "Q-2101" });
+  const converted = seedQuote("CONVERTED", "c-maple-ridge", "sales", [{ p: "p-charcoal-60", q: 10 }], {}, { id: "q-2101", quoteNo: "Q-2101" });
   newOrder(converted, "COUNTER");
   seedQuote("ACCEPTED", "c-quarry-lane", "sales", [{ p: "p-polymer-sand", q: 4 }], {}, { id: "q-2102", quoteNo: "Q-2102" });
 }
@@ -935,15 +935,15 @@ function glanceOf(quote) {
   let cost = 0;
   for (const line of quote.lines) {
     revenue += line.line_total_cents;
-    cost += Math.round((productById.get(line.product_id)?.branch_cost_cents[TRENTON_ID] ?? 0) * Number(line.qty_entered));
+    cost += Math.round((productById.get(line.product_id)?.branch_cost_cents[POINT_LOMA_ID] ?? 0) * Number(line.qty_entered));
   }
   const partial = quote.lines.some((line) => {
     const product = productById.get(line.product_id);
-    return product === undefined || product.branch_cost_cents[TRENTON_ID] === undefined;
+    return product === undefined || product.branch_cost_cents[POINT_LOMA_ID] === undefined;
   });
   return {
     lines: quote.lines.map((line) => {
-      const unitCost = productById.get(line.product_id)?.branch_cost_cents[TRENTON_ID];
+      const unitCost = productById.get(line.product_id)?.branch_cost_cents[POINT_LOMA_ID];
       const lineCost = unitCost === undefined ? undefined : Math.round(unitCost * Number(line.qty_entered));
       return {
         line_no: line.line_no,
@@ -1519,8 +1519,8 @@ const server = createServer(async (request, response) => {
         respondJson(response, 404, { error: "no product with that id" });
         return;
       }
-      if (Number.isFinite(body.trenton)) row.trenton = body.trenton;
-      if (Number.isFinite(body.belleville)) row.belleville = body.belleville;
+      if (Number.isFinite(body.pointLoma)) row.pointLoma = body.pointLoma;
+      if (Number.isFinite(body.julian)) row.julian = body.julian;
       respondJson(response, 200, row);
     });
     return;
@@ -2156,7 +2156,7 @@ const server = createServer(async (request, response) => {
           discount_bps: customer ? customer.percent_off * 100 : 0,
           source,
           delta_cents: Math.round(unit * qty) - line.line_total_cents,
-          blocked: marginBps(unit, product.branch_cost_cents[TRENTON_ID] ?? 0) < product.floor_bps + switches.floorRaiseBps,
+          blocked: marginBps(unit, product.branch_cost_cents[POINT_LOMA_ID] ?? 0) < product.floor_bps + switches.floorRaiseBps,
           ...(product.sold_by === line.price_uom ? {} : { unavailable: "cannot be priced in this unit" }),
         };
         if (row.blocked) row.block_policy = "category_margin_floor";
@@ -2529,7 +2529,7 @@ const server = createServer(async (request, response) => {
       const request = { id: `fr-${key}`, status: "PENDING", line_no: lineNo, disc_pct: disc };
       floorRequests.set(key, request);
       const askedUnit = netUnitCents(ruleUnitCents(product, customer), disc);
-      const askedMargin = marginBps(askedUnit, product.branch_cost_cents[TRENTON_ID] ?? 0);
+      const askedMargin = marginBps(askedUnit, product.branch_cost_cents[POINT_LOMA_ID] ?? 0);
       // The detail is the server's own sentence, built from its own figures: the
       // line, the discount and the margin against the floor. The core files it
       // for the filer, who reads it in the filer's own card (qd1c).
@@ -2715,7 +2715,7 @@ const server = createServer(async (request, response) => {
         is_active: true,
         list_price_cents: product.list_cents,
         list_price_uom: product.sold_by,
-        on_hand_by_branch: { [TRENTON_ID]: 400 },
+        on_hand_by_branch: { [POINT_LOMA_ID]: 400 },
         is_featured: product.featured,
       })),
     );
@@ -2737,7 +2737,7 @@ const server = createServer(async (request, response) => {
       has_image: false,
       match_reason: "NAME",
       on_hand_branch: 400,
-      on_hand_by_branch: { [TRENTON_ID]: 400 },
+      on_hand_by_branch: { [POINT_LOMA_ID]: 400 },
       list_price_cents: product.list_cents,
     }));
     respondJson(response, 200, { items: hits });
@@ -2787,7 +2787,7 @@ const server = createServer(async (request, response) => {
       has_image: false,
       match_reason: "SKU_PREFIX",
       on_hand_branch: 400,
-      on_hand_by_branch: { [TRENTON_ID]: 400 },
+      on_hand_by_branch: { [POINT_LOMA_ID]: 400 },
       list_price_cents: product.list_cents,
     });
     return;
@@ -2833,7 +2833,7 @@ const server = createServer(async (request, response) => {
       account_no: customer.account_no,
       name: customer.name,
       customer_type: customer.customer_type,
-      branch_id: TRENTON_ID,
+      branch_id: POINT_LOMA_ID,
       payment_terms_days: customer.payment_terms_days,
       credit_limit_cents: customer.credit_limit_cents,
       on_hold: HELD_STANDINGS.get(customer.id)?.on_hold === true,
@@ -3002,7 +3002,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     respondJson(response, 200, {
-      branches: [branchStockRow(match[1], TRENTON_ID, caller), branchStockRow(match[1], BELLEVILLE_ID, caller)],
+      branches: [branchStockRow(match[1], POINT_LOMA_ID, caller), branchStockRow(match[1], JULIAN_ID, caller)],
       seam_wired: true,
     });
     return;
@@ -3032,7 +3032,7 @@ const server = createServer(async (request, response) => {
       items.push({
         id: row.id,
         requested_by: card.requested_by,
-        branch_id: quote === undefined ? TRENTON_ID : quote.branch_id,
+        branch_id: quote === undefined ? POINT_LOMA_ID : quote.branch_id,
         policy_type: "MARGIN_BELOW_MINIMUM",
         detail: card.detail,
         subject_ref: `quote:${card.quote_id}`,

@@ -2,7 +2,7 @@
 // drawer, a sale, a contractor's pavers, an account that cannot carry the
 // sale on account, tender and receipt, parked sales, a return within 250.00,
 // a return above it that commits with no approval at the demo dealer, a
-// Kingston sale refused, and beyond the till.
+// Julian sale refused, and beyond the till.
 // The Driver, yard manager, Yard Team and Financial Controller cards are live
 // on the front door, so the till's entry serves the two Counter Till roles
 // only: none of those rows is in the coming list.
@@ -16,7 +16,7 @@ import {
   SEEDED,
   SEEDED_IDS,
   TOP_BAR_CLIP,
-  TRENTON_ID,
+  POINT_LOMA_ID,
   apiPicture,
   cad,
   dollars,
@@ -83,7 +83,7 @@ test("the drawer: the branch's MAIN counter drawer, found open with the till's o
   await signIn(page, "Sales");
   // The identity line names the invented dealer and the branch, not the
   // migrated trading name; the session bar says the drawer is open.
-  await expect(page.getByTestId("pagectx")).toContainText("Hardscape House (demo), Trenton");
+  await expect(page.getByTestId("pagectx")).toContainText("Gable Landscape Supply, Point Loma");
   await expect(page.getByTestId("session-dot")).toContainText("Open");
   // The surface carries no float figure, so the core's own Z report holds it:
   // MAIN is open with the float the till opens it with, $300.00, the
@@ -98,9 +98,9 @@ test("a sale: lines priced by the engine, no price field, and the margin column 
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
-  const holland = lineRow(page, "Holland Paver, Charcoal (demo)");
-  await expect(holland.locator(".lprice")).toHaveText(cad(595));
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking Paver 60 mm, Charcoal");
+  const charcoal = lineRow(page, "Interlocking Paver 60 mm, Charcoal");
+  await expect(charcoal.locator(".lprice")).toHaveText(cad(595));
   // The box's policy word is MANAGER_UP and the clerk is frontline (tier 3),
   // so the till refuses the whole margin surface (P3-10: the surface follows
   // the policy word): no margin cells, and the glance is refused server-side
@@ -109,8 +109,8 @@ test("a sale: lines priced by the engine, no price field, and the margin column 
   await expect(page.getByTestId("pos-line-margin")).toHaveCount(0);
   // The line carries a quantity input and no price field anywhere: the price
   // is text, and the one textbox of the line is its quantity.
-  await expect(holland.getByRole("textbox")).toHaveCount(1);
-  await expect(holland.getByRole("textbox")).toHaveAttribute("aria-label", /^Quantity: /);
+  await expect(charcoal.getByRole("textbox")).toHaveCount(1);
+  await expect(charcoal.getByRole("textbox")).toHaveAttribute("aria-label", /^Quantity: /);
   await expect(page.getByTestId("pos-lines").getByRole("textbox")).toHaveCount(1);
   await shot(page, "sales-03-sale", testInfo);
 });
@@ -120,10 +120,10 @@ test("a contractor's pavers: the account price rings, and a below floor line rin
 }, testInfo) => {
   await signIn(page, "Sales");
   // The contractor's own price: below the $5.95 list the drop row shows.
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
-  const holland = lineRow(page, "Holland Paver, Charcoal (demo)");
-  await expect(holland.locator(".lprice")).toHaveText(cad(524));
+  await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking Paver 60 mm, Charcoal");
+  const charcoal = lineRow(page, "Interlocking Paver 60 mm, Charcoal");
+  await expect(charcoal.locator(".lprice")).toHaveText(cad(524));
   // The policy word refuses the clerk the whole margin surface (P3-10), on
   // this contractor ticket as on any other: the price stands, the column does
   // not. The manager's till is the allowed side's proof (30-manager).
@@ -136,15 +136,15 @@ test("a contractor's pavers: the account price rings, and a below floor line rin
   // the proof the line is genuinely below the bulk category's floor of 20
   // percent; the refused surface states no margin for it (P3-10), and rings
   // it regardless.
-  await pickCustomer(page, "Quinte", "Quinte Paving & Design (demo)");
-  await searchAndAdd(page, "DEMO-AGG-GA", "Granular A (demo)");
-  const granular = lineRow(page, "Granular A (demo)");
+  await pickCustomer(page, "Fieldstone", "Fieldstone Pools and Patios");
+  await searchAndAdd(page, "DEMO-AGG-BASE", "Class 2 Base Rock");
+  const granular = lineRow(page, "Class 2 Base Rock");
   await expect(granular.locator(".lprice")).toHaveText(cad(2925));
   const bearer = await mint(page, "sales");
   const manager = await mint(page, "sales-manager");
   const glanced = await staffPost(page, manager, "/api/v1/pos/margin-glance", {
-    branch_id: TRENTON_ID,
-    customer_id: SEEDED_IDS.quinteC03,
+    branch_id: POINT_LOMA_ID,
+    customer_id: SEEDED_IDS.fieldstoneC03,
     customer_type: "CONTRACTOR",
     lines: [{ product_id: SEEDED_IDS.granularA, qty_entered: 1, uom_entered: "T" }],
   });
@@ -175,7 +175,7 @@ test("an account that cannot carry the sale on account: refused in words, nothin
   // runs, and the till shows the server's own words for the $6.72 the sale
   // would have booked on the account.
   await pickCustomer(page, "DEMO-C07", "DEMO-C07");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking Paver 60 mm, Charcoal");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Charge Account" }).click();
   await page.getByTestId("pos-complete-sale").click();
@@ -193,7 +193,7 @@ test("tender and receipt: cash with change due, held against the core's own read
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
+  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8 ft");
   // The pre-ring payment step, held against the core's own prices (rows 985
   // and 661, round 7): the card's shape is the Subtotal row, then the Tax and
   // Total rows the server's sale-preview states (three rows, never the
@@ -257,7 +257,7 @@ test("tender and receipt: cash with change due, held against the core's own read
   // The customer row is required on every sale: the walk-in sale prints the
   // counter's own word beside the walk-in account.
   expect(printedText).toContain("Customer: Walk-in");
-  expect(printedText).toContain("Hardscape House (demo)");
+  expect(printedText).toContain("Gable Landscape Supply");
   expect(printedText).toContain("12 Yard Gate Road");
   // The letterhead's honesty pin: the first dealer's real trading name never
   // prints. The name rides encoded (the name sweep's own discipline), so the
@@ -316,7 +316,7 @@ test("tender and receipt: a card sale says no card was charged, on the tender an
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-PAV-BRUSSELS", "Brussels Dimensional, Sandstone (demo)");
+  await searchAndAdd(page, "DEMO-PAV-SANDSTONE", "Dimensional Paver, Sandstone");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Card", exact: true }).click();
   await expect(page.getByText("TEST MODE: simulated terminal")).toBeVisible();
@@ -337,14 +337,14 @@ test("tender and receipt: an account sale bills the account, invoice and fresh b
     const read = await staffGet(
       page,
       bearer,
-      `/api/v1/customers/search?q=Bay%20Ridge&branch_id=${TRENTON_ID}`,
+      `/api/v1/customers/search?q=Bay%20Ridge&branch_id=${POINT_LOMA_ID}`,
     );
     const rows = read.body as unknown as Array<Record<string, unknown>>;
     return rows[0].open_balance_cents as number;
   };
   const balanceBefore = await balanceOf();
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
-  await searchAndAdd(page, "DEMO-STEP-SLAB", "Step Slab 24x48, Natural (demo)");
+  await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
+  await searchAndAdd(page, "DEMO-STEP-SLAB", "Step Slab 24x48, Natural");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Charge Account" }).click();
   const rung = await ring(page);
@@ -373,7 +373,7 @@ test("parked sales: the branch's list, a park and a pickup, never the other bran
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-MULCH-BLACK", "Black Cedar Mulch (demo)");
+  await searchAndAdd(page, "DEMO-MULCH-BLACK", "Black Cedar Mulch");
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
   const dialog = await openParked(page);
@@ -381,14 +381,14 @@ test("parked sales: the branch's list, a park and a pickup, never the other bran
   // What the world left waiting counts first: the seed's walk-in ticket is
   // among it, and the ticket just parked comes on top.
   const waiting = await parked.count();
-  await expect(dialog).toContainText(SEEDED.trentonTicket);
+  await expect(dialog).toContainText(SEEDED.pointLomaTicket);
   await expect(dialog).toContainText("Saved carts for this branch");
-  await expect(dialog).not.toContainText(SEEDED.kingstonTicket);
+  await expect(dialog).not.toContainText(SEEDED.julianTicket);
   expect(waiting).toBeGreaterThanOrEqual(2);
   await shot(page, "sales-07-parked", testInfo);
   // Pick the seeded walk-in ticket up, as anyone at this counter may: it
   // prices fresh through the engine.
-  await parked.filter({ hasText: SEEDED.trentonTicket }).getByRole("button", { name: "Resume" }).click();
+  await parked.filter({ hasText: SEEDED.pointLomaTicket }).getByRole("button", { name: "Resume" }).click();
   await expect(dialog).toHaveCount(0);
   await openStep(page, "items");
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
@@ -399,8 +399,8 @@ test("parked sales: the branch's list, a park and a pickup, never the other bran
   await page.getByRole("button", { name: "Park ticket" }).click();
   const again = await openParked(page);
   await expect(again.locator(".ticket")).toHaveCount(waiting);
-  await expect(again).not.toContainText(SEEDED.trentonTicket);
-  await expect(again).not.toContainText(SEEDED.kingstonTicket);
+  await expect(again).not.toContainText(SEEDED.pointLomaTicket);
+  await expect(again).not.toContainText(SEEDED.julianTicket);
 });
 
 test("a two order return: lines from both orders, one credit note in cash, and the drawer drops by its total", async ({
@@ -412,18 +412,18 @@ test("a two order return: lines from both orders, one credit note in cash, and t
   // one credit note, each order's return with its number, and the drawer's expected cash drops by the
   // note's total, the server's figure read off the Done step.
   await signIn(page, "Sales");
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
+  await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking Paver 60 mm, Charcoal");
   const first = await ringCash(page, "20.00");
   await page.goto("/");
   await signIn(page, "Sales");
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
-  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
+  await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
+  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8 ft");
   const second = await ringCash(page, "60.00");
 
   await openReturns(page);
-  await page.getByLabel("Search name or account number").fill("Bay Ridge");
-  await page.getByRole("button", { name: /Bay Ridge Landscaping \(demo\)/ }).click();
+  await page.getByLabel("Search name or account number").fill("Ridgeview");
+  await page.getByRole("button", { name: /Ridgeview Outdoor Living/ }).click();
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "lines");
   const orderOne = page.getByTestId("returns-order").filter({ hasText: first.order_no });
   const orderTwo = page.getByTestId("returns-order").filter({ hasText: second.order_no });
@@ -472,23 +472,23 @@ test("a two order return: lines from both orders, one credit note in cash, and t
 test("a swap: the credit pays a new order, the leftover goes back by cash, both documents name each other", async ({
   page,
 }, testInfo) => {
-  // Item 10, the swap: a cash sale is rung to the Bay Ridge account, then Returns takes its line back to
+  // Item 10, the swap: a cash sale is rung to the Ridgeview account, then Returns takes its line back to
   // stock and the replacement goods (the server prices them) are paid by the credit. The leftover goes back
   // by the original tender, cash from the drawer, so the drawer's expected cash drops by exactly the
   // leftover the Done step states. The figures are the server's: the preview before and the commit after
   // must say the same new order total.
   await signIn(page, "Sales");
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
-  await setQuantity(page, "Holland Paver, Charcoal (demo)", "40");
+  await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking Paver 60 mm, Charcoal");
+  await setQuantity(page, "Interlocking Paver 60 mm, Charcoal", "40");
   const rung = await ringCash(page, "400.00");
   const bearer = await mint(page, "sales");
   const drawerId = await openDrawer(page, bearer);
   const before = await expectedCash(page, bearer, drawerId);
 
   await openReturns(page);
-  await page.getByLabel("Search name or account number").fill("Bay Ridge");
-  await page.getByRole("button", { name: /Bay Ridge Landscaping \(demo\)/ }).click();
+  await page.getByLabel("Search name or account number").fill("Ridgeview");
+  await page.getByRole("button", { name: /Ridgeview Outdoor Living/ }).click();
   const order = page.getByTestId("returns-order").filter({ hasText: rung.order_no });
   await expect(order).toHaveCount(1);
   await order.getByRole("button", { name: "Return to stock" }).first().click();
@@ -524,7 +524,7 @@ test("a walk in return: found by its receipt number, cash or card only, and the 
   // receipt or order number. The account rail is not offered (it goes back to cash or card), and a cash
   // refund moves the drawer's expected cash by exactly the note's total, the server's figure on Done.
   await signIn(page, "Sales");
-  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8ft (demo)");
+  await searchAndAdd(page, "DEMO-EDGE-ALU", "Aluminum Edging 8 ft");
   const rung = await ringCash(page, "60.00");
   const bearer = await mint(page, "sales");
   const drawerId = await openDrawer(page, bearer);
