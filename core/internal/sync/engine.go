@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 )
 
@@ -153,7 +155,30 @@ func (e *Engine) Push(ctx context.Context, info ScopeInfo, f ScopeFilter, ops []
 // SyncPushResult: status (applied, conflict, rejected), seq when the
 // operation wrote, the conflict envelope when it conflicted, error when it
 // was rejected.
+//
+// The idempotency key is canonicalized here, once: a uuid is one key whatever
+// its letter case, and the ledger's slot lock, the ledger's uuid column and
+// the modules' dedup columns must all see one spelling, or the same key in
+// two cases takes two locks and both bodies apply. The result answers with
+// the spelling the client sent, which is how it matches results to its outbox.
 func (e *Engine) pushOne(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation) (apigen.SyncPushResult, error) {
+	sent := op.ClientId
+	if validOp(op) == nil {
+		if id, err := uuid.Parse(sent); err == nil {
+			op.ClientId = id.String()
+		}
+	}
+	res, err := e.pushCanonical(ctx, store, info, f, op)
+	if err == nil {
+		res.ClientId = sent
+		if res.Conflict != nil {
+			res.Conflict.ClientId = sent
+		}
+	}
+	return res, err
+}
+
+func (e *Engine) pushCanonical(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation) (apigen.SyncPushResult, error) {
 	if err := validOp(op); err != nil {
 		return e.auditRejected(ctx, info, f, op, "", err), nil
 	}
