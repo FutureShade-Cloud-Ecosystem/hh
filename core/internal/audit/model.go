@@ -89,6 +89,7 @@ const (
 	// answered from, filtered on action alone.
 	ActSyncPush           = "SYNC_PUSH"            // one applied or rejected outbox operation
 	ActSyncConflictReview = "SYNC_CONFLICT_REVIEW" // a manual conflict left waiting on a review card
+	ActSyncKeyReused      = "SYNC_KEY_REUSED"      // an idempotency key reused with a different body, refused
 )
 
 // sensitiveActions are badged in the viewer and follow the masked-only contract.
