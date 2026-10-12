@@ -349,22 +349,31 @@ func TestLoadSessionKeysRefusals(t *testing.T) {
 }
 
 // No output of the loaded material carries a private member: the key set
-// serves only public coordinates, and the minter has no marshal path.
+// serves only public coordinates, and the minter has no marshal path. The
+// scalar is searched for in every encoding a struct dump could use: base64url,
+// decimal and hex. A minter that gained an exported key field would marshal
+// the scalar as a decimal number, so the marshal must be exactly "{}".
 func TestNoPrivateMemberInAnyOutput(t *testing.T) {
 	k := freshPriv(t)
 	m := newTestMinter(t, k)
 	set, _ := NewSessionKeySet(m.PublicKey(), nil, nil)
 	dBytes := make([]byte, 32)
 	k.D.FillBytes(dBytes)
-	dB64 := base64.RawURLEncoding.EncodeToString(dBytes)
+	needles := []string{base64.RawURLEncoding.EncodeToString(dBytes), k.D.String(), k.D.Text(16)}
 	tok, _ := m.Mint("sub", time.Hour)
-	outputs := []string{string(set.JWKS()), tok}
-	if b, err := json.Marshal(m); err == nil {
-		outputs = append(outputs, string(b))
+	marshalled, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal minter: %v", err)
 	}
+	if string(marshalled) != "{}" {
+		t.Fatalf("the minter marshals to %s, want {}", marshalled)
+	}
+	outputs := []string{string(set.JWKS()), tok, string(marshalled)}
 	for i, out := range outputs {
-		if strings.Contains(out, dB64) {
-			t.Errorf("output %d carries the private scalar", i)
+		for _, needle := range needles {
+			if strings.Contains(out, needle) {
+				t.Errorf("output %d carries the private scalar (%d chars)", i, len(needle))
+			}
 		}
 	}
 	var doc struct {
