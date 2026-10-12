@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,5 +161,31 @@ func TestSessionCompositionLoadsAndMints(t *testing.T) {
 	comp, err = loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff")
 	if err != nil || comp.exchangeTTL != 30*time.Minute {
 		t.Fatalf("ttl: %v %v", err, comp)
+	}
+}
+
+func captureLog(buf *bytes.Buffer) *slog.Logger {
+	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+// CORE_JWKS_URL set on a console copy is unused (the core verifies through
+// its own key set, so bridge tokens do not verify): one warning names the
+// variable and never its value.
+func TestJWKSURLSetInConsoleModeWarnsOnceWithoutTheValue(t *testing.T) {
+	var buf bytes.Buffer
+	warnUnusedJWKSURL(captureLog(&buf), getenvOf(map[string]string{"CORE_JWKS_URL": "https://bridge.example.test/secret-path-jwks"}))
+	out := buf.String()
+	if strings.Count(out, "level=WARN") != 1 || !strings.Contains(out, "CORE_JWKS_URL") {
+		t.Fatalf("log = %q", out)
+	}
+	if strings.Contains(out, "bridge.example.test") || strings.Contains(out, "secret-path") {
+		t.Fatalf("the warning carries the value: %q", out)
+	}
+
+	buf.Reset()
+	warnUnusedJWKSURL(captureLog(&buf), getenvOf(map[string]string{"CORE_JWKS_URL": "  "}))
+	warnUnusedJWKSURL(captureLog(&buf), getenvOf(map[string]string{}))
+	if buf.Len() != 0 {
+		t.Fatalf("a warning for an unset name: %q", buf.String())
 	}
 }

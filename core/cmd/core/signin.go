@@ -10,6 +10,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -135,4 +136,16 @@ func consoleMembership(endpoint, project, apiKey string) (authz.MembershipSource
 		return nil, err
 	}
 	return authz.NewCachedMembership(appwrite, 30*time.Second), nil
+}
+
+// warnUnusedJWKSURL logs one warning when the remote JWK Set URL is still
+// configured on a console copy. The core verifies through its own key set,
+// so the URL is unused and a bridge issued token does not verify: an
+// operator who kept the name expects otherwise. The warning names the
+// variable and never its value.
+func warnUnusedJWKSURL(log *slog.Logger, getenv func(string) string) {
+	if strings.TrimSpace(getenv("CORE_JWKS_URL")) == "" {
+		return
+	}
+	log.Warn("CORE_JWKS_URL is set but unused in console mode: the core verifies its own tokens through its session key set, so tokens from another issuer do not verify; unset it")
 }

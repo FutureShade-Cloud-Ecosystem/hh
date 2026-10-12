@@ -300,6 +300,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		if err != nil {
 			return nil, err
 		}
+		warnUnusedJWKSURL(log, getenv)
 		keySource, claimIss = session.keys, demoCfg.issuer
 	} else {
 		iss, err = issuer.New(demoCfg.staffAudience, demoCfg.tokenTTL)

@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
@@ -87,5 +90,23 @@ func TestBootDefaultBuildRefusesWithoutAKey(t *testing.T) {
 	env.set("CORE_TOKEN_ISSUER", "hh-demo")
 	if _, err := registerRoutes(&recordingRegistrar{inner: http.NewServeMux()}, env.getenv); err == nil {
 		t.Fatal("booted with the hh-demo issuer")
+	}
+}
+
+// The boot of the real composition logs the warning when the stale remote
+// URL is still configured.
+func TestBootDefaultBuildWarnsAboutAStaleJWKSURL(t *testing.T) {
+	env := newCompEnv(t)
+	env.set("CORE_JWKS_URL", "https://bridge.example.test/jwks")
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(captureLog(&buf))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	registeredSurface(t, env)
+	if !strings.Contains(buf.String(), "CORE_JWKS_URL") {
+		t.Fatalf("no warning at boot: %q", buf.String())
+	}
+	if strings.Contains(buf.String(), "bridge.example.test") {
+		t.Fatal("the warning carries the value")
 	}
 }

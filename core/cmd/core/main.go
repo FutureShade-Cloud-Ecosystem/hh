@@ -349,6 +349,7 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	if err != nil {
 		return nil, err
 	}
+	warnUnusedJWKSURL(log, getenv)
 	verifier, err := identity.NewVerifier(identity.Config{
 		KeySource:        session.keys,
 		Issuer:           auth.issuer,
