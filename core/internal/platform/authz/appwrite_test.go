@@ -215,3 +215,27 @@ func TestAppwriteRejectsMalformedSlug(t *testing.T) {
 		t.Fatalf("request left the process for a malformed slug")
 	}
 }
+
+// A redirect from the platform is an operational failure and the key header
+// is never re-sent to wherever it points.
+func TestAppwriteRefusesRedirects(t *testing.T) {
+	var hits int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	}))
+	defer target.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/x", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+	src, err := NewAppwriteMembershipSource(srv.URL, "p", "k", &http.Client{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.OrgMember(context.Background(), "u1", "acme"); err == nil {
+		t.Fatal("a redirect was treated as an answer")
+	}
+	if atomic.LoadInt32(&hits) != 0 {
+		t.Fatal("the redirect was followed")
+	}
+}
