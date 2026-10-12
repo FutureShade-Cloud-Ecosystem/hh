@@ -10,6 +10,8 @@
 #[serde(rename_all = "snake_case")]
 pub enum Slot {
     SessionToken,
+    // Probe scaffolding: the probe 4 harness writes here. Absent from a normal build.
+    #[cfg(feature = "probe")]
     Probe,
 }
 
@@ -17,6 +19,7 @@ impl Slot {
     pub fn name(self) -> &'static str {
         match self {
             Slot::SessionToken => "session_token",
+            #[cfg(feature = "probe")]
             Slot::Probe => "probe",
         }
     }

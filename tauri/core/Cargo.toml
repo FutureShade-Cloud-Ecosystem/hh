@@ -6,6 +6,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+# `probe` adds the probe 4 keychain slot. Off by default; hh-field's `probe`
+# feature turns it on. Removed with the probe.
+[features]
+probe = []
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 
