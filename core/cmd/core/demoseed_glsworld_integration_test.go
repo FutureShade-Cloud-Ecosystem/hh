@@ -94,6 +94,18 @@ func TestDemoWorld_BranchRoomsAnswerTheBranchCodes(t *testing.T) {
 		}
 	}
 
+	// The depots the distance estimates start from sit in San Diego County, not at the first
+	// dealer's town centres (migration 0093 plants those; the build-only pass moves them).
+	for _, id := range []string{trentonBranchID, glsJulianBranchID} {
+		var lat, lng float64
+		if err := pool.QueryRow(ctx, `SELECT latitude, longitude FROM dispatch_branch_depots WHERE branch_id = $1::uuid`, id).Scan(&lat, &lng); err != nil {
+			t.Fatalf("the depot of %s: %v", id, err)
+		}
+		if lat < 32.5 || lat > 33.5 || lng < -117.6 || lng > -116.0 {
+			t.Errorf("the depot of %s sits at %.4f, %.4f, outside San Diego County", id, lat, lng)
+		}
+	}
+
 	notifier := yardChatNotifier{svc: svc, figuresOK: func(string) (bool, error) { return false, nil }}
 	post := func(key, branch string, audience tasks.Audience, body string) {
 		t.Helper()
@@ -170,6 +182,13 @@ func TestDemoWorld_NoTextColumnReadsAFirstDealerWord(t *testing.T) {
 		`scrubbed party`, `scrubname`, `best.?way`, `brussels`, `holland`, `courtstone`, `granular a`,
 		`northline`, `bay ridge`, `hastings`, `613[.-]\d{3}[.-]\d{4}`,
 	}, "|")
+	// The marker suffix is gone from the tenant's own entities, and the rebate's name carries no dash.
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM projects WHERE name ~* '\(demo\)'`); n != 0 {
+		t.Errorf("%d project name(s) still carry the marker suffix", n)
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM rebate_programs WHERE name ~ $1`, "[\u2013\u2014]"); n != 0 {
+		t.Errorf("%d rebate name(s) still carry a dash", n)
+	}
 	rows, err := pool.Query(ctx, `
 		SELECT c.table_name, c.column_name FROM information_schema.columns c
 		  JOIN information_schema.tables t ON t.table_name = c.table_name AND t.table_schema = c.table_schema
@@ -197,5 +216,18 @@ func TestDemoWorld_NoTextColumnReadsAFirstDealerWord(t *testing.T) {
 		if n := qwCount(t, ctx, pool, q, pattern); n != 0 {
 			t.Errorf("%s.%s reads a first dealer word in %d row(s)", c.table, c.column, n)
 		}
+	}
+}
+
+// TestDemoWorld_TenantConfigRouteNamesTheDealer: the route itself, on the demo graph the box
+// serves, answers the demo dealer and not the first dealer's stub.
+func TestDemoWorld_TenantConfigRouteNamesTheDealer(t *testing.T) {
+	rec, _ := rgDemoGateCase(t)
+	code, body := rgDemoProbe(t, rec, "GET", "/api/v1/tenant/config", nil)
+	if code != 200 {
+		t.Fatalf("GET /api/v1/tenant/config answered %d (%s), want 200", code, body)
+	}
+	if !strings.Contains(body, `"dealer_name":"Gable Landscape Supply"`) || glsDenylist.MatchString(body) {
+		t.Errorf("the demo box's public tenant config reads %s, want the demo dealer and no first dealer word", body)
 	}
 }

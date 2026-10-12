@@ -255,6 +255,10 @@ var glsTokens = [][2]string{
 	{"BisTrack", "the old system"},
 	{"1150mm", "45 in."},
 	{" (demo)", ""},
+	{" (Demo)", ""},
+	// A dash in a seeded value reads as a comma (the house rule: no dashes on a screen).
+	{" \u2014 ", ", "},
+	{" \u2013 ", ", "},
 }
 
 // glsPhone moves the plan's Ontario test numbers to San Diego County numbers in the reserved
