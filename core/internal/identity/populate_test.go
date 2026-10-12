@@ -108,6 +108,32 @@ func b4RoleID(t *testing.T, pool *pgxpool.Pool, code string) string {
 	return id
 }
 
+// b4SetPlantedAside sets aside (true) or restores (false) the rows the
+// migrations plant (users, their roles and branch grants, a portal row,
+// registry drivers), which are not the fixture's. Aside means tombstoned,
+// so every candidate, link, grant and verification read skips them, and
+// stamped with the foreign scope values, so the stamp steps leave them
+// untouched. Restored is the migrations' shape: live and unstamped.
+func b4SetPlantedAside(t *testing.T, pool *pgxpool.Pool, aside bool) {
+	t.Helper()
+	const planted = `NOT LIKE 'bb400000-%'`
+	del, org, tenant := "NULL", "NULL", "NULL"
+	if aside {
+		del, org, tenant = "now()", "'"+b4PreSetOrg+"'", "'"+b4PreSetTenant+"'"
+	}
+	for _, q := range []string{
+		`UPDATE users SET deleted_at = ` + del + `, org_id = ` + org + ` WHERE id::text ` + planted,
+		`UPDATE user_roles SET deleted_at = ` + del + `, org_id = ` + org + ` WHERE user_id::text ` + planted,
+		`UPDATE user_branch_grants SET deleted_at = ` + del + `, org_id = ` + org + ` WHERE user_id::text ` + planted,
+		`UPDATE portal_users SET deleted_at = ` + del + `, tenant_id = ` + tenant + ` WHERE id::text ` + planted,
+		`UPDATE dispatch_drivers SET deleted_at = ` + del + ` WHERE id::text ` + planted,
+	} {
+		if _, err := pool.Exec(context.Background(), q); err != nil {
+			t.Fatalf("planted rows aside=%v: %v (statement %.60s...)", aside, err, q)
+		}
+	}
+}
+
 // b4BuildFromFixture inserts the FROM side. The catalog rows (staff_role,
 // hhpro_contractor_role_map, roles) are migration seeds and are never
 // written here.
@@ -121,6 +147,11 @@ func b4BuildFromFixture(t *testing.T, pool *pgxpool.Pool) *b4Fixture {
 			t.Fatalf("fixture build: %v (statement %.60s...)", err, query)
 		}
 	}
+
+	// The migrations plant people of their own; the exact world counts
+	// below are the fixture's alone, so those rows sit aside for the run
+	// and cleanup restores them.
+	b4SetPlantedAside(t, pool, true)
 
 	exec(`INSERT INTO locations (id, branch_id, parent_id, loc_type, code, name, address) VALUES
 		($1, $1, NULL, 'BRANCH', 'B4A', 'B4 Fixture Branch A', '{}'),
@@ -230,6 +261,7 @@ func (f *b4Fixture) cleanup(t *testing.T) {
 	exec(`DELETE FROM users WHERE id::text LIKE 'bb400000-0000-4000-8000-0000000001%'`)
 	exec(`DELETE FROM locations WHERE id IN ($1, $2)`, b4BranchA, b4BranchB)
 	exec(`DELETE FROM org WHERE slug = $1`, b4OrgSlug)
+	b4SetPlantedAside(t, f.pool, false)
 }
 
 // directory answers the sixteen fixture users, the pre-stamped probe, and
@@ -880,7 +912,9 @@ func TestLinkPlatformIdentitiesLegs(t *testing.T) {
 		if _, err := pool.Exec(context.Background(), `DELETE FROM users WHERE id IN ($1, $2, $3)`, ids[0], ids[1], ids[2]); err != nil {
 			t.Fatalf("clean link users: %v", err)
 		}
+		b4SetPlantedAside(t, pool, false)
 	})
+	b4SetPlantedAside(t, pool, true)
 	exec := func(query string, args ...any) {
 		t.Helper()
 		if _, err := pool.Exec(ctx, query, args...); err != nil {
