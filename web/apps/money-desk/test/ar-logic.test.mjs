@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { formatMoney, parseAmountToCents, centsToField } from "../src/ar/ar-money.ts";
-import { canLiftHolds, lineWords, cardRange, cardTitle, holdKindWord, holdMarks, paymentOutcome, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise } from "../src/ar/ar-logic.ts";
+import { canLiftHolds, lineWords, cardRange, cardTitle, holdKindWord, holdMarks, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, relativeDay, rowMarks, statusTone, statusWord, validatePromise } from "../src/ar/ar-logic.ts";
 
 test("an amount typed is read through the decimal string and never a float", () => {
   assert.equal(parseAmountToCents("19.68"), 1968);
@@ -85,6 +85,15 @@ test("a worded 4xx is a refusal in the route's own words, and says the payment w
   assert.equal(missing.words, "The payment was not recorded. No such invoice: 0b1c2d3e.");
   assert.equal(paymentOutcome("Forbidden", 403).kind, "refused");
   assert.ok(paymentOutcome("Forbidden", 403).words.startsWith("The payment was not recorded."));
+});
+
+test("the pick ceiling words are the route's own sentence, said by the browser before any body is sent", () => {
+  // The core's validateApply refuses a pick over its ceiling ahead of its replay judgement; the desk
+  // refuses the same pick in the same words, so the route's sentence leads and the count follows.
+  assert.equal(MAX_APPLY_INVOICES, 100);
+  const words = pickCeilingWords(101);
+  assert.ok(words.startsWith("A received payment may name at most 100 invoices; record it as more than one payment."), words);
+  assert.ok(words.endsWith("101 invoices are picked."), words);
 });
 
 test("the replay refusal for a different payment says both things: the earlier press recorded, this one not", () => {

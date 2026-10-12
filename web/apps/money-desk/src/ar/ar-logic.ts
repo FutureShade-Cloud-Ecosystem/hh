@@ -171,6 +171,16 @@ export function paymentOutcome(error: string, status: number | undefined, heldKe
   return { kind: "refused", words: `The payment was not recorded. ${refusalWords("payment", error, status)}` };
 }
 
+/** The route's ceiling on a payment's invoice list (core/internal/payments/received_apply.go, MaxApplyInvoices):
+ * a pick over it is the one body the app can build that the route refuses ahead of its replay judgement,
+ * so the desk refuses it in the route's own words and no such body is ever sent, not even a preview's. */
+export const MAX_APPLY_INVOICES = 100;
+
+/** The ceiling's words for a pick over it: the route's own sentence first, then the pick's count. */
+export function pickCeilingWords(picked: number): string {
+  return `A received payment may name at most ${MAX_APPLY_INVOICES} invoices; record it as more than one payment. ${picked} invoices are picked.`;
+}
+
 export type PromiseCheck = { ok: true; promisedCents: number } | { ok: false; words: string };
 
 export function validatePromise(input: { amountText: string; date: string; by: string; note: string; balanceCents: number }): PromiseCheck {

@@ -678,6 +678,55 @@ test("a worded 4xx says the payment was not recorded in the route's own words, a
   expect(posts[1]?.idempotency_key).not.toBe(posts[0]?.idempotency_key);
 });
 
+test("a pick of more than 100 invoices is refused in the browser with the route's words: no body is sent and the held key is kept", async ({ page, request }) => {
+  // The wide world: Granite Edge carries 101 open invoices, the one pick the app can build that the
+  // core's validateApply refuses ahead of its replay judgement, so the desk refuses it before the wire.
+  await request.post("/_stub/scenario", { data: { name: "wide" } });
+  const posts: ApplyBody[] = [];
+  const overCeiling: ApplyBody[] = [];
+  let lose = true;
+  await page.route("**/api/v1/ar/payments/apply", async (route) => {
+    const body = route.request().postDataJSON() as ApplyBody;
+    // The route's ceiling is 100 invoices: once the desk guards it, no body naming more is ever
+    // sent, not a preview's and not a post's.
+    if (body.invoice_ids.length > 100) overCeiling.push(body);
+    if (body.preview) return route.continue();
+    posts.push(body);
+    if (lose) {
+      lose = false;
+      await route.fetch();
+      return route.abort("connectionreset");
+    }
+    return route.continue();
+  });
+  await page.addInitScript(receivablesHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-card]")).toHaveCount(4);
+  await openAccount(page, "Granite Edge Landscaping (demo)");
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been recorded");
+  // Pick all open: 101 invoices. The split area and the press read the route's own ceiling words, and
+  // the browser is their source: no apply body naming over 100 invoices goes out, not even a preview's.
+  await page.getByRole("button", { name: "Pick all open" }).click();
+  await expect(page.locator("[data-preview-error]")).toContainText("A received payment may name at most 100 invoices; record it as more than one payment");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-error]")).toContainText("A received payment may name at most 100 invoices; record it as more than one payment");
+  // The guard is the browser's own stop, so the route refusal's frame is not used: nothing was sent.
+  await expect(page.locator("[data-error]")).not.toContainText("The payment was not recorded");
+  await expect(page.getByRole("button", { name: "Record payment" })).toBeEnabled();
+  expect(overCeiling).toHaveLength(0);
+  expect(posts).toHaveLength(1);
+  // The held key is untouched by the guard: the next press under a lawful pick carries it, and the
+  // route answers the replay.
+  await fillCheque(page);
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Payment PAY-0101 was already applied");
+  expect(posts).toHaveLength(2);
+  expect(posts[1]?.idempotency_key).toBe(posts[0]?.idempotency_key);
+  await request.post("/_stub/reset");
+});
+
 test("on a phone the already applied notice after a replay is brought into view", async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const posts: ApplyBody[] = [];

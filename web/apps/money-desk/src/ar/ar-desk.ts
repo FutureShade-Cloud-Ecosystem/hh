@@ -14,7 +14,7 @@ import { html, type TemplateResult } from "lit";
 import type { BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
-import { canLiftHolds, paymentOutcome, refusalWords, validatePromise } from "./ar-logic.js";
+import { canLiftHolds, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import {
   renderAccount,
@@ -557,6 +557,13 @@ export class ArDesk {
       this.#host.repaint();
       return;
     }
+    // The pick ceiling holds for a preview too: the route would refuse this body ahead of its replay
+    // judgement, so the split area says the route's words and no such body is sent.
+    if (account.picked.length > MAX_APPLY_INVOICES) {
+      this.#account = { ...account, preview: null, previewError: pickCeilingWords(account.picked.length) };
+      this.#host.repaint();
+      return;
+    }
     const answer = await this.#api.applyPayment({
       customerId: account.customerId,
       method: METHODS.find((m) => m === account.method) ?? "CHEQUE",
@@ -580,6 +587,10 @@ export class ArDesk {
     const reference = this.#host.field("receive-reference").trim();
     if (cents === null || cents === 0) return this.#stopApply("Enter the amount received, such as $100.00.");
     if (account.picked.length === 0) return this.#stopApply("Pick the invoices the payment is for. Pick all open takes every open invoice.");
+    // The route's own ceiling, said here so the body is never sent: a pick over it is refused ahead of
+    // the route's replay judgement, which would end a held key for a body the desk could refuse itself.
+    // The guard is a stop before the wire, so the button and any held key are untouched by it.
+    if (account.picked.length > MAX_APPLY_INVOICES) return this.#stopApply(pickCeilingWords(account.picked.length));
     if (reference === "") return this.#stopApply("Enter a reference, such as a cheque number.");
     this.#busy = true;
     this.#clearMessages();

@@ -93,6 +93,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "apply-refused": [
     { file: RECEIVABLES, test: "a worded 4xx says the payment was not recorded in the route's own words, and the next press is a new payment with a new key" },
     { file: RECEIVABLES, test: "a payment that cannot be posted is stopped in words, and the server's refusal shows beside the split" },
+    { file: RECEIVABLES, test: "a pick of more than 100 invoices is refused in the browser with the route's words: no body is sent and the held key is kept" },
   ],
   "paid-context": [{ file: RECEIVABLES, test: "a paid invoice stays for context, dimmed, and takes nothing" }],
   promise: [{ file: RECEIVABLES, test: "a promise to pay is recorded, and a second is refused in the core's words" }],

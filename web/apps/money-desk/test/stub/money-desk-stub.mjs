@@ -147,6 +147,12 @@ const INVOICES = [
 
 const NSF_FEE = 3500;
 
+// The wide world's extra invoices: 99 open $10.00 invoices on the first account, so a Pick all open
+// names 101 invoices and the pick ceiling leg can draw the one body the app can build that the core's
+// validateApply refuses ahead of its replay judgement ("a received payment may name at most 100
+// invoices"). The full world's accounts carry too few to draw it.
+const WIDE_EXTRA = Array.from({ length: 99 }, (_, i) => ({ n: 101 + i, acct: 1, late: -3, total: 1_000 }));
+
 let world;
 
 // The payments writer's park: the next real apply's ANSWER is held for the asked window, the
@@ -158,9 +164,10 @@ let parkedApplyMs = 0;
 
 function reset(kind = "full") {
   parkedApplyMs = 0;
+  const source = kind === "wide" ? [...INVOICES, ...WIDE_EXTRA] : INVOICES;
   world = {
     empty: kind === "empty",
-    invoices: INVOICES.map((i) => ({
+    invoices: source.map((i) => ({
       id: uuid("a", i.n),
       invoice_no: `INV-${1000 + i.n}`,
       acct: i.acct,
@@ -549,7 +556,7 @@ async function handle(req, res) {
   }
   if (method === "POST" && path === "/_stub/scenario") {
     const body = await readBody(req);
-    reset(body?.name === "empty" ? "empty" : "full");
+    reset(body?.name === "empty" ? "empty" : body?.name === "wide" ? "wide" : "full");
     return send(res, 200, { ok: true });
   }
   if (method === "POST" && path === "/_stub/park-apply") {
