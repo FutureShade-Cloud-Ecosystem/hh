@@ -5,7 +5,7 @@
   "identifier": "ai.futurebuild.hh.field",
   "build": {
     "frontendDist": "../../web/apps/front-door/dist",
-    "beforeBuildCommand": "npm --prefix ../../web/apps/front-door run build"
+    "beforeBuildCommand": "npm --prefix \"$(git rev-parse --show-toplevel)/web/apps/front-door\" run build"
   },
   "app": {
     "withGlobalTauri": false,
