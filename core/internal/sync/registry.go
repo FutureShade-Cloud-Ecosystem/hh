@@ -98,10 +98,10 @@ var scopes = map[string]ScopeInfo{
 	"delivery_stops":  {Name: "delivery_stops", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersDispatchBoard, Ops: opsCreateUpdate},
 	"will_call":       {Name: "will_call", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersDispatchBoard, Ops: opsCreateUpdate},
 	"purchase_orders": {Name: "purchase_orders", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersBuyingStock, Ops: opsCreateUpdate},
-	"approvals":       {Name: "approvals", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersApprovals, Ops: opsCreateUpdateDelete},
-	"messages":        {Name: "messages", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersMessaging, Ops: opsCreateUpdate},
-	"acks":            {Name: "acks", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersMessaging, Ops: opsCreateOnly},
-	"orders":          {Name: "orders", Policy: PolicyServerWins, Tenancy: TenancyTenant, Writers: writersPortalBuy, Ops: opsCreateUpdate},
+	"approvals":       {Name: "approvals", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersAllStaff, Ops: opsCreateUpdateDelete},
+	"messages":        {Name: "messages", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersAllStaff, Ops: opsCreateUpdate},
+	"acks":            {Name: "acks", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersAllStaff, Ops: opsCreateOnly},
+	"orders":          {Name: "orders", Policy: PolicyServerWins, Tenancy: TenancyTenant, Writers: writersPortalBuy, Ops: opsCreateUpdateDelete},
 	"tracking_events": {Name: "tracking_events", Policy: PolicyServerWins, Tenancy: TenancyTenant, Writers: writersPortalTracked, Ops: opsCreateOnly},
 	"invoices":        {Name: "invoices", Policy: PolicyServerWins, Tenancy: TenancyBoth, Money: true},
 	"payments":        {Name: "payments", Policy: PolicyServerWins, Tenancy: TenancyTenant, Money: true},
@@ -110,7 +110,7 @@ var scopes = map[string]ScopeInfo{
 	// last_write_wins_by_field, per the confirmed table.
 	"attachments":           {Name: "attachments", Policy: PolicyLWWByField, Tenancy: TenancyOrg, Writers: writersAttachments, Ops: opsCreateUpdateDelete},
 	"quotes":                {Name: "quotes", Policy: PolicyLWWByField, Tenancy: TenancyOrg, Writers: writersQuoteDesk, Ops: opsCreateUpdateDelete},
-	"notify_prefs":          {Name: "notify_prefs", Policy: PolicyLWWByField, Tenancy: TenancyOrg, Writers: writersMessaging, Ops: opsCreateUpdate},
+	"notify_prefs":          {Name: "notify_prefs", Policy: PolicyLWWByField, Tenancy: TenancyOrg, Writers: writersAllStaff, Ops: opsCreateUpdate},
 	"scope_items":           {Name: "scope_items", Policy: PolicyLWWByField, Tenancy: TenancyTenant, Writers: writersPortalBuy, Ops: opsCreateUpdate},
 	"delivery_instructions": {Name: "delivery_instructions", Policy: PolicyLWWByField, Tenancy: TenancyTenant, Writers: writersPortalField, Ops: opsCreateUpdate},
 

@@ -222,6 +222,9 @@ func qd1gPushOne(t *testing.T, q *qd1bFixture, scope, sub, op string, payload ma
 		item["base_seq"] = *baseSeq
 	}
 	code, body := qd1bCall(t, q, http.MethodPost, "/api/v1/sync/"+scope, sub, map[string]any{"ops": []any{item}})
+	if qd1bFenced(code, body) {
+		return false, body // the sync write fence refused the role: a refusal
+	}
 	if code != http.StatusOK {
 		t.Fatalf("push %s %s as %s: %d %s", scope, op, sub, code, body)
 	}
@@ -631,6 +634,9 @@ func qd1gQuotesFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 		id, no := qd1gQuote(t, c, k.branch, "SENT", c.ownerFor(who, k.own), key)
 		code, body := qd1bCall(t, c.q, http.MethodPost, "/api/v1/sync/quotes", who.sub, map[string]any{"ops": []any{
 			map[string]any{"client_id": key, "op": "update", "payload": map[string]any{"id": id, "valid_until": qd1cMoved()}}}})
+		if qd1bFenced(code, body) {
+			continue // a role off the writer list is refused before any replay lookup
+		}
 		if code != http.StatusOK {
 			t.Fatalf("replay as %s: %d %s", who.role, code, body)
 		}
@@ -836,6 +842,9 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 		}
 		code, body := qd1bCall(t, c.q, http.MethodPost, "/api/v1/sync/approvals", who.sub, map[string]any{"ops": []any{
 			map[string]any{"client_id": key, "op": "update", "payload": map[string]any{"id": id, "detail": "qd1g replay words"}}}})
+		if qd1bFenced(code, body) {
+			continue // a role off the writer list is refused before any replay lookup
+		}
 		if code != http.StatusOK {
 			t.Fatalf("replay as %s: %d %s", who.role, code, body)
 		}

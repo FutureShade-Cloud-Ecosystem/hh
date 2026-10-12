@@ -135,7 +135,7 @@ func TestSyncPushAuditRowsCarryTheActorThroughServe(t *testing.T) {
 
 	// Staff: the linked users.id, no subject key. An update of a row that
 	// does not exist is the rejected row on the staff scope.
-	push("fx-synca-staff-rejected", "pick_tasks", staff, "update", "3ef10000-0000-4000-8000-0000000193c3")
+	push("fx-synca-staff-rejected", "quotes", staff, "update", "3ef10000-0000-4000-8000-0000000193c3")
 	r := syncRow("fx-synca-staff-rejected")
 	if r.actorID == nil || *r.actorID != testkit.UserInsideSalesID {
 		t.Errorf("staff row actor_id %v, want the linked users.id %s", r.actorID, testkit.UserInsideSalesID)

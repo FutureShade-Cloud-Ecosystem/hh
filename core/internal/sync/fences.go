@@ -68,18 +68,14 @@ var (
 	writersDispatchBoard = []string{roleYardManager, roleLogisticsManager, roleBranchManager}
 	writersBuyingStock   = []string{roleYardManager, roleProcurementManager}
 	writersQuoteDesk     = []string{roleInsideSales, roleOutsideSales, roleSalesManager, roleBranchManager}
-	// writersApprovals is the REST twin's list (POST /staff/approvals needs
-	// work on counter-till, quote-desk or manager-home), since the catalog
-	// declares no outbox for the scope.
-	writersApprovals = []string{
-		roleInsideSales, roleOutsideSales, roleSalesManager, roleBranchManager,
-		roleYardManager, roleLogisticsManager, roleProcurementManager,
-		rolePayablesReceivables, roleFinancialController, roleGeneralManager,
-		roleSuperAdmin,
-	}
-	// writersMessaging is the thirteen staff roles (the matrix holds each at
-	// work or above on house-messages) plus the catalog's super_admin.
-	writersMessaging = []string{
+	// writersAllStaff is the thirteen staff roles (the matrix holds each at
+	// work or above on house-messages) plus the catalog's super_admin. It
+	// fences messages, acks and notify_prefs, and approvals too: the sync
+	// door census (cmd/core qd1g, decision row 745) rules the requester's own
+	// edit and withdrawal of an approval request whatever the role, and the
+	// approvals store holds the finer rules per role and per document, so
+	// the fence admits the whole row there and the store decides.
+	writersAllStaff = []string{
 		roleInsideSales, roleOutsideSales, roleYardTeam, roleDriver,
 		roleYardManager, roleLogisticsManager, roleBranchManager, roleSalesManager,
 		roleProcurementManager, rolePayablesReceivables, roleGeneralManager,
