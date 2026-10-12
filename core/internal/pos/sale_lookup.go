@@ -10,6 +10,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -256,10 +257,13 @@ func (r *Repository) LookupSales(ctx context.Context, q SaleLookupQuery) ([]Sale
 		add("ps.till_session_id = $%d", q.TillSessionID)
 	}
 	if q.Q != "" {
-		add(`(o.order_no ILIKE '%%' || $%[1]d || '%%'
-		      OR COALESCE(i.invoice_no,'') ILIKE '%%' || $%[1]d || '%%'
-		      OR c.name ILIKE '%%' || $%[1]d || '%%'
-		      OR c.account_no::text ILIKE '%%' || $%[1]d || '%%')`, q.Q)
+		// The term is a piece of text the customer handed over, not a pattern: it is escaped with
+		// the one house escaper and every ILIKE names `ESCAPE '\'`, so a '%' or '_' in what they
+		// said matches literally and cannot widen the search to rows it only fits as a wildcard.
+		add(`(o.order_no ILIKE '%%' || $%[1]d || '%%' ESCAPE '\'
+		      OR COALESCE(i.invoice_no,'') ILIKE '%%' || $%[1]d || '%%' ESCAPE '\'
+		      OR c.name ILIKE '%%' || $%[1]d || '%%' ESCAPE '\'
+		      OR c.account_no::text ILIKE '%%' || $%[1]d || '%%' ESCAPE '\')`, likeutil.EscapeLikePattern(q.Q))
 	}
 	// THE DAY IS RESOLVED IN GO, IN THE HOUSE ZONE, AND BOUND AS AN INSTANT. See the DIB-165 block
 	// above for why: `$N::date` against this TIMESTAMPTZ column was promoted at the session's zone,

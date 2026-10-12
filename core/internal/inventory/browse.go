@@ -23,6 +23,8 @@ package inventory
 import (
 	"context"
 	"strings"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 )
 
 // BrowseFilter is the applied filter set. Empty fields are "no constraint".
@@ -217,7 +219,10 @@ func browseWhere(f BrowseFilter, skipField string, args *[]any) string {
 	if f.Text != "" {
 		// The concatenation is byte-identical to the expression migration 0118 indexes; any drift and
 		// the GIN index silently stops being used, which shows up as a slow page and not as an error.
-		w = append(w, "(p.sku::text || ' ' || p.name || ' ' || p.manufacturer || ' ' || p.collection) ILIKE '%' || "+add(f.Text)+" || '%'")
+		// The term is text to find, not a pattern to read: it is escaped with the one house escaper
+		// and the ILIKE names ESCAPE '\', so a caller's '%' or '_' cannot widen the filter (the ESCAPE
+		// clause changes how the pattern is read, not the expression the index wraps).
+		w = append(w, "(p.sku::text || ' ' || p.name || ' ' || p.manufacturer || ' ' || p.collection) ILIKE '%' || "+add(likeutil.EscapeLikePattern(f.Text))+" || '%' ESCAPE '\\'")
 	}
 	inList := func(field, column string, vals []string) {
 		if field == skipField || len(vals) == 0 {

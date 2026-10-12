@@ -34,6 +34,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 )
 
 // AccountReach is a caller's branch authority projected onto a read: every branch, or a set of
@@ -122,9 +124,9 @@ func (r *Repository) LookupAccountScoped(ctx context.Context, ref string, reach 
 	           AND c.name NOT ILIKE 'walk-in%'
 	           AND ($2::uuid[] IS NULL OR c.home_branch_id = ANY($2::uuid[]) OR c.home_branch_id IS NULL)`
 
-	scan := func(sql string) (SearchResult, bool, error) {
+	scan := func(sql string, pattern any) (SearchResult, bool, error) {
 		var s SearchResult
-		err := r.pool.QueryRow(ctx, sql, ref, reach.branchFilter()).Scan(
+		err := r.pool.QueryRow(ctx, sql, pattern, reach.branchFilter()).Scan(
 			&s.ID, &s.Name, &s.AccountNo, &s.CustomerType,
 			&s.PaymentTermsDays, &s.CreditLimitCents, &s.OpenBalanceCents)
 		switch {
@@ -137,16 +139,20 @@ func (r *Repository) LookupAccountScoped(ctx context.Context, ref string, reach 
 		}
 	}
 
-	if s, ok, err := scan(`SELECT ` + cols + ` FROM customers c
-	                        WHERE ` + fence + ` AND c.account_no = $1::citext`); ok || err != nil {
+	// The account number arm sees the reference exactly as typed; the two name arms are patterns, so
+	// they see it escaped under `ESCAPE '\'`, and a typed '%' or '_' matches text instead of widening
+	// into a wildcard that could resolve the LIMIT 1 onto a different account.
+	if s, ok, err := scan(`SELECT `+cols+` FROM customers c
+	                        WHERE `+fence+` AND c.account_no = $1::citext`, ref); ok || err != nil {
 		return s, ok, err
 	}
-	if s, ok, err := scan(`SELECT ` + cols + ` FROM customers c
-	                        WHERE ` + fence + ` AND c.name ILIKE $1 || '%'
-	                        ORDER BY c.name LIMIT 1`); ok || err != nil {
+	pattern := likeutil.EscapeLikePattern(ref)
+	if s, ok, err := scan(`SELECT `+cols+` FROM customers c
+	                        WHERE `+fence+` AND c.name ILIKE $1 || '%' ESCAPE '\'
+	                        ORDER BY c.name LIMIT 1`, pattern); ok || err != nil {
 		return s, ok, err
 	}
-	return scan(`SELECT ` + cols + ` FROM customers c
-	              WHERE ` + fence + ` AND c.name ILIKE '%' || $1 || '%'
-	              ORDER BY c.name LIMIT 1`)
+	return scan(`SELECT `+cols+` FROM customers c
+	              WHERE `+fence+` AND c.name ILIKE '%' || $1 || '%' ESCAPE '\'
+	              ORDER BY c.name LIMIT 1`, pattern)
 }
