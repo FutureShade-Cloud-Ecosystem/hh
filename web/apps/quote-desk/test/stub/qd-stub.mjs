@@ -645,7 +645,7 @@ function netUnitCents(ruleCents, discPct) {
 
 function marginBps(unitCents, costCents) {
   if (unitCents <= 0) return 0;
-  return Math.floor(((unitCents - costCents) * 10000) / unitCents);
+  return Math.trunc(((unitCents - costCents) * 10000) / unitCents);
 }
 
 // The floor decision on a discount write. Returns null when the write goes

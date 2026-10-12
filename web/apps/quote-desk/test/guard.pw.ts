@@ -72,13 +72,13 @@ test("below the floor opens the refusal dialog as a check only, and it closes by
   await openQuote(page, "Q-1001");
   await guard(page).getByTestId("qg-price").fill("90.00");
   await guard(page).getByTestId("qg-check").click();
-  await expect(guard(page).getByTestId("qg-result")).toHaveText("Blocked. Margin -4.45% is below the 12% floor");
+  await expect(guard(page).getByTestId("qg-result")).toHaveText("Blocked. Margin -4.44% is below the 12% floor");
   const dlg = dialog(page).getByRole("dialog", { name: "Action blocked" });
   await expect(dlg).toBeVisible();
   await expect(dlg).toHaveAttribute("aria-modal", "true");
   await expect(dialog(page).getByTestId("fr-policy")).toHaveText("Below floor");
   // The core's 403 carries the margin in its sentence, not as a figure of its own.
-  await expect(dialog(page).getByTestId("fr-reason")).toHaveText("Margin -4.45% is below the 12% floor");
+  await expect(dialog(page).getByTestId("fr-reason")).toHaveText("Margin -4.44% is below the 12% floor");
   await expect(dialog(page).getByTestId("fr-check-only")).toContainText("check only");
   await expect(dialog(page).getByTestId("fr-approvers")).toContainText("named no approver");
   // A check only files nothing: no request button, no note field.
@@ -95,6 +95,19 @@ test("below the floor opens the refusal dialog as a check only, and it closes by
   await page.keyboard.press("Escape");
   await expect(dlg).toHaveCount(0);
   await expect(guard(page).getByTestId("qg-check")).toBeFocused();
+});
+
+test("a 403 that is not the margin sentence is a fault in its own words, with no margin dialog", async ({ page }) => {
+  await signIn(page);
+  await openQuote(page, "Q-1001");
+  await page.route(/\/api\/v1\/staff\/policy\/check$/, (route) =>
+    route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "that branch is outside your grants" }) }),
+  );
+  await guard(page).getByTestId("qg-price").fill("90.00");
+  await guard(page).getByTestId("qg-check").click();
+  await expect(guard(page).getByTestId("qg-result")).toHaveText("That branch is outside your grants");
+  await expect(guard(page).getByTestId("qg-result")).toHaveAttribute("role", "alert");
+  await expect(dialog(page).getByRole("dialog", { name: "Action blocked" })).toHaveCount(0);
 });
 
 test("Tab stays inside the open dialog", async ({ page }) => {

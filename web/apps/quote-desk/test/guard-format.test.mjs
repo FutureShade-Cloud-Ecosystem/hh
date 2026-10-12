@@ -62,11 +62,16 @@ test("blockFromText reads the block an envelope carries and refuses anything els
   assert.equal(blockFromText(JSON.stringify({ block: { detail: "x" } })), null);
 });
 
-test("sentenceBlock reads the margin block from the sentence a 403 carries, and refuses silence", () => {
-  assert.deepEqual(sentenceBlock("margin -445 bps is below the 1200 bps floor", "MARGIN_BELOW_MINIMUM"), {
+test("sentenceBlock reads only the core's margin sentence as a block", () => {
+  assert.deepEqual(sentenceBlock("margin -444 bps is below the 1200 bps floor", "MARGIN_BELOW_MINIMUM"), {
     policyType: "MARGIN_BELOW_MINIMUM",
-    detail: "margin -4.45% is below the 12% floor",
+    detail: "margin -4.44% is below the 12% floor",
   });
+  // The spoken form the panel hands it is capitalised.
+  assert.notEqual(sentenceBlock("Margin 1000 bps is below the 1200 bps floor", "MARGIN_BELOW_MINIMUM"), null);
+  // Any other refusal is not a margin block: access, silence, other words.
+  assert.equal(sentenceBlock("that branch is outside your grants", "MARGIN_BELOW_MINIMUM"), null);
+  assert.equal(sentenceBlock("Forbidden", "MARGIN_BELOW_MINIMUM"), null);
   assert.equal(sentenceBlock("", "MARGIN_BELOW_MINIMUM"), null);
   assert.equal(sentenceBlock("   ", "MARGIN_BELOW_MINIMUM"), null);
 });
