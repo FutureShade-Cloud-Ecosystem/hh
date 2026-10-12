@@ -189,3 +189,26 @@ func TestJWKSURLSetInConsoleModeWarnsOnceWithoutTheValue(t *testing.T) {
 		t.Fatalf("a warning for an unset name: %q", buf.String())
 	}
 }
+
+// The mode check reaches the boot: a key file readable by group or other
+// refuses the composition, and 0400 and 0600 boot it.
+func TestSessionCompositionRefusesAGroupReadableKeyFile(t *testing.T) {
+	keyFile, _ := writeSigninKey(t, t.TempDir(), "current.pem")
+	env := map[string]string{"CORE_SESSION_SIGNING_KEY_FILE": keyFile}
+	for _, mode := range []os.FileMode{0o600, 0o400} {
+		if err := os.Chmod(keyFile, mode); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff"); err != nil {
+			t.Errorf("mode %o refused: %v", mode, err)
+		}
+	}
+	for _, mode := range []os.FileMode{0o640, 0o604, 0o644, 0o660} {
+		if err := os.Chmod(keyFile, mode); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadSessionComposition(getenvOf(env), "deploy-a", "hh-staff"); err == nil {
+			t.Errorf("mode %o accepted at boot", mode)
+		}
+	}
+}
