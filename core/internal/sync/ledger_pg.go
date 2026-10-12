@@ -21,9 +21,9 @@ type PgKeyLedger struct {
 
 // NewPgKeyLedger returns the ledger over the core's pool.
 func NewPgKeyLedger(pool *pgxpool.Pool) *PgKeyLedger {
-	n := int(pool.Config().MaxConns) / 2
-	if n < 1 {
-		n = 1
+	n := 1
+	if pool != nil { // the composition tests wire with no pool
+		n = max(1, int(pool.Config().MaxConns)/2)
 	}
 	return &PgKeyLedger{pool: pool, locks: make(chan struct{}, n)}
 }
