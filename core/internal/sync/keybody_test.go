@@ -15,36 +15,52 @@ import (
 // Postgres ledger keeps, with injectable faults on each half.
 type memLedger struct {
 	mu      gosync.Mutex
-	hashes  map[string]string
+	entries map[string]LedgerEntry
+	locks   map[string]*gosync.Mutex
 	readErr error
 	saveErr error
 }
 
-func newMemLedger() *memLedger { return &memLedger{hashes: map[string]string{}} }
+func newMemLedger() *memLedger {
+	return &memLedger{entries: map[string]LedgerEntry{}, locks: map[string]*gosync.Mutex{}}
+}
 
 func ledgerSlot(f ScopeFilter, scope, key string) string {
 	return f.OrgID + "|" + f.TenantID + "|" + scope + "|" + key
 }
 
-func (l *memLedger) BodyHash(_ context.Context, f ScopeFilter, scope, key string) (string, bool, error) {
+func (l *memLedger) Lock(_ context.Context, f ScopeFilter, scope, key string) (func(), error) {
+	l.mu.Lock()
+	slot := ledgerSlot(f, scope, key)
+	m, ok := l.locks[slot]
+	if !ok {
+		m = &gosync.Mutex{}
+		l.locks[slot] = m
+	}
+	l.mu.Unlock()
+	m.Lock()
+	return m.Unlock, nil
+}
+
+func (l *memLedger) Lookup(_ context.Context, f ScopeFilter, scope, key string) (LedgerEntry, bool, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.readErr != nil {
-		return "", false, l.readErr
+		return LedgerEntry{}, false, l.readErr
 	}
-	h, ok := l.hashes[ledgerSlot(f, scope, key)]
-	return h, ok, nil
+	e, ok := l.entries[ledgerSlot(f, scope, key)]
+	return e, ok, nil
 }
 
-func (l *memLedger) Remember(_ context.Context, f ScopeFilter, scope, key, hash string) error {
+func (l *memLedger) Remember(_ context.Context, f ScopeFilter, scope, key string, e LedgerEntry) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.saveErr != nil {
 		return l.saveErr
 	}
 	slot := ledgerSlot(f, scope, key)
-	if _, ok := l.hashes[slot]; !ok {
-		l.hashes[slot] = hash
+	if _, ok := l.entries[slot]; !ok {
+		l.entries[slot] = e
 	}
 	return nil
 }
@@ -52,7 +68,7 @@ func (l *memLedger) Remember(_ context.Context, f ScopeFilter, scope, key, hash 
 func (l *memLedger) size() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return len(l.hashes)
+	return len(l.entries)
 }
 
 func ledgerFixture(t *testing.T, policy Policy) (*Engine, *fakeStore, *memLedger, *auditRecorderDouble, ScopeInfo) {
@@ -207,7 +223,7 @@ func TestKeyBodyConflictLegs(t *testing.T) {
 		if res[0].Status != "applied" || res[0].Conflict == nil {
 			t.Fatalf("setup, want an applied merge: %+v", res[0])
 		}
-		if _, ok, _ := led.BodyHash(context.Background(), testFilter, info.Name, key(3)); !ok {
+		if _, ok, _ := led.Lookup(context.Background(), testFilter, info.Name, key(3)); !ok {
 			t.Fatalf("the merge that wrote stored no hash")
 		}
 		again := merged

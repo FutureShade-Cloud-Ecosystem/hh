@@ -35,20 +35,34 @@ import (
 //   - Only an APPLIED key is bound (create, update, delete that wrote, and
 //     a last write wins merge that wrote). A rejected operation, a
 //     conflict that applied nothing and an already tombstoned delete stamp
-//     no key on any row, so FindApplied does not see them and the client
-//     may retry such a key with a corrected body, as the module that
-//     refused it intended.
+//     no key on any row, so the client may retry such a key with a
+//     corrected body, as the module that refused it intended. The ledger
+//     is written after the module applied, never before.
+//   - The ledger is consulted for EVERY operation that carries a key, not
+//     only when the module's dedup finds it. Most Stores answer FindApplied
+//     from the row's single D30 column, which holds the LATEST key, so once
+//     a row has moved on an older key no longer dedups in the module while
+//     the ledger still holds it. Stored and different: key_reused, whatever
+//     FindApplied says. Stored and equal while FindApplied misses: the key
+//     already applied and must not apply again; it answers applied from the
+//     row's current state, found by the entity id stored beside the hash
+//     (the server assigned id of a create is known to no one else).
 //   - A key applied before the ledger existed has no stored hash. It is
 //     treated as a plain replay (applied with the row's current seq, as
 //     before the ledger) whatever body arrives, and the replay stores
 //     nothing: the engine cannot know that the body in hand is the one
 //     that first applied. This is the migration's documented seam, and it
 //     closes by itself as old keys age out of every client outbox.
+//   - Two pushes of one key race: find, apply and remember are separate
+//     statements, so without serialization both bodies could apply. The
+//     engine takes the ledger's per slot Lock around all three, so the
+//     second push sees the first one's hash (or its refusal) before it
+//     applies anything.
 //   - A ledger write that fails after the module applied is an operational
 //     fault: the push fails whole, and the client retries it whole, where
-//     the applied key now dedups as a legacy key (no hash). The guarantee
-//     is therefore weakest for exactly one key per ledger fault, never
-//     silently wrong for a key that was stored.
+//     the applied key dedups as a legacy key (no hash) while its row still
+//     holds it. The guarantee is therefore weakest for exactly one key per
+//     ledger fault, never silently wrong for a key that was stored.
 
 // ErrKeyReused is the refusal for a key reused with a different body. The
 // reason word leads the message so a client can branch on it: it is the
@@ -61,18 +75,30 @@ var ErrKeyReused = errors.New("key_reused: this idempotency key already names a 
 // that is either a client defect or a probe.
 const auditKeyReused = "SYNC_KEY_REUSED"
 
+// LedgerEntry is what the ledger holds per applied key: the hash of the
+// body that first applied, and the id of the row it touched (the created
+// row's id for a create, the payload's id for an update or delete).
+type LedgerEntry struct {
+	Hash     string
+	EntityID string
+}
+
 // KeyLedger is the seam holding, per applied idempotency key, the hash of
-// the body that first applied under it. Both halves run under the caller's
+// the body that first applied under it. Every half runs under the caller's
 // ScopeFilter: a key is only ever compared with keys of the same org, the
 // same tenant (a tenant caller) and the same scope, so one dealer's keys
 // never refuse another's and existence never leaks across them.
 type KeyLedger interface {
-	// BodyHash returns the hash stored when key first applied in scope
-	// under f, and whether one is stored.
-	BodyHash(ctx context.Context, f ScopeFilter, scope, key string) (string, bool, error)
-	// Remember stores the hash for a key that has just applied. The first
+	// Lock serializes everything done for one key in one scope under f: the
+	// holder alone may look up, apply and remember that key until release
+	// runs. A holder that vanishes (a lost connection) releases by itself.
+	Lock(ctx context.Context, f ScopeFilter, scope, key string) (release func(), err error)
+	// Lookup returns the entry stored when key first applied in scope under
+	// f, and whether one is stored.
+	Lookup(ctx context.Context, f ScopeFilter, scope, key string) (LedgerEntry, bool, error)
+	// Remember stores the entry for a key that has just applied. The first
 	// write wins: a second Remember for the same slot changes nothing.
-	Remember(ctx context.Context, f ScopeFilter, scope, key, hash string) error
+	Remember(ctx context.Context, f ScopeFilter, scope, key string, entry LedgerEntry) error
 }
 
 // WithKeyLedger wires the ledger seam. nil or unwired means no body check

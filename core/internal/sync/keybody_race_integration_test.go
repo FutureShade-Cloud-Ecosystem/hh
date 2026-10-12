@@ -64,3 +64,40 @@ func TestKeyBodyD30ConcurrentDifferentBodiesApplyOnce(t *testing.T) {
 		}
 	}
 }
+
+// More simultaneous pushes than the pool has connections must neither
+// deadlock nor fail: the ledger's lock holds at most half the pool, so the
+// stores always find a connection to apply with.
+func TestKeyBodyD30ManyConcurrentKeysDoNotStarveThePool(t *testing.T) {
+	f := new169Fixture(t)
+	cleanLedger(t, f)
+	f.engine.WithKeyLedger(sync.NewPgKeyLedger(f.pool))
+	k := f.quotesKit()
+	if r := d30Push(t, f, apigen.SyncPushOperation{ClientId: newKey(970), Op: "create", Payload: k.Create("")}); r.Status != "applied" {
+		t.Fatalf("create: %+v", r)
+	}
+	id := pullOf(t, f.engine, "customer_quotes", k.Filter, 0, 500)[0]
+	n := 3 * int(f.pool.Config().MaxConns)
+	var wg gosync.WaitGroup
+	statuses := make([]string, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			resp, err := f.engine.Push(context.Background(), k.Scope, k.Filter, []apigen.SyncPushOperation{{
+				ClientId: newKey(2000 + i), Op: "update", Payload: map[string]any{"id": id, "markup_bps": 3000 + i},
+			}})
+			if err != nil || len(resp.Results) != 1 {
+				statuses[i] = "fault"
+				return
+			}
+			statuses[i] = resp.Results[0].Status
+		}(i)
+	}
+	wg.Wait()
+	for i, s := range statuses {
+		if s != "applied" {
+			t.Fatalf("push %d of %d answered %q, want applied", i, n, s)
+		}
+	}
+}

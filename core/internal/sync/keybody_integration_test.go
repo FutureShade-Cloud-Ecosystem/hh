@@ -34,17 +34,17 @@ func TestKeyLedgerPostgresSlots(t *testing.T) {
 	tenant := sync.ScopeFilter{OrgID: testkit.OrgNorthID, TenantID: "7e000000-0000-4000-8000-000000000001", Tenant: true, Actor: "fxportal-alpha"}
 	k := newKey(900)
 
-	if _, ok, err := led.BodyHash(ctx, north, "pick_tasks", k); err != nil || ok {
+	if _, ok, err := led.Lookup(ctx, north, "pick_tasks", k); err != nil || ok {
 		t.Fatalf("empty ledger answered ok=%v err=%v", ok, err)
 	}
-	if err := led.Remember(ctx, north, "pick_tasks", k, hashA); err != nil {
+	if err := led.Remember(ctx, north, "pick_tasks", k, sync.LedgerEntry{Hash: hashA, EntityID: "row-a"}); err != nil {
 		t.Fatalf("remember: %v", err)
 	}
-	if err := led.Remember(ctx, north, "pick_tasks", k, hashB); err != nil {
+	if err := led.Remember(ctx, north, "pick_tasks", k, sync.LedgerEntry{Hash: hashB, EntityID: "row-b"}); err != nil {
 		t.Fatalf("second remember must be a quiet no-op: %v", err)
 	}
-	if h, ok, _ := led.BodyHash(ctx, north, "pick_tasks", k); !ok || h != hashA {
-		t.Fatalf("first write must win: got %q ok=%v", h, ok)
+	if e, ok, _ := led.Lookup(ctx, north, "pick_tasks", k); !ok || e.Hash != hashA || e.EntityID != "row-a" {
+		t.Fatalf("first write must win: got %+v ok=%v", e, ok)
 	}
 	for name, c := range map[string]struct {
 		f     sync.ScopeFilter
@@ -54,7 +54,7 @@ func TestKeyLedgerPostgresSlots(t *testing.T) {
 		"tenant":      {tenant, "pick_tasks"},
 		"other scope": {north, "shortages"},
 	} {
-		if _, ok, err := led.BodyHash(ctx, c.f, c.scope, k); err != nil || ok {
+		if _, ok, err := led.Lookup(ctx, c.f, c.scope, k); err != nil || ok {
 			t.Errorf("%s shares the slot: ok=%v err=%v", name, ok, err)
 		}
 	}

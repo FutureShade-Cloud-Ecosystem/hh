@@ -9,8 +9,11 @@
 --
 -- One row per applied key, scoped as the engine scopes every call: the org, the tenant for a
 -- tenant caller (empty for staff, so a staff key and a tenant key never share a slot), the sync
--- scope and the client key. The first write wins (the engine inserts ON CONFLICT DO NOTHING), so a
--- concurrent duplicate cannot rewrite the body a key is bound to. A key applied before this
+-- scope and the client key. entity_id is the row the key applied to (the created row's id for a
+-- create), so a key the owning module no longer dedups can still be answered from that row. The
+-- first write wins (the engine inserts ON CONFLICT DO NOTHING) and the engine serializes find,
+-- apply and remember per slot with a transaction scoped advisory lock, so a concurrent push of
+-- the same key with another body waits and then finds this row. A key applied before this
 -- migration has no row and answers as a plain replay; nothing is backfilled, because no stored
 -- body exists to hash.
 --
@@ -22,6 +25,7 @@ CREATE TABLE sync_op_hashes (
     scope      TEXT        NOT NULL,
     client_id  UUID        NOT NULL,
     body_hash  TEXT        NOT NULL CHECK (body_hash ~ '^[0-9a-f]{64}$'),
+    entity_id  TEXT        NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, tenant_id, scope, client_id)
 );

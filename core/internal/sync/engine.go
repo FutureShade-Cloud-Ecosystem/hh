@@ -159,38 +159,52 @@ func (e *Engine) pushOne(ctx context.Context, store Store, info ScopeInfo, f Sco
 	// The body hash the key is bound to (keyledger.go); empty when no
 	// ledger is wired.
 	var hash string
+	var entry LedgerEntry
+	bound := false
 	if e.ledger != nil {
 		h, err := opHash(info.Name, op)
 		if err != nil {
 			return e.auditRejected(ctx, info, f, op, "", errors.New("payload cannot be hashed")), nil
 		}
 		hash = h
+		// One key, one operation at a time: the lock spans the lookup, the
+		// apply and the remember, so a second push of the same key sees the
+		// first one's outcome before it applies anything.
+		release, err := e.ledger.Lock(ctx, f, info.Name, op.ClientId)
+		if err != nil {
+			return apigen.SyncPushResult{}, err
+		}
+		defer release()
+		// The fourth guarantee, asked of EVERY keyed operation before the
+		// module's dedup: the module's column may hold only a later key, so
+		// the ledger is the one record of what this key first applied. A
+		// different body is refused for this operation alone (rejected,
+		// never applied, no card of the first).
+		entry, bound, err = e.ledger.Lookup(ctx, f, info.Name, op.ClientId)
+		if err != nil {
+			return apigen.SyncPushResult{}, err
+		}
+		if bound && entry.Hash != hash {
+			return e.keyReused(ctx, info, f, op, entry.EntityID), nil
+		}
 	}
-	// Dedup first, before any conflict evaluation: an operation that
-	// already applied under this key is finished, and a replay must not
-	// re-litigate a row that moved after it landed.
+	// Dedup, before any conflict evaluation: an operation that already
+	// applied under this key is finished, and a replay must not re-litigate
+	// a row that moved after it landed. A key with no stored hash is a plain
+	// replay (keyledger.go).
 	row, applied, err := store.FindApplied(ctx, f, op.ClientId)
 	if err != nil {
 		return e.classified(ctx, info, f, op, "", err)
 	}
 	if applied {
-		// The fourth guarantee, checked inside dedup and before the
-		// replay answers: the key applied, so it must be the same
-		// operation. A different body is refused for this operation
-		// alone (rejected, never applied, no card of the first), and a
-		// key with no stored hash is a plain replay (keyledger.go).
-		if e.ledger != nil {
-			prior, found, err := e.ledger.BodyHash(ctx, f, info.Name, op.ClientId)
-			if err != nil {
-				return apigen.SyncPushResult{}, err
-			}
-			if found && prior != hash {
-				return e.keyReused(ctx, info, f, op, row.ID), nil
-			}
-		}
 		res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &row.Seq}
 		e.record(ctx, info, f, op, row.ID, resultApplied, "")
 		return res, nil
+	}
+	if bound {
+		// Same body, and the module's column has moved past this key: it
+		// applied once already and must not apply again.
+		return e.replayBound(ctx, store, info, f, op, entry)
 	}
 	switch op.Op {
 	case opCreate:
@@ -198,7 +212,7 @@ func (e *Engine) pushOne(ctx context.Context, store Store, info ScopeInfo, f Sco
 		if err != nil {
 			return e.classified(ctx, info, f, op, "", err)
 		}
-		if err := e.remember(ctx, info, f, op, hash); err != nil {
+		if err := e.remember(ctx, info, f, op, hash, created.ID); err != nil {
 			return apigen.SyncPushResult{}, err
 		}
 		res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &created.Seq}
@@ -220,7 +234,7 @@ func (e *Engine) pushOne(ctx context.Context, store Store, info ScopeInfo, f Sco
 		if err != nil {
 			return e.classified(ctx, info, f, op, id, err)
 		}
-		if err := e.remember(ctx, info, f, op, hash); err != nil {
+		if err := e.remember(ctx, info, f, op, hash, id); err != nil {
 			return apigen.SyncPushResult{}, err
 		}
 		res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &written.Seq}
@@ -247,7 +261,7 @@ func (e *Engine) pushOne(ctx context.Context, store Store, info ScopeInfo, f Sco
 		if err != nil {
 			return e.classified(ctx, info, f, op, id, err)
 		}
-		if err := e.remember(ctx, info, f, op, hash); err != nil {
+		if err := e.remember(ctx, info, f, op, hash, id); err != nil {
 			return apigen.SyncPushResult{}, err
 		}
 		res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied, Seq: &deleted.Seq}
@@ -314,7 +328,7 @@ func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, 
 	if err != nil {
 		return e.classified(ctx, info, f, op, id, err)
 	}
-	if err := e.remember(ctx, info, f, op, hash); err != nil {
+	if err := e.remember(ctx, info, f, op, hash, id); err != nil {
 		return apigen.SyncPushResult{}, err
 	}
 	applied := out.Applied
@@ -333,15 +347,39 @@ func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, 
 	return res, nil
 }
 
-// remember binds the key that has just applied to its body hash. Nothing
-// is stored without a ledger. A failure is an operational fault, not a
-// verdict on the operation: the push fails whole and the client retries it
-// whole (keyledger.go says what the retry sees).
-func (e *Engine) remember(ctx context.Context, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, hash string) error {
+// remember binds the key that has just applied to its body hash and the
+// row it touched. Nothing is stored without a ledger. A failure is an
+// operational fault, not a verdict on the operation: the push fails whole
+// and the client retries it whole (keyledger.go says what the retry sees).
+func (e *Engine) remember(ctx context.Context, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, hash, entityID string) error {
 	if e.ledger == nil {
 		return nil
 	}
-	return e.ledger.Remember(ctx, f, info.Name, op.ClientId, hash)
+	return e.ledger.Remember(ctx, f, info.Name, op.ClientId, LedgerEntry{Hash: hash, EntityID: entityID})
+}
+
+// replayBound answers an operation whose key the ledger holds with the same
+// body while the module's dedup no longer finds it: the key applied, so the
+// answer is applied from the row's current state and nothing is written. A
+// row that can no longer be read under the caller's filter answers applied
+// without a seq (the operation did land; there is no row left to report).
+func (e *Engine) replayBound(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, entry LedgerEntry) (apigen.SyncPushResult, error) {
+	id := entry.EntityID
+	if id == "" {
+		id, _ = op.Payload["id"].(string)
+	}
+	res := apigen.SyncPushResult{ClientId: op.ClientId, Status: resultApplied}
+	if id != "" {
+		row, ok, err := store.Load(ctx, f, id)
+		if err != nil {
+			return e.classified(ctx, info, f, op, id, err)
+		}
+		if ok {
+			res.Seq = &row.Seq
+		}
+	}
+	e.record(ctx, info, f, op, id, resultApplied, "")
+	return res, nil
 }
 
 // keyReused builds the refusal for a key reused with a different body and
