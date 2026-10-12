@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -398,5 +399,29 @@ func TestLoadErrorsAreNotWrappedPathErrors(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secret-name") {
 		t.Fatalf("error names the path: %v", err)
+	}
+}
+
+// A minter dumped through fmt, by pointer or by value, with any verb, prints
+// a fixed redaction and none of the key.
+func TestSessionMinterFormatsRedacted(t *testing.T) {
+	k := freshPriv(t)
+	m := newTestMinter(t, k)
+	needles := []string{k.D.String(), k.D.Text(16), k.X.String(), k.Y.String()}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%d", "%x", "%q"} {
+		for name, arg := range map[string]any{"pointer": m, "value": *m} {
+			out := fmt.Sprintf(verb, arg)
+			if !strings.Contains(out, "redacted") {
+				t.Errorf("%s of the %s prints %q, want the redaction", verb, name, out)
+			}
+			for _, n := range needles {
+				if strings.Contains(out, n) {
+					t.Errorf("%s of the %s carries key material", verb, name)
+				}
+			}
+		}
+	}
+	if got := m.String(); !strings.Contains(got, "redacted") {
+		t.Errorf("String = %q", got)
 	}
 }

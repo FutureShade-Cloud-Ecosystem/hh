@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 )
@@ -210,3 +211,16 @@ func (m *SessionMinter) MintAt(subject string, window time.Duration, at time.Tim
 	s.FillBytes(sig[32:])
 	return signed + "." + b64(sig), nil
 }
+
+const redactedMinter = "SessionMinter{redacted}"
+
+// String and Format redact: a minter handed to a logger, a panic message or
+// a debug dump prints this fixed text under every verb, whether passed by
+// pointer or by value, and never the key.
+func (m SessionMinter) String() string { return redactedMinter }
+
+// Format implements fmt.Formatter.
+func (m SessionMinter) Format(f fmt.State, _ rune) { _, _ = f.Write([]byte(redactedMinter)) }
+
+// GoString redacts the %#v form for any caller that bypasses Format.
+func (m SessionMinter) GoString() string { return redactedMinter }
