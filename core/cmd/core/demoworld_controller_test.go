@@ -140,7 +140,7 @@ func TestDemoWorld_Controller(t *testing.T) {
 	}
 	appwrite := newAppwriteFake(t)
 	for _, sub := range []string{cwControllerUserID, qwSalesUserID, qwManagerUserID} {
-		appwrite.setTeam(sub, "org:"+demoOrgSlug)
+		appwrite.setTeam(sub, "org-"+demoOrgSlug)
 	}
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)

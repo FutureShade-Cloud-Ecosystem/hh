@@ -70,10 +70,10 @@ var ErrOrgSlugShape = errors.New("identity: org slug does not match the pinned s
 // orgSlugPattern is byte-identical to the pinned server-side slug shape in
 // core/internal/platform/authz/middleware.go (the orgSlugPattern there,
 // ADR-0020 addendum: lowercase letters, digits, dot, underscore and hyphen,
-// starting lowercase alphanumeric, at most 64 characters). identity cannot
+// starting lowercase alphanumeric, at most 32 characters, so org-<slug> fits a 36 character Team id). identity cannot
 // import authz (authz imports identity for the verifier), so the pin is
 // duplicated here; the two must move together if the ADR ever changes it.
-var orgSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+var orgSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,31}$`)
 
 // SeedReport is the step 0 gate's outcome: counts by class, never values.
 type SeedReport struct {
@@ -155,7 +155,7 @@ func VerifySeedCoverage(ctx context.Context, db DBTX) (SeedReport, error) {
 // on the slug key so re-runs converge the display name and update no id.
 // Neither source repository has an org table (0213): the slug and name are
 // deployment configuration, and in production the slug must name the
-// platform team org:<slug> the callers hold membership in (ADR-0020 leg 3),
+// platform team org-<slug> the callers hold membership in (ADR-0020 leg 3),
 // a platform fact to confirm at provisioning time, not a value this code
 // fixes. inserted reports whether this call created the row.
 func ProvisionOrgAnchor(ctx context.Context, db DBTX, slug, name string) (orgID string, inserted bool, err error) {

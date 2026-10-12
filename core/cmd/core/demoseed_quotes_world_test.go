@@ -435,7 +435,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	}
 	appwrite := newAppwriteFake(t)
 	for _, sub := range []string{qwSalesUserID, qwManagerUserID, qwHRSubject} {
-		appwrite.setTeam(sub, "org:"+demoOrgSlug)
+		appwrite.setTeam(sub, "org-"+demoOrgSlug)
 	}
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)
