@@ -273,6 +273,9 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var br badRequestError
 	switch {
 	case errors.Is(err, errSharedForbidden):
+		// The gate's own refusal body, naming no branch. The x-role equality suite (cmd/core) fails an
+		// admitted probe that answers it; its probe names no branch, so it never does. A probe that ever
+		// names an unreachable branch must expect this refusal.
 		authz.RefuseForbidden(w)
 	case errors.As(err, &ce):
 		httpx.Error(w, ce.status, ce.msg)
