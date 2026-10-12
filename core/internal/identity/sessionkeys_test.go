@@ -219,3 +219,36 @@ func TestParseSessionPublicKeyPEM(t *testing.T) {
 		}
 	}
 }
+
+// The route answers GET and HEAD and refuses every other method with 405 and
+// an Allow header; HEAD carries the headers and no body.
+func TestSessionJWKSHandlerHeadAndOtherMethods(t *testing.T) {
+	set, err := NewSessionKeySet(freshPub(t), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := set.JWKSHandler()
+
+	head := httptest.NewRecorder()
+	h.ServeHTTP(head, httptest.NewRequest(http.MethodHead, "/.well-known/jwks.json", nil))
+	if head.Code != http.StatusOK || head.Body.Len() != 0 {
+		t.Fatalf("HEAD: status %d, body %d bytes", head.Code, head.Body.Len())
+	}
+	if head.Header().Get("Cache-Control") != "public, max-age=300" || !strings.HasPrefix(head.Header().Get("Content-Type"), "application/json") {
+		t.Fatalf("HEAD headers: %v", head.Header())
+	}
+
+	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(m, "/.well-known/jwks.json", nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s: status %d, want 405", m, rec.Code)
+		}
+		if rec.Header().Get("Allow") != "GET, HEAD" {
+			t.Errorf("%s: Allow = %q", m, rec.Header().Get("Allow"))
+		}
+		if rec.Body.Len() != 0 {
+			t.Errorf("%s: a 405 carried a body", m)
+		}
+	}
+}
