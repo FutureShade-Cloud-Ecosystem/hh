@@ -215,6 +215,8 @@ var glsTokens = [][2]string{
 	{"Aberdeen", "Stonecrest"},
 	{"Il Campo", "Cobble"},
 	{"techo-bloc.com", "stonecrest.example"},
+	{"unilock.com", "aldercreek.example"},
+	{"Banas", "Bluff Quarry Stone"},
 	{"Oaks", "Tidewater"},
 	{"Techo-Bloc", "Stonecrest Slab Company"},
 	{"Techo Bloc", "Stonecrest Slab Company"},
