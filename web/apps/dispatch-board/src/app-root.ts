@@ -1,17 +1,15 @@
-// The role app's root element: the chrome and the way in. The way in is the
-// demo's role cards (the shared kit's entry, the demo adapter behind the auth
-// package's AccountSurface seam). After the mint the branch resolves once, the
-// ports are wired with the caller's headers, and the work area renders.
+// The dispatch board's root element: the chrome and the way in. The way in is the demo's role cards
+// (the shared kit's entry, the demo adapter behind the auth package's AccountSurface seam), offered
+// for the two roles whose screens live here. After the mint the branch resolves once, the ports
+// are wired with the caller's headers, and the desk renders.
 //
-// The organisation header is the demo org by construction: the staff header
-// provider refuses to send a request without X-Org, so no call ever leaves
-// this app unresolved.
+// The organisation header is the demo org by construction: the staff header provider refuses to
+// send a request without X-Org, so no call ever leaves this app unresolved.
 //
-// The header is fed through plain attributes (signed-in, demo) and, for the
-// role label, an assignment in updated(): the design system's position gate
-// refuses every "." and "@" binding and every bound value outside the data-
-// and aria- attributes in a dependent package. Its two buttons ride data-action names
-// and the host's click listener below acts on them.
+// The header is fed through plain attributes (signed-in, demo) and, for the role label, an
+// assignment in updated(): the design system's position gate refuses every "." and "@" binding and
+// every bound value outside the data-, aria-, class and role attributes in a dependent package. The
+// controls ride data-action names and the host's click and change listeners below act on them.
 import { html, css, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
@@ -21,19 +19,27 @@ import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
-import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
+import { entryStyles, renderEntry, type EntryView, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
+import { DispatchApi } from "./dispatch-api.js";
+import { DispatchDesk } from "./desk.js";
+import { todayISO } from "./dispatch-logic.js";
+import { boardStyles } from "./styles.js";
 
 const DEMO_ORG = "hh-demo";
 
+// The flows this app offers a card for: the roles whose screens live here (the front door's own
+// live-role rule). A tappable card that led into a refused surface would be a login to nothing.
+const ENTRY_FLOWS = new Set(["logistics-manager", "yard-manager"]);
+
 export class DispatchBoardApp extends HHElement {
-  static styles = [baseStyles, entryStyles, css`
-    :host { display: block; min-height: 100vh; background: var(--hh-page); }
+  static styles = [baseStyles, entryStyles, boardStyles, css`
+    :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
   `];
 
-  // The demo account surface: listFlows() and chooseFlow() over the core's
-  // two demo routes. It is the injected AccountSurface for the auth package.
+  // The demo account surface: listFlows() and chooseFlow() over the core's two demo routes. It is
+  // the injected AccountSurface for the auth package.
   readonly #demoAccount: AccountSurface;
 
   // The custody: holds the adopted demo mint in memory, nothing persisted.
@@ -54,7 +60,22 @@ export class DispatchBoardApp extends HHElement {
     headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
   });
 
-  readonly #feedback = new HHFeedback();
+  // The desk (src/desk.ts): its state, its loads, its presses. The fields it reads are looked up in
+  // this element's own shadow root.
+  #desk = this.#newDesk();
+
+  #newDesk(): DispatchDesk {
+    return new DispatchDesk(new DispatchApi(this.#staffClient), {
+      repaint: () => this.requestUpdate(),
+      find: (selector) => this.renderRoot.querySelector(selector),
+      findAll: (selector) => [...this.renderRoot.querySelectorAll(selector)],
+      today: () => todayISO(),
+    });
+  }
+
+  // The theme: light by default, brand (the dark half) one tap away. Held in memory only: nothing
+  // here persists.
+  #theme: "light" | "dark" = "light";
 
   readonly #feedbackSender: FeedbackSender = async (request) => {
     const answer = await staffFeedback.feedbackCreateMultipart(this.#staffClient, {
@@ -78,32 +99,53 @@ export class DispatchBoardApp extends HHElement {
     super();
     this.#demoAccount = new DemoAccount({ client: this.#demoClient });
     this.#auth = new AuthController({ account: this.#demoAccount, sessions: this.#sessions });
-    this.#feedback.send = this.#feedbackSender;
   }
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
-  // The entry cards carry data-action="choose" and data-flow; one host
-  // listener reads them, as the till's does.
+  // The entry cards carry data-action="choose" and data-flow; one host listener reads them, as the
+  // till's does.
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
       .find((node): node is Element => node instanceof Element && node.hasAttribute("data-action"));
-    const action = control?.getAttribute("data-action");
+    if (control === undefined) return;
+    // A select acts on change, not on the click that opens it.
+    if (control instanceof HTMLSelectElement) return;
+    const action = control.getAttribute("data-action");
     if (action === "switch-role" || action === "sign-out") {
       this.#onSignOut();
       return;
     }
-    const flow = control?.getAttribute("data-flow");
+    if (action === "feedback") {
+      const widget = this.renderRoot.querySelector("hh-feedback");
+      if (widget instanceof HHFeedback) widget.show();
+      return;
+    }
+    if (action === "theme") {
+      this.#theme = this.#theme === "light" ? "dark" : "light";
+      this.requestUpdate();
+      return;
+    }
+    if (this.#desk.press(control)) return;
+    const flow = control.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
     }
   };
 
+  // A select or the date field changed: the desk acts on it.
+  readonly #onHostChange = (event: Event): void => {
+    const target = event.target;
+    if (target instanceof Element) this.#desk.change(target);
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener("click", this.#onHostClick);
+    // A change event is not composed, so it stops at the shadow root and never reaches the host.
+    this.renderRoot.addEventListener("change", this.#onHostChange);
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -118,6 +160,7 @@ export class DispatchBoardApp extends HHElement {
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
         clearFrontDoorHandoff();
+        void this.#desk.load();
       }
       this.requestUpdate();
     } else {
@@ -127,16 +170,23 @@ export class DispatchBoardApp extends HHElement {
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.renderRoot.removeEventListener("change", this.#onHostChange);
     super.disconnectedCallback();
   }
 
-  // The role label is the one header input the position gate keeps out of a
-  // template (only data- and aria- attributes take a bound value), so it is
-  // set on the element here, after each render.
+  // The role label is the one header input the position gate keeps out of a template, so it is set
+  // on the element here, after each render. The desk's seeding (the date field, the selects that
+  // name a current value) rides the same pass.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
-    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string }) | null;
-    if (header !== null) header.roleLabel = this.#roleLabel;
+    const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
+    if (header !== null) {
+      header.roleLabel = this.#roleLabel;
+      header.theme = this.#theme;
+    }
+    const widget = this.renderRoot.querySelector("hh-feedback");
+    if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) widget.send = this.#feedbackSender;
+    this.#desk.seed();
   }
 
   private async loadFlows(): Promise<void> {
@@ -151,6 +201,13 @@ export class DispatchBoardApp extends HHElement {
     this.requestUpdate();
   }
 
+  /** The flows state as the entry view renders it: the table filtered to the roles whose screens live here. */
+  #entryFlows(): FlowsState {
+    const flows = this.#entryView.flows;
+    if (flows.kind !== "ready") return flows;
+    return { kind: "ready", flows: flows.flows.filter((f) => f.flow !== undefined && ENTRY_FLOWS.has(f.flow)) };
+  }
+
   async #chooseFlow(flow: string): Promise<void> {
     this.#entryView = { ...this.#entryView, busy: true };
     this.requestUpdate();
@@ -160,6 +217,7 @@ export class DispatchBoardApp extends HHElement {
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
+        void this.#desk.load();
       } else {
         this.#entryView = { ...this.#entryView, busy: false, message: "Demo sign-in refused: the mint's session was not usable." };
       }
@@ -171,18 +229,25 @@ export class DispatchBoardApp extends HHElement {
 
   #onSignOut(): void {
     this.#sessions.clear();
+    this.#desk = this.#newDesk();
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
 
+  // The theme and feedback controls ride the header's named slot; the theme word names the theme a
+  // tap moves to.
+  private renderThemeControl(): TemplateResult {
+    const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
+    return html`<button slot="theme" type="button" class="theme-btn" data-action="feedback">Feedback</button><button slot="theme" type="button" class="theme-btn" data-action="theme">${label}</button>`;
+  }
+
   private renderSignedIn(): TemplateResult {
-    const session = this.#sessions.current;
-    const profile = session?.user;
     return html`
-      <hos-app-header signed-in demo></hos-app-header>
-      <main>
-        <p>Role app: ${profile?.name ?? "?"}, ${this.#roleLabel}</p>
+      <hos-app-header signed-in demo compact product-name="Dispatch">${this.renderThemeControl()}</hos-app-header>
+      <main class="desk">
+        ${this.#desk.render()}
       </main>
+      <hh-feedback screen="Dispatch and Load Building" trigger="external"></hh-feedback>
     `;
   }
 
@@ -190,9 +255,11 @@ export class DispatchBoardApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo></hos-app-header>
-      <main>
-        ${renderEntry(this.#entryView)}
+      <hos-app-header demo compact product-name="Dispatch">${this.renderThemeControl()}</hos-app-header>
+      <main class="desk">
+        <h1>Dispatch and Load Building</h1>
+        <p class="dim">Build the day's loads, crew the trucks and send them out. Demo data only.</p>
+        ${renderEntry({ ...this.#entryView, flows: this.#entryFlows() })}
       </main>
     `;
   }
