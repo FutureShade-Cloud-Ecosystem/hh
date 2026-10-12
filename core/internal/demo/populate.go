@@ -740,6 +740,40 @@ func scrubPlantedUsers(ctx context.Context, tx pgx.Tx, now time.Time) (renamed, 
 	return renamed, deactivated, moved, cleared, nil
 }
 
+// ConvergeDealerBranches moves the two BRANCH rows onto the demo dealer: code,
+// display name and address. Each statement is guarded on the values it would
+// write, so a re-run matches nothing and the count is only what this run
+// changed. It runs inside the caller's transaction.
+func ConvergeDealerBranches(ctx context.Context, tx pgx.Tx) (replaced int, err error) {
+	for _, b := range DealerBranches {
+		tag, err := tx.Exec(ctx,
+			`UPDATE locations
+			    SET code = $2, name = $3, updated_at = now()
+			  WHERE id = $1::uuid AND (code::text IS DISTINCT FROM $2 OR name IS DISTINCT FROM $3)`,
+			b.ID, b.Code, b.Name)
+		if err != nil {
+			return 0, fmt.Errorf("demo dealer branch %s: %w", b.Code, err)
+		}
+		replaced += int(tag.RowsAffected())
+		tag, err = tx.Exec(ctx,
+			`UPDATE locations
+			    SET address = jsonb_build_object(
+			          'line1', $2::text, 'city', $3::text, 'province', $4::text,
+			          'postal', $5::text, 'country', 'US'),
+			        updated_at = now()
+			  WHERE id = $1::uuid
+			    AND address IS DISTINCT FROM jsonb_build_object(
+			          'line1', $2::text, 'city', $3::text, 'province', $4::text,
+			          'postal', $5::text, 'country', 'US')`,
+			b.ID, b.Line1, b.City, b.Province, b.Postal)
+		if err != nil {
+			return 0, fmt.Errorf("demo dealer branch %s address: %w", b.Code, err)
+		}
+		replaced += int(tag.RowsAffected())
+	}
+	return replaced, nil
+}
+
 // renameDemoDealer converges the demo database's dealer display words onto
 // the invented trading name. The org anchor's name is already the identity
 // program's to converge (ProvisionOrgAnchor's guarded upsert writes the

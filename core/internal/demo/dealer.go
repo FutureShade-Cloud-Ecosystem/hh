@@ -1,6 +1,6 @@
 //go:build demo
 
-// dealer.go, the demo dealer's two yards: Gable Landscape Supply, Point Loma
+// dealer.go (the data; the guarded writes live in populate.go, where the table census states them), the demo dealer's two yards: Gable Landscape Supply, Point Loma
 // (code PLM, the main yard, where every demo login is homed) and Julian (code
 // JUL). Migration 0003 plants the two BRANCH rows under the first dealer's
 // codes, names and addresses; the demo database converges them onto the
@@ -22,16 +22,6 @@
 // Julian, and no seeded row changes yard.
 package demo
 
-import (
-	"context"
-	"fmt"
-
-	"github.com/jackc/pgx/v5"
-)
-
-// Branch ids are migration 0003's, kept in populate.go (trentonBranchID and
-// kingstonBranchID name the first dealer's cities; the ids are the rows').
-
 // DealerBranch is one yard of the demo dealer as the demo database carries it.
 type DealerBranch struct {
 	ID, Code, Name string
@@ -45,38 +35,4 @@ type DealerBranch struct {
 var DealerBranches = []DealerBranch{
 	{trentonBranchID, "PLM", "Gable Landscape Supply, Point Loma", "2410 Harbor Yard Road", "San Diego", "CA", "92106"},
 	{kingstonBranchID, "JUL", "Gable Landscape Supply, Julian", "1180 Quarry Gate Road", "Julian", "CA", "92036"},
-}
-
-// ConvergeDealerBranches moves the two BRANCH rows onto the demo dealer: code,
-// display name and address. Each statement is guarded on the values it would
-// write, so a re-run matches nothing and the count is only what this run
-// changed. It runs inside the caller's transaction.
-func ConvergeDealerBranches(ctx context.Context, tx pgx.Tx) (replaced int, err error) {
-	for _, b := range DealerBranches {
-		tag, err := tx.Exec(ctx,
-			`UPDATE locations
-			    SET code = $2, name = $3, updated_at = now()
-			  WHERE id = $1::uuid AND (code::text IS DISTINCT FROM $2 OR name IS DISTINCT FROM $3)`,
-			b.ID, b.Code, b.Name)
-		if err != nil {
-			return 0, fmt.Errorf("demo dealer branch %s: %w", b.Code, err)
-		}
-		replaced += int(tag.RowsAffected())
-		tag, err = tx.Exec(ctx,
-			`UPDATE locations
-			    SET address = jsonb_build_object(
-			          'line1', $2::text, 'city', $3::text, 'province', $4::text,
-			          'postal', $5::text, 'country', 'US'),
-			        updated_at = now()
-			  WHERE id = $1::uuid
-			    AND address IS DISTINCT FROM jsonb_build_object(
-			          'line1', $2::text, 'city', $3::text, 'province', $4::text,
-			          'postal', $5::text, 'country', 'US')`,
-			b.ID, b.Line1, b.City, b.Province, b.Postal)
-		if err != nil {
-			return 0, fmt.Errorf("demo dealer branch %s address: %w", b.Code, err)
-		}
-		replaced += int(tag.RowsAffected())
-	}
-	return replaced, nil
 }
