@@ -26,6 +26,7 @@ func serveEnv(t *testing.T) map[string]string {
 		"APP_ENV":              "demo",
 		"CORE_DATABASE_URL":    "postgres://b3:b3@127.0.0.1:5432/b3?sslmode=disable",
 		"CORE_STAFF_AUDIENCE":  "hh-staff",
+		"CORE_SIGNIN_MODE":     "demo",
 		"CORE_TENANT_AUDIENCE": "hh-tenant",
 	}
 }

@@ -104,6 +104,14 @@ func rgHexKey(t *testing.T) string {
 // ride the served handlers.
 func rgDemoGateCase(t *testing.T) (*recordingRegistrar, *appGraph) {
 	t.Helper()
+	return rgDemoGateCaseWith(t, nil)
+}
+
+// rgDemoGateCaseWith is rgDemoGateCase with extra environment values laid
+// over the demo mode's: the sign in mode boot tests change the mode and add
+// the console mode's names through it.
+func rgDemoGateCaseWith(t *testing.T, extra map[string]string) (*recordingRegistrar, *appGraph) {
+	t.Helper()
 	t.Setenv("APP_ENV", "dev") // Validate refuses an unset APP_ENV (HH-198)
 	caseURL := rgDemoCaseDatabase(t)
 	pool, err := pgxpool.New(context.Background(), caseURL)
@@ -114,16 +122,19 @@ func rgDemoGateCase(t *testing.T) (*recordingRegistrar, *appGraph) {
 	rgPlantDemoWorld(t, pool)
 
 	signKey := rgHexKey(t)
-	getenv := func(k string) string {
-		return map[string]string{
-			"CORE_DATABASE_URL":         caseURL,
-			"CORE_STAFF_AUDIENCE":       "hh-staff",
-			"CORE_TENANT_AUDIENCE":      "hh-tenant",
-			"CORE_STREAM_TICKET_KEY":    "fx-ticket-key",
-			"HH_ACCEPTANCE_SIGN_KEY_ID": "fx-accept-sign-key",
-			"HH_ACCEPTANCE_SIGN_KEY":    signKey,
-		}[k]
+	values := map[string]string{
+		"CORE_DATABASE_URL":         caseURL,
+		"CORE_STAFF_AUDIENCE":       "hh-staff",
+		"CORE_SIGNIN_MODE":          "demo",
+		"CORE_TENANT_AUDIENCE":      "hh-tenant",
+		"CORE_STREAM_TICKET_KEY":    "fx-ticket-key",
+		"HH_ACCEPTANCE_SIGN_KEY_ID": "fx-accept-sign-key",
+		"HH_ACCEPTANCE_SIGN_KEY":    signKey,
 	}
+	for k, v := range extra {
+		values[k] = v
+	}
+	getenv := func(k string) string { return values[k] }
 	rec := &recordingRegistrar{inner: http.NewServeMux()}
 	graph, err := demoRegisterRoutes(rec, getenv)
 	if err != nil {

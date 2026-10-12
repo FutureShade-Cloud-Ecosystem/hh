@@ -69,6 +69,13 @@ func (c BearerClass) String() string {
 type Minter struct {
 	Keys  *Keys
 	Clock *Clock
+	// Session, when set, is the core's persistent session signing key
+	// (CORE_SESSION_SIGNING_KEY_FILE): a token with no key or kid named in
+	// its shape is then signed ES256 under that key with the thumbprint
+	// kid, which is what a console mode composition verifies. Shapes that
+	// name their own kid, key or algorithm keep them, so the negative legs
+	// stay one field away.
+	Session *ecdsa.PrivateKey
 }
 
 // NewMinter generates fresh keys and a fresh clock. Nothing crosses runs.
@@ -168,6 +175,13 @@ func (m *Minter) Mint(t *testing.T, class BearerClass, sub string, shape TokenSh
 		claims[k] = v
 	}
 
+	if m.Session != nil && shape.KID == "" && shape.ECKey == nil && shape.Key == nil && shape.Alg == "" {
+		sessionKID, err := identity.SessionKeyThumbprint(&m.Session.PublicKey)
+		if err != nil {
+			t.Fatalf("testkit: session key thumbprint: %v", err)
+		}
+		shape.KID, shape.ECKey = sessionKID, m.Session
+	}
 	kid := shape.KID
 	if kid == "" {
 		kid = KidActiveRSA
