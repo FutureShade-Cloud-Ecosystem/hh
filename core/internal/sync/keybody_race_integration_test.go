@@ -6,6 +6,8 @@ package sync_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	gosync "sync"
 	"testing"
 
@@ -16,6 +18,24 @@ import (
 // Two pushes of one fresh key with different bodies, started together: the
 // guarantee is that exactly one applies. Twenty rounds, each a fresh key.
 func TestKeyBodyD30ConcurrentDifferentBodiesApplyOnce(t *testing.T) {
+	raceDifferentBodies(t, func(round, i int) string { return newKey(1000 + round) })
+}
+
+// The same race with the key spelled in two letter cases: a uuid is one
+// key whatever the case, so the second spelling must wait on the first and
+// be refused, exactly as the one spelling is.
+func TestKeyBodyD30ConcurrentMixedCaseKeyApplyOnce(t *testing.T) {
+	raceDifferentBodies(t, func(round, i int) string {
+		key := fmt.Sprintf("abcdef%02x-0000-4000-8000-%012d", round, 5000+round)
+		if i == 1 {
+			return strings.ToUpper(key)
+		}
+		return key
+	})
+}
+
+func raceDifferentBodies(t *testing.T, keyFor func(round, i int) string) {
+	t.Helper()
 	f := new169Fixture(t)
 	cleanLedger(t, f)
 	f.engine.WithKeyLedger(sync.NewPgKeyLedger(f.pool))
@@ -26,7 +46,6 @@ func TestKeyBodyD30ConcurrentDifferentBodiesApplyOnce(t *testing.T) {
 	id := pullOf(t, f.engine, "customer_quotes", k.Filter, 0, 500)[0]
 
 	for round := 0; round < 20; round++ {
-		key := newKey(1000 + round)
 		start := make(chan struct{})
 		var wg gosync.WaitGroup
 		results := make([]apigen.SyncPushResult, 2)
@@ -36,7 +55,7 @@ func TestKeyBodyD30ConcurrentDifferentBodiesApplyOnce(t *testing.T) {
 				defer wg.Done()
 				<-start
 				resp, err := f.engine.Push(context.Background(), k.Scope, k.Filter, []apigen.SyncPushOperation{{
-					ClientId: key, Op: "update", Payload: map[string]any{"id": id, "markup_bps": 2000 + 2*round + i},
+					ClientId: keyFor(round, i), Op: "update", Payload: map[string]any{"id": id, "markup_bps": 2000 + 2*round + i},
 				}})
 				if err != nil || len(resp.Results) != 1 {
 					results[i] = apigen.SyncPushResult{Status: "fault"}
