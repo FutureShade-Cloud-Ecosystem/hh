@@ -62,8 +62,8 @@ const (
 	secfixBranchC = "00000000-0000-4000-8000-0000000000c3"
 )
 
-// secfixRole is one row of staff_role: the sweep below enumerates the migration's rows, so a role added
-// there without a decision here fails the sweep.
+// secfixRole is one decision row per staff_role id. The list is a hand copy of the sixteen rows migration
+// 0215 inserts; a role added by a later migration is not seen here until a person adds its row.
 type secfixRole struct {
 	id    string
 	tier  int
