@@ -8,6 +8,7 @@ package order
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5"
@@ -98,6 +99,18 @@ func (e errDepositDefaultUnreadable) Error() string {
 // the cancel has an exit for) settle on the same transaction the status flip
 // commits in. A settlement that refuses fails the cancel: money must not be
 // orphaned on a CANCELLED order the way audit H2 found it.
+//
+// The stock rows the release hook will write are taken HERE, before the
+// settlement's first counter draw and after every refusal (the predicate above,
+// the matrix guard in the locked write): the settlement draws the invoices
+// feed counter, the release writes the order's stock rows after it, and the
+// POS ring takes a stock row first and that counter later, so a cancel that
+// drew the counter before its stock rows could meet the ring head on (round 2,
+// the Opus read's P2-1). Through the stock seam, inventory's own lock in
+// inventory's own order (sorted product then location, the one order every
+// balance locking caller there uses). Only when the cancel's transaction is in
+// hand: the nil tx is the settlement's own transaction (a caller with no cancel
+// transaction), where no release follows and there is nothing to order.
 func (s *Service) settleDepositsOnCancel(ctx context.Context, orderID, disposition, reason string) error {
 	if s.depositCanceller == nil {
 		// Unreachable in a deploy (main.go asserts the wiring at boot); a
@@ -107,6 +120,12 @@ func (s *Service) settleDepositsOnCancel(ctx context.Context, orderID, dispositi
 			"order_id", orderID)
 		return nil
 	}
-	_, err := s.depositCanceller.CancelOrderDeposits(ctx, precheckTx(ctx), orderID, disposition, reason)
+	tx := precheckTx(ctx)
+	if s.stock != nil && tx != nil {
+		if err := s.stock.LockHardHoldBalancesTx(ctx, tx, ResSourceOrder, orderID); err != nil {
+			return fmt.Errorf("order: lock the cancelled order's stock rows ahead of the deposit settlement: %w", err)
+		}
+	}
+	_, err := s.depositCanceller.CancelOrderDeposits(ctx, tx, orderID, disposition, reason)
 	return err
 }
