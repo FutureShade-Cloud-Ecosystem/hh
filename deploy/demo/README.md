@@ -3,9 +3,9 @@
 One image in the Railway shape (plan r7 section 5): the core built with
 `-tags demo`, the built files of every web app (front door at `/`, till at
 `/till/`, buying-and-stock at `/buying-and-stock/`, public desk at `/q/`, HH
-Drive at `/drive/`, Manager Home at `/home/`, Yard Pick at `/yard/`, Quote
-Desk at `/quote/` when present), Caddy in front, and the frozen migration
-set. Build from the repository root:
+Drive at `/drive/`, Manager Home at `/home/`, Yard Pick at `/yard/`, Money
+Desk at `/money-desk/`, Quote Desk at `/quote/` when present), Caddy in
+front, and the frozen migration set. Build from the repository root:
 
     docker build -f deploy/demo/Dockerfile -t hh-demo-till .
 
