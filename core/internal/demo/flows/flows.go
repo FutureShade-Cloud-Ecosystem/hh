@@ -18,7 +18,8 @@
 // Manager Home app's yard manager, and the live role logins the roles
 // roadmap adds one reviewed row at a time (the yard personas, Payables and
 // Receivables and the Procurement Manager and the Financial Controller
-// after PRs 300 and 303). A new flow is an edit here, reviewed, never a
+// after PRs 300 and 303, and the Logistics Manager of the dispatch board).
+// A new flow is an edit here, reviewed, never a
 // runtime input: the entry page may only ever offer what this file lists.
 package flows
 
@@ -145,6 +146,18 @@ var accounts = map[string]Account{
 		Label:          "Procurement manager",
 		Role:           "procurement_manager",
 	},
+	// The Logistics Manager, the dispatch board's first role: the dispatch
+	// persona migration 0200 plants, whose id and display name the populate
+	// keeps. The label is the roles catalog's own spelling, the front door
+	// card's word.
+	"logistics-manager": {
+		Flow:           "logistics-manager",
+		PlatformUserID: "d0200000-0000-4000-9000-000000000001",
+		Email:          "dispatch.demo@" + ReservedDomain,
+		DisplayName:    "Dispatch persona (demo)",
+		Label:          "Logistics Manager",
+		Role:           "logistics_manager",
+	},
 	"financial-controller": {
 		Flow:           "financial-controller",
 		PlatformUserID: "de110000-0000-4000-9000-0000000000c1",
@@ -175,6 +188,7 @@ func All() []Account {
 		accounts["payables-receivables"],
 		accounts["procurement-manager"],
 		accounts["financial-controller"],
+		accounts["logistics-manager"],
 	}
 }
 
