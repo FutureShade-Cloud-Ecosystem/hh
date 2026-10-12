@@ -4,14 +4,20 @@ use hh_shell_core::keychain::{self, Slot};
 
 const KEYCHAIN_SERVICE: &str = "ai.futurebuild.hh.field";
 
-#[tauri::command]
-fn keychain_set(slot: Slot, value: String) -> Result<(), String> {
-    keychain::set(KEYCHAIN_SERVICE, slot.name(), &value)
+// The keyring call blocks (a Secret Service unlock prompt can take a while), so
+// it runs on a blocking thread and never on the main thread or an async worker.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn keychain_get(slot: Slot) -> Result<String, String> {
-    keychain::get(KEYCHAIN_SERVICE, slot.name())
+async fn keychain_set(slot: Slot, value: String) -> Result<(), String> {
+    blocking(move || keychain::set(KEYCHAIN_SERVICE, slot.name(), &value)).await
+}
+
+#[tauri::command]
+async fn keychain_get(slot: Slot) -> Result<String, String> {
+    blocking(move || keychain::get(KEYCHAIN_SERVICE, slot.name())).await
 }
 
 // PROBE SCAFFOLDING, removed when the real shell lands: compiled only with
