@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 )
@@ -26,6 +27,9 @@ import (
 // persistent key must never mint under it, so a token from the public copy
 // or the testers' copy can never verify on a deployment that kept the demo
 // name.
+// maxKeyFileBytes bounds what a key file read takes.
+const maxKeyFileBytes = 64 << 10
+
 const demoIssuerValue = "hh-demo"
 
 // SessionKeyFiles names the three key files. Current holds the private key
@@ -78,7 +82,22 @@ func LoadSessionKeys(files SessionKeyFiles, issuer, staffAudience string) (*Load
 }
 
 func loadSessionPrivateKey(path string) (*ecdsa.PrivateKey, error) {
-	raw, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, errors.New("identity: the session signing key file cannot be read")
+	}
+	defer f.Close()
+	// The mode is read from the open descriptor, so the file checked is the
+	// file read. A key readable by group or other is refused: the platform
+	// mounts the secret file 0400 or 0600 and owned by the core's user.
+	info, err := f.Stat()
+	if err != nil {
+		return nil, errors.New("identity: the session signing key file cannot be read")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, errors.New("identity: the session signing key file must not be readable by group or other (mode 0400 or 0600)")
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, maxKeyFileBytes))
 	if err != nil {
 		return nil, errors.New("identity: the session signing key file cannot be read")
 	}
