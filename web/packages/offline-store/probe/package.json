@@ -1,0 +1,17 @@
+{
+  "name": "@hardscapehouse/offline-store-probe8",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "wa-sqlite": "1.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "vite": "8.3.4"
+  }
+}
