@@ -185,12 +185,15 @@ func secfixAttempt(key, branch string) PaymentAttempt {
 const secfixAttemptPath = "/api/v1/ar/payment-attempts"
 
 func TestSecfix_AttemptBranchIsNeverTheClientsChoice(t *testing.T) {
-	f := newSecfixFixture(t)
+	// Served as production serves it: role gate (default configuration), then the tier guard. The global
+	// person is a platform role because the default matrix gives general_manager only read on counter-till
+	// and financial_controller none, so the gate would refuse them before the branch rule is reached.
+	f := newSecfixGatedFixture(t)
 	forbidden := secfixForbiddenBody(t)
 	branchRole := secfixRoles[3] // branch_manager
 	f.person("scoped-a", branchRole.authority(secfixBranchA))
 	f.person("clerk-a", secfixRoles[9].authority(secfixBranchA)) // inside_sales
-	f.person("global", secfixRoles[0].authority())
+	f.person("global", secfixRoles[13].authority())              // super_admin
 	f.person("two-grants", branchRole.authority(secfixBranchA, secfixBranchB))
 
 	// A branch scoped role in a second branch: refused with the shared 403, nothing written.
@@ -212,9 +215,12 @@ func TestSecfix_AttemptBranchIsNeverTheClientsChoice(t *testing.T) {
 	if rec := f.do(t, "scoped-a", http.MethodPost, secfixAttemptPath, secfixAttempt("k-empty", "")); rec.Code != http.StatusCreated {
 		t.Fatalf("one grant, no branch named: got %d %s", rec.Code, rec.Body.String())
 	}
-	// A global role may name any branch.
+	// A global role may name any branch, or none (the attempt is then org wide: a NULL branch).
 	if rec := f.do(t, "global", http.MethodPost, secfixAttemptPath, secfixAttempt("k-global", secfixBranchC)); rec.Code != http.StatusCreated {
 		t.Fatalf("global naming a branch: got %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := f.do(t, "global", http.MethodPost, secfixAttemptPath, secfixAttempt("k-global-none", "")); rec.Code != http.StatusCreated {
+		t.Fatalf("global naming no branch: got %d %s", rec.Code, rec.Body.String())
 	}
 	// The same person with two grants: both reachable, the third refused, none named is ambiguous (422).
 	if rec := f.do(t, "two-grants", http.MethodPost, secfixAttemptPath, secfixAttempt("k-two-b", secfixBranchB)); rec.Code != http.StatusCreated {
@@ -227,7 +233,7 @@ func TestSecfix_AttemptBranchIsNeverTheClientsChoice(t *testing.T) {
 		t.Fatalf("two grants, no branch named: got %d %s, want 422", rec.Code, rec.Body.String())
 	}
 
-	want := map[string]string{"k-own": secfixBranchA, "k-empty": secfixBranchA, "k-global": secfixBranchC, "k-two-b": secfixBranchB}
+	want := map[string]string{"k-own": secfixBranchA, "k-empty": secfixBranchA, "k-global": secfixBranchC, "k-global-none": "", "k-two-b": secfixBranchB}
 	if len(f.store.attempts) != len(want) {
 		t.Fatalf("rows written: got %d want %d", len(f.store.attempts), len(want))
 	}
