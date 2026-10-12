@@ -1,0 +1,14 @@
+# One Tauri 2 workspace, three thin profiles over one shared Rust core
+# (decision log row 1519). Field is real; Work and Pro stay skeletons
+# (their READMEs only) until their own items.
+[workspace]
+resolver = "2"
+members = ["core", "hh-field"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.95"
+publish = false
+
+[profile.dev]
+debug = 0

@@ -1,0 +1,13 @@
+[package]
+name = "hh-shell-core"
+version = "0.0.0"
+description = "Shared Rust core for the HH shells: keychain custody now; the SQLite store, updater, deep links and permissions land here later."
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# keyring 3.6 with its pure Rust Secret Service path (zbus, no libsecret and
+# no libdbus headers). Desktop Linux only: Android has no keyring backend in
+# this crate, so the core reports that plainly (see keychain.rs).
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["async-secret-service", "tokio", "crypto-rust"] }
