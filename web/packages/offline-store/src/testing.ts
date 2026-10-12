@@ -11,18 +11,35 @@ import { SCOPE_POLICIES } from "./scopes.js";
 import type { ClosableSqlExecutor, SqlRow, SqlStatement, SqlValue } from "./sql.js";
 import type { SyncTransport } from "./transport.js";
 
+/**
+ * Most statements one test executor runs before it refuses the next. No honest test comes near it; a loop that
+ * spins on the database (a regression, a mutant) fails here, as an assertion, instead of hanging the run: a loop
+ * made only of awaited in memory calls never yields to the event loop, so no timer could end it.
+ */
+export const MAX_TEST_STATEMENTS = 500_000;
+
 /** An in-memory (or file) SQLite behind the executor seam. */
-export function nodeSqliteExecutor(path = ":memory:"): ClosableSqlExecutor {
+export function nodeSqliteExecutor(path = ":memory:", maxStatements = MAX_TEST_STATEMENTS): ClosableSqlExecutor {
   const db = new DatabaseSync(path);
   const plain = (row: Record<string, unknown>): SqlRow => ({ ...row }) as SqlRow;
+  let used = 0;
+  const count = (n = 1): void => {
+    used += n;
+    if (used > maxStatements) {
+      throw new Error(`test executor: more than ${maxStatements} statements, the code under test is spinning`);
+    }
+  };
   return {
     async run(sql, params = []) {
+      count();
       db.prepare(sql).run(...params);
     },
     async all<T = SqlRow>(sql: string, params: SqlValue[] = []) {
+      count();
       return db.prepare(sql).all(...params).map(plain) as T[];
     },
     async atomic(statements: SqlStatement[]) {
+      count(statements.length);
       db.exec("BEGIN");
       try {
         for (const s of statements) db.prepare(s.sql).run(...(s.params ?? []));

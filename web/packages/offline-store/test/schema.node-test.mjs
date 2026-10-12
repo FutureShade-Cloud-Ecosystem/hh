@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { migrate, SCHEMA_VERSION, entityTable } from "../src/schema.ts";
-import { nodeSqliteExecutor } from "../src/testing.ts";
+import { nodeSqliteExecutor, MAX_TEST_STATEMENTS } from "../src/testing.ts";
 
 async function tableNames(sql) {
   const rows = await sql.all("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
@@ -154,4 +154,17 @@ test("a schema 1 outbox is upgraded through both steps in one migrate", async ()
   await migrate(sql, ["pick_tasks"]);
   const [row] = await sql.all("SELECT attempts, sent, stall, settled, settled_at FROM outbox");
   assert.deepEqual(row, { attempts: 2, sent: 1, stall: null, settled: null, settled_at: null });
+});
+
+test("the test executor refuses a loop that spins on the database, so a spinning mutant fails instead of hanging", async () => {
+  const sql = nodeSqliteExecutor(":memory:", 50);
+  await assert.rejects(
+    (async () => {
+      for (;;) await sql.all("SELECT 1");
+    })(),
+    /spinning/,
+  );
+  const batch = nodeSqliteExecutor(":memory:", 5);
+  await assert.rejects(batch.atomic(Array.from({ length: 6 }, () => ({ sql: "SELECT 1" }))), /spinning/);
+  assert.ok(MAX_TEST_STATEMENTS >= 100_000, "the default must leave every honest test far from the cap");
 });
