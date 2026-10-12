@@ -66,6 +66,14 @@ func TestQDID_PolicyCheck_AgainstTheDatabase(t *testing.T) {
 		t.Fatalf("another caller on the clerk's override = %d %s, want 403", code, body)
 	}
 
+	// Once the line write has used the approval up it is no standing override: the check answers 403 again.
+	if _, err := q.pool.Exec(context.Background(), `UPDATE permission_approval_requests SET data = data || '{"used": true}'::jsonb WHERE id = $1`, id); err != nil {
+		t.Fatalf("use the override up: %v", err)
+	}
+	if code, body = ask(testkit.SubInsideSales, 10000, 9000, testkit.BranchNorthAID); code != http.StatusForbidden || !strings.Contains(body, `"block"`) {
+		t.Fatalf("with a used up override = %d %s, want the 403 block", code, body)
+	}
+
 	// A bad body is a 400.
 	if code, body = qd1bCall(t, q, http.MethodPost, path, testkit.SubInsideSales, map[string]any{"price_cents": 1}); code != http.StatusBadRequest {
 		t.Fatalf("missing fields = %d %s, want 400", code, body)

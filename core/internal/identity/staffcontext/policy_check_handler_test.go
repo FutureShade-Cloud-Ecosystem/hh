@@ -3,6 +3,7 @@ package staffcontext
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,7 +23,7 @@ func TestPolicyCheck_Route(t *testing.T) {
 
 	const linkedID = "11111111-1111-1111-1111-111111111111"
 	link := func(_ context.Context, _ string) (string, bool) { return linkedID, true }
-	f := &fakeStore{overrides: map[string]bool{}}
+	f := &fakeStore{overrides: map[string]bool{}, unusedOverrides: map[string]bool{}}
 	h := NewApprovalsHandler(NewApprovals(f), link)
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, sg.Guards)
@@ -80,7 +81,12 @@ func TestPolicyCheck_Route(t *testing.T) {
 	}
 
 	// An approved override for this caller and branch clears the block: 200 allowed with override true.
+	// An approved override the line write already used up is not standing: the check counts only an unused one.
 	f.overrides[linkedID+"|"+trt+"|"+string(PolicyMargin)] = true
+	if rr = do(`{"price_cents":10000,"cost_cents":9000,"branch_id":"`+trt+`"}`, true); rr.Code != http.StatusForbidden {
+		t.Fatalf("used up override = %d, want 403 (body %s)", rr.Code, rr.Body.String())
+	}
+	f.unusedOverrides[linkedID+"|"+trt+"|"+string(PolicyMargin)] = true
 	rr = do(`{"price_cents":10000,"cost_cents":9000,"branch_id":"`+trt+`"}`, true)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("below floor with override = %d, want 200 (body %s)", rr.Code, rr.Body.String())
@@ -98,6 +104,13 @@ func TestPolicyCheck_Route(t *testing.T) {
 		t.Fatalf("foreign branch carries a block: %s", rr.Body.String())
 	}
 
+	// A failed override lookup is the 503, never a guess either way.
+	f.overrideErr = errors.New("lookup down")
+	if rr = do(`{"price_cents":10000,"cost_cents":8000,"branch_id":"`+trt+`"}`, true); rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("lookup failure = %d, want 503 (body %s)", rr.Code, rr.Body.String())
+	}
+	f.overrideErr = nil
+
 	// A global caller reaches any branch.
 	sg.SetAuthority(identity.StaffAuthority{RoleID: "general_manager", Tier: 1, Scope: "global"})
 	if rr = do(`{"price_cents":10000,"cost_cents":8000,"branch_id":"`+kgn+`"}`, true); rr.Code != http.StatusOK {
@@ -105,7 +118,7 @@ func TestPolicyCheck_Route(t *testing.T) {
 	}
 
 	// A bad body is a 400, and so is a missing branch (the contract requires it).
-	for _, body := range []string{`not json`, `{"price_cents":1,"cost_cents":1}`, `{"price_cents":1,"cost_cents":1,"branch_id":""}`} {
+	for _, body := range []string{`not json`, `{"price_cents":-1,"cost_cents":1,"branch_id":"` + trt + `"}`, `{"price_cents":1,"cost_cents":9000000000000000,"branch_id":"` + trt + `"}`, `{"price_cents":1,"cost_cents":1}`, `{"price_cents":1,"cost_cents":1,"branch_id":""}`} {
 		if rr = do(body, true); rr.Code != http.StatusBadRequest {
 			t.Fatalf("body %q = %d, want 400 (body %s)", body, rr.Code, rr.Body.String())
 		}

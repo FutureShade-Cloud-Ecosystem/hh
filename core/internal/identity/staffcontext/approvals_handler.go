@@ -169,6 +169,10 @@ func (h *ApprovalsHandler) decideApproval(w http.ResponseWriter, r *http.Request
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// maxPolicyCheckCents bounds the advisory check's amounts so the basis point arithmetic (amount times 10000
+// in int64) cannot wrap: ten billion dollars is far past any quote.
+const maxPolicyCheckCents int64 = 1_000_000_000_000
+
 // policyCheckRequest is the contract's IdentityPolicyCheckRequest. The amounts are pointers so a body
 // that leaves one out is a 400 rather than a quiet zero.
 type policyCheckRequest struct {
@@ -198,11 +202,15 @@ func (h *ApprovalsHandler) checkPolicy(w http.ResponseWriter, r *http.Request, _
 		httpx.Error(w, http.StatusBadRequest, "price_cents, cost_cents and branch_id are required")
 		return
 	}
+	if *req.PriceCents < 0 || *req.CostCents < 0 || *req.PriceCents > maxPolicyCheckCents || *req.CostCents > maxPolicyCheckCents {
+		httpx.Error(w, http.StatusBadRequest, "price_cents and cost_cents must be between 0 and 1000000000000")
+		return
+	}
 	if !caller.CanAccessBranch(req.BranchID) {
 		httpx.Error(w, http.StatusForbidden, "that branch is outside your grants")
 		return
 	}
-	hasOverride, err := h.svc.HasApprovedOverride(r.Context(), caller.UserID, req.BranchID, "", PolicyMargin)
+	hasOverride, err := h.svc.HasUnusedApprovedOverride(r.Context(), caller.UserID, req.BranchID, PolicyMargin)
 	if err != nil {
 		httpx.Error(w, http.StatusServiceUnavailable, "the override lookup failed")
 		return
