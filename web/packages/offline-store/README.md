@@ -40,5 +40,8 @@ statechart in `statecharts/sync/` is its acceptance gate.
 
 Node 22.13 or later (type stripping and `node:sqlite`). `npm test` runs the package suites,
 the statechart table test and the generated path model tests (`HH_MODEL_PATHS` and
-`HH_MODEL_STEPS` deepen the model run). `probe/` holds the browser legs (Playwright,
-Chromium, not in CI): `PROBE_PORT=<free port> npx playwright test` from `probe/`.
+`HH_MODEL_STEPS` deepen the model run). The suites that need `node:sqlite` are named
+`*.node-test.mjs` so the repository's `bun test` drift gate (Bun has no `node:sqlite`) does
+not discover them; this package's `npm test` runs them, and the web CI loop runs that.
+`probe/` holds the browser legs (`*.pw.js`, Playwright, Chromium, not in CI):
+`PROBE_PORT=<free port in 56200 to 56299> npx playwright test` from `probe/`.
