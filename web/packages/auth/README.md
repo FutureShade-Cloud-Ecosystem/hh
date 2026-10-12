@@ -345,18 +345,21 @@ foreign X- header (the only X- header it owns is X-Org).
 - **The browser adapter** is `createAppwriteAccountSurface({endpoint,
   projectId, coreBaseUrl, fetch?})` from the separate entry
   `@hardscapehouse/auth/appwrite-adapter` (`src/appwrite-adapter.ts`). It is
-  the only place the Appwrite web SDK is imported; `appwrite` is pinned
-  exactly at 27.0.0 in this package's dependencies, and the package root
-  never imports the adapter, so a host that does not use it bundles no SDK.
-  The Tauri shells forward `exchange` to their Rust `auth_exchange` command
-  instead (`shared/AUTH-SHELL-CONTRACT.md`). Google redirects must be on the
-  page's own origin. The session cookie is FB Console's own, httpOnly and
-  first party. The SDK would also write a session fallback to local storage
+  plain REST over `fetch`, no SDK and no npm dependency: `POST
+  /account/sessions/email`, `POST /account/jwts`, `GET /account`, `DELETE
+  /account/sessions/current` under the configured endpoint, each with the
+  `X-Appwrite-Project` header, `credentials: "include"` (the session cookie
+  is FB Console's own, httpOnly and first party on the futurebuild.ai host)
+  and `redirect: "error"`; Google navigates (through an injectable
+  `navigate`) to the console's OAuth route with absolute success and failure
+  URLs that must be on the page's own origin. The package root never imports
+  the adapter. The Tauri shells forward `exchange` to their Rust
+  `auth_exchange` command instead (`shared/AUTH-SHELL-CONTRACT.md`).
+  The adapter was first built on the Appwrite web SDK and moved off it
+  because that SDK copies a session fallback into local storage
   (`cookieFallback`) whenever FB Console sends `X-Fallback-Cookies`, which
-  would break the custody rule above; the adapter removes that key after
-  every SDK call so it never rests in storage or goes back out, and a test
-  holds that line (the SDK's own transient write is pinned there as the
-  finding it is).
+  breaks the custody rule above. Now the adapter never reads that response
+  header, never sets it on a request, and touches no storage of any kind.
 - `CredentialProvider` (src/lock.ts) is the WebAuthn surface: `isAvailable`,
   `create`, `verify`. `webAuthnCredentialProvider()` is the platform adapter
   a shell wires.
@@ -410,11 +413,12 @@ The gates, as tests:
   bearer and writes no token to storage; the refresh timing, the backoff,
   the refusals that end a session and those that never do, and a sign-out
   that wins a refresh in flight, all on the fake clock.
-- `test/appwrite-adapter.test.mjs`: the real SDK over a faked fetch and
-  faked local storage: a fresh JWT per attempt, the one retry on a core 401,
-  every refusal code, the JWT never leaving the adapter, no `cookieFallback`
-  left behind, same-origin OAuth redirects, and the package root free of the
-  SDK.
+- `test/appwrite-adapter.test.mjs`: a fake fetch asserts the exact requests
+  (method, path, headers, credentials, no secret in a URL), storage doubles
+  throw on any write, a response carrying `X-Fallback-Cookies` is ignored,
+  a fresh JWT per attempt, the one retry on a core 401, every refusal code,
+  the JWT never leaving the adapter, same-origin OAuth redirects, and the
+  package root and the adapter free of any SDK.
 
 - `test/custody.test.mjs`: the token lives in memory and the mirror carries
   the display profile and nothing else; nothing in storage is

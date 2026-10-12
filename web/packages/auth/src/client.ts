@@ -31,11 +31,11 @@
 // account operations this package needs (createEmailPasswordSession,
 // createOAuth2Session, getSession, deleteSession) and the exchange, which
 // trades the signed-in FB Console account for the core's own session token
-// (POST /api/v1/auth/exchange). The Appwrite Web SDK is the one dependency
-// real login cannot avoid, so it lives behind this seam in an adapter
-// (src/appwrite-adapter.ts, a separate entry, for the browser; the Tauri
-// shells forward to their Rust side); the package root takes no npm
-// dependency on it and vendors no fake of it (src/testing.ts carries a fake
+// (POST /api/v1/auth/exchange). The calls to FB Console live behind this seam
+// in an adapter (src/appwrite-adapter.ts, a separate entry, plain REST over
+// fetch with no SDK, for the browser; the Tauri shells forward to their Rust
+// side); the package takes no npm dependency for it and vendors no fake
+// of the console (src/testing.ts carries a fake
 // of THIS interface, with obviously fake values, for tests). Sign-in methods
 // for the first release: the FutureBuild house sign-in (email and password)
 // and Google, both directly against FB Console's HH project; device unlock
@@ -184,10 +184,9 @@ const ENDS_SESSION: ReadonlySet<ExchangeRefusalCode> = new Set(["unauthorized", 
 
 /**
  * The account surface this package needs, as a narrow injected interface.
- * An adapter maps these onto the FB Console account (the Appwrite Web SDK in
- * a browser, the Rust side in a Tauri shell), the one integration point a
- * host wires, recorded in the README; the SDK's dependency lives there, not
- * here.
+ * An adapter maps these onto the FB Console account (REST over fetch in a
+ * browser, the Rust side in a Tauri shell), the one integration point a
+ * host wires, recorded in the README.
  */
 export interface AccountSurface {
   /**
