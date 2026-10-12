@@ -12,9 +12,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 )
 
 // settleInvoice is one payment slice applied to one invoice inside the take's
@@ -92,7 +93,7 @@ func (r *Repository) FindOwingOrders(ctx context.Context, term string, branchIDs
 	if limit <= 0 {
 		limit = 20
 	}
-	like := "%" + escapeLikeWildcards(term) + "%"
+	like := "%" + likeutil.EscapeLikePattern(term) + "%"
 	var out []OwingOrder
 	truncated := false
 	err := r.payBalanceRead(ctx, func(tx pgx.Tx, src PayBalanceSources) error {
@@ -229,14 +230,6 @@ func payBalanceTrail(ctx context.Context, tx pgx.Tx, src PayBalanceSources, orde
 	}
 	return trail, nil
 }
-
-// escapeLikeWildcards makes the term's own LIKE wildcards literal (the
-// backslash is Postgres' default LIKE escape): a customer typed "%", or an
-// underscore inside a reference, and the find matched every owing order in
-// reach instead of the one whose text carries the character.
-var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-
-func escapeLikeWildcards(term string) string { return likeEscaper.Replace(term) }
 
 // ReadOwingOrder is the advisory read of one order: its facts and the one
 // number it owes (the open balances plus the uninvoiced remainder). found
