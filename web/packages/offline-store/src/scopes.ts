@@ -4,6 +4,8 @@
 // test/scopes.test.mjs: SCOPE_POLICIES is core/internal/sync/registry.go, and
 // MANIFEST_OFFLINE is the offline block of every frontend in manifest.yaml.
 
+import { SCOPE_NAME } from "./schema.js";
+
 export type ConflictPolicy = "server_wins" | "last_write_wins_by_field" | "manual";
 export type ScopePolicy = ConflictPolicy | "pull_only";
 export type OfflineMode = "full" | "read_cache_plus_outbox" | "read_cache_only" | "none";
@@ -98,6 +100,24 @@ export interface WriteRefusal {
   message: string;
 }
 
+/**
+ * The fence that holds whatever a profile or a stored row says: a money scope
+ * in any spelling (case, spaces) is money, and a name that is not a registry
+ * scope in its exact lower snake case shape is not a scope at all. Enqueue
+ * runs it, and replay runs it again on every stored row, because a row written
+ * by an older build must not slip past a fence that has grown since.
+ */
+export function scopeFence(scope: unknown): WriteRefusal | null {
+  const plain = typeof scope === "string" ? scope.trim().toLowerCase() : "";
+  if (MONEY_SCOPES.includes(plain)) {
+    return { reason: "money_scope", message: `${String(scope)} is a money scope: money never queues, resolve it online` };
+  }
+  if (typeof scope !== "string" || !SCOPE_NAME.test(scope) || !Object.hasOwn(SCOPE_POLICIES, scope)) {
+    return { reason: "scope_not_declared", message: `${JSON.stringify(scope)} is not a scope name of the registry` };
+  }
+  return null;
+}
+
 const WRITE_MODES: readonly OfflineMode[] = ["full", "read_cache_plus_outbox"];
 
 export class ScopeBook {
@@ -129,9 +149,8 @@ export class ScopeBook {
 
   /** Why a client write to this scope is refused, or null when it is admitted. The money check comes first. */
   writeRefusal(scope: string): WriteRefusal | null {
-    if (MONEY_SCOPES.includes(scope)) {
-      return { reason: "money_scope", message: `${scope} is a money scope: money never queues, resolve it online` };
-    }
+    const fence = scopeFence(scope);
+    if (fence) return fence;
     if (!this.#declared.has(scope)) {
       return { reason: "scope_not_declared", message: `${scope} is not a scope of this profile` };
     }

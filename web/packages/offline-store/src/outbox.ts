@@ -2,7 +2,9 @@
 //  1. Order: rows replay in `seq` order, the order of enqueue, across scopes.
 //  2. Key: an operation's idempotency key is generated once, at enqueue, and
 //     stored; every attempt, in every process, sends that key and that body.
-//  3. Money: a money scope is refused at enqueue and never stored.
+//  3. Money: a money scope is refused at enqueue and never stored; replay checks
+//     the fence again on every stored row, so a row an older build wrote is
+//     closed with a card and never sent.
 //  4. Atomic outcome: the status change of a pushed operation and whatever the
 //     recorder adds for it (a conflict card, an entity row) land in one
 //     atomic statement list, or none of it does.
@@ -17,7 +19,7 @@
 //  8. A push stays under MAX_REQUEST_BYTES as well as under maxBatch rows.
 import type { SyncPushOperation, SyncPushResult } from "@hardscapehouse/api-client";
 import { bodyHash, canonicalJson } from "./canonical.js";
-import type { ScopeBook, WriteRefusalReason } from "./scopes.js";
+import { scopeFence, type ScopeBook, type WriteRefusalReason } from "./scopes.js";
 import { serialQueue, type SqlExecutor, type SqlStatement } from "./sql.js";
 import { classifyFailure, type SyncTransport } from "./transport.js";
 
@@ -102,6 +104,17 @@ interface DbRow {
   created_at: string;
 }
 
+/** The stored payload as an object, or null when the text is not a JSON object (disk damage, an old build). */
+function parsePayload(text: string): Record<string, unknown> | null {
+  try {
+    const value: unknown = JSON.parse(text);
+    return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A row for reading. A payload that cannot be read shows as empty here; replay closes that row with a card. */
 function toRow(r: DbRow): OutboxRow {
   return {
     seq: r.seq,
@@ -110,7 +123,7 @@ function toRow(r: DbRow): OutboxRow {
     op: r.op,
     entity: r.entity,
     entityId: r.entity_id,
-    payload: JSON.parse(r.payload) as Record<string, unknown>,
+    payload: parsePayload(r.payload) ?? {},
     baseSeq: r.base_seq,
     bodyHash: r.body_hash,
     status: r.status,
@@ -270,27 +283,34 @@ export class Outbox {
       );
       if (head.length === 0) return { kind: "done", ...totals };
       const scope = head[0]!.scope;
-      const run: OutboxRow[] = [];
+      const dbRun: DbRow[] = [];
       for (const r of head) {
         if (r.scope !== scope) break;
-        run.push(toRow(r));
+        dbRun.push(r);
       }
 
-      // A body that no longer matches its hash is never sent: it is closed as
-      // rejected and the rows behind it carry on.
-      const tampered: OutboxRow[] = [];
-      for (const row of run) {
-        const now = await bodyHash(hashInput({ scope: row.scope, op: row.op, entity: row.entity, payload: row.payload, baseSeq: row.baseSeq }));
-        if (now !== row.bodyHash) tampered.push(row);
+      // A row that cannot be trusted is never sent: the money fence and the
+      // scope name shape are checked again, the stored text must parse, and
+      // the body must still match its hash. Each such row is closed as
+      // rejected WITH a card, and the rows behind it carry on.
+      const bad: { row: OutboxRow; message: string }[] = [];
+      const run: OutboxRow[] = [];
+      for (const r of dbRun) {
+        const row = toRow(r);
+        const fence = scopeFence(r.scope);
+        const payload = parsePayload(r.payload);
+        let message: string | null = null;
+        if (fence) message = `${fence.message}; not sent`;
+        else if (payload === null) message = "stored payload is not readable JSON; not sent";
+        else if ((await bodyHash(hashInput({ scope: row.scope, op: row.op, entity: row.entity, payload, baseSeq: row.baseSeq }))) !== row.bodyHash) {
+          message = "stored body does not match its body hash; not sent";
+        }
+        if (message === null) run.push(row);
+        else bad.push({ row, message });
       }
-      if (tampered.length > 0) {
-        await this.#sql.atomic(
-          tampered.map((row) => ({
-            sql: "UPDATE outbox SET status = 'rejected', error = ? WHERE idempotency_key = ? AND status = 'pending'",
-            params: ["stored body does not match its body hash; not sent", row.key],
-          })),
-        );
-        totals.rejected += tampered.length;
+      if (bad.length > 0) {
+        const fault = await this.#closeRejected(bad, totals);
+        if (fault) return fault;
         continue;
       }
 
@@ -321,7 +341,7 @@ export class Outbox {
           }
           return null;
         }
-        return this.#closeRejected(run, `request refused (${failure.status}): ${failure.message}`, totals);
+        return this.#closeRejected(run.map((row) => ({ row, message: `request refused (${failure.status}): ${failure.message}` })), totals);
       }
       totals.sent += ops.length;
       if (failure.kind === "fault") {
@@ -375,10 +395,10 @@ export class Outbox {
   }
 
   /** Close rows as rejected, each with its card, in one atomic unit. Returns a fault outcome when that failed. */
-  async #closeRejected(rows: readonly OutboxRow[], message: string, totals: Totals): Promise<ReplayOutcome | null> {
+  async #closeRejected(items: readonly { row: OutboxRow; message: string }[], totals: Totals): Promise<ReplayOutcome | null> {
     try {
       const statements: SqlStatement[] = [];
-      for (const row of rows) {
+      for (const { row, message } of items) {
         statements.push({
           sql: "UPDATE outbox SET status = 'rejected', error = ? WHERE idempotency_key = ? AND status = 'pending'",
           params: [message, row.key],
@@ -386,11 +406,11 @@ export class Outbox {
         if (this.#onResult) statements.push(...this.#onResult({ row, result: { client_id: row.key, status: "rejected", error: message } }));
       }
       await this.#sql.atomic(statements);
-      totals.rejected += rows.length;
+      totals.rejected += items.length;
       return null;
     } catch (error) {
       const fault = error instanceof Error ? error.message : String(error);
-      await this.#noteFault(rows, fault);
+      await this.#noteFault(items.map((i) => i.row), fault);
       return { kind: "fault", message: fault };
     }
   }

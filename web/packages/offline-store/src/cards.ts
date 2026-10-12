@@ -50,7 +50,7 @@ export function draftFor(result: SyncPushResult): CardDraft | null {
     return {
       kind: envelope.applied === false ? "review" : "merge_report",
       policy: envelope.policy,
-      serverState: envelope.server_state,
+      serverState: envelope.server_state ?? {},
       error: null,
     };
   }

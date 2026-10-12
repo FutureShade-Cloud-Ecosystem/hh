@@ -5,7 +5,8 @@ import type { SqlExecutor, SqlStatement } from "./sql.js";
 
 export const SCHEMA_VERSION = 1;
 
-const SCOPE_NAME = /^[a-z][a-z_]{0,63}$/;
+/** The shape of a scope name; it is spliced into table names, so it is checked before any SQL. */
+export const SCOPE_NAME = /^[a-z][a-z_]{0,63}$/;
 
 /** The entity table of one scope. The name is validated because it is spliced into SQL. */
 export function entityTable(scope: string): string {
