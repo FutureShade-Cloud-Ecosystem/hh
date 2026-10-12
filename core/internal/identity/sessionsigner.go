@@ -98,9 +98,9 @@ func loadSessionPrivateKey(path string) (*ecdsa.PrivateKey, error) {
 	if info.Mode().Perm()&0o077 != 0 {
 		return nil, errors.New("identity: the session signing key file must not be readable by group or other (mode 0400 or 0600)")
 	}
-	raw, err := io.ReadAll(io.LimitReader(f, maxKeyFileBytes))
+	raw, err := readCapped(f)
 	if err != nil {
-		return nil, errors.New("identity: the session signing key file cannot be read")
+		return nil, errors.New("identity: the session signing key file cannot be read or is too long")
 	}
 	defer wipe(raw)
 	block := singlePEMBlock(raw)
@@ -132,9 +132,14 @@ func loadSessionPrivateKey(path string) (*ecdsa.PrivateKey, error) {
 }
 
 func loadSessionPublicKey(path, slot string) (*ecdsa.PublicKey, error) {
-	raw, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, errors.New("identity: the " + slot + " session key file cannot be read")
+	}
+	defer f.Close()
+	raw, err := readCapped(f)
+	if err != nil {
+		return nil, errors.New("identity: the " + slot + " session key file cannot be read or is too long")
 	}
 	defer wipe(raw)
 	pub, err := ParseSessionPublicKeyPEM(raw)
@@ -142,6 +147,21 @@ func loadSessionPublicKey(path, slot string) (*ecdsa.PublicKey, error) {
 		return nil, errors.New("identity: the " + slot + " session key file is not an EC P-256 PEM public key")
 	}
 	return pub, nil
+}
+
+// readCapped reads at most maxKeyFileBytes and refuses a longer file: it
+// reads one byte past the cap and fails if that byte exists, so a file is
+// never silently truncated before the trailing data check sees it.
+func readCapped(r io.Reader) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(r, maxKeyFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxKeyFileBytes {
+		wipe(raw)
+		return nil, errors.New("too long")
+	}
+	return raw, nil
 }
 
 func wipe(b []byte) {

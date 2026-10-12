@@ -481,3 +481,42 @@ func TestKeyFilesRefuseTrailingAndLeadingData(t *testing.T) {
 		t.Errorf("trailing whitespace refused: %v", err)
 	}
 }
+
+// A key file longer than the cap is refused, never truncated: a valid block,
+// a long run of whitespace and then a second block must not slip past the
+// trailing data check by falling beyond the read limit. Public files are
+// capped the same way.
+func TestKeyFilesOverTheCapAreRefused(t *testing.T) {
+	dir := t.TempDir()
+	cur, other := freshPriv(t), freshPriv(t)
+	curDER, _ := x509.MarshalECPrivateKey(cur)
+	curPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: curDER})
+	otherDER, _ := x509.MarshalECPrivateKey(other)
+	otherPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: otherDER})
+	pad := bytes.Repeat([]byte("\n"), maxKeyFileBytes)
+
+	big := append(append(append([]byte{}, curPEM...), pad...), otherPEM...)
+	bigFile := writeFile(t, dir, "big.pem", big)
+	if _, err := LoadSessionKeys(SessionKeyFiles{Current: bigFile}, signerIssuer, signerAud); err == nil {
+		t.Error("an oversized private key file was accepted")
+	}
+
+	curFile := writeSEC1(t, dir, "cur.pem", cur)
+	pubPEM, _ := marshalPKIXForTest(&other.PublicKey)
+	bigPub := writeFile(t, dir, "bigpub.pem", append(append(append([]byte{}, pubPEM...), pad...), otherPEM...))
+	for _, files := range []SessionKeyFiles{{Current: curFile, Next: bigPub}, {Current: curFile, Previous: bigPub}} {
+		if _, err := LoadSessionKeys(files, signerIssuer, signerAud); err == nil {
+			t.Error("an oversized public key file was accepted")
+		}
+	}
+
+	// A file exactly at the cap still loads.
+	atCap := append(append([]byte{}, curPEM...), bytes.Repeat([]byte("\n"), maxKeyFileBytes-len(curPEM))...)
+	if len(atCap) != maxKeyFileBytes {
+		t.Fatalf("test setup: %d bytes", len(atCap))
+	}
+	capFile := writeFile(t, dir, "cap.pem", atCap)
+	if _, err := LoadSessionKeys(SessionKeyFiles{Current: capFile}, signerIssuer, signerAud); err != nil {
+		t.Errorf("a file at the cap was refused: %v", err)
+	}
+}
