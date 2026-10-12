@@ -155,7 +155,9 @@ const ACTIONS = [
     else {
       const status = pickOne(w.rng, [400, 403, 404]);
       if (status !== 404) w.relaxed = true; // a 400 or 403 may park a scope; a 404 is a fault
-      w.server.failNext("status", status);
+      // A 400 is either about the body (invalid_json: split, judged per row) or about the scope or a hop (parks).
+      if (status === 400 && w.rng() < 0.5) w.server.failNext("status", 400, "invalid_json");
+      else w.server.failNext("status", status);
     }
   }],
   // A refusal on the heels of an attempt the server may have applied: the case a plain draw rarely lines up.
@@ -163,7 +165,9 @@ const ACTIONS = [
     if (w.rng() < 0.5) w.server.failNext("afterApply", 1 + Math.floor(w.rng() * 3));
     else w.server.failNext("dropResponse");
     w.relaxed = true;
-    w.server.failNext("status", pickOne(w.rng, [400, 403, 400]));
+    const status = pickOne(w.rng, [400, 403, 400]);
+    if (status === 400 && w.rng() < 0.7) w.server.failNext("status", 400, "invalid_json");
+    else w.server.failNext("status", status);
   }],
   [4, "session expires on the server", async (w) => {
     w.server.setAuthValid(false);

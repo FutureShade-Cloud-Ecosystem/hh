@@ -121,6 +121,13 @@ const encoder = new TextEncoder();
 
 const opBytes = (op: SyncPushOperation): number => encoder.encode(JSON.stringify(op)).length;
 
+/**
+ * The one 400 of the push route that is about the body (handler.go answers it for a body that does not
+ * decode). The other 400s of the route (an unknown scope, a pull only scope) refuse the whole scope, and a
+ * hop in front of the core answers 400 for its own reasons about every request: none of them judges a row.
+ */
+export const BODY_REFUSAL = "invalid_json";
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OPS: readonly string[] = ["create", "update", "delete"];
 
@@ -430,7 +437,7 @@ export class Outbox {
       const failure = classifyFailure(response.error, response.status);
       if (failure.kind === "refused") {
         await this.#unmark(run);
-        if (failure.status === 400) {
+        if (failure.status === 400 && failure.message === BODY_REFUSAL) {
           if (mayRetrySingly && run.length > 1) {
             for (const row of run) {
               if (parked.has(scope)) break;

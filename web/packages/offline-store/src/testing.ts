@@ -97,7 +97,7 @@ export class FakeWorker implements WorkerLike {
 }
 
 type Fault =
-  | { kind: "status"; status: number }
+  | { kind: "status"; status: number; message?: string }
   | { kind: "afterApply"; applied: number }
   | { kind: "dropResponse" }
   | { kind: "malformed"; shape: "short" | "reordered" | "foreign" };
@@ -157,12 +157,12 @@ export class FakeSyncServer {
     this.#refused.set(key, message);
   }
 
-  failNext(kind: "status", status: number): void;
+  failNext(kind: "status", status: number, message?: string): void;
   failNext(kind: "afterApply", applied: number): void;
   failNext(kind: "dropResponse"): void;
   failNext(kind: "malformed", shape: "short" | "reordered" | "foreign"): void;
-  failNext(kind: Fault["kind"], arg?: number | string): void {
-    if (kind === "status") this.#faults.push({ kind, status: arg as number });
+  failNext(kind: Fault["kind"], arg?: number | string, message?: string): void {
+    if (kind === "status") this.#faults.push({ kind, status: arg as number, ...(message !== undefined ? { message } : {}) });
     else if (kind === "afterApply") this.#faults.push({ kind, applied: arg as number });
     else if (kind === "dropResponse") this.#faults.push({ kind });
     else this.#faults.push({ kind, shape: arg as "short" | "reordered" | "foreign" });
@@ -216,7 +216,7 @@ export class FakeSyncServer {
     const fault = this.#faults[0];
     if (fault?.kind === "status") {
       this.#faults.shift();
-      return err(`status ${fault.status}`, fault.status);
+      return err(fault.message ?? `status ${fault.status}`, fault.status);
     }
     const all = [...this.#table(scope).entries()]
       .filter(([, r]) => r.seq > since)
@@ -241,7 +241,7 @@ export class FakeSyncServer {
     const fault = this.#faults[0];
     if (fault?.kind === "status") {
       this.#faults.shift();
-      return err(`status ${fault.status}`, fault.status);
+      return err(fault.message ?? `status ${fault.status}`, fault.status);
     }
     const stopAfter = fault?.kind === "afterApply" ? fault.applied : ops.length;
     const results: SyncPushResult[] = [];
