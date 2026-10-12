@@ -14,8 +14,9 @@
 -- first write wins (the engine inserts ON CONFLICT DO NOTHING) and the engine serializes find,
 -- apply and remember per slot with a transaction scoped advisory lock, so a concurrent push of
 -- the same key with another body waits and then finds this row. A key applied before this
--- migration has no row and answers as a plain replay; nothing is backfilled, because no stored
--- body exists to hash.
+-- migration has no row: while its module still dedups it, it answers as a plain replay, and once
+-- the row has moved on it applies again, as it did before this table. Nothing is backfilled,
+-- because no stored body exists to hash.
 --
 -- Additive: one new table, nothing read or changed by any running writer.
 
