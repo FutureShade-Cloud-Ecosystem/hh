@@ -117,12 +117,12 @@ func TestSessionMinterRefusesTheDemoIssuer(t *testing.T) {
 
 func TestSessionMinterWindowBounds(t *testing.T) {
 	m := newTestMinter(t, freshPriv(t))
-	for _, w := range []time.Duration{0, -time.Second, MaxDriverSessionTTL + time.Nanosecond} {
+	for _, w := range []time.Duration{0, -time.Second, time.Nanosecond, time.Second - time.Nanosecond, MaxDriverSessionTTL + time.Nanosecond} {
 		if _, err := m.Mint("sub", w); err == nil {
 			t.Errorf("window %v accepted", w)
 		}
 	}
-	for _, w := range []time.Duration{time.Nanosecond, time.Hour, MaxDriverSessionTTL} {
+	for _, w := range []time.Duration{time.Second, 2 * time.Second, time.Hour, MaxDriverSessionTTL} {
 		if _, err := m.Mint("sub", w); err != nil {
 			t.Errorf("window %v refused: %v", w, err)
 		}

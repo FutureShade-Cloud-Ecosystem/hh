@@ -130,6 +130,11 @@ func wipe(b []byte) {
 	}
 }
 
+// MinSessionWindow is the shortest window a token is minted for. Claims
+// carry whole seconds, so anything shorter would truncate to a token dead
+// on arrival (exp equal to iat).
+const MinSessionWindow = time.Second
+
 // SessionMinter signs ES256 session tokens with the deployment's key. The
 // claims are iss, sub, aud, iat and exp, nothing else: authority is the
 // database's, never the token's (D3).
@@ -164,7 +169,7 @@ func NewSessionMinter(key *ecdsa.PrivateKey, issuer, staffAudience string) (*Ses
 func (m *SessionMinter) PublicKey() *ecdsa.PublicKey { return &m.key.PublicKey }
 
 // Mint signs a token for the subject valid for the window, issued now.
-// The window is bounded 0 < window <= MaxDriverSessionTTL; the caller
+// The window is bounded MinSessionWindow <= window <= MaxDriverSessionTTL; the caller
 // computes it from the role's ceiling and the exchange knob.
 func (m *SessionMinter) Mint(subject string, window time.Duration) (string, error) {
 	return m.MintAt(subject, window, m.now())
@@ -175,7 +180,7 @@ func (m *SessionMinter) MintAt(subject string, window time.Duration, at time.Tim
 	if subject == "" {
 		return "", errors.New("identity: a session token needs a subject")
 	}
-	if window <= 0 || window > MaxDriverSessionTTL {
+	if window < MinSessionWindow || window > MaxDriverSessionTTL {
 		return "", errors.New("identity: the session window is outside the allowed bounds")
 	}
 	header, err := json.Marshal(map[string]string{"alg": "ES256", "kid": m.kid, "typ": "JWT"})
