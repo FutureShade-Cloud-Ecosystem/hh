@@ -277,6 +277,7 @@ jobs:
           }
           run_suite demo-exit-test required suite_demo_exit
       - name: Suite, the front door exit test (advisory)
+        timeout-minutes: 20
         # Advisory: not run before this workflow was written. The script
         # starts its core and its gate as background processes of its own and
         # stops them with signals, which the workstation lane that wrote this
@@ -291,8 +292,11 @@ jobs:
               web/apps/front-door/test/acceptance/exit-test.sh
           }
           run_suite front-door-exit-test advisory suite_front_door_exit
+      # always(): an advisory suite that hangs or fails its step must not keep
+      # the required suites' verdicts and evidence from being read.
       - name: Verdicts
         id: verdict
+        if: always()
         run: |
           set -uo pipefail
           . "$RUNNER_TEMP/acc-lib.sh"
@@ -308,7 +312,7 @@ jobs:
           done < "$ACC_VERDICTS"
           [ "$required_red" -eq 0 ] || { echo "$required_red required suite(s) red" >&2; exit 1; }
       - name: Upload the reports, traces and screenshots of a red run
-        if: always() && steps.verdict.outputs.any_red == 'true'
+        if: always() && (steps.verdict.outputs.any_red == 'true' || steps.verdict.outcome != 'success')
         uses: actions/upload-artifact@v4
         with:
           name: acceptance-reports
