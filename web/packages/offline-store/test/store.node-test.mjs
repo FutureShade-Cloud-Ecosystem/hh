@@ -11,6 +11,7 @@ import { createSqliteBackend } from "../src/backend-sqlite.ts";
 import { createOpfsBackend } from "../src/backend-opfs.ts";
 import { scopeBookFor } from "../src/scopes.ts";
 import { nodeSqliteExecutor, FakeLocks, FakeWorker } from "../src/testing.ts";
+import { bodyHash } from "../src/canonical.ts";
 import { baseRig, pick, uuid, FIELD_APPS } from "./_rig.mjs";
 
 async function rig(options = {}) {
@@ -317,4 +318,79 @@ test("a read cache only tab opens without touching the database and refuses ever
   assert.deepEqual({ rows: list.rows, readOnly: list.readOnly }, { rows: [], readOnly: true });
   assert.deepEqual(await store.cards.listOpen(), []);
   await owner.close();
+});
+
+// ---- replay integrity: a stored row that cannot be trusted is closed with a card ------------
+
+const hashOf = (row) => bodyHash({ scope: row.scope, op: row.op, entity: row.entity ?? null, payload: row.payload, baseSeq: row.baseSeq ?? null });
+
+test("a stored body that fails its hash is closed as rejected WITH a card, never silently", async () => {
+  const { store, sql, transport, server } = await rig();
+  const a = await store.enqueue(pick(1));
+  const b = await store.enqueue(pick(2));
+  await sql.run("UPDATE outbox SET payload = ? WHERE idempotency_key = ?", [JSON.stringify({ id: uuid(1), picked: 999 }), a.key]);
+  const out = await store.replay(transport);
+  assert.equal(out.kind, "done");
+  assert.deepEqual(server.appliedOrder, [b.key]);
+  const cards = await store.cards.listOpen();
+  assert.deepEqual(cards.map((c) => [c.clientId, c.kind]), [[a.key, "rejected"]]);
+  assert.match(cards[0].error, /body hash/);
+});
+
+test("a stored payload that does not parse is closed as rejected with a card, and the list still reads", async () => {
+  const { store, sql, transport, server } = await rig();
+  const a = await store.enqueue(pick(1));
+  const b = await store.enqueue(pick(2));
+  await sql.run("UPDATE outbox SET payload = ? WHERE idempotency_key = ?", ['{"id": [,]}', a.key]);
+  assert.equal((await store.outbox.list()).length, 2, "an unreadable row must not make the whole outbox unreadable");
+  const out = await store.replay(transport);
+  assert.equal(out.kind, "done");
+  assert.deepEqual(server.appliedOrder, [b.key]);
+  assert.deepEqual((await store.outbox.list()).map((r) => r.status), ["rejected", "applied"]);
+  const cards = await store.cards.listOpen();
+  assert.deepEqual(cards.map((c) => [c.clientId, c.kind]), [[a.key, "rejected"]]);
+  assert.match(cards[0].error, /not readable|does not parse|unreadable/);
+});
+
+test("replay re-checks the money fence: a stored money row is closed with a card and never sent", async () => {
+  const { store, sql, transport, server } = await rig();
+  const a = await store.enqueue(pick(1));
+  const b = await store.enqueue(pick(2));
+  // as if an older build had queued it before the scope joined the money list
+  const row = (await store.outbox.list())[0];
+  await sql.run("UPDATE outbox SET scope = 'payments', body_hash = ? WHERE idempotency_key = ?", [await hashOf({ ...row, scope: "payments" }), a.key]);
+  const out = await store.replay(transport);
+  assert.equal(out.kind, "done");
+  assert.deepEqual(server.appliedOrder, [b.key]);
+  assert.ok(!server.requests.some((q) => q.kind === "push" && q.scope === "payments"), "a money scope must never be pushed");
+  const cards = await store.cards.listOpen();
+  assert.deepEqual(cards.map((c) => [c.clientId, c.kind]), [[a.key, "rejected"]]);
+  assert.match(cards[0].error, /money/);
+});
+
+test("replay re-checks the scope name shape: a stored name that is not a registry scope is closed, never spliced or sent", async () => {
+  const { store, sql, transport, server } = await rig();
+  const a = await store.enqueue(pick(1));
+  const row = (await store.outbox.list())[0];
+  await sql.run("UPDATE outbox SET scope = ?, body_hash = ? WHERE idempotency_key = ?", ["Pick Tasks/../x", await hashOf({ ...row, scope: "Pick Tasks/../x" }), a.key]);
+  const out = await store.replay(transport);
+  assert.equal(out.kind, "done");
+  assert.equal(server.requests.length, 0);
+  assert.deepEqual((await store.outbox.list()).map((r) => r.status), ["rejected"]);
+  assert.equal((await store.cards.listOpen()).length, 1);
+});
+
+test("an applied result with an envelope but no server state, for a create with no id, still records its card", async () => {
+  const { store, sql } = await rig();
+  const op = await store.enqueue({ scope: "shortages", op: "create", payload: { line: 3 } });
+  const answer = {
+    ok: true,
+    value: { results: [{ client_id: op.key, status: "applied", seq: 40, conflict: { client_id: op.key, policy: "last_write_wins_by_field", applied: true } }] },
+  };
+  const out = await store.replay({ push: async () => answer, pull: async () => assert.fail("no pull") });
+  assert.equal(out.kind, "done", JSON.stringify(out));
+  const [card] = await store.cards.listOpen();
+  assert.equal(card.kind, "merge_report");
+  assert.deepEqual(card.serverState, {});
+  void sql;
 });

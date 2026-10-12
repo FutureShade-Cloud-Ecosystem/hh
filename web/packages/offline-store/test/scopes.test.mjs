@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { MANIFEST_OFFLINE, MONEY_SCOPES, SCOPE_POLICIES, scopeBookFor } from "../src/scopes.ts";
+import { MANIFEST_OFFLINE, MONEY_SCOPES, SCOPE_POLICIES, ScopeBook, scopeBookFor } from "../src/scopes.ts";
 
 const repo = (rel) => fileURLToPath(new URL(`../../../../${rel}`, import.meta.url));
 
@@ -88,4 +88,19 @@ test("a read cache only app never admits a write, even for a scope with a policy
 
 test("an unknown app id is a defect, not an empty profile", () => {
   assert.throws(() => scopeBookFor(["no-such-app"]), /no-such-app/);
+});
+
+test("a hand built book cannot admit a money scope by spelling it differently, nor a name that is not a registry scope", () => {
+  const spelled = ["Payments", " payments", "payments\n", "PAYMENTS", "Price_Matrix", "approvals ", "pay-ments", "", "__proto__", "ent_pick_tasks; DROP TABLE outbox"];
+  const book = new ScopeBook([
+    {
+      id: "hand-built",
+      mode: "full",
+      scopes: spelled,
+      conflictPolicy: Object.fromEntries(spelled.map((n) => [n, "server_wins"])),
+    },
+  ]);
+  for (const name of spelled) assert.notEqual(book.writeRefusal(name), null, JSON.stringify(name));
+  assert.equal(book.writeRefusal("Payments").reason, "money_scope", "a money name in any spelling is called what it is");
+  assert.equal(book.writeRefusal("ent_pick_tasks; DROP TABLE outbox").reason, "scope_not_declared");
 });
