@@ -31,6 +31,8 @@ import (
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // productApplicationRepairSQL fills one demo product's application where it is NULL or empty. The
@@ -47,8 +49,12 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 	if err != nil {
 		return 0, err
 	}
+	stamped, err := repairDriverDayOrg(ctx, tx, now)
+	if err != nil {
+		return 0, err
+	}
 	n, err := repairNorthlineHome(ctx, tx, now, branches)
-	return fixed + n, err
+	return fixed + stamped + n, err
 }
 
 // repairDemoProductApplications fills the application of every demo product an older seed left
@@ -90,17 +96,81 @@ func repairNorthlineHome(ctx context.Context, tx txExec, now time.Time, branches
 	return int(tag.RowsAffected()), nil
 }
 
+// driverOrgRepairSQL stamps the demo org on one day-keyed Driver row the first apply wrote without
+// it. The value is the org row the populate provisions (the same read driverOrgStamp makes at insert
+// time), and the guards hold the repair to its case: the row must still be unstamped (a second run
+// matches nothing, and a row somebody stamped by hand is left alone) and the org row must exist (on
+// the first apply of a fresh box it does not yet, and a NULL stamped over a NULL would touch the row
+// for no change and report a repair that did not happen).
+const driverOrgRepairSQL = `UPDATE delivery_runs
+	   SET org_id = (SELECT id FROM org WHERE slug = $1::citext), updated_at = $2
+	 WHERE id = $3::uuid AND org_id IS NULL
+	   AND EXISTS (SELECT 1 FROM org WHERE slug = $1::citext)`
+
+const driverStopOrgRepairSQL = `UPDATE delivery_stops
+	   SET org_id = (SELECT id FROM org WHERE slug = $1::citext), updated_at = $2
+	 WHERE id = $3::uuid AND org_id IS NULL
+	   AND EXISTS (SELECT 1 FROM org WHERE slug = $1::citext)`
+
+// repairDriverDayOrg stamps the demo org on THIS day's Driver run and its stops, for the one real
+// hole the insert-side stamp cannot cover: a fresh demo box's FIRST apply runs before the populate
+// provisions the org row (the entrypoint's order: demoseed, demo-populate, demoseed), so the boot
+// day's rows land with org NULL and the second apply's INSERTs recognise them and write nothing.
+// The rows are addressed by the same day-keyed ids the plan just used (the house-zone day of the
+// same clock), never by a filter, and the stop keys come from demoDriverDayStops, the same table
+// the fresh seed writes from, so there is one source and no copy. Earlier days' rows are stamped by
+// the boot that wrote them (their own apply runs with the org already in place through the insert
+// side); a box upgraded from a seed that stamped nothing keeps its old days unstamped, and those
+// rows carry no seq either (nothing walks a past day), so no scope ever answered them.
+func repairDriverDayOrg(ctx context.Context, tx txExec, now time.Time) (int, error) {
+	stamp := now.In(houseday.Location()).Format("20060102")
+	total := 0
+	tag, err := tx.Exec(ctx, driverOrgRepairSQL, demoOrgSlug, now, demoID(dayKey(stamp, "driver-run")))
+	if err != nil {
+		return 0, fmt.Errorf("demoseed: stamping the demo org on the Driver's run: %w", err)
+	}
+	total += int(tag.RowsAffected())
+	for _, id := range driverDayStopIDs(stamp) {
+		tag, err := tx.Exec(ctx, driverStopOrgRepairSQL, demoOrgSlug, now, id)
+		if err != nil {
+			return 0, fmt.Errorf("demoseed: stamping the demo org on the Driver's stop: %w", err)
+		}
+		total += int(tag.RowsAffected())
+	}
+	return total, nil
+}
+
+// driverDayStopIDs is the day-keyed ids of the Driver's stops, from the plan's own table.
+func driverDayStopIDs(stamp string) []string {
+	ids := make([]string, 0, len(demoDriverDayStops))
+	for _, s := range demoDriverDayStops {
+		ids = append(ids, demoID(dayKey(stamp, "driver-stop:"+s.Key)))
+	}
+	return ids
+}
+
 // repairDemoWorldPlan prints the plan's one-line account of the repair pass, and only when the
 // apply would actually repair something: the row the pass moves must still sit at the home it is
 // moved from. A second apply, or a box the plan already homes correctly, prints nothing, because a
 // plan line naming a repair that will not happen is a report that cries wolf. The default build's
 // side prints nothing, because that build carries no repair.
-func repairDemoWorldPlan(ctx context.Context, out *os.File, rows rowQuery, branches []branch) {
+func repairDemoWorldPlan(ctx context.Context, out *os.File, rows rowQuery, branches []branch, now time.Time) {
 	var empty int
 	if err := rows.QueryRow(ctx,
 		`SELECT count(*) FROM products WHERE id = ANY($1::uuid[]) AND (application IS NULL OR application = '')`,
 		demoProductIDs()).Scan(&empty); err == nil && empty > 0 {
 		fmt.Fprintf(out, "  product repair %d demo product(s) have no application and get their family with -apply\n", empty)
+	}
+	// The org repair says its line only when it will stamp: the org row exists and this day's Driver
+	// rows are still unstamped (the boot day's first apply ran before the populate did).
+	stamp := now.In(houseday.Location()).Format("20060102")
+	var unstamped int
+	if err := rows.QueryRow(ctx, `
+		SELECT count(*) FROM delivery_runs
+		 WHERE id = $1::uuid AND org_id IS NULL
+		   AND EXISTS (SELECT 1 FROM org WHERE slug = $2::citext)`,
+		demoID(dayKey(stamp, "driver-run")), demoOrgSlug).Scan(&unstamped); err == nil && unstamped > 0 {
+		fmt.Fprintf(out, "  org repair     the Driver's day-keyed run and stops take the demo org with -apply\n")
 	}
 	if len(branches) > 1 && branches[0].ID != branches[1].ID {
 		var waiting int

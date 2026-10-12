@@ -1,7 +1,7 @@
 // The Counter Till's exit test, run against the stubbed harness (the stub
 // serves the demo routes' contract shapes; the vite dev server proxies /api
 // to it). This is W6's slice of the plan's screen 1: two cards, a tapped card
-// lands on the till with the Demo banner and the role's name, the six coming
+// lands on the till with the Demo banner and the role's name, the five coming
 // roles show as coming and cannot be tapped, sign out returns to the cards,
 // and against a flows route that answers there are no cards at all. The yard
 // manager's, the Yard Team's and the Driver's flows are in the stub's flows
@@ -21,7 +21,6 @@ const COMING_ROLES = [
   "Outside Sales",
   "Logistics Manager",
   "Branch Manager",
-  "Financial Controller",
   "General Manager",
   "HR",
 ];
@@ -30,7 +29,7 @@ function flowsCall(page: Page): Promise<Response> {
   return page.waitForResponse((response) => response.url().endsWith("/api/v1/demo/flows"));
 }
 
-test("the entry page shows the two till role cards and the six coming roles, with no yard manager, yard team or driver card", async ({
+test("the entry page shows the two till role cards and the five coming roles, with no yard manager, yard team, driver or financial controller card", async ({
   page,
 }) => {
   const flows = flowsCall(page);
@@ -54,11 +53,12 @@ test("the entry page shows the two till role cards and the six coming roles, wit
   // logins (sales, sales manager, the yard manager, the Yard Team, the
   // Driver, Payables and Receivables, the Procurement Manager, the Financial
   // Controller); the till offers a card for its own pair alone (any other
-  // card would lead into a surface the server refuses). The Financial
-  // Controller stays in the coming list; the yard manager (Manager Home is
-  // its app), the Yard Team, the Driver, Payables and Receivables and the
-  // Procurement Manager have their own apps behind the front door's cards,
-  // so the till lists them nowhere.
+  // card would lead into a surface the server refuses). The yard manager
+  // (Manager Home is its app), the Yard Team, the Driver, Payables and
+  // Receivables, the Procurement Manager and the Financial Controller (the
+  // Money Desk is its app) have their own apps behind the front door's
+  // cards, so the till lists them nowhere: its coming list is the front
+  // door's coming rows.
   const listing = (await (await flows).json()) as { flows: Array<{ flow: string }> };
   expect(listing.flows.map((row) => row.flow)).toEqual([
     "sales",
@@ -77,11 +77,11 @@ test("the entry page shows the two till role cards and the six coming roles, wit
   await expect(page.getByRole("button", { name: "Driver", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Payables and Receivables", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Procurement manager/i })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Financial Controller", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Financial Controller", exact: true })).toHaveCount(0);
 
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(6);
+  await expect(coming.getByRole("listitem")).toHaveCount(5);
   for (const role of COMING_ROLES) {
     const control = coming.getByRole("button", { name: role, exact: true });
     await expect(control).toBeVisible();

@@ -41,9 +41,14 @@ test("the Subtotal is the server's figure, not the browser's sum of the lines", 
   await startQuote(page);
   await expect(page.getByTestId("qb-totals")).toContainText("$9,876.54");
   await expect(page.getByTestId("qb-totals")).not.toContainText("Products");
-  // No handler outlives the test: a /terms exchange still inside the handler when the page and
-  // context close has its response disposed under it and fails the run (the CI flake this guards).
-  await page.unrouteAll({ behavior: "wait" });
+  // Taking the routes off continues any /terms read still inside the handler behind its
+  // back (the runner marks the route handled and goes on), so the handler's own late
+  // fulfill then throws, and a read still inside response.json has its response disposed:
+  // one teardown window, three signatures. "wait" only drains the invocations it
+  // snapshots, so it narrows the window without closing it. "ignoreErrors" is the
+  // documented drain: errors thrown by the handler after unrouting are silently caught,
+  // and the reads the runner continues still paint the server's own figure.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });
 
 test("a delivery fee the server refused leaves the screen, the box and the deposit estimate", async ({ page }) => {
@@ -66,4 +71,8 @@ test("a delivery fee the server refused leaves the screen, the box and the depos
   await expect(page.getByTestId("qb-totals")).not.toContainText("Delivery");
   await expect(page.getByTestId("qb-totals")).not.toContainText("$25.00");
   await expect(fee).toHaveValue("");
+  // The same teardown window as the totals leg: this handler also settles the /terms
+  // exchanges itself, so a PUT it has claimed when the routes come off would throw past
+  // the test. The same drain closes it.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });

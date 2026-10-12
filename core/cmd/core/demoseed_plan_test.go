@@ -325,10 +325,13 @@ func TestPlan_OnlyTheTodaySurfacesAreDayKeyed(t *testing.T) {
 	}
 	// The tables a "today" measurement reads: sales.today walks pos_sale → invoices/orders, and its
 	// money needs the lines and the payment that settled it; deliveries.today, dispatch.unassigned and
-	// dispatch.due_to_commit all read delivery_stops, which needs an order to be about.
+	// dispatch.due_to_commit all read delivery_stops, which needs an order to be about. delivery_runs
+	// joined them with the Driver's dispatched day run: the run sheet is the fifth day-kind read, and
+	// the run row is as far as that read's day-keying reaches (its stops and orders were already here).
 	allowed := map[string]bool{
 		"orders": true, "order_lines": true, "invoices": true, "invoice_lines": true,
 		"payments": true, "payment_allocations": true, "pos_sale": true, "delivery_stops": true,
+		"delivery_runs": true,
 	}
 	for _, k := range sum.DayKeys {
 		if !strings.Contains(k, stamp) {
@@ -346,9 +349,11 @@ func TestPlan_OnlyTheTodaySurfacesAreDayKeyed(t *testing.T) {
 				"grows that table every deploy for nothing", k, r.table)
 		}
 	}
-	// The volume ceiling, asserted rather than intended. Eighteen rows a deploy is the trade this was
-	// argued for; a change that makes it sixty should have to come here and say so out loud.
-	if n := len(sum.DayKeys); n == 0 || n > 24 {
+	// The volume ceiling, asserted rather than intended. The counter sales and the unassigned
+	// deliveries were the trade this was argued for; the Driver's dispatched day run adds its own
+	// handful (the run, its two stops, and the order and line each stop is about), and a change that
+	// makes the daily set sixty should still have to come here and say so out loud.
+	if n := len(sum.DayKeys); n == 0 || n > 32 {
 		t.Errorf("the plan day-keys %d rows; the ruling is a handful per deploy (see ids.go)", n)
 	}
 

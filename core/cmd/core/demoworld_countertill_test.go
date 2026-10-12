@@ -62,7 +62,8 @@ const tillDemoDBEnvVar = "HH_TILL_DEMO_TEST_DATABASE_URL"
 // a key), and the vault key that seals the credential is generated at run time and never printed
 // or filed.
 const (
-	demoOrgSlug     = "hh-demo"
+	// demoOrgSlug lives in demoseed_build.go now (the seed stamps it); this block keeps the
+	// rest of the demo facts W0 pins.
 	trentonBranchID = "5d1b3f6e-0000-4000-9000-000000000001"
 	salesSubject    = "hh-demo-counter-sales"
 	salesMgrSubject = "hh-demo-counter-sales-manager"

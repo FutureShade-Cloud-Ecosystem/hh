@@ -56,9 +56,13 @@ var tablesTheSeedWrites = []string{
 // table in the list above is written once, ever, which is the claim
 // TestIntegration_ASecondDayAddsOnlyTheDayKeyedRows exists to hold, and the reason this list is
 // spelled out rather than derived: a table that quietly joins it should have to be typed here.
+// delivery_runs joined with the Driver's dispatched day run: the run sheet asks for the dealer's day
+// and must find a run out for delivery on it, which a stable-keyed fleet cannot promise past the
+// first apply's date.
 var dayKeyedTables = map[string]bool{
 	"orders": true, "order_lines": true, "invoices": true, "invoice_lines": true,
 	"payments": true, "payment_allocations": true, "pos_sale": true, "delivery_stops": true,
+	"delivery_runs": true,
 }
 
 // -- Promise 1 · running it twice produces the same world ------------------------------------------

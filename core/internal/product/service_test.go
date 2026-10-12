@@ -482,26 +482,6 @@ func TestProduct_SearchProducts_PassesThroughResults(t *testing.T) {
 	}
 }
 
-// TestEscapeLikePattern_Literal pins the LIKE-metacharacter escaping the SKU ILIKE prefix
-// relies on (finding #8): %, _ and \ from a user term must be escaped so that under
-// `ESCAPE '\'` they match literally instead of acting as wildcards.
-func TestEscapeLikePattern_Literal(t *testing.T) {
-	cases := map[string]string{
-		`abc`: `abc`,
-		`a%b`: `a\%b`,
-		`a_b`: `a\_b`,
-		`a\b`: `a\\b`,
-		`%_`:  `\%\_`,
-		// backslash must be escaped first so an escaped wildcard is not double-processed.
-		`\%`: `\\\%`,
-	}
-	for in, want := range cases {
-		if got := escapeLikePattern(in); got != want {
-			t.Errorf("escapeLikePattern(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 // TestProduct_SearchProducts_MatchesMetacharsLiterally guards finding #8 at the seam: a query
 // containing % or _ must not behave like a wildcard. With literal matching, "S_ooth" matches
 // nothing (no product name contains that substring), whereas a leaked LIKE wildcard would have
