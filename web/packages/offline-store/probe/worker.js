@@ -29,6 +29,8 @@ async function open() {
 }
 
 async function insert() {
+  // Probe only: the values are interpolated because they are a fresh UUID and an ISO string.
+  // The real outbox must bind parameters (sqlite3.statements with bind), never build SQL by string.
   const key = crypto.randomUUID();
   await sqlite3.exec(
     db,
