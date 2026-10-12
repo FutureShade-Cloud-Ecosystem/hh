@@ -336,7 +336,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// role gate.
 	rec := shims.NewRecorder(1024)
 	shims.RegisterRoutes(r, g, rec)
-	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
+	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(demoTenantConfig())))
 
 	belt := buildSmsBelt(pool, log)
 	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL, roleCfg)
