@@ -66,7 +66,7 @@ func TestPopulate_PersonaInboxesAnswerTheirRooms(t *testing.T) {
 	// The Sales persona: the branch house channel and the short pick notice
 	// path, both visible in the one inbox.
 	sales := slugsOf(personaSalesUserID)
-	if !sales["house-trenton"] {
+	if !sales["house-point-loma"] {
 		t.Errorf("the Sales persona's inbox missed its branch's house channel: %v", sales)
 	}
 	hasRepDM := false
@@ -81,22 +81,22 @@ func TestPopulate_PersonaInboxesAnswerTheirRooms(t *testing.T) {
 
 	// The Sales manager: the branch house channel.
 	manager := slugsOf(personaManagerID)
-	if !manager["house-trenton"] {
+	if !manager["house-point-loma"] {
 		t.Errorf("the Sales manager's inbox missed its branch's house channel: %v", manager)
 	}
 
 	// The Yard Team persona (all-branch grants): both yards' house channels.
 	yard := slugsOf(personaYardUserID)
-	if !yard["house-trenton"] || !yard["house-kingston"] {
+	if !yard["house-point-loma"] || !yard["house-julian"] {
 		t.Errorf("the Yard persona's inbox missed a branch house channel: %v", yard)
 	}
 
 	// The Driver persona: both yards' house channels and both drivers' rooms.
 	driver := slugsOf(personaDriverUserID)
-	if !driver["house-trenton"] || !driver["house-kingston"] {
+	if !driver["house-point-loma"] || !driver["house-julian"] {
 		t.Errorf("the Driver persona's inbox missed a branch house channel: %v", driver)
 	}
-	if !driver["drivers-trenton"] || !driver["drivers-kingston"] {
+	if !driver["drivers-point-loma"] || !driver["drivers-julian"] {
 		t.Errorf("the Driver persona's inbox missed its role-scoped rooms: %v", driver)
 	}
 }

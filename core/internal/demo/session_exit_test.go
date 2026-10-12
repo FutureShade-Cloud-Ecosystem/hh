@@ -267,10 +267,10 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	// roadmap's queue); the driver's is Kingston, where its seeded driver
 	// and runs are.
 	var trentonID, kingstonID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'TRT'`).Scan(&trentonID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'PLM'`).Scan(&trentonID); err != nil {
 		t.Fatalf("the Trenton branch: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'KGN'`).Scan(&kingstonID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'JUL'`).Scan(&kingstonID); err != nil {
 		t.Fatalf("the Kingston branch: %v", err)
 	}
 	mintPersona := func(flow, wantRole, wantLabel, wantID string) (string, map[string]string) {
@@ -321,7 +321,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	}
 
 	yardToken, yardHeaders := mintPersona("yard-team", "yard_team", "Yard Team", "d0200000-0000-4000-9000-000000000002")
-	if codes := branchCodes(yardHeaders); len(codes) != 1 || codes[0] != "TRT" {
+	if codes := branchCodes(yardHeaders); len(codes) != 1 || codes[0] != "PLM" {
 		t.Errorf("the yard persona reaches %v, want Trenton alone", codes)
 	}
 	if rsp := get("/api/v1/yard/pick-queue?branch_id="+trentonID, yardHeaders); rsp.StatusCode != http.StatusOK {
@@ -335,7 +335,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	}
 
 	driverToken, driverHeaders := mintPersona("driver", "driver", "Driver", "d0200000-0000-4000-9000-000000000003")
-	if codes := branchCodes(driverHeaders); len(codes) != 1 || codes[0] != "KGN" {
+	if codes := branchCodes(driverHeaders); len(codes) != 1 || codes[0] != "JUL" {
 		t.Errorf("the driver persona reaches %v, want Kingston alone", codes)
 	}
 	runsRsp := get("/api/v1/dispatch/my-runs?date="+seedClock.UTC().Format("2006-01-02"), driverHeaders)

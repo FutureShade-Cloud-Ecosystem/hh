@@ -52,7 +52,7 @@ const demoBoxMarker = "hh-demo-populate-v1"
 // carries any other.
 const (
 	demoOrgSlug = "hh-demo"
-	demoOrgName = "Hardscape House (demo)"
+	demoOrgName = "Gable Landscape Supply"
 )
 
 // The role accounts the demo sign-in mints for (the Counter Till's
@@ -121,13 +121,14 @@ const (
 	// directory as the till's accounts, and converges their branch grants;
 	// it never creates them. The display names are the renames this file's
 	// plantedDisplayNames list leaves on the rows.
+	dispatchUserID  = "d0200000-0000-4000-9000-000000000001"
 	yardUserID      = "d0200000-0000-4000-9000-000000000002"
-	yardEmail       = "yard.demo@dibbits.example"
+	yardEmail       = "yard.demo@" + demoDomain
 	yardDisplayName = "Yard persona (demo)"
 	yardRoleCode    = "YARD_TEAM"
 
 	driverUserID      = "d0200000-0000-4000-9000-000000000003"
-	driverEmail       = "driver.demo@dibbits.example"
+	driverEmail       = "driver.demo@" + demoDomain
 	driverDisplayName = "Driver persona (demo)"
 	driverRoleCode    = "DRIVERS"
 
@@ -218,6 +219,14 @@ var demoPersonas = []struct{ userID, email, roleCode, branchID string }{
 var plantedEmailMoves = []struct{ id, email string }{
 	{"d7000000-0000-4000-9000-000000000010", "platform.admin@hh-demo.invalid"},
 	{"d7000000-0000-4000-9000-0000000000da", "demo.teammate@hh-demo.invalid"},
+	// The three tour personas 0200 plants carry the first dealer's trading
+	// name in the domain; the demo dealer is Gable Landscape Supply, so the
+	// addresses move to the reserved demo domain too. The demoseed finds
+	// them under either form (its persona aliases), so a world seeded before
+	// the move and one seeded after it resolve the same three logins.
+	{dispatchUserID, "dispatch.demo@" + demoDomain},
+	{yardUserID, yardEmail},
+	{driverUserID, driverEmail},
 }
 
 // plantedDisplayNames replaces every planted row's display name with an
@@ -745,38 +754,9 @@ func scrubPlantedUsers(ctx context.Context, tx pgx.Tx, now time.Time) (renamed, 
 // guarded on the value it would write, so a re-run writes nothing, and the
 // count is only what this run changed.
 func renameDemoDealer(ctx context.Context, tx pgx.Tx) (replaced int, err error) {
-	for _, branch := range []struct{ id, name string }{
-		{trentonBranchID, "Hardscape House (demo), Trenton"},
-		{kingstonBranchID, "Hardscape House (demo), Kingston"},
-	} {
-		tag, err := tx.Exec(ctx,
-			`UPDATE locations SET name = $2, updated_at = now()
-			  WHERE id = $1::uuid AND name IS DISTINCT FROM $2`,
-			branch.id, branch.name)
-		if err != nil {
-			return 0, fmt.Errorf("demo-populate: dealer name: %w", err)
-		}
-		replaced += int(tag.RowsAffected())
-	}
-	// The branch address lines the receipt's letterhead prints (printing's
-	// ReadBranchHeader serves locations.address verbatim): migration 0003
-	// planted each line1 as a note to the first dealer, with the real trading
-	// name in it, and the counter receipt is the document that prints that
-	// address to a customer, so the demo database converges the two lines onto
-	// invented ones, the same guarded, demo-only discipline the display names
-	// above follow. Real deployments keep their own addresses.
-	for _, branch := range []struct{ id, line1 string }{
-		{trentonBranchID, "12 Yard Gate Road"},
-		{kingstonBranchID, "9 Yard Gate Road"},
-	} {
-		tag, err := tx.Exec(ctx,
-			`UPDATE locations SET address = jsonb_set(address, '{line1}', to_jsonb($2::text)), updated_at = now()
-			  WHERE id = $1::uuid AND address->>'line1' IS DISTINCT FROM $2`,
-			branch.id, branch.line1)
-		if err != nil {
-			return 0, fmt.Errorf("demo-populate: dealer name: %w", err)
-		}
-		replaced += int(tag.RowsAffected())
+	replaced, err = ConvergeDealerBranches(ctx, tx)
+	if err != nil {
+		return 0, err
 	}
 	// The settings row the receipt's letterhead reads, converged the way
 	// the identity program converges the org anchor: an upsert whose
