@@ -73,6 +73,15 @@ export function guardVerdictWords(check: GuardCheck): string {
   return `Blocked. The margin is ${margin}, below the margin policy.`;
 }
 
+/**
+ * sentenceBlock reads a policy block from the sentence the core's 403 carries in its error field, the one
+ * field the transport hands a screen (the block key itself is dropped on the way). Null when it said nothing.
+ */
+export function sentenceBlock(sentence: string, policyType: string): { policyType: string; detail: string } | null {
+  const detail = humanizeBps(sentence.trim());
+  return detail === "" ? null : { policyType, detail };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }

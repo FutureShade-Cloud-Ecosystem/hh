@@ -20,7 +20,7 @@ import { customElement, state } from "lit/decorators.js";
 import { PanelBase } from "./panel-base.js";
 import { panelStyles } from "./panel-styles.js";
 import { openGuardRefusal } from "./floor-refusal-dialog.js";
-import { blockFromText, dollarsToCents, guardVerdictWords } from "./_guard-format.js";
+import { blockFromText, dollarsToCents, guardVerdictWords, sentenceBlock } from "./_guard-format.js";
 import { MARGIN_POLICY } from "./_approval-copy.js";
 import { spokenRefusal } from "./_quote-workarea.js";
 
@@ -165,8 +165,10 @@ export class QdQuoteGuard extends PanelBase {
       if (!result.value.allowed) openGuardRefusal(MARGIN_POLICY, result.value.margin_bps, "");
       return;
     }
-    // The contract also lets the core refuse a below floor check with a 403 that carries the action block.
-    const block = result.status === 403 ? blockFromText(result.error) : null;
+    // The core refuses a below floor check with a 403 whose block key carries the action block. The transport
+    // hands the screen only the envelope's error field, which the core sets to the block's own sentence, so a
+    // 403 is read as that sentence under the margin policy when the text is not itself a block envelope.
+    const block = result.status === 403 ? (blockFromText(result.error) ?? sentenceBlock(spokenRefusal(result.error), MARGIN_POLICY)) : null;
     if (block !== null) {
       this.faulted = false;
       this.blocked = true;

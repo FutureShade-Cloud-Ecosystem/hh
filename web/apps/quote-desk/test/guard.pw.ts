@@ -72,12 +72,13 @@ test("below the floor opens the refusal dialog as a check only, and it closes by
   await openQuote(page, "Q-1001");
   await guard(page).getByTestId("qg-price").fill("90.00");
   await guard(page).getByTestId("qg-check").click();
-  await expect(guard(page).getByTestId("qg-result")).toHaveText("Blocked. The margin is -4.45%, below the margin policy.");
+  await expect(guard(page).getByTestId("qg-result")).toHaveText("Blocked. Margin -4.45% is below the 12% floor");
   const dlg = dialog(page).getByRole("dialog", { name: "Action blocked" });
   await expect(dlg).toBeVisible();
   await expect(dlg).toHaveAttribute("aria-modal", "true");
   await expect(dialog(page).getByTestId("fr-policy")).toHaveText("Below floor");
-  await expect(dialog(page).getByTestId("fr-figures")).toHaveText("The margin is -4.45%.");
+  // The core's 403 carries the margin in its sentence, not as a figure of its own.
+  await expect(dialog(page).getByTestId("fr-reason")).toHaveText("Margin -4.45% is below the 12% floor");
   await expect(dialog(page).getByTestId("fr-check-only")).toContainText("check only");
   await expect(dialog(page).getByTestId("fr-approvers")).toContainText("named no approver");
   // A check only files nothing: no request button, no note field.

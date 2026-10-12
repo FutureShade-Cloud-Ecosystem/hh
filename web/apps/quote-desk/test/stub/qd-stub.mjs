@@ -125,6 +125,9 @@ const BRANCHES = [
   },
 ];
 
+// The core's MarginFloorBps (staffcontext rbac.go): the floor the policy check holds a quote to.
+const MARGIN_FLOOR_BPS = 1200;
+
 const ACCOUNT_BRANCH = {
   "demo-account-sales": TRENTON_ID,
   "demo-account-sales-manager": TRENTON_ID,
@@ -3009,14 +3012,35 @@ const server = createServer(async (request, response) => {
   }
 
   if (path === "/api/v1/staff/policy/check" && request.method === "POST") {
+    // The core's order (identity staffcontext, policyCheck): the body, then the caller's branch grants, then
+    // the margin against the 12% floor with the caller's own approved override; below the floor with no
+    // override is a 403 whose error is the block's sentence and whose block key carries the action block.
     readBody(request, response, (body) => {
-      if (!Number.isInteger(body.price_cents) || !Number.isInteger(body.cost_cents) || typeof body.branch_id !== "string") {
-        respondJson(response, 400, { error: "identity: price_cents, cost_cents and branch_id are required" });
+      if (!Number.isInteger(body.price_cents) || !Number.isInteger(body.cost_cents) || typeof body.branch_id !== "string" || body.branch_id === "") {
+        respondJson(response, 400, { error: "price_cents, cost_cents and branch_id are required" });
+        return;
+      }
+      if (body.branch_id !== caller.branchId) {
+        respondJson(response, 403, { error: "that branch is outside your grants" });
         return;
       }
       const margin = marginBps(body.price_cents, body.cost_cents);
-      const override = caller.account.role_code === "sales_manager";
-      respondJson(response, 200, { allowed: margin >= 2000 || override, margin_bps: margin, override });
+      let override = false;
+      for (const [id, row] of floorRequests) {
+        const card = approvalCards.get(row.id);
+        const quote = card === undefined ? undefined : quotes.get(card.quote_id);
+        if (row.status === "APPROVED" && card !== undefined && card.requested_by === caller.account.user_id && (quote === undefined ? TRENTON_ID : quote.branch_id) === body.branch_id) override = true;
+        void id;
+      }
+      if (margin < MARGIN_FLOOR_BPS && !override) {
+        const detail = `margin ${margin} bps is below the ${MARGIN_FLOOR_BPS} bps floor`;
+        respondJson(response, 403, {
+          error: detail,
+          block: { policy_type: "MARGIN_BELOW_MINIMUM", branch_id: body.branch_id, detail, data: { margin_bps: String(margin), floor_bps: String(MARGIN_FLOOR_BPS) } },
+        });
+        return;
+      }
+      respondJson(response, 200, { allowed: true, margin_bps: margin, override });
     });
     return;
   }

@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { blockFromText, bpsToPercent, dollarsToCents, guardVerdictWords, humanizeBps, mentionsBps } from "../src/_guard-format.js";
+import { blockFromText, bpsToPercent, dollarsToCents, guardVerdictWords, humanizeBps, mentionsBps, sentenceBlock } from "../src/_guard-format.js";
 
 test("bpsToPercent speaks basis points the way the counter says them", () => {
   assert.equal(bpsToPercent(1200), "12%");
@@ -60,4 +60,13 @@ test("blockFromText reads the block an envelope carries and refuses anything els
   assert.equal(blockFromText("not json"), null);
   assert.equal(blockFromText(JSON.stringify({ error: "nope" })), null);
   assert.equal(blockFromText(JSON.stringify({ block: { detail: "x" } })), null);
+});
+
+test("sentenceBlock reads the margin block from the sentence a 403 carries, and refuses silence", () => {
+  assert.deepEqual(sentenceBlock("margin -445 bps is below the 1200 bps floor", "MARGIN_BELOW_MINIMUM"), {
+    policyType: "MARGIN_BELOW_MINIMUM",
+    detail: "margin -4.45% is below the 12% floor",
+  });
+  assert.equal(sentenceBlock("", "MARGIN_BELOW_MINIMUM"), null);
+  assert.equal(sentenceBlock("   ", "MARGIN_BELOW_MINIMUM"), null);
 });
