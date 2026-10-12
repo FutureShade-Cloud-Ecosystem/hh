@@ -151,6 +151,7 @@ func b4BuildFromFixture(t *testing.T, pool *pgxpool.Pool) *b4Fixture {
 	// The migrations plant people of their own; the exact world counts
 	// below are the fixture's alone, so those rows sit aside for the run
 	// and cleanup restores them.
+	t.Cleanup(func() { f.cleanup(t) })
 	b4SetPlantedAside(t, pool, true)
 
 	exec(`INSERT INTO locations (id, branch_id, parent_id, loc_type, code, name, address) VALUES
@@ -232,7 +233,6 @@ func b4BuildFromFixture(t *testing.T, pool *pgxpool.Pool) *b4Fixture {
 			($1, $2, NULL, $3, 'B4G', TRUE)`, b4DriverID(i), branch, fmt.Sprintf("B4 Fixture Casual %02d", i))
 	}
 
-	t.Cleanup(func() { f.cleanup(t) })
 	return f
 }
 
