@@ -334,8 +334,10 @@ const seen = () => {
 test("a push batch is capped by encoded bytes under 1 MiB, as well as by count", async () => {
   const { outbox, server, transport } = await rig();
   for (let n = 1; n <= 4; n++) await outbox.enqueue(fat(n));
-  const limited = { ...transport, push: async (scope, ops) => (bodyBytes(ops) >= MIB ? err("invalid_json", 400) : transport.push(scope, ops)) };
+  let refused = 0;
+  const limited = { ...transport, push: async (scope, ops) => (bodyBytes(ops) >= MIB ? (refused++, err("invalid_json", 400)) : transport.push(scope, ops)) };
   const out = await outbox.replay(limited);
+  assert.equal(refused, 0, "the batch must be cut before it is sent, not rescued by the split");
   assert.deepEqual(out, { kind: "done", sent: 4, applied: 4, conflicts: 0, rejected: 0 });
   for (const q of server.requests) if (q.kind === "push") assert.ok(bodyBytes(q.ops) < MIB, `a push of ${bodyBytes(q.ops)} bytes`);
   assert.ok(server.requests.filter((q) => q.kind === "push").length >= 2, "four 400 KB operations cannot share one request");

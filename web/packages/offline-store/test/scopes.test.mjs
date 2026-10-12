@@ -91,7 +91,7 @@ test("an unknown app id is a defect, not an empty profile", () => {
 });
 
 test("a hand built book cannot admit a money scope by spelling it differently, nor a name that is not a registry scope", () => {
-  const spelled = ["Payments", " payments", "payments\n", "PAYMENTS", "Price_Matrix", "approvals ", "pay-ments", "", "__proto__", "ent_pick_tasks; DROP TABLE outbox"];
+  const spelled = ["Payments", " payments", "payments\n", "PAYMENTS", "Price_Matrix", "approvals ", "pay-ments", "", "__proto__", "constructor", "not_a_registry_scope", "ent_pick_tasks; DROP TABLE outbox"];
   const book = new ScopeBook([
     {
       id: "hand-built",

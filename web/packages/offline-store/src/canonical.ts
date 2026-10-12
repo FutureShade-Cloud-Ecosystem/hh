@@ -5,7 +5,7 @@
 /**
  * JSON with object keys sorted at every depth. Refuses what is not plain JSON:
  * a prototype other than Object's or null, array holes, toJSON values, symbol
- * keys, non finite numbers, and nesting past 64 levels (which is how a cycle ends).
+ * keys, functions (so a toJSON value), non finite numbers, and nesting past 64 levels (which is how a cycle ends).
  */
 export function canonicalJson(value: unknown): string {
   return canonical(value, 0);
@@ -37,7 +37,6 @@ function canonical(value: unknown, depth: number): string {
       const proto = Object.getPrototypeOf(value);
       if (proto !== Object.prototype && proto !== null) throw new Error("canonical json: only plain objects and arrays are carried");
       if (Object.getOwnPropertySymbols(value).length > 0) throw new Error("canonical json: a symbol key is not plain JSON");
-      if (typeof (value as { toJSON?: unknown }).toJSON === "function") throw new Error("canonical json: a toJSON value is not plain JSON");
       const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
       return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v, depth + 1)}`).join(",")}}`;
     }
