@@ -409,11 +409,14 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 
 	// The note's children restock through the same seam the single return does: every child's
 	// restock rows, one sorted pass over the union (the note is one branch, its own wall), taken
-	// BEFORE the note's first counter draw, the single return's own stock-first rule. The swap
-	// already holds these rows for its two halves (swap.go pre-locks them ahead of this body), so
-	// the pass there is a no-op re-lock of rows the transaction already holds.
-	if err := s.lockRestockRowsTx(ctx, tx, ordered[0].oc.BranchID, noteRestockProducts(plan)); err != nil {
-		return ReturnNote{}, false, false, err
+	// BEFORE the note's first counter draw, the single return's own stock-first rule. The swap is
+	// the one caller that pre-locks itself: it takes the sorted union of BOTH its halves' products
+	// ahead of this body (swap.go), one pass, so the body adds none there and the swap's pre-lock
+	// stays the one call the review leg pins.
+	if !in.swap {
+		if err := s.lockRestockRowsTx(ctx, tx, ordered[0].oc.BranchID, noteRestockProducts(plan)); err != nil {
+			return ReturnNote{}, false, false, err
+		}
 	}
 
 	// Every invoice the note may touch, sorted, before any credit offset takes one and then the shared

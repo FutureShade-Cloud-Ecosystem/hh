@@ -156,6 +156,11 @@ func rloSeedReturnableSale(t *testing.T, pool *pgxpool.Pool, tag string) (ord, l
 		_, _ = pool.Exec(c, `DELETE FROM events_outbox WHERE payload->>'order_id' = $1`, ord)
 		_, _ = pool.Exec(c, `DELETE FROM stock_moves WHERE source_type = 'pos_return' AND source_ref_id IN
 			(SELECT id FROM pos_returns WHERE order_id = $1::uuid)`, ord)
+		// The balance projection goes back to the seeded figure with the same bare restore the
+		// hold fixture uses (the ring stand-in's delta carries no move row, so the balance must be
+		// unwound beside the move delete or the stock projection drifts from the ledger).
+		_, _ = pool.Exec(c, `UPDATE stock_balances SET on_hand_base = $3, updated_at = now()
+		 WHERE product_id = $1::uuid AND location_id = $2::uuid`, w5aProduct, trentonBranch, onHandBefore)
 		_, _ = pool.Exec(c, `DELETE FROM pos_return_lines WHERE return_id IN
 			(SELECT id FROM pos_returns WHERE order_id = $1::uuid)`, ord)
 		_, _ = pool.Exec(c, `DELETE FROM pos_returns WHERE order_id = $1::uuid`, ord)
