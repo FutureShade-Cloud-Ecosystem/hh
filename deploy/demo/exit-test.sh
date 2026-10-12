@@ -208,6 +208,7 @@ docker run -d --name "$HAPPY" --network "$NET" -p "127.0.0.1:$APP_PORT:8080" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_happy)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" >/dev/null
@@ -408,6 +409,7 @@ nohash_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_nohash)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	"$IMAGE" 2>&1)" && nohash_ok=0 || nohash_ok=1
 [ "$nohash_ok" = "1" ] && pass "without the hash the image exits non-zero" \
@@ -431,6 +433,7 @@ docker run -d --name "$RESUME" --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_build)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" >/dev/null
@@ -463,6 +466,7 @@ foreign_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_foreign)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && foreign_ok=0 || foreign_ok=1
@@ -494,6 +498,7 @@ app_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_appdb)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && app_ok=0 || app_ok=1
@@ -521,6 +526,7 @@ realuser_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_realuser)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && realuser_ok=0 || realuser_ok=1
@@ -550,6 +556,7 @@ realpay_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_realpay)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && realpay_ok=0 || realpay_ok=1

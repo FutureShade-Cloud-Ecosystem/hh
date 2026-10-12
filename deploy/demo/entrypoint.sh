@@ -81,7 +81,9 @@ esac
 export DEMO_MODE=true
 export APP_ENV=demo
 
-for name in DATABASE_URL PAYMENT_VAULT_KEY HH_ACCEPTANCE_SIGN_KEY_ID HH_ACCEPTANCE_SIGN_KEY; do
+# CORE_SIGNIN_MODE is a required name with no default: a copy whose
+# configuration omits it must refuse to start, never boot in the demo mode.
+for name in DATABASE_URL PAYMENT_VAULT_KEY HH_ACCEPTANCE_SIGN_KEY_ID HH_ACCEPTANCE_SIGN_KEY CORE_SIGNIN_MODE; do
 	if [ -z "$(printenv "$name")" ]; then
 		fail "$name is not set: the demo core needs it at boot, and the entrypoint refuses to start without it"
 	fi
@@ -90,10 +92,8 @@ done
 export CORE_DATABASE_URL="$DATABASE_URL"
 export CORE_STAFF_AUDIENCE="${CORE_STAFF_AUDIENCE:-hh-staff}"
 export CORE_TENANT_AUDIENCE="${CORE_TENANT_AUDIENCE:-hh-tenant}"
-# The core has no default sign in mode; this image defaults it to the demo
-# mode (the in memory issuer). A copy that signs real sessions sets console
-# in its own environment, with the key file and issuer names the core lists.
-export CORE_SIGNIN_MODE="${CORE_SIGNIN_MODE:-demo}"
+# CORE_SIGNIN_MODE is passed through as the operator set it (checked above);
+# the core itself refuses any value it does not accept.
 
 # The public port is the platform's PORT. The core listens on a loopback
 # port only: it is never reachable except through Caddy, which fronts
