@@ -115,6 +115,15 @@ handle /yard/* {
 	file_server
 }
 
+handle /money-desk/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /money-desk/index.html
+	file_server
+}
+
 handle /q/* {
 	basic_auth {
 		demo __GATE_HASH__
