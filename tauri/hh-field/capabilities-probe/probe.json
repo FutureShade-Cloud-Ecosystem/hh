@@ -8,6 +8,7 @@
   "permissions": [
     "sql:default",
     "sql:allow-execute",
-    "allow-probe-report"
+    "allow-probe-report",
+    "allow-keychain-delete"
   ]
 }

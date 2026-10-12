@@ -24,6 +24,10 @@
       await inv("keychain_set", { slot: "probe", value: v });
       var back = await inv("keychain_get", { slot: "probe" });
       out.keychain = { ok: back === v };
+      // Leave nothing behind in the user's keyring (the probe4.db file in the
+      // app config dir stays; remove it by hand after a run).
+      await inv("keychain_delete", { slot: "probe" });
+      out.keychain.deleted = true;
     } catch (e) { out.keychain = { ok: false, error: String(e) }; }
     // Let the front door render, then record whether its role picker is on
     // screen and whether the content security policy refused anything.

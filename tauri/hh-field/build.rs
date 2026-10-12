@@ -4,7 +4,7 @@ use tauri_build::{AppManifest, Attributes};
 // ACL to it and the capability must allow it by name. An undeclared app
 // command would be open to every window.
 #[cfg(feature = "probe")]
-const COMMANDS: &[&str] = &["keychain_set", "keychain_get", "probe_report"];
+const COMMANDS: &[&str] = &["keychain_set", "keychain_get", "keychain_delete", "probe_report"];
 #[cfg(not(feature = "probe"))]
 const COMMANDS: &[&str] = &["keychain_set", "keychain_get"];
 

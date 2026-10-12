@@ -20,6 +20,14 @@ async fn keychain_get(slot: Slot) -> Result<String, String> {
     blocking(move || keychain::get(KEYCHAIN_SERVICE, slot.name())).await
 }
 
+// PROBE SCAFFOLDING: lets the probe delete its own keychain item. Not part of
+// a normal build; the real shell decides its own sign out path.
+#[cfg(feature = "probe")]
+#[tauri::command]
+async fn keychain_delete(slot: Slot) -> Result<(), String> {
+    blocking(move || keychain::delete(KEYCHAIN_SERVICE, slot.name())).await
+}
+
 // PROBE SCAFFOLDING, removed when the real shell lands: compiled only with
 // the `probe` cargo feature (off by default), so a normal build never carries it.
 #[cfg(feature = "probe")]
@@ -38,7 +46,7 @@ pub fn run() {
     #[cfg(feature = "probe")]
     let builder = builder
         .plugin(tauri_plugin_sql::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![keychain_set, keychain_get, probe_report]);
+        .invoke_handler(tauri::generate_handler![keychain_set, keychain_get, keychain_delete, probe_report]);
     #[cfg(not(feature = "probe"))]
     let builder = builder.invoke_handler(tauri::generate_handler![keychain_set, keychain_get]);
     builder

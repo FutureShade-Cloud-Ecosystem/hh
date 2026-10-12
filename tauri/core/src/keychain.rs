@@ -37,6 +37,11 @@ pub fn get(service: &str, name: &str) -> Result<String, String> {
     entry(service, name)?.get_password().map_err(|e| e.to_string())
 }
 
+#[cfg(target_os = "linux")]
+pub fn delete(service: &str, name: &str) -> Result<(), String> {
+    entry(service, name)?.delete_credential().map_err(|e| e.to_string())
+}
+
 #[cfg(not(target_os = "linux"))]
 pub fn set(_service: &str, _name: &str, _value: &str) -> Result<(), String> {
     Err("no keychain backend on this target yet".into())
@@ -44,5 +49,10 @@ pub fn set(_service: &str, _name: &str, _value: &str) -> Result<(), String> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn get(_service: &str, _name: &str) -> Result<String, String> {
+    Err("no keychain backend on this target yet".into())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn delete(_service: &str, _name: &str) -> Result<(), String> {
     Err("no keychain backend on this target yet".into())
 }
