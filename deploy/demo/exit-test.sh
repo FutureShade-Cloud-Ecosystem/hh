@@ -44,7 +44,7 @@
 #   a marked build holding a real user or a real payment configuration is
 #     refused by the resume refusals before migrate or the seed write;
 #   the forwarded address discipline (W2's review): the source pin (the
-#     template the image carries holds the three overwrite lines), a
+#     template the image carries holds the four overwrite lines), a
 #     client-written X-Forwarded-For never survives the image's Caddy
 #     (proven at the traffic level, one capture behind the proxy), and
 #     rotating forged values buy the mint's limit no bucket;
@@ -579,8 +579,8 @@ fi
 echo "== the forwarded address discipline, at the source"
 pin_template="$(docker run --rm --entrypoint sh "$IMAGE" \
 	-c 'grep -c "header_up X-Forwarded-For" /srv/templates/Caddyfile.template' 2>/dev/null || true)"
-[ "$pin_template" = "3" ] && pass "the template the image carries holds the three overwrite lines" \
-	|| fail "the template in the image holds $pin_template header_up lines, want 3"
+[ "$pin_template" = "4" ] && pass "the template the image carries holds the four overwrite lines" \
+	|| fail "the template in the image holds $pin_template header_up lines, want 4"
 
 echo "== the forwarded address discipline, at the proxy"
 # One capture behind a Caddy built from the image's own template: the
@@ -612,8 +612,8 @@ while [ "$probes" -lt 30 ]; do
 done
 [ "$ready" = "1" ] || fail "the capture proxy never came up"
 pin_generated="$(docker exec "$CAP" grep -c "header_up X-Forwarded-For" /tmp/cf 2>/dev/null || true)"
-[ "$pin_generated" = "3" ] && pass "the generated configuration carries the three overwrite lines" \
-	|| fail "the generated configuration holds $pin_generated header_up lines, want 3"
+[ "$pin_generated" = "4" ] && pass "the generated configuration carries the four overwrite lines" \
+	|| fail "the generated configuration holds $pin_generated header_up lines, want 4"
 docker run -d --name "$CAPCLI" --network "$NET" \
 	--entrypoint curl \
 	curlimages/curl:8.22.0 \
