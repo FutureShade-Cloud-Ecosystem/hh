@@ -35,7 +35,8 @@ func newContractorRouteFixture(t *testing.T, scopes ...string) *contractorRouteF
 			t.Fatalf("register %s: %v", scope, err)
 		}
 	}
-	h, err := NewHandler(engine, nil)
+	staffDouble, portalStub := allWriters()
+	h, err := NewHandler(engine, staffDouble, portalStub, nil)
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
@@ -156,6 +157,18 @@ func TestPullOnlyScopesPostRefused(t *testing.T) {
 	}
 	for _, scope := range pullOnlyTenant {
 		rec := f.do(http.MethodPost, "/api/v1/sync/"+scope, f.tenant, []byte(`{"ops":[]}`), nil)
+		// Money never queues: payment_methods and aging are money scopes,
+		// so their POST is the shared RBAC-403 for every role, ahead of
+		// the pull-only shape.
+		if info, _ := Lookup(scope); info.Money {
+			if rec.Code != http.StatusForbidden || rec.Body.String() != string(authz.BodyForbidden) {
+				t.Fatalf("tenant push on money scope %s: %d %s, want the shared 403", scope, rec.Code, rec.Body.String())
+			}
+			if rec := f.do(http.MethodGet, "/api/v1/sync/"+scope+"?since=0", f.tenant, nil, nil); rec.Code != http.StatusOK {
+				t.Fatalf("tenant pull on %s: %d %s, want 200", scope, rec.Code, rec.Body.String())
+			}
+			continue
+		}
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("tenant pull-only push on %s: %d %s, want 400", scope, rec.Code, rec.Body.String())
 		}

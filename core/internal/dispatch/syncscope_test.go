@@ -66,6 +66,14 @@ var contractPODFields = map[string]bool{
 
 // fullStop builds one Stop with every leg set, money pointers included,
 // so the payload proof runs against the widest row the module can hold.
+// driverRoles is the sync write fence's staff roles seam for the driver
+// login this file drives.
+type driverRoles struct{}
+
+func (driverRoles) ResolveRoles(context.Context, string, string) ([]string, error) {
+	return []string{testkit.RoleDriver}, nil
+}
+
 func fullStop() Stop {
 	lat, lng := 44.1, -77.0
 	weight, volume, pallets := 1200.5, 2.25, 3
@@ -333,7 +341,7 @@ func TestDriverRoleReachesSyncScopeMember(t *testing.T) {
 			t.Fatalf("register %s: %v", scope, err)
 		}
 	}
-	h, err := sync.NewHandler(engine, nil)
+	h, err := sync.NewHandler(engine, driverRoles{}, fixedPortal{}, nil)
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
