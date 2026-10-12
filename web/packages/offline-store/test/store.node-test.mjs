@@ -155,8 +155,19 @@ test("a page for another scope, or one that makes no progress, is a fault and no
   const { store, transport } = await rig();
   const wrong = { ...transport, pull: async () => ({ ok: true, value: { scope: "shortages", items: [], tombstones: [], last_seq: 0, next_cursor: null } }) };
   assert.equal((await store.pull(wrong, "pick_tasks")).kind, "fault");
-  const stuck = { ...transport, pull: async (scope) => ({ ok: true, value: { scope, items: [], tombstones: [], last_seq: 0, next_cursor: "0" } }) };
-  assert.equal((await store.pull(stuck, "pick_tasks")).kind, "fault");
+  // Bounded: a store that lost its progress check fails here (after 25 pages) instead of asking for ever.
+  let pages = 0;
+  const stuck = {
+    ...transport,
+    pull: async (scope) => {
+      if (++pages > 25) return err("the store kept asking: no progress check", 500);
+      return { ok: true, value: { scope, items: [], tombstones: [], last_seq: 0, next_cursor: "0" } };
+    },
+  };
+  const out = await store.pull(stuck, "pick_tasks");
+  assert.equal(out.kind, "fault");
+  assert.match(out.message, /no progress/);
+  assert.ok(pages <= 2, `asked ${pages} times`);
 });
 
 test("a scope the profile does not declare cannot be read or pulled", async () => {

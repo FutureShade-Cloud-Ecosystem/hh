@@ -400,3 +400,43 @@ test("a lost response for a per field merge costs the merge report, and nothing 
   assert.equal(w.server.applyCount(op.key), 1);
   assert.equal((await w.store.cards.list()).length, 0, "the engine answers a replay with a plain applied, so no envelope reaches the device");
 });
+
+// ---- round 3: the relaxation of the cross scope order ends, and a spinning replay fails instead of hanging ----
+
+test("model: the cross scope order is checked again once no stall is open and no refusal is armed", async () => {
+  const w = await newWorld(31);
+  const pre = () => ({ state: w.runner.state, requests: w.server.requests.length, rows: new Map() });
+  await enqueueOk(w, { scope: "pick_tasks", op: "update", payload: { id: uuid(1), picked: 1 }, baseSeq: 1 });
+  await enqueueOk(w, { scope: "shortages", op: "update", payload: { id: uuid(2), short_by: 1 }, baseSeq: 2 });
+  w.server.failNext("status", 403);
+  await check(w, pre(), "arm a refusal");
+  assert.equal(w.relaxed, true, "a refusal is armed: a park may follow");
+  w.online = true;
+  await w.runner.dispatch({ type: "ONLINE" });
+  await check(w, pre(), "network back");
+  assert.equal((await w.store.outbox.health()).stalls.length, 1, "the 403 must have parked the pick scope");
+  assert.equal(w.relaxed, true, "a stall is open");
+  await w.runner.request();
+  await check(w, pre(), "sync requested");
+  assert.deepEqual((await w.store.outbox.health()).stalls, []);
+  assert.equal(w.relaxed, false, "the park healed and nothing is armed: the order is checked again");
+  // And it is a real check: an inversion in a strict stretch is caught.
+  const a = await enqueueOk(w, { scope: "pick_tasks", op: "update", payload: { id: uuid(3), picked: 1 }, baseSeq: 3 });
+  const b = await enqueueOk(w, { scope: "shortages", op: "update", payload: { id: uuid(4), short_by: 1 }, baseSeq: 4 });
+  w.server.appliedOrder.push(b.key, a.key);
+  w.server.requests.length; // no request: the inversion is planted straight into the server's record
+  await assert.rejects(check(w, pre(), "planted inversion"), /I1/);
+});
+
+test("model: a replay that spins fails the step at the request cap instead of hanging", async () => {
+  const w = await newWorld(32);
+  const transport = cappedTransport(w);
+  w.calls = 0;
+  let last;
+  for (let i = 0; i < 2000 && !w.capHit; i++) last = await transport.pull("pick_tasks", 0, 10);
+  assert.equal(w.capHit, true, "the cap never tripped");
+  assert.equal(last.ok, false);
+  assert.match(last.error, /cap/);
+  assert.ok(w.calls <= REQUEST_CAP + 1, `${w.calls} calls went through`);
+  await assert.rejects(check(w, { state: "idle", requests: 0, rows: new Map() }, "spin"), /request cap/);
+});

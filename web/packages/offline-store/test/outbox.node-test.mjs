@@ -453,6 +453,7 @@ for (const status of [403, 501]) {
     assert.equal(waiting, 2);
     assert.equal(stalls.length, 1);
     assert.deepEqual({ kind: stalls[0].kind, scope: stalls[0].scope, status: stalls[0].status, waiting: stalls[0].waiting }, { kind: "scope_refused", scope: "pick_tasks", status, waiting: 2 });
+    assert.equal(stalls[0].key, a.key, "the stall names the first operation of the batch, the one the refusal is about");
     assert.match(stalls[0].error, /no grant for this scope/, "the last error is carried");
     assert.match(stalls[0].message, /kept/, "the words say the work is kept");
     // The refusal is not an attempt the server answered about the rows: the sent mark is as it was.
@@ -853,4 +854,20 @@ test("settle waits for a replay in flight: it never changes a row while its requ
   assert.equal(res.ok, false);
   assert.equal(res.reason, "not_stalled");
   assert.equal(server.applyCount(b.key), 1);
+});
+
+test("health().stuck has no threshold: a single failed attempt already shows attempts 1 and its last error", async () => {
+  const { outbox, server, transport } = await rig();
+  await outbox.enqueue(pick(1));
+  server.failNext("status", 503);
+  assert.equal((await outbox.replay(transport)).kind, "fault");
+  const health = await outbox.health();
+  assert.equal(health.waiting, 1);
+  assert.deepEqual(health.stuck, { attempts: 1, lastError: "status 503" });
+  // One offline attempt counts the same (a request with no status cannot be told from one that left).
+  const second = await rig();
+  await second.outbox.enqueue(pick(1));
+  second.server.setOffline(true);
+  assert.equal((await second.outbox.replay(second.transport)).kind, "offline");
+  assert.equal((await second.outbox.health()).stuck.attempts, 1);
 });
