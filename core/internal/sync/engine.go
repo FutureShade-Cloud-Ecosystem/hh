@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 )
@@ -351,12 +352,23 @@ func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, 
 // row it touched. Nothing is stored without a ledger. A failure is an
 // operational fault, not a verdict on the operation: the push fails whole
 // and the client retries it whole (keyledger.go says what the retry sees).
+//
+// The write runs on a context detached from the request's cancellation: the
+// module has already committed, and the request context dies the moment the
+// client's connection drops, so riding it would leave an applied key unbound
+// for good. It is one primary key insert, bounded by ledgerWriteBound.
 func (e *Engine) remember(ctx context.Context, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, hash, entityID string) error {
 	if e.ledger == nil {
 		return nil
 	}
-	return e.ledger.Remember(ctx, f, info.Name, op.ClientId, LedgerEntry{Hash: hash, EntityID: entityID})
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ledgerWriteBound)
+	defer cancel()
+	return e.ledger.Remember(wctx, f, info.Name, op.ClientId, LedgerEntry{Hash: hash, EntityID: entityID})
 }
+
+// ledgerWriteBound caps the detached ledger write, so a stalled database
+// cannot hold the slot lock and a pool connection without end.
+const ledgerWriteBound = 30 * time.Second
 
 // replayBound answers an operation whose key the ledger holds with the same
 // body while the module's dedup no longer finds it: the key applied, so the
