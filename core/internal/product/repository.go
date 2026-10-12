@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -79,7 +80,7 @@ func buildFilterWhere(f Filter, inStockIDs []string, p string) (where []string, 
 		where = append(where, fmt.Sprintf("%scategory_id = $%d", p, len(args)))
 	}
 	if f.Q != "" {
-		args = append(args, "%"+escapeLikePattern(f.Q)+"%")
+		args = append(args, "%"+likeutil.EscapeLikePattern(f.Q)+"%")
 		where = append(where, fmt.Sprintf(
 			`(%sname ILIKE $%d ESCAPE '\' OR %ssku::text ILIKE $%d ESCAPE '\' OR %sdescription ILIKE $%d ESCAPE '\')`,
 			p, len(args), p, len(args), p, len(args)))
@@ -356,7 +357,7 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]Cat
 	WHERE ($1 <% p.name OR p.sku::text ILIKE $2 ESCAPE '\') AND p.is_active
 	ORDER BY word_similarity($1, p.name) DESC, similarity(p.name, $1) DESC, p.name
 	LIMIT $3`
-	rows, err := r.pool.Query(ctx, q, query, escapeLikePattern(query)+"%", limit)
+	rows, err := r.pool.Query(ctx, q, query, likeutil.EscapeLikePattern(query)+"%", limit)
 	if err != nil {
 		return nil, fmt.Errorf("search products %q: %w", query, err)
 	}
@@ -372,14 +373,6 @@ func (r *Repository) Search(ctx context.Context, query string, limit int) ([]Cat
 	}
 	return out, rows.Err()
 }
-
-// likeEscaper escapes the SQL LIKE/ILIKE metacharacters so a user search term is matched
-// literally under `ESCAPE '\'`: backslash first (it is the escape char), then % and _ wildcards.
-var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-
-// escapeLikePattern neutralizes LIKE wildcards in a user-supplied term before it is used as an
-// ILIKE prefix, so '%' and '_' cannot turn a prefix lookup into a wildcard scan.
-func escapeLikePattern(s string) string { return likeEscaper.Replace(s) }
 
 // ErrNotFound is returned when a product (or its category lookup) does not exist.
 // Exported so the pricing module can map a not-found from the GetCategory catalog seam
