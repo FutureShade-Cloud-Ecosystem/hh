@@ -1,0 +1,66 @@
+//go:build integration
+
+// keybody_race_integration_test.go: the fourth guarantee under concurrency.
+// Two pushes of one key with different bodies must not both apply.
+package sync_test
+
+import (
+	"context"
+	gosync "sync"
+	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
+)
+
+// Two pushes of one fresh key with different bodies, started together: the
+// guarantee is that exactly one applies. Twenty rounds, each a fresh key.
+func TestKeyBodyD30ConcurrentDifferentBodiesApplyOnce(t *testing.T) {
+	f := new169Fixture(t)
+	cleanLedger(t, f)
+	f.engine.WithKeyLedger(sync.NewPgKeyLedger(f.pool))
+	k := f.quotesKit()
+	if r := d30Push(t, f, apigen.SyncPushOperation{ClientId: newKey(960), Op: "create", Payload: k.Create("")}); r.Status != "applied" {
+		t.Fatalf("create: %+v", r)
+	}
+	id := pullOf(t, f.engine, "customer_quotes", k.Filter, 0, 500)[0]
+
+	for round := 0; round < 20; round++ {
+		key := newKey(1000 + round)
+		start := make(chan struct{})
+		var wg gosync.WaitGroup
+		results := make([]apigen.SyncPushResult, 2)
+		for i := 0; i < 2; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				resp, err := f.engine.Push(context.Background(), k.Scope, k.Filter, []apigen.SyncPushOperation{{
+					ClientId: key, Op: "update", Payload: map[string]any{"id": id, "markup_bps": 2000 + 2*round + i},
+				}})
+				if err != nil || len(resp.Results) != 1 {
+					results[i] = apigen.SyncPushResult{Status: "fault"}
+					return
+				}
+				results[i] = resp.Results[0]
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		applied, refused := 0, 0
+		for _, r := range results {
+			switch {
+			case r.Status == "applied":
+				applied++
+			case r.Status == "rejected" && r.Error != nil && len(*r.Error) >= 10 && (*r.Error)[:10] == "key_reused":
+				refused++
+			}
+		}
+		if applied != 1 || refused != 1 {
+			t.Fatalf("round %d: %d applied, %d key_reused of %+v, want exactly one of each", round, applied, refused, results)
+		}
+		if m := d30Markup(t, f, id); m != float64(2000+2*round) && m != float64(2000+2*round+1) {
+			t.Fatalf("round %d: markup %v is neither body", round, m)
+		}
+	}
+}
