@@ -328,3 +328,19 @@ func TestSecfix_NSFPolicyWriteHoldsHrAndPlatformRole(t *testing.T) {
 		t.Fatalf("hr alone: got %d, want 403", rec.Code)
 	}
 }
+
+// A global caller reaches every branch, so the reach check cannot catch a branch that is no location: the
+// service answers 422 for a malformed id instead of letting the uuid cast fail as a 500.
+func TestSecfix_AttemptBranchMustBeAUUID(t *testing.T) {
+	f := newSecfixGatedFixture(t)
+	f.person("global", secfixRoles[13].authority()) // super_admin
+	for _, bad := range []string{"not-a-uuid", "00000000-0000-4000-8000-00000000000g", secfixBranchA + "0"} {
+		rec := f.do(t, "global", http.MethodPost, secfixAttemptPath, secfixAttempt("k-bad", bad))
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("branch %q: got %d %s, want 422", bad, rec.Code, rec.Body.String())
+		}
+	}
+	if len(f.store.attempts) != 0 {
+		t.Fatalf("a refused attempt must write nothing, got %d rows", len(f.store.attempts))
+	}
+}
