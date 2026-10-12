@@ -120,7 +120,10 @@ export class FakeSyncServer {
   readonly #rows = new Map<string, Map<string, ServerRow>>();
   readonly #refused = new Map<string, string>();
   readonly #faults: Fault[] = [];
+  /** Keys the server answered with a conflict that applied nothing (server wins, manual). */
+  readonly conflictedKeys = new Set<string>();
   #offline = false;
+  #authValid = true;
   #seq = 0;
 
   /** How many times the server really applied this key (a dedup answer is not an application). */
@@ -130,6 +133,15 @@ export class FakeSyncServer {
 
   setOffline(offline: boolean): void {
     this.#offline = offline;
+  }
+
+  /** While invalid, every request is answered 401 (after it is recorded). */
+  setAuthValid(valid: boolean): void {
+    this.#authValid = valid;
+  }
+
+  clearFaults(): void {
+    this.#faults.length = 0;
   }
 
   /** Make the module refuse this key with this message (an operation level rejection). */
@@ -192,6 +204,7 @@ export class FakeSyncServer {
   #pull(scope: string, since: number, limit: number): Result<SyncPullResponse> {
     if (this.#offline) return err("network unreachable");
     this.requests.push({ kind: "pull", scope, since, limit });
+    if (!this.#authValid) return err("unauthorized", 401);
     const fault = this.#faults[0];
     if (fault?.kind === "status") {
       this.#faults.shift();
@@ -216,6 +229,7 @@ export class FakeSyncServer {
   #push(scope: string, ops: SyncPushOperation[]): Result<SyncPushResponse> {
     if (this.#offline) return err("network unreachable");
     this.requests.push({ kind: "push", scope, ops });
+    if (!this.#authValid) return err("unauthorized", 401);
     const fault = this.#faults[0];
     if (fault?.kind === "status") {
       this.#faults.shift();
@@ -286,6 +300,7 @@ export class FakeSyncServer {
         };
       }
       const p = policy === "manual" ? "manual" : "server_wins";
+      this.conflictedKeys.add(op.client_id);
       return { client_id: op.client_id, status: "conflict", conflict: { client_id: op.client_id, policy: p, server_state: { ...row.data }, applied: false } };
     }
     row.data = { ...row.data, ...op.payload };
