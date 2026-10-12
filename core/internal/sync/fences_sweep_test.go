@@ -94,6 +94,14 @@ func wantForbidden(t *testing.T, cell string, rec *httptest.ResponseRecorder) {
 	}
 }
 
+// wantUntouched asserts a refused push left the scope's store as it was.
+func wantUntouched(t *testing.T, f *sweepFixture, cell, scope string, before int) {
+	t.Helper()
+	if got := f.rows(scope); got != before {
+		t.Errorf("%s: a refused push reached the store (rows %d -> %d)", cell, before, got)
+	}
+}
+
 // TestWriteFenceSweep: every registry scope against every staff_role row and
 // every contractor role, through the real handler. Writers reach the store
 // (a 200 and a row), every other role gets the shared 403 with the identical
@@ -115,14 +123,17 @@ func TestWriteFenceSweep(t *testing.T) {
 			switch {
 			case info.Tenancy == TenancyTenant:
 				wantForbidden(t, cell, rec)
+				wantUntouched(t, f, cell, first, before)
 				refused++
 			case info.Money:
 				wantForbidden(t, cell, rec)
+				wantUntouched(t, f, cell, first, before)
 				refused++
 			case info.Policy == PolicyPullOnly:
 				if rec.Code != http.StatusBadRequest {
 					t.Errorf("%s: %d, want the pull-only 400", cell, rec.Code)
 				}
+				wantUntouched(t, f, cell, first, before)
 				refused++
 			case info.AllowsRole(role):
 				if rec.Code != http.StatusOK || f.rows(first) != before+1 {
@@ -147,14 +158,17 @@ func TestWriteFenceSweep(t *testing.T) {
 			switch {
 			case info.Tenancy == TenancyOrg:
 				wantForbidden(t, cell, rec)
+				wantUntouched(t, f, cell, first, before)
 				refused++
 			case info.Money:
 				wantForbidden(t, cell, rec)
+				wantUntouched(t, f, cell, first, before)
 				refused++
 			case info.Policy == PolicyPullOnly:
 				if rec.Code != http.StatusBadRequest {
 					t.Errorf("%s: %d, want the pull-only 400", cell, rec.Code)
 				}
+				wantUntouched(t, f, cell, first, before)
 				refused++
 			case info.AllowsRole(role):
 				if rec.Code != http.StatusOK || f.rows(first) != before+1 {

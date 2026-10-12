@@ -212,6 +212,28 @@ func qd1gRestAllowed(t *testing.T, label string, code int, body string) bool {
 	return false
 }
 
+// qd1gFenceAdmits reports whether the sync write fence lists the role as a
+// writer of the scope (the registry is the oracle; the pinned table in the
+// sync package holds the literal lists).
+func qd1gFenceAdmits(scope, role string) bool {
+	info, ok := syncpkg.Lookup(scope)
+	return ok && info.AllowsRole(role)
+}
+
+// qd1gFencedReplay settles a replay answer that may be the fence's 403: a
+// role off the scope's writer list is refused before any replay lookup (true,
+// skip the leg), but a refusal of a listed writer is a defect and fails.
+func qd1gFencedReplay(t *testing.T, scope string, who qd1gRole, code int, body string) bool {
+	t.Helper()
+	if !qd1bFenced(code, body) {
+		return false
+	}
+	if qd1gFenceAdmits(scope, who.role) {
+		t.Fatalf("the fence refused %s, a listed writer of %s: %s", who.role, scope, body)
+	}
+	return true
+}
+
 // qd1gPushOne drives one pushed operation through the registered sync route
 // as one principal and folds the answer to allow or refuse (an applied result
 // admits, a rejected one refuses, a conflict is a fault in the census).
@@ -634,8 +656,8 @@ func qd1gQuotesFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 		id, no := qd1gQuote(t, c, k.branch, "SENT", c.ownerFor(who, k.own), key)
 		code, body := qd1bCall(t, c.q, http.MethodPost, "/api/v1/sync/quotes", who.sub, map[string]any{"ops": []any{
 			map[string]any{"client_id": key, "op": "update", "payload": map[string]any{"id": id, "valid_until": qd1cMoved()}}}})
-		if qd1bFenced(code, body) {
-			continue // a role off the writer list is refused before any replay lookup
+		if qd1gFencedReplay(t, "quotes", who, code, body) {
+			continue // off the writer list: refused before any replay lookup
 		}
 		if code != http.StatusOK {
 			t.Fatalf("replay as %s: %d %s", who.role, code, body)
@@ -727,7 +749,8 @@ func qd1gApprovalsWrite(t *testing.T, c *qd1gCensus, who qd1gRole) {
 		id := k.make(t)
 		got, _ := qd1gPushOne(t, c.q, "approvals", who.sub, "update",
 			map[string]any{"id": id, "detail": "qd1g revised " + uuid.NewString()}, nil)
-		qd1gMust(t, "approvals.Write", who, k.name, got, k.want)
+		// A requester demoted off every filing role is refused at the fence.
+		qd1gMust(t, "approvals.Write", who, k.name, got, k.want && qd1gFenceAdmits("approvals", who.role))
 	}
 }
 
@@ -747,7 +770,7 @@ func qd1gApprovalsDelete(t *testing.T, c *qd1gCensus, who qd1gRole) {
 			id, _ := qd1gPlain(t, c, requester, testkit.BranchNorthAID)
 			qd1gMove(t, c, id, st.status, st.used)
 			got, _ := qd1gPushOne(t, c.q, "approvals", who.sub, "delete", map[string]any{"id": id}, nil)
-			want := mine && !st.used
+			want := mine && !st.used && qd1gFenceAdmits("approvals", who.role)
 			qd1gMust(t, "approvals.Delete", who, "withdraw "+label+st.name+" request", got, want)
 			if qd1gTombstoned(t, c, id) != want {
 				t.Errorf("CENSUS RULE approvals.Delete as %s (%s%s): tombstone is %v, want %v", who.role, label, st.name, !want, want)
@@ -842,8 +865,8 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 		}
 		code, body := qd1bCall(t, c.q, http.MethodPost, "/api/v1/sync/approvals", who.sub, map[string]any{"ops": []any{
 			map[string]any{"client_id": key, "op": "update", "payload": map[string]any{"id": id, "detail": "qd1g replay words"}}}})
-		if qd1bFenced(code, body) {
-			continue // a role off the writer list is refused before any replay lookup
+		if qd1gFencedReplay(t, "approvals", who, code, body) {
+			continue // off the writer list: refused before any replay lookup
 		}
 		if code != http.StatusOK {
 			t.Fatalf("replay as %s: %d %s", who.role, code, body)
@@ -872,6 +895,9 @@ func qd1gApprovalsFindApplied(t *testing.T, c *qd1gCensus, who qd1gRole) {
 	}
 	code, body := qd1bCall(t, c.q, http.MethodPost, "/api/v1/sync/approvals", who.sub, map[string]any{"ops": []any{
 		map[string]any{"client_id": key, "op": "update", "payload": map[string]any{"id": id, "detail": "qd1g dedup rewrite"}}}})
+	if qd1gFencedReplay(t, "approvals", who, code, body) {
+		return // a demoted requester: refused before the dedup lookup
+	}
 	if code != http.StatusOK {
 		t.Fatalf("dedup replay as %s: %d %s", who.role, code, body)
 	}

@@ -98,10 +98,10 @@ var scopes = map[string]ScopeInfo{
 	"delivery_stops":  {Name: "delivery_stops", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersDispatchBoard, Ops: opsCreateUpdate},
 	"will_call":       {Name: "will_call", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersDispatchBoard, Ops: opsCreateUpdate},
 	"purchase_orders": {Name: "purchase_orders", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersBuyingStock, Ops: opsCreateUpdate},
-	"approvals":       {Name: "approvals", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersAllStaff, Ops: opsCreateUpdateDelete},
+	"approvals":       {Name: "approvals", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersApprovals, Ops: opsCreateUpdateDelete},
 	"messages":        {Name: "messages", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersAllStaff, Ops: opsCreateUpdate},
 	"acks":            {Name: "acks", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersAllStaff, Ops: opsCreateOnly},
-	"orders":          {Name: "orders", Policy: PolicyServerWins, Tenancy: TenancyTenant, Writers: writersPortalBuy, Ops: opsCreateUpdateDelete},
+	"orders":          {Name: "orders", Policy: PolicyServerWins, Tenancy: TenancyTenant, Writers: writersPortalBuy, Ops: opsCreateUpdate},
 	"tracking_events": {Name: "tracking_events", Policy: PolicyServerWins, Tenancy: TenancyTenant, Writers: writersPortalTracked, Ops: opsCreateOnly},
 	"invoices":        {Name: "invoices", Policy: PolicyServerWins, Tenancy: TenancyBoth, Money: true},
 	"payments":        {Name: "payments", Policy: PolicyServerWins, Tenancy: TenancyTenant, Money: true},
@@ -120,7 +120,7 @@ var scopes = map[string]ScopeInfo{
 	"pod":             {Name: "pod", Policy: PolicyManual, Tenancy: TenancyOrg, Writers: writersDriveRun, Ops: opsCreateUpdate},
 	"cycle_counts":    {Name: "cycle_counts", Policy: PolicyManual, Tenancy: TenancyOrg, Writers: writersBuyingStock, Ops: opsCreateUpdate},
 	"customer_quotes": {Name: "customer_quotes", Policy: PolicyManual, Tenancy: TenancyTenant, Writers: writersPortalBuy, Ops: opsCreateUpdate},
-	"team":            {Name: "team", Policy: PolicyManual, Tenancy: TenancyTenant, Writers: writersPortalAdmin, Ops: opsCreateUpdateDelete},
+	"team":            {Name: "team", Policy: PolicyManual, Tenancy: TenancyTenant, Writers: writersPortalAdmin, Ops: opsCreateUpdate},
 	"pickups":         {Name: "pickups", Policy: PolicyManual, Tenancy: TenancyTenant, Writers: writersPortalField, Ops: opsCreateUpdate},
 
 	// pull-only, Colton's ruling on undeclared scopes. inventory_lookup is

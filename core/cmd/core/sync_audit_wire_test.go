@@ -125,12 +125,13 @@ func TestSyncPushAuditRowsCarryTheActorThroughServe(t *testing.T) {
 		}
 	}
 
-	// Tenant, applied: the tombstone of the tenant's own card.
-	push("fx-synca-tenant-applied", "orders", tenant, "delete", cardID)
+	// Tenant, applied: an update (a no-op write) of the tenant's own card;
+	// orders admits create and update, no delete.
+	push("fx-synca-tenant-applied", "orders", tenant, "update", cardID)
 	assertTenant("fx-synca-tenant-applied", "applied")
 
-	// Tenant, rejected: a tombstone of a card that does not exist.
-	push("fx-synca-tenant-rejected", "orders", tenant, "delete", "3ef10000-0000-4000-8000-0000000193c2")
+	// Tenant, rejected: an update of a card that does not exist.
+	push("fx-synca-tenant-rejected", "orders", tenant, "update", "3ef10000-0000-4000-8000-0000000193c2")
 	assertTenant("fx-synca-tenant-rejected", "rejected")
 
 	// Staff: the linked users.id, no subject key. An update of a row that

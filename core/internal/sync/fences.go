@@ -68,6 +68,16 @@ var (
 	writersDispatchBoard = []string{roleYardManager, roleLogisticsManager, roleBranchManager}
 	writersBuyingStock   = []string{roleYardManager, roleProcurementManager}
 	writersQuoteDesk     = []string{roleInsideSales, roleOutsideSales, roleSalesManager, roleBranchManager}
+	// writersApprovals is the ten roles the matrix holds at work or above on
+	// counter-till, quote-desk or manager-home, the surfaces a filing needs
+	// (the approvals store's approvalFileSurfaces and REST identityCreateApproval
+	// agree); a decision needs manage on a subset. The catalog declares no
+	// outbox for the scope, so the REST twin's list is the source.
+	writersApprovals = []string{
+		roleBranchManager, roleFinancialController, roleGeneralManager, roleInsideSales,
+		roleLogisticsManager, roleOutsideSales, rolePayablesReceivables,
+		roleProcurementManager, roleSalesManager, roleYardManager,
+	}
 	// writersAllStaff is the thirteen staff roles (the matrix holds each at
 	// work or above on house-messages) plus the catalog's super_admin. It
 	// fences messages, acks and notify_prefs, and approvals too: the sync
