@@ -361,7 +361,7 @@ test("a refused batch is split to single operations, and each one lands", async 
   const { outbox, server, transport } = await rig();
   const keys = [];
   for (let n = 1; n <= 3; n++) keys.push((await outbox.enqueue(pick(n))).key);
-  const refuseMany = { ...transport, push: async (scope, ops) => (ops.length > 1 ? err("batch too large", 400) : transport.push(scope, ops)) };
+  const refuseMany = { ...transport, push: async (scope, ops) => (ops.length > 1 ? err("invalid_json", 400) : transport.push(scope, ops)) };
   const out = await outbox.replay(refuseMany);
   assert.equal(out.kind, "done");
   assert.equal(out.rejected, 0);
@@ -376,7 +376,7 @@ test("an operation the server still refuses alone is closed as rejected with its
   const poison = await outbox.enqueue(pick(2));
   const c = await outbox.enqueue(pick(3));
   const d = await outbox.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(4), short_by: 1 } });
-  const refusing = { ...transport, push: async (scope, ops) => (ops.some((o) => o.client_id === poison.key) ? err("body refused", 400) : transport.push(scope, ops)) };
+  const refusing = { ...transport, push: async (scope, ops) => (ops.some((o) => o.client_id === poison.key) ? err("invalid_json", 400) : transport.push(scope, ops)) };
   const out = await outbox.replay(refusing);
   assert.deepEqual(out, { kind: "done", sent: out.sent, applied: 3, conflicts: 0, rejected: 1 });
   assert.deepEqual((await rows(sql)).map((r) => r.status), ["applied", "rejected", "applied", "applied"]);
@@ -384,7 +384,7 @@ test("an operation the server still refuses alone is closed as rejected with its
   const refused = rec.results.find(([k]) => k === poison.key);
   assert.equal(refused[1], "rejected");
   assert.match(refused[2], /400/, "the card carries the status of the refusal");
-  assert.match(refused[2], /body refused/);
+  assert.match(refused[2], /invalid_json/);
   const again = await outbox.replay(refusing);
   assert.deepEqual(again, { kind: "done", sent: 0, applied: 0, conflicts: 0, rejected: 0 });
 });
@@ -529,7 +529,8 @@ for (const status of [400, 403, 501]) {
     server.failNext("afterApply", 1); // the server applies it, the answer is a 500
     assert.equal((await outbox.replay(transport)).kind, "fault");
     assert.equal(server.applyCount(op.key), 1);
-    const out = await outbox.replay({ ...transport, push: async () => err("refused later", status) });
+    const refusal = status === 400 ? "invalid_json" : "refused later";
+    const out = await outbox.replay({ ...transport, push: async () => err(refusal, status) });
     assert.equal(out.kind, "done");
     assert.equal(out.rejected, 0);
     assert.deepEqual((await marks(sql)).map((r) => [r.status, r.sent]), [["pending", 1]]);
@@ -539,7 +540,7 @@ for (const status of [400, 403, 501]) {
     assert.equal(stalls[0].kind, status === 400 ? "check_applied" : "scope_refused");
     assert.equal(stalls[0].status, status);
     assert.equal(stalls[0].scope, "pick_tasks");
-    assert.match(stalls[0].error, /refused later/);
+    assert.match(stalls[0].error, new RegExp(refusal));
     if (status === 400) assert.match(stalls[0].message, /may already have been applied/);
     // The refusal passes: the retry reaches the server, which answers from its record. Applied exactly once.
     const healed = await outbox.replay(transport);
@@ -614,4 +615,73 @@ test("a 401 puts the sent mark back: nothing was answered about the rows", async
   server.failNext("status", 401);
   assert.equal((await outbox.replay(transport)).kind, "auth_expired");
   assert.deepEqual((await marks(sql)).map((r) => [r.sent, r.attempts]), [[0, 0]]);
+});
+
+// ---- round 3: only invalid_json is about the body; any other 400 is about the scope or a hop ----------------
+
+// The core answers a push with 400 for three reasons (core/internal/sync/handler.go): an unknown scope, a pull
+// only scope, and invalid_json. A hop in front of the core answers 400 for its own reasons, about every request.
+const SCOPE_WIDE_400 = [
+  ["the core says the scope is unknown", "unknown sync scope"],
+  ["the core says the scope is pull only", "sync: scope pick_tasks is pull-only"],
+  ["a hop answers with a plain text body", "Request Header Or Cookie Too Large"],
+  ["a hop answers with an HTML body", "<html><body><h1>400 Bad Request</h1></body></html>"],
+];
+
+for (const [name, message] of SCOPE_WIDE_400) {
+  test(`a 400 where ${name} refuses the scope, not a row: every never sent row stays pending with a scope_refused stall and no card`, async () => {
+    const rec = seen();
+    const { outbox, server, transport, sql } = await rig({ onResult: rec.onResult });
+    const a = await outbox.enqueue(pick(1));
+    await outbox.enqueue(pick(2));
+    await outbox.enqueue(pick(3));
+    const short = await outbox.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(4), short_by: 1 } });
+    const pushes = [];
+    const refusing = {
+      ...transport,
+      push: async (scope, ops) => (pushes.push([scope, ops.length]), scope === "pick_tasks" ? err(message, 400) : transport.push(scope, ops)),
+    };
+    const out = await outbox.replay(refusing);
+    assert.equal(out.kind, "done");
+    assert.equal(out.rejected, 0, "a scope wide 400 must not destroy queued work");
+    assert.deepEqual((await rows(sql)).map((r) => r.status), ["pending", "pending", "pending", "applied"]);
+    assert.deepEqual(rec.results.filter(([, st]) => st === "rejected"), [], "no card for work the scope refused");
+    assert.deepEqual(pushes[0], ["pick_tasks", 3], "the whole batch went out once");
+    assert.equal(pushes.filter(([scope]) => scope === "pick_tasks").length, 1, "a scope wide refusal is not split into singles");
+    assert.deepEqual(server.appliedOrder, [short.key]);
+    const { stalls, waiting } = await outbox.health();
+    assert.equal(waiting, 3);
+    assert.deepEqual(stalls.map((x) => [x.kind, x.scope, x.status, x.key, x.waiting]), [["scope_refused", "pick_tasks", 400, a.key, 3]]);
+    // The refusal is not an attempt the server answered about the rows: the mark is as it was.
+    assert.deepEqual((await marks(sql)).slice(0, 3).map((r) => [r.sent, r.attempts]), [[0, 0], [0, 0], [0, 0]]);
+    // It is lifted: the parked rows go out in order and the stall clears.
+    const healed = await outbox.replay(transport);
+    assert.equal(healed.kind, "done");
+    assert.equal(healed.applied, 3);
+    assert.deepEqual((await outbox.health()).stalls, []);
+  });
+}
+
+test("a scope wide 400 on a row that was sent before parks the scope as scope_refused too, not as check_applied", async () => {
+  const { outbox, server, transport, sql } = await rig();
+  const op = await outbox.enqueue(pick(1));
+  server.failNext("dropResponse");
+  await outbox.replay(transport);
+  const out = await outbox.replay({ ...transport, push: async () => err("unknown sync scope", 400) });
+  assert.equal(out.rejected, 0);
+  const { stalls } = await outbox.health();
+  assert.deepEqual(stalls.map((x) => [x.kind, x.key]), [["scope_refused", op.key]]);
+  assert.deepEqual((await marks(sql)).map((r) => [r.status, r.sent]), [["pending", 1]]);
+});
+
+test("only a 400 whose message is exactly invalid_json is split and judged row by row", async () => {
+  for (const message of ["invalid_json ", "Invalid_JSON", "invalid_json: unexpected end", "error: invalid_json"]) {
+    const { outbox, transport, sql } = await rig();
+    await outbox.enqueue(pick(1));
+    await outbox.enqueue(pick(2));
+    const out = await outbox.replay({ ...transport, push: async () => err(message, 400) });
+    assert.equal(out.rejected, 0, `${JSON.stringify(message)} closed rows`);
+    assert.deepEqual((await rows(sql)).map((r) => r.status), ["pending", "pending"]);
+    assert.deepEqual((await outbox.health()).stalls.map((x) => x.kind), ["scope_refused"]);
+  }
 });
