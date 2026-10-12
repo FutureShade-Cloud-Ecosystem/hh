@@ -2,11 +2,11 @@ package identity
 
 // The session signing path. This file and the SessionMinter type are the
 // only place in the package that holds a private key; no verifier code
-// references it (sessionfence_test.go holds that), and the verifier in verifier.go still has no signing path of
-// its own. The key is loaded once from a file the platform mounts, the raw
-// bytes are dropped, and the key has no marshal, write or log path: a
-// SessionMinter has no exported field and no method that returns the
-// private scalar.
+// references it (sessionfence_test.go holds that), and the verifier in
+// verifier.go still has no signing path of its own. The key is loaded once
+// from a file the platform mounts, the raw bytes are dropped, and the key
+// has no marshal, write or log path: a SessionMinter has no exported field
+// and no method that returns the private scalar.
 
 import (
 	"crypto/ecdsa"
@@ -23,13 +23,14 @@ import (
 	"time"
 )
 
+// maxKeyFileBytes bounds what a key file read takes; a longer file is
+// refused, never truncated.
+const maxKeyFileBytes = 64 << 10
+
 // demoIssuerValue is the issuer of the demo build's in memory issuer. A
 // persistent key must never mint under it, so a token from the public copy
 // or the testers' copy can never verify on a deployment that kept the demo
 // name.
-// maxKeyFileBytes bounds what a key file read takes.
-const maxKeyFileBytes = 64 << 10
-
 const demoIssuerValue = "hh-demo"
 
 // SessionKeyFiles names the three key files. Current holds the private key

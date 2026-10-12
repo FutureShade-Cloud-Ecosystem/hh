@@ -3,8 +3,9 @@
 // ERP's two HS256 issuers with verification only: this file, and every
 // verifier code path, has no signing path. The core's own session signing
 // lives apart, in sessionsigner.go (a file and a type that no verifier
-// code references, held by sessionfence_test.go), and the key source over its public halves in
-// sessionkeys.go; the verifier reads them only through KeySource. A token
+// code references, held by sessionfence_test.go), and the key source over
+// its public halves in sessionkeys.go; the verifier reads them only through
+// KeySource. A token
 // is identity only; authority is resolved from the database per request and
 // never read from claims (D3, docs/analysis/DECISIONS.md). Every
 // verification input, the JWK Set source, the issuer, the audience
