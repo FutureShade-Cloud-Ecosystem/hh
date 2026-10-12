@@ -1,30 +1,25 @@
-// The browser adapter: this package's AccountSurface (src/client.ts) over the
-// Appwrite web SDK, against FB Console's HH project, and over the core's
-// exchange route. It is a SEPARATE ENTRY (the "./appwrite-adapter" export):
-// the package root imports nothing from here, so a host that does not sign in
-// from a browser (a Tauri shell forwards to its Rust side instead) takes no
-// SDK dependency.
+// The browser adapter: this package's AccountSurface (src/client.ts) over
+// FB Console's REST API and the core's exchange route, with plain fetch and
+// no SDK. It is a SEPARATE ENTRY (the "./appwrite-adapter" export): the
+// package root imports nothing from here, so a host that does not sign in
+// from a browser (a Tauri shell forwards to its Rust side instead) bundles
+// none of it.
 //
-// What it holds: nothing. Each exchange attempt mints an FB Console JWT
-// (createJWT, 900 seconds of life), posts it with the org to
-// POST /api/v1/auth/exchange, and drops it; the next attempt, a retry
-// included, mints a new one, because the core accepts a JWT once. The JWT is
-// a local of one attempt, never a field, never returned, never in an error
-// text. The only thing handed back is the core's own answer or a typed
-// refusal code.
+// What it holds: nothing, and it writes nothing anywhere. Each exchange
+// attempt mints an FB Console JWT (POST /account/jwts, 900 seconds of life),
+// posts it with the org to POST /api/v1/auth/exchange, and drops it; the
+// next attempt, a retry included, mints a new one, because the core accepts a
+// JWT once. The JWT is a local of one attempt, never a field, never returned,
+// never in an error text. The only thing handed back is the core's own answer
+// or a typed refusal code.
 //
 // The session cookie is FB Console's, httpOnly and first party to the page
-// (every browser copy stays on a futurebuild.ai host, so the console's
-// api.futurebuild.ai cookie is not third party). The SDK has a second
-// mechanism this package refuses: whenever a console response carries
-// X-Fallback-Cookies the SDK writes it to window.localStorage under
-// "cookieFallback" and sends it back on every request. That value is the
-// session secret, and this package's custody rule is that no credential rests
-// in browser storage. The adapter therefore removes the key after every SDK
-// call, so the value is never left at rest and is never sent back. This is a
-// mitigation, not a prevention (the SDK writes before the adapter can see
-// the response); the TO-PRINCIPAL finding for this item says so.
-import { Account, Client, OAuthProvider } from "appwrite";
+// (every browser copy stays on a futurebuild.ai host), carried by
+// credentials "include". The web SDK was dropped because it copies a session
+// fallback to local storage whenever the console sends X-Fallback-Cookies;
+// this adapter never reads that response header, never sets it on a request,
+// and touches no storage of any kind (a test holds that line with storage
+// doubles that throw on any write, and a scan of this source).
 import type {
   AccountSurface,
   AccountUser,
@@ -41,11 +36,14 @@ export interface AppwriteAccountSurfaceOptions {
   projectId: string;
   /** The core's base URL, with no trailing path; the exchange route is appended. */
   coreBaseUrl: string;
-  /** The fetch used for the core's exchange route; the platform's when omitted. The SDK uses the platform's own. */
+  /** The fetch used for every call; the platform's when omitted. */
   fetch?: typeof fetch;
+  /** Navigate the window to a URL (the Google flow); sets window.location.href when omitted. */
+  navigate?: (url: string) => void;
+  /** The page's own origin, the only place a redirect may land; window.location.origin when omitted. */
+  pageOrigin?: string;
 }
 
-const FALLBACK_KEY = "cookieFallback";
 const EXCHANGE_PATH = "/api/v1/auth/exchange";
 
 function nonEmpty(value: string, what: string): string {
@@ -55,31 +53,10 @@ function nonEmpty(value: string, what: string): string {
   return value;
 }
 
-/** Remove the SDK's session fallback from local storage, whether or not it is there. Never throws. */
-function scrubFallback(): void {
-  try {
-    const storage = (globalThis as { window?: { localStorage?: Storage } }).window?.localStorage;
-    storage?.removeItem(FALLBACK_KEY);
-  } catch {
-    // denied site data: nothing could have been written either
-  }
-}
-
-/** Run one SDK call, and leave no fallback behind whatever it did. */
-async function sdk<T>(call: () => Promise<T>): Promise<T> {
-  try {
-    return await call();
-  } finally {
-    scrubFallback();
-  }
-}
-
-/** The SDK's exception carries the console's HTTP status in `code`; anything without one is the network. */
-function consoleRefusal(error: unknown): ExchangeRefusalCode {
-  const code = (error as { code?: unknown } | null)?.code;
-  if (typeof code !== "number") return "offline";
-  if (code === 401 || code === 403 || code === 404) return "no_session";
-  if (code === 429) return "rate_limited";
+/** The console's refusal of a JWT mint: the session is gone, blocked or throttled, or the console is down. */
+function consoleRefusal(status: number): ExchangeRefusalCode {
+  if (status === 401 || status === 403 || status === 404) return "no_session";
+  if (status === 429) return "rate_limited";
   return "unavailable";
 }
 
@@ -110,19 +87,16 @@ function readAnswer(body: unknown): ExchangeAnswer | null {
   return { token, expiresAtMs, user: { user_id, email, display_name, role_code, role_name, tier, scope } };
 }
 
-function accountUser(account: { $id: string; email: string; name: string }): AccountUser {
-  return { userId: account.$id, email: account.email, name: account.name };
-}
-
-/** The page's own origin, the only place a redirect may land. */
-function pageOrigin(): string | null {
-  const origin = (globalThis as { window?: { location?: { origin?: unknown } } }).window?.location?.origin;
-  return typeof origin === "string" && origin !== "" && origin !== "null" ? origin : null;
+/** The console's account, read field by field; anything short of an id, an email and a name is refused. */
+function readAccount(body: unknown): AccountUser {
+  if (isRecord(body) && typeof body["$id"] === "string" && body["$id"] !== "" && typeof body["email"] === "string" && typeof body["name"] === "string") {
+    return { userId: body["$id"], email: body["email"], name: body["name"] };
+  }
+  throw new Error("the console's account answer is not usable");
 }
 
 /** Validate a redirect: an absolute URL on the page's own origin, and nothing else. */
-function sameOriginRedirect(redirectTo: string): URL {
-  const origin = pageOrigin();
+function sameOriginRedirect(redirectTo: string, origin: string | null): URL {
   let target: URL;
   try {
     target = new URL(redirectTo);
@@ -137,11 +111,10 @@ function sameOriginRedirect(redirectTo: string): URL {
 
 /**
  * The AccountSurface over FB Console and the core. Construction validates the
- * options and touches nothing; the SDK client is built here and lives for the
- * surface's life.
+ * options and touches nothing.
  */
 export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOptions): AccountSurface {
-  const endpoint = nonEmpty(options.endpoint, "endpoint");
+  const endpoint = nonEmpty(options.endpoint, "endpoint").replace(/\/+$/, "");
   const projectId = nonEmpty(options.projectId, "project id");
   let exchangeUrl: string;
   try {
@@ -149,20 +122,53 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
   } catch {
     throw new Error("createAppwriteAccountSurface: the core base URL is not a URL");
   }
-  const client = new Client().setEndpoint(endpoint).setProject(projectId);
-  const account = new Account(client);
+
+  const send = (url: string, init: RequestInit): Promise<Response> => (options.fetch ?? globalThis.fetch)(url, init);
+  const origin = (): string | null => {
+    if (options.pageOrigin !== undefined) return options.pageOrigin;
+    const o = (globalThis as { window?: { location?: { origin?: unknown } } }).window?.location?.origin;
+    return typeof o === "string" && o !== "" && o !== "null" ? o : null;
+  };
+  const navigate =
+    options.navigate ??
+    ((url: string): void => {
+      (globalThis as unknown as { window: { location: { href: string } } }).window.location.href = url;
+    });
+
+  /** One console call: the project header, JSON, the first party cookie, no redirects. The response's headers are never read. */
+  function consoleCall(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<Response> {
+    return send(`${endpoint}${path}`, {
+      method,
+      headers: { "X-Appwrite-Project": projectId, "Content-Type": "application/json" },
+      credentials: "include",
+      redirect: "error",
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  }
+
+  async function readJson(response: Response): Promise<unknown> {
+    try {
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
 
   /** One attempt: a fresh JWT, one post to the core, and the JWT is dropped on the way out. */
   async function attempt(org: string): Promise<ExchangeResult> {
     let jwt: string;
     try {
-      jwt = (await sdk(() => account.createJWT())).jwt;
-    } catch (error) {
-      return { ok: false, code: consoleRefusal(error) };
+      const minted = await consoleCall("POST", "/account/jwts", {});
+      if (minted.status < 200 || minted.status > 299) return { ok: false, code: consoleRefusal(minted.status) };
+      const body = await readJson(minted);
+      const value = isRecord(body) ? body["jwt"] : undefined;
+      if (typeof value !== "string" || value === "") return { ok: false, code: "unavailable" };
+      jwt = value;
+    } catch {
+      return { ok: false, code: "offline" };
     }
     let response: Response;
     try {
-      const send = options.fetch ?? globalThis.fetch;
       response = await send(exchangeUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
@@ -175,39 +181,48 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
     }
     jwt = ""; // the attempt is over; the JWT is not kept
     if (response.status !== 200) return { ok: false, code: coreRefusal(response.status) };
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch {
-      return { ok: false, code: "unavailable" };
-    }
-    const answer = readAnswer(body);
+    const answer = readAnswer(await readJson(response));
     return answer === null ? { ok: false, code: "unavailable" } : { ok: true, answer };
+  }
+
+  async function account(): Promise<AccountUser> {
+    let response: Response;
+    try {
+      response = await consoleCall("GET", "/account");
+    } catch {
+      throw new Error("the console could not be reached (network)");
+    }
+    if (response.status !== 200) throw new Error(`the console refused the account read (status ${response.status})`);
+    return readAccount(await readJson(response));
   }
 
   return {
     async createEmailPasswordSession(email: string, password: string): Promise<AccountUser> {
-      await sdk(() => account.createEmailPasswordSession({ email, password }));
-      return accountUser(await sdk(() => account.get()));
+      let response: Response;
+      try {
+        response = await consoleCall("POST", "/account/sessions/email", { email, password });
+      } catch {
+        throw new Error("the console could not be reached (network)");
+      }
+      if (response.status < 200 || response.status > 299) {
+        throw new Error(`the console refused the sign-in (status ${response.status})`);
+      }
+      return account();
     },
 
     async createOAuth2Session(provider: OAuth2Provider, redirectTo: string): Promise<void> {
       if (provider !== "google") throw new Error("the provider is not supported: only google");
-      const success = sameOriginRedirect(redirectTo);
+      const success = sameOriginRedirect(redirectTo, origin());
       const failure = new URL(success);
       failure.searchParams.set("signin", "failed");
-      // The SDK navigates the page to the console's OAuth route and returns.
-      account.createOAuth2Session({
-        provider: OAuthProvider.Google,
-        success: success.toString(),
-        failure: failure.toString(),
-      });
+      const target = new URL(`${endpoint}/account/sessions/oauth2/google`);
+      target.searchParams.set("project", projectId);
+      target.searchParams.set("success", success.toString());
+      target.searchParams.set("failure", failure.toString());
+      navigate(target.toString());
     },
 
-    async getSession(): Promise<AccountUser> {
-      await sdk(() => account.getSession({ sessionId: "current" }));
-      return accountUser(await sdk(() => account.get()));
-    },
+    getSession: account,
 
     async exchange(org: string): Promise<ExchangeResult> {
       if (typeof org !== "string" || org.trim() === "") return { ok: false, code: "bad_request" };
@@ -220,7 +235,10 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
     },
 
     async deleteSession(): Promise<void> {
-      await sdk(() => account.deleteSession({ sessionId: "current" }));
+      const response = await consoleCall("DELETE", "/account/sessions/current");
+      if (response.status < 200 || response.status > 299) {
+        throw new Error(`the console refused the session delete (status ${response.status})`);
+      }
     },
   };
 }

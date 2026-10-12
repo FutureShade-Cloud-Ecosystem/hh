@@ -1,7 +1,6 @@
-// The browser adapter over the real Appwrite web SDK, with the network
-// faked at the fetch seam: the SDK's calls go through globalThis.fetch and
-// its storage touches go through window.localStorage, both replaced here by
-// recorded doubles. Every value is fake; no network is touched.
+// The browser adapter over plain REST: a fake fetch asserts the exact
+// requests, and storage doubles that throw on any write prove nothing is
+// ever stored. Every value is fake; no network is touched.
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createAppwriteAccountSurface } from "../src/appwrite-adapter.ts";
@@ -12,13 +11,24 @@ const CORE = "https://core.example.test";
 const PAGE = "https://hh-demo.example.test";
 const ORG = "yard-ten";
 
-const realFetch = globalThis.fetch;
 const realWindow = globalThis.window;
+const realLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+const realSessionStorage = Object.getOwnPropertyDescriptor(globalThis, "sessionStorage");
+
+function throwingStorage() {
+  const boom = () => {
+    throw new Error("a storage write happened");
+  };
+  return { getItem: () => null, setItem: boom, removeItem: boom, clear: boom };
+}
 
 afterEach(() => {
-  globalThis.fetch = realFetch;
   if (realWindow === undefined) delete globalThis.window;
   else globalThis.window = realWindow;
+  for (const [name, d] of [["localStorage", realLocalStorage], ["sessionStorage", realSessionStorage]]) {
+    if (d) Object.defineProperty(globalThis, name, d);
+    else delete globalThis[name];
+  }
 });
 
 function json(status, body, headers = {}) {
@@ -28,66 +38,55 @@ function json(status, body, headers = {}) {
   });
 }
 
-class RecordedLocalStorage {
-  writes = [];
-  #map = new Map();
-  getItem(key) {
-    return this.#map.has(key) ? this.#map.get(key) : null;
-  }
-  setItem(key, value) {
-    this.writes.push(key);
-    this.#map.set(key, String(value));
-  }
-  removeItem(key) {
-    this.#map.delete(key);
-  }
-  get keys() {
-    return [...this.#map.keys()];
-  }
-}
+const GOOD_ANSWER = {
+  token: "fake-core-token",
+  expiresAtMs: 1_000_000_900_000,
+  user: { user_id: "fake-user-1", email: "fake.user@example.invalid", display_name: "Fake User", role_code: "fake", role_name: "Fake", tier: 1, scope: "org" },
+};
 
-// The world: a fake FB Console and a fake core behind one fetch. `script`
-// overrides: coreAnswers is a queue of core statuses/bodies, jwtAnswers a
-// queue of {status} for the JWT mint, fallbackHeader makes the console send
-// X-Fallback-Cookies on session creation, as the probe saw it do.
-function world({ coreAnswers = [], jwtAnswers = [], fallbackHeader = false, throwOn = null } = {}) {
-  const storage = new RecordedLocalStorage();
-  const location = { href: "", origin: PAGE };
-  globalThis.window = { localStorage: storage, location, console: { warn() {} } };
+// The world: a fake FB Console and a fake core behind one fetch.
+// coreAnswers and consoleAnswers are queues of {status, body} per route key.
+function world({ coreAnswers = [], jwtAnswers = [], sessionAnswers = [], fallbackHeader = false, throwOn = null } = {}) {
+  // Any touch of any storage that writes fails the test loudly.
+  Object.defineProperty(globalThis, "localStorage", { value: throwingStorage(), configurable: true });
+  Object.defineProperty(globalThis, "sessionStorage", { value: throwingStorage(), configurable: true });
+  globalThis.window = { localStorage: throwingStorage(), sessionStorage: throwingStorage(), location: { href: "", origin: PAGE } };
   const calls = [];
+  const navigated = [];
   let jwtSeq = 0;
-  globalThis.fetch = async (url, init = {}) => {
+  const fallback = fallbackHeader ? { "X-Fallback-Cookies": '{"a_session_fake":"secret-fake"}' } : {};
+  const fetchFake = async (url, init = {}) => {
     const u = String(url);
     const call = { url: u, method: init.method ?? "GET", headers: { ...(init.headers ?? {}) }, body: init.body, credentials: init.credentials, redirect: init.redirect };
     calls.push(call);
     if (throwOn !== null && u.includes(throwOn)) throw new TypeError("simulated: network down");
     if (u === `${CORE}/api/v1/auth/exchange`) {
-      const answer = coreAnswers.shift() ?? {
-        status: 200,
-        body: {
-          token: "fake-core-token",
-          expiresAtMs: 1_000_000_900_000,
-          user: { user_id: "fake-user-1", email: "fake.user@example.invalid", display_name: "Fake User", role_code: "fake", role_name: "Fake", tier: 1, scope: "org" },
-        },
-      };
-      return json(answer.status, answer.body ?? null);
+      const a = coreAnswers.shift() ?? { status: 200, body: GOOD_ANSWER };
+      return json(a.status, a.body ?? null);
     }
-    if (u.endsWith("/account/sessions/email")) {
-      return json(201, { $id: "sess-1", userId: "fake-user-1", provider: "email" }, fallbackHeader ? { "X-Fallback-Cookies": '{"a_session_fake":"secret-fake"}' } : {});
+    if (u === `${ENDPOINT}/account/sessions/email`) {
+      const a = sessionAnswers.shift() ?? { status: 201 };
+      return json(a.status, a.status < 300 ? { $id: "sess-1", userId: "fake-user-1" } : { message: "simulated", code: a.status }, fallback);
     }
-    if (u.endsWith("/account/sessions/current") && call.method === "GET") return json(200, { $id: "sess-1", userId: "fake-user-1" });
-    if (u.endsWith("/account/sessions/current") && call.method === "DELETE") return new Response(null, { status: 204 });
-    if (u.endsWith("/account/jwts")) {
-      const answer = jwtAnswers.shift() ?? { status: 201 };
-      if (answer.status >= 400) return json(answer.status, { message: "simulated", code: answer.status, type: "simulated" });
+    if (u === `${ENDPOINT}/account/sessions/current` && call.method === "DELETE") return new Response(null, { status: 204, headers: fallback });
+    if (u === `${ENDPOINT}/account/jwts`) {
+      const a = jwtAnswers.shift() ?? { status: 201 };
+      if (a.status >= 400) return json(a.status, { message: "simulated", code: a.status });
       jwtSeq += 1;
-      return json(201, { jwt: `fake.jwt.${jwtSeq}` });
+      return json(201, { jwt: `fake.jwt.${jwtSeq}` }, fallback);
     }
-    if (u.endsWith("/account")) return json(200, { $id: "fake-user-1", email: "fake.user@example.invalid", name: "Fake User" });
+    if (u === `${ENDPOINT}/account`) return json(200, { $id: "fake-user-1", email: "fake.user@example.invalid", name: "Fake User" }, fallback);
     throw new Error(`unexpected fake call: ${call.method} ${u}`);
   };
-  const surface = createAppwriteAccountSurface({ endpoint: ENDPOINT, projectId: PROJECT, coreBaseUrl: CORE });
-  return { calls, location, storage, surface };
+  const surface = createAppwriteAccountSurface({
+    endpoint: ENDPOINT,
+    projectId: PROJECT,
+    coreBaseUrl: CORE,
+    fetch: fetchFake,
+    navigate: (url) => navigated.push(url),
+    pageOrigin: PAGE,
+  });
+  return { calls, navigated, surface };
 }
 
 const coreCalls = (calls) => calls.filter((c) => c.url === `${CORE}/api/v1/auth/exchange`);
@@ -103,10 +102,26 @@ test("sign in, then exchange: a JWT is minted and posted to the core with the or
   assert.equal(result.answer.expiresAtMs, 1_000_000_900_000);
   assert.equal(result.answer.user.user_id, "fake-user-1");
   assert.equal(JSON.stringify(result).includes("fake.jwt"), false, "the Console JWT never leaves the adapter");
+  const consoleCalls = calls.filter((c) => c.url.startsWith(ENDPOINT));
+  assert.deepEqual(
+    consoleCalls.map((c) => `${c.method} ${c.url.slice(ENDPOINT.length)}`),
+    ["POST /account/sessions/email", "GET /account", "POST /account/jwts"],
+  );
+  for (const c of consoleCalls) {
+    assert.equal(c.headers["X-Appwrite-Project"], PROJECT, "the project header");
+    assert.equal(c.headers["Content-Type"], "application/json");
+    assert.equal(c.credentials, "include", "the first party session cookie rides along");
+    assert.equal(c.redirect, "error");
+    assert.equal(c.url.includes("fake-password") || c.url.includes("fake.jwt") || c.url.includes("?"), false, "no secret and no query in a console URL");
+    assert.equal(Object.keys(c.headers).some((k) => k.toLowerCase() === "x-fallback-cookies"), false);
+  }
+  assert.deepEqual(JSON.parse(consoleCalls[0].body), { email: "fake.user@example.invalid", password: "fake-password" });
+  assert.equal(consoleCalls[1].body, undefined, "a GET has no body");
   const [core] = coreCalls(calls);
   assert.equal(core.method, "POST");
   assert.deepEqual(JSON.parse(core.body), { jwt: "fake.jwt.1", org: ORG });
   assert.equal(core.credentials, "omit", "the public leg sends no cookies");
+  assert.equal(core.redirect, "error");
   assert.equal(Object.keys(core.headers).some((k) => k.toLowerCase() === "authorization"), false, "no bearer on the public leg");
 });
 
@@ -185,46 +200,71 @@ test("an empty org is refused before any call", async () => {
   assert.equal(calls.length, 0);
 });
 
-test("the SDK leaves no cookieFallback in local storage, even when the console sends X-Fallback-Cookies", async () => {
-  for (const fallbackHeader of [false, true]) {
-    const { calls, storage, surface } = world({ fallbackHeader });
-    await surface.createEmailPasswordSession("fake.user@example.invalid", "fake-password");
-    await surface.exchange(ORG);
-    await surface.getSession();
-    await surface.deleteSession();
-    // The finding, pinned: the SDK itself writes the key whenever the console
-    // sends the header; the adapter's job is that it never rests there.
-    assert.equal(storage.writes.includes("cookieFallback"), fallbackHeader, `header ${fallbackHeader}: the SDK's own write`);
-    assert.equal(storage.keys.includes("cookieFallback"), false, `header ${fallbackHeader}: nothing left behind`);
-    assert.deepEqual(storage.keys, [], `header ${fallbackHeader}: local storage holds nothing at all`);
-    for (const call of calls) {
-      assert.equal(Object.keys(call.headers).some((k) => k.toLowerCase() === "x-fallback-cookies"), false, `header ${fallbackHeader}: the fallback is never sent back`);
-    }
+test("a response carrying X-Fallback-Cookies is ignored: never stored, never sent back", async () => {
+  // The storage doubles throw on any write, so a single touch fails the test.
+  const { calls, surface } = world({ fallbackHeader: true });
+  await surface.createEmailPasswordSession("fake.user@example.invalid", "fake-password");
+  const first = await surface.exchange(ORG);
+  assert.equal(first.ok, true);
+  await surface.getSession();
+  await surface.deleteSession();
+  assert.equal(JSON.stringify(first).includes("secret-fake"), false);
+  for (const call of calls) {
+    assert.equal(Object.keys(call.headers).some((k) => k.toLowerCase() === "x-fallback-cookies"), false, "the fallback is never sent back");
+    assert.equal(String(call.body ?? "").includes("secret-fake"), false);
   }
 });
 
-test("getSession answers the signed-in user and a missing session throws", async () => {
-  const { surface } = world();
+test("the adapter source never touches storage or the fallback header", async () => {
+  const { readFileSync } = await import("node:fs");
+  const text = readFileSync(new URL("../src/appwrite-adapter.ts", import.meta.url), "utf8")
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
+  assert.equal(/localStorage|sessionStorage|document\.cookie|indexedDB/.test(text), false);
+  assert.equal(/fallback/i.test(text), false);
+  assert.equal(/from\s+["']appwrite["']/.test(text), false, "no SDK");
+});
+
+test("sign in failures throw with the status only, and the console's session mint errors map", async () => {
+  const { surface } = world({ sessionAnswers: [{ status: 401 }] });
+  await assert.rejects(() => surface.createEmailPasswordSession("fake.user@example.invalid", "wrong"), /401/);
+  const down = world({ throwOn: "/account/sessions/email" });
+  await assert.rejects(() => down.surface.createEmailPasswordSession("a", "b"), /network|offline/i);
+});
+
+test("getSession answers the signed-in user from GET /account and a refusal throws", async () => {
+  const { calls, surface } = world();
   assert.deepEqual(await surface.getSession(), { userId: "fake-user-1", email: "fake.user@example.invalid", name: "Fake User" });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${ENDPOINT}/account`);
+});
+
+test("deleteSession is DELETE /account/sessions/current", async () => {
+  const { calls, surface } = world();
+  await surface.deleteSession();
+  assert.equal(calls[0].method, "DELETE");
+  assert.equal(calls[0].url, `${ENDPOINT}/account/sessions/current`);
+  assert.equal(calls[0].credentials, "include");
 });
 
 test("google sign-in navigates to the console's OAuth route with same-origin redirects", async () => {
-  const { location, surface } = world();
+  const { navigated, surface } = world();
   await surface.createOAuth2Session("google", `${PAGE}/signed-in`);
-  const target = new URL(location.href);
+  assert.equal(navigated.length, 1);
+  const target = new URL(navigated[0]);
   assert.equal(target.origin + target.pathname, `${ENDPOINT}/account/sessions/oauth2/google`);
   assert.equal(target.searchParams.get("project"), PROJECT);
   assert.equal(target.searchParams.get("success"), `${PAGE}/signed-in`);
-  const failure = new URL(target.searchParams.get("failure"));
-  assert.equal(failure.origin, PAGE, "the failure redirect is on the same host");
+  assert.equal(new URL(target.searchParams.get("failure")).origin, PAGE, "the failure redirect is on the same host");
 });
 
 test("google sign-in refuses a redirect to another host", async () => {
-  const { location, surface } = world();
+  const { navigated, surface } = world();
   for (const bad of ["https://evil.example.test/x", "http://hh-demo.example.test/x", "//evil.example.test", "javascript:alert(1)", ""]) {
     await assert.rejects(() => surface.createOAuth2Session("google", bad), /redirect/i, bad);
   }
-  assert.equal(location.href, "", "nothing navigated");
+  assert.deepEqual(navigated, [], "nothing navigated");
 });
 
 test("google is the only provider", async () => {
