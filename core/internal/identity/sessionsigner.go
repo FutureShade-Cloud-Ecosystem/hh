@@ -2,7 +2,7 @@ package identity
 
 // The session signing path. This file and the SessionMinter type are the
 // only place in the package that holds a private key; no verifier code
-// imports it, and the verifier in verifier.go still has no signing path of
+// references it (sessionfence_test.go holds that), and the verifier in verifier.go still has no signing path of
 // its own. The key is loaded once from a file the platform mounts, the raw
 // bytes are dropped, and the key has no marshal, write or log path: a
 // SessionMinter has no exported field and no method that returns the
