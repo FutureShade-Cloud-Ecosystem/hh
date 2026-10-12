@@ -4,6 +4,7 @@ const port = Number(process.env.PROBE_PORT);
 
 export default defineConfig({
   testDir: './test',
+  testMatch: '**/*.pw.js',
   workers: 1,
   reporter: 'list',
   use: { baseURL: `http://127.0.0.1:${port}` },
