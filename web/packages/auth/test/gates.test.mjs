@@ -94,12 +94,15 @@ test("the api-client is imported through its exports map, never by a relative pa
 
 test("the only X- header the package can mint is the one it owns", () => {
   const allowed = new Set(["X-Org"]);
+  // The browser adapter talks to FB Console, not the core, and FB Console names its project in
+  // this one header; it is allowed in that file only and never rides a core request.
+  const adapterOnly = new Map([["appwrite-adapter.ts", new Set(["X-Appwrite-Project"])]]);
   for (const file of sources()) {
     const found = file.text.match(/(["'])X-[A-Za-z0-9-]+\1/g) ?? [];
     for (const literal of found) {
       const name = literal.slice(1, -1);
       assert.ok(
-        allowed.has(name),
+        allowed.has(name) || (adapterOnly.get(file.name)?.has(name) ?? false),
         `${file.name} carries a foreign header literal ${name}: the unlock audit pair is gone until the core can verify an unlock, and roles and anything else are the server's`,
       );
     }
