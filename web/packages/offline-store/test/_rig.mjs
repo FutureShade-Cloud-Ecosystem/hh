@@ -18,8 +18,12 @@ export async function baseRig(apps = FIELD_APPS) {
   const now = () => `2000-01-01T00:00:${String(++tick).padStart(2, "0")}Z`;
   let keyN = 1000;
   const newKey = () => uuid(++keyN);
-  const server = new FakeSyncServer(scopes);
+  const server = new FakeSyncServer();
+  // Rows 1 to 9 of the two scopes the tests update exist on the server already,
+  // pick_tasks first so uuid(n) sits at server seq n.
+  for (const scope of ["pick_tasks", "shortages"]) for (let n = 1; n <= 9; n++) server.seed(scope, uuid(n), { n });
   return { sql, scopes, now, newKey, server, transport: server.transport() };
 }
 
-export const pick = (n, extra = {}) => ({ scope: "pick_tasks", op: "update", payload: { id: uuid(n), picked: n, ...extra }, baseSeq: 0 });
+/** An update of pick task n, based on the seq the server gave it. */
+export const pick = (n, extra = {}) => ({ scope: "pick_tasks", op: "update", payload: { id: uuid(n), picked: n, ...extra }, baseSeq: n });

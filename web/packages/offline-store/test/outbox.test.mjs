@@ -34,7 +34,7 @@ test("enqueue appends in order, each with its own uuid key, status pending", asy
   assert.deepEqual(pending.map((r) => r.key), [a.key, b.key, c.key]);
   assert.deepEqual(pending.map((r) => r.status), ["pending", "pending", "pending"]);
   assert.deepEqual(pending[0].payload, { id: uuid(1), picked: 1 });
-  assert.equal(pending[0].baseSeq, 0);
+  assert.equal(pending[0].baseSeq, 1);
 });
 
 test("the default key is a random uuid, generated at enqueue", async () => {
@@ -136,7 +136,7 @@ test("replay sends pending operations in enqueue order, batching runs of one sco
   const { outbox, server, transport } = await rig();
   const keys = [];
   for (const [scope, n] of [["pick_tasks", 1], ["pick_tasks", 2], ["shortages", 3], ["pick_tasks", 4], ["pick_tasks", 5]]) {
-    keys.push((await outbox.enqueue({ scope, op: "update", payload: { id: uuid(n), n }, baseSeq: 0 })).key);
+    keys.push((await outbox.enqueue({ scope, op: "update", payload: { id: uuid(n), n } })).key);
   }
   const out = await outbox.replay(transport);
   assert.equal(out.kind, "done");
@@ -262,8 +262,7 @@ test("a conflict result closes the operation as conflict, keeps it, and hands th
       return [{ sql: "INSERT INTO sync_state (scope, last_seq, last_pull_at) VALUES (?, 0, NULL)", params: [`marker-${row.key}`] }];
     },
   });
-  server.seed("pick_tasks", uuid(1), { picked: 0 }); // server row at seq 1
-  server.touch("pick_tasks", uuid(1), { picked: 5 }); // moved on to seq 2
+  server.touch("pick_tasks", uuid(1), { picked: 5 }); // another device moved the row past seq 1
   const a = await outbox.enqueue({ scope: "pick_tasks", op: "update", payload: { id: uuid(1), picked: 3 }, baseSeq: 1 });
   const out = await outbox.replay(transport);
   assert.equal(out.kind, "done");
