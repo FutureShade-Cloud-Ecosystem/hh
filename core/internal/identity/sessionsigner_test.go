@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -439,10 +440,19 @@ func TestKeyFilesRefuseTrailingAndLeadingData(t *testing.T) {
 	curPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: curDER})
 	curFile := writeFile(t, dir, "cur.pem", curPEM)
 
+	// A private block with its END line short by one dash does not decode, so
+	// pem.Decode skips it and returns the next valid block: the file must
+	// still be refused, or private key base64 rides in a "public" file.
+	damaged := bytes.Replace(privBlock, []byte("-----END EC PRIVATE KEY-----"), []byte("----END EC PRIVATE KEY-----"), 1)
+	if bytes.Equal(damaged, privBlock) {
+		t.Fatal("test setup: the END line was not damaged")
+	}
 	bad := map[string][]byte{
-		"public then private": append(append([]byte{}, pubOther...), privBlock...),
-		"public then text":    append(append([]byte{}, pubOther...), []byte("trailing words\n")...),
-		"text then public":    append([]byte("leading words\n"), pubOther...),
+		"damaged private then public": append(append([]byte{}, damaged...), pubOther...),
+		"public then damaged private": append(append([]byte{}, pubOther...), damaged...),
+		"public then private":         append(append([]byte{}, pubOther...), privBlock...),
+		"public then text":            append(append([]byte{}, pubOther...), []byte("trailing words\n")...),
+		"text then public":            append([]byte("leading words\n"), pubOther...),
 	}
 	for name, content := range bad {
 		f := writeFile(t, dir, "x.pem", content)
@@ -454,9 +464,10 @@ func TestKeyFilesRefuseTrailingAndLeadingData(t *testing.T) {
 		}
 	}
 	badPriv := map[string][]byte{
-		"two private blocks": append(append([]byte{}, curPEM...), privBlock...),
-		"private then text":  append(append([]byte{}, curPEM...), []byte("tail\n")...),
-		"text then private":  append([]byte("head\n"), curPEM...),
+		"damaged block then private": append(append([]byte{}, damaged...), curPEM...),
+		"two private blocks":         append(append([]byte{}, curPEM...), privBlock...),
+		"private then text":          append(append([]byte{}, curPEM...), []byte("tail\n")...),
+		"text then private":          append([]byte("head\n"), curPEM...),
 	}
 	for name, content := range badPriv {
 		f := writeFile(t, dir, "p.pem", content)

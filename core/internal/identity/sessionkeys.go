@@ -78,7 +78,11 @@ func ParseSessionPublicKeyPEM(data []byte) (*ecdsa.PublicKey, error) {
 // key behind a public one) or stray text makes the whole file unusable, so
 // a file the procedure treats as public can never carry private material.
 func singlePEMBlock(data []byte) *pem.Block {
-	if !bytes.HasPrefix(bytes.TrimLeft(data, " \t\r\n"), []byte("-----BEGIN ")) {
+	// Exactly one BEGIN marker: pem.Decode skips a block it cannot parse (a
+	// damaged END line, bad base64) and returns the next valid one, so a
+	// second marker could hide private material behind a "public" block.
+	if bytes.Count(data, []byte("-----BEGIN ")) != 1 ||
+		!bytes.HasPrefix(bytes.TrimLeft(data, " \t\r\n"), []byte("-----BEGIN ")) {
 		return nil
 	}
 	block, rest := pem.Decode(data)
