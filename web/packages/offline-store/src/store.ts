@@ -35,12 +35,26 @@ export interface StoredRow {
 
 export type StoreEnqueueResult = EnqueueResult | { ok: false; reason: "read_only"; message: string };
 export type StoreReplayOutcome = ReplayOutcome | { kind: "read_only" };
+export interface PullFault {
+  scope: string;
+  message: string;
+  status?: number;
+}
+
 export type PullOutcome =
   | { kind: "done"; scopes: number; items: number; tombstones: number }
   | { kind: "offline"; message: string }
   | { kind: "auth_expired"; message: string }
-  | { kind: "fault"; message: string; status?: number }
+  /** One or more scopes failed; `scopes`, `items` and `tombstones` count what the others stored. */
+  | { kind: "fault"; message: string; status?: number; faults: PullFault[]; scopes: number; items: number; tombstones: number }
   | { kind: "read_only" };
+
+/** How one scope's pull ended. */
+type ScopePull =
+  | { kind: "done"; items: number; tombstones: number }
+  | { kind: "offline"; message: string }
+  | { kind: "auth_expired"; message: string }
+  | { kind: "fault"; message: string; status?: number };
 
 export class OfflineStore {
   readonly outbox: Outbox;
@@ -49,7 +63,7 @@ export class OfflineStore {
   readonly #scopes: ScopeBook;
   readonly #now: () => string;
   readonly #pageLimit: number;
-  #cardsTouched = false;
+  #cardsMade = 0;
 
   private constructor(options: OfflineStoreOptions) {
     this.#backend = options.backend;
@@ -65,7 +79,7 @@ export class OfflineStore {
       ...(options.maxBatch ? { maxBatch: options.maxBatch } : {}),
       onResult: ({ row, result }) => {
         const statements = this.cards.statementsFor(row, result);
-        if (statements.length > 0) this.#cardsTouched = true;
+        if (statements.length > 0) this.#cardsMade++;
         return statements;
       },
     });
@@ -94,27 +108,49 @@ export class OfflineStore {
 
   async replay(transport: SyncTransport): Promise<StoreReplayOutcome> {
     if (this.ownership() !== "owner") return { kind: "read_only" };
-    this.#cardsTouched = false;
+    // A counter, not a flag: a replay that overlaps this one cannot reset away a card made here.
+    // The worst case is a notification more than needed, and a listener only re-reads.
+    const before = this.#cardsMade;
     try {
       return await this.outbox.replay(transport);
     } finally {
-      if (this.#cardsTouched) this.cards.notify();
+      if (this.#cardsMade !== before) this.cards.notify();
     }
   }
 
   // ---- pull -----------------------------------------------------------
 
-  /** Pull one scope, or every declared scope in order. Stops at the first failure; pages already stored stay. */
+  /**
+   * Pull one scope, or every declared scope in order. A scope that fails does not
+   * starve the ones after it: the failure is recorded, the pull carries on, and
+   * the outcome reports each. Only the network or the session going stops it
+   * (nothing else would answer). Pages already stored stay.
+   */
   async pull(transport: SyncTransport, scope?: string): Promise<PullOutcome> {
     if (this.ownership() !== "owner") return { kind: "read_only" };
     const targets = scope === undefined ? this.#scopes.declared() : [this.#declared(scope)];
     const total = { scopes: 0, items: 0, tombstones: 0 };
+    const faults: PullFault[] = [];
     for (const target of targets) {
       const out = await this.#pullScope(transport, target);
-      if (out.kind !== "done") return out;
+      if (out.kind === "offline" || out.kind === "auth_expired") return out;
+      if (out.kind === "fault") {
+        faults.push({ scope: target, message: out.message, ...(out.status !== undefined ? { status: out.status } : {}) });
+        continue;
+      }
       total.scopes++;
       total.items += out.items;
       total.tombstones += out.tombstones;
+    }
+    if (faults.length > 0) {
+      const first = faults[0]!;
+      return {
+        kind: "fault",
+        message: faults.map((f) => `${f.scope}: ${f.message}`).join("; "),
+        ...(first.status !== undefined ? { status: first.status } : {}),
+        faults,
+        ...total,
+      };
     }
     return { kind: "done", ...total };
   }
@@ -122,7 +158,7 @@ export class OfflineStore {
   async #pullScope(
     transport: SyncTransport,
     scope: string,
-  ): Promise<{ kind: "done"; items: number; tombstones: number } | Exclude<PullOutcome, { kind: "done" } | { kind: "read_only" }>> {
+  ): Promise<ScopePull> {
     const table = entityTable(scope);
     const sql = this.#backend.sql;
     let since = (await this.#state(scope)).lastSeq;

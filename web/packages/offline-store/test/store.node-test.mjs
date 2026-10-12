@@ -410,7 +410,7 @@ test("a pull continues past a scope that fails and reports each failure", async 
   assert.match(out.message, /attachments/);
   assert.match(out.message, /receiving/);
   const done = (await sql.all("SELECT scope FROM sync_state ORDER BY scope")).map((r) => r.scope);
-  assert.deepEqual(done, ["pick_tasks", "shortages"], "every scope with data after the failing ones must still be pulled");
+  assert.deepEqual(done, ["inventory_lookup", "pick_tasks", "pod", "runs", "shortages", "stops", "weights"], "every scope but the two failing ones must be pulled");
   assert.equal((await store.list("shortages")).rows.length, 9);
 });
 
