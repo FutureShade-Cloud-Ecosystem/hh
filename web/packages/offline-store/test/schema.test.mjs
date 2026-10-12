@@ -1,0 +1,91 @@
+// One schema (context 4.5): local entity tables per scope, outbox, sync_state,
+// attachments_queue, plus the conflict cards table. The migration is
+// idempotent and refuses a scope name that could not be a table suffix.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { migrate, SCHEMA_VERSION, entityTable } from "../src/schema.ts";
+import { nodeSqliteExecutor } from "../src/testing.ts";
+
+async function tableNames(sql) {
+  const rows = await sql.all("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
+  return rows.map((r) => r.name);
+}
+
+test("migrate creates the fixed tables and one entity table per scope", async () => {
+  const sql = nodeSqliteExecutor();
+  await migrate(sql, ["pick_tasks", "shortages"]);
+  assert.deepEqual(await tableNames(sql), [
+    "attachments_queue",
+    "cards",
+    "ent_pick_tasks",
+    "ent_shortages",
+    "outbox",
+    "schema_meta",
+    "sync_state",
+  ]);
+});
+
+test("migrate is idempotent and records the schema version", async () => {
+  const sql = nodeSqliteExecutor();
+  await migrate(sql, ["pick_tasks"]);
+  await sql.run(
+    "INSERT INTO ent_pick_tasks (id, seq, data, deleted) VALUES ('11111111-1111-4111-8111-111111111111', 3, '{}', 0)",
+  );
+  await migrate(sql, ["pick_tasks"]);
+  assert.equal((await sql.all("SELECT id FROM ent_pick_tasks")).length, 1);
+  const meta = await sql.all("SELECT value FROM schema_meta WHERE key = 'schema_version'");
+  assert.deepEqual(meta, [{ value: String(SCHEMA_VERSION) }]);
+});
+
+test("a later migrate adds the tables of newly declared scopes and keeps the old", async () => {
+  const sql = nodeSqliteExecutor();
+  await migrate(sql, ["pick_tasks"]);
+  await migrate(sql, ["pick_tasks", "pod"]);
+  assert.ok((await tableNames(sql)).includes("ent_pod"));
+  assert.ok((await tableNames(sql)).includes("ent_pick_tasks"));
+});
+
+test("a scope name that is not lower snake case is refused before any SQL runs", async () => {
+  const sql = nodeSqliteExecutor();
+  for (const bad of ["", "Pick", "a-b", "a b", "a;drop table outbox", "1abc", "pick_tasks'--", "x".repeat(65)]) {
+    await assert.rejects(migrate(sql, [bad]), /scope name/, `accepted ${JSON.stringify(bad)}`);
+  }
+  assert.deepEqual(await tableNames(sql), []);
+  assert.throws(() => entityTable("Bad Name"), /scope name/);
+  assert.equal(entityTable("pick_tasks"), "ent_pick_tasks");
+});
+
+test("the outbox keys are unique and the order column is monotonic", async () => {
+  const sql = nodeSqliteExecutor();
+  await migrate(sql, []);
+  const ins = (key) =>
+    sql.run(
+      `INSERT INTO outbox (idempotency_key, scope, op, entity_id, payload, base_seq, body_hash, status, attempts, created_at)
+       VALUES (?, 'pick_tasks', 'update', NULL, '{}', NULL, 'h', 'pending', 0, 't')`,
+      [key],
+    );
+  await ins("k1");
+  await ins("k2");
+  await assert.rejects(ins("k1"), /UNIQUE/i);
+  const rows = await sql.all("SELECT idempotency_key FROM outbox ORDER BY seq");
+  assert.deepEqual(rows.map((r) => r.idempotency_key), ["k1", "k2"]);
+});
+
+test("outbox status and card status are constrained to their vocabularies", async () => {
+  const sql = nodeSqliteExecutor();
+  await migrate(sql, []);
+  await assert.rejects(
+    sql.run(
+      `INSERT INTO outbox (idempotency_key, scope, op, entity_id, payload, base_seq, body_hash, status, attempts, created_at)
+       VALUES ('k', 's', 'update', NULL, '{}', NULL, 'h', 'bogus', 0, 't')`,
+    ),
+    /CHECK/i,
+  );
+  await assert.rejects(
+    sql.run(
+      `INSERT INTO cards (id, client_id, scope, kind, policy, entity_id, server_state, client_payload, error, status, created_at)
+       VALUES ('c', 'k', 's', 'bogus', 'manual', NULL, '{}', '{}', NULL, 'open', 't')`,
+    ),
+    /CHECK/i,
+  );
+});
