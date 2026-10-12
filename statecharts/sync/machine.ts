@@ -3,7 +3,9 @@
 // a Go port) performs the effects it names and feeds the outcomes back as
 // events (context section 2, standing decision 6).
 //
-//   offline      no network; nothing is sent, the outbox only grows
+//   offline      the platform says there is no network; nothing is sent, the outbox only grows
+//   unreachable  the platform says online but a request failed to reach the server; a request or a
+//                reconnect tries again, with no ONLINE event needed
 //   pushing      the outbox is replaying, in order
 //   pulling      the scopes are being pulled, after a push
 //   idle         at rest, signed in, online
@@ -11,11 +13,14 @@
 //   auth_expired the session is gone; the outbox is parked, nothing is sent
 //
 // A cycle is push, then pull: the device's own writes land before the world is
-// read back, so the pull shows them. A fault ends the cycle at rest; the
-// shell's timer or the user asks again (SYNC_REQUESTED), and the retry sends
-// the whole outbox again, where the server dedups on the keys.
+// read back, so the pull shows them. A push fault does not skip the pull (a
+// stuck write must not freeze the device's reads); a pull fault ends the cycle
+// at rest. The shell's timer or the user asks again (SYNC_REQUESTED), and the
+// retry sends the whole outbox again, where the server dedups on the keys.
+// A request that never reached the server is NETWORK_LOST, which parks in
+// unreachable, apart from OFFLINE, which only the platform sends.
 
-export const SYNC_STATES = ["offline", "idle", "pushing", "pulling", "conflict", "auth_expired"] as const;
+export const SYNC_STATES = ["offline", "unreachable", "idle", "pushing", "pulling", "conflict", "auth_expired"] as const;
 export type SyncState = (typeof SYNC_STATES)[number];
 
 export type SyncEffect = "push" | "pull";
@@ -25,7 +30,7 @@ export type SyncEvent =
   | { type: "OFFLINE" }
   | { type: "SYNC_REQUESTED" }
   | { type: "PUSH_DONE" }
-  | { type: "PUSH_FAULT"; openCards: boolean }
+  | { type: "PUSH_FAULT" }
   | { type: "PULL_DONE"; openCards: boolean }
   | { type: "PULL_FAULT"; openCards: boolean }
   | { type: "NETWORK_LOST" }
@@ -70,26 +75,35 @@ export function transition(state: SyncState, event: SyncEvent): Transition {
       if (event.type === "ONLINE") return go("pushing", "push");
       if (event.type === "AUTH_EXPIRED") return go("auth_expired");
       break;
+    case "unreachable":
+      if (event.type === "ONLINE" || event.type === "SYNC_REQUESTED") return go("pushing", "push");
+      if (event.type === "OFFLINE") return go("offline");
+      if (event.type === "AUTH_EXPIRED") return go("auth_expired");
+      break;
     case "idle":
       if (event.type === "SYNC_REQUESTED") return go("pushing", "push");
-      if (event.type === "OFFLINE" || event.type === "NETWORK_LOST") return go("offline");
+      if (event.type === "OFFLINE") return go("offline");
+      if (event.type === "NETWORK_LOST") return go("unreachable");
       if (event.type === "AUTH_EXPIRED") return go("auth_expired");
       break;
     case "pushing":
       if (event.type === "PUSH_DONE") return go("pulling", "pull");
-      if (event.type === "PUSH_FAULT") return rest(event.openCards);
-      if (event.type === "OFFLINE" || event.type === "NETWORK_LOST") return go("offline");
+      if (event.type === "PUSH_FAULT") return go("pulling", "pull");
+      if (event.type === "OFFLINE") return go("offline");
+      if (event.type === "NETWORK_LOST") return go("unreachable");
       if (event.type === "AUTH_EXPIRED") return go("auth_expired");
       break;
     case "pulling":
       if (event.type === "PULL_DONE" || event.type === "PULL_FAULT") return rest(event.openCards);
-      if (event.type === "OFFLINE" || event.type === "NETWORK_LOST") return go("offline");
+      if (event.type === "OFFLINE") return go("offline");
+      if (event.type === "NETWORK_LOST") return go("unreachable");
       if (event.type === "AUTH_EXPIRED") return go("auth_expired");
       break;
     case "conflict":
       if (event.type === "SYNC_REQUESTED") return go("pushing", "push");
       if (event.type === "CARDS_CLEARED") return go("idle");
-      if (event.type === "OFFLINE" || event.type === "NETWORK_LOST") return go("offline");
+      if (event.type === "OFFLINE") return go("offline");
+      if (event.type === "NETWORK_LOST") return go("unreachable");
       if (event.type === "AUTH_EXPIRED") return go("auth_expired");
       break;
     case "auth_expired":

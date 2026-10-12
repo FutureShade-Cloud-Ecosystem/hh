@@ -12,7 +12,7 @@ export type RunnerEvent =
   | { type: "OFFLINE" }
   | { type: "SYNC_REQUESTED" }
   | { type: "PUSH_DONE" }
-  | { type: "PUSH_FAULT"; openCards: boolean }
+  | { type: "PUSH_FAULT" }
   | { type: "PULL_DONE"; openCards: boolean }
   | { type: "PULL_FAULT"; openCards: boolean }
   | { type: "NETWORK_LOST" }
@@ -119,7 +119,7 @@ export class SyncRunner {
         if (out.kind === "done") return { type: "PUSH_DONE" };
         if (out.kind === "offline") return { type: "NETWORK_LOST" };
         if (out.kind === "auth_expired") return { type: "AUTH_EXPIRED" };
-        return { type: "PUSH_FAULT", openCards: await this.#openCards() };
+        return { type: "PUSH_FAULT" };
       }
       const out = await this.#store.pull(this.#transport);
       if (out.kind === "done") return { type: "PULL_DONE", openCards: await this.#openCards() };
@@ -128,8 +128,7 @@ export class SyncRunner {
       return { type: "PULL_FAULT", openCards: await this.#openCards() };
     } catch {
       // The store threw (the database failed): a fault, never a crash of the loop.
-      const openCards = await this.#openCards();
-      return effect === "push" ? { type: "PUSH_FAULT", openCards } : { type: "PULL_FAULT", openCards };
+      return effect === "push" ? { type: "PUSH_FAULT" } : { type: "PULL_FAULT", openCards: await this.#openCards() };
     }
   }
 }
