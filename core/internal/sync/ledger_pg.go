@@ -19,11 +19,19 @@ type PgKeyLedger struct {
 	locks chan struct{}
 }
 
-// NewPgKeyLedger returns the ledger over the core's pool.
+// NewPgKeyLedger returns the ledger over the core's pool. It panics, as the
+// composition root's other wiring refusals do, on a pool of fewer than two
+// connections: a lock holder keeps one connection for the lock and needs a
+// second for the lookup, the store and the remember, so with one connection
+// every keyed push would wait for itself forever.
 func NewPgKeyLedger(pool *pgxpool.Pool) *PgKeyLedger {
 	n := 1
 	if pool != nil { // the composition tests wire with no pool
-		n = max(1, int(pool.Config().MaxConns)/2)
+		conns := int(pool.Config().MaxConns)
+		if conns < 2 {
+			panic(fmt.Sprintf("sync: the key ledger needs a pool of at least 2 connections, got pool_max_conns %d", conns))
+		}
+		n = conns / 2
 	}
 	return &PgKeyLedger{pool: pool, locks: make(chan struct{}, n)}
 }
