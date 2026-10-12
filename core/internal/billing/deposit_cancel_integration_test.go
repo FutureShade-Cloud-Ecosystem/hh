@@ -335,6 +335,55 @@ func TestIntegration_CancelDeposits_SecondSettlementWritesNothing(t *testing.T) 
 	_ = dep
 }
 
+// The clearing update stamps the invoices feed seq: the invoices sync scope
+// (syncscope_invoices.go) is how the counter and the payer's app see an
+// invoice change, and it reads i.seq, so a balance and status move that
+// leaves the seq standing is a money move no pull can see, the settle's own
+// words. Both shapes that touch the document must move it: the VOID the
+// credit back (or an unpaid keep) leaves, and the PAID a kept part paid
+// document reads; a fully paid document is untouched and its seq stands.
+func TestIntegration_CancelDeposits_ClearingStampsTheInvoicesFeedSeq(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name         string
+		balance      int64
+		disposition  string
+		wantStatus   string
+		wantSeqMoves bool
+	}{
+		{"credit back voids the document", 4_000, "CREDIT_BACK", "VOID", true},
+		{"kept part paid reads PAID", 1_500, "KEPT", "PAID", true},
+		{"a fully paid document is untouched", 0, "CREDIT_BACK", "PAID", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tag := ns(t)
+			_, orderID, dep := seedDepositOrderAt(t, pool, tag, tc.balance)
+			if _, err := pool.Exec(ctx, `UPDATE invoices SET seq = 7 WHERE id = $1::uuid`, dep); err != nil {
+				t.Fatalf("plant the feed seq: %v", err)
+			}
+			if _, err := NewInvoiceWriter(pool).CancelOrderDeposits(ctx, nil, orderID, tc.disposition, "order cancelled"); err != nil {
+				t.Fatalf("settle: %v", err)
+			}
+			var status string
+			var balance, seq int64
+			if err := pool.QueryRow(ctx,
+				`SELECT status, balance_cents, seq FROM invoices WHERE id = $1::uuid`, dep).Scan(&status, &balance, &seq); err != nil {
+				t.Fatal(err)
+			}
+			if status != tc.wantStatus || balance != 0 {
+				t.Fatalf("the deposit document = %s/%d, want %s/0", status, balance, tc.wantStatus)
+			}
+			if tc.wantSeqMoves && seq <= 7 {
+				t.Fatalf("the cancel left the invoices feed seq at %d (was 7): the till and the payer's app can never see the deposit leave", seq)
+			}
+			if !tc.wantSeqMoves && seq != 7 {
+				t.Fatalf("an untouched document's feed seq moved to %d, want it standing at 7", seq)
+			}
+		})
+	}
+}
+
 // The settlement lock (PR272-GLM-REVIEW P2-1): a counter payment allocating
 // against the deposit invoice while the manager's cancel settles it. The
 // payment's transaction takes the invoice row FOR NO KEY UPDATE, the lock the

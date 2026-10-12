@@ -57,6 +57,7 @@ package billing
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/jackc/pgx/v5"
 
@@ -106,6 +107,19 @@ func (w *InvoiceWriter) CancelOrderDeposits(ctx context.Context, tx pgx.Tx, orde
 		ids, err := depositDocumentIDs(ctx, q, orderID)
 		if err != nil {
 			return err
+		}
+		// Every document's row is taken BEFORE the first balance move draws
+		// the invoices counter (the one money lock order): the clearing below
+		// stamps the feed seq, so a walk that locked its second document only
+		// after the first's counter draw would hold the counter while waiting
+		// on a row another invoice writer already held. Ascending id, the one
+		// order the apply's multi invoice walk takes.
+		sorted := append([]string(nil), ids...)
+		sort.Strings(sorted)
+		for _, id := range sorted {
+			if err := lockDepositDocumentRow(ctx, q, id); err != nil {
+				return err
+			}
 		}
 		for _, id := range ids {
 			if err := w.settleDepositDocument(ctx, q, orderID, id, disposition, reason); err != nil {
@@ -177,8 +191,15 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 		if disposition == DepositCancelKept && paid > 0 {
 			status = "PAID"
 		}
+		// The feed seq is drawn in the same statement as the balance move
+		// (invoiceWriterSeqCTE, the 0213 convention): the invoices sync scope
+		// reads i.seq, so a deposit leaving the till that no pull can see is a
+		// feed that lies by omission, exactly the settle's own words.
 		if _, err := tx.Exec(ctx,
-			`UPDATE invoices SET balance_cents = 0, status = $2, updated_at = now() WHERE id = $1::uuid`,
+			invoiceWriterSeqCTE+`
+			UPDATE invoices SET balance_cents = 0, status = $2, updated_at = now(),
+			                    seq = (SELECT next_value FROM iseq)
+			 WHERE id = $1::uuid`,
 			d.id, status); err != nil {
 			return fmt.Errorf("clear the deposit document: %w", err)
 		}
@@ -243,6 +264,29 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 	// the reason. Best-effort beside the money, exactly like every other
 	// Recorder call on this writer's module.
 	w.recordDepositCancel(ctx, tx, d, disposition, reason, paid, closed)
+	return nil
+}
+
+// lockDepositDocumentRow takes one live deposit document's row FOR NO KEY
+// UPDATE, the lock the payments path takes on the invoices it allocates
+// against, ahead of the settlement's own re-read (which takes the same lock
+// again on a row this transaction already holds, a no-op). Called over the
+// order's documents in ascending id order before any balance move, so the
+// counter a clearing draws is never held while another of the order's rows is
+// still unlocked.
+func lockDepositDocumentRow(ctx context.Context, q pgx.Tx, invoiceID string) error {
+	var id string
+	err := q.QueryRow(ctx, `
+		SELECT id::text FROM invoices
+		 WHERE id = $1::uuid AND doc_type = 'INVOICE' AND source_kind = 'SUPPLIER_DEPOSIT'
+		   AND status NOT IN ('DRAFT','VOID')
+		   FOR NO KEY UPDATE`, invoiceID).Scan(&id)
+	if err == pgx.ErrNoRows {
+		return nil // no longer live, a raced void or a second cancel
+	}
+	if err != nil {
+		return fmt.Errorf("lock the deposit document: %w", err)
+	}
 	return nil
 }
 
