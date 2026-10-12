@@ -4,6 +4,10 @@
 // SQLite row and reads it back, stores one keychain value and reads it back,
 // then reports the result and the webview origin to the Rust log.
 (function () {
+  var csp = [];
+  document.addEventListener("securitypolicyviolation", function (e) {
+    csp.push(e.violatedDirective + " " + e.blockedURI);
+  });
   window.addEventListener("DOMContentLoaded", async function () {
     var inv = window.__TAURI_INTERNALS__.invoke;
     var out = { origin: window.location.origin, ua: navigator.userAgent };
@@ -21,6 +25,13 @@
       var back = await inv("keychain_get", { name: "probe4" });
       out.keychain = { ok: back === v };
     } catch (e) { out.keychain = { ok: false, error: String(e) }; }
+    // Let the front door render, then record whether its role picker is on
+    // screen and whether the content security policy refused anything.
+    await new Promise(function (r) { setTimeout(r, 1500); });
+    var host = document.querySelector("fd-app-root");
+    var root = host && (host.shadowRoot || host);
+    out.frontDoor = { picker: !!root && root.textContent.indexOf("Pick a role") >= 0 };
+    out.csp = { violations: csp.length, first: csp.slice(0, 3) };
     var banner = document.createElement("pre");
     banner.style.cssText = "position:fixed;left:0;right:0;bottom:0;margin:0;padding:8px;background:#111;color:#0f0;font:12px monospace;z-index:99999;white-space:pre-wrap";
     banner.textContent = "PROBE4 " + JSON.stringify(out);

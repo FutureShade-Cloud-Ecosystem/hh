@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "probe",
+  "description": "PROBE SCAFFOLDING, removed when the real shell lands. Loaded only by a build with the probe cargo feature (see build.rs): the open SQLite grant the probe harness needs. The webview may load any database path the plugin accepts and run any statement, so this must never reach a real shell.",
+  "windows": ["main"],
+  "permissions": ["sql:default", "sql:allow-execute"]
+}

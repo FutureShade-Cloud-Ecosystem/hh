@@ -26,10 +26,11 @@ fn probe_report(app: tauri::AppHandle, json: String) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_sql::Builder::default().build());
+    let builder = tauri::Builder::default();
     #[cfg(feature = "probe")]
-    let builder = builder.invoke_handler(tauri::generate_handler![keychain_set, keychain_get, probe_report]);
+    let builder = builder
+        .plugin(tauri_plugin_sql::Builder::default().build())
+        .invoke_handler(tauri::generate_handler![keychain_set, keychain_get, probe_report]);
     #[cfg(not(feature = "probe"))]
     let builder = builder.invoke_handler(tauri::generate_handler![keychain_set, keychain_get]);
     builder
