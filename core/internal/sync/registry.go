@@ -65,6 +65,17 @@ type ScopeInfo struct {
 	Name    string
 	Policy  Policy
 	Tenancy Tenancy
+	// Writers are the role ids allowed to push to the scope: staff_role ids
+	// on an org scope, canonical contractor role ids on a tenant scope. The
+	// handler admits a staff caller holding ANY listed role. Empty means no
+	// client write at all (deny by default).
+	Writers []string
+	// Ops are the operation kinds a writer may push (the engine's validOp
+	// vocabulary); one op outside the list refuses the whole request.
+	Ops []string
+	// Money marks a scope whose rows are money: a push is refused with the
+	// shared 403 for every role, because money never queues.
+	Money bool
 }
 
 // scopes is the 43-row registry, table-driven from the two documents the
@@ -79,38 +90,38 @@ type ScopeInfo struct {
 // without the pack (or the reverse) fails the suite.
 var scopes = map[string]ScopeInfo{
 	// server_wins, per the confirmed table.
-	"pick_tasks":      {Name: "pick_tasks", Policy: PolicyServerWins, Tenancy: TenancyOrg},
-	"weights":         {Name: "weights", Policy: PolicyServerWins, Tenancy: TenancyOrg},
-	"stops":           {Name: "stops", Policy: PolicyServerWins, Tenancy: TenancyOrg},
-	"runs":            {Name: "runs", Policy: PolicyServerWins, Tenancy: TenancyOrg},
-	"loads":           {Name: "loads", Policy: PolicyServerWins, Tenancy: TenancyOrg},
-	"delivery_stops":  {Name: "delivery_stops", Policy: PolicyServerWins, Tenancy: TenancyOrg},
-	"will_call":       {Name: "will_call", Policy: PolicyServerWins, Tenancy: TenancyOrg},
-	"purchase_orders": {Name: "purchase_orders", Policy: PolicyServerWins, Tenancy: TenancyOrg},
-	"approvals":       {Name: "approvals", Policy: PolicyServerWins, Tenancy: TenancyOrg},
-	"messages":        {Name: "messages", Policy: PolicyServerWins, Tenancy: TenancyOrg},
-	"acks":            {Name: "acks", Policy: PolicyServerWins, Tenancy: TenancyOrg},
-	"orders":          {Name: "orders", Policy: PolicyServerWins, Tenancy: TenancyTenant},
-	"tracking_events": {Name: "tracking_events", Policy: PolicyServerWins, Tenancy: TenancyTenant},
-	"invoices":        {Name: "invoices", Policy: PolicyServerWins, Tenancy: TenancyBoth},
-	"payments":        {Name: "payments", Policy: PolicyServerWins, Tenancy: TenancyTenant},
-	"price_matrix":    {Name: "price_matrix", Policy: PolicyServerWins, Tenancy: TenancyBoth},
+	"pick_tasks":      {Name: "pick_tasks", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersYardPick, Ops: opsCreateUpdate},
+	"weights":         {Name: "weights", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersYardPick, Ops: opsCreateUpdate},
+	"stops":           {Name: "stops", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersDriveRun, Ops: opsCreateUpdate},
+	"runs":            {Name: "runs", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersDriveRun, Ops: opsCreateUpdate},
+	"loads":           {Name: "loads", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersDispatchBoard, Ops: opsCreateUpdate},
+	"delivery_stops":  {Name: "delivery_stops", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersDispatchBoard, Ops: opsCreateUpdate},
+	"will_call":       {Name: "will_call", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersDispatchBoard, Ops: opsCreateUpdate},
+	"purchase_orders": {Name: "purchase_orders", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersBuyingStock, Ops: opsCreateUpdate},
+	"approvals":       {Name: "approvals", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersApprovals, Ops: opsCreateUpdateDelete},
+	"messages":        {Name: "messages", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersAllStaff, Ops: opsCreateUpdate},
+	"acks":            {Name: "acks", Policy: PolicyServerWins, Tenancy: TenancyOrg, Writers: writersAllStaff, Ops: opsCreateOnly},
+	"orders":          {Name: "orders", Policy: PolicyServerWins, Tenancy: TenancyTenant, Writers: writersPortalBuy, Ops: opsCreateUpdate},
+	"tracking_events": {Name: "tracking_events", Policy: PolicyServerWins, Tenancy: TenancyTenant, Writers: writersPortalTracked, Ops: opsCreateOnly},
+	"invoices":        {Name: "invoices", Policy: PolicyServerWins, Tenancy: TenancyBoth, Money: true},
+	"payments":        {Name: "payments", Policy: PolicyServerWins, Tenancy: TenancyTenant, Money: true},
+	"price_matrix":    {Name: "price_matrix", Policy: PolicyServerWins, Tenancy: TenancyBoth, Money: true},
 
 	// last_write_wins_by_field, per the confirmed table.
-	"attachments":           {Name: "attachments", Policy: PolicyLWWByField, Tenancy: TenancyOrg},
-	"quotes":                {Name: "quotes", Policy: PolicyLWWByField, Tenancy: TenancyOrg},
-	"notify_prefs":          {Name: "notify_prefs", Policy: PolicyLWWByField, Tenancy: TenancyOrg},
-	"scope_items":           {Name: "scope_items", Policy: PolicyLWWByField, Tenancy: TenancyTenant},
-	"delivery_instructions": {Name: "delivery_instructions", Policy: PolicyLWWByField, Tenancy: TenancyTenant},
+	"attachments":           {Name: "attachments", Policy: PolicyLWWByField, Tenancy: TenancyOrg, Writers: writersAttachments, Ops: opsCreateUpdateDelete},
+	"quotes":                {Name: "quotes", Policy: PolicyLWWByField, Tenancy: TenancyOrg, Writers: writersQuoteDesk, Ops: opsCreateUpdateDelete},
+	"notify_prefs":          {Name: "notify_prefs", Policy: PolicyLWWByField, Tenancy: TenancyOrg, Writers: writersAllStaff, Ops: opsCreateUpdate},
+	"scope_items":           {Name: "scope_items", Policy: PolicyLWWByField, Tenancy: TenancyTenant, Writers: writersPortalBuy, Ops: opsCreateUpdate},
+	"delivery_instructions": {Name: "delivery_instructions", Policy: PolicyLWWByField, Tenancy: TenancyTenant, Writers: writersPortalField, Ops: opsCreateUpdate},
 
 	// manual, per the confirmed table.
-	"shortages":       {Name: "shortages", Policy: PolicyManual, Tenancy: TenancyOrg},
-	"receiving":       {Name: "receiving", Policy: PolicyManual, Tenancy: TenancyOrg},
-	"pod":             {Name: "pod", Policy: PolicyManual, Tenancy: TenancyOrg},
-	"cycle_counts":    {Name: "cycle_counts", Policy: PolicyManual, Tenancy: TenancyOrg},
-	"customer_quotes": {Name: "customer_quotes", Policy: PolicyManual, Tenancy: TenancyTenant},
-	"team":            {Name: "team", Policy: PolicyManual, Tenancy: TenancyTenant},
-	"pickups":         {Name: "pickups", Policy: PolicyManual, Tenancy: TenancyTenant},
+	"shortages":       {Name: "shortages", Policy: PolicyManual, Tenancy: TenancyOrg, Writers: writersYardPick, Ops: opsCreateUpdate},
+	"receiving":       {Name: "receiving", Policy: PolicyManual, Tenancy: TenancyOrg, Writers: writersYardPick, Ops: opsCreateUpdate},
+	"pod":             {Name: "pod", Policy: PolicyManual, Tenancy: TenancyOrg, Writers: writersDriveRun, Ops: opsCreateUpdate},
+	"cycle_counts":    {Name: "cycle_counts", Policy: PolicyManual, Tenancy: TenancyOrg, Writers: writersBuyingStock, Ops: opsCreateUpdate},
+	"customer_quotes": {Name: "customer_quotes", Policy: PolicyManual, Tenancy: TenancyTenant, Writers: writersPortalBuy, Ops: opsCreateUpdate},
+	"team":            {Name: "team", Policy: PolicyManual, Tenancy: TenancyTenant, Writers: writersPortalAdmin, Ops: opsCreateUpdate},
+	"pickups":         {Name: "pickups", Policy: PolicyManual, Tenancy: TenancyTenant, Writers: writersPortalField, Ops: opsCreateUpdate},
 
 	// pull-only, Colton's ruling on undeclared scopes. inventory_lookup is
 	// the yard's read seam, products and customers the reference cache, the
@@ -129,8 +140,8 @@ var scopes = map[string]ScopeInfo{
 	"warranty_claims":  {Name: "warranty_claims", Policy: PolicyPullOnly, Tenancy: TenancyOrg},
 	"widget_measures":  {Name: "widget_measures", Policy: PolicyPullOnly, Tenancy: TenancyOrg},
 	"warranty_board":   {Name: "warranty_board", Policy: PolicyPullOnly, Tenancy: TenancyOrg},
-	"payment_methods":  {Name: "payment_methods", Policy: PolicyPullOnly, Tenancy: TenancyTenant},
-	"aging":            {Name: "aging", Policy: PolicyPullOnly, Tenancy: TenancyTenant},
+	"payment_methods":  {Name: "payment_methods", Policy: PolicyPullOnly, Tenancy: TenancyTenant, Money: true},
+	"aging":            {Name: "aging", Policy: PolicyPullOnly, Tenancy: TenancyTenant, Money: true},
 }
 
 // Lookup resolves one scope name to its registry row. ok is false for any

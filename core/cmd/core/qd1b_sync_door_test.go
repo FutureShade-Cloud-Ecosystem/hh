@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
@@ -47,11 +48,29 @@ type qd1bPushResult struct {
 	Error  *string `json:"error"`
 }
 
+// qd1bFenced reports whether a push answer is the sync write fence's refusal
+// (the shared RBAC-403, byte for byte): a role not on the scope's writer list
+// is refused before the engine, so no per operation result exists. The door
+// tests fold it into a rejected result, the refusal they assert for a caller
+// the store would refuse anyway.
+func qd1bFenced(code int, body string) bool {
+	return code == http.StatusForbidden && body == string(authz.BodyForbidden)
+}
+
+// qd1bFencedResult is the rejected result a fenced push stands for.
+func qd1bFencedResult() qd1bPushResult {
+	words := "forbidden by the sync write fence"
+	return qd1bPushResult{Status: "rejected", Error: &words}
+}
+
 // qd1bPush pushes one operation as one principal and returns the result.
 func qd1bPush(t *testing.T, q *qd1bFixture, sub string, op qd1bPushOp) qd1bPushResult {
 	t.Helper()
 	code, body := qd1bCall(t, q, http.MethodPost, "/api/v1/sync/approvals", sub,
 		map[string]any{"ops": []qd1bPushOp{op}})
+	if qd1bFenced(code, body) {
+		return qd1bFencedResult()
+	}
 	if code != http.StatusOK {
 		t.Fatalf("push %s %s: %d %s", op.Op, sub, code, body)
 	}
