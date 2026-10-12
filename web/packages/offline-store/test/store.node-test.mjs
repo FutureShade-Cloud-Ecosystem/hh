@@ -11,6 +11,7 @@ import { createSqliteBackend } from "../src/backend-sqlite.ts";
 import { createOpfsBackend } from "../src/backend-opfs.ts";
 import { scopeBookFor } from "../src/scopes.ts";
 import { nodeSqliteExecutor, FakeLocks, FakeWorker } from "../src/testing.ts";
+import { err } from "@hardscapehouse/api-client";
 import { bodyHash } from "../src/canonical.ts";
 import { baseRig, pick, uuid, FIELD_APPS } from "./_rig.mjs";
 
@@ -393,4 +394,96 @@ test("an applied result with an envelope but no server state, for a create with 
   assert.equal(card.kind, "merge_report");
   assert.deepEqual(card.serverState, {});
   void sql;
+});
+
+// ---- pull past a failing scope ----------------------------------------------------------------
+
+test("a pull continues past a scope that fails and reports each failure", async () => {
+  const { store, transport, sql } = await rig();
+  const flaky = {
+    ...transport,
+    pull: async (scope, since, limit) => (scope === "attachments" || scope === "receiving" ? err("not wired", 501) : transport.pull(scope, since, limit)),
+  };
+  const out = await store.pull(flaky);
+  assert.equal(out.kind, "fault");
+  assert.deepEqual(out.faults.map((f) => [f.scope, f.status]), [["attachments", 501], ["receiving", 501]]);
+  assert.match(out.message, /attachments/);
+  assert.match(out.message, /receiving/);
+  const done = (await sql.all("SELECT scope FROM sync_state ORDER BY scope")).map((r) => r.scope);
+  assert.deepEqual(done, ["pick_tasks", "shortages"], "every scope with data after the failing ones must still be pulled");
+  assert.equal((await store.list("shortages")).rows.length, 9);
+});
+
+test("a pull stops at once when the network or the session is gone, whatever scope it is on", async () => {
+  const { store, transport, server } = await rig();
+  server.setOffline(true);
+  assert.equal((await store.pull(transport)).kind, "offline");
+  assert.equal(server.requests.length, 0);
+  server.setOffline(false);
+  server.setAuthValid(false);
+  assert.equal((await store.pull(transport)).kind, "auth_expired");
+  assert.equal(server.requests.length, 1, "after a 401 nothing else is asked");
+});
+
+test("a fault outcome from one scope pull still carries the counts of what was stored", async () => {
+  const { store, transport } = await rig();
+  const flaky = { ...transport, pull: async (scope, since, limit) => (scope === "attachments" ? err("boom", 500) : transport.pull(scope, since, limit)) };
+  const out = await store.pull(flaky);
+  assert.equal(out.kind, "fault");
+  assert.equal(out.items, 18);
+  assert.equal(out.scopes, 8);
+});
+
+// ---- test gaps found by the second read ------------------------------------------------------
+
+test("a tombstone for a row this device never held is stored as deleted, so a fresh device does not show a ghost", async () => {
+  const { store, server, transport, sql } = await rig();
+  const id = uuid(77);
+  server.seed("pick_tasks", id, { n: 77 });
+  server.remove("pick_tasks", id);
+  await store.pull(transport, "pick_tasks");
+  assert.deepEqual(await sql.all("SELECT deleted, data FROM ent_pick_tasks WHERE id = ?", [id]), [{ deleted: 1, data: "{}" }]);
+  assert.equal((await store.read("pick_tasks", id)).row, null);
+  assert.ok(!(await store.list("pick_tasks")).rows.some((r) => r.id === id), "a deleted row must not be listed");
+  // and a later older copy of the row cannot bring it back
+  await sql.run("UPDATE sync_state SET last_seq = 0");
+  const stale = { ...transport, pull: async (scope) => ({ ok: true, value: { scope, items: [{ id, seq: 1, data: { n: 1 } }], tombstones: [], last_seq: 1, next_cursor: null } }) };
+  await store.pull(stale, "pick_tasks");
+  assert.equal((await store.read("pick_tasks", id)).row, null);
+});
+
+test("a result update never overwrites a row that was closed in between (the pending guard)", async () => {
+  const { store, sql, transport } = await rig();
+  const op = await store.enqueue(pick(1));
+  const closer = {
+    ...transport,
+    push: async (scope, ops) => {
+      await sql.run("UPDATE outbox SET status = 'rejected', error = 'closed elsewhere' WHERE idempotency_key = ?", [op.key]);
+      return transport.push(scope, ops);
+    },
+  };
+  await store.replay(closer);
+  assert.deepEqual(await sql.all("SELECT status, error FROM outbox WHERE idempotency_key = ?", [op.key]), [{ status: "rejected", error: "closed elsewhere" }]);
+});
+
+test("two replays that overlap never drop a card notification", async () => {
+  const r = await baseRig();
+  let overlap = null;
+  const sql = {
+    run: (q, p) => r.sql.run(q, p),
+    all: (q, p) => r.sql.all(q, p),
+    atomic: async (statements) => {
+      // while the first replay is committing its card, a second replay is requested
+      if (overlap === null && statements.some((st) => st.sql.includes("INTO cards"))) overlap = store.replay(r.transport);
+      return r.sql.atomic(statements);
+    },
+  };
+  const store = await OfflineStore.open({ backend: createSqliteBackend(sql), scopes: r.scopes, now: r.now, newKey: r.newKey });
+  let heard = 0;
+  store.cards.subscribe(() => heard++);
+  r.server.touch("pick_tasks", uuid(1), { n: 100 });
+  await store.enqueue({ ...pick(1), baseSeq: 1 });
+  await store.replay(r.transport);
+  await overlap;
+  assert.ok(heard >= 1, "the card arrived and nobody was told");
 });
