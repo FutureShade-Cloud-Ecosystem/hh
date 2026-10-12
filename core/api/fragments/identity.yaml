@@ -24,6 +24,29 @@ paths:
               schema:
                 $ref: "#/components/schemas/IdentityPing"
 
+  /.well-known/jwks.json:
+    get:
+      operationId: identitySessionJwks
+      tags: [staff-identity]
+      summary: Read the JWK Set of the deployment's session signing keys
+      description: >-
+        Public and cacheable. Serves the public halves only of the current
+        key and of the NEXT and PREVIOUS keys during a rotation (ES256, the
+        kid is the RFC 7638 thumbprint). The core verifies its own session
+        tokens through an in process source over the same keys; this route
+        is for a remote verifier and for the rotation procedure. It carries
+        no private member and no account data.
+      x-addition: "the deployment's own session JWK Set (state note HH-S4-AUTH, section 2); the ERP signed with shared HS256 secrets and had no key set"
+      x-role: public
+      security: []
+      responses:
+        "200":
+          description: The JWK Set, with Cache-Control public and a max-age equal to the verifier's key cache default
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionJwkSet"
+
   /api/v1/auth/login:
     post:
       operationId: identityLogin
@@ -905,6 +928,29 @@ components:
       properties:
         module: { type: string }
         status: { type: string }
+
+    SessionJwkSet:
+      type: object
+      description: The session signing keys' public halves (RFC 7517), current first
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionJwk"
+
+    SessionJwk:
+      type: object
+      description: One session signing key's public half; no private member exists in this shape
+      required: [kty, crv, x, y, kid, use, alg]
+      properties:
+        kty: { type: string, enum: [EC] }
+        crv: { type: string, enum: [P-256] }
+        x: { type: string }
+        y: { type: string }
+        kid: { type: string, description: "RFC 7638 thumbprint of the public key" }
+        use: { type: string, enum: [sig] }
+        alg: { type: string, enum: [ES256] }
 
     IdentityLoginRequest:
       type: object

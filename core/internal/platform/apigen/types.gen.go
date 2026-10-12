@@ -2934,6 +2934,20 @@ type IdentityPing struct {
 	Status string `json:"status"`
 }
 
+type SessionJwkSet struct {
+	Keys []SessionJwk `json:"keys"`
+}
+
+type SessionJwk struct {
+	Kty string `json:"kty"`
+	Crv string `json:"crv"`
+	X   string `json:"x"`
+	Y   string `json:"y"`
+	Kid string `json:"kid"`
+	Use string `json:"use"`
+	Alg string `json:"alg"`
+}
+
 type IdentityLoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`

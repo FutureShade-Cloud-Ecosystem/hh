@@ -16,6 +16,8 @@ drops:
     reason: "Not a route: a comment line in order/activity.go:27 quoting an API framing the surface exists to hide. The literal grep cannot tell comments from registrations."
 
 additions:
+  - route: "GET /.well-known/jwks.json"
+    reason: "The deployment's own session JWK Set (current, NEXT and PREVIOUS public keys); the ERP signed with shared HS256 secrets and had no key set."
   - route: "GET /api/v1/sync/{scope}"
     reason: "Context 4.5 sync protocol, one pull per manifest offline scope; the ERP has no sync endpoint."
   - route: "POST /api/v1/sync/{scope}"

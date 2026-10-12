@@ -370,6 +370,8 @@ export const SCHEMA_DESCRIPTORS = {
   "BankRecReconInput": {"k":"object","req":["bank_account_id","year","month","statement_balance_cents"],"props":{"bank_account_id":{"k":"string"},"year":{"k":"integer"},"month":{"k":"integer","minimum":1,"maximum":12},"statement_balance_cents":{"k":"integer"}}},
   "BankRecReconciliationPage": {"k":"object","req":["items"],"props":{"items":{"k":"array","of":{"k":"ref","name":"BankRecReconciliation"}},"next_cursor":{"k":"union","of":[{"k":"string"},{"k":"null"}]},"limit":{"k":"integer"}}},
   "IdentityPing": {"k":"object","req":["module","status"],"props":{"module":{"k":"string"},"status":{"k":"string"}}},
+  "SessionJwkSet": {"k":"object","req":["keys"],"props":{"keys":{"k":"array","of":{"k":"ref","name":"SessionJwk"}}}},
+  "SessionJwk": {"k":"object","req":["kty","crv","x","y","kid","use","alg"],"props":{"kty":{"k":"lit","v":["EC"]},"crv":{"k":"lit","v":["P-256"]},"x":{"k":"string"},"y":{"k":"string"},"kid":{"k":"string"},"use":{"k":"lit","v":["sig"]},"alg":{"k":"lit","v":["ES256"]}}},
   "IdentityLoginRequest": {"k":"object","req":["email","password"],"props":{"email":{"k":"string"},"password":{"k":"string"}}},
   "IdentityUser": {"k":"object","req":["user_id","email","display_name","role_code","role_name","tier","scope"],"props":{"user_id":{"k":"string"},"email":{"k":"string"},"display_name":{"k":"string"},"role_code":{"k":"string"},"role_name":{"k":"string"},"tier":{"k":"integer"},"scope":{"k":"lit","v":["GLOBAL","BRANCH"]}}},
   "IdentityLoginResponse": {"k":"object","req":["token","user"],"props":{"token":{"k":"string"},"user":{"k":"ref","name":"IdentityUser"}}},

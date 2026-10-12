@@ -22,6 +22,7 @@ type Route struct {
 // test asserts the core's registered surface against this table in both
 // directions.
 var Routes = []Route{
+	{Method: "GET", Path: "/.well-known/jwks.json", OperationID: "identitySessionJwks", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/public/v1/ar/invoice-opened/{deliveryID}", OperationID: "billingTrackInvoiceOpened", Tag: "public", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/public/v1/ar/track/{token}/click", OperationID: "billingTrackReminderClick", Tag: "public", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/public/v1/ar/track/{token}/open", OperationID: "billingTrackReminderOpen", Tag: "public", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},

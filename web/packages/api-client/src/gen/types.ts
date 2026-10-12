@@ -2464,6 +2464,18 @@ export type IdentityPing = {
   module: string;
   status: string;
 };
+export type SessionJwkSet = {
+  keys: SessionJwk[];
+};
+export type SessionJwk = {
+  kty: "EC";
+  crv: "P-256";
+  x: string;
+  y: string;
+  kid: string;
+  use: "sig";
+  alg: "ES256";
+};
 export type IdentityLoginRequest = {
   email: string;
   password: string;

@@ -369,6 +369,8 @@ export const SCHEMA_NAMES: readonly string[] = [
   "BankRecReconInput",
   "BankRecReconciliationPage",
   "IdentityPing",
+  "SessionJwkSet",
+  "SessionJwk",
   "IdentityLoginRequest",
   "IdentityUser",
   "IdentityLoginResponse",
@@ -1112,6 +1114,7 @@ export interface ManifestRoute {
 }
 
 export const ROUTES: readonly ManifestRoute[] = [
+  { "method": "GET", "path": "/.well-known/jwks.json", "operationId": "identitySessionJwks", "tag": "staff-identity" },
   { "method": "GET", "path": "/api/public/v1/ar/invoice-opened/{deliveryID}", "operationId": "billingTrackInvoiceOpened", "tag": "public" },
   { "method": "GET", "path": "/api/public/v1/ar/track/{token}/click", "operationId": "billingTrackReminderClick", "tag": "public" },
   { "method": "GET", "path": "/api/public/v1/ar/track/{token}/open", "operationId": "billingTrackReminderOpen", "tag": "public" },
@@ -1900,6 +1903,7 @@ export const TAG_NAMESPACES: Readonly<Record<string, string>> = {
 // whose success is a union, a plain string, bytes, or undeclared have no
 // entry here.
 export const SUCCESS_SCHEMAS: Readonly<Record<string, string>> = {
+  "identitySessionJwks": "SessionJwkSet",
   "customerQuotePublicView": "CustomerQuotePublicView",
   "customerQuotePublicAccept": "CustomerQuoteAcceptanceResult",
   "quotePublicViewQuote": "QuotePublicView",
