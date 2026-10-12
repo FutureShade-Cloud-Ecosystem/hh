@@ -58,21 +58,21 @@
 <p class="note">What the two working roles do differently is the big refund (below), and the manager's wider reach, which has no screen of its own in this release.</p>
 
 <h2>The demo world</h2>
-<p>The box carries one invented dealer, Hardscape House (demo), with two branches, Trenton and Kingston, and the counter works Trenton. Every product and account on it is invented for the demo.</p>
-<p data-claim="world-invented">There are ten demo products and nine demo customers, and every one of their names carries <strong>(demo)</strong>. Every product code begins with <code>DEMO-</code>. Beside the nine, the account picker also lists a few placeholder rows left over from the starting data, named as scrubbed placeholders: part of the invented world, not accounts to bill.</p>
+<p>The box carries one invented dealer, Gable Landscape Supply, with two branches, Point Loma and Julian, and the counter works Point Loma. Every product and account on it is invented for the demo.</p>
+<p data-claim="world-invented">There are ten demo products and nine demo customers, and every name is invented: none is a real business or a real person. Every product code begins with <code>DEMO-</code>. Beside the nine, the account picker also lists a few placeholder rows left over from the starting data, named as scrubbed placeholders: part of the invented world, not accounts to bill.</p>
 <ul>
-  <li>Holland Paver, Charcoal (demo), <code>DEMO-PAV-HOLLAND</code></li>
-  <li>Brussels Dimensional, Sandstone (demo), <code>DEMO-PAV-BRUSSELS</code></li>
-  <li>Courtstone, Basalt (demo), <code>DEMO-PAV-COURTSTONE</code></li>
-  <li>Retaining Wall Block 8x18 (demo), <code>DEMO-WALL-BLOCK</code></li>
-  <li>Step Slab 24x48, Natural (demo), <code>DEMO-STEP-SLAB</code></li>
-  <li>HPB Bedding Stone (demo), <code>DEMO-AGG-HPB</code></li>
-  <li>Granular A (demo), <code>DEMO-AGG-GA</code></li>
-  <li>Concrete Sand (demo), <code>DEMO-AGG-SAND</code></li>
-  <li>Black Cedar Mulch (demo), <code>DEMO-MULCH-BLACK</code></li>
-  <li>Aluminum Edging 8ft (demo), <code>DEMO-EDGE-ALU</code></li>
+  <li>Interlocking Paver 60 mm, Charcoal, <code>DEMO-PAV-CHARCOAL</code></li>
+  <li>Dimensional Paver, Sandstone, <code>DEMO-PAV-SANDSTONE</code></li>
+  <li>Large Format Paver, Basalt, <code>DEMO-PAV-BASALT</code></li>
+  <li>Retaining Wall Block 8x18, <code>DEMO-WALL-BLOCK</code></li>
+  <li>Step Slab 24x48, Natural, <code>DEMO-STEP-SLAB</code></li>
+  <li>Paver Bedding Stone, <code>DEMO-AGG-BEDDING</code></li>
+  <li>Class 2 Base Rock, <code>DEMO-AGG-BASE</code></li>
+  <li>Concrete Sand, <code>DEMO-AGG-SAND</code></li>
+  <li>Black Cedar Mulch, <code>DEMO-MULCH-BLACK</code></li>
+  <li>Aluminum Edging 8 ft, <code>DEMO-EDGE-ALU</code></li>
 </ul>
-<p>The nine accounts, all invented: Northline Hardscapes Ltd (C01), Bay Ridge Landscaping (C02), Quinte Paving and Design (C03), Harbourview Builders (C04), Cedar Hollow Homes (C05), County of Hastings (C08), Stonebrook Contracting (C09, on a credit hold), and two retail walk-up accounts (C06 and C07, one of them carrying a zero credit limit). The counter's account picker shows the accounts that belong to the branch the till works, so at Trenton you will see the Trenton ones: the refusal you can meet at this counter is the zero limit account, and the account on a hold sits at the other branch, on the far side of the branch fence.</p>
+<p>The nine accounts, all invented: Summit Ridge Builders (C01), Ridgeview Outdoor Living (C02), Fieldstone Pools and Patios (C03), Harbourview Builders (C04), Cedar Hollow Homes (C05), Valley Municipal Works (C08), Stonebrook Contracting (C09, on a credit hold), and two retail walk-up accounts (C06 and C07, one of them carrying a zero credit limit). The counter's account picker shows the accounts that belong to the branch the till works, so at Point Loma you will see the Point Loma ones: the refusal you can meet at this counter is the zero limit account, and the account on a hold sits at the other branch, on the far side of the branch fence.</p>
 <p data-claim="world-dated">Before each round of testing the box is wiped back to its starting world, and the world's history is written again at that moment: the box is dated to the moment it was rebuilt, so what you see always reads as current.</p>
 
 <h2>Two kinds of sale</h2>
@@ -92,10 +92,10 @@
 <h2>The walls</h2>
 <p data-claim="return-walk-in">A sale rung with no customer can be returned too: on the first step choose Walk in sale and type its receipt or order number. Walk in sales are never listed, only found by their number, and they go back to cash or card, never to an account.</p>
 <p data-claim="return-swap">The swap: on the Refund step, add the replacement goods and the credit pays for them. The screen shows the credit, the new order total with tax, what the credit pays, and either what goes back by the original way the sale was paid or what is still to pay. Ring the swap and one credit note and one new order are recorded, each naming the other, with a receipt line for each.</p>
-<p data-claim="other-branch">One branch never sees another's. A sale that belongs to Kingston is refused at this counter before any money moves, whichever of the three refund ways is tried, even though the sale is real; the cash and account rails name the branch fence, and the card rail refuses a seeded card sale first for its missing card reference. A credit note covers one branch only.</p>
+<p data-claim="other-branch">One branch never sees another's. A sale that belongs to Julian is refused at this counter before any money moves, whichever of the three refund ways is tried, even though the sale is real; the cash and account rails name the branch fence, and the card rail refuses a seeded card sale first for its missing card reference. A credit note covers one branch only.</p>
 <p data-claim="role-matrix">Each role reaches only its own screens. Beyond the till, the matrix holds on this box too: through browser tools, the manager's sign-in reaches dispatch reads that the clerk's is refused, though no screen for them exists in this release.</p>
 <p data-claim="credit-refused">The credit gate refuses an account sale in words, to both logins: an account over its limit, or on a hold, cannot carry a sale on account. On the zero limit walk-up account you will meet the shape refusal instead, the same words to both logins: this account cannot carry a sale on account at all, so the till answers in the server's own words, <em>This account cannot carry $6.72 on account. Pay in full now, or take a deposit with the balance due later.</em>, and nothing is rung; the ticket stands. Credit exceptions belong to leadership, and no leadership login exists in this release, so nobody on this box can release a hold.</p>
-<p data-claim="parked-branch">A ticket can be parked and picked up again by anyone at the same counter, whatever role they signed in as. The parked list is this branch's own: a ticket parked at Kingston never shows at Trenton.</p>
+<p data-claim="parked-branch">A ticket can be parked and picked up again by anyone at the same counter, whatever role they signed in as. The parked list is this branch's own: a ticket parked at Julian never shows at Point Loma.</p>
 
 <h2>The drawer</h2>
 <p data-claim="drawer-shared">One shared drawer serves each branch's counter, and every tester rings into the same drawer, so its count will not balance. That is expected: closing and counting the drawer is not in this release. On a fresh box the drawer starts closed: Sales presses Open Session, and the drawer opens with a 300.00 float, the reference till's own.</p>
