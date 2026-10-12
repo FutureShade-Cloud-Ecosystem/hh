@@ -1,7 +1,10 @@
 // Package identity verifies platform-issued bearer tokens against the
 // platform JWK Set (ADR-0016, context section 4.4). Phase B replaces the
-// ERP's two HS256 issuers with verification only: issuance is the platform's
-// job, so this package has no signing path outside _test.go files. A token
+// ERP's two HS256 issuers with verification only: this file, and every
+// verifier code path, has no signing path. The core's own session signing
+// lives apart, in sessionsigner.go (a file and a type that no verifier
+// code imports), and the key source over its public halves in
+// sessionkeys.go; the verifier reads them only through KeySource. A token
 // is identity only; authority is resolved from the database per request and
 // never read from claims (D3, docs/analysis/DECISIONS.md). Every
 // verification input, the JWK Set source, the issuer, the audience
