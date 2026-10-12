@@ -6,7 +6,9 @@ import (
 	"testing"
 )
 
-// The private key file must not be readable by group or other.
+// The private key file must not be readable by group or other. Deleting the
+// check in loadSessionPrivateKey makes the refusal cases below fail (checked
+// by mutation in the round 3 report).
 func TestSigningKeyFileModeIsChecked(t *testing.T) {
 	dir := t.TempDir()
 	k := freshPriv(t)
@@ -19,7 +21,7 @@ func TestSigningKeyFileModeIsChecked(t *testing.T) {
 			t.Errorf("mode %o refused: %v", mode, err)
 		}
 	}
-	for _, mode := range []os.FileMode{0o640, 0o604, 0o644, 0o660, 0o666, 0o440, 0o404} {
+	for _, mode := range []os.FileMode{0o640, 0o604, 0o644, 0o660, 0o666, 0o440, 0o444, 0o404, 0o770} {
 		if err := os.Chmod(p, mode); err != nil {
 			t.Fatal(err)
 		}

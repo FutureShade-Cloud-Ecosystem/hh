@@ -38,20 +38,27 @@ func TestSessionKIDShapesAreJudgedUnderTheRealKid(t *testing.T) {
 	}
 
 	otherEC, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	cases := map[string]TokenShape{
-		"forged signature, default key": {SessionKID: true},
-		"forged signature, other EC":    {SessionKID: true, ECKey: otherEC},
-		"RS256 under the EC kid":        {SessionKID: true, Key: m.Keys.RSAActive},
-		"HS256 confusion":               {SessionKID: true, Alg: "HS256"},
+	// Each shape must be refused by the check it exists to exercise, named by
+	// the verifier's own static message: a forged signature by the signature
+	// check, a key of the wrong family by the key and algorithm match, the
+	// symmetric token by the algorithm allow list (before any key lookup).
+	cases := map[string]struct {
+		shape TokenShape
+		want  string
+	}{
+		"forged signature, default key": {TokenShape{SessionKID: true}, "identity: signature did not verify"},
+		"forged signature, other EC":    {TokenShape{SessionKID: true, ECKey: otherEC}, "identity: signature did not verify"},
+		"RS256 under the EC kid":        {TokenShape{SessionKID: true, Key: m.Keys.RSAActive}, "identity: key does not match algorithm"},
+		"HS256 confusion":               {TokenShape{SessionKID: true, Alg: "HS256"}, "identity: algorithm not allowed"},
 	}
-	for name, shape := range cases {
-		_, err := v.Verify(ctx, m.Mint(t, StaffClass, "sub", shape))
+	for name, c := range cases {
+		_, err := v.Verify(ctx, m.Mint(t, StaffClass, "sub", c.shape))
 		if err == nil {
 			t.Errorf("%s: verified", name)
 			continue
 		}
-		if ve, ok := err.(*identity.VerifyError); ok && ve.Error() == "identity: unknown key id" {
-			t.Errorf("%s: refused as an unknown kid, not by the check it exercises", name)
+		if err.Error() != c.want {
+			t.Errorf("%s: refused with %q, want %q", name, err.Error(), c.want)
 		}
 	}
 	// Without SessionKID the same overrides fall to an unknown kid, which is

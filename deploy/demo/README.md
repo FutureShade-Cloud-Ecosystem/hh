@@ -2,8 +2,10 @@
 
 One image in the Railway shape (plan r7 section 5): the core built with
 `-tags demo`, the built files of every web app (front door at `/`, till at
-`/till/`, public desk at `/q/`, Quote Desk at `/quote/` when present), Caddy in front, and the
-frozen migration set. Build from the repository root:
+`/till/`, buying-and-stock at `/buying-and-stock/`, public desk at `/q/`, HH
+Drive at `/drive/`, Manager Home at `/home/`, Yard Pick at `/yard/`, Money
+Desk at `/money-desk/`, Quote Desk at `/quote/` when present), Caddy in
+front, and the frozen migration set. Build from the repository root:
 
     docker build -f deploy/demo/Dockerfile -t hh-demo-till .
 
@@ -102,6 +104,10 @@ forged chain is never the answer.
 | `CORE_STAFF_AUDIENCE`, `CORE_TENANT_AUDIENCE` | the token audiences (defaults `hh-staff` and `hh-tenant`) |
 | `CORE_DEMO_TOKEN_TTL` | the demo session length the mint issues, optional |
 | `CORE_SIGNIN_MODE` | `demo` or `console`, required, no default (the image refuses to start without it) |
+| `CORE_SESSION_SIGNING_KEY_FILE` | console mode: path of the PEM EC P-256 private key. The secret mount must be mode 0400 or 0600 and owned by the user the core runs as (a file readable by group or other is refused at boot, and so is one the core's user cannot read); mount it read only |
+| `CORE_SESSION_KEY_NEXT_FILE`, `CORE_SESSION_KEY_PREVIOUS_FILE` | console mode, optional: PEM public halves only, any mode, one PEM block each |
+| `CORE_TOKEN_ISSUER`, `CORE_APPWRITE_ENDPOINT`, `CORE_APPWRITE_PROJECT`, `CORE_APPWRITE_API_KEY` | console mode: the deployment's issuer (never `hh-demo`) and the FB Console values |
+| `CORE_EXCHANGE_TOKEN_TTL` | console mode, optional: the exchange token window, one second to one hour |
 
 ## The console sign in mode (the testers' copy and the public copy)
 
@@ -160,7 +166,7 @@ is no second box sharing the work.
 `deploy/demo/exit-test.sh` drives the built image end to end against a
 throwaway local Postgres (container `hh-till-l3d-pg` on `127.0.0.1:5599`,
 started by the script when absent): the image builds; on a clean database
-it answers `/healthz` (no phrase asked), the flows listing with the two
+it answers `/healthz` (no phrase asked), the flows listing with the eight
 flows, the app's first page (refused without the phrase, served with it),
 and `/api/v1/payments/config` with `simulated: true`; the gate refuses the
 mint without the phrase and still admits a staff call with a valid demo

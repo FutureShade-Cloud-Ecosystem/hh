@@ -426,6 +426,29 @@ esac
 	&& pass "the refused boot wrote nothing to the database" \
 	|| fail "the refused boot left user tables behind"
 
+echo "== without the sign in mode, before serve and before anything writes"
+freshdb "$DBPFX"_nomode
+nomode_log="$(docker run --rm --network "$NET" \
+	-e "DATABASE_URL=$(dsn_for "$DBPFX"_nomode)" \
+	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
+	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
+	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
+	"$IMAGE" 2>&1)" && nomode_ok=0 || nomode_ok=1
+[ "$nomode_ok" = "1" ] && pass "without the sign in mode the image exits non-zero" \
+	|| fail "without the sign in mode the image exited 0"
+case "$nomode_log" in
+	*CORE_SIGNIN_MODE*"is not set"*) pass "the refusal names the missing sign in mode" ;;
+	*) fail "the refusal does not name the missing sign in mode" ;;
+esac
+case "$nomode_log" in
+	*listening*) fail "the image reached serve without the sign in mode" ;;
+	*) pass "the image exited before serve" ;;
+esac
+[ "$(tables_count "$DBPFX"_nomode)" = "0" ] \
+	&& pass "the refused boot wrote nothing to the database" \
+	|| fail "the refused boot left user tables behind"
+
 echo "== an interrupted build this image started resumes"
 freshdb "$DBPFX"_build
 migrate_only "$DBPFX"_build marked
@@ -690,7 +713,7 @@ esac
 # stays for the next run.
 # --------------------------------------------------------------------------
 docker rm -f "$HAPPY" "$RESUME" "$CAP" "$CAPCLI" >/dev/null 2>&1 || true
-for db in "$DBPFX"_happy "$DBPFX"_nohash "$DBPFX"_build "$DBPFX"_foreign "$DBPFX"_appdb "$DBPFX"_realuser "$DBPFX"_realpay; do
+for db in "$DBPFX"_happy "$DBPFX"_nohash "$DBPFX"_nomode "$DBPFX"_build "$DBPFX"_foreign "$DBPFX"_appdb "$DBPFX"_realuser "$DBPFX"_realpay; do
 	docker exec "$PG_NAME" psql -U postgres -q -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
 done
 

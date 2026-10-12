@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -439,10 +440,19 @@ func TestKeyFilesRefuseTrailingAndLeadingData(t *testing.T) {
 	curPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: curDER})
 	curFile := writeFile(t, dir, "cur.pem", curPEM)
 
+	// A private block with its END line short by one dash does not decode, so
+	// pem.Decode skips it and returns the next valid block: the file must
+	// still be refused, or private key base64 rides in a "public" file.
+	damaged := bytes.Replace(privBlock, []byte("-----END EC PRIVATE KEY-----"), []byte("----END EC PRIVATE KEY-----"), 1)
+	if bytes.Equal(damaged, privBlock) {
+		t.Fatal("test setup: the END line was not damaged")
+	}
 	bad := map[string][]byte{
-		"public then private": append(append([]byte{}, pubOther...), privBlock...),
-		"public then text":    append(append([]byte{}, pubOther...), []byte("trailing words\n")...),
-		"text then public":    append([]byte("leading words\n"), pubOther...),
+		"damaged private then public": append(append([]byte{}, damaged...), pubOther...),
+		"public then damaged private": append(append([]byte{}, pubOther...), damaged...),
+		"public then private":         append(append([]byte{}, pubOther...), privBlock...),
+		"public then text":            append(append([]byte{}, pubOther...), []byte("trailing words\n")...),
+		"text then public":            append([]byte("leading words\n"), pubOther...),
 	}
 	for name, content := range bad {
 		f := writeFile(t, dir, "x.pem", content)
@@ -454,9 +464,10 @@ func TestKeyFilesRefuseTrailingAndLeadingData(t *testing.T) {
 		}
 	}
 	badPriv := map[string][]byte{
-		"two private blocks": append(append([]byte{}, curPEM...), privBlock...),
-		"private then text":  append(append([]byte{}, curPEM...), []byte("tail\n")...),
-		"text then private":  append([]byte("head\n"), curPEM...),
+		"damaged block then private": append(append([]byte{}, damaged...), curPEM...),
+		"two private blocks":         append(append([]byte{}, curPEM...), privBlock...),
+		"private then text":          append(append([]byte{}, curPEM...), []byte("tail\n")...),
+		"text then private":          append([]byte("head\n"), curPEM...),
 	}
 	for name, content := range badPriv {
 		f := writeFile(t, dir, "p.pem", content)
@@ -468,5 +479,44 @@ func TestKeyFilesRefuseTrailingAndLeadingData(t *testing.T) {
 	ok := writeFile(t, dir, "ws.pem", append(append([]byte{}, curPEM...), []byte("\n\n  \n")...))
 	if _, err := LoadSessionKeys(SessionKeyFiles{Current: ok}, signerIssuer, signerAud); err != nil {
 		t.Errorf("trailing whitespace refused: %v", err)
+	}
+}
+
+// A key file longer than the cap is refused, never truncated: a valid block,
+// a long run of whitespace and then a second block must not slip past the
+// trailing data check by falling beyond the read limit. Public files are
+// capped the same way.
+func TestKeyFilesOverTheCapAreRefused(t *testing.T) {
+	dir := t.TempDir()
+	cur, other := freshPriv(t), freshPriv(t)
+	curDER, _ := x509.MarshalECPrivateKey(cur)
+	curPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: curDER})
+	otherDER, _ := x509.MarshalECPrivateKey(other)
+	otherPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: otherDER})
+	pad := bytes.Repeat([]byte("\n"), maxKeyFileBytes)
+
+	big := append(append(append([]byte{}, curPEM...), pad...), otherPEM...)
+	bigFile := writeFile(t, dir, "big.pem", big)
+	if _, err := LoadSessionKeys(SessionKeyFiles{Current: bigFile}, signerIssuer, signerAud); err == nil {
+		t.Error("an oversized private key file was accepted")
+	}
+
+	curFile := writeSEC1(t, dir, "cur.pem", cur)
+	pubPEM, _ := marshalPKIXForTest(&other.PublicKey)
+	bigPub := writeFile(t, dir, "bigpub.pem", append(append(append([]byte{}, pubPEM...), pad...), otherPEM...))
+	for _, files := range []SessionKeyFiles{{Current: curFile, Next: bigPub}, {Current: curFile, Previous: bigPub}} {
+		if _, err := LoadSessionKeys(files, signerIssuer, signerAud); err == nil {
+			t.Error("an oversized public key file was accepted")
+		}
+	}
+
+	// A file exactly at the cap still loads.
+	atCap := append(append([]byte{}, curPEM...), bytes.Repeat([]byte("\n"), maxKeyFileBytes-len(curPEM))...)
+	if len(atCap) != maxKeyFileBytes {
+		t.Fatalf("test setup: %d bytes", len(atCap))
+	}
+	capFile := writeFile(t, dir, "cap.pem", atCap)
+	if _, err := LoadSessionKeys(SessionKeyFiles{Current: capFile}, signerIssuer, signerAud); err != nil {
+		t.Errorf("a file at the cap was refused: %v", err)
 	}
 }
