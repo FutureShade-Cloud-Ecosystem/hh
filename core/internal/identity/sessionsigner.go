@@ -16,7 +16,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -84,7 +83,7 @@ func loadSessionPrivateKey(path string) (*ecdsa.PrivateKey, error) {
 		return nil, errors.New("identity: the session signing key file cannot be read")
 	}
 	defer wipe(raw)
-	block, _ := pem.Decode(raw)
+	block := singlePEMBlock(raw)
 	if block == nil {
 		return nil, errors.New("identity: the session signing key file is not a PEM private key")
 	}

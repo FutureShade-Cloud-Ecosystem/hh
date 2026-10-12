@@ -75,7 +75,7 @@ func TestSessionKeyThumbprintRefusesOtherCurves(t *testing.T) {
 func TestSessionKeySetRefusesEqualKeys(t *testing.T) {
 	a, b := freshPub(t), freshPub(t)
 	cases := []struct {
-		name                  string
+		name                    string
 		current, next, previous *ecdsa.PublicKey
 	}{
 		{"current equals next", a, a, nil},

@@ -7,6 +7,7 @@ package identity
 // verifier code imports it.
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -57,7 +58,7 @@ func sessionKeyCoordinates(pub *ecdsa.PublicKey) (x, y string, err error) {
 // public halves only. Errors are static text; file content never enters
 // them.
 func ParseSessionPublicKeyPEM(data []byte) (*ecdsa.PublicKey, error) {
-	block, _ := pem.Decode(data)
+	block := singlePEMBlock(data)
 	if block == nil || block.Type != "PUBLIC KEY" {
 		return nil, errors.New("identity: session public key file is not a PEM public key")
 	}
@@ -70,6 +71,21 @@ func ParseSessionPublicKeyPEM(data []byte) (*ecdsa.PublicKey, error) {
 		return nil, errors.New("identity: session public key must be an EC P-256 key")
 	}
 	return pub, nil
+}
+
+// singlePEMBlock decodes a file that holds exactly one PEM block: no text
+// before it and nothing but whitespace after it. A second block (a private
+// key behind a public one) or stray text makes the whole file unusable, so
+// a file the procedure treats as public can never carry private material.
+func singlePEMBlock(data []byte) *pem.Block {
+	if !bytes.HasPrefix(bytes.TrimLeft(data, " \t\r\n"), []byte("-----BEGIN ")) {
+		return nil
+	}
+	block, rest := pem.Decode(data)
+	if block == nil || len(bytes.TrimSpace(rest)) != 0 {
+		return nil
+	}
+	return block
 }
 
 // sessionKeyEntry is one served key.

@@ -425,3 +425,48 @@ func TestSessionMinterFormatsRedacted(t *testing.T) {
 		t.Errorf("String = %q", got)
 	}
 }
+
+// A key file with a second PEM block, or text around the block, is refused
+// in all three loaders: a NEXT file holding a public block followed by a
+// private one must not be accepted as public.
+func TestKeyFilesRefuseTrailingAndLeadingData(t *testing.T) {
+	dir := t.TempDir()
+	cur, other := freshPriv(t), freshPriv(t)
+	privDER, _ := x509.MarshalECPrivateKey(other)
+	privBlock := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: privDER})
+	pubOther, _ := marshalPKIXForTest(&other.PublicKey)
+	curDER, _ := x509.MarshalECPrivateKey(cur)
+	curPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: curDER})
+	curFile := writeFile(t, dir, "cur.pem", curPEM)
+
+	bad := map[string][]byte{
+		"public then private": append(append([]byte{}, pubOther...), privBlock...),
+		"public then text":    append(append([]byte{}, pubOther...), []byte("trailing words\n")...),
+		"text then public":    append([]byte("leading words\n"), pubOther...),
+	}
+	for name, content := range bad {
+		f := writeFile(t, dir, "x.pem", content)
+		if _, err := LoadSessionKeys(SessionKeyFiles{Current: curFile, Next: f}, signerIssuer, signerAud); err == nil {
+			t.Errorf("NEXT, %s: accepted", name)
+		}
+		if _, err := LoadSessionKeys(SessionKeyFiles{Current: curFile, Previous: f}, signerIssuer, signerAud); err == nil {
+			t.Errorf("PREVIOUS, %s: accepted", name)
+		}
+	}
+	badPriv := map[string][]byte{
+		"two private blocks": append(append([]byte{}, curPEM...), privBlock...),
+		"private then text":  append(append([]byte{}, curPEM...), []byte("tail\n")...),
+		"text then private":  append([]byte("head\n"), curPEM...),
+	}
+	for name, content := range badPriv {
+		f := writeFile(t, dir, "p.pem", content)
+		if _, err := LoadSessionKeys(SessionKeyFiles{Current: f}, signerIssuer, signerAud); err == nil {
+			t.Errorf("current, %s: accepted", name)
+		}
+	}
+	// Trailing whitespace alone is fine.
+	ok := writeFile(t, dir, "ws.pem", append(append([]byte{}, curPEM...), []byte("\n\n  \n")...))
+	if _, err := LoadSessionKeys(SessionKeyFiles{Current: ok}, signerIssuer, signerAud); err != nil {
+		t.Errorf("trailing whitespace refused: %v", err)
+	}
+}
