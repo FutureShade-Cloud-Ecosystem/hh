@@ -117,6 +117,11 @@ export class ScopeBook {
     return [...this.#declared].sort();
   }
 
+  /** Whether the profile holds this scope. */
+  has(scope: string): boolean {
+    return this.#declared.has(scope);
+  }
+
   /** The conflict policy of a writable scope, or undefined. */
   policy(scope: string): ConflictPolicy | undefined {
     return this.#writable.get(scope);
