@@ -16899,7 +16899,8 @@ paths:
       tags:
         - staff-till
       summary: Upsert the org-default NSF policy
-      x-role: requireManager
+      description: "Dealer wide money policy: only the general manager, the financial controller and the platform roles write it. Any other role gets the shared 403. The read stays open to every manager tier role."
+      x-role: requireAdmin
       x-access:
         surfaces:
           - money-desk

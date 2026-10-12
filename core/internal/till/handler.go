@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -54,7 +55,8 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/ar/credit-holds", g.RequireManager(h.staff(h.listCreditHolds)))
 	r.Handle("POST /api/v1/ar/credit-holds/{id}/release", g.RequireAdmin(h.staff(h.releaseHold)))
 	r.Handle("GET /api/v1/ar/nsf-policy", g.RequireManager(h.staff(h.getNSFPolicy)))
-	r.Handle("PUT /api/v1/ar/nsf-policy", g.RequireManager(h.staff(h.updateNSFPolicy)))
+	// The org default NSF policy is dealer wide money policy: tier 1 global finance and general roles only.
+	r.Handle("PUT /api/v1/ar/nsf-policy", g.RequireStaffPredicate(nsfPolicyWriter, h.staff(h.updateNSFPolicy)))
 	r.Handle("POST /api/v1/ar/payment-attempts", g.RequireStaff(h.staff(h.recordAttempt)))
 	h.registerHistoryRoutes(r, g) // Q-044 payment/invoice attribution reads (history.go)
 }
@@ -118,7 +120,7 @@ func (h *Handler) getNSFPolicy(w http.ResponseWriter, r *http.Request, caller gu
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
-// updateNSFPolicy upserts the org-default NSF policy (manager-gated).
+// updateNSFPolicy upserts the org-default NSF policy (finance and general roles only, see nsfPolicyWriter).
 func (h *Handler) updateNSFPolicy(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in NSFPolicy
 	if !decodeJSON(w, r, &in) {
@@ -269,6 +271,8 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	var ce clientError
 	var br badRequestError
 	switch {
+	case errors.Is(err, errSharedForbidden):
+		authz.RefuseForbidden(w)
 	case errors.As(err, &ce):
 		httpx.Error(w, ce.status, ce.msg)
 	case errors.As(err, &br):
