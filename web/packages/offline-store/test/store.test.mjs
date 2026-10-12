@@ -49,6 +49,11 @@ test("the next pull asks only for what is newer than the stored cursor", async (
   assert.equal(out.items, 1);
   assert.deepEqual(pulls(server).map((q) => q.since), [0, 9]);
   assert.deepEqual((await store.read("pick_tasks", uuid(3))).row.data, { n: 33 });
+  // the cursor moved on with the second pull (the touched row has the server's newest seq)
+  const touchedSeq = server.row("pick_tasks", uuid(3)).seq;
+  assert.equal((await store.staleness("pick_tasks")).lastSeq, touchedSeq);
+  await store.pull(transport, "pick_tasks");
+  assert.deepEqual(pulls(server).map((q) => q.since), [0, 9, touchedSeq]);
 });
 
 test("pull with no scope pulls every declared scope, each with its own cursor", async () => {
