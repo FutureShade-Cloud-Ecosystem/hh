@@ -90,6 +90,10 @@ done
 export CORE_DATABASE_URL="$DATABASE_URL"
 export CORE_STAFF_AUDIENCE="${CORE_STAFF_AUDIENCE:-hh-staff}"
 export CORE_TENANT_AUDIENCE="${CORE_TENANT_AUDIENCE:-hh-tenant}"
+# The core has no default sign in mode; this image defaults it to the demo
+# mode (the in memory issuer). A copy that signs real sessions sets console
+# in its own environment, with the key file and issuer names the core lists.
+export CORE_SIGNIN_MODE="${CORE_SIGNIN_MODE:-demo}"
 
 # The public port is the platform's PORT. The core listens on a loopback
 # port only: it is never reachable except through Caddy, which fronts

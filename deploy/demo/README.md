@@ -101,6 +101,7 @@ forged chain is never the answer.
 | `CORE_INTERNAL_PORT` | the core's loopback port (the default is 9090) |
 | `CORE_STAFF_AUDIENCE`, `CORE_TENANT_AUDIENCE` | the token audiences (defaults `hh-staff` and `hh-tenant`) |
 | `CORE_DEMO_TOKEN_TTL` | the demo session length the mint issues, optional |
+| `CORE_SIGNIN_MODE` | `demo` (this image's default) or `console`; the core itself has no default |
 
 ## One replica
 
