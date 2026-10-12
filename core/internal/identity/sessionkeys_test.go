@@ -122,7 +122,14 @@ func TestSessionJWKSGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kid, _ := SessionKeyThumbprint(basePointKey(t))
+	// The kid is a literal, computed once outside this code base (SHA-256 of
+	// the RFC 7638 canonical JWK of the base point, through Python's hashlib
+	// and base64), so a member order wrong in both the code and the hand
+	// built check above cannot pass.
+	const kid = "xx0BcA-wMohw8atYDJOe6peGModklG2wRHBlXHMvl0M"
+	if got, _ := SessionKeyThumbprint(basePointKey(t)); got != kid {
+		t.Fatalf("thumbprint of the base point = %q, want the pinned %q", got, kid)
+	}
 	want := `{"keys":[{"kty":"EC","crv":"P-256","x":"axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY","y":"T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU","kid":"` + kid + `","use":"sig","alg":"ES256"}]}`
 	if got := string(set.JWKS()); got != want {
 		t.Fatalf("JWK Set =\n%s\nwant\n%s", got, want)
