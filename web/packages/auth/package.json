@@ -8,14 +8,16 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./appwrite-adapter": "./src/appwrite-adapter.ts"
   },
   "scripts": {
-    "test": "node --import ./test/_ts-js-loader.mjs --test test/custody.test.mjs test/unlock.test.mjs test/lock-signout.test.mjs test/client.test.mjs test/gates.test.mjs test/exchange.test.mjs",
+    "test": "node --import ./test/_ts-js-loader.mjs --test test/custody.test.mjs test/unlock.test.mjs test/lock-signout.test.mjs test/client.test.mjs test/gates.test.mjs test/exchange.test.mjs test/appwrite-adapter.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@hardscapehouse/api-client": "0.0.0"
+    "@hardscapehouse/api-client": "0.0.0",
+    "appwrite": "27.0.0"
   },
   "devDependencies": {
     "@types/node": "22.20.4",
