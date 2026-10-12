@@ -34,6 +34,9 @@ interface CardDraft {
   error: string | null;
 }
 
+/** The card policy of a row a person settled as applied (not a server conflict policy). */
+export const SETTLED_BY_PERSON = "settled_by_person";
+
 /** What card, if any, a push result owes the person. */
 export function draftFor(result: SyncPushResult): CardDraft | null {
   const envelope = result.conflict;
@@ -102,8 +105,12 @@ export class CardStore {
    * atomic unit as the outbox status change. Insert-or-ignore on the
    * operation's key: a result seen twice makes one card.
    */
-  statementsFor(row: OutboxRow, result: SyncPushResult): SqlStatement[] {
-    const draft = draftFor(result);
+  statementsFor(row: OutboxRow, result: SyncPushResult, settlement?: "applied" | "withdrawn"): SqlStatement[] {
+    // A person who settles a stalled row as applied leaves a review card: nothing the server said backs it.
+    const draft: CardDraft | null =
+      settlement === "applied"
+        ? { kind: "review", policy: SETTLED_BY_PERSON, serverState: {}, error: result.error ?? null }
+        : draftFor(result);
     if (!draft) return [];
     const entityId = row.entityId ?? (typeof draft.serverState["id"] === "string" ? draft.serverState["id"] : null);
     return [

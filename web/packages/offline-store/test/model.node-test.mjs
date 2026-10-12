@@ -11,7 +11,8 @@
 //   I2 once       no operation is applied by the server twice
 //   I3 conflicts  a closed conflict or rejection always has its card, and a card is only ever dismissed by the user
 //   I4 money      nothing is queued for a money scope, and every attempt is refused
-//   I5 parked     while auth is expired nothing is sent and nothing leaves the outbox
+//   I5 parked     while auth is expired nothing is sent and nothing leaves the outbox (a person's settlement
+//                 of a stalled row is local, sends nothing, and is the one thing that may close a row then)
 //   I6 drain      after a reconnect (with a good network and session) the outbox drains, in order, to a rest state
 //   I7 honesty    the client calls an operation applied only if the server applied it exactly once, and calls it
 //                 conflict or rejected only if the server did not apply it
@@ -184,13 +185,15 @@ const ACTIONS = [
     assert.deepEqual(after, before, "I9: the pending outbox changed across a restart");
     if (w.online) await w.runner.dispatch({ type: "ONLINE" });
   }],
-  // The person resolves a stalled row, honestly: applied only if the server did apply it, withdrawn only if it did not.
-  [5, "the person settles a stall", async (w) => {
+  // The person resolves a stalled row, honestly: applied if the server did apply it; withdrawn or resend if it did not.
+  [20, "the person settles a stall", async (w) => {
     const { stalls } = await w.store.outbox.health();
     if (!stalls.length) return;
     const stall = pickOne(w.rng, stalls);
     const held = w.server.applyCount(stall.key) > 0;
-    const choice = w.rng() < 0.3 ? "resend" : held ? "applied" : "withdrawn";
+    // A person who resends has checked that the server does not hold it: resend clears the sent mark, so a
+    // later refusal would close the row as rejected.
+    const choice = held ? "applied" : w.rng() < 0.4 ? "resend" : "withdrawn";
     const res = await w.store.settle(stall.key, choice);
     assert.equal(res.ok, true, `settle ${choice} on a standing stall was refused: ${JSON.stringify(res)}`);
     w.trace.push(`  (${choice} ${stall.kind})`);
@@ -274,7 +277,10 @@ async function check(w, pre, action) {
   // I5 parked
   if (pre.state === "auth_expired" && !["session refreshed", "process restart"].includes(action)) {
     assert.equal(server.requests.length, pre.requests, `I5: the device sent ${server.requests.length - pre.requests} requests while auth was expired (${action})`);
-    for (const [key, status] of pre.rows) assert.equal(rows.find((r) => r.key === key)?.status, status, `I5: ${key} moved while auth was expired`);
+    // A person's own settlement is local and sends nothing, so it may close a stalled row at any time.
+    if (action !== "the person settles a stall") {
+      for (const [key, status] of pre.rows) assert.equal(rows.find((r) => r.key === key)?.status, status, `I5: ${key} moved while auth was expired`);
+    }
   }
   // I7 honesty, at every step: closed as applied means applied once; closed otherwise means never applied
   for (const row of rows) {
@@ -348,7 +354,7 @@ test("model: the generator reaches every state, every outcome kind and every fau
   const stalls = new Set();
   const settled = new Set();
   let restarts = 0;
-  for (let seed = 1; seed <= 60; seed++) {
+  for (let seed = 1; seed <= 120; seed++) {
     const w = await newWorld(seed);
     w.runner.onState((s) => states.add(s));
     for (let step = 0; step < STEPS; step++) {

@@ -2,7 +2,7 @@
 // pulled projections with their cursors, and the conflict cards.
 import type { StorageBackend, Ownership } from "./backend.js";
 import { CardStore } from "./cards.js";
-import { Outbox, type EnqueueInput, type EnqueueResult, type ReplayOutcome } from "./outbox.js";
+import { Outbox, type EnqueueInput, type EnqueueResult, type ReplayOutcome, type SettleChoice, type SettleResult } from "./outbox.js";
 import { entityTable, migrate } from "./schema.js";
 import type { ScopeBook } from "./scopes.js";
 import type { SqlStatement } from "./sql.js";
@@ -77,8 +77,8 @@ export class OfflineStore {
       now: this.#now,
       ...(options.newKey ? { newKey: options.newKey } : {}),
       ...(options.maxBatch ? { maxBatch: options.maxBatch } : {}),
-      onResult: ({ row, result }) => {
-        const statements = this.cards.statementsFor(row, result);
+      onResult: ({ row, result, settlement }) => {
+        const statements = this.cards.statementsFor(row, result, settlement);
         if (statements.length > 0) this.#cardsMade++;
         return statements;
       },
@@ -113,6 +113,22 @@ export class OfflineStore {
     const before = this.#cardsMade;
     try {
       return await this.outbox.replay(transport);
+    } finally {
+      if (this.#cardsMade !== before) this.cards.notify();
+    }
+  }
+
+  /**
+   * A person's resolution of a stalled row (see Outbox.settle). The stall UI is
+   * item 7's; the shell calls this. A card made here is announced like any other.
+   */
+  async settle(key: string, choice: SettleChoice): Promise<SettleResult> {
+    if (this.ownership() !== "owner") {
+      return { ok: false, reason: "read_only", message: "this tab is read cache only; another tab owns the store" };
+    }
+    const before = this.#cardsMade;
+    try {
+      return await this.outbox.settle(key, choice);
     } finally {
       if (this.#cardsMade !== before) this.cards.notify();
     }

@@ -3,7 +3,7 @@
 // cards. Dialect is plain SQLite; nothing here is engine specific.
 import type { SqlExecutor, SqlStatement } from "./sql.js";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** The shape of a scope name; it is spliced into table names, so it is checked before any SQL. */
 export const SCOPE_NAME = /^[a-z][a-z_]{0,63}$/;
@@ -34,7 +34,9 @@ const FIXED_DDL = [
      created_at TEXT NOT NULL,
      sent INTEGER NOT NULL DEFAULT 0,
      stall TEXT CHECK (stall IS NULL OR stall IN ('scope_refused', 'check_applied')),
-     stall_status INTEGER
+     stall_status INTEGER,
+     settled TEXT CHECK (settled IS NULL OR settled IN ('applied', 'withdrawn', 'resend')),
+     settled_at TEXT
    )`,
   `CREATE INDEX IF NOT EXISTS outbox_status_seq ON outbox (status, seq)`,
   `CREATE TABLE IF NOT EXISTS sync_state (
@@ -84,16 +86,29 @@ function entityDdl(scope: string): string {
  * was not definitively answered) and the stall record to the outbox. A table
  * from schema 1 gets the columns; an attempt it already counted may have
  * reached the server, so those rows start as sent.
+ * Schema 3 added `settled` and `settled_at`, the audit of a person's
+ * resolution of a stalled row. Each step is applied on its own, so a table of
+ * any earlier schema reaches this one in a single migrate.
  */
 async function upgradeOutbox(sql: SqlExecutor): Promise<void> {
   const cols = (await sql.all<{ name: string }>("SELECT name FROM pragma_table_info('outbox')")).map((c) => c.name);
-  if (cols.length === 0 || cols.includes("sent")) return;
-  await sql.atomic([
-    { sql: "ALTER TABLE outbox ADD COLUMN sent INTEGER NOT NULL DEFAULT 0" },
-    { sql: "ALTER TABLE outbox ADD COLUMN stall TEXT CHECK (stall IS NULL OR stall IN ('scope_refused', 'check_applied'))" },
-    { sql: "ALTER TABLE outbox ADD COLUMN stall_status INTEGER" },
-    { sql: "UPDATE outbox SET sent = 1 WHERE attempts > 0" },
-  ]);
+  if (cols.length === 0) return;
+  const steps: SqlStatement[] = [];
+  if (!cols.includes("sent")) {
+    steps.push(
+      { sql: "ALTER TABLE outbox ADD COLUMN sent INTEGER NOT NULL DEFAULT 0" },
+      { sql: "ALTER TABLE outbox ADD COLUMN stall TEXT CHECK (stall IS NULL OR stall IN ('scope_refused', 'check_applied'))" },
+      { sql: "ALTER TABLE outbox ADD COLUMN stall_status INTEGER" },
+      { sql: "UPDATE outbox SET sent = 1 WHERE attempts > 0" },
+    );
+  }
+  if (!cols.includes("settled")) {
+    steps.push(
+      { sql: "ALTER TABLE outbox ADD COLUMN settled TEXT CHECK (settled IS NULL OR settled IN ('applied', 'withdrawn', 'resend'))" },
+      { sql: "ALTER TABLE outbox ADD COLUMN settled_at TEXT" },
+    );
+  }
+  if (steps.length > 0) await sql.atomic(steps);
 }
 
 /**

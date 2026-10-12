@@ -1,5 +1,8 @@
 // The durable outbox. Invariants, for the readers:
-//  1. Order: rows replay in `seq` order, the order of enqueue, across scopes.
+//  1. Order: rows replay in `seq` order, the order of enqueue. Within a scope
+//     that always holds. Across scopes it holds until a refusal parks a scope
+//     (7): the other scopes carry on, and the parked scope's rows go out
+//     later, in their own order, after rows enqueued behind them elsewhere.
 //  2. Key: an operation's idempotency key is generated once, at enqueue, and
 //     stored; every attempt, in every process, sends that key and that body.
 //  3. Money: a money scope is refused at enqueue and never stored; replay checks
@@ -11,21 +14,29 @@
 //  5. Nothing is dropped: no row is ever deleted; a row ends applied,
 //     conflict or rejected, and stays readable.
 //  6. A fault is whole: an operational fault, a malformed answer or an
-//     unreadable network marks nothing, and the next replay sends the same
-//     rows again, where the server dedups on the keys.
+//     unreadable network closes no row. The rows stay pending, marked `sent`
+//     with the attempt counted (7), and the next replay sends the same rows
+//     again, where the server dedups on the keys.
 //  7. A refusal closes a row only when the server cannot hold it. The core's
 //     own refusals are 400, 403 and 501 (404 and 413 come from a hop in front
-//     and are faults). A 400 on a batch is split to single operations, and one
-//     still refused alone is closed as rejected with a card, but only if no
-//     earlier request for it could have reached the server (`sent`, set
-//     durably before the first request leaves, in the same atomic step as the
-//     attempt count). A row that was sent before is UNCERTAIN: it stays
-//     pending and the scope shows a `check_applied` stall. A 403 or 501 parks
-//     the scope: its rows stay pending, a `scope_refused` stall shows, the
-//     other scopes and the pull carry on, and every replay tries again.
+//     and are faults). Of the 400s only `invalid_json` is about a body: such a
+//     400 on a batch is split to single operations, and one still refused
+//     alone is closed as rejected with a card, but only if no earlier request
+//     for it could have reached the server (`sent`, set durably before the
+//     first request leaves, in the same atomic step as the attempt count). A
+//     row that was sent before is UNCERTAIN: it stays pending and the scope
+//     shows a `check_applied` stall. Every other refusal is about the scope or
+//     a hop (a 400 `unknown sync scope` or `pull-only`, a hop's own 400, a 403,
+//     a 501): it parks the scope. Its rows stay pending, a `scope_refused`
+//     stall shows, the other scopes and the pull carry on, and every replay
+//     tries again.
 //  8. A push stays under MAX_REQUEST_BYTES as well as under maxBatch rows.
 //  9. A stuck outbox is visible: `health()` reports the writes waiting, the
-//     attempts and last error of a standing fault, and every stall.
+//     attempts and last error of a standing fault (no threshold: the shell
+//     must not alarm on attempts of one), and every stall.
+// 10. A stall has a way out, and it is a person's: `settle(key, choice)` closes
+//     the row as applied or withdrawn, or clears it for a resend, and records
+//     which on the row.
 import type { SyncPushOperation, SyncPushResult } from "@hardscapehouse/api-client";
 import { bodyHash, canonicalJson } from "./canonical.js";
 import { scopeFence, type ScopeBook, type WriteRefusalReason } from "./scopes.js";
@@ -67,7 +78,18 @@ export interface OutboxRow {
   /** A request for this row may have reached the server and was not definitively answered. */
   sent: boolean;
   stall: StallKind | null;
+  /** How a person last resolved a stall on this row, and when (the audit; null if never). */
+  settled: SettleChoice | null;
+  settledAt: string | null;
 }
+
+/** What a person can decide about a stalled row (see `Outbox.settle`). */
+export type SettleChoice = "applied" | "withdrawn" | "resend";
+const SETTLE_CHOICES: readonly string[] = ["applied", "withdrawn", "resend"];
+
+export type SettleResult =
+  | { ok: true; key: string; choice: SettleChoice }
+  | { ok: false; reason: "unknown_key" | "not_stalled" | "invalid_choice" | "read_only"; message: string };
 
 /** Why a scope's pending work is not moving, apart from a plain fault. */
 export type StallKind = "scope_refused" | "check_applied";
@@ -101,7 +123,7 @@ export type ReplayOutcome =
   | { kind: "fault"; message: string; status?: number };
 
 /** Extra statements to land in the same atomic unit as one result's status change. */
-export type ResultRecorder = (context: { row: OutboxRow; result: SyncPushResult }) => SqlStatement[];
+export type ResultRecorder = (context: { row: OutboxRow; result: SyncPushResult; settlement?: "applied" | "withdrawn" }) => SqlStatement[];
 
 export interface OutboxOptions {
   sql: SqlExecutor;
@@ -149,6 +171,8 @@ interface DbRow {
   sent: number;
   stall: StallKind | null;
   stall_status: number | null;
+  settled: SettleChoice | null;
+  settled_at: string | null;
 }
 
 /** The words for a stall. */
@@ -188,6 +212,8 @@ function toRow(r: DbRow): OutboxRow {
     createdAt: r.created_at,
     sent: r.sent === 1,
     stall: r.stall,
+    settled: r.settled,
+    settledAt: r.settled_at,
   };
 }
 
@@ -347,6 +373,55 @@ export class Outbox {
         };
       });
     return { waiting: pending.length, stuck, stalls };
+  }
+
+  /**
+   * The person's way out of a stall (`check_applied` or `scope_refused`): the
+   * stalled row, named by its key, is resolved by one of
+   *   applied    the person checked and the server holds it. The row is closed `applied`, with a
+   *              review card saying so (policy `settled_by_person`), and is never sent again.
+   *   withdrawn  the person does not want it. The row is closed `rejected`, with a card, never sent.
+   *   resend     the person wants it sent. The sent mark is cleared and the stall with it, so the
+   *              next replay sends it as a new attempt (the same key: a server that holds it
+   *              answers from its record), and a refusal then judges it as a row never sent.
+   * Each is recorded on the row (`settled`, `settled_at`) and lands in one atomic unit with its
+   * card. Rows behind the stall are released: the next replay sends them in order. It refuses a
+   * row that is not stalled and changes nothing. It sends nothing and waits for a replay in
+   * flight, so it never changes a row while its request is out. The stall UI belongs to item 7.
+   */
+  settle(key: string, choice: SettleChoice): Promise<SettleResult> {
+    return this.#replayQueue(() => this.#settle(key, choice));
+  }
+
+  async #settle(key: string, choice: SettleChoice): Promise<SettleResult> {
+    if (!SETTLE_CHOICES.includes(choice)) {
+      return { ok: false, reason: "invalid_choice", message: "choice must be applied, withdrawn or resend" };
+    }
+    const found = await this.#sql.all<DbRow>("SELECT * FROM outbox WHERE idempotency_key = ?", [key]);
+    if (found.length === 0) return { ok: false, reason: "unknown_key", message: "no such operation in the outbox" };
+    const db = found[0]!;
+    if (db.status !== "pending" || db.stall === null) {
+      return { ok: false, reason: "not_stalled", message: "this operation is not stalled; only a stalled operation can be settled" };
+    }
+    const row = toRow(db);
+    const at = this.#now();
+    const cleared = "stall = NULL, stall_status = NULL, settled = ?, settled_at = ?";
+    const guard = "WHERE idempotency_key = ? AND status = 'pending' AND stall IS NOT NULL";
+    const statements: SqlStatement[] = [];
+    if (choice === "resend") {
+      statements.push({ sql: `UPDATE outbox SET sent = 0, ${cleared} ${guard}`, params: [choice, at, key] });
+    } else {
+      const withdrawn = choice === "withdrawn";
+      const why = `${db.stall} ${db.stall_status ?? 0}`;
+      const error = withdrawn ? `withdrawn by the person (${why}): not sent again` : `marked applied by the person (${why}): not sent again`;
+      statements.push({ sql: `UPDATE outbox SET status = ?, error = ?, ${cleared} ${guard}`, params: [withdrawn ? "rejected" : "applied", error, choice, at, key] });
+      if (this.#onResult) {
+        const result: SyncPushResult = { client_id: key, status: withdrawn ? "rejected" : "applied", error };
+        statements.push(...this.#onResult({ row, result, settlement: choice }));
+      }
+    }
+    await this.#sql.atomic(statements);
+    return { ok: true, key, choice };
   }
 
   /**

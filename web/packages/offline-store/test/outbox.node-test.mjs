@@ -772,8 +772,10 @@ test("a resent row that is refused again is judged as a row never sent: a 400 in
   const { outbox, sql, a, refusingPicks } = await checkAppliedRig({ onResult: rec.onResult });
   await outbox.settle(a.key, "resend");
   const out = await outbox.replay(refusingPicks);
-  assert.equal(out.rejected, 2, "the resent row and the one behind it, each refused alone, neither sent before");
-  assert.deepEqual((await rows(sql)).map((r) => r.status).slice(0, 2), ["rejected", "rejected"]);
+  assert.equal(out.rejected, 1, "the resent row was cleared, so it is judged as never sent");
+  // The row behind it was in the same lost batch, so it is uncertain and stalls in its turn.
+  assert.deepEqual((await rows(sql)).map((r) => r.status).slice(0, 2), ["rejected", "pending"]);
+  assert.deepEqual((await outbox.health()).stalls.map((x) => x.kind), ["check_applied"]);
 });
 
 test("settle on a scope_refused stall: withdrawn closes the row with a card, resend clears the park", async () => {
