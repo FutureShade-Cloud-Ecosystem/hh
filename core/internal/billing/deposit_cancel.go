@@ -11,9 +11,9 @@ package billing
 //     leaves the live set (VOID: it is no longer money attached to anything,
 //     exactly what every live-deposit read already means by the word), and
 //     whatever the customer had PAID of it lands on the account as a credit,
-//     one ADJUSTMENT row off this settlement. An unpaid deposit needs no
-//     account row: the credit exactly clears the open document, so the
-//     subledger and the ledger both read zero with no second row to carry it.
+//     one ADJUSTMENT row off this settlement. The closed part lands on the
+//     ledger as its own row (see THE ACCOUNT ROWS below), so the running
+//     balance and the statement follow the clearing.
 //
 //   KEPT (a manager's override, or the dealer's own default; row 1228,
 //   Colton's A: keep only what was paid): the dealer keeps what the customer
@@ -21,13 +21,30 @@ package billing
 //   by the same clearing the credit back uses (the balance goes to zero in
 //   this transaction, with the one deposit.cancelled:<invoice id> journal key
 //   booking it): a part paid document reads PAID, an entirely unpaid one VOID,
-//   and a fully paid one stands PAID. No account row lands. The booking splits
+//   and a fully paid one stands PAID. The closed part's ledger row lands as
+//   for the credit back; no credit row does (the paid part is the dealer's,
+//   not the account's). The booking splits
 //   the one entry: DR 2300 for the whole deposit, CR other income for the paid
 //   part, CR the receivable for the closed rest.
 //
 // WHY NO CREDIT MEMO. The deposit document never routes through the credit
 // memo path (SupplierDepositNotCreditable stands): a memo would reverse
 // revenue that was never booked. This settlement is the deposit's own exit.
+//
+// THE ACCOUNT ROWS. The running balance every credit gate reads is the LEDGER's
+// latest balance_after (the POS sale gate, the quote conversion gate, the
+// account picker), and the statement is the ledger's rows summed, so a balance
+// that clears only on the document leaves both reading money that is not owed.
+// The settlement therefore writes a row for the part it closes, negative,
+// tagged source_type 'invoice': that tag is LOAD BEARING exactly as the credit
+// memo's insert explains (credit_memo.go), because the cleared document has
+// already left the open invoice arm of the AR tie out and of v_ar_aging, and a
+// second count of the same close would break the 1100 tie out by the closed
+// amount. The paid part's credit back keeps its own row (source_type
+// 'deposit_cancel', inside the tie out's second arm, the credit the customer
+// is owed). Both rows stamp occurred_at clock_timestamp(), the 0009 ordering
+// rule: they share one transaction, and now() is transaction fixed, so two
+// rows would tie and the latest balance_after read would pick arbitrarily.
 //
 // NEVER ROUTED THROUGH THE RETURNS FLOW. The settlement rides the cancel's
 // own transaction when the caller hands one over (the order cancel runs it
@@ -167,31 +184,48 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 		}
 	}
 
-	if disposition == DepositCancelCreditBack {
-		// The paid part (total less what is still owed) becomes the account's
-		// credit. An unpaid deposit paid nothing, so no row: the cleared
-		// document is itself the credit (the subledger and the ledger both
-		// read zero). source_type 'deposit_cancel' keeps the row out of the
-		// credit memo document family and inside the AR tie-out's second arm.
-		if paid > 0 {
-			var open int64
-			if err := tx.QueryRow(ctx,
-				`SELECT COALESCE(SUM(balance_cents),0) FROM invoices
-				  WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID')`,
-				d.customer).Scan(&open); err != nil {
-				return fmt.Errorf("read open balance: %w", err)
-			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO customer_transactions
-					(customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo)
-				VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'deposit_cancel', $4::uuid, $5::uuid, $6)`,
-				d.customer, -paid, open-paid, d.id, d.branch,
-				"Supplier deposit "+d.no+" credited back on the order's cancel"); err != nil {
-				return fmt.Errorf("write the account credit: %w", err)
-			}
+	// The account rows (see THE ACCOUNT ROWS in the file header), both chained
+	// on the account's AR read AFTER the clearing update, the figure the till's
+	// NSF reversal anchors on: open invoice balances plus the standing
+	// non invoice movements. The closed row lands first so the credit back,
+	// when there is one, is the later row the gates read.
+	writeClosed, writeCredit := closed > 0, disposition == DepositCancelCreditBack && paid > 0
+	var arAfter int64
+	if writeClosed || writeCredit {
+		if err := tx.QueryRow(ctx, `
+			SELECT
+			  (SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
+			    WHERE customer_id = $1::uuid AND status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents <> 0)
+			+ (SELECT COALESCE(SUM(amount_cents), 0) FROM customer_transactions
+			    WHERE customer_id = $1::uuid AND txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF') AND source_type <> 'invoice')`,
+			d.customer).Scan(&arAfter); err != nil {
+			return fmt.Errorf("read the account's AR after the clearing: %w", err)
 		}
 	}
-	// KEPT writes no account row: the paid part's move into other income and
+	if writeClosed {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO customer_transactions
+				(customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
+			VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'invoice', $4::uuid, $5::uuid, $6, clock_timestamp())`,
+			d.customer, -closed, arAfter, d.id, d.branch,
+			"Supplier deposit "+d.no+" closed on the order's cancel"); err != nil {
+			return fmt.Errorf("write the closed part's ledger row: %w", err)
+		}
+	}
+	if writeCredit {
+		// The paid part (total less what was still owed) becomes the account's
+		// credit. source_type 'deposit_cancel' keeps the row out of the credit
+		// memo document family and inside the AR tie-out's second arm.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO customer_transactions
+				(customer_id, txn_type, amount_cents, balance_after, source_type, source_ref_id, branch_id, memo, occurred_at)
+			VALUES ($1::uuid, 'ADJUSTMENT', $2, $3, 'deposit_cancel', $4::uuid, $5::uuid, $6, clock_timestamp())`,
+			d.customer, -paid, arAfter-paid, d.id, d.branch,
+			"Supplier deposit "+d.no+" credited back on the order's cancel"); err != nil {
+			return fmt.Errorf("write the account credit: %w", err)
+		}
+	}
+	// KEPT writes no credit row: the paid part's move into other income and
 	// the closed rest's clearing are the booking's, emitted beside this
 	// settlement and posted by the gl consumer.
 
