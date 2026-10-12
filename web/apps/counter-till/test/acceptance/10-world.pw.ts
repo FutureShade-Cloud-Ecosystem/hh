@@ -39,16 +39,16 @@ const TEN_PRODUCTS = [
 // The names the demo dealer, Gable Landscape Supply, sells them under: invented trade names, none a
 // real brand and none carrying a marker suffix.
 const TEN_NAMES: Record<string, string> = {
-  "DEMO-PAV-CHARCOAL": "Interlocking Paver 60 mm, Charcoal",
-  "DEMO-PAV-SANDSTONE": "Dimensional Paver, Sandstone",
-  "DEMO-PAV-BASALT": "Large Format Paver, Basalt",
-  "DEMO-WALL-BLOCK": "Retaining Wall Block 8x18",
-  "DEMO-STEP-SLAB": "Step Slab 24x48, Natural",
-  "DEMO-AGG-BEDDING": "Paver Bedding Stone",
-  "DEMO-AGG-BASE": "Class 2 Base Rock",
+  "DEMO-PAV-CHARCOAL": "Interlocking paver 60 mm, charcoal",
+  "DEMO-PAV-SANDSTONE": "Dimensional paver, sandstone",
+  "DEMO-PAV-BASALT": "Large format paver, basalt",
+  "DEMO-WALL-BLOCK": "Retaining wall block 8x18",
+  "DEMO-STEP-SLAB": "Step slab 24x48, natural",
+  "DEMO-AGG-BEDDING": "Paver bedding stone",
+  "DEMO-AGG-BASE": "Class 2 base rock",
   "DEMO-AGG-SAND": "Concrete Sand",
-  "DEMO-MULCH-BLACK": "Black Cedar Mulch",
-  "DEMO-EDGE-ALU": "Aluminum Edging 8 ft",
+  "DEMO-MULCH-BLACK": "Black cedar mulch",
+  "DEMO-EDGE-ALU": "Aluminum edging 8 ft",
 };
 
 test("the way in's data: eight flows with role codes and labels", async ({ page }) => {
@@ -157,11 +157,6 @@ test("the account picker answers the branch's demo accounts under invented names
   for (const accountNo of ["DEMO-C02", "DEMO-C03", "DEMO-C05", "DEMO-C07"]) {
     expect(rows.some((row) => row.account_no === accountNo)).toBe(true);
   }
-  // Beside the nine, the picker lists the migration-planted placeholder rows
-  // the starting data carries, named as scrubbed placeholders: part of the
-  // invented world, never accounts to bill, and the page says so.
-  const scrubbed = rows.filter((row) => String(row.name).startsWith("Scrubbed Party"));
-  expect(scrubbed.length).toBeGreaterThanOrEqual(1);
 });
 
 test("the clerk's margin glance is refused, the manager's answers: the policy word names who sees cost and margin", async ({

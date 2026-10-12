@@ -104,7 +104,7 @@ function buildWorld() {
       order_line_no: 1,
       product_id: "00000000-0000-4000-9000-0000000000p9",
       sku: "GRAN-A-CYD",
-      description: "Class 2 Base Rock gravel",
+      description: "Class 2 base rock gravel",
       qty_short: "4.0000",
       uom: "CYD",
       note: "Only 8 yards left in the bin",
@@ -164,7 +164,7 @@ function buildWorld() {
         customer_name: "Site foreman",
         fulfillment: "WILL_CALL",
         lines: [
-          { line_no: 1, product_id: "00000000-0000-4000-9000-0000000000p9", sku: "GRAN-A-CYD", description: "Class 2 Base Rock gravel", qty_ordered: "12.0000", uom: "CYD" },
+          { line_no: 1, product_id: "00000000-0000-4000-9000-0000000000p9", sku: "GRAN-A-CYD", description: "Class 2 base rock gravel", qty_ordered: "12.0000", uom: "CYD" },
         ],
         source: "DISPATCH",
       },

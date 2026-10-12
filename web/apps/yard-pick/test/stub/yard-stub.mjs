@@ -202,7 +202,7 @@ const TICKETS = {
     requested_at: "2026-10-08T16:00:00Z",
     source: "DISPATCH",
     lines: [
-      { line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Class 2 Base Rock gravel, bulk", qty_ordered: "10.0000", uom: "TONNE", location: "Bulk 1" },
+      { line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Class 2 base rock gravel, bulk", qty_ordered: "10.0000", uom: "TONNE", location: "Bulk 1" },
       { line_no: 2, product_id: "1a000000-0000-4000-9000-0000000000c2", sku: "GRAN-B", description: "Granular B gravel, bulk", qty_ordered: "6.0000", uom: "TONNE", location: "Bulk 1" },
       { line_no: 3, product_id: "1a000000-0000-4000-9000-0000000000c3", sku: "FAB-GEO", description: "Geotextile fabric, 4 by 300 ft", qty_ordered: "2.0000", uom: "ROLL", location: "Rack 2" },
       { line_no: 4, product_id: "1a000000-0000-4000-9000-0000000000c4", sku: "PIPE-CORR-4", description: "Corrugated pipe, 4 in", qty_ordered: "8.0000", uom: "EA", location: "Rack 5" },

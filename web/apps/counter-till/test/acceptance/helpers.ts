@@ -31,7 +31,7 @@ export const SEEDED = {
 
 /**
  * Two of the seed's stable ids, fixed by the seed's own id scheme: the
- * Point Loma contractor whose bulk rule puts Class 2 Base Rock below the floor, and
+ * Point Loma contractor whose bulk rule puts Class 2 base rock below the floor, and
  * that product. The below floor leg reads the glance for exactly this line
  * through the manager's bearer (the policy word's named reader, row 651)
  * and proves the floor fact; the clerk's screen states no column at all.
