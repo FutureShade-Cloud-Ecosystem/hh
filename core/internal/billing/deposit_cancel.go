@@ -191,17 +191,13 @@ func (w *InvoiceWriter) settleDepositDocument(ctx context.Context, tx pgx.Tx, or
 		if disposition == DepositCancelKept && paid > 0 {
 			status = "PAID"
 		}
-		// The feed seq is drawn in the same statement as the balance move
-		// (invoiceWriterSeqCTE, the 0213 convention): the invoices sync scope
-		// reads i.seq, so a deposit leaving the till that no pull can see is a
-		// feed that lies by omission, exactly the settle's own words.
-		if _, err := tx.Exec(ctx,
-			invoiceWriterSeqCTE+`
-			UPDATE invoices SET balance_cents = 0, status = $2, updated_at = now(),
-			                    seq = (SELECT next_value FROM iseq)
-			 WHERE id = $1::uuid`,
-			d.id, status); err != nil {
-			return fmt.Errorf("clear the deposit document: %w", err)
+		// The clearing draws the invoices feed seq beside the balance move
+		// (clearDepositDocument, the writer's own statement for it, the 0213
+		// convention): the invoices sync scope reads i.seq, so a deposit
+		// leaving the till that no pull can see is a feed that lies by
+		// omission, exactly the settle's own words.
+		if err := w.clearDepositDocument(ctx, tx, d.id, status); err != nil {
+			return err
 		}
 	}
 

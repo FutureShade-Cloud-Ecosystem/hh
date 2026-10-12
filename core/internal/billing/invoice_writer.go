@@ -115,6 +115,29 @@ const invoiceWriterSeqCTE = `WITH iseq AS (
 	RETURNING next_value
 ) `
 
+// clearDepositDocument closes one deposit document on the caller's
+// transaction: the balance to zero under the settlement's status, with a
+// fresh invoices feed seq drawn in the same statement (the same allocator
+// this file's INSERTs draw, the 0213 convention), so the counter and the
+// payer's app see the document leave the till. It lives here, beside the
+// writer's other seq drawing statements, and is the deposit cancel
+// settlement's own close (deposit_cancel.go), never a credit memo.
+func (w *InvoiceWriter) clearDepositDocument(ctx context.Context, tx pgx.Tx, invoiceID, status string) error {
+	tag, err := tx.Exec(ctx,
+		invoiceWriterSeqCTE+`
+		UPDATE invoices SET balance_cents = 0, status = $2, updated_at = now(),
+		                    seq = (SELECT next_value FROM iseq)
+		 WHERE id = $1::uuid`,
+		invoiceID, status)
+	if err != nil {
+		return fmt.Errorf("clear the deposit document: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("clear the deposit document: the document vanished under the settlement's lock")
+	}
+	return nil
+}
+
 // defaultTermsDays is the fallback payment terms when the caller resolves none. It matches the
 // customer module's own default; a wrong due date on an invoice is a collections problem, so this is
 // deliberately the SHORT end rather than a generous guess.
