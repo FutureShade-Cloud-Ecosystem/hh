@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 )
 
 // -- policy -------------------------------------------------------------------------------------
@@ -173,11 +175,13 @@ func registerWhere(f RegisterFilter, args []any) (string, []any) {
 		clauses = append(clauses, "i.doc_type = 'INVOICE'")
 	}
 	if s := strings.TrimSpace(f.Search); s != "" {
-		args = append(args, "%"+s+"%")
+		args = append(args, "%"+likeutil.EscapeLikePattern(s)+"%")
 		n := len(args)
 		clauses = append(clauses, fmt.Sprintf(
-			`(i.invoice_no::text ILIKE $%d OR c.name ILIKE $%d OR c.account_no::text ILIKE $%d
-			  OR COALESCE(o.order_no::text,'') ILIKE $%d OR COALESCE(o.po_job_ref,'') ILIKE $%d)`,
+			`(i.invoice_no::text ILIKE $%d ESCAPE '\' OR c.name ILIKE $%d ESCAPE '\'
+			  OR c.account_no::text ILIKE $%d ESCAPE '\'
+			  OR COALESCE(o.order_no::text,'') ILIKE $%d ESCAPE '\'
+			  OR COALESCE(o.po_job_ref,'') ILIKE $%d ESCAPE '\')`,
 			n, n, n, n, n))
 	}
 	if f.BranchID != "" {

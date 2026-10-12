@@ -34,6 +34,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 )
 
 // ErrPaymentLookupNotConfigured marks a store without this read (a unit-test fake). A wiring state,
@@ -138,19 +140,27 @@ func (s *Service) FindPayments(ctx context.Context, reach BranchReach, q LookupQ
 // keeps the three shapes from drifting into three different definitions of what a payment IS.
 //
 // The reference arm matches payment_no OR gateway_ref because the person holding a reference does
-// not know which of the two they are holding. payment_no is CITEXT (case already irrelevant);
-// gateway_ref is plain text and is matched case-insensitively so a reference copied out of a bank
-// statement in upper case still finds it.
+// not know which of the two they are holding. payment_no is CITEXT (case already irrelevant) and
+// stays an EXACT comparison on the raw reference; gateway_ref is plain text and is matched
+// case-insensitively so a reference copied out of a bank statement in upper case still finds it.
+// Both ILIKE arms match the caller's text LITERALLY: the term is escaped with the house escaper
+// (platform/likeutil) and each pattern names ESCAPE '\', so a '%' or '_' in a reference or a
+// customer name cannot widen the lookup into a wildcard scan. Only the patterns read that way; the
+// amount match stays exact, the ordering and the reach are untouched.
 func (r *Repository) FindPayments(ctx context.Context, q LookupQuery, reach BranchReach) ([]PaymentMatch, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
-	var ref, cust any
+	var ref, refEsc, cust any
 	if q.Reference != "" {
 		ref = q.Reference
+		// The escaped twin of the reference rides $6: the payment_no comparison above needs the
+		// text as it was written, the gateway_ref pattern below needs it as a literal, and one
+		// parameter cannot serve both when the reference carries a metacharacter.
+		refEsc = likeutil.EscapeLikePattern(q.Reference)
 	}
 	if q.CustomerRef != "" {
-		cust = q.CustomerRef
+		cust = likeutil.EscapeLikePattern(q.CustomerRef)
 	}
 	var amount any
 	if q.AmountCents != 0 {
@@ -165,14 +175,14 @@ func (r *Repository) FindPayments(ctx context.Context, q LookupQuery, reach Bran
 		  LEFT JOIN locations l ON l.id = p.branch_id
 		 WHERE ($1::text IS NULL
 		        OR p.payment_no = $1::citext
-		        OR (p.gateway_ref <> '' AND p.gateway_ref ILIKE $1::text))
+		        OR (p.gateway_ref <> '' AND p.gateway_ref ILIKE $6::text ESCAPE '\'))
 		   AND ($2::bigint IS NULL OR p.amount_cents = $2::bigint)
 		   AND ($3::text IS NULL
-		        OR c.name ILIKE '%' || $3::text || '%'
-		        OR c.account_no::text ILIKE '%' || $3::text || '%')
+		        OR c.name ILIKE '%' || $3::text || '%' ESCAPE '\'
+		        OR c.account_no::text ILIKE '%' || $3::text || '%' ESCAPE '\')
 		   AND ($4::uuid[] IS NULL OR p.branch_id = ANY($4::uuid[]))
 		 ORDER BY p.received_at DESC, p.payment_no DESC
-		 LIMIT $5`, ref, amount, cust, reach.branchFilter(), q.Limit)
+		 LIMIT $5`, ref, amount, cust, reach.branchFilter(), q.Limit, refEsc)
 	if err != nil {
 		return nil, err
 	}
