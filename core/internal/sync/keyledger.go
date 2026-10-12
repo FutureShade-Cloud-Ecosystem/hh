@@ -161,10 +161,43 @@ func opHash(scope string, op apigen.SyncPushOperation) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// jsStringFixups put back the two characters Go's encoder always escapes
-// and JavaScript's JSON.stringify does not, so the common text matches the
-// client's canonical string byte for byte.
-var jsStringFixups = strings.NewReplacer(` `, " ", ` `, " ")
+// jsSeparators puts back the two characters Go's encoder always escapes and
+// JavaScript's JSON.stringify writes literally (U+2028 and U+2029), so the
+// common text matches the client's canonical string. It walks the encoded
+// string escape by escape, so a backslash that is itself escaped (a payload
+// holding the text backslash u 2 0 2 8) is never mistaken for the escape.
+func jsSeparators(s string) string {
+	if !strings.Contains(s, sepEscapePrefix) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			continue
+		}
+		switch {
+		case strings.HasPrefix(s[i:], lineSepEscape):
+			b.WriteRune(0x2028)
+			i += len(lineSepEscape) - 1
+		case strings.HasPrefix(s[i:], paraSepEscape):
+			b.WriteRune(0x2029)
+			i += len(paraSepEscape) - 1
+		default:
+			b.WriteByte(s[i])
+			b.WriteByte(s[i+1])
+			i++
+		}
+	}
+	return b.String()
+}
+
+// The six character escapes Go's encoder writes for the two separators.
+const (
+	sepEscapePrefix = "\\" + "u202"
+	lineSepEscape   = sepEscapePrefix + "8"
+	paraSepEscape   = sepEscapePrefix + "9"
+)
 
 func writeCanonical(b *strings.Builder, v any) error {
 	switch x := v.(type) {
@@ -212,7 +245,7 @@ func writeCanonical(b *strings.Builder, v any) error {
 		if err := enc.Encode(x); err != nil {
 			return fmt.Errorf("sync: canonical: %w", err)
 		}
-		b.WriteString(jsStringFixups.Replace(strings.TrimSuffix(buf.String(), "\n")))
+		b.WriteString(jsSeparators(strings.TrimSuffix(buf.String(), "\n")))
 	}
 	return nil
 }
