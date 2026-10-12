@@ -6,6 +6,9 @@ resolver = "2"
 members = ["core", "hh-field"]
 
 [workspace.package]
+# One source of the version for every crate and the Tauri config (Android
+# refuses 0.0.0).
+version = "0.0.1"
 edition = "2021"
 rust-version = "1.95"
 publish = false

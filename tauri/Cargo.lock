@@ -1687,7 +1687,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hh-field"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "hh-shell-core",
  "serde_json",
@@ -1698,7 +1698,7 @@ dependencies = [
 
 [[package]]
 name = "hh-shell-core"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "keyring",
  "serde",

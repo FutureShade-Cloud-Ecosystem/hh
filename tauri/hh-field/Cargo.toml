@@ -1,6 +1,6 @@
 [package]
 name = "hh-field"
-version = "0.0.0"
+version.workspace = true
 description = "HH Field: the Tauri 2 profile for field roles, shipping the micro app bundles inside it."
 edition.workspace = true
 rust-version.workspace = true
