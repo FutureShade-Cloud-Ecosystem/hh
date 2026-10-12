@@ -5,7 +5,9 @@
 // package's throw safe session mirror (the tab's own session storage, memory only when that is blocked),
 // one record per signed in user, one entry per account. A write that fails at run time (quota, or storage
 // that passed the probe and later throws) keeps the record in memory for the page's life, so a failed write
-// never leaves the account with no key held. A key is a random label, never a credential. A different user
+// never leaves the account with no key held; while that memory record stands it is the whole truth for its
+// user, so a key the route ended while writes were failing stays ended, and the next write that lands
+// writes the record as it stands. A key is a random label, never a credential. A different user
 // reads a different record and never sees these, and these are left untouched while the other user is
 // signed in.
 import { ThrowSafeMirror, type StorageLike } from "@hardscapehouse/auth";
@@ -30,8 +32,10 @@ export function newKey(): string {
 
 const KEY_PREFIX = "hh-money-desk.held-payment-keys.v1.";
 
-/** The records whose storage write failed, kept for the page's life: one map per user id, read ahead of
- * storage, stood down the moment a write lands (storage then carries the whole record). */
+/** The records whose storage write failed, kept for the page's life: one map per user id, each read on
+ * its own as the whole truth for that user (storage still holds the last record that landed, which can
+ * name a key the route has since ended), stood down the moment a write lands (that write carries the
+ * whole record as it stands). */
 const unwritten = new Map<string, Map<string, string>>();
 
 export class HeldKeys {
@@ -61,6 +65,11 @@ export class HeldKeys {
   }
 
   #read(): Map<string, string> {
+    // Once a write for this user has failed, the memory record is the whole truth for that user until a
+    // write lands: storage still holds the last record that landed, which can name a key the route has
+    // since ended, so the memory record is never laid over it.
+    const held = unwritten.get(this.#userId);
+    if (held !== undefined) return new Map(held);
     if (this.#mirror === null) return new Map(this.#memory);
     const out = new Map<string, string>();
     const raw = this.#mirror.read();
@@ -72,8 +81,6 @@ export class HeldKeys {
         }
       }
     }
-    const held = unwritten.get(this.#userId);
-    if (held !== undefined) for (const [account, key] of held) out.set(account, key);
     return out;
   }
 
@@ -85,7 +92,10 @@ export class HeldKeys {
     }
     if (all.size === 0) {
       this.#mirror.clear();
-      unwritten.delete(this.#userId);
+      // A clear in the failing window can fail as the writes did and the mirror does not report it, so
+      // the empty record stays the truth for this user until a write lands, exactly as a failed write's
+      // record does.
+      if (unwritten.has(this.#userId)) unwritten.set(this.#userId, new Map());
       return;
     }
     if (this.#mirror.write({ v: 1, keys: Object.fromEntries(all) })) {

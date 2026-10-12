@@ -81,6 +81,85 @@ test("a storage write that fails at run time keeps the key held in memory for th
   assert.equal(new HeldKeys("user-throw-1", s).get("acct-2"), undefined);
 });
 
+/** A storage whose record writes fail on demand: the probe always passes and reads always work, the
+ * shape of a quota that starts hitting mid session (the probe key is never the record's own key). */
+function failingOnDemand() {
+  const map = new Map();
+  const record = "hh-money-desk.held-payment-keys.";
+  const s = {
+    map,
+    failWrites: false,
+    failClears: false,
+    getItem: (k) => (map.has(k) ? map.get(k) : null),
+    setItem: (k, v) => {
+      if (s.failWrites && k.startsWith(record)) throw new Error("QuotaExceededError");
+      map.set(k, v);
+    },
+    removeItem: (k) => {
+      if (s.failClears && k.startsWith(record)) throw new Error("InvalidStateError");
+      map.delete(k);
+    },
+  };
+  return s;
+}
+
+test("a key the route ended while writes were failing stays ended: the memory record is the whole truth until a write lands", () => {
+  const s = failingOnDemand();
+  const user = "user-ended-A";
+  const h = new HeldKeys(user, s);
+  h.set("acct-A", "kA"); // lands
+  s.failWrites = true; // every record write now fails
+  h.set("acct-B", "kB");
+  h.delete("acct-A"); // the route answered A
+  assert.equal(h.get("acct-A"), undefined);
+  assert.equal(h.get("acct-B"), "kB");
+  // A later desk of the same user on the same page (a sign out and back in) reads the same whole truth.
+  assert.equal(new HeldKeys(user, s).get("acct-A"), undefined);
+  assert.equal(new HeldKeys(user, s).get("acct-B"), "kB");
+  // Writes land again: the landing write writes the memory record as it stands, so A stays ended.
+  s.failWrites = false;
+  h.set("acct-C", "kC");
+  const stored = JSON.parse(s.map.get(`hh-money-desk.held-payment-keys.v1.${user}`));
+  assert.deepEqual(Object.keys(stored.keys).sort(), ["acct-B", "acct-C"]);
+  const after = new HeldKeys(user, s);
+  assert.equal(after.get("acct-A"), undefined);
+  assert.equal(after.get("acct-B"), "kB");
+  assert.equal(after.get("acct-C"), "kC");
+});
+
+test("under failing writes, a delete of one of two held accounts keeps it gone", () => {
+  const s = failingOnDemand();
+  const h = new HeldKeys("user-ended-B", s);
+  h.set("acct-1", "K1"); // lands
+  s.failWrites = true;
+  h.set("acct-2", "K2"); // the write fails
+  h.delete("acct-1");
+  assert.equal(h.get("acct-1"), undefined);
+  assert.equal(h.get("acct-2"), "K2");
+  assert.equal(new HeldKeys("user-ended-B", s).get("acct-1"), undefined);
+  assert.equal(new HeldKeys("user-ended-B", s).get("acct-2"), "K2");
+});
+
+test("a delete to empty in the failing window stays empty even when the clear itself fails", () => {
+  const s = failingOnDemand();
+  const h = new HeldKeys("user-ended-C", s);
+  h.set("acct-1", "K1"); // lands
+  s.failWrites = true;
+  s.failClears = true; // the stored record cannot be dropped either
+  h.set("acct-2", "K2");
+  h.delete("acct-1");
+  h.delete("acct-2"); // the record is empty: nothing may come back from storage
+  assert.equal(h.get("acct-1"), undefined);
+  assert.equal(h.get("acct-2"), undefined);
+  assert.equal(new HeldKeys("user-ended-C", s).get("acct-2"), undefined);
+  // A write that lands writes the record as it stands (still without the ended key) and stands it down.
+  s.failWrites = false;
+  s.failClears = false;
+  h.set("acct-3", "K3");
+  const stored = JSON.parse(s.map.get("hh-money-desk.held-payment-keys.v1.user-ended-C"));
+  assert.deepEqual(Object.keys(stored.keys), ["acct-3"]);
+});
+
 test("a key is a uuid even where randomUUID is missing (a plain http origin), from getRandomValues", () => {  const real = globalThis.crypto;
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
   try {
