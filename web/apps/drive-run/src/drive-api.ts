@@ -132,12 +132,6 @@ export class DriveApi {
     return { ok: true, value: answer.value.items.map(toRun) };
   }
 
-  /** One stop with its proof photos. */
-  async stop(id: string): Promise<Result<DriverStop>> {
-    const answer = await staffDispatch.dispatchGetStop(this.#client, id);
-    return answer.ok ? { ok: true, value: toStop(answer.value) } : answer;
-  }
-
   /** The delivery's proof: the typed name and the recipient's own confirmation, the core's POD shape. */
   async pod(id: string, receivedBy: string): Promise<Result<DriverStop>> {
     const answer = await staffDispatch.dispatchCapturePod(this.#client, id, { received_by: receivedBy, affirmed: true });

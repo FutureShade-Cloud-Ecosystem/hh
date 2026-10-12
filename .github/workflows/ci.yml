@@ -372,12 +372,12 @@ jobs:
           HH_TILL_DEMO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/hh_demo_world_proof?sslmode=disable
         run: |
           set -euo pipefail
-          go test -tags demo ./cmd/core -run 'TestDemoWorld_(Quotes|CounterTill|Controller|ControllerGuards|ControllerApprovalsCursor|ControllerParkFilesInOneTransaction|ControllerRecurringRunRefusedOverTheThreshold)$' -count=1 -v -timeout 30m 2>&1 | tee "$RUNNER_TEMP/demo-world-proofs.txt"
+          go test -tags demo ./cmd/core -run 'TestDemoWorld_(Quotes|CounterTill|Controller|ControllerGuards|ControllerApprovalsCursor|ControllerParkFilesInOneTransaction|ControllerRecurringRunRefusedOverTheThreshold|DriverRunOutForDelivery|DriverRunPayloadsCarryNoMoney)$' -count=1 -v -timeout 30m 2>&1 | tee "$RUNNER_TEMP/demo-world-proofs.txt"
           if grep -q -e '--- SKIP' "$RUNNER_TEMP/demo-world-proofs.txt"; then
             echo "a demo world proof was skipped" >&2
             exit 1
           fi
-          for name in TestDemoWorld_Quotes TestDemoWorld_CounterTill TestDemoWorld_Controller TestDemoWorld_ControllerGuards TestDemoWorld_ControllerApprovalsCursor TestDemoWorld_ControllerParkFilesInOneTransaction TestDemoWorld_ControllerRecurringRunRefusedOverTheThreshold; do
+          for name in TestDemoWorld_Quotes TestDemoWorld_CounterTill TestDemoWorld_Controller TestDemoWorld_ControllerGuards TestDemoWorld_ControllerApprovalsCursor TestDemoWorld_ControllerParkFilesInOneTransaction TestDemoWorld_ControllerRecurringRunRefusedOverTheThreshold TestDemoWorld_DriverRunOutForDelivery TestDemoWorld_DriverRunPayloadsCarryNoMoney; do
             if ! grep -q -e "--- PASS: $name " "$RUNNER_TEMP/demo-world-proofs.txt"; then
               echo "$name did not pass" >&2
               exit 1
@@ -531,7 +531,17 @@ jobs:
           trap 'docker rm -f -v hh-evening-guard-pg >/dev/null 2>&1 || true' EXIT
           ../scripts/evening-guard/prepare.sh "$RUNNER_TEMP/evening-guard"
           target="$(date -u +%s)"
-          target=$(( target - target % 86400 + 1800 ))
+          # The most recent half past UTC midnight that has already passed, never the
+          # one still ahead of the real clock. A pin ahead of the real clock keeps this
+          # libfaketime build's Postgres from firing its SIGALRM timeouts at all
+          # (statement_timeout, lock_timeout and the deadlock detector ride the same
+          # timer), so the purchasing deadlock legs wait out their own deadlines
+          # instead of answering the contention sentinel: every CI failure of this
+          # step reached it inside the only window whose pin sits ahead of the real
+          # clock, before half past UTC midnight. Pinned behind the real clock every
+          # timer fires on time, and the guard keeps the same evening window, anchored
+          # to the most recent half past midnight instead of the current UTC day's.
+          target=$(( (target - 1800) / 86400 * 86400 + 1800 ))
           pin="$(date -u -d "@$target" '+%Y-%m-%d %H:%M:%S')"
           # The same digest pinned mirror the services above use (Docker Hub's anonymous rate
           # limit refuses the runners), so the guard pulls what the jobs already pull; the

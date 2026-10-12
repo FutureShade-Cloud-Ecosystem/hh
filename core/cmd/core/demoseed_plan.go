@@ -10,11 +10,12 @@
 //
 //	A · Home tiles show distributions, not a single bar   → §5 orders, §6 invoices, §7 counter sales
 //	B · Dispatch is testable end to end                   → §8 fleet, §9 runs, §10 stops, §11 will-call
-//	C · Picking and loading are testable                  → §12 tasks, shortages, scan trail
-//	D · Counter/POS is testable                           → §2 customers, §3 products, §4 pricing
-//	E · Determinism                                       → the whole file, and planInput.Now
+//	C · Picking and loading are testable                   → §12 tasks, shortages, scan trail
+//	D · Counter/POS is testable                            → §2 customers, §3 products, §4 pricing
+//	E · Determinism                                        → the whole file, and planInput.Now
 //	F · The Needs-you queue has something in every row    → §13 parked tickets, §14 approvals
-//	G · The "today" widgets are still alive next week     → §15, and dayKey in ids.go
+//	G · The "today" widgets and the Driver's out for delivery run are still alive next week
+//	                                                       → §15, and dayKey in ids.go
 //
 // TWO RULINGS MADE HERE, both recorded in NOTES-DEMO-DATA.md so they can be reversed cheaply:
 //
@@ -35,7 +36,8 @@
 // 4th adds that day's counter sale and that day's unassigned delivery beside the 3rd's rather than
 // recognising them and writing nothing. ids.go argues the whole case; the short version is that a
 // tile reading a POPULATION wants the population to hold still, a tile reading a DAY needs a row
-// dated today, and only four reads in the product are of the second kind.
+// dated today, and only four reads in the product are of the second kind, plus the Driver's run
+// sheet, which asks for the dealer's day and must find a run out for delivery on it.
 // demoseed_plan carries the pin's cmd/demoseed/plan.go (the fold:
 // one-shot subcommand of cmd/core, plan and apply modes preserved).
 package main
@@ -841,6 +843,21 @@ var demoApprovals = []approvalSpec{
 // seven-run fleet is stable-keyed on purpose, so a day-keyed stop pointing at a run frozen on the
 // first-apply date would be a delivery scheduled for Thursday riding a truck that went out on Monday.
 //
+// THE ONE RUN THAT EXCEPTION ADMITS IS THE DRIVER'S OWN, and it is a run of its own rather than a
+// stop on the frozen fleet's. The Driver persona's card walks Mark loaded, Mark en route, Delivered
+// with proof, Could not deliver and Complete run, and the core refuses Mark en route on a run that
+// was never dispatched (AdvanceStop's ErrRunNotDispatched), so the walk needs a DISPATCHED run on
+// the dealer's current day, every day: on the seed day alone it would go dark on the first deploy
+// after midnight, exactly the way the four measurements above did. The run is therefore day-keyed
+// whole (the run row, its two stops and the order each stop is about), sits on the stable crew
+// (truck T1, driver D1, Kingston, the branch the persona's grant reaches) and carries what the
+// core's own dispatch would set: DISPATCHED, with a departure stamp. Its stops are seeded READY,
+// which is seeded, not core reachable (the core's dispatch loads every stop as it sends the run
+// out): it is there so the walk can start at Mark loaded, which the stop matrix allows and the
+// drive run acceptance legs were written against. The stable fleet's R4 and R5 stay exactly as
+// they are: a planned present and a planned future for the board, beside a present that is out on
+// the road.
+//
 // EACH ONE BRINGS ITS OWN ORDER. A stop and a counter sale both need an order to be about, and
 // pointing at §5's stable order book would attach a hundred stops to order DEMO-KGN-O01 over a
 // hundred deploys. The order is one row and one line; it costs less than the incoherence.
@@ -873,6 +890,36 @@ var demoTodayStops = []todaySpec{
 	{Key: "T4", Branch: 1, Cust: "C02", Prod: "P08", Qty: "5.0000", QtyF: 5,
 		Contact: "Back gate", Phone: "613-555-0232", Addr: "271 Dundas St E",
 		City: "Trenton", Postal: "K8V 1M1", Lat: 44.1022, Lng: -77.5652, WeightKg: "5000.0000"},
+}
+
+// The Driver's run for today, out for delivery: the two stops it carries, each about its own order
+// (same ruling as the unassigned deliveries above: the stable order book must not accumulate a stop
+// a day). Both customers hold terms, so neither order owes anything at the door and the driver's
+// payloads carry no money: no owed amount, no deposit pair, no door money, which the core's own
+// fence would otherwise word at the gate. Both weigh, so the run's gauge reads green on FLAT-1
+// (1456 + 1768 = 3224kg of 9000kg).
+type driverDayStopSpec struct {
+	Key      string // the day-independent half of the key: which of the run's stops this is
+	Cust     string
+	Prod     string
+	Qty      string // NUMERIC literal in the product's base UOM
+	QtyF     float64
+	Contact  string
+	Phone    string
+	Addr     string
+	City     string
+	Postal   string
+	Lat, Lng float64
+	WeightKg string
+}
+
+var demoDriverDayStops = []driverDayStopSpec{
+	{Key: "D1", Cust: "C08", Prod: "P01", Qty: "560.0000", QtyF: 560,
+		Contact: "Municipal yard office", Phone: "613-555-0241", Addr: "290 Counter St",
+		City: "Kingston", Postal: "K7M 8T6", Lat: 44.2517, Lng: -76.5225, WeightKg: "1456.0000"},
+	{Key: "D2", Cust: "C04", Prod: "P03", Qty: "520.0000", QtyF: 520,
+		Contact: "Site super, rear laneway", Phone: "613-555-0242", Addr: "15 Woodhaven Dr",
+		City: "Kingston", Postal: "K7M 7S3", Lat: 44.2209, Lng: -76.5342, WeightKg: "1768.0000"},
 }
 
 // -- §16 what the demo stock COSTS, so the two cost-class measures stop lying ---------------------
