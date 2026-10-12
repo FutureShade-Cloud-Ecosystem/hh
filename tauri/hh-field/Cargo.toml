@@ -18,3 +18,9 @@ hh-shell-core = { path = "../core" }
 tauri = { version = "=2.12.3", features = [] }
 tauri-plugin-sql = { version = "=2.5.0", features = ["sqlite"] }
 serde_json = "1"
+
+# `probe` is the probe 4 proof harness (probe.js and probe_report). Off by
+# default; enable it only for the proof runs. Removed when the real shell lands.
+[features]
+default = []
+probe = []

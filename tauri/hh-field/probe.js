@@ -1,3 +1,5 @@
+// PROBE SCAFFOLDING, removed when the real shell lands. Compiled in only with
+// the `probe` cargo feature (off by default), never in a normal build.
 // Probe 4 only: runs in the webview beside the front door bundle, writes one
 // SQLite row and reads it back, stores one keychain value and reads it back,
 // then reports the result and the webview origin to the Rust log.

@@ -12,6 +12,9 @@ fn keychain_get(name: String) -> Result<String, String> {
     hh_shell_core::keychain::get(KEYCHAIN_SERVICE, &name)
 }
 
+// PROBE SCAFFOLDING, removed when the real shell lands: compiled only with
+// the `probe` cargo feature (off by default), so a normal build never carries it.
+#[cfg(feature = "probe")]
 #[tauri::command]
 fn probe_report(app: tauri::AppHandle, json: String) {
     println!("HH_PROBE4 {json}");
@@ -23,14 +26,19 @@ fn probe_report(app: tauri::AppHandle, json: String) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_sql::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![keychain_set, keychain_get, probe_report])
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_sql::Builder::default().build());
+    #[cfg(feature = "probe")]
+    let builder = builder.invoke_handler(tauri::generate_handler![keychain_set, keychain_get, probe_report]);
+    #[cfg(not(feature = "probe"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![keychain_set, keychain_get]);
+    builder
         .setup(|app| {
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                .title("HH Field")
-                .initialization_script(include_str!("../probe.js"))
-                .build()?;
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default()).title("HH Field");
+            // PROBE SCAFFOLDING, removed when the real shell lands (see probe.js).
+            #[cfg(feature = "probe")]
+            let window = window.initialization_script(include_str!("../probe.js"));
+            window.build()?;
             Ok(())
         })
         .run(tauri::generate_context!())
