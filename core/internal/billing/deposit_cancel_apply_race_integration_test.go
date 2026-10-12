@@ -260,8 +260,10 @@ func TestIntegration_CancelDeposits_ApplyFirstThenCancelCreditsThePayment(t *tes
 
 // THE WALK ORDER: with two live deposit documents on one order whose created
 // order differs from their id order, the settlement must walk them in ID
-// order, the order the apply's multi invoice walk locks the same rows in, or
-// a cancel and an apply naming both can meet head on. The feed seq each
+// order, its OWN sort (the shared reader hands the documents back oldest
+// first, the order the POS return's account rail offsets them in), because the
+// id order is the one the apply's multi invoice walk locks the same rows in,
+// or a cancel and an apply naming both can meet head on. The feed seq each
 // clearing draws makes the walk observable: the document settled first carries
 // the smaller seq.
 func TestIntegration_CancelDeposits_TheWalkTakesTheDocumentsInIdOrder(t *testing.T) {

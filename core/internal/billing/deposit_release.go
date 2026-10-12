@@ -93,14 +93,13 @@ type depositQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// depositDocumentIDs lists the order's live SUPPLIER_DEPOSIT documents (not DRAFT, not VOID).
+// depositDocumentIDs lists the order's live SUPPLIER_DEPOSIT documents (not DRAFT, not VOID), oldest first.
 func depositDocumentIDs(ctx context.Context, q depositQuerier, orderID string) ([]string, error) {
 	rows, err := q.Query(ctx, `
 		SELECT id::text FROM invoices
 		 WHERE order_id = $1::uuid AND doc_type = 'INVOICE'
 		   AND source_kind = 'SUPPLIER_DEPOSIT' AND status NOT IN ('DRAFT','VOID')
-		 -- id order, the order the apply's multi invoice walk locks the same rows in, so the two writers can never meet head on
-		 ORDER BY id`, orderID)
+		 ORDER BY created_at, id`, orderID)
 	if err != nil {
 		return nil, fmt.Errorf("billing: deposit documents for %s: %w", orderID, err)
 	}

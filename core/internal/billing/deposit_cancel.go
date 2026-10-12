@@ -113,7 +113,11 @@ func (w *InvoiceWriter) CancelOrderDeposits(ctx context.Context, tx pgx.Tx, orde
 		// stamps the feed seq, so a walk that locked its second document only
 		// after the first's counter draw would hold the counter while waiting
 		// on a row another invoice writer already held. Ascending id, the one
-		// order the apply's multi invoice walk takes.
+		// order the apply's multi invoice walk takes. The WALK is the cancel's
+		// own: the shared reader hands the documents back oldest first (the
+		// order the POS return's account rail offsets them in), so the cancel
+		// sorts the ids itself and walks the sorted list, keeping the apply's
+		// lock order without bending the reader to it.
 		sorted := append([]string(nil), ids...)
 		sort.Strings(sorted)
 		for _, id := range sorted {
@@ -121,7 +125,7 @@ func (w *InvoiceWriter) CancelOrderDeposits(ctx context.Context, tx pgx.Tx, orde
 				return err
 			}
 		}
-		for _, id := range ids {
+		for _, id := range sorted {
 			if err := w.settleDepositDocument(ctx, q, orderID, id, disposition, reason); err != nil {
 				return fmt.Errorf("deposit document %s: %w", id, err)
 			}
