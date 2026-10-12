@@ -59,23 +59,36 @@ import (
 //   - A key is one key whatever its letter case: the engine canonicalizes
 //     it once (lower case uuid text) before the lock, the lookup, the
 //     module's dedup and the remember, so every one of them sees one
-//     spelling and the two spellings share one lock.
+//     spelling and the two spellings share one lock. The seam: a key that
+//     was sent in upper case and applied before this ledger was stored as
+//     sent, and a module that dedups by comparing text (the tasks event
+//     note) no longer matches it against the lower case spelling, so that
+//     one legacy key applies again. The uuid typed columns are unaffected,
+//     the money scopes refuse every push, and the client mints lower case
+//     keys, so it takes a caller supplied upper case key older than the
+//     ledger. It closes with the rest of the pre ledger keys, above.
 //   - Two pushes of one key race: find, apply and remember are separate
 //     statements, so without serialization both bodies could apply. The
 //     engine takes the ledger's per slot Lock around all three, so the
 //     second push sees the first one's hash (or its refusal) before it
 //     applies anything. A holder keeps a pool connection for the whole
-//     push, so the Postgres ledger caps holders at half the pool and
-//     refuses a pool of fewer than two connections at construction.
-//     Pushes of one hot key queue behind one another by design.
+//     push, so the Postgres ledger caps holders at half the pool. It does
+//     not refuse a small pool at construction: Lock refuses a pool of fewer
+//     than two connections with ErrLedgerPoolTooSmall, and serve refuses it
+//     at boot (RequireLedgerPool). Pushes of one hot key queue behind one
+//     another by design.
 //   - The ledger write after the module's commit runs on a context detached
 //     from the request: a client that drops its connection cancels the
 //     request context but not the binding. What can still leave one applied
 //     key unbound is a fault of the ledger write itself (the database
-//     refusing it) or the process dying between the module's commit and the
-//     insert. Then the push fails whole, the client retries it whole, and
-//     the retry sees the applied key with no hash (a legacy key, above)
-//     while the row still holds it. The guarantee is weakest for exactly
+//     refusing it), the process dying between the module's commit and the
+//     insert, or a client that drops while the module's own COMMIT round
+//     trip is in flight: the stores commit on the request context, so the
+//     driver can return the cancellation although the server committed, and
+//     the push fails before the ledger write runs. That last window is one
+//     database round trip wide. In each case the push fails whole, the
+//     client retries it whole, and the retry sees the applied key with no
+//     hash (a legacy key, above) while the row still holds it. The guarantee is weakest for exactly
 //     that one key per such fault, never silently wrong for a key that was
 //     stored.
 
