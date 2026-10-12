@@ -15,6 +15,7 @@
 //                 conflict or rejected only if the server did not apply it
 //   I8 keys       every send of an operation carries the same key and the same body
 //   I9 rows       no outbox row is deleted, and a closed row never reopens
+//   I10 offline   the runner rests in offline only when the platform said so; a failed request is unreachable
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OfflineStore } from "../src/store.ts";
@@ -183,8 +184,10 @@ async function quiesce(w) {
   w.server.setOffline(false);
   w.server.setAuthValid(true);
   w.online = true;
+  // Only the platform's own offline needs the platform's ONLINE. A failed request (unreachable) must
+  // recover from a plain request: an ONLINE here used to mask a runner parked after one dropped response.
   if (w.runner.state === "auth_expired") await w.runner.dispatch({ type: "SESSION_REFRESHED", online: true });
-  else await w.runner.dispatch({ type: "ONLINE" });
+  else if (w.runner.state === "offline") await w.runner.dispatch({ type: "ONLINE" });
   for (let i = 0; i < 3 && (await w.store.outbox.pending()).length > 0; i++) await w.runner.request();
   await w.runner.request();
   const pending = await w.store.outbox.pending();
@@ -250,6 +253,8 @@ async function check(w, pre, action) {
   }
   w.prevRows = new Map(rows.map((r) => [r.key, r.status]));
   assert.ok(!["pushing", "pulling"].includes(w.runner.state), "the runner stopped mid cycle");
+  // I10 offline
+  if (w.runner.state === "offline") assert.equal(w.online, false, `I10: the runner is offline but the platform is online (${action})`);
 }
 
 async function walk(seed) {
@@ -298,7 +303,7 @@ test("model: the generator reaches every state, every outcome kind and every fau
     for (const c of await w.store.cards.list()) kinds.add(c.kind);
     for (const r of await w.store.outbox.list()) kinds.add(`row:${r.status}`);
   }
-  assert.deepEqual([...states].sort(), ["auth_expired", "conflict", "idle", "offline", "pulling", "pushing"]);
+  assert.deepEqual([...states].sort(), ["auth_expired", "conflict", "idle", "offline", "pulling", "pushing", "unreachable"]);
   for (const k of ["superseded", "review", "merge_report", "rejected", "row:applied", "row:conflict", "row:rejected"]) assert.ok(kinds.has(k), `never produced ${k}`);
   assert.ok(restarts > 0);
 });
@@ -320,7 +325,6 @@ test("a lost response for a per field merge costs the merge report, and nothing 
   w.server.touch("attachments", uuid(1), { b: 2 });
   const op = await enqueueOk(w, { scope: "attachments", op: "update", payload: { id: uuid(1), a: 9 }, baseSeq: 1 });
   w.server.failNext("dropResponse");
-  await w.runner.dispatch({ type: "ONLINE" });
   await w.runner.dispatch({ type: "ONLINE" });
   await w.runner.request();
   const row = (await w.store.outbox.list()).find((r) => r.key === op.key);

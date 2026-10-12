@@ -10,8 +10,7 @@ const events = {
   OFFLINE: { type: "OFFLINE" },
   SYNC_REQUESTED: { type: "SYNC_REQUESTED" },
   PUSH_DONE: { type: "PUSH_DONE" },
-  "PUSH_FAULT/cards": { type: "PUSH_FAULT", openCards: true },
-  "PUSH_FAULT/none": { type: "PUSH_FAULT", openCards: false },
+  PUSH_FAULT: { type: "PUSH_FAULT" },
   "PULL_DONE/cards": { type: "PULL_DONE", openCards: true },
   "PULL_DONE/none": { type: "PULL_DONE", openCards: false },
   "PULL_FAULT/cards": { type: "PULL_FAULT", openCards: true },
@@ -29,18 +28,26 @@ const intended = {
     ONLINE: ["pushing", ["push"]],
     AUTH_EXPIRED: ["auth_expired", []],
   },
+  // A request that failed (NETWORK_LOST) is not the platform saying offline
+  // (OFFLINE): it parks in unreachable, which a retry leaves on its own.
+  unreachable: {
+    ONLINE: ["pushing", ["push"]],
+    SYNC_REQUESTED: ["pushing", ["push"]],
+    OFFLINE: ["offline", []],
+    AUTH_EXPIRED: ["auth_expired", []],
+  },
   idle: {
     SYNC_REQUESTED: ["pushing", ["push"]],
     OFFLINE: ["offline", []],
-    NETWORK_LOST: ["offline", []],
+    NETWORK_LOST: ["unreachable", []],
     AUTH_EXPIRED: ["auth_expired", []],
   },
   pushing: {
     PUSH_DONE: ["pulling", ["pull"]],
-    "PUSH_FAULT/cards": ["conflict", []],
-    "PUSH_FAULT/none": ["idle", []],
+    // A push fault does not stop the pull: the device's reads must not go stale behind a stuck write.
+    PUSH_FAULT: ["pulling", ["pull"]],
     OFFLINE: ["offline", []],
-    NETWORK_LOST: ["offline", []],
+    NETWORK_LOST: ["unreachable", []],
     AUTH_EXPIRED: ["auth_expired", []],
   },
   pulling: {
@@ -49,14 +56,14 @@ const intended = {
     "PULL_FAULT/cards": ["conflict", []],
     "PULL_FAULT/none": ["idle", []],
     OFFLINE: ["offline", []],
-    NETWORK_LOST: ["offline", []],
+    NETWORK_LOST: ["unreachable", []],
     AUTH_EXPIRED: ["auth_expired", []],
   },
   conflict: {
     SYNC_REQUESTED: ["pushing", ["push"]],
     CARDS_CLEARED: ["idle", []],
     OFFLINE: ["offline", []],
-    NETWORK_LOST: ["offline", []],
+    NETWORK_LOST: ["unreachable", []],
     AUTH_EXPIRED: ["auth_expired", []],
   },
   auth_expired: {
@@ -65,8 +72,8 @@ const intended = {
   },
 };
 
-test("the states are the six the plan names, and the machine starts offline", () => {
-  assert.deepEqual([...SYNC_STATES].sort(), ["auth_expired", "conflict", "idle", "offline", "pulling", "pushing"]);
+test("the states are the plan's six plus unreachable, and the machine starts offline", () => {
+  assert.deepEqual([...SYNC_STATES].sort(), ["auth_expired", "conflict", "idle", "offline", "pulling", "pushing", "unreachable"]);
   assert.equal(INITIAL, "offline");
 });
 
@@ -154,7 +161,14 @@ test("the only ways into pushing are a reconnect, a request, and a refreshed ses
       if (t.state === "pushing" && state !== "pushing") into.add(`${state} on ${event.type}`);
     }
   }
-  assert.deepEqual([...into].sort(), ["auth_expired on SESSION_REFRESHED", "conflict on SYNC_REQUESTED", "idle on SYNC_REQUESTED", "offline on ONLINE"]);
+  assert.deepEqual([...into].sort(), [
+    "auth_expired on SESSION_REFRESHED",
+    "conflict on SYNC_REQUESTED",
+    "idle on SYNC_REQUESTED",
+    "offline on ONLINE",
+    "unreachable on ONLINE",
+    "unreachable on SYNC_REQUESTED",
+  ]);
 });
 
 test("auth expired parks: nothing but a refreshed session leaves it, and it starts no work otherwise", () => {
@@ -171,4 +185,18 @@ test("offline never starts work except on reconnect", () => {
     if (event.type === "ONLINE") continue;
     assert.equal(t.effects.length, 0, name);
   }
+});
+
+test("a failed request leaves its state on a retry or a request, with no platform ONLINE event", () => {
+  for (const state of ["idle", "pushing", "pulling", "conflict"]) {
+    assert.equal(transition(state, events.NETWORK_LOST).state, "unreachable", state);
+  }
+  assert.deepEqual(transition("unreachable", events.SYNC_REQUESTED), { state: "pushing", effects: ["push"] });
+  assert.equal(transition("offline", events.NETWORK_LOST).state, "offline");
+  assert.deepEqual(transition("offline", events.SYNC_REQUESTED), { state: "offline", effects: [] }, "the platform said offline: a request must not try");
+  assert.equal(transition("unreachable", events.OFFLINE).state, "offline", "the platform can still say offline");
+});
+
+test("a push fault runs the pull, so the reads do not go stale behind a stuck write", () => {
+  assert.deepEqual(transition("pushing", events.PUSH_FAULT), { state: "pulling", effects: ["pull"] });
 });

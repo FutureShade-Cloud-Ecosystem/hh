@@ -55,12 +55,12 @@ test("a push fault returns to idle with the outbox kept, and a later request ret
   assert.equal(server.appliedOrder.length, 2);
 });
 
-test("losing the network during a push goes offline and keeps everything", async () => {
+test("losing the network during a push is unreachable, and keeps everything", async () => {
   const { runner, store, server } = await rig();
   await store.enqueue(pick(1));
   server.failNext("dropResponse");
   await runner.dispatch({ type: "ONLINE" });
-  assert.equal(runner.state, "offline");
+  assert.equal(runner.state, "unreachable");
   assert.equal((await store.outbox.pending()).length, 1);
   await runner.dispatch({ type: "ONLINE" });
   assert.equal(runner.state, "idle");
@@ -126,4 +126,51 @@ test("every event the runner emits is in the machine's vocabulary", async () => 
   for (const t of seen) assert.ok(machine.EVENT_TYPES.includes(t), t);
   assert.ok(seen.has("PUSH_DONE") && seen.has("PULL_DONE") && seen.has("NETWORK_LOST") && seen.has("AUTH_EXPIRED"));
   void runner;
+});
+
+test("one failed request does not park the runner: a sync request retries with no ONLINE event", async () => {
+  const { runner, store, server } = await rig();
+  const op = await store.enqueue(pick(1));
+  server.failNext("dropResponse");
+  await runner.dispatch({ type: "ONLINE" });
+  assert.equal(runner.state, "unreachable");
+  assert.equal((await store.outbox.pending()).length, 1);
+  await runner.request();
+  assert.equal(runner.state, "idle", "a retry must leave the failed state by itself");
+  assert.deepEqual(await store.outbox.pending(), []);
+  assert.equal(server.applyCount(op.key), 1);
+});
+
+test("a failed pull is unreachable too, and a request retries it", async () => {
+  const { runner, server } = await rig();
+  await runner.dispatch({ type: "ONLINE" });
+  server.setOffline(true);
+  await runner.request();
+  assert.equal(runner.state, "unreachable");
+  server.setOffline(false);
+  await runner.request();
+  assert.equal(runner.state, "idle");
+});
+
+test("the platform saying offline still parks the runner until it says online", async () => {
+  const { runner, server } = await rig();
+  await runner.dispatch({ type: "ONLINE" });
+  await runner.dispatch({ type: "OFFLINE" });
+  const seen = server.requests.length;
+  await runner.request();
+  assert.equal(runner.state, "offline");
+  assert.equal(server.requests.length, seen);
+  await runner.dispatch({ type: "ONLINE" });
+  assert.equal(runner.state, "idle");
+});
+
+test("a push fault still lets the pull run, so reads do not go stale behind a stuck write", async () => {
+  const { runner, store, server } = await rig();
+  await store.enqueue(pick(1));
+  server.failNext("status", 500);
+  await runner.dispatch({ type: "ONLINE" });
+  assert.equal(runner.state, "idle");
+  assert.ok(server.requests.some((q) => q.kind === "pull"), "the pull must run after a push fault");
+  assert.equal((await store.outbox.pending()).length, 1);
+  assert.equal((await store.list("pick_tasks")).rows.length, 9);
 });
