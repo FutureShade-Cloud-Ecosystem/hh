@@ -11,6 +11,10 @@
 //  6. A fault is whole: an operational fault, a malformed answer or an
 //     unreadable network marks nothing, and the next replay sends the same
 //     rows again, where the server dedups on the keys.
+//  7. A refusal is a verdict: a standing refusal of a whole request (400, 403,
+//     404, 413, 501) is split to single operations, and one still refused
+//     alone is closed as rejected with a card. It is never retried forever.
+//  8. A push stays under MAX_REQUEST_BYTES as well as under maxBatch rows.
 import type { SyncPushOperation, SyncPushResult } from "@hardscapehouse/api-client";
 import { bodyHash, canonicalJson } from "./canonical.js";
 import type { ScopeBook, WriteRefusalReason } from "./scopes.js";
@@ -65,10 +69,18 @@ export interface OutboxOptions {
   scopes: ScopeBook;
   now?: () => string;
   newKey?: () => string;
-  /** Most operations in one push request. The core's body cap is 1 MiB. */
+  /** Most operations in one push request; the bytes are capped separately (MAX_REQUEST_BYTES). */
   maxBatch?: number;
   onResult?: ResultRecorder;
 }
+
+/** One push request body stays under the core's 1 MiB cap (handler.go) with headroom. */
+export const MAX_REQUEST_BYTES = 1024 * 1024 - 64 * 1024;
+/** `{"ops":[` and `]}` around the operations, and one comma between neighbours. */
+const ENVELOPE_BYTES = 10;
+const encoder = new TextEncoder();
+
+const opBytes = (op: SyncPushOperation): number => encoder.encode(JSON.stringify(op)).length;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OPS: readonly string[] = ["create", "update", "delete"];
@@ -112,6 +124,36 @@ function toRow(r: DbRow): OutboxRow {
 /** The bytes the hash covers: everything about the operation except its key and its clock. */
 function hashInput(r: { scope: string; op: string; entity: string | null; payload: unknown; baseSeq: number | null }) {
   return { scope: r.scope, op: r.op, entity: r.entity, payload: r.payload, baseSeq: r.baseSeq };
+}
+
+interface Totals {
+  sent: number;
+  applied: number;
+  conflicts: number;
+  rejected: number;
+}
+
+function toOperation(row: OutboxRow): SyncPushOperation {
+  return {
+    client_id: row.key,
+    op: row.op,
+    ...(row.entity !== null ? { entity: row.entity } : {}),
+    payload: row.payload,
+    ...(row.baseSeq !== null ? { base_seq: row.baseSeq } : {}),
+  };
+}
+
+/** The longest prefix of a run whose push body stays under MAX_REQUEST_BYTES (always at least one row). */
+function fitBytes(run: readonly OutboxRow[]): OutboxRow[] {
+  let bytes = ENVELOPE_BYTES;
+  const fit: OutboxRow[] = [];
+  for (const row of run) {
+    const next = opBytes(toOperation(row)) + (fit.length > 0 ? 1 : 0);
+    if (fit.length > 0 && bytes + next > MAX_REQUEST_BYTES) break;
+    bytes += next;
+    fit.push(row);
+  }
+  return fit;
 }
 
 function invalid(message: string): EnqueueResult {
@@ -170,6 +212,16 @@ export class Outbox {
     }
 
     const key = input.key ?? this.#newKey();
+    const size = opBytes({
+      client_id: key,
+      op: input.op as OpKind,
+      ...(entity !== null ? { entity } : {}),
+      payload: JSON.parse(text) as Record<string, unknown>,
+      ...(baseSeq !== null ? { base_seq: baseSeq } : {}),
+    });
+    if (size + ENVELOPE_BYTES > MAX_REQUEST_BYTES) {
+      return invalid(`operation too large: ${size} bytes, a push request carries at most ${MAX_REQUEST_BYTES}`);
+    }
     const existing = await this.#sql.all<{ seq: number; body_hash: string }>(
       "SELECT seq, body_hash FROM outbox WHERE idempotency_key = ?",
       [key],
@@ -210,7 +262,7 @@ export class Outbox {
   }
 
   async #replay(transport: SyncTransport): Promise<ReplayOutcome> {
-    const totals = { sent: 0, applied: 0, conflicts: 0, rejected: 0 };
+    const totals: Totals = { sent: 0, applied: 0, conflicts: 0, rejected: 0 };
     for (;;) {
       const head = await this.#sql.all<DbRow>(
         "SELECT * FROM outbox WHERE status = 'pending' ORDER BY seq LIMIT ?",
@@ -242,31 +294,56 @@ export class Outbox {
         continue;
       }
 
-      const ops: SyncPushOperation[] = run.map((row) => ({
-        client_id: row.key,
-        op: row.op,
-        ...(row.entity !== null ? { entity: row.entity } : {}),
-        payload: row.payload,
-        ...(row.baseSeq !== null ? { base_seq: row.baseSeq } : {}),
-      }));
+      // One request carries at most MAX_REQUEST_BYTES; the rest of the run waits for the next turn of the loop.
+      const batch = fitBytes(run);
+      const outcome = await this.#push(transport, scope, batch, totals, true);
+      if (outcome) return outcome;
+    }
+  }
+
+  /**
+   * Send one batch and record the answer. Returns null when the batch was dealt
+   * with and the replay should carry on, or the outcome that ends the replay.
+   * A standing refusal (400, 403, 404, 413, 501) is a verdict on the request:
+   * a batch of several is split to single operations, and one still refused
+   * alone is closed as rejected with its card.
+   */
+  async #push(transport: SyncTransport, scope: string, run: OutboxRow[], totals: Totals, mayRetrySingly: boolean): Promise<ReplayOutcome | null> {
+    const ops: SyncPushOperation[] = run.map(toOperation);
+    const response = await transport.push(scope, ops);
+    if (!response.ok) {
+      const failure = classifyFailure(response.error, response.status);
+      if (failure.kind === "refused") {
+        if (mayRetrySingly && run.length > 1) {
+          for (const row of run) {
+            const outcome = await this.#push(transport, scope, [row], totals, false);
+            if (outcome) return outcome;
+          }
+          return null;
+        }
+        return this.#closeRejected(run, `request refused (${failure.status}): ${failure.message}`, totals);
+      }
       totals.sent += ops.length;
-      const response = await transport.push(scope, ops);
-      if (!response.ok) {
-        const failure = classifyFailure(response.error, response.status);
-        if (failure.kind === "fault") await this.#noteFault(run, failure.message);
-        return failure.kind === "fault" ? { kind: "fault", message: failure.message, status: failure.status } : failure;
+      if (failure.kind === "fault") {
+        await this.#noteFault(run, failure.message);
+        return { kind: "fault", message: failure.message, status: failure.status };
       }
+      return failure;
+    }
+    totals.sent += ops.length;
 
-      const results = response.value.results;
-      const answered =
-        Array.isArray(results) && results.length === run.length && results.every((res, i) => res.client_id === run[i]!.key);
-      if (!answered) {
-        const message = "push response did not answer each operation in order";
-        await this.#noteFault(run, message);
-        return { kind: "fault", message };
-      }
+    const results = response.value.results;
+    const answered =
+      Array.isArray(results) && results.length === run.length && results.every((res, i) => res.client_id === run[i]!.key);
+    if (!answered) {
+      const message = "push response did not answer each operation in order";
+      await this.#noteFault(run, message);
+      return { kind: "fault", message };
+    }
 
+    try {
       const statements: SqlStatement[] = [];
+      const counted: Totals = { sent: 0, applied: 0, conflicts: 0, rejected: 0 };
       for (let i = 0; i < run.length; i++) {
         const row = run[i]!;
         const result = results[i]!;
@@ -274,28 +351,47 @@ export class Outbox {
         if (result.status === "applied") status = "applied";
         else if (result.status === "conflict") status = "conflict";
         else if (result.status === "rejected") status = "rejected";
-        else {
-          const message = `push response carries an unknown status for ${row.key}`;
-          await this.#noteFault(run, message);
-          return { kind: "fault", message };
-        }
+        else throw new Error(`push response carries an unknown status for ${row.key}`);
         statements.push({
           sql: "UPDATE outbox SET status = ?, server_seq = ?, error = ? WHERE idempotency_key = ? AND status = 'pending'",
           params: [status, result.seq ?? null, status === "rejected" ? (result.error ?? "rejected") : null, row.key],
         });
         if (this.#onResult) statements.push(...this.#onResult({ row, result }));
-        if (status === "applied") totals.applied++;
-        else if (status === "conflict") totals.conflicts++;
-        else totals.rejected++;
-        if (status === "applied" && result.conflict) totals.conflicts++;
+        if (status === "applied") counted.applied++;
+        else if (status === "conflict") counted.conflicts++;
+        else counted.rejected++;
+        if (status === "applied" && result.conflict) counted.conflicts++;
       }
-      try {
-        await this.#sql.atomic(statements);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        await this.#noteFault(run, message);
-        return { kind: "fault", message };
+      await this.#sql.atomic(statements);
+      totals.applied += counted.applied;
+      totals.conflicts += counted.conflicts;
+      totals.rejected += counted.rejected;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await this.#noteFault(run, message);
+      return { kind: "fault", message };
+    }
+    return null;
+  }
+
+  /** Close rows as rejected, each with its card, in one atomic unit. Returns a fault outcome when that failed. */
+  async #closeRejected(rows: readonly OutboxRow[], message: string, totals: Totals): Promise<ReplayOutcome | null> {
+    try {
+      const statements: SqlStatement[] = [];
+      for (const row of rows) {
+        statements.push({
+          sql: "UPDATE outbox SET status = 'rejected', error = ? WHERE idempotency_key = ? AND status = 'pending'",
+          params: [message, row.key],
+        });
+        if (this.#onResult) statements.push(...this.#onResult({ row, result: { client_id: row.key, status: "rejected", error: message } }));
       }
+      await this.#sql.atomic(statements);
+      totals.rejected += rows.length;
+      return null;
+    } catch (error) {
+      const fault = error instanceof Error ? error.message : String(error);
+      await this.#noteFault(rows, fault);
+      return { kind: "fault", message: fault };
     }
   }
 

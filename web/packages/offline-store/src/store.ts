@@ -132,7 +132,7 @@ export class OfflineStore {
       const res = await transport.pull(scope, since, this.#pageLimit);
       if (!res.ok) {
         const failure = classifyFailure(res.error, res.status);
-        return failure.kind === "fault" ? { kind: "fault", message: failure.message, status: failure.status } : failure;
+        return failure.kind === "fault" || failure.kind === "refused" ? { kind: "fault", message: failure.message, status: failure.status } : failure;
       }
       const page = res.value;
       if (page.scope !== scope) return { kind: "fault", message: `pull answered scope ${page.scope} for ${scope}` };
