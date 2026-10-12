@@ -481,7 +481,7 @@ export class Outbox {
         else if (result.status === "rejected") status = "rejected";
         else throw new Error(`push response carries an unknown status for ${row.key}`);
         statements.push({
-          sql: "UPDATE outbox SET status = ?, server_seq = ?, error = ?, stall = NULL, stall_status = NULL WHERE idempotency_key = ? AND status = 'pending'",
+          sql: "UPDATE outbox SET status = ?, server_seq = ?, error = ? WHERE idempotency_key = ? AND status = 'pending'",
           params: [status, result.seq ?? null, status === "rejected" ? (result.error ?? "rejected") : null, row.key],
         });
         if (this.#onResult) statements.push(...this.#onResult({ row, result }));
@@ -508,7 +508,7 @@ export class Outbox {
       const statements: SqlStatement[] = [];
       for (const { row, message } of items) {
         statements.push({
-          sql: "UPDATE outbox SET status = 'rejected', error = ?, stall = NULL, stall_status = NULL WHERE idempotency_key = ? AND status = 'pending'",
+          sql: "UPDATE outbox SET status = 'rejected', error = ? WHERE idempotency_key = ? AND status = 'pending'",
           params: [message, row.key],
         });
         if (this.#onResult) statements.push(...this.#onResult({ row, result: { client_id: row.key, status: "rejected", error: message } }));
@@ -560,7 +560,6 @@ export class Outbox {
     parked.add(scope);
     try {
       await this.#sql.atomic([
-        { sql: "UPDATE outbox SET stall = NULL, stall_status = NULL WHERE scope = ? AND status = 'pending'", params: [scope] },
         {
           sql: "UPDATE outbox SET stall = ?, stall_status = ?, error = ? WHERE idempotency_key = ? AND status = 'pending'",
           params: [kind, status, `request refused (${status}): ${message}`, row.key],
