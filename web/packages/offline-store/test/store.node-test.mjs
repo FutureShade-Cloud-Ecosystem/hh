@@ -521,3 +521,61 @@ test("a pull that never makes progress is a fault, and fails the test instead of
   assert.match(out.message, /no progress/);
   assert.ok(pages <= 2, `asked ${pages} times`);
 });
+
+// ---- round 3: settling a stalled row through the store --------------------------------------------------------
+
+test("store.settle: applied leaves a review card the person can dismiss, and the cards listeners hear it", async () => {
+  const { store, server, transport, sql } = await rig();
+  const op = await store.enqueue(pick(1));
+  server.failNext("dropResponse");
+  assert.equal((await store.replay(transport)).kind, "offline");
+  await store.replay({ ...transport, push: async () => err("invalid_json", 400) });
+  assert.equal((await store.outbox.health()).stalls[0].kind, "check_applied");
+  let heard = 0;
+  store.cards.subscribe(() => heard++);
+  assert.deepEqual(await store.settle(op.key, "applied"), { ok: true, key: op.key, choice: "applied" });
+  assert.ok(heard >= 1, "a card arrived and nobody was told");
+  const [card] = await store.cards.listOpen();
+  assert.deepEqual({ kind: card.kind, policy: card.policy, clientId: card.clientId, scope: card.scope }, { kind: "review", policy: "settled_by_person", clientId: op.key, scope: "pick_tasks" });
+  assert.match(card.error, /person/);
+  assert.equal((await sql.all("SELECT status FROM outbox"))[0].status, "applied");
+  await store.cards.dismiss(card.id);
+  assert.deepEqual(await store.cards.listOpen(), []);
+});
+
+test("store.settle: withdrawn leaves a rejected card; resend leaves none", async () => {
+  const { store, server, transport } = await rig();
+  const a = await store.enqueue(pick(1));
+  const b = await store.enqueue(pick(2));
+  server.failNext("dropResponse");
+  await store.replay(transport);
+  const refusing = { ...transport, push: async () => err("no grant", 403) };
+  await store.replay(refusing);
+  assert.equal((await store.outbox.health()).stalls[0].key, a.key);
+  assert.equal((await store.settle(a.key, "resend")).ok, true);
+  assert.deepEqual(await store.cards.listOpen(), []);
+  await store.replay(refusing);
+  assert.equal((await store.outbox.health()).stalls[0].key, a.key);
+  assert.equal((await store.settle(a.key, "withdrawn")).ok, true);
+  const cards = await store.cards.listOpen();
+  assert.deepEqual(cards.map((c) => [c.kind, c.clientId]), [["rejected", a.key]]);
+  assert.match(cards[0].error, /withdrawn/);
+  assert.equal((await store.replay(transport)).kind, "done");
+  assert.ok(b.ok);
+});
+
+test("store.settle: a read cache only tab cannot settle, and a refused settle makes no card", async () => {
+  const { store } = await rig();
+  const refused = await store.settle(uuid(999), "applied");
+  assert.deepEqual({ ok: refused.ok, reason: refused.reason }, { ok: false, reason: "unknown_key" });
+  assert.deepEqual(await store.cards.list(), []);
+  const locks = new FakeLocks();
+  const ours = await createOpfsBackend({ dbName: "hh", locks, createWorker: () => new FakeWorker(nodeSqliteExecutor()) });
+  const theirs = await createOpfsBackend({ dbName: "hh", locks, createWorker: () => new FakeWorker(nodeSqliteExecutor()) });
+  const reader = await OfflineStore.open({ backend: theirs, scopes: scopeBookFor(FIELD_APPS) });
+  assert.equal(reader.ownership(), "read_cache_only");
+  const res = await reader.settle(uuid(1), "withdrawn");
+  assert.deepEqual({ ok: res.ok, reason: res.reason }, { ok: false, reason: "read_only" });
+  await ours.close();
+  await theirs.close();
+});

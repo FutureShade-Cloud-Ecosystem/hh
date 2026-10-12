@@ -184,6 +184,17 @@ const ACTIONS = [
     assert.deepEqual(after, before, "I9: the pending outbox changed across a restart");
     if (w.online) await w.runner.dispatch({ type: "ONLINE" });
   }],
+  // The person resolves a stalled row, honestly: applied only if the server did apply it, withdrawn only if it did not.
+  [5, "the person settles a stall", async (w) => {
+    const { stalls } = await w.store.outbox.health();
+    if (!stalls.length) return;
+    const stall = pickOne(w.rng, stalls);
+    const held = w.server.applyCount(stall.key) > 0;
+    const choice = w.rng() < 0.3 ? "resend" : held ? "applied" : "withdrawn";
+    const res = await w.store.settle(stall.key, choice);
+    assert.equal(res.ok, true, `settle ${choice} on a standing stall was refused: ${JSON.stringify(res)}`);
+    w.trace.push(`  (${choice} ${stall.kind})`);
+  }],
   [4, "user dismisses a card", async (w) => {
     const open = await w.store.cards.listOpen();
     if (!open.length) return;
@@ -335,6 +346,7 @@ test("model: the generator reaches every state, every outcome kind and every fau
   const states = new Set();
   const kinds = new Set();
   const stalls = new Set();
+  const settled = new Set();
   let restarts = 0;
   for (let seed = 1; seed <= 60; seed++) {
     const w = await newWorld(seed);
@@ -344,6 +356,7 @@ test("model: the generator reaches every state, every outcome kind and every fau
       if (name === "process restart") restarts++;
       await run(w);
       for (const stall of (await w.store.outbox.health()).stalls) stalls.add(stall.kind);
+      for (const r of await w.sql.all("SELECT DISTINCT settled FROM outbox WHERE settled IS NOT NULL")) settled.add(r.settled);
     }
     await quiesce(w);
     for (const c of await w.store.cards.list()) kinds.add(c.kind);
@@ -353,6 +366,7 @@ test("model: the generator reaches every state, every outcome kind and every fau
   for (const k of ["superseded", "review", "merge_report", "rejected", "row:applied", "row:conflict", "row:rejected"]) assert.ok(kinds.has(k), `never produced ${k}`);
   assert.ok(restarts > 0);
   assert.deepEqual([...stalls].sort(), ["check_applied", "scope_refused"], "the draws must reach both stalls");
+  assert.ok(settled.size === 3, `the draws must reach every settlement, reached ${[...settled]}`);
   assert.ok(kinds.has("rejected"));
 });
 

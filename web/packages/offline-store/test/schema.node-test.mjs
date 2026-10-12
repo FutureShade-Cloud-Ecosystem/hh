@@ -114,3 +114,44 @@ test("the outbox carries the sent flag and the stall columns, and a database fro
   assert.deepEqual(meta, [{ value: String(SCHEMA_VERSION) }]);
   assert.ok(SCHEMA_VERSION >= 2);
 });
+
+test("the outbox carries the settlement audit columns, and a schema 2 database is upgraded in place, keeping its rows and stalls", async () => {
+  const sql = nodeSqliteExecutor();
+  await sql.run(`CREATE TABLE outbox (
+     seq INTEGER PRIMARY KEY AUTOINCREMENT, idempotency_key TEXT NOT NULL UNIQUE, scope TEXT NOT NULL,
+     op TEXT NOT NULL CHECK (op IN ('create', 'update', 'delete')), entity TEXT, entity_id TEXT, payload TEXT NOT NULL,
+     base_seq INTEGER, body_hash TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('pending', 'applied', 'conflict', 'rejected')),
+     attempts INTEGER NOT NULL DEFAULT 0, error TEXT, server_seq INTEGER, created_at TEXT NOT NULL,
+     sent INTEGER NOT NULL DEFAULT 0,
+     stall TEXT CHECK (stall IS NULL OR stall IN ('scope_refused', 'check_applied')),
+     stall_status INTEGER)`);
+  await sql.run(`INSERT INTO outbox (idempotency_key, scope, op, payload, body_hash, status, attempts, sent, stall, stall_status, created_at)
+                 VALUES ('k1', 'pick_tasks', 'update', '{}', 'h', 'pending', 1, 1, 'check_applied', 400, 't')`);
+  await sql.run("CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  await sql.run("INSERT INTO schema_meta (key, value) VALUES ('schema_version', '2')");
+  await migrate(sql, ["pick_tasks"]);
+  await migrate(sql, ["pick_tasks"]);
+  const cols = (await sql.all("SELECT name FROM pragma_table_info('outbox')")).map((c) => c.name);
+  for (const c of ["settled", "settled_at"]) assert.ok(cols.includes(c), `no ${c} column`);
+  const [row] = await sql.all("SELECT attempts, sent, stall, stall_status, settled, settled_at FROM outbox");
+  assert.deepEqual(row, { attempts: 1, sent: 1, stall: "check_applied", stall_status: 400, settled: null, settled_at: null });
+  await assert.rejects(sql.run("UPDATE outbox SET settled = 'bogus'"), /CHECK/i);
+  assert.equal(SCHEMA_VERSION, 3);
+  assert.deepEqual(await sql.all("SELECT value FROM schema_meta WHERE key = 'schema_version'"), [{ value: "3" }]);
+});
+
+test("a schema 1 outbox is upgraded through both steps in one migrate", async () => {
+  const sql = nodeSqliteExecutor();
+  await sql.run(`CREATE TABLE outbox (
+     seq INTEGER PRIMARY KEY AUTOINCREMENT, idempotency_key TEXT NOT NULL UNIQUE, scope TEXT NOT NULL,
+     op TEXT NOT NULL CHECK (op IN ('create', 'update', 'delete')), entity TEXT, entity_id TEXT, payload TEXT NOT NULL,
+     base_seq INTEGER, body_hash TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('pending', 'applied', 'conflict', 'rejected')),
+     attempts INTEGER NOT NULL DEFAULT 0, error TEXT, server_seq INTEGER, created_at TEXT NOT NULL)`);
+  await sql.run(`INSERT INTO outbox (idempotency_key, scope, op, payload, body_hash, status, attempts, created_at)
+                 VALUES ('k1', 'pick_tasks', 'update', '{}', 'h', 'pending', 2, 't')`);
+  await migrate(sql, ["pick_tasks"]);
+  const [row] = await sql.all("SELECT attempts, sent, stall, settled, settled_at FROM outbox");
+  assert.deepEqual(row, { attempts: 2, sent: 1, stall: null, settled: null, settled_at: null });
+});

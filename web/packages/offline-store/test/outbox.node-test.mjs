@@ -685,3 +685,170 @@ test("only a 400 whose message is exactly invalid_json is split and judged row b
     assert.deepEqual((await outbox.health()).stalls.map((x) => x.kind), ["scope_refused"]);
   }
 });
+
+// ---- round 3: the person settles a stalled row --------------------------------------------------------------
+//
+// settle(key, 'applied' | 'withdrawn' | 'resend') is the one way out of a stall (check_applied or scope_refused).
+// The stall UI belongs to item 7; the shell calls this.
+
+/** Two picks and a shortage; the server applied the first pick but its answer was lost; then a 400 invalid_json
+ * on the pick scope stalls it as check_applied with the second pick held behind it. */
+async function checkAppliedRig(opts = {}) {
+  const r = await rig(opts);
+  const a = await r.outbox.enqueue(pick(1));
+  const b = await r.outbox.enqueue(pick(2));
+  const s = await r.outbox.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(3), short_by: 1 } });
+  r.server.failNext("afterApply", 1);
+  assert.equal((await r.outbox.replay(r.transport)).kind, "fault");
+  const refusingPicks = { ...r.transport, push: async (scope, ops) => (scope === "pick_tasks" ? err("invalid_json", 400) : r.transport.push(scope, ops)) };
+  await r.outbox.replay(refusingPicks);
+  const { stalls } = await r.outbox.health();
+  assert.deepEqual(stalls.map((x) => [x.kind, x.key]), [["check_applied", a.key]], "the rig must start from a check_applied stall");
+  return { ...r, a, b, s, refusingPicks };
+}
+
+const audit = (sql) => sql.all("SELECT idempotency_key AS k, status, sent, stall, stall_status, settled, settled_at, error FROM outbox ORDER BY seq");
+const pushedKeys = (server, from = 0) => server.requests.slice(from).filter((q) => q.kind === "push").flatMap((q) => q.ops.map((o) => o.client_id));
+
+test("settle applied: the stalled row is closed as applied by the person, with a card, and is not sent again", async () => {
+  const rec = seen();
+  const { outbox, server, transport, sql, a, b } = await checkAppliedRig({ onResult: rec.onResult });
+  const before = server.requests.length;
+  const res = await outbox.settle(a.key, "applied");
+  assert.deepEqual(res, { ok: true, key: a.key, choice: "applied" });
+  const [row] = await audit(sql);
+  assert.deepEqual({ status: row.status, stall: row.stall, stall_status: row.stall_status, settled: row.settled }, { status: "applied", stall: null, stall_status: null, settled: "applied" });
+  assert.ok(row.settled_at, "the time of the settlement is kept");
+  assert.match(row.error, /person/, "the row says a person closed it");
+  const card = rec.results.find(([k]) => k === a.key);
+  assert.ok(card, "a card for the settlement");
+  assert.equal(card[1], "applied");
+  assert.match(card[2], /person/);
+  assert.deepEqual((await outbox.health()).stalls, []);
+  assert.equal(server.requests.length, before, "settle sends nothing");
+  // The rows behind the stall are released, in order, and the settled row is never sent again.
+  const out = await outbox.replay(transport);
+  assert.equal(out.kind, "done");
+  assert.deepEqual(pushedKeys(server, before), [b.key]);
+  assert.equal(server.applyCount(a.key), 1);
+  assert.deepEqual((await rows(sql)).map((r) => r.status), ["applied", "applied", "applied"]);
+});
+
+test("settle withdrawn: the stalled row is closed rejected with a card, and the rows behind it are released", async () => {
+  const rec = seen();
+  const { outbox, server, transport, sql, a, b } = await checkAppliedRig({ onResult: rec.onResult });
+  const before = server.requests.length;
+  assert.deepEqual(await outbox.settle(a.key, "withdrawn"), { ok: true, key: a.key, choice: "withdrawn" });
+  const [row] = await audit(sql);
+  assert.deepEqual({ status: row.status, stall: row.stall, settled: row.settled }, { status: "rejected", stall: null, settled: "withdrawn" });
+  assert.ok(row.settled_at);
+  assert.match(row.error, /withdrawn/);
+  const card = rec.results.find(([k]) => k === a.key);
+  assert.equal(card[1], "rejected");
+  assert.match(card[2], /withdrawn/);
+  assert.deepEqual((await outbox.health()).stalls, []);
+  assert.equal((await outbox.replay(transport)).kind, "done");
+  assert.deepEqual(pushedKeys(server, before), [b.key], "the withdrawn row is not sent");
+});
+
+test("settle resend: the row is sent again as a new attempt, ahead of the rows behind it, and the server dedups", async () => {
+  const { outbox, server, transport, sql, a, b } = await checkAppliedRig();
+  const before = server.requests.length;
+  assert.deepEqual(await outbox.settle(a.key, "resend"), { ok: true, key: a.key, choice: "resend" });
+  const [row] = await audit(sql);
+  assert.deepEqual({ status: row.status, sent: row.sent, stall: row.stall, stall_status: row.stall_status, settled: row.settled }, { status: "pending", sent: 0, stall: null, stall_status: null, settled: "resend" });
+  assert.ok(row.settled_at);
+  assert.deepEqual((await outbox.health()).stalls, []);
+  assert.equal(server.requests.length, before, "settle sends nothing; the next replay does");
+  const out = await outbox.replay(transport);
+  assert.equal(out.kind, "done");
+  assert.deepEqual(pushedKeys(server, before), [a.key, b.key], "in order, the resent row first");
+  assert.equal(server.applyCount(a.key), 1, "the same key: the server answers from its record, nothing applied twice");
+  assert.deepEqual((await rows(sql)).map((r) => r.status), ["applied", "applied", "applied"]);
+});
+
+test("a resent row that is refused again is judged as a row never sent: a 400 invalid_json closes it rejected with its card", async () => {
+  const rec = seen();
+  const { outbox, sql, a, refusingPicks } = await checkAppliedRig({ onResult: rec.onResult });
+  await outbox.settle(a.key, "resend");
+  const out = await outbox.replay(refusingPicks);
+  assert.equal(out.rejected, 2, "the resent row and the one behind it, each refused alone, neither sent before");
+  assert.deepEqual((await rows(sql)).map((r) => r.status).slice(0, 2), ["rejected", "rejected"]);
+});
+
+test("settle on a scope_refused stall: withdrawn closes the row with a card, resend clears the park", async () => {
+  const rec = seen();
+  const { outbox, server, transport, sql } = await rig({ onResult: rec.onResult });
+  const a = await outbox.enqueue(pick(1));
+  const b = await outbox.enqueue(pick(2));
+  const refusing = { ...transport, push: async () => err("no grant", 403) };
+  await outbox.replay(refusing);
+  assert.deepEqual((await outbox.health()).stalls.map((x) => [x.kind, x.key]), [["scope_refused", a.key]]);
+  assert.equal((await outbox.settle(a.key, "withdrawn")).ok, true);
+  assert.deepEqual((await rows(sql)).map((r) => r.status), ["rejected", "pending"]);
+  assert.deepEqual((await outbox.health()).stalls, []);
+  assert.equal((await outbox.replay(transport)).kind, "done");
+  assert.deepEqual(server.appliedOrder, [b.key]);
+  assert.equal(server.applyCount(a.key), 0);
+});
+
+test("settle cannot be called on a row that is not stalled, and changes nothing when refused", async () => {
+  const rec = seen();
+  const { outbox, server, transport, sql } = await rig({ onResult: rec.onResult });
+  const pending = await outbox.enqueue(pick(1));
+  const done = await outbox.enqueue(pick(2));
+  server.failNext("status", 500);
+  await outbox.replay(transport); // a fault: pending, attempted, no stall
+  const first = await outbox.replay(transport);
+  assert.equal(first.kind, "done");
+  const later = await outbox.enqueue(pick(3));
+  const snapshot = await audit(sql);
+  const cards = rec.results.length;
+  for (const choice of ["applied", "withdrawn", "resend"]) {
+    const onPending = await outbox.settle(later.key, choice);
+    assert.equal(onPending.ok, false);
+    assert.equal(onPending.reason, "not_stalled");
+    const onClosed = await outbox.settle(done.key, choice);
+    assert.equal(onClosed.ok, false);
+    assert.equal(onClosed.reason, "not_stalled");
+    const unknown = await outbox.settle(uuid(999), choice);
+    assert.equal(unknown.ok, false);
+    assert.equal(unknown.reason, "unknown_key");
+  }
+  assert.equal((await outbox.settle(later.key, "bogus")).reason, "invalid_choice");
+  assert.deepEqual(await audit(sql), snapshot, "a refused settle leaves every row as it was");
+  assert.equal(rec.results.length, cards, "and makes no card");
+  assert.ok(pending.ok);
+});
+
+test("a row can be settled once: the second call finds it no longer stalled", async () => {
+  const { outbox, a } = await checkAppliedRig();
+  assert.equal((await outbox.settle(a.key, "applied")).ok, true);
+  const again = await outbox.settle(a.key, "applied");
+  assert.equal(again.ok, false);
+  assert.equal(again.reason, "not_stalled");
+});
+
+test("settle waits for a replay in flight: it never changes a row while its request is out", async () => {
+  const { outbox, server, transport, a, b } = await checkAppliedRig();
+  const events = [];
+  let release;
+  const gate = new Promise((resolve) => (release = resolve));
+  const slow = {
+    ...transport,
+    push: async (scope, ops) => (events.push("push"), await gate, transport.push(scope, ops)),
+  };
+  const replaying = outbox.replay(slow); // the shortages row is not pending; the stalled pick scope is retried
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const settling = outbox.settle(a.key, "withdrawn").then((res) => (events.push("settled"), res));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(events, ["push"], "settle must wait for the replay");
+  release();
+  await replaying;
+  const res = await settling;
+  assert.deepEqual(events, ["push", "settled"]);
+  // The replay's own answer decided the row first (it applied a deduped and b); the settlement then found it closed.
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "not_stalled");
+  assert.equal(server.applyCount(b.key), 1);
+});
