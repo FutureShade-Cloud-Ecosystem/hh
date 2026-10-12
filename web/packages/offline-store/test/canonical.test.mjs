@@ -28,3 +28,46 @@ test("the hash matches a known SHA-256 vector for a known canonical string", asy
   // sha256 of the canonical text {"a":1}
   assert.equal(await bodyHash({ a: 1 }), "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862");
 });
+
+test("canonical JSON refuses anything that is not plain JSON: objects with another prototype, holes, toJSON values", () => {
+  class Point {
+    constructor() {
+      this.x = 1;
+    }
+  }
+  const cyclic = {};
+  cyclic.self = cyclic;
+  const withSymbol = { a: 1, [Symbol("s")]: 2 };
+  const sparse = new Array(2);
+  const holey = [1, , 3];
+  for (const [name, bad] of Object.entries({
+    date: new Date(0),
+    map: new Map([["a", 1]]),
+    set: new Set([1]),
+    instance: new Point(),
+    regexp: /x/,
+    nestedDate: { at: new Date(1e12) },
+    inArray: [new Date(0)],
+    sparse,
+    holey,
+    toJSON: { toJSON: () => "x" },
+    symbolKey: withSymbol,
+    cyclic,
+    typedArray: new Uint8Array(2),
+  })) {
+    assert.throws(() => canonicalJson(bad), /canonical/, name);
+  }
+});
+
+test("canonical JSON still carries a null prototype object and every plain JSON shape", () => {
+  const bare = Object.create(null);
+  bare.b = 1;
+  bare.a = [null, true, "x", 1.5, { c: [] }];
+  assert.equal(canonicalJson(bare), '{"a":[null,true,"x",1.5,{"c":[]}],"b":1}');
+  assert.equal(canonicalJson(JSON.parse('{"__proto__":{"x":1},"k":2}')), '{"__proto__":{"x":1},"k":2}');
+});
+
+test("two different dates can never share a hash: neither is hashable", async () => {
+  await assert.rejects(bodyHash({ a: new Date(0) }), /canonical/);
+  await assert.rejects(bodyHash({ a: new Date(1e12) }), /canonical/);
+});
