@@ -153,10 +153,12 @@ func newFreightHarness(t *testing.T) *frtHarness {
 	// drove the decide route through its handler with an HS256 login
 	// token; that session world stayed behind. Under the carry the rail
 	// is *identity.Approvals and the decide path takes the bridged caller
-	// the guard resolved (the A3 re-point), so the harness resolves the
-	// seeded person's authority through the rail's canonical read and
-	// hands the caller in directly: the graded-against-the-database
-	// property the login leg used to buy is preserved by the read, not by
+	// the guard resolved (the A3 re-point). The guard's own resolution is
+	// not exercised here: the seed links no platform user and plants no
+	// staff_role_grant rows, so the harness stamps the seeded person from
+	// the seed's scaffold tables (seededCaller) and hands the caller in
+	// directly. What stays proven is the rail's role allowlist and branch
+	// reach against the database, which the login leg used to buy through
 	// a token.
 	identitySvc := identity.NewApprovals(identity.NewApprovalRepository(pool))
 	svc := NewService(NewRepository(pool)).
