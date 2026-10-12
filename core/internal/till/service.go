@@ -949,7 +949,7 @@ func (s *Service) UpdateNSFPolicy(ctx context.Context, in NSFPolicy) error {
 	if err != nil {
 		return err
 	}
-	// Backstop under the route's own role predicate (nsfPolicyWriter): a dealer wide setting is never a tier 2 write.
+	// Backstop under the route's requireAdmin guard: a dealer wide setting is never a tier 2 write.
 	if !caller.IsAdmin() {
 		return forbidden("till: leadership is required to edit the NSF policy")
 	}

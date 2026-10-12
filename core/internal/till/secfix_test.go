@@ -22,11 +22,23 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
 type secfixAuthorities struct {
 	bySubject map[string]identity.StaffAuthority
+	// extraRoles are further roles a subject holds beside the winner (the whole row the role gate walks).
+	extraRoles map[string][]string
+}
+
+func (s secfixAuthorities) ResolveRoles(_ context.Context, subject, _ string) ([]string, error) {
+	a, ok := s.bySubject[subject]
+	if !ok {
+		return []string{}, nil
+	}
+	return append([]string{a.RoleID}, s.extraRoles[subject]...), nil
 }
 
 func (s secfixAuthorities) ResolveStaff(_ context.Context, subject, _ string) (identity.StaffAuthority, bool, error) {
@@ -90,14 +102,24 @@ type secfixFixture struct {
 	store   *fakeStore
 	harness *testkit.Harness
 	subject map[string]identity.StaffAuthority
+	extra   map[string][]string
 }
 
-func newSecfixFixture(t *testing.T) *secfixFixture {
+// newSecfixFixture serves the till routes behind the tier guards only: the tier layer.
+func newSecfixFixture(t *testing.T) *secfixFixture { return buildSecfixFixture(t, false) }
+
+// newSecfixGatedFixture serves them as production does: the role gate (default configuration) wraps the
+// registration, so a request meets the role gate and then the tier guard.
+func newSecfixGatedFixture(t *testing.T) *secfixFixture { return buildSecfixFixture(t, true) }
+
+func buildSecfixFixture(t *testing.T, gated bool) *secfixFixture {
 	t.Helper()
 	store := newFakeStore()
 	subjects := map[string]identity.StaffAuthority{}
+	extra := map[string][]string{}
+	auths := secfixAuthorities{bySubject: subjects, extraRoles: extra}
 	harness := testkit.NewHarness(t)
-	g, err := guards.NewGuards(harness.Gate, secfixAuthorities{bySubject: subjects}, secfixNoPortal{}, secfixKnob{})
+	g, err := guards.NewGuards(harness.Gate, auths, secfixNoPortal{}, secfixKnob{})
 	if err != nil {
 		t.Fatalf("NewGuards: %v", err)
 	}
@@ -105,8 +127,24 @@ func newSecfixFixture(t *testing.T) *secfixFixture {
 	svc := NewService(store)
 	h := NewHandler(svc, nil).WithUserLinker(func(_ context.Context, sub string) (string, bool) { return "user-" + sub, true })
 	mux := http.NewServeMux()
-	h.RegisterRoutes(mux, g)
-	return &secfixFixture{mux: mux, store: store, harness: harness, subject: subjects}
+	var reg httpx.Registrar = mux
+	if gated {
+		cfg, err := roleconfig.Default()
+		if err != nil {
+			t.Fatalf("roleconfig.Default: %v", err)
+		}
+		rg, err := authz.NewRoleGate(harness.Gate, auths, cfg)
+		if err != nil {
+			t.Fatalf("NewRoleGate: %v", err)
+		}
+		wrapped, err := authz.NewRoleGateRegistrar(mux, rg)
+		if err != nil {
+			t.Fatalf("NewRoleGateRegistrar: %v", err)
+		}
+		reg = wrapped
+	}
+	h.RegisterRoutes(reg, g)
+	return &secfixFixture{mux: mux, store: store, harness: harness, subject: subjects, extra: extra}
 }
 
 func (f *secfixFixture) person(sub string, a identity.StaffAuthority) {
@@ -200,37 +238,87 @@ func TestSecfix_AttemptBranchIsNeverTheClientsChoice(t *testing.T) {
 	}
 }
 
-// nsfWriters is the decision: the roles that write the org default NSF policy.
-var nsfWriters = map[string]bool{
+// nsfWritersServed is who writes the org default NSF policy as production serves it: the route is
+// requireAdmin (tier 1 global) with x-access money-desk manage, and the default matrix gives manage or
+// above to general_manager (manage) and financial_controller (admin); the platform roles pass the role
+// gate's level check. Every tier 2 role and hr is refused with the shared 403.
+var nsfWritersServed = map[string]bool{
 	"general_manager": true, "financial_controller": true,
 	"super_admin": true, "dealer_admin": true, "fb_operator": true,
 }
 
-func TestSecfix_NSFPolicyWriteSweep(t *testing.T) {
-	f := newSecfixFixture(t)
+// nsfReadersServed is who reads it as served: tier 1 or 2 with a money-desk cell of read or above.
+var nsfReadersServed = map[string]bool{
+	"general_manager": true, "financial_controller": true, "payables_receivables": true,
+	"branch_manager": true, "sales_manager": true, "yard_manager": true, "procurement_manager": true,
+	"super_admin": true, "dealer_admin": true, "fb_operator": true,
+}
+
+const secfixNSFPath = "/api/v1/ar/nsf-policy"
+
+func TestSecfix_NSFPolicyWriteSweepServed(t *testing.T) {
+	f := newSecfixGatedFixture(t)
 	forbidden := secfixForbiddenBody(t)
 	body := NSFPolicy{FeeCents: 9900, FeeAccountCode: "4200"}
 	pairs := 0
 	for _, r := range secfixRoles {
 		sub := "role-" + r.id
 		f.person(sub, r.authority(secfixBranchA))
-		put := f.do(t, sub, http.MethodPut, "/api/v1/ar/nsf-policy", body)
-		if nsfWriters[r.id] {
+		put := f.do(t, sub, http.MethodPut, secfixNSFPath, body)
+		if nsfWritersServed[r.id] {
 			if put.Code != http.StatusOK {
 				t.Errorf("%s writes the NSF policy: got %d %s", r.id, put.Code, put.Body.String())
 			}
 		} else if put.Code != http.StatusForbidden || put.Body.String() != forbidden {
 			t.Errorf("%s must get the shared 403 on the NSF policy write: got %d %q", r.id, put.Code, put.Body.String())
 		}
-		// The read is unchanged: every manager tier role reads, front line does not.
-		get := f.do(t, sub, http.MethodGet, "/api/v1/ar/nsf-policy", nil)
-		if r.tier <= identity.TierManager && get.Code != http.StatusOK {
-			t.Errorf("%s must still read the NSF policy: got %d", r.id, get.Code)
+		get := f.do(t, sub, http.MethodGet, secfixNSFPath, nil)
+		if nsfReadersServed[r.id] != (get.Code == http.StatusOK) {
+			t.Errorf("%s NSF policy read as served: got %d, admitted want %v", r.id, get.Code, nsfReadersServed[r.id])
 		}
-		if r.tier == identity.TierFrontline && get.Code != http.StatusForbidden {
-			t.Errorf("%s must not read the NSF policy: got %d", r.id, get.Code)
+		if !nsfReadersServed[r.id] && (get.Code != http.StatusForbidden || get.Body.String() != forbidden) {
+			t.Errorf("%s read refusal must be the shared 403: got %d %q", r.id, get.Code, get.Body.String())
 		}
 		pairs += 2
 	}
-	t.Logf("NSF sweep: %d roles, %d role by route pairs", len(secfixRoles), pairs)
+	t.Logf("served NSF sweep: %d roles, %d role by route pairs", len(secfixRoles), pairs)
+}
+
+// The tier layer alone (no role gate): requireAdmin admits every tier 1 global role, so the matrix is what
+// narrows the write in production; no tier 2 role and no tier 3 role passes it whatever a dealer configures.
+func TestSecfix_NSFPolicyWriteTierLayer(t *testing.T) {
+	f := newSecfixFixture(t)
+	forbidden := secfixForbiddenBody(t)
+	for _, r := range secfixRoles {
+		sub := "role-" + r.id
+		f.person(sub, r.authority(secfixBranchA))
+		put := f.do(t, sub, http.MethodPut, secfixNSFPath, NSFPolicy{FeeCents: 9900, FeeAccountCode: "4200"})
+		tier1Global := r.tier == identity.TierLeadership && r.scope == identity.ScopeGlobal
+		if tier1Global && put.Code != http.StatusOK {
+			t.Errorf("%s (tier 1 global) passes the tier guard: got %d %s", r.id, put.Code, put.Body.String())
+		}
+		if !tier1Global && (put.Code != http.StatusForbidden || put.Body.String() != forbidden) {
+			t.Errorf("%s must get the shared 403 at the tier layer: got %d %q", r.id, put.Code, put.Body.String())
+		}
+		// The read at the tier layer: every tier 1 and tier 2 role passes the manager guard.
+		get := f.do(t, sub, http.MethodGet, secfixNSFPath, nil)
+		if (r.tier <= identity.TierManager) != (get.Code == http.StatusOK) {
+			t.Errorf("%s tier layer read: got %d", r.id, get.Code)
+		}
+	}
+}
+
+// A person holding hr and super_admin resolves to hr as the winner (tier, then id), but the role gate walks
+// the whole row (D48 X10) and admits on the platform role; the tier guard admits tier 1 global.
+func TestSecfix_NSFPolicyWriteHoldsHrAndPlatformRole(t *testing.T) {
+	f := newSecfixGatedFixture(t)
+	f.person("hr-and-platform", secfixRoles[2].authority())
+	f.extra["hr-and-platform"] = []string{"super_admin"}
+	if rec := f.do(t, "hr-and-platform", http.MethodPut, secfixNSFPath, NSFPolicy{FeeCents: 100, FeeAccountCode: "4200"}); rec.Code != http.StatusOK {
+		t.Fatalf("hr beside super_admin: got %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	f.person("hr-only", secfixRoles[2].authority())
+	if rec := f.do(t, "hr-only", http.MethodPut, secfixNSFPath, NSFPolicy{FeeCents: 100, FeeAccountCode: "4200"}); rec.Code != http.StatusForbidden {
+		t.Fatalf("hr alone: got %d, want 403", rec.Code)
+	}
 }

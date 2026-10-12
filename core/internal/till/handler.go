@@ -55,8 +55,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/ar/credit-holds", g.RequireManager(h.staff(h.listCreditHolds)))
 	r.Handle("POST /api/v1/ar/credit-holds/{id}/release", g.RequireAdmin(h.staff(h.releaseHold)))
 	r.Handle("GET /api/v1/ar/nsf-policy", g.RequireManager(h.staff(h.getNSFPolicy)))
-	// The org default NSF policy is dealer wide money policy: tier 1 global finance and general roles only.
-	r.Handle("PUT /api/v1/ar/nsf-policy", g.RequireStaffPredicate(nsfPolicyWriter, h.staff(h.updateNSFPolicy)))
+	// The org default NSF policy is dealer wide money policy: tier 1 global, and the role gate's money-desk
+	// manage cell narrows it to the general manager, the financial controller and the platform roles.
+	r.Handle("PUT /api/v1/ar/nsf-policy", g.RequireAdmin(h.staff(h.updateNSFPolicy)))
 	r.Handle("POST /api/v1/ar/payment-attempts", g.RequireStaff(h.staff(h.recordAttempt)))
 	h.registerHistoryRoutes(r, g) // Q-044 payment/invoice attribution reads (history.go)
 }
@@ -120,7 +121,7 @@ func (h *Handler) getNSFPolicy(w http.ResponseWriter, r *http.Request, caller gu
 	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
-// updateNSFPolicy upserts the org-default NSF policy (finance and general roles only, see nsfPolicyWriter).
+// updateNSFPolicy upserts the org-default NSF policy (tier 1 global, narrowed by the role gate).
 func (h *Handler) updateNSFPolicy(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var in NSFPolicy
 	if !decodeJSON(w, r, &in) {
