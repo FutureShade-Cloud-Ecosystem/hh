@@ -1886,9 +1886,10 @@ paths:
       tags: [staff-till]
       summary: Upsert the org-default NSF policy
       description: >-
-        Dealer wide money policy: only the general manager, the financial
-        controller and the platform roles write it. Any other role gets the
-        shared 403. The read stays open to every manager tier role.
+        Dealer wide money policy: tier 1 global only, and the role gate's
+        money-desk manage cell leaves the general manager, the financial
+        controller and the platform roles under the default configuration.
+        Any other role gets the shared 403. The read is unchanged.
       x-role: requireAdmin
       x-access:
         surfaces: [money-desk]
@@ -1916,7 +1917,13 @@ paths:
       operationId: tillRecordPaymentAttempt
       tags: [staff-till]
       summary: Record one declined or errored gateway attempt
-      description: A successful capture is a payments row, never an attempt here.
+      description: >-
+        A successful capture is a payments row, never an attempt here. The
+        attempt is written under a branch the caller reaches: a named branch
+        the caller cannot reach is the shared 403, a branch that is not a
+        branch id is 422, none named resolves to the caller's single granted
+        branch (422 when the caller has several), and a global caller naming
+        none records an attempt with no branch.
       x-role: requireStaff
       x-access:
         surfaces: [counter-till]
@@ -1939,6 +1946,14 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: >-
+            The attempt failed validation (amount, result, a branch that is
+            not a branch id, or no single branch to derive); the message says
+            which rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
 components:
   parameters:
