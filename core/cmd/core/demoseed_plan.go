@@ -282,8 +282,8 @@ var demoOrders = []orderSpec{
 	// these two are the board's own work, requested today and tomorrow so they land inside the
 	// commit-prompt window the persona signs in under. At branch 1 (Trenton before the demo world
 	// renames it, the Point Loma main yard), the yard the demo populate converges the persona onto.
-	{"O29", 1, "C04", "CONFIRMED", "DELIVERY", 0, 0, []lineSpec{ln("P04", "120.0000", 120)}},
-	{"O30", 1, "C08", "CONFIRMED", "DELIVERY", 0, 1, []lineSpec{ln("P01", "480.0000", 480), ln("P06", "6.0000", 6)}},
+	{"O29", 1, "C03", "CONFIRMED", "DELIVERY", 0, 0, []lineSpec{ln("P04", "120.0000", 120)}},
+	{"O30", 1, "C05", "CONFIRMED", "DELIVERY", 0, 1, []lineSpec{ln("P01", "480.0000", 480), ln("P06", "6.0000", 6)}},
 	{"O06", 0, "C01", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "320.0000", 320), ln("P10", "24.0000", 24)}},
 	{"O07", 0, "C04", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "2400.0000", 2400)}},
 	{"O08", 1, "C05", "PICKING", "WILL_CALL", 1, 0, []lineSpec{ln("P09", "12.0000", 12)}},
