@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "HH Field",
+  "version": "0.0.0",
+  "identifier": "ai.futurebuild.hh.field",
+  "build": {
+    "frontendDist": "../../web/apps/front-door/dist",
+    "beforeBuildCommand": "npm --prefix ../../web/apps/front-door run build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png"]
+  }
+}
