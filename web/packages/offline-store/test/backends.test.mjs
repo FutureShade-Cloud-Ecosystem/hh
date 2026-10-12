@@ -11,14 +11,14 @@ import { createSqliteBackend } from "../src/backend-sqlite.ts";
 import { createOpfsBackend, StoreReadOnlyError } from "../src/backend-opfs.ts";
 import { createWaSqliteExecutor } from "../src/wasqlite-executor.ts";
 import { migrate } from "../src/schema.ts";
-import { nodeSqliteExecutor, FakeLocks, FakeWorker } from "../src/testing.ts";
+import { nodeSqliteExecutor, waSqliteWasm, FakeLocks, FakeWorker } from "../src/testing.ts";
 import { executorContract } from "./executor-contract.mjs";
 
 executorContract("node:sqlite executor", async () => nodeSqliteExecutor());
-executorContract("wa-sqlite executor (memory VFS in node)", async () => createWaSqliteExecutor({ vfs: "memory" }));
+executorContract("wa-sqlite executor (memory VFS in node)", async () => createWaSqliteExecutor({ vfs: "memory", wasmBinary: waSqliteWasm() }));
 
 test("the wa-sqlite engine runs the whole schema, not just toy tables", async () => {
-  const sql = await createWaSqliteExecutor({ vfs: "memory" });
+  const sql = await createWaSqliteExecutor({ vfs: "memory", wasmBinary: waSqliteWasm() });
   await migrate(sql, ["pick_tasks", "pod"]);
   const names = (await sql.all("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")).map((r) => r.name);
   assert.deepEqual(names, ["attachments_queue", "cards", "ent_pick_tasks", "ent_pod", "outbox", "schema_meta", "sync_state"]);
