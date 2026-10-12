@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { err } from "@hardscapehouse/api-client";
 import { Outbox } from "../src/outbox.ts";
 import { migrate } from "../src/schema.ts";
 import { scopeBookFor, MONEY_SCOPES } from "../src/scopes.ts";
@@ -314,4 +315,108 @@ test("an empty outbox replays to nothing and sends nothing", async () => {
   const out = await outbox.replay(transport);
   assert.deepEqual(out, { kind: "done", sent: 0, applied: 0, conflicts: 0, rejected: 0 });
   assert.equal(server.requests.length, 0);
+});
+
+// ---- request level refusals and the byte cap --------------------------------
+// The core answers a whole push with a verdict in a few cases (core/internal/sync/handler.go):
+// 400 for a body past 1 MiB or an unknown scope, 403 for a caller class that does not fit the
+// scope, 404, 413, 501 for a scope not wired. The same answer comes on every retry, so it is a
+// verdict on that batch, never a fault to retry forever.
+
+const MIB = 1024 * 1024;
+const bodyBytes = (ops) => new TextEncoder().encode(JSON.stringify({ ops })).length;
+const fat = (n, bytes = 400_000) => pick(n, { note: "x".repeat(bytes) });
+const seen = () => {
+  const results = [];
+  return { results, onResult: ({ row, result }) => (results.push([row.key, result.status, result.error ?? null]), []) };
+};
+
+test("a push batch is capped by encoded bytes under 1 MiB, as well as by count", async () => {
+  const { outbox, server, transport } = await rig();
+  for (let n = 1; n <= 4; n++) await outbox.enqueue(fat(n));
+  const limited = { ...transport, push: async (scope, ops) => (bodyBytes(ops) >= MIB ? err("invalid_json", 400) : transport.push(scope, ops)) };
+  const out = await outbox.replay(limited);
+  assert.deepEqual(out, { kind: "done", sent: 4, applied: 4, conflicts: 0, rejected: 0 });
+  for (const q of server.requests) if (q.kind === "push") assert.ok(bodyBytes(q.ops) < MIB, `a push of ${bodyBytes(q.ops)} bytes`);
+  assert.ok(server.requests.filter((q) => q.kind === "push").length >= 2, "four 400 KB operations cannot share one request");
+});
+
+test("one operation that can never fit in a request is refused at enqueue, not queued to stall", async () => {
+  const { outbox, sql } = await rig();
+  const res = await outbox.enqueue(fat(1, 2 * MIB));
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, "invalid");
+  assert.match(res.message, /too large/);
+  assert.deepEqual(await rows(sql), []);
+});
+
+test("a refused batch is split to single operations, and each one lands", async () => {
+  const { outbox, server, transport } = await rig();
+  const keys = [];
+  for (let n = 1; n <= 3; n++) keys.push((await outbox.enqueue(pick(n))).key);
+  const refuseMany = { ...transport, push: async (scope, ops) => (ops.length > 1 ? err("batch too large", 413) : transport.push(scope, ops)) };
+  const out = await outbox.replay(refuseMany);
+  assert.equal(out.kind, "done");
+  assert.equal(out.rejected, 0);
+  assert.deepEqual(server.appliedOrder, keys, "order changed across the split");
+  assert.deepEqual(await outbox.pending(), []);
+});
+
+test("an operation the server still refuses alone is closed as rejected with its card, and the rest carry on", async () => {
+  const rec = seen();
+  const { outbox, server, transport, sql } = await rig({ onResult: rec.onResult });
+  const a = await outbox.enqueue(pick(1));
+  const poison = await outbox.enqueue(pick(2));
+  const c = await outbox.enqueue(pick(3));
+  const d = await outbox.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(4), short_by: 1 } });
+  const refusing = { ...transport, push: async (scope, ops) => (ops.some((o) => o.client_id === poison.key) ? err("body refused", 413) : transport.push(scope, ops)) };
+  const out = await outbox.replay(refusing);
+  assert.deepEqual(out, { kind: "done", sent: out.sent, applied: 3, conflicts: 0, rejected: 1 });
+  assert.deepEqual((await rows(sql)).map((r) => r.status), ["applied", "rejected", "applied", "applied"]);
+  assert.deepEqual(server.appliedOrder, [a.key, c.key, d.key]);
+  const refused = rec.results.find(([k]) => k === poison.key);
+  assert.equal(refused[1], "rejected");
+  assert.match(refused[2], /413/, "the card carries the status of the refusal");
+  assert.match(refused[2], /body refused/);
+  const again = await outbox.replay(refusing);
+  assert.deepEqual(again, { kind: "done", sent: 0, applied: 0, conflicts: 0, rejected: 0 });
+});
+
+for (const status of [400, 403, 404, 413, 501]) {
+  test(`a ${status} on one scope closes its operations with cards and never starves another scope`, async () => {
+    const rec = seen();
+    const { outbox, server, transport } = await rig({ onResult: rec.onResult });
+    await outbox.enqueue(pick(1));
+    await outbox.enqueue(pick(2));
+    const short = await outbox.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(3), short_by: 2 } });
+    const refusing = { ...transport, push: async (scope, ops) => (scope === "pick_tasks" ? err("refused", status) : transport.push(scope, ops)) };
+    const out = await outbox.replay(refusing);
+    assert.equal(out.kind, "done");
+    assert.equal(out.rejected, 2);
+    assert.deepEqual(server.appliedOrder, [short.key], "the other scope must be sent");
+    assert.equal(rec.results.filter(([, st]) => st === "rejected").length, 2, "every closed operation has its card");
+    assert.deepEqual(await outbox.pending(), []);
+  });
+}
+
+test("an operational fault (500) is still a fault: it stops the replay and marks nothing as rejected", async () => {
+  const { outbox, server, transport, sql } = await rig();
+  await outbox.enqueue(pick(1));
+  server.failNext("status", 500);
+  const out = await outbox.replay(transport);
+  assert.equal(out.kind, "fault");
+  assert.deepEqual((await rows(sql)).map((r) => r.status), ["pending"]);
+});
+
+test("a recorder that throws is a fault with the rows counted, never a throw out of replay", async () => {
+  const { outbox, sql, transport } = await rig({
+    onResult: () => {
+      throw new Error("recorder broke");
+    },
+  });
+  await outbox.enqueue(pick(1));
+  const out = await outbox.replay(transport);
+  assert.equal(out.kind, "fault");
+  assert.match(out.message, /recorder broke/);
+  assert.deepEqual((await rows(sql)).map((r) => [r.status, r.attempts]), [["pending", 1]]);
 });

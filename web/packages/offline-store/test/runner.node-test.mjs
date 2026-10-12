@@ -7,6 +7,7 @@ import { SyncRunner } from "../src/runner.ts";
 import { OfflineStore } from "../src/store.ts";
 import { createSqliteBackend } from "../src/backend-sqlite.ts";
 import * as machine from "../../../../statecharts/sync/machine.ts";
+import { err } from "@hardscapehouse/api-client";
 import { baseRig, pick, uuid } from "./_rig.mjs";
 
 async function rig() {
@@ -173,4 +174,22 @@ test("a push fault still lets the pull run, so reads do not go stale behind a st
   assert.ok(server.requests.some((q) => q.kind === "pull"), "the pull must run after a push fault");
   assert.equal((await store.outbox.pending()).length, 1);
   assert.equal((await store.list("pick_tasks")).rows.length, 9);
+});
+
+test("a request level refusal of one scope does not stall the outbox or the pull", async () => {
+  const r = await rig();
+  const { store, server } = r;
+  const refused = (await store.enqueue(pick(1))).key;
+  const short = (await store.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(2), short_by: 1 } })).key;
+  const transport = { ...r.transport, push: async (scope, ops) => (scope === "pick_tasks" ? err("scope refused", 403) : r.transport.push(scope, ops)) };
+  const runner = new SyncRunner({ store, transport, machine });
+  await runner.dispatch({ type: "ONLINE" });
+  assert.deepEqual(server.appliedOrder, [short], "the shortage behind the refused pick must be sent");
+  assert.ok(server.requests.some((q) => q.kind === "pull"), "the pull must run");
+  assert.equal((await store.list("pick_tasks")).rows.length, 9);
+  const cards = await store.cards.listOpen();
+  assert.deepEqual(cards.map((c) => [c.clientId, c.kind]), [[refused, "rejected"]]);
+  assert.match(cards[0].error, /403/);
+  assert.equal(runner.state, "conflict", "the card waits for a person");
+  assert.deepEqual(await store.outbox.pending(), []);
 });
