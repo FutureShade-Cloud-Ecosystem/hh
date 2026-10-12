@@ -193,7 +193,7 @@ test("beyond the till: the manager's reach past the counter's walls, and the car
   expect(clerkWrite.status).toBe(403);
   const managerWrite = await staffPost(page, manager, "/api/v1/pricing/rules", {});
   expect([400, 422]).toContain(managerWrite.status);
-  // Sign out: the entry page with the five coming roles comes back.
+  // Sign out: the entry page with the four coming roles comes back.
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
   await expect(page.getByRole("list", { name: "Coming roles" })).toBeVisible();

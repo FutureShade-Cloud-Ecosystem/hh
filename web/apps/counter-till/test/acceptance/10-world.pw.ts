@@ -57,7 +57,7 @@ test("the way in's data: eight flows with role codes and labels", async ({ page 
   const body = (await flows.json()) as {
     flows: Array<{ flow: string; role_code: string; label: string }>;
   };
-  expect(body.flows).toHaveLength(8);
+  expect(body.flows).toHaveLength(9);
   expect(body.flows.map((row) => row.flow)).toEqual([
     "sales",
     "sales-manager",
@@ -67,6 +67,7 @@ test("the way in's data: eight flows with role codes and labels", async ({ page 
     "payables-receivables",
     "procurement-manager",
     "financial-controller",
+    "logistics-manager",
   ]);
   expect(body.flows.map((row) => row.role_code)).toEqual([
     "inside_sales",
@@ -77,6 +78,7 @@ test("the way in's data: eight flows with role codes and labels", async ({ page 
     "payables_receivables",
     "procurement_manager",
     "financial_controller",
+    "logistics_manager",
   ]);
   expect(body.flows.map((row) => row.label)).toEqual([
     "Sales",
@@ -87,6 +89,7 @@ test("the way in's data: eight flows with role codes and labels", async ({ page 
     "Payables and Receivables",
     "Procurement manager",
     "Financial Controller",
+    "Logistics Manager",
   ]);
   // The picture is the table itself, as the browser shows the core's answer:
   // the page loads the flows route and waits for its rows to be on the

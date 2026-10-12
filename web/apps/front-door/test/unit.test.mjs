@@ -136,9 +136,9 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the eight live roles with the contract's labels and the flows they mint", () => {
-  assert.equal(LIVE_ROLES.length, 8);
-  const [sales, manager, yardManager, yardTeam, payRec, buyer, driver, controller] = LIVE_ROLES;
+test("the catalog holds the nine live roles with the contract's labels and the flows they mint", () => {
+  assert.equal(LIVE_ROLES.length, 9);
+  const [sales, manager, yardManager, yardTeam, payRec, buyer, driver, controller, logistics] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
   assert.deepEqual(sales.tiles.map((tile) => tile.name), ["Counter Till", "Quote Desk"]);
@@ -160,7 +160,7 @@ test("the catalog holds the eight live roles with the contract's labels and the 
   );
   assert.deepEqual(
     yardManager.tiles.map((tile) => tile.href),
-    ["/home/", "/yard/", null, "/buying-and-stock/", null],
+    ["/home/", "/yard/", "/dispatch/", "/buying-and-stock/", null],
   );
   // The Yard Team's label is the flows row's own ("Yard Team"), and its one
   // live module is the Yard Pick app under /yard/; House Messages is not on
@@ -207,12 +207,19 @@ test("the catalog holds the eight live roles with the contract's labels and the 
   assert.deepEqual(controller.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
   assert.deepEqual(controller.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", null]);
   assert.equal(controller.tiles[0], payRec.tiles[0], "both roles open the one Money Desk tile");
+  // The Logistics Manager: the dispatch board is its landing, under /dispatch/, and the yard manager
+  // opens the very same tile; Manager Home opens at /home/ and House Messages is not on the box yet.
+  assert.equal(logistics.id, "logistics_manager");
+  assert.equal(logistics.label, "Logistics Manager");
+  assert.equal(logistics.flow, "logistics-manager");
+  assert.deepEqual(logistics.tiles.map((tile) => tile.name), ["Dispatch and Load Building", "Manager Home", "House Messages"]);
+  assert.deepEqual(logistics.tiles.map((tile) => tile.href), ["/dispatch/", "/home/", null]);
+  assert.equal(logistics.tiles[0], yardManager.tiles[2], "both roles open the one dispatch tile");
 });
 
-test("the catalog holds the five coming roles, each with its matrix modules", () => {
+test("the catalog holds the four coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
-    "Logistics Manager",
     "Branch Manager",
     "General Manager",
     "HR",

@@ -13,7 +13,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 const COMING_LABELS = [
   "Outside Sales",
-  "Logistics Manager",
   "Branch Manager",
   "General Manager",
   "HR",
@@ -64,7 +63,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-test("the picker renders the eight live cards and the five coming rows", async ({ page }) => {
+test("the picker renders the nine live cards and the four coming rows", async ({ page }) => {
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toBeVisible();
   await expect(sales).toBeEnabled();
@@ -136,15 +135,23 @@ test("the picker renders the eight live cards and the five coming rows", async (
   await expect(controller).toContainText("Sign in as Financial Controller");
   await expect(controller).toContainText("Money Desk");
 
+  // The Logistics Manager's card is live with the dispatch board as its first tile.
+  const logistics = page.getByRole("button", { name: "Logistics Manager", exact: true });
+  await expect(logistics).toBeVisible();
+  await expect(logistics).toBeEnabled();
+  await expect(logistics).toContainText("Build the day's loads and send the trucks out.");
+  await expect(logistics).toContainText("Sign in as Logistics Manager");
+  await expect(logistics).toContainText("Dispatch and Load Building");
+
   // Coming recedes: the disclosure starts collapsed and opens to today's
   // list, unchanged, its rows disabled with their muted chips.
   const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Five more roles are coming");
+  await expect(disclosure).toContainText("Four more roles are coming");
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).not.toBeVisible();
-  await disclosure.getByText("Five more roles are coming").click();
+  await disclosure.getByText("Four more roles are coming").click();
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(5);
+  await expect(coming.getByRole("listitem")).toHaveCount(4);
   for (const label of COMING_LABELS) {
     const row = coming.getByRole("listitem").filter({ hasText: label });
     await expect(row).toBeVisible();
