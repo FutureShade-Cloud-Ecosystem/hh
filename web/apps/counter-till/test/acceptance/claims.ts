@@ -18,12 +18,12 @@ export interface ClaimProof {
 
 export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "sign-in-roles": [
-    { file: "10-world.pw.ts", test: "the way in's data: two flows with role codes and labels" },
-    { file: "20-sales.pw.ts", test: "the way in: two cards, the eleven coming roles untapped, and the banner" },
+    { file: "10-world.pw.ts", test: "the way in's data: eight flows with role codes and labels" },
+    { file: "20-sales.pw.ts", test: "the way in: two cards, the six coming roles untapped, the yard manager, the yard team and the driver start at the front door, and the banner" },
     { file: "30-manager.pw.ts", test: "the way in: the manager's card opens the same till under its own name" },
   ],
-  "coming-eleven": [
-    { file: "20-sales.pw.ts", test: "the way in: two cards, the eleven coming roles untapped, and the banner" },
+  "coming-six": [
+    { file: "20-sales.pw.ts", test: "the way in: two cards, the six coming roles untapped, the yard manager, the yard team and the driver start at the front door, and the banner" },
     { file: "30-manager.pw.ts", test: "beyond the till: the manager's reach past the counter's walls, and the cards come back" },
   ],
   "world-invented": [
@@ -70,23 +70,17 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: "20-sales.pw.ts", test: "parked sales: the branch's list, a park and a pickup, never the other branch's" },
     { file: "30-manager.pw.ts", test: "parked sales: a ticket parks and either role picks it up, at the same counter" },
   ],
-  "return-within": [
-    { file: "20-sales.pw.ts", test: "a return within 250.00: refunded in cash, and the drawer's expected cash drops by it" },
-    { file: "30-manager.pw.ts", test: "a return within 250.00 under the manager: refunded, and the drawer drops by it" },
+  "return-customer-first": [
+    { file: "20-sales.pw.ts", test: "a two order return: lines from both orders, one credit note in cash, and the drawer drops by its total" },
   ],
-  "refund-any-size": [
-    { file: "20-sales.pw.ts", test: "a return above 250.00 at the demo dealer: no approval threshold, so the clerk's own refund commits with no refusal and no dialog" },
+  "return-walk-in": [
+    { file: "20-sales.pw.ts", test: "a walk in return: found by its receipt number, cash or card only, and the drawer drops by its total" },
   ],
-  "refund-no-dialog": [
-    { file: "20-sales.pw.ts", test: "a return above 250.00 at the demo dealer: no approval threshold, so the clerk's own refund commits with no refusal and no dialog" },
-  ],
-  "manager-own": [
-    { file: "30-manager.pw.ts", test: "a return above 250.00 as the manager: no refusal, no dialog, recorded as the manager's own decision" },
+  "return-swap": [
+    { file: "20-sales.pw.ts", test: "a swap: the credit pays a new order, the leftover goes back by cash, both documents name each other" },
   ],
   "other-branch": [
     { file: "10-world.pw.ts", test: "a Kingston sale is refused at this counter: the lookup, its ticket, and all three refund rails" },
-    { file: "20-sales.pw.ts", test: "a Kingston sale: refused in words before anything lays out" },
-    { file: "30-manager.pw.ts", test: "a Kingston sale: the same wall to the manager" },
   ],
   "role-matrix": [
     { file: "10-world.pw.ts", test: "the walls the box holds: the role matrix, and the price rule write beside it" },
@@ -101,7 +95,6 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   ],
   "known-seeded-card": [
     { file: "10-world.pw.ts", test: "the seeded card sale carries no card reference, so the desk cannot refund it by card" },
-    { file: "20-sales.pw.ts", test: "a return within 250.00: refunded in cash, and the drawer's expected cash drops by it" },
   ],
   restart: [
     { file: "90-restart.pw.ts", test: "the pre restart bearer is refused, and a fresh sign in works" },

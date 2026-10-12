@@ -14,8 +14,11 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
-// The table is closed: two flows, the pair the Counter Till cycle ships
-// (D49, DECISIONS.md). A new flow is an edit here, reviewed, never a
+// The table is closed: the Counter Till's pair (D49, DECISIONS.md), the
+// Manager Home app's yard manager, and the live role logins the roles
+// roadmap adds one reviewed row at a time (the yard personas, Payables and
+// Receivables and the Procurement Manager and the Financial Controller
+// after PRs 300 and 303). A new flow is an edit here, reviewed, never a
 // runtime input: the entry page may only ever offer what this file lists.
 package flows
 
@@ -67,13 +70,16 @@ type Account struct {
 	Role string
 }
 
-// accounts is the closed table. The platform user ids, the emails and
-// the display names are the populate's rows, reconciled against the
-// populate's pushed branch: the mint's token sub and the membership
-// source's answers must name the users rows the populate creates. The
-// agreement is by copy today (the populate holds its own copies of these
-// values); it becomes by construction when the populate imports this
-// table, a named stitch for the demo image's lane.
+// accounts is the closed table. The Counter Till pair's platform user
+// ids, emails and display names are the populate's rows, reconciled
+// against the populate's pushed branch: the mint's token sub and the
+// membership source's answers must name the users rows the populate
+// creates. The persona rows name the logins migration 0200 plants: the
+// same ids the demoseed resolves by those emails, and the display names
+// the populate's renames leave on them. The agreement is by copy today
+// (the populate holds its own copies of these values); it becomes by
+// construction when the populate imports this table, a named stitch for
+// the demo image's lane.
 var accounts = map[string]Account{
 	"sales": {
 		Flow:           "sales",
@@ -91,6 +97,62 @@ var accounts = map[string]Account{
 		Label:          "Sales manager",
 		Role:           "sales_manager",
 	},
+	// The yard manager, Manager Home's first per-role landing (roadmap 2.3):
+	// the demo persona whose card opens the manager.yard profile.
+	"yard-manager": {
+		Flow:           "yard-manager",
+		PlatformUserID: "de110000-0000-4000-9000-000000000003",
+		Email:          "yard.manager@" + ReservedDomain,
+		DisplayName:    "Yard manager (demo)",
+		Label:          "Yard manager",
+		Role:           "yard_manager",
+	},
+	"yard-team": {
+		Flow:           "yard-team",
+		PlatformUserID: "d0200000-0000-4000-9000-000000000002",
+		Email:          "yard.demo@dibbits.example",
+		DisplayName:    "Yard persona (demo)",
+		Label:          "Yard Team",
+		Role:           "yard_team",
+	},
+	"driver": {
+		Flow:           "driver",
+		PlatformUserID: "d0200000-0000-4000-9000-000000000003",
+		Email:          "driver.demo@dibbits.example",
+		DisplayName:    "Driver persona (demo)",
+		Label:          "Driver",
+		Role:           "driver",
+	},
+	// Payables and Receivables, the roles roadmap's first receivables
+	// increment, PR 300. The id block is the lane's own, so the role
+	// lanes' rows cannot collide as they land one after another.
+	"payables-receivables": {
+		Flow:           "payables-receivables",
+		PlatformUserID: "de110000-0000-4000-9000-0000000000a1",
+		Email:          "payables.receivables@" + ReservedDomain,
+		DisplayName:    "Payables and Receivables (demo)",
+		Label:          "Payables and Receivables",
+		Role:           "payables_receivables",
+	},
+	// The procurement manager's login, the roles roadmap's Buying and
+	// Stock slice, PR 303. The id block is this lane's own, so the role
+	// lanes' rows cannot collide as they land one after another.
+	"procurement-manager": {
+		Flow:           "procurement-manager",
+		PlatformUserID: "de64b000-0000-4000-9000-000000000001",
+		Email:          "procurement.manager@" + ReservedDomain,
+		DisplayName:    "Procurement manager (demo)",
+		Label:          "Procurement manager",
+		Role:           "procurement_manager",
+	},
+	"financial-controller": {
+		Flow:           "financial-controller",
+		PlatformUserID: "de110000-0000-4000-9000-0000000000c1",
+		Email:          "financial.controller@" + ReservedDomain,
+		DisplayName:    "Financial controller (demo)",
+		Label:          "Financial Controller",
+		Role:           "financial_controller",
+	},
 }
 
 // Get returns the account one flow name stands for. The second return is
@@ -102,11 +164,17 @@ func Get(flow string) (Account, bool) {
 }
 
 // All returns every account in the table, ordered by flow name so the
-// entry page and the populate see one stable order.
+// entry pages and the populate see one stable order.
 func All() []Account {
 	return []Account{
 		accounts["sales"],
 		accounts["sales-manager"],
+		accounts["yard-manager"],
+		accounts["yard-team"],
+		accounts["driver"],
+		accounts["payables-receivables"],
+		accounts["procurement-manager"],
+		accounts["financial-controller"],
 	}
 }
 

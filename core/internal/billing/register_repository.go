@@ -28,6 +28,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 )
 
 // -- policy -------------------------------------------------------------------------------------
@@ -173,17 +175,22 @@ func registerWhere(f RegisterFilter, args []any) (string, []any) {
 		clauses = append(clauses, "i.doc_type = 'INVOICE'")
 	}
 	if s := strings.TrimSpace(f.Search); s != "" {
-		args = append(args, "%"+s+"%")
+		args = append(args, "%"+likeutil.EscapeLikePattern(s)+"%")
 		n := len(args)
 		clauses = append(clauses, fmt.Sprintf(
-			`(i.invoice_no::text ILIKE $%d OR c.name ILIKE $%d OR c.account_no::text ILIKE $%d
-			  OR COALESCE(o.order_no::text,'') ILIKE $%d OR COALESCE(o.po_job_ref,'') ILIKE $%d)`,
+			`(i.invoice_no::text ILIKE $%d ESCAPE '\' OR c.name ILIKE $%d ESCAPE '\'
+			  OR c.account_no::text ILIKE $%d ESCAPE '\'
+			  OR COALESCE(o.order_no::text,'') ILIKE $%d ESCAPE '\'
+			  OR COALESCE(o.po_job_ref,'') ILIKE $%d ESCAPE '\')`,
 			n, n, n, n, n))
 	}
 	if f.BranchID != "" {
 		args = append(args, f.BranchID)
 		clauses = append(clauses, fmt.Sprintf("i.branch_id = $%d::uuid", len(args)))
 	}
+	// The caller's branch wall, always applied: a named branch only narrows inside it.
+	args = append(args, f.Reach.SQLArg())
+	clauses = append(clauses, fmt.Sprintf("($%d::uuid[] IS NULL OR i.branch_id = ANY($%d::uuid[]))", len(args), len(args)))
 	if f.CustomerID != "" {
 		args = append(args, f.CustomerID)
 		clauses = append(clauses, fmt.Sprintf("i.customer_id = $%d::uuid", len(args)))
@@ -334,7 +341,7 @@ func (r *Repository) RegisterCountsFor(ctx context.Context, asOf time.Time, dueS
 // one reason: the operator is about to act on that number, and the action will read the balances
 // again from this table. A figure summed on a stale row set would let somebody create a statement for
 // an amount nobody can reproduce.
-func (r *Repository) SelectionTotals(ctx context.Context, invoiceIDs []string) (int64, int, error) {
+func (r *Repository) SelectionTotals(ctx context.Context, invoiceIDs []string, reach BranchReach) (int64, int, error) {
 	if r.pool == nil {
 		return 0, 0, errNoDB
 	}
@@ -344,8 +351,9 @@ func (r *Repository) SelectionTotals(ctx context.Context, invoiceIDs []string) (
 	var sum int64
 	var n int
 	if err := r.pool.QueryRow(ctx,
-		`SELECT COALESCE(SUM(balance_cents),0), COUNT(*) FROM invoices WHERE id = ANY($1::uuid[])`,
-		invoiceIDs).Scan(&sum, &n); err != nil {
+		`SELECT COALESCE(SUM(balance_cents),0), COUNT(*) FROM invoices
+		  WHERE id = ANY($1::uuid[]) AND ($2::uuid[] IS NULL OR branch_id = ANY($2::uuid[]))`,
+		invoiceIDs, reach.SQLArg()).Scan(&sum, &n); err != nil {
 		return 0, 0, fmt.Errorf("billing: selection totals: %w", err)
 	}
 	return sum, n, nil

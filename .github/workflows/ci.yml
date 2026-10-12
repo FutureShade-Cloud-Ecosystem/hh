@@ -358,8 +358,8 @@ jobs:
         # this log.
         run: go test -tags demo ./... -count=1 -p 1 -timeout 30m
       # The step above runs quiet, so a skipped world proof would hide in it.
-      # This one runs the two proofs alone, verbosely, and fails unless both
-      # PASS and neither SKIPs, so the log shows them passing. It reuses the
+      # This one runs the world proofs alone, verbosely, and fails unless each
+      # PASS, and none SKIPs, so the log shows them passing. It reuses the
       # fresh database from the step before the suite: the proofs build and
       # drop their own databases beside it, so a second run does not collide.
       # The -timeout 30m matches the suite steps, and -v's ok line keeps
@@ -372,12 +372,12 @@ jobs:
           HH_TILL_DEMO_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/hh_demo_world_proof?sslmode=disable
         run: |
           set -euo pipefail
-          go test -tags demo ./cmd/core -run 'TestDemoWorld_(Quotes|CounterTill)$' -count=1 -v -timeout 30m 2>&1 | tee "$RUNNER_TEMP/demo-world-proofs.txt"
+          go test -tags demo ./cmd/core -run 'TestDemoWorld_(Quotes|CounterTill|Controller|ControllerGuards|ControllerApprovalsCursor|ControllerParkFilesInOneTransaction|ControllerRecurringRunRefusedOverTheThreshold|DriverRunOutForDelivery|DriverRunPayloadsCarryNoMoney)$' -count=1 -v -timeout 30m 2>&1 | tee "$RUNNER_TEMP/demo-world-proofs.txt"
           if grep -q -e '--- SKIP' "$RUNNER_TEMP/demo-world-proofs.txt"; then
             echo "a demo world proof was skipped" >&2
             exit 1
           fi
-          for name in TestDemoWorld_Quotes TestDemoWorld_CounterTill; do
+          for name in TestDemoWorld_Quotes TestDemoWorld_CounterTill TestDemoWorld_Controller TestDemoWorld_ControllerGuards TestDemoWorld_ControllerApprovalsCursor TestDemoWorld_ControllerParkFilesInOneTransaction TestDemoWorld_ControllerRecurringRunRefusedOverTheThreshold TestDemoWorld_DriverRunOutForDelivery TestDemoWorld_DriverRunPayloadsCarryNoMoney; do
             if ! grep -q -e "--- PASS: $name " "$RUNNER_TEMP/demo-world-proofs.txt"; then
               echo "$name did not pass" >&2
               exit 1

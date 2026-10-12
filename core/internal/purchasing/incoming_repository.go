@@ -71,6 +71,39 @@ const outstandingOnOrderSQL = `
 	 GROUP BY pl.product_id, p.branch_id
 	HAVING SUM(` + openPOLineOutstanding + `) > 0`
 
+// openDraftsSQL is the draft pointer: per (product, branch), the newest DRAFT order that still has
+// an outstanding line for the product. $2 is the status set, the one fragment spelling the others
+// share, handed DRAFT alone.
+const openDraftsSQL = `
+	SELECT DISTINCT ON (pl.product_id, p.branch_id)
+	       pl.product_id::text, p.branch_id::text, p.id::text, p.po_no::text` + openPOLineSource + `
+	 WHERE ` + openPOLineIsOpen + `
+	   AND ($1::uuid IS NULL OR p.branch_id = $1::uuid)
+	   AND ($3::uuid[] IS NULL OR pl.product_id = ANY($3::uuid[]))
+	 ORDER BY pl.product_id, p.branch_id, p.created_at DESC, p.id`
+
+// OpenDraftsFor reads the draft pointers. branchID "" = every branch; productIDs empty = every
+// product, widened to SQL NULL for the reason OutstandingOnOrderBase states.
+func (r *Repository) OpenDraftsFor(ctx context.Context, branchID string, productIDs []string) ([]OpenDraft, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx, openDraftsSQL, nullStr(branchID), []string{StatusDraft}, nullStrings(productIDs))
+	if err != nil {
+		return nil, fmt.Errorf("purchasing: open drafts: %w", err)
+	}
+	defer rows.Close()
+	var out []OpenDraft
+	for rows.Next() {
+		var d OpenDraft
+		if err := rows.Scan(&d.ProductID, &d.BranchID, &d.POID, &d.PONo); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
 // OpenPOLinesForProduct returns every outstanding PO line for one product inside the reach.
 //
 // SOONEST FIRST, with the undated orders LAST (NULLS LAST). A person asking "when is it showing up"
@@ -114,7 +147,7 @@ func (r *Repository) OutstandingOnOrderBase(ctx context.Context, branchID string
 		return nil, errNoDB
 	}
 	rows, err := r.pool.Query(ctx, outstandingOnOrderSQL,
-		nullStr(branchID), openPOStatuses, nullStrings(productIDs))
+		nullStr(branchID), onOrderStatuses, nullStrings(productIDs))
 	if err != nil {
 		return nil, fmt.Errorf("purchasing: outstanding on order: %w", err)
 	}

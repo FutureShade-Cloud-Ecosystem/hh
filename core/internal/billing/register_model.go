@@ -171,6 +171,9 @@ type RegisterFilter struct {
 	// ignored, and the rows come from a single snapshot, so a payment landing mid-read cannot shift a
 	// row between pages. Only the export sets it; the list read is always paged.
 	All bool
+	// Reach is the caller's branches, set by the service from the stamped caller and never taken from
+	// a request. The zero value reaches nothing, so a filter built anywhere else reads an empty book.
+	Reach BranchReach
 }
 
 // RegisterPage is the register read's answer.
@@ -343,6 +346,18 @@ type ReceiptInput struct {
 	AmountCents    int64  `json:"amount_cents"`
 	Reference      string `json:"reference"` // cheque no / EFT trace, recorded, never invented
 	IdempotencyKey string `json:"idempotency_key"`
+}
+
+// ApplyPaymentInput records ONE received payment against a list of the account's open invoices and
+// asks the server to split it oldest first. The split is never the caller's to compute.
+type ApplyPaymentInput struct {
+	CustomerID     string   `json:"customer_id"`
+	Method         string   `json:"method"` // CASH | CARD | CHEQUE | EFT
+	AmountCents    int64    `json:"amount_cents"`
+	Reference      string   `json:"reference"`
+	InvoiceIDs     []string `json:"invoice_ids"`
+	IdempotencyKey string   `json:"idempotency_key"`
+	Preview        bool     `json:"preview"`
 }
 
 // ReceiptResult is what the Record Payment control gets back. Replayed=true means the key had

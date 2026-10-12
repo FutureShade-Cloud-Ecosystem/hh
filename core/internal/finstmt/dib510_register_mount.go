@@ -68,6 +68,13 @@ func (h *Handler) WithRegisterSender(s RegisterSender) *Handler {
 	return h
 }
 
+// WithPaymentTrail binds the reader that says whether a caller holds the payment trail reads. Unbound,
+// the register's invoice detail withholds the payment entries from every caller.
+func (h *Handler) WithPaymentTrail(t billing.PaymentTrailReader) *Handler {
+	h.paymentTrail = t
+	return h
+}
+
 // NotifierSender adapts the shipped notify port onto the register's Sender. Pure translation: the
 // register composes the words (billing/register_messages.go), notify decides how they travel.
 type NotifierSender struct{ N notify.Notifier }
@@ -97,6 +104,7 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	billing.NewRegisterHandler(svc, repo, h.log).
 		WithBranchNamer(branchNamer(pool)).
 		WithUserLinker(h.userLink).
+		WithPaymentTrail(h.paymentTrail).
 		RegisterRoutes(r, g)
 }
 

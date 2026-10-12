@@ -1152,6 +1152,45 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/ar/payments/apply:
+    post:
+      operationId: paymentsApplyReceived
+      tags:
+        - staff-billing
+      summary: Record one received payment across the account's open invoices
+      description: "The caller names the money (amount, method, reference) and a list of the account's open invoices; the server allocates it oldest first in one transaction: one payment row, its payment_allocations, one journal by the idempotency key (a retry posts once). One payment applies to one branch's invoices: a list spanning two branches is refused in words, because the payment, its subledger rows and its journal all carry one branch. An amount over the selected invoices' payable, an invoice of another account, an invoice outside the caller's branch reach and a not open invoice are all refused in words with nothing applied. preview true answers the same split without writing anything, and never reads the key: a preview under a key an apply already spent answers the fresh split against the live balances, not the recorded payment's replay. The branch reach refusal answers as not found, the same 404 as a missing invoice. A replayed key is judged like a first attempt, and then against its own body: an invoice it paid that is outside the caller's branch reach answers 404, a key that recorded a payment for another account, or for a different payment (another amount, method, reference or invoice list), is refused 422, and the same body under the same key answers the first result and writes nothing."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - money-desk
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingApplyPaymentInput"
+      responses:
+        "200":
+          description: The payment and the server's split per invoice, oldest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingApplyPaymentAnswer"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: "The payment is refused in words with nothing applied: an amount over the selected invoices' payable, an invoice that is not open, an empty or oversized list, the same invoice named twice, a customer id or invoice id that is not a uuid, a list spanning more than one branch, or a key already spent on another account's payment or on a different payment"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/ar/register/invoices/{id}/send:
     post:
       operationId: billingSendInvoice
@@ -1314,7 +1353,7 @@ paths:
       x-access:
         surfaces:
           - money-desk
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1346,7 +1385,7 @@ paths:
       x-access:
         surfaces:
           - money-desk
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1683,7 +1722,7 @@ paths:
       x-access:
         surfaces:
           - money-desk
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1925,7 +1964,7 @@ paths:
       x-access:
         surfaces:
           - money-desk
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -7290,7 +7329,7 @@ paths:
       tags:
         - staff-gl
       summary: Create a balanced manual journal (posts below the policy threshold, parks as DRAFT at or over it)
-      description: "Maker-checker: a journal whose debit total is below the gl_policy approval threshold posts immediately; at or over the threshold it is parked as DRAFT (surfaced as derived_status PENDING_APPROVAL) and a JE_OVER_THRESHOLD approval request is filed on the approvals rail. An unbalanced body is refused with an unprocessable-entity error."
+      description: "Maker-checker: a journal whose debit total is below the gl_policy approval threshold posts immediately; at or over the threshold it is parked as DRAFT (surfaced as derived_status PENDING_APPROVAL) and a JE_OVER_THRESHOLD approval request is filed on the approvals rail in the same transaction as the park. A journal at or over the threshold needs a branch_id to file under (bad request when it has none) and must be a manual journal (a journal of any other source at or over the threshold is a bad request and nothing is saved), and when the request cannot be filed the create fails (service unavailable) and nothing is saved. An unbalanced body is refused with an unprocessable-entity error."
       x-role: requireManager
       x-access:
         surfaces:
@@ -7360,7 +7399,7 @@ paths:
       tags:
         - staff-gl
       summary: Approve and post a parked DRAFT (the checker half of maker-checker)
-      description: "Four-eyes: the approver must differ from the journal's creator; a creator attempting to approve their own journal is refused as forbidden. Approving a journal that is no longer DRAFT conflicts."
+      description: "Four-eyes: the approver must differ from the journal's creator; a creator attempting to approve their own journal is refused as forbidden. Approving a journal that is no longer DRAFT conflicts. A journal over the approval threshold is posted by this route only when the approvals queue holds an approved request for the journal's current amount. Every other state conflicts, each with its own sentence: a pending request (\"gl: this journal has a pending approval request; decide it from the approvals queue, which posts it\"), a rejected request, a deleted request, an approved request for a different amount, and no request at all. Deciding the request in the queue is the way to post such a journal (the decision posts the journal and stamps the request in one transaction). A journal under the threshold with no request is approved by this route as before. The journal id is matched without regard to letter case. A journal made by a recurring run carries no request (a run files none yet), so at or over the threshold the conflict names its recurring template. When the queue cannot be asked the route answers 503."
       x-role: requireManager
       x-access:
         surfaces:
@@ -10431,7 +10470,7 @@ paths:
       tags:
         - staff-inventory
       summary: List the replenishment worklist, worst shortfall first
-      description: Graded on the projected position (available plus in transit plus on order), not on-hand. on_order_degraded is true when the on-order leg was not measured; it is always present rather than omitted when false.
+      description: "Graded on the projected position (available plus in transit plus on order), not on-hand. On order counts placed orders only (ORDERED and PARTIAL): a draft never covers a shortfall, so a row with a draft stays here and names it in draft_po_id and draft_po_no. on_order_degraded is true when the on-order leg was not measured; it is always present rather than omitted when false."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -10444,7 +10483,7 @@ paths:
         - name: branch_id
           in: query
           required: false
-          description: Omitted means all branches
+          description: Omitted means every branch in the caller's reach (all branches for a global caller, the granted ones for a branch scoped caller). A branch outside the reach answers 403.
           schema:
             type: string
       responses:
@@ -10560,12 +10599,14 @@ paths:
       tags:
         - staff-inventory
       summary: Draft a purchase order from selected shortfall lines
-      description: The selection must share one preferred vendor; a line with none is refused. When the purchasing seam is unbound the answer is 503 with the draft carried alongside the error, so the surface can show what would have been ordered.
+      description: "The selection must share one preferred vendor; a line with none is refused. When the purchasing seam is unbound the answer is 503 with the draft carried alongside the error, so the surface can show what would have been ordered. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -10599,12 +10640,14 @@ paths:
       tags:
         - staff-inventory
       summary: Draft a purchase order for one product from its replenishment line
-      description: qty_base of zero means use the replenishment suggestion. Always a DRAFT, never an ordered PO. The same 503-with-draft posture as shortfall/create-po applies when purchasing is unbound.
+      description: "qty_base of zero means use the replenishment suggestion. Always a DRAFT, never an ordered PO. The same 503-with-draft posture as shortfall/create-po applies when purchasing is unbound. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -11763,6 +11806,173 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: messagingCreateChannel
+      tags:
+        - staff-messaging
+      summary: Found a TEAM or TOPIC channel, idempotently on its slug
+      description: "The caller becomes the channel's owner. A replay with the same slug (or the slug derived from the same name) answers 200 with the existing channel, never a duplicate room, and only for a caller who already holds a row in that room (the founder, a derived member): a name or slug collision with any other room is refused with 409 and seats nobody, the branch wall reads the existing room's own branch (403), and a room of another kind (a DM, an APPROVAL or BRANCH room) is never answered here. Slugs in the system namespaces (dm-, rep-, approvals-, chosen or derived) are refused with 400. A channel naming a branch the caller does not reach is refused with 403; BRANCH, DM and APPROVAL kinds are structural or system-provisioned and are refused with 400."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelCreate"
+      responses:
+        "200":
+          description: The channel already existed and the caller is already in it (the idempotent replay)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "201":
+          description: The channel as founded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/dms:
+    post:
+      operationId: messagingCreateDM
+      tags:
+        - staff-messaging
+      summary: Open, or find, the direct message channel with one other staffer
+      description: "The pair's channel is found when it exists (whoever opened it, including a seeded pair) and created exactly once otherwise; a replay answers 200 with the same room. A direct message is reached only through this route: its slug namespace is closed to caller founded rooms, and a slug of the pair already held by a room of another kind is refused with 409 rather than converged on. Naming the caller's own id is 400; a user who is not an active staffer is 404."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingDMCreate"
+      responses:
+        "200":
+          description: The pair's channel already existed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "201":
+          description: The direct message channel as opened
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/members:
+    post:
+      operationId: messagingAddChannelMember
+      tags:
+        - staff-messaging
+      summary: Seat one staffer in a channel the caller belongs to
+      description: "The row is explicit and idempotent: an already-seated member answers the row as it stands, and a DERIVED row is never rewritten. A caller who is not a member of the channel is refused with 403 (the module's channel-scoping wall, which also keeps anyone from seating themselves into a room they hold no row in); a direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and on a room whose membership the branch model derives, a target who reaches neither the room's branch nor every branch is 403. A user who is not an active staffer is 404 or 403."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingDMCreate"
+      responses:
+        "200":
+          description: The membership row as seated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannelMember"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/members/{userID}:
+    delete:
+      operationId: messagingRemoveChannelMember
+      tags:
+        - staff-messaging
+      summary: Drop one explicit member row from a channel the caller belongs to
+      description: A DERIVED member row is the role and branch model's and is refused with 409 (the next membership sync would re-derive it); only explicit rows are hand-removable. A direct message or approvals channel has fixed membership and refuses with 409; managing members belongs to the room's owner and to the roles the role matrix gives Admin on house-messages (the general manager), everyone else is 403; and a removal never drops the room's last OWNER row (409, a channel keeps its owner).
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: userID
+          in: path
+          required: true
+          description: The member being removed
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The removal echo
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/messaging/channels/{id}/messages:
     get:
       operationId: messagingListMessages
@@ -14329,7 +14539,7 @@ paths:
       tags:
         - staff-tasks
       summary: Record or change the skid count on the pick's order, with a reason
-      description: PUT replaces the order's recorded skid count with the count sent. A reason from the same list as a short pick is required on every change; OTHER also needs a note. The same count again is not a change (changed is false). The skid deposit that follows the count is recorded, not billed; the response carries it before and after. The caller must reach the task's branch (403 otherwise). Refused with 409 when the order's status cannot take it.
+      description: PUT replaces the order's recorded skid count with the count sent. A reason from the same list as a short pick is required on every change; OTHER also needs a note. The same count again is not a change (changed is false). The skid deposit that follows the count is recorded, not billed; the response carries it before and after to a role on the cost and margin list only. The caller must reach the task's branch (403 otherwise). Refused with 409 when the order's status cannot take it.
       x-role: requireStaff
       x-access:
         surfaces:
@@ -14403,12 +14613,13 @@ paths:
       tags:
         - staff-tasks
       summary: Resolve one shortage with a stated resolution
-      description: The resolution text is required. Resolving an already-resolved shortage answers 409.
+      description: The resolution text is required. Resolving an already-resolved shortage answers 409. Beside the yard-pick level, the caller's role must sit on the shortage_resolvers list (the decided default names the yard team and the yard manager, exactly the roles the default gives the surface at work).
       x-role: requireStaff
       x-access:
         surfaces:
           - yard-pick
         level: work
+        list: shortage_resolvers
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -16448,12 +16659,13 @@ paths:
       tags:
         - staff-till
       summary: List the bounced-payment queue
-      description: Manager-gated; the queue exposes customer financial-distress information.
+      description: "Manager-gated; the queue exposes customer financial-distress information. Held to work by ruling 87, like a payment's history: the queue lists payments by number, method and amount, and the payment trail is the money desk's to work."
       x-role: requireManager
       x-access:
         surfaces:
+          - counter-till
           - money-desk
-        level: read
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Cursor"
@@ -16486,7 +16698,7 @@ paths:
       x-access:
         surfaces:
           - money-desk
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -16519,12 +16731,13 @@ paths:
       tags:
         - staff-till
       summary: Read who took a payment and which invoices it was applied to
-      description: The path key may be the payment's id or the human payment number printed on the receipt. For a BOUNCED payment the historical applications are reconstructed from the audit trail and flagged reversed_by_nsf.
+      description: "The path key may be the payment's id or the human payment number printed on the receipt. For a BOUNCED payment the historical applications are reconstructed from the audit trail and flagged reversed_by_nsf. Held to work by ruling 87: a customer's payment trail is the money desk's to work, not a money desk reader's to browse."
       x-role: requireStaff
       x-access:
         surfaces:
           - counter-till
-        level: read
+          - money-desk
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -16552,12 +16765,13 @@ paths:
       tags:
         - staff-till
       summary: Read which payments and credits settled an invoice, attributed
-      description: The path key may be the invoice's id or the human invoice number.
+      description: "The path key may be the invoice's id or the human invoice number. Held to work by ruling 87, like a payment's history: the payment trail is the money desk's to work."
       x-role: requireStaff
       x-access:
         surfaces:
           - counter-till
-        level: read
+          - money-desk
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -17284,6 +17498,86 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/pricing/floor-preview:
+    post:
+      operationId: pricingPreviewFloor
+      tags:
+        - staff-pricing
+      summary: Name the products a proposed price would put under the margin floor
+      description: "The pricing editors' floor warning (the editors warn and may still save). Lays the proposed rule, customer price, category margin policy or quantity break over the stored pricing data and grades the existing products it can reach through the resolver and its margin gate, as a quote line would meet them. A change that names no branch is graded at every branch location, each at its own cost with its own branch-limited rules, keeping the worst per product and naming that branch in the item, so a breach only one yard makes is named. Returns the products the new price leaves under the floor, worst first, each marked when it was already under the floor before the change. A surcharge tier never changes a price under the replace rule, so a break of surcharge tiers names nothing. A change that names a customer is graded at that customer's own pricing type, so the price today is what the customer pays. Products with no cost on file (at the named branch when the change names one, else at any branch) are counted in no_cost, and products the resolver has no price to grade (no list price, no unit conversion) in not_graded; any other failure of the grading is an error answer, never a count. no_cost_branches names the yards a branch-less check found no cost on file at, with the product count: informational, it never opens the warning on its own. At most 200 products and a bounded number of product, customer type, quantity and branch combinations are graded (a combination is one resolve at one branch); the branches are graded dearest cost first, and truncated says when more existed, with not_graded_branches counting the branch gradings the cap left out. A quantity break has at most 20 tiers, and a tier starting at zero is graded at one base unit. Writes nothing: no price changes and no row in the pricing log. The request trail the server keeps of every POST still records the call itself. Refuses what the write itself would refuse (an override needs a customer, a category and a price unit)."
+      x-addition: the editors' floor warning (plan CP0-6, QD-4); no ERP source route
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: manage
+        list: pricing_editors
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingFloorPreviewRequest"
+      responses:
+        "200":
+          description: The products the proposed price leaves under the floor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingFloorPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          description: The proposed price is not valid against the pricing vocabulary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /api/v1/pricing/floor-confirmations:
+    post:
+      operationId: pricingConfirmFloorWarning
+      tags:
+        - staff-pricing
+      summary: Record in the pricing log that the editor confirmed a floor warning
+      description: "Called after the confirmed save, against the record that save wrote. Writes one pricing log row (action UPDATE, field floor_warning_confirmed) naming the actor and the products the editor was shown. Unlike the writes' own log rows, a failure to write this one is an error answer, not a silent drop. A reference pair must be complete, and its id is checked only against the two kinds the pricing module can read itself: an id that names a product or a customer is refused when the claimed kind is the other (a product id sent as a quote reference is a 400). That check is partial by design: the kinds pricing has no read for (quote, order, category) are never resolved, an id that names nothing the module can see is taken as it comes, and the product read drops inactive products, so a product reference carrying an inactive product's id is accepted."
+      x-addition: records the editor's confirmation of a floor warning (plan CP0-6, QD-4); no ERP source route
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: manage
+        list: pricing_editors
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PricingFloorConfirmation"
+      responses:
+        "200":
+          description: The confirmation is in the pricing log
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PricingStatusResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/pricing/reports/low-margin:
     post:
       operationId: pricingLowMarginReport
@@ -18854,6 +19148,83 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: purchasingCreateVendor
+      tags:
+        - staff-purchasing
+      x-addition: the vendor create route of the roles roadmap's Buying and Stock core slice; no ERP source route
+      summary: Create a vendor
+      description: The vendor number is minted server side (VM- and digits, a shape the load doors refuse as a legacy key) and is never accepted from the caller. The record is created active under the caller's org; the ordering email rides the record as the remit fallback the outbound send's address book reads.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - buying-and-stock
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingCreateVendorRequest"
+      responses:
+        "201":
+          description: The created vendor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorMaster"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/purchasing/vendors/{vendorID}:
+    put:
+      operationId: purchasingUpdateVendor
+      tags:
+        - staff-purchasing
+      x-addition: the vendor edit route of the roles roadmap's Buying and Stock core slice; no ERP source route
+      summary: Correct one vendor's record
+      description: Every field is optional and absent means unchanged; an empty order_email clears the fallback address. The vendor number is not editable. A vendor another org owns answers 404 like an unknown id; a carried vendor with no org yet is claimed for the caller's org by its first edit.
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - buying-and-stock
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingUpdateVendorRequest"
+      responses:
+        "200":
+          description: The vendor after the corrections
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingVendorMaster"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/purchasing/pos:
     get:
       operationId: purchasingListPOs
@@ -18898,12 +19269,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Create a draft purchase order
-      description: The PO number is minted server-side and is never accepted from a caller. A USD document requires a positive fx_rate; an omitted currency means CAD at a rate of 1.
+      description: "The PO number is minted server-side and is never accepted from a caller. A USD document requires a positive fx_rate; an omitted currency means CAD at a rate of 1. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -18960,12 +19333,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Add a line to a draft purchase order
-      description: "Lines may only be edited while the order is DRAFT: once a PO is ORDERED its line set is frozen, because a purchase order is a contract and editing one after placement is how a three-way match is quietly defeated."
+      description: "Lines may only be edited while the order is DRAFT: once a PO is ORDERED its line set is frozen, because a purchase order is a contract and editing one after placement is how a three-way match is quietly defeated. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -18992,17 +19367,78 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/purchasing/pos/{id}/lines/{lineID}:
+    put:
+      operationId: purchasingUpdateLine
+      tags:
+        - staff-purchasing
+      x-addition: the draft line correction route of the roles roadmap's Buying and Stock core slice; no ERP source route
+      summary: Correct the quantity or the cost of one line on a draft purchase order
+      description: "Each field is optional and absent means unchanged; the product is not editable through this route. Lines may only be corrected while the order is DRAFT, the same freeze the add and remove routes carry. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - buying-and-stock
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: lineID
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingUpdateLineRequest"
+      responses:
+        "200":
+          description: The purchase order after the correction
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPODetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
     delete:
       operationId: purchasingRemoveLine
       tags:
         - staff-purchasing
       summary: Remove a line from a draft purchase order
+      description: "Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -19027,18 +19463,26 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          description: A line id that is not a uuid, or a quantity beyond what an order line can hold
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/purchasing/pos/{id}/transition:
     post:
       operationId: purchasingTransitionPO
       tags:
         - staff-purchasing
       summary: Move a purchase order along its lifecycle
-      description: Operator-driven moves only (place, close, cancel). The receipt-driven moves to PARTIAL and RECEIVED are computed from what landed and are never requested here.
+      description: "Operator-driven moves only (place, close, cancel). The receipt-driven moves to PARTIAL and RECEIVED are computed from what landed and are never requested here. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -19110,12 +19554,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Set or clear the promised receiving date on a purchase order
-      description: "An empty expected_at clears the date: a withdrawn vendor promise leaves no date, and a stale one left on the record is a screen that lies to the person planning around it. Refused on a RECEIVED, CLOSED or CANCELLED order."
+      description: "An empty expected_at clears the date: a withdrawn vendor promise leaves no date, and a stale one left on the record is a screen that lies to the person planning around it. Refused on a RECEIVED, CLOSED or CANCELLED order. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -19148,12 +19594,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Record or correct how a purchase order's goods reach the yard
-      description: "Sets the arrival the purchase order carries, readable on GET /api/v1/purchasing/pos/{id}. delivery_method is required: on a correction an empty value is a malformed request, not an unrecord, and sending UNKNOWN is how an arrival is unrecorded. Refused on a RECEIVED, CLOSED or CANCELLED order, the same finished statuses the expected-date route refuses. Core's receiving worklist does not render the column yet; the DIB-573 read half is unported."
+      description: "Sets the arrival the purchase order carries, readable on GET /api/v1/purchasing/pos/{id}. delivery_method is required: on a correction an empty value is a malformed request, not an unrecord, and sending UNKNOWN is how an arrival is unrecorded. Refused on a RECEIVED, CLOSED or CANCELLED order, the same finished statuses the expected-date route refuses. Core's receiving worklist does not render the column yet; the DIB-573 read half is unported. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -19299,12 +19747,14 @@ paths:
       tags:
         - staff-purchasing
       summary: Send a purchase order to the vendor's ordering desk
-      description: "The send goes to exactly one recipient: the tagged ordering contact, or a deliberate, confirmed fallback to the vendor record address. A DRAFT order is not sendable. The response is the send record even when no transport delivered anything: status and detail carry the outcome, a failed send of a well-formed request is still a 200. An idempotency_key replays to the first send rather than sending twice."
+      description: "The send goes to exactly one recipient: the tagged ordering contact, or a deliberate, confirmed fallback to the vendor record address. A DRAFT order is not sendable. The response is the send record even when no transport delivered anything: status and detail carry the outcome, a failed send of a well-formed request is still a 200. An idempotency_key replays to the first send rather than sending twice. Walled to the po_writers list: the Procurement Manager, the General Manager and the super admin; every other role is refused with the shared forbidden body."
       x-role: requireManager
       x-access:
         surfaces:
           - buying-and-stock
-        level: manage
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: the General Manager reads the buying surface and may still write an order, which a manage level cannot say without admitting every manage seat on the surface."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
@@ -20525,7 +20975,7 @@ paths:
       tags:
         - staff-quote
       summary: Convert an ACCEPTED dealer quote into an order from the counter
-      description: "The counter door onto quote-to-order conversion. The body is optional: a bare POST converts with no fulfilment choice. The credit and hold gate runs inside the conversion transaction, and the selling-role check runs in the service. A 409 names the refusal (credit policy, repeat acceptance, or a state that cannot convert)."
+      description: "The counter door onto quote-to-order conversion. The body is optional: a bare POST converts with no fulfilment choice. The credit and hold gate runs inside the conversion transaction, and the selling-role check runs in the service. A 409 names the refusal (credit policy, repeat acceptance, or a state that cannot convert). An optional Idempotency-Key header (a UUID) makes a retry safe: a repeat under the same key on the same quote answers the first order and makes no second one, whatever the quote's status is by then and whatever the dealer's multi accept switch says; the same key with a different fulfilment is a 409 in words. Without a key the switch's own behaviour stands."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -20540,6 +20990,13 @@ paths:
           description: Quote id (uuid) or the visible quote number
           schema:
             type: string
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: A UUID chosen once per conversion attempt and resent unchanged on every retry of it. Scoped to the quote.
+          schema:
+            type: string
+            format: uuid
       requestBody:
         required: false
         content:
@@ -20939,6 +21396,31 @@ paths:
                 $ref: "#/components/schemas/QuoteAcceptanceSettings"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/quotes/settings-grant:
+    get:
+      operationId: quoteSettingsGrant
+      tags:
+        - staff-quote
+      summary: Read whether the signed-in caller holds the settings panel grants
+      description: One question the Quote Desk asks before it mounts its settings panels. Each boolean uses the very predicate the refusing route uses, so the answer cannot drift from the refusal. requireStaff is the coarse first line only; the predicates that answer the grant live in the service.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - quote-desk
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The three grant booleans
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuoteSettingsGrant"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -27824,6 +28306,112 @@ components:
         replayed:
           type: boolean
           description: True when the idempotency key was already honoured and this request posted nothing
+    BillingApplyPaymentInput:
+      type: object
+      description: One received payment the server allocates across the named invoices, oldest first. The split is never the caller's to compute.
+      required:
+        - customer_id
+        - method
+        - amount_cents
+        - reference
+        - invoice_ids
+        - idempotency_key
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        method:
+          type: string
+          enum:
+            - CASH
+            - CARD
+            - CHEQUE
+            - EFT
+        amount_cents:
+          type: integer
+          format: int64
+        reference:
+          type: string
+          description: The instrument's own reference (cheque no, EFT trace); recorded, never invented
+        invoice_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: The account's open invoices the payment may be applied to
+        idempotency_key:
+          type: string
+        preview:
+          type: boolean
+          description: Answer the same split without writing anything
+    BillingApplyPaymentLine:
+      type: object
+      description: One invoice's share of the split
+      required:
+        - invoice_id
+        - invoice_no
+        - applied_cents
+        - outcome
+        - balance_after_cents
+        - stays_open_cents
+      properties:
+        invoice_id:
+          type: string
+          format: uuid
+        invoice_no:
+          type: string
+        applied_cents:
+          type: integer
+          format: int64
+        outcome:
+          type: string
+          enum:
+            - CLOSES
+            - PART
+            - NONE
+          description: CLOSES mirrors the settle's own status flip; a held back invoice that paid its payable in full stays PART with its retained balance
+        balance_after_cents:
+          type: integer
+          format: int64
+          description: The invoice's balance after this split
+        stays_open_cents:
+          type: integer
+          format: int64
+          description: What the account can still pay on this invoice after the split (balance less holdback)
+    BillingApplyPaymentAnswer:
+      type: object
+      description: The payment (absent on a preview) and the server's split per invoice, oldest first
+      required:
+        - preview
+        - amount_cents
+        - applied_cents
+        - unapplied_cents
+        - lines
+        - replayed
+      properties:
+        preview:
+          type: boolean
+        payment_id:
+          type: string
+          format: uuid
+        payment_no:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        applied_cents:
+          type: integer
+          format: int64
+        unapplied_cents:
+          type: integer
+          format: int64
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingApplyPaymentLine"
+        replayed:
+          type: boolean
+          description: True when the idempotency key was already honoured and this request posted nothing
     BillingReminderInput:
       type: object
       description: One deliberate reminder run over a selection
@@ -33461,7 +34049,7 @@ components:
           description: True only when every load on the order has reached DELIVERED
     DispatchStopPaymentHold:
       type: object
-      description: The driver-facing banner payload, computed per read from the gate and never stored. reason is written for a driver to read; code is the machine handle so surfaces can style the banner without parsing prose.
+      description: The driver-facing banner payload, computed per read from the gate and never stored. reason is written for a driver to read; code is the machine handle so surfaces can style the banner without parsing prose. The hold itself reaches every caller; the figure and the gate's own sentence reach only a role on the cost and margin list, and every other caller is told the hold in words, never a figure.
       required:
         - stop_id
         - order_id
@@ -33482,6 +34070,7 @@ components:
         amount_due_cents:
           type: integer
           format: int64
+          description: Carried only to a role on the cost and margin list; absent for every other role, which is told the hold in words
     DispatchPaymentHoldPage:
       type: object
       required:
@@ -35782,7 +36371,6 @@ components:
         - move_type
         - source_type
         - source_ref_id
-        - unit_cost_cents
         - occurred_at
       properties:
         id:
@@ -35819,6 +36407,7 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         occurred_at:
           type: string
           format: date-time
@@ -35832,7 +36421,6 @@ components:
         - on_hand_base
         - allocated_base
         - available_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -35852,7 +36440,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
-          description: The branch weighted-average unit cost
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryPendingFulfilment:
       type: object
       description: One COLLECT_LATER or DELIVERED line awaiting a stock move
@@ -36013,7 +36601,6 @@ components:
         - in_transit_base
         - available_base
         - soft_held_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -36042,6 +36629,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryBrowseRow:
       type: object
       description: One product on the browse surface, with its stock position
@@ -36064,7 +36652,6 @@ components:
         - reserved_base
         - available_base
         - in_transit_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -36106,6 +36693,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InventoryFacetValue:
       type: object
       required:
@@ -36396,7 +36984,6 @@ components:
         - qty_base
         - qty_shipped_base
         - qty_received_base
-        - unit_cost_cents
         - ship_move_id
         - recv_move_id
       properties:
@@ -36424,6 +37011,7 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         ship_move_id:
           type: string
         recv_move_id:
@@ -36536,8 +37124,6 @@ components:
         - preferred_vendor_id
         - preferred_vendor_name
         - lead_time_days
-        - avg_cost_cents
-        - suggested_value_cents
       properties:
         product_id:
           type: string
@@ -36589,10 +37175,18 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
         suggested_value_cents:
           type: integer
           format: int64
-          description: suggested_qty_base times the branch weighted-average cost
+          description: "suggested_qty_base times the branch weighted-average cost; the same role gate as avg_cost_cents (the figure derives from it): byte-absent for a caller off the dealer's cost and margin list."
+        draft_po_id:
+          type: string
+          format: uuid
+          description: The newest draft purchase order a buyer has started for this product at this branch, unplaced. A draft never covers a shortfall, so the row stays on the worklist beside it; absent when there is none. Placing the draft takes the row off the worklist.
+        draft_po_no:
+          type: string
+          description: The number of the draft named by draft_po_id; present with it, absent without it
     InventoryReorderPoint:
       type: object
       description: The per (product, branch) replenishment policy row
@@ -36754,6 +37348,13 @@ components:
           type: string
         vendor_name:
           type: string
+        existing_draft_po_id:
+          type: string
+          format: uuid
+          description: The unplaced draft this product already had at this branch before this press. A draft never covers a shortfall, so the press still drafts the full quantity; absent when there was none.
+        existing_draft_po_no:
+          type: string
+          description: The number of the draft named by existing_draft_po_id; present with it, absent without it
     InventoryNudgeRequest:
       type: object
       required:
@@ -37031,8 +37632,6 @@ components:
         - snapshot_qty_base
         - counted_qty_base
         - variance_base
-        - unit_cost_cents
-        - variance_value_cents
       properties:
         id:
           type: string
@@ -37062,9 +37661,11 @@ components:
         unit_cost_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         reason_code:
           type: string
         move_id:
@@ -37140,8 +37741,6 @@ components:
         - line_count
         - counted_lines
         - variance_lines
-        - net_variance_value_cents
-        - abs_variance_value_cents
       properties:
         line_count:
           type: integer
@@ -37155,9 +37754,11 @@ components:
         net_variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
         abs_variance_value_cents:
           type: integer
           format: int64
+          description: Held out (absent, never zero) for a role off the cost and margin list
     InvCountSheetDetail:
       type: object
       description: A sheet plus its lines and a variance summary (the count-variance screen payload)
@@ -37181,7 +37782,6 @@ components:
         - product_id
         - location_id
         - on_hand_base
-        - avg_cost_cents
       properties:
         product_id:
           type: string
@@ -37194,6 +37794,7 @@ components:
         avg_cost_cents:
           type: integer
           format: int64
+          description: "The branch weighted-average unit cost. Role gated by the dealer's cost and margin list (X3): byte-absent for a caller off the list, never a zero that reads as free."
     InvCountCreateSheetRequest:
       type: object
       required:
@@ -37668,6 +38269,65 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MessagingChannel"
+    MessagingChannelCreate:
+      type: object
+      description: "One caller-founded channel. Slug is optional: an empty slug is derived from the name, so the same founding twice converges on one room. BranchID optionally scopes a TEAM channel to one yard the caller reaches."
+      required:
+        - kind
+        - name
+      properties:
+        kind:
+          type: string
+          enum:
+            - TEAM
+            - TOPIC
+        name:
+          type: string
+        topic:
+          type: string
+        slug:
+          type: string
+        branch_id:
+          type: string
+          format: uuid
+    MessagingDMCreate:
+      type: object
+      description: Names the other staffer (the DM and member-add bodies share the shape)
+      required:
+        - user_id
+      properties:
+        user_id:
+          type: string
+          format: uuid
+    MessagingChannelMember:
+      type: object
+      description: One membership row. DERIVED rows are the role and branch model's and are never hand-removable; EXPLICIT rows are the seat this surface writes.
+      required:
+        - channel_id
+        - user_id
+        - role
+        - source
+        - joined_at
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+            - MEMBER
+            - OWNER
+        source:
+          type: string
+          enum:
+            - DERIVED
+            - EXPLICIT
+        joined_at:
+          type: string
+          format: date-time
     MessagingMessage:
       type: object
       description: "One post. author_id is empty for a system EVENT message. ref carries the structured MessagingEventRef for EVENT messages and MessagingApprovalRef for APPROVAL cards. thread_root_id is empty for a top-level message. superseded_by non-empty means a newer fact about the same record auto-resolved this message (last write wins): it renders as superseded and never requires an ack."
@@ -39865,7 +40525,7 @@ components:
         still_owed_cents:
           type: integer
           format: int64
-          description: The money the order still owes under the hold; absent when nothing
+          description: The money the order still owes under the hold. Carried only to a role on the cost and margin list and absent for every other role and when nothing is owed; the hold mark and its words stay.
     TaskShortage:
       type: object
       description: One reported shortage on a pick
@@ -40089,8 +40749,6 @@ components:
       required:
         - skid_count
         - previous_skid_count
-        - deposit_cents
-        - previous_deposit_cents
         - changed
         - order_no
       properties:
@@ -40105,9 +40763,11 @@ components:
         deposit_cents:
           type: integer
           format: int64
+          description: Carried only to a role on the cost and margin list; absent for every other role
         previous_deposit_cents:
           type: integer
           format: int64
+          description: Carried only to a role on the cost and margin list; absent for every other role
         changed:
           type: boolean
         order_no:
@@ -44586,6 +45246,195 @@ components:
             - CATEGORY_POLICY_DISABLED
             - APPROVED_OVERRIDE
             - MANAGER_SCOPE_OVERRIDE
+    PricingFloorPreviewRequest:
+      type: object
+      description: The proposed write to grade. kind picks which of rule, override (with customer_id), policy (with category_id) or quantity_break carries it; id names the record being edited and is omitted on create.
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          enum:
+            - rule
+            - override
+            - category_policy
+            - quantity_break
+        id:
+          type: string
+          format: uuid
+        branch_id:
+          type: string
+          format: uuid
+          description: Grade against this branch's own cost and its branch-limited rules; omitted grades every branch location at its own cost with its own branch-limited rules, keeps the worst per product and names that branch in each item
+        rule:
+          $ref: "#/components/schemas/PricingRuleWrite"
+        customer_id:
+          type: string
+          format: uuid
+        override:
+          $ref: "#/components/schemas/PricingOverrideWrite"
+        category_id:
+          type: string
+          format: uuid
+        policy:
+          $ref: "#/components/schemas/PricingCategoryPolicyWrite"
+        quantity_break:
+          $ref: "#/components/schemas/PricingQuantityBreakWrite"
+    PricingFloorPreviewItem:
+      type: object
+      description: One product the proposed price leaves under the margin floor
+      required:
+        - product_id
+        - sku
+        - name
+        - final_cents
+        - margin_bps
+        - floor_bps
+        - price_uom
+        - source
+        - previous_final_cents
+        - previous_margin_bps
+        - already_under_floor
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        sku:
+          type: string
+        name:
+          type: string
+        category_id:
+          type: string
+        customer_type:
+          type: string
+          description: The customer type this was worst for; the customer's own type when the change names a customer
+        branch_id:
+          type: string
+          description: "The branch this worst grading happened at: the change's own branch when it named one, else the worst branch of those graded"
+        branch_code:
+          type: string
+          description: That branch's code, so a warning line stays short; the full name is in branch_name
+        branch_name:
+          type: string
+          description: That branch's name, so an editor who named no branch still sees which yard breaches; empty when the change named its branch
+        final_cents:
+          type: integer
+          format: int64
+          description: The unit price with the change
+        margin_bps:
+          type: integer
+          format: int64
+        floor_bps:
+          type: integer
+          format: int64
+        price_uom:
+          type: string
+        source:
+          type: string
+          enum:
+            - CUSTOMER_PRODUCT_RULE
+            - QUANTITY_BREAK
+            - CUSTOMER_CATEGORY_RULE
+            - CUSTOMER_OVERRIDE
+            - TIER_CATEGORY
+            - TIER_DEFAULT
+            - LIST
+            - PROMOTION
+        previous_final_cents:
+          type: integer
+          format: int64
+          description: The unit price today
+        previous_margin_bps:
+          type: integer
+          format: int64
+        already_under_floor:
+          type: boolean
+          description: True when the product was under the floor before the change too
+    PricingFloorPreview:
+      type: object
+      required:
+        - items
+        - evaluated
+        - not_graded
+        - no_cost
+        - truncated
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PricingFloorPreviewItem"
+        evaluated:
+          type: integer
+          description: Products graded in full at the branches the cap allowed
+        not_graded:
+          type: integer
+          description: Products the resolver had no price to grade in full (no list price, no unit conversion)
+        no_cost:
+          type: integer
+          description: Products with no cost on file (at the named branch when the change names one, else at any branch), whose margin cannot be told
+        truncated:
+          type: boolean
+          description: More products or combinations were reachable than one preview grades (200 products, a bounded number of product, customer type, quantity and branch combinations); the branches were graded dearest cost first and the rest were not graded
+        no_cost_branches:
+          type: array
+          description: The yards a branch-less check found no cost on file at, with how many products; those products were graded at the branches that carry a cost, and a quote at a yard with no cost row would never be blocked by the gate, so this is said and never a stop.
+          items:
+            $ref: "#/components/schemas/PricingFloorNoCostBranch"
+        not_graded_branches:
+          type: integer
+          description: Branch gradings the work cap left out after the dearest branches were graded first; zero unless truncated is true
+    PricingFloorNoCostBranch:
+      type: object
+      description: One branch location the branch-less check found no cost on file at, with how many products
+      required:
+        - branch_id
+        - products
+      properties:
+        branch_id:
+          type: string
+        branch_code:
+          type: string
+        branch_name:
+          type: string
+        products:
+          type: integer
+          description: Products the check graded with no cost row at this branch
+    PricingFloorConfirmation:
+      type: object
+      required:
+        - entity_type
+        - entity_id
+        - product_ids
+      properties:
+        entity_type:
+          type: string
+          enum:
+            - pricing_rule
+            - customer_override
+            - category_policy
+            - quantity_break
+        entity_id:
+          type: string
+          format: uuid
+          description: The record the confirmed save wrote (the category id for a category policy)
+        product_ids:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: string
+            format: uuid
+        ref_entity_type:
+          type: string
+          enum:
+            - product
+            - customer
+            - category
+            - quote
+            - order
+        ref_entity_id:
+          type: string
+          format: uuid
     PricingLowMarginRequest:
       type: object
       description: A batch of line contexts run through the resolver
@@ -44891,6 +45740,7 @@ components:
           type: string
         items:
           type: array
+          maxItems: 20
           items:
             $ref: "#/components/schemas/PricingQuantityBreakItem"
         version:
@@ -46505,6 +47355,57 @@ components:
           format: int32
         is_active:
           type: boolean
+    PurchasingCreateVendorRequest:
+      type: object
+      description: The vendor number is minted server side. payment_terms_days defaults to 30 when absent; zero is legal and means pay on delivery.
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        payment_terms_days:
+          type: integer
+          format: int32
+        order_email:
+          type: string
+    PurchasingUpdateVendorRequest:
+      type: object
+      description: Every field is optional and absent means unchanged; an empty order_email clears the fallback address. A body naming nothing is refused.
+      properties:
+        name:
+          type: string
+        payment_terms_days:
+          type: integer
+          format: int32
+        order_email:
+          type: string
+        is_active:
+          type: boolean
+    PurchasingVendorMaster:
+      type: object
+      description: "The vendor record as the master writes answer it: the directory projection plus the ordering email on the record. order_email empty is a real answer, no address on file."
+      required:
+        - id
+        - vendor_no
+        - name
+        - payment_terms_days
+        - order_email
+        - is_active
+      properties:
+        id:
+          type: string
+          format: uuid
+        vendor_no:
+          type: string
+        name:
+          type: string
+        payment_terms_days:
+          type: integer
+          format: int32
+        order_email:
+          type: string
+        is_active:
+          type: boolean
     PurchasingPO:
       type: object
       description: "The purchase-order header projection. currency and fx_rate are the document's, frozen when the PO was agreed; every unit cost on the lines is expressed in this currency. subtotal_cents and subtotal_cad_cents are gated money: present only for callers the branch cost_visibility policy allows, absent otherwise (never zero, never null)."
@@ -47195,6 +48096,15 @@ components:
           type: number
         uom:
           type: string
+        unit_cost_cents:
+          type: integer
+          format: int64
+    PurchasingUpdateLineRequest:
+      type: object
+      description: "The correction of one line already on a draft: the quantity or the cost, each optional and absent meaning unchanged. A body naming neither is refused. The product is not editable through this route."
+      properties:
+        qty_ordered_base:
+          type: number
         unit_cost_cents:
           type: integer
           format: int64
@@ -47950,6 +48860,34 @@ components:
           description: The acceptance history, oldest first; empty on a quote nobody has accepted
           items:
             $ref: "#/components/schemas/QuoteAcceptanceRecord"
+        declined:
+          $ref: "#/components/schemas/QuoteDeclineRecord"
+    QuoteDeclineRecord:
+      type: object
+      description: Why and how a staff member closed the quote as lost on the customer's behalf, from the decision's audit row. Absent unless a staff decline is on record. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).
+      required:
+        - reason_code
+        - channel
+        - declined_at
+      properties:
+        reason_code:
+          type: string
+          enum:
+            - price
+            - competitor
+            - project_cancelled
+            - timing
+            - no_response
+            - other
+        channel:
+          type: string
+          description: How the customer said no (phone, text, email or in_person)
+        note:
+          type: string
+          description: What the staff member wrote; absent when nothing was written
+        declined_at:
+          type: string
+          format: date-time
     QuoteAcceptanceRecord:
       type: object
       description: "One row of a quote's acceptance history, oldest first: the customer's own acceptance, or staff accepting on the customer's behalf after the customer said yes by another channel. quantities_confirmed is false on a customer acceptance taken before the confirmation existed. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8)."
@@ -48605,6 +49543,23 @@ components:
         switch_wired:
           type: boolean
           description: Whether the write seam is wired, so the client can render read-only
+    QuoteSettingsGrant:
+      type: object
+      description: "The answer to one question the Quote Desk asks before it mounts its settings panels: does the signed-in caller hold the grants the three panels need? Each boolean uses the very predicate the refusing route uses, so the answer cannot drift from the refusal."
+      required:
+        - can_read_acceptance
+        - can_read_scope_rules
+        - can_edit_policy
+      properties:
+        can_read_acceptance:
+          type: boolean
+          description: True when the caller may read the acceptance settings (the Sales manager or the General Manager)
+        can_read_scope_rules:
+          type: boolean
+          description: True when the caller may read the scope rules (a Tier-1 global user)
+        can_edit_policy:
+          type: boolean
+          description: True when the caller may write the quote policy (the Sales manager or the General Manager)
     QuoteAcceptanceSettingsWrite:
       type: object
       description: The multi-accept write. The staff quote resource is the canonical dealer_quote (DECISIONS.md D8).

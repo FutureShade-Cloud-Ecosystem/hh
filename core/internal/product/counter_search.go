@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -296,7 +297,7 @@ SELECT ` + counterSelect + `,
    )
  ORDER BY rank, sim DESC NULLS LAST, p.name
  LIMIT $3`
-	rows, err := r.pool.Query(ctx, sql, q.Q, escapeLikePattern(q.Q), q.Limit)
+	rows, err := r.pool.Query(ctx, sql, q.Q, likeutil.EscapeLikePattern(q.Q), q.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("counter search %q: %w", q.Q, err)
 	}

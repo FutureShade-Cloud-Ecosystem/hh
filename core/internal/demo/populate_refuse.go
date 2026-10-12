@@ -50,15 +50,19 @@ func refuseForeignOrg(ctx context.Context, tx pgx.Tx) error {
 
 // refuseForeignUser: every users row must be the migrations' planted set
 // (the fixed ids, plus 0077's row by its migration-fixed email, the one
-// planted id the database minted itself) or one of the two role accounts
+// planted id the database minted itself) or one of the role accounts
 // this populate creates. The set is pinned in code, never queried.
 func refuseForeignUser(ctx context.Context, tx pgx.Tx) error {
-	plantedIDs := make(map[string]bool, len(plantedUserIDs)+2)
+	plantedIDs := make(map[string]bool, len(plantedUserIDs)+3)
 	for _, id := range plantedUserIDs {
 		plantedIDs[strings.ToLower(id)] = true
 	}
 	plantedIDs[strings.ToLower(salesUserID)] = true
 	plantedIDs[strings.ToLower(managerUserID)] = true
+	plantedIDs[strings.ToLower(yardMgrUserID)] = true
+	plantedIDs[strings.ToLower(payRecUserID)] = true
+	plantedIDs[strings.ToLower(buyerUserID)] = true
+	plantedIDs[strings.ToLower(controllerUserID)] = true
 	plantedEmails := make(map[string]bool, len(plantedUserEmails))
 	for _, e := range plantedUserEmails {
 		plantedEmails[strings.ToLower(e)] = true

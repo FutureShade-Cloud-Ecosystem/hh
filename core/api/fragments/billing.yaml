@@ -282,6 +282,65 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+  /api/v1/ar/payments/apply:
+    post:
+      operationId: paymentsApplyReceived
+      tags: [staff-billing]
+      summary: Record one received payment across the account's open invoices
+      description: >-
+        The caller names the money (amount, method, reference) and a list of the
+        account's open invoices; the server allocates it oldest first in one
+        transaction: one payment row, its payment_allocations, one journal by the
+        idempotency key (a retry posts once). One payment applies to one
+        branch's invoices: a list spanning two branches is refused in words,
+        because the payment, its subledger rows and its journal all carry one
+        branch. An amount over the selected invoices' payable, an invoice of
+        another account, an invoice outside the caller's branch reach and a not
+        open invoice are all refused in words
+        with nothing applied. preview true answers the same split without
+        writing anything, and never reads the key: a preview under a key an
+        apply already spent answers the fresh split against the live balances,
+        not the recorded payment's replay. The branch reach refusal answers as
+        not found, the same 404 as a missing invoice. A replayed key is judged
+        like a first attempt, and then against its own body: an invoice it
+        paid that is outside the caller's branch reach answers 404, a key that
+        recorded a payment for another account, or for a different payment
+        (another amount, method, reference or invoice list), is refused 422,
+        and the same body under the same key answers the first result and
+        writes nothing.
+      x-role: requireStaff
+      x-access:
+        surfaces: [money-desk]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BillingApplyPaymentInput"
+      responses:
+        "200":
+          description: The payment and the server's split per invoice, oldest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingApplyPaymentAnswer"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422":
+          description: >-
+            The payment is refused in words with nothing applied: an amount over
+            the selected invoices' payable, an invoice that is not open, an empty
+            or oversized list, the same invoice named twice, a customer id or
+            invoice id that is not a uuid, a list spanning
+            more than one branch, or a key already
+            spent on another account's payment or on a different payment
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/v1/ar/register/invoices/{id}/send:
     post:
       operationId: billingSendInvoice
@@ -420,7 +479,7 @@ paths:
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -447,7 +506,7 @@ paths:
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -745,7 +804,7 @@ paths:
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -958,7 +1017,7 @@ paths:
       x-role: requireManager
       x-access:
         surfaces: [money-desk]
-        level: manage
+        level: work
       parameters:
         - $ref: "#/components/parameters/XOrg"
       requestBody:
@@ -1771,6 +1830,70 @@ components:
         status:
           type: string
           enum: [RECEIVED, DEPOSITED, BOUNCED, REFUNDED, VOID, PENDING]
+        replayed:
+          type: boolean
+          description: True when the idempotency key was already honoured and this request posted nothing
+
+    BillingApplyPaymentInput:
+      type: object
+      description: >-
+        One received payment the server allocates across the named invoices,
+        oldest first. The split is never the caller's to compute.
+      required: [customer_id, method, amount_cents, reference, invoice_ids, idempotency_key]
+      properties:
+        customer_id: { type: string, format: uuid }
+        method:
+          type: string
+          enum: [CASH, CARD, CHEQUE, EFT]
+        amount_cents: { type: integer, format: int64 }
+        reference:
+          type: string
+          description: The instrument's own reference (cheque no, EFT trace); recorded, never invented
+        invoice_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: The account's open invoices the payment may be applied to
+        idempotency_key: { type: string }
+        preview:
+          type: boolean
+          description: Answer the same split without writing anything
+
+    BillingApplyPaymentLine:
+      type: object
+      description: One invoice's share of the split
+      required: [invoice_id, invoice_no, applied_cents, outcome, balance_after_cents, stays_open_cents]
+      properties:
+        invoice_id: { type: string, format: uuid }
+        invoice_no: { type: string }
+        applied_cents: { type: integer, format: int64 }
+        outcome:
+          type: string
+          enum: [CLOSES, PART, NONE]
+          description: CLOSES mirrors the settle's own status flip; a held back invoice that paid its payable in full stays PART with its retained balance
+        balance_after_cents:
+          type: integer
+          format: int64
+          description: The invoice's balance after this split
+        stays_open_cents:
+          type: integer
+          format: int64
+          description: What the account can still pay on this invoice after the split (balance less holdback)
+
+    BillingApplyPaymentAnswer:
+      type: object
+      description: The payment (absent on a preview) and the server's split per invoice, oldest first
+      required: [preview, amount_cents, applied_cents, unapplied_cents, lines, replayed]
+      properties:
+        preview: { type: boolean }
+        payment_id: { type: string, format: uuid }
+        payment_no: { type: string }
+        amount_cents: { type: integer, format: int64 }
+        applied_cents: { type: integer, format: int64 }
+        unapplied_cents: { type: integer, format: int64 }
+        lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/BillingApplyPaymentLine"
         replayed:
           type: boolean
           description: True when the idempotency key was already honoured and this request posted nothing

@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
-// the rule the D2 brief fixes (two live roles with the contract's labels and
-// the till's flow ids; eleven coming roles, each carrying the modules the
+// the rule the D2 brief fixes (the seven live roles with the contract's
+// labels and the flows they mint; six coming roles, each carrying the modules
 // matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test
@@ -136,9 +136,9 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the two live roles with the contract's labels and the till's flows", () => {
-  assert.equal(LIVE_ROLES.length, 2);
-  const [sales, manager] = LIVE_ROLES;
+test("the catalog holds the seven live roles with the contract's labels and the flows they mint", () => {
+  assert.equal(LIVE_ROLES.length, 7);
+  const [sales, manager, yardManager, yardTeam, payRec, buyer, driver] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
   assert.deepEqual(sales.tiles.map((tile) => tile.name), ["Counter Till", "Quote Desk"]);
@@ -148,55 +148,82 @@ test("the catalog holds the two live roles with the contract's labels and the ti
     manager.tiles.map((tile) => tile.name),
     ["Counter Till", "Quote Desk", "Manager Home", "Dealer Admin", "House Messages"],
   );
-  // The box's two live modules navigate; the manager's three not-yet modules do not.
+  // The yard manager: Manager Home is its live landing, the Yard Pick app its
+  // live pick app and Buying and Stock the live buying app; the two modules
+  // the matrix gives it that the box does not serve yet open the coming-soon
+  // page.
+  assert.equal(yardManager.label, "Yard manager");
+  assert.equal(yardManager.flow, "yard-manager");
+  assert.deepEqual(
+    yardManager.tiles.map((tile) => tile.name),
+    ["Manager Home", "Yard Pick", "Dispatch and Load Building", "Buying and Stock", "House Messages"],
+  );
+  assert.deepEqual(
+    yardManager.tiles.map((tile) => tile.href),
+    ["/home/", "/yard/", null, "/buying-and-stock/", null],
+  );
+  // The Yard Team's label is the flows row's own ("Yard Team"), and its one
+  // live module is the Yard Pick app under /yard/; House Messages is not on
+  // the box yet.
+  assert.equal(yardTeam.label, "Yard Team");
+  assert.equal(yardTeam.flow, "yard-team");
+  assert.deepEqual(yardTeam.tiles.map((tile) => tile.name), ["Yard Pick", "House Messages"]);
+  assert.deepEqual(yardTeam.tiles.map((tile) => tile.href), ["/yard/", null]);
+  assert.equal(buyer.label, "Procurement manager");
+  assert.equal(buyer.flow, "procurement-manager");
+  assert.deepEqual(
+    buyer.tiles.map((tile) => tile.name),
+    ["Buying and Stock", "Manager Home", "House Messages"],
+  );
+  // The box's live modules navigate; the not-yet modules do not.
   assert.deepEqual(
     sales.tiles.map((tile) => tile.href),
     ["/till/", "/quote/"],
   );
   assert.deepEqual(
     manager.tiles.map((tile) => tile.href),
-    ["/till/", "/quote/", null, null, null],
+    ["/till/", "/quote/", "/home/", null, null],
   );
+  assert.deepEqual(
+    buyer.tiles.map((tile) => tile.href),
+    ["/buying-and-stock/", "/home/", null],
+  );
+  // Payables and Receivables' one live module is the Money Desk; its Manager
+  // Home tile opens at /home/ and its House Messages tile is not on the box yet.
+  assert.equal(payRec.label, "Payables and Receivables");
+  assert.equal(payRec.flow, "payables-receivables");
+  assert.deepEqual(payRec.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
+  assert.deepEqual(payRec.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", null]);
+  // The driver: HH Drive is its live landing; House Messages is the closed
+  // module behind the chipped nav.
+  assert.equal(driver.label, "Driver");
+  assert.equal(driver.flow, "driver");
+  assert.deepEqual(driver.tiles.map((tile) => tile.name), ["HH Drive", "House Messages"]);
+  assert.deepEqual(driver.tiles.map((tile) => tile.href), ["/drive/", null]);
 });
 
-test("the catalog holds the eleven coming roles, each with its matrix modules", () => {
+test("the catalog holds the six coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
-    "Yard Team",
-    "Yard Manager",
     "Logistics Manager",
-    "Driver",
     "Branch Manager",
-    "Procurement Manager",
-    "Payables and Receivables",
     "Financial Controller",
     "General Manager",
     "HR",
   ];
   assert.deepEqual(COMING_ROLES.map((role) => role.label), labels);
   // Every coming role shows at least the modules the matrix gives it at work
-  // level or above; HR's two and Driver's two are the smallest rows, the
-  // Branch manager's and the Yard manager's five the widest.
+  // level or above; HR's two are the smallest rows, the Branch manager's
+  // five the widest.
   for (const role of COMING_ROLES) {
     assert.ok(role.modules.length >= 2, `${role.label} shows its modules`);
     assert.ok(role.modules.length <= 5, `${role.label} carries no invented module`);
   }
   // Spot checks against the matrix's cells (ROLE-ACCESS-r3 as row 1156
-  // amended it): Outside Sales has no till, the Yard manager's till and desk
-  // are removed; the general manager's admin cells include Dealer Admin; HR's
-  // are House Messages and Dealer Admin.
+  // amended it): Outside Sales has no till; the general manager's admin cells
+  // include Dealer Admin; HR's are House Messages and Dealer Admin.
   const outside = COMING_ROLES.find((role) => role.id === "outside_sales");
   assert.equal(outside.modules.includes("Counter Till"), false);
-  const yardManager = COMING_ROLES.find((role) => role.id === "yard_manager");
-  assert.equal(yardManager.modules.includes("Counter Till"), false, "the yard manager's till cell is removed");
-  assert.equal(yardManager.modules.includes("Quote Desk"), false, "the yard manager's desk cell is removed");
-  assert.deepEqual(yardManager.modules, [
-    "Yard Pick and Receive",
-    "Dispatch and Load Building",
-    "Buying and Stock",
-    "Manager Home",
-    "House Messages",
-  ]);
   const general = COMING_ROLES.find((role) => role.id === "general_manager");
   assert.deepEqual(general.modules, ["Money Desk", "Manager Home", "House Messages", "Dealer Admin"]);
   const hr = COMING_ROLES.find((role) => role.id === "hr");
@@ -210,12 +237,13 @@ import { countMarginApprovals, readApprovalsPage } from "../src/approvals-count.
 const row = (policy_type, status) => ({ id: "a", requested_by: "u", branch_id: "b", policy_type, detail: "d", status });
 const pageOf = (pages) => async (cursor) => ({ ok: true, value: pages[cursor ?? ""] });
 
-test("the count reads the core's bare array", async () => {
-  const n = await countMarginApprovals(pageOf({ "": [row("MARGIN_BELOW_MINIMUM", "PENDING"), row("MARGIN_BELOW_MINIMUM", "PENDING")] }));
+test("the count reads the contract's page object, and a bare array is not a page", async () => {
+  const n = await countMarginApprovals(pageOf({ "": { items: [row("MARGIN_BELOW_MINIMUM", "PENDING"), row("MARGIN_BELOW_MINIMUM", "PENDING")], next_cursor: null } }));
   assert.equal(n, 2);
+  assert.equal(await countMarginApprovals(pageOf({ "": [row("MARGIN_BELOW_MINIMUM", "PENDING")] })), null);
 });
 
-test("the count reads the contract's page object and follows every cursor", async () => {
+test("the count follows every cursor", async () => {
   const n = await countMarginApprovals(
     pageOf({
       "": { items: [row("MARGIN_BELOW_MINIMUM", "PENDING")], next_cursor: "c2" },
@@ -229,12 +257,15 @@ test("the count reads the contract's page object and follows every cursor", asyn
 test("the count is the margin kind and pending only", async () => {
   const n = await countMarginApprovals(
     pageOf({
-      "": [
-        row("MARGIN_BELOW_MINIMUM", "PENDING"),
-        row("MARGIN_BELOW_MINIMUM", "APPROVED"),
-        row("CREDIT_LIMIT_EXCEEDED", "PENDING"),
-        row("FREIGHT_ABOVE_QUOTE", "PENDING"),
-      ],
+      "": {
+        items: [
+          row("MARGIN_BELOW_MINIMUM", "PENDING"),
+          row("MARGIN_BELOW_MINIMUM", "APPROVED"),
+          row("CREDIT_LIMIT_EXCEEDED", "PENDING"),
+          row("FREIGHT_ABOVE_QUOTE", "PENDING"),
+        ],
+        next_cursor: null,
+      },
     }),
   );
   assert.equal(n, 1);
@@ -242,7 +273,7 @@ test("the count is the margin kind and pending only", async () => {
 
 test("an unreadable answer, a bad row, a failed page or a repeated cursor yields no count", async () => {
   assert.equal(await countMarginApprovals(pageOf({ "": "nope" })), null);
-  assert.equal(await countMarginApprovals(pageOf({ "": [{ policy_type: 1, status: "PENDING" }] })), null);
+  assert.equal(await countMarginApprovals(pageOf({ "": { items: [{ policy_type: 1, status: "PENDING" }], next_cursor: null } })), null);
   assert.equal(await countMarginApprovals(async () => ({ ok: false })), null);
   assert.equal(
     await countMarginApprovals(pageOf({ "": { items: [], next_cursor: "x" }, x: { items: [], next_cursor: "x" } })),

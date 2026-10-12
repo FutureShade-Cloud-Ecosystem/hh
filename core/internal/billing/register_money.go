@@ -75,3 +75,20 @@ func (w *PaymentsReceiptWriter) RecordReceipt(ctx context.Context, in ReceiptWri
 func (w *PaymentsReceiptWriter) PayableCentsFor(ctx context.Context, invoiceID string) (int64, string, error) {
 	return w.repo.PayableCentsFor(ctx, invoiceID)
 }
+
+// ApplyReceived hands one received payment and its invoice list to the payments module's own walk
+// (oldest first, one transaction) and passes the split answer straight through: the translation is
+// the whole of this adapter's job, and the walk's words are the operator's words.
+func (w *PaymentsReceiptWriter) ApplyReceived(ctx context.Context, in ApplyReceivedCommand) (payments.ApplyAnswer, error) {
+	return w.repo.ApplyReceived(ctx, payments.ApplyRequest{
+		CustomerID:     in.CustomerID,
+		Method:         in.Method,
+		Reference:      in.Reference,
+		IdempotencyKey: in.IdempotencyKey,
+		ReceivedBy:     in.ReceivedBy,
+		BranchIDs:      in.BranchIDs,
+		InvoiceIDs:     in.InvoiceIDs,
+		AmountCents:    in.AmountCents,
+		Preview:        in.Preview,
+	})
+}

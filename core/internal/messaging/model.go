@@ -11,6 +11,7 @@ package messaging
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -98,6 +99,53 @@ func sanitizeSlugPart(s string) string {
 	return string(out)
 }
 
+// reservedChannelSlugPrefixes are the system namespaces no caller founded
+// room may enter: the DM pair slugs (dm-<a>-<b>), the rep customer-message
+// channels (rep-...), the approvals rail's per-approver channels
+// (approvals-...), and the branch seeded families whose names are derived
+// from branch facts and converged on by system routing: the house queues
+// (house-<city>, the branch's home for unassigned customers), the
+// payments channels (payments-<city>, the day's rollup) and the yard
+// rooms (yard-<city>), the counter rooms (sales-<city>) and the drivers
+// rooms (drivers-<city>). A caller founded room that squatted one of them
+// would capture the next system convergence on the same slug (the
+// branch's pick or the post by slug), so a slug arriving there (chosen
+// or derived from the name) is refused before the insert runs. This is
+// the first wall; the second is structural: the system's lookup by slug
+// resolves only a row carrying the auto_scope marker (ChannelIDBySlug). The cost
+// is honest: a room whose name happens to derive into the namespace
+// ("DM guidelines", "House 0 mine") is told to pick another name.
+var reservedChannelSlugPrefixes = []string{"dm-", "rep-", "approvals-", "house-", "payments-", "yard-", "sales-", "drivers-"}
+
+// reservedChannelSlugs are the exact system slugs no caller founded room
+// may take: the GLOBAL payments floor ("payments"), which the routine
+// router and the rollup reader match exactly. A bare slug carries no
+// prefix, so it stands on its own beside the families.
+var reservedChannelSlugs = []string{"payments"}
+
+// isReservedChannelSlug reports whether the slug lands in one of the system
+// namespaces reservedChannelSlugPrefixes names, or is one of the exact
+// system slugs reservedChannelSlugs lists. The slug column is CITEXT,
+// so the unique index folds case: the namespace wall must fold the same
+// way or an upper cased APPROVALS- slug squats a system room the next
+// provision converges on. The service lower cases caller chosen slugs
+// before this runs; folding here too keeps the wall whole for any other
+// caller.
+func isReservedChannelSlug(slug string) bool {
+	lower := strings.ToLower(slug)
+	for _, p := range reservedChannelSlugPrefixes {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	for _, s := range reservedChannelSlugs {
+		if lower == s {
+			return true
+		}
+	}
+	return false
+}
+
 // Membership sources.
 const (
 	SourceDerived  = "DERIVED"
@@ -134,6 +182,18 @@ type Channel struct {
 	UnreadCount int        `json:"unread_count"`
 	Mentioned   bool       `json:"mentioned"`
 	LatestAt    *time.Time `json:"latest_at,omitempty"`
+}
+
+// ChannelMember is one membership row as the member-add surface returns it:
+// the channel, the member, their role in the room, and the membership's
+// source (EXPLICIT rows are the hand-manageable ones; DERIVED rows belong to
+// the role and branch model).
+type ChannelMember struct {
+	ChannelID string    `json:"channel_id"`
+	UserID    string    `json:"user_id"`
+	Role      string    `json:"role"`
+	Source    string    `json:"source"`
+	JoinedAt  time.Time `json:"joined_at"`
 }
 
 // Message is one post. AuthorID is empty for a system EVENT message. Ref carries {topic, entity,

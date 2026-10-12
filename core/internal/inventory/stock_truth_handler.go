@@ -213,6 +213,11 @@ func (h *Handler) branchStock(w http.ResponseWriter, r *http.Request, _ guards.S
 			h.writeErr(w, r, err)
 			return
 		}
+		// X3: the cost leg rides only for a caller the cost rule
+		// allows (cost_gate.go); it is byte-absent otherwise.
+		if !h.costAllowed(r) {
+			blankBranchStockCost([]BranchStock{row})
+		}
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"branches": []BranchStock{row}})
 		return
 	}
@@ -220,6 +225,9 @@ func (h *Handler) branchStock(w http.ResponseWriter, r *http.Request, _ guards.S
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
+	}
+	if !h.costAllowed(r) {
+		blankBranchStockCost(rows)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"branches": rows})
 }
@@ -277,6 +285,11 @@ func (h *Handler) browse(w http.ResponseWriter, r *http.Request, _ guards.StaffC
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
+	}
+	// X3: the cost leg rides only for a caller the cost rule allows
+	// (cost_gate.go); it is byte-absent otherwise.
+	if !h.costAllowed(r) {
+		blankRowCost(res.Rows)
 	}
 	// An empty page is `[]`, not null, DIB-452 made the empty page an ordinary thing to ask for
 	// (a pager whose last request lands exactly on the end of the list gets one), and "no rows" must
@@ -442,6 +455,13 @@ func (h *Handler) listTransfers(w http.ResponseWriter, r *http.Request, _ guards
 		h.writeErr(w, r, err)
 		return
 	}
+	// X3: a line's unit cost is the branch average the ship move priced
+	// it at; it rides only for a caller the cost rule allows.
+	if !h.costAllowed(r) {
+		for i := range rows {
+			blankTransferCost(&rows[i])
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"transfers": rows})
 }
 
@@ -450,6 +470,9 @@ func (h *Handler) getTransfer(w http.ResponseWriter, r *http.Request, _ guards.S
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
+	}
+	if !h.costAllowed(r) {
+		blankTransferCost(&t)
 	}
 	httpx.WriteJSON(w, http.StatusOK, t)
 }
@@ -557,17 +580,32 @@ func (h *Handler) cancelTransfer(w http.ResponseWriter, r *http.Request, _ guard
 // - DIB-72 replenishment -
 
 func (h *Handler) shortfall(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
-	wl, err := h.svc.ShortfallWorklist(r.Context(), r.URL.Query().Get("branch_id"), intParam(r, "limit", 0))
+	wl, err := h.svc.ShortfallWorklist(r.Context(), reachFromRequest(r), r.URL.Query().Get("branch_id"), intParam(r, "limit", 0))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
 	}
+	// X3: the worklist's two cost legs (the branch average and the
+	// suggested value derived from it) ride only for a caller the cost
+	// rule allows (cost_gate.go).
+	if !h.costAllowed(r) {
+		blankShortfallCost(wl.Rows)
+	}
 	// on_order_degraded is ALWAYS present rather than omitted when false: a flag that appears only in
 	// the broken case is one a client forgets to read. It is false on every wired deployment, so the
 	// surface renders nothing for it, see DIB-470.
+	//
+	// The page is the contract's InventoryShortfallPage: the list under `items` (an array, never
+	// null: nothing short is an ordinary answer), the cursor key present and null (the worklist is
+	// one bounded page), the same envelope every list carries.
+	rows := wl.Rows
+	if rows == nil {
+		rows = []ShortfallRow{}
+	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"shortfall":         wl.Rows,
+		"items":             rows,
 		"on_order_degraded": wl.OnOrderDegraded,
+		"next_cursor":       nil,
 	})
 }
 
@@ -619,7 +657,7 @@ func (h *Handler) createPOFromShortfall(w http.ResponseWriter, r *http.Request, 
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	draft, poID, poNo, err := h.svc.CreatePOFromShortfall(r.Context(), req.BranchID, req.ProductIDs)
+	draft, poID, poNo, err := h.svc.CreatePOFromShortfall(r.Context(), reachFromRequest(r), req.BranchID, req.ProductIDs)
 	if err != nil {
 		// The draft rides along even on the 503 the stub returns, so the surface can show the buyer
 		// exactly what would have been ordered instead of an empty error toast.

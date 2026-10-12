@@ -6,11 +6,17 @@ It replaces the Counter Till's entry view as the box's first screen
 role's home with its modules as tiles, one header across the states with the
 demo badge, the role's name, Switch role and Sign out.
 
-- The two live roles are the demo mint's own (`inside_sales` to flow
-  `sales`, `sales_manager` to flow `sales-manager`), labelled on the cards
-  the way the demo adapter's contract names them ("Sales", "Sales manager"),
-  the same rule the till's entry view follows.
-- The eleven other roles of ROLE-ACCESS-r3 stay visible as coming, each with
+- The seven live roles are the demo mint's own with their screens on the box
+  (`inside_sales` to flow `sales`, `sales_manager` to flow `sales-manager`,
+  `yard_manager` to flow `yard-manager`, `yard_team` to flow `yard-team`,
+  `payables_receivables` to flow `payables-receivables`,
+  `procurement_manager` to flow `procurement-manager`, `driver` to flow
+  `driver`), labelled on the cards the way the demo adapter's contract names
+  them ("Sales", "Sales manager", "Yard manager", "Yard Team", "Payables and
+  Receivables", "Procurement manager", "Driver"), the same rule the till's
+  entry view follows. The yard manager's live module is Manager Home at
+  `/home/`; the Yard Team's live module is the Yard Pick app at `/yard/`.
+- The six other roles of ROLE-ACCESS-r3 stay visible as coming, each with
   the modules the matrix gives it at work, manage or admin level, never
   tappable. The catalog lives in `src/roles.ts`, distilled once from the
   decided record; the record itself is read only and is not carried here.
@@ -30,8 +36,11 @@ demo badge, the role's name, Switch role and Sign out.
 - The icons come from the ported registry (the one registry: the Counter
   Till's `src/ported/_icon-consumer.ts` and `_icon-registry.ts`, imported
   across the app boundary). No second registry lives here.
-- The Counter Till hangs off `/till/` and the Quote Desk off `/quote/`; the
-  demo image's wiring of those routes is D1's. The manager's three tiles
+- The Counter Till hangs off `/till/`, the Quote Desk off `/quote/`, the
+  Buying and Stock app off `/buying-and-stock/`, Manager Home off `/home/`
+  and the Yard Pick app off `/yard/`; the demo image serves those five. The
+  Money Desk tile points at `/money-desk/`, which the image does not serve
+  yet (its wiring lands with the Money Desk app). The manager's two tiles
   whose apps are not on the box yet open the polite coming-soon page.
 
 The app is demo-lane scaffolding, not a catalog frontend: it takes no entry

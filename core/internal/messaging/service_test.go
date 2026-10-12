@@ -13,20 +13,28 @@ import (
 // scripted results so channel-scoping authz, unread math, thread replies, and event routing can be
 // proven without a live Postgres.
 type fakeStore struct {
-	members   map[string]map[string]bool // channelID -> userID -> isMember
-	exists    map[string]bool            // channelID -> exists
-	channels  map[string][]Channel       // userID -> channels
-	messages  map[string]MessagePage     // channelID -> page
-	threads   map[string][]Message       // "channelID|rootID" -> replies (channel-bound, mirrors the SQL guard)
-	unread    map[string]UnreadCounts    // userID -> summary
-	slugs     map[string]string          // slug -> channelID
-	yard      map[string]string          // branchID -> slug
-	syncErr   error
-	inserted  []Message       // messages posted via InsertMessage
-	events    []Message       // event messages posted
-	eventRefs []EventRef      // refs captured parallel to events (Feature 2 ref assertions)
-	eventDup  map[string]bool // (channelID|eventKey) already inserted
-	markCalls []string        // "channelID|userID"
+	roleCodes   map[string]string          // userID -> canonical role code
+	members     map[string]map[string]bool // channelID -> userID -> isMember
+	exists      map[string]bool            // channelID -> exists
+	channels    map[string][]Channel       // userID -> channels
+	messages    map[string]MessagePage     // channelID -> page
+	threads     map[string][]Message       // "channelID|rootID" -> replies (channel-bound, mirrors the SQL guard)
+	unread      map[string]UnreadCounts    // userID -> summary
+	slugs       map[string]string          // slug -> channelID
+	roomsBySlug map[string]Channel         // slug -> the room that holds it (the convergence the slug index carries)
+	yard        map[string]string          // branchID -> slug
+	// The membership walls' doubles:
+	facts         map[string]channelFactsRow // channelID -> kind/branch/auto_scope
+	memberRoles   map[string]string          // "channelID|userID" -> role
+	memberSources map[string]string          // "channelID|userID" -> source
+	userBranches  map[string]map[string]bool // userID -> branchID -> granted
+	userGlobal    map[string]bool            // userID -> GLOBAL scope
+	syncErr       error
+	inserted      []Message       // messages posted via InsertMessage
+	events        []Message       // event messages posted
+	eventRefs     []EventRef      // refs captured parallel to events (Feature 2 ref assertions)
+	eventDup      map[string]bool // (channelID|eventKey) already inserted
+	markCalls     []string        // "channelID|userID"
 	// Feature A / B doubles:
 	prefs      map[string]NotificationPrefs // "channelID|userID" -> stored prefs
 	tiers      map[string]string            // channelID -> tier (default STANDARD)
@@ -46,19 +54,25 @@ type fakeStore struct {
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		members:  map[string]map[string]bool{},
-		exists:   map[string]bool{},
-		channels: map[string][]Channel{},
-		messages: map[string]MessagePage{},
-		threads:  map[string][]Message{},
-		unread:   map[string]UnreadCounts{},
-		slugs:    map[string]string{},
-		yard:     map[string]string{},
-		eventDup: map[string]bool{},
-		prefs:    map[string]NotificationPrefs{},
-		tiers:    map[string]string{},
-		acks:     map[string]Ack{},
-		unacked:  map[string][]Message{},
+		members:       map[string]map[string]bool{},
+		exists:        map[string]bool{},
+		channels:      map[string][]Channel{},
+		messages:      map[string]MessagePage{},
+		threads:       map[string][]Message{},
+		unread:        map[string]UnreadCounts{},
+		slugs:         map[string]string{},
+		roomsBySlug:   map[string]Channel{},
+		yard:          map[string]string{},
+		facts:         map[string]channelFactsRow{},
+		memberRoles:   map[string]string{},
+		memberSources: map[string]string{},
+		userBranches:  map[string]map[string]bool{},
+		userGlobal:    map[string]bool{},
+		eventDup:      map[string]bool{},
+		prefs:         map[string]NotificationPrefs{},
+		tiers:         map[string]string{},
+		acks:          map[string]Ack{},
+		unacked:       map[string][]Message{},
 	}
 }
 
@@ -227,6 +241,83 @@ func (f *fakeStore) PostApprovalEcho(_ context.Context, channelID, approvalID, b
 
 func (f *fakeStore) UserDisplayName(_ context.Context, userID string) (string, error) {
 	return f.displayNames[userID], nil
+}
+
+// UserRoleCode answers the canonical role code planted with setRoleCode, an
+// empty code for a user without one (the real query's answer for no role).
+func (f *fakeStore) UserRoleCode(_ context.Context, userID string) (string, error) {
+	return f.roleCodes[userID], nil
+}
+
+func (f *fakeStore) setRoleCode(userID, code string) {
+	if f.roleCodes == nil {
+		f.roleCodes = map[string]string{}
+	}
+	f.roleCodes[userID] = code
+}
+
+// The channel/DM/member seams' base double: honest minimums (a slug always
+// converges on one channel, members seat idempotently). The route-level
+// double in channels_admin_route_test.go wraps this with the recording the
+// route legs assert on; service-level detail tests use these defaults.
+func (f *fakeStore) CreateChannel(_ context.Context, in CreateChannelInput, ownerID string) (Channel, bool, error) {
+	if in.Slug == "" {
+		in.Slug = sanitizeSlugPart(in.Name)
+	}
+	// The convergence the repository's slug index carries: the conflict arm
+	// answers the room as it stands (its own kind and branch) and writes
+	// nothing, no seat; only the fresh arm seats the founder.
+	if c, ok := f.roomsBySlug[in.Slug]; ok {
+		return c, false, nil
+	}
+	id := "ch-" + in.Slug
+	c := Channel{ID: id, Kind: in.Kind, BranchID: in.BranchID, Slug: in.Slug, Name: in.Name}
+	f.roomsBySlug[in.Slug] = c
+	f.slugs[in.Slug] = id
+	f.setMember(id, ownerID)
+	return c, true, nil
+}
+
+func (f *fakeStore) CreateDM(_ context.Context, aUserID, bUserID string) (Channel, bool, error) {
+	return Channel{ID: "dm-" + aUserID + "-" + bUserID, Kind: KindDM}, true, nil
+}
+
+func (f *fakeStore) AddChannelMember(_ context.Context, channelID, userID string) (ChannelMember, error) {
+	if src, ok := f.memberSources[channelID+"|"+userID]; ok {
+		return ChannelMember{ChannelID: channelID, UserID: userID, Role: "MEMBER", Source: src}, nil
+	}
+	f.setMember(channelID, userID)
+	f.memberSources[channelID+"|"+userID] = SourceExplicit
+	return ChannelMember{ChannelID: channelID, UserID: userID, Role: "MEMBER", Source: SourceExplicit}, nil
+}
+
+func (f *fakeStore) RemoveChannelMember(_ context.Context, channelID, userID string) error {
+	if f.members[channelID] != nil {
+		delete(f.members[channelID], userID)
+		delete(f.memberSources, channelID+"|"+userID)
+	}
+	return nil
+}
+
+func (f *fakeStore) channelFacts(_ context.Context, channelID string) (channelFactsRow, error) {
+	if facts, ok := f.facts[channelID]; ok {
+		return facts, nil
+	}
+	if f.exists[channelID] {
+		return channelFactsRow{Kind: KindTeam}, nil
+	}
+	return channelFactsRow{}, errNotFound
+}
+
+func (f *fakeStore) memberRole(_ context.Context, channelID, userID string) (string, error) {
+	return f.memberRoles[channelID+"|"+userID], nil
+}
+
+func (f *fakeStore) userReachesBranch(_ context.Context, userID, branchID string) (bool, error) {
+	if f.userBranches[userID] == nil {
+		return f.userGlobal[userID], nil
+	}
+	return f.userBranches[userID][branchID] || f.userGlobal[userID], nil
 }
 
 // svcWith builds a service over a fake store (bypassing the *Repository constructor).

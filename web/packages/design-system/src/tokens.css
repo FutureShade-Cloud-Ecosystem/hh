@@ -240,9 +240,19 @@
 
   /* ── radius, by role ──────────────────────────────────────────────────────── */
   --hh-radius-control: 10px;
+  /* The floor a host may raise for the app header's own buttons; zero leaves them as they are. */
+  --hh-header-control-min: 0px;
   --hh-radius-card: 16px;
   --hh-radius-pill: 999px;
   --hh-radius-widget: 16px;
+
+  /* ── control sizes, by role ─────────────────────────────────────────────────
+     The one height of a form control: the sheet's button and .control faces
+     take it, and a consumer rows its own controls onto the same token so a
+     form row reads as one system (the demo polish round 2 bounds tests pin
+     their rows to it live). Theme-invariant like the spacing grid and the
+     radii: a control does not change height between themes. */
+  --hh-h-input: 44px;
 
   /* ── elevation: exactly two levels, resting and raised ───────────────────────
      Dark lifts with the SURFACE step and takes no resting shadow; light lifts

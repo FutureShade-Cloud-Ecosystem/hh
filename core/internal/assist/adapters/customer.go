@@ -36,7 +36,7 @@ type AccountLookup interface {
 // ARReader is what this adapter needs from internal/billing, the AR console's own reads.
 type ARReader interface {
 	CustomerAging(ctx context.Context, customerID string) (billing.AgingRow, time.Time, bool, error)
-	CustomerActivity(ctx context.Context, customerID string, limit int) ([]billing.ARActivity, error)
+	CustomerActivity(ctx context.Context, customerID string, limit int, withPayments bool) ([]billing.ARActivity, error)
 }
 
 type customerAdapter struct {
@@ -100,7 +100,7 @@ func (a customerAdapter) Balance(ctx context.Context, c assist.Caller, customerI
 // An account with nothing on it returns an empty slice and no error, a new account that has never
 // been invoiced is an ordinary state.
 func (a customerAdapter) RecentActivity(ctx context.Context, c assist.Caller, customerID string, limit int) ([]assist.ActivityRecord, error) {
-	rows, err := a.ar.CustomerActivity(ctx, customerID, limit)
+	rows, err := a.ar.CustomerActivity(ctx, customerID, limit, c.PaymentTrail)
 	if err != nil {
 		return nil, err
 	}

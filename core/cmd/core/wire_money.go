@@ -18,10 +18,12 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/gl"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/inventory"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
@@ -90,6 +92,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// caller (the two-source order is the adapter's own, carried).
 	pricingSvc.
 		WithCostVisibility(pricingCostVisibility{}).
+		WithFloorCustomerType(pricingFloorCustomers{svc: customer.NewService(customer.NewRepository(pool))}).
 		WithVendorDirectory(pricingVendorDirectory{pool: pool}).
 		WithCatalogSKUs(pricingCatalogSKUs{pool: pool}).
 		WithOverrideAuthority(w5cOverrideAuthority{roles: roleCfg, log: log}).
@@ -102,16 +105,28 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	glSvc := gl.NewService(gl.NewRepository(pool)).
 		WithDeadRequeuer(outboxStore).
 		WithAudit(auditSvc).
-		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals})
+		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
+		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
 	gl.NewHandler(glSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
 
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithAudit(auditSvc)
 	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
+	pricingSvc.WithCandidateSource(pricingFloorCandidates{products: productSvc, inventory: inventorySvc})
 	productSvc.WithStock(productStockReader{svc: inventorySvc}).WithBranchStock(inventorySvc).WithListPrices(pricingSvc)
-	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterRoutes(r, g)
-	inventory.NewHandler(inventorySvc, log).WithUserLinker(link).RegisterStockTruthRoutes(r, g)
+	// X3, the yard fence: the stock reads' cost legs (on hand, branch
+	// stock, browse, the replenishment worklist) ride only for a caller
+	// on the configuration's cost and margin list, the same rule the
+	// quote and till reads answer through. Both route bundles carry the
+	// rule, and the boot fail-fast keeps an unwired boot from handing
+	// the yard team every branch's costs.
+	inventoryHandler := inventory.NewHandler(inventorySvc, log).WithUserLinker(link).WithCostRoles(roleCfg)
+	if !inventoryHandler.CostRolesWired() {
+		panic("inventory: cost roles not wired - the stock reads would answer the cost legs to every caller")
+	}
+	inventoryHandler.RegisterRoutes(r, g)
+	inventoryHandler.RegisterStockTruthRoutes(r, g)
 
 	// The order lifecycle: base service, audit seams, reorder seams (pricing
 	// and inventory are in-batch), actor names. The customer-tier seam
@@ -124,7 +139,10 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithAuditTrail(auditSvc).
 		WithReorderPricing(pricingSvc).
 		WithReorderInventory(inventorySvc)
-	orderHandler := order.NewHandler(orderSvc).WithUserLinker(link)
+	// The payment trail reader is bound once the role gate's reader exists (bindPaymentTrail); until
+	// then the order activity and the register withhold the payments from every caller.
+	paymentTrail := &billing.LatePaymentTrail{}
+	orderHandler := order.NewHandler(orderSvc).WithUserLinker(link).WithPaymentTrail(paymentTrail)
 	orderHandler.RegisterRoutes(r, g)
 	orderHandler.RegisterTransitionRoutes(r, g)
 	orderHandler.RegisterEditRoutes(r, g)
@@ -171,6 +189,13 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// service runs, from the same configuration: the store is built on the
 	// operations wire, so the configuration is published for it (P2-4).
 	quote.PublishRoleConfig(roleCfg)
+	// The messaging membership wall reads the same configuration's Admin
+	// cell on house-messages (who may manage a room's members beside the
+	// room's owner): the service is built on the operations wire the role
+	// configuration does not pass, so it is published for it here, beside
+	// the quote door's publish. Nothing published means the wall knows no
+	// admin and fails closed to owner-only.
+	messaging.PublishRoleConfig(roleCfg)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
@@ -191,7 +216,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	quoteInvoicer, quotePayer := quoteMoneyDoor(pool, orderSvc)
 	quoteStaffSvc.WithOrderInvoicer(quoteInvoicer).WithCounterPayer(quotePayer)
 	quoteRepo.WithStockReserver(w5aQuoteStockReserver{svc: inventorySvc})
-	quoteStaffHandler := quote.NewStaffHandler(quoteStaffSvc).WithUserLinker(link)
+	quoteStaffHandler := quote.NewStaffHandler(quoteStaffSvc).WithUserLinker(link).WithSettingsGrantReader(quoteStaffSvc.SettingsGrant)
 	quoteStaffHandler.RegisterStaffRoutes(r, g)
 	quoteStaffHandler.RegisterShareRoutes(r, g)
 	quoteStaffHandler.RegisterPublicRoutes(r)
@@ -214,6 +239,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	})
 
 	return &moneySpine{
+		paymentTrail:    paymentTrail,
 		glSvc:           glSvc,
 		inventorySvc:    inventorySvc,
 		orderSvc:        orderSvc,
@@ -226,6 +252,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		pricingSvc:      pricingSvc,
 		quoteStaffSvc:   quoteStaffSvc,
 		quoteAutomation: quoteAutomation,
+		roleCfg:         roleCfg,
 	}
 }
 
@@ -237,6 +264,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 // instances at the pin and a second construction would strand a setter on
 // an instance nobody serves.
 type moneySpine struct {
+	paymentTrail    *billing.LatePaymentTrail
 	glSvc           *gl.Service
 	inventorySvc    *inventory.Service
 	orderSvc        *order.Service
@@ -249,15 +277,30 @@ type moneySpine struct {
 	pricingSvc      *pricing.Service
 	quoteStaffSvc   *quote.StaffService
 	quoteAutomation *quote.AutomationService
+	// roleCfg rides the spine for the operations wiring's role-gated
+	// reads (the counts' X3 cost gate), the same configuration the
+	// money-side reads already gate through here.
+	roleCfg *roleconfig.Config
 }
 
 // jeApprovalFilerAdapter satisfies gl.ApprovalFiler over the approvals
-// rail's FileJEApproval (the pin's adapter, re-pointed at the bridge).
+// rail's FileJEApprovalTx (the pin's adapter, re-pointed at the bridge).
 type jeApprovalFilerAdapter struct{ svc *identity.Approvals }
 
-func (a jeApprovalFilerAdapter) FileJEApproval(ctx context.Context, journalID, branchID string, amountCents int64, createdBy string) error {
-	_, err := a.svc.FileJEApproval(ctx, journalID, branchID, amountCents, createdBy)
-	return err
+func (a jeApprovalFilerAdapter) FileJEApprovalTx(ctx context.Context, tx pgx.Tx, journalID, branchID string, amountCents int64, createdBy string) (func(context.Context), error) {
+	return a.svc.FileJEApprovalTx(ctx, tx, journalID, branchID, amountCents, createdBy)
+}
+
+// jeStateAdapter satisfies gl.ApprovalStateChecker over identity's JournalApprovalState: the GL's approve
+// route asks where a journal stands with the rail, and the two modules' state words are the same strings.
+type jeStateAdapter struct{ svc *identity.Approvals }
+
+func (a jeStateAdapter) JournalApprovalState(ctx context.Context, journalID string, amountCents int64) (gl.ApprovalState, error) {
+	st, err := a.svc.JournalApprovalState(ctx, journalID, amountCents)
+	if err != nil {
+		return "", err
+	}
+	return gl.ApprovalState(st), nil
 }
 
 // jeDeciderAdapter satisfies the rail's JEDecider over gl's
@@ -463,6 +506,120 @@ func (a pricingCatalogSKUs) LookupSKUs(ctx context.Context, skus []string) (map[
 	return out, rows.Err()
 }
 
+// pricingFloorCandidates satisfies pricing.FloorCandidates for the editors' floor warning
+// (plan CP0-6): the active products a pricing change may reach, each with the cost the floor is
+// graded against. Products come from the catalogue's own list (the product module owns the
+// table) and the cost from inventory's cost basis (it owns the branch costs), so pricing reads
+// neither table. With a branch the cost is that branch's; with none the product carries every
+// branch location's own cost row (BranchCosts, so the preview grades each branch at its own
+// cost with its own branch rules) and CostCents stays the highest of them, the basis the
+// warning errs toward naming a product on. The per-branch rows come from inventory's
+// cross-branch availability read, one row per branch with its cost. A product with no cost row
+// comes back at 0 and the preview counts it as no cost on file.
+type pricingFloorCandidates struct {
+	products  *product.Service
+	inventory *inventory.Service
+}
+
+func (a pricingFloorCandidates) CandidateProducts(ctx context.Context, categoryID, productID, branchID string, limit int) ([]pricing.CandidateProduct, error) {
+	if limit <= 0 {
+		limit = pricing.PreviewProductCap + 1
+	}
+	var rows []product.Product
+	if productID != "" {
+		p, err := a.products.Get(ctx, productID)
+		if err != nil {
+			if errors.Is(err, product.ErrNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		if p.IsActive {
+			rows = append(rows, p)
+		}
+	} else {
+		// The catalogue pages at 200; read pages until the limit or the end, so the caller's
+		// one extra row (the truncation signal) is there.
+		const page = 200
+		for off := 0; len(rows) < limit; off += page {
+			n := page
+			if rem := limit - len(rows); rem < n {
+				n = rem
+			}
+			got, err := a.products.List(ctx, product.Filter{CategoryID: categoryID, ActiveOnly: true, Limit: n, Offset: off})
+			if err != nil {
+				return nil, err
+			}
+			rows = append(rows, got...)
+			if len(got) < n {
+				break
+			}
+		}
+	}
+	out := make([]pricing.CandidateProduct, 0, len(rows))
+	for _, p := range rows {
+		cat, err := a.products.GetCategory(ctx, p.ID)
+		if err != nil {
+			if errors.Is(err, product.ErrNotFound) {
+				continue
+			}
+			return nil, err
+		}
+		if categoryID != "" && cat != categoryID {
+			continue
+		}
+		cost, branches, err := a.candidateCost(ctx, p.ID, branchID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, pricing.CandidateProduct{
+			ProductID: p.ID, CategoryID: cat, SKU: p.SKU, Name: p.Name, BaseUOM: p.BaseUOM, CostCents: cost, BranchCosts: branches,
+		})
+	}
+	return out, nil
+}
+
+// candidateCost is the cost the floor is graded against: the named branch's own cost, or with
+// no branch every branch's own row (BranchCosts, the preview grades each one) alongside the
+// highest any branch carries, read from inventory's one-row-per-branch availability answer
+// (it left-joins the branch cost, so a branch with no cost row reports 0).
+func (a pricingFloorCandidates) candidateCost(ctx context.Context, productID, branchID string) (int64, []pricing.CandidateBranchCost, error) {
+	if branchID != "" {
+		cost, _, err := a.inventory.CurrentCostCents(ctx, productID, branchID)
+		return cost, nil, err
+	}
+	branches, err := a.inventory.AvailabilityAllBranches(ctx, productID)
+	if err != nil {
+		return 0, nil, err
+	}
+	var highest int64
+	per := make([]pricing.CandidateBranchCost, 0, len(branches))
+	for _, b := range branches {
+		per = append(per, pricing.CandidateBranchCost{
+			BranchID: b.BranchID, BranchCode: b.BranchCode, BranchName: b.BranchName, CostCents: b.AvgCostCents,
+		})
+		if b.AvgCostCents > highest {
+			highest = b.AvgCostCents
+		}
+	}
+	return highest, per, nil
+}
+
+// pricingFloorCustomers satisfies pricing.FloorCustomers over customer.Service.ResolveAccount, so
+// a customer scoped change is graded at that customer's own pricing type.
+type pricingFloorCustomers struct{ svc *customer.Service }
+
+func (a pricingFloorCustomers) CustomerType(ctx context.Context, customerID string) (string, error) {
+	acct, err := a.svc.ResolveAccount(ctx, customerID)
+	if err != nil {
+		if errors.Is(err, customer.ErrNotFound) {
+			return "", pricing.ErrFloorCustomerNotFound
+		}
+		return "", err
+	}
+	return acct.CustomerType, nil
+}
+
 // w5cOverrideAuthority satisfies pricing.OverrideAuthority over the
 // bridged caller stamp and the dealer's role configuration: the caller's
 // own manager scope, held to the CONFIGURED floor clearers
@@ -660,8 +817,7 @@ func (a quoteCounterPayer) KeyTakenTx(ctx context.Context, tx pgx.Tx, key string
 }
 
 // LockPaymentsSequenceTx binds the door's sequence order seam to the payments module's shared
-// non incrementing lock on the caller's transaction (payments/LOCK-ORDER.md), the same adapter
-// belt as the other two methods.
+// non incrementing lock on the caller's transaction, the same adapter belt as the other two methods.
 func (a quoteCounterPayer) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error {
 	return a.repo.LockPaymentsSequenceTx(ctx, tx)
 }

@@ -79,12 +79,39 @@ handle /till/* {
 	file_server
 }
 
+handle /buying-and-stock/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /buying-and-stock/index.html
+	file_server
+}
+
 handle /drive/* {
 	basic_auth {
 		demo __GATE_HASH__
 	}
 	root * /srv/app
 	try_files {path} /drive/index.html
+	file_server
+}
+
+handle /home/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /home/index.html
+	file_server
+}
+
+handle /yard/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /yard/index.html
 	file_server
 }
 

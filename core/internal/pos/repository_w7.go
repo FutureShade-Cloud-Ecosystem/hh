@@ -10,6 +10,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -524,6 +525,14 @@ func (r *Repository) LockInvoicesTx(ctx context.Context, tx pgx.Tx, invoiceIDs [
 		}
 	}
 	return nil
+}
+
+// LockPaymentsSequenceTx draws the payments counter through the payments module's own seam, without
+// advancing it, before this return's invoice locks: every payments writer takes that counter first,
+// and a return that held an owed invoice and then waited on the counter (its refund rail's insert)
+// closed a cycle with one (the Opus review's P2-4).
+func (r *Repository) LockPaymentsSequenceTx(ctx context.Context, tx pgx.Tx) error {
+	return payments.LockPaymentsSequence(ctx, tx)
 }
 
 // SumUnbookedCardRefundsTx is the money the processor already refunded for the order inside a

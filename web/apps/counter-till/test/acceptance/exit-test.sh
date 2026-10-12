@@ -28,7 +28,7 @@
 #   the image builds from the union context;
 #   on a clean database the box answers /healthz, serves the testers' page
 #     behind the gate, and answers the flows table's two rows;
-#   the acceptance run (the eleven screens as each role, the world leg, and
+#   the acceptance run (the story's screens as each role, the world leg, and
 #     the page's claims held to the ledger) is green, with a screenshot per
 #     screen per role in the untracked acceptance folder, no two of them
 #     byte-identical, none of them a blank page, and each taken on a settled
@@ -172,11 +172,11 @@ KGN_LINE="$(docker exec "$PG_NAME" psql -U postgres -d w9_exit -tAc \
 pass "the harness holds the Kingston sale's line id for the three-rail leg"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-	*'"flow":"sales"'*'"flow":"sales-manager"'*) pass "the flows table answers its two rows" ;;
+	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"payables-receivables"'*) pass "the flows table answers its three rows" ;;
 	*) fail "the flows table did not answer: $flows" ;;
 esac
 
-echo "== the acceptance run: the eleven screens as each role, the world, and the page's claims"
+echo "== the acceptance run: the story's screens as each role, the world, and the page's claims"
 SHOT_DIR="$(pwd)/$APP/acceptance-screens"
 rm -rf "$SHOT_DIR"
 cd "$APP"
@@ -190,8 +190,16 @@ else
 fi
 # The run's screenshots, held to the exact set: every screen of both passes
 # named, none missing, none extra.
+# The list is the legs' own shot() and shotParts() names (every story leg in
+# test/acceptance except the restart leg), derived never hand picked; the unit
+# chain holds it to the legs (test/exit-shot-list.test.mjs).
 expected="00-world-flows
 40-claims-testers-page
+deposits-01-credit-payment
+deposits-02-cod-payment
+deposits-03-held-card
+deposits-04-pay-balance-found
+deposits-05-pay-balance-paid
 manager-01-way-in
 manager-02-drawer
 manager-03-sale
@@ -199,9 +207,6 @@ manager-04-contractor-pavers
 manager-05-credit-refused
 manager-06-receipt-card
 manager-07-parked
-manager-08-return-within
-manager-09-own-refund
-manager-10-kingston
 manager-11-beyond
 sales-01-way-in
 sales-02-drawer
@@ -214,10 +219,12 @@ sales-06-receipt-account
 sales-06-receipt-card
 sales-06-receipt-cash
 sales-07-parked
-sales-08-return-within
-sales-09-committed
-sales-10-kingston
-sales-11-beyond"
+sales-08-return-two-orders
+sales-09-credit-note-done
+sales-10-swap-preview
+sales-11-beyond
+sales-11-swap-done
+sales-12-walk-in-return-done"
 actual="$(cd "$SHOT_DIR" && ls *.png 2>/dev/null | sed 's/\.png$//' | sort)"
 missing=""
 for name in $expected; do
@@ -228,11 +235,11 @@ for name in $actual; do
 	printf '%s\n' "$expected" | grep -qx "$name" || extra="$extra $name"
 done
 count="$(printf '%s\n' "$actual" | grep -c . || true)"
-[ "$count" = "30" ] && [ -z "$missing" ] && [ -z "$extra" ] \
-	&& pass "the run produced exactly its 30 named screenshots" \
+[ "$count" = "32" ] && [ -z "$missing" ] && [ -z "$extra" ] \
+	&& pass "the run produced exactly its 32 named screenshots" \
 	|| fail "the screenshots drifted (count $count, missing:$missing, extra:$extra)"
 cd - >/dev/null
-echo "== the screenshots' own rule: no two byte-identical (the story's thirty)"
+echo "== the screenshots' own rule: no two byte-identical (the story's thirty-two)"
 dupes="$(cd "$SHOT_DIR" && sha256sum ./*.png | sort | uniq -w64 -D | sed 's/^[0-9a-f]* *//')"
 [ -z "$dupes" ] && pass "no two of the story's screenshots are byte-identical" \
 	|| fail "byte-identical screenshots: $(printf '%s' "$dupes" | tr '\n' ' ')"
@@ -256,11 +263,11 @@ else
 	FAILURES=$((FAILURES + 1))
 fi
 restart_shots="$(cd "$SHOT_DIR" && ls *.png 2>/dev/null | wc -l | tr -d ' ')"
-[ "$restart_shots" = "31" ] \
-	&& pass "the restart leg's own screenshot sits beside the story's thirty" \
-	|| fail "the restart leg left $restart_shots screenshots, want 31"
+[ "$restart_shots" = "33" ] \
+	&& pass "the restart leg's own screenshot sits beside the story's thirty-two" \
+	|| fail "the restart leg left $restart_shots screenshots, want 33"
 dupes="$(cd "$SHOT_DIR" && sha256sum ./*.png | sort | uniq -w64 -D | sed 's/^[0-9a-f]* *//')"
-[ -z "$dupes" ] && pass "no two of the run's 31 screenshots are byte-identical" \
+[ -z "$dupes" ] && pass "no two of the run's 33 screenshots are byte-identical" \
 	|| fail "byte-identical screenshots: $(printf '%s' "$dupes" | tr '\n' ' ')"
 cd - >/dev/null
 

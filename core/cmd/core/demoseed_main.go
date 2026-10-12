@@ -12,7 +12,9 @@
 // list of guarded UPDATEs that repair rows this command itself (or a migration) already planted,
 // never a live tester's row: the scrub-name rename pass (the demoseed_scrubname pair), which moves
 // migration-planted demo customers off their scrub placeholders, and the seed-repair pass (the
-// demoseed_repair pair), which re-homes the one account whose home branch a later ruling moved.
+// demoseed_repair pair), which re-homes the one account whose home branch a later ruling moved and
+// stamps the demo org on the Driver's day-keyed rows the boot's first apply wrote before the
+// populate provisioned the org.
 // Each statement in them names the row by fixed id AND the exact value being repaired, so nothing
 // outside the fixed list moves, a second run matches no row, and a hand-edited row is left alone.
 // Running it twice produces the same world: the second run's inserts all conflict, create nothing,
@@ -148,7 +150,7 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	// The seed-repair pass is the demo build's too (the repair pair): the plan says the guarded
 	// repair -apply would make, and only when the row still sits where the pass moves it from,
 	// so a world with nothing to repair reports nothing.
-	repairDemoWorldPlan(ctx, out, pool, branches)
+	repairDemoWorldPlan(ctx, out, pool, branches, now)
 	fmt.Fprintf(out, "  plan           %d rows across %d tables, dated %s … %s\n\n",
 		summary.Rows, len(summary.ByTable), summary.FirstDate, summary.LastDate)
 	writeSummary(out, summary)
@@ -201,7 +203,7 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		fmt.Fprintf(out, "renamed:  %d migration-planted demo customer(s) off their scrub placeholder names\n", renamed)
 	}
 	if repaired > 0 {
-		fmt.Fprintf(out, "repaired: %d row(s) an older seed left wrong (a home branch, an empty product application)\n", repaired)
+		fmt.Fprintf(out, "repaired:  %d row(s) an older apply left wrong (a home branch, an empty product application, a missing org stamp)\n", repaired)
 	}
 	if res.Created == 0 && renamed == 0 && repaired == 0 {
 		fmt.Fprintln(out, "the demo world was already complete, this run changed nothing.")
