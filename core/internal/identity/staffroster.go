@@ -12,6 +12,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// ErrRosterNoDatabase is the reader's state when it was built without a database; the HTTP layer answers
+// it 503, as the approvals rail answers its own unconfigured pool.
+var ErrRosterNoDatabase = errors.New("identity: staff roster has no database")
+
 // RosterEntry is one staff member of one org: the users row linked by
 // platform_user_id, the winning role of that person's grants in the org
 // (the same priority the authority resolver applies), and the branch
@@ -47,7 +51,7 @@ func NewStaffRosterReader(pool *pgxpool.Pool) *StaffRosterReader {
 // scoped tables read (staff_role_grant and user_branch_grants).
 func (r *StaffRosterReader) Roster(ctx context.Context, orgID string) ([]RosterEntry, error) {
 	if r.pool == nil {
-		return nil, errors.New("identity: staff roster has no database")
+		return nil, ErrRosterNoDatabase
 	}
 	if orgID == "" {
 		return nil, errors.New("identity: staff roster requires the org id")

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
@@ -142,6 +143,79 @@ func TestStaffRoster_Route(t *testing.T) {
 	d.err = context.DeadlineExceeded
 	if rr = get("/api/v1/staff", true); rr.Code != http.StatusInternalServerError {
 		t.Fatalf("reader failure = %d, want 500", rr.Code)
+	}
+}
+
+// A reader that answers in a language-aware collation order (lower case between upper case names, a space
+// ignored) hands the handler a list that is not in byte order. The walk must still read every member once.
+func TestStaffRoster_WalkSurvivesANonByteOrderedReader(t *testing.T) {
+	sg := testkit.NewStaffGuards(t)
+	bearer := sg.Bearer(t)
+	sg.SetAuthority(identity.StaffAuthority{RoleID: "branch_manager", Tier: 2, Scope: "branch", Branches: []string{trt}})
+	mk := func(id, name string) identity.RosterEntry {
+		return identity.RosterEntry{UserID: id, Email: id + "@example.test", DisplayName: name, RoleID: "inside_sales", RoleLabel: "Inside Sales", Tier: 3, Scope: "branch"}
+	}
+	d := &rosterDouble{byOrg: map[string][]identity.RosterEntry{testkit.OrgNorthID: {
+		mk("1", "Alan"), mk("2", "alice"), mk("3", "Al Smith"), mk("4", "Bob"), // glibc en_US order
+	}}}
+	mux := http.NewServeMux()
+	NewStaffRosterHandler(d).RegisterRoutes(mux, sg.Guards)
+	get := func(q string) []string {
+		r := httptest.NewRequest(http.MethodGet, "/api/v1/staff"+q, nil)
+		r.Header.Set("Authorization", "Bearer "+bearer)
+		r.Header.Set("X-Org", testkit.OrgNorthSlug)
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, r)
+		var p struct {
+			Items []struct {
+				UserID string `json:"user_id"`
+			} `json:"items"`
+			NextCursor *string `json:"next_cursor"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &p); err != nil || rr.Code != http.StatusOK {
+			t.Fatalf("roster %q = %d %s", q, rr.Code, rr.Body.String())
+		}
+		ids := []string{}
+		for _, it := range p.Items {
+			ids = append(ids, it.UserID)
+		}
+		if p.NextCursor != nil {
+			ids = append(ids, "next:"+*p.NextCursor)
+		}
+		return ids
+	}
+	var walked []string
+	q := "?limit=1"
+	for i := 0; i < 8; i++ {
+		got := get(q)
+		if n := len(got); n > 0 && strings.HasPrefix(got[n-1], "next:") {
+			walked = append(walked, got[:n-1]...)
+			q = "?limit=1&cursor=" + strings.TrimPrefix(got[n-1], "next:")
+			continue
+		}
+		walked = append(walked, got...)
+		break
+	}
+	// Byte order: "Al Smith" < "Alan" < "Bob" < "alice".
+	if strings.Join(walked, ",") != "3,1,4,2" {
+		t.Fatalf("walk = %v, want every member once in byte order [3 1 4 2]", walked)
+	}
+}
+
+// The no database state is the 503 the rail's convention gives it, not a 500.
+func TestStaffRoster_NoDatabaseIs503(t *testing.T) {
+	sg := testkit.NewStaffGuards(t)
+	bearer := sg.Bearer(t)
+	sg.SetAuthority(identity.StaffAuthority{RoleID: "branch_manager", Tier: 2, Scope: "branch", Branches: []string{trt}})
+	mux := http.NewServeMux()
+	NewStaffRosterHandler(&rosterDouble{err: identity.ErrRosterNoDatabase}).RegisterRoutes(mux, sg.Guards)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/staff", nil)
+	r.Header.Set("Authorization", "Bearer "+bearer)
+	r.Header.Set("X-Org", testkit.OrgNorthSlug)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, r)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no database = %d, want 503 (body %s)", rr.Code, rr.Body.String())
 	}
 }
 

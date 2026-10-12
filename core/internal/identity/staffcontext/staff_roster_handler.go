@@ -7,6 +7,7 @@ package staffcontext
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -59,9 +60,17 @@ func (h *StaffRosterHandler) list(w http.ResponseWriter, r *http.Request, caller
 	}
 	entries, err := h.src.Roster(r.Context(), caller.OrgID)
 	if err != nil {
+		if errors.Is(err, identity.ErrRosterNoDatabase) {
+			httpx.Error(w, http.StatusServiceUnavailable, "database unavailable")
+			return
+		}
 		httpx.Error(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	// The cursor compares in Go's byte order, so the list is put in that order here whatever collation the
+	// database sorted by (a language-aware one puts "alice" between "Alan" and "Bob"): one order for the
+	// slice, the search and the cursor.
+	sort.SliceStable(entries, func(i, j int) bool { return rosterBefore(entries[i], entries[j]) })
 	start := 0
 	if p.Cursor != "" {
 		tier, name, id, ok := parseRosterCursor(p.Cursor)
@@ -125,4 +134,15 @@ func rosterAfter(e identity.RosterEntry, tier int, name, id string) bool {
 		return e.DisplayName > name
 	}
 	return e.UserID > id
+}
+
+// rosterBefore is the list's one order: tier, display name, id, compared bytewise.
+func rosterBefore(a, b identity.RosterEntry) bool {
+	if a.Tier != b.Tier {
+		return a.Tier < b.Tier
+	}
+	if a.DisplayName != b.DisplayName {
+		return a.DisplayName < b.DisplayName
+	}
+	return a.UserID < b.UserID
 }
