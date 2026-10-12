@@ -39,8 +39,8 @@ How the test holds it:
 | `quotes.Load` | `GET /api/v1/quotes` (the list), at the conflict envelope | The projection of a quote travels only to a caller the list would show it to. The engine still gets the row's id and seq; the data is dropped. See section 4: this is the one deliberate difference from `GET /api/v1/quotes/{id}`. | `SyncStore.Load`, `maskUnreadable` |
 | `quotes.FindApplied` | none; a replay answers status and seq only | A replay of an applied key answers applied with the stamped seq and carries no projection, and applies nothing. The data rule is the list rule above. | `SyncStore.FindApplied`, `maskUnreadable`; the engine never reads data on this path |
 | `approvals.Create` | `POST /api/v1/staff/approvals` | Work or better on the counter, the Quote Desk or Manager Home. The caller files as itself. Credit and cash on delivery filings only: a margin, journal or freight filing is refused exactly as the rail refuses it. The branch must sit in the caller's org. | `ApprovalsSyncStore.Create`, `callerHoldsLevel`, `approvalCallerPolicy`, `approvalBranchInOrg` |
-| `approvals.Write` | `POST /api/v1/staff/approvals/{id}/decide` for a decision; the requester's note has no REST twin | A decision needs Manage or better on Manager Home or the Quote Desk, then the rail's own `Decide` (branch reach, who may decide that policy and filer, separation of duties, PENDING only). A note is the requester's own edit of its own PENDING plain request, whatever its role; a floor request's detail is never an editable note. | `ApprovalsSyncStore.Write`, `writeDecision` (`holdsLevel`, `Decide`), `writeNote` |
-| `approvals.Delete` | none; the withdrawal has no REST route | Only the requester withdraws a request, in any state except one whose approval has been consumed. Nobody else, in any state. The role does not matter: it is ownership. | `ApprovalsSyncStore.Delete`, the requester and consumed checks on the locked row |
+| `approvals.Write` | `POST /api/v1/staff/approvals/{id}/decide` for a decision; the requester's note has no REST twin | A decision needs Manage or better on Manager Home or the Quote Desk, then the rail's own `Decide` (branch reach, who may decide that policy and filer, separation of duties, PENDING only). A note is the requester's own edit of its own PENDING plain request, for a role the sync write fence lists as an approvals writer (a role that cannot file is refused at the fence); a floor request's detail is never an editable note. | `ApprovalsSyncStore.Write`, `writeDecision` (`holdsLevel`, `Decide`), `writeNote` |
+| `approvals.Delete` | none; the withdrawal has no REST route | Only the requester withdraws a request, in any state except one whose approval has been consumed. Nobody else, in any state. Ownership decides, among the roles the sync write fence lists as approvals writers. | `ApprovalsSyncStore.Delete`, the requester and consumed checks on the locked row |
 | `approvals.Pull` | `GET /api/v1/staff/approvals` (the list) | The list rule: Work or better on the counter, the Quote Desk or Manager Home; a dealer wide caller reads every branch, a scoped caller only its granted branches, none when it holds none; a floor request only for who could decide it or filed it. One addition to the list: a caller reads back its own filings in any branch. | `ApprovalsSyncStore.Pull`, `readerFor`; a tombstone names an id alone and stays (section 4) |
 | `approvals.Load` | `GET /api/v1/staff/approvals` (the list), at the conflict envelope | The projection of a request travels only to a caller the list would show it to; the engine keeps the id and seq. | `ApprovalsSyncStore.Load`, `readerFor` |
 | `approvals.FindApplied` | none; a replay answers status and seq only | As quotes.FindApplied: applied with the stamped seq, no projection, nothing applied. | `ApprovalsSyncStore.FindApplied`; the engine never reads data on this path |
@@ -228,16 +228,16 @@ The census asserts for every role and for every planted row that the replay answ
 | inside_sales | R | R | R | R | R | R | A | R | R | R |
 | sales_manager | R | R | R | A | R | R | A | R | R | R |
 | outside_sales | R | R | R | R | R | R | A | R | R | R |
-| yard_team | R | R | R | R | R | R | A | R | R | R |
+| yard_team | R | R | R | R | R | R | R | R | R | R |
 | yard_manager | R | R | R | R | R | R | A | R | R | R |
 | logistics_manager | R | R | R | R | R | R | A | R | R | R |
-| driver | R | R | R | R | R | R | A | R | R | R |
+| driver | R | R | R | R | R | R | R | R | R | R |
 | branch_manager | R | R | R | R | R | R | A | R | R | R |
 | procurement_manager | R | R | R | R | R | R | A | R | R | R |
 | payables_receivables | R | R | R | R | R | R | A | R | R | R |
 | financial_controller | A | A | R | A | A | A | A | R | R | R |
 | general_manager | A | A | R | A | A | A | A | R | R | R |
-| hr | R | R | R | R | R | R | A | R | R | R |
+| hr | R | R | R | R | R | R | R | R | R | R |
 
 1. decide a credit request of branch A
 2. decide a credit request of branch B
@@ -257,16 +257,16 @@ The census asserts for every role and for every planted row that the replay answ
 | inside_sales | A | R | A | R | A | R | R | R |
 | sales_manager | A | R | A | R | A | R | R | R |
 | outside_sales | A | R | A | R | A | R | R | R |
-| yard_team | A | R | A | R | A | R | R | R |
+| yard_team | R | R | R | R | R | R | R | R |
 | yard_manager | A | R | A | R | A | R | R | R |
 | logistics_manager | A | R | A | R | A | R | R | R |
-| driver | A | R | A | R | A | R | R | R |
+| driver | R | R | R | R | R | R | R | R |
 | branch_manager | A | R | A | R | A | R | R | R |
 | procurement_manager | A | R | A | R | A | R | R | R |
 | payables_receivables | A | R | A | R | A | R | R | R |
 | financial_controller | A | R | A | R | A | R | R | R |
 | general_manager | A | R | A | R | A | R | R | R |
-| hr | A | R | A | R | A | R | R | R |
+| hr | R | R | R | R | R | R | R | R |
 
 1. withdraw its own pending request (stated rule, no REST twin)
 2. withdraw another requester's pending request (stated rule, no REST twin)
@@ -357,9 +357,12 @@ The census asserts for every role and for every planted row that the replay answ
    applies nothing. A refused role replaying another's key learns that the key applied and
    its seq, never the row.
 5. **Withdrawal and note edits are ownership rules.** `approvals.Delete` and the note arm
-   of `approvals.Write` have no REST twin and no role wall: the requester edits or
-   withdraws its own request whatever its role, and nobody else does. A request a role
-   could not file through REST can exist only if the role was changed after filing.
+   of `approvals.Write` have no REST twin and are ownership rules behind the sync write fence: the requester
+   edits or withdraws its own request, and nobody else does, provided it still holds a
+   filing role (the fence lists the ten roles with work on counter-till, quote-desk or
+   manager-home). A request a role could not file through REST can exist only if the role
+   was changed after filing; that demoted requester is refused through sync (the desk's
+   REST path is unaffected).
 6. **Only a DRAFT quote is withdrawn through sync,** where the REST edit of a SENT
    quote's validity is allowed. The withdrawal is a tombstone that takes effect; the
    desk's own path withdraws a record.

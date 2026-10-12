@@ -2,8 +2,10 @@
 
 One image in the Railway shape (plan r7 section 5): the core built with
 `-tags demo`, the built files of every web app (front door at `/`, till at
-`/till/`, public desk at `/q/`, Quote Desk at `/quote/` when present), Caddy in front, and the
-frozen migration set. Build from the repository root:
+`/till/`, buying-and-stock at `/buying-and-stock/`, public desk at `/q/`, HH
+Drive at `/drive/`, Manager Home at `/home/`, Yard Pick at `/yard/`, Money
+Desk at `/money-desk/`, Quote Desk at `/quote/` when present), Caddy in
+front, and the frozen migration set. Build from the repository root:
 
     docker build -f deploy/demo/Dockerfile -t hh-demo-till .
 
@@ -116,7 +118,7 @@ is no second box sharing the work.
 `deploy/demo/exit-test.sh` drives the built image end to end against a
 throwaway local Postgres (container `hh-till-l3d-pg` on `127.0.0.1:5599`,
 started by the script when absent): the image builds; on a clean database
-it answers `/healthz` (no phrase asked), the flows listing with the two
+it answers `/healthz` (no phrase asked), the flows listing with the eight
 flows, the app's first page (refused without the phrase, served with it),
 and `/api/v1/payments/config` with `simulated: true`; the gate refuses the
 mint without the phrase and still admits a staff call with a valid demo
