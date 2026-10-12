@@ -118,7 +118,7 @@ func TestPolicyCheck_Route(t *testing.T) {
 	}
 
 	// A bad body is a 400, and so is a missing branch (the contract requires it).
-	for _, body := range []string{`not json`, `{"price_cents":-1,"cost_cents":1,"branch_id":"` + trt + `"}`, `{"price_cents":1,"cost_cents":9000000000000000,"branch_id":"` + trt + `"}`, `{"price_cents":1,"cost_cents":1}`, `{"price_cents":1,"cost_cents":1,"branch_id":""}`} {
+	for _, body := range []string{`not json`, `{"price_cents":1,"cost_cents":1,"branch_id":"abc"}`, `{"price_cents":-1,"cost_cents":1,"branch_id":"` + trt + `"}`, `{"price_cents":1,"cost_cents":9000000000000000,"branch_id":"` + trt + `"}`, `{"price_cents":1,"cost_cents":1}`, `{"price_cents":1,"cost_cents":1,"branch_id":""}`} {
 		if rr = do(body, true); rr.Code != http.StatusBadRequest {
 			t.Fatalf("body %q = %d, want 400 (body %s)", body, rr.Code, rr.Body.String())
 		}

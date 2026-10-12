@@ -88,6 +88,57 @@ func TestQDID_PolicyCheck_AgainstTheDatabase(t *testing.T) {
 	}
 }
 
+func TestQDID_PolicyCheck_OnlyAnApprovedLiveRowAtTheBranchClears(t *testing.T) {
+	q := newQD1BFixture(t)
+	ctx := context.Background()
+	ask := func(branch string) (int, string) {
+		return qd1bCall(t, q, http.MethodPost, "/api/v1/staff/policy/check", testkit.SubInsideSales,
+			map[string]any{"price_cents": 10000, "cost_cents": 9000, "branch_id": branch})
+	}
+	setRow := func(id, set string) {
+		t.Helper()
+		if _, err := q.pool.Exec(ctx, `UPDATE permission_approval_requests SET `+set+` WHERE id = $1`, id); err != nil {
+			t.Fatalf("set %s: %v", set, err)
+		}
+	}
+	wantBlock := func(why string, code int, body string) {
+		t.Helper()
+		if code != http.StatusForbidden || !strings.Contains(body, `"block"`) {
+			t.Fatalf("%s = %d %s, want the 403 block", why, code, body)
+		}
+	}
+
+	clerk := qd1bUserID(t, q.pool, testkit.SubInsideSales)
+	id := qd1bPlantFloor(t, q, clerk, testkit.BranchNorthAID, "000000000e02")
+
+	// PENDING never clears.
+	code, body := ask(testkit.BranchNorthAID)
+	wantBlock("a pending request", code, body)
+	// REJECTED never clears.
+	setRow(id, `status = 'REJECTED'`)
+	code, body = ask(testkit.BranchNorthAID)
+	wantBlock("a rejected request", code, body)
+	// APPROVED clears at its own branch ...
+	setRow(id, `status = 'APPROVED'`)
+	if code, body = ask(testkit.BranchNorthAID); code != http.StatusOK || !strings.Contains(body, `"override":true`) {
+		t.Fatalf("approved at its branch = %d %s, want override true", code, body)
+	}
+	// ... but not at another branch the clerk can reach (a grant planted for the test).
+	if _, err := q.pool.Exec(ctx, `INSERT INTO user_branch_grants (user_id, branch_id, org_id) VALUES ($1, $2, $3)`,
+		clerk, testkit.BranchNorthBID, testkit.OrgNorthID); err != nil {
+		t.Fatalf("plant the second branch grant: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = q.pool.Exec(ctx, `DELETE FROM user_branch_grants WHERE user_id = $1 AND branch_id = $2`, clerk, testkit.BranchNorthBID)
+	})
+	code, body = ask(testkit.BranchNorthBID)
+	wantBlock("the approved row at another branch", code, body)
+	// A tombstoned approved row never clears.
+	setRow(id, `deleted_at = now()`)
+	code, body = ask(testkit.BranchNorthAID)
+	wantBlock("a tombstoned approved row", code, body)
+}
+
 func TestQDID_Roster_AgainstTheDatabase(t *testing.T) {
 	q := newQD1BFixture(t)
 	ctx := context.Background()

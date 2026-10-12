@@ -202,6 +202,11 @@ func (h *ApprovalsHandler) checkPolicy(w http.ResponseWriter, r *http.Request, _
 		httpx.Error(w, http.StatusBadRequest, "price_cents, cost_cents and branch_id are required")
 		return
 	}
+	if _, err := uuid.Parse(req.BranchID); err != nil {
+		// A global caller reaches any string, and a non uuid would raise in the lookup's uuid column as a 503.
+		httpx.Error(w, http.StatusBadRequest, "branch_id must be a branch id")
+		return
+	}
 	if *req.PriceCents < 0 || *req.CostCents < 0 || *req.PriceCents > maxPolicyCheckCents || *req.CostCents > maxPolicyCheckCents {
 		httpx.Error(w, http.StatusBadRequest, "price_cents and cost_cents must be between 0 and 1000000000000")
 		return
