@@ -42,7 +42,6 @@ var notYetRegistered = map[string]string{
 	"getTenantBrand":                "held for the tenant brand gap (ADR 0021 annex records the hold)",
 	"identityAssignRole":            "no implementation lane assigned for the staff identity admin surface",
 	"identityChangePassword":        "no implementation lane assigned for the staff identity admin surface",
-	"identityCheckPolicy":           "no implementation lane assigned for the staff identity admin surface",
 	"identityConfirmPasswordReset":  "the D38 sign-in-methods leave-behind: the staff sign-in surface stays unregistered until HH-4.2 lands one",
 	"identityCreateStaff":           "no implementation lane assigned for the staff identity admin surface",
 	"identityGeneratePasswordReset": "no implementation lane assigned for the staff identity admin surface",
