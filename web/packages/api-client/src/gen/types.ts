@@ -2493,6 +2493,15 @@ export type IdentityLoginResponse = {
   token: string;
   user: IdentityUser;
 };
+export type IdentityExchangeRequest = {
+  jwt: string;
+  org: string;
+};
+export type IdentityExchangeResponse = {
+  token: string;
+  expiresAtMs: number;
+  user: IdentityUser;
+};
 export type IdentityChangePasswordRequest = {
   current_password: string;
   new_password: string;

@@ -96,6 +96,35 @@ func TestDemoServeRefusesAProviderVariable(t *testing.T) {
 	}
 }
 
+// The demo environment guard through the serve entry: a CORE_ name on no
+// list refuses the boot, naming the variable and never its value, while the
+// console mode's declared names pass the guard (the next guard, the made up
+// database, is what stops the serve).
+func TestDemoServeRefusesAnUnknownCoreName(t *testing.T) {
+	env := serveEnv(t)
+	getenv, lookup, environ := envFuncs(env)
+	picture := append(environ(), "CORE_BRAND_NEW_WIRE=value-that-must-not-print")
+	err := demoServe(getenv, lookup, func() []string { return picture })
+	if err == nil {
+		t.Fatal("an unknown CORE_ name was accepted")
+	}
+	if !strings.Contains(err.Error(), "CORE_BRAND_NEW_WIRE") || strings.Contains(err.Error(), "must-not-print") {
+		t.Fatalf("refusal %q", err)
+	}
+}
+
+func TestDemoServeAcceptsTheConsoleModeNames(t *testing.T) {
+	for _, name := range append([]string{"CORE_EXCHANGE_JWT_BOUND", "CORE_TRUSTED_PROXIES", "CORE_SIGNIN_EMAIL_DOMAINS", "CORE_SIGNIN_EMAIL_ADDRESSES"}, demoEnvAllowCoreNames...) {
+		env := serveEnv(t)
+		getenv, lookup, environ := envFuncs(env)
+		picture := append(environ(), name+"=x")
+		err := demoServe(getenv, lookup, func() []string { return picture })
+		if err != nil && strings.Contains(err.Error(), "is on no list") {
+			t.Errorf("%s refused by the guard: %v", name, err)
+		}
+	}
+}
+
 // G4's one exception, through the serve entry: the feedback bridge is the one
 // outbound a demo box may carry (the Feature Polish ruling), so the bridge's
 // own five variables pass the provider gate. The proof the gate was passed is

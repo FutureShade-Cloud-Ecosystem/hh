@@ -18,6 +18,8 @@ drops:
 additions:
   - route: "GET /.well-known/jwks.json"
     reason: "The deployment's own session JWK Set (current, NEXT and PREVIOUS public keys); the ERP signed with shared HS256 secrets and had no key set."
+  - route: "POST /api/v1/auth/exchange"
+    reason: "The real sign in through FB Console: a Console JWT and an org slug for a core session token, behind the gates of the state note HH-S4-AUTH section 3; the ERP signed in with its own password table."
   - route: "GET /api/v1/sync/{scope}"
     reason: "Context 4.5 sync protocol, one pull per manifest offline scope; the ERP has no sync endpoint."
   - route: "POST /api/v1/sync/{scope}"

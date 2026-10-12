@@ -2968,6 +2968,17 @@ type IdentityLoginResponse struct {
 	User  IdentityUser `json:"user"`
 }
 
+type IdentityExchangeRequest struct {
+	Jwt string `json:"jwt"`
+	Org string `json:"org"`
+}
+
+type IdentityExchangeResponse struct {
+	Token       string       `json:"token"`
+	ExpiresAtMs int64        `json:"expiresAtMs"`
+	User        IdentityUser `json:"user"`
+}
+
 type IdentityChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password"`
 	NewPassword     string `json:"new_password"`

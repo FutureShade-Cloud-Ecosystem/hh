@@ -185,16 +185,18 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	// test holds against the source tree. The environment picture arrives
 	// as an argument, the way getenv and lookupEnv do, so this call is
 	// pinned by a test through demoServe and not only inside the boot
-	// package. The allow list's CORE_ prefix is the plan's own: every
-	// future CORE_* name classes as allowed on the demo box without
-	// anyone looking at it, which is G4's stated blind spot and not an
-	// oversight of this wiring.
+	// package. CORE_ is not allowed wholesale: a CORE_ name is carried on
+	// a demo box only when demoEnvAllowCoreNames states it, so a future
+	// name fails the boot until someone classes it. The console sign in
+	// mode is a declared shape (its names are on that list).
 	if err := boot.RefuseProviderVars(environ(), boot.ProviderDeny{
 		Prefixes:         demoEnvDenyPrefixes,
 		PrefixExceptions: demoEnvPlaneBridgeAllowNames,
 		Names:            demoEnvDenyNames,
 		CardVar:          demoEnvCardProcessorVar,
 		CardAllowed:      demoEnvCardProcessorValue,
+		ExplicitPrefix:   demoEnvExplicitPrefix,
+		ExplicitAllowed:  demoEnvAllowCoreNames,
 	}); err != nil {
 		return err
 	}
@@ -442,6 +444,23 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	if err := ops.syncEngine.RegisterScope("customer_quotes", customerquote.NewSyncStore(cqStore, cqService)); err != nil {
 		pool.Close()
 		panic("sync: scope wiring refused to boot: " + err.Error())
+	}
+
+	// The sign in exchange (item 6b), console mode only: the same handler
+	// the default build mounts, over the uncached FB Console source. The
+	// demo mode has no exchange.
+	if demoCfg.signin == signinConsole {
+		exch, err := buildExchange(exchangeDeps{
+			getenv: getenv, log: log, pool: pool, session: session,
+			appwrite: appwriteNames{endpoint: demoCfg.appwriteURL, project: demoCfg.appwriteProj, apiKey: demoCfg.appwriteKey},
+			orgs:     orgs, staff: staff, knob: dispatchDriverSessionKnob{repo: dispatch.NewRepository(pool)},
+			audit: money.auditSvc,
+		})
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		r.Handle("POST /api/v1/auth/exchange", g.Public(exch))
 	}
 
 	// The demo module's mint routes (W2): the tap-a-role sign-in, the

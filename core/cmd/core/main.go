@@ -533,6 +533,22 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
+	// The sign in exchange (item 6b, state note section 3): public leg, no
+	// bearer, mounted here because this wiring runs only in the console
+	// mode. It reads membership from the uncached FB Console source. A
+	// configuration refusal stops the boot.
+	exch, err := buildExchange(exchangeDeps{
+		getenv: getenv, log: log, pool: pool, session: session,
+		appwrite: appwriteNames{endpoint: auth.appwriteURL, project: auth.appwriteProj, apiKey: auth.appwriteKey},
+		orgs:     orgs, staff: staff, knob: dispatchDriverSessionKnob{repo: dispatch.NewRepository(pool)},
+		audit: money.auditSvc,
+	})
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	r.Handle("POST /api/v1/auth/exchange", g.Public(exch))
+
 	// The load doors (HH-LOAD-1 LD-1, ADR-0024) register only where the
 	// deployment switched them on (CORE_LOAD_DOORS, the same switch that
 	// wired the machine gate above); the routes land through the gate
