@@ -116,6 +116,8 @@ func TestSessionCompositionRefusals(t *testing.T) {
 		{"previous equals current", map[string]string{"CORE_SESSION_SIGNING_KEY_FILE": keyFile, "CORE_SESSION_KEY_PREVIOUS_FILE": curPub}, "deploy-a", "differ"},
 		{"ttl above the knob minimum", map[string]string{"CORE_SESSION_SIGNING_KEY_FILE": keyFile, "CORE_EXCHANGE_TOKEN_TTL": "90m"}, "deploy-a", "CORE_EXCHANGE_TOKEN_TTL"},
 		{"ttl above the staff window", map[string]string{"CORE_SESSION_SIGNING_KEY_FILE": keyFile, "CORE_EXCHANGE_TOKEN_TTL": "13h"}, "deploy-a", "CORE_EXCHANGE_TOKEN_TTL"},
+		{"ttl one nanosecond", map[string]string{"CORE_SESSION_SIGNING_KEY_FILE": keyFile, "CORE_EXCHANGE_TOKEN_TTL": "1ns"}, "deploy-a", "CORE_EXCHANGE_TOKEN_TTL"},
+		{"ttl under one second", map[string]string{"CORE_SESSION_SIGNING_KEY_FILE": keyFile, "CORE_EXCHANGE_TOKEN_TTL": "999ms"}, "deploy-a", "CORE_EXCHANGE_TOKEN_TTL"},
 		{"ttl zero", map[string]string{"CORE_SESSION_SIGNING_KEY_FILE": keyFile, "CORE_EXCHANGE_TOKEN_TTL": "0s"}, "deploy-a", "CORE_EXCHANGE_TOKEN_TTL"},
 		{"ttl not a duration", map[string]string{"CORE_SESSION_SIGNING_KEY_FILE": keyFile, "CORE_EXCHANGE_TOKEN_TTL": "soon"}, "deploy-a", "CORE_EXCHANGE_TOKEN_TTL"},
 	}

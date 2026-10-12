@@ -85,6 +85,9 @@ func loadSessionKeyConfig(getenv func(string) string) (sessionKeyConfig, error) 
 		if err != nil || d <= 0 {
 			return sessionKeyConfig{}, fmt.Errorf("%s must be a positive duration, got %q", envExchangeTokenTTL, raw)
 		}
+		if d < identity.MinSessionWindow {
+			return sessionKeyConfig{}, fmt.Errorf("%s is shorter than the minimum token window of %s", envExchangeTokenTTL, identity.MinSessionWindow)
+		}
 		if d > identity.StaffSessionTTL {
 			return sessionKeyConfig{}, fmt.Errorf("%s is longer than the staff session window", envExchangeTokenTTL)
 		}
