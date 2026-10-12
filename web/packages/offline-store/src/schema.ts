@@ -3,7 +3,7 @@
 // cards. Dialect is plain SQLite; nothing here is engine specific.
 import type { SqlExecutor, SqlStatement } from "./sql.js";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** The shape of a scope name; it is spliced into table names, so it is checked before any SQL. */
 export const SCOPE_NAME = /^[a-z][a-z_]{0,63}$/;
@@ -31,7 +31,10 @@ const FIXED_DDL = [
      attempts INTEGER NOT NULL DEFAULT 0,
      error TEXT,
      server_seq INTEGER,
-     created_at TEXT NOT NULL
+     created_at TEXT NOT NULL,
+     sent INTEGER NOT NULL DEFAULT 0,
+     stall TEXT CHECK (stall IS NULL OR stall IN ('scope_refused', 'check_applied')),
+     stall_status INTEGER
    )`,
   `CREATE INDEX IF NOT EXISTS outbox_status_seq ON outbox (status, seq)`,
   `CREATE TABLE IF NOT EXISTS sync_state (
@@ -77,6 +80,23 @@ function entityDdl(scope: string): string {
 }
 
 /**
+ * Schema 2 added `sent` (a request for the row may have reached the server and
+ * was not definitively answered) and the stall record to the outbox. A table
+ * from schema 1 gets the columns; an attempt it already counted may have
+ * reached the server, so those rows start as sent.
+ */
+async function upgradeOutbox(sql: SqlExecutor): Promise<void> {
+  const cols = (await sql.all<{ name: string }>("SELECT name FROM pragma_table_info('outbox')")).map((c) => c.name);
+  if (cols.length === 0 || cols.includes("sent")) return;
+  await sql.atomic([
+    { sql: "ALTER TABLE outbox ADD COLUMN sent INTEGER NOT NULL DEFAULT 0" },
+    { sql: "ALTER TABLE outbox ADD COLUMN stall TEXT CHECK (stall IS NULL OR stall IN ('scope_refused', 'check_applied'))" },
+    { sql: "ALTER TABLE outbox ADD COLUMN stall_status INTEGER" },
+    { sql: "UPDATE outbox SET sent = 1 WHERE attempts > 0" },
+  ]);
+}
+
+/**
  * Create or extend the schema. Idempotent; a later call with more scopes adds
  * their tables and keeps every row. Every scope name is validated before any
  * SQL runs, and a database written by a newer schema is refused rather than
@@ -89,6 +109,7 @@ export async function migrate(sql: SqlExecutor, scopes: readonly string[]): Prom
   if (found.length > 0 && Number(found[0]!.value) > SCHEMA_VERSION) {
     throw new Error(`offline-store: database schema ${found[0]!.value} is newer than this build (${SCHEMA_VERSION})`);
   }
+  await upgradeOutbox(sql);
   await sql.atomic([
     ...FIXED_DDL.map((ddl) => ({ sql: ddl })),
     ...entityStatements,

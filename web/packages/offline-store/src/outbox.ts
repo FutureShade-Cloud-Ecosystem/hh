@@ -13,10 +13,19 @@
 //  6. A fault is whole: an operational fault, a malformed answer or an
 //     unreadable network marks nothing, and the next replay sends the same
 //     rows again, where the server dedups on the keys.
-//  7. A refusal is a verdict: a standing refusal of a whole request (400, 403,
-//     404, 413, 501) is split to single operations, and one still refused
-//     alone is closed as rejected with a card. It is never retried forever.
+//  7. A refusal closes a row only when the server cannot hold it. The core's
+//     own refusals are 400, 403 and 501 (404 and 413 come from a hop in front
+//     and are faults). A 400 on a batch is split to single operations, and one
+//     still refused alone is closed as rejected with a card, but only if no
+//     earlier request for it could have reached the server (`sent`, set
+//     durably before the first request leaves, in the same atomic step as the
+//     attempt count). A row that was sent before is UNCERTAIN: it stays
+//     pending and the scope shows a `check_applied` stall. A 403 or 501 parks
+//     the scope: its rows stay pending, a `scope_refused` stall shows, the
+//     other scopes and the pull carry on, and every replay tries again.
 //  8. A push stays under MAX_REQUEST_BYTES as well as under maxBatch rows.
+//  9. A stuck outbox is visible: `health()` reports the writes waiting, the
+//     attempts and last error of a standing fault, and every stall.
 import type { SyncPushOperation, SyncPushResult } from "@hardscapehouse/api-client";
 import { bodyHash, canonicalJson } from "./canonical.js";
 import { scopeFence, type ScopeBook, type WriteRefusalReason } from "./scopes.js";
@@ -55,10 +64,38 @@ export interface OutboxRow {
   error: string | null;
   serverSeq: number | null;
   createdAt: string;
+  /** A request for this row may have reached the server and was not definitively answered. */
+  sent: boolean;
+  stall: StallKind | null;
+}
+
+/** Why a scope's pending work is not moving, apart from a plain fault. */
+export type StallKind = "scope_refused" | "check_applied";
+
+/** A stall the UI shows: the scope, the status, the last error, and words for the person. */
+export interface OutboxStall {
+  kind: StallKind;
+  scope: string;
+  /** The operation to look at: the one the refusal was about. */
+  key: string;
+  status: number;
+  error: string | null;
+  /** Pending operations in the scope, the stalled one included. */
+  waiting: number;
+  message: string;
+}
+
+/** The stuck signal: what the shell shows when writes are waiting and not moving. */
+export interface OutboxHealth {
+  /** Pending operations, all scopes. */
+  waiting: number;
+  /** Set while any pending operation has been attempted: the most attempts and that operation's last error. */
+  stuck: { attempts: number; lastError: string | null } | null;
+  stalls: OutboxStall[];
 }
 
 export type ReplayOutcome =
-  | { kind: "done"; sent: number; applied: number; conflicts: number; rejected: number }
+  | { kind: "done"; sent: number; applied: number; conflicts: number; rejected: number; stalledScopes?: string[] }
   | { kind: "offline"; message: string }
   | { kind: "auth_expired"; message: string }
   | { kind: "fault"; message: string; status?: number };
@@ -102,6 +139,17 @@ interface DbRow {
   error: string | null;
   server_seq: number | null;
   created_at: string;
+  sent: number;
+  stall: StallKind | null;
+  stall_status: number | null;
+}
+
+/** The words for a stall. */
+function stallWords(kind: StallKind, scope: string, status: number): string {
+  if (kind === "check_applied") {
+    return `The server now refuses an operation in ${scope} (${status}), but an earlier request for it may already have been applied. Check whether it was applied before it is entered again; it is kept and will be tried again.`;
+  }
+  return `The server refuses writes to ${scope} for this sign in (${status}). The queued work is kept, not sent, and tried again on every cycle until the refusal is lifted.`;
 }
 
 /** The stored payload as an object, or null when the text is not a JSON object (disk damage, an old build). */
@@ -131,6 +179,8 @@ function toRow(r: DbRow): OutboxRow {
     error: r.error,
     serverSeq: r.server_seq,
     createdAt: r.created_at,
+    sent: r.sent === 1,
+    stall: r.stall,
   };
 }
 
@@ -266,6 +316,32 @@ export class Outbox {
     return this.list("pending");
   }
 
+  /** The stuck signal and the stalls, read from the rows, so they survive a restart. */
+  async health(): Promise<OutboxHealth> {
+    const pending = await this.#sql.all<DbRow>("SELECT * FROM outbox WHERE status = 'pending' ORDER BY seq");
+    let stuck: OutboxHealth["stuck"] = null;
+    for (const r of pending) {
+      if (r.attempts > 0 && (stuck === null || r.attempts > stuck.attempts)) stuck = { attempts: r.attempts, lastError: r.error };
+    }
+    const waitingIn = new Map<string, number>();
+    for (const r of pending) waitingIn.set(r.scope, (waitingIn.get(r.scope) ?? 0) + 1);
+    const stalls: OutboxStall[] = pending
+      .filter((r) => r.stall !== null)
+      .map((r) => {
+        const status = r.stall_status ?? 0;
+        return {
+          kind: r.stall!,
+          scope: r.scope,
+          key: r.idempotency_key,
+          status,
+          error: r.error,
+          waiting: waitingIn.get(r.scope) ?? 0,
+          message: stallWords(r.stall!, r.scope, status),
+        };
+      });
+    return { waiting: pending.length, stuck, stalls };
+  }
+
   /**
    * Replay the pending rows in order against the transport. One caller at a
    * time: a second call waits, then finds what the first one finished.
@@ -276,12 +352,15 @@ export class Outbox {
 
   async #replay(transport: SyncTransport): Promise<ReplayOutcome> {
     const totals: Totals = { sent: 0, applied: 0, conflicts: 0, rejected: 0 };
+    // Scopes the server refused in this replay: their rows stay pending, the others carry on.
+    const parked = new Set<string>();
     for (;;) {
+      const skip = [...parked];
       const head = await this.#sql.all<DbRow>(
-        "SELECT * FROM outbox WHERE status = 'pending' ORDER BY seq LIMIT ?",
-        [this.#maxBatch],
+        `SELECT * FROM outbox WHERE status = 'pending'${skip.length > 0 ? ` AND scope NOT IN (${skip.map(() => "?").join(", ")})` : ""} ORDER BY seq LIMIT ?`,
+        [...skip, this.#maxBatch],
       );
-      if (head.length === 0) return { kind: "done", ...totals };
+      if (head.length === 0) return { kind: "done", ...totals, ...(skip.length > 0 ? { stalledScopes: skip } : {}) };
       const scope = head[0]!.scope;
       const dbRun: DbRow[] = [];
       for (const r of head) {
@@ -316,7 +395,7 @@ export class Outbox {
 
       // One request carries at most MAX_REQUEST_BYTES; the rest of the run waits for the next turn of the loop.
       const batch = fitBytes(run);
-      const outcome = await this.#push(transport, scope, batch, totals, true);
+      const outcome = await this.#push(transport, scope, batch, totals, true, parked);
       if (outcome) return outcome;
     }
   }
@@ -324,24 +403,53 @@ export class Outbox {
   /**
    * Send one batch and record the answer. Returns null when the batch was dealt
    * with and the replay should carry on, or the outcome that ends the replay.
-   * A standing refusal (400, 403, 404, 413, 501) is a verdict on the request:
-   * a batch of several is split to single operations, and one still refused
-   * alone is closed as rejected with its card.
+   * The rows are marked sent (and the attempt counted) durably before the
+   * request leaves; a definitive answer that the server applied nothing (a
+   * refusal, a 401) puts the mark back.
+   * A 400 on a batch of several is split to single operations; one still
+   * refused alone is closed as rejected with its card only if it was never sent
+   * before, else it is a `check_applied` stall. A 403 or 501 parks the scope.
    */
-  async #push(transport: SyncTransport, scope: string, run: OutboxRow[], totals: Totals, mayRetrySingly: boolean): Promise<ReplayOutcome | null> {
+  async #push(
+    transport: SyncTransport,
+    scope: string,
+    run: OutboxRow[],
+    totals: Totals,
+    mayRetrySingly: boolean,
+    parked: Set<string>,
+  ): Promise<ReplayOutcome | null> {
     const ops: SyncPushOperation[] = run.map(toOperation);
+    try {
+      await this.#mark(run);
+    } catch (error) {
+      // No durable mark, no request: it could not be told apart from a send that never was.
+      return { kind: "fault", message: error instanceof Error ? error.message : String(error) };
+    }
     const response = await transport.push(scope, ops);
     if (!response.ok) {
       const failure = classifyFailure(response.error, response.status);
       if (failure.kind === "refused") {
-        if (mayRetrySingly && run.length > 1) {
-          for (const row of run) {
-            const outcome = await this.#push(transport, scope, [row], totals, false);
-            if (outcome) return outcome;
+        await this.#unmark(run);
+        if (failure.status === 400) {
+          if (mayRetrySingly && run.length > 1) {
+            for (const row of run) {
+              if (parked.has(scope)) break;
+              const outcome = await this.#push(transport, scope, [row], totals, false, parked);
+              if (outcome) return outcome;
+            }
+            return null;
           }
-          return null;
+          const row = run[0]!;
+          if (!row.sent) {
+            return this.#closeRejected([{ row, message: `request refused (${failure.status}): ${failure.message}` }], totals);
+          }
+          return this.#park(scope, row, "check_applied", failure.status, failure.message, parked);
         }
-        return this.#closeRejected(run.map((row) => ({ row, message: `request refused (${failure.status}): ${failure.message}` })), totals);
+        return this.#park(scope, run[0]!, "scope_refused", failure.status, failure.message, parked);
+      }
+      if (failure.kind === "auth_expired") {
+        await this.#unmark(run);
+        return failure;
       }
       totals.sent += ops.length;
       if (failure.kind === "fault") {
@@ -373,7 +481,7 @@ export class Outbox {
         else if (result.status === "rejected") status = "rejected";
         else throw new Error(`push response carries an unknown status for ${row.key}`);
         statements.push({
-          sql: "UPDATE outbox SET status = ?, server_seq = ?, error = ? WHERE idempotency_key = ? AND status = 'pending'",
+          sql: "UPDATE outbox SET status = ?, server_seq = ?, error = ?, stall = NULL, stall_status = NULL WHERE idempotency_key = ? AND status = 'pending'",
           params: [status, result.seq ?? null, status === "rejected" ? (result.error ?? "rejected") : null, row.key],
         });
         if (this.#onResult) statements.push(...this.#onResult({ row, result }));
@@ -400,7 +508,7 @@ export class Outbox {
       const statements: SqlStatement[] = [];
       for (const { row, message } of items) {
         statements.push({
-          sql: "UPDATE outbox SET status = 'rejected', error = ? WHERE idempotency_key = ? AND status = 'pending'",
+          sql: "UPDATE outbox SET status = 'rejected', error = ?, stall = NULL, stall_status = NULL WHERE idempotency_key = ? AND status = 'pending'",
           params: [message, row.key],
         });
         if (this.#onResult) statements.push(...this.#onResult({ row, result: { client_id: row.key, status: "rejected", error: message } }));
@@ -415,17 +523,66 @@ export class Outbox {
     }
   }
 
-  /** Count a failed attempt on the rows that were sent. Best effort: the rows stay pending either way. */
+  /**
+   * Durably mark rows as possibly sent and count the attempt, in one atomic
+   * step, before their request leaves. Any stall they carried is cleared: the
+   * answer to this request says whether it stands.
+   */
+  async #mark(run: readonly OutboxRow[]): Promise<void> {
+    await this.#sql.atomic(
+      run.map((row) => ({
+        sql: "UPDATE outbox SET sent = 1, attempts = attempts + 1, stall = NULL, stall_status = NULL WHERE idempotency_key = ? AND status = 'pending'",
+        params: [row.key],
+      })),
+    );
+  }
+
+  /**
+   * Put the mark back to what it was before the request: the server answered
+   * definitively that it applied nothing. Best effort and safe to fail: a row
+   * left marked is only treated as uncertain.
+   */
+  async #unmark(run: readonly OutboxRow[]): Promise<void> {
+    try {
+      await this.#sql.atomic(
+        run.map((row) => ({
+          sql: "UPDATE outbox SET sent = ?, attempts = MAX(attempts - 1, 0) WHERE idempotency_key = ? AND status = 'pending'",
+          params: [row.sent ? 1 : 0, row.key],
+        })),
+      );
+    } catch {
+      // The rows are still pending and marked sent: the safe side.
+    }
+  }
+
+  /** Park a scope for the rest of this replay and record the stall on the row to look at. */
+  async #park(scope: string, row: OutboxRow, kind: StallKind, status: number, message: string, parked: Set<string>): Promise<ReplayOutcome | null> {
+    parked.add(scope);
+    try {
+      await this.#sql.atomic([
+        { sql: "UPDATE outbox SET stall = NULL, stall_status = NULL WHERE scope = ? AND status = 'pending'", params: [scope] },
+        {
+          sql: "UPDATE outbox SET stall = ?, stall_status = ?, error = ? WHERE idempotency_key = ? AND status = 'pending'",
+          params: [kind, status, `request refused (${status}): ${message}`, row.key],
+        },
+      ]);
+      return null;
+    } catch (error) {
+      return { kind: "fault", message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** Record why a sent attempt failed. The attempt was already counted when the rows were marked. Best effort. */
   async #noteFault(run: readonly OutboxRow[], message: string): Promise<void> {
     try {
       await this.#sql.atomic(
         run.map((row) => ({
-          sql: "UPDATE outbox SET attempts = attempts + 1, error = ? WHERE idempotency_key = ? AND status = 'pending'",
+          sql: "UPDATE outbox SET error = ? WHERE idempotency_key = ? AND status = 'pending'",
           params: [message, row.key],
         })),
       );
     } catch {
-      // The rows are still pending; the count is a courtesy.
+      // The rows are still pending; the message is a courtesy.
     }
   }
 }

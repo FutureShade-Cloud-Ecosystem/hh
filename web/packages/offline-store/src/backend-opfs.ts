@@ -54,10 +54,14 @@ async function takeLock(locks: LockManagerLike, name: string): Promise<(() => Pr
  * One request, one reply, and a guarantee that every call settles: a worker
  * that errors, or a call that gets no reply in time, fails the call in flight
  * and every later one, and tells the backend so it can give up ownership.
+ * Calls go to the worker one at a time, each posted when the one before has
+ * been answered, so a call's timer measures the worker's time on that call and
+ * never the time it waited behind a long one.
  */
 class WorkerClient {
   #next = 1;
   #dead: Error | null = null;
+  #tail: Promise<unknown> = Promise.resolve();
   readonly #pending = new Map<number, { resolve: (reply: WorkerReply) => void; reject: (error: Error) => void }>();
   readonly #worker: WorkerLike;
   readonly #timeoutMs: number;
@@ -86,6 +90,13 @@ class WorkerClient {
   }
 
   call(build: (id: number) => WorkerRequest): Promise<WorkerReply> {
+    if (this.#dead) return Promise.reject(this.#dead);
+    const turn = this.#tail.then(() => this.#post(build));
+    this.#tail = turn.then(() => undefined, () => undefined);
+    return turn;
+  }
+
+  #post(build: (id: number) => WorkerRequest): Promise<WorkerReply> {
     if (this.#dead) return Promise.reject(this.#dead);
     const id = this.#next++;
     return new Promise((resolve, reject) => {
