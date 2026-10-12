@@ -16,7 +16,7 @@ import type { SyncTransport } from "./transport.js";
  * spins on the database (a regression, a mutant) fails here, as an assertion, instead of hanging the run: a loop
  * made only of awaited in memory calls never yields to the event loop, so no timer could end it.
  */
-export const MAX_TEST_STATEMENTS = 500_000;
+export const MAX_TEST_STATEMENTS = 30_000;
 
 /** An in-memory (or file) SQLite behind the executor seam. */
 export function nodeSqliteExecutor(path = ":memory:", maxStatements = MAX_TEST_STATEMENTS): ClosableSqlExecutor {

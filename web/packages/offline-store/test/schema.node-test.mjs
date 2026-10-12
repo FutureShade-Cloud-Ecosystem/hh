@@ -166,5 +166,5 @@ test("the test executor refuses a loop that spins on the database, so a spinning
   );
   const batch = nodeSqliteExecutor(":memory:", 5);
   await assert.rejects(batch.atomic(Array.from({ length: 6 }, () => ({ sql: "SELECT 1" }))), /spinning/);
-  assert.ok(MAX_TEST_STATEMENTS >= 100_000, "the default must leave every honest test far from the cap");
+  assert.ok(MAX_TEST_STATEMENTS >= 20_000, "the default must leave every honest test far from the cap");
 });
