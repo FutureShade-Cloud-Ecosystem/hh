@@ -111,6 +111,14 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		return fmt.Errorf("demoseed: composing modules: %w", err)
 	}
 
+	// The demo world seam (the glsworld pair): in the demo build, -apply moves the two branch rows
+	// onto the demo dealer before the plan reads them, because the plan derives every document
+	// reference from the branch code. The default build's side is a no-op.
+	if *doApply {
+		if err := glsPrepareWorld(ctx, pool); err != nil {
+			return err
+		}
+	}
 	branches, err := resolveBranches(ctx, pool)
 	if err != nil {
 		return err
@@ -136,6 +144,10 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
+
+	// The demo world's words (the glsworld pair): the built plan's strings pass through the demo
+	// dictionary before anything prints or writes. The default build returns the rows as built.
+	rows = glsRewritePlan(rows)
 
 	fmt.Fprintf(out, "demoseed %s\n", demoMarker)
 	fmt.Fprintf(out, "  clock          %s\n", now.Format(time.RFC3339))
@@ -185,6 +197,15 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("demoseed: nothing was written: %w", err)
 	}
+	// The demo world's migration-planted words (the glsworld pair), in the same transaction for the
+	// same reason: the rows the migrations plant carry the first dealer's names, and the demo build
+	// moves them through the demo dictionary, one guarded update per changed value.
+	worldRenamed, err := glsRenamePlanted(ctx, tx, now)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("demoseed: nothing was written: %w", err)
+	}
+	renamed += worldRenamed
 	// The seed-repair pass (the repair pair), inside the same transaction for the same reason:
 	// the world lands all-or-nothing. One guarded UPDATE, demo build only, its guarantees argued
 	// in demoseed_repair_demo.go beside the scrub-name pass it follows.

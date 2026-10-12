@@ -475,10 +475,10 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		lines             int
 	}
 	wants := map[string]want{
-		"Q1": {"DEMO-TRT-Q1", "DRAFT", qwSalesUserID, 2},
-		"Q2": {"DEMO-TRT-Q2", "SENT", qwManagerUserID, 2},
-		"Q3": {"DEMO-TRT-Q3", "ACCEPTED", qwSalesUserID, 3},
-		"Q4": {"DEMO-TRT-Q4", "ACCEPTED", qwSalesUserID, 2},
+		"Q1": {"DEMO-PLM-Q1", "DRAFT", qwSalesUserID, 2},
+		"Q2": {"DEMO-PLM-Q2", "SENT", qwManagerUserID, 2},
+		"Q3": {"DEMO-PLM-Q3", "ACCEPTED", qwSalesUserID, 3},
+		"Q4": {"DEMO-PLM-Q4", "ACCEPTED", qwSalesUserID, 2},
 	}
 	seeded := map[string]qwQuote{}
 	for key, w := range wants {
