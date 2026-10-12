@@ -43,7 +43,9 @@ func TestClaimJWTIsSingleUse(t *testing.T) {
 	pool := claimTestPool(t)
 	c := newClaims(t, pool, nil)
 	h := HashJWTSignature([]byte("single-use-signature"))
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM console_jwt_claim WHERE sig_hash = $1`, h[:]) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM console_jwt_claim WHERE sig_hash = $1`, h[:])
+	})
 	exp := time.Now().Add(10 * time.Minute)
 	if ok, err := c.ClaimJWT(context.Background(), h, exp); err != nil || !ok {
 		t.Fatalf("first claim: %v %v", ok, err)
@@ -57,7 +59,9 @@ func TestClaimJWTConcurrentPresentationsOneWins(t *testing.T) {
 	pool := claimTestPool(t)
 	c := newClaims(t, pool, nil)
 	h := HashJWTSignature([]byte("concurrent-signature"))
-	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM console_jwt_claim WHERE sig_hash = $1`, h[:]) })
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM console_jwt_claim WHERE sig_hash = $1`, h[:])
+	})
 	exp := time.Now().Add(10 * time.Minute)
 	var wins int32
 	var wg sync.WaitGroup

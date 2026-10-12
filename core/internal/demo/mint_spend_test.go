@@ -67,7 +67,7 @@ func TestCeilingRefusalSpendsNothing(t *testing.T) {
 	if rsp := mintAs(tester); rsp.Code != http.StatusTooManyRequests {
 		t.Fatalf("the mint against a full ceiling answered %d, want 429 (body: %s)", rsp.Code, rsp.Body.String())
 	}
-	if got := len(m.limit.Stamps("v:"+tester)); got != 0 {
+	if got := len(m.limit.Stamps("v:" + tester)); got != 0 {
 		t.Errorf("the refused mint left %d stamp(s) on the tester's own key, want none: a refusal spends nothing", got)
 	}
 	clock.advance(DefaultBurstWindow + time.Second)
@@ -145,7 +145,7 @@ func TestMintSurvivesAPartialSlideOfTheKey(t *testing.T) {
 			// slid out) and the grant recorded the new one: the stored
 			// slice is exactly those five, with no phantom riding the
 			// compacted array behind them.
-			stored := m.limit.Stamps("v:"+tester)
+			stored := m.limit.Stamps("v:" + tester)
 			if len(stored) != 5 {
 				t.Errorf("the key holds %d stamps after the tap at +31, want the five live ones: a phantom rides the compacted slice", len(stored))
 			} else {
@@ -164,7 +164,7 @@ func TestMintSurvivesAPartialSlideOfTheKey(t *testing.T) {
 	if rsp := mintAs(tester); rsp.Code != http.StatusOK {
 		t.Fatalf("the tap at +41s answered %d, want 200: four stamps are truly live under the allowance of five (body: %s)", rsp.Code, rsp.Body.String())
 	}
-	stored := m.limit.Stamps("v:"+tester)
+	stored := m.limit.Stamps("v:" + tester)
 	if len(stored) != 5 {
 		t.Fatalf("the key holds %d stamps at the end, want the five live ones", len(stored))
 	}
