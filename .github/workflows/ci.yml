@@ -151,6 +151,19 @@ jobs:
         run: |
           go build ./...
           go vet ./...
+      - name: Format check (gofmt)
+        working-directory: core
+        # gofmt reads build tagged files whatever the tags, so drift in the
+        # demo and integration tagged files shows here too. Lists the files
+        # that differ and fails when there are any.
+        run: |
+          set -euo pipefail
+          drift="$(gofmt -l .)"
+          if [ -n "$drift" ]; then
+            echo "gofmt drift in:" >&2
+            echo "$drift" >&2
+            exit 1
+          fi
       - name: Vulnerability scan (govulncheck)
         working-directory: core
         # Reachable vulnerabilities in the standard library at the pinned
@@ -274,13 +287,14 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        # The official image, pulled through Amazon ECR Public's mirror of
-        # the Docker official images so the hosted runners do not hit
-        # Docker Hub's anonymous pull rate limit (PRs 290 and 291 failed at
-        # "Initialize containers" with toomanyrequests before any code ran).
-        # Same Postgres major and same alpine variant as the source image
-        # (16.15 on alpine 3.24); the index digest matches docker.io's.
-        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        # The official image, pulled through Google's mirror of the Docker
+        # official images (mirror.gcr.io) so the hosted runners hit neither
+        # Docker Hub's anonymous pull limit (PRs 290 and 291) nor Amazon ECR
+        # Public's data limit (PRs 312, 315 and 316 failed at "Initialize
+        # containers" with toomanyrequests before any code ran). The pin is
+        # the index digest docker.io serves for 16-alpine (16.15 on alpine
+        # 3.24), so the bytes are the ones every earlier run used.
+        image: mirror.gcr.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: till_base
@@ -417,13 +431,14 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        # The official image, pulled through Amazon ECR Public's mirror of
-        # the Docker official images so the hosted runners do not hit
-        # Docker Hub's anonymous pull rate limit (PRs 290 and 291 failed at
-        # "Initialize containers" with toomanyrequests before any code ran).
-        # Same Postgres major and same alpine variant as the source image
-        # (16.15 on alpine 3.24); the index digest matches docker.io's.
-        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        # The official image, pulled through Google's mirror of the Docker
+        # official images (mirror.gcr.io) so the hosted runners hit neither
+        # Docker Hub's anonymous pull limit (PRs 290 and 291) nor Amazon ECR
+        # Public's data limit (PRs 312, 315 and 316 failed at "Initialize
+        # containers" with toomanyrequests before any code ran). The pin is
+        # the index digest docker.io serves for 16-alpine (16.15 on alpine
+        # 3.24), so the bytes are the ones every earlier run used.
+        image: mirror.gcr.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -543,14 +558,14 @@ jobs:
           # to the most recent half past midnight instead of the current UTC day's.
           target=$(( (target - 1800) / 86400 * 86400 + 1800 ))
           pin="$(date -u -d "@$target" '+%Y-%m-%d %H:%M:%S')"
-          # The same digest pinned mirror the services above use (Docker Hub's anonymous rate
-          # limit refuses the runners), so the guard pulls what the jobs already pull; the
+          # The same digest pinned mirror the services above use (the registries with pull
+          # limits refuse the runners), so the guard pulls what the jobs already pull; the
           # faketime package is version pinned to the Alpine release this digest ships.
           docker run -d --name hh-evening-guard-pg -p 127.0.0.1:5601:5432 \
             -e POSTGRES_PASSWORD=postgres -e TZ=UTC \
             -e LD_PRELOAD=/usr/lib/faketime/libfaketime.so.1 \
             -e FAKETIME="@$pin" -e FAKETIME_NO_CACHE=1 \
-            public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea \
+            mirror.gcr.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea \
             sh -c 'apk update >/dev/null && apk add --no-cache "libfaketime=0.9.13-r0" >/dev/null && exec docker-entrypoint.sh postgres' >/dev/null
           shift_s="$(../scripts/evening-guard/shift.sh "$GUARD/postgres?sslmode=disable")"
           psql "$GUARD/postgres?sslmode=disable" -v ON_ERROR_STOP=1 \
