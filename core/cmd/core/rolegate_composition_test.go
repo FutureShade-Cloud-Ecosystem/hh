@@ -110,7 +110,7 @@ func plantMatrixStaff(t *testing.T, env *compEnv, pool *pgxpool.Pool) {
 		testkit.OrgNorthID, testkit.BranchNorthAID); err != nil {
 		t.Fatalf("plant matrix staff role grants: %v", err)
 	}
-	orgNorth := "org:" + testkit.OrgNorthSlug
+	orgNorth := "org-" + testkit.OrgNorthSlug
 	for _, sub := range []string{xrSubFinancialController, xrSubBranchManager, xrSubProcurementManager, xrSubYardTeam, xrSubHR, xrSubTwoGrants} {
 		env.appwrite.setTeam(sub, orgNorth)
 	}

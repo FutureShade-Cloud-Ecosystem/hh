@@ -648,8 +648,8 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	// 3. the demo membership and tokens (all test support, never shipped), then the FULL served
 	// surface through the real registerRoutes.
 	appwrite := newAppwriteFake(t)
-	appwrite.setTeam(salesSubject, "org:"+demoOrgSlug)
-	appwrite.setTeam(salesMgrSubject, "org:"+demoOrgSlug)
+	appwrite.setTeam(salesSubject, "org-"+demoOrgSlug)
+	appwrite.setTeam(salesMgrSubject, "org-"+demoOrgSlug)
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)
 	if _, err := rand.Read(acceptKey); err != nil {

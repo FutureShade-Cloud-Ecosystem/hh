@@ -94,7 +94,7 @@ func qd1gPlantStaff(t *testing.T, q *qd1bFixture) *qd1gCensus {
 	t.Helper()
 	ctx := context.Background()
 	c := &qd1gCensus{q: q, roles: qd1gRoleSubs()}
-	orgNorth := "org:" + testkit.OrgNorthSlug
+	orgNorth := "org-" + testkit.OrgNorthSlug
 	plant := func(sub, role string) {
 		if _, err := q.pool.Exec(ctx, `
 			INSERT INTO users (email, display_name, status, platform_user_id, org_id)

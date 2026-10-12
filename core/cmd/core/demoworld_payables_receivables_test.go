@@ -74,8 +74,8 @@ func TestDemoWorld_PayablesReceivables(t *testing.T) {
 	}
 
 	appwrite := newAppwriteFake(t)
-	appwrite.setTeam(prPayRecSubject, "org:"+demoOrgSlug)
-	appwrite.setTeam(prControllerSubject, "org:"+demoOrgSlug)
+	appwrite.setTeam(prPayRecSubject, "org-"+demoOrgSlug)
+	appwrite.setTeam(prControllerSubject, "org-"+demoOrgSlug)
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)
 	if _, err := rand.Read(acceptKey); err != nil {

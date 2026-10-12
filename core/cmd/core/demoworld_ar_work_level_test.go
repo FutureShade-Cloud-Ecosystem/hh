@@ -112,7 +112,7 @@ func TestDemoWorld_PayablesReceivablesWorkLevel(t *testing.T) {
 	for _, s := range []string{prPayRecSubject, qwSalesUserID, wlYardManagerSubject, wlHRSubject,
 		wlOutsideSalesSubject, wlProcurementSubject, wlSalesManagerSubject, wlBranchManagerSubject,
 		wlBranchManagerKgnSubject, wlGeneralManagerSubject} {
-		appwrite.setTeam(s, "org:"+demoOrgSlug)
+		appwrite.setTeam(s, "org-"+demoOrgSlug)
 	}
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)

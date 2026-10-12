@@ -95,8 +95,8 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 
 	// The served surface, the demo Sales login (the till and the quote desk's own caller).
 	appwrite := newAppwriteFake(t)
-	appwrite.setTeam(qwSalesUserID, "org:"+demoOrgSlug)
-	appwrite.setTeam(qwManagerUserID, "org:"+demoOrgSlug)
+	appwrite.setTeam(qwSalesUserID, "org-"+demoOrgSlug)
+	appwrite.setTeam(qwManagerUserID, "org-"+demoOrgSlug)
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)
 	if _, err := rand.Read(acceptKey); err != nil {
@@ -141,7 +141,7 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 		codFinSubject, orgID); err != nil {
 		t.Fatalf("plant the Financial controller grant: %v", err)
 	}
-	appwrite.setTeam(codFinSubject, "org:"+demoOrgSlug)
+	appwrite.setTeam(codFinSubject, "org-"+demoOrgSlug)
 
 	// 1. THE ACCOUNT, as the seeded row reads. The zero-day terms are the fact the product's own
 	// dispatch rule reads ("the defining rule of a COD account"); the credit line is what lets the

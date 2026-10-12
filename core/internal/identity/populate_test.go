@@ -722,7 +722,7 @@ func TestProvisionOrgAnchorSlugLegs(t *testing.T) {
 		"b4 anchor bad",         // no spaces
 		"b4/anchor",             // outside the vocabulary
 		"B4 ANCHOR",             // folds to a space-carrying value, still refused
-		strings.Repeat("a", 65), // over the 64 character bound
+		strings.Repeat("a", 33), // over the 32 character bound
 	} {
 		if _, _, err := ProvisionOrgAnchor(ctx, pool, slug, "B4 Anchor Bad"); !errors.Is(err, ErrOrgSlugShape) {
 			t.Fatalf("slug %q: err=%v, want ErrOrgSlugShape", slug, err)
