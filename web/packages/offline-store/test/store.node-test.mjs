@@ -11,7 +11,7 @@ import { createSqliteBackend } from "../src/backend-sqlite.ts";
 import { createOpfsBackend } from "../src/backend-opfs.ts";
 import { scopeBookFor } from "../src/scopes.ts";
 import { nodeSqliteExecutor, FakeLocks, FakeWorker } from "../src/testing.ts";
-import { err } from "@hardscapehouse/api-client";
+import { err, ok } from "@hardscapehouse/api-client";
 import { bodyHash } from "../src/canonical.ts";
 import { baseRig, pick, uuid, FIELD_APPS } from "./_rig.mjs";
 
@@ -486,4 +486,38 @@ test("two replays that overlap never drop a card notification", async () => {
   await store.replay(r.transport);
   await overlap;
   assert.ok(heard >= 1, "the card arrived and nobody was told");
+});
+
+// ---- round 2 ----------------------------------------------------------------
+
+test("a card seen twice stays dismissed: the repeat neither reopens nor replaces it", async () => {
+  const { store, sql } = await rig();
+  const op = await store.enqueue({ scope: "pick_tasks", op: "update", payload: { id: uuid(1), picked: 1 }, baseSeq: 0 });
+  assert.ok(op.ok);
+  const row = (await store.outbox.pending())[0];
+  const result = { client_id: row.key, status: "rejected", error: "closed" };
+  await sql.atomic(store.cards.statementsFor(row, result));
+  const [card] = await store.cards.listOpen();
+  await store.cards.dismiss(card.id);
+  await sql.atomic(store.cards.statementsFor(row, { ...result, error: "closed again" }));
+  const all = await store.cards.list();
+  assert.equal(all.length, 1);
+  assert.equal(all[0].status, "dismissed");
+  assert.equal(all[0].error, "closed", "the first card is kept, not replaced");
+});
+
+test("a pull that never makes progress is a fault, and fails the test instead of hanging it", async () => {
+  const { store } = await rig();
+  let pages = 0;
+  const stuck = {
+    push: async () => err("unused", 500),
+    pull: async (scope, since) => {
+      if (++pages > 25) return err("the store kept asking: no progress check", 500);
+      return ok({ scope, items: [], tombstones: [], last_seq: since, next_cursor: String(since) });
+    },
+  };
+  const out = await store.pull(stuck, "pick_tasks");
+  assert.equal(out.kind, "fault");
+  assert.match(out.message, /no progress/);
+  assert.ok(pages <= 2, `asked ${pages} times`);
 });

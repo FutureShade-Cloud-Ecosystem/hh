@@ -193,3 +193,37 @@ test("a request level refusal of one scope does not stall the outbox or the pull
   assert.equal(runner.state, "conflict", "the card waits for a person");
   assert.deepEqual(await store.outbox.pending(), []);
 });
+
+test("a standing push fault rests in idle, and the store's public state says the writes are stuck", async () => {
+  const { runner, store, server } = await rig();
+  await store.enqueue(pick(1));
+  await store.enqueue(pick(2));
+  await runner.dispatch({ type: "ONLINE" });
+  assert.equal(runner.state, "idle");
+  for (let i = 0; i < 3; i++) {
+    server.failNext("status", 503);
+    await runner.request();
+    assert.equal(runner.state, "idle", "the machine rests as before; the stuck signal is the store's");
+  }
+  const health = await store.outbox.health();
+  assert.equal(health.waiting, 2);
+  assert.ok(health.stuck.attempts >= 3, `attempts ${health.stuck.attempts}`);
+  assert.match(health.stuck.lastError, /503/);
+  await runner.request();
+  assert.deepEqual(await store.outbox.health(), { waiting: 0, stuck: null, stalls: [] });
+});
+
+test("a scope parked by a 403 leaves the runner in idle with the stall visible, and the pull still runs", async () => {
+  const { runner, store, server, transport } = await rig();
+  await store.enqueue(pick(1));
+  await runner.dispatch({ type: "ONLINE" });
+  assert.deepEqual(await store.outbox.pending(), []);
+  await store.enqueue(pick(2));
+  const refusing = { ...transport, push: async (scope, ops) => (scope === "pick_tasks" ? err("no grant", 403) : transport.push(scope, ops)) };
+  const parked = new SyncRunner({ store, transport: refusing, machine });
+  await parked.dispatch({ type: "ONLINE" });
+  assert.equal(parked.state, "idle");
+  assert.equal((await store.outbox.pending()).length, 1);
+  assert.equal((await store.outbox.health()).stalls[0].kind, "scope_refused");
+  assert.ok(server.requests.some((q) => q.kind === "pull"));
+});

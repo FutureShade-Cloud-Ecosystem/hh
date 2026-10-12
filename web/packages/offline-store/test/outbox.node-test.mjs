@@ -22,6 +22,8 @@ async function rig(opts = {}) {
 }
 
 const rows = (sql) => sql.all("SELECT seq, idempotency_key AS k, scope, status, attempts, error FROM outbox ORDER BY seq");
+// The round 2 columns: whether a request may have reached the server, and the stall record.
+const marks = (sql) => sql.all("SELECT seq, idempotency_key AS k, scope, status, attempts, sent, stall, stall_status, error FROM outbox ORDER BY seq");
 
 test("enqueue appends in order, each with its own uuid key, status pending", async () => {
   const { outbox } = await rig();
@@ -218,13 +220,15 @@ test("an applied replay is recognised by its key: a lost response costs no secon
   assert.ok(seqs.every((r) => Number.isInteger(r.server_seq)), "the deduped answer's seq was not recorded");
 });
 
-test("a transport failure with no status is offline and leaves the outbox as it was", async () => {
+test("a transport failure with no status is offline: the row stays pending, and is marked as possibly sent", async () => {
+  // No status can mean the request never left or that its response was lost after the server applied it;
+  // the device cannot tell which, so the attempt counts and the row is treated as sent.
   const { outbox, server, transport, sql } = await rig();
   await outbox.enqueue(pick(1));
   server.setOffline(true);
   const out = await outbox.replay(transport);
   assert.equal(out.kind, "offline");
-  assert.deepEqual((await rows(sql)).map((r) => [r.status, r.attempts]), [["pending", 0]]);
+  assert.deepEqual((await marks(sql)).map((r) => [r.status, r.attempts, r.sent]), [["pending", 1, 1]]);
 });
 
 test("a 401 is auth expired and parks the outbox untouched", async () => {
@@ -234,7 +238,7 @@ test("a 401 is auth expired and parks the outbox untouched", async () => {
   server.failNext("status", 401);
   const out = await outbox.replay(transport);
   assert.equal(out.kind, "auth_expired");
-  assert.deepEqual((await rows(sql)).map((r) => [r.status, r.attempts]), [["pending", 0], ["pending", 0]]);
+  assert.deepEqual((await marks(sql)).map((r) => [r.status, r.attempts, r.sent]), [["pending", 0, 0], ["pending", 0, 0]]);
   // still accepts writes while parked
   const c = await outbox.enqueue(pick(3));
   assert.ok(c.ok);
@@ -320,8 +324,9 @@ test("an empty outbox replays to nothing and sends nothing", async () => {
 // ---- request level refusals and the byte cap --------------------------------
 // The core answers a whole push with a verdict in a few cases (core/internal/sync/handler.go):
 // 400 for a body past 1 MiB or an unknown scope, 403 for a caller class that does not fit the
-// scope, 404, 413, 501 for a scope not wired. The same answer comes on every retry, so it is a
-// verdict on that batch, never a fault to retry forever.
+// scope, 501 for a scope not wired. Only these three are deterministic answers of the core on these
+// routes (404 and 413 can only come from a proxy in front, so they are faults). A 400 on one
+// operation that was never sent before closes it; a 403 or 501 parks the scope without losing work.
 
 const MIB = 1024 * 1024;
 const bodyBytes = (ops) => new TextEncoder().encode(JSON.stringify({ ops })).length;
@@ -356,7 +361,7 @@ test("a refused batch is split to single operations, and each one lands", async 
   const { outbox, server, transport } = await rig();
   const keys = [];
   for (let n = 1; n <= 3; n++) keys.push((await outbox.enqueue(pick(n))).key);
-  const refuseMany = { ...transport, push: async (scope, ops) => (ops.length > 1 ? err("batch too large", 413) : transport.push(scope, ops)) };
+  const refuseMany = { ...transport, push: async (scope, ops) => (ops.length > 1 ? err("batch too large", 400) : transport.push(scope, ops)) };
   const out = await outbox.replay(refuseMany);
   assert.equal(out.kind, "done");
   assert.equal(out.rejected, 0);
@@ -371,35 +376,18 @@ test("an operation the server still refuses alone is closed as rejected with its
   const poison = await outbox.enqueue(pick(2));
   const c = await outbox.enqueue(pick(3));
   const d = await outbox.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(4), short_by: 1 } });
-  const refusing = { ...transport, push: async (scope, ops) => (ops.some((o) => o.client_id === poison.key) ? err("body refused", 413) : transport.push(scope, ops)) };
+  const refusing = { ...transport, push: async (scope, ops) => (ops.some((o) => o.client_id === poison.key) ? err("body refused", 400) : transport.push(scope, ops)) };
   const out = await outbox.replay(refusing);
   assert.deepEqual(out, { kind: "done", sent: out.sent, applied: 3, conflicts: 0, rejected: 1 });
   assert.deepEqual((await rows(sql)).map((r) => r.status), ["applied", "rejected", "applied", "applied"]);
   assert.deepEqual(server.appliedOrder, [a.key, c.key, d.key]);
   const refused = rec.results.find(([k]) => k === poison.key);
   assert.equal(refused[1], "rejected");
-  assert.match(refused[2], /413/, "the card carries the status of the refusal");
+  assert.match(refused[2], /400/, "the card carries the status of the refusal");
   assert.match(refused[2], /body refused/);
   const again = await outbox.replay(refusing);
   assert.deepEqual(again, { kind: "done", sent: 0, applied: 0, conflicts: 0, rejected: 0 });
 });
-
-for (const status of [400, 403, 404, 413, 501]) {
-  test(`a ${status} on one scope closes its operations with cards and never starves another scope`, async () => {
-    const rec = seen();
-    const { outbox, server, transport } = await rig({ onResult: rec.onResult });
-    await outbox.enqueue(pick(1));
-    await outbox.enqueue(pick(2));
-    const short = await outbox.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(3), short_by: 2 } });
-    const refusing = { ...transport, push: async (scope, ops) => (scope === "pick_tasks" ? err("refused", status) : transport.push(scope, ops)) };
-    const out = await outbox.replay(refusing);
-    assert.equal(out.kind, "done");
-    assert.equal(out.rejected, 2);
-    assert.deepEqual(server.appliedOrder, [short.key], "the other scope must be sent");
-    assert.equal(rec.results.filter(([, st]) => st === "rejected").length, 2, "every closed operation has its card");
-    assert.deepEqual(await outbox.pending(), []);
-  });
-}
 
 test("an operational fault (500) is still a fault: it stops the replay and marks nothing as rejected", async () => {
   const { outbox, server, transport, sql } = await rig();
@@ -421,4 +409,209 @@ test("a recorder that throws is a fault with the rows counted, never a throw out
   assert.equal(out.kind, "fault");
   assert.match(out.message, /recorder broke/);
   assert.deepEqual((await rows(sql)).map((r) => [r.status, r.attempts]), [["pending", 1]]);
+});
+
+// ---- round 2: what a refusal may close, the sent flag, parked scopes, the stuck signal ------------
+
+for (const status of [404, 413]) {
+  test(`a ${status} comes from a hop in front of the core: it is a fault, every row stays pending, nothing is closed`, async () => {
+    const rec = seen();
+    const { outbox, server, transport, sql } = await rig({ onResult: rec.onResult });
+    await outbox.enqueue(pick(1));
+    await outbox.enqueue(pick(2));
+    await outbox.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(3), short_by: 2 } });
+    server.failNext("status", status);
+    const out = await outbox.replay(transport);
+    assert.equal(out.kind, "fault");
+    assert.equal(out.status, status);
+    assert.deepEqual((await rows(sql)).map((r) => r.status), ["pending", "pending", "pending"]);
+    assert.deepEqual(rec.results, [], "no card for a fault");
+    assert.deepEqual((await outbox.health()).stalls, [], "a fault is the stuck signal, not a stall");
+    const again = await outbox.replay(transport);
+    assert.equal(again.kind, "done");
+    assert.equal(again.applied, 3);
+  });
+}
+
+for (const status of [403, 501]) {
+  test(`a ${status} parks the scope: its rows stay pending with a visible stall, other scopes carry on`, async () => {
+    const rec = seen();
+    const { outbox, server, transport, sql } = await rig({ onResult: rec.onResult });
+    const a = await outbox.enqueue(pick(1));
+    const b = await outbox.enqueue(pick(2));
+    const short = await outbox.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(3), short_by: 2 } });
+    const refusing = { ...transport, push: async (scope, ops) => (scope === "pick_tasks" ? err("no grant for this scope", status) : transport.push(scope, ops)) };
+    const out = await outbox.replay(refusing);
+    assert.equal(out.kind, "done");
+    assert.equal(out.rejected, 0, "a scope wide refusal must not destroy queued work");
+    assert.deepEqual(server.appliedOrder, [short.key], "the other scope must be sent");
+    assert.deepEqual((await rows(sql)).map((r) => r.status), ["pending", "pending", "applied"]);
+    assert.deepEqual(rec.results.filter(([, st]) => st === "rejected"), [], "no card for parked work");
+    const pushes = server.requests.filter((q) => q.kind === "push").map((q) => q.scope);
+    assert.deepEqual(pushes, ["shortages"], "the refusing scope never reached the server's recorder; one request was enough");
+    const { stalls, waiting } = await outbox.health();
+    assert.equal(waiting, 2);
+    assert.equal(stalls.length, 1);
+    assert.deepEqual({ kind: stalls[0].kind, scope: stalls[0].scope, status: stalls[0].status, waiting: stalls[0].waiting }, { kind: "scope_refused", scope: "pick_tasks", status, waiting: 2 });
+    assert.match(stalls[0].error, /no grant for this scope/, "the last error is carried");
+    assert.match(stalls[0].message, /kept/, "the words say the work is kept");
+    // The refusal is not an attempt the server answered about the rows: the sent mark is as it was.
+    assert.deepEqual((await marks(sql)).slice(0, 2).map((r) => r.sent), [0, 0]);
+    // The grant comes back: the parked rows go out in order, and the stall clears.
+    const healed = await outbox.replay(transport);
+    assert.equal(healed.kind, "done");
+    assert.deepEqual(server.appliedOrder, [short.key, a.key, b.key]);
+    assert.deepEqual((await outbox.health()).stalls, []);
+    assert.deepEqual((await marks(sql)).map((r) => r.stall), [null, null, null]);
+  });
+}
+
+test("a parked scope is retried on every replay, not forgotten, and the stall survives a restart", async () => {
+  const { outbox, server, transport, sql, scopes, now, newKey } = await rig();
+  await outbox.enqueue(pick(1));
+  const refusing = { ...transport, push: async () => err("no grant", 403) };
+  await outbox.replay(refusing);
+  await outbox.replay(refusing);
+  assert.equal(server.requests.length, 0);
+  const reopened = new Outbox({ sql, scopes, now, newKey });
+  const { stalls } = await reopened.health();
+  assert.equal(stalls.length, 1);
+  assert.equal(stalls[0].kind, "scope_refused");
+  assert.equal((await reopened.replay(transport)).kind, "done");
+  assert.deepEqual((await reopened.health()).stalls, []);
+});
+
+test("a 400 on one operation that was never sent before closes it as rejected with its card", async () => {
+  const rec = seen();
+  const { outbox, sql, transport } = await rig({ onResult: rec.onResult });
+  await outbox.enqueue(pick(1));
+  const out = await outbox.replay({ ...transport, push: async () => err("invalid_json", 400) });
+  assert.equal(out.rejected, 1);
+  assert.deepEqual((await marks(sql)).map((r) => [r.status, r.sent, r.stall]), [["rejected", 0, null]]);
+  assert.equal(rec.results.length, 1);
+});
+
+test("the sent mark is durable before the first request leaves, in the same atomic step as the attempt count", async () => {
+  const { outbox, sql, transport } = await rig();
+  await outbox.enqueue(pick(1));
+  await outbox.enqueue(pick(2));
+  let inside;
+  const spying = { ...transport, push: async (scope, ops) => ((inside = await rows(sql)), transport.push(scope, ops)) };
+  await outbox.replay(spying);
+  assert.deepEqual(inside.map((r) => [r.sent, r.attempts]), [[1, 1], [1, 1]], "the mark must exist while the request is out");
+});
+
+test("a mark that cannot be written means nothing is sent", async () => {
+  const { sql, transport, scopes, now, newKey } = await rig();
+  let failMarks = false;
+  const flaky = {
+    ...sql,
+    atomic: async (statements) => {
+      if (failMarks && statements.some((s) => /sent = 1/.test(s.sql))) throw new Error("disk full");
+      return sql.atomic(statements);
+    },
+  };
+  const outbox = new Outbox({ sql: flaky, scopes, now, newKey });
+  await outbox.enqueue(pick(1));
+  failMarks = true;
+  let sent = 0;
+  const out = await outbox.replay({ ...transport, push: async (scope, ops) => (sent++, transport.push(scope, ops)) });
+  assert.equal(out.kind, "fault");
+  assert.match(out.message, /disk full/);
+  assert.equal(sent, 0, "a request must not leave without its durable mark");
+});
+
+for (const status of [400, 403, 501]) {
+  test(`a ${status} after an earlier attempt the server may have applied never closes the row as rejected`, async () => {
+    const rec = seen();
+    const { outbox, server, transport, sql } = await rig({ onResult: rec.onResult });
+    const op = await outbox.enqueue(pick(1));
+    server.failNext("afterApply", 1); // the server applies it, the answer is a 500
+    assert.equal((await outbox.replay(transport)).kind, "fault");
+    assert.equal(server.applyCount(op.key), 1);
+    const out = await outbox.replay({ ...transport, push: async () => err("refused later", status) });
+    assert.equal(out.kind, "done");
+    assert.equal(out.rejected, 0);
+    assert.deepEqual((await marks(sql)).map((r) => [r.status, r.sent]), [["pending", 1]]);
+    assert.deepEqual(rec.results.filter(([, st]) => st === "rejected"), [], "no rejected card for work the server holds");
+    const { stalls } = await outbox.health();
+    assert.equal(stalls.length, 1);
+    assert.equal(stalls[0].kind, status === 400 ? "check_applied" : "scope_refused");
+    assert.equal(stalls[0].status, status);
+    assert.equal(stalls[0].scope, "pick_tasks");
+    assert.match(stalls[0].error, /refused later/);
+    if (status === 400) assert.match(stalls[0].message, /may already have been applied/);
+    // The refusal passes: the retry reaches the server, which answers from its record. Applied exactly once.
+    const healed = await outbox.replay(transport);
+    assert.equal(healed.kind, "done");
+    assert.equal(server.applyCount(op.key), 1);
+    assert.deepEqual((await rows(sql)).map((r) => r.status), ["applied"]);
+    assert.deepEqual((await outbox.health()).stalls, []);
+  });
+}
+
+test("a check_applied stall holds the rows behind it in its scope, and other scopes carry on", async () => {
+  const { outbox, server, transport, sql } = await rig();
+  const a = await outbox.enqueue(pick(1));
+  const b = await outbox.enqueue(pick(2));
+  const s = await outbox.enqueue({ scope: "shortages", op: "update", payload: { id: uuid(3), short_by: 1 } });
+  server.failNext("dropResponse"); // all three pushes are separate requests: pick batch first
+  assert.equal((await outbox.replay(transport)).kind, "offline");
+  const refusingPicks = { ...transport, push: async (scope, ops) => (scope === "pick_tasks" ? err("invalid_json", 400) : transport.push(scope, ops)) };
+  const out = await outbox.replay(refusingPicks);
+  assert.equal(out.rejected, 0);
+  assert.deepEqual((await rows(sql)).map((r) => r.status), ["pending", "pending", "applied"]);
+  const { stalls } = await outbox.health();
+  assert.deepEqual(stalls.map((x) => [x.kind, x.scope, x.waiting]), [["check_applied", "pick_tasks", 2]]);
+  assert.equal(stalls[0].key, a.key, "the stall names the first operation, the one to check");
+  assert.equal(server.applyCount(b.key), 1);
+  assert.equal(server.applyCount(s.key), 1);
+});
+
+test("a refused batch of several that were sent before is split, and each single is judged on its own history", async () => {
+  const { outbox, server, transport, sql } = await rig();
+  const a = await outbox.enqueue(pick(1));
+  server.failNext("dropResponse"); // a is sent, applied, never heard of
+  await outbox.replay(transport);
+  const b = await outbox.enqueue(pick(2)); // never sent
+  const refuseAll = { ...transport, push: async () => err("invalid_json", 400) };
+  const before = server.requests.length;
+  const out = await outbox.replay(refuseAll);
+  // a was sent before: it stalls and holds the scope; b sits behind it and is not sent or closed.
+  assert.equal(out.rejected, 0);
+  assert.deepEqual((await marks(sql)).map((r) => [r.status, r.sent]), [["pending", 1], ["pending", 0]]);
+  assert.equal(server.requests.length, before, "the refusing transport never reached the server");
+  const { stalls } = await outbox.health();
+  assert.deepEqual(stalls.map((x) => [x.kind, x.key]), [["check_applied", a.key]]);
+  assert.equal((await rows(sql))[1].k, b.key);
+  // The refusal passes: both go out, a is deduped by the server.
+  assert.equal((await outbox.replay(transport)).kind, "done");
+  assert.equal(server.applyCount(a.key), 1);
+  assert.equal(server.applyCount(b.key), 1);
+});
+
+test("the stuck signal: a standing 500 or 503 shows attempts, the last error and the writes waiting", async () => {
+  const { outbox, server, transport } = await rig();
+  assert.deepEqual(await outbox.health(), { waiting: 0, stuck: null, stalls: [] });
+  await outbox.enqueue(pick(1));
+  await outbox.enqueue(pick(2));
+  for (let i = 0; i < 3; i++) {
+    server.failNext("status", i === 1 ? 503 : 500);
+    assert.equal((await outbox.replay(transport)).kind, "fault");
+  }
+  const health = await outbox.health();
+  assert.equal(health.waiting, 2);
+  assert.equal(health.stuck.attempts, 3);
+  assert.match(health.stuck.lastError, /503|500/);
+  assert.deepEqual(health.stalls, []);
+  assert.equal((await outbox.replay(transport)).kind, "done");
+  assert.deepEqual(await outbox.health(), { waiting: 0, stuck: null, stalls: [] });
+});
+
+test("a 401 puts the sent mark back: nothing was answered about the rows", async () => {
+  const { outbox, server, transport, sql } = await rig();
+  await outbox.enqueue(pick(1));
+  server.failNext("status", 401);
+  assert.equal((await outbox.replay(transport)).kind, "auth_expired");
+  assert.deepEqual((await marks(sql)).map((r) => [r.sent, r.attempts]), [[0, 0]]);
 });

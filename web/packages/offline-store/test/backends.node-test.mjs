@@ -199,3 +199,29 @@ test("opfs backend: a store over a dead worker refuses writes as read only inste
   assert.deepEqual({ ok: res.ok, reason: res.reason }, { ok: false, reason: "read_only" });
   assert.deepEqual(await store.replay((await baseRig()).transport), { kind: "read_only" });
 });
+
+test("opfs backend: the call timer starts when the worker begins the call, not when it is posted behind others", async () => {
+  // A worker that serialises its calls, as wa-sqlite does: the third call waits two calls' time in the queue.
+  const inner = nodeSqliteExecutor();
+  let tail = Promise.resolve();
+  const slow = (fn) => (...args) => {
+    const turn = tail.then(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return fn(...args);
+    });
+    tail = turn.then(() => undefined, () => undefined);
+    return turn;
+  };
+  const executor = { ...inner, run: slow(inner.run), all: slow(inner.all), atomic: slow(inner.atomic) };
+  const worker = new FakeWorker(executor);
+  const { backend, states } = await ownerWith(worker, { callTimeoutMs: 90 });
+  await Promise.all([
+    backend.sql.run("CREATE TABLE t (x INTEGER)"),
+    backend.sql.run("INSERT INTO t (x) VALUES (1)"),
+    backend.sql.run("INSERT INTO t (x) VALUES (2)"),
+    backend.sql.run("INSERT INTO t (x) VALUES (3)"),
+  ]);
+  assert.equal(backend.ownership(), "owner", "queue time is not worker time");
+  assert.deepEqual(states, ["owner"]);
+  assert.deepEqual(await backend.sql.all("SELECT COUNT(*) AS n FROM t"), [{ n: 3 }]);
+});

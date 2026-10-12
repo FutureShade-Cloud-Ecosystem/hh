@@ -16,6 +16,8 @@
 //   I8 keys       every send of an operation carries the same key and the same body
 //   I9 rows       no outbox row is deleted, and a closed row never reopens
 //   I10 offline   the runner rests in offline only when the platform said so; a failed request is unreachable
+//   I7 and I9 are walked over refusals too: the draws include one shot 400, 403 and 404 answers, and a
+//   refusal that follows an attempt the server may have applied. A refusal never closes such a row.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OfflineStore } from "../src/store.ts";
@@ -137,12 +139,19 @@ const ACTIONS = [
   }],
   [12, "sync requested", async (w) => w.runner.request()],
   [8, "arm a server fault", async (w) => {
-    const k = Math.floor(w.rng() * 5);
+    const k = Math.floor(w.rng() * 8);
     if (k === 0) w.server.failNext("status", 500);
     else if (k === 1) w.server.failNext("status", 503);
     else if (k === 2) w.server.failNext("afterApply", 1 + Math.floor(w.rng() * 3));
     else if (k === 3) w.server.failNext("dropResponse");
-    else w.server.failNext("malformed", pickOne(w.rng, ["short", "reordered", "foreign"]));
+    else if (k === 4) w.server.failNext("malformed", pickOne(w.rng, ["short", "reordered", "foreign"]));
+    else w.server.failNext("status", pickOne(w.rng, [400, 403, 404]));
+  }],
+  // A refusal on the heels of an attempt the server may have applied: the case a plain draw rarely lines up.
+  [5, "an ambiguous attempt, then a refusal", async (w) => {
+    if (w.rng() < 0.5) w.server.failNext("afterApply", 1 + Math.floor(w.rng() * 3));
+    else w.server.failNext("dropResponse");
+    w.server.failNext("status", pickOne(w.rng, [400, 403, 400]));
   }],
   [4, "session expires on the server", async (w) => {
     w.server.setAuthValid(false);
@@ -235,6 +244,20 @@ async function check(w, pre, action) {
     assert.equal(server.requests.length, pre.requests, `I5: the device sent ${server.requests.length - pre.requests} requests while auth was expired (${action})`);
     for (const [key, status] of pre.rows) assert.equal(rows.find((r) => r.key === key)?.status, status, `I5: ${key} moved while auth was expired`);
   }
+  // I7 honesty, at every step: closed as applied means applied once; closed otherwise means never applied
+  for (const row of rows) {
+    if (row.status === "pending") continue;
+    const n = server.applyCount(row.key);
+    if (row.status === "applied") assert.equal(n, 1, `I7: ${row.key} is applied on the device but ${n} times on the server (${action})`);
+    else assert.equal(n, 0, `I7: ${row.key} is ${row.status} on the device but the server applied it ${n} times (${action})`);
+  }
+  // A stall always names a pending row that the outbox still holds
+  const health = await store.outbox.health();
+  for (const stall of health.stalls) {
+    const row = rows.find((r) => r.key === stall.key);
+    assert.ok(row && row.status === "pending", `I9: stall for ${stall.key} names a row that is not pending (${action})`);
+    if (stall.kind === "check_applied") assert.ok(row.sent, `I7: ${stall.key} is a check_applied stall but was never sent`);
+  }
   // I8 keys
   const bodies = new Map();
   for (const q of server.requests) {
@@ -290,6 +313,7 @@ test(`model: ${PATHS} generated paths of ${STEPS} steps keep every invariant`, {
 test("model: the generator reaches every state, every outcome kind and every fault", async () => {
   const states = new Set();
   const kinds = new Set();
+  const stalls = new Set();
   let restarts = 0;
   for (let seed = 1; seed <= 60; seed++) {
     const w = await newWorld(seed);
@@ -298,6 +322,7 @@ test("model: the generator reaches every state, every outcome kind and every fau
       const [, name, run] = chooseAction(w.rng);
       if (name === "process restart") restarts++;
       await run(w);
+      for (const stall of (await w.store.outbox.health()).stalls) stalls.add(stall.kind);
     }
     await quiesce(w);
     for (const c of await w.store.cards.list()) kinds.add(c.kind);
@@ -306,6 +331,8 @@ test("model: the generator reaches every state, every outcome kind and every fau
   assert.deepEqual([...states].sort(), ["auth_expired", "conflict", "idle", "offline", "pulling", "pushing", "unreachable"]);
   for (const k of ["superseded", "review", "merge_report", "rejected", "row:applied", "row:conflict", "row:rejected"]) assert.ok(kinds.has(k), `never produced ${k}`);
   assert.ok(restarts > 0);
+  assert.deepEqual([...stalls].sort(), ["check_applied", "scope_refused"], "the draws must reach both stalls");
+  assert.ok(kinds.has("rejected"));
 });
 
 test("a reconnect drains offline work in enqueue order across scopes", async () => {
