@@ -62,7 +62,7 @@ async function walk(prefix, viewport, theme) {
 
   // The opened disclosure: the coming list's content, today's rows and
   // their muted chips.
-  await page.getByTestId("coming-disclosure").getByText("Six more roles are coming").click();
+  await page.getByTestId("coming-disclosure").getByText("Five more roles are coming").click();
   await page.getByRole("list", { name: "Coming roles" }).waitFor();
   await settle(page);
   await page.locator(".coming-card").screenshot({ path: join(outDir, `${prefix}front-door-04-coming.png`) });

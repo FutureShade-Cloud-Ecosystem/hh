@@ -5,23 +5,26 @@
 // read only; this branch does not carry a copy of it). The rule the D2 brief
 // gives, applied to that record once, by hand, here:
 //
-//   - The seven roles whose logins the demo mints and whose screens this box
+//   - The eight roles whose logins the demo mints and whose screens this box
 //     serves are LIVE: inside_sales, sales_manager, yard_manager, yard_team,
-//     payables_receivables, procurement_manager and driver, labelled on the
-//     cards the way the demo adapter's contract names them ("Sales", "Sales
-//     manager", "Yard manager", "Yard Team", "Payables and Receivables",
-//     "Procurement manager", "Driver" - the flows route's own labels, the
-//     same rule the till's entry view follows, so every name-based selector
-//     keeps reading exactly those words). The flow ids are the flows table's
-//     own: inside_sales -> "sales", sales_manager -> "sales-manager",
+//     payables_receivables, procurement_manager, driver and
+//     financial_controller, labelled on the cards the way the demo adapter's
+//     contract names them ("Sales", "Sales manager", "Yard manager", "Yard
+//     Team", "Payables and Receivables", "Procurement manager", "Driver",
+//     "Financial Controller" - the flows route's own labels, the same rule
+//     the till's entry view follows, so every name-based selector keeps
+//     reading exactly those words). The flow ids are the flows table's own:
+//     inside_sales -> "sales", sales_manager -> "sales-manager",
 //     yard_manager -> "yard-manager", yard_team -> "yard-team". Payables and
 //     Receivables' flow is "payables-receivables" and its one live module is
 //     the Money Desk; the Procurement manager's flow is
 //     "procurement-manager" and its one live module is Buying and Stock; the
 //     yard manager's live module is Manager Home under /home/; the Yard
 //     Team's one live module is the Yard Pick app; the Driver's flow is
-//     "driver" and its one live module is HH Drive.
-//   - The six others are COMING. Each shows the modules the matrix gives
+//     "driver" and its one live module is HH Drive; the Financial
+//     Controller's flow is "financial-controller" and its one live module is
+//     the same Money Desk tile, on the same path.
+//   - The five others are COMING. Each shows the modules the matrix gives
 //     that role at work, manage or admin level, by the surfaces table's own
 //     names; read cells (and none) show nothing. A coming role is never
 //     tappable.
@@ -86,7 +89,8 @@ export interface LiveRole {
     | "yard_team"
     | "payables_receivables"
     | "procurement_manager"
-    | "driver";
+    | "driver"
+    | "financial_controller";
   /** The demo flow id the mint takes, the flows table's own mapping. */
   readonly flow:
     | "sales"
@@ -95,7 +99,8 @@ export interface LiveRole {
     | "yard-team"
     | "payables-receivables"
     | "procurement-manager"
-    | "driver";
+    | "driver"
+    | "financial-controller";
   /**
    * The card's label and its accessible name, alone: the demo adapter's
    * contract words, never decorated.
@@ -179,10 +184,18 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     icon: "lucide:truck",
     tiles: [DRIVE_TILE, HOUSE_MESSAGES_TILE],
   },
+  {
+    id: "financial_controller",
+    flow: "financial-controller",
+    label: "Financial Controller",
+    line: "Decide approvals and keep the ledger.",
+    icon: "lucide:landmark",
+    tiles: [MONEY_DESK_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
+  },
 ];
 
 /**
- * The six coming roles, in the till's entry view's own order, each with
+ * The five coming roles, in the till's entry view's own order, each with
  * the modules ROLE-ACCESS-r3 gives it at work, manage or admin level (read
  * cells and none show nothing). Outside Sales has no till (rows 363 and 364);
  * HR's two are House Messages and Dealer Admin, and the matrix gives its
@@ -205,11 +218,6 @@ export const COMING_ROLES: readonly ComingRole[] = [
       "Manager Home",
       "House Messages",
     ],
-  },
-  {
-    id: "financial_controller",
-    label: "Financial Controller",
-    modules: ["Money Desk", "Manager Home", "House Messages"],
   },
   {
     id: "general_manager",

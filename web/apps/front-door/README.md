@@ -6,17 +6,20 @@ It replaces the Counter Till's entry view as the box's first screen
 role's home with its modules as tiles, one header across the states with the
 demo badge, the role's name, Switch role and Sign out.
 
-- The seven live roles are the demo mint's own with their screens on the box
+- The eight live roles are the demo mint's own with their screens on the box
   (`inside_sales` to flow `sales`, `sales_manager` to flow `sales-manager`,
   `yard_manager` to flow `yard-manager`, `yard_team` to flow `yard-team`,
   `payables_receivables` to flow `payables-receivables`,
   `procurement_manager` to flow `procurement-manager`, `driver` to flow
-  `driver`), labelled on the cards the way the demo adapter's contract names
-  them ("Sales", "Sales manager", "Yard manager", "Yard Team", "Payables and
-  Receivables", "Procurement manager", "Driver"), the same rule the till's
-  entry view follows. The yard manager's live module is Manager Home at
-  `/home/`; the Yard Team's live module is the Yard Pick app at `/yard/`.
-- The six other roles of ROLE-ACCESS-r3 stay visible as coming, each with
+  `driver`, `financial_controller` to flow `financial-controller`), labelled
+  on the cards the way the demo adapter's contract names them ("Sales",
+  "Sales manager", "Yard manager", "Yard Team", "Payables and Receivables",
+  "Procurement manager", "Driver", "Financial Controller"), the same rule the
+  till's entry view follows. The yard manager's live module is Manager Home
+  at `/home/`; the Yard Team's live module is the Yard Pick app at `/yard/`;
+  the Money Desk at `/money-desk/` is the live module of Payables and
+  Receivables and of the Financial Controller.
+- The five other roles of ROLE-ACCESS-r3 stay visible as coming, each with
   the modules the matrix gives it at work, manage or admin level, never
   tappable. The catalog lives in `src/roles.ts`, distilled once from the
   decided record; the record itself is read only and is not carried here.
@@ -38,10 +41,9 @@ demo badge, the role's name, Switch role and Sign out.
   across the app boundary). No second registry lives here.
 - The Counter Till hangs off `/till/`, the Quote Desk off `/quote/`, the
   Buying and Stock app off `/buying-and-stock/`, Manager Home off `/home/`
-  and the Yard Pick app off `/yard/`; the demo image serves those five. The
-  Money Desk tile points at `/money-desk/`, which the image does not serve
-  yet (its wiring lands with the Money Desk app). The manager's two tiles
-  whose apps are not on the box yet open the polite coming-soon page.
+  the Yard Pick app off `/yard/` and the Money Desk off `/money-desk/`; the
+  demo image serves those six. The manager's two tiles whose apps are not on
+  the box yet open the polite coming-soon page.
 
 The app is demo-lane scaffolding, not a catalog frontend: it takes no entry
 in `manifest.yaml` (that list is generated from the role catalog, and the
