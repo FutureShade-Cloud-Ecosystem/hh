@@ -4,9 +4,15 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"net/http"
+	"path/filepath"
 	"testing"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/flows"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/issuer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/membership"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
@@ -71,6 +77,19 @@ func TestBootDemoBuildConsoleCell(t *testing.T) {
 	if _, ok := graph.members.(*authz.CachedMembership); !ok {
 		t.Fatalf("membership source is %T, want the cached FB Console source", graph.members)
 	}
+	// The outer type alone would pass a flow table source wrapped in the
+	// cache. Behaviour decides: a flow table account in the demo org is a
+	// member under the flow table source and is NOT under FB Console, whose
+	// fake holds no team for it; and a real Console member is admitted, so
+	// the answer provably came from the Console source.
+	flowAccount := flows.All()[0].PlatformUserID
+	if ok, err := graph.members.OrgMember(context.Background(), flowAccount, flows.OrgSlug); err != nil || ok {
+		t.Fatalf("a flow table account is a member under the console mode (ok=%v err=%v): the flow table source answered", ok, err)
+	}
+	appwrite.setTeam("console-user-2", "org-"+flows.OrgSlug)
+	if ok, err := graph.members.OrgMember(context.Background(), "console-user-2", flows.OrgSlug); err != nil || !ok {
+		t.Fatalf("a Console team member is refused (ok=%v err=%v)", ok, err)
+	}
 	tok, err := graph.session.minter.Mint("console-user-1", graph.session.exchangeTTL)
 	if err != nil {
 		t.Fatal(err)
@@ -105,9 +124,9 @@ func TestDemoBuildSigninModeRefusals(t *testing.T) {
 		}
 	}
 	for name, extra := range map[string]map[string]string{
-		"no mode":              {},
-		"unknown mode":         {"CORE_SIGNIN_MODE": "both"},
-		"console without keys": {"CORE_SIGNIN_MODE": "console"},
+		"no mode":      {},
+		"unknown mode": {"CORE_SIGNIN_MODE": "both"},
+		"console without issuer and Console names": {"CORE_SIGNIN_MODE": "console"},
 	} {
 		if _, err := loadDemoServeConfig(get(extra)); err == nil {
 			t.Errorf("%s: accepted", name)
@@ -115,5 +134,49 @@ func TestDemoBuildSigninModeRefusals(t *testing.T) {
 	}
 	if cfg, err := loadDemoServeConfig(get(map[string]string{"CORE_SIGNIN_MODE": "demo"})); err != nil || cfg.signin != signinDemo {
 		t.Errorf("demo mode refused: %v", err)
+	}
+}
+
+// The persistent minter refuses the demo issuer's claim value. The refusal
+// in the identity package is a second copy of the constant; this pins it to
+// the demo issuer's, so a rename there cannot silently stop the guard.
+func TestPersistentMinterRefusesTheDemoIssuersClaimValue(t *testing.T) {
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identity.NewSessionMinter(k, issuer.ClaimIssuer, "hh-staff"); err == nil {
+		t.Fatalf("a persistent key may mint as %q", issuer.ClaimIssuer)
+	}
+}
+
+// The demo build in console mode refuses to boot without the key file and
+// with the demo issuer, through the real demoRegisterRoutes (the shared
+// loader is exercised through this build's own path, not only the default's).
+func TestDemoBuildConsoleBootRefusals(t *testing.T) {
+	appwrite := newAppwriteFake(t)
+	keyFile, _ := writeSigninKey(t, t.TempDir(), "current.pem")
+	names := func(extra map[string]string) map[string]string {
+		m := map[string]string{
+			"CORE_SIGNIN_MODE":       "console",
+			"CORE_TOKEN_ISSUER":      "hh-demo-testers",
+			"CORE_APPWRITE_ENDPOINT": appwrite.server.URL,
+			"CORE_APPWRITE_PROJECT":  "fx-appwrite-project",
+			"CORE_APPWRITE_API_KEY":  "fx-appwrite-key-placeholder",
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	cases := map[string]map[string]string{
+		"no key file":      names(nil),
+		"the demo issuer":  names(map[string]string{"CORE_SESSION_SIGNING_KEY_FILE": keyFile, "CORE_TOKEN_ISSUER": "hh-demo"}),
+		"key file missing": names(map[string]string{"CORE_SESSION_SIGNING_KEY_FILE": filepath.Join(t.TempDir(), "absent.pem")}),
+	}
+	for name, extra := range cases {
+		if _, err := rgDemoGateCaseErr(t, extra); err == nil {
+			t.Errorf("%s: demoRegisterRoutes booted", name)
+		}
 	}
 }

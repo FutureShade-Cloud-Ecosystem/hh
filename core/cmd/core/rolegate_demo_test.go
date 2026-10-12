@@ -112,6 +112,22 @@ func rgDemoGateCase(t *testing.T) (*recordingRegistrar, *appGraph) {
 // the console mode's names through it.
 func rgDemoGateCaseWith(t *testing.T, extra map[string]string) (*recordingRegistrar, *appGraph) {
 	t.Helper()
+	rec, graph, err := rgDemoGateCaseTry(t, extra)
+	if err != nil {
+		t.Fatalf("demoRegisterRoutes: %v", err)
+	}
+	return rec, graph
+}
+
+// rgDemoGateCaseErr is the refusal form: it returns the boot error, if any.
+func rgDemoGateCaseErr(t *testing.T, extra map[string]string) (*appGraph, error) {
+	t.Helper()
+	_, graph, err := rgDemoGateCaseTry(t, extra)
+	return graph, err
+}
+
+func rgDemoGateCaseTry(t *testing.T, extra map[string]string) (*recordingRegistrar, *appGraph, error) {
+	t.Helper()
 	t.Setenv("APP_ENV", "dev") // Validate refuses an unset APP_ENV (HH-198)
 	caseURL := rgDemoCaseDatabase(t)
 	pool, err := pgxpool.New(context.Background(), caseURL)
@@ -138,13 +154,13 @@ func rgDemoGateCaseWith(t *testing.T, extra map[string]string) (*recordingRegist
 	rec := &recordingRegistrar{inner: http.NewServeMux()}
 	graph, err := demoRegisterRoutes(rec, getenv)
 	if err != nil {
-		t.Fatalf("demoRegisterRoutes: %v", err)
+		return nil, nil, err
 	}
 	t.Cleanup(graph.pool.Close)
 	if len(rec.patterns) == 0 {
 		t.Fatal("demoRegisterRoutes registered nothing; the probe surface is empty")
 	}
-	return rec, graph
+	return rec, graph, nil
 }
 
 // rgDemoProbe issues one request against the demo surface with the probe
