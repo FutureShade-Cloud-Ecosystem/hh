@@ -15,8 +15,9 @@ import (
 // AppwriteMembershipSource is the concrete MembershipSource: a thin client
 // over the Appwrite server API (D28: membership resolves against the
 // platform per request, coarse membership only, never authority and never
-// the credential). Platform teams are named org:<slug> and
-// tenant:<org>:<slug> (context section 3), so both methods read the user's
+// the credential). Platform org teams are named org-<slug> (OrgTeamID; the
+// Console refuses a colon in a Team id and caps it at 36 characters) and
+// tenant teams are still read in the older tenant:<org>:<slug> form, so both methods read the user's
 // team membership list and key on the team id: no core table is touched,
 // which is what keeps the zero-statement property whole. Exactly one
 // attempt per call: no retries anywhere in this file, so an unreachable
@@ -78,19 +79,42 @@ type appwriteMembershipPage struct {
 	Memberships []appwriteMembership `json:"memberships"`
 }
 
+// orgTeamPrefix and maxTeamIDLen are the Console's Team id rules as they
+// bear on org teams: at most 36 characters from a-z A-Z 0-9 period hyphen
+// underscore, not starting with a special character, and no colon.
+const (
+	orgTeamPrefix = "org-"
+	maxTeamIDLen  = 36
+)
+
+// OrgTeamID is the one place the org Team id form is spelled. It returns
+// org-<slug>, and false when the slug fails the pinned shape or the result
+// would exceed the Console's 36 character cap. Nothing is truncated: two
+// slugs never share a Team.
+func OrgTeamID(slug string) (string, bool) {
+	if !orgSlugPattern.MatchString(slug) {
+		return "", false
+	}
+	id := orgTeamPrefix + slug
+	if len(id) > maxTeamIDLen {
+		return "", false
+	}
+	return id, true
+}
+
 // OrgMember reports whether the platform user belongs to the team
-// org:<orgSlug>. Absence is the boolean false, not an error: the ADR-0020
+// org-<orgSlug>. Absence is the boolean false, not an error: the ADR-0020
 // rule needs an unknown slug and an absent membership to answer
 // identically downstream.
 func (s *AppwriteMembershipSource) OrgMember(ctx context.Context, platformUserID, orgSlug string) (bool, error) {
-	if !orgSlugPattern.MatchString(orgSlug) {
+	teamID, ok := OrgTeamID(orgSlug)
+	if !ok {
 		return false, fmt.Errorf("authz: org slug does not match the pinned shape")
 	}
 	memberships, err := s.userMemberships(ctx, platformUserID)
 	if err != nil {
 		return false, err
 	}
-	teamID := "org:" + orgSlug
 	for _, m := range memberships {
 		// Both fields must match: the listing is scoped to the user, so a
 		// row naming another user is not this caller's membership and is
