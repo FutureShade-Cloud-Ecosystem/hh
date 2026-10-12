@@ -28,6 +28,7 @@ import { SyncRunner } from "../src/runner.ts";
 import { createSqliteBackend } from "../src/backend-sqlite.ts";
 import { MONEY_SCOPES, scopeBookFor } from "../src/scopes.ts";
 import { migrate } from "../src/schema.ts";
+import { err } from "@hardscapehouse/api-client";
 import { nodeSqliteExecutor, FakeSyncServer } from "../src/testing.ts";
 import * as machine from "../../../../statecharts/sync/machine.ts";
 import { uuid, FIELD_APPS } from "./_rig.mjs";
@@ -42,6 +43,23 @@ function mulberry32(seed) {
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// No step of a walk needs anywhere near this many requests. A replay that spins (a mutant, a regression) hits
+// the cap, which turns the next request into a fault, so the step fails as an assertion instead of hanging.
+const REQUEST_CAP = 500;
+
+function cappedTransport(world) {
+  const inner = world.server.transport();
+  const spin = () => {
+    if (++world.calls <= REQUEST_CAP) return null;
+    world.capHit = true;
+    return err(`model rig: request cap of ${REQUEST_CAP} requests in one step passed, the replay is spinning`, 500);
+  };
+  return {
+    push: async (scope, ops) => spin() ?? inner.push(scope, ops),
+    pull: async (scope, since, limit) => spin() ?? inner.pull(scope, since, limit),
   };
 }
 
@@ -64,6 +82,9 @@ async function newWorld(seed) {
     index: new Map(),
     scopeOf: new Map(),
     relaxed: false,
+    strictFrom: 0,
+    calls: 0,
+    capHit: false,
     dismissed: new Set(),
     maxCards: 0,
     prevRows: new Map(),
@@ -84,7 +105,7 @@ async function open(world) {
     now,
     newKey: () => uuid(++world.keyN),
   });
-  world.runner = new SyncRunner({ store: world.store, transport: world.server.transport(), machine });
+  world.runner = new SyncRunner({ store: world.store, transport: cappedTransport(world), machine });
 }
 
 const pickOne = (rng, list) => list[Math.floor(rng() * list.length)];
@@ -155,7 +176,6 @@ const ACTIONS = [
     else if (k === 4) w.server.failNext("malformed", pickOne(w.rng, ["short", "reordered", "foreign"]));
     else {
       const status = pickOne(w.rng, [400, 403, 404]);
-      if (status !== 404) w.relaxed = true; // a 400 or 403 may park a scope; a 404 is a fault
       // A 400 is either about the body (invalid_json: split, judged per row) or about the scope or a hop (parks).
       if (status === 400 && w.rng() < 0.5) w.server.failNext("status", 400, "invalid_json");
       else w.server.failNext("status", status);
@@ -165,7 +185,6 @@ const ACTIONS = [
   [5, "an ambiguous attempt, then a refusal", async (w) => {
     if (w.rng() < 0.5) w.server.failNext("afterApply", 1 + Math.floor(w.rng() * 3));
     else w.server.failNext("dropResponse");
-    w.relaxed = true;
     const status = pickOne(w.rng, [400, 403, 400]);
     if (status === 400 && w.rng() < 0.7) w.server.failNext("status", 400, "invalid_json");
     else w.server.failNext("status", status);
@@ -219,6 +238,7 @@ function chooseAction(rng) {
 
 async function quiesce(w) {
   w.trace.push("quiesce");
+  w.calls = 0;
   w.server.clearFaults();
   w.server.setOffline(false);
   w.server.setAuthValid(true);
@@ -243,19 +263,24 @@ async function quiesce(w) {
 
 async function check(w, pre, action) {
   const { server, store } = w;
-  // I1 order: always within a scope; across scopes until a scope has been parked in this walk
-  if ((await store.outbox.health()).stalls.length > 0) w.relaxed = true;
+  // I1 order: always within a scope. Across scopes the order holds except while a scope can be parked: a stall is
+  // open, or a refusal is armed that may park one. The relaxation ends with the park: the stretch of the server's
+  // record from the last relaxed step on is checked across scopes again.
+  const armed = server.armedFaults().some((f) => f.kind === "status" && [400, 403, 501].includes(f.status));
+  w.relaxed = (await store.outbox.health()).stalls.length > 0 || armed;
+  if (w.relaxed) w.strictFrom = server.appliedOrder.length;
+  assert.ok(!w.capHit, `the replay passed the request cap of ${REQUEST_CAP} in one step and is spinning (${action})`);
   let last = -1;
   const lastIn = new Map();
-  for (const key of server.appliedOrder) {
+  server.appliedOrder.forEach((key, at) => {
     const i = w.index.get(key);
     assert.notEqual(i, undefined, `I1: the server applied unknown key ${key}`);
     const scope = w.scopeOf.get(key);
     assert.ok(i > (lastIn.get(scope) ?? -1), `I1: ${key} (enqueue ${i}) was applied after a later enqueue of ${scope}`);
     lastIn.set(scope, i);
-    if (!w.relaxed) assert.ok(i > last, `I1: ${key} (enqueue ${i}) was applied after enqueue ${last}`);
-    last = i;
-  }
+    if (at >= w.strictFrom) assert.ok(i > last, `I1: ${key} (enqueue ${i}) was applied after enqueue ${last}`);
+    if (at >= w.strictFrom) last = i;
+  });
   // I2 once
   for (const key of server.appliedOrder) assert.equal(server.applyCount(key), 1, `I2: ${key} applied ${server.applyCount(key)} times`);
   const rows = await store.outbox.list();
@@ -329,6 +354,7 @@ async function walk(seed) {
         requests: w.server.requests.length,
         rows: new Map((await w.store.outbox.list()).map((r) => [r.key, r.status])),
       };
+      w.calls = 0;
       await run(w);
       await check(w, pre, name);
       if (w.rng() < 0.05) {
@@ -424,7 +450,6 @@ test("model: the cross scope order is checked again once no stall is open and no
   const a = await enqueueOk(w, { scope: "pick_tasks", op: "update", payload: { id: uuid(3), picked: 1 }, baseSeq: 3 });
   const b = await enqueueOk(w, { scope: "shortages", op: "update", payload: { id: uuid(4), short_by: 1 }, baseSeq: 4 });
   w.server.appliedOrder.push(b.key, a.key);
-  w.server.requests.length; // no request: the inversion is planted straight into the server's record
   await assert.rejects(check(w, pre(), "planted inversion"), /I1/);
 });
 

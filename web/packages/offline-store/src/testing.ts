@@ -148,6 +148,11 @@ export class FakeSyncServer {
     this.#authValid = valid;
   }
 
+  /** The faults queued and not yet consumed by a request: the kind, and the status of a status fault. */
+  armedFaults(): { kind: Fault["kind"]; status?: number }[] {
+    return this.#faults.map((f) => (f.kind === "status" ? { kind: f.kind, status: f.status } : { kind: f.kind }));
+  }
+
   clearFaults(): void {
     this.#faults.length = 0;
   }
