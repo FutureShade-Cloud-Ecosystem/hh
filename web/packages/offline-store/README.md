@@ -30,11 +30,39 @@ statechart in `statecharts/sync/` is its acceptance gate.
 
 1. Replay is in enqueue order, across scopes (runs of one scope batch together).
 2. An operation's key is generated once, stored, and sent unchanged on every attempt.
-3. Money never queues: a money scope is refused at enqueue and never stored.
+3. Money never queues: a money scope is refused at enqueue and never stored, and replay
+   checks the fence again on every stored row.
 4. A pushed operation's status change and its card land in one atomic unit.
 5. No outbox row is deleted; no card is deleted (dismissed only).
 6. A fault is whole: nothing is marked, and the retry sends the same rows again.
 7. A parked (auth expired) outbox sends nothing and loses nothing.
+8. A standing refusal of a request (400, 403, 404, 413, 501) is a verdict, never a fault to
+   retry: the batch is split to single operations, and one still refused is closed as
+   rejected with a card. A push is also capped by bytes, under the core's 1 MiB.
+9. A row that cannot be trusted (hash mismatch, unreadable payload, a fenced scope) is closed
+   as rejected with a card, never sent and never closed silently.
+10. A failed request is `unreachable`, apart from the platform's `offline`: a sync request or
+    a reconnect leaves it. A push fault still lets the pull run.
+11. A pull carries on past a failing scope and reports each failure; only the network or the
+    session going stops it.
+12. Every OPFS worker call settles: a dead or silent worker rejects the call, releases the
+    lock and turns ownership to `read_cache_only`.
+
+## Secure context
+
+`crypto.subtle` (the body hash) and `crypto.randomUUID` (idempotency keys) exist only in a
+secure context: https, `localhost`, or a Tauri webview. A page served over plain http from
+another host has neither, so every enqueue there is refused as `invalid` and nothing is
+queued. Serve the PWA over https; the shells are already fine.
+
+## Known limits
+
+- A tab that did not get the OPFS lock stays `read_cache_only` until it reloads; nothing
+  waits on the lock to take over when the owner closes.
+- The pull cursor never moves backwards. A server restore that resets its sequence would
+  leave a device stuck; recovering needs a server epoch, which is an engine change.
+- A lost response after a per field merge costs the merge report (the engine answers the
+  retry with a plain applied).
 
 ## Tests
 
