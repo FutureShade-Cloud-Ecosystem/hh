@@ -590,6 +590,7 @@ var ownedObjects = map[string]string{
 	"surface_user_workspace":          "settings",          // 0172_surface_settings_substrate
 	"sync_discrepancies":              "bistrack",          // 0079_bistrack_sync
 	"sync_jobs":                       "bistrack",          // 0079_bistrack_sync
+	"sync_op_hashes":                  "sync",              // 0387_sync_op_hashes (the engine's idempotency body ledger)
 	"system_settings":                 "settings",          // 0014_dibbits_branch_config
 	"task_events":                     "tasks",             // 0073_tasks_and_task_events
 	"task_pick_lines":                 "tasks",             // 0187_task_pick_lines
