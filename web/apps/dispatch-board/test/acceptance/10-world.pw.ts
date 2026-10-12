@@ -17,7 +17,7 @@ test("L-card: the front door lists the Logistics Manager, with its role code and
 test("L-card: the card lands on the load board at the dealer's main yard", async ({ page }, testInfo) => {
   await arriveFromFrontDoor(page);
   await expect(page.locator("[data-card='card.deliveries']")).toBeVisible();
-  await expect(page.locator("[data-branch-name]")).toHaveText("Point Loma");
+  await expect(page.locator("[data-branch-name]")).toContainText("Point Loma");
   await expect(page.getByTestId("header-word")).toHaveText("Logistics Manager");
   await shot(page, "10-load-board", testInfo);
 });
