@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
-// the rule the D2 brief fixes (the eight live roles with the contract's
-// labels and the flows they mint; five coming roles, each carrying the modules
+// the rule the D2 brief fixes (the live roles with the contract's
+// labels and the flows they mint; the coming roles, each carrying the modules
 // the matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test
@@ -14,7 +14,7 @@ import {
   FrontDoorSessionStore,
   validateMint,
 } from "../src/session.js";
-import { COMING_ROLES, LIVE_ROLES } from "../src/roles.js";
+import { COMING_ROLES, LIVE_ROLES, comingHeading } from "../src/roles.js";
 
 /** A storage double with the map's own semantics, probed like the real thing. */
 function fakeStorage() {
@@ -136,8 +136,8 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the eight live roles with the contract's labels and the flows they mint", () => {
-  assert.equal(LIVE_ROLES.length, 8);
+test("the catalog holds the nine live roles with the contract's labels and the flows they mint", () => {
+  assert.equal(LIVE_ROLES.length, 9);
   const [sales, manager, yardManager, yardTeam, payRec, buyer, driver, controller] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
@@ -207,14 +207,24 @@ test("the catalog holds the eight live roles with the contract's labels and the 
   assert.deepEqual(controller.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
   assert.deepEqual(controller.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", null]);
   assert.equal(controller.tiles[0], payRec.tiles[0], "both roles open the one Money Desk tile");
+  // The General Manager (global, tier one): the Money Desk and Manager Home
+  // are on the box, so their tiles navigate; House Messages and Dealer Admin
+  // are not built yet, so they stay href null and read "coming".
+  const general = LIVE_ROLES.find((role) => role.id === "general_manager");
+  assert.equal(general.label, "General Manager");
+  assert.equal(general.flow, "general-manager");
+  assert.deepEqual(
+    general.tiles.map((tile) => tile.name),
+    ["Money Desk", "Manager Home", "House Messages", "Dealer Admin"],
+  );
+  assert.deepEqual(general.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", null, null]);
 });
 
-test("the catalog holds the five coming roles, each with its matrix modules", () => {
+test("the catalog holds the coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
     "Logistics Manager",
     "Branch Manager",
-    "General Manager",
     "HR",
   ];
   assert.deepEqual(COMING_ROLES.map((role) => role.label), labels);
@@ -226,14 +236,22 @@ test("the catalog holds the five coming roles, each with its matrix modules", ()
     assert.ok(role.modules.length <= 5, `${role.label} carries no invented module`);
   }
   // Spot checks against the matrix's cells (ROLE-ACCESS-r3 as row 1156
-  // amended it): Outside Sales has no till; the general manager's admin cells
-  // include Dealer Admin; HR's are House Messages and Dealer Admin.
+  // amended it): Outside Sales has no till; HR's are House Messages and Dealer Admin.
   const outside = COMING_ROLES.find((role) => role.id === "outside_sales");
   assert.equal(outside.modules.includes("Counter Till"), false);
-  const general = COMING_ROLES.find((role) => role.id === "general_manager");
-  assert.deepEqual(general.modules, ["Money Desk", "Manager Home", "House Messages", "Dealer Admin"]);
+  assert.equal(
+    COMING_ROLES.some((role) => role.id === "general_manager"),
+    false,
+    "a live role is on no coming row",
+  );
   const hr = COMING_ROLES.find((role) => role.id === "hr");
   assert.deepEqual(hr.modules, ["House Messages", "Dealer Admin"]);
+});
+
+test("the coming disclosure's heading counts the roles still coming, in words", () => {
+  assert.equal(comingHeading(COMING_ROLES.length), "Four more roles are coming");
+  assert.equal(comingHeading(5), "Five more roles are coming");
+  assert.equal(comingHeading(1), "One more role is coming");
 });
 
 // The approvals note's count: the core's bare array, the contract's page

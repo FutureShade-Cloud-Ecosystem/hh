@@ -63,7 +63,7 @@ test("the way in: two cards, the five coming roles untapped, the yard manager, t
   // The coming roles: shown, labelled Coming, and dead controls. The yard
   // manager, the Yard Team and the Driver are not among them: their cards
   // live on the front door now.
-  for (const role of ["Outside Sales", "Branch Manager", "General Manager", "HR"]) {
+  for (const role of ["Outside Sales", "Branch Manager", "HR"]) {
     const coming = page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role });
     await expect(coming).toBeDisabled();
   }
@@ -71,7 +71,7 @@ test("the way in: two cards, the five coming roles untapped, the yard manager, t
   // Financial Controller have live cards on the front door, so the till's
   // list drops them, as it dropped the Driver: its coming list is the front
   // door's coming rows.
-  for (const role of ["Yard manager", "Yard Team", "Payables and Receivables", "Financial Controller"]) {
+  for (const role of ["Yard manager", "Yard Team", "Payables and Receivables", "Financial Controller", "General Manager"]) {
     await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role })).toHaveCount(0);
   }
   await shot(page, "sales-01-way-in", testInfo);

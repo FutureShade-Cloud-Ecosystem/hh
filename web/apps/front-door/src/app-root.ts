@@ -52,6 +52,7 @@ import {
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import {
   COMING_ROLES,
+  comingHeading,
   LIVE_ROLES,
   type ComingRole,
   type LiveRole,
@@ -938,7 +939,7 @@ export class FrontDoorApp extends HHElement {
         </div>
         <details class="coming-card" data-testid="coming-disclosure">
           <summary>
-            <span class="coming-heading">Five more roles are coming</span>
+            <span class="coming-heading">${comingHeading(COMING_ROLES.length)}</span>
             <span class="chev" aria-hidden="true">${drawIcon(iconForId("lucide:chevron-up"), 16)}</span>
           </summary>
           <ul class="coming" aria-label="Coming roles">

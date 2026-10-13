@@ -47,6 +47,7 @@ const FLOWS = [
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
+  { flow: "general-manager", role_code: "general_manager", label: "General Manager" },
 ];
 
 const USERS = {
@@ -110,6 +111,15 @@ const USERS = {
     display_name: "Financial controller (demo)",
     role_code: "financial_controller",
     role_name: "Financial Controller",
+    tier: 1,
+    scope: "GLOBAL",
+  },
+  "general-manager": {
+    user_id: "demo-account-general-manager",
+    email: "general-manager@demo.invalid",
+    display_name: "General manager (demo)",
+    role_code: "general_manager",
+    role_name: "General Manager",
     tier: 1,
     scope: "GLOBAL",
   },

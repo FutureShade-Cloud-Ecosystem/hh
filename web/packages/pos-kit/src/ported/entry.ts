@@ -31,7 +31,6 @@ export const COMING_ROLES: readonly string[] = [
   "Outside Sales",
   "Logistics Manager",
   "Branch Manager",
-  "General Manager",
   "HR",
 ];
 
@@ -62,6 +61,7 @@ const FLOW_ICONS: Record<string, string> = {
   "payables-receivables": "lucide:landmark",
   "procurement-manager": "lucide:package",
   "financial-controller": "lucide:landmark",
+  "general-manager": "lucide:shield-check",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
@@ -70,6 +70,7 @@ const FLOW_BLURBS: Record<string, string> = {
   "payables-receivables": "Chase overdue accounts and work the bounced payments.",
   "procurement-manager": "Buy the branch's stock.",
   "financial-controller": "Decide approvals and keep the ledger.",
+  "general-manager": "Decide what only leadership may decide.",
 };
 
 export const entryStyles = css`

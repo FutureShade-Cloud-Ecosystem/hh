@@ -5,14 +5,14 @@
 // read only; this branch does not carry a copy of it). The rule the D2 brief
 // gives, applied to that record once, by hand, here:
 //
-//   - The eight roles whose logins the demo mints and whose screens this box
+//   - The roles whose logins the demo mints and whose screens this box
 //     serves are LIVE: inside_sales, sales_manager, yard_manager, yard_team,
-//     payables_receivables, procurement_manager, driver and
-//     financial_controller, labelled on the cards the way the demo adapter's
-//     contract names them ("Sales", "Sales manager", "Yard manager", "Yard
+//     payables_receivables, procurement_manager, driver,
+//     financial_controller and general_manager, labelled on the cards the
+//     way the demo adapter's contract names them ("Sales", "Sales manager", "Yard manager", "Yard
 //     Team", "Payables and Receivables", "Procurement manager", "Driver",
-//     "Financial Controller" - the flows route's own labels, the same rule
-//     the till's entry view follows, so every name-based selector keeps
+//     "Financial Controller", "General Manager" - the flows route's own
+//     labels, the same rule the till's entry view follows, so every name-based selector keeps
 //     reading exactly those words). The flow ids are the flows table's own:
 //     inside_sales -> "sales", sales_manager -> "sales-manager",
 //     yard_manager -> "yard-manager", yard_team -> "yard-team". Payables and
@@ -23,8 +23,10 @@
 //     Team's one live module is the Yard Pick app; the Driver's flow is
 //     "driver" and its one live module is HH Drive; the Financial
 //     Controller's flow is "financial-controller" and its one live module is
-//     the same Money Desk tile, on the same path.
-//   - The five others are COMING. Each shows the modules the matrix gives
+//     the same Money Desk tile, on the same path; the General Manager's flow
+//     is "general-manager" and its live modules are the Money Desk and
+//     Manager Home, with House Messages and Dealer Admin still href null.
+//   - The others are COMING. Each shows the modules the matrix gives
 //     that role at work, manage or admin level, by the surfaces table's own
 //     names; read cells (and none) show nothing. A coming role is never
 //     tappable.
@@ -90,7 +92,8 @@ export interface LiveRole {
     | "payables_receivables"
     | "procurement_manager"
     | "driver"
-    | "financial_controller";
+    | "financial_controller"
+    | "general_manager";
   /** The demo flow id the mint takes, the flows table's own mapping. */
   readonly flow:
     | "sales"
@@ -100,7 +103,8 @@ export interface LiveRole {
     | "payables-receivables"
     | "procurement-manager"
     | "driver"
-    | "financial-controller";
+    | "financial-controller"
+    | "general-manager";
   /**
    * The card's label and its accessible name, alone: the demo adapter's
    * contract words, never decorated.
@@ -192,6 +196,14 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     icon: "lucide:landmark",
     tiles: [MONEY_DESK_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
   },
+  {
+    id: "general_manager",
+    flow: "general-manager",
+    label: "General Manager",
+    line: "Decide what only leadership may decide, across both branches.",
+    icon: "lucide:shield-check",
+    tiles: [MONEY_DESK_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE, DEALER_ADMIN_TILE],
+  },
 ];
 
 /**
@@ -219,10 +231,16 @@ export const COMING_ROLES: readonly ComingRole[] = [
       "House Messages",
     ],
   },
-  {
-    id: "general_manager",
-    label: "General Manager",
-    modules: ["Money Desk", "Manager Home", "House Messages", "Dealer Admin"],
-  },
   { id: "hr", label: "HR", modules: ["House Messages", "Dealer Admin"] },
 ];
+
+const COUNT_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
+
+/**
+ * The coming disclosure's heading: the count of roles still coming, written
+ * out, so it moves as each role goes live and never carries a stale number.
+ */
+export function comingHeading(count: number): string {
+  const word = COUNT_WORDS[count] ?? String(count);
+  return count === 1 ? `${word} more role is coming` : `${word} more roles are coming`;
+}
