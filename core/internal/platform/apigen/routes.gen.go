@@ -22,6 +22,7 @@ type Route struct {
 // test asserts the core's registered surface against this table in both
 // directions.
 var Routes = []Route{
+	{Method: "GET", Path: "/.well-known/jwks.json", OperationID: "identitySessionJwks", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/public/v1/ar/invoice-opened/{deliveryID}", OperationID: "billingTrackInvoiceOpened", Tag: "public", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/public/v1/ar/track/{token}/click", OperationID: "billingTrackReminderClick", Tag: "public", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/public/v1/ar/track/{token}/open", OperationID: "billingTrackReminderOpen", Tag: "public", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
@@ -98,6 +99,7 @@ var Routes = []Route{
 	{Method: "GET", Path: "/api/v1/audit/transaction/{entityType}/{entityId}", OperationID: "auditReopenTransaction", Tag: "staff-audit", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till"}, Level: "read", List: ""},
 	{Method: "GET", Path: "/api/v1/audit/{id}", OperationID: "auditGetEntry", Tag: "staff-audit", XRole: "requireAdmin", Bearer: "staff", Addition: false, Surfaces: []string{"dealer-admin"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/auth/change-password", OperationID: "identityChangePassword", Tag: "staff-identity", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till", "quote-desk", "yard-pick", "drive-run", "dispatch-board", "buying-and-stock", "money-desk", "manager-home", "house-messages", "dealer-admin"}, Level: "work", List: ""},
+	{Method: "POST", Path: "/api/v1/auth/exchange", OperationID: "identityExchange", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/auth/google/callback", OperationID: "identityGoogleCallback", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/auth/google/start", OperationID: "identityGoogleStart", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "POST", Path: "/api/v1/auth/login", OperationID: "identityLogin", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},

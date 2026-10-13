@@ -81,6 +81,10 @@ func (f *fakeReserver) ReleaseBySourceTx(_ context.Context, _ pgx.Tx, _, _, _ st
 	return 0, f.err
 }
 
+func (f *fakeReserver) LockHardHoldBalancesTx(_ context.Context, _ pgx.Tx, _, _ string) error {
+	return f.err
+}
+
 // TestReserveOrderLines_SkipsFreeTextAndZeroQuantityLines. order_lines.product_id is NULLABLE, a
 // "delivery surcharge" line is legal and has no stock. Refusing the whole confirm because of one is
 // a regression on every order that carries one, so those lines are skipped, not refused.

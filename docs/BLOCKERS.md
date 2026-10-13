@@ -1587,3 +1587,24 @@ read with the `q.` aliases), PR 178's fix shape. The new red-first legs
 quotes at one created_at with quote numbers 100, 101 and 102 and page from the first one's pair: red before the fix with the
 next page empty, green with it, each with a recorded message naming the cursor's position and the missing rows. The quote
 package was never in `red=`; nothing leaves the integration job's exclusion list.
+
+
+## internal/dispatch rejoined the integration job; the HH-191 dispatch entry and its corrections are closed (appended; the entries above are never edited)
+
+The HH-191 entry, its round 2 correction and its round 3 correction record `internal/dispatch` as red and excluded from the
+integration job. It is neither now: the job's `red` filter is gone and the package runs in `go list` order with every other
+one. The commits are 2005458c (the legs send the bearer, stamp the caller's own role, tier and scope, and the anonymous legs
+no longer die at setup; `red` dropped), 550275b7 (the three sync fixture files clean the kit's world completely, found
+because dispatch's leftovers turned `internal/inventory` and `internal/sync` red once it ran) and, for the identity legs
+that share the work, ea970f1f (the B4 population legs set the migrations' planted rows aside; the demo job sets
+`HH_B4_TEST_DATABASE_URL`).
+
+The 403 class of the round 2 correction (the three freight raise legs) was closed by a test side stamp, not by a production
+change. The seed links no platform user and plants no `staff_role_grant` rows, so the rail's canonical read resolved the
+ruled approver to no authority and refused correctly. The leg now stamps the seeded person from the seed's scaffold tables
+(`seededCaller` in `freightraise_integration_test.go`); the guard's own resolution is not exercised in that file.
+
+Still open, for its owner: after the whole integration list the module gate again holds three `3ef10000-` fixture
+locations (none remain right after `internal/dispatch` alone). Some package later in `go list` order still leaves the kit's
+fixture world behind. `internal/inventory`, the known victim, runs before it and passes, so nothing is red today, but a
+package that runs after the leaker and counts branches would be.

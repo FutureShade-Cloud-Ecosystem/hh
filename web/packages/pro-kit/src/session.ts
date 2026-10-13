@@ -1,8 +1,8 @@
 // The TenantSession seam: the one narrow place a Pro app asks "who is signed
 // in, and what may they do". It sits over the auth package's custody
-// (SessionStore) and sign in orchestration (AuthController), so every guard
-// those carry (sign out wins over a late answer, a newer sign in supersedes an
-// older one, an expired token reads as signed out) holds here unchanged.
+// (SessionStore). The auth controller's exchange needs an organisation a tenant
+// caller does not have, so the adapter's answer is adopted straight into custody
+// and an expired token reads as signed out.
 //
 // What it keeps, and what it never does:
 // - The bearer token and its expiry live in the custody's private memory.
@@ -26,12 +26,10 @@
 // contract").
 import { err, tenantAuth, type FetchLike, type HeaderProvider, type Result, type TenantCapabilities, type TenantRole } from "@hardscapehouse/api-client";
 import {
-  AuthController,
   SessionStore,
   ThrowSafeMirror,
   authHeaderProvider,
   SESSION_MIRROR_KEY,
-  type AccountSurface,
   type AccountUser,
   type StorageLike,
 } from "@hardscapehouse/auth";
@@ -90,49 +88,6 @@ export function memoryStorage(): StorageLike {
   };
 }
 
-/** The bridge from a TenantSignInAdapter to the auth package's AccountSurface. */
-class AdapterAccount implements AccountSurface {
-  readonly #adapter: TenantSignInAdapter;
-  #held: TenantAnswer | null = null;
-  /** The adapter's own refusal, kept so the screen shows its words, not the controller's wrapper. */
-  refusal: { error: string; status?: number } | null = null;
-
-  constructor(adapter: TenantSignInAdapter) {
-    this.#adapter = adapter;
-  }
-
-  async createEmailPasswordSession(email: string, password: string): Promise<AccountUser> {
-    this.refusal = null;
-    const answer = await this.#adapter.signIn(email, password);
-    if (!answer.ok) {
-      this.refusal = answer.status === undefined ? { error: answer.error } : { error: answer.error, status: answer.status };
-      throw new Error(answer.error);
-    }
-    this.#held = answer.value;
-    return { ...answer.value.user };
-  }
-
-  async createOAuth2Session(): Promise<void> {
-    throw new Error("sign in with another service is not offered here");
-  }
-
-  async getSession(): Promise<AccountUser> {
-    throw new Error("there is no session to resume");
-  }
-
-  async createJWT(): Promise<{ jwt: string; expiresAtMs: number }> {
-    const held = this.#held;
-    this.#held = null;
-    if (held === null) throw new Error("there is no sign in to complete");
-    return { jwt: held.token, expiresAtMs: held.expiresAtMs };
-  }
-
-  async deleteSession(): Promise<void> {
-    this.#held = null;
-    await this.#adapter.signOut();
-  }
-}
-
 const NOT_SIGNED_IN_WORDS = "You are signed out. Sign in again.";
 const CANNOT_OPEN_WORDS = "This account cannot open Pro. Ask the dealer to check your access.";
 const UNAVAILABLE_WORDS = "Pro is not reachable right now. Try again in a moment.";
@@ -147,8 +102,7 @@ export interface InMemoryTenantSessionOptions {
 
 export class InMemoryTenantSession implements TenantSession {
   readonly #sessions: SessionStore;
-  readonly #account: AdapterAccount;
-  readonly #controller: AuthController;
+  readonly #adapter: TenantSignInAdapter;
   readonly #client: ApiClient;
   readonly #listeners = new Set<() => void>();
   #profile: TenantProfile | null = null;
@@ -157,22 +111,24 @@ export class InMemoryTenantSession implements TenantSession {
   constructor(options: InMemoryTenantSessionOptions) {
     const now = options.now ?? Date.now;
     this.#sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, memoryStorage()), now });
-    this.#account = new AdapterAccount(options.adapter);
-    this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
+    this.#adapter = options.adapter;
     this.headers = authHeaderProvider({ callerClass: "tenant", sessions: this.#sessions });
     this.#client = new ApiClient({ baseUrl: options.baseUrl ?? "", fetch: options.fetch, headers: this.headers });
   }
 
   async signIn(email: string, password: string): Promise<Result<TenantProfile>> {
-    const adopted = await this.#controller.signInWithPassword(email, password);
-    if (!adopted.ok) {
-      const refusal = this.#account.refusal;
-      if (refusal !== null) return refusal.status === undefined ? err(refusal.error) : err(refusal.error, refusal.status);
-      return err(adopted.error);
+    // A tenant sign in has no organisation and no platform exchange to ask: the adapter's answer is the
+    // session, adopted straight into custody (the auth controller's exchange path is for staff).
+    const signedIn = await this.#adapter.signIn(email, password);
+    if (!signedIn.ok) return signedIn.status === undefined ? err(signedIn.error) : err(signedIn.error, signedIn.status);
+    const held = signedIn.value;
+    if (!this.#sessions.adopt({ token: held.token, tokenExpiresAtMs: held.expiresAtMs, user: { ...held.user } })) {
+      await this.#clearCustody();
+      return err("sign-in failed: the sign in returned an unusable session");
     }
     const answer = await tenantAuth.tenantGetMe(this.#client);
     if (!answer.ok) {
-      await this.#controller.signOut();
+      await this.#clearCustody();
       this.#profile = null;
       this.#notify();
       const words = answer.status === 401 ? NOT_SIGNED_IN_WORDS : answer.status === 403 ? CANNOT_OPEN_WORDS : UNAVAILABLE_WORDS;
@@ -191,9 +147,18 @@ export class InMemoryTenantSession implements TenantSession {
   }
 
   async signOut(): Promise<void> {
-    await this.#controller.signOut();
+    await this.#clearCustody();
     this.#profile = null;
     this.#notify();
+  }
+
+  async #clearCustody(): Promise<void> {
+    try {
+      await this.#adapter.signOut();
+    } catch {
+      // the far side was already gone; custody is cleared regardless
+    }
+    this.#sessions.clear();
   }
 
   current(): { token: string; expiresAtMs: number } | null {
