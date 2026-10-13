@@ -30,6 +30,8 @@ import type { AreaDesk, AreaEntry } from "./purch/area.js";
 import { purchStyles } from "./purch/purch-styles.js";
 import { LandedApi } from "./landed/landed-api.js";
 import { LandedDesk } from "./landed/landed-desk.js";
+import { VendorsApi } from "./vendors/vendors-api.js";
+import { VendorsDesk } from "./vendors/vendors-desk.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -75,6 +77,7 @@ export class BuyingAndStockApp extends HHElement {
     };
     return [
       { id: "orders", label: "Purchase orders", desk: new PoDesk(new PoApi(this.#staffClient), host) },
+      { id: "vendors", label: "Vendors", desk: new VendorsDesk(new VendorsApi(this.#staffClient), host) },
       { id: "landed", label: "Landed cost", desk: new LandedDesk(new LandedApi(this.#staffClient), host) },
     ];
   }

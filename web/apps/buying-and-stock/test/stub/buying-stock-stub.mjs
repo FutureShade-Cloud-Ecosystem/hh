@@ -371,19 +371,6 @@ async function handle(req, res) {
       { id: BRANCH, code: "TRT", name: "Trenton yard", address: { line1: "1 Yard Road", city: "Trenton", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
     ]);
   }
-  const skus = path.match(/^\/api\/v1\/purchasing\/vendors\/([^/]+)\/skus$/);
-  if (method === "GET" && skus) {
-    const vendor = VENDORS.find((v) => uuid("a", v.n) === skus[1]);
-    if (vendor === undefined) return json(res, { items: [] });
-    const items = PRODUCTS.filter((p) => p.vendor === vendor.n).map((p) => ({
-      vendor_id: skus[1],
-      product_id: uuid("f", p.n),
-      sku: p.sku,
-      product_name: p.name,
-      vendor_sku: p.sku === "DBS-BRUS-DIM" ? "ALC-BRU-DIM-60" : `${vendor.no}-${p.sku}`,
-    }));
-    return json(res, { items });
-  }
   if (method === "GET" && path === "/api/v1/purchasing/pos") {
     const status = url.searchParams.get("status");
     const rows = world.pos.filter((p) => status === null || p.status === status).map(poView);

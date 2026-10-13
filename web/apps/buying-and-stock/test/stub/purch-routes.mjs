@@ -3,9 +3,10 @@
 // true, or returns false and the main stub carries on. The world the parts share with the main stub
 // (the orders, the vendors, the products) arrives through the kit.
 import { makeLanded } from "./purch-landed.mjs";
+import { makeVendors } from "./purch-vendors.mjs";
 
 export function createPurchRoutes(kit) {
-  const parts = [makeLanded(kit)];
+  const parts = [makeLanded(kit), makeVendors(kit)];
   return {
     reset() {
       for (const p of parts) p.reset();

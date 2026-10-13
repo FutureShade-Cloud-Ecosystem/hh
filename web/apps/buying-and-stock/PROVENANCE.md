@@ -25,6 +25,15 @@ role app template's shell, held to the procurement references in
 | Capture form (freight, duty, handling, USD with a manual rate, the basis, special buys, late freight) | `app/src/landedcost-capture.ts` | `capture`, `buildCreate` | The order is picked from the register (the original typed a reference and no order id, so an apply was refused 422); the branch comes from the order; amounts parse through the decimal string; a late freight counts what is left per received line, picked from the order's own lines instead of typed product ids |
 | Allocate (per basis preview, apply, retro, void) | `app/src/landedcost-allocate.ts` | `detailView`, `confirmWords`, `settleWords` | A confirm step before apply, late freight apply and void, naming the order, the basis and the server's total; the screen says the compared basis is not the one applied (the original's note implied it was); each press re-reads the document first and settles against what the core holds, because the core answers an apply of a document that is not a draft like a real one |
 
+## Vendors (`src/vendors/`)
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Vendor records (list, add, correct, active or inactive) | `app/src/purchasing-console.ts`, `app/src/purchasing-api.ts` | `src/vendors/` | A search and a show inactive switch; a correction sends only the fields that changed; the list never carries the email on file, so the screen says so and clearing it is its own act; the checks mirror the core's validators and its refusals are shown as it words them |
+| Ordering contact (the desk an order is sent to) | `app/src/purchasing-console.ts` | `contactTab`, `contactBody` | Tag, change and remove, the removal behind a confirm step; a phone only contact is kept and the screen says it cannot be mailed |
+| The vendor's own codes for our products | `app/src/purchasing-console.ts` | `codesTab`, `mappingBody` | Add, correct and remove from a picker over the catalogue; the unit and the number of ours it holds are asked for together |
+| The order a vendor quoted back | `app/src/purchasing-logic.ts` | `lookup`, `refWords` | Found by the number however the vendor wrote it |
+
 Not ported on purpose (later, named on screen as Later): receiving a truck
 (the yard team's, Yard Pick and Receive), the vendor screens (the core has no
 vendor create or edit route yet), vendor bills and the three way match (the
