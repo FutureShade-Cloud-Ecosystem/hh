@@ -202,6 +202,13 @@ test("offline, the pick record and a shortage report drain in order and land cle
   await page.getByRole("radio", { name: "Not enough on the yard" }).click();
   await page.getByRole("button", { name: "Report short pick" }).click();
   await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
+  // The skid count is a direct door (it moves the order's skid deposit): with
+  // no signal it says so in words and queues nothing.
+  await page.getByRole("button", { name: "One skid more" }).click();
+  await page.getByRole("radio", { name: "Count corrected" }).click();
+  await page.getByRole("button", { name: "Save skid count" }).click();
+  await expect(page.locator("[data-error]")).toContainText("Check your signal");
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
   // Back online: the outbox drains in the order the writes were made.
   await platformWord(page, true);
   await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
