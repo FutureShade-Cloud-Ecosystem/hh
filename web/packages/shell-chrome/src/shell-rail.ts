@@ -399,6 +399,12 @@ export class ShellRail extends HHElement {
       const wanted = Number(row.getAttribute('data-tab') ?? '0');
       if (row.tabIndex !== wanted) row.tabIndex = wanted;
     }
+    // The toggle's native title rides the same road: the position gate refuses
+    // a bound title, so the words travel as data-title (equal to its aria-label)
+    // and land on the real title here.
+    const toggle = this.renderRoot.querySelector?.<HTMLButtonElement>('button.toggle');
+    const title = toggle?.getAttribute('data-title');
+    if (toggle && title && toggle.title !== title) toggle.title = title;
   }
 
   render(): Template {
@@ -412,11 +418,11 @@ export class ShellRail extends HHElement {
             data-action="rail-toggle"
             tabindex="0"
             aria-expanded=${this.collapsed ? 'false' : 'true'}
-            title=${this.collapsed ? 'Keep your pins open' : 'Let your pins hide again'}
+            data-title="${this.collapsed ? 'Keep your pins open' : 'Let your pins hide again'}"
             aria-label=${this.collapsed ? 'Keep your pins open' : 'Let your pins hide again'}
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d=${this.collapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6'}></path>
+              <path d="${this.collapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6'}"></path>
             </svg>
           </button>
         </div>
