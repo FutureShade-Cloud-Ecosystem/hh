@@ -19,6 +19,8 @@ import {
 import {
   FAKE_ACCOUNT,
   FAKE_JWT,
+  fakeExchangeAnswer,
+  fakeExchangeRefusal,
   FAKE_PASSWORD,
   FAKE_PIN,
   DeferredAccountSurface,
@@ -174,12 +176,12 @@ test("the tenant provider type carries no organisation input to misconfigure", a
 test("the controller signs in through the fake account surface and custody holds the token in memory only", async () => {
   const { recorded, sessions } = custody();
   const account = new FakeAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const result = await controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
   assert.equal(result.ok, true, `sign-in resolves a Result: ${result.ok ? "" : result.error}`);
   assert.deepEqual(result.value, { ...FAKE_ACCOUNT });
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-1`, "the fake surface's first mint (documented fake) lives in memory");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-1`, "the fake surface's first mint (documented fake) lives in memory");
 
   const payload = JSON.parse(recorded.writes.find((w) => w.key === SESSION_MIRROR_KEY).value);
   assert.deepEqual(
@@ -199,7 +201,7 @@ test("the controller signs in through the fake account surface and custody holds
 test("the controller adopts an out-of-band session and signs out", async () => {
   const { recorded, sessions } = custody();
   const account = new FakeAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   assert.equal(
     controller.adopt({
@@ -236,7 +238,7 @@ test("a failed resume clears the stale profile it failed from", async () => {
   assert.notEqual(sessions.profile, null, "the stale display profile is what a failed resume must not leave behind");
 
   const account = new FakeAccountSurface(); // no platform session: getSession throws
-  const refused = await new AuthController({ account, sessions }).resume();
+  const refused = await new AuthController({ activeOrg: () => "yard-ten", account, sessions }).resume();
   assert.equal(refused.ok, false);
   assert.match(refused.error, /no platform session/);
   assert.equal(sessions.current, null);
@@ -249,7 +251,7 @@ test("resume re-signs in through the issuer after a reload, holding nothing to t
   const account = new FakeAccountSurface();
   account.setClock(() => nowMs);
   const first = custody({ now: () => nowMs });
-  const signIn = await new AuthController({ account, sessions: first.sessions }).signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
+  const signIn = await new AuthController({ activeOrg: () => "yard-ten", account, sessions: first.sessions }).signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
   assert.equal(signIn.ok, true);
 
   // The reload: a fresh custody over the SAME browser storage, no live session.
@@ -263,12 +265,12 @@ test("resume re-signs in through the issuer after a reload, holding nothing to t
     "nothing restorable is credential-shaped: the payload is the display profile",
   );
 
-  const controller = new AuthController({ account, sessions: reloaded });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions: reloaded });
   nowMs += 1_000;
   const resumed = await controller.resume();
   assert.equal(resumed.ok, true, `resume resolves a Result: ${resumed.ok ? "" : resumed.error}`);
   assert.deepEqual(resumed.value, { ...FAKE_ACCOUNT }, "the issuer's cookie-backed session answered");
-  assert.equal(reloaded.current.token, `${FAKE_JWT}-MINT-2`, "a fresh mint, distinct from the sign-in's first, rides memory again");
+  assert.equal(reloaded.current.token, `${FAKE_JWT}-EX-2`, "a fresh mint, distinct from the sign-in's first, rides memory again");
 });
 
 test("resume mints a fresh token after the old one expired: the refresh path is the same seam", async () => {
@@ -276,25 +278,25 @@ test("resume mints a fresh token after the old one expired: the refresh path is 
   const account = new FakeAccountSurface();
   account.setClock(() => nowMs);
   const { sessions } = custody({ now: () => nowMs });
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
   assert.equal((await controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD)).ok, true);
   const oldToken = sessions.current.token;
-  assert.equal(oldToken, `${FAKE_JWT}-MINT-1`, "the sign-in's mint is in custody");
+  assert.equal(oldToken, `${FAKE_JWT}-EX-1`, "the sign-in's mint is in custody");
 
   nowMs += 900_000 + 1; // past the minted token's lifetime
   assert.equal(sessions.current, null, "the token expired");
   const resumed = await controller.resume();
   assert.equal(resumed.ok, true);
   assert.equal(account.getSessionCount, 1, "resume answered through the platform session seam exactly once");
-  assert.equal(account.jwtCount, 2, "the refresh minted a second token");
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-2`, "custody now holds the FRESH mint, not the expired one");
+  assert.equal(account.exchangeCount, 2, "the refresh minted a second token");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-2`, "custody now holds the FRESH mint, not the expired one");
   assert.notEqual(sessions.current.token, oldToken, "the fresh token is distinguishable from the old one");
 });
 
 test("resume is refused as data when the platform holds no session", async () => {
   const account = new FakeAccountSurface(); // no sign-in ever happened
   const { sessions } = custody();
-  const refused = await new AuthController({ account, sessions }).resume();
+  const refused = await new AuthController({ activeOrg: () => "yard-ten", account, sessions }).resume();
   assert.equal(refused.ok, false);
   assert.match(refused.error, /no platform session/);
   assert.equal(sessions.current, null, "nothing was adopted");
@@ -329,7 +331,7 @@ async function untilHandoff(account, name) {
 test("sign out wins over a resume in flight: the late platform answer adopts nothing", async () => {
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const pending = controller.resume(); // the refresh path is in flight
   const getSession = await untilHandoff(account, "getSession");
@@ -366,19 +368,19 @@ test("sign out wins over a resume in flight: the late platform answer adopts not
 test("sign out wins over a sign-in in flight: the late credential and mint adopt nothing", async () => {
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const pending = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
   const created = await untilHandoff(account, "createEmailPasswordSession");
   created.complete({ ...FAKE_ACCOUNT }); // the platform accepts the credential
-  const minted = await untilHandoff(account, "createJWT"); // the token mint is in flight
+  const minted = await untilHandoff(account, "exchange"); // the token mint is in flight
 
   await controller.signOut(); // the user signs out while the mint is mid flight
   assert.equal(account.deleteCount, 1);
   assert.equal(sessions.current, null);
   assert.equal(recorded.size, 0);
 
-  minted.complete({ jwt: `${FAKE_JWT}-MINT-9`, expiresAtMs: START_MS + 900_000 }); // the mint answers late
+  minted.complete(fakeExchangeAnswer(`${FAKE_JWT}-EX-9`, START_MS + 900_000)); // the mint answers late
   const result = await pending;
   assert.equal(result.ok, false, "the sign-in resolves an error Result after sign-out");
   assert.match(result.error, /cancelled/);
@@ -432,7 +434,7 @@ test("a resume begun while sign-out's own deleteSession is pending adopts nothin
   // its check unless the sign-out bumps again after the await.
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const signingOut = controller.signOut(); // deleteSession is in flight
   const pending = controller.resume(); // the resume starts during that await
@@ -445,7 +447,7 @@ test("a resume begun while sign-out's own deleteSession is pending adopts nothin
   getSession.complete({ ...FAKE_ACCOUNT }); // the platform answers late
   await flush();
   assert.equal(
-    account.handoff("createJWT"),
+    account.handoff("exchange"),
     null,
     "the mint was never asked: the sign-out's post-await bump superseded the resume",
   );
@@ -464,7 +466,7 @@ test("a resume begun while sign-out's own deleteSession is pending adopts nothin
 test("a sign-in begun while sign-out's own deleteSession is pending adopts nothing once sign-out has returned", async () => {
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const signingOut = controller.signOut(); // deleteSession is in flight
   const pending = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD); // starts during that await
@@ -477,7 +479,7 @@ test("a sign-in begun while sign-out's own deleteSession is pending adopts nothi
   created.complete({ ...FAKE_ACCOUNT }); // the platform accepts the credential late
   await flush();
   assert.equal(
-    account.handoff("createJWT"),
+    account.handoff("exchange"),
     null,
     "the mint was never asked: the sign-out's post-await bump superseded the sign-in",
   );
@@ -501,7 +503,7 @@ test("a resume in flight when sign-out is called resolves cancelled even while d
   // the adoption afterwards.
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface({ deferDeleteSession: true });
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const pending = controller.resume(); // the resume is in flight when the user signs out
   const getSession = await untilHandoff(account, "getSession");
@@ -511,7 +513,7 @@ test("a resume in flight when sign-out is called resolves cancelled even while d
   getSession.complete({ ...FAKE_ACCOUNT }); // the platform answers while the sign-out waits
   await flush();
   assert.equal(
-    account.handoff("createJWT"),
+    account.handoff("exchange"),
     null,
     "the mint was never asked: the bump before the await superseded the resume before its answer landed",
   );
@@ -538,17 +540,17 @@ test("a sign-out landing between getSession and createJWT cancels the resume's m
   // passed when the sign-out lands, so this is the second check's case.
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const pending = controller.resume();
   (await untilHandoff(account, "getSession")).complete({ ...FAKE_ACCOUNT });
-  const minted = await untilHandoff(account, "createJWT"); // the token mint is in flight
+  const minted = await untilHandoff(account, "exchange"); // the token mint is in flight
   await controller.signOut(); // the sign-out lands between the two awaits and completes
   assert.equal(account.deleteCount, 1);
   assert.equal(sessions.current, null);
   assert.equal(recorded.size, 0);
 
-  minted.complete({ jwt: `${FAKE_JWT}-MINT-9`, expiresAtMs: START_MS + 900_000 }); // the mint answers late
+  minted.complete(fakeExchangeAnswer(`${FAKE_JWT}-EX-9`, START_MS + 900_000)); // the mint answers late
   const result = await pending;
   assert.equal(result.ok, false, "the resume resolves an error Result after sign-out");
   assert.match(result.error, /cancelled/);
@@ -578,8 +580,8 @@ async function signOutThenOtherSignIn(account, controller, sessions, staleMint =
   const signingIn = controller.signInWithPassword(OTHER_ACCOUNT.email, FAKE_PASSWORD);
   const created = await untilHandoff(account, "createEmailPasswordSession");
   created.complete({ ...OTHER_ACCOUNT });
-  const mint = await untilNextHandoff(account, "createJWT", staleMint);
-  mint.complete({ jwt: `${FAKE_JWT}-B`, expiresAtMs: START_MS + 900_000 });
+  const mint = await untilNextHandoff(account, "exchange", staleMint);
+  mint.complete(fakeExchangeAnswer(`${FAKE_JWT}-B`, START_MS + 900_000, {}, OTHER_ACCOUNT));
   assert.equal((await signingIn).ok, true, "person B's sign-in succeeded");
   assert.equal(sessions.current.token, `${FAKE_JWT}-B`, "B's token is in custody");
 }
@@ -601,7 +603,7 @@ function otherUserCustodyHolds(sessions, recorded) {
 test("a stale resume whose getSession FAILS after another user signed in leaves that user's custody alone", async () => {
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const pending = controller.resume(); // person A's resume, in flight
   const staleSession = await untilHandoff(account, "getSession");
@@ -619,17 +621,17 @@ test("a stale resume whose getSession FAILS after another user signed in leaves 
 test("a stale resume whose mint FAILS after another user signed in leaves that user's custody alone", async () => {
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const pending = controller.resume(); // person A's resume, in flight
   (await untilHandoff(account, "getSession")).complete({ ...FAKE_ACCOUNT });
-  const staleMint = await untilHandoff(account, "createJWT"); // A's mint is parked
+  const staleMint = await untilHandoff(account, "exchange"); // A's mint is parked
   await signOutThenOtherSignIn(account, controller, sessions, staleMint);
 
   staleMint.fail(new Error("platform: session gone")); // A's stale mint FAILS late
   const result = await pending;
   assert.equal(result.ok, false, "the stale resume still resolves an error Result");
-  assert.match(result.error, /the token refresh failed/);
+  assert.match(result.error, /the token exchange failed/);
   assert.equal(sessions.current.token, `${FAKE_JWT}-B`, "B's custody is untouched: the stale failure cleared nothing");
   assert.deepEqual(sessions.profile, OTHER_ACCOUNT, "B's profile is untouched");
   otherUserCustodyHolds(sessions, recorded);
@@ -643,15 +645,15 @@ test("a failed mint with no sign-out in between still clears the custody it fail
   sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 60_000, user: { ...FAKE_ACCOUNT } });
   assert.notEqual(sessions.profile, null, "the stale display profile is what a failed refresh must not leave behind");
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const pending = controller.resume();
   (await untilHandoff(account, "getSession")).complete({ ...FAKE_ACCOUNT });
-  const mint = await untilHandoff(account, "createJWT");
-  mint.fail(new Error("network down"));
+  const mint = await untilHandoff(account, "exchange");
+  mint.complete(fakeExchangeRefusal("no_session")); // a refusal that ends sessions; a mere network failure keeps the profile
   const result = await pending;
   assert.equal(result.ok, false);
-  assert.match(result.error, /the token refresh failed/);
+  assert.match(result.error, /the token exchange failed/);
   assert.equal(sessions.current, null, "the failed refresh cleared the custody it failed from");
   assert.equal(sessions.profile, null, "the stale profile went with the failed refresh");
   assert.equal(recorded.size, 0, "storage holds nothing after the failed refresh");
@@ -666,17 +668,17 @@ async function twoOverlappingResumes() {
   const { recorded, sessions } = custody();
   sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + 60_000, user: { ...FAKE_ACCOUNT } });
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const older = controller.resume();
   const olderSession = await untilHandoff(account, "getSession"); // the older resume's answer, parked
   const newer = controller.resume();
   const newerSession = await untilNextHandoff(account, "getSession", olderSession); // the newer's, parked too
   newerSession.complete({ ...FAKE_ACCOUNT });
-  const newerMint = await untilHandoff(account, "createJWT");
-  newerMint.complete({ jwt: `${FAKE_JWT}-MINT-NEWER`, expiresAtMs: START_MS + 900_000 });
+  const newerMint = await untilHandoff(account, "exchange");
+  newerMint.complete(fakeExchangeAnswer(`${FAKE_JWT}-EX-NEWER`, START_MS + 900_000));
   assert.equal((await newer).ok, true, "the newer resume succeeded and adopted");
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-NEWER`, "the newer session is the one in custody");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-NEWER`, "the newer session is the one in custody");
   return { account, controller, older, olderSession, recorded, sessions };
 }
 
@@ -687,7 +689,7 @@ test("two overlapping resumes, no sign-out: the older resume's late failure wipe
   const stale = await older;
   assert.equal(stale.ok, false, "the older resume still resolves an error Result");
   assert.match(stale.error, /no platform session to resume/);
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-NEWER`, "the newer session was not wiped by the older resume's late failure");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-NEWER`, "the newer session was not wiped by the older resume's late failure");
   assert.deepEqual(sessions.profile, { ...FAKE_ACCOUNT }, "the newer profile is untouched");
   assert.equal(
     recorded.getItem(SESSION_MIRROR_KEY)?.includes(FAKE_ACCOUNT.userId),
@@ -697,7 +699,7 @@ test("two overlapping resumes, no sign-out: the older resume's late failure wipe
   const staff = authHeaderProvider({ callerClass: "staff", sessions, activeOrg: () => ORG });
   assert.deepEqual(
     staff(),
-    { "X-Org": ORG, Authorization: `Bearer ${FAKE_JWT}-MINT-NEWER` },
+    { "X-Org": ORG, Authorization: `Bearer ${FAKE_JWT}-EX-NEWER` },
     "the wire still carries the newer session's token",
   );
 });
@@ -705,18 +707,18 @@ test("two overlapping resumes, no sign-out: the older resume's late failure wipe
 test("two overlapping resumes, no sign-out: the older resume's late success replaces nothing of the newer session", async () => {
   const { account, older, olderSession, sessions } = await twoOverlappingResumes();
 
-  const mintBefore = account.handoff("createJWT"); // the newer resume's mint is the latest createJWT call
+  const mintBefore = account.handoff("exchange"); // the newer resume's mint is the latest createJWT call
   olderSession.complete({ ...FAKE_ACCOUNT }); // the older resume's answer lands late, after the newer adopted
   await flush();
   assert.equal(
-    account.handoff("createJWT"),
+    account.handoff("exchange"),
     mintBefore,
     "the older resume asked for no mint: it was superseded before it could carry on",
   );
   const stale = await older;
   assert.equal(stale.ok, false, "the older resume resolves an error Result instead of replacing the newer session");
   assert.match(stale.error, /cancelled/);
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-NEWER`, "the newer session was not replaced by the older resume's late success");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-NEWER`, "the newer session was not replaced by the older resume's late success");
   assert.deepEqual(sessions.profile, { ...FAKE_ACCOUNT }, "the newer profile is untouched");
 });
 
@@ -731,7 +733,7 @@ test("a resume that adopts first does not cancel a person's explicit sign-in", a
   // custody, because the person at the keyboard signed in.
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const pendingResume = controller.resume(); // the issuer's resume is in flight
   const getSession = await untilHandoff(account, "getSession");
@@ -739,14 +741,14 @@ test("a resume that adopts first does not cancel a person's explicit sign-in", a
   const created = await untilHandoff(account, "createEmailPasswordSession");
 
   getSession.complete({ ...FAKE_ACCOUNT }); // the resume's answer lands first
-  const resumeMint = await untilHandoff(account, "createJWT");
-  resumeMint.complete({ jwt: `${FAKE_JWT}-MINT-RESUMED`, expiresAtMs: START_MS + 900_000 });
+  const resumeMint = await untilHandoff(account, "exchange");
+  resumeMint.complete(fakeExchangeAnswer(`${FAKE_JWT}-EX-RESUMED`, START_MS + 900_000));
   assert.equal((await pendingResume).ok, true, "the resume adopted: this is the race's starting state");
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-RESUMED`);
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-RESUMED`);
 
   created.complete({ ...OTHER_ACCOUNT }); // B's credential is accepted, after the resume adopted
-  const mintB = await untilNextHandoff(account, "createJWT", resumeMint);
-  mintB.complete({ jwt: `${FAKE_JWT}-B`, expiresAtMs: START_MS + 900_000 });
+  const mintB = await untilNextHandoff(account, "exchange", resumeMint);
+  mintB.complete(fakeExchangeAnswer(`${FAKE_JWT}-B`, START_MS + 900_000, {}, OTHER_ACCOUNT));
   const result = await pendingSignIn;
 
   assert.equal(result.ok, true, `the explicit sign-in is not cancelled by the earlier resume (${result.ok ? "" : result.error})`);
@@ -770,7 +772,7 @@ test("a double submit of one sign-in, the FIRST submit's answer landing first: t
   // signed in, success.
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const first = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
   const created1 = await untilHandoffAt(account, "createEmailPasswordSession", 0);
@@ -780,17 +782,17 @@ test("a double submit of one sign-in, the FIRST submit's answer landing first: t
   created1.complete({ ...FAKE_ACCOUNT }); // the FIRST submit's credential is accepted first
   await flush();
   assert.equal(
-    account.handoffs("createJWT").length,
+    account.handoffs("exchange").length,
     0,
     "the first submit minted nothing: it is no longer the newest, and it is parked waiting for the newest to settle",
   );
 
   created2.complete({ ...FAKE_ACCOUNT }); // the second submit's credential lands
   await flush(); // the second submit carries on to its mint
-  const mint2 = await untilHandoffAt(account, "createJWT", 0); // the only mint: the second submit's
-  mint2.complete({ jwt: `${FAKE_JWT}-MINT-2`, expiresAtMs: START_MS + 900_000 });
+  const mint2 = await untilHandoffAt(account, "exchange", 0); // the only mint: the second submit's
+  mint2.complete(fakeExchangeAnswer(`${FAKE_JWT}-EX-2`, START_MS + 900_000));
   assert.equal((await settles(second, "the second submit")).ok, true, "the newest submit signed in and adopted");
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-2`, "custody holds the newest submit's own session");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-2`, "custody holds the newest submit's own session");
 
   const firstResult = await settles(first, "the first submit");
   assert.equal(
@@ -798,8 +800,8 @@ test("a double submit of one sign-in, the FIRST submit's answer landing first: t
     true,
     `the first submit resolves successful too: it waited, custody holds its own user (${firstResult.ok ? "" : firstResult.error})`,
   );
-  assert.equal(account.handoffs("createJWT").length, 1, "the first submit minted nothing, in the end: only the newest submit's mint");
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-2`, "custody still holds the newest submit's own mint: the late submit adopted nothing");
+  assert.equal(account.handoffs("exchange").length, 1, "the first submit minted nothing, in the end: only the newest submit's mint");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-2`, "custody still holds the newest submit's own mint: the late submit adopted nothing");
   assert.deepEqual(sessions.profile, { ...FAKE_ACCOUNT });
   assert.equal(
     recorded.getItem(SESSION_MIRROR_KEY)?.includes(FAKE_ACCOUNT.userId),
@@ -820,7 +822,7 @@ test("a double submit of one sign-in, the SECOND submit's answer landing first: 
   // signed in.
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const first = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
   const created1 = await untilHandoffAt(account, "createEmailPasswordSession", 0);
@@ -829,15 +831,15 @@ test("a double submit of one sign-in, the SECOND submit's answer landing first: 
 
   created2.complete({ ...FAKE_ACCOUNT }); // the second submit's credential is accepted first
   await flush(); // the second submit carries on to its mint
-  const mint2 = await untilHandoffAt(account, "createJWT", 0); // the only mint so far: the second submit's
-  mint2.complete({ jwt: `${FAKE_JWT}-MINT-2`, expiresAtMs: START_MS + 900_000 });
+  const mint2 = await untilHandoffAt(account, "exchange", 0); // the only mint so far: the second submit's
+  mint2.complete(fakeExchangeAnswer(`${FAKE_JWT}-EX-2`, START_MS + 900_000));
   assert.equal((await settles(second, "the second submit")).ok, true, "the newest submit signed in and adopted");
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-2`, "custody holds the newest submit's own session");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-2`, "custody holds the newest submit's own session");
 
   created1.complete({ ...FAKE_ACCOUNT }); // the first submit's answer lands late
   await flush();
   assert.equal(
-    account.handoffs("createJWT").length,
+    account.handoffs("exchange").length,
     1,
     "the first submit minted nothing: it was no longer the newest, and custody already held its own user",
   );
@@ -847,7 +849,7 @@ test("a double submit of one sign-in, the SECOND submit's answer landing first: 
     true,
     `the first submit resolves successful too, custody already held its own user (${firstResult.ok ? "" : firstResult.error})`,
   );
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-2`, "custody still holds the newest submit's own mint: the late submit adopted nothing");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-2`, "custody still holds the newest submit's own mint: the late submit adopted nothing");
   assert.deepEqual(sessions.profile, { ...FAKE_ACCOUNT });
   assert.equal(
     recorded.getItem(SESSION_MIRROR_KEY)?.includes(FAKE_ACCOUNT.userId),
@@ -876,7 +878,7 @@ test("two people's sign-ins in flight, the older answer landing after the newer 
   // sign-in makes the older one stale.
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const older = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD); // person A submits
   const createdA = await untilHandoffAt(account, "createEmailPasswordSession", 0);
@@ -884,15 +886,15 @@ test("two people's sign-ins in flight, the older answer landing after the newer 
   const createdB = await untilHandoffAt(account, "createEmailPasswordSession", 1);
 
   createdB.complete({ ...OTHER_ACCOUNT }); // B's answer lands first
-  const mintB = await untilHandoffAt(account, "createJWT", 0);
-  mintB.complete({ jwt: `${FAKE_JWT}-B`, expiresAtMs: START_MS + 900_000 });
+  const mintB = await untilHandoffAt(account, "exchange", 0);
+  mintB.complete(fakeExchangeAnswer(`${FAKE_JWT}-B`, START_MS + 900_000, {}, OTHER_ACCOUNT));
   assert.equal((await settles(newer, "the newer sign-in")).ok, true, "B, the newest sign-in, signed in and adopted");
   assert.equal(sessions.current.token, `${FAKE_JWT}-B`, "custody holds B's session");
 
   createdA.complete({ ...FAKE_ACCOUNT }); // A's answer lands late, after B adopted
   await flush();
   assert.equal(
-    account.handoffs("createJWT").length,
+    account.handoffs("exchange").length,
     1,
     "A minted nothing: it was no longer the newest, so it stopped before its mint",
   );
@@ -907,7 +909,7 @@ test("two people's sign-ins in flight, the older answer landing after the newer 
 test("two people's sign-ins in flight, the NEWER answer landing after the older's: the older waits, adopts nothing and mints nothing, and resolves superseded once the newer settled", async () => {
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const older = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD); // person A submits
   const createdA = await untilHandoffAt(account, "createEmailPasswordSession", 0);
@@ -917,7 +919,7 @@ test("two people's sign-ins in flight, the NEWER answer landing after the older'
   createdA.complete({ ...FAKE_ACCOUNT }); // A's answer lands first, but B's submit had already superseded it
   await flush();
   assert.equal(
-    account.handoffs("createJWT").length,
+    account.handoffs("exchange").length,
     0,
     "A minted nothing: B's submit had already made A no longer the newest",
   );
@@ -926,8 +928,8 @@ test("two people's sign-ins in flight, the NEWER answer landing after the older'
   assert.equal(recorded.size, 0, "storage holds nothing");
 
   createdB.complete({ ...OTHER_ACCOUNT }); // B's answer lands late and lands as the person
-  const mintB = await untilHandoffAt(account, "createJWT", 0);
-  mintB.complete({ jwt: `${FAKE_JWT}-B`, expiresAtMs: START_MS + 900_000 });
+  const mintB = await untilHandoffAt(account, "exchange", 0);
+  mintB.complete(fakeExchangeAnswer(`${FAKE_JWT}-B`, START_MS + 900_000, {}, OTHER_ACCOUNT));
   assert.equal((await settles(newer, "the newer sign-in")).ok, true, "B, the newest sign-in, signed in");
   assert.equal(sessions.current.token, `${FAKE_JWT}-B`, "custody holds B's session");
 
@@ -943,7 +945,7 @@ test("two people's sign-ins in flight, the NEWER answer landing after the older'
 test("three sign-ins in flight: only the newest adopts, the two older answers resolve superseded and mint nothing", async () => {
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const first = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD); // person A submits
   const createdA = await untilHandoffAt(account, "createEmailPasswordSession", 0);
@@ -953,8 +955,8 @@ test("three sign-ins in flight: only the newest adopts, the two older answers re
   const createdC = await untilHandoffAt(account, "createEmailPasswordSession", 2);
 
   createdC.complete({ ...THIRD_ACCOUNT }); // the newest answer lands
-  const mintC = await untilHandoffAt(account, "createJWT", 0);
-  mintC.complete({ jwt: `${FAKE_JWT}-C`, expiresAtMs: START_MS + 900_000 });
+  const mintC = await untilHandoffAt(account, "exchange", 0);
+  mintC.complete(fakeExchangeAnswer(`${FAKE_JWT}-C`, START_MS + 900_000, {}, THIRD_ACCOUNT));
   assert.equal((await settles(third, "the newest sign-in")).ok, true, "C, the newest sign-in, signed in and adopted");
   assert.equal(sessions.current.token, `${FAKE_JWT}-C`);
 
@@ -971,7 +973,7 @@ test("three sign-ins in flight: only the newest adopts, the two older answers re
   assert.match(staleB.error, /superseded/);
 
   assert.equal(
-    account.handoffs("createJWT").length,
+    account.handoffs("exchange").length,
     1,
     "exactly one mint was asked, the newest sign-in's: the two stale answers carried no further",
   );
@@ -987,7 +989,7 @@ test("three sign-ins in flight: only the newest adopts, the two older answers re
 test("a sign-out during two sign-ins in flight cancels both: neither adopts, neither mints, and neither says superseded", async () => {
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const first = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD); // person A submits
   const createdA = await untilHandoffAt(account, "createEmailPasswordSession", 0);
@@ -1004,7 +1006,7 @@ test("a sign-out during two sign-ins in flight cancels both: neither adopts, nei
   createdB.complete({ ...OTHER_ACCOUNT }); // B's answer lands after the sign-out
   await flush();
   assert.equal(
-    account.handoffs("createJWT").length,
+    account.handoffs("exchange").length,
     0,
     "neither submit minted: the sign-out had cancelled both before either carried on",
   );
@@ -1032,7 +1034,7 @@ test("a sign-out during two sign-ins in flight cancels both: neither adopts, nei
 test("a sign-in in flight when sign-out is called mints and adopts nothing while deleteSession is still pending", async () => {
   const { recorded, sessions } = custody();
   const account = new DeferredAccountSurface({ deferDeleteSession: true });
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const pending = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD); // the sign-in is in flight
   const created = await untilHandoffAt(account, "createEmailPasswordSession", 0);
@@ -1042,7 +1044,7 @@ test("a sign-in in flight when sign-out is called mints and adopts nothing while
   created.complete({ ...FAKE_ACCOUNT }); // the platform accepts the credential while the sign-out waits
   await flush();
   assert.equal(
-    account.handoffs("createJWT").length,
+    account.handoffs("exchange").length,
     0,
     "the mint was never asked: the bump before the await cancelled the sign-in before its answer carried on",
   );
@@ -1067,7 +1069,7 @@ test("a resume in flight across a sign-in resolves cancelled: the sign-in's adop
   // test.
   const { sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const pending = controller.resume(); // the resume is in flight first
   const getSession = await untilHandoff(account, "getSession");
@@ -1075,22 +1077,22 @@ test("a resume in flight across a sign-in resolves cancelled: the sign-in's adop
   const signingIn = controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
   const created = await untilHandoff(account, "createEmailPasswordSession");
   created.complete({ ...FAKE_ACCOUNT });
-  const signInMint = await untilHandoff(account, "createJWT");
-  signInMint.complete({ jwt: `${FAKE_JWT}-MINT-SIGNED-IN`, expiresAtMs: START_MS + 900_000 });
+  const signInMint = await untilHandoff(account, "exchange");
+  signInMint.complete(fakeExchangeAnswer(`${FAKE_JWT}-EX-SIGNED-IN`, START_MS + 900_000));
   assert.equal((await signingIn).ok, true, "the sign-in completed and adopted");
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-SIGNED-IN`);
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-SIGNED-IN`);
 
   getSession.complete({ ...FAKE_ACCOUNT }); // the resume's answer lands late, after the sign-in adopted
   await flush();
   assert.equal(
-    account.handoff("createJWT"),
+    account.handoff("exchange"),
     signInMint,
     "the resume asked for no mint: the sign-in's adoption bump superseded it",
   );
   const result = await pending;
   assert.equal(result.ok, false, "the resume resolves an error Result instead of replacing the fresh sign-in");
   assert.match(result.error, /cancelled/);
-  assert.equal(sessions.current.token, `${FAKE_JWT}-MINT-SIGNED-IN`, "the fresh sign-in's session was not replaced");
+  assert.equal(sessions.current.token, `${FAKE_JWT}-EX-SIGNED-IN`, "the fresh sign-in's session was not replaced");
   assert.deepEqual(sessions.profile, { ...FAKE_ACCOUNT }, "the signed-in profile is untouched");
 });
 
@@ -1101,7 +1103,7 @@ test("a resume in flight across an out-of-band adoption resolves cancelled: the 
   // is where only it is under test.
   const { sessions } = custody();
   const account = new DeferredAccountSurface();
-  const controller = new AuthController({ account, sessions });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions });
 
   const pending = controller.resume(); // the resume is in flight
   const getSession = await untilHandoff(account, "getSession");
@@ -1116,7 +1118,7 @@ test("a resume in flight across an out-of-band adoption resolves cancelled: the 
 
   getSession.complete({ ...FAKE_ACCOUNT }); // the resume's answer lands after the adoption
   await flush();
-  assert.equal(account.handoff("createJWT"), null, "the resume asked for no mint: the adopt() bump superseded it");
+  assert.equal(account.handoff("exchange"), null, "the resume asked for no mint: the adopt() bump superseded it");
   const result = await pending;
   assert.equal(result.ok, false, "the resume resolves an error Result instead of replacing the adopted session");
   assert.match(result.error, /cancelled/);

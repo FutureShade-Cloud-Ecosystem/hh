@@ -18,6 +18,7 @@ const RECEIVABLES = "test/receivables.pw.ts";
 const LEDGER = "test/ledger.pw.ts";
 const LIENS = "test/liens.pw.ts";
 const COMPLIANCE = "test/compliance.pw.ts";
+const BANKREC = "test/bankrec.pw.ts";
 const FRONT_DOOR = "../front-door/test/acceptance/front-door.pw.ts";
 const CORE = "../../../core/cmd/core/";
 
@@ -140,7 +141,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "journal-register": [{ file: LEDGER, test: "the journal register keeps a journal number on one line and says what is later" }],
   "trial-balance": [{ file: LEDGER, test: "it reads the trial balance in balance, with the server's totals" }],
   "liens-areas": [
-    { file: LIENS, test: "the General Manager's area switch holds Liens and Compliance, and the controller's holds all four" },
+    { file: LIENS, test: "the General Manager's area switch holds Liens and Compliance, and the controller's holds all five" },
     { file: LIENS, test: "Payables and Receivables reads the jobs and the calendar and is offered no write" },
     { file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of eight" },
   ],
@@ -195,6 +196,46 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: LIENS, test: "the keys reach every tab and the release confirm, and focus lands where the screen changed" },
     { file: COMPLIANCE, test: "the keys reach the tabs, the filter and the save, and focus stays where the person was" },
     { file: COMPLIANCE, test: "every tab fits the screen with cards in place of tables" },
+  ],
+  "bankrec-area": [
+    { file: BANKREC, test: "the controller's third area lists the accounts, what waits on each, and the cards as tracking only" },
+    { file: BANKREC, test: "Payables and Receivables has no bank reconciliation area" },
+  ],
+  "bankrec-import": [
+    { file: BANKREC, test: "a statement pasted in imports, the same rows again add nothing, and a file the core cannot read says what it lacked" },
+    { file: BANKREC, test: "a statement file chosen in the browser fills the rows and imports to the card account" },
+    { file: "src/bankrec/bankrec-views.ts", source: "Uploading the file to FB Console Storage, and the bank feed, are not in this increment" },
+  ],
+  "bankrec-auto": [
+    { file: BANKREC, test: "auto match pairs the card, lodgement and batch lines and leaves the rest for the hand" },
+    { file: BANKREC, test: "auto match can be held to a window of dates, and a window that ends before it starts is refused in the browser" },
+  ],
+  "bankrec-hand": [
+    { file: BANKREC, test: "a line matched by hand to a payment leaves the unmatched list, and the refusals say what to do" },
+    { file: BANKREC, test: "a line matched by hand to a posted journal posts nothing new" },
+  ],
+  "bankrec-undo": [{ file: BANKREC, test: "an undo is confirmed, returns the line to unmatched and keeps the history" }],
+  "bankrec-month": [
+    { file: BANKREC, test: "a month opens with the difference in words, sign off is held until it is zero, and the refusal for unmatched lines is in words" },
+    { file: BANKREC, test: "matching the last lines lets the month sign off, and a signed off month is closed" },
+  ],
+  "bankrec-zero": [
+    { file: BANKREC, test: "a zero closing balance is not sent quietly: the core's replacement is said" },
+    { file: BANKREC, test: "a blank or invalid closing balance is refused in the browser and nothing is sent" },
+  ],
+  "bankrec-rules": [{ file: BANKREC, test: "the rules list what is in use, and approving a new version retires the old one" }],
+  "bankrec-refused": [
+    { file: BANKREC, test: "a refused write names who may do it, never the bare gate word" },
+    { file: BANKREC, test: "a refused sign off and a refused undo are said in words and change nothing" },
+  ],
+  "bankrec-states": [
+    { file: BANKREC, test: "while the accounts load the screen says so, a failed load offers Try again, and an empty list says so" },
+    { file: BANKREC, test: "the core's bare arrays and the contract's pages are both read, and anything else is refused, never half read" },
+    { file: BANKREC, test: "more than a page of lines shows more on request and follows the core's cursor to the end" },
+  ],
+  "bankrec-phone": [
+    { file: BANKREC, test: "on a phone the tables give way to cards and no screen scrolls the page sideways" },
+    { file: BANKREC, test: "the tabs and the controls work from the keyboard, and focus is visible" },
   ],
   "phone-sideways": [{ file: RECEIVABLES, test: "on a phone no screen scrolls the page sideways" }],
   "empty-world": [{ file: RECEIVABLES, test: "the empty world: each screen says so in words" }],

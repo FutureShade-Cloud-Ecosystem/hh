@@ -29,6 +29,9 @@ import { arStyles } from "./ar/ar-styles.js";
 import { GlApi } from "./gl/gl-api.js";
 import { GlDesk } from "./gl/gl-desk.js";
 import { glStyles } from "./gl/gl-styles.js";
+import { BankrecApi } from "./bankrec/bankrec-api.js";
+import { BankrecDesk } from "./bankrec/bankrec-desk.js";
+import { bankrecStyles } from "./bankrec/bankrec-styles.js";
 import { LienApi } from "./lien/lien-api.js";
 import { LienDesk, type LienHost } from "./lien/lien-desk.js";
 import { lienStyles } from "./lien/lien-styles.js";
@@ -46,20 +49,21 @@ const GENERAL_MANAGER_ROLE = "general_manager";
 
 // The desk's areas, in switch order. A new area is one more entry here, one case in #onHostClick for its presses
 // and one in renderArea for its screens.
-const AREAS = ["ledger", "receivables", "liens", "compliance"] as const;
+const AREAS = ["ledger", "receivables", "bank", "liens", "compliance"] as const;
 type Area = (typeof AREAS)[number];
 
-// The areas each role holds, and the one it lands on (the first listed). The controller holds all four; Payables and
+// The areas each role holds, and the one it lands on (the first listed). The controller holds all five; Payables and
 // Receivables lands on receivables and holds the liens and the calendar beside it; the General Manager, who holds the
 // release gate of the liens, lands there.
 const AREAS_BY_ROLE: Readonly<Record<string, readonly Area[]>> = {
-  [CONTROLLER_ROLE]: ["ledger", "receivables", "liens", "compliance"],
+  [CONTROLLER_ROLE]: ["ledger", "receivables", "bank", "liens", "compliance"],
   [PAYREC_ROLE]: ["receivables", "liens", "compliance"],
   [GENERAL_MANAGER_ROLE]: ["liens", "compliance"],
 };
 const AREA_LABEL: Readonly<Record<Area, string>> = {
   ledger: "Approvals and ledger",
   receivables: "Receivables",
+  bank: "Bank reconciliation",
   liens: "Liens",
   compliance: "Compliance",
 };
@@ -69,7 +73,7 @@ const AREA_LABEL: Readonly<Record<Area, string>> = {
 const MONEY_DESK_FLOWS: readonly string[] = ["payables-receivables", "financial-controller"];
 
 export class MoneyDeskApp extends HHElement {
-  static styles = [baseStyles, entryStyles, arStyles, glStyles, lienStyles, css`
+  static styles = [baseStyles, entryStyles, arStyles, glStyles, bankrecStyles, lienStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
     main.gl-desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
@@ -110,6 +114,26 @@ export class MoneyDeskApp extends HHElement {
   // this element's own shadow root. The controller holds both desks and switches between them.
   #gl = this.#newGlDesk();
   #area: Area = "ledger";
+
+  // The bank reconciliation slice (src/bankrec): the controller's area, loaded when it is first chosen.
+  #bank = this.#newBankDesk();
+
+  #newBankDesk(): BankrecDesk {
+    return new BankrecDesk(new BankrecApi(this.#staffClient), {
+      repaint: () => this.requestUpdate(),
+      setField: (name, value) => {
+        const el = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[data-field="${name}"]`);
+        if (el === null) return;
+        if (el instanceof HTMLSelectElement) {
+          const at = [...el.options].findIndex((o) => o.getAttribute("data-id") === value);
+          if (at >= 0 && el.selectedIndex !== at) el.selectedIndex = at;
+        } else if (el instanceof HTMLInputElement && el.type === "file") {
+          if (value === "") el.value = "";
+        } else if (el.value !== value) el.value = value;
+      },
+      reveal: (selector) => this.renderRoot.querySelector(selector)?.scrollIntoView({ block: "start", behavior: "smooth" }),
+    });
+  }
 
   // The liens slice (src/lien) and the compliance slice (src/compliance): the fields they read are looked up in
   // this element's own shadow root, a select by the id of its chosen option.
@@ -278,6 +302,7 @@ export class MoneyDeskApp extends HHElement {
       return;
     }
     if (control !== undefined && this.#isController() && this.#area === "ledger" && this.#gl.press(control)) return;
+    if (control !== undefined && this.#isController() && this.#area === "bank" && this.#bank.press(control)) return;
     if (control !== undefined && this.#area === "liens" && this.#lien.press(control)) return;
     if (control !== undefined && this.#area === "compliance" && this.#compliance.press(control)) return;
     if (control !== undefined && this.#ar.press(control)) return;
@@ -289,13 +314,17 @@ export class MoneyDeskApp extends HHElement {
 
   readonly #onInput = (event: Event): void => {
     const target = event.target;
-    if (target instanceof Element && target.hasAttribute("data-field")) this.#ar.input(target);
+    if (target instanceof Element && target.hasAttribute("data-field")) {
+      this.#ar.input(target);
+      this.#bank.input(target);
+    }
   };
 
   readonly #onChange = (event: Event): void => {
     const target = event.target;
     if (target instanceof Element && target.hasAttribute("data-field")) {
       this.#ar.change(target);
+      this.#bank.change(target);
       if (this.#area === "liens") this.#lien.change(target);
       if (this.#area === "compliance") this.#compliance.change(target);
     }
@@ -347,6 +376,7 @@ export class MoneyDeskApp extends HHElement {
     super.updated(changed);
     this.#ar.afterRender();
     this.#gl.afterRender();
+    if (this.#area === "bank") this.#bank.afterRender();
     if (this.#area === "liens") this.#lien.afterRender();
     if (this.#area === "compliance") this.#compliance.afterRender();
     const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
@@ -397,6 +427,7 @@ export class MoneyDeskApp extends HHElement {
   // compliance desks read themselves the first time their area opens.
   #startGl(): void {
     this.#gl = this.#newGlDesk();
+    this.#bank = this.#newBankDesk();
     this.#lien = this.#newLienDesk();
     this.#compliance = this.#newComplianceDesk();
     this.#area = this.#areas()[0] ?? "receivables";
@@ -405,6 +436,7 @@ export class MoneyDeskApp extends HHElement {
   }
 
   #openArea(): void {
+    if (this.#area === "bank") this.#bank.ensureLoaded();
     if (this.#area === "liens") this.#lien.ensureLoaded();
     if (this.#area === "compliance") this.#compliance.ensureLoaded();
   }
@@ -413,6 +445,7 @@ export class MoneyDeskApp extends HHElement {
     this.#sessions.clear();
     this.#ar = this.#newDesk();
     this.#gl = this.#newGlDesk();
+    this.#bank = this.#newBankDesk();
     this.#lien = this.#newLienDesk();
     this.#compliance = this.#newComplianceDesk();
     clearFrontDoorHandoff();
@@ -440,6 +473,8 @@ export class MoneyDeskApp extends HHElement {
     switch (this.#area) {
       case "ledger":
         return html`<main class="gl-desk">${this.#gl.render()}</main>`;
+      case "bank":
+        return html`<main class="br-desk">${this.#bank.render()}</main>`;
       case "liens":
         return html`<main class="li-desk">${this.#lien.render()}</main>`;
       case "compliance":
