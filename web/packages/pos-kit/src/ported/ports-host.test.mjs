@@ -188,3 +188,34 @@ test('the panel store keeps only what the session wrote: one key goes, the rest 
   assert.equal(readPanelLayoutRaw('key-two'), 'two');
   clearSessionState();
 });
+
+// ── the core's base URL (item 7d: a console copy's core may sit on another origin) ──
+
+test('a host with a base URL sends every ported call to the core there; without one the call stays relative', async () => {
+  const realFetch = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = (async (url) => {
+    seen.push(String(url));
+    return new Response('{}', { status: 200 });
+  });
+  try {
+    wirePorts({
+      headers: async () => ({ 'X-Org': 'gable' }),
+      houseDay: () => HOUSE_DAY,
+      user: () => null,
+      token: () => 'stub-token',
+      baseUrl: 'https://core.example.test',
+    });
+    await api('/api/v1/pos/policy?branch_id=b');
+    wirePorts({
+      headers: async () => ({ 'X-Org': 'hh-demo' }),
+      houseDay: () => HOUSE_DAY,
+      user: () => null,
+      token: () => 'stub-token',
+    });
+    await api('/api/v1/pos/policy?branch_id=b');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.deepEqual(seen, ['https://core.example.test/api/v1/pos/policy?branch_id=b', '/api/v1/pos/policy?branch_id=b']);
+});

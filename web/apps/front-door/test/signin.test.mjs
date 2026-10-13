@@ -113,7 +113,7 @@ test("the micro apps' role table is the front door's role catalog: each live rol
     const byHref = { "/till/": "counter-till", "/quote/": "quote-desk", "/home/": "manager-home", "/drive/": "drive-run", "/buying-and-stock/": "buying-and-stock", "/money-desk/": "money-desk", "/yard/": "yard-pick" };
     return byHref[tile.href] ?? null;
   };
-  for (const appId of APP_IDS) {
+  for (const appId of APP_IDS.filter((id) => id !== "role-template")) {
     const fromCatalog = LIVE_ROLES.filter((role) => role.tiles.some((tile) => appOfTile(tile) === appId)).map((role) => role.id);
     assert.deepEqual([...APP_ROLES[appId]].sort(), fromCatalog.sort(), appId);
   }

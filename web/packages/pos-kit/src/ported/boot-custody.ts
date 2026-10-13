@@ -31,6 +31,7 @@ import {
   type StorageLike,
 } from "@hardscapehouse/auth";
 import { createAppwriteAccountSurface, enterPersona } from "@hardscapehouse/auth/appwrite-adapter";
+import type { EntryView } from "./entry.js";
 import { loadRuntimeConfig, type ConsoleRuntimeConfig, type RuntimeConfig } from "@hardscapehouse/auth/runtime-config";
 
 // ── the role matrix, once ─────────────────────────────────────────────────
@@ -66,6 +67,7 @@ export const APP_IDS = [
   "money-desk",
   "yard-pick",
   "dealer-admin",
+  "role-template",
 ] as const;
 export type AppId = (typeof APP_IDS)[number];
 
@@ -83,6 +85,8 @@ export const APP_ROLES: Readonly<Record<AppId, readonly RoleCode[]>> = {
   "money-desk": ["payables_receivables", "financial_controller"],
   "yard-pick": ["yard_manager", "yard_team"],
   "dealer-admin": ["sales_manager"],
+  // The role template admits every live role until the role that copies it narrows this list (ROLE-GOES-LIVE.md).
+  "role-template": ["inside_sales", "sales_manager", "yard_manager", "yard_team", "payables_receivables", "procurement_manager", "driver", "financial_controller"],
 };
 
 /** What an app needs from the session the exchange named, in its own terms. */
@@ -137,6 +141,11 @@ export function servedConsoleConfig(): ConsoleRuntimeConfig | null {
   return served;
 }
 
+/** The entry view an app shows while it has no session and the demo cards do not apply: its existing unavailable state. */
+export function entryUnavailable(): EntryView {
+  return { flows: { kind: "unavailable", status: null }, busy: false, message: null };
+}
+
 // ── custody ───────────────────────────────────────────────────────────────
 
 export type AppStart =
@@ -161,6 +170,11 @@ export interface BootDeps {
   pageOrigin?: string;
 }
 
+/** The build's BASE_URL (Vite sets it); "/" when there is none. Read loosely: these apps carry no Vite client types. */
+function buildBase(): string {
+  return (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? "/";
+}
+
 export interface Custody {
   readonly mode: "demo" | "console";
   readonly controller: AuthController;
@@ -176,9 +190,12 @@ export interface Custody {
   /** Console mode: recover the session and report each outcome until it is final. Demo mode: nothing. */
   begin(appId: AppId, onOutcome: (outcome: AppStart) => void): void;
   /** Sign out for good: end the session, forget the persona id, stop the loops, then go to the front door. True when it navigated. */
-  leave(baseUrl: string): Promise<boolean>;
-  /** Go to the front door when the app is served under a prefix (the front door is at the origin root); true when it navigated. */
-  toFrontDoor(baseUrl: string): boolean;
+  leave(baseUrl?: string): Promise<boolean>;
+  /**
+   * Go to the front door when the app is served under a prefix (the front door is at the origin
+   * root); true when it navigated. The base is the build's BASE_URL unless a test names one.
+   */
+  toFrontDoor(baseUrl?: string): boolean;
 }
 
 const RETRY_FIRST_MS = 15_000;
@@ -202,7 +219,7 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
     ((url: string): void => {
       (globalThis as unknown as { window: { location: { assign: (u: string) => void } } }).window.location.assign(url);
     });
-  const toFrontDoor = (baseUrl: string): boolean => {
+  const toFrontDoor = (baseUrl: string = buildBase()): boolean => {
     if (baseUrl === "/") return false;
     navigate("/");
     return true;
@@ -219,7 +236,7 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
       coreBaseUrl: "",
       identity: () => null,
       begin: () => {},
-      leave: async (baseUrl) => {
+      leave: async (baseUrl = buildBase()) => {
         await controller.signOut();
         return toFrontDoor(baseUrl);
       },
@@ -355,7 +372,7 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
       };
       void run();
     },
-    async leave(baseUrl) {
+    async leave(baseUrl = buildBase()) {
       generation += 1; // every loop and any attempt in flight stops reporting
       stopTimer();
       memo.clear();

@@ -111,6 +111,7 @@ test("every app lists the role codes the matrix gives it, and every role code ha
   assert.deepEqual(APP_ROLES["money-desk"], ["payables_receivables", "financial_controller"]);
   assert.deepEqual(APP_ROLES["buying-and-stock"], ["yard_manager", "procurement_manager"]);
   assert.deepEqual(APP_ROLES["dealer-admin"], ["sales_manager"]);
+  assert.deepEqual([...APP_ROLES["role-template"]].sort(), Object.keys(ROLE_FLOWS).sort());
   assert.deepEqual(APP_ROLES["manager-home"], ["sales_manager", "yard_manager", "payables_receivables", "procurement_manager", "financial_controller"]);
   assert.equal(ROLE_FLOWS["sales_manager"], "sales-manager");
   assert.equal(ROLE_FLOWS["inside_sales"], "sales");

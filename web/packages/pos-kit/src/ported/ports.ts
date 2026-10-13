@@ -64,6 +64,11 @@ export interface PortHost {
    * with no real picture on the stacked-stone glyph.
    */
   productTile?(category: string, theme: 'light' | 'dark'): string | null;
+  /**
+   * The core's base URL when it is not the page's own origin (a console copy points the app at the
+   * dealer's core); absent or empty keeps every call relative, as the demo's always were.
+   */
+  baseUrl?: string;
 }
 
 /** True when the host has been wired and carries a live session. */
@@ -279,7 +284,7 @@ export async function api(path: string, init: RequestInit = {}): Promise<Respons
       // not JSON: send it as it arrived and let the server refuse it
     }
   }
-  const response = await fetch(path, { ...init, body, headers });
+  const response = await fetch(`${(host.baseUrl ?? '').replace(/\/+$/, '')}${path}`, { ...init, body, headers });
   // The parked list arrives in the contract's page shape ({items, limit}); the
   // ported panel reads the bare rows. Unwrapped here, once, so every ported
   // call site keeps the reference's own shape: the rows themselves are
@@ -853,7 +858,7 @@ export async function putProductImage(productId: string, file: File): Promise<Re
   if (host === null) return unwired('putProductImage');
   const headers = new Headers(await host.headers());
   headers.set('Content-Type', file.type || 'image/png');
-  return fetch(`/api/v1/products/${encodeURIComponent(productId)}/image?alt=${encodeURIComponent(file.name)}`, {
+  return fetch(`${(host.baseUrl ?? '').replace(/\/+$/, '')}/api/v1/products/${encodeURIComponent(productId)}/image?alt=${encodeURIComponent(file.name)}`, {
     method: 'PUT',
     headers,
     body: file,
