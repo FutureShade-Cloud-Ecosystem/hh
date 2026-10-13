@@ -1,3 +1,105 @@
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+
+use hh_shell_core::profiles;
+use hh_shell_core::store::{self, SqlRow, SqlStatement, SqlValue, Store};
+
+// The offline store's fixed database file, named per profile (plan B.3: the
+// declared scopes pull into one durable local store). It lives in the app
+// config dir; the webview never names a path. Work's file is its own, never
+// Field's: the two profiles are different installs with different identifiers.
+const STORE_FILE: &str = "work.sqlite3";
+
+fn open_store(app: &tauri::AppHandle) -> Result<Store, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    store::Store::open_path(&dir.join(STORE_FILE))
+}
+
+// The blocking helper keeps the store's SQLite work on a blocking thread,
+// never on the main thread or an async worker.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+}
+
+// The offline store's executor seam: the store package's SQLite backend
+// drives these two commands and nothing else. `run_statement` covers the
+// seam's run (ignore the rows) and all (take the rows); `run_atomic` is the
+// seam's atomic. The database is the profile's one fixed file (STORE_FILE),
+// not a webview chosen path, and ATTACH and DETACH are refused inside the
+// core (see hh-shell-core::store).
+#[tauri::command]
+async fn run_statement(
+    sql: String,
+    params: Option<Vec<SqlValue>>,
+    store: tauri::State<'_, Store>,
+) -> Result<Vec<SqlRow>, String> {
+    let store = store.inner().clone();
+    blocking(move || store.run(&sql, params.unwrap_or_default())).await
+}
+
+#[tauri::command]
+async fn run_atomic(statements: Vec<SqlStatement>, store: tauri::State<'_, Store>) -> Result<(), String> {
+    let store = store.inner().clone();
+    blocking(move || store.atomic(statements)).await
+}
+
+// One startup line naming the profile the shell is running (the gates and
+// device legs read it; nothing here is secret: profile facts only, never
+// tokens or keys). The update values are the Work channel's configuration
+// from tauri.conf.json (pinned by the tests below).
+fn profile_line(plugin_config: &tauri::utils::config::PluginConfig) -> String {
+    let p = profiles::work();
+    let endpoint = plugin_config
+        .0
+        .get("updater")
+        .and_then(|u| u.get("endpoints"))
+        .and_then(|e| e.get(0))
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    serde_json::json!({
+        "identifier": p.identifier,
+        "product": p.product_name,
+        "brand": p.brand,
+        "channel": p.channel.as_str(),
+        "window": { "title": p.window.title, "width": p.window.width, "height": p.window.height },
+        "permissions": { "camera": p.permissions.camera, "fine_location": p.permissions.fine_location },
+        "updates": { "channel": p.channel.as_str(), "endpoint": endpoint },
+        "store": { "file": STORE_FILE },
+        "apps": p.apps.iter().map(|a| serde_json::json!({
+            "id": a.id,
+            "name": a.name,
+            "offline": a.offline.as_ref().map(|o| serde_json::json!({
+                "mode": o.mode,
+                "scopes": o.scopes,
+                "conflict_policy": o.conflict_policy,
+            })),
+        })).collect::<Vec<_>>(),
+    })
+    .to_string()
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        // The Work channel's updater (see tauri.conf.json plugins.updater and
+        // the README): registered, but nothing polls until the shell chrome's
+        // update prompt asks, so the placeholder endpoint stays idle.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![run_statement, run_atomic])
+        .setup(|app| {
+            let profile = profiles::work();
+            println!("HH_PROFILE {}", profile_line(&app.config().plugins));
+            app.manage(open_store(app.handle()).expect("the profile's store opens"));
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                .title(profile.window.title)
+                .inner_size(profile.window.width, profile.window.height)
+                .build()?;
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running HH Work");
+}
+
 #[cfg(test)]
 mod tests {
     use hh_shell_core::profiles;
@@ -150,6 +252,8 @@ mod tests {
         assert_eq!(money["offline"]["mode"], "none");
         let till = apps.iter().find(|a| a["id"] == "counter-till").unwrap();
         assert_eq!(till["offline"]["mode"], "read_cache_only");
-        assert!(!line.to_lowercase().contains("token"), "no secret-shaped field in the line");
+        for secret in ["session_token", "secret", "password", "private"] {
+            assert!(!line.to_lowercase().contains(secret), "a secret-shaped field ({secret}) is in the line");
+        }
     }
 }

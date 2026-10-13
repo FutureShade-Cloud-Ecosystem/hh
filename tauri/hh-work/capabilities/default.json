@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Work main window only. The core's default window permissions and this profile's app commands, allowed by name (they are declared in build.rs; core:default does not cover app commands). Capabilities are per profile and never copied between profiles: Work holds no device permission at all (the device grants are Field only, plan B.3), and nothing here is taken from hh-field's file.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-run-statement",
+    "allow-run-atomic",
+    "updater:default"
+  ]
+}
