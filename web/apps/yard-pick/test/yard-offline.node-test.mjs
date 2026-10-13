@@ -276,3 +276,17 @@ test("the banner mode maps the runner state and the ownership onto the chrome's 
   assert.equal(bannerMode("idle", "read_cache_only"), "read-only");
   assert.equal(bannerMode("offline", "read_cache_only"), "read-only");
 });
+
+test("a second skid count before any pull names the first count as its previous one", async () => {
+  const { layer, server } = await rig();
+  server.setOffline(true);
+  const first = await layer.recordSkids(TASK, 2, "COUNT_CORRECTION", "");
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+  assert.equal(first.value.previous_skid_count, null);
+  const second = await layer.recordSkids(TASK, 5, "CONDENSED_SKIDS", "");
+  assert.equal(second.ok, true);
+  if (!second.ok) return;
+  assert.equal(second.value.previous_skid_count, 2);
+  assert.equal(second.value.changed, true);
+});

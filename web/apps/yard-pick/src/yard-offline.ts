@@ -326,6 +326,13 @@ export class YardOffline {
     if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };
     if (weightsRow.row !== null) {
       await this.#patchRow("weights", taskId, (data) => ({ ...data, skid_count: skidCount, reason }));
+    } else {
+      // No pulled row yet: the device keeps its own count, so a second save
+      // before any pull still names the first one as the previous count.
+      await this.#sql.run(`INSERT OR IGNORE INTO ${entityTable("weights")} (id, seq, data, deleted) VALUES (?, 0, ?, 0)`, [
+        taskId,
+        JSON.stringify({ id: taskId, task_id: taskId, skid_count: skidCount, reason }),
+      ]);
     }
     this.#writtenSincePull.add(`weights:${taskId}`);
     this.requestSync();
