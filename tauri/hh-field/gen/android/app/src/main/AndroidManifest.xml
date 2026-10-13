@@ -2,6 +2,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Device permissions are Field only (plan B.3): camera and fine location
+         serve the yard apps' capture and geolocation surfaces, and no other
+         profile may copy them. The webview asks through its own surfaces; the
+         capture file itself travels through the FileProvider, whose wry
+         capture root in res/xml/file_paths.xml must stay. -->
+    <!-- CAMERA: proof of delivery and yard photos (HH Drive pod capture, Yard
+         Pick receiving photos), taken with the device camera app through the
+         webview's capture input. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- ACCESS_FINE_LOCATION: the driver's stop position on HH Drive while the
+         app is in use. Coarse location is not enough for a delivery proof. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 

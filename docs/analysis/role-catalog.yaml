@@ -1,5 +1,5 @@
 # Origin: `analysis/role-catalog.yaml` in `futurebuildai/hh_pro_dibbits` at commit 829d387baec93556ffa0e9242f4091e9be9544ec (read only source).
-# Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged except the role lines a recorded decision has touched: the `public-desk` roles line, amended by D23, and the internal surfaces' role lists, reconciled to the decided access matrix by D48.
+# Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged except the role lines a recorded decision has touched: the `public-desk` roles line, amended by D23, the internal surfaces' role lists, reconciled to the decided access matrix by D48, and the contractor roles, reconciled to the core's five stored portal roles by decision log row 1592.
 # This copy is the live role catalog from D23 onward; the copy in hh_pro_dibbits is frozen at the close of HH-1.
 # In-body `analysis/...` paths resolve to `docs/analysis/...` in this copy.
 
@@ -401,6 +401,7 @@ roles:
     audience: external
     origin: both
     origin_codes: [owner, account_admin]
+    core_role: account_admin
     tier: external
     scope: tenant
     devices: [phone, desktop]
@@ -417,10 +418,11 @@ roles:
       - hardscapeos_dibbits/app/src/portal/portal-shell.ts
 
   - id: contractor_buyer
-    label: Contractor Project Manager
+    label: Contractor Buyer
     audience: external
-    origin: both
-    origin_codes: [pm, buyer]
+    origin: erp
+    origin_codes: [buyer]
+    core_role: buyer
     tier: external
     scope: tenant
     devices: [phone, desktop]
@@ -428,7 +430,27 @@ roles:
     top_jobs:
       - Build the scope of an order from the catalogue at the account price, not list.
       - Push an order to the supplier quote desk when a line has no price behind it.
-      - Track the order to the truck and reschedule before it is out for delivery.
+      - Track the order to the truck, reschedule before it is out for delivery, and pay the invoices the order raises.
+    micro_apps: [pro-procurement, pro-pay, pro-field]
+    sources:
+      - hardscapeos_dibbits/app/src/portal/portal-api.ts
+      - hh_pro_dibbits/src/core/selectors/pricing.ts
+      - hh_pro_dibbits/src/ui/pages/OrderPage.tsx
+
+  - id: contractor_buyer_no_pay
+    label: Contractor Project Manager
+    audience: external
+    origin: both
+    origin_codes: [pm, buyer_no_pay]
+    core_role: buyer_no_pay
+    tier: external
+    scope: tenant
+    devices: [phone, desktop]
+    environment: site
+    top_jobs:
+      - Build the scope of an order from the catalogue at the account price, not list.
+      - Push an order to the supplier quote desk when a line has no price behind it.
+      - Track the order to the truck and reschedule before it is out for delivery; payment stays with the buyer, accounts payable and the owner.
     micro_apps: [pro-procurement, pro-field]
     sources:
       - hh_pro_dibbits/src/core/domain/team.ts
@@ -441,6 +463,7 @@ roles:
     audience: external
     origin: hhpro
     origin_codes: [ap]
+    core_role: ap_finance
     tier: external
     scope: tenant
     devices: [desktop, phone]
@@ -461,6 +484,7 @@ roles:
     audience: external
     origin: both
     origin_codes: [field, field_crew]
+    core_role: field_crew
     tier: external
     scope: tenant
     devices: [phone]
@@ -872,7 +896,7 @@ micro_apps:
   - id: pro-procurement
     name: Pro Procurement Board
     audience: external
-    roles: [contractor_owner, contractor_buyer]
+    roles: [contractor_owner, contractor_buyer, contractor_buyer_no_pay]
     devices: [phone, desktop]
     kit: list-detail
     brand: hh-pro
@@ -914,7 +938,7 @@ micro_apps:
   - id: pro-pay
     name: Pro Pay
     audience: external
-    roles: [contractor_ap, contractor_owner]
+    roles: [contractor_ap, contractor_owner, contractor_buyer]
     devices: [desktop, phone]
     kit: list-detail
     brand: hh-pro
@@ -950,7 +974,7 @@ micro_apps:
   - id: pro-field
     name: Pro Field
     audience: external
-    roles: [contractor_field, contractor_buyer, contractor_owner]
+    roles: [contractor_field, contractor_buyer, contractor_buyer_no_pay, contractor_owner]
     devices: [phone]
     kit: list-detail
     brand: hh-pro
