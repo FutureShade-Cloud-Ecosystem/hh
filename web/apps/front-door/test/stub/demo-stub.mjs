@@ -378,13 +378,14 @@ async function handleConsole(request, response, url) {
     }
     if (answerArmed(response, "persona")) return true;
     const seconds = typeof consoleArms.personaWindowSeconds === "number" ? consoleArms.personaWindowSeconds : 600;
-    const row = FLOWS.find((candidate) => candidate.role_code === persona);
+    // Keyed by the core's persona id, which is the flow id (sales-manager), not the role code.
+    const row = FLOWS.find((candidate) => candidate.flow === persona);
     const user = row === undefined ? undefined : USERS[row.flow];
     if (user === undefined) {
       sendJson(response, 400, sharedBody(400));
       return true;
     }
-    const block = { ...user, user_id: `persona:${persona}`, email: `${persona}@hh-demo.invalid`, display_name: user.role_name };
+    const block = { ...user, user_id: `persona:${persona}`, email: `${row.role_code}@hh-demo.invalid`, display_name: user.role_name };
     sendJson(response, 200, { token: coreToken(block.user_id, seconds), expiresAtMs: Date.now() + seconds * 1000, user: block });
     return true;
   }

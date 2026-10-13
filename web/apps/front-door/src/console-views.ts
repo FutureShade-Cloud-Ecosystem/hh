@@ -174,7 +174,7 @@ export function personaCards(
 ): TemplateResult {
   return html`
     <div class="cards" data-testid="persona-cards">
-      ${LIVE_ROLES.map((role) => card(role, session.personaRefusal(role.id), session.personaBusy === role.id))}
+      ${LIVE_ROLES.map((role) => card(role, session.personaRefusal(role.flow), session.personaBusy === role.flow))}
     </div>
     ${coming()}
   `;

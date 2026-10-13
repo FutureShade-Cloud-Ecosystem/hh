@@ -328,12 +328,20 @@ test.describe("the persona cards", () => {
     await page.getByTestId("persona-cards").getByRole("button", { name: "Yard Team", exact: true }).click();
     await expect(page.getByTestId("home-title")).toHaveText("Yard Team");
     const calls = (await peek(page)).personas;
-    expect(calls.map((call) => call.persona)).toEqual(["driver", "yard_team"]);
+    expect(calls.map((call) => call.persona)).toEqual(["driver", "yard-team"]);
     expect(calls.every((call) => call.authorized)).toBe(true);
     await expect(page.getByRole("button", { name: "Switch role" })).toBeVisible();
     await page.getByRole("button", { name: "Switch role" }).click();
     await expect(page.getByTestId("role-entry")).toBeVisible();
     await expect(page.getByTestId("continue-own")).toHaveText(/Continue as Sales Manager/);
+  });
+
+  test("a persona whose flow id and role code differ is sent by flow and lands on its role's home", async ({ page, baseURL }) => {
+    await serve(page, baseURL!, { personas: true, personasOpen: true });
+    await page.goto("/");
+    await page.getByTestId("persona-cards").getByRole("button", { name: "Sales manager", exact: true }).click();
+    await expect(page.getByTestId("home-title")).toHaveText("Sales manager");
+    expect((await peek(page)).personas.map((call) => call.persona)).toEqual(["sales-manager"]);
   });
 
   test("the public copy: cards on the sign in screen with no bearer, and a persona ends at its expiry", async ({ page, baseURL }) => {
@@ -342,7 +350,7 @@ test.describe("the persona cards", () => {
     await expect(page.getByTestId("persona-cards")).toBeVisible();
     await page.getByTestId("persona-cards").getByRole("button", { name: "Sales", exact: true }).click();
     await expect(page.getByTestId("home-title")).toHaveText("Sales");
-    expect((await peek(page)).personas).toEqual([{ persona: "inside_sales", authorized: false }]);
+    expect((await peek(page)).personas).toEqual([{ persona: "sales", authorized: false }]);
     expect((await peek(page)).exchanges).toBe(0);
     await expect(status(page)).toHaveText("Your session ended. Sign in again.", { timeout: 15_000 });
     expect((await peek(page)).exchanges).toBe(0);

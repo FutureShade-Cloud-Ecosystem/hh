@@ -1264,7 +1264,7 @@ export class FrontDoorApp extends HHElement {
     `;
   }
 
-  /** One live role card. The demo's calls the mint with the flow; the console's calls the persona route with the role id. */
+  /** One live role card. The demo's calls the mint with the flow; the console's calls the persona route with the flow id (the core's persona id). */
   #roleCard(
     role: LiveRole,
     options: { action: "choose" | "persona"; verb: string; busy: boolean; anyBusy: boolean; refusal: string | undefined },
@@ -1277,7 +1277,7 @@ export class FrontDoorApp extends HHElement {
         class="card ${starting ? "starting" : ""}"
         data-action=${options.action}
         data-flow=${options.action === "choose" ? role.flow : nothing}
-        data-persona=${options.action === "persona" ? role.id : nothing}
+        data-persona=${options.action === "persona" ? role.flow : nothing}
         aria-label=${role.label}
         ?disabled=${options.anyBusy}
       >

@@ -261,10 +261,10 @@ export class ConsoleSession {
     this.#changed();
   }
 
-  /** One persona card. The refusal, if any, stands in that card; the others keep working. */
+  /** One persona card. The id is the core's persona id, which is the role's flow id ("sales-manager"), not its role code. The refusal, if any, stands in that card; the others keep working. */
   async persona(id: string): Promise<void> {
     if (!this.config.personas || this.#personaBusy !== null) return;
-    if (!LIVE_ROLES.some((role) => role.id === id)) return;
+    if (!LIVE_ROLES.some((role) => role.flow === id)) return;
     this.#personaBusy = id;
     this.#refusals.delete(id);
     this.#changed();

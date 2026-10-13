@@ -16,6 +16,7 @@ import {
 } from "@hardscapehouse/auth/testing";
 import { ConsoleSession } from "../src/console.js";
 import { SIGN_IN_WORDS, PERSONA_REFUSAL_WORDS } from "../src/signin.js";
+import { LIVE_ROLES } from "../src/roles.js";
 
 const START = 1_000_000_000_000;
 const CONFIG = {
@@ -59,9 +60,12 @@ class World {
         const body = JSON.parse(init.body);
         this.personaCalls.push({ body, headers: init.headers });
         if (this.personaStatus !== 200) return new Response(null, { status: this.personaStatus });
+        // The core's persona ids are the flow ids; the answer names the role code (they differ for sales-manager).
+        const live = LIVE_ROLES.find((role) => role.flow === body.persona);
+        if (live === undefined) return new Response(null, { status: 403 });
         const result = fakeExchangeAnswer(`fake-persona-token-${body.persona}`, this.clock.now() + 600_000, {
           user_id: `persona:${body.persona}`,
-          role_code: body.persona,
+          role_code: live.id,
           role_name: `Persona ${body.persona}`,
           display_name: `Persona ${body.persona}`,
         });
@@ -308,7 +312,7 @@ test("persona cards: an entry adopts the answer, lands, and arms no refresh", as
 
 test("the testers' copy sends the partner's bearer to the persona route", async () => {
   const w = await signedInWorld({ config: { ...CONFIG, personas: true } });
-  await w.session.persona("yard_team");
+  await w.session.persona("yard-team");
   assert.equal(w.personaCalls[0].headers.Authorization, "Bearer fake-core-token-1");
 });
 
@@ -318,9 +322,9 @@ test("a persona refusal shows in the card that earned it and the others keep wor
   await w.session.persona("driver");
   assert.equal(w.session.phase, "signed-out");
   assert.equal(w.session.personaRefusal("driver"), PERSONA_REFUSAL_WORDS.rate_limited);
-  assert.equal(w.session.personaRefusal("yard_team"), "");
+  assert.equal(w.session.personaRefusal("yard-team"), "");
   w.personaStatus = 200;
-  await w.session.persona("yard_team");
+  await w.session.persona("yard-team");
   assert.equal(w.session.phase, "signed-in");
   assert.equal(w.session.personaRefusal("driver"), PERSONA_REFUSAL_WORDS.rate_limited, "the other card's refusal stands until its own retry");
 });
@@ -342,7 +346,7 @@ test("persona entry offline is refused in the card without a call; an unknown pe
   assert.equal(w.session.personaRefusal("driver"), PERSONA_REFUSAL_WORDS.offline);
   assert.equal(w.personaCalls.length, 0);
   w.online = true;
-  await w.session.persona("not_a_role");
+  await w.session.persona("not-a-role");
   assert.equal(w.personaCalls.length, 0);
 });
 
@@ -399,4 +403,16 @@ test("nothing bearer capable is written to storage", async () => {
 test("onChange fires as the state moves", async () => {
   const w = await signedInWorld();
   assert.ok(w.changes > 3);
+});
+
+test("the persona id sent is the core's flow id, not the role code (sales-manager differs from sales_manager)", async () => {
+  const w = await signedOutWorld({ config: { ...CONFIG, personas: true, personasOpen: true } });
+  await w.session.persona("sales-manager");
+  assert.deepEqual(w.personaCalls[0].body, { persona: "sales-manager" });
+  assert.equal(w.session.who.roleCode, "sales_manager", "the answer's role code still drives the landing");
+  assert.equal(w.session.phase, "signed-in");
+  const w2 = await signedOutWorld({ config: { ...CONFIG, personas: true, personasOpen: true } });
+  await w2.session.persona("sales_manager");
+  assert.equal(w2.personaCalls.length, 0, "a role code is not a persona id");
+  assert.equal(w2.session.phase, "signed-out");
 });
