@@ -1,9 +1,21 @@
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 use hh_shell_core::keychain::{self, Slot};
 use hh_shell_core::profiles;
+use hh_shell_core::store::{self, SqlRow, SqlStatement, SqlValue, Store};
 
 const KEYCHAIN_SERVICE: &str = "ai.futurebuild.hh.field";
+
+// The offline store's fixed database file, named per profile (plan B.3: the
+// declared scopes pull into one durable local store). It lives in the app
+// config dir; the webview never names a path.
+const STORE_FILE: &str = "field.sqlite3";
+
+fn open_store(app: &tauri::AppHandle) -> Result<Store, String> {
+    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    store::Store::open_path(&dir.join(STORE_FILE))
+}
 
 // The keyring call blocks (a Secret Service unlock prompt can take a while), so
 // it runs on a blocking thread and never on the main thread or an async worker.
@@ -19,6 +31,28 @@ async fn keychain_set(slot: Slot, value: String) -> Result<(), String> {
 #[tauri::command]
 async fn keychain_get(slot: Slot) -> Result<String, String> {
     blocking(move || keychain::get(KEYCHAIN_SERVICE, slot.name())).await
+}
+
+// The offline store's executor seam: the store package's SQLite backend
+// drives these two commands and nothing else. `run_statement` covers the
+// seam's run (ignore the rows) and all (take the rows); `run_atomic` is the
+// seam's atomic. The database is the profile's one fixed file (STORE_FILE),
+// not a webview chosen path, and ATTACH and DETACH are refused inside the
+// core (see hh-shell-core::store).
+#[tauri::command]
+async fn run_statement(
+    sql: String,
+    params: Option<Vec<SqlValue>>,
+    store: tauri::State<'_, Store>,
+) -> Result<Vec<SqlRow>, String> {
+    let store = store.inner().clone();
+    blocking(move || store.run(&sql, params.unwrap_or_default())).await
+}
+
+#[tauri::command]
+async fn run_atomic(statements: Vec<SqlStatement>, store: tauri::State<'_, Store>) -> Result<(), String> {
+    let store = store.inner().clone();
+    blocking(move || store.atomic(statements)).await
 }
 
 // PROBE SCAFFOLDING: lets the probe delete its own keychain item. Not part of
@@ -62,6 +96,7 @@ fn profile_line(plugin_config: &tauri::utils::config::PluginConfig) -> String {
         "window": { "title": p.window.title, "width": p.window.width, "height": p.window.height },
         "permissions": { "camera": p.permissions.camera, "fine_location": p.permissions.fine_location },
         "updates": { "channel": p.channel.as_str(), "endpoint": endpoint },
+        "store": { "file": STORE_FILE },
         "apps": p.apps.iter().map(|a| serde_json::json!({
             "id": a.id,
             "name": a.name,
@@ -85,13 +120,26 @@ pub fn run() {
     #[cfg(feature = "probe")]
     let builder = builder
         .plugin(tauri_plugin_sql::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![keychain_set, keychain_get, keychain_delete, probe_report]);
+        .invoke_handler(tauri::generate_handler![
+            keychain_set,
+            keychain_get,
+            keychain_delete,
+            probe_report,
+            run_statement,
+            run_atomic
+        ]);
     #[cfg(not(feature = "probe"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![keychain_set, keychain_get]);
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        keychain_set,
+        keychain_get,
+        run_statement,
+        run_atomic
+    ]);
     builder
         .setup(|app| {
             let profile = profiles::field();
             println!("HH_PROFILE {}", profile_line(&app.config().plugins));
+            app.manage(open_store(app.handle()).expect("the profile's store opens"));
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title(profile.window.title)
                 .inner_size(profile.window.width, profile.window.height);
@@ -148,6 +196,25 @@ mod tests {
     }
 
     const TAURI_CONF: &str = include_str!("../tauri.conf.json");
+
+    const CAPABILITY: &str = include_str!("../capabilities/default.json");
+
+    #[test]
+    fn the_stores_commands_are_allowed_by_name_and_no_sql_grant_is_open() {
+        // Probe 4 review round 1, P2 2: the webview's SQL grant must never be
+        // open. The store's engine is the core's fixed file behind two
+        // commands, and the capability names exactly those two.
+        let cap: serde_json::Value = serde_json::from_str(CAPABILITY).expect("the capability parses");
+        let perms: Vec<&str> = cap["permissions"]
+            .as_array()
+            .expect("a permissions list")
+            .iter()
+            .map(|p| p.as_str().expect("permission names are strings"))
+            .collect();
+        assert!(perms.contains(&"allow-run-statement"), "run_statement is allowed by name");
+        assert!(perms.contains(&"allow-run-atomic"), "run_atomic is allowed by name");
+        assert!(!CAPABILITY.contains("sql:"), "no open SQL grant reaches a real build");
+    }
 
     #[test]
     fn the_field_update_channel_is_configured_with_placeholders() {

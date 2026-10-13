@@ -9,6 +9,8 @@
     "core:default",
     "allow-keychain-set",
     "allow-keychain-get",
+    "allow-run-statement",
+    "allow-run-atomic",
     "updater:default"
   ]
 }

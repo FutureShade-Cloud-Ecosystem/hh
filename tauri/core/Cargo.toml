@@ -14,6 +14,13 @@ probe = []
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The offline store's SQLite engine behind the fixed database file (the
+# webview never gets an open SQL grant; see store.rs). `bundled` compiles the
+# SQLite C amalgamation, so no system sqlite header is needed on any target.
+# The 0.31 line is the one whose libsqlite3-sys (0.28) is the same crate the
+# probe's tauri-plugin-sql builds through sqlx: the `links` to the native
+# library allow exactly one of it in the graph.
+rusqlite = { version = "=0.31.0", features = ["bundled"] }
 
 # keyring 3.6 with its pure Rust Secret Service path (zbus, no libsecret and
 # no libdbus headers). Desktop Linux only: Android has no keyring backend in

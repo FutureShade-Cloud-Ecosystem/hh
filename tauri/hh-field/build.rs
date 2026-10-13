@@ -11,9 +11,16 @@ use tauri_build::{AppManifest, Attributes};
 // Remove them from disk with the probe, or a default build would still carry
 // their allow permissions in its ACL manifest.
 #[cfg(feature = "probe")]
-const COMMANDS: &[&str] = &["keychain_set", "keychain_get", "keychain_delete", "probe_report"];
+const COMMANDS: &[&str] = &[
+    "keychain_set",
+    "keychain_get",
+    "keychain_delete",
+    "probe_report",
+    "run_statement",
+    "run_atomic",
+];
 #[cfg(not(feature = "probe"))]
-const COMMANDS: &[&str] = &["keychain_set", "keychain_get"];
+const COMMANDS: &[&str] = &["keychain_set", "keychain_get", "run_statement", "run_atomic"];
 
 fn main() {
     // The probe capability (open SQLite grant) sits in its own folder and is
