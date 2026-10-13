@@ -975,7 +975,8 @@ test("on a phone no screen scrolls the page sideways", async ({ page, request })
   await page.getByRole("button", { name: "Credit holds", exact: true }).click();
   await expect(page.locator("[data-hold-row]")).toHaveCount(3);
   expect(await wide()).toBeLessThanOrEqual(0);
-  await page.getByRole("button", { name: "Receivables", exact: true }).click();
+  // Payables and Receivables also holds the area switch, whose Receivables button comes first.
+  await page.getByRole("button", { name: "Receivables", exact: true }).last().click();
   await openAccount(page, "Granite Edge Landscaping (demo)");
   expect(await wide()).toBeLessThanOrEqual(0);
   await page.getByRole("button", { name: "Statement", exact: true }).click();

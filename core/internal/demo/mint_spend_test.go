@@ -67,7 +67,7 @@ func TestCeilingRefusalSpendsNothing(t *testing.T) {
 	if rsp := mintAs(tester); rsp.Code != http.StatusTooManyRequests {
 		t.Fatalf("the mint against a full ceiling answered %d, want 429 (body: %s)", rsp.Code, rsp.Body.String())
 	}
-	if got := len(m.limit.entries["v:"+tester]); got != 0 {
+	if got := len(m.limit.Stamps("v:" + tester)); got != 0 {
 		t.Errorf("the refused mint left %d stamp(s) on the tester's own key, want none: a refusal spends nothing", got)
 	}
 	clock.advance(DefaultBurstWindow + time.Second)
@@ -94,7 +94,7 @@ func TestKeyRefusalSpendsNothing(t *testing.T) {
 	if rsp := mintAs(tester); rsp.Code != http.StatusOK {
 		t.Fatalf("the granted mint answered %d, want 200 (body: %s)", rsp.Code, rsp.Body.String())
 	}
-	if got, want := len(m.ceiling.entries["192.0.2.1"]), 1; got != want {
+	if got, want := len(m.ceiling.Stamps("192.0.2.1")), 1; got != want {
 		t.Fatalf("the ceiling holds %d admissions after the granted mint, want %d", got, want)
 	}
 	for i := 0; i < 5; i++ {
@@ -102,7 +102,7 @@ func TestKeyRefusalSpendsNothing(t *testing.T) {
 			t.Fatalf("hammer %d answered %d, want the spent key's 429 (body: %s)", i+1, rsp.Code, rsp.Body.String())
 		}
 	}
-	if got, want := len(m.ceiling.entries["192.0.2.1"]), 1; got != want {
+	if got, want := len(m.ceiling.Stamps("192.0.2.1")), 1; got != want {
 		t.Errorf("the ceiling holds %d admissions after the hammering, want %d: a refused hammer spent the team's allowance", got, want)
 	}
 	fresh := fmt.Sprintf("%032x", 8)
@@ -145,7 +145,7 @@ func TestMintSurvivesAPartialSlideOfTheKey(t *testing.T) {
 			// slid out) and the grant recorded the new one: the stored
 			// slice is exactly those five, with no phantom riding the
 			// compacted array behind them.
-			stored := m.limit.entries["v:"+tester]
+			stored := m.limit.Stamps("v:" + tester)
 			if len(stored) != 5 {
 				t.Errorf("the key holds %d stamps after the tap at +31, want the five live ones: a phantom rides the compacted slice", len(stored))
 			} else {
@@ -164,7 +164,7 @@ func TestMintSurvivesAPartialSlideOfTheKey(t *testing.T) {
 	if rsp := mintAs(tester); rsp.Code != http.StatusOK {
 		t.Fatalf("the tap at +41s answered %d, want 200: four stamps are truly live under the allowance of five (body: %s)", rsp.Code, rsp.Body.String())
 	}
-	stored := m.limit.entries["v:"+tester]
+	stored := m.limit.Stamps("v:" + tester)
 	if len(stored) != 5 {
 		t.Fatalf("the key holds %d stamps at the end, want the five live ones", len(stored))
 	}
@@ -174,3 +174,10 @@ func TestMintSurvivesAPartialSlideOfTheKey(t *testing.T) {
 		}
 	}
 }
+
+// testClock is a controllable clock for the limit's window.
+type testClock struct{ at time.Time }
+
+func (c *testClock) Now() time.Time { return c.at }
+
+func (c *testClock) advance(d time.Duration) { c.at = c.at.Add(d) }

@@ -57,6 +57,21 @@ Not wired, with the reason: `billingRecordInvoicePayment` (one payment on one in
 same money is a way to take it twice), `billingTrackInvoiceOpened`, `billingTrackReminderOpen` and `billingTrackReminderClick` (public tracking pixels a
 customer's mail client fetches, not screens), `tillRecordPaymentAttempt` (the Counter Till's declined card log; its surface is the till, not this desk).
 
+## Ledger beyond its three reads (`src/gl/`)
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Chart of accounts, add, deactivate | `app/src/gl-accounts.ts`, `app/src/gl-api.ts` | `chartView` in `src/gl/gl-books.ts`, `GlApi.accounts` | Deactivate opens a review (no route turns an account back on); inactive accounts stay listed with a word |
+| New journal composer | `app/src/gl-journal-entry.ts` | `composerView`, `checkDraft` in `src/gl/gl-logic.ts` | A review step before posting; no running totals on screen (the app adds no money, the server refuses an unbalanced journal in words); a lost answer is never retried |
+| Reverse guard with a summary | `app/src/_gl-workbench-rules.ts` (`reverseSummary`, `reverseNeedsConfirm`) | `reverseConfirm` | The review lists the journal's lines instead of a computed total; Void gets a review too |
+| Recurring templates | `app/src/gl-api.ts` | `recurringView` | Run adds a draft for a second approver |
+| Periods, close, reopen, year end close | `app/src/gl-periods.ts` | `periodsView`, confirm panels | In page reviews replace `window.confirm` and `window.prompt`; each names the period or year and what changes |
+| Trial balance period, export | `app/src/gl-trial-balance.ts`, `app/src/_gl-export.ts` | `trialView`, `GlApi.exportBooks` | The server's parity export route replaces the client CSV projection; the Excel workbook stays later |
+| Tie out, BisTrack check, policy | `app/src/gl-workbench.ts`, `app/src/gl-trial-balance.ts` | `checksView`, `policyView` | A word beside each colour; the BisTrack check says it reads a synthetic snapshot |
+| Payables and Receivables as a reader | none | `mode: "reader"` in `src/gl/gl-desk.ts` | Reads only; writes held with the roles that may |
+
+Visual reference: the Money Desk boards (`hh-sup/design-refs/money-desk/`, trial-balance and controller-home) for the cards and
+pills; the original's GL workbench tabs second. No FB Design board for these tabs existed when this was built.
 
 ## Bank reconciliation slice (`src/bankrec/`)
 
