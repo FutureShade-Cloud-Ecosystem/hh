@@ -113,6 +113,19 @@ func TestDemoServeRefusesAnUnknownCoreName(t *testing.T) {
 	}
 }
 
+// The entrypoint-only operator variable is not the core's: the guard refuses
+// it, which is why the entrypoint un-exports it before the core starts
+// (deploy/demo/entrypoint-port-test.sh holds that side).
+func TestDemoServeRefusesTheEntrypointOnlyPortName(t *testing.T) {
+	env := serveEnv(t)
+	getenv, lookup, environ := envFuncs(env)
+	picture := append(environ(), "CORE_INTERNAL_PORT=9090")
+	err := demoServe(getenv, lookup, func() []string { return picture })
+	if err == nil || !strings.Contains(err.Error(), "CORE_INTERNAL_PORT") {
+		t.Fatalf("refusal %v", err)
+	}
+}
+
 func TestDemoServeAcceptsTheConsoleModeNames(t *testing.T) {
 	for _, name := range append([]string{"CORE_EXCHANGE_JWT_BOUND", "CORE_TRUSTED_PROXIES", "CORE_SIGNIN_EMAIL_DOMAINS", "CORE_SIGNIN_EMAIL_ADDRESSES"}, demoEnvAllowCoreNames...) {
 		env := serveEnv(t)
