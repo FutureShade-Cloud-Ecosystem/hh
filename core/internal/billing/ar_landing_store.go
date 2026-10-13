@@ -23,7 +23,14 @@ import (
 
 // ARLandingRepository implements ARLandingStore and ARReminderStore over pgx.
 type ARLandingRepository struct {
-	pool *pgxpool.Pool // nil in scaffold/tests
+	pool *pgxpool.Pool   // nil in scaffold/tests
+	zone houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
+}
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (r *ARLandingRepository) WithZone(src houseday.Source) *ARLandingRepository {
+	r.zone = src
+	return r
 }
 
 // NewARLandingRepository wires the pool.
@@ -280,13 +287,17 @@ func (r *ARLandingRepository) ReminderContextFor(ctx context.Context, customerID
 	if r.pool == nil {
 		return ReminderContext{}, errNoDB
 	}
+	zone, err := houseday.Resolve(ctx, r.zone)
+	if err != nil {
+		return ReminderContext{}, err
+	}
 	var rc ReminderContext
 	// WITH NO INVOICE NAMED, THE OLDEST OPEN ONE IS THE SUBJECT. A reminder fired from the
 	// escalation queue is about the ACCOUNT, and an account-level reminder that fell back to
 	// CURRENT_DATE would record itself in the CURRENT bucket and print no watermark on a resend -
 	// a notice about a 128-day-old invoice, filed as if nothing were late. The worst open invoice is
 	// the one a collections conversation is actually about, so it is the one the message names.
-	err := r.pool.QueryRow(ctx, `
+	err = r.pool.QueryRow(ctx, `
 		SELECT c.id::text, c.name, c.account_no::text,
 		       COALESCE(i.invoice_no::text, ''), COALESCE(i.due_date, $3::date),
 		       COALESCE(i.balance_cents, 0)
@@ -303,7 +314,7 @@ func (r *ARLandingRepository) ReminderContextFor(ctx context.Context, customerID
 		        ORDER BY iv.due_date
 		        LIMIT 1
 		  ) i ON TRUE
-		 WHERE c.id = $1::uuid`, customerID, nullUUID(invoiceID), houseday.Today(nil), reach.SQLArg()).
+		 WHERE c.id = $1::uuid`, customerID, nullUUID(invoiceID), zone.Today(nil), reach.SQLArg()).
 		Scan(&rc.CustomerID, &rc.CustomerName, &rc.AccountNo, &rc.InvoiceNo, &rc.DueDate, &rc.BalanceCents)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReminderContext{}, ErrNotFound

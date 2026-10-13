@@ -92,13 +92,13 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 	if pool == nil {
 		return
 	}
-	repo := billing.NewRepository(pool)
+	repo := billing.NewRepository(pool).WithZone(h.zone)
 	svc := billing.NewRegisterService(repo).
 		WithZone(h.zone).
 		WithMoney(billing.NewPaymentsReceiptWriter(payments.NewRepository(pool))).
 		// The SHIPPED statement generator (billing/statements.go), the same one the month-end run
 		// drives. The bulk bar produces statements; it does not compose them.
-		WithStatements(billing.NewStatementService(repo))
+		WithStatements(billing.NewStatementService(repo).WithZone(h.zone))
 	if h.registerSender != nil {
 		svc = svc.WithSender(h.registerSender)
 	}

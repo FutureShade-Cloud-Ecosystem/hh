@@ -233,7 +233,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// stream-ticket route answers 501 and clients use the Bearer stream.
 	messagingRepo := messaging.NewRepository(pool)
 	messagingHub := messaging.NewSSEHub(messagingRepo, log)
-	messagingSvc := messaging.NewService(messagingRepo).WithRealtime(messagingHub)
+	messagingSvc := messaging.NewService(messagingRepo).WithZone(newDealerZone(pool)).WithRealtime(messagingHub)
 	messaging.NewHandler(messagingSvc, log).WithHub(messagingHub).
 		WithStreamTickets(streamTicketKey).
 		WithUserLinker(link).RegisterRoutes(r, g)
@@ -493,7 +493,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("payment_methods", payments.NewPaymentMethodsStore(pool)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("aging", billing.NewAgingStore(pool, nil)); err != nil {
+	if err := syncEngine.RegisterScope("aging", billing.NewAgingStore(pool, nil).WithZone(newDealerZone(pool))); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -600,7 +600,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithAudit(auditSvc)
 	// The yard's short pick: the order takes the shortfall as a backorder and the notice facts read
 	// the live invoice through billing (wire_yard_short.go).
-	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
+	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool).WithZone(newDealerZone(pool))})
 	// The delivery road asks billing, the owner of the deposit documents, to release them (deposit_release.go).
 	orderSvc.WithDepositReleaser(newInvoiceWriter(pool))
 	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}})

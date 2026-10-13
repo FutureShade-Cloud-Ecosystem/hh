@@ -112,7 +112,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
 
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
-	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithAudit(auditSvc)
+	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
 	pricingSvc.WithCandidateSource(pricingFloorCandidates{products: productSvc, inventory: inventorySvc})
 	productSvc.WithStock(productStockReader{svc: inventorySvc}).WithBranchStock(inventorySvc).WithListPrices(pricingSvc)

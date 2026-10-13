@@ -94,9 +94,19 @@ func buildSmsBelt(pool *pgxpool.Pool, log *slog.Logger) *smsBelt {
 		log.Error("sms: requested provider is not usable - falling back to the stub; NO texts will be sent", "err", smsErr)
 	}
 	smsOutbox := messagingprovider.NewOutbox(pool)
-	smsPrefs := messagingprovider.NewPrefsStore(pool)
+	smsPrefs := messagingprovider.NewPrefsStore(pool).WithZone(newDealerZone(pool))
 	smsResolver := messagingprovider.NewConsentResolver(smsPrefs, log)
 	smsPolicy := messagingprovider.PolicyFromEnv()
+	// The send window is read in the dealer's own zone unless SMS_WINDOW_ZONE named one. Read once, at
+	// boot, beside the other SMS_WINDOW_* variables; an unreadable zone keeps the Ontario default and
+	// says so.
+	zoneCtx, cancelZone := context.WithTimeout(context.Background(), 5*time.Second)
+	if dz, zerr := newDealerZone(pool).BusinessZone(zoneCtx); zerr != nil {
+		log.Warn("sms: the dealer's business zone could not be read; the send window keeps its default zone", "err", zerr)
+	} else {
+		smsPolicy.WithDealerZone(dz)
+	}
+	cancelZone()
 	if zerr := smsPolicy.ZoneError(); zerr != nil {
 		log.Warn("sms: send-window timezone fell back to the business default", "err", zerr)
 	}
@@ -426,15 +436,17 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// the month-end handler, the counter's aging reader, the AR landing
 	// half.
 	w3bCreditSvc := billing.NewCreditService(billingRepo).WithAudit(auditSvc)
-	w3bStatementSvc := billing.NewStatementService(billingRepo).WithAudit(auditSvc)
+	w3bStatementSvc := billing.NewStatementService(billingRepo).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	billing.NewMonthEndHandler(w3bCreditSvc, w3bStatementSvc, log).
+		WithZone(newDealerZone(pool)).
 		WithUserLinker(link).RegisterRoutes(r, g)
 	posSvc.WithAgingReader(posAgingAdapter{svc: w3bCreditSvc}).
 		WithHoldReader(ops.tillRepo).
 		WithAccountChecker(posAccountAdapter{svc: customerSvc})
 
-	arLandingRepo := billing.NewARLandingRepository(pool)
+	arLandingRepo := billing.NewARLandingRepository(pool).WithZone(newDealerZone(pool))
 	arLandingSvc := billing.NewARLandingService(arLandingRepo).
+		WithZone(newDealerZone(pool)).
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithActorNames(staffNameAdapter{repo: orderRepo})
@@ -443,8 +455,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// the send is recorded and marked FAILED in words, never a phantom
 	// DELIVERED the paper-path sweep would count; a real transport lands
 	// as an adapter passed in this same slot.
-	arReminderSvc := billing.NewARReminderService(arLandingRepo, arLandingSvc, billing.UnwiredSender{}, cfg.StaffBaseURL)
+	arReminderSvc := billing.NewARReminderService(arLandingRepo, arLandingSvc, billing.UnwiredSender{}, cfg.StaffBaseURL).WithZone(newDealerZone(pool))
 	billing.NewARLandingHandler(arLandingSvc, arReminderSvc, log).
+		WithZone(newDealerZone(pool)).
 		WithUserLinker(link).RegisterRoutes(r, g)
 
 	// The dispatch gate seam (W3-C closes at the union): Swarm B's billing

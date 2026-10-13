@@ -46,8 +46,12 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 	if r.pool == nil {
 		return 0, errNoDB
 	}
+	day, err := r.clockAt(ctx, asOf)
+	if err != nil {
+		return 0, err
+	}
 	var sum int64
-	err := r.pool.QueryRow(ctx,
+	err = r.pool.QueryRow(ctx,
 		`SELECT
 		   (SELECT COALESCE(SUM(balance_cents), 0) FROM invoices
 		     WHERE status IN ('FINALIZED','PARTIALLY_PAID') AND balance_cents <> 0
@@ -57,7 +61,7 @@ func (r *Repository) ARBalanceCents(ctx context.Context, asOf time.Time, branchI
 		     WHERE txn_type IN ('NSF','ADJUSTMENT','CREDIT_MEMO','WRITE_OFF') AND source_type <> 'invoice'
 		       AND created_at <= $3
 		       AND ($2 = '' OR branch_id = $2::uuid))`,
-		houseClock(asOf), branchID, asOf,
+		day, branchID, asOf,
 	).Scan(&sum)
 	if err != nil {
 		return 0, fmt.Errorf("billing: AR balance as-of %s: %w", asOf.Format(time.RFC3339), err)

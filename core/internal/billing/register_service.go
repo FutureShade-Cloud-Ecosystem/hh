@@ -38,6 +38,12 @@ import (
 // truncated to the day before subtracting, an invoice is not "0.6 days late", and a subtraction of
 // timestamps would make the answer depend on what time of day somebody opened the screen.
 func registerStatus(v RegisterRow, asOf time.Time, dueSoonDays int) (string, int) {
+	return registerStatusIn(houseday.DefaultZone(), v, asOf, dueSoonDays)
+}
+
+// registerStatusIn is registerStatus in a named dealer's zone: "past due" is judged on the dealer's
+// own calendar day.
+func registerStatusIn(zone houseday.Zone, v RegisterRow, asOf time.Time, dueSoonDays int) (string, int) {
 	if v.DocType == "CREDIT_MEMO" {
 		return StatusCredit, 0
 	}
@@ -49,7 +55,7 @@ func registerStatus(v RegisterRow, asOf time.Time, dueSoonDays int) (string, int
 	case "PAID":
 		return StatusPaid, 0
 	}
-	days := daysBetween(v.DueDate, asOf)
+	days := DaysPastDueIn(zone, v.DueDate, asOf)
 	if v.Disputed {
 		if days > 0 {
 			return StatusDisputed, days
@@ -370,7 +376,11 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 		LastContactAt: lastContact, AsOf: asOf,
 	}
 	openDispute := hasDispute && dispute.Status == "OPEN"
-	d.Status, d.DaysOverdue = registerStatus(RegisterRow{
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return InvoiceDetail{}, err
+	}
+	d.Status, d.DaysOverdue = registerStatusIn(zone, RegisterRow{
 		DocType: h.DocType, StoredStatus: h.StoredStatus, DueDate: h.DueDate, Disputed: openDispute,
 	}, asOf, pol.DueSoonDays)
 

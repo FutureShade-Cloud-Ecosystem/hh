@@ -66,3 +66,86 @@ func TestAddPromise_AFailedZoneReadRefusesTheDecision(t *testing.T) {
 		t.Fatalf("err = %v, want the zone read failure surfaced", err)
 	}
 }
+
+// -- the receivables' day is the dealer's day ----------------------------------------------------
+
+// An invoice due on the 26th is not late on the dealer's 26th and is one day late on its 27th. At
+// zoneInstant (05:00 UTC on the 27th) that is Toronto's 27th and Los Angeles's still-26th.
+func TestDaysPastDueIn_CountsTheDealersCalendarDays(t *testing.T) {
+	la, _ := houseday.NewZone("America/Los_Angeles")
+	due := time.Date(2026, time.August, 26, 0, 0, 0, 0, time.UTC)
+	if got := DaysPastDueIn(la, due, zoneInstant); got != 0 {
+		t.Fatalf("Los Angeles: %d days past due, want 0 (due today)", got)
+	}
+	if got := DaysPastDueIn(houseday.DefaultZone(), due, zoneInstant); got != 1 {
+		t.Fatalf("Toronto: %d days past due, want 1", got)
+	}
+	if got := DaysPastDue(due, zoneInstant); got != 1 {
+		t.Fatalf("the default moved: %d, want 1", got)
+	}
+}
+
+func TestBuildCardsIn_BucketsOnTheDealersDay(t *testing.T) {
+	la, _ := houseday.NewZone("America/Los_Angeles")
+	p := ARLandingPolicy{AgingWarnDays: 0, AgingEscalateDays: 30}
+	p.Tier = TierPro
+	invs := []OpenInvoice{{
+		CustomerID: "c1", BalanceCents: 1000,
+		DueDate: time.Date(2026, time.August, 26, 0, 0, 0, 0, time.UTC),
+	}}
+	count := func(cards []LandingCard, bucket string) int {
+		for _, c := range cards {
+			if c.Bucket == bucket {
+				return c.Invoices
+			}
+		}
+		return -1
+	}
+	if n := count(BuildCardsIn(la, invs, p, zoneInstant), BucketCurrent); n != 1 {
+		t.Fatalf("Los Angeles: current bucket holds %d, want the invoice (due today)", n)
+	}
+	if n := count(BuildCardsIn(houseday.DefaultZone(), invs, p, zoneInstant), BucketCurrent); n != 0 {
+		t.Fatalf("Toronto: current bucket holds %d, want 0 (one day late)", n)
+	}
+}
+
+func TestRegisterStatusIn_JudgesLatenessOnTheDealersDay(t *testing.T) {
+	la, _ := houseday.NewZone("America/Los_Angeles")
+	v := RegisterRow{DocType: "INVOICE", StoredStatus: "FINALIZED", DueDate: time.Date(2026, time.August, 26, 0, 0, 0, 0, time.UTC)}
+	if st, days := registerStatusIn(la, v, zoneInstant, 0); st == StatusOverdue || days != 0 {
+		t.Fatalf("Los Angeles: %s/%d, want not overdue on the due day", st, days)
+	}
+	if st, days := registerStatusIn(houseday.DefaultZone(), v, zoneInstant, 0); st != StatusOverdue || days != 1 {
+		t.Fatalf("Toronto: %s/%d, want overdue by one day", st, days)
+	}
+}
+
+func TestParseAsOfIn_ReadsTheDayInTheDealersZone(t *testing.T) {
+	la, _ := houseday.NewZone("America/Los_Angeles")
+	got, err := parseAsOfIn(la, "2026-08-26")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := la.Today(func() time.Time { return got }); d != "2026-08-26" {
+		t.Fatalf("Los Angeles as-of reads as %s, want 2026-08-26", d)
+	}
+	if got.Location() != la.Location() && got.Format("2006-01-02") != "2026-08-26" {
+		t.Fatalf("the instant is not in the dealer's frame: %v", got)
+	}
+	if _, err := parseAsOfFor(context.Background(), zoneSource{err: errors.New("down")}, "2026-08-26"); err == nil {
+		t.Fatal("a failed zone read must refuse the as-of")
+	}
+}
+
+func TestRepository_ClockAtReadsInTheDealersZone(t *testing.T) {
+	la, _ := houseday.NewZone("America/Los_Angeles")
+	r := (&Repository{}).WithZone(zoneSource{zone: la})
+	got, err := r.clockAt(context.Background(), zoneInstant)
+	if err != nil || got.Format("2006-01-02") != "2026-08-26" {
+		t.Fatalf("clockAt = %v, %v; want the dealer's 26th", got, err)
+	}
+	got, err = (&Repository{}).clockAt(context.Background(), zoneInstant)
+	if err != nil || got.Format("2006-01-02") != "2026-08-27" {
+		t.Fatalf("no source: %v, %v; want Toronto's 27th", got, err)
+	}
+}

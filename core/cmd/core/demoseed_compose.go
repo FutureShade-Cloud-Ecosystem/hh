@@ -72,7 +72,7 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 		WithUOMConverter(productSvc).
 		WithMarginGate(pricing.NewIdentityMarginGate())
 
-	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithAudit(auditSvc)
+	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	taxSvc := newTaxEngine(pool).WithAudit(auditSvc)
 
 	payVault, err := payment.NewVault(vaultKey)
@@ -111,7 +111,7 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 	orderRepo := order.NewRepository(pool)
 	orderSvc := order.NewService(orderRepo).WithAudit(auditSvc).WithAuditTrail(auditSvc)
 
-	messagingSvc := messaging.NewService(messaging.NewRepository(pool))
+	messagingSvc := messaging.NewService(messaging.NewRepository(pool)).WithZone(newDealerZone(pool))
 
 	tasksSvc := tasks.NewService(tasks.NewRepository(pool)).
 		WithOrderReader(orderReaderAdapter{repo: orderRepo}).

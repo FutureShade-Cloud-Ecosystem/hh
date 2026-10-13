@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // realtime is the optional real-time fan-out seam (FR-7). The SSE hub implements it; when nil the
@@ -70,6 +72,23 @@ type store interface {
 type Service struct {
 	repo store
 	rt   realtime
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. The rollup's day,
+	// the day a routine event is filed under, is the dealer's own calendar day.
+	zone houseday.Source
+}
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
+
+// rollupDayFor is the dealer's calendar day an instant belongs to (the rollup's day), in the zone the
+// service's dealer chose. A failed zone read refuses: a payment filed under the wrong day is a total
+// the clerk reconciles against, so it is not guessed.
+func (s *Service) rollupDayFor(ctx context.Context, at time.Time) (string, error) {
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return "", err
+	}
+	return zone.Today(func() time.Time { return at }), nil
 }
 
 func NewService(repo *Repository) *Service { return &Service{repo: repo} }
