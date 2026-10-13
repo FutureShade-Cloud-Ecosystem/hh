@@ -54,6 +54,10 @@ export interface DriverRow {
   readonly run: DriverRunView;
   readonly group: DriverGroupKey;
   readonly current_stop: DriverStopView | null;
+  /** The current stop's 1-based place among the run's stops sorted by stop number; 0 when there is none. */
+  readonly stop_place: number;
+  /** How many stops the board holds for the run. */
+  readonly stop_total: number;
   readonly done_stops: number;
   readonly left_stops: number;
   readonly did_not_go: number;
@@ -63,9 +67,11 @@ export interface DriverRow {
 // -- the four states -----------------------------------------------------------------------------------
 
 /**
- * The board's four states, in the order the board draws them. A driver is ON A
- * STOP while a stop is en route, BETWEEN STOPS once one is delivered and the
- * next waits loaded or ready, NOT STARTED while the run is planned, and DONE
+ * The board's four states, in the order the board draws them, named by state
+ * and never by place (the board holds no position). A driver is EN ROUTE while
+ * a stop is en route, and the NEXT STOP IS NOT STARTED while the run is
+ * dispatched and the stop ahead waits loaded or ready (the keys "on-stop" and
+ * "between-stops" stay as the data keys). NOT STARTED is a planned run, and DONE
  * when the day's driving is over: the run completed or cancelled, or a
  * dispatched run whose every stop has settled while the completion step waits.
  */
@@ -74,8 +80,8 @@ export type DriverGroupKey = "on-stop" | "between-stops" | "not-started" | "done
 export const DRIVER_GROUP_ORDER: readonly DriverGroupKey[] = Object.freeze(["on-stop", "between-stops", "not-started", "done"]);
 
 const GROUP_WORD: Readonly<Record<DriverGroupKey, string>> = Object.freeze({
-  "on-stop": "On a stop",
-  "between-stops": "Between stops",
+  "on-stop": "En route",
+  "between-stops": "Next stop not started",
   "not-started": "Not started",
   done: "Done",
 });
@@ -111,6 +117,18 @@ export function driverGroupOf(run: DriverRunView, stops: readonly DriverStopView
   // to PLANNED | DISPATCHED | COMPLETED | CANCELLED) reads as not started, and
   // its status word (below) answers "" so nothing raw ever shows.
   return "not-started";
+}
+
+/**
+ * The current stop's 1-based place among the run's stops in stop number order.
+ * A stop number is not an ordinal (taking a stop off a run leaves a gap), so
+ * the place is counted, never read off the number. 0 when no stop is ahead.
+ */
+export function stopPlaceOf(stops: readonly DriverStopView[]): number {
+  const current = currentStopOf(stops);
+  if (current === null) return 0;
+  const sorted = [...stops].sort((a, b) => a.stop_no - b.stop_no);
+  return sorted.findIndex((s) => s.id === current.id) + 1;
 }
 
 /** The row's three counts: delivered, still ahead of the truck, and did not go. */
@@ -160,6 +178,8 @@ export function buildDriverRow(run: DriverRunView, stops: readonly DriverStopVie
     run,
     group: driverGroupOf(run, stops),
     current_stop: currentStopOf(stops),
+    stop_place: stopPlaceOf(stops),
+    stop_total: stops.length,
     done_stops: counts.done,
     left_stops: counts.left,
     did_not_go: counts.didNotGo,
@@ -241,8 +261,8 @@ export function sinceWords(iso: string, nowMs: number): string {
  * when there is no stop ahead of the truck, or the run carries no stops.
  */
 export function stopPositionWords(row: DriverRow): string {
-  if (row.current_stop === null || row.run.stop_count <= 0) return "";
-  return `stop ${row.current_stop.stop_no} of ${row.run.stop_count}`;
+  if (row.current_stop === null || row.stop_place <= 0 || row.stop_total <= 0) return "";
+  return `stop ${row.stop_place} of ${row.stop_total}`;
 }
 
 /**

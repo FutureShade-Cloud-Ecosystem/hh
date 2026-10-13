@@ -151,8 +151,8 @@ test("the four groups sit in the brief's order, empty ones are dropped, and the 
 
 test("the group words are the board's own, and the order constant matches them", () => {
   assert.deepEqual(DRIVER_GROUP_ORDER, ["on-stop", "between-stops", "not-started", "done"]);
-  assert.equal(driverGroupWord("on-stop"), "On a stop");
-  assert.equal(driverGroupWord("between-stops"), "Between stops");
+  assert.equal(driverGroupWord("on-stop"), "En route");
+  assert.equal(driverGroupWord("between-stops"), "Next stop not started");
   assert.equal(driverGroupWord("not-started"), "Not started");
   assert.equal(driverGroupWord("done"), "Done");
 });
@@ -185,7 +185,17 @@ test("the row's stop position reads as stop n of m, and answers nothing when the
   const row = buildDriverRow(enRouteRun, [deliveredStop, enRouteStop, readyStop]);
   assert.equal(stopPositionWords(row), "stop 2 of 3");
   assert.equal(stopPositionWords({ ...row, current_stop: null }), "");
-  assert.equal(stopPositionWords({ ...row, run: { ...enRouteRun, stop_count: 0 } }), "");
+  assert.equal(stopPositionWords({ ...row, stop_total: 0 }), "");
+});
+
+test("the stop position counts the current stop's place among the run's stops, never its stop number", () => {
+  // Stops 1 and 3 remain after stop 2 left the run (a gap in the numbering,
+  // and a live stop count of 2): the second of two, not "stop 3 of 2".
+  const gapped = buildDriverRow({ ...enRouteRun, stop_count: 2 }, [
+    { ...enRouteStop, id: "stop-3", stop_no: 3 },
+    { ...deliveredStop },
+  ]);
+  assert.equal(stopPositionWords(gapped), "stop 2 of 2");
 });
 
 test("drivers with no run on the board are counted by words, and inactive drivers never are", () => {

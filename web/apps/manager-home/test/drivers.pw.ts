@@ -26,6 +26,8 @@ test("the board groups the day's rows by state, on a stop first and done last", 
   await expect(page.locator("[data-group='not-started'] .driver-row")).toHaveCount(1);
   await expect(page.locator("[data-group='done'] .driver-row")).toHaveCount(1);
   await expect(page.locator("[data-test='drivers-count']")).toHaveText("4 runs on the board today");
+  await expect(page.locator("[data-group='on-stop'] .eyebrow")).toHaveText("En route · 1");
+  await expect(page.locator("[data-group='between-stops'] .eyebrow")).toHaveText("Next stop not started · 1");
 });
 
 test("a row reads as the driver's day: role label, truck, run, place, status word, change line", async ({ page }) => {
