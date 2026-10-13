@@ -191,3 +191,106 @@ test("the paper path lists flags, a sweep raises the account that ignored three 
   const landing = await call("GET", "/api/v1/ar/landing");
   assert.equal(landing.json.paper_path.length, 1, "the landing's Needs you list reads the same flags");
 });
+
+// ---- an invoice: send, document, dispute, and a payment reversal -------------------------------------------------------
+
+async function invoiceOf(no) {
+  const register = await call("GET", "/api/v1/ar/register");
+  return register.json.items.find((r) => r.invoice_no === no);
+}
+
+test("an invoice is sent once per key, and an account with no contact email is refused in the core's words", async () => {
+  await reset();
+  const inv = await invoiceOf("INV-1002");
+  const path = `/api/v1/ar/register/invoices/${inv.id}/send`;
+  const first = await call("POST", path, { idempotency_key: "s-1" });
+  assert.equal(first.status, 200);
+  assert.equal(first.json.sent, 1);
+  assert.equal(first.json.replayed, 0);
+  // The core answers an empty tone here, which the contract's tone enum has no word for (reported, not copied).
+  assert.equal(first.json.tone, "");
+  const again = await call("POST", path, { idempotency_key: "s-1" });
+  assert.equal(again.status, 200);
+  assert.deepEqual([again.json.sent, again.json.replayed], [0, 1]);
+  refused(await call("POST", path, { idempotency_key: "" }), 422, "sending an invoice needs an idempotency key");
+  refused(await call("POST", "/api/v1/ar/register/invoices/nope/send", { idempotency_key: "s-2" }), 404, "no such invoice");
+  const oakline = await invoiceOf("INV-1003");
+  const none = await call("POST", `/api/v1/ar/register/invoices/${oakline.id}/send`, { idempotency_key: "s-3" });
+  assert.equal(none.status, 422);
+  assert.ok(none.json.error.endsWith("has no contact email on the account"), none.json.error);
+  assert.ok(coreSource.includes('"%s has no contact email on the account"'));
+});
+
+test("an invoice document is HTML, never cached, and a missing invoice is not found", async () => {
+  await reset();
+  const inv = await invoiceOf("INV-1001");
+  const doc = await call("GET", `/api/v1/ar/register/invoices/${inv.id}/document`);
+  assert.equal(doc.status, 200);
+  assert.ok(doc.text.startsWith("<!doctype html>"));
+  assert.ok(doc.text.includes("INV-1001"));
+  refused(await call("GET", "/api/v1/ar/register/invoices/nope/document"), 404, "no such invoice");
+});
+
+test("a dispute opens once, shows on the invoice, closes with an outcome, and is refused in the core's words", async () => {
+  await reset();
+  const inv = await invoiceOf("INV-1002");
+  const path = `/api/v1/ar/register/invoices/${inv.id}/dispute`;
+  const good = { reason: "DAMAGED", note: "Two pallets arrived cracked", amount_cents: 10000, idempotency_key: "d-1" };
+  refused(await call("POST", path, { ...good, idempotency_key: "" }), 422, "opening a dispute needs an idempotency key");
+  refused(await call("POST", path, { ...good, reason: "BORED" }), 422, "a dispute names a reason: short delivery, damaged, pricing, not ordered, or other");
+  refused(await call("POST", "/api/v1/ar/register/invoices/nope/dispute", good), 404, "no such invoice");
+  refused(await call("POST", path, { ...good, amount_cents: inv.balance_cents + 1 }), 422, "the disputed amount cannot exceed the outstanding balance");
+  const opened = await call("POST", path, good);
+  assert.equal(opened.status, 200);
+  holds("BillingDisputeView", opened.json);
+  assert.equal(opened.json.status, "OPEN");
+  const detail = await call("GET", `/api/v1/ar/register/invoices/${inv.id}`);
+  holds("BillingInvoiceDetail", detail.json);
+  assert.equal(detail.json.dispute.status, "OPEN");
+  assert.equal(detail.json.status, "DISPUTED");
+  const second = await call("POST", path, { ...good, idempotency_key: "d-2" });
+  assert.equal(second.status, 409);
+  assert.equal(second.json.error, "this invoice already has an open dispute");
+  assert.ok(coreSource.includes("this invoice already has an open dispute"));
+  holds("BillingDisputeView", second.json.dispute);
+
+  const close = `${path}/resolve`;
+  refused(await call("POST", close, { outcome: "SHRUGGED" }), 422, "closing a dispute names how it ended: paid, credited, written off, or withdrawn");
+  refused(await call("POST", "/api/v1/ar/register/invoices/nope/dispute/resolve", { outcome: "PAID" }), 404, "no such invoice");
+  const done = await call("POST", close, { outcome: "CREDITED" });
+  assert.equal(done.status, 200);
+  assert.deepEqual(done.json, { resolved: true });
+  assert.equal((await call("POST", close, { outcome: "CREDITED" })).json.resolved, false, "closing what is not open answers false");
+  const after = await call("GET", `/api/v1/ar/register/invoices/${inv.id}`);
+  assert.equal(after.json.dispute.status, "RESOLVED");
+  assert.equal(after.json.dispute.outcome, "CREDITED");
+  assert.notEqual(after.json.status, "DISPUTED");
+});
+
+test("a payment is reversed once, reopens what it paid, and is refused in the core's words", async () => {
+  await reset();
+  const inv = await invoiceOf("INV-1002");
+  const paid = await call("POST", `/api/v1/ar/register/invoices/${inv.id}/payments`, { method: "CHEQUE", amount_cents: 2500, reference: "r", idempotency_key: "rv-1" });
+  const path = `/api/v1/ar/payments/${paid.json.payment_id}/reverse`;
+  refused(await call("POST", path, { reason: "" }), 400, "payments: a reversal reason is required");
+  refused(await call("POST", "/api/v1/ar/payments/nope/reverse", { reason: "Keyed in error" }), 404, "payment not found");
+  const reversed = await call("POST", path, { reason: "Keyed on the wrong account" });
+  assert.equal(reversed.status, 201);
+  holds("PaymentsReversalResult", reversed.json);
+  assert.equal(reversed.json.amount_cents, 2500);
+  assert.equal(reversed.json.label, "VOID", "a same day reversal is a void");
+  assert.equal(reversed.json.same_day, true);
+  assert.deepEqual(reversed.json.reopened_invoices, [inv.id]);
+  assert.equal((await invoiceOf("INV-1002")).balance_cents, inv.balance_cents, "the balance is what it was before the payment");
+  refused(await call("POST", path, { reason: "again" }), 409, "payments: this payment has already been reversed");
+  const history = await call("GET", `/api/v1/ar/payments/${paid.json.payment_id}/history`);
+  holds("TillPaymentHistory", history.json);
+  assert.equal(history.json.reversed, true);
+  const reversal = await call("POST", `/api/v1/ar/payments/${reversed.json.reversal_payment_id}/reverse`, { reason: "undo the undo" });
+  assert.equal(reversal.status, 400);
+  assert.ok(reversal.json.error.includes("it is itself a reversing entry"));
+  assert.ok(coreSource.includes("it is itself a reversing entry"));
+  const list = await call("GET", `/api/v1/ar/invoices/${inv.id}/payments`);
+  holds("TillInvoicePayments", list.json);
+  assert.ok(list.json.items.some((p) => p.status === "VOID"));
+});

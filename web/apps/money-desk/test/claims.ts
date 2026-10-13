@@ -154,6 +154,13 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: OFFICE, test: "the sweep raises the account that ignored three reminders" },
     { file: OFFICE, test: "on a phone the reminders screen fits, the history becomes cards, and the form works from the keyboard" },
   ],
+  "office-invoice": [
+    { file: OFFICE, test: "an invoice is sent through the messaging sink, and an account with no contact email is refused in the server's words" },
+    { file: OFFICE, test: "an invoice document opens in a frame that can run nothing, and closes" },
+    { file: OFFICE, test: "on a phone the invoice's dispute form and the reversal fit the screen" },
+  ],
+  "office-dispute": [{ file: OFFICE, test: "a dispute is checked, opened, shown on the invoice and the register, and closed with an outcome" }],
+  "office-reverse": [{ file: OFFICE, test: "a payment is reversed with a reason, and the invoice is owing what it was" }],
   "phone-sideways": [{ file: RECEIVABLES, test: "on a phone no screen scrolls the page sideways" }],
   "empty-world": [{ file: RECEIVABLES, test: "the empty world: each screen says so in words" }],
 };

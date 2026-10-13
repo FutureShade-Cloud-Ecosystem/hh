@@ -125,6 +125,17 @@ export class MoneyDeskApp extends HHElement {
           const plain = this.renderRoot.querySelector<HTMLElement>(`[data-ro="${name}"]`);
           if (plain !== null && plain.textContent !== value) plain.textContent = value;
         },
+        mountDocument: (selector, text) => {
+          // The invoice document is the core's own HTML: it is shown in a frame with every permission withheld, never
+          // set into this page, and the slot holds nothing else.
+          const slot = this.renderRoot.querySelector<HTMLElement>(selector);
+          if (slot === null) return;
+          const frame = document.createElement("iframe");
+          frame.setAttribute("sandbox", "");
+          frame.title = "Invoice document";
+          frame.srcdoc = text;
+          slot.replaceChildren(frame);
+        },
         download: (text, filename) => {
           const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
           const link = document.createElement("a");

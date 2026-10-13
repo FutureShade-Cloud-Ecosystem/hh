@@ -100,3 +100,35 @@ test("a moment reads as the days since it, from elapsed time and never a guessed
   assert.equal(relativeStamp("2030-06-10T12:00:00Z", now), "5 days ago");
   assert.equal(relativeStamp("not a time", now), "");
 });
+
+// ---- an invoice: send, dispute, a payment reversal -----------------------------------------------------------------
+
+import { disputeCheck, disputeOutcomeWord, disputeReasonWord, reversalCheck, reversalWords, sendInvoiceWords } from "../src/ar/office-logic.ts";
+
+test("a dispute is checked before it is sent: a reason, an amount in dollars, never above the balance", () => {
+  assert.deepEqual(disputeCheck({ reason: "DAMAGED", amountText: "100.00", note: " Cracked pallets ", balanceCents: 96_000 }), { ok: true, reason: "DAMAGED", amountCents: 10_000, note: "Cracked pallets" });
+  assert.match(disputeCheck({ reason: "", amountText: "100.00", note: "", balanceCents: 96_000 }).words, /Choose why/);
+  assert.match(disputeCheck({ reason: "DAMAGED", amountText: "", note: "", balanceCents: 96_000 }).words, /Enter the disputed amount/);
+  assert.match(disputeCheck({ reason: "DAMAGED", amountText: "12.345", note: "", balanceCents: 96_000 }).words, /dollars and cents/);
+  assert.match(disputeCheck({ reason: "DAMAGED", amountText: "0", note: "", balanceCents: 96_000 }).words, /more than zero/);
+  assert.equal(disputeCheck({ reason: "DAMAGED", amountText: "960.01", note: "", balanceCents: 96_000 }).words, "That is more than the invoice balance of $960.00.");
+  assert.equal(disputeCheck({ reason: "DAMAGED", amountText: "960.00", note: "", balanceCents: 96_000 }).ok, true);
+  assert.equal(disputeReasonWord("SHORT_DELIVERY"), "Short delivery");
+  assert.equal(disputeReasonWord("NOT_ORDERED"), "Not ordered");
+  assert.equal(disputeOutcomeWord("WRITTEN_OFF"), "Written off");
+  assert.equal(disputeOutcomeWord("PAID"), "Paid");
+});
+
+test("a reversal needs a reason, and says what it undid in dollars the server named", () => {
+  assert.deepEqual(reversalCheck("  Keyed on the wrong account "), { ok: true, reason: "Keyed on the wrong account" });
+  assert.match(reversalCheck("  ").words, /Enter why the payment is being reversed/);
+  const done = { label: "VOID", original_payment_id: "p", reversal_payment_id: "r", reversal_no: "REV-0101", amount_cents: 2500, reason: "x", same_day: true, reopened_invoices: ["a", "b"] };
+  assert.equal(reversalWords(done, "PAY-0101"), "Payment PAY-0101 is reversed as a void, the same day. $25.00 is owing again on 2 invoices.");
+  assert.equal(reversalWords({ ...done, label: "REVERSAL", same_day: false, reopened_invoices: ["a"] }, "PAY-0101"), "Payment PAY-0101 is reversed as a reversal. $25.00 is owing again on 1 invoice.");
+});
+
+test("a sent invoice says it went through the messaging sink, and a replay says nothing new went", () => {
+  assert.equal(sendInvoiceWords({ sent: 1, replayed: 0, tone: "" }), "The invoice went to the account's contact through the messaging sink.");
+  assert.equal(sendInvoiceWords({ sent: 0, replayed: 1, tone: "" }), "That invoice was already sent on this key, so nothing new went.");
+  assert.match(sendInvoiceWords({ sent: 1, replayed: 0, tone: "", skipped: { "INV-1": "recorded, but delivery failed: x" } }), /was recorded, but did not go: nothing left the building/);
+});

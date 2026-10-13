@@ -32,7 +32,7 @@ import type { ApplyAnswer } from "./ar-api.js";
 import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
-import { renderContacts, renderRemindersPanels, renderRunPanel } from "./office-views.js";
+import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
 
 export type Tab = "receivables" | "statements" | "holds" | "reminders";
 export type RegisterFilter = "open" | "overdue" | "promised" | "disputed" | "paid";
@@ -665,7 +665,7 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
   `;
 }
 
-function paymentList(account: AccountModel): TemplateResult {
+function paymentList(model: DeskModel, account: AccountModel): TemplateResult {
   const payments = account.payments?.items ?? [];
   if (payments.length === 0) return html`<p class="dim">No payment has been applied to this invoice yet.</p>`;
   return html`
@@ -674,12 +674,12 @@ function paymentList(account: AccountModel): TemplateResult {
         (p) => html`
           <li data-payment-row>
             <span>${p.payment_no} · ${p.method.toLowerCase()} · ${formatMoney(p.amount_cents)}
-              ${p.status === "BOUNCED" ? html`<span class="pill pill-stop">Bounced</span>` : html`<span class="pill pill-good">${p.status === "DEPOSITED" ? "Deposited" : "Received"}</span>`}</span>
-            ${p.status === "BOUNCED"
+              ${p.status === "BOUNCED" ? html`<span class="pill pill-stop">Bounced</span>` : p.status === "VOID" ? html`<span class="pill pill-plain">Reversal</span>` : html`<span class="pill pill-good">${p.status === "DEPOSITED" ? "Deposited" : "Received"}</span>`}</span>
+            ${p.status === "BOUNCED" || p.status === "VOID"
               ? nothing
               : account.bounceFor === p.payment_id
                 ? html`<span class="inline-form"><label><span class="visually-hidden">Reason it bounced</span><input type="text" data-field="bounce-reason" placeholder="Why it came back, such as cheque returned NSF" autocomplete="off" /></label><button type="button" class="btn btn-danger small-btn" data-action="bounce-confirm" data-payment-id="${p.payment_id}">Confirm bounced</button><button type="button" class="btn btn-secondary small-btn" data-action="bounce-cancel">Cancel</button></span>`
-                : html`<button type="button" class="btn btn-secondary small-btn" data-action="bounce-start" data-payment-id="${p.payment_id}">Mark bounced</button>`}
+                : html`<span class="row-actions"><button type="button" class="btn btn-secondary small-btn" data-action="bounce-start" data-payment-id="${p.payment_id}">Mark bounced</button>${renderReverse(model.office, p)}</span>`}
           </li>
         `,
       )}
@@ -703,8 +703,9 @@ function invoicePanel(model: DeskModel, account: AccountModel): TemplateResult {
         ${d.promise !== undefined ? html`<dt>Promise to pay</dt><dd data-promise>${formatMoney(d.promise.promised_cents)} by ${d.promise.promised_date}${d.promise.note ? `: ${d.promise.note}` : ""}</dd>` : nothing}
         ${d.dispute !== undefined ? html`<dt>Dispute</dt><dd data-dispute>${d.dispute.status === "OPEN" ? "Open" : "Resolved"}: ${formatMoney(d.dispute.amount_cents)}${d.dispute.note ? `, ${d.dispute.note}` : ""}</dd>` : nothing}
       </dl>
+      ${renderInvoiceActions(model.office, d)}
       <h3>Payments on this invoice</h3>
-      ${paymentList(account)}
+      ${paymentList(model, account)}
     </section>
   `;
 }

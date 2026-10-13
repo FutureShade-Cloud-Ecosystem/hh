@@ -169,6 +169,12 @@ const officeWorld = createOfficeWorld({
   isController: (req) => isController(req),
   uuid: (kind, n) => uuid(kind, n),
   accounts: () => ACCOUNTS.map((a) => ({ id: uuid("e", a.n), name: a.name, no: a.no })),
+  world: () => world,
+  acct: (n) => acct(n),
+  custId: (n) => custId(n),
+  invNumber: (inv) => invNumber(inv),
+  invById: (id) => invById(id),
+  dayOffset: (n) => dayOffset(n),
   customerIdOfNo: (no) => uuid("e", ACCOUNTS.find((a) => a.no === no).n),
   openInvoices: (customerId) =>
     world.invoices.filter((i) => uuid("e", i.acct) === customerId && i.balance_cents > 0).map((i) => ({ id: i.id, invoice_no: i.invoice_no, late: i.late, balance_cents: i.balance_cents })),
@@ -190,7 +196,10 @@ function reset(kind = "full") {
       balance_cents: i.paid === true ? 0 : i.total,
       holdback_cents: i.holdback ?? 0,
       promise: null,
-      disputed: i.n === 4,
+      dispute:
+        i.n === 4
+          ? { id: uuid("7", 4), status: "OPEN", reason: "SHORT_DELIVERY", note: "Two pallets were short on the drop", amount_cents: 20_000, raised_at: NOW_ISO() }
+          : null,
       payments: [],
     })),
     payments: [],
@@ -255,7 +264,7 @@ reset();
 
 function statusOf(inv) {
   if (inv.balance_cents === 0) return "PAID";
-  if (inv.disputed === true) return "DISPUTED";
+  if (inv.dispute !== null && inv.dispute.status === "OPEN") return "DISPUTED";
   const held = world.holds.some((h) => h.status === "ACTIVE" && h.customer_id === custId(inv.acct));
   if (inv.late > 0) return "OVERDUE";
   if (held) return "CREDIT_HOLD";
@@ -294,7 +303,7 @@ function registerRow(inv) {
     status: statusOf(inv),
     days_overdue: Math.max(inv.late, 0),
     account_status: accountStatus(a.n),
-    disputed: inv.disputed === true,
+    disputed: inv.dispute !== null && inv.dispute.status === "OPEN",
     account: position(a.n),
   };
   if (inv.holdback_cents > 0) row.holdback_cents = inv.holdback_cents;
@@ -430,16 +439,7 @@ function detail(inv) {
     as_of: dayOffset(0),
   };
   if (inv.promise !== null) out.promise = inv.promise;
-  if (inv.disputed === true) {
-    out.dispute = {
-      id: uuid("7", inv.n ?? 1),
-      status: "OPEN",
-      reason: "SHORT_DELIVERY",
-      note: "Two pallets were short on the drop",
-      amount_cents: 20_000,
-      raised_at: NOW_ISO(),
-    };
-  }
+  if (inv.dispute !== null) out.dispute = inv.dispute;
   out.order_no = `SO-${2000 + invNumber(inv)}`;
   return out;
 }
@@ -493,7 +493,7 @@ function history(p) {
     status: p.status,
     amount_cents: p.amount_cents,
     received_at: p.received_at,
-    reversed: p.status === "BOUNCED",
+    reversed: p.status === "BOUNCED" || p.reversed === true,
     allocations: p.allocations.map((al) => {
       const inv = world.invoices.find((i) => invNumber(i) === al.invoice_n);
       return {
@@ -981,6 +981,10 @@ async function handle(req, res) {
   {
     const body = method === "POST" || method === "PUT" ? await readBody(req) : null;
     const answer = officeWorld.handle(req, url, body);
+    if (answer !== null && answer.text !== undefined) {
+      res.writeHead(answer.status, { "Content-Type": answer.type, "Cache-Control": "no-store" });
+      return res.end(answer.text);
+    }
     if (answer !== null) return send(res, answer.status, answer.body);
   }
   return refuse(res, 404, "not found");

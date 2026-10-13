@@ -18,7 +18,20 @@ import type {
 } from "@hardscapehouse/api-client";
 import { OfficeApi } from "./office-api.js";
 import { newKey } from "./held-keys.js";
-import { AttemptKeys, officeRefusal, outcomeUnknown, paperResolveCheck, reminderResultWords, validateApContact, type Channel } from "./office-logic.js";
+import {
+  AttemptKeys,
+  disputeCheck,
+  officeRefusal,
+  outcomeUnknown,
+  paperResolveCheck,
+  reminderResultWords,
+  reversalCheck,
+  reversalWords,
+  sendInvoiceWords,
+  validateApContact,
+  DISPUTE_OUTCOMES,
+  type Channel,
+} from "./office-logic.js";
 
 export interface OfficeHost {
   /** Asks the root to repaint. */
@@ -39,7 +52,14 @@ export interface OfficeHost {
   readonly policy: () => BillingLandingPolicy | null;
   /** Reads the book again (cards, aging, register, holds, Needs you) after a write that moves it. */
   readonly reloadBook: () => Promise<void>;
+  /** Reads the open account's invoices and the selected invoice again after a write that moves them. */
+  readonly reloadAccount: () => Promise<void>;
+  /** Puts an invoice document's HTML into the element matching the selector, in a sandboxed frame. */
+  readonly mountDocument: (selector: string, html: string) => void;
 }
+
+/** The panel an invoice's extra actions open, and what it is about. */
+export type InvoiceMode = "none" | "document" | "dispute" | "resolve";
 
 export interface OfficeWho {
   readonly userId: string;
@@ -65,9 +85,16 @@ export interface RemindForm {
   readonly confirm: boolean;
 }
 
+export type DocumentView = { readonly phase: "none" } | { readonly phase: "loading" } | { readonly phase: "error"; readonly words: string } | { readonly phase: "ready" };
+
 export interface OfficeModel {
   readonly busy: boolean;
   readonly nowMs: number;
+  /** What the open invoice's extra actions are showing: nothing, its document, a dispute form, or the close form. */
+  readonly invoiceMode: InvoiceMode;
+  readonly document: DocumentView;
+  /** The payment being reversed, waiting on a reason. */
+  readonly reversing: string | null;
   readonly accounts: readonly BillingAgingRow[];
   readonly policy: BillingLandingPolicy | null;
   readonly remind: RemindForm;
@@ -98,6 +125,12 @@ export class OfficeDesk {
   #historyFor = "";
   #paper: Listing<BillingPaperPathEntry> = { phase: "none" };
   #closing: { flagId: string; status: "MOVED_TO_PAPER" | "DISMISSED" } | null = null;
+  #invoiceMode: InvoiceMode = "none";
+  #invoiceId: string | null = null;
+  #document: DocumentView = { phase: "none" };
+  /** The invoice document's HTML, held until the next paint can mount it. */
+  #documentHtml: string | null = null;
+  #reversing: string | null = null;
   /** The account whose name field the next paint must fill from its contact. */
   #fillContactFor: string | null = null;
 
@@ -115,6 +148,9 @@ export class OfficeDesk {
     return {
       busy: this.#busy,
       nowMs: Date.now(),
+      invoiceMode: this.#invoiceMode,
+      document: this.#document,
+      reversing: this.#reversing,
       accounts: this.#host.accounts(),
       policy: this.#host.policy(),
       remind: this.#remind,
@@ -335,6 +371,128 @@ export class OfficeDesk {
     return false;
   }
 
+  // ---- an invoice: send, document, dispute; a payment reversal ----------------------------------------------
+
+  /** The open invoice changed (or closed): its extra panels start over. */
+  invoiceChanged(invoiceId: string | null): void {
+    if (invoiceId === this.#invoiceId) return;
+    this.#invoiceId = invoiceId;
+    this.#invoiceMode = "none";
+    this.#document = { phase: "none" };
+    this.#documentHtml = null;
+    this.#reversing = null;
+  }
+
+  async #sendInvoice(invoiceId: string): Promise<void> {
+    if (this.#busy) return;
+    const attempt = `send-invoice:${invoiceId}`;
+    const key = this.#keys.keyFor(attempt);
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.sendInvoice(invoiceId, key);
+    this.#busy = false;
+    if (!result.ok) {
+      if (!outcomeUnknown(result.status)) this.#keys.settle(attempt);
+      this.#fail("send-invoice", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    this.#keys.settle(attempt);
+    this.#host.notice(sendInvoiceWords(result.value));
+    this.#host.reveal("[data-notice]");
+    await this.#host.reloadAccount();
+    this.#host.repaint();
+  }
+
+  async #showDocument(invoiceId: string): Promise<void> {
+    this.#invoiceMode = "document";
+    this.#document = { phase: "loading" };
+    this.#host.repaint();
+    const got = await this.#api.invoiceDocument(invoiceId);
+    if (this.#invoiceId !== invoiceId || this.#invoiceMode !== "document") return;
+    if (!got.ok) {
+      this.#document = { phase: "error", words: officeRefusal("document", got.error, got.status) };
+      this.#host.repaint();
+      return;
+    }
+    this.#document = { phase: "ready" };
+    this.#documentHtml = got.value;
+    this.#host.repaint();
+  }
+
+  async #openDispute(invoiceId: string, balanceCents: number): Promise<void> {
+    if (this.#busy) return;
+    const check = disputeCheck({
+      reason: this.#host.field("dispute-reason"),
+      amountText: this.#host.field("dispute-amount"),
+      note: this.#host.field("dispute-note"),
+      balanceCents,
+    });
+    if (!check.ok) return this.#stop(check.words);
+    const attempt = `dispute:${invoiceId}:${check.reason}:${check.amountCents}:${check.note}`;
+    const key = this.#keys.keyFor(attempt);
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.openDispute(invoiceId, { reason: check.reason, note: check.note, amountCents: check.amountCents, key });
+    this.#busy = false;
+    if (!result.ok) {
+      if (!outcomeUnknown(result.status)) this.#keys.settle(attempt);
+      this.#fail("dispute", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    this.#keys.settle(attempt);
+    this.#invoiceMode = "none";
+    this.#host.notice("The dispute is open. The invoice shows as disputed until it is closed.");
+    this.#host.reveal("[data-notice]");
+    await Promise.all([this.#host.reloadAccount(), this.#host.reloadBook()]);
+    this.#host.repaint();
+  }
+
+  async #resolveDispute(invoiceId: string): Promise<void> {
+    if (this.#busy) return;
+    const outcome = this.#host.field("dispute-outcome");
+    if (!DISPUTE_OUTCOMES.includes(outcome)) return this.#stop("Choose how the dispute ended.");
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.resolveDispute(invoiceId, outcome);
+    this.#busy = false;
+    if (!result.ok) {
+      this.#fail("dispute", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    this.#invoiceMode = "none";
+    this.#host.notice(result.value.resolved ? "The dispute is closed and the way it ended is on the record." : "There was no open dispute on this invoice, so nothing was closed.");
+    this.#host.reveal("[data-notice]");
+    await Promise.all([this.#host.reloadAccount(), this.#host.reloadBook()]);
+    this.#host.repaint();
+  }
+
+  async #reversePayment(paymentId: string, paymentNo: string): Promise<void> {
+    if (this.#busy) return;
+    const check = reversalCheck(this.#host.field("reverse-reason"));
+    if (!check.ok) return this.#stop(check.words);
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.reversePayment(paymentId, check.reason);
+    this.#busy = false;
+    if (!result.ok) {
+      this.#fail("reverse", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    this.#reversing = null;
+    this.#host.notice(reversalWords(result.value, paymentNo));
+    this.#host.reveal("[data-notice]");
+    await Promise.all([this.#host.reloadAccount(), this.#host.reloadBook()]);
+    this.#host.repaint();
+  }
+
   // ---- the press ---------------------------------------------------------------------------------------------
 
   /** Acts on a control carrying data-action. Returns true when the press was this slice's. */
@@ -367,6 +525,35 @@ export class OfficeDesk {
       case "remind-send":
         void this.#sendReminder();
         return true;
+      case "invoice-send":
+        void this.#sendInvoice(attr("data-invoice-id"));
+        return true;
+      case "invoice-document":
+        void this.#showDocument(attr("data-invoice-id"));
+        return true;
+      case "invoice-mode":
+        this.#invoiceMode = attr("data-choice") === "dispute" ? "dispute" : attr("data-choice") === "resolve" ? "resolve" : "none";
+        this.#document = { phase: "none" };
+        this.#documentHtml = null;
+        this.#host.repaint();
+        return true;
+      case "dispute-open":
+        void this.#openDispute(attr("data-invoice-id"), Number(attr("data-balance-cents")));
+        return true;
+      case "dispute-close":
+        void this.#resolveDispute(attr("data-invoice-id"));
+        return true;
+      case "reverse-start":
+        this.#reversing = attr("data-payment-id");
+        this.#host.repaint();
+        return true;
+      case "reverse-cancel":
+        this.#reversing = null;
+        this.#host.repaint();
+        return true;
+      case "reverse-confirm":
+        void this.#reversePayment(attr("data-payment-id"), attr("data-payment-no"));
+        return true;
       case "paper-sweep":
         void this.#sweepPaper();
         return true;
@@ -388,6 +575,11 @@ export class OfficeDesk {
 
   /** After each paint: a contact's name fills its field once the contact has been read. */
   afterRender(): void {
+    if (this.#documentHtml !== null) {
+      const text = this.#documentHtml;
+      this.#documentHtml = null;
+      this.#host.mountDocument("[data-doc-slot]", text);
+    }
     const id = this.#fillContactFor;
     if (id === null) return;
     const read = this.#contacts.get(id);

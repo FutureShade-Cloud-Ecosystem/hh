@@ -47,6 +47,8 @@ export interface DeskHost {
   readonly setField: (name: string, value: string, key?: string) => void;
   /** Hands text to the person as a file. */
   readonly download: (text: string, filename: string) => void;
+  /** Puts an invoice document's HTML into the element matching the selector, in a sandboxed frame with no scripts. */
+  readonly mountDocument: (selector: string, html: string) => void;
 }
 
 export interface DeskWho {
@@ -121,6 +123,11 @@ export class ArDesk {
         this.#error = words;
         host.repaint();
       },
+      reloadAccount: async () => {
+        await this.#reloadAccount();
+        host.repaint();
+      },
+      mountDocument: (selector, text) => host.mountDocument(selector, text),
       accounts: () => this.#aging,
       policy: () => this.#landing?.policy ?? null,
       reloadBook: async () => {
@@ -266,6 +273,7 @@ export class ArDesk {
         return true;
       case "back":
         this.#account = null;
+        this.#office.invoiceChanged(null);
         this.#clearMessages();
         void this.#reloadBook().then(() => this.#host.repaint());
         this.#host.repaint();
@@ -531,6 +539,7 @@ export class ArDesk {
     if (this.#account === null || invoiceId === "") return;
     this.#clearMessages();
     this.#account = { ...this.#account, selectedInvoiceId: invoiceId, right: "invoice", detail: null, payments: null, bounceFor: null };
+    this.#office.invoiceChanged(invoiceId);
     this.#host.repaint();
     await this.#reloadInvoice();
     this.#host.repaint();

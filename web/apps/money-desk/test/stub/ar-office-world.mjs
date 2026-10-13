@@ -33,6 +33,7 @@ export function createOfficeWorld(ctx) {
       kind,
       landingPolicy: { ...DEFAULT_POLICY, ar_tier: kind === "pro" ? "PRO" : "BASE" },
       policyHistory: [],
+      invoiceSends: new Map(),
       sends: [],
       sendKeys: new Map(),
       // The demo world starts with the one paper path flag the landing has always drawn (Summit Patio, three sends).
@@ -168,9 +169,101 @@ export function createOfficeWorld(ctx) {
     return { flag_id: f.flag_id, customer_id: f.customer_id, customer_name: a?.name ?? "Account", account_no: a?.no ?? "", delivered_sends: f.delivered_sends, window_days: f.window_days, raised_at: f.raised_at };
   };
 
+  // ---- an invoice: send, document, dispute (core/internal/billing register_service.go, register_handler.go) ----------
+
+  const invoiceOr404 = (id) => {
+    const inv = ctx.invById(id);
+    return inv === undefined ? { error: refuse(404, "no such invoice") } : { inv };
+  };
+  const NO_CONTACT = new Set(["OB-200"]);
+
+  function sendInvoice(id, body) {
+    if (body === null) return refuse(422, "the request body must be JSON");
+    const key = typeof body.idempotency_key === "string" ? body.idempotency_key : "";
+    if (key === "") return refuse(422, "sending an invoice needs an idempotency key");
+    const found = invoiceOr404(id);
+    if (found.error) return found.error;
+    const account = ctx.acct(found.inv.acct);
+    if (NO_CONTACT.has(account.no)) return refuse(422, `${account.name} has no contact email on the account`);
+    if (w.invoiceSends.has(key)) return ok({ sent: 0, replayed: 1, tone: "" });
+    w.invoiceSends.set(key, found.inv.id);
+    return ok({ sent: 1, replayed: 0, tone: "" });
+  }
+
+  function documentOf(id) {
+    const found = invoiceOr404(id);
+    if (found.error) return found.error;
+    const inv = found.inv;
+    const a = ctx.acct(inv.acct);
+    const text = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Invoice ${inv.invoice_no}</title></head><body><h1>Invoice ${inv.invoice_no}</h1><p>${a.name}, account ${a.no}</p><p>Total ${inv.total_cents} cents, balance ${inv.balance_cents} cents.</p></body></html>`;
+    return { status: 200, type: "text/html; charset=utf-8", text };
+  }
+
+  function openDispute(id, body) {
+    if (body === null) return refuse(422, "the request body must be JSON");
+    const key = typeof body.idempotency_key === "string" ? body.idempotency_key : "";
+    if (key === "") return refuse(422, "opening a dispute needs an idempotency key");
+    const reason = String(body.reason ?? "").trim().toUpperCase();
+    if (!["SHORT_DELIVERY", "DAMAGED", "PRICING", "NOT_ORDERED", "OTHER"].includes(reason)) return refuse(422, "a dispute names a reason: short delivery, damaged, pricing, not ordered, or other");
+    const found = invoiceOr404(id);
+    if (found.error) return found.error;
+    const inv = found.inv;
+    if (body.amount_cents > inv.balance_cents) return refuse(422, "the disputed amount cannot exceed the outstanding balance");
+    if (inv.dispute !== null && inv.dispute.status === "OPEN") return { status: 409, body: { error: "this invoice already has an open dispute", dispute: inv.dispute } };
+    inv.dispute = { id: ctx.uuid("7", ctx.world().counter + 500), status: "OPEN", reason, note: String(body.note ?? "").trim(), amount_cents: body.amount_cents, raised_at: NOW_ISO() };
+    ctx.world().counter += 1;
+    return ok(inv.dispute);
+  }
+
+  function resolveDispute(id, body) {
+    if (body === null) return refuse(422, "the request body must be JSON");
+    const outcome = String(body.outcome ?? "").trim().toUpperCase();
+    if (!["PAID", "CREDITED", "WRITTEN_OFF", "WITHDRAWN"].includes(outcome)) return refuse(422, "closing a dispute names how it ended: paid, credited, written off, or withdrawn");
+    const found = invoiceOr404(id);
+    if (found.error) return found.error;
+    const inv = found.inv;
+    if (inv.dispute === null || inv.dispute.status !== "OPEN") return ok({ resolved: false });
+    inv.dispute = { ...inv.dispute, status: "RESOLVED", outcome, resolved_at: NOW_ISO() };
+    return ok({ resolved: true });
+  }
+
+  // ---- a payment reversal (core/internal/payments reversal_handler.go, reversal.go) ------------------------------------
+
+  function reversePayment(id, body) {
+    if (body === null) return refuse(400, "invalid JSON body");
+    const world = ctx.world();
+    const p = world.payments.find((x) => x.id === id);
+    const reason = String(body.reason ?? "");
+    if (reason === "") return refuse(400, "payments: a reversal reason is required");
+    if (p === undefined) return refuse(404, "payment not found");
+    if (p.reverses !== undefined) return refuse(400, "payments: this payment cannot be reversed: it is itself a reversing entry, take the payment again as a new payment so the reason for re-charging is its own record");
+    if (p.reversed === true) return refuse(409, "payments: this payment has already been reversed");
+    if (p.status === "VOID") return refuse(400, "payments: this payment cannot be reversed: status is VOID");
+    const reopened = [];
+    for (const al of p.allocations) {
+      const inv = world.invoices.find((i) => ctx.invNumber(i) === al.invoice_n);
+      if (p.status !== "BOUNCED") inv.balance_cents += al.amount_cents;
+      reopened.push(inv.id);
+    }
+    p.reversed = true;
+    world.counter += 1;
+    const reversal = { id: ctx.uuid("c", 100 + world.counter), no: `REV-${String(100 + world.counter).padStart(4, "0")}`, acct: p.acct, method: p.method, amount_cents: p.amount_cents, status: "VOID", reason, received_at: NOW_ISO(), bounced_at: "", allocations: p.allocations.map((al) => ({ ...al })), reverses: p.id };
+    world.payments.push(reversal);
+    return ok({ label: "VOID", original_payment_id: p.id, reversal_payment_id: reversal.id, reversal_no: reversal.no, amount_cents: p.amount_cents, reason, same_day: true, reopened_invoices: reopened }, 201);
+  }
+
   function handle(req, url, body) {
     const path = url.pathname;
     const method = req.method;
+    let m = path.match(/^\/api\/v1\/ar\/register\/invoices\/([^/]+)\/(send|document|dispute|dispute\/resolve)$/);
+    if (m) {
+      if (m[2] === "send" && method === "POST") return sendInvoice(m[1], body);
+      if (m[2] === "document" && method === "GET") return documentOf(m[1]);
+      if (m[2] === "dispute" && method === "POST") return openDispute(m[1], body);
+      if (m[2] === "dispute/resolve" && method === "POST") return resolveDispute(m[1], body);
+    }
+    m = path.match(/^\/api\/v1\/ar\/payments\/([^/]+)\/reverse$/);
+    if (m && method === "POST") return reversePayment(m[1], body);
     if (method === "POST" && path === "/api/v1/ar/reminders") {
       // The act is gated on the capability, not only the payload: a base plan caller who hand crafts the POST is refused.
       if (w.landingPolicy.ar_tier !== "PRO") return refuse(403, gateWords.base);
@@ -220,7 +313,7 @@ export function createOfficeWorld(ctx) {
       if (denied !== null) return denied;
       return ok({ items: w.policyHistory });
     }
-    let m = path.match(/^\/api\/v1\/ar\/customers\/([^/]+)\/ap-contact$/);
+    m = path.match(/^\/api\/v1\/ar\/customers\/([^/]+)\/ap-contact$/);
     if (m) {
       const id = m[1];
       if (method === "GET") {

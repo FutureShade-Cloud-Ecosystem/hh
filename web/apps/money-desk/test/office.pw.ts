@@ -243,3 +243,96 @@ test("on a phone the reminders screen fits, the history becomes cards, and the f
   await page.keyboard.press("Tab");
   await expect(page.locator("[data-field='remind-invoice']")).toBeFocused();
 });
+
+// ---- an invoice: send, document, dispute, and a payment reversal -------------------------------------------------------
+
+async function openInvoice(page: Page, account: string, invoice: string): Promise<void> {
+  await openAccount(page, account);
+  await page.locator("[data-invoice-row]", { hasText: invoice }).getByRole("button", { name: invoice }).click();
+  await expect(page.locator("[data-invoice-panel]")).toContainText(`Invoice ${invoice}`);
+}
+
+test("an invoice is sent through the messaging sink, and an account with no contact email is refused in the server's words", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openInvoice(page, "Granite Edge Landscaping (demo)", "INV-1002");
+  await page.getByRole("button", { name: "Send the invoice" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("The invoice went to the account's contact through the messaging sink.");
+  expect(await page.locator("[data-invoice-panel]").innerText()).not.toMatch(/@|gls-demo|\.invalid/);
+  await page.getByRole("button", { name: "‹ Receivables" }).click();
+  await openInvoice(page, "Oakline Builders (demo)", "INV-1003");
+  await page.getByRole("button", { name: "Send the invoice" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("Oakline Builders (demo) has no contact email on the account.");
+});
+
+test("an invoice document opens in a frame that can run nothing, and closes", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openInvoice(page, "Granite Edge Landscaping (demo)", "INV-1002");
+  await page.getByRole("button", { name: "View the document" }).click();
+  await expect(page.locator("[data-doc-slot] iframe")).toHaveAttribute("sandbox", "");
+  await expect(page.frameLocator("[data-doc-slot] iframe").locator("h1")).toHaveText("Invoice INV-1002");
+  await page.getByRole("button", { name: "Close the document" }).click();
+  await expect(page.locator("[data-doc-slot] iframe")).toHaveCount(0);
+});
+
+test("a dispute is checked, opened, shown on the invoice and the register, and closed with an outcome", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openInvoice(page, "Granite Edge Landscaping (demo)", "INV-1002");
+  await page.getByRole("button", { name: "Open a dispute" }).click();
+  await page.getByRole("button", { name: "Open the dispute" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("Choose why the customer disputes it.");
+  await page.locator("[data-field='dispute-reason']").selectOption("DAMAGED");
+  await page.locator("[data-field='dispute-amount']").fill("960.01");
+  await page.getByRole("button", { name: "Open the dispute" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("That is more than the invoice balance of $960.00.");
+  await page.locator("[data-field='dispute-amount']").fill("100.00");
+  await page.locator("[data-field='dispute-note']").fill("Two pallets arrived cracked");
+  await page.getByRole("button", { name: "Open the dispute" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("The dispute is open.");
+  await expect(page.locator("[data-dispute]")).toContainText("Open: $100.00, Two pallets arrived cracked");
+  await expect(page.locator("[data-invoice-panel] .pill", { hasText: "disputed" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Close the dispute" }).click();
+  await page.getByRole("button", { name: "Close the dispute" }).last().click();
+  await expect(page.locator("[data-error]")).toHaveText("Choose how the dispute ended.");
+  await page.locator("[data-field='dispute-outcome']").selectOption("CREDITED");
+  await page.getByRole("button", { name: "Close the dispute" }).last().click();
+  await expect(page.locator("[data-notice]")).toContainText("The dispute is closed");
+  await expect(page.locator("[data-dispute-closed]")).toHaveText("Last dispute: Damaged, closed as Credited.");
+  await expect(page.getByRole("button", { name: "Open a dispute" })).toBeVisible();
+});
+
+test("a payment is reversed with a reason, and the invoice is owing what it was", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openAccount(page, "Riverstone Paving (demo)");
+  await page.locator("[data-field='receive-amount']").fill("250.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 7782");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("PAY-0101 applied");
+  await page.locator("[data-invoice-row]", { hasText: "INV-1005" }).getByRole("button", { name: "INV-1005" }).click();
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$637.50");
+  await page.locator("[data-payment-row]").getByRole("button", { name: "Reverse" }).click();
+  await page.getByRole("button", { name: "Confirm reversed" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("Enter why the payment is being reversed, such as keyed on the wrong account.");
+  await page.locator("[data-field='reverse-reason']").fill("Keyed on the wrong account");
+  await page.getByRole("button", { name: "Confirm reversed" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("Payment PAY-0101 is reversed as a void, the same day. $250.00 is owing again on 1 invoice.");
+  await expect(page.locator("[data-invoice-balance]")).toHaveText("$887.50");
+  await expect(page.locator("[data-payment-row]", { hasText: "REV-" })).toContainText("Reversal");
+  await expect(page.locator("[data-payment-row]", { hasText: "REV-" }).getByRole("button")).toHaveCount(0);
+  await page.locator("[data-payment-row]", { hasText: "PAY-0101" }).getByRole("button", { name: "Reverse" }).click();
+  await page.locator("[data-field='reverse-reason']").fill("Again");
+  await page.getByRole("button", { name: "Confirm reversed" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("This payment has already been reversed.");
+});
+
+test("on a phone the invoice's dispute form and the reversal fit the screen", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDesk(page, request);
+  await openInvoice(page, "Granite Edge Landscaping (demo)", "INV-1002");
+  await page.getByRole("button", { name: "Open a dispute" }).click();
+  await expect(page.locator("[data-dispute-form]")).toBeVisible();
+  await noSidewaysScroll(page);
+  await page.getByRole("button", { name: "View the document" }).click();
+  await expect(page.locator("[data-doc-slot] iframe")).toBeVisible();
+  await noSidewaysScroll(page);
+});

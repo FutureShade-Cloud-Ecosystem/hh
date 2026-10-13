@@ -225,6 +225,11 @@ const officeStyles = css`
   .close-form { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }
   .close-form label { min-width: 220px; flex: 1 1 220px; }
   .inline-select { min-width: 200px; }
+  .inv-actions { margin: var(--hh-s-12) 0; padding-top: var(--hh-s-12); border-top: 1px solid var(--hh-line); }
+  .row-actions { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }
+  .doc-view { margin-top: var(--hh-s-12); }
+  .doc-slot iframe { width: 100%; height: 360px; border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); background: var(--hh-card); }
+  .doc-slot:empty { display: none; }
   @media (max-width: 1100px) {
     .remind-cols .col-side { order: -1; }
   }

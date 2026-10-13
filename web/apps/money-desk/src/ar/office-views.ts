@@ -7,11 +7,11 @@
 // credit-hold) for the cards, tables and the right hand panels; the original app's ar-console, ar-monthend and
 // ar-invoice-register screens for what each panel holds.
 import { html, nothing, type TemplateResult } from "lit";
-import type { BillingStatement } from "@hardscapehouse/api-client";
+import type { BillingInvoiceDetail, BillingStatement } from "@hardscapehouse/api-client";
 import { formatMoney } from "./ar-money.js";
 import { cardTitle, relativeDay } from "./ar-logic.js";
 import type { Listing, OfficeModel } from "./office-desk.js";
-import { channelWord, contactLine, deliveryWord, recipientWords, relativeStamp, reminderPreview, runModeWord, runNoticeWords, sendStatusWord, statementGoes } from "./office-logic.js";
+import { DISPUTE_OUTCOMES, DISPUTE_REASONS, channelWord, contactLine, deliveryWord, disputeOutcomeWord, disputeReasonWord, recipientWords, relativeStamp, reminderPreview, runModeWord, runNoticeWords, sendStatusWord, statementGoes } from "./office-logic.js";
 
 function deliveryPill(statement: BillingStatement): TemplateResult {
   const tone = statement.delivery_status === "FAILED" ? "stop" : statement.delivery_status === "NOT_QUEUED" ? "plain" : "good";
@@ -242,4 +242,83 @@ export function renderRemindersPanels(om: OfficeModel): TemplateResult {
       <div class="col-side">${remindForm(om)}</div>
     </div>
   `;
+}
+
+// ---- an invoice's extra actions (inside the invoice panel) -------------------------------------------------------
+
+export function renderInvoiceActions(om: OfficeModel, d: BillingInvoiceDetail): TemplateResult {
+  const open = d.dispute !== undefined && d.dispute.status === "OPEN";
+  const closed = d.dispute !== undefined && d.dispute.status === "RESOLVED";
+  return html`
+    <div class="inv-actions" data-invoice-actions>
+      <div class="actions">
+        <button type="button" class="btn btn-secondary small-btn" data-action="invoice-send" data-invoice-id="${d.id}" ?disabled=${om.busy}>Send the invoice</button>
+        <button type="button" class="btn btn-secondary small-btn" data-action="invoice-document" data-invoice-id="${d.id}" aria-pressed="${om.invoiceMode === "document" ? "true" : "false"}">View the document</button>
+        ${open
+          ? html`<button type="button" class="btn btn-secondary small-btn" data-action="invoice-mode" data-choice="resolve" aria-pressed="${om.invoiceMode === "resolve" ? "true" : "false"}">Close the dispute</button>`
+          : html`<button type="button" class="btn btn-secondary small-btn" data-action="invoice-mode" data-choice="dispute" aria-pressed="${om.invoiceMode === "dispute" ? "true" : "false"}">Open a dispute</button>`}
+      </div>
+      <p class="dim small">Sending goes to the account's contact through the messaging sink. The address is never shown.</p>
+      ${closed && d.dispute !== undefined ? html`<p class="dim small" data-dispute-closed>Last dispute: ${disputeReasonWord(d.dispute.reason)}, closed as ${disputeOutcomeWord(d.dispute.outcome ?? "")}.</p>` : nothing}
+      ${om.invoiceMode === "document" ? documentFrame(om) : nothing}
+      ${om.invoiceMode === "dispute" ? disputeForm(om, d) : nothing}
+      ${om.invoiceMode === "resolve" ? resolveForm(om, d) : nothing}
+    </div>
+  `;
+}
+
+function documentFrame(om: OfficeModel): TemplateResult {
+  const doc = om.document;
+  return html`
+    <section class="doc-view" aria-label="Invoice document" data-doc-view>
+      ${doc.phase === "error" ? html`<p class="alert alert-error" role="alert" data-error>${doc.words}</p>` : doc.phase === "ready" ? nothing : html`<p class="dim" role="status">Loading the document.</p>`}
+      <div class="doc-slot" data-doc-slot></div>
+      <div class="actions"><button type="button" class="btn btn-secondary small-btn" data-action="invoice-mode" data-choice="none">Close the document</button></div>
+    </section>
+  `;
+}
+
+function disputeForm(om: OfficeModel, d: BillingInvoiceDetail): TemplateResult {
+  return html`
+    <form class="held-form" aria-label="Open a dispute" data-dispute-form>
+      <label>Why it is disputed
+        <select data-field="dispute-reason">
+          <option value="">Choose a reason</option>
+          ${DISPUTE_REASONS.map((r) => html`<option value="${r}">${disputeReasonWord(r)}</option>`)}
+        </select>
+      </label>
+      <label>Amount disputed (dollars)<input type="text" inputmode="decimal" data-field="dispute-amount" placeholder="Up to ${formatMoney(d.totals.balance_cents)}" autocomplete="off" /></label>
+      <label>What the customer said<input type="text" data-field="dispute-note" placeholder="Such as two pallets arrived cracked" autocomplete="off" /></label>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-action="dispute-open" data-invoice-id="${d.id}" data-balance-cents="${d.totals.balance_cents}" ?disabled=${om.busy}>Open the dispute</button>
+        <button type="button" class="btn btn-secondary" data-action="invoice-mode" data-choice="none">Cancel</button>
+      </div>
+    </form>
+  `;
+}
+
+function resolveForm(om: OfficeModel, d: BillingInvoiceDetail): TemplateResult {
+  return html`
+    <form class="held-form" aria-label="Close the dispute" data-resolve-form>
+      <label>How it ended
+        <select data-field="dispute-outcome">
+          <option value="">Choose an outcome</option>
+          ${DISPUTE_OUTCOMES.map((o) => html`<option value="${o}">${disputeOutcomeWord(o)}</option>`)}
+        </select>
+      </label>
+      <p class="dim small">Closing records how the argument ended. It does not itself move any money.</p>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-action="dispute-close" data-invoice-id="${d.id}" ?disabled=${om.busy}>Close the dispute</button>
+        <button type="button" class="btn btn-secondary" data-action="invoice-mode" data-choice="none">Cancel</button>
+      </div>
+    </form>
+  `;
+}
+
+/** The reversal's inline form, or its start button, for one payment row. */
+export function renderReverse(om: OfficeModel, payment: { payment_id: string; payment_no: string }): TemplateResult {
+  if (om.reversing === payment.payment_id) {
+    return html`<span class="inline-form"><label><span class="visually-hidden">Why it is reversed</span><input type="text" data-field="reverse-reason" placeholder="Why it is reversed" autocomplete="off" /></label><button type="button" class="btn btn-danger small-btn" data-action="reverse-confirm" data-payment-id="${payment.payment_id}" data-payment-no="${payment.payment_no}" ?disabled=${om.busy}>Confirm reversed</button><button type="button" class="btn btn-secondary small-btn" data-action="reverse-cancel">Cancel</button></span>`;
+  }
+  return html`<button type="button" class="btn btn-secondary small-btn" data-action="reverse-start" data-payment-id="${payment.payment_id}">Reverse</button>`;
 }

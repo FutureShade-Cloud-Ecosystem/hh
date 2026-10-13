@@ -220,3 +220,56 @@ export function relativeStamp(stamp: string, nowMs: number): string {
   if (days === 0) return "today";
   return `${days} ${days === 1 ? "day" : "days"} ago`;
 }
+
+// ---- an invoice: send, dispute, a payment reversal ------------------------------------------------------------------
+
+import type { BillingReminderResult, PaymentsReversalResult } from "@hardscapehouse/api-client";
+import { formatMoney, parseAmountToCents } from "./ar-money.js";
+
+export function sendInvoiceWords(result: BillingReminderResult): string {
+  if (result.replayed > 0 && result.sent === 0) return "That invoice was already sent on this key, so nothing new went.";
+  if (result.skipped !== undefined && Object.keys(result.skipped).length > 0) return "The send was recorded, but did not go: nothing left the building.";
+  return "The invoice went to the account's contact through the messaging sink.";
+}
+
+const DISPUTE_REASON_WORD: Record<string, string> = { SHORT_DELIVERY: "Short delivery", DAMAGED: "Damaged", PRICING: "Pricing", NOT_ORDERED: "Not ordered", OTHER: "Other" };
+const DISPUTE_OUTCOME_WORD: Record<string, string> = { PAID: "Paid", CREDITED: "Credited", WRITTEN_OFF: "Written off", WITHDRAWN: "Withdrawn" };
+
+export const DISPUTE_REASONS: readonly string[] = ["SHORT_DELIVERY", "DAMAGED", "PRICING", "NOT_ORDERED", "OTHER"];
+export const DISPUTE_OUTCOMES: readonly string[] = ["PAID", "CREDITED", "WRITTEN_OFF", "WITHDRAWN"];
+
+export function disputeReasonWord(reason: string): string {
+  return DISPUTE_REASON_WORD[reason] ?? reason;
+}
+
+export function disputeOutcomeWord(outcome: string): string {
+  return DISPUTE_OUTCOME_WORD[outcome] ?? outcome;
+}
+
+export type DisputeCheck = { ok: true; reason: string; amountCents: number; note: string } | { ok: false; words: string };
+
+/** The core's OpenDispute checks, said before the request is sent; the amount is parsed through the decimal string. */
+export function disputeCheck(input: { reason: string; amountText: string; note: string; balanceCents: number }): DisputeCheck {
+  if (!DISPUTE_REASONS.includes(input.reason)) return { ok: false, words: "Choose why the customer disputes it." };
+  if (input.amountText.trim() === "") return { ok: false, words: "Enter the disputed amount, such as 100.00." };
+  const cents = parseAmountToCents(input.amountText);
+  if (cents === null) return { ok: false, words: "Enter the amount as dollars and cents, such as 100.00." };
+  if (cents === 0) return { ok: false, words: "The amount must be more than zero." };
+  if (cents > input.balanceCents) return { ok: false, words: `That is more than the invoice balance of ${formatMoney(input.balanceCents)}.` };
+  return { ok: true, reason: input.reason, amountCents: cents, note: input.note.trim() };
+}
+
+export type ReversalCheck = { ok: true; reason: string } | { ok: false; words: string };
+
+export function reversalCheck(reason: string): ReversalCheck {
+  const trimmed = reason.trim();
+  if (trimmed === "") return { ok: false, words: "Enter why the payment is being reversed, such as keyed on the wrong account." };
+  return { ok: true, reason: trimmed };
+}
+
+/** What a reversal undid, from the server's own answer. */
+export function reversalWords(result: PaymentsReversalResult, paymentNo: string): string {
+  const n = result.reopened_invoices.length;
+  const kind = result.label === "VOID" ? "a void, the same day" : "a reversal";
+  return `Payment ${paymentNo} is reversed as ${kind}. ${formatMoney(result.amount_cents)} is owing again on ${n} ${n === 1 ? "invoice" : "invoices"}.`;
+}
