@@ -187,7 +187,11 @@ case "$HASH" in
 esac
 
 echo "== the throwaway Postgres"
-docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
+net_made=0
+if ! docker network inspect "$NET" >/dev/null 2>&1; then
+	docker network create "$NET" >/dev/null
+	net_made=1
+fi
 if docker ps --format '{{.Names}}' | grep -qx "$PG_NAME"; then
 	pg_up=1
 else
@@ -326,6 +330,12 @@ for pp in pro-procurement pro-pay pro-field; do
 	asset="$(curl -s -u "demo:$PHRASE" "$BASE/$pp/" | sed -n "s/.*src=\"\(\/$pp\/assets\/[^\"]*\.js\)\".*/\1/p" | head -1)"
 	if [ -n "$asset" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' -u "demo:$PHRASE" "$BASE$asset")" = "200" ]; then
 		pass "$pp's script asset resolves under /$pp/"
+		# The bundle is a demo build: only a --mode demo build carries the demo session mint.
+		if curl -s -u "demo:$PHRASE" "$BASE$asset" | grep -q '/api/v1/demo/session'; then
+			pass "$pp's bundle is a demo build (it carries the demo session route)"
+		else
+			fail "$pp's bundle is not a demo build (no demo session route in $asset)"
+		fi
 	else
 		fail "$pp's script asset did not resolve under /$pp/ (found: ${asset:-none})"
 	fi
@@ -800,6 +810,14 @@ docker rm -f "$HAPPY" "$RESUME" "$CAP" "$CAPCLI" >/dev/null 2>&1 || true
 for db in "$DBPFX"_happy "$DBPFX"_nohash "$DBPFX"_nomode "$DBPFX"_build "$DBPFX"_foreign "$DBPFX"_appdb "$DBPFX"_realuser "$DBPFX"_realpay; do
 	docker exec "$PG_NAME" psql -U postgres -q -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
 done
+
+# A Postgres and network this run created go too; ones it found stay.
+if [ "$pg_up" = "0" ]; then
+	docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
+fi
+if [ "$net_made" = "1" ]; then
+	docker network rm "$NET" >/dev/null 2>&1 || true
+fi
 
 echo "== done: $FAILURES failure(s)"
 [ "$FAILURES" -eq 0 ]
