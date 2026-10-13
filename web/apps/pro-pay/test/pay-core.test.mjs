@@ -104,6 +104,48 @@ test("a pay answer is read as paid, declined, refused or unknown, and a timeout 
   assert.equal(classifyPayment({ ok: false, error: "the request timed out" }).kind, "unknown");
 });
 
+test("a 400 or 404 on a pay never says no money moved: the core can answer 400 after an approved charge", () => {
+  for (const status of [400, 404]) {
+    const out = classifyPayment({ ok: false, error: "no", status });
+    assert.equal(out.kind, "refused");
+    assert.doesNotMatch(out.words, /No money moved/i);
+    assert.match(out.words, /Statements/);
+    assert.match(out.words, /before paying again/);
+  }
+  // 401, 402 and 403 are refused at the guards or before the charge: those keep their plain "no money moved".
+  assert.match(classifyPayment({ ok: false, error: "x", status: 403 }).words, /No money moved/);
+});
+
+test("a 400 that reads balance changed is an unknown outcome: the charge may have gone through", () => {
+  const out = classifyPayment({ ok: false, error: 'invoice "x" balance changed; refresh and retry', status: 400 });
+  assert.equal(out.kind, "unknown");
+  assert.match(out.words, /may have gone through/);
+});
+
+test("a balance changed 400 holds the attempt, and Check payment resends the same key and body", async () => {
+  const t = transport([reply(400, { error: 'invoice "x" balance changed; refresh and retry' }), reply(201, PAYMENT)]);
+  const sender = new PaySender(t.client, { canPay: () => true });
+  assert.equal((await sender.pay(body(), 5000)).kind, "unknown");
+  assert.ok(sender.waiting, "held");
+  const blocked = await sender.pay(body({ methodId: undefined, nonce: "n-2" }), 5000);
+  assert.equal(blocked.kind, "blocked", "a changed funding source cannot start a second charge");
+  assert.equal((await sender.pay(body(), 5000)).kind, "paid");
+  assert.equal(t.calls.length, 2);
+  assert.deepEqual(t.calls[1].body, t.calls[0].body);
+});
+
+test("a held attempt survives a 400 or a 404 on Check payment, and the next check is the same request", async () => {
+  for (const status of [400, 404]) {
+    const t = transport([reply(409, { error: "pending" }), reply(status, { error: "no" }), reply(201, PAYMENT)]);
+    const sender = new PaySender(t.client, { canPay: () => true });
+    assert.equal((await sender.pay(body(), 5000)).kind, "unknown");
+    assert.equal((await sender.pay(body(), 5000)).kind, "refused", String(status));
+    assert.ok(sender.waiting, `still held after ${status}`);
+    assert.equal((await sender.pay(body(), 5000)).kind, "paid");
+    assert.deepEqual(t.calls[2].body, t.calls[0].body);
+  }
+});
+
 test("a lapsed session on a pay says so in plain words and moved no money; a role refusal says the role", () => {
   assert.match(classifyPayment({ ok: false, error: "x", status: 401 }).words, /signed out/);
   assert.match(classifyPayment({ ok: false, error: "x", status: 403 }).words, /role/);

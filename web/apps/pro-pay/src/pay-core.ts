@@ -105,17 +105,21 @@ export type PayOutcome =
 const UNKNOWN_WORDS = "We could not confirm this payment. It may have gone through. Check it before paying again.";
 const WAITING_WORDS = "A payment is still waiting for an answer. Check it first.";
 
-/** paid; declined (402, no money moved); refused (a 4xx before any charge); unknown (409, 5xx, no answer: a possible success). */
+const CHECK_WORDS = "This payment could not be confirmed as stopped. Check Statements, then refresh before paying again.";
+
+/**
+ * paid; declined (402, no money moved); refused (401 and 403 at the guards, no money moved; 400 and 404 only say the
+ * request was not accepted, never that no money moved); unknown (409, 5xx, no answer, and a 400 that reads "balance
+ * changed", which the core sends after an approved charge when the settle finds the balance moved: a possible success).
+ */
 export function classifyPayment(result: Result<TenantPayment>, expectedCents = Number.NaN): PayOutcome {
   if (result.ok) return { kind: "paid", payment: result.value, differs: Number.isFinite(expectedCents) && result.value.amount_cents !== expectedCents };
   const status = result.status;
   if (status === 402) return { kind: "declined", words: "The payment was declined. No money moved." };
   if (status === 401) return { kind: "refused", status, words: "You are signed out. Sign in again. No money moved." };
   if (status === 403) return { kind: "refused", status, words: "Your role does not allow paying invoices. No money moved." };
-  if (status === 404) return { kind: "refused", status, words: "An invoice or the payment method was not found. Refresh and try again. No money moved." };
-  if (status !== undefined && status >= 400 && status < 500 && status !== 409) {
-    return { kind: "refused", status, words: "This payment could not be made. Refresh and try again. No money moved." };
-  }
+  if (status === 400 && /balance changed/i.test(result.error)) return { kind: "unknown", words: UNKNOWN_WORDS };
+  if (status !== undefined && status >= 400 && status < 500 && status !== 409) return { kind: "refused", status, words: CHECK_WORDS };
   return { kind: "unknown", words: UNKNOWN_WORDS };
 }
 
@@ -217,6 +221,8 @@ export class PaySender {
     this.#inflight = null;
     if (outcome.kind === "unknown") {
       this.#held = attempt;
+    } else if (this.#held === attempt && outcome.kind === "refused" && (outcome.status === 400 || outcome.status === 404)) {
+      // A check of a held attempt answered 400 or 404: that does not say the charge failed, so the attempt stays held.
     } else {
       this.#held = null;
       if (outcome.kind === "paid") this.#settled = { canon: attempt.canon, outcome };

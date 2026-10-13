@@ -188,6 +188,48 @@ test.describe("phone", () => {
     expect((await paymentsHeld(page, "ap")).length).toBe(3);
   });
 
+  test("a 400 that reads balance changed after a charge is unknown: held, and Check payment is the same request", async ({ page }) => {
+    const posts: string[] = [];
+    await page.route("**/api/v1/tenant/payments", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      posts.push(route.request().postData() ?? "");
+      if (posts.length === 1) {
+        await route.fetch();
+        return route.fulfill({ status: 400, json: { error: 'invoice "x" balance changed; refresh and retry' } });
+      }
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();
+    await page.getByTestId("pay-open").click();
+    await expect(page.getByTestId("method-option").first()).toBeVisible();
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("sheet-words")).toContainText("It may have gone through");
+    await expect(page.getByTestId("sheet-words")).not.toContainText("No money moved");
+    await expect(page.getByTestId("check-payment")).toBeVisible();
+    await page.getByTestId("check-payment").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    expect(posts.length).toBe(2);
+    expect(posts[1]).toBe(posts[0]);
+    expect((await paymentsHeld(page, "ap")).length).toBe(3);
+  });
+
+  test("any other 400 or a 404 on a pay says to check Statements, never that no money moved, and reloads the invoices", async ({ page }) => {
+    let listed = 0;
+    await page.route("**/api/v1/tenant/invoices?*", (route) => {
+      listed += 1;
+      return route.continue();
+    });
+    await page.route("**/api/v1/tenant/payments", (route) => (route.request().method() === "POST" ? route.fulfill({ status: 404, json: { error: "not found" } }) : route.continue()));
+    await signIn(page, "ap");
+    await pickAllAndOpenSheet(page);
+    const before = listed;
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("sheet-words")).toContainText("Check Statements");
+    await expect(page.getByTestId("sheet-words")).not.toContainText("No money moved");
+    await expect.poll(() => listed).toBeGreaterThan(before);
+  });
+
   test("closing the sheet on an unknown outcome leaves a notice, and Check payment from it is the same request", async ({ page }) => {
     const posts: string[] = [];
     await page.route("**/api/v1/tenant/payments", async (route) => {

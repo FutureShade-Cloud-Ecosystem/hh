@@ -497,9 +497,12 @@ export class ProPayApp extends HHElement {
         break;
       case "refused":
       case "blocked":
-        this.#sheet = { ...sheet, phase: "choose", words: outcome.words };
+        // A held attempt stays the held one: the sheet keeps offering Check payment, never a new choice.
+        this.#sheet = { ...sheet, phase: this.#sender.waiting !== null ? "unknown" : "choose", words: outcome.words };
         break;
     }
+    // A 400 or a 404 says the request was not accepted, and a selection may no longer be payable: read the books again.
+    if (outcome.kind === "refused" && (outcome.status === 400 || outcome.status === 404)) void this.#loadSurface();
     this.requestUpdate();
   }
 
