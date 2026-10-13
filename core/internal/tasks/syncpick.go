@@ -183,6 +183,11 @@ func (s *SyncStore) writePicked(ctx context.Context, f sync.ScopeFilter, id, key
 	if !has || (sc.Status != "" && sc.Status != identity.StatusActive) {
 		return sync.RowState{}, refusedf("no active staff authority in this org")
 	}
+	// The direct door's taskBranchFence answers 401 to a staff login with no linked ERP user: a pick
+	// record moves an order's quantities and money and must name who did it.
+	if sc.UserID == "" {
+		return sync.RowState{}, refusedf("yard: unauthenticated")
+	}
 	if branch, _ := cur.Data["branch_id"].(string); branch != "" && !sc.CanAccessBranch(branch) {
 		return sync.RowState{}, refusedf("yard: branch out of scope")
 	}
@@ -190,7 +195,7 @@ func (s *SyncStore) writePicked(ctx context.Context, f sync.ScopeFilter, id, key
 	if err != nil {
 		return sync.RowState{}, err
 	}
-	actor := s.actorERP(ctx, f)
+	actor := sc.UserID
 	if _, err := s.recorder.RecordPick(ctx, id, actor, lines); err != nil {
 		return sync.RowState{}, classifyRecordErr(err)
 	}
