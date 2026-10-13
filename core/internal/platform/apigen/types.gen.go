@@ -3103,7 +3103,7 @@ type IdentityApprovalDecideRequest struct {
 	Reason  string `json:"reason"`
 }
 
-// TaxReasonCode is the document's enum: "STD_ON_HST_13", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW".
+// TaxReasonCode is the document's enum: "STD_ON_HST_13", "STD_SALES_TAX", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW".
 type TaxReasonCode string
 
 type TaxRate struct {
