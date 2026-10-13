@@ -155,6 +155,9 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 	seen := make(map[int]bool, len(lines))
 	clean := make([]PickedLineInput, 0, len(lines))
 	for _, l := range lines {
+		if err := checkPickText(l); err != nil {
+			return nil, err
+		}
 		if l.OrderLineNo <= 0 {
 			return nil, httpx.BadRequestf("every recorded line needs the ticket's own line number")
 		}
@@ -220,6 +223,30 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 	// The rep hears at once, after the record is safe. Best effort: see notifyOrderRep.
 	s.noticeShortPicks(ctx, taskID, clean, res)
 	return picked, nil
+}
+
+// checkPickText refuses text a record could not hold or show safely, before the order is told anything
+// (a NUL fails the write after ApplyPicks has already moved the order). Every C0 control, DEL and the
+// bidi controls (U+202A to U+202E, U+2066 to U+2069) are refused in every text leg; the note and the
+// description, which a picker types or copies on several lines, keep tab, LF and CR. Both doors reach
+// this through RecordPick, so a record queued offline is refused as that op's rejection, never a fault.
+func checkPickText(l PickedLineInput) error {
+	for _, f := range []struct {
+		name, val string
+		multiline bool
+	}{
+		{"product id", l.ProductID, false}, {"sku", l.SKU, false}, {"description", l.Description, true},
+		{"ordered quantity", l.QtyOrdered, false}, {"picked quantity", l.QtyPicked, false}, {"unit", l.UOM, false},
+		{"short reason", l.ShortReason, false}, {"note", l.ShortNote, true},
+	} {
+		for _, r := range f.val {
+			if (r < 0x20 && !(f.multiline && (r == '\t' || r == '\n' || r == '\r'))) || r == 0x7f ||
+				(r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+				return httpx.BadRequestf("line %d: the %s cannot hold control characters, enter it as plain text", l.OrderLineNo, f.name)
+			}
+		}
+	}
+	return nil
 }
 
 // applyToOrder hands a recorded pick to the order module, when the port is wired.
