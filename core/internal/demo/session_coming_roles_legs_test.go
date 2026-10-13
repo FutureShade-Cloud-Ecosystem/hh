@@ -425,4 +425,72 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 			}
 		}
 	})
+	t.Run("logistics-manager", func(t *testing.T) {
+		lm := mint(t, "logistics-manager")
+		if lm.user.UserID != "de5b2000-0000-4000-9000-000000000004" || lm.user.RoleCode != "logistics_manager" ||
+			lm.user.RoleName != "Logistics Manager" || lm.user.Tier != 2 || lm.user.Scope != "BRANCH" {
+			t.Errorf("the credential is %+v, want the Logistics Manager at tier 2 BRANCH", lm.user)
+		}
+		// Manager Home opens the role's own profile (migration 0381's manager.logistics,
+		// born from the dock shape so the day's deliveries lead, as 0203 ruled). No
+		// profile is invented here: the dashboard module carries it.
+		var dash struct {
+			Profile string `json:"profile"`
+			Source  string `json:"source"`
+		}
+		if err := json.Unmarshal([]byte(wantOK(t, "the Manager Home landing", "/api/v1/dashboard", lm)), &dash); err != nil {
+			t.Fatalf("the landing does not decode: %v", err)
+		}
+		if dash.Profile != "manager.logistics" || dash.Source != "role" {
+			t.Errorf("the landing is profile %q from %q, want the role's own manager.logistics", dash.Profile, dash.Source)
+		}
+		var widgets struct {
+			Profile string `json:"profile"`
+			Widgets []struct {
+				Measure  string `json:"measure"`
+				Position int    `json:"position"`
+			} `json:"widgets"`
+		}
+		if err := json.Unmarshal([]byte(wantOK(t, "the widgets", "/api/v1/dashboard/widgets", lm)), &widgets); err != nil {
+			t.Fatalf("the widgets do not decode: %v", err)
+		}
+		if widgets.Profile != "manager.logistics" || len(widgets.Widgets) == 0 ||
+			widgets.Widgets[0].Position != 0 || widgets.Widgets[0].Measure != "deliveries.today" {
+			t.Errorf("the widgets are %+v, want the day's deliveries leading on manager.logistics", widgets)
+		}
+		// The needs queue answers on the same profile. In the seeded world nothing
+		// at Trenton is unassigned, due to commit or stale, so the queue is empty
+		// and says so; what the profile carries is its three dock sources, read
+		// from the policy table.
+		var needs struct {
+			Profile string `json:"profile"`
+			Rows    []struct {
+				SourceKey string `json:"source_key"`
+			} `json:"rows"`
+		}
+		if err := json.Unmarshal([]byte(wantOK(t, "the needs queue", "/api/v1/dashboard/needs", lm)), &needs); err != nil {
+			t.Fatalf("the needs queue does not decode: %v", err)
+		}
+		if needs.Profile != "manager.logistics" {
+			t.Errorf("the needs queue is profile %q, want manager.logistics", needs.Profile)
+		}
+		rows, err := pool.Query(context.Background(),
+			`SELECT source_key FROM dashboard_needs_sources WHERE profile = 'manager.logistics' AND visible ORDER BY position`)
+		if err != nil {
+			t.Fatalf("the needs policy read: %v", err)
+		}
+		var sources []string
+		for rows.Next() {
+			var key string
+			if err := rows.Scan(&key); err != nil {
+				t.Fatal(err)
+			}
+			sources = append(sources, key)
+		}
+		rows.Close()
+		want := []string{"dispatch.unassigned", "dispatch.due_to_commit", "tasks.stale_picks"}
+		if strings.Join(sources, ",") != strings.Join(want, ",") {
+			t.Errorf("the profile's needs sources are %v, want the dock's %v", sources, want)
+		}
+	})
 }
