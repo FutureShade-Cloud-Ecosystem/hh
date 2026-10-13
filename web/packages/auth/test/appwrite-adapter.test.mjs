@@ -4,6 +4,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createAppwriteAccountSurface } from "../src/appwrite-adapter.ts";
+import { PlatformUnreachableError } from "../src/index.ts";
 
 const ENDPOINT = "https://console.example.test/v1";
 const PROJECT = "fake-project";
@@ -66,7 +67,7 @@ function world({ coreAnswers = [], jwtAnswers = [], sessionAnswers = [], fallbac
     }
     if (u === `${ENDPOINT}/account/sessions/email`) {
       const a = sessionAnswers.shift() ?? { status: 201 };
-      return json(a.status, a.status < 300 ? { $id: "sess-1", userId: "fake-user-1" } : { message: "simulated", code: a.status }, fallback);
+      return json(a.status, a.status < 300 ? { $id: "sess-1", userId: "fake-user-1" } : { message: "simulated", code: a.status, type: a.type }, fallback);
     }
     if (u === `${ENDPOINT}/account/sessions/current` && call.method === "DELETE") return new Response(null, { status: 204, headers: fallback });
     if (u === `${ENDPOINT}/account/jwts`) {
@@ -123,6 +124,7 @@ test("sign in, then exchange: a JWT is minted and posted to the core with the or
   assert.equal(core.credentials, "omit", "the public leg sends no cookies");
   assert.equal(core.redirect, "error");
   assert.equal(Object.keys(core.headers).some((k) => k.toLowerCase() === "authorization"), false, "no bearer on the public leg");
+  assert.deepEqual(Object.keys(core.headers).sort(), ["Accept", "Content-Type"], "the core call carries exactly these headers: no project header, no cookie header");
 });
 
 test("every exchange attempt mints a fresh JWT and none is reused", async () => {
@@ -230,7 +232,9 @@ test("sign in failures throw with the status only, and the console's session min
   const { surface } = world({ sessionAnswers: [{ status: 401 }] });
   await assert.rejects(() => surface.createEmailPasswordSession("fake.user@example.invalid", "wrong"), /401/);
   const down = world({ throwOn: "/account/sessions/email" });
-  await assert.rejects(() => down.surface.createEmailPasswordSession("a", "b"), /network|offline/i);
+  await assert.rejects(() => down.surface.createEmailPasswordSession("a", "b"), PlatformUnreachableError);
+  const gone = world({ throwOn: "/account" });
+  await assert.rejects(() => gone.surface.getSession(), PlatformUnreachableError);
 });
 
 test("getSession answers the signed-in user from GET /account and a refusal throws", async () => {
@@ -270,6 +274,36 @@ test("google sign-in refuses a redirect to another host", async () => {
 test("google is the only provider", async () => {
   const { surface } = world();
   await assert.rejects(() => surface.createOAuth2Session("github", `${PAGE}/x`), /provider/);
+});
+
+test("a sign in refused because a session already exists deletes the current session and retries the create once", async () => {
+  const { calls, surface } = world({ sessionAnswers: [{ status: 401, type: "user_session_already_exists" }] });
+  const user = await surface.createEmailPasswordSession("fake.user@example.invalid", "fake-password");
+  assert.equal(user.userId, "fake-user-1");
+  assert.deepEqual(
+    calls.map((c) => `${c.method} ${c.url.slice(ENDPOINT.length)}`),
+    ["POST /account/sessions/email", "DELETE /account/sessions/current", "POST /account/sessions/email", "GET /account"],
+  );
+});
+
+test("the already-exists retry happens once only, and only for that type", async () => {
+  const twice = world({ sessionAnswers: [{ status: 401, type: "user_session_already_exists" }, { status: 401, type: "user_session_already_exists" }] });
+  await assert.rejects(() => twice.surface.createEmailPasswordSession("a", "b"), /401/);
+  assert.equal(twice.calls.filter((c) => c.method === "DELETE").length, 1);
+  assert.equal(twice.calls.filter((c) => c.url.endsWith("/sessions/email")).length, 2);
+  const wrong = world({ sessionAnswers: [{ status: 401, type: "user_invalid_credentials" }] });
+  await assert.rejects(() => wrong.surface.createEmailPasswordSession("a", "b"), /401/);
+  assert.equal(wrong.calls.filter((c) => c.method === "DELETE").length, 0, "a wrong password deletes nothing");
+  assert.equal(wrong.calls.length, 1);
+});
+
+test("a non https endpoint or core URL is refused, except localhost and 127.0.0.1", () => {
+  const make = (endpoint, coreBaseUrl) => createAppwriteAccountSurface({ endpoint, projectId: PROJECT, coreBaseUrl });
+  assert.throws(() => make("http://console.example.test/v1", CORE), /https/);
+  assert.throws(() => make(ENDPOINT, "http://core.example.test"), /https/);
+  assert.throws(() => make("ftp://console.example.test/v1", CORE), /https/);
+  assert.doesNotThrow(() => make("http://localhost:8080/v1", "http://127.0.0.1:8000"));
+  assert.doesNotThrow(() => make(ENDPOINT, CORE));
 });
 
 test("the options are validated at construction", () => {

@@ -20,6 +20,7 @@
 // this adapter never reads that response header, never sets it on a request,
 // and touches no storage of any kind (a test holds that line with storage
 // doubles that throw on any write, and a scan of this source).
+import { PlatformUnreachableError } from "./client.js";
 import type {
   AccountSurface,
   AccountUser,
@@ -45,6 +46,21 @@ export interface AppwriteAccountSurfaceOptions {
 }
 
 const EXCHANGE_PATH = "/api/v1/auth/exchange";
+
+/** A URL the password or a JWT will be sent to must be https; a local development host may be http. */
+function secureUrl(value: string, what: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`createAppwriteAccountSurface: the ${what} is not a URL`);
+  }
+  const local = url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+  if (url.protocol !== "https:" && !local) {
+    throw new Error(`createAppwriteAccountSurface: the ${what} must be https (http only for localhost and 127.0.0.1)`);
+  }
+  return value;
+}
 
 function nonEmpty(value: string, what: string): string {
   if (typeof value !== "string" || value.trim() === "") {
@@ -114,13 +130,15 @@ function sameOriginRedirect(redirectTo: string, origin: string | null): URL {
  * options and touches nothing.
  */
 export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOptions): AccountSurface {
-  const endpoint = nonEmpty(options.endpoint, "endpoint").replace(/\/+$/, "");
+  const endpoint = secureUrl(nonEmpty(options.endpoint, "endpoint"), "endpoint").replace(/\/+$/, "");
   const projectId = nonEmpty(options.projectId, "project id");
   let exchangeUrl: string;
   try {
-    exchangeUrl = new URL(EXCHANGE_PATH, nonEmpty(options.coreBaseUrl, "core base URL")).toString();
-  } catch {
-    throw new Error("createAppwriteAccountSurface: the core base URL is not a URL");
+    exchangeUrl = new URL(EXCHANGE_PATH, secureUrl(nonEmpty(options.coreBaseUrl, "core base URL"), "core base URL")).toString();
+  } catch (error) {
+    throw error instanceof Error && /must be https|is required/.test(error.message)
+      ? error
+      : new Error("createAppwriteAccountSurface: the core base URL is not a URL");
   }
 
   const send = (url: string, init: RequestInit): Promise<Response> => (options.fetch ?? globalThis.fetch)(url, init);
@@ -185,12 +203,18 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
     return answer === null ? { ok: false, code: "unavailable" } : { ok: true, answer };
   }
 
+  /** The console's error type from a refused response, or null when the body is not JSON with one. */
+  async function errorType(response: Response): Promise<string | null> {
+    const body = await readJson(response);
+    return isRecord(body) && typeof body["type"] === "string" ? body["type"] : null;
+  }
+
   async function account(): Promise<AccountUser> {
     let response: Response;
     try {
       response = await consoleCall("GET", "/account");
     } catch {
-      throw new Error("the console could not be reached (network)");
+      throw new PlatformUnreachableError("the console could not be reached (network)");
     }
     if (response.status !== 200) throw new Error(`the console refused the account read (status ${response.status})`);
     return readAccount(await readJson(response));
@@ -198,11 +222,20 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
 
   return {
     async createEmailPasswordSession(email: string, password: string): Promise<AccountUser> {
-      let response: Response;
-      try {
-        response = await consoleCall("POST", "/account/sessions/email", { email, password });
-      } catch {
-        throw new Error("the console could not be reached (network)");
+      const create = async (): Promise<Response> => {
+        try {
+          return await consoleCall("POST", "/account/sessions/email", { email, password });
+        } catch {
+          throw new PlatformUnreachableError("the console could not be reached (network)");
+        }
+      };
+      let response = await create();
+      // A leftover session (an earlier attempt, a sign out that never reached
+      // the console) makes the console refuse a create: delete the current
+      // one and create again, once.
+      if (response.status === 401 && (await errorType(response)) === "user_session_already_exists") {
+        await this.deleteSession();
+        response = await create();
       }
       if (response.status < 200 || response.status > 299) {
         throw new Error(`the console refused the sign-in (status ${response.status})`);
