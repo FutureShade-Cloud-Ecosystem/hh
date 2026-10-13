@@ -7,8 +7,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { goMaxPickedLines } from "./_lib/gosets.mjs";
 import {
+  MAX_PICKED_LINES,
   MAX_SKIDS,
+  isLocalLine,
+  pickQueuedWords,
+  pickRecordProblem,
   RESOLVE_WALL_NAMES,
   SHORT_REASONS,
   FORBIDDEN_BODY,
@@ -327,4 +332,30 @@ test("the role gate's bare Forbidden body is answered with the wall's plain word
   assert.equal(wallWords(RESOLVE_WALL_NAMES), "That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
   assert.equal(yardError("Forbidden", 403, "fallback"), "That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
   assert.equal(yardError("Forbidden", 403, "fallback", { wall: ["Yard Manager"] }), "That is not yours to settle. Only the Yard Manager may resolve a shortage.");
+});
+
+// ---- the pick record door's client rules (item 6c) ----
+
+test("the client's bound on a record is the core's (tasks.maxPickedLines, read from the Go source)", () => {
+  assert.equal(MAX_PICKED_LINES, goMaxPickedLines());
+});
+
+test("pickRecordProblem names what the door would refuse, in words, and lets a clean record through", () => {
+  const line = { order_line_no: 1, product_id: "", sku: "A", description: "d", qty_ordered: "4", qty_picked: "4", uom: "EA", short_reason: "", short_note: "" };
+  assert.equal(pickRecordProblem([line]), "");
+  assert.match(pickRecordProblem([]), /Say what was picked/);
+  assert.match(pickRecordProblem(Array.from({ length: MAX_PICKED_LINES + 1 }, () => line)), /more lines than any one ticket carries/);
+  assert.match(pickRecordProblem([{ ...line, short_note: "a\u0000" }]), /Line 1: the note cannot hold control characters/);
+  assert.match(pickRecordProblem([{ ...line, sku: "a\n" }]), /the sku cannot hold control characters/);
+  assert.match(pickRecordProblem([{ ...line, description: "a\u202e" }]), /the description cannot hold control characters/);
+  assert.equal(pickRecordProblem([{ ...line, short_note: "a\n\tb\r", description: "x\ny" }]), "", "a note and a description keep tab, LF and CR");
+});
+
+test("a line is local while only this device holds it, and the queued words do not claim the rep was told", () => {
+  assert.equal(isLocalLine({ id: "local:t:1" }), true);
+  assert.equal(isLocalLine({ id: "2a000000-0000-4000-9000-000000000001" }), false);
+  const words = pickQueuedWords([{ qty_ordered: "6", qty_picked: "4" }, { qty_ordered: "2", qty_picked: "2" }]);
+  assert.match(words, /saved on this device/i);
+  assert.match(words, /when it sends/);
+  assert.doesNotMatch(words, /has been told/);
 });

@@ -42,6 +42,7 @@ import {
   actionDone,
   lineIsShort,
   pickSummary,
+  pickQueuedWords,
   qtyText,
   recordBlockedReason,
   shortOf,
@@ -733,7 +734,10 @@ export class YardPickApp extends HHElement {
     if (answer.ok) {
       await this.#refreshPick();
       const firstShort = answer.value.find((p) => lineIsShort(p.qty_ordered, p.qty_picked));
-      if (firstShort !== undefined) {
+      if (this.#yardOffline !== null && this.#yardOffline.runner.state === "offline") {
+        // No signal: the record is on the device, in the outbox, and nobody has been told yet.
+        this.#notice = pickQueuedWords(answer.value);
+      } else if (firstShort !== undefined) {
         const ticketLine = this.#pick?.ticket?.lines.find((l) => l.line_no === firstShort.order_line_no);
         this.#notice = shortPickWords(firstShort, ticketLine?.qty_backordered ?? "");
       } else {
