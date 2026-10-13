@@ -14,7 +14,7 @@ export interface PrintWindow {
 }
 
 export interface PrintDeps {
-  toUrl(html: string): string;
+  toUrl(markup: string): string;
   revoke(url: string): void;
   later(run: () => void, ms: number): void;
 }
@@ -26,7 +26,7 @@ export type PrintOutcome = { readonly ok: true } | { readonly ok: false; readonl
 
 /** The browser's own parts. */
 export const browserPrintDeps: PrintDeps = {
-  toUrl: (html) => URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" })),
+  toUrl: (markup) => URL.createObjectURL(new Blob([markup], { type: "text/html;charset=utf-8" })),
   revoke: (url) => URL.revokeObjectURL(url),
   later: (run, ms) => void window.setTimeout(run, ms),
 };
@@ -37,12 +37,12 @@ export function openPrintWindow(): PrintWindow | null {
 }
 
 /** Carries the document into the window and prints it once the window has it. A blocked window is a sentence. */
-export function printHtmlInto(win: PrintWindow | null, html: string, deps: PrintDeps): PrintOutcome {
+export function printHtmlInto(win: PrintWindow | null, markup: string, deps: PrintDeps): PrintOutcome {
   if (win === null) {
     return { ok: false, message: BLOCKED_WINDOW_WORDS };
   }
   try {
-    const url = deps.toUrl(html);
+    const url = deps.toUrl(markup);
     win.addEventListener("load", () => {
       win.focus?.();
       win.print?.();

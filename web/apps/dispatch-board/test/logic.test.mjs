@@ -62,6 +62,8 @@ import {
   scheduleRefusal,
   validateReason,
   truckBody,
+  volumeText,
+  capacityText,
   truckLine,
   willCallLine,
   willCallNotice,
@@ -487,8 +489,8 @@ test("a truck body is the whole row: pounds become kilograms at the wire, and a 
   assert.equal(made.branch_id, "b1");
   assert.equal(made.code, "Truck 05");
   assert.equal(made.truck_type, "FLATBED");
-  assert.equal(made.capacity_kg, 9071.8);
-  assert.equal(made.capacity_m3, 7.6);
+  assert.equal(made.capacity_kg, 9071.85);
+  assert.equal(made.capacity_m3, 7.65);
   assert.equal(made.pallet_positions, 8);
   assert.equal(made.is_active, true);
   const blank = truckBody(tf(), undefined, "b1");
@@ -502,9 +504,20 @@ test("a truck body is the whole row: pounds become kilograms at the wire, and a 
   assert.equal(kept.capacity_kg, 9000);
   assert.equal(kept.capacity_m3, 7.65);
   const changed = truckBody(tf({ capacity: "20000", volume: "10" }), base, "b1");
-  assert.equal(changed.capacity_kg, 9071.8);
+  assert.equal(changed.capacity_kg, 9071.85);
   const out = truckBody(tf({ capacity: "19842" }), truck({ is_active: false }), "b1", false);
   assert.equal(out.is_active, false);
+});
+
+test("a whole figure typed reads back as typed after the first save, over a range of yards and pounds", () => {
+  for (const yards of [1, 2, 6, 8, 10, 12, 14, 16, 18, 20, 25, 30, 40]) {
+    const body = truckBody(tf({ volume: String(yards) }), undefined, "b1");
+    assert.equal(volumeText(body.capacity_m3), String(yards), `${yards} cu yd`);
+  }
+  for (const lb of [9999, 12345, 20000, 26000, 40000]) {
+    const body = truckBody(tf({ capacity: String(lb) }), undefined, "b1");
+    assert.equal(capacityText(body.capacity_kg), String(lb), `${lb} lb`);
+  }
 });
 
 test("a truck reads as facts in the yard's units, and an unmeasured truck says so", () => {
@@ -555,7 +568,7 @@ test("the order box wants something typed, and a missing order says what to chec
 });
 
 test("a minted code is announced once, in words that say it will not be shown again", () => {
-  assert.equal(willCallNotice({ order_no: "ORD-0044", expires_at: "2026-10-26T18:00:00Z" }), "Pickup code printed for ORD-0044, good until Oct 26, 2026. It is shown once: print the tag now.");
+  assert.equal(willCallNotice({ order_no: "ORD-0044", expires_at: "2026-10-26T18:00:00Z" }), "Pickup code made for ORD-0044, good until Oct 26, 2026. It is shown once: print the tag now.");
 });
 
 // ---- the dispatch rules (part B, sub item 4) --------------------------------------------------------------
