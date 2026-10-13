@@ -59,6 +59,7 @@ export const lienStyles = css`
   .li-field input, .li-field select, .li-field textarea { font: inherit; font-size: 16px; min-height: 44px; padding: var(--hh-s-8) var(--hh-s-12); background: var(--hh-field); color: var(--hh-text); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); width: 100%; box-sizing: border-box; }
   .li-field textarea { min-height: 180px; font-family: var(--hh-font-mono, ui-monospace, monospace); font-size: 14px; line-height: 1.45; }
   .li-field input:focus-visible, .li-field select:focus-visible, .li-field textarea:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
+  .li-field input[type="date"] { min-width: 0; max-width: 100%; }
   .li-hint { font-size: 13px; font-weight: 400; color: var(--hh-text-dim); }
   .li-hint-bad { color: var(--hh-state-stop); font-weight: 700; }
   .li-actions { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; margin: var(--hh-s-12) 0; }
