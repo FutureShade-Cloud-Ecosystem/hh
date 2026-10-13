@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  DRIVERS_SUB_WORDS,
   EMPTY_BOARD_WORDS,
   DRIVER_GROUP_ORDER,
   buildDriverRow,
@@ -214,4 +215,9 @@ test("drivers with no run on the board are counted by words, and inactive driver
 
 test("the empty board's words are the brief's own sentence", () => {
   assert.equal(EMPTY_BOARD_WORDS, "No runs on the board today");
+});
+
+test("the Drivers sub line says plainly it is run status, not a live map (the core has no position feed)", () => {
+  assert.match(DRIVERS_SUB_WORDS, /^Run status, not a live map\./);
+  assert.doesNotMatch(DRIVERS_SUB_WORDS, /GPS|location|coordinates/i);
 });

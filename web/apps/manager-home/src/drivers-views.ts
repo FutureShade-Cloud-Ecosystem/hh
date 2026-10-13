@@ -17,6 +17,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import type { DriverRow } from "./drivers-logic.js";
 import {
   DRIVER_GROUP_ORDER,
+  DRIVERS_SUB_WORDS,
   EMPTY_BOARD_WORDS,
   driverGroupWord,
   runStatusWord,
@@ -41,7 +42,7 @@ export interface DriversModel {
 
 export function renderDrivers(model: DriversModel): TemplateResult {
   return html`
-    ${viewHeader("drivers", model.branchName, "Where every driver's day stands: the run, the stop, and when it last moved. Read only.")}
+    ${viewHeader("drivers", model.branchName, DRIVERS_SUB_WORDS)}
     ${model.refused !== "" ? html`<p class="refusal" data-test="drivers-refusal">${model.refused}</p>` : nothing}
     ${model.error !== "" ? html`<p class="error-line" data-test="drivers-error">${model.error}</p>` : nothing}
     ${model.phase === "loading"

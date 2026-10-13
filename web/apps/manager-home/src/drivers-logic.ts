@@ -210,6 +210,10 @@ export function groupDriverRows(rows: readonly DriverRow[]): readonly { key: Dri
 // honestly is omitted by the view, never shown raw.
 
 /** The board's one empty answer, the day with no runs on it at all. */
+/** The line under the heading: the core holds run and stop status, not positions, so the view says so. */
+export const DRIVERS_SUB_WORDS =
+  "Run status, not a live map. Where every driver's day stands: the run, the stop, and when it last moved. Read only.";
+
 export const EMPTY_BOARD_WORDS = "No runs on the board today";
 
 /** Run statuses in the original board's own words; an unknown one is omitted, never shown raw. */

@@ -17,6 +17,7 @@ async function openDrivers(page: import("@playwright/test").Page): Promise<void>
   await page.goto("/");
   await page.locator(".view-link", { hasText: "Drivers" }).click();
   await expect(page.getByRole("heading", { name: "Drivers" })).toBeVisible();
+  await expect(page.locator(".view-head .page-sub")).toContainText("Run status, not a live map.");
 }
 
 test("the board groups the day's rows by state, on a stop first and done last", async ({ page }) => {
