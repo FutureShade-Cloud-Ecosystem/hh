@@ -23,12 +23,12 @@ import {
   type TenantPayment,
   type TenantPaymentMethod,
 } from "@hardscapehouse/api-client";
-import { CAPABILITIES, InMemoryTenantSession, chipStyles, monoStyles, realExchangeAdapter, roleLabel, stubAdapter, surfaceOf, tenantClient, appOf, type Capability, type TenantSession } from "@hardscapehouse/pro-kit";
+import { CAPABILITIES, InMemoryTenantSession, chipStyles, monoStyles, realExchangeAdapter, demoTenantAdapter, signInFromCard, demoRoleFromAddress, otherAppAddress, roleLabel, stubAdapter, surfaceOf, tenantClient, appOf, type Capability, type TenantSession } from "@hardscapehouse/pro-kit";
 import "@hardscapehouse/pro-kit/src/frame.js";
 import "@hardscapehouse/pro-kit/src/signin.js";
 import "@hardscapehouse/pro-kit/src/state-view.js";
 import type { SurfaceSelect } from "@hardscapehouse/pro-kit/src/frame.js";
-import type { SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
+import type { SignInMethodChoice, SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
 import type { HHProSignIn } from "@hardscapehouse/pro-kit/src/signin.js";
 import { PaySender, isPayable, payableCents, readHostedToken, type PayBody, type PayOutcome } from "./pay-core.js";
 import { hostedFieldAddress } from "./hosted-field.js";
@@ -85,7 +85,7 @@ export class ProPayApp extends HHElement {
 
   constructor() {
     super();
-    this.#session = new InMemoryTenantSession({ adapter: import.meta.env.DEV ? stubAdapter() : realExchangeAdapter() });
+    this.#session = new InMemoryTenantSession({ adapter: import.meta.env.DEV ? stubAdapter() : import.meta.env.MODE === "demo" ? demoTenantAdapter() : realExchangeAdapter() });
     this.#client = tenantClient(this.#session);
     this.#sender = new PaySender(this.#client, { canPay: () => this.#session.can("pay_invoices") });
   }
@@ -117,7 +117,7 @@ export class ProPayApp extends HHElement {
   };
 
   readonly #onSignIn = (event: Event): void => {
-    void this.#signIn((event as CustomEvent<SignInSubmit>).detail);
+    void this.#signIn((event as CustomEvent<SignInSubmit | SignInMethodChoice>).detail);
   };
 
   readonly #onSelect = (event: Event): void => {
@@ -127,7 +127,7 @@ export class ProPayApp extends HHElement {
       return;
     }
     const target = appOf(app);
-    if (target !== undefined) window.location.assign(target.path);
+    if (target !== undefined) window.location.assign(otherAppAddress(target.path, this.#session.profile()?.role, import.meta.env.MODE === "demo"));
   };
 
   readonly #onSignOut = (): void => {
@@ -136,9 +136,15 @@ export class ProPayApp extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    // The demo build: a front door contractor card opens this app with its role, and the persona signs in at once.
+    if (import.meta.env.MODE === "demo") {
+      const asked = demoRoleFromAddress(window.location.search);
+      if (asked !== null) void this.#signIn({ method: "persona", roleLabel: asked });
+    }
     this.addEventListener("click", this.#onClick);
     this.addEventListener("keydown", this.#onKey);
     this.addEventListener("pro-signin-submit", this.#onSignIn);
+    this.addEventListener("pro-signin-method", this.#onSignIn);
     this.addEventListener("pro-surface-select", this.#onSelect);
     this.addEventListener("pro-sign-out", this.#onSignOut);
     window.addEventListener("message", this.#onMessage);
@@ -159,6 +165,7 @@ export class ProPayApp extends HHElement {
     this.removeEventListener("click", this.#onClick);
     this.removeEventListener("keydown", this.#onKey);
     this.removeEventListener("pro-signin-submit", this.#onSignIn);
+    this.removeEventListener("pro-signin-method", this.#onSignIn);
     this.removeEventListener("pro-surface-select", this.#onSelect);
     this.removeEventListener("pro-sign-out", this.#onSignOut);
     window.removeEventListener("message", this.#onMessage);
@@ -193,11 +200,11 @@ export class ProPayApp extends HHElement {
     }
   }
 
-  async #signIn(input: SignInSubmit): Promise<void> {
+  async #signIn(input: SignInSubmit | SignInMethodChoice): Promise<void> {
     this.#busy = true;
     this.#message = "";
     this.requestUpdate();
-    const result = await this.#session.signIn(input.email, input.password);
+    const result = await signInFromCard(this.#session, input);
     this.#busy = false;
     if (result.ok) {
       this.#message = "";
@@ -571,6 +578,10 @@ export class ProPayApp extends HHElement {
       signin.dealerName = this.#dealerName;
       signin.message = this.#message;
       signin.busy = this.#busy;
+      const options = this.#session.options();
+      signin.methods = options.methods;
+      signin.refused = options.refused;
+      signin.personas = options.personas;
     }
     // The hosted frame's address is assigned once, here: the position gate refuses a bound src.
     const frame = this.renderRoot.querySelector("iframe[data-hosted]") as HTMLIFrameElement | null;

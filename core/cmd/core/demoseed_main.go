@@ -111,6 +111,14 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		return fmt.Errorf("demoseed: composing modules: %w", err)
 	}
 
+	// The demo world seam (the glsworld pair): in the demo build, -apply moves the two branch rows
+	// onto the demo dealer before the plan reads them, because the plan derives every document
+	// reference from the branch code. The default build's side is a no-op.
+	if *doApply {
+		if err := glsPrepareWorld(ctx, pool); err != nil {
+			return err
+		}
+	}
 	branches, err := resolveBranches(ctx, pool)
 	if err != nil {
 		return err
@@ -126,16 +134,24 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
+	contractor, err := resolveContractor(ctx, pool)
+	if err != nil {
+		return err
+	}
 	seal, keyed, err := newSealer(cfg.PaymentVaultKey)
 	if err != nil {
 		return err
 	}
 
 	rows, summary, err := buildPlan(planInput{
-		Now: now, Branches: branches, Categories: cats, Personas: personas, Seal: seal})
+		Now: now, Branches: branches, Categories: cats, Personas: personas, Seal: seal, Contractor: contractor})
 	if err != nil {
 		return err
 	}
+
+	// The demo world's words (the glsworld pair): the built plan's strings pass through the demo
+	// dictionary before anything prints or writes. The default build returns the rows as built.
+	rows = glsRewritePlan(rows)
 
 	fmt.Fprintf(out, "demoseed %s\n", demoMarker)
 	fmt.Fprintf(out, "  clock          %s\n", now.Format(time.RFC3339))
@@ -185,6 +201,14 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("demoseed: nothing was written: %w", err)
 	}
+	// The demo world's migration-planted words (the glsworld pair), in the same transaction for the
+	// same reason: the rows the migrations plant carry the first dealer's names, and the demo build
+	// moves them through the demo dictionary, one guarded update per changed value.
+	worldRenamed, err := glsRenamePlanted(ctx, tx, now)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("demoseed: nothing was written: %w", err)
+	}
 	// The seed-repair pass (the repair pair), inside the same transaction for the same reason:
 	// the world lands all-or-nothing. One guarded UPDATE, demo build only, its guarantees argued
 	// in demoseed_repair_demo.go beside the scrub-name pass it follows.
@@ -202,10 +226,13 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	if renamed > 0 {
 		fmt.Fprintf(out, "renamed:  %d migration-planted demo customer(s) off their scrub placeholder names\n", renamed)
 	}
+	if worldRenamed > 0 {
+		fmt.Fprintf(out, "world words:  %d migration-planted value(s) moved onto the demo dealer's words\n", worldRenamed)
+	}
 	if repaired > 0 {
 		fmt.Fprintf(out, "repaired:  %d row(s) an older apply left wrong (a home branch, an empty product application, a missing org stamp)\n", repaired)
 	}
-	if res.Created == 0 && renamed == 0 && repaired == 0 {
+	if res.Created == 0 && renamed == 0 && worldRenamed == 0 && repaired == 0 {
 		fmt.Fprintln(out, "the demo world was already complete, this run changed nothing.")
 	}
 	for _, t := range sortedKeys(res.ByTable) {
@@ -237,6 +264,14 @@ func writeSummary(out *os.File, s planSummary) {
 		}
 		fmt.Fprintln(out, "  quote share links")
 		for _, l := range s.QuoteLinks {
+			fmt.Fprintf(out, "    %s\n", l)
+		}
+	}
+	if len(s.ContractorLines) == 0 {
+		fmt.Fprintln(out, "  contractor   none, the contractor account is not on this database yet (apply again after the demo populate)")
+	} else {
+		fmt.Fprintln(out, "  contractor world")
+		for _, l := range s.ContractorLines {
 			fmt.Fprintf(out, "    %s\n", l)
 		}
 	}

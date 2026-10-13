@@ -79,6 +79,9 @@ type planInput struct {
 	// that product uncategorised rather than inventing a taxonomy on a live system.
 	Categories map[string]string
 	Seal       sealer
+	// Contractor is what the contractor world needs from the database (demoseed_contractor.go): that
+	// the populate has made the account, its branch and its portal users. Zero value: no world.
+	Contractor contractorFacts
 }
 
 // planSummary is what the command prints. It is the human-readable half of the same arithmetic the
@@ -116,6 +119,10 @@ type planSummary struct {
 	// every row the section wrote.
 	ProcurementLines  []string
 	ProcurementRowIDs []string
+	// The contractor world (demoseed_contractor.go): one line per document, and the id of every row
+	// the section wrote.
+	ContractorLines  []string
+	ContractorRowIDs []string
 }
 
 // -- the catalogue of demo entities, as tables ----------------------------------------------------

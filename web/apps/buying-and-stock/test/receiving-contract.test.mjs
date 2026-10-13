@@ -25,39 +25,39 @@ test("the receiving queue answers in the contract's shape: placed and part recei
   const res = await stub.call("GET", `${P}/receiving`);
   assert.equal(res.status, 200);
   holds("PurchasingWorklistItemPage", res.json);
-  assert.deepEqual(res.json.items.map((i) => i.po_no), ["PO-TRT-141", "PO-TRT-136", "PO-TRT-67"]);
+  assert.deepEqual(res.json.items.map((i) => i.po_no), ["PO-PLM-141", "PO-PLM-136", "PO-PLM-67"]);
   assert.ok(res.json.items.every((i) => i.open_lines >= 1 && i.qty_outstanding_base > 0));
   refused(await stub.call("GET", `${P}/receiving?branch_id=b0000000-0000-4000-8000-000000000002`), 403, "caller cannot access this branch");
 });
 
 test("a receive moves the order on, makes a receipt in the contract's shape, and the receipt reads back", async () => {
   await stub.reset();
-  const po = await order("PO-TRT-136");
+  const po = await order("PO-PLM-136");
   const line = po.lines[0];
   const first = await stub.call("POST", `${P}/pos/${po.id}/receive`, { lines: [{ po_line_id: line.id, qty_base: 4 }], notes: "one pallet short" });
   assert.equal(first.status, 200);
   holds("PurchasingReceipt", first.json);
-  assert.equal(first.json.grn_no, "PO-TRT-136/R1");
+  assert.equal(first.json.grn_no, "PO-PLM-136/R1");
   assert.equal(first.json.value_cad_cents, 4 * 2500);
   assert.equal(first.json.notes, "one pallet short");
-  let after = await order("PO-TRT-136");
+  let after = await order("PO-PLM-136");
   assert.equal(after.status, "PARTIAL");
   assert.equal(after.lines[0].qty_received_base, 4);
   assert.equal(after.receipts.length, 1);
   holds("PurchasingPODetail", after);
   const rest = await stub.call("POST", `${P}/pos/${po.id}/receive`, { lines: [{ po_line_id: line.id, qty_base: 6 }] });
-  assert.equal(rest.json.grn_no, "PO-TRT-136/R2");
-  after = await order("PO-TRT-136");
+  assert.equal(rest.json.grn_no, "PO-PLM-136/R2");
+  after = await order("PO-PLM-136");
   assert.equal(after.status, "RECEIVED");
   const read = await stub.call("GET", `${P}/receipts/${first.json.id}`);
   holds("PurchasingReceipt", read.json);
   assert.equal(read.json.lines.length, 1);
-  assert.equal((await stub.call("GET", `${P}/receiving`)).json.items.some((i) => i.po_no === "PO-TRT-136"), false);
+  assert.equal((await stub.call("GET", `${P}/receiving`)).json.items.some((i) => i.po_no === "PO-PLM-136"), false);
 });
 
 test("a receive the core would refuse is refused in the core's words and order", async () => {
   await stub.reset();
-  const po = await order("PO-TRT-136");
+  const po = await order("PO-PLM-136");
   const line = po.lines[0];
   const recv = (body, id = po.id) => stub.call("POST", `${P}/pos/${id}/receive`, body);
   refused(await recv({ lines: [] }), 400, "nothing to receive, supply at least one line");
@@ -66,15 +66,15 @@ test("a receive the core would refuse is refused in the core's words and order",
   refused(await recv({ lines: [{ po_line_id: line.id, qty_base: 10.5 }] }), 409, "over-receipt on line 1, 10.5000 requested but only 10.0000 outstanding", "over-receipt on line %d, %s requested but only %s outstanding");
   // Two entries of 6 against 10 outstanding fold into 12 and are refused as one over receipt.
   refused(await recv({ lines: [{ po_line_id: line.id, qty_base: 6 }, { po_line_id: line.id, qty_base: 6 }] }), 409, "over-receipt on line 1, 12.0000 requested but only 10.0000 outstanding", "over-receipt on line %d, %s requested but only %s outstanding");
-  const received = await order("PO-TRT-66");
+  const received = await order("PO-PLM-66");
   refused(await recv({ lines: [{ po_line_id: received.lines[0].id, qty_base: 1 }] }, received.id), 409, "purchase order is already fully received");
-  assert.equal((await order("PO-TRT-136")).lines[0].qty_received_base, 0, "a refusal changed nothing");
+  assert.equal((await order("PO-PLM-136")).lines[0].qty_received_base, 0, "a refusal changed nothing");
   assert.ok(coreSourceOf(["purchasing"]).includes("cannot receive against a DRAFT purchase order, place the order first"));
 });
 
 test("a landed cost is attached to a receipt once, applied at once, and shows in the landed costs", async () => {
   await stub.reset();
-  const po = await order("PO-TRT-136");
+  const po = await order("PO-PLM-136");
   const rc = (await stub.call("POST", `${P}/pos/${po.id}/receive`, { lines: [{ po_line_id: po.lines[0].id, qty_base: 10 }] })).json;
   const attach = (body) => stub.call("POST", `${P}/receipts/${rc.id}/landed-cost`, body);
   refused(await attach({ freight_cents: -1, allocation_basis: "VALUE" }), 400, "freight/duty/handling must be non-negative");
@@ -85,17 +85,17 @@ test("a landed cost is attached to a receipt once, applied at once, and shows in
   assert.equal(done.status, 200);
   holds("PurchasingReceipt", done.json);
   assert.ok(done.json.landed_cost_id);
-  refused(await attach({ freight_cents: 100, allocation_basis: "VALUE" }), 409, "receipt PO-TRT-136/R1 already carries a landed cost", "receipt %s already carries a landed cost");
+  refused(await attach({ freight_cents: 100, allocation_basis: "VALUE" }), 409, "receipt PO-PLM-136/R1 already carries a landed cost", "receipt %s already carries a landed cost");
   const lc = await stub.call("GET", `/api/v1/landed-costs/${done.json.landed_cost_id}`);
   holds("LandedCostDetail", lc.json);
   assert.equal(lc.json.status, "POSTED");
-  assert.equal(lc.json.po_ref, "PO-TRT-136/R1");
+  assert.equal(lc.json.po_ref, "PO-PLM-136/R1");
   assert.equal(lc.json.allocations.reduce((a, x) => a + x.allocated_cad_cents + x.sold_through_cad_cents, 0), 51_550);
 });
 
 test("the cost payload is withheld as {} from a role the policy hides cost from, and the keys leave the order", async () => {
   await stub.reset();
-  const po = await order("PO-TRT-141");
+  const po = await order("PO-PLM-141");
   const open = await stub.call("GET", `${P}/pos/${po.id}/costs`);
   holds("PurchasingPOCosts", open.json);
   assert.equal(open.json.subtotal_cents, 12 * 82_000);
@@ -112,22 +112,22 @@ test("the cost payload is withheld as {} from a role the policy hides cost from,
 
 test("the order document is a file in either form, without prices when cost is hidden", async () => {
   await stub.reset();
-  const po = await order("PO-TRT-141");
+  const po = await order("PO-PLM-141");
   const csv = await stub.call("GET", `${P}/pos/${po.id}/document.csv`);
   assert.equal(csv.status, 200);
   assert.match(csv.headers.get("content-type"), /text\/csv/);
   assert.match(csv.text, /Unit cost/);
   const printable = await stub.call("GET", `${P}/pos/${po.id}/document`);
   assert.match(printable.headers.get("content-type"), /text\/html/);
-  assert.match(printable.text, /Purchase order PO-TRT-141/);
+  assert.match(printable.text, /Purchase order PO-PLM-141/);
   await stub.post("/_stub/flag", { name: "costsHidden", value: true });
   assert.doesNotMatch((await stub.call("GET", `${P}/pos/${po.id}/document.csv`)).text, /Unit cost/);
 });
 
 test("a send goes to the tagged desk, one attempt is one send, and a key cannot cross orders", async () => {
   await stub.reset();
-  const a = await order("PO-TRT-141");
-  const b = await order("PO-TRT-136");
+  const a = await order("PO-PLM-141");
+  const b = await order("PO-PLM-136");
   const vendor = (id) => id;
   await stub.call("PUT", `${P}/vendors/${vendor(a.vendor_id)}/contact`, { contact_name: "Orders desk", email: "po@techo.test" });
   const sent = await stub.call("POST", `${P}/pos/${a.id}/send`, { idempotency_key: "attempt-1" });
@@ -146,7 +146,7 @@ test("a send goes to the tagged desk, one attempt is one send, and a key cannot 
 
 test("an untagged send is refused until the fallback is confirmed, and every refusal is the core's sentence", async () => {
   await stub.reset();
-  const po = await order("PO-TRT-136");
+  const po = await order("PO-PLM-136");
   const send = (body) => stub.call("POST", `${P}/pos/${po.id}/send`, body);
   refused(await send({ idempotency_key: "k1" }), 400, "this vendor has no email on file, tag an ordering contact to send anything at all");
   await stub.call("PUT", `${P}/vendors/${po.vendor_id}`, { order_email: "orders@alcli.test" });
@@ -156,7 +156,7 @@ test("an untagged send is refused until the fallback is confirmed, and every ref
   assert.equal(ok.json.recipient_kind, "FALLBACK");
   assert.equal(ok.json.recipient, "orders@alcli.test");
   await stub.reset();
-  const phone = await order("PO-TRT-136");
+  const phone = await order("PO-PLM-136");
   await stub.call("PUT", `${P}/vendors/${phone.vendor_id}/contact`, { phone: "613 555 0140" });
   refused(await stub.call("POST", `${P}/pos/${phone.id}/send`, {}), 400, "this vendor's ordering contact is a phone number, add an email to it and the order can be sent");
   await stub.post("/_stub/flag", { name: "refuseUntagged", value: true });
@@ -171,7 +171,7 @@ test("a send of a draft or a cancelled order is refused, and a send that fails t
   refused(await stub.call("POST", `${P}/pos/${made.json.po_id}/send`, {}), 409, "place the order first, a draft is still being edited");
   await stub.call("POST", `${P}/pos/${made.json.po_id}/transition`, { to: "CANCELLED" });
   refused(await stub.call("POST", `${P}/pos/${made.json.po_id}/send`, {}), 409, "this order was cancelled, nothing to send");
-  const po = await order("PO-TRT-141");
+  const po = await order("PO-PLM-141");
   await stub.call("PUT", `${P}/vendors/${po.vendor_id}/contact`, { email: "po@techo.test" });
   await stub.post("/_stub/flag", { name: "sendFails", value: true });
   const failed = await stub.call("POST", `${P}/pos/${po.id}/send`, { idempotency_key: "k9" });
@@ -183,7 +183,7 @@ test("a send of a draft or a cancelled order is refused, and a send that fails t
 
 test("the wall refuses the writes of a role that is not a manager, and the reads stay open", async () => {
   await stub.reset();
-  const po = await order("PO-TRT-136");
+  const po = await order("PO-PLM-136");
   await stub.post("/_stub/role", { role: "payables-receivables" });
   for (const [path, body] of [
     [`${P}/pos/${po.id}/receive`, { lines: [{ po_line_id: po.lines[0].id, qty_base: 1 }] }],
@@ -215,9 +215,9 @@ function oneShot(base, method, path, body) {
 
 test("an answer lost on the way back still leaves the write done, exactly once", async () => {
   await stub.reset();
-  const po = await order("PO-TRT-136");
+  const po = await order("PO-PLM-136");
   await stub.post("/_stub/flag", { name: "dropNext", value: true });
   const result = await oneShot(stub.base, "POST", `${P}/pos/${po.id}/receive`, { lines: [{ po_line_id: po.lines[0].id, qty_base: 2 }] });
   assert.equal(result.answered, false, "the answer was lost");
-  assert.equal((await order("PO-TRT-136")).lines[0].qty_received_base, 2, "the write was made once");
+  assert.equal((await order("PO-PLM-136")).lines[0].qty_received_base, 2, "the write was made once");
 });

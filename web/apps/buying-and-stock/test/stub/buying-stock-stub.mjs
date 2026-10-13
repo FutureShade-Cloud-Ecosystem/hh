@@ -249,7 +249,7 @@ function productRow(p) {
     sku: p.sku,
     product_name: p.name,
     branch_id: BRANCH,
-    branch_code: "TRT",
+    branch_code: "PLM",
     uom: p.uom,
     on_hand_base: p.onHand,
     reserved_base: p.reserved,
@@ -276,7 +276,7 @@ function reset() {
   for (const s of SEEDED_POS) {
     world.pos.push({
       id: uuid("c", s.n),
-      no: `PO-TRT-${s.n}`,
+      no: `PO-PLM-${s.n}`,
       vendor: s.vendor,
       status: s.status,
       expect: s.expect === null ? null : dayOffset(s.expect),
@@ -400,7 +400,7 @@ const BRANCH_VIEWS = {
 };
 
 const branchCode = (id) => BRANCH_VIEWS[id]?.code ?? "";
-const branchName = (id) => (id === BRANCH ? "Trenton yard" : BRANCH_VIEWS[id]?.name ?? "");
+const branchName = (id) => (id === BRANCH ? "Loma yard" : BRANCH_VIEWS[id]?.name ?? "");
 
 reset();
 
@@ -749,7 +749,7 @@ let role = "procurement-manager";
 // Switches a test can set: cost hidden from the caller (the purchasing policy), the mail transport
 // failing, the untagged send refused by policy, and the answer to the next write lost on the way back.
 const flags = { costsHidden: false, sendFails: false, refuseUntagged: false, dropNext: false };
-// The reach covers the Trenton buyer branch and the two Gable yards the inventory and counts areas read.
+// The reach covers the main buyer branch and the two Gable yards the inventory and counts areas read.
 const reach = () => (fenced ? [] : [BRANCH, PLM, JUL]);
 // The caller's seat on this surface, per the role matrix: the procurement manager holds manage,
 // the yard manager work, payables and receivables read. roleMode names the seat the writes test.
@@ -914,7 +914,7 @@ async function handle(req, res) {
   }
   if (method === "GET" && path === "/api/v1/branches") {
     return json(res, [
-      { id: BRANCH, code: "TRT", name: "Trenton yard", address: { line1: "1 Yard Road", city: "Trenton", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
+      { id: BRANCH, code: "STB", name: "Loma yard", address: { line1: "1 Yard Road", city: "Point Loma", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
       { id: PLM, code: "PLM", name: "Point Loma yard", address: { line1: "410 Harbor Drive", city: "San Diego", province: "CA", postal: "92101", country: "US" }, is_default: false, is_system_default: false, is_active: true },
       { id: JUL, code: "JUL", name: "Julian yard", address: { line1: "7 Main Street", city: "Julian", province: "CA", postal: "92036", country: "US" }, is_default: false, is_system_default: false, is_active: true },
     ]);
@@ -1459,7 +1459,7 @@ async function handle(req, res) {
     const vendor = ALL_VENDORS.find((v) => uuid("a", v.n) === vendorId);
     const n = world.counter++;
     const po = {
-      id: uuid("c", n), no: `PO-TRT-${n}`, vendor: vendor.n, status: "DRAFT", expect: null,
+      id: uuid("c", n), no: `PO-PLM-${n}`, vendor: vendor.n, status: "DRAFT", expect: null,
       method: "UNKNOWN", created: NOW_ISO(),
       lines: lines.map((l) => ({ id: uuid("d", ++world.lineCounter), product: PRODUCTS.find((p) => uuid("f", p.n) === l.product_id).n, qty: l.qty_base, cost: l.unit_cost_cents })),
     };
@@ -1683,7 +1683,7 @@ async function handle(req, res) {
     const n = world.counter++;
     const po = {
       id: uuid("c", n),
-      no: `PO-TRT-${n}`,
+      no: `PO-PLM-${n}`,
       vendor: p.vendor,
       status: "DRAFT",
       expect: null,

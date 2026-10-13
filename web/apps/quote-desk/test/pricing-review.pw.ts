@@ -310,7 +310,7 @@ test("a floor confirmation in the log names its products where the names are kno
   await expect(page.getByTestId("floor-dialog")).toHaveCount(0);
   await openTab(page, "audit");
   const change = page.getByTestId("pa-change").filter({ hasText: "the editor confirmed a floor warning naming 2 products" });
-  await expect(change).toContainText("HPV-60 · Holland Stone 60 mm");
+  await expect(change).toContainText("HPV-60 · Charcoal Stone 60 mm");
   await expect(change).not.toContainText("a7000000-0000");
 });
 
@@ -327,13 +327,13 @@ test("a BYPASS row keeps its reason", async ({ page }) => {
 test("editing a branch limited tier default rule keeps its branch", async ({ page }) => {
   await openRules(page);
   const row = page.getByTestId("pr-row").filter({ hasText: "Contractor, default" });
-  await expect(row).toContainText("Trenton");
+  await expect(row).toContainText("Point Loma");
   await row.getByTestId("pr-edit").click();
   await expect(page.getByTestId("pr-dialog")).toBeVisible();
   // the tier default scope cannot edit the branch, so the branch it has is shown read only,
   // and the read only value is tied to its label by an explicit relation (a11y, round 3)
   await expect(page.getByTestId("pr-branch")).toHaveCount(0);
-  await expect(page.getByTestId("pr-branch-readonly")).toHaveText("Trenton");
+  await expect(page.getByTestId("pr-branch-readonly")).toHaveText("Point Loma");
   const labelledBy = await page.getByTestId("pr-branch-readonly").getAttribute("aria-labelledby");
   expect(labelledBy).not.toBeNull();
   await expect(page.locator(`#${labelledBy}`)).toHaveText("Branch");

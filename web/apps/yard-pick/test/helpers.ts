@@ -18,7 +18,7 @@ export function yardHandoff(): void {
     tokenExpiresAtMs: Date.now() + 3_600_000,
     flow: "yard-team",
     roleLabel: "Yard Team",
-    user: { userId: "d0200000-0000-4000-9000-000000000002", email: "yard.demo@dibbits.example", name: "Yard persona (demo)" },
+    user: { userId: "d0200000-0000-4000-9000-000000000002", email: "yard.demo@hh-demo.invalid", name: "Yard persona (demo)" },
     roleCode: "yard_team",
     roleName: "Yard Team",
     tier: 3,
