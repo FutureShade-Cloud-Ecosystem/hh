@@ -11,6 +11,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import './lib/dom.mjs';
 import { buildDemoPage, demoSheets, DEMO_TITLE } from '../demo/demo-page.ts';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
@@ -34,6 +35,9 @@ const TEXT_FILES = [
   'test/rail.test.mjs',
   'test/banner-update.test.mjs',
   'test/lib/render.mjs',
+  'test/lib/dom.mjs',
+  'test/lib/window-stub-probe.mjs',
+  'test/window-stub.test.mjs',
   'test/_ts-js-loader.mjs',
 ];
 
