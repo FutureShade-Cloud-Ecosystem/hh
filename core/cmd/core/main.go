@@ -44,9 +44,11 @@ import (
 	staffcontext "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
+	syncengine "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
 func main() {
@@ -316,6 +318,7 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
+	dealer.Set(cfg.DealerName)
 	log := slog.Default()
 
 	auth, err := loadServeConfig(getenv)
@@ -613,6 +616,12 @@ func serve(getenv func(string) string) error {
 		return err
 	}
 	defer graph.pool.Close()
+	// The sync engine's key ledger holds one connection per push for its
+	// slot lock; a pool of one would hang every keyed push, so refuse to
+	// boot rather than serve a door that wedges.
+	if err := syncengine.RequireLedgerPool(graph.pool); err != nil {
+		return err
+	}
 
 	// healthz: a LIVE database ping, not a startup nil-check, so a deploy
 	// gate fails honestly when the database is down.

@@ -43,8 +43,6 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -499,16 +497,3 @@ func glsRenameColumn(ctx context.Context, tx glsTx, p glsPlanted, now time.Time)
 // no branch lands in the room the first dealer's seed called yard-trenton, which the demo world's
 // rooms no longer carry (they follow the branch codes).
 func init() { tasksDefaultChannelSlug = "yard-plm" }
-
-// demoTenantConfig is the public tenant config the demo box serves: the demo dealer's name,
-// the kit's gold, and a support address and phone in the reserved demo forms. The default
-// build keeps the first dealer's stub.
-func demoTenantConfig() apigen.TenantPublicConfig {
-	c := tenantconfig.Default()
-	c.Id = "gls"
-	c.DealerName = "Gable Landscape Supply"
-	c.PrimaryColor = "#FFC313"
-	c.SupportEmail = "support@hh-demo.invalid"
-	c.SupportPhone = "619-555-0100"
-	return c
-}

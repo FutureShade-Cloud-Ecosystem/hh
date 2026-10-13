@@ -17,7 +17,7 @@ export default defineConfig({
   testMatch: "**/*.pw.ts",
   // The acceptance legs have their own harness (test/acceptance.config.ts), the
   // Buying and Stock pattern.
-  testIgnore: ["**/acceptance/**"],
+  testIgnore: ["**/acceptance/**", "**/live/**"],
   workers: 1,
   use: {
     baseURL: `http://127.0.0.1:${appPort}`,

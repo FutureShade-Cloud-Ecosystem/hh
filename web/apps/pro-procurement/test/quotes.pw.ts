@@ -19,7 +19,7 @@ async function signIn(page: Page, who: string): Promise<void> {
 async function openQuotes(page: Page): Promise<void> {
   await page.getByTestId("frame-selector").click();
   const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
-  await panel.getByRole("button", { name: "Quote studio", exact: true }).click();
+  await panel.getByRole("button", { name: "Quotes", exact: true }).click();
   await expect(page.getByTestId("surface-title")).toHaveText("Quotes");
 }
 

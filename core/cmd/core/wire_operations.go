@@ -273,7 +273,12 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// ride the carried audit service through the seam adapter below.
 	// Later Phase D items register their scopes beside this block, one
 	// RegisterScope per owning module.
-	syncEngine := sync.NewEngine().WithAudit(syncAuditSeam{svc: spine.auditSvc, link: link}, log)
+	// The key ledger (sync_op_hashes, migration 0389) is the engine's
+	// fourth guarantee: an idempotency key reused with a different body is
+	// refused, never applied.
+	syncEngine := sync.NewEngine().
+		WithAudit(syncAuditSeam{svc: spine.auditSvc, link: link}, log).
+		WithKeyLedger(sync.NewPgKeyLedger(pool))
 	if err := syncEngine.RegisterScope("pick_tasks", tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
