@@ -242,22 +242,26 @@ export function outcomeWord(outcome: string): string {
 // refuse negatives: a negative price or a negative margin is the server's
 // refusal to give, not a form the client can second guess.
 
+/**
+ * A typed decimal to hundredths through the decimal string, never a float
+ * multiply: digits, an optional point with one or two digits after it, nothing
+ * else (no third decimal, exponent, hex, sign or separator). "1.005" is a
+ * mistyped "1.05", not a dollar; "1e3" is not a thousand.
+ */
+function hundredthsFromDecimal(input: string): number | null {
+  const match = input.trim().match(/^([0-9]{1,9})(?:\.([0-9]{1,2}))?$/);
+  if (match === null) return null;
+  return Number(`${match[1]}${(match[2] ?? "").padEnd(2, "0")}`);
+}
+
 /** Dollars a person typed to integer cents, or null when it is not one. */
 export function centsFromMoneyInput(input: string): number | null {
-  const t = input.trim();
-  if (t === "") return null;
-  const n = Number(t);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return Math.round(n * 100);
+  return hundredthsFromDecimal(input);
 }
 
 /** A percent a person typed to integer basis points, or null when it is not one. */
 export function bpsFromPctInput(input: string): number | null {
-  const t = input.trim();
-  if (t === "") return null;
-  const n = Number(t);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return Math.round(n * 100);
+  return hundredthsFromDecimal(input);
 }
 
 /** Integer cents to the display text, the dollar sign included. */

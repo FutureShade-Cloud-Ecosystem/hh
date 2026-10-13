@@ -106,6 +106,27 @@ test("money renders from the server's cents, never recomputed", () => {
   assert.equal(centsFromMoneyInput("-1"), null);
 });
 
+test("money is parsed through the decimal string: a third decimal, an exponent, hex or a sign is refused", () => {
+  for (const bad of ["1.005", "20.005", "12.345", "1e3", "0x1F", "+1", "1.", ".5", "1,000", "1 0"]) {
+    assert.equal(centsFromMoneyInput(bad), null, bad);
+  }
+  assert.equal(centsFromMoneyInput("1.5"), 150);
+  assert.equal(centsFromMoneyInput("0.01"), 1);
+  assert.equal(centsFromMoneyInput("100"), 10000);
+  assert.equal(centsFromMoneyInput("20.5"), 2050);
+  assert.equal(centsFromMoneyInput(" 12.34 "), 1234);
+});
+
+test("a percent is parsed through the decimal string, with the same refusals", () => {
+  for (const bad of ["1.005", "20.005", "12.345", "1e3", "0x1F", "+1", "1."]) {
+    assert.equal(bpsFromPctInput(bad), null, bad);
+  }
+  assert.equal(bpsFromPctInput("1.5"), 150);
+  assert.equal(bpsFromPctInput("0.01"), 1);
+  assert.equal(bpsFromPctInput("100"), 10000);
+  assert.equal(bpsFromPctInput("20.5"), 2050);
+});
+
 test("a percent the person typed becomes integer basis points, or nothing", () => {
   assert.equal(bpsFromPctInput("30"), 3000);
   assert.equal(bpsFromPctInput("12.5"), 1250);

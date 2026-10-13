@@ -188,6 +188,20 @@ test("an unparsable percent is refused at the form, before any call", async () =
   assert.equal(door.calls.some((x) => Array.isArray(x) && x[0] === "previewFloor"), false);
 });
 
+test("a margin with a third decimal is refused in words and never reaches the door", async () => {
+  for (const bad of ["12.345", "1e3", "0x1F"]) {
+    const door = fakeDoor();
+    const c = run(door);
+    await c.open();
+    c.click("pr-policy-edit", { category: "ca7-1" });
+    c.input("policy-target", bad);
+    c.input("policy-floor", "20");
+    await c.click("pr-policy-save", {});
+    assert.match(c.model.margin.formError, /percent/, bad);
+    assert.equal(door.calls.some((x) => Array.isArray(x) && (x[0] === "previewFloor" || x[0] === "upsertPolicy")), false, bad);
+  }
+});
+
 test("cancel closes the editor and drops any open warning", () => {
   const door = fakeDoor();
   const c = run(door);
