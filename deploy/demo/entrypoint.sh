@@ -98,10 +98,20 @@ export CORE_TENANT_AUDIENCE="${CORE_TENANT_AUDIENCE:-hh-tenant}"
 # The public port is the platform's PORT. The core listens on a loopback
 # port only: it is never reachable except through Caddy, which fronts
 # every page and every mint request.
+# BEGIN internal port
 GATE_PORT="${PORT:-8080}"
 CORE_INTERNAL_PORT="${CORE_INTERNAL_PORT:-9090}"
 export CORE_LISTEN_ADDR="127.0.0.1:${CORE_INTERNAL_PORT}"
 UPSTREAM="127.0.0.1:${CORE_INTERNAL_PORT}"
+# Only this script reads CORE_INTERNAL_PORT (the core is told its address by
+# CORE_LISTEN_ADDR). Un-export it so no child inherits it: the demo
+# environment guard refuses a CORE_ name on no list. Unset drops the export
+# attribute; the plain assignment after it keeps the value in this shell.
+internal_port="$CORE_INTERNAL_PORT"
+unset CORE_INTERNAL_PORT
+CORE_INTERNAL_PORT="$internal_port"
+unset internal_port
+# END internal port
 
 # --------------------------------------------------------------------------
 # Step 1: a bounded wait for the database to accept connections. The
