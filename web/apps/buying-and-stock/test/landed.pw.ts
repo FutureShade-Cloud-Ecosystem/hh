@@ -4,7 +4,7 @@
 // held to the core's shapes and sentences by test/landed-contract.test.mjs.
 import { test, expect, openArea, stubRole, resetStub, lowContrast, noSidewaysScroll } from "./helpers.js";
 
-const ORDER = "PO-TRT-66 · Alcli (demo)";
+const ORDER = "PO-PLM-66 · Alcli (demo)";
 
 async function newCapture(page: import("@playwright/test").Page): Promise<void> {
   await page.getByRole("button", { name: "New landed cost" }).click();
@@ -22,7 +22,7 @@ test("the area opens on the landed costs already captured, with the counts besid
   await expect(page.getByRole("heading", { name: "Landed cost", level: 1 })).toBeVisible();
   const rows = page.locator("[data-landed-row]");
   await expect(rows).toHaveCount(1);
-  await expect(rows.first()).toContainText("PO-TRT-66");
+  await expect(rows.first()).toContainText("PO-PLM-66");
   await expect(rows.first()).toContainText("Applied");
   await expect(rows.first()).toContainText("By value");
   await expect(rows.first()).toContainText("$480.00");
@@ -42,7 +42,7 @@ test("a capture is saved as a draft, its split compared across the bases, then a
 
   const detail = page.locator("[data-landed-detail]");
   await expect(detail).toBeVisible();
-  await expect(page.locator("[data-notice]")).toContainText("Saved as a draft on PO-TRT-66");
+  await expect(page.locator("[data-notice]")).toContainText("Saved as a draft on PO-PLM-66");
   await expect(detail.locator("[data-status]").first()).toHaveText("Draft");
   await expect(detail.locator("[data-total]")).toHaveText("$515.50");
   await expect(detail.locator("[data-allocation-row]")).toHaveCount(2);
@@ -57,14 +57,14 @@ test("a capture is saved as a draft, its split compared across the bases, then a
   // Nothing is applied until the confirm step is pressed through.
   await page.getByRole("button", { name: "Apply", exact: true }).click();
   const confirm = page.locator("[data-confirm]");
-  await expect(confirm).toContainText("Apply $515.50 of landed cost to PO-TRT-66, by weight.");
+  await expect(confirm).toContainText("Apply $515.50 of landed cost to PO-PLM-66, by weight.");
   await expect(confirm).toContainText("It cannot be edited after; a mistake is undone by voiding it.");
   await page.getByRole("button", { name: "Go back" }).click();
   await expect(detail.locator("[data-status]").first()).toHaveText("Draft");
   await page.getByRole("button", { name: "Apply", exact: true }).click();
   await page.getByRole("button", { name: "Apply it" }).click();
 
-  await expect(page.locator("[data-notice]")).toContainText("Applied to PO-TRT-66.");
+  await expect(page.locator("[data-notice]")).toContainText("Applied to PO-PLM-66.");
   await expect(detail.locator("[data-status]").first()).toHaveText("Applied");
   await expect(detail.locator("[data-allocation-row]")).toHaveCount(1);
   await expect(detail.locator("[data-total]")).toHaveText("$515.50");
@@ -76,13 +76,13 @@ test("a capture is saved as a draft, its split compared across the bases, then a
 
 test("a void is confirmed, reverses the document, and the list says so", async ({ page, request }) => {
   await openArea(page, request, "Landed cost");
-  await page.locator("[data-landed-row]").first().getByRole("button", { name: "PO-TRT-66" }).click();
+  await page.locator("[data-landed-row]").first().getByRole("button", { name: "PO-PLM-66" }).click();
   await expect(page.locator("[data-landed-detail]")).toBeVisible();
   await expect(page.getByRole("button", { name: "Apply", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Void" }).click();
-  await expect(page.locator("[data-confirm]")).toContainText("Void the landed cost of $515.50 on PO-TRT-66.");
+  await expect(page.locator("[data-confirm]")).toContainText("Void the landed cost of $515.50 on PO-PLM-66.");
   await page.getByRole("button", { name: "Void it" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Voided: the landed cost on PO-TRT-66 is reversed.");
+  await expect(page.locator("[data-notice]")).toContainText("Voided: the landed cost on PO-PLM-66 is reversed.");
   await expect(page.locator("[data-landed-detail] [data-status]").first()).toHaveText("Voided");
   await expect(page.getByRole("button", { name: "Void" })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to the list" }).click();
@@ -120,7 +120,7 @@ test("an apply whose answer was lost is settled by reading the document, so the 
   await page.getByRole("button", { name: "Apply it" }).click();
   // The apply was made; nothing came back; the screen read the document and says what it now is.
   await expect(page.locator("[data-landed-detail] [data-status]").first()).toHaveText("Applied");
-  await expect(page.locator("[data-notice]")).toContainText("Applied to PO-TRT-66.");
+  await expect(page.locator("[data-notice]")).toContainText("Applied to PO-PLM-66.");
   await expect(page.getByRole("button", { name: "Apply", exact: true })).toHaveCount(0);
 });
 
@@ -180,7 +180,7 @@ test("a late freight follows an applied landed cost and splits by what is still 
   await page.getByRole("button", { name: "Apply late freight" }).click();
   await expect(page.locator("[data-confirm]")).toContainText("goes straight to cost of goods sold");
   await page.getByRole("button", { name: "Apply late freight" }).last().click();
-  await expect(page.locator("[data-notice]")).toContainText("Late freight applied to PO-TRT-66.");
+  await expect(page.locator("[data-notice]")).toContainText("Late freight applied to PO-PLM-66.");
   await expect(page.locator("[data-landed-detail] [data-status]").first()).toHaveText("Retro adjusted");
   const row = page.locator("[data-allocation-row]").first();
   await expect(row).toContainText("$40.00");
@@ -234,7 +234,7 @@ test("every text is 4.5 to 1 or better in both themes: the list, a capture, a dr
     await page.getByRole("checkbox", { name: /late freight/ }).click();
     expect(await lowContrast(page), `${theme}, capture`).toEqual([]);
     await page.getByRole("button", { name: "Back to the list" }).click();
-    await page.locator("[data-landed-row]").first().getByRole("button", { name: "PO-TRT-66" }).click();
+    await page.locator("[data-landed-row]").first().getByRole("button", { name: "PO-PLM-66" }).click();
     await page.getByRole("button", { name: "Void" }).click();
     expect(await lowContrast(page), `${theme}, confirm`).toEqual([]);
     await page.getByRole("button", { name: "Go back" }).click();
@@ -250,7 +250,7 @@ test("at 390 px the page never scrolls sideways: the list is cards, the capture 
   await newCapture(page);
   await noSidewaysScroll(page);
   await page.getByRole("button", { name: "Back to the list" }).click();
-  await page.locator("[data-landed-row]").first().getByRole("button", { name: "PO-TRT-66" }).click();
+  await page.locator("[data-landed-row]").first().getByRole("button", { name: "PO-PLM-66" }).click();
   await expect(page.locator("[data-landed-detail]")).toBeVisible();
   await noSidewaysScroll(page);
 });

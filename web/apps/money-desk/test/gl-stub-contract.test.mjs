@@ -211,7 +211,7 @@ test("the refusals are the core's sentences, in the core's order", async () => {
 
 const BOOKS_MONTH = 9;
 const line = (account_code, debit_cents, credit_cents, memo = "") => ({ account_code, debit_cents, credit_cents, memo });
-const fresh = { branch_id: IDS.trenton, memo: "Freight accrual", source: "MANUAL" };
+const fresh = { branch_id: IDS.pointLoma, memo: "Freight accrual", source: "MANUAL" };
 
 test("the chart of accounts answers the contract's page, creates an account and refuses in the core's words and order", async () => {
   await reset();
