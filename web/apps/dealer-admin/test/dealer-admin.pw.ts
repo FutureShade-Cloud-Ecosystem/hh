@@ -105,3 +105,63 @@ test("a caller who may not edit the rosters reads them read-only", async ({ page
   await expect(page.locator('[data-action="ph-save"]')).toHaveCount(0);
   await page.request.post("/_stub/reset");
 });
+
+test("the audit trail, one entry's masked detail, and the entity's whole trail", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="audit"]').click();
+
+  // The trail renders three entries; the sensitive one is badged.
+  await expect(page.locator("[data-test=audit-count]")).toHaveText("3 entries");
+  const saleRow = page.locator("[data-test^=audit-row-]").filter({ hasText: "SALE_COMPLETED" });
+  const overrideRow = page.locator("[data-test^=audit-row-]").filter({ hasText: "PRICE_OVERRIDE" });
+  await expect(overrideRow.locator(".chip-sensitive")).toBeVisible();
+
+  // A row opens the masked detail drawer: the change set is the projection.
+  await overrideRow.click();
+  await expect(page.locator("[data-detail-state=ready]")).toBeVisible();
+  await expect(page.locator("[data-test=audit-changes]")).toContainText("contract price match");
+
+  // The sale's whole trail opens beneath: the sale spans two rows.
+  await saleRow.click();
+  await expect(page.locator("[data-detail-state=ready]")).toBeVisible();
+  await page.locator('[data-action="open-audit-trail"]').click();
+  await expect(page.locator("[data-test=audit-trail]")).toBeVisible();
+  await expect(page.locator("[data-test^=audit-trail-row-]")).toHaveCount(2);
+});
+
+test("the audit filters narrow the trail, and empty means two different things", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await page.locator('.surface-link[data-surface="audit"]').click();
+  await expect(page.locator("[data-test=audit-count]")).toHaveText("3 entries");
+
+  // The action filter narrows to the one override.
+  await page.locator('[data-field="audit-action"]').selectOption({ label: "PRICE_OVERRIDE" });
+  await page.locator('[data-action="apply-audit-filters"]').click();
+  await expect(page.locator("[data-test=audit-count]")).toHaveText("1 entries");
+
+  // An empty trail under active filters says the filters are narrower than
+  // the record, not that nothing happened.
+  await page.locator('[data-field="audit-entity-type"]').fill("warranty.claim");
+  await page.locator('[data-action="apply-audit-filters"]').click();
+  await expect(page.locator("[data-test=audit-empty]")).toContainText("narrower than the record");
+
+  // Clear empties the fields and the trail returns whole.
+  await page.locator('[data-action="clear-audit-filters"]').click();
+  await expect(page.locator("[data-test=audit-count]")).toHaveText("3 entries");
+  await expect(page.locator('[data-field="audit-entity-type"]')).toHaveValue("");
+});
+
+test("a frontline caller is refused the audit read", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.nth(1).click();
+  await page.locator('.surface-link[data-surface="audit"]').click();
+
+  // The trail is an admin read; the refusal names who may act.
+  await expect(page.locator("[data-test=audit-error]")).toContainText("managers and above");
+});

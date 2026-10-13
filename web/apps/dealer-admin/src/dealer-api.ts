@@ -21,6 +21,7 @@
 // app's screens use.
 import {
   ApiClient,
+  staffAudit,
   staffBranches,
   staffIdentity,
   staffSettings,
@@ -69,11 +70,38 @@ export interface BranchRow {
   readonly name: string;
 }
 
+// -- the audit trail --------------------------------------------------------------------------------
+
+/** One audit row as the screens use it: the masked projection, nothing more. */
+export interface AuditRow {
+  readonly id: string;
+  readonly action: string;
+  readonly entity_type: string;
+  readonly entity_id: string;
+  readonly actor_id: string;
+  readonly actor_role: string;
+  readonly branch_id: string;
+  readonly changes: unknown;
+  readonly request_id: string;
+  readonly created_at: string;
+  readonly seq: number | null;
+}
+
+export interface AuditQuery {
+  readonly entity_type?: string;
+  readonly action?: string;
+  readonly actor_id?: string;
+  readonly since?: string;
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
 type Bag = Record<string, unknown>;
 
 const bag = (value: unknown): Bag => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Bag) : {});
 const text = (value: unknown): string => (typeof value === "string" ? value : "");
 const num = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+const maybeNum = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 const list = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : []);
 
 export function toStaffMemberRow(raw: unknown): StaffMemberRow {
@@ -103,6 +131,23 @@ export function toRoleRow(raw: unknown): RoleRow {
 export function toBranchRow(raw: unknown): BranchRow {
   const r = bag(raw);
   return { id: text(r.id), code: text(r.code), name: text(r.name) };
+}
+
+export function toAuditRow(raw: unknown): AuditRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    action: text(r.action),
+    entity_type: text(r.entity_type),
+    entity_id: text(r.entity_id),
+    actor_id: text(r.actor_id),
+    actor_role: text(r.actor_role),
+    branch_id: text(r.branch_id),
+    changes: r.changes ?? {},
+    request_id: text(r.request_id),
+    created_at: text(r.created_at),
+    seq: maybeNum(r.seq),
+  };
 }
 
 /** Every call the staff and hotkeys surfaces make. */
@@ -177,5 +222,29 @@ export class DealerApi {
   async putPlatformHotkeys(surface: string, keys: readonly { action: string; binding: string; position: number }[]): Promise<Result<true>> {
     const answer = await staffSettings.settingsPutPlatformHotkeys(this.#client, surface, { keys: keys.map((k) => ({ ...k })) });
     return answer.ok ? { ok: true, value: true } : answer;
+  }
+
+  // -- the audit trail ----------------------------------------------------------------------------
+
+  /** The audit trail, filtered. The server applies the caller's authority. */
+  async audit(query: AuditQuery): Promise<Result<readonly AuditRow[]>> {
+    const answer = await staffAudit.auditListEntries(this.#client, { ...query, limit: query.limit ?? 200 });
+    if (!answer.ok) return answer;
+    const page = bag(answer.value);
+    return { ok: true, value: list(page.items).map(toAuditRow) };
+  }
+
+  /** One entry's full masked projection: the fields the list does not carry. */
+  async auditEntry(id: string): Promise<Result<AuditRow>> {
+    const answer = await staffAudit.auditGetEntry(this.#client, id);
+    return answer.ok ? { ok: true, value: toAuditRow(answer.value) } : answer;
+  }
+
+  /** One entity's whole trail: the rows a transaction spans, oldest view by the server. */
+  async auditTransaction(entityType: string, entityId: string): Promise<Result<readonly AuditRow[]>> {
+    const answer = await staffAudit.auditReopenTransaction(this.#client, entityType, entityId, { limit: 200 });
+    if (!answer.ok) return answer;
+    const page = bag(answer.value);
+    return { ok: true, value: list(page.items).map(toAuditRow) };
   }
 }

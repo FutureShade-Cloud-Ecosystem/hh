@@ -49,6 +49,9 @@ import { SURFACES, isSurfaceId } from "./surfaces.js";
 import { dealerStyles } from "./styles.js";
 import { renderStaff, type StaffModel } from "./views-staff.js";
 import { renderHotkeys, type HotkeysModel } from "./views-hotkeys.js";
+import { renderAudit, type AuditDetail, type AuditModel, type AuditTrail } from "./views-audit.js";
+import { EMPTY_FILTERS, sinceWire, type AuditFilters } from "./audit-logic.js";
+import type { AuditRow } from "./dealer-api.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -76,6 +79,15 @@ const emptyHotkeysModel = (): HotkeysModel => ({
   saveError: "",
   notice: "",
   busy: false,
+});
+
+const emptyAuditModel = (): AuditModel => ({
+  phase: "loading",
+  rows: [],
+  filters: { ...EMPTY_FILTERS },
+  error: "",
+  detail: null,
+  trail: null,
 });
 
 export class DealerAdminApp extends HHElement {
@@ -122,6 +134,12 @@ export class DealerAdminApp extends HHElement {
   // The hotkeys surface's state.
   #hotkeys: HotkeysModel = emptyHotkeysModel();
 
+  // The audit surface's state, and the detail fetch's generation counter: a
+  // response whose generation is no longer current is dropped, so opening a
+  // second row, filtering or closing voids the answer still in flight.
+  #audit: AuditModel = emptyAuditModel();
+  #auditDetailGen = 0;
+
   // The way in: this app's own door, one card per demo role.
   #entryView: { flows: { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; flows: DemoFlow[] }; busy: boolean; message: string | null } = {
     flows: { kind: "loading" },
@@ -160,6 +178,7 @@ export class DealerAdminApp extends HHElement {
         this.#surface = surface;
         // A surface loads its own reads the first time it is opened.
         if (surface === "hotkeys" && this.#hotkeys.phase === "loading") void this.#loadHotkeys();
+        if (surface === "audit" && this.#audit.phase === "loading") void this.#loadAudit();
         this.requestUpdate();
       }
       return;
@@ -170,6 +189,35 @@ export class DealerAdminApp extends HHElement {
     }
     if (action === "reload-hotkeys") {
       void this.#loadHotkeys();
+      return;
+    }
+    if (action === "reload-audit") {
+      void this.#loadAudit();
+      return;
+    }
+    if (action === "apply-audit-filters") {
+      void this.#loadAudit();
+      return;
+    }
+    if (action === "clear-audit-filters") {
+      this.#audit = { ...this.#audit, filters: { ...EMPTY_FILTERS } };
+      this.requestUpdate();
+      void this.#loadAudit();
+      return;
+    }
+    if (action === "open-audit-entry") {
+      void this.#openAuditEntry(control?.getAttribute("data-entry-id") ?? "");
+      return;
+    }
+    if (action === "close-audit-detail") {
+      this.#closeAuditDetail();
+      return;
+    }
+    if (action === "open-audit-trail") {
+      void this.#openAuditTrail(
+        control?.getAttribute("data-entity-type") ?? "",
+        control?.getAttribute("data-entity-id") ?? "",
+      );
       return;
     }
     if (action === "ph-set") {
@@ -216,12 +264,44 @@ export class DealerAdminApp extends HHElement {
     void this.#assignRole(id, role?.code ?? "");
   };
 
+  // The audit filters' fields mirror from input events, never bound.
+  readonly #onHostInput = (event: Event): void => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const field = target.getAttribute("data-field") ?? "";
+    if (!field.startsWith("audit-")) return;
+    const value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
+    const filters = this.#audit.filters;
+    if (field === "audit-entity-type") this.#audit = { ...this.#audit, filters: { ...filters, entity_type: value } };
+    if (field === "audit-action") this.#audit = { ...this.#audit, filters: { ...filters, action: value } };
+    if (field === "audit-actor-id") this.#audit = { ...this.#audit, filters: { ...filters, actor_id: value } };
+    if (field === "audit-since") this.#audit = { ...this.#audit, filters: { ...filters, since: value } };
+  };
+
+  // Enter opens the focused trail row; Escape closes the drawer.
+  readonly #onHostKeydown = (event: Event): void => {
+    if (!(event instanceof KeyboardEvent)) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (event.key === "Enter" && target.getAttribute("data-action") === "open-audit-entry") {
+      event.preventDefault();
+      void this.#openAuditEntry(target.getAttribute("data-entry-id") ?? "");
+      return;
+    }
+    if (event.key === "Escape" && this.#audit.detail !== null) {
+      event.preventDefault();
+      this.#closeAuditDetail();
+    }
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener("click", this.#onHostClick);
-    // change does not leave this element's own shadow root, so the select
-    // listener sits on the root itself.
+    // change, input and keydown do not leave this element's own shadow root,
+    // so their listeners sit on the root itself.
     this.renderRoot.addEventListener("change", this.#onHostChange);
+    this.renderRoot.addEventListener("input", this.#onHostInput);
+    this.renderRoot.addEventListener("keydown", this.#onHostKeydown);
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -247,6 +327,8 @@ export class DealerAdminApp extends HHElement {
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("change", this.#onHostChange);
+    this.renderRoot.removeEventListener("input", this.#onHostInput);
+    this.renderRoot.removeEventListener("keydown", this.#onHostKeydown);
     if (this.#hotkeys.capturing !== null) window.removeEventListener("keydown", this.#onCapture, true);
     window.clearTimeout(this.#copiedTimer);
     super.disconnectedCallback();
@@ -268,6 +350,18 @@ export class DealerAdminApp extends HHElement {
       const id = select.getAttribute("data-user-id") ?? "";
       const row = this.#staff.rows.find((m) => m.user_id === id);
       if (row !== undefined) select.value = row.role_name;
+    }
+    // The audit filters' fields mirror the model too, so a Clear empties
+    // what is on the glass and a reload keeps the person's words.
+    const fields: Record<string, string> = {
+      "audit-entity-type": this.#audit.filters.entity_type,
+      "audit-action": this.#audit.filters.action,
+      "audit-actor-id": this.#audit.filters.actor_id,
+      "audit-since": this.#audit.filters.since,
+    };
+    for (const [field, value] of Object.entries(fields)) {
+      const el = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${field}"]`);
+      if (el !== null && el.value !== value) el.value = value;
     }
   }
 
@@ -534,6 +628,91 @@ export class DealerAdminApp extends HHElement {
     await this.#loadHotkeys();
   }
 
+  // -- the audit surface ------------------------------------------------------------------------------
+
+  async #loadAudit(): Promise<void> {
+    // A new list is a new question: the drawer's in-flight answer is void.
+    this.#auditDetailGen += 1;
+    this.#audit = { ...emptyAuditModel(), filters: this.#audit.filters };
+    this.requestUpdate();
+    const f = this.#audit.filters;
+    const result = await this.#api.audit({
+      entity_type: f.entity_type.trim() === "" ? undefined : f.entity_type.trim(),
+      action: f.action === "" ? undefined : f.action,
+      actor_id: f.actor_id.trim() === "" ? undefined : f.actor_id.trim(),
+      since: sinceWire(f.since) === "" ? undefined : sinceWire(f.since),
+    });
+    if (!result.ok) {
+      if (result.status === 403) {
+        this.#audit = {
+          ...this.#audit,
+          phase: "refused",
+          error: staffRefusalWords(errorWords(result.error), result.status),
+        };
+      } else {
+        this.#audit = {
+          ...this.#audit,
+          phase: "error",
+          error: `The trail did not load. ${errorWords(result.error)}`,
+        };
+      }
+      this.requestUpdate();
+      return;
+    }
+    this.#audit = { ...this.#audit, phase: "ready", rows: result.value };
+    this.requestUpdate();
+  }
+
+  /**
+   * Open one entry's masked detail. The drawer paints the list's projection
+   * first and swaps in Get's answer when it lands; a response whose
+   * generation is no longer current is dropped, so opening a second row,
+   * filtering or closing voids the answer still in flight.
+   */
+  async #openAuditEntry(id: string): Promise<void> {
+    if (id === "") return;
+    this.#auditDetailGen += 1;
+    const gen = this.#auditDetailGen;
+    const row: AuditRow | undefined = this.#audit.rows.find((r) => r.id === id)
+      ?? this.#audit.trail?.rows.find((r) => r.id === id);
+    const detail: AuditDetail = { forId: id, state: "loading", entry: row ?? null };
+    this.#audit = { ...this.#audit, detail };
+    this.requestUpdate();
+    const result = await this.#api.auditEntry(id);
+    if (gen !== this.#auditDetailGen) return;
+    if (!result.ok) {
+      this.#audit = { ...this.#audit, detail: { ...detail, state: "error" } };
+      this.requestUpdate();
+      return;
+    }
+    this.#audit = { ...this.#audit, detail: { forId: id, state: "ready", entry: result.value } };
+    this.requestUpdate();
+  }
+
+  #closeAuditDetail(): void {
+    // Closing is an answer to the question: the in-flight answer is void.
+    this.#auditDetailGen += 1;
+    this.#audit = { ...this.#audit, detail: null };
+    this.requestUpdate();
+  }
+
+  async #openAuditTrail(entityType: string, entityId: string): Promise<void> {
+    if (entityType === "" || entityId === "") return;
+    const trail: AuditTrail = { entityType, entityId, phase: "loading", rows: [], error: "" };
+    this.#audit = { ...this.#audit, trail };
+    this.requestUpdate();
+    const result = await this.#api.auditTransaction(entityType, entityId);
+    if (result.ok) {
+      this.#audit = { ...this.#audit, trail: { ...trail, phase: "ready", rows: result.value } };
+    } else {
+      this.#audit = {
+        ...this.#audit,
+        trail: { ...trail, phase: "error", error: `The entity's trail did not load. ${errorWords(result.error)}` },
+      };
+    }
+    this.requestUpdate();
+  }
+
   async #chooseFlow(flow: string): Promise<void> {
     this.#entryView = { ...this.#entryView, busy: true };
     this.requestUpdate();
@@ -559,6 +738,8 @@ export class DealerAdminApp extends HHElement {
     this.#surface = SURFACES[0].id;
     this.#staff = emptyStaffModel();
     this.#hotkeys = emptyHotkeysModel();
+    this.#audit = emptyAuditModel();
+    this.#auditDetailGen += 1;
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -596,6 +777,7 @@ export class DealerAdminApp extends HHElement {
     // The router line: one case per registry surface. The next coder adds
     // theirs beside this one; nothing else in this file changes.
     if (this.#surface === "hotkeys") return renderHotkeys(this.#hotkeys);
+    if (this.#surface === "audit") return renderAudit(this.#audit);
     return renderStaff(this.#staff);
   }
 

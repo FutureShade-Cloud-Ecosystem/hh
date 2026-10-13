@@ -29,6 +29,18 @@ dealer-admin in any file ("No built app, no boards in any file").
 | The read only posture: the server's `can_edit` gates Set, Unbind and Save; a non editor gets the rosters and one calm sentence | `app/src/platform-hotkeys.ts` (`body`, `renderRoster`) | `renderRosters` in `src/views-hotkeys.ts` | The sentence kept; the empty roster's empty state kept for the read only caller |
 | The empty draft guard on save (`bind at least one key`) and the server's own sentence stripped of its module prefix | `app/src/platform-hotkeys.ts` (`save`), `app/src/_platform-hotkeys.ts` (`serverSentence`) | `#saveRoster` in `src/app-root.ts`, `serverSentence` in `src/hotkey-logic.ts` | Same strip (one leading lowercase word, a colon, a space), a no-op on a message that never had one |
 | The browser owned keys marked, never refused (dashed keycap) | `app/src/platform-hotkeys.ts` (`BROWSER_KEYS`, `isBrowserKey`) | `src/hotkey-logic.ts`, the cap classes in `src/views-hotkeys.ts` | Same set, same escape rule rationale |
+| The audit trail's list, filters, and the masked detail drawer | `app/src/audit-log.ts` | `src/views-audit.ts`, the audit methods in `src/app-root.ts`, `audit`/`auditEntry`/`auditTransaction` in `src/dealer-api.ts` | Rebuilt on HH's sheet over the generated client (list, entry, transaction); the filters ride the client's own query options |
+| The sensitive action badges and the curated action filter list | `app/src/audit-log.ts` (`SENSITIVE_ACTIONS`, `ACTION_OPTIONS`) | `isSensitive`, `ACTION_OPTIONS` in `src/audit-logic.ts` | Kept verbatim |
+| The two empty sentences: filtered empty is not nothing happened | `app/src/audit-log.ts` (`filtersActive`, the two `emptyState` calls) | `auditEmptyWords`, `filtersActive` in `src/audit-logic.ts` | The original's own DIB-425 rule, kept as words |
+| The drawer's generation guard: opening a second row, filtering or closing voids the answer still in flight | `app/src/audit-log.ts` (`detailGen`, `openDetail`, `cancelDetail`) | `#auditDetailGen`, `#openAuditEntry`, `#closeAuditDetail` in `src/app-root.ts` | The counter carried over; the abort half is not, because the calls go through the generated client (a Result, no res.json() window); the drawer's three self describing attributes kept |
+| The actor cell | `app/src/audit-log.ts` with `app/src/_audit-actor.ts` (`renderActorCell`) | `actorWords` in `src/audit-logic.ts` | The honest change: the HH core's audit projection carries no resolved name and production reads the role word empty (the core attributes by the linked users id), so the cell shows the role's words when a row carries one, else the id's own block, never a blank |
+| The drilldown to one entity's whole trail | `app/src/audit-log.ts` with `app/src/_audit-drilldown.ts` | the trail card in `src/views-audit.ts`, `#openAuditTrail` in `src/app-root.ts` | The original's kind aware viewer became the one generic question the transaction route answers: this entity's rows |
+
+What the original's audit surface carried that this port does not, said
+plainly: the roving tabindex cursor with its arrow key model and the
+aria-selected discipline around it (the original's own accessibility round
+machinery). The rows here are tab stops whose Enter opens, and Escape
+closes, the drawer; the full two hundred row keyboard model is not carried.
 
 What has no source in the original app and is new here, each from its named
 reference:

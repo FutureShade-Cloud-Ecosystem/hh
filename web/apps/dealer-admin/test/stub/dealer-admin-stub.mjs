@@ -1,9 +1,9 @@
 // Dealer Admin's local stub: the demo way in, and the dealer's staff world
 // answered in the core's shapes (the staff register, the roles catalog, the
-// branches, the platform hotkey rosters). It is a development and test double
-// only; the real routes are the core's, and the staff identity admin family
-// is contract-only there until the auth lane lands it. The audit routes join
-// with their own commit.
+// branches, the platform hotkey rosters, the audit trail). It is a
+// development and test double only; the real routes are the core's, and the
+// staff identity admin family is contract-only there until the auth lane
+// lands it.
 import { createServer } from "node:http";
 
 const port = Number(process.env.DA_STUB_PORT ?? 56610);
@@ -166,16 +166,67 @@ function readBody(req) {
 
 let staff;
 let hotkeys;
+let audit;
 let scenario;
 let log;
 
 function reset() {
   staff = buildStaff();
   hotkeys = buildHotkeys();
+  audit = buildAudit();
   scenario = "";
   log = [];
 }
 reset();
+
+// The audit world: one sale whose trail spans three rows (the transaction
+// drilldown's case), one sensitive price override, one ordinary status
+// change. The masked projection is what the routes answer, the way the core
+// enforces it.
+function buildAudit() {
+  const ago = (minutes) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+  return [
+    {
+      id: "07000000-0000-4000-9000-0000000000a1",
+      action: "SALE_COMPLETED",
+      entity_type: "pos.sale",
+      entity_id: "0f000000-0000-4000-9000-0000000000s1",
+      actor_id: "da110000-0000-4000-9000-000000000002",
+      actor_role: "",
+      branch_id: BRANCHES[0].id,
+      changes: { total_cents: 19680, lines: 2, tender: "CASH" },
+      request_id: "req-0001",
+      created_at: ago(30),
+      seq: 41,
+    },
+    {
+      id: "07000000-0000-4000-9000-0000000000a2",
+      action: "ORDER_STATUS_CHANGED",
+      entity_type: "pos.sale",
+      entity_id: "0f000000-0000-4000-9000-0000000000s1",
+      actor_id: "da110000-0000-4000-9000-000000000002",
+      actor_role: "",
+      branch_id: BRANCHES[0].id,
+      changes: { from: "OPEN", to: "PICKED" },
+      request_id: "req-0002",
+      created_at: ago(20),
+      seq: 42,
+    },
+    {
+      id: "07000000-0000-4000-9000-0000000000a3",
+      action: "PRICE_OVERRIDE",
+      entity_type: "pricing.override",
+      entity_id: "0f000000-0000-4000-9000-0000000000o1",
+      actor_id: "da110000-0000-4000-9000-000000000001",
+      actor_role: "",
+      branch_id: BRANCHES[0].id,
+      changes: { sku: "PAV-60-CH", from_cents: 480, to_cents: 420, reason: "contract price match" },
+      request_id: "req-0003",
+      created_at: ago(10),
+      seq: 43,
+    },
+  ];
+}
 
 // The platform rosters as the read serves them: the shell's map with one
 // seeded binding (F2, deliberately also the counter's search key: the cross
@@ -348,6 +399,43 @@ async function handle(req, res) {
       position: typeof k.position === "number" ? k.position : i,
     }));
     return json(res, { saved: true });
+  }
+
+  // ---- the audit trail ----
+
+  if (req.method === "GET" && path === "/api/v1/audit") {
+    // The trail is an admin read: a frontline caller is refused with the
+    // shared Forbidden body.
+    if (!isManager(flow) || scenario === "refused-audit") return refuse(res, 403, "Forbidden");
+    const entityType = url.searchParams.get("entity_type") ?? "";
+    const action = url.searchParams.get("action") ?? "";
+    const actorId = url.searchParams.get("actor_id") ?? "";
+    const since = url.searchParams.get("since") ?? "";
+    const items = audit.filter((e) => {
+      if (entityType !== "" && e.entity_type !== entityType) return false;
+      if (action !== "" && e.action !== action) return false;
+      if (actorId !== "" && e.actor_id !== actorId) return false;
+      if (since !== "" && new Date(e.created_at).getTime() < new Date(since).getTime()) return false;
+      return true;
+    });
+    return json(res, { items, next_cursor: null, limit: 200 });
+  }
+
+  const entryMatch = path.match(/^\/api\/v1\/audit\/([^/]+)$/);
+  if (req.method === "GET" && entryMatch && entryMatch[1] !== "transaction") {
+    if (!isManager(flow) || scenario === "refused-audit") return refuse(res, 403, "Forbidden");
+    const entry = audit.find((e) => e.id === entryMatch[1]);
+    if (entry === undefined) return refuse(res, 404, "entry not found");
+    return json(res, entry);
+  }
+
+  const transactionMatch = path.match(/^\/api\/v1\/audit\/transaction\/([^/]+)\/([^/]+)$/);
+  if (req.method === "GET" && transactionMatch) {
+    if (!isManager(flow) || scenario === "refused-audit") return refuse(res, 403, "Forbidden");
+    const entityType = decodeURIComponent(transactionMatch[1]);
+    const entityId = decodeURIComponent(transactionMatch[2]);
+    const items = audit.filter((e) => e.entity_type === entityType && e.entity_id === entityId);
+    return json(res, { items, next_cursor: null, limit: 200 });
   }
 
   return notFound(res);

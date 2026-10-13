@@ -402,6 +402,52 @@ export const dealerStyles = css`
     gap: var(--hh-s-8);
   }
 
+  /* -- the audit trail ------------------------------------------------------------------ */
+
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-8);
+    align-items: center;
+    margin: 0 0 var(--hh-s-12);
+  }
+  .filters .text-field {
+    min-width: 180px;
+    min-height: 36px;
+    font-size: 14px;
+  }
+
+  .chip-sensitive {
+    color: var(--hh-danger);
+    border-color: var(--hh-danger);
+  }
+
+  /* The drawer's pairs flow across the width instead of stranding a column
+     of it: the label/value pair is the repeating unit. */
+  .detail .kv {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, 120px minmax(240px, 1fr));
+    gap: var(--hh-s-8) var(--hh-s-16);
+    font-size: 14px;
+  }
+  .detail .k {
+    color: var(--hh-text-dim);
+  }
+  .detail .v {
+    overflow-wrap: anywhere;
+  }
+  .detail .changes {
+    margin: 0;
+    padding: var(--hh-s-12);
+    background: var(--hh-widget-raised);
+    border: 1px solid var(--hh-hairline);
+    border-radius: var(--hh-radius-control);
+    font-family: var(--hh-font-mono);
+    font-size: var(--hh-s-12);
+    overflow-x: auto;
+    color: var(--hh-text);
+  }
+
   /* -- the way in (the demo door) ------------------------------------------------------------------ */
 
   .stage {

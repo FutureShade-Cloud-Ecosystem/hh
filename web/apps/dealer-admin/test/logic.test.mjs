@@ -35,6 +35,16 @@ import {
   serverSentence,
   validChord,
 } from "../src/hotkey-logic.ts";
+import {
+  ACTION_OPTIONS,
+  auditEmptyWords,
+  actorWords,
+  entityWords,
+  filtersActive,
+  isSensitive,
+  sinceWire,
+  whenWords,
+} from "../src/audit-logic.ts";
 
 const ROLES = [
   { code: "GENERAL_MANAGER", name: "General Manager", tier: 1, scope: "GLOBAL" },
@@ -266,4 +276,51 @@ test("the server's own sentence keeps its words and loses only the module prefix
 test("a keystroke that types into the sale is refused in the surface's own words", () => {
   assert.match(platformBadChordSentence("pos.counter"), /types into the sale/);
   assert.match(platformBadChordSentence("app.shell"), /cannot be bound/);
+});
+
+// -- the audit trail: words for what a row says --------------------------------------
+
+test("the sensitive actions badge, and the rest stay neutral", () => {
+  assert.equal(isSensitive("PRICE_OVERRIDE"), true);
+  assert.equal(isSensitive("EVIDENCE_VIEW"), true);
+  assert.equal(isSensitive("TAX_RELIEF_ASSESS"), true);
+  assert.equal(isSensitive("SALE_COMPLETED"), false);
+  assert.equal(isSensitive(""), false);
+  assert.ok(ACTION_OPTIONS.includes("HTTP.POST"));
+  assert.ok(ACTION_OPTIONS.includes("PRICE_OVERRIDE"));
+});
+
+test("the actor is a role label when the server sent one, else the id's own block", () => {
+  // Production rows read the role word empty (the core attributes by the
+  // linked users id); the role path is the coarse trail's fallback.
+  assert.equal(actorWords({ actor_role: "GENERAL_MANAGER", actor_id: "da110000-0000-4000-9000-000000000001" }), "general manager");
+  assert.equal(actorWords({ actor_id: "da110000-0000-4000-9000-000000000001" }), "da110000");
+  assert.equal(actorWords({}), "No actor recorded");
+});
+
+test("the when words read as a person reads a moment", () => {
+  assert.equal(whenWords("2026-10-12T14:03:00Z", Date.UTC(2026, 9, 12)), "Oct 12, 14:03 UTC");
+  assert.equal(whenWords("not-a-date"), "not-a-date");
+});
+
+test("the entity is the type and, when the row carries one, the id", () => {
+  assert.equal(entityWords({ entity_type: "pos.sale", entity_id: "sa1" }), "pos.sale / sa1");
+  assert.equal(entityWords({ entity_type: "pos.sale" }), "pos.sale");
+  assert.equal(entityWords({ entity_type: "" }), "");
+});
+
+test("empty because of the filters and empty because nothing happened are different sentences", () => {
+  assert.match(auditEmptyWords(true), /narrower than the record/);
+  assert.match(auditEmptyWords(false), /Nothing has been recorded yet/);
+});
+
+test("a filter set is not the empty filter set", () => {
+  assert.equal(filtersActive({ entity_type: "pos.sale", action: "", actor_id: "", since: "" }), true);
+  assert.equal(filtersActive({ entity_type: "", action: "", actor_id: "", since: "" }), false);
+});
+
+test("the since input goes onto the wire as an instant; an unparsable one goes as it came", () => {
+  const wire = sinceWire("2026-10-12T14:03");
+  assert.equal(wire, new Date("2026-10-12T14:03").toISOString());
+  assert.equal(sinceWire(""), "");
 });
