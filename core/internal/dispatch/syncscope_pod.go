@@ -32,6 +32,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
@@ -40,6 +41,9 @@ type PODSyncStore struct {
 	pool *pgxpool.Pool
 	link syncLinker
 	role SyncRoleResolver
+	// attestor and staff are the typed name attestation door's seams (syncscope_pod_attest.go).
+	attestor PODAttestor
+	staff    identity.SyncStaffResolver
 }
 
 // NewPODSyncStore wires the adapter; a nil linker is legal only where
@@ -196,7 +200,8 @@ func (s *PODSyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key 
 	args = append(args, key)
 	r, err := scanSyncPod(s.pool.QueryRow(ctx, q, args...))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return sync.RowState{}, false, nil
+		// Not a photo row: the key may have applied a typed name attestation on a stop.
+		return s.findAttestation(ctx, f, d, key)
 	}
 	if err != nil {
 		return sync.RowState{}, false, fmt.Errorf("dispatch: pod sync find applied: %w", err)
@@ -297,6 +302,9 @@ func (s *PODSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key strin
 	}
 	if _, _, ok := podScopePredicate(f, d); !ok {
 		return sync.RowState{}, sync.ErrOpRefused
+	}
+	if isAttestation(fields) {
+		return s.createAttestation(ctx, f, d, key, fields)
 	}
 	if err := podCreateFields(fields); err != nil {
 		return sync.RowState{}, err
