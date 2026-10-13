@@ -2,7 +2,7 @@
 // by line, with the reason a short line needs, and change the skid count on
 // the skid stepper with a reason.
 import { test, expect } from "@playwright/test";
-import { reassignTicket, resetStub, stubLog, yardHandoff } from "./helpers.js";
+import { resetStub, stubLog, touchTicket, yardHandoff } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -165,11 +165,17 @@ test("the record goes to the server as one pick_tasks op, in the ticket's own or
 });
 
 test("a connected record the server superseded is an error in words, never a saved notice", async ({ page, request }) => {
-  await openInProgress(page);
+  // SO-1041 is in progress already, so the device has written nothing to it: its record names the pulled seq as its base.
+  // The boot pull must have rested first, or the record would go blind behind an in-flight cycle and meet no stale check.
+  await page.goto("/");
+  await expect(page.locator("[data-staleness]")).toContainText("Pulled");
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
+  await expect(page.locator("[data-task-status]")).toHaveText("Picking");
   await page.waitForLoadState("networkidle");
-  // The desk moves the ticket after the device's last pull.
-  await reassignTicket(request, "0a000000-0000-4000-9000-000000000040");
-  await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
+  // The desk changes the OPEN ticket after the device's last pull (the seq moves, the pick stays open).
+  await touchTicket(request, "0a000000-0000-4000-9000-000000000041");
+  await page.locator("[data-line]", { hasText: "Flagstone" }).locator(".line-row").click();
   await page.getByRole("button", { name: /^All \d+/ }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-error]")).toContainText("changed on the server first");

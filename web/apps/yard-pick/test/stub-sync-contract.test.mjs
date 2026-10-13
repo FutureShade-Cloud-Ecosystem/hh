@@ -316,3 +316,45 @@ test("pick_tasks update: picked onto a cancelled pick is refused in the core's w
   assert.equal(res.status, "rejected");
   assert.match(res.error, /this pick was cancelled, its record cannot change/);
 });
+
+// The engine's order of decisions (core/internal/sync/engine.go): shape, dedup, load, STALE, then the module's Write.
+// So a record based on a seq the server moved is superseded whether or not the task is open; only a blind
+// record (no base) reaches the module, whose RecordPick refuses a closed pick. A leg that wants "superseded"
+// must move an OPEN task's seq; a leg that wants the closed words must send a blind record.
+async function stubPost(path, body) {
+  const res = await fetch(`${base}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+  assert.equal(res.status, 200, `${path} answered ${res.status}`);
+}
+
+async function recordOp(id, lines, baseSeq) {
+  const res = await fetch(`${base}/api/v1/sync/pick_tasks`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ ops: [{ client_id: `00000000-0000-4000-8000-0000000fc${String(++opCounter).padStart(3, "0")}`, op: "update", ...(baseSeq !== undefined ? { base_seq: baseSeq } : {}), payload: { id, picked: [fullLine(lines[0])] } }] }),
+  });
+  return (await res.json()).results[0];
+}
+
+test("order of decisions: a touched OPEN task supersedes a based record and stays open", async () => {
+  await resetStub();
+  const { id, lines } = await aTaskWithLines();
+  const base = (await pullRow("pick_tasks", id)).seq;
+  await stubPost("/_stub/touch", { task_id: id });
+  const row = await pullRow("pick_tasks", id);
+  assert.ok(row.seq > base, "the seq moved");
+  assert.notEqual(row.data.status, "CANCELLED", "the task is still open");
+  const answer = await recordOp(id, lines, base);
+  assert.equal(answer.status, "conflict");
+  assert.equal(answer.conflict.policy, "server_wins");
+});
+
+test("order of decisions: stale is decided before closed, and a blind record on a cancelled pick gets the closed words", async () => {
+  await resetStub();
+  const { id, lines } = await aTaskWithLines();
+  const base = (await pullRow("pick_tasks", id)).seq;
+  await stubPost("/_stub/reassign", { task_id: id });
+  assert.equal((await recordOp(id, lines, base)).status, "conflict", "based and stale: superseded, the closed status is never reached");
+  const blind = await recordOp(id, lines, undefined);
+  assert.equal(blind.status, "rejected");
+  assert.match(blind.error, /this pick was cancelled, its record cannot change/);
+});

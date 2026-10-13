@@ -488,6 +488,17 @@ async function handle(req, res) {
     syncTouch("pick_tasks", task.id);
     return json(res, { ok: true, seq: syncSeqOf("pick_tasks", task.id) });
   }
+  // The desk changes an OPEN ticket (its grade): the row's seq moves and the task stays open, so a record
+  // based on the older seq is superseded (the engine's stale decision) rather than refused as closed.
+  if (req.method === "POST" && path === "/_stub/touch") {
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const task = findTask(String(body.task_id ?? ""));
+    if (!task) return notFound(res);
+    task.priority = task.priority === "HIGH" ? "NORMAL" : "HIGH";
+    task.updated_at = new Date().toISOString();
+    syncTouch("pick_tasks", task.id);
+    return json(res, { ok: true, seq: syncSeqOf("pick_tasks", task.id) });
+  }
   if (req.method === "GET" && path === "/_stub/log") return json(res, log);
   // The rep's API read, doubled: the notices the order's rep holds.
   if (req.method === "GET" && path === "/_stub/rep-notices") return json(res, repNotices);
