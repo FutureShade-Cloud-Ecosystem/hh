@@ -26,7 +26,9 @@
 //     Controller's flow is "financial-controller" and its one live module is
 //     the same Money Desk tile, on the same path; the Logistics Manager's
 //     flow is "logistics-manager" and its one live module is the dispatch
-//     board under /dispatch/, the same tile the yard manager opens.
+//     board under /dispatch/, the same tile the yard manager opens. House
+//     Messages, which the matrix gives every one of the thirteen roles, is
+//     live for all nine under /messages/ (Sales holds it too).
 //   - The four others are COMING. Each shows the modules the matrix gives
 //     that role at work, manage or admin level, by the surfaces table's own
 //     names; read cells (and none) show nothing. A coming role is never
@@ -70,10 +72,12 @@ const MONEY_DESK_TILE: ModuleTile = { name: "Money Desk", icon: "lucide:landmark
 const DRIVE_TILE: ModuleTile = { name: "HH Drive", icon: "lucide:truck", href: "/drive/" };
 const MANAGER_HOME_TILE: ModuleTile = { name: "Manager Home", icon: "lucide:house", href: "/home/" };
 const DEALER_ADMIN_TILE: ModuleTile = { name: "Dealer Admin", icon: "lucide:settings", href: null };
+// The one tile every live role holds: the matrix gives all thirteen roles the House Messages cell
+// (work level, the general manager at admin), and the app lives under /messages/.
 const HOUSE_MESSAGES_TILE: ModuleTile = {
   name: "House Messages",
   icon: "lucide:message-square",
-  href: null,
+  href: "/messages/",
 };
 // The tile says what it opens: the app under /yard/ serves the pick half, so
 // the tile carries the app's own short name, not the matrix surface's fuller
@@ -139,7 +143,7 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     label: "Sales",
     line: "Ring up counter sales and build quotes.",
     icon: "lucide:receipt",
-    tiles: [TILL_TILE, QUOTE_TILE],
+    tiles: [TILL_TILE, QUOTE_TILE, HOUSE_MESSAGES_TILE],
   },
   {
     id: "sales_manager",

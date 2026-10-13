@@ -74,6 +74,7 @@ test("the picker renders the nine live cards and the four coming rows", async ({
   await expect(sales).toContainText("Sign in as Sales");
   await expect(sales).toContainText("Counter Till");
   await expect(sales).toContainText("Quote Desk");
+  await expect(sales).toContainText("House Messages");
 
   const manager = page.getByRole("button", { name: "Sales manager", exact: true });
   await expect(manager).toBeVisible();
@@ -219,10 +220,10 @@ test("a Yard Team sign in shows the Yard Pick tile and mints the yard flow", asy
   await expect(yardTile).toContainText("Open the Yard Pick");
   await expect(page.getByTestId("home-title")).toHaveText("Yard Team");
   await expect(page.getByTestId("header-word")).toHaveText("Yard Team");
-  // House Messages is the role's other matrix module and is not on the box
-  // yet: it recedes under the coming-next word instead of a live tile.
-  await expect(page.getByRole("heading", { name: "Coming next" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toBeVisible();
+  // House Messages is the role's other matrix module and is live on the box:
+  // a live tile that opens /messages/, so nothing of this role is coming next.
+  await expect(page.getByRole("heading", { name: "Coming next" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toHaveAttribute("data-href", "/messages/");
   expect(await storedFlow(page)).toBe("yard-team");
   expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
 });
@@ -230,11 +231,11 @@ test("a Yard Team sign in shows the Yard Pick tile and mints the yard flow", asy
 test("a Driver sign in shows the HH Drive tile, which navigates to /drive/", async ({ page }) => {
   await signIn(page, "Driver");
   // The driver's two tiles: HH Drive (live, opens /drive/) and House Messages
-  // (closed, the polite coming-soon page).
+  // (live, opens /messages/).
   const drive = page.getByRole("button", { name: "HH Drive", exact: true });
   await expect(drive).toBeVisible();
   await expect(drive).toContainText("Open the HH Drive");
-  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toHaveAttribute("data-href", "/messages/");
   await expect(page.getByTestId("header-word")).toHaveText("Driver");
   expect(await storedFlow(page)).toBe("driver");
   // The HH Drive tile carries the box's /drive/ prefix, the same one the
@@ -280,9 +281,11 @@ test("a manager sign in, a Switch role, then a Sales sign in leaves the manager'
   expect(await storedFlow(page)).toBe("sales");
   await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Quote Desk", exact: true })).toBeVisible();
-  for (const name of ["Manager Home", "Dealer Admin", "House Messages"]) {
+  for (const name of ["Manager Home", "Dealer Admin"]) {
     await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
   }
+  // House Messages is Sales' own tile too (the matrix gives it at work level).
+  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toBeVisible();
   await expect(page.getByTestId("header-word")).toHaveText("Sales");
 });
 

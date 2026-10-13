@@ -133,6 +133,15 @@ handle /dispatch/* {
 	file_server
 }
 
+handle /messages/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /messages/index.html
+	file_server
+}
+
 handle /q/* {
 	basic_auth {
 		demo __GATE_HASH__
