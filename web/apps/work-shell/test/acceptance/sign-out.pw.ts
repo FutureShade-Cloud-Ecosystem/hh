@@ -87,7 +87,7 @@ async function waitForAppRoot(page: Page): Promise<void> {
 }
 
 /** The wait the host allows a frame (config.ts SIGN_OUT_WAIT_MS), with room for the page to react. */
-const WAIT_MS = 2000;
+const WAIT_MS = 4500;
 
 test.describe("composed dist: the host's side of the ask", () => {
   test.skip(() => (process.env["WS_DIST"] ?? "") !== "", "the composed fixture pages are not in an assembled dist");

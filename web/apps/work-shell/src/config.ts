@@ -15,7 +15,10 @@ export const LAUNCH_FILE = "/launch.json";
 
 /**
  * The longest Switch role waits for the framed app to say its own sign out has
- * run. After this the host revokes what it can reach without the answer, so a
- * frame that is busy, offline or broken never holds the person at the desk.
+ * run. It must outlast the slowest app's own bound (the Quote Desk waits up to
+ * UNSENT_WAIT_MS, 3000, for unsent work before it ends its session) plus room
+ * for its sign out and offline close, or a framed Switch role would cut that
+ * guard. test/sign-out.test.mjs holds the two together. After this wait the
+ * host revokes what it can reach without the answer.
  */
-export const SIGN_OUT_WAIT_MS = 2000;
+export const SIGN_OUT_WAIT_MS = 4500;
