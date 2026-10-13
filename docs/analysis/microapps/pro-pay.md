@@ -4,7 +4,7 @@
 
 # pro-pay: Pro Pay
 
-Audience: external   Roles: contractor_ap, contractor_owner   Devices: desktop, phone   Environment: office
+Audience: external   Roles: contractor_ap, contractor_owner, contractor_buyer   Devices: desktop, phone   Environment: office
 Kit: list-detail   Brand: hh-pro   Shell: hh-pro
 Offline: read_cache_only. Scopes: invoices, payments, payment_methods, aging. Conflict policy: invoices server_wins, payments server_wins. Why read cache only: paying is the one contractor action that moves money, and the amount charged is computed by the same function that renders the amount shown so the two cannot drift (`quotePayment`, described in `hh_pro_dibbits/CLAUDE.md`). A queued payment would be an amount agreed offline against an aging figure that has since moved. Reading what is owed offline is useful; charging offline is not.
 

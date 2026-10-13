@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/export"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 )
 
 // xlsx.go, DIB-454 / DIB-207 / DIB-203: the statements and transaction exports as REAL .xlsx.
@@ -42,9 +43,9 @@ import (
 // why (see TestExportParity_TheXlsxAgreesWithTheCsvExceptTheDeliberateBlanks) rather than asserting
 // a sameness that would forbid the blank-instead-of-zero rule.
 
-// entity is the legal entity these statements belong to. It matches the frontend's ENTITY constant,
-// which the brand test pins.
-const entity = "Dibbits"
+// entity is the legal entity these statements belong to: the dealer's own configured name, or the
+// neutral word "Dealer" when none is set. It is read at export time and never a name fixed in code.
+func entity() string { return dealer.Or("Dealer") }
 
 // monthNames renders the period label. Month 0 is a full fiscal year.
 var monthNames = [...]string{
@@ -149,7 +150,7 @@ func (s *Service) StatementWorkbook(ctx context.Context, q export.StatementQuery
 func (s *Service) incomeStatementWorkbook(rep IncomeStatementReport, q export.StatementQuery) *export.Workbook {
 	wb := export.New()
 	sh := wb.AddSheet("Income Statement")
-	sh.Title = entity + ", Income Statement"
+	sh.Title = entity() + ", Income Statement"
 	sh.Subtitle = subtitle(periodLabel(rep.Year, rep.Month), branchLabel(rep.BranchID, q.BranchName),
 		"generated "+s.nowFn().Format("2006-01-02 15:04"))
 	sh.Columns = []export.Column{
@@ -180,7 +181,7 @@ func (s *Service) incomeStatementWorkbook(rep IncomeStatementReport, q export.St
 func (s *Service) balanceSheetWorkbook(rep BalanceSheetReport, q export.StatementQuery) *export.Workbook {
 	wb := export.New()
 	sh := wb.AddSheet("Balance Sheet")
-	sh.Title = entity + ", Balance Sheet"
+	sh.Title = entity() + ", Balance Sheet"
 	sh.Subtitle = subtitle(periodLabel(rep.Year, 0), branchLabel(rep.BranchID, q.BranchName),
 		"generated "+s.nowFn().Format("2006-01-02 15:04"))
 	sh.Columns = []export.Column{
@@ -216,7 +217,7 @@ func (s *Service) balanceSheetWorkbook(rep BalanceSheetReport, q export.Statemen
 func (s *Service) trialBalanceWorkbook(rep TrialBalanceReport, q export.StatementQuery) *export.Workbook {
 	wb := export.New()
 	sh := wb.AddSheet("Trial Balance")
-	sh.Title = entity + ", Trial Balance"
+	sh.Title = entity() + ", Trial Balance"
 	sh.Subtitle = subtitle(periodLabel(rep.Year, 0), branchLabel(q.BranchID, q.BranchName),
 		"generated "+s.nowFn().Format("2006-01-02 15:04"),
 		"in balance: "+yesNo(rep.InBalance))
@@ -247,7 +248,7 @@ func (s *Service) trialBalanceWorkbook(rep TrialBalanceReport, q export.Statemen
 func (s *Service) agingWorkbook(sum AgingSummary, q export.StatementQuery) *export.Workbook {
 	wb := export.New()
 	sh := wb.AddSheet("AR Aging")
-	sh.Title = entity + ", AR Aging"
+	sh.Title = entity() + ", AR Aging"
 	sh.Subtitle = subtitle("as at "+s.nowFn().Format("2006-01-02"), branchLabel(sum.BranchID, q.BranchName))
 	sh.Columns = []export.Column{
 		{Header: "Customer", Width: 32},
@@ -312,7 +313,7 @@ func (s *Service) transactionWorkbook(rows []GLDetailRow, q export.TransactionQu
 
 	// Sheet 1, the summary.
 	sm := wb.AddSheet("Summary")
-	sm.Title = entity + ", Transactions"
+	sm.Title = entity() + ", Transactions"
 	sm.Subtitle = sub
 	sm.Columns = []export.Column{
 		{Header: "Account", Width: 12},

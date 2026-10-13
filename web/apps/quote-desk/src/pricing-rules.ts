@@ -322,7 +322,7 @@ export class QdPricingRules extends PricingTabBase {
 
   protected override updated(changed: Map<string, unknown>): void {
     super.updated(changed);
-    this.fillSelect("filter-scope", [["", "All scopes"], ...EDITABLE_SCOPES.map((s) => [s, SCOPE_OPTION[s] ?? scopeLabel(s)] as const)], this.fScope);
+    this.fillSelect("filter-scope", [["", "All places"], ...EDITABLE_SCOPES.map((s) => [s, SCOPE_OPTION[s] ?? scopeLabel(s)] as const)], this.fScope);
     this.fillSelect("filter-type", [["", "All customer types"], ...CUSTOMER_TYPES.map((t) => [t, t] as const)], this.fType);
     this.fillSelect("filter-category", [["", "All categories"], ...this.categoryChoices()], this.fCategory);
     if (this.dialogOpen) {
@@ -367,7 +367,7 @@ export class QdPricingRules extends PricingTabBase {
           ${this.loading || this.listError !== "" ? nothing : html`<span class="count" data-testid="pr-count">${this.rules.length} rules</span>`}
         </div>
         <div class="toolbar">
-          <select aria-label="Filter by scope" data-field="filter-scope" data-testid="pr-filter-scope"></select>
+          <select aria-label="Filter by where the rule applies" data-field="filter-scope" data-testid="pr-filter-scope"></select>
           <select aria-label="Filter by customer type" data-field="filter-type" data-testid="pr-filter-type"></select>
           <select aria-label="Filter by category" data-field="filter-category" data-testid="pr-filter-category"></select>
           ${this.canEdit ? html`<button type="button" class="primary push" data-action="new" data-testid="pr-new">+ New rule</button>` : nothing}
@@ -382,7 +382,7 @@ export class QdPricingRules extends PricingTabBase {
                   <table>
                     <thead>
                       <tr>
-                        <th>Scope</th>
+                        <th>Where it applies</th>
                         <th>Applies to</th>
                         <th class="r">Value</th>
                         <th class="r">Priority</th>
@@ -433,7 +433,7 @@ export class QdPricingRules extends PricingTabBase {
           </div>
           <div class="dialog-body">
             <div class="field">
-              <label for="pr-scope">Scope</label>
+              <label for="pr-scope">Where it applies</label>
               <select id="pr-scope" data-field="scope" data-testid="pr-scope"></select>
             </div>
             ${isTier

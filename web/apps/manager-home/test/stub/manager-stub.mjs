@@ -1374,7 +1374,7 @@ async function handle(req, res) {
       {
         id: BRANCH_ID,
         code: "PLM",
-        name: "Gable Landscape Supply Landscape Supply · Point Loma",
+        name: "Gable Landscape Supply · Point Loma",
         address: { line1: "TBD", city: "Point Loma", province: "CA", postal: "92106", country: "US" },
         is_default: true,
         is_system_default: false,

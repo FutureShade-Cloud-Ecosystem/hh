@@ -29,10 +29,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customer"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/flows"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messaging"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/jackc/pgx/v5"
 )
@@ -284,6 +287,11 @@ type Report struct {
 	StaffGrantsInserted  int64
 	PaymentConfigCreated int
 	DemoBoxCreated       bool
+	// The contractor world (the Pro apps' sign in): Summit Ridge Builders'
+	// customers row, its five portal users and its three job sites.
+	TenantAccountsCreated int
+	PortalUsersCreated    int
+	TenantJobsCreated     int
 	// The persona inboxes (House Messages): memberships materialized for the
 	// persona roles and rep DM channels ensured for the sales floor, the
 	// messaging module's own seeding keyed by role.
@@ -456,6 +464,15 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	}
 	report.OrgInserted = pop.OrgInserted
 	report.StaffGrantsInserted = pop.Grants.Inserted
+
+	// The contractor world, after the org anchor exists: Summit Ridge
+	// Builders, its five portal users and its three jobs, written through
+	// the owning modules' seams so the table fence has nothing to allow.
+	tenantAccounts, portalUsers, tenantJobs, err := writeTenantWorld(ctx, tx, pop.OrgID)
+	report.TenantAccountsCreated, report.PortalUsersCreated, report.TenantJobsCreated = tenantAccounts, portalUsers, tenantJobs
+	if err != nil {
+		return report, err
+	}
 
 	// REFUSAL 6 belongs beside the write it guards: exactly one payment
 	// configuration, this populate's own. A row any other run or hand put
@@ -866,6 +883,60 @@ func writeDemoBox(ctx context.Context, tx pgx.Tx, now time.Time) (bool, error) {
 	return tag.RowsAffected() == 1, nil
 }
 
+// writeTenantWorld creates the demo's one contractor account, Summit Ridge
+// Builders (GLS-TENANT-r3): the customers row under the flow table's pinned
+// id (top pricing tier is the customer type CONTRACTOR on account terms),
+// one portal user per contractor flow with the platform identity and the
+// tenant already set, and the three job sites. Every write goes through the
+// module that owns the table (customer, identity, portal) and converges on
+// its own rows, so a second run writes nothing. The portal rows are keyed
+// by the flow table: the same id is the row id, the platform user id and the
+// token subject.
+func writeTenantWorld(ctx context.Context, tx pgx.Tx, orgID string) (accounts, users, jobs int, err error) {
+	made, err := customer.EnsureAccount(ctx, tx, customer.PinnedAccount{
+		ID:               flows.TenantAccountID,
+		AccountNo:        flows.TenantAccountNo,
+		Name:             flows.TenantAccountName,
+		CustomerType:     "CONTRACTOR",
+		HomeBranchID:     trentonBranchID,
+		OrgID:            orgID,
+		PaymentTermsDays: 30,
+		CreditLimitCents: 5_000_000,
+	})
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("demo-populate: contractor account: %w", err)
+	}
+	if made {
+		accounts = 1
+	}
+	var seeds []identity.PortalUserSeed
+	for _, a := range flows.All() {
+		if a.Class() != flows.ClassTenant {
+			continue
+		}
+		seeds = append(seeds, identity.PortalUserSeed{
+			ID: a.PlatformUserID, CustomerID: a.Tenant, Email: a.Email,
+			Name: a.DisplayName, Role: a.Role, PlatformUserID: a.PlatformUserID,
+		})
+	}
+	users, err = identity.ProvisionPortalUsers(ctx, tx, seeds)
+	if err != nil {
+		return accounts, users, 0, fmt.Errorf("demo-populate: contractor portal users: %w", err)
+	}
+	for _, j := range flows.TenantJobs() {
+		made, err := portal.EnsureProject(ctx, tx, portal.PinnedProject{
+			ID: j.ID, CustomerID: flows.TenantAccountID, Name: j.Name, JobAddress: j.Address,
+		})
+		if err != nil {
+			return accounts, users, jobs, fmt.Errorf("demo-populate: contractor job: %w", err)
+		}
+		if made {
+			jobs++
+		}
+	}
+	return accounts, users, jobs, nil
+}
+
 // writeReport prints what the run did, in the demoseed run report's
 // spirit: the clock, the counts, and the second-run line stated plainly.
 // Every figure counts what THIS RUN created or changed, never what the
@@ -884,6 +955,8 @@ func writeReport(out io.Writer, r Report) {
 	fmt.Fprintf(out, "  staff grants     %d inserted\n", r.StaffGrantsInserted)
 	fmt.Fprintf(out, "  payment config   %d created (merchant %s, simulator, no host, surcharges off)\n",
 		r.PaymentConfigCreated, demoMerchantID)
+	fmt.Fprintf(out, "  contractor world %d account, %d portal users, %d jobs (%s)\n",
+		r.TenantAccountsCreated, r.PortalUsersCreated, r.TenantJobsCreated, flows.TenantAccountName)
 	fmt.Fprintf(out, "  demo_box         row created: %v\n", r.DemoBoxCreated)
 	fmt.Fprintf(out, "  persona inboxes  %d memberships, %d rep channels\n", r.PersonaMemberships, r.PersonaRepChannels)
 	if r.createdNothing() {
@@ -897,5 +970,6 @@ func (r Report) createdNothing() bool {
 		r.DisplayNamesRenamed == 0 && r.DealerNamesReplaced == 0 &&
 		r.UsersDeactivated == 0 && r.EmailsMoved == 0 &&
 		r.CredentialsCleared == 0 &&
-		r.PaymentConfigCreated == 0 && !r.DemoBoxCreated && r.StaffGrantsInserted == 0
+		r.PaymentConfigCreated == 0 && !r.DemoBoxCreated && r.StaffGrantsInserted == 0 &&
+		r.TenantAccountsCreated == 0 && r.PortalUsersCreated == 0 && r.TenantJobsCreated == 0
 }

@@ -197,7 +197,7 @@ test("a failed mint says so in plain words, never the server's raw word", async 
   await page.goto("/");
   await page.locator("[data-flow='yard-manager']").click();
   const notice = page.locator(".notice-line[role='status']");
-  await expect(notice).toHaveText("Demo sign-in refused. Try again in a moment.");
+  await expect(notice).toHaveText("Sign-in did not go through. Try again in a moment.");
   await expect(notice).not.toContainText("internal");
 });
 
