@@ -43,8 +43,18 @@ role app template's shell, held to the procurement references in
 | Receipts and a landed cost attached to one | `app/src/landed-cost.ts` | `receiptPanel`, `attachBody`, `attachConfirmWords` | One landed cost per receipt, applied at once, behind a confirm step that lists each amount and adds none |
 | The order document and the send to the vendor | `app/src/purchasing-document-api.ts`, `app/src/purchasing-document-logic.ts` | `documentAndSends`, `sendOutcome` | The document downloads as a spreadsheet or to print; a send names the desk it goes to before it goes, asks for the fallback address only when the core says so, keeps one key for one attempt across every retry, and reads the delivery status because the request succeeds even when the delivery failed |
 
-Not ported on purpose (later, named on screen as Later): receiving a truck
-(the yard team's, Yard Pick and Receive), the vendor screens (the core has no
-vendor create or edit route yet), vendor bills and the three way match (the
-Money Desk's), landed cost, transfers and counts. There is no vendor bill
-control at all; the screen says in words who posts a bill.
+## Vendor bills and the three way match (`src/bills/`)
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Bill list with the match state and the filters | `app/src/purchasing-console.ts` | `list`, `billRow` in `src/bills/bills-views.ts` | Drafts to post, in variance and posted counts beside the list; the filters narrow by state and by match; a read only seat is told in words who enters and posts |
+| Bill entry against an order | `app/src/purchasing-logic.ts` | `entry`, `billBody`, `prefillQty`, `prefillCost` | The form starts from what has arrived and not been billed at the order's price; amounts through the decimal string; the vendor's own rate for a USD bill; no instalment schedule is entered (an empty one is legal: the bill is due in full), existing ones are shown |
+| Three way match, line by line | `app/src/purchasing-logic.ts` | `matchLine`, `qtyVarianceWords`, `priceVarianceWords` | The verdict and both variances are the core's figures, said in words; the app recomputes none |
+| Post, and accept a variance | `app/src/purchasing-console.ts` | `postActions`, `postConfirmWords`, `acceptWords` | A confirm step naming the bill, the vendor, the order and the server's total; the bill is read again before and after the press (no key exists, the status is the guard); a variance is refused by the core with its figure, and the acceptance asks for a note that is kept with the bill |
+| Match tolerance and cost policy | `app/src/purchasing-console.ts` | `rules`, `toleranceBody`, `policyBody` | Read by everyone in a sentence; changed only by the super admin behind a confirm step, with the core's own 25 percent ceiling |
+
+Not ported on purpose: the vendor bill instalment schedule is read but not entered (the
+total it must equal is the server's, and an empty schedule is legal); transfers and counts are
+the inventory slice's. The bill entry, post and tolerance routes sit on the Money Desk's surface
+in the contract (x-access), so the bills area offers those controls only to the seats that hold
+them, and everyone else reads the bills and the match and is told in words who posts.

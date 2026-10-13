@@ -46,6 +46,7 @@ test("goods are received behind a confirm step, the order moves to Partial, then
   // Going back changes nothing and keeps what was typed.
   await page.getByRole("button", { name: "Go back" }).click();
   await expect(recv(page)).toHaveValue("4");
+  await expect(page.locator("[data-recv-notes]")).toHaveValue("one pallet short");
   await expect(page.locator("[data-receipt-row]")).toHaveCount(0);
   await page.getByRole("button", { name: "Receive goods", exact: true }).click();
   await page.getByRole("button", { name: "Receive the goods" }).click();

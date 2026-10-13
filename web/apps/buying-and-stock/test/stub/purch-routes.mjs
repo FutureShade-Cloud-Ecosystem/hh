@@ -3,6 +3,7 @@
 // true, or returns false and the main stub carries on. The world the parts share with the main stub
 // (the orders, the vendors, the products) arrives through the kit; the parts that lean on each
 // other (a landed cost attached to a receipt, a send to a vendor's contact) are wired here.
+import { makeBills } from "./purch-bills.mjs";
 import { makeLanded } from "./purch-landed.mjs";
 import { makeReceiving } from "./purch-receiving.mjs";
 import { makeVendors } from "./purch-vendors.mjs";
@@ -13,7 +14,8 @@ export function createPurchRoutes(kit) {
   const receiving = makeReceiving(kit, landed, vendors);
   // The landed part reads a receipt's lines through the kit, the receiving part writes the receipts.
   kit.receiptLines = receiving.receiptLines;
-  const parts = [landed, receiving, vendors];
+  const bills = makeBills(kit);
+  const parts = [landed, receiving, vendors, bills];
   return {
     reset() {
       for (const p of parts) p.reset();

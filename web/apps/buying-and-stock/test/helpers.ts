@@ -26,6 +26,28 @@ export function procurementHandoff(): void {
   }
 }
 
+/** Runs in the page before any script: the front door's record for another seat, given the role code (passed to addInitScript). */
+export function roleHandoff(roleCode: string): void {
+  const part = (value: unknown): string =>
+    btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const exp = Math.floor(Date.now() / 1000) + 7 * 86_400;
+  const token = `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub: "de110000-0000-4000-9000-000000000009", exp })}.c2ln`;
+  const record = {
+    token,
+    tokenExpiresAtMs: Date.now() + 7 * 86_400_000,
+    flow: roleCode,
+    roleLabel: roleCode,
+    user: { userId: "de110000-0000-4000-9000-000000000009", email: `${roleCode}@hh-demo.invalid`, name: `${roleCode} (demo)` },
+    roleCode,
+    roleName: roleCode,
+    tier: 2,
+    scope: "BRANCH",
+  };
+  if (window.sessionStorage.getItem("hh-demo.front-door.session.v1") === null) {
+    window.sessionStorage.setItem("hh-demo.front-door.session.v1", JSON.stringify(record));
+  }
+}
+
 /** Puts the stub's world back to the start. The dev server proxies /_stub to the stub. */
 export async function resetStub(request: APIRequestContext): Promise<void> {
   const response = await request.post("/_stub/reset");
@@ -124,3 +146,16 @@ export async function noSidewaysScroll(page: Page): Promise<void> {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow, "the page scrolls sideways").toBeLessThanOrEqual(0);
 }
+
+/** Signs in as another seat (its role code in the session, its role at the stub's wall) and opens an area. */
+export async function openAreaAs(page: Page, request: APIRequestContext, seat: { code: string; stub: string }, name: string): Promise<void> {
+  await resetStub(request);
+  await stubRole(request, seat.stub);
+  await page.addInitScript(roleHandoff, seat.code);
+  await page.goto("/");
+  await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
+  await page.locator("nav.areas").getByRole("button", { name }).click();
+}
+
+export const AP = { code: "payables_receivables", stub: "payables-receivables" };
+export const SUPER = { code: "super_admin", stub: "super-admin" };

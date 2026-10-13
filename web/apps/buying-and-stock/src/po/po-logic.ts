@@ -106,6 +106,8 @@ const WHO_MAY: Record<string, string> = {
     "Drafting, placing, editing and cancelling a purchase order is for the Procurement Manager, the General Manager and the super admin only. The Yard Manager receives goods only; other roles can read.",
   "post-bill":
     "Posting a vendor bill is for Payables and Receivables. The Procurement Manager can read the bills against its own orders and the three way match, but does not post them.",
+  bill:
+    "Entering and posting a vendor bill is for Payables and Receivables. The Procurement Manager can read the bills and the three way match, but does not enter or post them.",
   landed:
     "Capturing, applying and voiding a landed cost is for the Procurement Manager, the General Manager and the super admin. Other roles can read.",
   vendor:

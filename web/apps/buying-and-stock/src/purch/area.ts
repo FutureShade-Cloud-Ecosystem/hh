@@ -26,4 +26,6 @@ export interface AreaEntry {
 export interface DeskHost {
   readonly repaint: () => void;
   readonly field: (name: string) => string;
+  /** The signed in role's code (a read only seat is not offered the controls the wall would refuse). */
+  readonly role: () => string;
 }

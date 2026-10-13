@@ -16,6 +16,8 @@ export const purchStyles = css`
   /* The step before a consequential press. */
   .confirm { margin-top: var(--hh-s-16); padding: var(--hh-s-16); border: 1px solid var(--hh-state-watch); border-inline-start-width: 4px; border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-accent) 18%, transparent); }
   .confirm p { margin: 0 0 var(--hh-s-8); }
+  /* On the wash the dim text colour falls under 4.5 to 1 in the brand theme: labels take the text colour. */
+  .confirm label { color: var(--hh-text); margin-bottom: var(--hh-s-8); }
   .confirm .actions { justify-content: flex-end; }
 
   .check { display: flex; align-items: center; gap: var(--hh-s-12); min-height: 44px; }

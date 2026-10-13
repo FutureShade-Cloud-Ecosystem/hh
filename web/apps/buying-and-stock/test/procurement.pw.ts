@@ -392,10 +392,11 @@ test("a role the gate walls out of ordering is refused in the ruled words, besid
   await expect(page.locator("[data-draft]")).toHaveCount(0);
 });
 
-test("there is no vendor bill control, and the words say who posts a bill", async ({ page, request }) => {
+test("the orders screen has no vendor bill control of its own, the bills live in their area, and the words say who posts a bill", async ({ page, request }) => {
   await openHome(page, request);
-  await expect(page.getByRole("button", { name: /bill/i })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: /bill/i })).toHaveCount(0);
+  // The worklist, the register and incoming carry no bill control; the Vendor bills area is a tab beside them.
+  await expect(page.locator(".home").getByRole("button", { name: /bill/i })).toHaveCount(0);
+  await expect(page.locator("nav.areas").getByRole("button", { name: "Vendor bills" })).toBeVisible();
   await expect(page.locator("[data-bills-note]")).toContainText("Posting a vendor bill is for Payables and Receivables");
 });
 

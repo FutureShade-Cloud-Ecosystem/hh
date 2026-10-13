@@ -115,15 +115,16 @@ function linesTable(model: ReceivingModel, po: PurchasingPODetail): TemplateResu
 function receiveBlock(model: ReceivingModel, po: PurchasingPODetail): TemplateResult {
   const why = receivable(po.status);
   if (why !== "") return html`<p class="foot dim" data-not-receivable>${why}</p>`;
-  if (model.confirm?.kind === "receive") return confirmBox(model.confirm.words, "Receive the goods", "do-receive", model.busy);
   return html`
     <label>Notes on the delivery
       <input type="text" autocomplete="off" data-field="recv-notes" data-recv-notes />
     </label>
     ${noteAt(model, "order")}
-    <div class="actions end">
-      <button type="button" class="btn btn-primary" data-action="ask-receive" ?disabled=${model.busy}>Receive goods</button>
-    </div>
+    ${model.confirm?.kind === "receive"
+      ? confirmBox(model.confirm.words, "Receive the goods", "do-receive", model.busy)
+      : html`<div class="actions end">
+          <button type="button" class="btn btn-primary" data-action="ask-receive" ?disabled=${model.busy}>Receive goods</button>
+        </div>`}
   `;
 }
 

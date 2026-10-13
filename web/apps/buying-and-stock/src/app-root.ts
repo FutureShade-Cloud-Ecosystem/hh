@@ -30,6 +30,8 @@ import type { AreaDesk, AreaEntry } from "./purch/area.js";
 import { purchStyles } from "./purch/purch-styles.js";
 import { LandedApi } from "./landed/landed-api.js";
 import { LandedDesk } from "./landed/landed-desk.js";
+import { BillsApi } from "./bills/bills-api.js";
+import { BillsDesk } from "./bills/bills-desk.js";
 import { ReceivingApi } from "./receiving/receiving-api.js";
 import { ReceivingDesk } from "./receiving/receiving-desk.js";
 import { VendorsApi } from "./vendors/vendors-api.js";
@@ -76,11 +78,13 @@ export class BuyingAndStockApp extends HHElement {
     const host = {
       repaint: () => this.requestUpdate(),
       field: (name: string) => this.#fieldElement(name)?.value ?? "",
+      role: () => this.#roleCode,
     };
     return [
       { id: "orders", label: "Purchase orders", desk: new PoDesk(new PoApi(this.#staffClient), host) },
       { id: "receiving", label: "Receiving", desk: new ReceivingDesk(new ReceivingApi(this.#staffClient), host) },
       { id: "vendors", label: "Vendors", desk: new VendorsDesk(new VendorsApi(this.#staffClient), host) },
+      { id: "bills", label: "Vendor bills", desk: new BillsDesk(new BillsApi(this.#staffClient), host) },
       { id: "landed", label: "Landed cost", desk: new LandedDesk(new LandedApi(this.#staffClient), host) },
     ];
   }
@@ -134,6 +138,9 @@ export class BuyingAndStockApp extends HHElement {
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
+
+  // The signed in role's code: it decides which controls an area offers.
+  #roleCode = "";
 
   // The entry cards carry data-action="choose" and data-flow; one host
   // listener reads them, as the till's does.
@@ -193,6 +200,7 @@ export class BuyingAndStockApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.user.name;
+        this.#roleCode = handoff.session.roleCode;
         clearFrontDoorHandoff();
         void this.#areas[0]!.desk.load();
       }
@@ -247,6 +255,7 @@ export class BuyingAndStockApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.user.name;
+        this.#roleCode = result.value.roleCode;
         void this.#areas[0]!.desk.load();
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {

@@ -172,10 +172,10 @@ function lineView(l, n) {
     description: p.name,
     qty_ordered_base: l.qty,
     qty_received_base: received,
-    qty_billed_base: 0,
+    qty_billed_base: l.billed ?? 0,
     qty_outstanding_base: l.qty - received,
     uom: p.uom,
-    ...(flags.costsHidden ? {} : { unit_cost_cents: l.cost, line_total_cents: l.qty * l.cost, billed_cents: 0 }),
+    ...(flags.costsHidden ? {} : { unit_cost_cents: l.cost, line_total_cents: l.qty * l.cost, billed_cents: l.billedCents ?? 0 }),
   };
 }
 
@@ -434,8 +434,6 @@ async function handle(req, res) {
     (method === "POST" && (path === "/api/v1/inventory/reorder-po" || path === "/api/v1/purchasing/pos")) ||
     (method !== "GET" && /^\/api\/v1\/purchasing\/pos\//.test(path));
   if (isOrdering && walled) return json(res, { error: "Forbidden" }, 403);
-  // A vendor bill is posted in the Money Desk: this role's matrix refuses it at the gate.
-  if (/^\/api\/v1\/purchasing\/bills/.test(path) && method !== "GET") return json(res, { error: "Forbidden" }, 403);
 
   // ---- writes ----
   if (method === "POST" && path === "/api/v1/inventory/reorder-po") {
