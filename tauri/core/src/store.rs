@@ -352,6 +352,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    const TRANSACTION_CONTROL: [&str; 12] = [
+        "BEGIN",
+        "BEGIN IMMEDIATE",
+        "COMMIT",
+        "END",
+        "ROLLBACK",
+        "SAVEPOINT s",
+        "RELEASE s",
+        "/* c */ BEGIN",
+        "-- c\nCOMMIT",
+        "/* c */ ROLLBACK",
+        "/* c */ SAVEPOINT s",
+        "-- c\n RELEASE SAVEPOINT s",
+    ];
+
+    #[test]
+    fn a_commit_inside_an_atomic_cannot_split_the_batch() {
+        let store = store();
+        store.run("CREATE TABLE a (note TEXT NOT NULL)", vec![]).expect("create");
+        let insert = |note: &str| SqlStatement {
+            sql: "INSERT INTO a (note) VALUES ($1)".into(),
+            params: vec![SqlValue::Text(note.into())],
+        };
+        let bad = SqlStatement { sql: "INSERT INTO a (no_such_column) VALUES (1)".into(), params: vec![] };
+        for control in TRANSACTION_CONTROL {
+            let control = SqlStatement { sql: control.into(), params: vec![] };
+            let result = store.atomic(vec![insert("one"), control.clone(), insert("two"), bad.clone()]);
+            assert!(result.is_err(), "{}: the batch must fail", control.sql);
+            let rows = store.run("SELECT note FROM a", vec![]).expect("select");
+            assert!(rows.is_empty(), "{}: the first half committed: {rows:?}", control.sql);
+        }
+    }
+
+    #[test]
+    fn transaction_control_through_run_is_refused_and_cannot_wedge_the_store() {
+        let store = store();
+        store.run("CREATE TABLE w (note TEXT)", vec![]).expect("create");
+        for sql in TRANSACTION_CONTROL {
+            assert!(store.run(sql, vec![]).is_err(), "run must refuse: {sql}");
+            // The store still takes an atomic batch right after.
+            store
+                .atomic(vec![SqlStatement { sql: "INSERT INTO w (note) VALUES ('ok')".into(), params: vec![] }])
+                .unwrap_or_else(|e| panic!("after {sql} the store is wedged: {e}"));
+        }
+        let rows = store.run("SELECT note FROM w", vec![]).expect("select");
+        assert_eq!(rows.len(), TRANSACTION_CONTROL.len());
+    }
+
     #[test]
     fn a_file_store_keeps_its_data_across_connections() {
         let path = std::env::temp_dir().join(format!("hh-field-store-test-{}.sqlite3", std::process::id()));
