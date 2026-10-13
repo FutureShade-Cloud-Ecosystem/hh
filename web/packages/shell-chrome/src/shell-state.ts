@@ -18,10 +18,24 @@
 
 // ── the pin book ─────────────────────────────────────────────────────────────────────────────────
 
-/** The two operations the book needs, so tests and shells inject doubles. */
-export interface PinStorage {
-  read(userId: string): string | null;
-  write(userId: string, value: string): void;
+/** The two operations a keyed storage seam needs, so tests and shells inject
+ * doubles. The pins seam keys by user id; the rail's posture seam keys by its
+ * own key. */
+export interface KeyValueStorage {
+  read(key: string): string | null;
+  write(key: string, value: string): void;
+}
+
+/** The pins seam: a KeyValueStorage whose keys are user ids. */
+export interface PinStorage extends KeyValueStorage {}
+
+/** One row of the rail: the person's own pinned surface. The glyph is a
+ * short mark the shell renders beside the label until the icon registry
+ * lands behind the design system's icon seam. */
+export interface RailPin {
+  key: string;
+  label: string;
+  glyph: string;
 }
 
 /** An in-memory seam, for tests and the demo. Keyed by user id. */
