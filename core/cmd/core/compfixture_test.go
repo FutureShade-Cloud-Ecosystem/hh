@@ -52,7 +52,7 @@ const fixtureAcceptanceKeyID = "fx-accept-sign-key"
 const xrNoPortalRowSub = "fxportal-norow-alpha"
 
 // appwriteFake serves the Appwrite membership listing shape over invented
-// fixture principals: staff subjects hold the one org:<slug> team
+// fixture principals: staff subjects hold the one org-<slug> team
 // membership, portal subjects hold exactly one tenant:<org>:<slug> team,
 // and an unknown subject holds nothing. It answers the one endpoint the
 // membership source reads; no real directory is ever contacted.
@@ -100,7 +100,7 @@ func (f *appwriteFake) setTeam(sub string, teams ...string) {
 // north org, gamma in the south), and the no-row subject holds a team
 // with no portal row behind it.
 func (f *appwriteFake) wireFixtureTeams() {
-	orgNorth := "org:" + testkit.OrgNorthSlug
+	orgNorth := "org-" + testkit.OrgNorthSlug
 	for _, sub := range []string{
 		testkit.SubInsideSales, testkit.SubSalesManager, testkit.SubGeneralMgr,
 		testkit.SubTwoOrg, testkit.SubRevoked, testkit.SubInert, testkit.SubDriver, testkit.SubSuspended,
@@ -203,6 +203,7 @@ func newCompEnv(t *testing.T) *compEnv {
 		customerquote.EnvKeyID:   fixtureAcceptanceKeyID,
 		customerquote.EnvKey:     hex.EncodeToString(rawKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.values = values
 	env.getenv = func(k string) string { return env.values[k] }
 	return env

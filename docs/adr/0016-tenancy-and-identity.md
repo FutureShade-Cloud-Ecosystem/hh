@@ -28,7 +28,7 @@ Note that HH Pro carried two disagreeing contractor role enums of its own (`Team
 
 ### Staff roles as per-membership Team roles in Appwrite
 
-Rejected: the thirteen staff roles across three tiers, with global or branch scope, would sprawl across Team memberships. Context section 3 maps only coarse roles onto platform teams (`org:<slug>` with operator, org_admin, reviewer, member; `tenant:<org>:<slug>` for dealers and customers), and `domain-map.md` C30 records that "neither repository's role set maps onto that shape at present." Staff roles are the axis that decides which micro-app a person gets (context section 4.5, "micro-app per role, shell per audience"), so they live in core tables (`staff_role_grant`) keyed by the platform user id, with the Team claim as the coarse gate.
+Rejected: the thirteen staff roles across three tiers, with global or branch scope, would sprawl across Team memberships. Context section 3 maps only coarse roles onto platform teams (`org-<slug>` with operator, org_admin, reviewer, member; `tenant:<org>:<slug>` for dealers and customers), and `domain-map.md` C30 records that "neither repository's role set maps onto that shape at present." Staff roles are the axis that decides which micro-app a person gets (context section 4.5, "micro-app per role, shell per audience"), so they live in core tables (`staff_role_grant`) keyed by the platform user id, with the Team claim as the coarse gate.
 
 ### Fail-open when no role is found (HH Pro's default)
 

@@ -150,8 +150,8 @@ func TestMintStopsAtTheAddressCeiling(t *testing.T) {
 	m, _, _ := newTestMint(t, minter, nil)
 	// The wiring's ceiling must carry exactly the number the farm walk
 	// below proves, the package's own team scale constant.
-	if m.ceiling.allow != DefaultAddressCeiling {
-		t.Fatalf("the wiring's ceiling allowance is %d, want the package's %d", m.ceiling.allow, DefaultAddressCeiling)
+	if m.ceiling.Allowance() != DefaultAddressCeiling {
+		t.Fatalf("the wiring's ceiling allowance is %d, want the package's %d", m.ceiling.Allowance(), DefaultAddressCeiling)
 	}
 
 	mintAs := func(id string) *httptest.ResponseRecorder {
