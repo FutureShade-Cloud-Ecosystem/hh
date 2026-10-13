@@ -11,11 +11,14 @@
 import { createServer } from "node:http";
 import { createGlWorld } from "./gl-world.mjs";
 import { createFinstmtWorld } from "./finstmt-world.mjs";
+import { createBankrecWorld } from "./bankrec-world.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
 // The statements slice's world (periods, the five statements, aging, saved packs), answered by its own module.
 const finstmtWorld = createFinstmtWorld();
+// The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own module.
+const bankrecWorld = createBankrecWorld();
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
@@ -564,6 +567,7 @@ async function handle(req, res) {
     reset();
     glWorld.reset();
     finstmtWorld.reset();
+    bankrecWorld.reset();
     return send(res, 200, { ok: true });
   }
   if (method === "GET" && path === "/_stub/finstmt-calls") return send(res, 200, { calls: finstmtWorld.calls(), exports: finstmtWorld.exports(), year: finstmtWorld.fiscalYear });
@@ -604,6 +608,12 @@ async function handle(req, res) {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const body = method === "POST" ? await readBody(req) : null;
     const answer = glWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
+  }
+  if (path.startsWith("/api/v1/bankrec/")) {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const body = method === "POST" ? await readBody(req) : null;
+    const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
     return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
   }
   if (!path.startsWith("/api/v1/ar/")) return refuse(res, 404, "not found");

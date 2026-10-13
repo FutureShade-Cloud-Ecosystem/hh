@@ -202,7 +202,7 @@ function validateUser(user: SessionUser): SessionUser | null {
 
 /**
  * The custody. adopt() takes a full session handed over from out of band (a
- * sign-in answer, a Google callback through the Console bridge, a reload's
+ * sign-in answer, a Google callback through FB Console's OAuth provider, a reload's
  * resume through the issuer) exactly as the ERP's adoptSession did: the
  * token lives in private memory, the mirror receives the display profile,
  * never the token and never any other credential. adopt returns false and

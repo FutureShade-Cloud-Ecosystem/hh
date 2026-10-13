@@ -62,10 +62,9 @@ func NewAppwriteMembershipSource(endpoint, project, apiKey string, hc *http.Clie
 	if apiKey == "" {
 		return nil, errors.New("authz: appwrite api key is required")
 	}
-	if hc == nil {
-		hc = &http.Client{Timeout: appwriteDefaultTimeout}
-	}
-	return &AppwriteMembershipSource{endpoint: u.String(), project: project, apiKey: apiKey, hc: hc}, nil
+	// A redirect is an operational failure: the key header is never
+	// re-sent to wherever a 3xx points.
+	return &AppwriteMembershipSource{endpoint: u.String(), project: project, apiKey: apiKey, hc: refusingRedirects(hc)}, nil
 }
 
 // appwriteMembership is the one response field both methods read.

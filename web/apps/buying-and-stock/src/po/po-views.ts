@@ -115,10 +115,7 @@ function tabs(model: DeskModel): TemplateResult {
   return html`
     <nav class="tabs" aria-label="Buying and Stock views">
       ${tab("orders", "Purchase orders")}
-      <span class="tag-later" data-later>Receiving <em>later</em></span>
       ${tab("incoming", "Incoming")}
-      <span class="tag-later" data-later>Vendors <em>later</em></span>
-      <span class="tag-later" data-later>Vendor bills <em>later</em></span>
     </nav>
   `;
 }
