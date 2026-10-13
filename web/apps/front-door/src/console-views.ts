@@ -150,7 +150,6 @@ export function signInScreen(session: ConsoleSession, personaBlock: TemplateResu
         ${dealerLockup(session.config.dealer)}
         <h1 class="signin-title" id="signin-title">Sign in</h1>
         <p class="signin-lead">Use your work account.</p>
-        ${methodsBlock(session, busy, invalid)}
         <p
           id="signin-status"
           class="status ${notice.tone === "error" ? "error" : ""}"
@@ -159,6 +158,7 @@ export function signInScreen(session: ConsoleSession, personaBlock: TemplateResu
           aria-atomic="true"
           data-testid="signin-status"
         >${notice.text}</p>
+        ${methodsBlock(session, busy, invalid)}
       </section>
       ${personaBlock}
     </div>

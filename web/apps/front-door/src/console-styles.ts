@@ -174,6 +174,11 @@ export const consoleStyles = css`
     line-height: 1.5;
     color: var(--hh-text-dim);
   }
+  /* Empty at rest it takes no room of its own: the card's row gap beside it is cancelled, so the
+     live region stays in the tree without a blank band under the lead. */
+  .status:empty {
+    margin-top: calc(var(--hh-s-16) * -1);
+  }
   .status.error {
     color: var(--hh-danger);
     font-weight: 600;
@@ -208,7 +213,6 @@ export const consoleStyles = css`
   .entry-card {
     display: grid;
     gap: var(--hh-s-16);
-    max-width: 560px;
     padding: var(--hh-s-32) var(--hh-s-24);
     background: var(--hh-card);
     border: 1px solid var(--hh-control-line);
@@ -229,6 +233,8 @@ export const consoleStyles = css`
     line-height: 1.45;
   }
   .entry-card .btn-wide {
+    justify-self: start;
+    min-width: min(100%, 360px);
     min-height: 52px;
     font-size: 17px;
     font-weight: 600;
@@ -313,7 +319,7 @@ export const consoleStyles = css`
     gap: var(--hh-s-16);
     max-width: 520px;
     margin: 0 auto;
-    padding: var(--hh-s-32) 0;
+    padding: var(--hh-s-32) var(--hh-s-16);
   }
   .config-error h2 {
     margin: 0;
@@ -328,6 +334,21 @@ export const consoleStyles = css`
   }
   .config-error button {
     justify-self: start;
+  }
+  /* The stacked header (the same breakpoint the band's own zones stack at): the menu opens as a
+     full width sheet under the band instead of hanging off a button near the right edge, where
+     it would run past the screen on a phone. */
+  @media (max-width: 1200px) {
+    header {
+      position: relative;
+    }
+    .apps-menu {
+      position: static;
+    }
+    .apps-list {
+      inset-inline: var(--hh-s-16);
+      min-width: 0;
+    }
   }
   @media (max-width: 480px) {
     .signin-stage {
