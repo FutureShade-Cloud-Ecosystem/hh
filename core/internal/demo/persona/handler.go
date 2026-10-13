@@ -100,6 +100,7 @@ const (
 	CodePersonaRowError = "p_persona_row_error"
 	CodeNoAuthority     = "p_no_authority"
 	CodeRoleDrift       = "p_role_drift"
+	CodeOpenAdmin       = "p_open_admin"
 	CodeCeilingError    = "p_ceiling_error"
 	CodeAuditError      = "p_audit_error"
 	CodeMintError       = "p_mint_error"
@@ -111,7 +112,7 @@ func AllCodes() []string {
 		CodeRateAddress, CodeRatePersona, CodeNoBearer, CodeBearerRefused, CodeVerifierDown, CodeBearerClass,
 		CodeChained, CodeCallerNotListed, CodeCallerNoRow, CodeCallerRowError, CodeBody, CodeUnknownPersona,
 		CodeContractor, CodeAnchorMissing, CodeAnchorError, CodePersonaNoRow, CodePersonaRowError,
-		CodeNoAuthority, CodeRoleDrift, CodeCeilingError, CodeAuditError, CodeMintError,
+		CodeNoAuthority, CodeRoleDrift, CodeOpenAdmin, CodeCeilingError, CodeAuditError, CodeMintError,
 	}
 }
 
@@ -420,6 +421,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if authority.RoleID != p.Role {
 		h.refuse503(w, CodeRoleDrift)
+		return
+	}
+	// The lead's rule, pending the principal's A6 ruling on admin cards on
+	// the public copy: a stranger with no bearer never holds a tier 1 global
+	// token, whose guards admit every admin route. Judged on the resolved
+	// authority, so there is no list of roles to keep in step. The testers'
+	// copy keeps the admin cards.
+	if h.cfg.Mode == CallerOpen && authority.IsAdmin() {
+		h.refuse403(w, CodeOpenAdmin)
 		return
 	}
 

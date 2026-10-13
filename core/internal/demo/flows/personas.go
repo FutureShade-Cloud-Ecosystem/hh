@@ -76,6 +76,11 @@ func fromFlow(n int, flow string, also ...string) Persona {
 	return build(n, flow, a.Label, a.Role, also...)
 }
 
+// Note (the lead's rule, pending the principal's A6 ruling on admin cards on
+// the public copy): general-manager, financial-controller, hr and dealer-admin
+// resolve to tier 1 global authority, and the persona route refuses them on
+// the open copy (handler CodeOpenAdmin). They stay enterable on the testers'
+// copy.
 var personas = []Persona{
 	fromFlow(1, "sales"),
 	build(2, "outside-sales", "Outside Sales", "outside_sales"),

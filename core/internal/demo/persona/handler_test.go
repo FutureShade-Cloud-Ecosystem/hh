@@ -60,12 +60,12 @@ func TestPartnerEntersAsEveryEnterablePersona(t *testing.T) {
 
 func TestOpenCopyEntersWithNoBearer(t *testing.T) {
 	f := newFx(t, CallerOpen)
-	a := decode(t, f.enterOpen("hr", fxAddr))
-	if sub, _, _ := claims(t, a.Token); sub != "persona:hr" {
+	a := decode(t, f.enterOpen("logistics-manager", fxAddr))
+	if sub, _, _ := claims(t, a.Token); sub != "persona:logistics-manager" {
 		t.Fatalf("sub %q", sub)
 	}
 	// A bearer on the open route is ignored, not judged.
-	rec := f.do(`{"persona":"hr"}`, "Bearer junk", "198.51.100.8:1")
+	rec := f.do(`{"persona":"logistics-manager"}`, "Bearer junk", "198.51.100.8:1")
 	decode(t, rec)
 }
 
@@ -240,7 +240,7 @@ func TestOpenCopyRateLimitsPerAddressAndPerAddressAndPersona(t *testing.T) {
 		t.Fatalf("the refusal minted or wrote: %d %d", f.minter.calls, len(f.audit.rows))
 	}
 	// Another persona from the same address still fits the address allowance.
-	decode(t, f.enterOpen("hr", fxAddr))
+	decode(t, f.enterOpen("logistics-manager", fxAddr))
 	// Another address is its own bucket for the same persona.
 	decode(t, f.enterOpen("sales", "203.0.113.9:1"))
 }
@@ -251,7 +251,7 @@ func TestOpenCopyAddressAllowanceBoundsEveryPersona(t *testing.T) {
 	f := newFx(t, CallerOpen)
 	f.cfg.AddressLimit = ratelimit.NewAddressLimit(3, time.Minute, func() time.Time { return f.now })
 	f.rebuild()
-	for _, id := range []string{"sales", "hr", "driver"} {
+	for _, id := range []string{"sales", "logistics-manager", "driver"} {
 		decode(t, f.enterOpen(id, fxAddr))
 	}
 	if rec := f.enterOpen("yard-team", fxAddr); rec.Code != http.StatusTooManyRequests {
@@ -297,18 +297,18 @@ func TestTrustedProxyHeaderCountsOnlyFromAListedPeer(t *testing.T) {
 	f.cfg.Trusted = trusted
 	f.rebuild()
 	for i := 0; i < AddressPersonaAllowance; i++ {
-		decode(t, f.do(`{"persona":"hr"}`, "", "127.0.0.1:9", "X-Forwarded-For", "203.0.113.50"))
+		decode(t, f.do(`{"persona":"logistics-manager"}`, "", "127.0.0.1:9", "X-Forwarded-For", "203.0.113.50"))
 	}
-	if rec := f.do(`{"persona":"hr"}`, "", "127.0.0.1:9", "X-Forwarded-For", "203.0.113.50"); rec.Code != 429 {
+	if rec := f.do(`{"persona":"logistics-manager"}`, "", "127.0.0.1:9", "X-Forwarded-For", "203.0.113.50"); rec.Code != 429 {
 		t.Fatalf("the named client was not limited: %d", rec.Code)
 	}
-	decode(t, f.do(`{"persona":"hr"}`, "", "127.0.0.1:9", "X-Forwarded-For", "203.0.113.51"))
+	decode(t, f.do(`{"persona":"logistics-manager"}`, "", "127.0.0.1:9", "X-Forwarded-For", "203.0.113.51"))
 	// From an unlisted peer the header is ignored: forging it buys nothing.
 	f = newFx(t, CallerOpen)
 	for i := 0; i < AddressPersonaAllowance; i++ {
-		decode(t, f.do(`{"persona":"hr"}`, "", "192.0.2.1:9", "X-Forwarded-For", "203.0.113."+string(rune('1'+i%9))))
+		decode(t, f.do(`{"persona":"logistics-manager"}`, "", "192.0.2.1:9", "X-Forwarded-For", "203.0.113."+string(rune('1'+i%9))))
 	}
-	if rec := f.do(`{"persona":"hr"}`, "", "192.0.2.1:9", "X-Forwarded-For", "203.0.113.99"); rec.Code != 429 {
+	if rec := f.do(`{"persona":"logistics-manager"}`, "", "192.0.2.1:9", "X-Forwarded-For", "203.0.113.99"); rec.Code != 429 {
 		t.Fatalf("a forged header got a fresh bucket: %d", rec.Code)
 	}
 }
@@ -419,9 +419,9 @@ func TestPartnerAuditRowNamesThePartnerAndThePersona(t *testing.T) {
 
 func TestPublicAuditRowNamesTheBucketAndThePersonaNeverTheAddress(t *testing.T) {
 	f := newFx(t, CallerOpen)
-	decode(t, f.enterOpen("hr", "198.51.100.7:1111"))
-	decode(t, f.enterOpen("hr", "198.51.100.7:2222"))
-	decode(t, f.enterOpen("hr", "198.51.100.8:1111"))
+	decode(t, f.enterOpen("logistics-manager", "198.51.100.7:1111"))
+	decode(t, f.enterOpen("logistics-manager", "198.51.100.7:2222"))
+	decode(t, f.enterOpen("logistics-manager", "198.51.100.8:1111"))
 	if len(f.audit.rows) != 3 {
 		t.Fatalf("%d rows", len(f.audit.rows))
 	}
@@ -431,9 +431,9 @@ func TestPublicAuditRowNamesTheBucketAndThePersonaNeverTheAddress(t *testing.T) 
 	if b(0) == "" || b(0) != b(1) || b(0) == b(2) {
 		t.Fatalf("buckets %q %q %q", b(0), b(1), b(2))
 	}
-	p, _ := flows.PersonaByID("hr")
+	p, _ := flows.PersonaByID("logistics-manager")
 	for _, r := range f.audit.rows {
-		if r.Extra["subject_ref"] != "persona:hr" || r.EntityID != p.UserID || r.Action != "AUTH_PERSONA_ENTRY" {
+		if r.Extra["subject_ref"] != "persona:logistics-manager" || r.EntityID != p.UserID || r.Action != "AUTH_PERSONA_ENTRY" {
 			t.Fatalf("row %+v", r)
 		}
 		if r.ActorID != "" && r.ActorID != p.UserID {
@@ -453,7 +453,7 @@ func TestPublicAuditRowNamesTheBucketAndThePersonaNeverTheAddress(t *testing.T) 
 	}
 	// The bucket is salted: another handler gives another bucket.
 	g := newFx(t, CallerOpen)
-	decode(t, g.enterOpen("hr", "198.51.100.7:1"))
+	decode(t, g.enterOpen("logistics-manager", "198.51.100.7:1"))
 	if g.audit.rows[0].MaskedRef == b(0) {
 		t.Fatal("two handlers share a salt")
 	}
@@ -591,3 +591,29 @@ func TestMintedTokenPassesTheRealVerifierAndTheStaffGate(t *testing.T) {
 }
 
 var _ = identity.ClassStaff
+
+// The lead's rule, pending the principal's A6 ruling on admin cards on the
+// public copy: on the open copy every persona whose resolved authority is an
+// admin (tier 1, global) is the shared 403, judged after ResolveStaff. The
+// testers' copy mints all four.
+func TestOpenCopyRefusesEveryAdminPersonaAndTestersCopyMintsThem(t *testing.T) {
+	for _, id := range []string{"general-manager", "financial-controller", "hr", "dealer-admin"} {
+		f := newFx(t, CallerOpen)
+		rec := f.enterOpen(id, fxAddr)
+		f.assertShared(rec, 403)
+		if f.h.GateFailures()[CodeOpenAdmin] != 1 {
+			t.Fatalf("%s: counters %v", id, f.h.GateFailures())
+		}
+		if f.knob.calls != 0 {
+			t.Fatalf("%s: the refusal read the knob", id)
+		}
+		g := newFx(t, CallerPartner)
+		a := decode(t, g.enter(id))
+		if a.User.Tier != 1 || a.User.Scope != "GLOBAL" {
+			t.Fatalf("%s: tier %d scope %s", id, a.User.Tier, a.User.Scope)
+		}
+	}
+	// A tier 2 global role (Payables and Receivables) is not an admin.
+	f := newFx(t, CallerOpen)
+	decode(t, f.enterOpen("payables-receivables", fxAddr))
+}

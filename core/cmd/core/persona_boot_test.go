@@ -38,7 +38,7 @@ func pbPlantPersonas(t *testing.T, pool *pgxpool.Pool) {
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM org WHERE slug = $1`, flows.OrgSlug).Scan(&orgID); err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{"sales", "yard-manager", "driver", "general-manager"} {
+	for _, id := range []string{"sales", "yard-manager", "driver", "general-manager", "financial-controller", "hr", "dealer-admin"} {
 		p, _ := flows.PersonaByID(id)
 		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name, status, platform_user_id, org_id)
 			VALUES ($1::uuid, $2, $3, 'ACTIVE', $4, $5::uuid)`, p.UserID, p.Email, p.DisplayName(), p.Subject(), orgID); err != nil {
@@ -46,7 +46,7 @@ func pbPlantPersonas(t *testing.T, pool *pgxpool.Pool) {
 		}
 		for _, role := range p.StaffRoles() {
 			var branch any
-			if role != "general_manager" {
+			if role != "general_manager" && role != "financial_controller" && role != "hr" && role != "dealer_admin" {
 				branch = rgDemoBranchID
 			}
 			if _, err := pool.Exec(ctx, `INSERT INTO staff_role_grant (platform_user_id, role_id, org_id, branch_id) VALUES ($1, $2, $3::uuid, $4::uuid)`,
@@ -342,4 +342,22 @@ func TestBootConsolePersonaConfigurationRefusals(t *testing.T) {
 			t.Errorf("%s: booted", name)
 		}
 	}
+}
+
+// The lead's rule, pending the principal's A6 ruling on admin cards on the
+// public copy: the open copy refuses every admin persona with the shared 403
+// and writes no row, and still mints a non admin one.
+func TestBootPersonaPublicCopyRefusesAdminCards(t *testing.T) {
+	rec, graph := pbCase(t, map[string]string{"CORE_PERSONA_CALLER": "open", "CORE_PERSONA_PARTNERS": ""})
+	for i, id := range []string{"general-manager", "financial-controller", "hr", "dealer-admin"} {
+		rsp := pbPost(rec.inner, "", `{"persona":"`+id+`"}`, "198.51.100.6"+string(rune('0'+i))+":1")
+		if rsp.Code != http.StatusForbidden || rsp.Body.String() != string(authz.BodyForbidden) {
+			t.Fatalf("%s = %d %s", id, rsp.Code, rsp.Body)
+		}
+	}
+	var n int
+	if err := graph.pool.QueryRow(context.Background(), `SELECT count(*) FROM audit_log WHERE action = 'AUTH_PERSONA_ENTRY'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("audit rows %d (%v)", n, err)
+	}
+	pbEnter(t, rec.inner, "", "sales", "198.51.100.70:1")
 }
