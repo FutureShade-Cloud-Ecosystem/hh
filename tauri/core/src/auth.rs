@@ -475,6 +475,54 @@ mod tests {
     }
 
     #[test]
+    fn a_sign_out_during_a_sign_in_store_leaves_no_secret_behind() {
+        use crate::custody::CustodyError;
+        use std::sync::{mpsc, Mutex};
+
+        // A custody whose `set` holds until released, so a sign out can be
+        // started while a sign in is between the session and the store.
+        struct Gate {
+            inner: MemoryCustody,
+            entered: Mutex<mpsc::Sender<()>>,
+            release: Mutex<mpsc::Receiver<()>>,
+        }
+        impl Custody for Gate {
+            fn get(&self, a: &Address) -> Result<Option<String>, CustodyError> {
+                self.inner.get(a)
+            }
+            fn delete(&self, a: &Address) -> Result<(), CustodyError> {
+                self.inner.delete(a)
+            }
+            fn set(&self, a: &Address, v: &str) -> Result<(), CustodyError> {
+                self.entered.lock().unwrap().send(()).unwrap();
+                self.release.lock().unwrap().recv().unwrap();
+                self.inner.set(a, v)
+            }
+        }
+
+        let (etx, erx) = mpsc::channel();
+        let (rtx, rrx) = mpsc::channel();
+        let gate = Arc::new(Gate { inner: MemoryCustody::new(), entered: Mutex::new(etx), release: Mutex::new(rrx) });
+        let server = MockServer::start(vec![created(), Reply::json(200, ACCOUNT_OK), Reply::json(204, "")]);
+        let cfg = AuthConfig::for_test(&format!("{}/v1", server.url()), PROJECT, &server.url());
+        let svc = Arc::new(AuthService::new(PROFILE, &cfg, gate.clone()).unwrap());
+        run(async {
+            let s_in = svc.clone();
+            let signing_in = tokio::spawn(async move { s_in.sign_in("a@b.example", PASSWORD).await });
+            tokio::task::spawn_blocking(move || erx.recv().unwrap()).await.unwrap();
+            let s_out = svc.clone();
+            let signing_out = tokio::spawn(async move { s_out.sign_out().await });
+            // Give an unserialised sign out every chance to finish first.
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            rtx.send(()).unwrap();
+            let _ = signing_in.await.unwrap();
+            signing_out.await.unwrap().unwrap();
+        });
+        drop(server);
+        assert_eq!(gate.inner.get(&addr()), Ok(None), "the sign out returned, yet a live session secret sits in custody");
+    }
+
+    #[test]
     fn the_auth_sources_hold_no_logging_or_printing() {
         // The Rust side never logs the JWT, the session secret or the core
         // token (AUTH-SHELL-CONTRACT r6): nothing in the auth path prints at
