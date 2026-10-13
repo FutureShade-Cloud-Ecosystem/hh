@@ -32,7 +32,7 @@ import {
 } from "@hardscapehouse/auth";
 import { createAppwriteAccountSurface, enterPersona } from "@hardscapehouse/auth/appwrite-adapter";
 import type { EntryView } from "./entry.js";
-import { loadRuntimeConfig, type ConsoleRuntimeConfig, type RuntimeConfig } from "@hardscapehouse/auth/runtime-config";
+import { loadRuntimeConfig, personaVisible, type ConsoleRuntimeConfig, type RuntimeConfig } from "@hardscapehouse/auth/runtime-config";
 
 // ── the role matrix, once ─────────────────────────────────────────────────
 
@@ -297,6 +297,11 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
     const remembered = memo.read();
     if (remembered !== null && !cfg.personas) {
       memo.clear(); // a copy without personas has none to enter
+    }
+    if (remembered !== null && cfg.personas && !personaVisible(cfg, remembered)) {
+      // The public copy shows no admin persona (principal ruling A6), so a remembered one is not entered.
+      memo.clear();
+      return { kind: "front-door", why: "persona_refused" };
     }
     if (remembered !== null && cfg.personas) {
       let bearer: string | null = null;

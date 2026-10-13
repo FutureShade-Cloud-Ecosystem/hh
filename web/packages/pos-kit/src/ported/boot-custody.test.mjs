@@ -490,3 +490,27 @@ test("demo mode: retry does nothing", async () => {
   await clock.advance(300_000);
   assert.equal(called, false);
 });
+
+// ── principal ruling A6 ─────────────────────────────────────────────────────
+
+test("the public copy refuses a remembered admin persona without asking the core; the testers' copy allows it", async () => {
+  for (const id of ["financial-controller", "general-manager", "hr", "dealer-admin"]) {
+    const storage = new RecordedStorage();
+    new PersonaMemo(storage).write(id);
+    const log = [];
+    const { custody } = boot({ ...PUBLIC_COPY, personaCaller: "public" }, { surface: fakeSurface(), fetchFn: personaFetch(log, { roleCode: "financial_controller" }), storage });
+    const [outcome] = await collect(custody, "money-desk", 1).done;
+    assert.deepEqual(outcome, { kind: "front-door", why: "persona_refused" }, id);
+    assert.equal(log.length, 0, `${id}: the route is not asked`);
+    assert.equal(new PersonaMemo(storage).read(), null);
+  }
+  const storage = new RecordedStorage();
+  new PersonaMemo(storage).write("financial-controller");
+  const log = [];
+  const surface = fakeSurface({ exchange: () => answerFor("sales_manager", "fake-partner-token") });
+  const { custody } = boot({ ...TESTERS_COPY, personaCaller: "partner" }, { surface, fetchFn: personaFetch(log, { roleCode: "financial_controller" }), storage });
+  const [outcome] = await collect(custody, "money-desk", 1).done;
+  assert.equal(outcome.kind, "ready");
+  assert.equal(log.length, 1);
+  await custody.leave("/");
+});
