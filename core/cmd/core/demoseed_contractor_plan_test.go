@@ -198,7 +198,7 @@ func TestContractorPlan_CarriesNoCardDataNoDashesNoCosts(t *testing.T) {
 				if !ok {
 					continue
 				}
-				if strings.ContainsAny(s, "–—") {
+				if strings.ContainsAny(s, "\u2013\u2014") {
 					t.Errorf("%s.%s holds a dash: %q", table, col, s)
 				}
 				if col != "id" && !strings.Contains(col, "_id") && cardRun.MatchString(s) {
