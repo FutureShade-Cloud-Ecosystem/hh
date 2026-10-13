@@ -294,7 +294,10 @@ export class DealerAdminApp extends HHElement {
     if (!(target instanceof Element)) return;
     const field = target.getAttribute("data-field") ?? "";
     if (field.startsWith("pr-")) {
-      const value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
+      const value =
+        target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement
+          ? target.value
+          : "";
       this.#pricing.input(field.slice(3), value);
       return;
     }

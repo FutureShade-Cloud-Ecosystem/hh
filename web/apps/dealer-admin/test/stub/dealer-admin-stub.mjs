@@ -217,6 +217,8 @@ let clearance;
 let rebates;
 let ledgerRows;
 let conversions;
+let batches;
+let importProfiles;
 
 // The customer overrides: one yard account's price on Retaining Walls.
 const CUST_YARD = "cu110000-0000-4000-9000-0000000000a1";
@@ -335,6 +337,67 @@ const UOM_WORLD = [
   },
 ];
 
+// The batches: one staged manufacturer update with two lines, and one
+// profile with its mapping.
+const BATCHES_WORLD = [
+  {
+    id: "3a110000-0000-4000-9000-0000000000a1",
+    batch_no: "NL-2026-07",
+    vendor_id: "vd110000-0000-4000-9000-0000000000a1",
+    vendor_name: "Northline Supply",
+    profile_id: "2a110000-0000-4000-9000-0000000000a1",
+    status: "STAGED",
+    effective_date: null,
+    source_ref: "nl-pricefile.csv",
+    line_count: 2,
+    outlier_count: 1,
+    created_at: "2026-09-01T09:00:00Z",
+    approved_at: null,
+    applied_at: null,
+  },
+];
+const BATCH_LINES_WORLD = [
+  {
+    id: "3b110000-0000-4000-9000-0000000000a1",
+    batch_id: "3a110000-0000-4000-9000-0000000000a1",
+    product_id: "fa110000-0000-4000-9000-0000000000a1",
+    sku: "PAV-60-CH",
+    before_cost_cents: 30000,
+    after_cost_cents: 31500,
+    before_retail_cents: 480,
+    after_retail_cents: 520,
+    variance_bps: 833,
+    is_outlier: false,
+    derived_from: "COST_MARKUP",
+    unmatched: false,
+  },
+  {
+    id: "3b110000-0000-4000-9000-0000000000a2",
+    batch_id: "3a110000-0000-4000-9000-0000000000a1",
+    product_id: "",
+    sku: "UNKNOWN-SKU",
+    before_cost_cents: null,
+    after_cost_cents: null,
+    before_retail_cents: null,
+    after_retail_cents: null,
+    variance_bps: null,
+    is_outlier: true,
+    derived_from: "NONE",
+    unmatched: true,
+  },
+];
+const PROFILES_WORLD = [
+  {
+    id: "2a110000-0000-4000-9000-0000000000a1",
+    vendor_id: "vd110000-0000-4000-9000-0000000000a1",
+    vendor_name: "Northline Supply",
+    name: "Northline standard",
+    mapping: { sku_col: "Item", cost_col: "Dealer Net", retail_col: "MSRP", trade_col: "Trade" },
+    markup_bps: 6000,
+    is_active: true,
+  },
+];
+
 // The quantity breaks: one category schedule for Pavers, one open top tier.
 const BREAKS_WORLD = [
   {
@@ -375,6 +438,8 @@ function reset() {
   rebates = structuredClone(REBATES_WORLD);
   ledgerRows = structuredClone(LEDGER_WORLD.rows);
   conversions = structuredClone(UOM_WORLD);
+  batches = structuredClone(BATCHES_WORLD);
+  importProfiles = structuredClone(PROFILES_WORLD);
   scenario = "";
   log = [];
 }
@@ -1052,6 +1117,121 @@ async function handle(req, res) {
       weight_qty: 0,
       unconfirmed: true,
     });
+  }
+
+  // ---- the price batches and import profiles ----
+
+  if (req.method === "GET" && path === "/api/v1/pricing/batches") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const status = url.searchParams.get("status") ?? "";
+    const items = batches.filter((b) => status === "" || b.status === status);
+    return json(res, { items: scenario === "empty-pricing" ? [] : items, next_cursor: null, limit: 200 });
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/batches") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const id = `3a110000-0000-4000-9000-${Math.random().toString(16).slice(2, 14).padStart(12, "0")}`;
+    const batch = {
+      id,
+      batch_no: String(body?.batch_no ?? ""),
+      vendor_id: String(body?.vendor_id ?? ""),
+      vendor_name: "Northline Supply",
+      profile_id: String(body?.profile_id ?? ""),
+      status: "DRAFT",
+      effective_date: body?.effective_date ? String(body.effective_date) : null,
+      source_ref: String(body?.source_ref ?? ""),
+      line_count: 0,
+      outlier_count: 0,
+      created_at: new Date().toISOString(),
+      approved_at: null,
+      applied_at: null,
+    };
+    batches.push(batch);
+    return json(res, batch);
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/batches/apply-due") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    let applied = 0;
+    for (const batch of batches) {
+      if (batch.status === "APPROVED" && batch.effective_date !== null && batch.effective_date.slice(0, 10) <= new Date().toISOString().slice(0, 10)) {
+        batch.status = "APPLIED";
+        batch.applied_at = new Date().toISOString();
+        applied += 1;
+      }
+    }
+    return json(res, { applied });
+  }
+
+  const batchMatch = path.match(/^\/api\/v1\/pricing\/batches\/([^/]+)$/);
+  if (req.method === "GET" && batchMatch) {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const batch = batches.find((b) => b.id === decodeURIComponent(batchMatch[1]));
+    if (batch === undefined) return refuse(res, 404, "batch not found");
+    return json(res, batch);
+  }
+
+  const linesMatch = path.match(/^\/api\/v1\/pricing\/batches\/([^/]+)\/lines$/);
+  if (req.method === "GET" && linesMatch) {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const batchId = decodeURIComponent(linesMatch[1]);
+    return json(res, { items: BATCH_LINES_WORLD.filter((l) => l.batch_id === batchId), next_cursor: null, limit: 500 });
+  }
+
+  const importMatch = path.match(/^\/api\/v1\/pricing\/batches\/([^/]+)\/import$/);
+  if (req.method === "POST" && importMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const batch = batches.find((b) => b.id === decodeURIComponent(importMatch[1]));
+    if (batch === undefined) return refuse(res, 404, "batch not found");
+    const csv = Buffer.from(raw).toString("utf8");
+    const rows = Math.max(0, csv.trim().split("\n").length - 1);
+    batch.line_count += rows;
+    batch.status = "STAGED";
+    return json(res, {
+      batch,
+      preview: [],
+      unmatched: [],
+      estimated: [],
+      outliers: rows > 2 ? [{ sku: "OUTLIER-SKU" }] : [],
+      total_lines: rows,
+      matched_lines: rows,
+    });
+  }
+
+  const approveMatch = path.match(/^\/api\/v1\/pricing\/batches\/([^/]+)\/approve$/);
+  if (req.method === "POST" && approveMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const batch = batches.find((b) => b.id === decodeURIComponent(approveMatch[1]));
+    if (batch === undefined) return refuse(res, 404, "batch not found");
+    if (batch.status !== "STAGED") return refuse(res, 409, "only a staged batch can be approved");
+    batch.status = "APPROVED";
+    batch.approved_at = new Date().toISOString();
+    return json(res, batch);
+  }
+
+  const applyMatch = path.match(/^\/api\/v1\/pricing\/batches\/([^/]+)\/apply$/);
+  if (req.method === "POST" && applyMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const batch = batches.find((b) => b.id === decodeURIComponent(applyMatch[1]));
+    if (batch === undefined) return refuse(res, 404, "batch not found");
+    if (batch.status !== "APPROVED") return refuse(res, 409, "only an approved batch can be applied");
+    batch.status = "APPLIED";
+    batch.applied_at = new Date().toISOString();
+    return json(res, { batch, applied: batch.line_count });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/pricing/import-profiles") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    return json(res, { items: scenario === "empty-pricing" ? [] : importProfiles, next_cursor: null, limit: 200 });
+  }
+
+  const profileMatch = path.match(/^\/api\/v1\/pricing\/import-profiles\/([^/]+)$/);
+  if (req.method === "PUT" && profileMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const profile = importProfiles.find((p) => p.id === decodeURIComponent(profileMatch[1]));
+    if (profile === undefined) return refuse(res, 404, "profile not found");
+    if (body?.mapping !== undefined && typeof body.mapping === "object") profile.mapping = body.mapping;
+    return json(res, profile);
   }
 
   // ---- the audit trail ----

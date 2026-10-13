@@ -423,3 +423,44 @@ test("the units of measure tab: the seeded edge, the warn line, and the probe's 
   await expect(plan).toContainText("picks 7 PLT (rounded up; 0.84 PLT over)");
   await expect(plan).toContainText("rests on unconfirmed factors");
 });
+
+test("the batches and imports tab: the staged batch, its lines, the maker check", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+  await page.locator('.pr-tab[data-tab="batches"]').click();
+
+  await expect(page.locator("[data-test=pr-batches-count]")).toHaveText("1 batch");
+  await expect(page.locator("[data-test=pr-profiles-count]")).toHaveText("1 profile");
+  const row = page.locator('tr[data-batch="3a110000-0000-4000-9000-0000000000a1"]');
+  await expect(row).toContainText("NL-2026-07");
+  await expect(row).toContainText("Staged");
+
+  // Opening the batch shows its lines, the unmatched SKU named.
+  await row.getByRole("button", { name: "Lines" }).click();
+  await expect(page.locator("[data-test=pr-batch-open]")).toContainText("UNKNOWN-SKU");
+  await expect(page.locator("[data-test=pr-batch-open]")).toContainText("no catalog product");
+
+  // Import into the draft's rows: the result is the server's counts.
+  await page.locator('[data-field="pr-batch-csv"]').fill("Item,Dealer Net,MSRP\nPAV-60-CH,315,520\nWAL-8,210,340\nSLB-12,180,290\nXX,999,999");
+  await page.locator('[data-action="pr-batch-import"]').click();
+  await expect(page.locator("[data-test=pr-batch-import-result]")).toContainText("4 rows parsed");
+
+  // The maker check: approve the staged batch.
+  await page.locator('[data-action="pr-batch-approve"]').click();
+  await expect(page.locator("[data-test=pr-batch-notice]")).toContainText("Approved");
+  await expect(page.locator("[data-test=pr-batch-open]")).toContainText("Approved");
+
+  // Then apply it: the answer is the server's count of prices written.
+  await page.locator('[data-action="pr-batch-apply"]').click();
+  await expect(page.locator("[data-test=pr-batch-notice]")).toContainText("Applied");
+  await expect(page.locator("[data-test=pr-batch-open]")).toContainText("Applied");
+
+  // The mapping editor: name the SKU column, save, the profile re-reads.
+  await page.locator('[data-action="pr-profile-edit"]').click();
+  await page.locator('[data-field="pr-profile-sku"]').fill("SKU");
+  await page.locator('[data-action="pr-profile-save"]').click();
+  await expect(page.locator("[data-test=pr-batches-notice]")).toContainText("mapping is saved");
+});

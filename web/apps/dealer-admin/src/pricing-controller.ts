@@ -20,6 +20,7 @@ import type {
 } from "./pricing-logic.js";
 import {
   accrualResultWords,
+  importResultWords,
   vendorWords,
   bpsFromPctInput,
   centsFromMoneyInput,
@@ -50,6 +51,9 @@ import type {
   StatusResult,
   UomConversionRow,
   UomPlanRow,
+  BatchImportResult,
+  BatchRow,
+  ImportProfileRow,
 } from "./pricing-api.js";
 import type { PricingOverrideWrite, PricingRulePatch, PricingRuleWrite } from "@hardscapehouse/api-client";
 
@@ -95,6 +99,15 @@ export interface PricingDoor {
   upsertUom(body: Record<string, unknown>): Promise<{ ok: true; value: UomConversionRow } | { ok: false; error: string; status?: number }>;
   deleteUom(id: string): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
   planUom(body: Record<string, unknown>): Promise<{ ok: true; value: UomPlanRow } | { ok: false; error: string; status?: number }>;
+  batches(status?: string): Promise<{ ok: true; value: readonly BatchRow[] } | { ok: false; error: string; status?: number }>;
+  createBatch(body: Record<string, unknown>): Promise<{ ok: true; value: BatchRow } | { ok: false; error: string; status?: number }>;
+  batchLines(id: string): Promise<{ ok: true; value: readonly { readonly id: string; readonly sku: string; readonly before_retail_cents: number | null; readonly after_retail_cents: number | null; readonly is_outlier: boolean; readonly unmatched: boolean; readonly derived_from: string }[] } | { ok: false; error: string; status?: number }>;
+  importBatch(id: string, csv: string): Promise<{ ok: true; value: BatchImportResult } | { ok: false; error: string; status?: number }>;
+  approveBatch(id: string): Promise<{ ok: true; value: BatchRow } | { ok: false; error: string; status?: number }>;
+  applyBatch(id: string): Promise<{ ok: true; value: { status: string; applied: number } } | { ok: false; error: string; status?: number }>;
+  applyDueBatches(): Promise<{ ok: true; value: { status: string; applied: number } } | { ok: false; error: string; status?: number }>;
+  importProfiles(): Promise<{ ok: true; value: readonly ImportProfileRow[] } | { ok: false; error: string; status?: number }>;
+  updateImportProfile(id: string, mapping: Readonly<Record<string, string>>): Promise<{ ok: true; value: ImportProfileRow } | { ok: false; error: string; status?: number }>;
   previewFloor(body: PricingFloorPreviewRequest): Promise<
     { ok: true; value: FloorPreview } | { ok: false; error: string; status?: number }
   >;
@@ -356,6 +369,59 @@ export interface UomProbe {
   readonly result: UomPlanRow | null;
 }
 
+/** The batch create form's own words. */
+export interface BatchCreateForm {
+  readonly batchNo: string;
+  readonly vendorId: string;
+  readonly profileId: string;
+  readonly effective: string;
+  readonly sourceRef: string;
+}
+
+/** The open batch: its lines, its import panel, and its maker check buttons. */
+export interface OpenBatch {
+  readonly id: string;
+  readonly linesPhase: LoadPhase;
+  readonly lines: readonly { readonly id: string; readonly sku: string; readonly before_retail_cents: number | null; readonly after_retail_cents: number | null; readonly is_outlier: boolean; readonly unmatched: boolean; readonly derived_from: string }[];
+  readonly linesError: string;
+  readonly importText: string;
+  readonly importBusy: boolean;
+  readonly importError: string;
+  readonly importResult: string;
+  readonly actionBusy: boolean;
+  readonly actionError: string;
+  readonly actionNotice: string;
+}
+
+/** One profile's mapping editor, as the person last left it. */
+export interface ProfileEdit {
+  readonly id: string;
+  readonly name: string;
+  readonly skuCol: string;
+  readonly costCol: string;
+  readonly retailCol: string;
+  readonly tradeCol: string;
+  readonly effectiveCol: string;
+  readonly busy: boolean;
+  readonly error: string;
+}
+
+export interface BatchesModel {
+  readonly phase: LoadPhase;
+  readonly rows: readonly BatchRow[];
+  readonly statusFilter: string;
+  readonly error: string;
+  readonly busy: boolean;
+  readonly formError: string;
+  readonly notice: string;
+  readonly creating: BatchCreateForm | null;
+  readonly open: OpenBatch | null;
+  readonly profiles: readonly ImportProfileRow[];
+  readonly profilesPhase: LoadPhase;
+  readonly profilesError: string;
+  readonly profileEdit: ProfileEdit | null;
+}
+
 export interface UomModel {
   readonly phase: LoadPhase;
   readonly rows: readonly UomConversionRow[];
@@ -410,6 +476,7 @@ export interface PricingModel {
   readonly promos: PromosModel;
   readonly rebates: RebatesModel;
   readonly uom: UomModel;
+  readonly batches: BatchesModel;
 }
 
 function emptyMargin(): MarginModel {
@@ -484,6 +551,24 @@ function emptyRebates(): RebatesModel {
   };
 }
 
+function emptyBatches(): BatchesModel {
+  return {
+    phase: "idle",
+    rows: [],
+    statusFilter: "",
+    error: "",
+    busy: false,
+    formError: "",
+    notice: "",
+    creating: null,
+    open: null,
+    profiles: [],
+    profilesPhase: "idle",
+    profilesError: "",
+    profileEdit: null,
+  };
+}
+
 function emptyUom(): UomModel {
   return {
     phase: "idle",
@@ -538,6 +623,7 @@ function emptyModel(): PricingModel {
     promos: emptyPromos(),
     rebates: emptyRebates(),
     uom: emptyUom(),
+    batches: emptyBatches(),
   };
 }
 
@@ -618,6 +704,16 @@ export class PricingController {
 
   #setProbe(patch: Partial<UomProbe>): void {
     this.#set({ uom: { ...this.model.uom, probe: { ...this.model.uom.probe, ...patch } } });
+  }
+
+  #setBatches(patch: Partial<BatchesModel>): void {
+    this.#set({ batches: { ...this.model.batches, ...patch } });
+  }
+
+  #setOpen(patch: Partial<OpenBatch>): void {
+    const open = this.model.batches.open;
+    if (open === null) return;
+    this.#set({ batches: { ...this.model.batches, open: { ...open, ...patch } } });
   }
 
   /** The app opens the surface: the categories once, then the open tab's group. */
@@ -784,6 +880,31 @@ export class PricingController {
       const probeKey = probeText[field];
       if (probeKey !== undefined) this.#setProbe({ [probeKey]: value } as Partial<UomProbe>);
     }
+    const creating = this.model.batches.creating;
+    if (creating !== null) {
+      const createText: Partial<Record<string, keyof BatchCreateForm>> = {
+        "batch-no": "batchNo",
+        "batch-vendor": "vendorId",
+        "batch-profile": "profileId",
+        "batch-effective": "effective",
+        "batch-source": "sourceRef",
+      };
+      const createKey = createText[field];
+      if (createKey !== undefined) this.#setBatches({ creating: { ...creating, [createKey]: value } });
+    }
+    if (field === "batch-csv") this.#setOpen({ importText: value });
+    const profileEdit = this.model.batches.profileEdit;
+    if (profileEdit !== null) {
+      const profileText: Partial<Record<string, keyof ProfileEdit>> = {
+        "profile-sku": "skuCol",
+        "profile-cost": "costCol",
+        "profile-retail": "retailCol",
+        "profile-trade": "tradeCol",
+        "profile-effective": "effectiveCol",
+      };
+      const profileKey = profileText[field];
+      if (profileKey !== undefined) this.#setBatches({ profileEdit: { ...profileEdit, [profileKey]: value } });
+    }
     const brk = this.model.breaks.editing;
     if (brk !== null) {
       if (field === "brk-code") this.#setBreaks({ editing: { ...brk, code: value } });
@@ -862,6 +983,7 @@ export class PricingController {
       if (field === "reb-active") this.#setRebates({ editing: { ...rebate, active: value === "yes" } });
     }
     if (field === "acc-source-type") this.#setAccrual({ sourceType: value });
+    if (field === "batches-status") this.#setBatches({ statusFilter: value });
     const uomEdit = this.model.uom.editing;
     if (uomEdit !== null) {
       if (field === "uom-source") this.#setUom({ editing: { ...uomEdit, source: value } });
@@ -1100,6 +1222,30 @@ export class PricingController {
         return this.model.uom.probe.pickUom;
       case "uom-probe-weight":
         return this.model.uom.probe.weightUom;
+      case "batches-status":
+        return this.model.batches.statusFilter;
+      case "batch-no":
+        return this.model.batches.creating?.batchNo ?? "";
+      case "batch-vendor":
+        return this.model.batches.creating?.vendorId ?? "";
+      case "batch-profile":
+        return this.model.batches.creating?.profileId ?? "";
+      case "batch-effective":
+        return this.model.batches.creating?.effective ?? "";
+      case "batch-source":
+        return this.model.batches.creating?.sourceRef ?? "";
+      case "batch-csv":
+        return this.model.batches.open?.importText ?? "";
+      case "profile-sku":
+        return this.model.batches.profileEdit?.skuCol ?? "";
+      case "profile-cost":
+        return this.model.batches.profileEdit?.costCol ?? "";
+      case "profile-retail":
+        return this.model.batches.profileEdit?.retailCol ?? "";
+      case "profile-trade":
+        return this.model.batches.profileEdit?.tradeCol ?? "";
+      case "profile-effective":
+        return this.model.batches.profileEdit?.effectiveCol ?? "";
       case "clr-product":
       case "clr-reason":
       case "clr-price":
@@ -1151,6 +1297,7 @@ export class PricingController {
         if (tab === "promos" && this.model.promos.promotions.phase === "idle") await this.loadPromosTab();
         if (tab === "rebates" && this.model.rebates.phase === "idle") await this.loadRebates();
         if (tab === "uom" && this.model.uom.phase === "idle") await this.loadUom();
+        if (tab === "batches" && this.model.batches.phase === "idle") await this.loadBatches();
         return;
       }
       case "pr-reload-margin":
@@ -1325,6 +1472,56 @@ export class PricingController {
         return;
       case "pr-uom-plan":
         await this.#runPlan();
+        return;
+      // -- the batches and imports tab --
+      case "pr-batches-apply":
+        this.#setBatches({ statusFilter: "" });
+        await this.loadBatches();
+        return;
+      case "pr-batches-filter":
+        await this.loadBatches();
+        return;
+      case "pr-batches-reload":
+        await this.loadBatches();
+        return;
+      case "pr-batch-new":
+        this.#setBatches({
+          creating: { batchNo: "", vendorId: "", profileId: "", effective: "", sourceRef: "" },
+          formError: "",
+        });
+        return;
+      case "pr-batch-create":
+        await this.#createBatch();
+        return;
+      case "pr-batch-cancel":
+        this.#setBatches({ creating: null, formError: "" });
+        return;
+      case "pr-batch-open":
+        await this.#openBatch(attrs.id ?? "");
+        return;
+      case "pr-batch-close":
+        this.#setBatches({ open: null });
+        return;
+      case "pr-batch-import":
+        await this.#importBatch();
+        return;
+      case "pr-batch-approve":
+        await this.#approveBatch(attrs.id ?? "");
+        return;
+      case "pr-batch-apply":
+        await this.#applyBatch(attrs.id ?? "");
+        return;
+      case "pr-batches-apply-due":
+        await this.#applyDue();
+        return;
+      case "pr-profile-edit":
+        this.#openProfileEdit(attrs.id ?? "");
+        return;
+      case "pr-profile-cancel":
+        this.#setBatches({ profileEdit: null });
+        return;
+      case "pr-profile-save":
+        await this.#saveProfile();
         return;
       case "pr-break-drop-item": {
         const editing = this.model.breaks.editing;
@@ -2646,6 +2843,174 @@ export class PricingController {
       return;
     }
     this.#setProbe({ busy: false, result: result.value });
+  }
+  // -- the batches and imports tab ---------------------------------------------------------------------------
+
+  async loadBatches(): Promise<void> {
+    this.#setBatches({ ...emptyBatches(), statusFilter: this.model.batches.statusFilter, notice: this.model.batches.notice });
+    const result = await this.#door.batches(this.model.batches.statusFilter);
+    if (!result.ok) {
+      this.#setBatches({
+        phase: result.status === 403 ? "refused" : "error",
+        error: pricingRefusalWords(result.error, result.status, "read"),
+      });
+      return;
+    }
+    this.#setBatches({ phase: "ready", rows: result.value });
+    if (this.model.batches.profilesPhase === "idle") {
+      const profiles = await this.#door.importProfiles();
+      if (profiles.ok) this.#setBatches({ profiles: profiles.value, profilesPhase: "ready" });
+      else this.#setBatches({ profilesPhase: "error", profilesError: profiles.error });
+    }
+  }
+
+  async #createBatch(): Promise<void> {
+    const creating = this.model.batches.creating;
+    if (creating === null || this.model.batches.busy) return;
+    if (creating.batchNo.trim() === "" || creating.sourceRef.trim() === "") {
+      this.#setBatches({ formError: "A batch names itself (the number) and names its source file." });
+      return;
+    }
+    this.#setBatches({ busy: true, formError: "" });
+    const result = await this.#door.createBatch({
+      batch_no: creating.batchNo.trim(),
+      vendor_id: creating.vendorId.trim(),
+      profile_id: creating.profileId.trim(),
+      effective_date: creating.effective.trim(),
+      source_ref: creating.sourceRef.trim(),
+    });
+    if (!result.ok) {
+      this.#setBatches({ busy: false, formError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setBatches({ busy: false, creating: null, notice: "The batch is open in draft. Import the manufacturer's file into it." });
+    await this.loadBatches();
+    await this.#openBatch(result.value.id);
+  }
+
+  async #openBatch(id: string): Promise<void> {
+    if (id === "") return;
+    this.#setBatches({
+      open: {
+        id,
+        linesPhase: "loading",
+        lines: [],
+        linesError: "",
+        importText: "",
+        importBusy: false,
+        importError: "",
+        importResult: "",
+        actionBusy: false,
+        actionError: "",
+        actionNotice: "",
+      },
+    });
+    const lines = await this.#door.batchLines(id);
+    if (this.model.batches.open?.id !== id) return;
+    if (!lines.ok) {
+      this.#setOpen({ linesPhase: "error", linesError: pricingRefusalWords(lines.error, lines.status, "read") });
+      return;
+    }
+    this.#setOpen({ linesPhase: "ready", lines: lines.value });
+  }
+
+  async #importBatch(): Promise<void> {
+    const open = this.model.batches.open;
+    if (open === null || open.importBusy) return;
+    if (open.importText.trim() === "") {
+      this.#setOpen({ importError: "Paste or load the manufacturer's CSV first; the import reads the file whole." });
+      return;
+    }
+    this.#setOpen({ importBusy: true, importError: "", importResult: "" });
+    const result = await this.#door.importBatch(open.id, open.importText);
+    if (!result.ok) {
+      this.#setOpen({ importBusy: false, importError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    await this.loadBatches();
+    await this.#openBatch(open.id);
+    // The result outlives the reopen the reload triggers: the answer is the
+    // server's counts, and the person is mid work.
+    this.#setOpen({ importBusy: false, importResult: importResultWords(result.value) });
+  }
+
+  async #approveBatch(id: string): Promise<void> {
+    if (id === "" || this.model.batches.open?.actionBusy) return;
+    this.#setOpen({ actionBusy: true, actionError: "", actionNotice: "" });
+    const result = await this.#door.approveBatch(id);
+    if (!result.ok) {
+      this.#setOpen({ actionBusy: false, actionError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    await this.loadBatches();
+    await this.#openBatch(id);
+    this.#setOpen({ actionBusy: false, actionNotice: "Approved. It applies on its effective date, or when someone applies it." });
+  }
+
+  async #applyBatch(id: string): Promise<void> {
+    if (id === "" || this.model.batches.open?.actionBusy) return;
+    this.#setOpen({ actionBusy: true, actionError: "", actionNotice: "" });
+    const result = await this.#door.applyBatch(id);
+    if (!result.ok) {
+      this.#setOpen({ actionBusy: false, actionError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    await this.loadBatches();
+    await this.#openBatch(id);
+    this.#setOpen({ actionBusy: false, actionNotice: `Applied: ${result.value.applied} prices written to the retail anchor.` });
+  }
+
+  async #applyDue(): Promise<void> {
+    if (this.model.batches.busy) return;
+    this.#setBatches({ busy: true, formError: "" });
+    const result = await this.#door.applyDueBatches();
+    if (!result.ok) {
+      this.#setBatches({ busy: false, formError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setBatches({ busy: false, notice: `${result.value.applied} due ${result.value.applied === 1 ? "batch" : "batches"} applied.` });
+    await this.loadBatches();
+  }
+
+  #openProfileEdit(id: string): void {
+    const row = id === "" ? undefined : this.model.batches.profiles.find((p) => p.id === id);
+    if (row === undefined) return;
+    this.#setBatches({
+      profileEdit: {
+        id: row.id,
+        name: row.name,
+        skuCol: row.mapping.sku_col ?? "",
+        costCol: row.mapping.cost_col ?? "",
+        retailCol: row.mapping.retail_col ?? "",
+        tradeCol: row.mapping.trade_col ?? "",
+        effectiveCol: row.mapping.effective_col ?? "",
+        busy: false,
+        error: "",
+      },
+    });
+  }
+
+  async #saveProfile(): Promise<void> {
+    const edit = this.model.batches.profileEdit;
+    if (edit === null || edit.busy) return;
+    if (edit.skuCol.trim() === "") {
+      this.#setBatches({ profileEdit: { ...edit, error: "The mapping must at least name the SKU column." } });
+      return;
+    }
+    this.#setBatches({ profileEdit: { ...edit, busy: true, error: "" } });
+    const mapping: Record<string, string> = { sku_col: edit.skuCol.trim() };
+    if (edit.costCol.trim() !== "") mapping.cost_col = edit.costCol.trim();
+    if (edit.retailCol.trim() !== "") mapping.retail_col = edit.retailCol.trim();
+    if (edit.tradeCol.trim() !== "") mapping.trade_col = edit.tradeCol.trim();
+    if (edit.effectiveCol.trim() !== "") mapping.effective_col = edit.effectiveCol.trim();
+    const result = await this.#door.updateImportProfile(edit.id, mapping);
+    if (!result.ok) {
+      this.#setBatches({ profileEdit: { ...edit, busy: false, error: pricingWriteError(result.error, result.status) } });
+      return;
+    }
+    this.#setBatches({ profileEdit: null, notice: "The mapping is saved; the next import reads the file with it." });
+    const profiles = await this.#door.importProfiles();
+    if (profiles.ok) this.#setBatches({ profiles: profiles.value, profilesPhase: "ready" });
   }
 }
 

@@ -481,6 +481,125 @@ function toUomPlanRow(raw: unknown): UomPlanRow {
   };
 }
 
+// -- the price batches --------------------------------------------------------------------------------
+
+/** One price batch: a staged manufacturer update under its effective date. */
+export interface BatchRow {
+  readonly id: string;
+  readonly batch_no: string;
+  readonly vendor_id: string;
+  readonly vendor_name: string;
+  readonly profile_id: string;
+  readonly status: string;
+  readonly effective_date: string;
+  readonly source_ref: string;
+  readonly line_count: number;
+  readonly outlier_count: number;
+  readonly created_at: string;
+  readonly approved_at: string;
+  readonly applied_at: string;
+}
+
+export function toBatchRow(raw: unknown): BatchRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    batch_no: text(r.batch_no),
+    vendor_id: text(r.vendor_id),
+    vendor_name: text(r.vendor_name),
+    profile_id: text(r.profile_id),
+    status: text(r.status),
+    effective_date: text(r.effective_date),
+    source_ref: text(r.source_ref),
+    line_count: num(r.line_count),
+    outlier_count: num(r.outlier_count),
+    created_at: text(r.created_at),
+    approved_at: text(r.approved_at),
+    applied_at: text(r.applied_at),
+  };
+}
+
+/** One change line: before and after, with the flags stamped at derivation. */
+export interface BatchLineRow {
+  readonly id: string;
+  readonly product_id: string;
+  readonly sku: string;
+  readonly before_cost_cents: number | null;
+  readonly after_cost_cents: number | null;
+  readonly before_retail_cents: number | null;
+  readonly after_retail_cents: number | null;
+  readonly variance_bps: number | null;
+  readonly is_outlier: boolean;
+  readonly derived_from: string;
+  readonly unmatched: boolean;
+}
+
+export function toBatchLineRow(raw: unknown): BatchLineRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    product_id: text(r.product_id),
+    sku: text(r.sku),
+    before_cost_cents: maybeNum(r.before_cost_cents),
+    after_cost_cents: maybeNum(r.after_cost_cents),
+    before_retail_cents: maybeNum(r.before_retail_cents),
+    after_retail_cents: maybeNum(r.after_retail_cents),
+    variance_bps: maybeNum(r.variance_bps),
+    is_outlier: bool(r.is_outlier),
+    derived_from: text(r.derived_from),
+    unmatched: bool(r.unmatched),
+  };
+}
+
+/** What an import answers: the batch plus the derived preview aids and counts. */
+export interface BatchImportResult {
+  readonly batch: BatchRow;
+  readonly total_lines: number;
+  readonly matched_lines: number;
+  readonly unmatched: readonly BatchLineRow[];
+  readonly outliers: readonly BatchLineRow[];
+}
+
+function toBatchImportResult(raw: unknown): BatchImportResult {
+  const r = bag(raw);
+  return {
+    batch: toBatchRow(r.batch),
+    total_lines: num(r.total_lines),
+    matched_lines: num(r.matched_lines),
+    unmatched: list(r.unmatched).map(toBatchLineRow),
+    outliers: list(r.outliers).map(toBatchLineRow),
+  };
+}
+
+/** One import profile: the CSV column mapping for a manufacturer. */
+export interface ImportProfileRow {
+  readonly id: string;
+  readonly vendor_id: string;
+  readonly vendor_name: string;
+  readonly name: string;
+  readonly mapping: Readonly<Record<string, string>>;
+  readonly markup_bps: number;
+  readonly is_active: boolean;
+}
+
+function toImportProfileRow(raw: unknown): ImportProfileRow {
+  const r = bag(raw);
+  const mapping: Record<string, string> = {};
+  const rawMapping = bag(r.mapping);
+  for (const key of Object.keys(rawMapping)) {
+    if (typeof rawMapping[key] === "string") mapping[key] = rawMapping[key] as string;
+  }
+  return {
+    id: text(r.id),
+    vendor_id: text(r.vendor_id),
+    vendor_name: text(r.vendor_name),
+    name: text(r.name),
+    mapping,
+    markup_bps: num(r.markup_bps),
+    is_active: bool(r.is_active),
+  };
+}
+
 // -- the customer overrides --------------------------------------------------------------------------
 
 /** One customer category override as the screens use it. */
@@ -833,6 +952,76 @@ export class PricingApi {
     const answer = await staffPricing.pricingPlanUOM(this.#client, body as Parameters<typeof staffPricing.pricingPlanUOM>[1]);
     if (!answer.ok) return answer;
     return { ok: true, value: toUomPlanRow(answer.value) };
+  }
+
+  // -- the price batches and import profiles --------------------------------------------------------------
+
+  /** The price batches, filtered by status. */
+  async batches(status?: string): Promise<Result<readonly BatchRow[]>> {
+    const answer = await staffPricing.pricingListBatches(this.#client, {
+      limit: 200,
+      status: status === "" || status === undefined ? undefined : (status as "DRAFT" | "STAGED" | "APPROVED" | "APPLIED" | "CANCELLED"),
+    });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toBatchRow) };
+  }
+
+  async createBatch(body: unknown): Promise<Result<BatchRow>> {
+    const answer = await staffPricing.pricingCreateBatch(this.#client, body as Parameters<typeof staffPricing.pricingCreateBatch>[1]);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toBatchRow(answer.value) };
+  }
+
+  /** One batch's change lines. */
+  async batchLines(id: string): Promise<Result<readonly BatchLineRow[]>> {
+    const answer = await staffPricing.pricingListBatchLines(this.#client, id, { limit: 500 });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toBatchLineRow) };
+  }
+
+  /** Import a manufacturer CSV into a draft or staged batch. The body is the file's bytes. */
+  async importBatch(id: string, csv: string): Promise<Result<BatchImportResult>> {
+    const answer = await staffPricing.pricingImportBatch(this.#client, id, csv, "text/csv");
+    if (!answer.ok) return answer;
+    return { ok: true, value: toBatchImportResult(answer.value) };
+  }
+
+  /** The maker check: a second pair of hands approves a staged batch. */
+  async approveBatch(id: string): Promise<Result<BatchRow>> {
+    const answer = await staffPricing.pricingApproveBatch(this.#client, id);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toBatchRow(answer.value) };
+  }
+
+  /** Write the batch's prices into the retail anchor on or after its date. */
+  async applyBatch(id: string): Promise<Result<StatusResult & { readonly applied: number }>> {
+    const answer = await staffPricing.pricingApplyBatch(this.#client, id);
+    if (!answer.ok) return answer;
+    const r = bag(answer.value);
+    const status = toStatus(r.batch ?? answer.value);
+    return { ok: true, value: { status: status.status, applied: num(r.applied) } };
+  }
+
+  /** Apply every batch whose effective date has come. */
+  async applyDueBatches(): Promise<Result<StatusResult & { readonly applied: number }>> {
+    const answer = await staffPricing.pricingApplyDueBatches(this.#client);
+    if (!answer.ok) return answer;
+    const r = bag(answer.value);
+    return { ok: true, value: { status: "applied", applied: num(r.applied) } };
+  }
+
+  /** The import profiles: each manufacturer's column mapping. */
+  async importProfiles(): Promise<Result<readonly ImportProfileRow[]>> {
+    const answer = await staffPricing.pricingListImportProfiles(this.#client, { limit: 200 });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toImportProfileRow) };
+  }
+
+  /** Rewrite one profile's mapping. */
+  async updateImportProfile(id: string, mapping: Readonly<Record<string, string>>): Promise<Result<ImportProfileRow>> {
+    const answer = await staffPricing.pricingUpdateImportProfileMapping(this.#client, id, { mapping: { ...mapping } });
+    if (!answer.ok) return answer;
+    return { ok: true, value: toImportProfileRow(answer.value) };
   }
 
   // -- the floor warning ------------------------------------------------------------------------------

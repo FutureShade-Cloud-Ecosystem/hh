@@ -401,3 +401,42 @@ test("the uom tab's warn line and empty words are its own", () => {
   assert.match(uomUnconfirmedWords(1, 2), /1 of 2 factors are seeded defaults/);
   assert.match(uomEmptyWords(), /No conversions configured/);
 });
+
+// -- the batches and imports tab -------------------------------------------------------------------------
+
+import {
+  batchEmptyWords,
+  batchLineWords,
+  batchStatusWord,
+  derivationWord,
+  importResultWords,
+} from "../src/pricing-logic.ts";
+
+test("a batch status keeps its own word, voice lowered; a derivation says its anchor", () => {
+  assert.equal(batchStatusWord("STAGED"), "Staged");
+  assert.equal(batchStatusWord("APPLIED"), "Applied");
+  assert.equal(batchStatusWord("STRANGE_STATE"), "strange state");
+  assert.equal(derivationWord("TRADE_PLUS_FOB"), "Trade + freight");
+  assert.equal(derivationWord("NONE"), "Not derived");
+});
+
+test("a batch line reads as before to after, with the outlier and the unmatched named", () => {
+  const words = batchLineWords({ sku: "PAV-60-CH", before_retail_cents: 480, after_retail_cents: 520, is_outlier: true, unmatched: false });
+  assert.match(words, /PAV-60-CH/);
+  assert.match(words, /CA\$4\.80/);
+  assert.match(words, /CA\$5\.20/);
+  assert.match(words, /outlier/);
+  assert.match(batchLineWords({ sku: "XX", before_retail_cents: null, after_retail_cents: null, is_outlier: false, unmatched: true }), /no catalog product/);
+});
+
+test("an import's result is the server's own counts", () => {
+  const words = importResultWords({ total_lines: 120, matched_lines: 118, unmatched: [{ sku: "XX" }], outliers: [{ sku: "YY" }] });
+  assert.match(words, /120 rows parsed/);
+  assert.match(words, /118 matched/);
+  assert.match(words, /1 SKU has no catalog product/);
+  assert.match(words, /1 outlier/);
+});
+
+test("the batches tab's empty words are its own", () => {
+  assert.match(batchEmptyWords(), /No price batches yet/);
+});

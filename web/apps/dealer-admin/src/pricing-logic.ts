@@ -729,3 +729,42 @@ export function weightSentence(plan: UomPlanLike | null): string {
   const chain = chainLabel(plan.weight_steps);
   return `Load weight ${trimNumber(plan.weight_qty, 2)} ${plan.weight_uom}${chain ? ` (via ${chain})` : ""}.`;
 }
+
+// -- the batches and imports tab -------------------------------------------------------------------------
+
+/** The batches tab's empty words. */
+export function batchEmptyWords(): string {
+  return "No price batches yet. A manufacturer update imports into a batch, is approved by a second pair of hands, and applies on its effective date.";
+}
+
+/** One batch line as the list shows it: before to after, with the flags named. */
+export function batchLineWords(line: {
+  readonly sku: string;
+  readonly before_retail_cents: number | null;
+  readonly after_retail_cents: number | null;
+  readonly is_outlier: boolean;
+  readonly unmatched: boolean;
+}): string {
+  const parts: string[] = [line.sku];
+  if (line.before_retail_cents !== null || line.after_retail_cents !== null) {
+    parts.push(`${moneyWords(line.before_retail_cents)} to ${moneyWords(line.after_retail_cents)}`);
+  }
+  if (line.unmatched) parts.push("no catalog product: reported and skipped at apply");
+  else if (line.is_outlier) parts.push("outlier: the variance passed the alert threshold");
+  return parts.join(", ");
+}
+
+/** An import's answer, told from the server's own counts. */
+export function importResultWords(result: {
+  readonly total_lines: number;
+  readonly matched_lines: number;
+  readonly unmatched: readonly unknown[];
+  readonly outliers: readonly unknown[];
+}): string {
+  const parts: string[] = [
+    `${result.total_lines} rows parsed, ${result.matched_lines} matched.`,
+    `${result.unmatched.length} ${result.unmatched.length === 1 ? "SKU has" : "SKUs have"} no catalog product.`,
+    `${result.outliers.length} ${result.outliers.length === 1 ? "outlier" : "outliers"} past the alert threshold.`,
+  ];
+  return parts.join(" ");
+}

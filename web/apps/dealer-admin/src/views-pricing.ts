@@ -27,6 +27,12 @@ import {
   pickSentence,
   rebateEmptyWords,
   rebateRateWords,
+  batchEmptyWords,
+  batchLineWords,
+  batchStatusWord,
+  BATCH_STATUSES,
+  derivationWord,
+  importResultWords,
   trimNumber,
   uomEmptyWords,
   uomSourceWord,
@@ -50,6 +56,7 @@ import {
   PRICING_TABS,
 } from "./pricing-logic.js";
 import type { BreakRow, ClearanceRow, OverrideRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
+type BatchLineRow = Parameters<typeof batchLineWords>[0];
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
 
 export function renderPricing(model: PricingModel): TemplateResult {
@@ -87,6 +94,7 @@ function renderTab(model: PricingModel): TemplateResult {
   if (model.tab === "promos") return renderPromos(model);
   if (model.tab === "rebates") return renderRebates(model);
   if (model.tab === "uom") return renderUom(model);
+  if (model.tab === "batches") return renderBatches(model);
   const tab = PRICING_TABS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
@@ -1696,5 +1704,280 @@ function renderUomEditor(model: PricingModel): TemplateResult | typeof nothing {
         <button type="button" class="btn btn-secondary" data-action="pr-uom-cancel" ?disabled=${m.busy}>Cancel</button>
       </div>
     </section>
+  `;
+}
+
+// -- the batches and imports tab -------------------------------------------------------------------------
+
+export function renderBatches(model: PricingModel): TemplateResult {
+  const m = model.batches;
+  return html`
+    ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-batches-loading">Loading the price batches…</p>` : nothing}
+    ${m.phase === "error" || m.phase === "refused"
+      ? html`<p class="error-line" data-test="pr-batches-error">${m.error}</p>
+          <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-batches-reload">Try again</button></div>`
+      : nothing}
+    ${m.phase === "ready"
+      ? html`
+          <section class="card">
+            <div class="card-head">
+              <h2 class="card-title">Price batches</h2>
+              <span class="count" data-test="pr-batches-count">${m.rows.length} ${m.rows.length === 1 ? "batch" : "batches"}</span>
+              <button type="button" class="btn btn-secondary btn-small" data-action="pr-batches-apply-due" ?disabled=${m.busy}>Apply due</button>
+              <button type="button" class="btn btn-primary btn-small" data-action="pr-batch-new">New batch</button>
+            </div>
+            ${m.notice === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-batches-notice">${m.notice}</p>`}
+            ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-batches-form-error">${m.formError}</p>`}
+            <div class="filters" role="group" aria-label="Batch status filter">
+              <select class="select" aria-label="Status" data-field="pr-batches-status">
+                <option value="">Status: all</option>
+                <option value="DRAFT">${batchStatusWord("DRAFT")}</option>
+                <option value="STAGED">${batchStatusWord("STAGED")}</option>
+                <option value="APPROVED">${batchStatusWord("APPROVED")}</option>
+                <option value="APPLIED">${batchStatusWord("APPLIED")}</option>
+                <option value="CANCELLED">${batchStatusWord("CANCELLED")}</option>
+              </select>
+              <button type="button" class="btn btn-secondary" data-action="pr-batches-filter">Apply</button>
+            </div>
+            ${m.rows.length === 0
+              ? html`<p class="notice-line" data-test="pr-batches-empty">${batchEmptyWords()}</p>`
+              : html`
+                  <div class="tablewrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th scope="col">Batch</th>
+                          <th scope="col">Vendor</th>
+                          <th scope="col">Status</th>
+                          <th scope="col">Effective</th>
+                          <th scope="col" class="num">Lines</th>
+                          <th scope="col" class="num">Outliers</th>
+                          <th scope="col">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${m.rows.map((row) => renderBatchRowView(row, model))}
+                      </tbody>
+                    </table>
+                  </div>
+                `}
+          </section>
+          ${m.creating !== null ? renderBatchCreate(model) : nothing}
+          ${m.open !== null ? renderOpenBatch(model) : nothing}
+          ${renderProfiles(model)}
+        `
+      : nothing}
+  `;
+}
+
+function renderBatchRowView(row: Parameters<typeof batchStatusWord>[0] extends string ? { readonly id: string; readonly batch_no: string; readonly vendor_name: string; readonly status: string; readonly effective_date: string; readonly line_count: number; readonly outlier_count: number } : never, model: PricingModel): TemplateResult {
+  void model;
+  const m = model.batches;
+  const open = m.open?.id === row.id;
+  return html`
+    <tr data-batch=${row.id}>
+      <td class="mono">${row.batch_no}</td>
+      <td>${row.vendor_name === "" ? html`<span class="dim">unnamed</span>` : row.vendor_name}</td>
+      <td><span class="chip">${batchStatusWord(row.status)}</span></td>
+      <td class="mono dim">${row.effective_date === "" ? "no date" : row.effective_date.slice(0, 10)}</td>
+      <td class="num">${row.line_count}</td>
+      <td class="num ${row.outlier_count > 0 ? "" : "dim"}">${row.outlier_count}</td>
+      <td>
+        <div class="pr-actions">
+          <button
+            type="button"
+            class="btn btn-secondary btn-small"
+            data-action="pr-batch-open"
+            data-id=${row.id}
+            aria-current=${open ? "true" : "false"}
+          >
+            ${open ? "Open" : "Lines"}
+          </button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderBatchCreate(model: PricingModel): TemplateResult | typeof nothing {
+  const m = model.batches;
+  const e = m.creating;
+  if (e === null) return nothing;
+  return html`
+    <section class="card" data-test="pr-batch-create">
+      <div class="card-head"><h2 class="card-title">New batch</h2></div>
+      <div class="form-grid">
+        <label class="field"><span class="field-label">Batch number</span>
+          <input class="text-field" type="text" data-field="pr-batch-no" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Vendor id</span>
+          <input class="text-field" type="text" data-field="pr-batch-vendor" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Import profile id (the mapping it reads with)</span>
+          <input class="text-field" type="text" data-field="pr-batch-profile" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Effective date (empty applies by hand)</span>
+          <input class="text-field" type="date" data-field="pr-batch-effective" ?disabled=${m.busy} /></label>
+        <label class="field field-full"><span class="field-label">Source reference (the file it came from)</span>
+          <input class="text-field" type="text" data-field="pr-batch-source" ?disabled=${m.busy} /></label>
+      </div>
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-batch-create-error">${m.formError}</p>`}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-batch-create" ?disabled=${m.busy}>${m.busy ? "Creating…" : "Create draft"}</button>
+        <button type="button" class="btn btn-secondary" data-action="pr-batch-cancel" ?disabled=${m.busy}>Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
+  const m = model.batches.open;
+  if (m === null) return nothing;
+  const row = model.batches.rows.find((b) => b.id === m.id);
+  const status = row?.status ?? "";
+  return html`
+    <section class="card" data-test="pr-batch-open">
+      <div class="card-head">
+        <h2 class="card-title">Batch ${row?.batch_no ?? m.id.slice(0, 8)}</h2>
+        <span class="chip">${batchStatusWord(status)}</span>
+        <button type="button" class="btn btn-secondary btn-small" data-action="pr-batch-close">Close</button>
+      </div>
+      ${m.actionNotice === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-batch-notice">${m.actionNotice}</p>`}
+      ${m.actionError === "" ? nothing : html`<p class="error-line" data-test="pr-batch-action-error">${m.actionError}</p>`}
+      <div class="pr-actions">
+        ${status === "STAGED"
+          ? html`<button type="button" class="btn btn-primary" data-action="pr-batch-approve" data-id=${m.id} ?disabled=${m.actionBusy}>Approve</button>`
+          : nothing}
+        ${status === "APPROVED"
+          ? html`<button type="button" class="btn btn-primary" data-action="pr-batch-apply" data-id=${m.id} ?disabled=${m.actionBusy}>Apply now</button>`
+          : nothing}
+      </div>
+      ${status === "DRAFT" || status === "STAGED"
+        ? html`
+            <div class="card-head"><h2 class="card-title">Import the manufacturer's file</h2></div>
+            <label class="field">
+              <span class="field-label">The CSV, whole (the import reads it with the batch's profile)</span>
+              <textarea class="text-field" rows="5" data-field="pr-batch-csv" ?disabled=${m.importBusy}></textarea>
+            </label>
+            ${m.importError === "" ? nothing : html`<p class="error-line" data-test="pr-batch-import-error">${m.importError}</p>`}
+            ${m.importResult === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-batch-import-result">${m.importResult}</p>`}
+            <div class="pr-actions">
+              <button type="button" class="btn btn-primary" data-action="pr-batch-import" ?disabled=${m.importBusy}>
+                ${m.importBusy ? "Importing…" : "Import into this batch"}
+              </button>
+            </div>
+          `
+        : nothing}
+      <div class="card-head"><h2 class="card-title">Change lines</h2></div>
+      ${m.linesPhase === "loading" ? html`<p class="notice-line">Loading the lines…</p>` : nothing}
+      ${m.linesPhase === "error" ? html`<p class="error-line">${m.linesError}</p>` : nothing}
+      ${m.linesPhase === "ready" && m.lines.length === 0 ? html`<p class="notice-line" data-test="pr-batch-lines-empty">No lines yet. Import the file to fill the batch.</p>` : nothing}
+      ${m.linesPhase === "ready" && m.lines.length > 0
+        ? html`
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">SKU</th>
+                    <th scope="col">Retail</th>
+                    <th scope="col">Derived</th>
+                    <th scope="col">Flag</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.lines.map(
+                    (line) => html`
+                      <tr data-line=${line.id}>
+                        <td class="mono">${line.sku}</td>
+                        <td>${batchLineWords(line)}</td>
+                        <td class="dim">${derivationWord(line.derived_from)}</td>
+                        <td>${line.unmatched ? html`<span class="chip chip-danger">unmatched</span>` : line.is_outlier ? html`<span class="chip chip-danger">outlier</span>` : html`<span class="chip chip-dim">ok</span>`}</td>
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+            </div>
+          `
+        : nothing}
+    </section>
+  `;
+}
+
+function renderProfiles(model: PricingModel): TemplateResult {
+  const m = model.batches;
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Import profiles</h2>
+        <span class="count" data-test="pr-profiles-count">${m.profiles.length} ${m.profiles.length === 1 ? "profile" : "profiles"}</span>
+      </div>
+      ${m.profilesPhase === "error" ? html`<p class="error-line" data-test="pr-profiles-error">${m.profilesError}</p>` : nothing}
+      ${m.profiles.length === 0
+        ? html`<p class="notice-line" data-test="pr-profiles-empty">No import profiles yet. The first import against a vendor's file mints one.</p>`
+        : html`
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Profile</th>
+                    <th scope="col">Vendor</th>
+                    <th scope="col">Mapping</th>
+                    <th scope="col" class="num">Markup</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.profiles.map(
+                    (p) => html`
+                      <tr data-profile=${p.id}>
+                        <td class="person">${p.name}</td>
+                        <td>${p.vendor_name === "" ? "unnamed" : p.vendor_name}</td>
+                        <td class="mono dim">${Object.entries(p.mapping).map(([k, v]) => `${k}: ${v}`).join(", ")}</td>
+                        <td class="num">${p.markup_bps}</td>
+                        <td>
+                          <button
+                            type="button"
+                            class="btn btn-secondary btn-small"
+                            data-action="pr-profile-edit"
+                            data-id=${p.id}
+                            aria-label=${`Edit the mapping for ${p.name}`}
+                          >
+                            Edit mapping
+                          </button>
+                        </td>
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+            </div>
+          `}
+      ${m.profileEdit !== null ? renderProfileEdit(model) : nothing}
+    </section>
+  `;
+}
+
+function renderProfileEdit(model: PricingModel): TemplateResult | typeof nothing {
+  const e = model.batches.profileEdit;
+  if (e === null) return nothing;
+  return html`
+    <div class="card" data-test="pr-profile-editor">
+      <div class="card-head"><h2 class="card-title">Mapping: ${e.name}</h2></div>
+      <div class="form-grid">
+        <label class="field"><span class="field-label">SKU column header</span>
+          <input class="text-field" type="text" data-field="pr-profile-sku" ?disabled=${e.busy} /></label>
+        <label class="field"><span class="field-label">Cost column header</span>
+          <input class="text-field" type="text" data-field="pr-profile-cost" ?disabled=${e.busy} /></label>
+        <label class="field"><span class="field-label">Retail column header</span>
+          <input class="text-field" type="text" data-field="pr-profile-retail" ?disabled=${e.busy} /></label>
+        <label class="field"><span class="field-label">Trade column header (optional)</span>
+          <input class="text-field" type="text" data-field="pr-profile-trade" ?disabled=${e.busy} /></label>
+        <label class="field"><span class="field-label">Effective date column header (optional)</span>
+          <input class="text-field" type="text" data-field="pr-profile-effective" ?disabled=${e.busy} /></label>
+      </div>
+      ${e.error === "" ? nothing : html`<p class="error-line" data-test="pr-profile-error">${e.error}</p>`}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-profile-save" ?disabled=${e.busy}>${e.busy ? "Saving…" : "Save the mapping"}</button>
+        <button type="button" class="btn btn-secondary" data-action="pr-profile-cancel" ?disabled=${e.busy}>Cancel</button>
+      </div>
+    </div>
   `;
 }
