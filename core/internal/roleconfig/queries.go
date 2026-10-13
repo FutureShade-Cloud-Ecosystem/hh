@@ -141,6 +141,23 @@ func (c *Config) PurchaseOrderWriters() []string {
 	return out
 }
 
+// OrderCancellers returns who may cancel an order, and with it keep a special order's supplier
+// deposit: the Sales Manager, the Branch Manager and the General Manager, each giving the reason
+// the cancel requires (the principal's ruling, row 1579, "a manager with a reason"). The super
+// admin is a platform role and joins the list at the gate (authz), not here. Every other role is
+// refused: the Yard Manager, the Financial Controller and Payables and Receivables among them. In
+// the role vocabulary's order. Not a stored setting: the ruling fixes it, so it cannot drift from a
+// configuration edit.
+func (c *Config) OrderCancellers() []string {
+	var out []string
+	for _, role := range roleVocabulary {
+		if role == "sales_manager" || role == "branch_manager" || role == "general_manager" {
+			out = append(out, role)
+		}
+	}
+	return out
+}
+
 // LowMarginReportReaders returns who reads the low margin report (the audit the managers scan, sorted
 // by margin): the roles that clear a floor or decide one, and the roles above them, held to the cost
 // and margin list. A role is a reader when it clears the floor on its own price in its own branch

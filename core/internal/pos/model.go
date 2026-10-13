@@ -177,7 +177,7 @@ type StockGlance struct {
 // -- tax reason codes (W4 records the decision; the deterministic engine is M5) --
 const (
 	TaxStdON13      = "STD_ON_HST_13"           // 13% provisional default
-	TaxStdSales     = "STD_SALES_TAX"           // the neutral standard rate of a jurisdiction other than Ontario (0389)
+	TaxStdSales     = "STD_SALES_TAX"           // the neutral standard rate of a jurisdiction other than Ontario (0391)
 	TaxONFNPos8     = "ON_FN_POS_8"             // Ontario First Nations point-of-sale 8% credit → collect 5%
 	TaxFedVendorDel = "FED_S87_VENDOR_DELIVERY" // federal 0% provisional, Dibbits delivery to a reserve
 	TaxManualReview = "MANUAL_TAX_REVIEW"       // routed to a person
@@ -371,7 +371,7 @@ type taxSnapshotRow struct {
 	Automated         bool
 	EvidenceDocID     string
 	SignatureID       string
-	// StandardRateBps is the standard rate FullHSTCents was computed at (0389); zero is the Ontario 13 percent.
+	// StandardRateBps is the standard rate FullHSTCents was computed at (0391); zero is the Ontario 13 percent.
 	StandardRateBps int
 }
 

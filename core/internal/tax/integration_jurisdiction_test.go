@@ -8,7 +8,7 @@ import (
 )
 
 // A California dealer against the real schema: its rows are bound through the repository, the neutral
-// standard reason is accepted by the widened snapshot CHECK (0389), the snapshot carries the standard rate
+// standard reason is accepted by the widened snapshot CHECK (0391), the snapshot carries the standard rate
 // it was written under, and the recompute reads that rate back instead of the dealer's current one.
 // The rows planted here are torn down by defer (the pool closes before t.Cleanup runs, DIB-384).
 func TestIntegration_Jurisdiction_CaliforniaBindsAndRecomputesAtItsOwnStandard(t *testing.T) {

@@ -2979,6 +2979,10 @@ type IdentityExchangeResponse struct {
 	User        IdentityUser `json:"user"`
 }
 
+type IdentityAuthMethodsResponse struct {
+	Methods []string `json:"methods"`
+}
+
 type IdentityChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password"`
 	NewPassword     string `json:"new_password"`

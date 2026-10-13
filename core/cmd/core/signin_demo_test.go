@@ -52,6 +52,9 @@ func TestBootDemoBuildDemoCell(t *testing.T) {
 	if c := serveOnce(rec.inner, http.MethodPost, "/api/v1/auth/exchange").Code; c != http.StatusNotFound {
 		t.Fatalf("demo mode serves the exchange: %d", c)
 	}
+	if c := serveOnce(rec.inner, http.MethodGet, "/api/v1/auth/methods").Code; c != http.StatusNotFound {
+		t.Fatalf("demo mode serves the methods route: %d", c)
+	}
 }
 
 // The demo build, console mode: the persistent key source and issuer, FB
@@ -107,6 +110,10 @@ func TestBootDemoBuildConsoleCell(t *testing.T) {
 	// The console mode mounts the exchange: an empty body is the gate 1 400.
 	if c := serveOnce(rec.inner, http.MethodPost, "/api/v1/auth/exchange").Code; c != http.StatusBadRequest {
 		t.Fatalf("console mode exchange answered %d, want 400", c)
+	}
+	// And the public methods route: no org is the default body, not a 400.
+	if c := serveOnce(rec.inner, http.MethodGet, "/api/v1/auth/methods").Code; c != http.StatusOK {
+		t.Fatalf("console mode methods route answered %d, want 200", c)
 	}
 	for _, c := range []struct{ m, p string }{{http.MethodGet, "/api/v1/demo/flows"}, {http.MethodPost, "/api/v1/demo/session"}} {
 		if code := serveOnce(rec.inner, c.m, c.p).Code; code != http.StatusNotFound {
