@@ -68,9 +68,11 @@ export class CtOfflineStrip extends HHElement {
   }
 
   protected override updated(): void {
-    const banner = this.renderRoot.querySelector<HTMLElement & { mode: string; waiting: number }>("hh-shell-offline-banner");
+    const banner = this.renderRoot.querySelector<HTMLElement & { mode: string; waiting: number; cacheOnly: boolean }>("hh-shell-offline-banner");
     if (banner !== null) {
       banner.mode = this.#mode;
+      // A read cache only app: the headline says what is shown, never that writes wait.
+      banner.cacheOnly = true;
       // The till has no outbox: nothing is ever counted as waiting.
       banner.waiting = 0;
     }
