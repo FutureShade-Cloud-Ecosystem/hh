@@ -480,3 +480,21 @@ test("a persona session that ends at its expiry takes its id with it", async () 
   assert.equal(w.session.phase, "signed-out");
   assert.equal(memoOf(w), null);
 });
+
+// ── principal ruling A6: the public copy shows no admin persona ──────────
+
+test("the public copy lists no admin persona card and refuses to enter one; the testers' copy lists every card", async () => {
+  const open = await signedOutWorld({ config: { ...CONFIG, personas: true, personasOpen: true, personaCaller: "public" } });
+  const flows = open.session.personaRoles.map((role) => role.flow);
+  assert.equal(flows.includes("financial-controller"), false);
+  assert.equal(flows.length, LIVE_ROLES.length - 1);
+  await open.session.persona("financial-controller");
+  assert.deepEqual(open.personaCalls, [], "the route is not even asked");
+  assert.equal(open.session.phase, "signed-out");
+  await open.session.persona("driver");
+  assert.equal(open.personaCalls.length, 1);
+
+  const partner = await signedOutWorld({ config: { ...CONFIG, personas: true, personasOpen: false, personaCaller: "partner" } });
+  assert.equal(partner.session.personaRoles.length, LIVE_ROLES.length);
+  assert.ok(partner.session.personaRoles.some((role) => role.flow === "financial-controller"));
+});

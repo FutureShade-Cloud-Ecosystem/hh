@@ -181,6 +181,10 @@ test("a failed JWT mint maps to a code without touching the core", async () => {
     [401, "no_session"],
     [429, "rate_limited"],
     [500, "unavailable"],
+    // shells contract r7: only a Console 401 ends a session; a 403 or 404 can be a path, project or permission fault
+    [403, "unavailable"],
+    [404, "unavailable"],
+    [418, "unavailable"],
   ];
   for (const [status, code] of table) {
     const { calls, surface } = world({ jwtAnswers: [{ status }] });

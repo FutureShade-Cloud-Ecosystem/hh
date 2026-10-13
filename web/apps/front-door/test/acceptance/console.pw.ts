@@ -364,6 +364,19 @@ test.describe("the persona cards", () => {
     await expect(page.getByTestId("continue-own")).toHaveText(/Continue as Sales Manager/);
   });
 
+  test("the public copy shows no admin persona card; the testers' copy shows them all (ruling A6)", async ({ page, baseURL }) => {
+    await serve(page, baseURL!, { personas: true, personasOpen: true, personaCaller: "public" });
+    await page.goto("/");
+    const publicCards = page.getByTestId("persona-cards").getByRole("button");
+    await expect(publicCards).toHaveCount(7);
+    await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Financial Controller", exact: true })).toHaveCount(0);
+    await serve(page, baseURL!, { personas: true, personasOpen: false, personaCaller: "partner" });
+    await page.goto("/");
+    await signInAsPartner(page);
+    await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(8);
+    await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Financial Controller", exact: true })).toHaveCount(1);
+  });
+
   test("a persona whose flow id and role code differ is sent by flow and lands on its role's home", async ({ page, baseURL }) => {
     await serve(page, baseURL!, { personas: true, personasOpen: true });
     await page.goto("/");

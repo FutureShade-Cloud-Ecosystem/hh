@@ -71,7 +71,9 @@ function nonEmpty(value: string, what: string): string {
 
 /** The console's refusal of a JWT mint: the session is gone, blocked or throttled, or the console is down. */
 function consoleRefusal(status: number): ExchangeRefusalCode {
-  if (status === 401 || status === 403 || status === 404) return "no_session";
+  // Shells contract r7: only a Console 401 means the session is gone or blocked. A 403 or 404 can be a path,
+  // project or permission fault and must never wipe a session; every other status is an outage.
+  if (status === 401) return "no_session";
   if (status === 429) return "rate_limited";
   return "unavailable";
 }

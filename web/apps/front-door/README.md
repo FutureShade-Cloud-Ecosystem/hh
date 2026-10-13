@@ -70,7 +70,11 @@ in `src/signin.ts`), never the demo cards. The file holds public facts only:
 `coreBaseUrl` empty means the page's own origin. `personas` says the persona
 route exists on this deployment (the testers' copy and the public copy);
 `personasOpen` says it answers without a bearer (the public copy), so the cards
-show on the sign in screen itself. The deployment writes the file; this repository
+show on the sign in screen itself. `personaCaller` (`"public"` or `"partner"`, mirroring the core's
+`CORE_PERSONA_CALLER`; absent, it follows `personasOpen`, and a value that disagrees with it is an
+incomplete config) decides which cards show: on `public` the admin personas (general-manager,
+financial-controller, hr, dealer-admin) are neither drawn nor enterable (principal ruling A6); on `partner`
+every card shows. The deployment writes the file; this repository
 ships none (the dev server's stub serves one, `test/stub/demo-stub.mjs`).
 
 **demo** is everything described above: the phrase gated staging copy keeps its

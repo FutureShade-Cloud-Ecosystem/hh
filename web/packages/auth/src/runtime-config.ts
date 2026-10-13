@@ -22,6 +22,17 @@ export interface DealerBrand {
   mark?: string;
 }
 
+export type PersonaCaller = "public" | "partner";
+
+/** The personas only the testers' copy shows: the admin roles (principal ruling A6). Ids are the core's persona ids. */
+export const ADMIN_PERSONA_IDS: readonly string[] = ["general-manager", "financial-controller", "hr", "dealer-admin"];
+
+/** Whether a persona may be shown, or entered, on this deployment. A config without the field is judged by personasOpen. */
+export function personaVisible(config: { personasOpen: boolean; personaCaller?: PersonaCaller }, id: string): boolean {
+  const caller = config.personaCaller ?? (config.personasOpen ? "public" : "partner");
+  return caller !== "public" || !ADMIN_PERSONA_IDS.includes(id);
+}
+
 export interface DemoRuntimeConfig {
   mode: "demo";
 }
@@ -38,6 +49,12 @@ export interface ConsoleRuntimeConfig {
   coreBaseUrl: string;
   /** The persona route exists on this deployment (the testers' copy and the public copy). */
   personas: boolean;
+  /**
+   * Who calls the persona route on this deployment, mirroring the core's CORE_PERSONA_CALLER: `public` (no
+   * bearer, the public copy) or `partner` (a partner's bearer, the testers' copy). Absent, it follows
+   * personasOpen. The public copy never shows the admin personas (principal ruling A6).
+   */
+  personaCaller: PersonaCaller;
   /** The persona route answers without a bearer (the public copy), so the cards show before any sign in. */
   personasOpen: boolean;
   dealer: DealerBrand;
@@ -105,12 +122,17 @@ export function parseRuntimeConfig(raw: unknown): RuntimeConfigResult {
   const personas = flag(raw, "personas");
   const personasOpen = flag(raw, "personasOpen");
   const dealer = dealerOf(raw["dealer"]);
+  const rawCaller = raw["personaCaller"];
   const incomplete: RuntimeConfigResult = { ok: false, reason: "incomplete" };
   if (typeof org !== "string" || !ORG_PATTERN.test(org)) return incomplete;
   if (!secureUrl(endpoint)) return incomplete;
   if (typeof project !== "string" || project === "") return incomplete;
   if (core !== "" && !secureUrl(core)) return incomplete;
   if (personas === null || personasOpen === null || dealer === null) return incomplete;
+  if (rawCaller !== undefined && rawCaller !== "public" && rawCaller !== "partner") return incomplete;
+  // The caller must agree with whether the route answers without a bearer.
+  if (rawCaller !== undefined && (rawCaller === "public") !== personasOpen) return incomplete;
+  const personaCaller: PersonaCaller = personasOpen ? "public" : "partner";
   return {
     ok: true,
     config: {
@@ -121,6 +143,7 @@ export function parseRuntimeConfig(raw: unknown): RuntimeConfigResult {
       coreBaseUrl: core as string,
       personas,
       personasOpen,
+      personaCaller,
       dealer,
     },
   };

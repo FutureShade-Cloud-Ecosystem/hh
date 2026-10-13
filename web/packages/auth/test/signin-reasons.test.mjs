@@ -135,7 +135,7 @@ test("adopt without the option still arms the refresh", async () => {
 });
 
 test("a console outage or throttle on the resume's account read keeps the profile and the lock and backs off, never no_session", async () => {
-  for (const [status, reason] of [[503, "unavailable"], [500, "unavailable"], [429, "rate_limited"]]) {
+  for (const [status, reason] of [[503, "unavailable"], [500, "unavailable"], [429, "rate_limited"], [403, "unavailable"], [404, "unavailable"], [418, "unavailable"]]) {
     class Down extends FakeAccountSurface {
       async getSession() {
         throw new PlatformRefusedError(status);

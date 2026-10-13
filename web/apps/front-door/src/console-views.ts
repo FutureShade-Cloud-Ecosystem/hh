@@ -13,7 +13,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import type { DealerBrand, RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
 import type { ConsoleSession } from "./console.js";
 import { CONFIG_ERROR_WORDS, SIGN_IN_WORDS } from "./signin.js";
-import { LIVE_ROLES, type LiveRole } from "./roles.js";
+import type { LiveRole } from "./roles.js";
 
 /** The gable diamond over two bars in a ring: the tenant kit's mark, drawn in the ink the page is on and the house gold. */
 function gableMark(): TemplateResult {
@@ -174,7 +174,7 @@ export function personaCards(
 ): TemplateResult {
   return html`
     <div class="cards" data-testid="persona-cards">
-      ${LIVE_ROLES.map((role) => card(role, session.personaRefusal(role.flow), session.personaBusy === role.flow))}
+      ${session.personaRoles.map((role) => card(role, session.personaRefusal(role.flow), session.personaBusy === role.flow))}
     </div>
     ${coming()}
   `;
