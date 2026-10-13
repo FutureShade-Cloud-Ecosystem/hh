@@ -71,6 +71,7 @@
 // core's own FloorRefusalError marshals.
 import { createServer } from "node:http";
 import { handlePricing, resetPricing } from "./pricing-stub.mjs";
+import { createSyncStub } from "./sync-stub.mjs";
 
 const port = Number(process.env.QD_STUB_PORT ?? 4839);
 
@@ -1183,6 +1184,25 @@ function editResult(quote, line) {
   };
 }
 
+// The offline store's sync routes over this world (sync-stub.mjs): the pull
+// feeds of the desk's read scopes and the quotes push, with the core's own
+// writable sets read from the Go source.
+const syncStub = createSyncStub({
+  products: () => PRODUCTS,
+  customers: () => CUSTOMERS,
+  quotes,
+  customerById,
+  branchIds: new Set([TRENTON_ID, BELLEVILLE_ID]),
+  // A Work caller sees its own quotes, a Manage caller every quote in its branch (the list rule).
+  viewable: (caller, quote) => caller.account.role_code === "sales_manager" || quote.owner_id === caller.account.user_id,
+  makeQuote: ({ id, customerId, caller, validUntil }) => {
+    quoteCounter += 1;
+    const made = seedQuote("DRAFT", customerId, caller.flow, [], { salesperson_id: caller.account.user_id, salesperson_name: caller.account.display_name }, id === undefined ? null : { id, quoteNo: `Q-${quoteCounter}` });
+    if (validUntil !== "") made.valid_until = validUntil;
+    return made;
+  },
+});
+
 // ---------------------------------------------------------------------------
 // The server.
 // ---------------------------------------------------------------------------
@@ -1200,6 +1220,10 @@ const server = createServer(async (request, response) => {
   // The suite's peek routes: the ledgers the layout save assertions read, and
   // the cost list switch the wrong-role page flips. Test scaffolding; no
   // contract path shares the namespace.
+  if (path === "/_stub/sync-log") {
+    respondJson(response, 200, syncStub.log);
+    return;
+  }
   if (path === "/_stub/state") {
     respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, staffDecisions, conversions, payments, posts, switches: { ...switches } });
     return;
@@ -1424,6 +1448,7 @@ const server = createServer(async (request, response) => {
   // changes quotes, policy or switches leaves the next one a clean stub.
   if (path === "/_stub/reset" && request.method === "POST") {
     seedWorld();
+    syncStub.reset();
     shareLinks.clear();
     floorRequests.clear();
     resetSeamWorld();
@@ -1573,6 +1598,9 @@ const server = createServer(async (request, response) => {
     return;
   }
   const userId = caller.account.user_id;
+
+  // The offline store's pull and push routes.
+  if (syncStub.handle({ request, response, path, url, caller, readBody, respondJson })) return;
 
   if (request.method === "GET" && path === "/api/v1/branches") {
     respondJson(response, 200, BRANCHES);

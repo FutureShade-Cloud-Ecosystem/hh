@@ -32,6 +32,15 @@ import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import { QdClient, type BranchRef } from "./qd-client.js";
+// The Work shell's offline layer (item 8b): writes are refused with no signal and never queue (money never
+// queues); the desk's reads fall back to the copy on the device; a new quote and an expiry date are kept when
+// the signal is gone. The panel shows the connection, the copy's age, the drafts waiting and the cards.
+import { browserSignal, noSignalFetch, noSignalWebFetch, readThroughFetch, readThroughWebFetch, type CachedRoute, type ReadThroughHooks } from "@hardscapehouse/work-offline";
+import { apiClientTransport, DeskOffline, dbNameFor } from "./desk-offline.js";
+import { quoteDeskRoutes } from "./offline-reads.js";
+// The panel registers itself; the wiring pass hands it the controller.
+import "./offline-panel.js";
+import type { QdOfflinePanel } from "./offline-panel.js";
 import { PricingClient } from "./pricing-client.js";
 import { LIST_ROUTE, parseRoute, routeHash, type DeskRoute } from "./quote-router.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
@@ -119,6 +128,12 @@ export class QuoteDeskApp extends HHElement {
   readonly #controller: AuthController;
   readonly #client: QdClient;
   readonly #pricing: PricingClient;
+  /** The staff client with no guard: only the offline store's sync transport rides it, and the only writes that reach it are the scopes the core admits a client write to. */
+  readonly #syncClient: ApiClient;
+  /** The device's connection, read each time it is asked. */
+  readonly #signal = browserSignal();
+  /** The Work shell's offline layer for the signed in person; null before the desk is up and after sign out. */
+  #offline: DeskOffline | null = null;
   /** Which of the desk's two screens shows: the quotes (always mounted, so a draft survives), or the pricing panel (mounted only while open). */
   #view: "quotes" | "pricing" = "quotes";
   #flowsState: FlowsState = { kind: "loading" };
@@ -156,7 +171,15 @@ export class QuoteDeskApp extends HHElement {
       sessions: this.#sessions,
       activeOrg: () => DEMO_ORG,
     });
-    const client = new ApiClient({ baseUrl: "", headers: staffHeaders });
+    // The Work shell's guard: a write with no signal is refused before it dials (never queued), and a read the
+    // device holds a copy of is answered from it when the network does not answer.
+    const routes: CachedRoute[] = quoteDeskRoutes(() => this.#offline?.reader() ?? null, () => this.#branch?.id ?? "");
+    const hooks: ReadThroughHooks = {
+      onCached: (words) => this.#offline?.hooks.onCached?.(words),
+      onLive: () => this.#offline?.hooks.onLive?.(),
+    };
+    const client = new ApiClient({ baseUrl: "", headers: staffHeaders, fetch: noSignalFetch(readThroughFetch(undefined, this.#signal, routes, hooks), this.#signal) });
+    this.#syncClient = new ApiClient({ baseUrl: "", headers: staffHeaders });
     // The feedback widget's sender rides the staff client: the feedback
     // route is staff guarded and the desk's own custody holds the bearer.
     this.#feedbackSender = async (request) => {
@@ -192,6 +215,7 @@ export class QuoteDeskApp extends HHElement {
       houseDay: () => houseDayInZone(HOUSE_ZONE),
       user: () => this.#deskIdentity,
       token: () => this.#sessions.current?.token ?? "",
+      fetch: noSignalWebFetch(readThroughWebFetch(undefined, this.#signal, routes, hooks), this.#signal),
     });
   }
 
@@ -233,6 +257,7 @@ export class QuoteDeskApp extends HHElement {
       builder.route = this.#route;
       builder.roleCode = this.#deskIdentity?.role_code ?? "";
     }
+    this.renderRoot.querySelector<QdOfflinePanel>("qd-offline-panel")?.attach(this.#offline);
     const pricing = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-pricing-panel");
     if (pricing !== null) {
       pricing["pricing"] = this.#pricing;
@@ -454,6 +479,17 @@ export class QuoteDeskApp extends HHElement {
     }
     this.#branch = branch.value;
     setBranches([{ id: branch.value.id, name: branch.value.name }]);
+    // The Work shell's copy on this device, the person's own: opened before the desk mounts so a read that loses
+    // the network has something to answer from; the first pull runs behind the desk.
+    const offline = new DeskOffline({
+      signal: this.#signal,
+      qd: this.#client,
+      transport: apiClientTransport(this.#syncClient),
+      dbName: dbNameFor(this.#sessions.current?.user.userId ?? ""),
+    });
+    this.#offline = offline;
+    await offline.open(branch.value.id);
+    void offline.cycle();
     this.#surface = "desk";
     // A sign in starts at the desk's landing page (decision log row 941):
     // whatever the address bar carried in (a stale quote fragment, a handoff
@@ -479,6 +515,9 @@ export class QuoteDeskApp extends HHElement {
     // Bounded: a save that never answers must not hold the session open for good.
     const sent = await waitUpTo(UNSENT_WAIT_MS, Promise.allSettled(detail.waits));
     await this.#controller.signOut();
+    // The copy on this device is released with the session; its outbox stays the person's own for their next sign in.
+    await this.#offline?.close();
+    this.#offline = null;
     // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
     clearFrontDoorHandoff();
     this.#busy = false;
@@ -602,6 +641,7 @@ export class QuoteDeskApp extends HHElement {
       <main>
         ${this.#surface === "desk"
           ? html`
+              <qd-offline-panel></qd-offline-panel>
               <div class="surface ${this.#view === "pricing" ? "away" : ""}">
                 <qd-quote-builder></qd-quote-builder>
               </div>
