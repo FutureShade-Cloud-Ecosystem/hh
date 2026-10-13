@@ -15,7 +15,8 @@
 //!   core, and retries once, with another fresh JWT, on a core 401 only.
 //! - **sign out** clears the keychain entry FIRST, then tells Console to end
 //!   the session within a short window, so an unreachable or hanging Console
-//!   cannot keep the entry alive.
+//!   cannot keep the entry alive. Sign in and sign out never overlap (one
+//!   lock), so a sign out that returned leaves no entry behind.
 //!
 //! Nothing here logs or prints, and every error is an `AuthCode`.
 
@@ -34,6 +35,9 @@ pub struct AuthService {
     custody: Arc<dyn Custody>,
     address: Address,
     best_effort: Duration,
+    /// Serialises sign in and sign out, so a sign out that returned can never
+    /// be followed by a sign in storing a secret it did not see.
+    writes: tokio::sync::Mutex<()>,
 }
 
 /// A custody call on a blocking thread (a keyring unlock prompt must never
@@ -62,7 +66,7 @@ impl AuthService {
         let console = ConsoleClient::new(config)?;
         let address = Address::console_session(profile_identifier, console.project_id())
             .map_err(|_| AuthCode::Unavailable)?;
-        Ok(Self { console, custody, address, best_effort: SIGN_OUT_BEST_EFFORT })
+        Ok(Self { console, custody, address, best_effort: SIGN_OUT_BEST_EFFORT, writes: tokio::sync::Mutex::new(()) })
     }
 
     /// Tests use a short window.
@@ -87,6 +91,7 @@ impl AuthService {
     }
 
     pub async fn sign_in(&self, email: &str, password: &str) -> Result<AccountUser, AuthCode> {
+        let _turn = self.writes.lock().await;
         // The keychain first: fail closed before Console holds a session we
         // could not keep. The old entry, if any, is ended after the new one is in.
         let old = self.get().await?;
@@ -132,6 +137,7 @@ impl AuthService {
     }
 
     pub async fn sign_out(&self) -> Result<(), AuthCode> {
+        let _turn = self.writes.lock().await;
         let secret = self.get().await.ok().flatten().and_then(SessionSecret::new);
         let cleared = self.delete().await;
         if let Some(secret) = secret {
