@@ -125,3 +125,9 @@ test("only the till's reads are routed: a write path is never answered from the 
     assert.ok(!routes.some((r) => r.match(new URL(path, "http://work.local"))), path);
   }
 });
+
+test("the till never answers a customer from the copy: the copy holds no terms or credit, and unknown must not read as zero", async () => {
+  const { desk } = await rig();
+  const routes = tillRoutes(() => desk.reader());
+  assert.ok(!routes.some((r) => r.match(new URL("/api/v1/customers/search?q=maple", "http://work.local"))));
+});

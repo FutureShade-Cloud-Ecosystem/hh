@@ -175,3 +175,25 @@ test("the parked tickets read from the copy, and a resume is refused with no sig
     await page.request.delete(`/api/v1/pos/parked/${made.id}`, { headers });
   }
 });
+
+test("with no signal a customer is never shown with invented credit or terms", async ({ page, context }) => {
+  await signIn(page);
+  await waitForFirstPull(page);
+  await context.setOffline(true);
+  await expect(banner(page)).toBeVisible();
+  await openStep(page, "customer");
+  await page.getByRole("button", { name: /Select customer/ }).click();
+  await page.getByPlaceholder("Search name or account #…").fill("Maple");
+  const row = page.locator("button.row").filter({ hasText: "Maple Ridge Contracting" }).first();
+  // Either the search is refused with no signal or a row is offered; wait for one of them, then read what the screen says.
+  await expect(row.or(page.getByText(/No signal/).first())).toBeVisible();
+  if (await row.isVisible()) {
+    await expect(row).not.toContainText("$0.00");
+    await row.click();
+    await expect(page.getByText("Maple Ridge Contracting").first()).toBeVisible();
+  }
+  const body = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+  expect(body).not.toMatch(/Available \(derived\) \$0\.00/i);
+  expect(body).not.toMatch(/Terms\s+d\b/i);
+  expect(body).not.toMatch(/Cash On Demand account/i);
+});
