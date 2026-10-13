@@ -40,8 +40,9 @@ test("the kit catalogue's ids for this app land on this app's surfaces", () => {
   assert.equal(surfaceRouteFromCatalogue("board")?.surface, "board");
   assert.equal(surfaceRouteFromCatalogue("projects")?.surface, "projects");
   assert.equal(surfaceRouteFromCatalogue("catalog")?.surface, "catalog");
-  // The kit catalogue names the ref's quote builder; the surface the core serves is the dealer's quotes.
-  assert.equal(surfaceRouteFromCatalogue("quote-studio")?.surface, "quotes");
+  assert.equal(surfaceRouteFromCatalogue("today")?.surface, "today");
+  assert.equal(surfaceRouteFromCatalogue("quotes")?.surface, "quotes");
+  assert.equal(surfaceRouteFromCatalogue("quote-studio"), null);
   assert.equal(surfaceRouteFromCatalogue("no-such-surface"), null);
 });
 

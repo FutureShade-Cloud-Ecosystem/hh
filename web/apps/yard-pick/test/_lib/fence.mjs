@@ -78,6 +78,26 @@ export function textFiles(root, extensions) {
 export const describeHits = (hits) => hits.map((h) => `${h.file}: ${h.kind} "${h.word}" x${h.count} ... ${h.window}`);
 
 /**
+ * The bundle scan's two named exemptions, each with its reason, so a gate that
+ * grew a hole states the hole's shape and the guard test beside it holds the
+ * shape narrow:
+ *   opfs-worker chunk  the wa-sqlite storage engine's own bytes (its query
+ *                      planner names estimatedCost and friends); not the
+ *                      yard's payload and not a field the app reads.
+ *   the scope registry's price row   the offline store ships the money fence's
+ *                      own rows: the scope name price_matrix exists in the
+ *                      bytes precisely because the fence refuses writes to it
+ *                      by name (money never queues).
+ */
+export function exemptBundleHit(hit) {
+  if (/opfs-worker/.test(hit.file)) return true;
+  if (hit.kind === "word" && hit.word === "price" && /price_matrix/.test(hit.window) && /server_wins|pull_only|manual/.test(hit.window)) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * The same fence over a JSON payload the server sent: the KEYS are scanned
  * for the money words (a word inside a customer's name or a sentence is data,
  * not a field), and the string values for a figure that reads as money. Text

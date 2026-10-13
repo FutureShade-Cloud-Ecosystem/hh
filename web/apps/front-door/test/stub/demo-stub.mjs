@@ -5,6 +5,7 @@
 // file. The phrase gate in front of the real demo box is the image's Caddy;
 // this stub checks no credential, like the core's own public demo routes.
 //
+//   GET  /api/v1/demo/flows   -> the closed table with each row's class (staff rows, then the five contractor rows)
 //   POST /api/v1/demo/session -> DemoSessionResponse, or the armed refusal
 //   POST /api/v1/feedback     -> 201 { issue_id, issue_number: HH-42 }, or the
 //                                armed board refusal; the last submission's
@@ -47,6 +48,16 @@ const FLOWS = [
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
+];
+
+// Summit Ridge Builders' contractor personas, as the core's listing carries them (class "tenant"). The front
+// door offers a card for each and opens the Pro app for the role; it never mints them, so USERS holds none.
+const CONTRACTOR_FLOWS = [
+  { flow: "contractor-account-admin", role_code: "account_admin", label: "Contractor owner", class: "tenant" },
+  { flow: "contractor-buyer", role_code: "buyer", label: "Contractor buyer", class: "tenant" },
+  { flow: "contractor-buyer-no-pay", role_code: "buyer_no_pay", label: "Contractor buyer (no pay)", class: "tenant" },
+  { flow: "contractor-ap-finance", role_code: "ap_finance", label: "Contractor AP", class: "tenant" },
+  { flow: "contractor-field-crew", role_code: "field_crew", label: "Contractor field crew", class: "tenant" },
 ];
 
 const USERS = {
@@ -128,6 +139,8 @@ const USERS = {
 // mint's 429 limit, a 503 for an account the box cannot resolve) and the next
 // mint for one of the named flows answers it, once per arming.
 let refusal = null;
+// The flows listing answers 503 while armed (the contractor cards then show nothing; the staff cards still work).
+let listingFails = false;
 let lastOrg = "";
 let mints = 0;
 let pendingApprovalCount = 3;
@@ -234,8 +247,15 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (path === "/_stub/listing-fails" && request.method === "POST") {
+    listingFails = true;
+    sendJson(response, 200, { armed: true });
+    return;
+  }
+
   if (path === "/_stub/reset" && request.method === "POST") {
     refusal = null;
+    listingFails = false;
     feedbackRefusal = null;
     feedbackNumberless = false;
     lastFeedback = null;
@@ -319,6 +339,15 @@ const server = createServer(async (request, response) => {
     } else {
       sendJson(response, 200, { items, next_cursor: null, limit: 20 });
     }
+    return;
+  }
+
+  if (path === "/api/v1/demo/flows" && request.method === "GET") {
+    if (listingFails) {
+      sendJson(response, 503, { error: "the listing is not answering" });
+      return;
+    }
+    sendJson(response, 200, { flows: [...FLOWS.map((row) => ({ ...row, class: "staff" })), ...CONTRACTOR_FLOWS] });
     return;
   }
 

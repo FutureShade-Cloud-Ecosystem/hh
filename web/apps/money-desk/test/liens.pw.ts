@@ -276,14 +276,14 @@ test("Payables and Receivables reads the jobs and the calendar and is offered no
   await expect(page.locator("[data-read-only]")).toContainText("Setting the review status is for the Financial Controller or the General Manager.");
 });
 
-test("the General Manager's area switch holds Liens and Compliance, and the controller's holds all five", async ({ page, request }) => {
+test("the General Manager's area switch holds Liens and Compliance, and the controller's holds all six", async ({ page, request }) => {
   await openLiens(page, request, "general_manager");
   const names = page.locator("nav[aria-label='Money Desk areas'] button");
   await expect(names).toHaveText(["Liens", "Compliance"]);
   const second = await page.context().newPage();
   await second.addInitScript(handoffFor, "controller");
   await second.goto("/");
-  await expect(second.locator("nav[aria-label='Money Desk areas'] button")).toHaveText(["Approvals and ledger", "Receivables", "Bank reconciliation", "Liens", "Compliance"]);
+  await expect(second.locator("nav[aria-label='Money Desk areas'] button")).toHaveText(["Approvals and ledger", "Receivables", "Bank reconciliation", "Tax", "Liens", "Compliance"]);
   await second.close();
 });
 

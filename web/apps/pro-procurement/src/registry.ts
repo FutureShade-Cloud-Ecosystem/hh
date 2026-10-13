@@ -6,10 +6,8 @@
 // state; the server stays the boundary, this only keeps a screen from
 // offering what the server will refuse.
 //
-// The frame's selector reads the Pro kit's catalogue (PRO-0's, not this app's),
-// so the mapping from its ids to this app's surfaces rides here too: the kit
-// names Board, Catalog, Quote studio and Projects for this app, and the quote
-// surface the core actually serves is the dealer's quotes.
+// The frame's selector reads the Pro kit's catalogue; its ids for this app are
+// this app's own top surfaces, so the mapping is the identity.
 import type { Capability } from "@hardscapehouse/pro-kit";
 
 export type SurfaceId = "today" | "board" | "projects" | "catalog" | "quotes" | "scope" | "product";
@@ -48,8 +46,8 @@ const CATALOGUE_ROUTES: Readonly<Record<string, SurfaceId>> = {
   board: "board",
   projects: "projects",
   catalog: "catalog",
-  // The kit catalogue names the ref's quote builder; the quotes surface the core serves is the dealer's.
-  "quote-studio": "quotes",
+  today: "today",
+  quotes: "quotes",
 };
 
 export function surfaceRouteFromCatalogue(catalogueId: string): { surface: SurfaceId } | null {
