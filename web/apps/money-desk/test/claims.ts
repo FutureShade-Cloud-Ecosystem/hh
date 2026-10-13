@@ -174,6 +174,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: OFFICE, test: "when the switch is not wired it is shown and cannot be changed" },
   ],
   "office-nsf-hold": [{ file: OFFICE, test: "a hold a returned payment placed names its payment and is lifted through the till's path" }],
+  "office-sweep": [{ file: OFFICE, test: "the credit sweep only reports while automatic holds are off, and places a hold once they are on" }],
   "office-dispatch": [{ file: OFFICE, test: "an invoice says whether its order may go out, and why not" }],
   "bankrec-area": [
     { file: BANKREC, test: "the controller's third area lists the accounts, what waits on each, and the cards as tracking only" },

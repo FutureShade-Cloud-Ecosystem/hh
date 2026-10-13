@@ -17,6 +17,7 @@ import { HeldKeys, newKey } from "./held-keys.js";
 import { canLiftHolds, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import { OfficeDesk, type OfficeHost } from "./office-desk.js";
+import { sweepWords } from "./office-logic.js";
 import {
   renderAccount,
   renderHolds,
@@ -928,7 +929,7 @@ export class ArDesk {
     const result = await this.#api.sweep();
     if (!result.ok) this.#fail("release-hold", result);
     else {
-      this.#notice = `The sweep checked ${result.value.evaluated} accounts and placed ${result.value.placed} ${result.value.placed === 1 ? "hold" : "holds"}.`;
+      this.#notice = sweepWords(result.value);
       await this.#reloadBook();
     }
     this.#host.repaint();

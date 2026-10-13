@@ -51,6 +51,7 @@ sink, so every screen says what would go and to which contact by its role label,
 | Automatic credit hold switch | `app/src/ar-console.ts` | `autoHoldLines`, `holdPanel` | Read as words with its thresholds read only; two presses and a reason; shown but not offered when the server says the switch is not wired |
 | Holds a returned payment placed, lifted by the till's path | `app/src/ar-console.ts` | `OfficeApi.releaseTillHold`, `placedBy` | The billing release refuses an NSF hold in the core's words, so the controller's Lift goes through the till's own route for one |
 | Dispatch gate read | `app/src/ar-console.ts` | `dispatchWords`, `renderInvoiceActions` | Asked from the invoice that names the order, answered in the server's reason |
+| Credit sweep: report or place | `app/src/ar-console.ts` | `sweepWords` | The sweep says it only reported (and how many it would hold) while automatic holds are off, instead of a flat "placed 0" |
 
 Not wired, with the reason: `billingRecordInvoicePayment` (one payment on one invoice: `paymentsApplyReceived` replaced it in round 3 and a second path to the
 same money is a way to take it twice), `billingTrackInvoiceOpened`, `billingTrackReminderOpen` and `billingTrackReminderClick` (public tracking pixels a

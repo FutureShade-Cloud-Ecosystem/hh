@@ -437,3 +437,26 @@ test("the dispatch gate says whether an order may go out, and why not, in the co
   assert.deepEqual(missing.json, { allowed: false, reason: "AR check unavailable: order not found" });
   assert.ok(coreSource.includes("AR check unavailable: order not found"));
 });
+
+// ---- the credit sweep -------------------------------------------------------------------------------------------------
+
+test("the credit sweep only reports while automatic holds are off, and places the holds once they are on", async () => {
+  await reset();
+  const list = await call("GET", "/api/v1/ar/credit-holds?status=ACTIVE");
+  await call("POST", `/api/v1/ar/credit-holds/${list.json.items[0].id}/release`, { reason: "Replacement cheque cleared" });
+  const report = await call("POST", "/api/v1/ar/credit-sweep");
+  assert.equal(report.status, 200);
+  holds("BillingEvaluationResult", report.json);
+  assert.equal(report.json.dry_run, true);
+  assert.equal(report.json.placed, 0);
+  assert.equal(report.json.would_hold, 1, "the account whose hold was lifted is still past the edge");
+  assert.equal((await call("GET", "/api/v1/ar/holds?status=ACTIVE")).json.items.length, 2, "a dry run places nothing");
+  await call("PUT", "/api/v1/ar/auto-hold", { enabled: true });
+  const placed = await call("POST", "/api/v1/ar/credit-sweep");
+  holds("BillingEvaluationResult", placed.json);
+  assert.deepEqual([placed.json.dry_run, placed.json.placed, placed.json.would_hold], [false, 1, 0]);
+  const after = await call("GET", "/api/v1/ar/holds?status=ACTIVE");
+  assert.equal(after.json.items.length, 3);
+  holds("BillingCreditHoldPage", after.json);
+  assert.equal((await call("POST", "/api/v1/ar/credit-sweep")).json.placed, 0, "an account already held is not held twice");
+});

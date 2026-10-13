@@ -438,3 +438,14 @@ export function dispatchWords(result: BillingDispatchGateResult, orderNo: string
   const reason = result.reason.trim();
   return `Order ${orderNo} is stopped: ${/[.!?]$/.test(reason) ? reason : `${reason}.`}`;
 }
+
+// ---- the credit sweep ------------------------------------------------------------------------------------------------
+
+import type { BillingEvaluationResult } from "@hardscapehouse/api-client";
+
+/** What a sweep did: it places holds only when automatic holds are on, and otherwise reports what it would hold. */
+export function sweepWords(r: BillingEvaluationResult): string {
+  const accounts = `${r.evaluated} ${r.evaluated === 1 ? "account" : "accounts"}`;
+  if (r.dry_run) return `The sweep checked ${accounts}. It would hold ${r.would_hold === 0 ? "none" : r.would_hold} and placed none, because automatic holds are off.`;
+  return `The sweep checked ${accounts} and placed ${r.placed} ${r.placed === 1 ? "hold" : "holds"}.`;
+}

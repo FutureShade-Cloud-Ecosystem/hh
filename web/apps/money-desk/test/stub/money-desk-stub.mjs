@@ -866,7 +866,22 @@ async function handle(req, res) {
   }
   if (method === "POST" && path === "/api/v1/ar/credit-sweep") {
     if (!isController(req)) return send(res, 403, { error: "Forbidden" });
-    return send(res, 200, { evaluated: ACCOUNTS.length, placed: 0, would_hold: 0, dry_run: false });
+    // The sweep (core credit_gate.go Evaluate): an account whose oldest open invoice is at the escalation edge and has no
+    // active hold would be held. While the automatic switch is off it only reports (dry_run, would_hold) and places nothing;
+    // with it on it places the hold.
+    const edge = officeWorld.policy().aging_escalate_days;
+    const due = ACCOUNTS.filter((a) => {
+      const open = world.invoices.filter((i) => i.acct === a.n && i.balance_cents > 0);
+      const aged = open.some((i) => i.late >= edge);
+      return aged && !world.holds.some((h) => h.status === "ACTIVE" && h.customer_id === custId(a.n));
+    });
+    const dry = !officeWorld.state().autoHold;
+    if (!dry) {
+      for (const a of due) {
+        world.holds.push({ id: uuid("d", 100 + world.holds.length), customer_id: custId(a.n), status: "ACTIVE", hold_kind: "AR_AGING", auto_placed: true, reason: `Receivables are more than ${edge} days past due`, created_at: NOW_ISO() });
+      }
+    }
+    return send(res, 200, { evaluated: ACCOUNTS.length, placed: dry ? 0 : due.length, would_hold: dry ? due.length : 0, dry_run: dry, ...(due.length === 0 ? {} : { customers: due.map((a) => custId(a.n)) }) });
   }
 
   if (method === "POST" && path === "/api/v1/ar/register/selection") {

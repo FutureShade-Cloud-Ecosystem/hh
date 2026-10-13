@@ -202,3 +202,16 @@ test("the dispatch gate reads as a yes or the server's reason", () => {
   assert.equal(dispatchWords({ allowed: false, reason: "ACCOUNT ON HOLD, a payment was returned; the office must clear this before delivery" }, "SO-2001"), "Order SO-2001 is stopped: ACCOUNT ON HOLD, a payment was returned; the office must clear this before delivery.");
   assert.equal(dispatchWords({ allowed: false, reason: "AR check unavailable: order not found" }, "SO-9"), "Order SO-9 is stopped: AR check unavailable: order not found.");
 });
+
+// ---- the credit sweep ------------------------------------------------------------------------------------------------
+
+import { sweepWords } from "../src/ar/office-logic.ts";
+
+test("the credit sweep says what it did, and when it only reported", () => {
+  assert.equal(sweepWords({ evaluated: 5, placed: 1, would_hold: 0, dry_run: false }), "The sweep checked 5 accounts and placed 1 hold.");
+  assert.equal(sweepWords({ evaluated: 5, placed: 2, would_hold: 0, dry_run: false }), "The sweep checked 5 accounts and placed 2 holds.");
+  assert.equal(sweepWords({ evaluated: 1, placed: 0, would_hold: 0, dry_run: false }), "The sweep checked 1 account and placed 0 holds.");
+  assert.equal(sweepWords({ evaluated: 5, placed: 0, would_hold: 1, dry_run: true }), "The sweep checked 5 accounts. It would hold 1 and placed none, because automatic holds are off.");
+  assert.equal(sweepWords({ evaluated: 5, placed: 0, would_hold: 3, dry_run: true }), "The sweep checked 5 accounts. It would hold 3 and placed none, because automatic holds are off.");
+  assert.equal(sweepWords({ evaluated: 5, placed: 0, would_hold: 0, dry_run: true }), "The sweep checked 5 accounts. It would hold none and placed none, because automatic holds are off.");
+});

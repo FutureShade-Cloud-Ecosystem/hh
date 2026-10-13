@@ -479,3 +479,24 @@ test("on a phone the settings fit the screen and work from the keyboard", async 
   await page.keyboard.press("Tab");
   await expect(page.locator("[data-field='set-escalate']")).toBeFocused();
 });
+
+test("the credit sweep only reports while automatic holds are off, and places a hold once they are on", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openTab(page, "Credit holds");
+  await page.locator("[data-hold-row]", { hasText: "Granite" }).getByRole("button", { name: "Lift..." }).click();
+  await page.locator("[data-field='release-reason']").fill("Replacement cheque cleared");
+  await page.getByRole("button", { name: "Lift hold" }).click();
+  await expect(page.locator("[data-hold-row]")).toHaveCount(2);
+  await page.getByRole("button", { name: "Run the sweep" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("The sweep checked 5 accounts. It would hold 1 and placed none, because automatic holds are off.");
+  await expect(page.locator("[data-hold-row]")).toHaveCount(2);
+  await openTab(page, "Settings");
+  await page.getByRole("button", { name: "Turn automatic holds on" }).click();
+  await page.getByRole("button", { name: "Turn on", exact: true }).click();
+  await expect(page.locator("[data-hold-state]")).toHaveText("On");
+  await openTab(page, "Credit holds");
+  await page.getByRole("button", { name: "Run the sweep" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("The sweep checked 5 accounts and placed 1 hold.");
+  await expect(page.locator("[data-hold-row]")).toHaveCount(3);
+  await expect(page.locator("[data-hold-row]", { hasText: "Granite" })).toContainText("auto");
+});
