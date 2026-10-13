@@ -32,11 +32,10 @@ import (
 // TestHouseZone_EveryCopyInTheBackendNamesTheSameZone) still enumerates this constant as a default.
 const arAgingZone = "America/Toronto"
 
-// houseDaySQL is the Ontario day expression the v_ar_aging VIEW carries (migration 0376). A view
-// cannot receive a bound parameter, so the view's day is still America/Toronto's whatever the dealer's
-// zone: finstmt's and reporting's AR aging read it, and moving it needs a forward migration that reads
-// the dealer's zone from the settings table (reported as remaining, slice 3). Everything billing reads
-// itself takes the dealer's zone as a bind parameter (houseDaySQLAt).
+// houseDaySQL is the Ontario day expression, kept for tests that seed relative to the Ontario day. The
+// v_ar_aging view no longer carries it: migration 0394 reads the dealer's zone through settings'
+// settings_business_zone(), so finstmt's and reporting's AR aging name the same day as everything billing
+// reads itself, which takes the dealer's zone as a bind parameter (houseDaySQLAt).
 const houseDaySQL = `(now() AT TIME ZONE '` + arAgingZone + `')::date`
 
 // houseDaySQLAt is the ONE expression every SQL-side aging computation derives the dealer's day
