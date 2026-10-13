@@ -1,4 +1,5 @@
 //! Shared core of the HH shells.
+pub mod auth;
 pub mod console;
 pub mod custody;
 #[cfg(feature = "probe")]

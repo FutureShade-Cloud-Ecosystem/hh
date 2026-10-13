@@ -1737,6 +1737,7 @@ name = "hh-field"
 version = "0.0.1"
 dependencies = [
  "hh-shell-core",
+ "serde",
  "serde_json",
  "tauri",
  "tauri-build",

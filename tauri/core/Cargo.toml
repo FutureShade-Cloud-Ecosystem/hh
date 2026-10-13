@@ -33,6 +33,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 webpki-roots = "1"
 # Secret values (the session secret, a JWT, the core token) are wiped on drop.
 zeroize = "1"
+# spawn_blocking for custody calls and the sign out time bound; Tauri runs on this runtime.
+tokio = { version = "1", default-features = false, features = ["rt", "time"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "time"] }

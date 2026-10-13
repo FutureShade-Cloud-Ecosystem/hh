@@ -164,7 +164,7 @@ const MAX_PASSWORD: usize = 256;
 const EXCHANGE_PATH: &str = "/api/v1/auth/exchange";
 
 /// The core's org slug shape (`orgSlugPattern` in the core's authz middleware).
-fn org_ok(org: &str) -> bool {
+pub fn org_ok(org: &str) -> bool {
     let b = org.as_bytes();
     (1..=32).contains(&b.len())
         && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())

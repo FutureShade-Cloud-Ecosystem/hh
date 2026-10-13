@@ -148,15 +148,22 @@ pub fn platform_custody() -> Box<dyn Custody> {
 pub struct MemoryCustody {
     entries: Mutex<HashMap<Address, String>>,
     available: bool,
+    writes_fail: bool,
 }
 
 impl MemoryCustody {
     pub fn new() -> Self {
-        Self { entries: Mutex::new(HashMap::new()), available: true }
+        Self { entries: Mutex::new(HashMap::new()), available: true, writes_fail: false }
     }
 
     pub fn unavailable() -> Self {
-        Self { entries: Mutex::new(HashMap::new()), available: false }
+        Self { entries: Mutex::new(HashMap::new()), available: false, writes_fail: false }
+    }
+
+    /// Reads and deletes work, `set` fails closed (a keychain that locked
+    /// between the read and the write).
+    pub fn writes_fail() -> Self {
+        Self { entries: Mutex::new(HashMap::new()), available: true, writes_fail: true }
     }
 
     /// How many entries are held (tests assert a failed write stored nothing).
@@ -187,6 +194,9 @@ impl Custody for MemoryCustody {
 
     fn set(&self, address: &Address, value: &str) -> Result<(), CustodyError> {
         self.check()?;
+        if self.writes_fail {
+            return Err(CustodyError::KeychainUnavailable);
+        }
         self.entries.lock().expect("custody fake lock").insert(address.clone(), value.to_string());
         Ok(())
     }

@@ -1,3 +1,5 @@
+mod auth;
+
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 #[cfg(feature = "probe")]
@@ -139,15 +141,29 @@ pub fn run() {
             keychain_delete,
             probe_report,
             run_statement,
-            run_atomic
+            run_atomic,
+            auth::auth_sign_in,
+            auth::auth_resume,
+            auth::auth_exchange,
+            auth::auth_sign_out
         ]);
     #[cfg(not(feature = "probe"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![run_statement, run_atomic]);
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        run_statement,
+        run_atomic,
+        auth::auth_sign_in,
+        auth::auth_resume,
+        auth::auth_exchange,
+        auth::auth_sign_out
+    ]);
     builder
         .setup(|app| {
             let profile = profiles::field();
             println!("HH_PROFILE {}", profile_line(&app.config().plugins));
             app.manage(open_store(app.handle()).expect("the profile's store opens"));
+            // The sign in commands' state: custody and the Console client, built
+            // from the profile's fixed configuration (never the webview's).
+            app.manage(auth::AuthState::for_profile());
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title(profile.window.title)
                 .inner_size(profile.window.width, profile.window.height);
@@ -296,5 +312,70 @@ mod tests {
             MANIFEST.contains("Field only"),
             "the manifest still carries the permission rationale"
         );
+    }
+
+    // ---- item 7: the four auth commands -----------------------------------
+
+    const AUTH_COMMANDS: [&str; 4] = ["auth_sign_in", "auth_resume", "auth_exchange", "auth_sign_out"];
+    const AUTH_PERMISSIONS: [&str; 4] =
+        ["allow-auth-sign-in", "allow-auth-resume", "allow-auth-exchange", "allow-auth-sign-out"];
+    const AUTH_SOURCE: &str = include_str!("auth.rs");
+
+    #[test]
+    fn the_auth_commands_are_allowed_by_name_to_the_bundled_local_origin_only() {
+        let cap: serde_json::Value = serde_json::from_str(CAPABILITY).expect("the capability parses");
+        let perms: Vec<&str> = cap["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+        for name in AUTH_PERMISSIONS {
+            assert!(perms.contains(&name), "{name} is allowed by name");
+        }
+        // No wildcard or whole-set grant of the app's commands.
+        assert!(perms.iter().all(|p| !p.contains('*')), "no wildcard permission");
+        // Local only: a capability with a `remote` block reaches remote URLs;
+        // `local: false` would drop the bundled origin. Neither is present.
+        assert!(cap.get("remote").is_none(), "the default capability names no remote URL");
+        assert!(cap.get("local").is_none_or(|l| l == &serde_json::json!(true)));
+        assert_eq!(cap["windows"], serde_json::json!(["main"]), "the main window only");
+        assert!(cap.get("webviews").is_none(), "no extra webview is granted");
+        // The shell never opens remote domain IPC.
+        assert!(!TAURI_CONF.contains("dangerousRemoteDomainIpcAccess"));
+        // The probe capability, which is not in a normal build, grants none of them.
+        const PROBE_CAPABILITY: &str = include_str!("../capabilities-probe/probe.json");
+        assert!(!PROBE_CAPABILITY.contains("auth"), "the probe capability grants no auth command");
+    }
+
+    #[cfg(not(feature = "probe"))]
+    #[test]
+    fn the_auth_commands_are_declared_in_the_built_acl_manifest() {
+        for name in AUTH_COMMANDS {
+            assert!(BUILT_ACL_MANIFEST.contains(name), "{name} is declared in the ACL manifest");
+        }
+        for name in AUTH_PERMISSIONS {
+            assert!(BUILT_CAPABILITIES.contains(name), "{name} is granted in the merged capabilities");
+        }
+    }
+
+    #[test]
+    fn no_auth_command_takes_an_endpoint_a_project_or_a_core_url() {
+        // AUTH-SHELL-CONTRACT r6, "Commands are fenced": those three values
+        // are fixed in the Rust profile, never an argument. Read every
+        // command signature in the auth module.
+        let production = AUTH_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let mut commands = 0;
+        for chunk in production.split("#[tauri::command]").skip(1) {
+            commands += 1;
+            let signature = chunk.split("{").next().unwrap().to_ascii_lowercase();
+            for banned in ["endpoint", "project", "core_url", "url", "jwt", "secret", "token"] {
+                assert!(!signature.contains(banned), "a command signature mentions {banned}: {signature}");
+            }
+        }
+        assert_eq!(commands, 4, "exactly the four contract commands");
+    }
+
+    #[test]
+    fn the_auth_module_prints_and_logs_nothing() {
+        let production = AUTH_SOURCE.split("#[cfg(test)]").next().unwrap();
+        for banned in ["println!", "eprintln!", "print!(", "dbg!", "log::", "tracing::", "info!(", "warn!(", "error!("] {
+            assert!(!production.contains(banned), "auth.rs contains {banned}");
+        }
     }
 }
