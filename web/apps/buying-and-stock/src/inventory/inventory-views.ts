@@ -189,7 +189,7 @@ function invTabs(model: InvModel): TemplateResult {
 }
 
 function catalogueOptions(model: InvModel): TemplateResult[] {
-  return model.catalogue.map((p) => html`<option value=${p.id}>${p.sku} ${p.name}</option>`);
+  return model.catalogue.map((p) => html`<option data-value=${p.id}>${p.sku} ${p.name}</option>`);
 }
 
 // ---- the lookup ------------------------------------------------------------------------------------
@@ -512,7 +512,7 @@ function reservationsPane(model: InvModel): TemplateResult {
         </label>
         <label>Branch
           <select data-field="res-branch">
-            ${[...model.branchNames.entries()].map(([id, name]) => html`<option value=${id}>${name}</option>`)}
+            ${[...model.branchNames.entries()].map(([id, name]) => html`<option data-value=${id}>${name}</option>`)}
           </select>
         </label>
         <label class="narrow">Quantity
@@ -626,12 +626,12 @@ function transfersPane(model: InvModel): TemplateResult {
       <div class="forms">
         <label>From
           <select data-field="tr-from">
-            ${[...model.branchNames.entries()].map(([id, name]) => html`<option value=${id}>${name}</option>`)}
+            ${[...model.branchNames.entries()].map(([id, name]) => html`<option data-value=${id}>${name}</option>`)}
           </select>
         </label>
         <label>To
           <select data-field="tr-to">
-            ${[...model.branchNames.entries()].map(([id, name]) => html`<option value=${id}>${name}</option>`)}
+            ${[...model.branchNames.entries()].map(([id, name]) => html`<option data-value=${id}>${name}</option>`)}
           </select>
         </label>
         <label>Product
@@ -785,7 +785,7 @@ function replenishPane(model: InvModel): TemplateResult {
         <div class="forms">
           <label>Yard
             <select data-field="bootstrap-branch">
-              ${[...model.branchNames.entries()].map(([id, name]) => html`<option value=${id}>${name}</option>`)}
+              ${[...model.branchNames.entries()].map(([id, name]) => html`<option data-value=${id}>${name}</option>`)}
             </select>
           </label>
           <button type="button" class="btn btn-secondary small-btn" data-action="bootstrap-points" ?disabled=${model.busy}>Open a line for every stocked product</button>

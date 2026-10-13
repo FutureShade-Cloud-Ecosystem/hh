@@ -45,6 +45,20 @@ const AREAS = [
 
 type AreaId = (typeof AREAS)[number]["id"];
 
+/**
+ * A field's value as the desks read it. An option's value cannot be bound (the
+ * design system's rule), so a select whose options carry the id in data-value
+ * answers that id; every other field answers its own value.
+ */
+function fieldValue(el: HTMLInputElement | HTMLSelectElement | null): string {
+  if (el === null) return "";
+  if (el instanceof HTMLSelectElement) {
+    const chosen = el.selectedOptions[0]?.getAttribute("data-value");
+    if (chosen !== null && chosen !== undefined) return chosen;
+  }
+  return el.value;
+}
+
 export class BuyingAndStockApp extends HHElement {
   static styles = [baseStyles, entryStyles, poStyles, areaStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
@@ -88,7 +102,7 @@ export class BuyingAndStockApp extends HHElement {
   #newDesk(): PoDesk {
     return new PoDesk(new PoApi(this.#staffClient), {
       repaint: () => this.requestUpdate(),
-      field: (name) => this.#fieldElement(name)?.value ?? "",
+      field: (name) => fieldValue(this.#fieldElement(name)),
     });
   }
 
@@ -103,7 +117,7 @@ export class BuyingAndStockApp extends HHElement {
   #newInventoryDesk(): InventoryDesk {
     return new InventoryDesk(new InventoryApi(this.#staffClient), {
       repaint: () => this.requestUpdate(),
-      field: (name) => this.#fieldElement(name)?.value ?? "",
+      field: (name) => fieldValue(this.#fieldElement(name)),
       seat: this.#seat(),
     });
   }
@@ -113,7 +127,7 @@ export class BuyingAndStockApp extends HHElement {
       repaint: () => this.requestUpdate(),
       field: (name, key) => {
         const scope = key === undefined ? "" : `[data-key="${key}"]`;
-        return this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]${scope}`)?.value ?? "";
+        return fieldValue(this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]${scope}`));
       },
       seat: this.#seat(),
     });

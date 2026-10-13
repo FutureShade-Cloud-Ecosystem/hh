@@ -138,7 +138,7 @@ function sheetsPane(model: CountsModel): TemplateResult {
       <div class="forms">
         <label>Branch
           <select data-field="sheet-branch">
-            ${[...model.branchNames.entries()].map(([id, name]) => html`<option value=${id}>${name}</option>`)}
+            ${[...model.branchNames.entries()].map(([id, name]) => html`<option data-value=${id}>${name}</option>`)}
           </select>
         </label>
         <label>Scope
@@ -180,7 +180,7 @@ function lineRow(model: CountsModel, line: InvCountLine): TemplateResult {
         ${editable && needsReason
           ? html`<select data-field="reason" data-key=${line.id}>
               <option value="">Pick a reason</option>
-              ${model.reasons.map((r) => html`<option value=${r.code}>${r.code}</option>`)}
+              ${model.reasons.map((r) => html`<option>${r.code}</option>`)}
             </select>`
           : html`<span class="code">${line.reason_code ?? ""}</span>`}
       </td>
@@ -198,7 +198,7 @@ function entryPane(model: CountsModel): TemplateResult {
         <h3>Count entry</h3>
       ${state === "freeze"
         ? html`<span class="dim">Freeze the snapshot on-hand basis to begin counting.</span>`
-        : html`<label class="check"><input type="checkbox" data-action="toggle-blind" ?checked=${model.blind} /> Blind count (hide book on-hand)</label>`}
+        : html`<label class="check">${model.blind ? html`<input type="checkbox" data-action="toggle-blind" checked />` : html`<input type="checkbox" data-action="toggle-blind" />`} Blind count (hide book on-hand)</label>`}
       </div>
       ${state === "freeze"
         ? html`<div class="actions">
@@ -376,7 +376,7 @@ function reconPane(model: CountsModel): TemplateResult {
         <div class="forms">
           <label>Branch
             <select data-field="recon-branch">
-              ${[...model.branchNames.entries()].map(([id, name]) => html`<option value=${id}>${name}</option>`)}
+              ${[...model.branchNames.entries()].map(([id, name]) => html`<option data-value=${id}>${name}</option>`)}
             </select>
           </label>
           <button type="button" class="btn btn-secondary small-btn" data-action="recon-run" ?disabled=${model.busy || model.reconBusy}>Run the tie-out</button>
