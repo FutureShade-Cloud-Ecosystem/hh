@@ -8,12 +8,13 @@
 // the authenticated carriers (TenantLoginResponse and
 // TenantRefreshResponse, whose config is TenantConfig).
 //
-// The served values mirror the ERP antecedent exactly: a static dealer
-// stub (portal/handler.go config over model.go defaultConfig at the
-// pinned carry commit), which is also the recorded fixture capture
-// (core/api/fixtures-live/config.json). A real dealer config service is a
-// later mission; until it lands this handler is the route's home, and the
-// tenant module carry re-homes it.
+// The served shape mirrors the ERP antecedent (portal/handler.go config
+// over model.go defaultConfig at the pinned carry commit, recorded in
+// core/api/fixtures-live/config.json), but not its values: the antecedent
+// served its first dealer's identity, and the default here carries no
+// dealer's name. A real dealer config service is a later mission; until it
+// lands this handler is the route's home, serving the config it is
+// constructed over, and the tenant module carry re-homes it.
 package tenantconfig
 
 import (
@@ -39,16 +40,20 @@ func New(config apigen.TenantPublicConfig) *Handler {
 	return &Handler{config: config}
 }
 
-// Default is the dealer stub carry: the same six field values the ERP
-// antecedent served from its own defaultConfig, matching the recorded
-// fixture capture for this route byte for byte in meaning.
+// Default is the config of no dealer: the same six fields the ERP
+// antecedent served, with no dealer's name, logo, colour or support line in
+// them. The antecedent's stub served its first dealer's identity; this
+// route must never show one dealer's name on another's box (decision log
+// row 1592), so a dealer's name and brand come from the dealer's own
+// configuration through New, the demo's from the demo seed. The id is the
+// neutral key "default".
 func Default() apigen.TenantPublicConfig {
 	return apigen.TenantPublicConfig{
-		Id:           "dibbits",
-		DealerName:   "Dibbits Landscape Supply",
+		Id:           "default",
+		DealerName:   "",
 		LogoUrl:      "",
-		PrimaryColor: "#E8A74E",
-		SupportEmail: "support@dibbits.example",
+		PrimaryColor: "",
+		SupportEmail: "",
 		SupportPhone: "",
 	}
 }

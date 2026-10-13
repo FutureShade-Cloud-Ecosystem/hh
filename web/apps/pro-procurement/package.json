@@ -1,0 +1,27 @@
+{
+  "name": "@hardscapehouse/pro-procurement",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pro Procurement Board: a Pro contractor app on the Pro kit (TenantSession seam, Pro frame, tenant client). Lit 3, Vite, TypeScript, typecheck and test scripts.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/sinks.test.mjs test/unit.test.mjs test/today.test.mjs test/board.test.mjs test/scope.test.mjs test/catalog.test.mjs test/quotes.test.mjs test/reorder.test.mjs test/projects.test.mjs test/failures.test.mjs && playwright test && playwright test -c test/acceptance.config.ts",
+    "test:acceptance": "playwright test --config test/acceptance.config.ts"
+  },
+  "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
+    "@hardscapehouse/auth": "0.0.0",
+    "@hardscapehouse/design-system": "0.0.0",
+    "@hardscapehouse/pro-kit": "0.0.0",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
+  }
+}

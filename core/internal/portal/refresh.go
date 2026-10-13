@@ -92,7 +92,7 @@ func (s *Service) Refresh(ctx context.Context, token string) (RefreshResponse, e
 	return RefreshResponse{
 		Token:            fresh,
 		User:             u,
-		Config:           defaultConfig(),
+		Config:           s.dealerConfig(),
 		ExpiresAt:        now.Add(jwtTTL).UTC(),
 		SessionExpiresAt: claims.sessionExpiry().UTC(),
 	}, nil
