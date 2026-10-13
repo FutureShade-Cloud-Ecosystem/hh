@@ -33,6 +33,7 @@ import {
 import type {
   CreatedRef,
   FloorPreview,
+  OverrideRow,
   PolicyRow,
   PolicyWrite,
   PricingApi,
@@ -40,7 +41,7 @@ import type {
   RuleRow,
   StatusResult,
 } from "./pricing-api.js";
-import type { PricingRulePatch, PricingRuleWrite } from "@hardscapehouse/api-client";
+import type { PricingOverrideWrite, PricingRulePatch, PricingRuleWrite } from "@hardscapehouse/api-client";
 
 /** What the controller calls; the real PricingApi satisfies it structurally. */
 export interface PricingDoor {
@@ -55,6 +56,13 @@ export interface PricingDoor {
   createRule(body: PricingRuleWrite): Promise<{ ok: true; value: CreatedRef } | { ok: false; error: string; status?: number }>;
   updateRule(id: string, body: PricingRulePatch): Promise<{ ok: true; value: RuleRow } | { ok: false; error: string; status?: number }>;
   deleteRule(id: string, opts: { version: number }): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
+  overrides(customerId: string): Promise<{ ok: true; value: readonly OverrideRow[] } | { ok: false; error: string; status?: number }>;
+  createOverride(
+    customerId: string,
+    body: PricingOverrideWrite,
+  ): Promise<{ ok: true; value: CreatedRef } | { ok: false; error: string; status?: number }>;
+  updateOverride(id: string, body: PricingOverrideWrite): Promise<{ ok: true; value: OverrideRow } | { ok: false; error: string; status?: number }>;
+  deleteOverride(id: string, opts: { version: number }): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
   previewFloor(body: PricingFloorPreviewRequest): Promise<
     { ok: true; value: FloorPreview } | { ok: false; error: string; status?: number }
   >;
@@ -145,6 +153,36 @@ export interface RulesModel {
   readonly confirmingId: string;
 }
 
+/** The override editor's own words, as the person last left them. */
+export interface OverrideEdit {
+  /** Empty on a create; the override's id on an edit. */
+  readonly id: string;
+  readonly version: number;
+  readonly categoryId: string;
+  readonly calc: string;
+  readonly discountInput: string;
+  readonly markupInput: string;
+  readonly priceUom: string;
+  readonly notes: string;
+}
+
+export interface CustomersModel {
+  readonly phase: LoadPhase;
+  /** The customer id as typed; the load answers exactly this id. */
+  readonly customerIdInput: string;
+  /** The customer the rows belong to, captured when the load started. */
+  readonly loadedFor: string;
+  readonly rows: readonly OverrideRow[];
+  readonly error: string;
+  readonly editing: OverrideEdit | null;
+  readonly busy: boolean;
+  readonly formError: string;
+  readonly notice: string;
+  readonly floor: FloorPanel | null;
+  /** The row whose delete button was tapped once and is waiting for the yes. */
+  readonly confirmingId: string;
+}
+
 export interface PricingModel {
   readonly tab: PricingTab["id"];
   /** The categories catalog: every tab's picker names. */
@@ -152,6 +190,7 @@ export interface PricingModel {
   readonly categoriesPhase: LoadPhase;
   readonly margin: MarginModel;
   readonly rules: RulesModel;
+  readonly customers: CustomersModel;
 }
 
 function emptyMargin(): MarginModel {
@@ -173,6 +212,24 @@ function emptyRules(): RulesModel {
   };
 }
 
+function emptyCustomers(): CustomersModel {
+  return {
+    // Ready from the start: the tab is a typed question, and before a
+    // customer is named it says so rather than loading.
+    phase: "ready",
+    customerIdInput: "",
+    loadedFor: "",
+    rows: [],
+    error: "",
+    editing: null,
+    busy: false,
+    formError: "",
+    notice: "",
+    floor: null,
+    confirmingId: "",
+  };
+}
+
 function emptyModel(): PricingModel {
   return {
     tab: "margin",
@@ -180,6 +237,7 @@ function emptyModel(): PricingModel {
     categoriesPhase: "idle",
     margin: emptyMargin(),
     rules: emptyRules(),
+    customers: emptyCustomers(),
   };
 }
 
@@ -224,6 +282,10 @@ export class PricingController {
 
   #setRules(patch: Partial<RulesModel>): void {
     this.#set({ rules: { ...this.model.rules, ...patch } });
+  }
+
+  #setCustomers(patch: Partial<CustomersModel>): void {
+    this.#set({ customers: { ...this.model.customers, ...patch } });
   }
 
   /** The app opens the surface: the categories once, then the open tab's group. */
@@ -294,6 +356,16 @@ export class PricingController {
       const key = text_[field];
       if (key !== undefined) this.#setRules({ editing: { ...rule, [key]: value } });
     }
+    const override = this.model.customers.editing;
+    if (override !== null) {
+      if (field === "cust-discount") this.#setCustomers({ editing: { ...override, discountInput: value } });
+      if (field === "cust-markup") this.#setCustomers({ editing: { ...override, markupInput: value } });
+      if (field === "cust-uom") this.#setCustomers({ editing: { ...override, priceUom: value } });
+      if (field === "cust-notes") this.#setCustomers({ editing: { ...override, notes: value } });
+    }
+    if (field === "cust-id" && this.model.customers.editing === null) {
+      this.#setCustomers({ customerIdInput: value });
+    }
   }
 
   /** A select or checkbox answered: the category (by its picker name), or the enforcement flag. */
@@ -319,6 +391,14 @@ export class PricingController {
     }
     if (field === "rules-scope") this.#setRules({ filters: { ...this.model.rules.filters, scope: value } });
     if (field === "rules-type") this.#setRules({ filters: { ...this.model.rules.filters, customerType: value } });
+    const override = this.model.customers.editing;
+    if (override !== null) {
+      if (field === "cust-category") {
+        const hit = this.model.categories.find((c) => c.name === value);
+        this.#setCustomers({ editing: { ...override, categoryId: value === "" || hit !== undefined ? (hit?.id ?? "") : override.categoryId } });
+      }
+      if (field === "cust-calc") this.#setCustomers({ editing: { ...override, calc: value } });
+    }
   }
 
   /**
@@ -386,9 +466,30 @@ export class PricingController {
         return this.model.rules.filters.scope;
       case "rules-type":
         return this.model.rules.filters.customerType;
+      case "cust-id":
+        return this.model.customers.customerIdInput;
+      case "cust-category":
+        return this.#overrideField("categoryId") === ""
+          ? ""
+          : categoryName(this.#overrideField("categoryId"), this.model.categories);
+      case "cust-calc":
+        return this.#overrideField("calc");
+      case "cust-discount":
+        return this.#overrideField("discountInput");
+      case "cust-markup":
+        return this.#overrideField("markupInput");
+      case "cust-uom":
+        return this.#overrideField("priceUom");
+      case "cust-notes":
+        return this.#overrideField("notes");
       default:
         return "";
     }
+  }
+
+  /** One override editor field, or the empty word when no editor is open. */
+  #overrideField(key: "categoryId" | "calc" | "discountInput" | "markupInput" | "priceUom" | "notes"): string {
+    return this.model.customers.editing?.[key] ?? "";
   }
 
   async click(action: string, attrs: Readonly<Record<string, string>>): Promise<void> {
@@ -447,6 +548,28 @@ export class PricingController {
         return;
       case "pr-rule-retire":
         await this.#retireRule(attrs.id ?? "");
+        return;
+      // -- the customer prices tab --
+      case "pr-cust-load":
+        await this.loadOverrides();
+        return;
+      case "pr-cust-edit":
+        this.#openOverrideEditor(attrs.id ?? "");
+        return;
+      case "pr-cust-cancel":
+        this.#setCustomers({ editing: null, floor: null, formError: "" });
+        return;
+      case "pr-cust-review":
+        this.#setCustomers({ floor: null });
+        return;
+      case "pr-cust-save":
+        await this.#saveOverride();
+        return;
+      case "pr-cust-confirm":
+        await this.#confirmOverride();
+        return;
+      case "pr-cust-del":
+        await this.#deleteOverride(attrs.id ?? "");
         return;
       default:
     }
@@ -788,6 +911,201 @@ export class PricingController {
     }
     this.#setRules({ busy: false, notice: "Retired. The rule stays in the pricing log." });
     await this.loadRules();
+  }
+
+  // -- the customer prices tab -------------------------------------------------------------------------
+
+  async loadOverrides(): Promise<void> {
+    const customerId = this.model.customers.customerIdInput.trim();
+    if (customerId === "") {
+      this.#setCustomers({ phase: "ready", rows: [], loadedFor: "", error: "", editing: null, floor: null });
+      return;
+    }
+    this.#setCustomers({ ...emptyCustomers(), customerIdInput: this.model.customers.customerIdInput, notice: this.model.customers.notice });
+    // A read or a write belongs to the customer it began for: the id is
+    // captured when the load starts, and an answer that comes back after the
+    // field moved is dropped, never shown under the new name.
+    const asked = customerId;
+    const result = await this.#door.overrides(customerId);
+    if (this.model.customers.customerIdInput.trim() !== asked) return;
+    if (!result.ok) {
+      this.#setCustomers({
+        phase: result.status === 403 ? "refused" : "error",
+        loadedFor: asked,
+        error: pricingRefusalWords(result.error, result.status, "read"),
+      });
+      return;
+    }
+    this.#setCustomers({ phase: "ready", rows: result.value, loadedFor: asked });
+  }
+
+  #openOverrideEditor(id: string): void {
+    const row = id === "" ? undefined : this.model.customers.rows.find((r) => r.id === id);
+    this.#setCustomers({
+      editing: {
+        id: row?.id ?? "",
+        version: row?.version ?? 0,
+        categoryId: row?.category_id ?? "",
+        calc: row?.calc_type ?? "",
+        discountInput: row?.discount_bps !== null && row?.discount_bps !== undefined ? (row.discount_bps / 100).toString() : "",
+        markupInput: row?.markup_bps !== null && row?.markup_bps !== undefined ? (row.markup_bps / 100).toString() : "",
+        priceUom: row?.price_uom ?? "",
+        notes: row?.notes ?? "",
+      },
+      floor: null,
+      formError: "",
+      notice: "",
+    });
+  }
+
+  #overrideWrite(): { write: PricingOverrideWrite | null; error: string } {
+    const editing = this.model.customers.editing;
+    if (editing === null) return { write: null, error: "" };
+    if (editing.calc === "PCT_OFF_LIST") {
+      const bps = bpsFromPctInput(editing.discountInput);
+      if (bps === null) return { write: null, error: "Enter the discount as a percent, like 8." };
+      return {
+        write: {
+          category_id: editing.categoryId,
+          calc_type: editing.calc,
+          price_cents: null,
+          discount_bps: bps,
+          markup_bps: null,
+          price_uom: editing.priceUom.trim(),
+          notes: editing.notes,
+          version: editing.version,
+        },
+        error: "",
+      };
+    }
+    if (editing.calc === "MARKUP_ON_COST") {
+      const bps = bpsFromPctInput(editing.markupInput);
+      if (bps === null) return { write: null, error: "Enter the markup as a percent, like 12." };
+      return {
+        write: {
+          category_id: editing.categoryId,
+          calc_type: editing.calc,
+          price_cents: null,
+          discount_bps: null,
+          markup_bps: bps,
+          price_uom: editing.priceUom.trim(),
+          notes: editing.notes,
+          version: editing.version,
+        },
+        error: "",
+      };
+    }
+    return { write: null, error: "Choose what the price does: a percent off list, or a markup on cost." };
+  }
+
+  async #saveOverride(): Promise<void> {
+    const editing = this.model.customers.editing;
+    if (editing === null || this.model.customers.busy) return;
+    if (editing.categoryId === "") {
+      this.#setCustomers({ formError: "Choose the category this price names." });
+      return;
+    }
+    const { write, error } = this.#overrideWrite();
+    if (error !== "" || write === null) {
+      this.#setCustomers({ formError: error });
+      return;
+    }
+    const customerId = this.model.customers.loadedFor;
+    this.#setCustomers({ busy: true, formError: "" });
+    const preview = await this.#door.previewFloor({
+      kind: "override",
+      customer_id: customerId,
+      ...(editing.id !== "" ? { id: editing.id } : {}),
+      override: write,
+    });
+    if (!preview.ok) {
+      this.#setCustomers({ busy: false, formError: pricingWriteError(preview.error, preview.status) });
+      return;
+    }
+    if (needsFloorConfirm(preview.value)) {
+      this.#setCustomers({
+        busy: false,
+        floor: {
+          items: affectedFloorItems(preview.value),
+          notes: floorNoteLines(preview.value),
+          productIds: shownProductIds(preview.value),
+          busy: false,
+        },
+      });
+      return;
+    }
+    await this.#writeOverride(customerId, write);
+  }
+
+  async #confirmOverride(): Promise<void> {
+    const editing = this.model.customers.editing;
+    const floor = this.model.customers.floor;
+    if (editing === null || floor === null || floor.busy || this.model.customers.busy) return;
+    const { write, error } = this.#overrideWrite();
+    if (error !== "" || write === null) {
+      this.#setCustomers({ formError: error });
+      return;
+    }
+    this.#setCustomers({ floor: { ...floor, busy: true } });
+    await this.#writeOverride(this.model.customers.loadedFor, write, floor.productIds);
+  }
+
+  async #writeOverride(customerId: string, write: PricingOverrideWrite, productIds: readonly string[] = []): Promise<void> {
+    const editing = this.model.customers.editing;
+    if (editing === null) return;
+    let entityId = editing.id;
+    if (editing.id === "") {
+      const created = await this.#door.createOverride(customerId, write);
+      if (!created.ok) {
+        this.#setCustomers({ busy: false, floor: null, formError: pricingWriteError(created.error, created.status) });
+        return;
+      }
+      entityId = created.value.id;
+    } else {
+      const updated = await this.#door.updateOverride(editing.id, write);
+      if (!updated.ok) {
+        this.#setCustomers({ busy: false, floor: this.model.customers.floor === null ? null : { ...this.model.customers.floor, busy: false }, formError: pricingWriteError(updated.error, updated.status) });
+        return;
+      }
+    }
+    if (productIds.length > 0) {
+      const logged = await this.#door.confirmFloor({
+        entity_type: "customer_override",
+        entity_id: entityId,
+        product_ids: productIds,
+      });
+      this.#setCustomers({
+        busy: false,
+        editing: null,
+        floor: null,
+        notice: logged.ok ? floorConfirmVerdict(logged.value) : floorConfirmVerdict(null),
+      });
+    } else {
+      this.#setCustomers({ busy: false, editing: null, floor: null, notice: "Saved." });
+    }
+    await this.loadOverrides();
+  }
+
+  /** Delete is two taps: the first asks, the second carries the row's version. */
+  async #deleteOverride(id: string): Promise<void> {
+    if (id === "" || this.model.customers.busy) return;
+    if (this.model.customers.confirmingId !== id) {
+      this.#setCustomers({ confirmingId: id });
+      return;
+    }
+    const row = this.model.customers.rows.find((r) => r.id === id);
+    if (row === undefined) {
+      this.#setCustomers({ confirmingId: "" });
+      return;
+    }
+    this.#setCustomers({ busy: true, confirmingId: "" });
+    const result = await this.#door.deleteOverride(id, { version: row.version });
+    if (!result.ok) {
+      this.#setCustomers({ busy: false, formError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setCustomers({ busy: false, notice: "Deleted. The account prices by its tier rules again." });
+    await this.loadOverrides();
   }
 }
 

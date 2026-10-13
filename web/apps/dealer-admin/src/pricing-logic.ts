@@ -493,3 +493,35 @@ function dayWords(iso: string): string {
   if (Number.isNaN(d.getTime())) return "";
   return iso.slice(0, 10);
 }
+
+// -- the customer prices tab: two different empties, a value in its unit --------------------------------
+
+/**
+ * The overrides tab's two empties are different sentences (the original's
+ * own DIB-425 rule): no customer has been asked about is not a customer
+ * with no prices.
+ */
+export function overrideEmptyWords(asked: boolean): string {
+  if (!asked) {
+    return "Type a customer id and load their prices. The customer's own category prices ride over the tier rules for that account alone; an account with none is a system account and prices by its tier.";
+  }
+  return "No category prices for this customer. The account prices by its tier rules; a price here would ride over them for this customer alone.";
+}
+
+/** An override's value in its calc's own unit. The store CHECK admits no fixed price here. */
+export function overrideValueWords(
+  override: {
+    readonly calc_type: string;
+    readonly discount_bps?: number | null;
+    readonly markup_bps?: number | null;
+  },
+): string {
+  switch (override.calc_type) {
+    case "PCT_OFF_LIST":
+      return `${pctWords(override.discount_bps ?? null)} off list`;
+    case "MARKUP_ON_COST":
+      return `${pctWords(override.markup_bps ?? null)} on cost`;
+    default:
+      return "";
+  }
+}

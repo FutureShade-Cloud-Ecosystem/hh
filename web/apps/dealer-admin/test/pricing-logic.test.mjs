@@ -250,3 +250,22 @@ test("a rule's calc cell keeps the unit beside the figure", () => {
   assert.equal(ruleCalcWords("SF"), "a SF");
   assert.equal(ruleCalcWords(""), "");
 });
+
+// -- the customer prices tab: two different empties, a value in its unit ------------------------------
+
+import {
+  overrideEmptyWords,
+  overrideValueWords,
+} from "../src/pricing-logic.ts";
+
+test("the overrides tab's two empties are different sentences, the original's own rule", () => {
+  assert.match(overrideEmptyWords(false), /Type a customer id/);
+  assert.match(overrideEmptyWords(true), /No category prices for this customer/);
+});
+
+test("an override's value says what the calc does; a fixed price is not an override", () => {
+  assert.equal(overrideValueWords({ calc_type: "PCT_OFF_LIST", discount_bps: 800 }), "8.00% off list");
+  assert.equal(overrideValueWords({ calc_type: "MARKUP_ON_COST", markup_bps: 1200 }), "12.00% on cost");
+  assert.equal(overrideValueWords({ calc_type: "ABSOLUTE", price_cents: 100 }), "");
+  assert.equal(overrideValueWords({ calc_type: "ODD" }), "");
+});

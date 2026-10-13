@@ -20,6 +20,8 @@ import {
   customerTypeWord,
   marginEmptyWords,
   moneyWords,
+  overrideEmptyWords,
+  overrideValueWords,
   pctWords,
   pricingEmptyWords,
   RULE_SCOPES,
@@ -29,7 +31,7 @@ import {
   validityWords,
   PRICING_TABS,
 } from "./pricing-logic.js";
-import type { RuleRow } from "./pricing-api.js";
+import type { OverrideRow, RuleRow } from "./pricing-api.js";
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
 
 export function renderPricing(model: PricingModel): TemplateResult {
@@ -62,6 +64,7 @@ function renderTab(model: PricingModel): TemplateResult {
   // its case beside this one; until then the tab says plainly it is not wired.
   if (model.tab === "margin") return renderMargin(model);
   if (model.tab === "rules") return renderRules(model);
+  if (model.tab === "customers") return renderCustomers(model);
   const tab = PRICING_TABS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
@@ -499,6 +502,152 @@ function renderRuleEditor(model: PricingModel): TemplateResult | typeof nothing 
           ${m.busy ? "Checking the floor…" : e.id === "" ? "Check the floor, then create" : "Check the floor, then save"}
         </button>
         <button type="button" class="btn btn-secondary" data-action="pr-rule-cancel" ?disabled=${m.busy}>Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+// -- the customer prices tab ---------------------------------------------------------------------------
+
+export function renderCustomers(model: PricingModel): TemplateResult {
+  const m = model.customers;
+  const asked = m.loadedFor !== "";
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Customer prices</h2>
+        ${m.rows.length === 0 ? nothing : html`<span class="count" data-test="pr-cust-count">${m.rows.length} ${m.rows.length === 1 ? "price" : "prices"}</span>`}
+        ${asked
+          ? html`<button type="button" class="btn btn-primary btn-small" data-action="pr-cust-edit">New price</button>`
+          : nothing}
+      </div>
+      <p class="pr-hint">
+        The category prices one account rides over its tier rules. The pricing reads here are the contract's own: this
+        surface holds no customer search, so the id is typed whole.
+      </p>
+      <div class="filters" role="group" aria-label="The customer">
+        <input class="text-field" type="text" placeholder="Customer id" aria-label="Customer id" data-field="pr-cust-id" />
+        <button type="button" class="btn btn-primary" data-action="pr-cust-load" ?disabled=${m.busy}>Load prices</button>
+      </div>
+      ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-cust-loading">Loading the customer's prices…</p>` : nothing}
+      ${m.phase === "error" || m.phase === "refused"
+        ? html`<p class="error-line" data-test="pr-cust-error">${m.error}</p>`
+        : nothing}
+      ${m.notice === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-cust-notice">${m.notice}</p>`}
+      ${m.phase === "ready" ? renderOverrides(model, asked) : nothing}
+    </section>
+    ${m.phase === "ready" && m.editing !== null ? renderOverrideEditor(model) : nothing}
+  `;
+}
+
+function renderOverrides(model: PricingModel, asked: boolean): TemplateResult | typeof nothing {
+  const m = model.customers;
+  if (!asked) return html`<p class="notice-line" data-test="pr-cust-empty">${overrideEmptyWords(false)}</p>`;
+  if (m.rows.length === 0) return html`<p class="notice-line" data-test="pr-cust-empty">${overrideEmptyWords(true)}</p>`;
+  return html`
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Category</th>
+            <th scope="col">Value</th>
+            <th scope="col">Notes</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${m.rows.map((row) => renderOverrideRow(row, model))}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderOverrideRow(row: OverrideRow, model: PricingModel): TemplateResult {
+  const m = model.customers;
+  const confirming = m.confirmingId === row.id;
+  return html`
+    <tr data-override=${row.id}>
+      <td><span class="person">${categoryName(row.category_id, model.categories)}</span></td>
+      <td class="num" data-test="pr-cust-value">${overrideValueWords(row)}</td>
+      <td class="dim">${row.notes}</td>
+      <td>
+        <div class="pr-actions">
+          <button
+            type="button"
+            class="btn btn-secondary btn-small"
+            data-action="pr-cust-edit"
+            data-id=${row.id}
+            aria-label=${`Edit the price for ${categoryName(row.category_id, model.categories)}`}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            class="btn btn-secondary btn-small"
+            data-action="pr-cust-del"
+            data-id=${row.id}
+            ?disabled=${m.busy}
+          >
+            ${confirming ? "Delete: tap again" : "Delete"}
+          </button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderOverrideEditor(model: PricingModel): TemplateResult | typeof nothing {
+  const m = model.customers;
+  const e = m.editing;
+  if (e === null) return nothing;
+  const heading = e.id === "" ? "New category price" : `Category price: ${categoryName(e.categoryId, model.categories)}`;
+  return html`
+    <section class="card" data-test="pr-cust-editor">
+      <div class="card-head">
+        <h2 class="card-title">${heading}</h2>
+        ${e.id === "" ? html`<span class="chip chip-wait">create</span>` : html`<span class="chip">version ${e.version}</span>`}
+      </div>
+      <div class="form-grid">
+        <label class="field">
+          <span class="field-label">Category</span>
+          <select class="select" data-field="pr-cust-category" ?disabled=${m.busy}>
+            <option value="">Choose a category</option>
+            ${model.categories.map((c) => html`<option>${c.name}</option>`)}
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">What the price does</span>
+          <select class="select" data-field="pr-cust-calc" ?disabled=${m.busy}>
+            <option value="">Choose a calc</option>
+            <option value="PCT_OFF_LIST">${calcTypeWord("PCT_OFF_LIST")}</option>
+            <option value="MARKUP_ON_COST">${calcTypeWord("MARKUP_ON_COST")}</option>
+          </select>
+        </label>
+        ${e.calc === "PCT_OFF_LIST"
+          ? html`<label class="field"><span class="field-label">Discount, percent off list</span>
+              <input class="text-field" type="text" inputmode="decimal" data-field="pr-cust-discount" ?disabled=${m.busy} /></label>`
+          : nothing}
+        ${e.calc === "MARKUP_ON_COST"
+          ? html`<label class="field"><span class="field-label">Markup, percent on cost</span>
+              <input class="text-field" type="text" inputmode="decimal" data-field="pr-cust-markup" ?disabled=${m.busy} /></label>`
+          : nothing}
+        <label class="field">
+          <span class="field-label">Price unit</span>
+          <input class="text-field" type="text" placeholder="SF" data-field="pr-cust-uom" ?disabled=${m.busy} />
+        </label>
+        <label class="field field-full">
+          <span class="field-label">Notes, as the row shows them</span>
+          <input class="text-field" type="text" data-field="pr-cust-notes" ?disabled=${m.busy} />
+        </label>
+      </div>
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-cust-form-error">${m.formError}</p>`}
+      ${m.floor === null ? nothing : renderFloorPanel(m.floor, "pr-cust-confirm", "pr-cust-review")}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-cust-save" ?disabled=${m.busy || m.floor !== null}>
+          ${m.busy ? "Checking the floor…" : e.id === "" ? "Check the floor, then add" : "Check the floor, then save"}
+        </button>
+        <button type="button" class="btn btn-secondary" data-action="pr-cust-cancel" ?disabled=${m.busy}>Cancel</button>
       </div>
     </section>
   `;

@@ -332,3 +332,118 @@ test("retire is two taps, and the second carries the version the row showed", as
   assert.deepEqual(del[2], { version: 3 });
   assert.match(c.model.rules.notice, /Retired/);
 });
+
+// -- the customer prices tab --------------------------------------------------------------------------
+
+const CUST_ID = "cu110000-0000-4000-9000-0000000000a1";
+const OVERRIDES = [
+  {
+    id: "8a110000-0000-4000-9000-0000000000a1",
+    customer_id: CUST_ID,
+    category_id: "ca7-2",
+    calc_type: "PCT_OFF_LIST",
+    price_cents: null,
+    discount_bps: 800,
+    markup_bps: null,
+    price_uom: "SF",
+    notes: "Yard account discount",
+    version: 2,
+  },
+];
+
+function fakeOverridesDoor(over = {}) {
+  const door = fakeRulesDoor({
+    overrides: async (customerId) => {
+      door.calls.push(["overrides", customerId]);
+      return { ok: true, value: OVERRIDES };
+    },
+    createOverride: async (customerId, body) => {
+      door.calls.push(["createOverride", customerId, body]);
+      return { ok: true, value: { id: "8a110000-0000-4000-9000-0000000000a9", version: 1 } };
+    },
+    updateOverride: async (id, body) => {
+      door.calls.push(["updateOverride", id, body]);
+      return { ok: true, value: { ...OVERRIDES[0], ...body, version: body.version + 1 } };
+    },
+    deleteOverride: async (id, opts) => {
+      door.calls.push(["deleteOverride", id, opts]);
+      return { ok: true, value: { status: "deleted" } };
+    },
+    ...over,
+  });
+  return door;
+}
+
+test("the overrides tab loads one customer's prices by the typed id", async () => {
+  const door = fakeOverridesDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "customers" });
+  c.input("cust-id", CUST_ID);
+  await c.click("pr-cust-load", {});
+  assert.equal(c.model.customers.phase, "ready");
+  assert.equal(c.model.customers.loadedFor, CUST_ID);
+  assert.equal(c.model.customers.rows.length, 1);
+});
+
+test("an override add rides the floor with the customer named, then creates", async () => {
+  const door = fakeOverridesDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "customers" });
+  c.input("cust-id", CUST_ID);
+  await c.click("pr-cust-load", {});
+  c.click("pr-cust-edit", {});
+  c.change("cust-category", "Retaining Walls");
+  c.change("cust-calc", "PCT_OFF_LIST");
+  c.input("cust-discount", "9");
+  await c.click("pr-cust-save", {});
+  const preview = door.calls.filter((x) => Array.isArray(x) && x[0] === "previewFloor").pop();
+  assert.equal(preview[1].kind, "override");
+  assert.equal(preview[1].customer_id, CUST_ID);
+  const create = door.calls.find((x) => Array.isArray(x) && x[0] === "createOverride");
+  assert.ok(create);
+  assert.equal(create[1], CUST_ID);
+  assert.equal(create[2].discount_bps, 900);
+  assert.equal(create[2].version, 0);
+  assert.equal(c.model.customers.notice, "Saved.");
+});
+
+test("an override edit patches with the row's version; delete is two taps with the version", async () => {
+  const door = fakeOverridesDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "customers" });
+  c.input("cust-id", CUST_ID);
+  await c.click("pr-cust-load", {});
+  c.click("pr-cust-edit", { id: OVERRIDES[0].id });
+  c.input("cust-discount", "10");
+  await c.click("pr-cust-save", {});
+  const update = door.calls.find((x) => Array.isArray(x) && x[0] === "updateOverride");
+  assert.ok(update);
+  assert.equal(update[1], OVERRIDES[0].id);
+  assert.equal(update[2].version, 2);
+
+  c.click("pr-cust-del", { id: OVERRIDES[0].id });
+  assert.equal(c.model.customers.confirmingId, OVERRIDES[0].id);
+  await c.click("pr-cust-del", { id: OVERRIDES[0].id });
+  const del = door.calls.find((x) => Array.isArray(x) && x[0] === "deleteOverride");
+  assert.deepEqual(del[2], { version: 2 });
+  assert.match(c.model.customers.notice, /Deleted/);
+});
+
+test("a refused overrides read lands refused, naming the gate", async () => {
+  const door = fakeOverridesDoor({
+    overrides: async (customerId) => {
+      door.calls.push(["overrides", customerId]);
+      return { ok: false, error: "Forbidden", status: 403 };
+    },
+  });
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "customers" });
+  c.input("cust-id", CUST_ID);
+  await c.click("pr-cust-load", {});
+  assert.equal(c.model.customers.phase, "refused");
+  assert.match(c.model.customers.error, /staff/);
+});

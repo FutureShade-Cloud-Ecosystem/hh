@@ -23,6 +23,7 @@ import {
   staffPricing,
   type PricingFloorConfirmation,
   type PricingFloorPreviewRequest,
+  type PricingOverrideWrite,
   type PricingRulePatch,
   type PricingRuleWrite,
   type Result,
@@ -210,6 +211,38 @@ export interface RuleQuery {
   readonly customer_type?: string;
 }
 
+// -- the customer overrides --------------------------------------------------------------------------
+
+/** One customer category override as the screens use it. */
+export interface OverrideRow {
+  readonly id: string;
+  readonly customer_id: string;
+  readonly category_id: string;
+  readonly calc_type: string;
+  readonly price_cents: number | null;
+  readonly discount_bps: number | null;
+  readonly markup_bps: number | null;
+  readonly price_uom: string;
+  readonly notes: string;
+  readonly version: number;
+}
+
+export function toOverrideRow(raw: unknown): OverrideRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    customer_id: text(r.customer_id),
+    category_id: text(r.category_id),
+    calc_type: text(r.calc_type),
+    price_cents: maybeNum(r.price_cents),
+    discount_bps: maybeNum(r.discount_bps),
+    markup_bps: maybeNum(r.markup_bps),
+    price_uom: text(r.price_uom),
+    notes: text(r.notes),
+    version: num(r.version),
+  };
+}
+
 /**
  * Every call the pricing tabs make. The generated client's own functions do
  * the wire; this class narrows the answers and gives each tab one named
@@ -284,6 +317,36 @@ export class PricingApi {
   /** Retire a rule; the version the row showed rides the delete. */
   async deleteRule(id: string, opts: { version: number }): Promise<Result<StatusResult>> {
     const answer = await staffPricing.pricingDeleteRule(this.#client, id, opts);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toStatus(answer.value) };
+  }
+
+  // -- the customer overrides ---------------------------------------------------------------------------
+
+  /** One customer's category overrides, the prices that ride over their tier. */
+  async overrides(customerId: string): Promise<Result<readonly OverrideRow[]>> {
+    const answer = await staffPricing.pricingListOverrides(this.#client, customerId, { limit: 200 });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toOverrideRow) };
+  }
+
+  /** Give one customer a category price; the write carries version zero. */
+  async createOverride(customerId: string, body: PricingOverrideWrite): Promise<Result<CreatedRef>> {
+    const answer = await staffPricing.pricingCreateOverride(this.#client, customerId, body);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toCreatedRef(answer.value) };
+  }
+
+  /** Save one override as the write over the version the row showed. */
+  async updateOverride(id: string, body: PricingOverrideWrite): Promise<Result<OverrideRow>> {
+    const answer = await staffPricing.pricingUpdateOverride(this.#client, id, body);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toOverrideRow(answer.value) };
+  }
+
+  /** Delete one override; the version the row showed rides the delete. */
+  async deleteOverride(id: string, opts: { version: number }): Promise<Result<StatusResult>> {
+    const answer = await staffPricing.pricingDeleteOverride(this.#client, id, opts);
     if (!answer.ok) return answer;
     return { ok: true, value: toStatus(answer.value) };
   }

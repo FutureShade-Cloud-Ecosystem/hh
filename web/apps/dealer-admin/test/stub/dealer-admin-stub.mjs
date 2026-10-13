@@ -210,6 +210,24 @@ const RULES_WORLD = [
 ];
 
 let rules;
+let overrides;
+
+// The customer overrides: one yard account's price on Retaining Walls.
+const CUST_YARD = "cu110000-0000-4000-9000-0000000000a1";
+const OVERRIDES_WORLD = [
+  {
+    id: "8a110000-0000-4000-9000-0000000000a1",
+    customer_id: CUST_YARD,
+    category_id: "ca7a0000-0000-4000-9000-0000000000a2",
+    calc_type: "PCT_OFF_LIST",
+    price_cents: null,
+    discount_bps: 800,
+    markup_bps: null,
+    price_uom: "SF",
+    notes: "Yard account discount",
+    version: 2,
+  },
+];
 
 function reset() {
   staff = buildStaff();
@@ -217,6 +235,7 @@ function reset() {
   audit = buildAudit();
   policies = buildPolicies();
   rules = structuredClone(RULES_WORLD);
+  overrides = structuredClone(OVERRIDES_WORLD);
   scenario = "";
   log = [];
 }
@@ -597,6 +616,62 @@ async function handle(req, res) {
     rule.is_active = false;
     rule.version += 1;
     return json(res, { status: "retired" });
+  }
+
+  // ---- the customer overrides ----
+
+  const custOverridesMatch = path.match(/^\/api\/v1\/pricing\/customers\/([^/]+)\/overrides$/);
+  if (req.method === "GET" && custOverridesMatch) {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const customerId = decodeURIComponent(custOverridesMatch[1]);
+    const items = overrides.filter((o) => o.customer_id === customerId);
+    return json(res, { items: scenario === "empty-pricing" ? [] : items, next_cursor: null, limit: 200 });
+  }
+
+  if (req.method === "POST" && custOverridesMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const customerId = decodeURIComponent(custOverridesMatch[1]);
+    const id = `8a110000-0000-4000-9000-${Math.random().toString(16).slice(2, 14).padStart(12, "0")}`;
+    overrides.push({
+      id,
+      customer_id: customerId,
+      category_id: String(body?.category_id ?? ""),
+      calc_type: String(body?.calc_type ?? ""),
+      price_cents: body?.price_cents ?? null,
+      discount_bps: body?.discount_bps ?? null,
+      markup_bps: body?.markup_bps ?? null,
+      price_uom: String(body?.price_uom ?? ""),
+      notes: String(body?.notes ?? ""),
+      version: 1,
+    });
+    return json(res, { id, version: 1 });
+  }
+
+  const overrideMatch = path.match(/^\/api\/v1\/pricing\/overrides\/([^/]+)$/);
+  if (req.method === "PUT" && overrideMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const override = overrides.find((o) => o.id === decodeURIComponent(overrideMatch[1]));
+    if (override === undefined) return refuse(res, 404, "override not found");
+    if (typeof body?.version === "number" && body.version !== override.version) return refuse(res, 409, "version conflict: the override changed since you opened it");
+    override.category_id = String(body?.category_id ?? override.category_id);
+    override.calc_type = String(body?.calc_type ?? override.calc_type);
+    if (body?.price_cents !== undefined) override.price_cents = body.price_cents;
+    if (body?.discount_bps !== undefined) override.discount_bps = body.discount_bps;
+    if (body?.markup_bps !== undefined) override.markup_bps = body.markup_bps;
+    override.price_uom = String(body?.price_uom ?? override.price_uom);
+    if (body?.notes !== undefined) override.notes = String(body.notes);
+    override.version += 1;
+    return json(res, override);
+  }
+
+  if (req.method === "DELETE" && overrideMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const idx = overrides.findIndex((o) => o.id === decodeURIComponent(overrideMatch[1]));
+    if (idx < 0) return refuse(res, 404, "override not found");
+    const version = Number(url.searchParams.get("version") ?? "0");
+    if (version !== overrides[idx].version) return refuse(res, 409, "version conflict: the override changed since you opened it");
+    overrides.splice(idx, 1);
+    return json(res, { status: "deleted" });
   }
 
   // ---- the audit trail ----

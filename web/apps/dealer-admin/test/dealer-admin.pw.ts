@@ -268,3 +268,41 @@ test("the rules tab: the list, an edit saved clean, and a retire asked twice", a
   await expect(page.locator("[data-test=pr-rules-notice]")).toContainText("Retired.");
   await expect(page.locator('tr[data-rule="9a110000-0000-4000-9000-0000000000a1"]')).toContainText("retired");
 });
+
+test("the customer prices tab: one account's overrides, an add, and a delete asked twice", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+  await page.locator('.pr-tab[data-tab="customers"]').click();
+
+  // Before a customer is named, the empty says what this tab is for.
+  await expect(page.locator("[data-test=pr-cust-empty]")).toContainText("Type a customer id");
+
+  // Load the yard account: one price on Retaining Walls, named by category.
+  await page.locator('[data-field="pr-cust-id"]').fill("cu110000-0000-4000-9000-0000000000a1");
+  await page.locator('[data-action="pr-cust-load"]').click();
+  await expect(page.locator("[data-test=pr-cust-count]")).toHaveText("1 price");
+  const row = page.locator('tr[data-override="8a110000-0000-4000-9000-0000000000a1"]');
+  await expect(row).toContainText("Retaining Walls");
+  await expect(row.locator("[data-test=pr-cust-value]")).toHaveText("8.00% off list");
+
+  // An add: the card's own New price button opens the blank editor; pick
+  // the category, the calc, the percent, save through a clean grading.
+  await page.locator('[data-action="pr-cust-edit"]').first().click();
+  await page.locator("[data-test=pr-cust-editor] [data-field='pr-cust-category']").selectOption({ label: "Slabs and Steps" });
+  await page.locator('[data-field="pr-cust-calc"]').selectOption({ label: "Percent off list" });
+  await page.locator('[data-field="pr-cust-discount"]').fill("5");
+  await page.locator('[data-action="pr-cust-save"]').click();
+  await expect(page.locator("[data-test=pr-cust-notice]")).toContainText("Saved.");
+  await expect(page.locator("[data-test=pr-cust-count]")).toHaveText("2 prices");
+
+  // Delete asks twice, then the row is gone.
+  const del = page.locator('[data-action="pr-cust-del"]').first();
+  await del.click();
+  await expect(del).toHaveText("Delete: tap again");
+  await del.click();
+  await expect(page.locator("[data-test=pr-cust-notice]")).toContainText("Deleted.");
+  await expect(page.locator("[data-test=pr-cust-count]")).toHaveText("1 price");
+});
