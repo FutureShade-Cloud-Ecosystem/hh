@@ -13080,7 +13080,7 @@ paths:
       tags:
         - staff-order
       summary: Cancel an open order (manager only, reason required)
-      description: Applies the CANCELLED transition from DRAFT, CONFIRMED, PICKING or READY. The service proves no finalized invoice or committed counter sale is attached, under the order row lock; a money-attached order answers 409 and belongs to the POS returns flow.
+      description: "Applies the CANCELLED transition from DRAFT, CONFIRMED, PICKING or READY. The service proves no money the cancel has no exit for is attached, under the order row lock: a finalized invoice other than a supplier deposit document, or a committed counter sale, answers 409 and belongs to the POS returns flow. An order whose only money is its supplier deposit document cancels: the deposit settles on the same transaction, credited back to the customer's account by the dealer's default or kept when keep_deposit is true (a manager's override, the mandatory reason is its audited reason). Kept means the dealer keeps only what the customer paid of the deposit; the unpaid rest is closed so nothing more is owed on the cancelled order."
       x-role: requireManager
       x-access:
         surfaces:
@@ -39228,7 +39228,10 @@ components:
       properties:
         reason:
           type: string
-          description: The cancellation reason; blank is refused
+          description: The cancellation reason; blank is refused. With keep_deposit it is the override's audited reason.
+        keep_deposit:
+          type: boolean
+          description: A manager's override to keep what the customer paid of the order's supplier deposit rather than credit it back (the unpaid rest is closed); false applies the dealer's default
     OrderHeaderEditRequest:
       type: object
       description: requested_date is the only editable order field; an explicit empty string clears it
@@ -42506,6 +42509,7 @@ components:
         - lookup_presentation
         - margin_visibility
         - balance_visibility
+        - supplier_deposit_cancel
       properties:
         branch_id:
           type: string
@@ -42555,6 +42559,12 @@ components:
             - MANAGER_UP
             - HIDDEN
           description: Who may receive a customer's past-due balance on the customer step
+        supplier_deposit_cancel:
+          type: string
+          enum:
+            - CREDIT_BACK
+            - KEPT
+          description: The dealer default a cancelled special order's supplier deposit takes; a manager may keep it on a given order at the cancel itself
         quick_chip_set:
           type: array
           items:
