@@ -186,6 +186,12 @@ export const boardStyles = css`
   .sched-form .wide { grid-column: 1 / -1; }
   .sched-form .alert, .sched-form p { margin: 0; }
 
+  /* The rules: a name, its value in words, and the one sentence that keeps it apart from its neighbour. */
+  .rules { display: grid; gap: var(--hh-s-12); }
+  .rules li { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, 1fr) minmax(0, 2fr); gap: var(--hh-s-4) var(--hh-s-16); align-items: baseline; padding-bottom: var(--hh-s-12); border-bottom: 1px solid var(--hh-line); }
+  .rules li:last-child { border-bottom: 0; padding-bottom: 0; }
+  .rule-name { font-weight: 600; }
+
   /* Will call: the order box beside its two buttons, and the one time tag. */
   .wc-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--hh-s-12) var(--hh-s-16); align-items: end; }
   .wc-form .actions { margin-top: 0; }
@@ -212,6 +218,7 @@ export const boardStyles = css`
     .board { grid-template-columns: minmax(0, 1fr); }
   }
   @media (max-width: 700px) {
+    .rules li { grid-template-columns: minmax(0, 1fr); }
     .week { display: flex; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: var(--hh-s-4); }
     .day { flex: 0 0 132px; scroll-snap-align: start; }
     .qcards { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -95,7 +95,7 @@ const JULIAN = {
 };
 let manyBranches = false;
 
-const POLICY = {
+const DEFAULT_POLICY = {
   branch_id: BRANCH,
   commit_prompt_hours: 48,
   reopen_policy: "MANAGER",
@@ -105,6 +105,9 @@ const POLICY = {
   freight_split_mode: "EVEN",
   driver_session_hours: 12,
 };
+let POLICY = { ...DEFAULT_POLICY };
+// The policy trail the settings screen reads: one row per knob that moved, newest first.
+let policyTrail = [];
 
 function seedWorld() {
   const trucks = [
@@ -204,7 +207,7 @@ function seedWorld() {
 let world = seedWorld();
 // What a test arms: the next write's refusal, the caller's reopen right, and a hold's amount.
 let armed = null;
-let caller = { can_reopen: true, can_commit: true, can_manage: true };
+let caller = { can_reopen: true, can_commit: true, can_manage: true, can_set_policy: true };
 let holdAmount = false;
 const HOLD_STOP = "5a000001-0000-4000-9000-000000000005";
 
@@ -469,7 +472,9 @@ async function route(req, res, url) {
   if (path === "/_stub/reset") {
     world = seedWorld();
     armed = null;
-    caller = { can_reopen: true, can_commit: true, can_manage: true };
+    caller = { can_reopen: true, can_commit: true, can_manage: true, can_set_policy: true };
+    POLICY = { ...DEFAULT_POLICY };
+    policyTrail = [];
     holdAmount = false;
     manyBranches = false;
     return json(res, { ok: true });
@@ -554,6 +559,11 @@ async function route(req, res, url) {
       }
       return json(res, { items, limit: 60 });
     }
+    if (rest === "policy") return json(res, POLICY);
+    if (rest === "policy/history") {
+      if (!caller.can_manage) return fail(res, 403, "Forbidden");
+      return json(res, { items: policyTrail });
+    }
     if (rest === "will-call") {
       const order = resolveOrder(res, q("order_id"));
       if (order === null) return;
@@ -573,6 +583,35 @@ async function route(req, res, url) {
   if (method !== "POST" && method !== "PUT") return fail(res, 404, "not found");
   const body = await readBody(req);
   if (body === null) return fail(res, 400, "bad request");
+
+  if (rest === "policy" && method === "PUT") {
+    if (!caller.can_manage || !caller.can_set_policy) return fail(res, 403, "Forbidden");
+    const int = (v) => (Number.isInteger(v) ? v : 0);
+    const next = {
+      branch_id: BRANCH,
+      commit_prompt_hours: int(body.commit_prompt_hours),
+      reopen_policy: body.reopen_policy || "MANAGER",
+      load_value_visibility: body.load_value_visibility || "MANAGER_UP",
+      commit_horizon_weeks: int(body.commit_horizon_weeks) || 8,
+      working_view_days: int(body.working_view_days) || 14,
+      freight_split_mode: body.freight_split_mode || "EVEN",
+      driver_session_hours: int(body.driver_session_hours) || 12,
+    };
+    if (next.commit_prompt_hours < 0 || next.commit_prompt_hours > 336) return fail(res, 422, "dispatch: commit_prompt_hours must be between 0 and 336");
+    if (!["ANYONE", "MANAGER", "NOBODY"].includes(next.reopen_policy)) return fail(res, 422, "dispatch: reopen_policy must be ANYONE, MANAGER or NOBODY");
+    if (!["MANAGER_UP", "ALL_STAFF", "HIDDEN"].includes(next.load_value_visibility)) return fail(res, 422, "dispatch: cost_visibility must be MANAGER_UP, ALL_STAFF or HIDDEN");
+    if (next.commit_horizon_weeks < 1 || next.commit_horizon_weeks > 26) return fail(res, 422, "dispatch: commit_horizon_weeks must be between 1 and 26");
+    if (next.working_view_days < 1 || next.working_view_days > 90) return fail(res, 422, "dispatch: working_view_days must be between 1 and 90");
+    if (!["EVEN", "MANUAL"].includes(next.freight_split_mode)) return fail(res, 422, "dispatch: freight_split_mode must be EVEN or MANUAL");
+    if (next.driver_session_hours < 1 || next.driver_session_hours > 168) return fail(res, 422, "dispatch: driver_session_hours must be between 1 and 168");
+    const moved = [];
+    for (const field of ["commit_prompt_hours", "reopen_policy", "load_value_visibility", "commit_horizon_weeks", "working_view_days", "freight_split_mode", "driver_session_hours"]) {
+      if (String(POLICY[field]) !== String(next[field])) moved.push({ field, before: String(POLICY[field]), after: String(next[field]), who: "Logistics Manager", when: `${TODAY}T18:00:00Z` });
+    }
+    policyTrail = [...moved, ...policyTrail];
+    POLICY = next;
+    return json(res, POLICY);
+  }
 
   // ---- the registry: the role gate answers a bare Forbidden below the manage level
   if ((rest === "trucks" || rest === "drivers" || /^(trucks|drivers)\/[^/]+$/.test(rest)) && (method === "POST" || method === "PUT")) {

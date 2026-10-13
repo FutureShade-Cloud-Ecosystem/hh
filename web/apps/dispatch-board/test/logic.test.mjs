@@ -46,6 +46,11 @@ import {
   driverBody,
   driverLine,
   fleetStateWord,
+  historyFaultWords,
+  historyRow,
+  policyBody,
+  policyRefusal,
+  policyRows,
   scheduleBody,
   scheduleNotice,
   scheduleRefusal,
@@ -58,6 +63,7 @@ import {
   willCallWord,
   validateDriver,
   validateOrderRef,
+  validatePolicyFields,
   validateReschedule,
   validateSchedule,
   validateTruck,
@@ -544,4 +550,70 @@ test("the order box wants something typed, and a missing order says what to chec
 
 test("a minted code is announced once, in words that say it will not be shown again", () => {
   assert.equal(willCallNotice({ order_no: "ORD-0044", expires_at: "2026-10-26T18:00:00Z" }), "Pickup code printed for ORD-0044, good until Oct 26, 2026. It is shown once: print the tag now.");
+});
+
+// ---- the dispatch rules (part B, sub item 4) --------------------------------------------------------------
+
+const policy = (over = {}) => ({
+  branch_id: "b1", commit_prompt_hours: 48, reopen_policy: "MANAGER", load_value_visibility: "MANAGER_UP",
+  commit_horizon_weeks: 4, working_view_days: 14, freight_split_mode: "EVEN", driver_session_hours: 12, ...over,
+});
+
+test("the rules read as sentences a dispatcher would say, each with its unit", () => {
+  const rows = policyRows(policy());
+  const byKey = Object.fromEntries(rows.map((r) => [r.key, r]));
+  assert.equal(rows.length, 7);
+  assert.equal(byKey.commit_prompt_hours.word, "48 hours");
+  assert.equal(byKey.reopen_policy.word, "A dispatch manager");
+  assert.equal(byKey.load_value_visibility.word, "Managers and above");
+  assert.equal(byKey.commit_horizon_weeks.word, "4 weeks");
+  assert.equal(byKey.working_view_days.word, "14 days");
+  assert.equal(byKey.freight_split_mode.word, "Evenly across the loads");
+  assert.equal(byKey.driver_session_hours.word, "12 hours");
+  assert.equal(byKey.working_view_days.label, "How far the daily view reaches");
+  assert.match(byKey.commit_horizon_weeks.note, /how far ahead a delivery may be promised/i, "the two reaches are never left to be confused");
+  assert.match(byKey.working_view_days.note, /not how far ahead a delivery may be promised/i);
+  assert.equal(policyRows(policy({ reopen_policy: "NOBODY" })).find((r) => r.key === "reopen_policy").word, "Nobody, a commitment is final");
+  assert.equal(policyRows(policy({ reopen_policy: "SOMETHING_NEW" })).find((r) => r.key === "reopen_policy").word, "something new", "an unmapped value degrades to itself, never to an invented phrase");
+});
+
+test("the rules form wants whole numbers and nothing else; the bounds are the core's to say", () => {
+  const f = (over = {}) => ({ prompt: "48", reopen: "MANAGER", visibility: "MANAGER_UP", horizon: "4", view: "14", ...over });
+  assert.equal(validatePolicyFields(f()), "");
+  assert.match(validatePolicyFields(f({ prompt: "" })), /Hours ahead is a whole number/);
+  assert.match(validatePolicyFields(f({ prompt: "4.5" })), /Hours ahead is a whole number/);
+  assert.match(validatePolicyFields(f({ horizon: "x" })), /Weeks is a whole number/);
+  assert.match(validatePolicyFields(f({ view: "-1" })), /Days is a whole number/);
+  assert.equal(validatePolicyFields(f({ prompt: "999999" })), "", "999999 hours is the core's to refuse, in its own words");
+});
+
+test("the rules body is the whole policy: the edited knobs, the others as they were, the yard it is for", () => {
+  const body = policyBody({ prompt: "24", reopen: "NOBODY", visibility: "HIDDEN", horizon: "6", view: "10" }, policy(), "b1");
+  assert.deepEqual(body, { branch_id: "b1", commit_prompt_hours: 24, reopen_policy: "NOBODY", load_value_visibility: "HIDDEN", commit_horizon_weeks: 6, working_view_days: 10, freight_split_mode: "EVEN", driver_session_hours: 12 });
+});
+
+test("a refused rule is the core's sentence with the column name turned into the rule's name, and a bare Forbidden says who decides", () => {
+  assert.equal(policyRefusal("dispatch: commit_prompt_hours must be between 0 and 336", 422), "Prompt to commit, hours ahead must be between 0 and 336");
+  assert.equal(policyRefusal("dispatch: reopen_policy must be ANYONE, MANAGER or NOBODY", 422), "Who may reopen a committed load must be ANYONE, MANAGER or NOBODY");
+  assert.match(policyRefusal("Forbidden", 403), /You can read the dispatch rules, but your dealer names who may change them/);
+  assert.match(policyRefusal("", 500), /nothing changed/);
+});
+
+test("a history row says the rule, what it was, what it is, who and when, in the same words as the controls", () => {
+  const row = historyRow({ field: "reopen_policy", before: "MANAGER", after: "ANYONE", who: "Logistics Manager", when: "2026-10-12T18:04:00Z" });
+  assert.equal(row.rule, "Who may reopen a committed load");
+  assert.equal(row.was, "A dispatch manager");
+  assert.equal(row.now, "Anyone who could have committed it");
+  assert.equal(row.who, "Logistics Manager");
+  assert.match(row.when, /^Oct 12, 2026/);
+  assert.equal(historyRow({ field: "commit_prompt_hours", before: "48", after: "24" }).now, "24");
+  assert.equal(historyRow({ field: "commit_prompt_hours", before: "48", after: "24" }).who, "Somebody");
+  assert.equal(historyRow({ field: "commit_prompt_hours", before: "48", after: "24" }).when, "");
+  assert.equal(historyRow({ field: "future_knob", before: "A", after: "B" }).rule, "future knob");
+});
+
+test("the history's fault is the core's sentence, and a refusal for a non manager says the trail is a manager's", () => {
+  assert.match(historyFaultWords("Forbidden", 403), /managers read the change history/i);
+  assert.match(historyFaultWords("", 500), /nothing changed/);
+  assert.equal(historyFaultWords("dispatch: branch_id is required", 400), "branch_id is required");
 });

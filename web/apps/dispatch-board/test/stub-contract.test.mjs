@@ -20,7 +20,7 @@ import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
 
-const coreSource = ["dispatch", join("platform", "httpx")]
+const coreSource = ["dispatch", "settings", join("platform", "httpx")]
   .flatMap((dir) =>
     readdirSync(join(coreInternal, dir))
       .filter((f) => f.endsWith(".go") && !f.endsWith("_test.go"))
@@ -430,4 +430,42 @@ test("will call: a code is minted once, listed without its token, cancelled once
   await post("/_stub/caller", { can_manage: false });
   refused(await call("POST", `/api/v1/dispatch/will-call/${history.json.items[0].id}/revoke`), 403, "Forbidden");
   assert.equal((await mint("ORD-0044")).status, 201, "minting is work, not manage");
+});
+
+test("the dispatch rules: read, rewritten, each change recorded with who and when, and every refusal is the core's sentence", async () => {
+  await reset();
+  const branch = (await call("GET", "/api/v1/branches")).json[0].id;
+  const read = await call("GET", `/api/v1/dispatch/policy?branch_id=${branch}`);
+  assert.equal(read.status, 200);
+  holds("DispatchPolicy", read.json);
+  const empty = await call("GET", `/api/v1/dispatch/policy/history?branch_id=${branch}`);
+  holds("DispatchPolicyChangePage", empty.json);
+  assert.deepEqual(empty.json.items, []);
+  const saved = await call("PUT", "/api/v1/dispatch/policy", { ...read.json, branch_id: branch, commit_prompt_hours: 24, reopen_policy: "ANYONE" });
+  assert.equal(saved.status, 200);
+  holds("DispatchPolicy", saved.json);
+  assert.equal(saved.json.commit_prompt_hours, 24);
+  const board = await call("GET", "/api/v1/dispatch/loadboard");
+  assert.equal(board.json.policy.reopen_policy, "ANYONE", "the board reads the rule the screen just saved");
+  const trail = await call("GET", `/api/v1/dispatch/policy/history?branch_id=${branch}`);
+  holds("DispatchPolicyChangePage", trail.json);
+  assert.deepEqual(trail.json.items.map((c) => [c.field, c.before, c.after]).sort(), [["commit_prompt_hours", "48", "24"], ["reopen_policy", "MANAGER", "ANYONE"]]);
+  assert.ok(trail.json.items.every((c) => c.who && c.when), "every change carries who and when");
+  const same = await call("PUT", "/api/v1/dispatch/policy", { ...saved.json, branch_id: branch });
+  assert.equal(same.status, 200);
+  assert.equal((await call("GET", `/api/v1/dispatch/policy/history?branch_id=${branch}`)).json.items.length, 2, "saving nothing new records nothing");
+  const put = (over) => call("PUT", "/api/v1/dispatch/policy", { ...saved.json, branch_id: branch, ...over });
+  refused(await put({ commit_prompt_hours: 999 }), 422, "commit_prompt_hours must be between 0 and 336");
+  refused(await put({ reopen_policy: "EVERYONE" }), 422, "reopen_policy must be ANYONE, MANAGER or NOBODY");
+  refused(await put({ load_value_visibility: "SOME" }), 422, "cost_visibility must be MANAGER_UP, ALL_STAFF or HIDDEN");
+  refused(await put({ commit_horizon_weeks: 99 }), 422, "commit_horizon_weeks must be between 1 and 26");
+  refused(await put({ working_view_days: 200 }), 422, "working_view_days must be between 1 and 90");
+  refused(await put({ driver_session_hours: 500 }), 422, "driver_session_hours must be between 1 and");
+  refused(await put({ freight_split_mode: "ODD" }), 422, "freight_split_mode must be EVEN or MANUAL");
+  // A manager who is not on the setters list meets the wall; the read stays open and the trail is a manager's.
+  await post("/_stub/caller", { can_set_policy: false });
+  refused(await put({ commit_prompt_hours: 12 }), 403, "Forbidden");
+  assert.equal((await call("GET", `/api/v1/dispatch/policy?branch_id=${branch}`)).status, 200);
+  await post("/_stub/caller", { can_set_policy: true, can_manage: false });
+  refused(await call("GET", `/api/v1/dispatch/policy/history?branch_id=${branch}`), 403, "Forbidden");
 });

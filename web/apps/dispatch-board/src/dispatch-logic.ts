@@ -17,6 +17,8 @@ import type {
   DispatchLoadRow,
   DispatchDriver,
   DispatchLoadStop,
+  DispatchPolicy,
+  DispatchPolicyChange,
   DispatchScheduleInput,
   DispatchTruck,
   DispatchStopPaymentHold,
@@ -987,4 +989,144 @@ export function willCallRefusal(error: string, status: number | null): string {
 
 export function willCallNotice(minted: { order_no?: string; expires_at: string }): string {
   return `Pickup code printed for ${minted.order_no ?? "the order"}, good until ${shortDate(minted.expires_at)}. It is shown once: print the tag now.`;
+}
+
+// ---- the dispatch rules (part B) --------------------------------------------------------------------------
+
+/** Each knob named the way the controls and the history name it, the unit riding the name when the value is a bare number. */
+export const DISPATCH_RULE_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  commit_prompt_hours: "Prompt to commit, hours ahead",
+  reopen_policy: "Who may reopen a committed load",
+  load_value_visibility: "Who sees a load's dollar value",
+  commit_horizon_weeks: "How far the board plans, in weeks",
+  working_view_days: "How far the daily view reaches, in days",
+  freight_split_mode: "How freight is split across loads",
+  driver_session_hours: "How long a driver stays signed in, in hours",
+});
+
+export interface PolicyChoice {
+  readonly value: string;
+  readonly label: string;
+}
+
+export const REOPEN_CHOICES: readonly PolicyChoice[] = Object.freeze([
+  { value: "ANYONE", label: "Anyone who could have committed it" },
+  { value: "MANAGER", label: "A dispatch manager" },
+  { value: "NOBODY", label: "Nobody, a commitment is final" },
+]);
+
+export const LOAD_VALUE_CHOICES: readonly PolicyChoice[] = Object.freeze([
+  { value: "MANAGER_UP", label: "Managers and above" },
+  { value: "ALL_STAFF", label: "Every staff member" },
+  { value: "HIDDEN", label: "Nobody" },
+]);
+
+const FREIGHT_SPLIT_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  EVEN: "Evenly across the loads",
+  MANUAL: "By hand, per load",
+});
+
+const VALUE_WORDS: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
+  reopen_policy: Object.fromEntries(REOPEN_CHOICES.map((c) => [c.value, c.label])),
+  load_value_visibility: Object.fromEntries(LOAD_VALUE_CHOICES.map((c) => [c.value, c.label])),
+  freight_split_mode: FREIGHT_SPLIT_WORDS,
+});
+
+/** A stored value in words. An unmapped value comes back as itself, lowercased, never as an invented phrase. */
+function valueWord(field: string, value: string): string {
+  const mapped = VALUE_WORDS[field]?.[value];
+  if (mapped !== undefined) return mapped;
+  return /^\d+$/.test(value) ? value : value.toLowerCase().replace(/_/g, " ");
+}
+
+export interface PolicyRow {
+  readonly key: keyof DispatchPolicy;
+  readonly label: string;
+  readonly word: string;
+  readonly note: string;
+}
+
+const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+/** The rules as the read-out draws them: the name, the value with its unit, and the one sentence that keeps a rule from being confused with its neighbour. */
+export function policyRows(p: DispatchPolicy): PolicyRow[] {
+  return [
+    { key: "commit_prompt_hours", label: "Prompt to commit", word: count(p.commit_prompt_hours, "hour", "hours"), note: "How far ahead of a delivery the board asks for the date to be committed." },
+    { key: "reopen_policy", label: "Who may reopen a committed load", word: valueWord("reopen_policy", p.reopen_policy), note: "A committed load is a promise. This says who may take it back." },
+    { key: "load_value_visibility", label: "Who sees a load's dollar value", word: valueWord("load_value_visibility", p.load_value_visibility), note: "A figure the core is told not to send is not on the board at all." },
+    { key: "commit_horizon_weeks", label: "How far the board plans", word: count(p.commit_horizon_weeks, "week", "weeks"), note: "How far ahead a delivery may be promised." },
+    { key: "working_view_days", label: "How far the daily view reaches", word: count(p.working_view_days, "day", "days"), note: "How many days the daily board shows from its date. It is not how far ahead a delivery may be promised." },
+    { key: "freight_split_mode", label: "How freight is split across loads", word: valueWord("freight_split_mode", p.freight_split_mode), note: "Set with the freight split, not here." },
+    { key: "driver_session_hours", label: "How long a driver stays signed in", word: count(p.driver_session_hours, "hour", "hours"), note: "A company rule: it is read from the dealer's default, so it is set by the dealer's administrators, not for one yard." },
+  ];
+}
+
+export interface PolicyFields {
+  readonly prompt: string;
+  readonly reopen: string;
+  readonly visibility: string;
+  readonly horizon: string;
+  readonly view: string;
+}
+
+/** The form's own check: whole numbers only. The bounds live in one place, the core's, and its words are what the person reads. */
+export function validatePolicyFields(f: PolicyFields): string {
+  const whole = (text: string): boolean => /^\d+$/.test(text.trim());
+  if (!whole(f.prompt)) return "Hours ahead is a whole number, like 48.";
+  if (!whole(f.horizon)) return "Weeks is a whole number, like 4.";
+  if (!whole(f.view)) return "Days is a whole number, like 14.";
+  return "";
+}
+
+/** The whole policy for the core's absolute write: the five edited knobs, the other two as they were, the yard it is for. */
+export function policyBody(f: PolicyFields, base: DispatchPolicy, branchId: string): DispatchPolicy {
+  return {
+    branch_id: branchId,
+    commit_prompt_hours: Number(f.prompt.trim()),
+    reopen_policy: f.reopen as DispatchPolicy["reopen_policy"],
+    load_value_visibility: f.visibility as DispatchPolicy["load_value_visibility"],
+    commit_horizon_weeks: Number(f.horizon.trim()),
+    working_view_days: Number(f.view.trim()),
+    freight_split_mode: base.freight_split_mode,
+    driver_session_hours: base.driver_session_hours,
+  };
+}
+
+/** A refused rule: the core's sentence with its column names turned into the rules' names. A bare Forbidden is the setters list. */
+export function policyRefusal(error: string, status: number | null): string {
+  if (status === 403 && /^forbidden\.?$/i.test(plainSentence(error))) {
+    return "You can read the dispatch rules, but your dealer names who may change them.";
+  }
+  let words = refusalWords("Saving the rules", error, status);
+  const names: Record<string, string> = { ...DISPATCH_RULE_WORDS, cost_visibility: DISPATCH_RULE_WORDS.load_value_visibility ?? "" };
+  for (const [key, name] of Object.entries(names)) words = words.split(key).join(name);
+  return words;
+}
+
+export interface HistoryRow {
+  readonly rule: string;
+  readonly was: string;
+  readonly now: string;
+  readonly who: string;
+  readonly when: string;
+}
+
+/** One change in the same words the controls use. A field the screen has no words for reads as itself. */
+export function historyRow(c: DispatchPolicyChange): HistoryRow {
+  const when = c.when ? new Date(c.when) : null;
+  return {
+    rule: DISPATCH_RULE_WORDS[c.field] ?? c.field.replace(/_/g, " "),
+    was: valueWord(c.field, c.before),
+    now: valueWord(c.field, c.after),
+    who: c.who && c.who.trim() !== "" ? c.who : "Somebody",
+    when: when !== null && !Number.isNaN(when.getTime())
+      ? when.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
+      : "",
+  };
+}
+
+/** Why the trail is not on screen. The trail is a manager's; every other fault is the core's own sentence. */
+export function historyFaultWords(error: string, status: number | null): string {
+  if (status === 403) return "Managers read the change history. It is not shown to this login.";
+  return refusalWords("The change history", error, status);
 }

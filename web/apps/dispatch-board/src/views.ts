@@ -19,6 +19,8 @@ import type {
   DispatchLoadRow,
   DispatchLoadStop,
   DispatchMintedPickup,
+  DispatchPolicy,
+  DispatchPolicyChange,
   DispatchRun,
   DispatchStop,
   DispatchStopPaymentHold,
@@ -27,11 +29,15 @@ import type {
 } from "@hardscapehouse/api-client";
 import {
   BOARD_COLUMNS,
+  LOAD_VALUE_CHOICES,
+  REOPEN_CHOICES,
   TRUCK_TYPES,
   TRUCK_TYPE_LABEL,
   capacityText,
   driverLine,
   fleetStateWord,
+  historyRow,
+  policyRows,
   truckLine,
   volumeText,
   willCallLine,
@@ -79,14 +85,14 @@ import {
   type CardId,
 } from "./dispatch-logic.js";
 
-export type Tab = "load" | "day" | "schedule" | "fleet" | "willcall";
+export type Tab = "load" | "day" | "schedule" | "fleet" | "willcall" | "settings";
 export type Axis = "TRUCK" | "STATUS";
 
 /** An inline form open on one card: a date and a reason, a reason alone, or a new truck. */
 export interface Sheet {
   readonly kind:
     | "reschedule-stop" | "reschedule-run" | "reopen-stop" | "reopen-run" | "fail-stop" | "new-run" | "cancel-run"
-    | "add-truck" | "edit-truck" | "add-driver" | "edit-driver" | "revoke-willcall";
+    | "add-truck" | "edit-truck" | "add-driver" | "edit-driver" | "revoke-willcall" | "edit-policy";
   readonly id: string;
   /** What was typed when a refusal sent the sheet back, so the person keeps their work. */
   readonly values?: Readonly<Record<string, string>>;
@@ -124,6 +130,10 @@ export interface BoardModel {
   readonly span: Span;
   /** The schedule form's own refusal, shown beside its button. */
   readonly scheduleError: string;
+  /** The settings tab: the yard's rules, the trail of changes, and why the trail is not shown when it is not. */
+  readonly policy: DispatchPolicy | null;
+  readonly history: readonly DispatchPolicyChange[];
+  readonly historyFault: string;
   /** The will call tab: the order named, its codes, and the code just minted (in memory, shown once). */
   readonly willCall: {
     readonly order: string;
@@ -255,6 +265,32 @@ function fleetSheet(sheet: Sheet, model: BoardModel): TemplateResult {
 
 function sheetPanel(sheet: Sheet, model: BoardModel): TemplateResult {
   if (sheet.kind === "add-truck" || sheet.kind === "edit-truck" || sheet.kind === "add-driver" || sheet.kind === "edit-driver") return fleetSheet(sheet, model);
+  if (sheet.kind === "edit-policy") {
+    const p = model.policy;
+    const options = (choices: readonly { value: string; label: string }[]): TemplateResult[] => choices.map((c) => html`<option data-id=${c.value}>${c.label}</option>`);
+    return html`
+      <form class="sheet" data-sheet=${sheet.kind} data-sheet-id=${sheet.id} novalidate>
+        <h4>Change the dispatch rules</h4>
+        <div class="sheet-grid">
+          <label>Prompt to commit, hours ahead<input class="control" type="text" inputmode="numeric" data-field="prompt" data-initial=${p === null ? nothing : String(p.commit_prompt_hours)} autocomplete="off" /></label>
+          <label>Who may reopen a committed load
+            <select class="control" data-field="reopen" data-initial=${p === null ? nothing : p.reopen_policy}>${options(REOPEN_CHOICES)}</select>
+          </label>
+          <label>Who sees a load's dollar value
+            <select class="control" data-field="visibility" data-initial=${p === null ? nothing : p.load_value_visibility}>${options(LOAD_VALUE_CHOICES)}</select>
+          </label>
+          <label>How far the board plans, in weeks<input class="control" type="text" inputmode="numeric" data-field="horizon" data-initial=${p === null ? nothing : String(p.commit_horizon_weeks)} autocomplete="off" /></label>
+          <label>How far the daily view reaches, in days<input class="control" type="text" inputmode="numeric" data-field="view" data-initial=${p === null ? nothing : String(p.working_view_days)} autocomplete="off" /></label>
+        </div>
+        <p class="small dim">The board plans weeks ahead. The daily view is the days it shows from its date. They are two different numbers.</p>
+        ${sheet.error !== "" ? html`<p class="alert alert-error" role="alert" data-sheet-error>${sheet.error}</p>` : nothing}
+        <div class="actions">
+          <button type="button" class="btn btn-primary" data-action="sheet-submit" ?disabled=${model.busy}>Save the rules</button>
+          <button type="button" class="btn btn-secondary" data-action="sheet-cancel">Cancel</button>
+        </div>
+      </form>
+    `;
+  }
   if (sheet.kind === "revoke-willcall") {
     return html`
       <form class="sheet" data-sheet=${sheet.kind} data-sheet-id=${sheet.id} novalidate>
@@ -357,7 +393,7 @@ function toolbar(model: BoardModel): TemplateResult {
             </label>`
           : html`<span class="yard" data-branch-name>${model.branchName}</span>`}
       </div>
-      ${model.tab === "fleet" || model.tab === "willcall" ? nothing : html`<div class="when" role="group" aria-label="Delivery day">
+      ${model.tab === "fleet" || model.tab === "willcall" || model.tab === "settings" ? nothing : html`<div class="when" role="group" aria-label="Delivery day">
         <button type="button" class="btn btn-secondary day-btn" data-action="day-prev" aria-label="Previous day">&lsaquo;</button>
         <input class="control" type="date" data-field="date" aria-label="Delivery day" data-current=${model.date} />
         <button type="button" class="btn btn-secondary day-btn" data-action="day-next" aria-label="Next day">&rsaquo;</button>
@@ -374,7 +410,7 @@ function toolbar(model: BoardModel): TemplateResult {
         : nothing}
       <div class="tools">
         <button type="button" class="btn btn-secondary small-btn" data-action="refresh" ?disabled=${model.busy}>Refresh</button>
-        ${model.tab === "fleet" || model.tab === "willcall" ? nothing : html`<button type="button" class="btn btn-primary small-btn" data-action="new-run" ?disabled=${model.busy}>New truck</button>`}
+        ${model.tab === "fleet" || model.tab === "willcall" || model.tab === "settings" ? nothing : html`<button type="button" class="btn btn-primary small-btn" data-action="new-run" ?disabled=${model.busy}>New truck</button>`}
       </div>
     </div>
     ${sheetFor(model, ["new-run"], "new")}
@@ -389,7 +425,7 @@ function tabs(model: BoardModel): TemplateResult {
   return html`
     <nav class="tabs" aria-label="Dispatch screens">
       ${tab("load", "Load board")}${tab("day", "Day board")}${tab("schedule", "Schedule")}
-      ${tab("fleet", "Trucks and drivers")}${tab("willcall", "Will call")}${later("Settings")}
+      ${tab("fleet", "Trucks and drivers")}${tab("willcall", "Will call")}${tab("settings", "Settings")}
     </nav>
   `;
 }
@@ -1072,6 +1108,51 @@ export function renderWillCall(model: BoardModel): TemplateResult {
   `;
 }
 
+// ---- the rules -----------------------------------------------------------------------------------
+
+/** The settings tab: the yard's dispatch rules in words, a way to change them, and the trail of who changed what. */
+export function renderSettings(model: BoardModel): TemplateResult {
+  const p = model.policy;
+  if (p === null) return html``;
+  const rows = model.history.map(historyRow);
+  return html`
+    <section class="panel" data-rules>
+      <div class="panel-head">
+        <h2>How dispatch runs at ${model.branchName}</h2>
+        <button type="button" class="btn btn-primary small-btn" data-action="open-sheet" data-sheet-kind="edit-policy" data-fleet-id="policy" ?disabled=${model.busy}>Change the rules</button>
+      </div>
+      ${sheetFor(model, ["edit-policy"], "policy")}
+      <ul class="rules">
+        ${policyRows(p).map((r) => html`
+          <li data-rule=${r.key}>
+            <span class="rule-name">${r.label}</span>
+            <strong class="rule-word" data-rule-word>${r.word}</strong>
+            <span class="small dim">${r.note}</span>
+          </li>`)}
+      </ul>
+    </section>
+    <section class="panel" data-history>
+      <div class="panel-head"><h3>What changed</h3></div>
+      ${model.historyFault !== ""
+        ? html`<p class="dim" data-history-fault>${model.historyFault}</p>`
+        : rows.length === 0
+          ? html`<p class="dim" data-history-empty>No rule has been changed at this yard.</p>`
+          : html`<div class="scroll"><table class="stack">
+              <thead><tr><th>Rule</th><th>Was</th><th>Now</th><th>Who</th><th>When</th></tr></thead>
+              <tbody>
+                ${rows.map((r) => html`<tr data-history-row>
+                  <td data-label="Rule"><span class="who">${r.rule}</span></td>
+                  <td data-label="Was">${r.was}</td>
+                  <td data-label="Now"><strong>${r.now}</strong></td>
+                  <td data-label="Who">${r.who}</td>
+                  <td data-label="When">${r.when}</td>
+                </tr>`)}
+              </tbody>
+            </table></div>`}
+    </section>
+  `;
+}
+
 // ---- the screen ----------------------------------------------------------------------------------
 
 export function renderDesk(model: BoardModel): TemplateResult {
@@ -1101,6 +1182,8 @@ export function renderDesk(model: BoardModel): TemplateResult {
             ? renderFleet(model)
             : model.tab === "willcall"
               ? renderWillCall(model)
-              : renderDayBoard(model)}
+              : model.tab === "settings"
+                ? renderSettings(model)
+                : renderDayBoard(model)}
   `;
 }

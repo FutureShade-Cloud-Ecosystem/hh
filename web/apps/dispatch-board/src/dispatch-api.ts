@@ -23,6 +23,8 @@ import {
   type DispatchLoadBoardView,
   type DispatchLoadOutcomeList,
   type DispatchMintedPickup,
+  type DispatchPolicy,
+  type DispatchPolicyChangePage,
   type DispatchPaymentHoldPage,
   type DispatchRescheduleResult,
   type DispatchRun,
@@ -78,6 +80,21 @@ export class DispatchApi {
 
   revokeWillCall(id: string): Promise<Result<DispatchWillCallRevokeResult>> {
     return staffDispatch.dispatchRevokeWillCall(this.#client, id);
+  }
+
+  // ---- the rules (the read is open to staff; the write is the setters list's; the trail is a manager's)
+
+  policy(branchId: string): Promise<Result<DispatchPolicy>> {
+    return staffDispatch.dispatchGetPolicy(this.#client, { branch_id: branchId });
+  }
+
+  /** An absolute write of the whole policy for one yard. */
+  savePolicy(body: DispatchPolicy): Promise<Result<DispatchPolicy>> {
+    return staffDispatch.dispatchPutPolicy(this.#client, body);
+  }
+
+  policyHistory(branchId: string): Promise<Result<DispatchPolicyChangePage>> {
+    return staffDispatch.dispatchGetPolicyHistory(this.#client, { branch_id: branchId });
   }
 
   // ---- the registry (the manage level; the core refuses below it)

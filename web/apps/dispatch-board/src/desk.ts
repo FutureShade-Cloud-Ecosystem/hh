@@ -17,6 +17,8 @@ import type {
   DispatchStop,
   DispatchStopPaymentHold,
   DispatchMintedPickup,
+  DispatchPolicy,
+  DispatchPolicyChange,
   DispatchTruck,
   DispatchWillCall,
   Result,
@@ -27,6 +29,9 @@ import {
   assignTargets,
   bulkLoadOutcome,
   driverBody,
+  historyFaultWords,
+  policyBody,
+  policyRefusal,
   loadableStops,
   moveAnnouncement,
   plainSentence,
@@ -44,10 +49,12 @@ import {
   truckBody,
   validateDriver,
   validateOrderRef,
+  validatePolicyFields,
   validateTruck,
   willCallNotice,
   willCallRefusal,
   type DriverFields,
+  type PolicyFields,
   type ScheduleFields,
   type TruckFields,
   type CardId,
@@ -101,6 +108,9 @@ export class DispatchDesk {
   #runError: { id: string; words: string } | null = null;
   #scheduleError = "";
   // Will call: the order as typed, its codes, whether a lookup has run, and the code just minted (held in memory, shown once).
+  #policy: DispatchPolicy | null = null;
+  #history: readonly DispatchPolicyChange[] = [];
+  #historyFault = "";
   #wcOrder = "";
   #wcItems: readonly DispatchWillCall[] = [];
   #wcLooked = false;
@@ -171,6 +181,16 @@ export class DispatchDesk {
       this.#calendar = calendar.ok ? (calendar.value.items ?? []) : [];
       this.#holds = await this.#readHolds(view.value.loads.map((r) => r.run.id));
       this.#selected = new Set(pruneSelection([...this.#selected], [...view.value.staging, ...view.value.loads.flatMap((r) => r.stops)]));
+    } else if (this.#tab === "settings") {
+      const [policy, history] = await Promise.all([this.#api.policy(branch), this.#api.policyHistory(branch)]);
+      if (!policy.ok) {
+        this.#loadFailed("The dispatch rules", policy);
+        return false;
+      }
+      this.#policy = policy.value;
+      // The trail is the rules' company: a refusal leaves it out and says why.
+      this.#history = history.ok ? (history.value.items ?? []) : [];
+      this.#historyFault = history.ok ? "" : historyFaultWords(history.error, history.status ?? null);
     } else if (this.#tab === "willcall") {
       // Nothing on this tab is a board: a code list is read for the order that was named.
       if (this.#wcOrder !== "") await this.#readWillCalls();
@@ -259,6 +279,9 @@ export class DispatchDesk {
       loading: this.#loading,
       span: this.#span,
       scheduleError: this.#scheduleError,
+      policy: this.#policy,
+      history: this.#history,
+      historyFault: this.#historyFault,
       willCall: { order: this.#wcOrder, items: this.#wcItems, looked: this.#wcLooked, error: this.#wcError, minted: this.#wcMinted },
       runError: this.#runError,
     };
@@ -328,7 +351,7 @@ export class DispatchDesk {
         return true;
       case "tab": {
         const id = attr("data-tab-id");
-        const next: Tab = id === "day" ? "day" : id === "schedule" ? "schedule" : id === "fleet" ? "fleet" : id === "willcall" ? "willcall" : "load";
+        const next: Tab = id === "day" ? "day" : id === "schedule" ? "schedule" : id === "fleet" ? "fleet" : id === "willcall" ? "willcall" : id === "settings" ? "settings" : "load";
         if (next === this.#tab) return true;
         this.#tab = next;
         this.#sheet = null;
@@ -519,7 +542,7 @@ export class DispatchDesk {
    * One write, then the board again. A refusal is shown in the core's own words and the board is
    * read again too, because a 409 usually means the world moved under the screen.
    */
-  async #run(write: () => Promise<Failure | null>, okNotice: string, what = "That", reading = false): Promise<boolean> {
+  async #run(write: () => Promise<Failure | null>, okNotice: string, what = "That", reading = false, refusal?: (f: Failure) => string): Promise<boolean> {
     if (this.#busy) return false;
     this.#busy = true;
     this.#loading = reading;
@@ -530,7 +553,7 @@ export class DispatchDesk {
       refused = await write();
     } finally {
       if (refused === null) this.#notice = okNotice;
-      else this.#error = refusalWords(what, refused.error, refused.status ?? null);
+      else this.#error = refusal !== undefined ? refusal(refused) : refusalWords(what, refused.error, refused.status ?? null);
       await this.#reload();
       this.#busy = false;
       this.#loading = false;
@@ -890,6 +913,26 @@ export class DispatchDesk {
       }
       case "cancel-run": {
         await this.#runAction(sheet.id, "cancel");
+        return;
+      }
+      case "edit-policy": {
+        const base = this.#policy;
+        if (base === null) return;
+        const f: PolicyFields = { prompt: typed.prompt ?? "", reopen: typed.reopen ?? "", visibility: typed.visibility ?? "", horizon: typed.horizon ?? "", view: typed.view ?? "" };
+        const words = validatePolicyFields(f);
+        if (words !== "") return this.#sheetRefused(words);
+        const body = policyBody(f, base, this.#branchId);
+        const ok = await this.#run(
+          async () => {
+            const r = await this.#api.savePolicy(body);
+            return r.ok ? null : r;
+          },
+          "Saved. The board reads the new rules on its next read.",
+          "Saving the rules",
+          false,
+          (failure) => policyRefusal(failure.error, failure.status ?? null),
+        );
+        if (!ok) this.#restoreSheet(sheet, typed);
         return;
       }
       case "revoke-willcall": {
