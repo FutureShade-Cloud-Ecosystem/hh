@@ -515,7 +515,7 @@ func TestIntegration_LockOrder_OwedReturnBesideReceivedPaymentApply(t *testing.T
 				rec := loposPost(t, mux, sg, "/api/v1/pos/returns", map[string]any{
 					"idempotency_key": uuidKey(t), "order_id": orderID, "refund_method": "CASH",
 					"till_session_id": w.sessionID, "restock": false,
-					"lines":           []map[string]any{{"order_line_id": lineID, "qty_base": qty / 2}},
+					"lines": []map[string]any{{"order_line_id": lineID, "qty_base": qty / 2}},
 				})
 				retBody <- rec.Body.String()
 				retDone <- rec.Code
@@ -604,7 +604,7 @@ func TestIntegration_LockOrder_APaidSaleReturnDoesNotHoldThePaymentsCounter(t *t
 				rec := loposPost(t, mux, sg, "/api/v1/pos/returns", map[string]any{
 					"idempotency_key": uuidKey(t), "order_id": orderID, "refund_method": "CASH",
 					"till_session_id": w.sessionID, "restock": false,
-					"lines":           []map[string]any{{"order_line_id": lineID, "qty_base": qty / 2}},
+					"lines": []map[string]any{{"order_line_id": lineID, "qty_base": qty / 2}},
 				})
 				retBody <- rec.Body.String()
 				retDone <- rec.Code

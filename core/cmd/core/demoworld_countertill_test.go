@@ -674,6 +674,7 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		customerquote.EnvKeyID:   "fx-accept-sign-key",
 		customerquote.EnvKey:     hex.EncodeToString(acceptKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.getenv = func(k string) string { return values[k] }
 	rec, _ := registeredSurface(t, env)
 

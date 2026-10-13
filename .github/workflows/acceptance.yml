@@ -1,0 +1,320 @@
+name: acceptance
+
+# The acceptance suites against the built demo image, on a schedule. Every
+# suite below was run by hand against a hand built image before this file; none
+# ran in ci.yml (it runs the stub legs only). This workflow builds the demo
+# image from deploy/demo/Dockerfile, starts it against a Postgres service, and
+# runs the suites one at a time, each on a fresh database (the stories consume
+# the seeded world, so a second suite on a used world reads state the first
+# left behind). Each suite prints one VERDICT line, the Playwright reports,
+# traces and screenshots upload when any suite is red, and the final step fails
+# the run only for a REQUIRED suite.
+#
+# A suite is REQUIRED when it was green when this workflow was written. A red
+# suite stays in the run as ADVISORY, with the reason beside its step, so its
+# state is visible every run and the step to promote it is one word. It is never
+# fixed here: this file only runs suites, it changes none.
+#
+# No secrets: the gate phrase, its hash and the two keys the image wants are
+# generated inside the job, masked, and live only in the runner's environment
+# for the length of the run. The Postgres service password is the throwaway the
+# service alone holds, as in ci.yml's demo job.
+
+on:
+  schedule:
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acceptance
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    name: acceptance suites on the built demo image
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # The same pin as ci.yml's demo job: the official image through
+        # Google's mirror, by the index digest, so the hosted runners hit
+        # neither Docker Hub's nor Amazon ECR Public's anonymous pull limits.
+        image: mirror.gcr.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5599:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      ACC_IMAGE: hh-accept
+      # The prefix of every container and network this run names.
+      ACC_NAME: hh-accept
+      ACC_PG_PORT: '5599'
+      ACC_PG_PASSWORD: postgres
+      # The image runs on the host network: the box on its public port, the
+      # core on its loopback port, the database on the service's mapped port.
+      ACC_BOX_PORT: '8080'
+      ACC_CORE_PORT: '9090'
+      # The Quote Desk's served desk (its own dev server, started by the run).
+      ACC_QD_PORT: '4838'
+      # The image exit test's own throwaway Postgres container and its box.
+      ACC_EXIT_PG_PORT: '5601'
+      ACC_EXIT_APP_PORT: '5811'
+      # The front door exit test's throwaway Postgres, its gate and its core.
+      ACC_FD_PG_PORT: '5671'
+      ACC_FD_APP_PORT: '5672'
+      ACC_FD_CORE_PORT: '5673'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: core/go.mod
+      - name: Install the web workspace
+        run: npm --prefix web ci
+      - name: Check the browser the suites drive
+        run: |
+          set -euo pipefail
+          command -v google-chrome >/dev/null || { echo "google-chrome is missing from the runner image: every suite drives it" >&2; exit 1; }
+          google-chrome --version
+      - name: Build the demo image
+        run: docker build -f deploy/demo/Dockerfile -t "$ACC_IMAGE" .
+      - name: Generate the throwaway runtime values
+        run: |
+          set -euo pipefail
+          phrase="$(openssl rand -hex 8)"
+          vault_key="$(openssl rand -hex 32)"
+          sign_key="$(openssl rand -hex 32)"
+          hash="$(printf '%s\n' "$phrase" | docker run --rm -i --entrypoint caddy "$ACC_IMAGE" hash-password)"
+          case "$hash" in
+            '$2a'*|'$2b'*|'$2y'*) ;;
+            *) echo "the generated gate value is not a bcrypt hash" >&2; exit 1 ;;
+          esac
+          for value in "$phrase" "$vault_key" "$sign_key" "$hash"; do
+            echo "::add-mask::$value"
+          done
+          {
+            echo "ACC_PHRASE=$phrase"
+            echo "PAYMENT_VAULT_KEY=$vault_key"
+            echo "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1"
+            echo "HH_ACCEPTANCE_SIGN_KEY=$sign_key"
+            echo "DEMO_GATE_BCRYPT_HASH=$hash"
+          } >> "$GITHUB_ENV"
+      - name: Tag the service's Postgres image for the exit tests
+        # The two exit tests start their own throwaway Postgres from
+        # postgres:16-alpine. The service container above already pulled the
+        # pinned mirror image, so its image id is tagged with that name and
+        # the exit tests find it locally and pull nothing from Docker Hub.
+        run: |
+          set -euo pipefail
+          service="$(docker ps -q --filter "publish=$ACC_PG_PORT" | head -n 1)"
+          [ -n "$service" ] || { echo "the Postgres service container is not running" >&2; exit 1; }
+          docker tag "$(docker inspect --format '{{.Image}}' "$service")" postgres:16-alpine
+      - name: Write the helpers every suite step sources
+        run: |
+          cat > "$RUNNER_TEMP/acc-lib.sh" <<'LIB'
+          # Sourced by each suite step. Nothing here prints a runtime value.
+          ACC_OUT="$RUNNER_TEMP/acc-out"
+          ACC_VERDICTS="$RUNNER_TEMP/acc-verdicts"
+          ACC_PG_URL="postgres://postgres:${ACC_PG_PASSWORD}@127.0.0.1:${ACC_PG_PORT}"
+          ACC_BOX_URL="http://127.0.0.1:${ACC_BOX_PORT}"
+          mkdir -p "$ACC_OUT"
+
+          # fresh_box <database>: a new database and a new box on it, waiting
+          # for the box to answer /healthz (the first boot builds the demo
+          # world, so the wait is long). The runtime values come from the
+          # job's environment by name, never on a command line.
+          fresh_box() {
+            docker rm -f "$ACC_NAME-box" >/dev/null 2>&1 || true
+            psql "$ACC_PG_URL/postgres?sslmode=disable" -v ON_ERROR_STOP=1 -q \
+              -c "DROP DATABASE IF EXISTS $1 WITH (FORCE)" -c "CREATE DATABASE $1"
+            DATABASE_URL="$ACC_PG_URL/$1?sslmode=disable" PORT="$ACC_BOX_PORT" CORE_INTERNAL_PORT="$ACC_CORE_PORT" \
+              docker run -d --name "$ACC_NAME-box" --network host \
+              -e DATABASE_URL -e PORT -e CORE_INTERNAL_PORT -e PAYMENT_VAULT_KEY \
+              -e HH_ACCEPTANCE_SIGN_KEY_ID -e HH_ACCEPTANCE_SIGN_KEY -e DEMO_GATE_BCRYPT_HASH \
+              "$ACC_IMAGE" >/dev/null
+            probes=0
+            while [ "$probes" -lt 150 ]; do
+              if curl -sf "$ACC_BOX_URL/healthz" >/dev/null 2>&1; then return 0; fi
+              probes=$((probes + 1))
+              sleep 2
+            done
+            echo "the box never answered /healthz on $1" >&2
+            docker logs "$ACC_NAME-box" 2>&1 | tail -30 >&2
+            return 1
+          }
+
+          # pw <app> <suite> <playwright args...>: one Playwright run with its
+          # report, traces (kept on failure) and results under ACC_OUT/<suite>.
+          pw() {
+            app="$1"; suite="$2"; shift 2
+            (cd "web/apps/$app" && CI=true PLAYWRIGHT_HTML_OPEN=never \
+              PLAYWRIGHT_HTML_REPORT="$ACC_OUT/$suite/report" \
+              npx --no-install playwright test "$@" --reporter=list,html \
+              --trace=retain-on-failure --output="$ACC_OUT/$suite/results")
+          }
+
+          # run_suite <suite> <required|advisory> <command...>: runs the
+          # command, prints one VERDICT line and records it. Always returns 0,
+          # so the next suite runs; the last step turns the record into the
+          # run's result.
+          run_suite() {
+            suite="$1"; mode="$2"; shift 2
+            echo "::group::$suite ($mode)"
+            if "$@"; then word=PASS; else word=FAIL; fi
+            echo "::endgroup::"
+            echo "VERDICT $suite: $word ($mode)"
+            echo "$suite|$mode|$word" >> "$ACC_VERDICTS"
+            return 0
+          }
+          LIB
+      - name: Suite, Drive run (required)
+        run: |
+          set -uo pipefail
+          . "$RUNNER_TEMP/acc-lib.sh"
+          fresh_box acc_drive_run || { echo "drive-run|required|FAIL" >> "$ACC_VERDICTS"; echo "VERDICT drive-run: FAIL (required, the box did not start)"; exit 0; }
+          suite_drive_run() {
+            DRIVE_IMAGE_URL="$ACC_BOX_URL" DRIVE_GATE_PHRASE="$ACC_PHRASE" DRIVE_SHOT_DIR="$ACC_OUT/drive-run/shots" \
+              pw drive-run drive-run --config test/acceptance.config.ts
+          }
+          run_suite drive-run required suite_drive_run
+      - name: Suite, Quote Desk (required)
+        # The desk is served by the suite's own config (served.config.ts) at
+        # the root of QD_ACCEPT_URL with /api proxied to the box, because the
+        # acceptance config alone expects a desk already running there.
+        run: |
+          set -uo pipefail
+          . "$RUNNER_TEMP/acc-lib.sh"
+          fresh_box acc_quote_desk || { echo "quote-desk|required|FAIL" >> "$ACC_VERDICTS"; echo "VERDICT quote-desk: FAIL (required, the box did not start)"; exit 0; }
+          suite_quote_desk() {
+            QD_APP_PORT="$ACC_QD_PORT" QD_STUB_PORT="$ACC_BOX_PORT" \
+              QD_ACCEPT_URL="http://127.0.0.1:$ACC_QD_PORT/" QD_ACCEPT_USER=demo QD_ACCEPT_PHRASE="$ACC_PHRASE" \
+              pw quote-desk quote-desk --config test/acceptance/served.config.ts
+          }
+          run_suite quote-desk required suite_quote_desk
+      - name: Suite, Manager Home (advisory)
+        # Advisory: red when this workflow was written. The yard manager's
+        # shortage resolve story finds two shortage rows where it expects one
+        # (a strict mode locator violation in 20-resolve), so the story and the
+        # seeded world disagree. A fix to the story or the seed promotes it.
+        run: |
+          set -uo pipefail
+          . "$RUNNER_TEMP/acc-lib.sh"
+          fresh_box acc_manager_home || { echo "manager-home|advisory|FAIL" >> "$ACC_VERDICTS"; echo "VERDICT manager-home: FAIL (advisory, the box did not start)"; exit 0; }
+          suite_manager_home() {
+            MH_IMAGE_URL="$ACC_BOX_URL" MH_GATE_PHRASE="$ACC_PHRASE" MH_SHOT_DIR="$ACC_OUT/manager-home/shots" \
+              pw manager-home manager-home --config test/acceptance.config.ts
+          }
+          run_suite manager-home advisory suite_manager_home
+      - name: Suite, Yard Pick (advisory)
+        # Advisory: red when this workflow was written. Five legs fail on the
+        # current image: the cost glance answers 400 where 200 is expected, the
+        # pick screen walk never finds its button, the short pick finds no
+        # task, and the delivery date refusal reads "Forbidden" where the
+        # suite expects the dispatch capability's sentence.
+        run: |
+          set -uo pipefail
+          . "$RUNNER_TEMP/acc-lib.sh"
+          fresh_box acc_yard_pick || { echo "yard-pick|advisory|FAIL" >> "$ACC_VERDICTS"; echo "VERDICT yard-pick: FAIL (advisory, the box did not start)"; exit 0; }
+          suite_yard_pick() {
+            YARD_IMAGE_URL="$ACC_BOX_URL" YARD_GATE_PHRASE="$ACC_PHRASE" YARD_SHOT_DIR="$ACC_OUT/yard-pick/shots" \
+              pw yard-pick yard-pick --config test/acceptance.config.ts
+          }
+          run_suite yard-pick advisory suite_yard_pick
+      - name: Suite, Counter Till (advisory)
+        # Advisory: red when this workflow was written. The story drifted from
+        # the app: the way in now renders the yard manager card the suite
+        # expects absent, the signed-in role marker is not found after the
+        # sign in, and the account picker holds no scrubbed party account. The
+        # story only; the restart leg is left to the till's own exit test.
+        run: |
+          set -uo pipefail
+          . "$RUNNER_TEMP/acc-lib.sh"
+          fresh_box acc_counter_till || { echo "counter-till|advisory|FAIL" >> "$ACC_VERDICTS"; echo "VERDICT counter-till: FAIL (advisory, the box did not start)"; exit 0; }
+          suite_counter_till() {
+            kgn_line="$(psql "$ACC_PG_URL/acc_counter_till?sslmode=disable" -tAc \
+              "SELECT ol.id::text FROM order_lines ol JOIN orders o ON o.id = ol.order_id WHERE o.order_no = 'DEMO-KGN-S01' LIMIT 1" | tr -d '[:space:]')" || return 1
+            CT_IMAGE_URL="$ACC_BOX_URL" CT_GATE_PHRASE="$ACC_PHRASE" CT_SHOT_DIR="$ACC_OUT/counter-till/shots" CT_KGN_LINE="$kgn_line" \
+              pw counter-till counter-till --config test/acceptance.config.ts --grep-invert restart
+          }
+          run_suite counter-till advisory suite_counter_till
+      - name: Remove the box
+        if: always()
+        run: docker rm -f "$ACC_NAME-box" >/dev/null 2>&1 || true
+      - name: Suites on their own stubs (front door, Buying and Stock, Money Desk)
+        # These three configs serve the built app against the app's own stub
+        # (their configs start both servers), not against the image. They are
+        # acceptance specs of the apps and none runs in ci.yml's loop, which
+        # runs each app's default config.
+        run: |
+          set -uo pipefail
+          . "$RUNNER_TEMP/acc-lib.sh"
+          run_suite front-door required pw front-door front-door --config test/acceptance.config.ts
+          run_suite buying-and-stock required pw buying-and-stock buying-and-stock --config test/acceptance.config.ts
+          run_suite money-desk required pw money-desk money-desk --config test/acceptance.config.ts
+      - name: Suite, the demo image exit test (required)
+        # deploy/demo/exit-test.sh builds its own image and drives it against
+        # its own throwaway Postgres, on its own ports and names.
+        run: |
+          set -uo pipefail
+          . "$RUNNER_TEMP/acc-lib.sh"
+          suite_demo_exit() {
+            W5_EXIT_IMAGE="$ACC_IMAGE:exit" W5_EXIT_PG="$ACC_NAME-exit-pg" W5_EXIT_NET="$ACC_NAME-exit-net" \
+              W5_EXIT_PG_PORT="$ACC_EXIT_PG_PORT" W5_EXIT_APP_PORT="$ACC_EXIT_APP_PORT" W5_EXIT_PREFIX="${ACC_NAME//-/}" \
+              ./deploy/demo/exit-test.sh
+          }
+          run_suite demo-exit-test required suite_demo_exit
+      - name: Suite, the front door exit test (advisory)
+        timeout-minutes: 20
+        # Advisory: not run before this workflow was written. The script
+        # starts its core and its gate as background processes of its own and
+        # stops them with signals, which the workstation lane that wrote this
+        # file may not do. The first dispatch run decides whether it is
+        # promoted to required.
+        run: |
+          set -uo pipefail
+          . "$RUNNER_TEMP/acc-lib.sh"
+          suite_front_door_exit() {
+            D2_FD_PG="$ACC_NAME-fd-pg" D2_FD_NET="$ACC_NAME-fd-net" D2_FD_PG_PORT="$ACC_FD_PG_PORT" \
+              D2_FD_APP_PORT="$ACC_FD_APP_PORT" D2_FD_CORE_PORT="$ACC_FD_CORE_PORT" \
+              web/apps/front-door/test/acceptance/exit-test.sh
+          }
+          run_suite front-door-exit-test advisory suite_front_door_exit
+      # always(): an advisory suite that hangs or fails its step must not keep
+      # the required suites' verdicts and evidence from being read.
+      - name: Verdicts
+        id: verdict
+        if: always()
+        run: |
+          set -uo pipefail
+          . "$RUNNER_TEMP/acc-lib.sh"
+          echo "any_red=false" >> "$GITHUB_OUTPUT"
+          required_red=0
+          [ -f "$ACC_VERDICTS" ] || { echo "no suite recorded a verdict" >&2; exit 1; }
+          while IFS='|' read -r suite mode word; do
+            echo "VERDICT $suite: $word ($mode)"
+            if [ "$word" != PASS ]; then
+              echo "any_red=true" >> "$GITHUB_OUTPUT"
+              [ "$mode" = required ] && required_red=$((required_red + 1))
+            fi
+          done < "$ACC_VERDICTS"
+          [ "$required_red" -eq 0 ] || { echo "$required_red required suite(s) red" >&2; exit 1; }
+      - name: Upload the reports, traces and screenshots of a red run
+        if: always() && (steps.verdict.outputs.any_red == 'true' || steps.verdict.outcome != 'success')
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-reports
+          path: ${{ runner.temp }}/acc-out
+          if-no-files-found: ignore

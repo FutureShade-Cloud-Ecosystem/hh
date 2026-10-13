@@ -26,11 +26,21 @@ import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { PoApi } from "./po/po-api.js";
 import { PoDesk } from "./po/po-desk.js";
 import { poStyles } from "./po/po-styles.js";
+import type { AreaDesk, AreaEntry } from "./purch/area.js";
+import { purchStyles } from "./purch/purch-styles.js";
+import { LandedApi } from "./landed/landed-api.js";
+import { LandedDesk } from "./landed/landed-desk.js";
+import { BillsApi } from "./bills/bills-api.js";
+import { BillsDesk } from "./bills/bills-desk.js";
+import { ReceivingApi } from "./receiving/receiving-api.js";
+import { ReceivingDesk } from "./receiving/receiving-desk.js";
+import { VendorsApi } from "./vendors/vendors-api.js";
+import { VendorsDesk } from "./vendors/vendors-desk.js";
 
 const DEMO_ORG = "hh-demo";
 
 export class BuyingAndStockApp extends HHElement {
-  static styles = [baseStyles, entryStyles, poStyles, css`
+  static styles = [baseStyles, entryStyles, poStyles, purchStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
   `];
@@ -57,15 +67,41 @@ export class BuyingAndStockApp extends HHElement {
     headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
   });
 
-  // The procurement slice (src/po): its state, its loads, its presses. The
-  // fields it reads are looked up in this element's own shadow root.
-  #po = this.#newDesk();
+  // The areas, each a desk of its own (src/po, src/landed, ...): its state, its loads, its
+  // presses. The fields a desk reads are looked up in this element's own shadow root. The
+  // purchase orders are first and load at sign in; the others load when first shown.
+  #areas: readonly AreaEntry[] = this.#newAreas();
+  #area = "orders";
+  readonly #shown = new Set<string>(["orders"]);
 
-  #newDesk(): PoDesk {
-    return new PoDesk(new PoApi(this.#staffClient), {
+  #newAreas(): AreaEntry[] {
+    const host = {
       repaint: () => this.requestUpdate(),
-      field: (name) => this.#fieldElement(name)?.value ?? "",
-    });
+      field: (name: string) => this.#fieldElement(name)?.value ?? "",
+      role: () => this.#roleCode,
+    };
+    return [
+      { id: "orders", label: "Purchase orders", desk: new PoDesk(new PoApi(this.#staffClient), host) },
+      { id: "receiving", label: "Receiving", desk: new ReceivingDesk(new ReceivingApi(this.#staffClient), host) },
+      { id: "vendors", label: "Vendors", desk: new VendorsDesk(new VendorsApi(this.#staffClient), host) },
+      { id: "bills", label: "Vendor bills", desk: new BillsDesk(new BillsApi(this.#staffClient), host) },
+      { id: "landed", label: "Landed cost", desk: new LandedDesk(new LandedApi(this.#staffClient), host) },
+    ];
+  }
+
+  get #desk(): AreaDesk {
+    return (this.#areas.find((a) => a.id === this.#area) ?? this.#areas[0]!).desk;
+  }
+
+  #showArea(id: string): void {
+    const entry = this.#areas.find((a) => a.id === id);
+    if (entry === undefined) return;
+    this.#area = id;
+    if (!this.#shown.has(id)) {
+      this.#shown.add(id);
+      void entry.desk.load();
+    }
+    this.requestUpdate();
   }
 
   #fieldElement(name: string): HTMLInputElement | HTMLSelectElement | null {
@@ -103,6 +139,9 @@ export class BuyingAndStockApp extends HHElement {
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
+  // The signed in role's code: it decides which controls an area offers.
+  #roleCode = "";
+
   // The entry cards carry data-action="choose" and data-flow; one host
   // listener reads them, as the till's does.
   readonly #onHostClick = (event: MouseEvent): void => {
@@ -124,17 +163,24 @@ export class BuyingAndStockApp extends HHElement {
       this.requestUpdate();
       return;
     }
-    if (control !== undefined && this.#po.press(control)) return;
+    if (action === "area") {
+      this.#showArea(control?.getAttribute("data-area-id") ?? "");
+      return;
+    }
+    if (control !== undefined && this.#desk.press(control)) return;
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
     }
   };
 
-  // The draft's date field: the words under it follow what is typed (the field itself is never bound).
+  // A field changed: the area keeps the words under it in step with what is typed (the field itself is never bound).
   readonly #onHostInput = (event: Event): void => {
     const target = event.composedPath()[0];
-    if (target instanceof HTMLInputElement && target.getAttribute("data-field") === "expected") this.#po.expectedTyped(target.value);
+    if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement) {
+      const name = target.getAttribute("data-field");
+      if (name !== null) this.#desk.typed?.(name, target.value);
+    }
   };
 
   connectedCallback(): void {
@@ -154,8 +200,9 @@ export class BuyingAndStockApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.user.name;
+        this.#roleCode = handoff.session.roleCode;
         clearFrontDoorHandoff();
-        void this.#po.load();
+        void this.#areas[0]!.desk.load();
       }
       this.requestUpdate();
     } else {
@@ -182,7 +229,7 @@ export class BuyingAndStockApp extends HHElement {
     const widget = this.renderRoot.querySelector("hh-feedback");
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) widget.send = this.#feedbackSender;
     // A draft's starting field values: set once per draft, after the render that drew them.
-    this.#po.seed((name, value) => {
+    this.#desk.seed?.((name, value) => {
       const field = this.#fieldElement(name);
       if (field !== null) field.value = value;
     });
@@ -208,7 +255,8 @@ export class BuyingAndStockApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.user.name;
-        void this.#po.load();
+        this.#roleCode = result.value.roleCode;
+        void this.#areas[0]!.desk.load();
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
         this.#entryView = { ...this.#entryView, busy: false, message: "Sign-in did not go through. Try the role again." };
@@ -221,7 +269,10 @@ export class BuyingAndStockApp extends HHElement {
 
   #onSignOut(): void {
     this.#sessions.clear();
-    this.#po = this.#newDesk();
+    this.#areas = this.#newAreas();
+    this.#area = "orders";
+    this.#shown.clear();
+    this.#shown.add("orders");
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -233,11 +284,19 @@ export class BuyingAndStockApp extends HHElement {
     return html`<button slot="theme" type="button" class="theme-btn" data-action="feedback" title="Send feedback about this screen">Feedback</button><button slot="theme" type="button" class="theme-btn" data-action="theme">${label}</button>`;
   }
 
+  // The area switcher: one tab per area, the open one a pill. The words are the areas' own.
+  private renderAreas(): TemplateResult {
+    return html`<nav class="areas" aria-label="Buying and Stock areas">${this.#areas.map(
+      (a) => html`<button type="button" class="tab" data-action="area" data-area-id=${a.id} aria-current="${this.#area === a.id ? "true" : "false"}">${a.label}</button>`,
+    )}</nav>`;
+  }
+
   private renderSignedIn(): TemplateResult {
     return html`
       <hos-app-header signed-in demo compact product-name="Yard">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
-        ${this.#po.render()}
+        ${this.renderAreas()}
+        ${this.#desk.render()}
       </main>
       <hh-feedback screen="Buying and Stock" trigger="external"></hh-feedback>
     `;
