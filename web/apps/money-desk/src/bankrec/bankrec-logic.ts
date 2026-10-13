@@ -214,7 +214,7 @@ export function importFailedWords(error: string): string {
   }
   const date = /^csv row (\d+): bad date "([^"]*)"/.exec(text);
   if (date !== null) {
-    return `Not imported: row ${date[1]} has a date the file format does not read ("${date[2]}"). Dates are written year, month, day, such as 2031-06-04.`;
+    return `Not imported: row ${date[1]} has a date the file format does not read ("${date[2]}"). Dates are written year, month, day, with dashes.`;
   }
   const amount = /^csv row (\d+): bad (?:amount|debit|credit) "([^"]*)"/.exec(text);
   if (amount !== null) {

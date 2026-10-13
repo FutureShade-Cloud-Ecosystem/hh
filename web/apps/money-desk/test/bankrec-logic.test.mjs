@@ -164,7 +164,7 @@ test("a failed import says what the file lacked in words a bookkeeper can act on
   );
   assert.equal(
     importFailedWords('statement parse failed: bankrec: csv row 3: bad date "June 4" (want "2006-01-02"): parsing time "June 4" as "2006-01-02": cannot parse "June 4" as "2006"'),
-    'Not imported: row 3 has a date the file format does not read ("June 4"). Dates are written year, month, day, such as 2031-06-04.',
+    'Not imported: row 3 has a date the file format does not read ("June 4"). Dates are written year, month, day, with dashes.',
   );
   assert.equal(
     importFailedWords('statement parse failed: bankrec: csv row 5: bad amount "12..5": not a number: "12..5"'),

@@ -409,7 +409,7 @@ export class BankrecDesk {
   #monthInput(): { year: number; month: number } | string {
     const year = Number(this.#form["br-year"]?.trim());
     const month = Number(this.#form["br-month"]);
-    if (!Number.isInteger(year) || year < 2000 || year > 2100) return "Enter the year as four digits, such as 2031.";
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) return "Enter the year as four digits.";
     if (!Number.isInteger(month) || month < 1 || month > 12) return "Pick the month.";
     return { year, month };
   }
