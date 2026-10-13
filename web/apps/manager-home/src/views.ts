@@ -12,6 +12,7 @@ import type { DemoFlow } from "@hardscapehouse/api-client";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import { widgetLink } from "./landing-links.js";
 import { roleWords } from "./role-words.js";
+import { gaugeSegments, sparkColumns, sparkLabel } from "./widget-shapes.js";
 import type {
   ApprovalRow,
   NeedsQueue,
@@ -147,6 +148,17 @@ function renderWidget(
       </article>
     `);
   }
+  if ((w.shape === "trend" || w.shape === "gauge") && figure !== null && datum !== undefined) {
+    return placed(w, html`
+      <article class="card" data-widget=${w.widget_key}>
+        <h2 class="card-title">${w.title}</h2>
+        <p class="figure small">${figure}</p>
+        <p class="card-sub">${caption}</p>
+        ${w.shape === "trend" ? renderTrend(datum, w) : renderGauge(datum, w)}
+        ${foot}
+      </article>
+    `);
+  }
   // A gauge with no ceiling from the server renders its count and no fill. The core measures
   // this measure as a count; inventing a scale here would paint a severity the server never
   // sent, which is the confident wrong number this app exists to never show.
@@ -174,6 +186,42 @@ function renderFoot(w: WidgetView): TemplateResult {
     return html`<p class="tile-foot"><button type="button" class="foot-link" data-action="open-view" data-view=${link.view}>Open ${VIEW_TITLE[link.view]}<span class="chev" aria-hidden="true">›</span></button></p>`;
   }
   return html`<p class="tile-foot">${NOT_HERE}</p>`;
+}
+
+/**
+ * The trend: a column per point the server sent, the tallest at full height. With fewer than two
+ * honest points there is no line, and the card is its figure alone (never an invented series).
+ * The first and last point's labels sit under it as text; nothing animates, so there is no motion
+ * to reduce.
+ */
+function renderTrend(datum: WidgetDatum, w: WidgetView): TemplateResult | typeof nothing {
+  const columns = sparkColumns(datum.points);
+  if (columns === null) return nothing;
+  return html`
+    <div class="spark" role="img" aria-label=${sparkLabel(datum.points, w.kind)}>
+      ${columns.map((c) => html`<span class="spark-col ${c.heightClass}"></span>`)}
+    </div>
+    <p class="spark-ends"><span>${columns[0].label}</span><span>${columns[columns.length - 1].label}</span></p>
+  `;
+}
+
+/**
+ * The gauge: the points' shares of their own sum as one segmented meter, with the tone the server
+ * named, and a legend that carries every exact figure as text. The core measures this as a count
+ * with no ceiling, so the meter shows composition, never "how full": no invented scale.
+ */
+function renderGauge(datum: WidgetDatum, w: WidgetView): TemplateResult | typeof nothing {
+  const segments = gaugeSegments(datum.points);
+  if (segments === null) return nothing;
+  const spoken = `${w.title}: ${segments.map((g) => `${g.label} ${grouped(g.number)}`).join(", ")}`;
+  return html`
+    <div class="meter" role="img" aria-label=${spoken}>
+      ${segments.map((g) => html`<span class="seg ${g.widthClass} ${g.toneClass}"></span>`)}
+    </div>
+    <ul class="legend">
+      ${segments.map((g) => html`<li class="legend-row"><span class="swatch ${g.toneClass}" aria-hidden="true"></span><span class="label">${g.label}</span><span class="value">${grouped(g.number)}</span></li>`)}
+    </ul>
+  `;
 }
 
 function placed(w: WidgetView, body: TemplateResult): TemplateResult {

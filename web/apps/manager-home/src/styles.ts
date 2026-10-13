@@ -468,6 +468,92 @@ export const homeStyles = css`
     color: var(--hh-text-dim);
   }
 
+  /* -- trend and gauge ------------------------------------------------------------------ */
+
+  .spark {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--hh-s-2);
+    height: 48px;
+    margin-top: var(--hh-s-8);
+  }
+  .spark-col {
+    display: block;
+    flex: 1 1 0;
+    min-width: 2px;
+    border-radius: 2px 2px 0 0;
+    background: var(--hh-success-fill);
+  }
+  /* The column heights, quantized in steps of five percent, static classes like the bar widths. */
+  .h0 { height: 0%; }
+  .h5 { height: 5%; }
+  .h10 { height: 10%; }
+  .h15 { height: 15%; }
+  .h20 { height: 20%; }
+  .h25 { height: 25%; }
+  .h30 { height: 30%; }
+  .h35 { height: 35%; }
+  .h40 { height: 40%; }
+  .h45 { height: 45%; }
+  .h50 { height: 50%; }
+  .h55 { height: 55%; }
+  .h60 { height: 60%; }
+  .h65 { height: 65%; }
+  .h70 { height: 70%; }
+  .h75 { height: 75%; }
+  .h80 { height: 80%; }
+  .h85 { height: 85%; }
+  .h90 { height: 90%; }
+  .h95 { height: 95%; }
+  .h100 { height: 100%; }
+  .spark-ends {
+    display: flex;
+    justify-content: space-between;
+    margin: 0;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+  }
+  .meter {
+    display: flex;
+    gap: var(--hh-s-2);
+    height: 12px;
+    margin-top: var(--hh-s-8);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--hh-track);
+  }
+  .seg {
+    display: block;
+    height: 100%;
+  }
+  .tone-none { background: var(--hh-success-fill); }
+  .tone-good { background: var(--hh-state-good); }
+  .tone-watch { background: var(--hh-state-watch); }
+  .tone-stop { background: var(--hh-state-stop); }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-4) var(--hh-s-16);
+    margin: var(--hh-s-8) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .legend-row {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    font-size: 14px;
+  }
+  .legend-row .value {
+    font-weight: 650;
+  }
+  .swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+  }
+
   /* -- the views' links ------------------------------------------------------------------ */
 
   /* The landing's own way into its three views: small chips with chevrons. The needs rows link
