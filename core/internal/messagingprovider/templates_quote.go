@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 )
 
 // templates_quote.go, the two quote-side message bodies (Wave 3: DIB-77 quote delivery, DIB-58
@@ -91,16 +92,26 @@ func RenderQuoteShare(n QuoteShareNotice, r Recipient) notify.Message {
 	if ref == "" {
 		ref = shortID(n.QuoteID)
 	}
-	body := fmt.Sprintf("%s: your %s quote %s", greet(r), senderName(), ref)
+	head := fmt.Sprintf("%s: your quote %s", greet(r), ref)
 	if n.TotalCents > 0 {
-		body += " for " + formatCAD(n.TotalCents)
+		head += " for " + formatCAD(n.TotalCents)
 	}
-	body += " is ready: " + n.ShareURL
+	if name := dealer.Name(); name != "" {
+		head += " from " + name
+	}
+	tail := " is ready: " + n.ShareURL
 	if n.ValidUntil != "" {
-		body += fmt.Sprintf(" (valid to %s)", n.ValidUntil)
+		tail += fmt.Sprintf(" (valid to %s)", n.ValidUntil)
 	}
-	body += ". Reply STOP to opt out."
-	return notify.Message{Channel: notify.SMSChannel, To: r.Phone, Body: clampSegment(body)}
+	tail += ". Reply STOP to opt out."
+	// The clamp shortens the words before the link, never the link or the opt out line.
+	if room := smsSegment - len([]rune(tail)); len([]rune(head)) > room {
+		if room < 1 {
+			room = 1
+		}
+		head = string([]rune(head)[:room-1]) + "…"
+	}
+	return notify.Message{Channel: notify.SMSChannel, To: r.Phone, Body: clampSegment(head + tail)}
 }
 
 // RenderQuoteFollowupSMS builds one cadence step's text.
@@ -167,7 +178,7 @@ func RenderQuoteFollowupEmail(n QuoteFollowupNotice, name string) notify.Message
 	return notify.Message{
 		Channel: notify.EmailChannel,
 		To:      n.Email,
-		Subject: fmt.Sprintf("%s, quote %s", senderName(), ref),
+		Subject: quoteSubject(ref),
 		Body:    b.String(),
 	}
 }
@@ -179,4 +190,12 @@ func orText(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// quoteSubject names the dealer when one is configured, else a plain capitalised form.
+func quoteSubject(ref string) string {
+	if name := dealer.Name(); name != "" {
+		return fmt.Sprintf("%s, quote %s", name, ref)
+	}
+	return "Your quote " + ref
 }
