@@ -168,6 +168,27 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		return raw
 	}
 
+	// marginGlance asks the till's margin glance about ten of the demo paver at
+	// Trenton and returns the status and body: the cost and margin question the
+	// matrix answers per role (the list, then the policy word, both must allow).
+	marginGlance := func(t *testing.T, m minted) (int, string) {
+		t.Helper()
+		status, raw := get(t, "/api/v1/products/counter-search?q=DEMO-PAV-HOLLAND", m)
+		if status != http.StatusOK {
+			return status, raw
+		}
+		var found struct {
+			Items []struct {
+				ProductID string `json:"product_id"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(raw), &found); err != nil || len(found.Items) == 0 {
+			t.Fatalf("the counter search does not answer a product: %v (body: %s)", err, raw)
+		}
+		return do(t, http.MethodPost, "/api/v1/pos/margin-glance", m.headers,
+			`{"branch_id":"`+trentonID+`","customer_id":"","customer_type":"RETAIL","lines":[{"product_id":"`+found.Items[0].ProductID+`","qty_entered":10,"uom_entered":"PC"}]}`)
+	}
+
 	t.Run("general-manager", func(t *testing.T) {
 		gm := mint(t, "general-manager")
 		// The card's credential is the flow table's account, a leadership
@@ -362,6 +383,46 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		}
 		if parked != 1 {
 			t.Errorf("the needs queue counts %d parked tickets, want the one at Trenton (rows: %+v)", parked, needs.Rows)
+		}
+
+		// L-card: the card's bearer reaches the surfaces the role holds: the till
+		// (manage), the Quote Desk (work), the dispatch board (manage).
+		wantOK(t, "the till's policy (counter-till, manage)", "/api/v1/pos/policy", bm)
+		wantOK(t, "the Quote Desk's quotes (quote-desk, work)", "/api/v1/quotes", bm)
+		// L-branch: the role's own branch only. The branch list leaves Kingston
+		// out and the server fences a read named at it.
+		if codes := branchCodes(t, bm); !sameSet(codes, []string{"TRT"}) {
+			t.Errorf("the Branch Manager reaches %v, want Trenton alone", codes)
+		}
+		wantOK(t, "the dispatch board at Trenton", "/api/v1/dispatch/trucks?branch_id="+trentonID, bm)
+		if status, raw := get(t, "/api/v1/dispatch/trucks?branch_id="+kingstonID, bm); status != http.StatusForbidden {
+			t.Errorf("the dispatch board at Kingston: status %d body %s, want the branch fence's 403", status, raw)
+		}
+		// L-wall: Yard Pick (a Trenton read) and Dealer Admin sit at None for the role.
+		wantWall(t, "the yard pick queue (yard-pick, None)", "/api/v1/yard/pick-queue?branch_id="+trentonID, bm)
+		wantWall(t, "the pricing rules (dealer-admin, None)", "/api/v1/pricing/rules", bm)
+		// L-cost: the role is on the cost and margin list and tier two clears the
+		// policy word (MANAGER_UP), so the till's glance answers a margin figure.
+		cfg, err := roleconfig.Default()
+		if err != nil {
+			t.Fatalf("roleconfig.Default: %v", err)
+		}
+		if !contains(cfg.CostVisibility(), "branch_manager") {
+			t.Errorf("the decided matrix does not list the Branch Manager on the cost and margin list: %v", cfg.CostVisibility())
+		}
+		if status, raw := marginGlance(t, bm); status != http.StatusOK || !strings.Contains(raw, "margin_bps") {
+			t.Errorf("the margin glance for the Branch Manager: status %d body %s, want a margin figure", status, raw)
+		}
+		// Approvals: the decided matrix names the Sales manager alone as the
+		// branch's floor approver (quote_floor_branch_approvers) and the Financial
+		// Controller and General Manager for the other four kinds, so the Branch
+		// Manager decides no kind at all. (Manager Home's decider words and the
+		// coming roles notes say a branch manager decides Margin in its own
+		// branch; the server does not, and the server is what this leg pins.)
+		for _, kind := range []string{"MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE"} {
+			if status, raw := get(t, "/api/v1/staff/approvals?status=PENDING&kind="+kind, bm); status != http.StatusForbidden {
+				t.Errorf("the Branch Manager listing %s approvals: status %d body %s, want 403", kind, status, raw)
+			}
 		}
 	})
 }
