@@ -24,6 +24,7 @@ import {
   STOP_LABEL,
   assignTargets,
   bulkLoadOutcome,
+  driverBody,
   loadableStops,
   moveAnnouncement,
   plainSentence,
@@ -38,7 +39,12 @@ import {
   validateReason,
   validateReschedule,
   validateSchedule,
+  truckBody,
+  validateDriver,
+  validateTruck,
+  type DriverFields,
   type ScheduleFields,
+  type TruckFields,
   type CardId,
 } from "./dispatch-logic.js";
 import { renderDesk, type Axis, type BoardModel, type Sheet, type Span, type Tab } from "./views.js";
@@ -154,6 +160,19 @@ export class DispatchDesk {
       this.#calendar = calendar.ok ? (calendar.value.items ?? []) : [];
       this.#holds = await this.#readHolds(view.value.loads.map((r) => r.run.id));
       this.#selected = new Set(pruneSelection([...this.#selected], [...view.value.staging, ...view.value.loads.flatMap((r) => r.stops)]));
+    } else if (this.#tab === "fleet") {
+      // The registry lists what is out of use too, so a retired truck can be brought back.
+      const [trucks, drivers] = await Promise.all([this.#api.trucks(branch, true), this.#api.drivers(branch, true)]);
+      if (!trucks.ok) {
+        this.#loadFailed("The trucks", trucks);
+        return false;
+      }
+      if (!drivers.ok) {
+        this.#loadFailed("The drivers", drivers);
+        return false;
+      }
+      this.#trucks = trucks.value.items ?? [];
+      this.#drivers = drivers.value.items ?? [];
     } else if (this.#tab === "schedule") {
       // The schedule reads the day's books and the week ahead; it crews nothing, so it reads no crew lists.
       const [board, calendar] = await Promise.all([this.#api.dayBoard(branch, day), this.#api.calendar(branch, day, shiftISODate(day, 6))]);
@@ -263,8 +282,20 @@ export class DispatchDesk {
     const key = `${sheet.kind}:${sheet.id}`;
     if (this.#sheetSeeded === key) return;
     this.#sheetSeeded = key;
+    // A fresh sheet takes what the person had typed (after a refusal) or the row it edits (data-initial).
+    const saved = sheet.values ?? {};
+    for (const el of this.#host.findAll("[data-sheet] [data-field]")) {
+      const name = el.getAttribute("data-field") ?? "";
+      const want = saved[name] ?? el.getAttribute("data-initial");
+      if (want === null || want === undefined) continue;
+      if (el instanceof HTMLInputElement) el.value = want;
+      else if (el instanceof HTMLSelectElement) {
+        const index = [...el.options].findIndex((o) => (o.getAttribute("data-id") ?? "") === want);
+        if (index >= 0) el.selectedIndex = index;
+      }
+    }
     const to = this.#host.find("[data-sheet] [data-field=\"to_date\"]");
-    if (to instanceof HTMLInputElement) to.value = shiftISODate(this.#today, 1);
+    if (to instanceof HTMLInputElement && saved.to_date === undefined) to.value = shiftISODate(this.#today, 1);
   }
 
   // ---- the press --------------------------------------------------------------------------------
@@ -282,7 +313,7 @@ export class DispatchDesk {
         return true;
       case "tab": {
         const id = attr("data-tab-id");
-        const next: Tab = id === "day" ? "day" : id === "schedule" ? "schedule" : "load";
+        const next: Tab = id === "day" ? "day" : id === "schedule" ? "schedule" : id === "fleet" ? "fleet" : "load";
         if (next === this.#tab) return true;
         this.#tab = next;
         this.#sheet = null;
@@ -342,12 +373,15 @@ export class DispatchDesk {
       case "schedule-submit":
         void this.#schedule();
         return true;
+      case "fleet-toggle":
+        void this.#fleetToggle(attr("data-fleet-kind"), attr("data-fleet-id"), attr("data-active-to") === "true");
+        return true;
       case "new-run":
         this.#openSheet("new-run", "new");
         return true;
       case "open-sheet": {
         const kind = attr("data-sheet-kind") as Sheet["kind"];
-        this.#openSheet(kind, attr("data-stop-id") || attr("data-run-id"));
+        this.#openSheet(kind, attr("data-stop-id") || attr("data-run-id") || attr("data-fleet-id"));
         return true;
       }
       case "sheet-cancel":
@@ -604,6 +638,22 @@ export class DispatchDesk {
     this.#host.repaint();
   }
 
+  /** Takes a truck or a driver out of use, or puts them back: a rewrite of the row with the one flag changed. */
+  async #fleetToggle(kind: string, id: string, active: boolean): Promise<void> {
+    const truck = kind === "truck" ? this.#trucks.find((t) => t.id === id) : undefined;
+    const driver = kind === "driver" ? this.#drivers.find((d) => d.id === id) : undefined;
+    if (truck === undefined && driver === undefined) return;
+    const name = truck?.code ?? driver?.name ?? "It";
+    await this.#run(
+      async () => {
+        const r = truck !== undefined ? await this.#api.updateTruck(truck.id, { ...truck, is_active: active }) : await this.#api.updateDriver(id, { ...(driver as DispatchDriver), is_active: active });
+        return r.ok ? null : r;
+      },
+      active ? `${name} is back in use.` : `${name} is out of use. It leaves the pick lists and stays on the books.`,
+      "That change",
+    );
+  }
+
   /** Schedules the order in the form. A refusal stays beside the button and the form keeps what was typed. */
   async #schedule(): Promise<void> {
     if (this.#busy) return;
@@ -651,6 +701,17 @@ export class DispatchDesk {
     this.#host.repaint();
   }
 
+  /** Everything typed in the open sheet, so a refusal can put it back. */
+  #typed(): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const el of this.#host.findAll("[data-sheet] [data-field]")) {
+      const name = el.getAttribute("data-field") ?? "";
+      if (el instanceof HTMLInputElement) out[name] = el.value;
+      else if (el instanceof HTMLSelectElement) out[name] = el.selectedOptions[0]?.getAttribute("data-id") ?? "";
+    }
+    return out;
+  }
+
   #fieldValue(name: string): string {
     const el = this.#host.find(`[data-sheet] [data-field="${name}"]`);
     if (el instanceof HTMLInputElement) return el.value;
@@ -667,6 +728,7 @@ export class DispatchDesk {
     const sheet = this.#sheet;
     if (sheet === null || this.#busy) return;
     const reason = this.#fieldValue("reason");
+    const typed = this.#typed();
     switch (sheet.kind) {
       case "new-run": {
         await this.#run(
@@ -693,7 +755,7 @@ export class DispatchDesk {
           `Moved to ${to}. The customer's date changed with it.`,
           "Moving it",
         );
-        if (!ok) this.#restoreSheet(sheet);
+        if (!ok) this.#restoreSheet(sheet, typed);
         return;
       }
       case "reopen-stop":
@@ -710,11 +772,47 @@ export class DispatchDesk {
           sheet.kind === "reopen-stop" ? reopenNotice(stop ?? { order_no: undefined, run_id: undefined }) : row !== undefined ? reopenRunNotice(row) : "Reopened.",
           "Reopening it",
         );
-        if (!ok) this.#restoreSheet(sheet);
+        if (!ok) this.#restoreSheet(sheet, typed);
         return;
       }
       case "cancel-run": {
         await this.#runAction(sheet.id, "cancel");
+        return;
+      }
+      case "add-truck":
+      case "edit-truck": {
+        const f: TruckFields = { code: typed.code ?? "", name: typed.name ?? "", type: typed.type ?? "", capacity: typed.capacity ?? "", volume: typed.volume ?? "", pallets: typed.pallets ?? "" };
+        const words = validateTruck(f);
+        if (words !== "") return this.#sheetRefused(words);
+        const base = sheet.kind === "edit-truck" ? this.#trucks.find((t) => t.id === sheet.id) : undefined;
+        const body = truckBody(f, base, this.#branchId);
+        const ok = await this.#run(
+          async () => {
+            const r = base === undefined ? await this.#api.createTruck(body) : await this.#api.updateTruck(base.id, body);
+            return r.ok ? null : r;
+          },
+          base === undefined ? `${body.code} added to the trucks.` : `${body.code} saved.`,
+          "Saving the truck",
+        );
+        if (!ok) this.#restoreSheet(sheet, typed);
+        return;
+      }
+      case "add-driver":
+      case "edit-driver": {
+        const f: DriverFields = { name: typed.name ?? "", phone: typed.phone ?? "", licence: typed.licence ?? "", login: typed.login ?? "" };
+        const words = validateDriver(f);
+        if (words !== "") return this.#sheetRefused(words);
+        const base = sheet.kind === "edit-driver" ? this.#drivers.find((d) => d.id === sheet.id) : undefined;
+        const body = driverBody(f, base, this.#branchId);
+        const ok = await this.#run(
+          async () => {
+            const r = base === undefined ? await this.#api.createDriver(body) : await this.#api.updateDriver(base.id, body);
+            return r.ok ? null : r;
+          },
+          base === undefined ? `${body.name} added to the drivers.` : `${body.name} saved.`,
+          "Saving the driver",
+        );
+        if (!ok) this.#restoreSheet(sheet, typed);
         return;
       }
       case "fail-stop": {
@@ -728,9 +826,9 @@ export class DispatchDesk {
   }
 
   /** After a refused submit the sheet stays open with the core's words beside its own button. */
-  #restoreSheet(sheet: Sheet): void {
-    this.#sheet = { ...sheet, error: this.#error };
-    this.#sheetSeeded = `${sheet.kind}:${sheet.id}`;
+  #restoreSheet(sheet: Sheet, values?: Readonly<Record<string, string>>): void {
+    this.#sheet = { ...sheet, error: this.#error, ...(values !== undefined ? { values } : {}) };
+    this.#sheetSeeded = null;
     this.#error = "";
     this.#host.repaint();
   }

@@ -344,3 +344,54 @@ test("scheduling a delivery: the order resolves by its number, the stop fits the
   refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0043", scheduled_date: "2099-01-01" })), 422, "planning horizon");
   refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0043", latitude: 32.7 })), 400, "latitude and longitude must be given together");
 });
+
+test("the registry: trucks and drivers are created and rewritten, retired and brought back, and every answer fits the contract", async () => {
+  await reset();
+  const branch = (await call("GET", "/api/v1/branches")).json[0].id;
+  const truckIn = (over) => ({ id: "", branch_id: branch, code: "Truck 05", name: "Truck 05, stake body", truck_type: "FLATBED", capacity_kg: 5000, is_active: true, ...over });
+  const made = await call("POST", "/api/v1/dispatch/trucks", truckIn());
+  assert.equal(made.status, 201);
+  holds("DispatchCreatedRef", made.json);
+  const listed = await call("GET", "/api/v1/dispatch/trucks");
+  assert.equal(listed.json.items.length, 5);
+  holds("DispatchTruckPage", listed.json);
+  const row = listed.json.items.find((t) => t.id === made.json.id);
+  const renamed = await call("PUT", `/api/v1/dispatch/trucks/${made.json.id}`, { ...row, name: "Truck 05, longer deck", capacity_kg: 6000, capacity_m3: 9, pallet_positions: 8 });
+  assert.equal(renamed.status, 200);
+  holds("DispatchTruck", renamed.json);
+  assert.equal(renamed.json.name, "Truck 05, longer deck");
+  assert.equal(renamed.json.capacity_m3, 9);
+  const retired = await call("PUT", `/api/v1/dispatch/trucks/${made.json.id}`, { ...renamed.json, is_active: false });
+  assert.equal(retired.json.is_active, false);
+  assert.equal((await call("GET", "/api/v1/dispatch/trucks")).json.items.length, 4, "a retired truck leaves the pick list");
+  const all = await call("GET", "/api/v1/dispatch/trucks?include_inactive=true");
+  assert.equal(all.json.items.length, 5, "the registry still lists it");
+  holds("DispatchTruckPage", all.json);
+  const driverIn = (over) => ({ id: "", branch_id: branch, name: "Driver D (demo)", phone: "619-555-0144", licence_class: "B", is_active: true, ...over });
+  const driver = await call("POST", "/api/v1/dispatch/drivers", driverIn());
+  assert.equal(driver.status, 201);
+  holds("DispatchCreatedRef", driver.json);
+  const drivers = await call("GET", "/api/v1/dispatch/drivers?include_inactive=true");
+  holds("DispatchDriverPage", drivers.json);
+  const drow = drivers.json.items.find((d) => d.id === driver.json.id);
+  const linked = await call("PUT", `/api/v1/dispatch/drivers/${driver.json.id}`, { ...drow, user_id: "d0200000-0000-4000-9000-000000000001", is_active: false });
+  assert.equal(linked.status, 200);
+  holds("DispatchDriver", linked.json);
+  assert.equal(linked.json.user_id, "d0200000-0000-4000-9000-000000000001");
+  assert.equal((await call("GET", "/api/v1/dispatch/drivers")).json.items.length, 3);
+  // The core's sentences.
+  refused(await call("POST", "/api/v1/dispatch/trucks", truckIn({ code: " " })), 400, "a truck needs a code");
+  refused(await call("POST", "/api/v1/dispatch/trucks", truckIn({ code: "Truck 06", truck_type: "SPACESHIP" })), 400, "unknown truck_type");
+  refused(await call("POST", "/api/v1/dispatch/trucks", truckIn({ code: "Truck 06", capacity_kg: -1 })), 400, "capacity_kg must not be negative");
+  refused(await call("POST", "/api/v1/dispatch/trucks", truckIn({ code: "Truck 01" })), 409, "a truck with that code already exists at this branch");
+  refused(await call("PUT", `/api/v1/dispatch/trucks/${made.json.id}`, { ...row, code: "Truck 01" }), 409, "a truck with that code already exists at this branch");
+  refused(await call("PUT", `/api/v1/dispatch/trucks/${made.json.id}`, { ...row, branch_id: "other" }), 400, "a truck's branch does not move");
+  refused(await call("POST", "/api/v1/dispatch/drivers", driverIn({ name: " " })), 400, "a driver needs a name");
+  refused(await call("POST", "/api/v1/dispatch/drivers", driverIn({ user_id: "not-an-id" })), 400, "user_id must be a user id, or left out for a driver with no login");
+  refused(await call("PUT", `/api/v1/dispatch/drivers/${driver.json.id}`, { ...drow, branch_id: "other" }), 400, "a driver's branch does not move");
+  // Below the manage level the role gate answers a bare Forbidden on the writes and still serves the reads.
+  await post("/_stub/caller", { can_manage: false });
+  refused(await call("POST", "/api/v1/dispatch/trucks", truckIn({ code: "Truck 07" })), 403, "Forbidden");
+  refused(await call("PUT", `/api/v1/dispatch/drivers/${driver.json.id}`, drow), 403, "Forbidden");
+  assert.equal((await call("GET", "/api/v1/dispatch/trucks")).status, 200);
+});

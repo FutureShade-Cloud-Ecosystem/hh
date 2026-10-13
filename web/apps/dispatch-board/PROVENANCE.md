@@ -45,6 +45,7 @@ lead's Sonnet visual read uses. Screens are looked at in `hh-s4/modules/reports/
 | What | Source path in the original app | Lands in | What changed |
 | --- | --- | --- | --- |
 | Schedule a delivery: the order number box, its help line, the form's fields, the day's table | `app/src/dispatch-schedule.ts`, `order-ref.ts` | `scheduleForm`, `renderSchedule`, `validateSchedule`, `scheduleBody`, `scheduleRefusal` | The form asks for a request, never a commitment; the day is cards, not a table; a move of date rides the part A reschedule sheet; the board follows the order to its day |
+| Truck and driver registry: the lists, the add forms, the type list, the advisory capacity note | `app/src/dispatch-fleet.ts` | `renderFleet`, `fleetSheet`, `truckBody`, `driverBody`, `validateTruck`, `validateDriver`, `truckLine`, `driverLine` | Adds the update routes (change, out of use, back in use) the original never had; capacity typed in pounds, volume in cubic yards, shown in tons and pounds; out of use rows stay listed; the staff login link is a plain id field (the staff list route is the dealer admin surface's, which the dispatch roles do not hold) |
 | The date move and its reason | `app/src/dispatch-reschedule.ts` | the part A `validateReschedule` and sheet, now also reached from the schedule tab | One sheet, two doors |
 
 ## Not ported on purpose (part B or never)

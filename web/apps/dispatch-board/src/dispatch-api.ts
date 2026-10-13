@@ -3,7 +3,8 @@
 // already serves (core/internal/dispatch). The board draws no money of its own: a figure the core
 // sends is formatted where it is shown, and a figure it leaves out is absent.
 //
-// Reads: the branches the caller reaches, the load board, the day board, the trucks and drivers,
+// Reads: the branches the caller reaches, the load board, the day board, the trucks and drivers (with
+// the ones out of use for the registry),
 // the procurement gaps, the calendar and a run's payment holds.
 // Writes: schedule an order's delivery, open a run, crew it, dispatch it, cancel it, complete it, reopen it, clear the reopen
 // marker, move its date; put a stop on a run or take it off, commit its date, reopen it, move its
@@ -15,6 +16,8 @@ import {
   type Branch,
   type DispatchBoard,
   type DispatchCalendarDayPage,
+  type DispatchCreatedRef,
+  type DispatchDriver,
   type DispatchDriverPage,
   type DispatchGapPage,
   type DispatchLoadBoardView,
@@ -25,6 +28,7 @@ import {
   type DispatchRunDetail,
   type DispatchScheduleInput,
   type DispatchStop,
+  type DispatchTruck,
   type DispatchTruckPage,
   type Result,
 } from "@hardscapehouse/api-client";
@@ -49,12 +53,32 @@ export class DispatchApi {
     return staffDispatch.dispatchGetBoard(this.#client, { branch_id: branchId, date });
   }
 
-  trucks(branchId: string): Promise<Result<DispatchTruckPage>> {
-    return staffDispatch.dispatchListTrucks(this.#client, { branch_id: branchId });
+  /** The pick list: trucks in use. The registry asks for the ones out of use too. */
+  trucks(branchId: string, includeInactive = false): Promise<Result<DispatchTruckPage>> {
+    return staffDispatch.dispatchListTrucks(this.#client, includeInactive ? { branch_id: branchId, include_inactive: true } : { branch_id: branchId });
   }
 
-  drivers(branchId: string): Promise<Result<DispatchDriverPage>> {
-    return staffDispatch.dispatchListDrivers(this.#client, { branch_id: branchId });
+  drivers(branchId: string, includeInactive = false): Promise<Result<DispatchDriverPage>> {
+    return staffDispatch.dispatchListDrivers(this.#client, includeInactive ? { branch_id: branchId, include_inactive: true } : { branch_id: branchId });
+  }
+
+  // ---- the registry (the manage level; the core refuses below it)
+
+  createTruck(body: DispatchTruck): Promise<Result<DispatchCreatedRef>> {
+    return staffDispatch.dispatchCreateTruck(this.#client, body);
+  }
+
+  /** A rewrite, not a delta: every field of the row rides it. */
+  updateTruck(id: string, body: DispatchTruck): Promise<Result<DispatchTruck>> {
+    return staffDispatch.dispatchUpdateTruck(this.#client, id, body);
+  }
+
+  createDriver(body: DispatchDriver): Promise<Result<DispatchCreatedRef>> {
+    return staffDispatch.dispatchCreateDriver(this.#client, body);
+  }
+
+  updateDriver(id: string, body: DispatchDriver): Promise<Result<DispatchDriver>> {
+    return staffDispatch.dispatchUpdateDriver(this.#client, id, body);
   }
 
   gaps(branchId: string, date: string): Promise<Result<DispatchGapPage>> {

@@ -15,8 +15,10 @@ import type {
   DispatchLoadBoardView,
   DispatchLoadOutcome,
   DispatchLoadRow,
+  DispatchDriver,
   DispatchLoadStop,
   DispatchScheduleInput,
+  DispatchTruck,
   DispatchStopPaymentHold,
 } from "@hardscapehouse/api-client";
 
@@ -821,4 +823,126 @@ export function scheduleNotice(stop: { order_no?: string; scheduled_date: string
 export function scheduleRefusal(error: string, status: number | null): string {
   if (status === 404) return "No order matches that number at this yard. Check the number on the paperwork.";
   return refusalWords("Scheduling it", error, status);
+}
+
+// ---- the trucks and drivers registry (part B) --------------------------------------------------------
+
+export const TRUCK_TYPES = ["FLATBED", "BOOM", "DUMP", "PICKUP", "TRAILER"] as const;
+export const TRUCK_TYPE_LABEL: Record<string, string> = {
+  FLATBED: "Flatbed",
+  BOOM: "Boom truck",
+  DUMP: "Dump truck",
+  PICKUP: "Pickup",
+  TRAILER: "Trailer",
+};
+
+export interface TruckFields {
+  readonly code: string;
+  readonly name: string;
+  readonly type: string;
+  /** Pounds, as typed. */
+  readonly capacity: string;
+  /** Cubic yards, as typed. */
+  readonly volume: string;
+  readonly pallets: string;
+}
+
+export interface DriverFields {
+  readonly name: string;
+  readonly phone: string;
+  readonly licence: string;
+  /** A staff login id, or empty for a driver with no login. */
+  readonly login: string;
+}
+
+export const fleetStateWord = (active: boolean): string => (active ? "In use" : "Out of use");
+
+/** The capacity as the edit sheet shows it: whole pounds. Empty when the core holds none. */
+export function capacityText(kg: number | null | undefined): string {
+  return typeof kg === "number" && Number.isFinite(kg) ? String(Math.round(kg * LB_PER_KG)) : "";
+}
+
+/** The volume as the edit sheet shows it: cubic yards to a tenth. Empty when the core holds none. */
+export function volumeText(m3: number | null | undefined): string {
+  return typeof m3 === "number" && Number.isFinite(m3) ? String(Math.round(m3 * CUYD_PER_M3 * 10) / 10) : "";
+}
+
+/** A typed figure back to the wire's unit. A figure left exactly as shown is the stored figure, so saving never drifts it. */
+function wireFigure(typed: string, shown: string, original: number | null | undefined, toWire: (v: number) => number): number | null {
+  const text = typed.trim();
+  if (text === "") return null;
+  if (typeof original === "number" && text === shown) return original;
+  return Math.round(toWire(Number(text)) * 10) / 10;
+}
+
+export function validateTruck(f: TruckFields): string {
+  if (f.code.trim() === "") return "A truck needs a code, like Truck 05.";
+  if (!(TRUCK_TYPES as readonly string[]).includes(f.type)) return "Pick a truck type.";
+  const cap = f.capacity.trim();
+  if (cap !== "") {
+    if (!Number.isFinite(Number(cap))) return "Capacity is a number of pounds, like 20000.";
+    if (Number(cap) < 0) return "Capacity cannot be negative.";
+  }
+  const vol = f.volume.trim();
+  if (vol !== "") {
+    if (!Number.isFinite(Number(vol))) return "Volume is a number of cubic yards, like 10.";
+    if (Number(vol) < 0) return "Volume cannot be negative.";
+  }
+  const pal = f.pallets.trim();
+  if (pal !== "" && !/^\d+$/.test(pal)) return "Pallet positions are a whole number, like 8.";
+  return "";
+}
+
+/** The whole row for the core's create or rewrite. The rewrite is absolute, so every field rides it. */
+export function truckBody(f: TruckFields, base: DispatchTruck | undefined, branchId: string, active?: boolean): DispatchTruck {
+  const pal = f.pallets.trim();
+  return {
+    id: base?.id ?? "",
+    branch_id: base?.branch_id ?? branchId,
+    code: f.code.trim(),
+    name: f.name.trim(),
+    truck_type: f.type as DispatchTruck["truck_type"],
+    capacity_kg: wireFigure(f.capacity, capacityText(base?.capacity_kg), base?.capacity_kg, (lb) => lb / LB_PER_KG),
+    capacity_m3: wireFigure(f.volume, volumeText(base?.capacity_m3), base?.capacity_m3, (cy) => cy / CUYD_PER_M3),
+    pallet_positions: pal === "" ? null : Number(pal),
+    is_active: active ?? base?.is_active ?? true,
+  };
+}
+
+/** A truck's capacities in the yard's units. An unmeasured truck says so, since the board draws no gauge for it. */
+export function truckLine(t: Pick<DispatchTruck, "capacity_kg" | "capacity_m3" | "pallet_positions">): string[] {
+  const out: string[] = [];
+  if (typeof t.capacity_kg === "number") out.push(fmtWeight(t.capacity_kg));
+  if (typeof t.capacity_m3 === "number") out.push(`${fmtNum(toCuYd(t.capacity_m3))} cu yd`);
+  if (typeof t.pallet_positions === "number") out.push(`${t.pallet_positions} pallet positions`);
+  return out.length > 0 ? out : ["Capacity not measured"];
+}
+
+const USER_ID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function validateDriver(f: DriverFields): string {
+  if (f.name.trim() === "") return "A driver needs a name.";
+  const login = f.login.trim();
+  if (login !== "" && !USER_ID_SHAPE.test(login)) return "A staff login id is a long id with dashes. Leave it empty for a driver with no login.";
+  return "";
+}
+
+export function driverBody(f: DriverFields, base: DispatchDriver | undefined, branchId: string, active?: boolean): DispatchDriver {
+  return {
+    id: base?.id ?? "",
+    branch_id: base?.branch_id ?? branchId,
+    name: f.name.trim(),
+    phone: f.phone.trim(),
+    licence_class: f.licence.trim(),
+    user_id: f.login.trim(),
+    is_active: active ?? base?.is_active ?? true,
+  };
+}
+
+export function driverLine(d: Pick<DispatchDriver, "licence_class" | "phone" | "user_id">): string[] {
+  return [
+    d.licence_class ? `Licence ${d.licence_class}` : "No licence on file",
+    d.phone ? d.phone : "No phone",
+    d.user_id ? "Has a staff login" : "No staff login",
+  ];
 }

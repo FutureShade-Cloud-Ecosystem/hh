@@ -43,12 +43,19 @@ import {
   stopWord,
   targetLine,
   unloadableSummary,
+  driverBody,
+  driverLine,
+  fleetStateWord,
   scheduleBody,
   scheduleNotice,
   scheduleRefusal,
   validateReason,
+  truckBody,
+  truckLine,
+  validateDriver,
   validateReschedule,
   validateSchedule,
+  validateTruck,
   worstBand,
 } from "../src/dispatch-logic.ts";
 
@@ -437,4 +444,71 @@ test("a schedule refusal keeps the core's sentence, and a missing order says wha
   assert.equal(scheduleRefusal("dispatch: confirm the order before scheduling a delivery for it", 409), "confirm the order before scheduling a delivery for it");
   assert.match(scheduleRefusal("", 500), /nothing changed/);
   assert.match(scheduleRefusal("Forbidden", 403), /not yours to do/);
+});
+
+// ---- the trucks and drivers registry (part B, sub item 2) ---------------------------------------------
+
+const tf = (over = {}) => ({ code: "Truck 05", name: "Truck 05, stake body", type: "FLATBED", capacity: "", volume: "", pallets: "", ...over });
+const truck = (over = {}) => ({ id: "t1", branch_id: "b1", code: "Truck 01", name: "Flatbed", truck_type: "FLATBED", capacity_kg: 9000, is_active: true, ...over });
+
+test("a truck wants a code, a known type, and capacities that are plain non negative numbers", () => {
+  assert.equal(validateTruck(tf()), "");
+  assert.match(validateTruck(tf({ code: "  " })), /A truck needs a code/);
+  assert.match(validateTruck(tf({ type: "SPACESHIP" })), /Pick a truck type/);
+  assert.match(validateTruck(tf({ capacity: "heavy" })), /Capacity is a number of pounds/);
+  assert.match(validateTruck(tf({ capacity: "-5" })), /Capacity cannot be negative/);
+  assert.match(validateTruck(tf({ volume: "-1" })), /Volume cannot be negative/);
+  assert.match(validateTruck(tf({ volume: "x" })), /Volume is a number of cubic yards/);
+  assert.match(validateTruck(tf({ pallets: "2.5" })), /Pallet positions are a whole number/);
+  assert.match(validateTruck(tf({ pallets: "-1" })), /Pallet positions are a whole number/);
+  assert.equal(validateTruck(tf({ capacity: "20000", volume: "12.5", pallets: "10" })), "");
+});
+
+test("a truck body is the whole row: pounds become kilograms at the wire, and a capacity left as shown is the stored figure", () => {
+  const made = truckBody(tf({ capacity: "20000", volume: "10", pallets: "8" }), undefined, "b1");
+  assert.equal(made.id, "");
+  assert.equal(made.branch_id, "b1");
+  assert.equal(made.code, "Truck 05");
+  assert.equal(made.truck_type, "FLATBED");
+  assert.equal(made.capacity_kg, 9071.8);
+  assert.equal(made.capacity_m3, 7.6);
+  assert.equal(made.pallet_positions, 8);
+  assert.equal(made.is_active, true);
+  const blank = truckBody(tf(), undefined, "b1");
+  assert.equal(blank.capacity_kg, null);
+  assert.equal(blank.capacity_m3, null);
+  assert.equal(blank.pallet_positions, null);
+  // The edit sheet shows 9000 kg as 19,842 lb; saving without touching it must not drift the stored figure.
+  const base = truck({ capacity_kg: 9000, capacity_m3: 7.65 });
+  const kept = truckBody(tf({ code: "Truck 01", capacity: "19842", volume: "10" }), base, "b1");
+  assert.equal(kept.id, "t1");
+  assert.equal(kept.capacity_kg, 9000);
+  assert.equal(kept.capacity_m3, 7.65);
+  const changed = truckBody(tf({ capacity: "20000", volume: "10" }), base, "b1");
+  assert.equal(changed.capacity_kg, 9071.8);
+  const out = truckBody(tf({ capacity: "19842" }), truck({ is_active: false }), "b1", false);
+  assert.equal(out.is_active, false);
+});
+
+test("a truck reads as facts in the yard's units, and an unmeasured truck says so", () => {
+  assert.deepEqual(truckLine(truck({ capacity_kg: 9000, capacity_m3: 10, pallet_positions: 12 })), ["9.9 tons", "13.1 cu yd", "12 pallet positions"]);
+  assert.deepEqual(truckLine(truck({ capacity_kg: 1100 })), ["2,425 lb"]);
+  assert.deepEqual(truckLine(truck({ capacity_kg: null })), ["Capacity not measured"]);
+  assert.equal(fleetStateWord(true), "In use");
+  assert.equal(fleetStateWord(false), "Out of use");
+});
+
+test("a driver wants a name, and a login link that is a user id or nothing", () => {
+  const df = (over = {}) => ({ name: "Driver D (demo)", phone: "", licence: "", login: "", ...over });
+  assert.equal(validateDriver(df()), "");
+  assert.match(validateDriver(df({ name: " " })), /A driver needs a name/);
+  assert.match(validateDriver(df({ login: "not-an-id" })), /A staff login id is a long id with dashes/);
+  assert.equal(validateDriver(df({ login: "d0200000-0000-4000-9000-000000000001" })), "");
+  const body = driverBody(df({ name: " Driver D ", phone: " 619-555-0144 ", licence: "B" }), undefined, "b1");
+  assert.deepEqual(body, { id: "", branch_id: "b1", name: "Driver D", phone: "619-555-0144", licence_class: "B", user_id: "", is_active: true });
+  const kept = driverBody(df({ name: "Driver A" }), { id: "d1", branch_id: "b1", name: "x", is_active: false }, "b1", true);
+  assert.equal(kept.id, "d1");
+  assert.equal(kept.is_active, true);
+  assert.equal(driverLine({ id: "d1", branch_id: "b", name: "x", is_active: true, licence_class: "A", phone: "619-555-0141", user_id: "u" }).join(" | "), "Licence A | 619-555-0141 | Has a staff login");
+  assert.equal(driverLine({ id: "d1", branch_id: "b", name: "x", is_active: true }).join(" | "), "No licence on file | No phone | No staff login");
 });

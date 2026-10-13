@@ -189,13 +189,13 @@ function seedWorld() {
     { id: "0a000001-0000-4000-9000-000000000042", order_no: "ORD-0042", customer_name: "Mesa Stoneworks", status: "CANCELLED" },
     { id: "0a000001-0000-4000-9000-000000000043", order_no: "ORD-0043", customer_name: "Coastline Patios", status: "CONFIRMED" },
   ];
-  return { trucks, drivers, runs, stops, orders, seq: { run: 5, resched: 1, stop: 50 } };
+  return { trucks, drivers, runs, stops, orders, seq: { run: 5, resched: 1, stop: 50, truck: 5, driver: 4 } };
 }
 
 let world = seedWorld();
 // What a test arms: the next write's refusal, the caller's reopen right, and a hold's amount.
 let armed = null;
-let caller = { can_reopen: true, can_commit: true };
+let caller = { can_reopen: true, can_commit: true, can_manage: true };
 let holdAmount = false;
 const HOLD_STOP = "5a000001-0000-4000-9000-000000000005";
 
@@ -353,7 +353,7 @@ function loadBoard(date) {
       committed: day.filter((s) => s.commit_state === "COMMITTED").length,
       due: waiting.filter((s) => s.commit_state !== "COMMITTED" && s.scheduled_date <= addDays(TODAY, 2)).length,
     },
-    trucks: world.trucks.map(truckView),
+    trucks: world.trucks.filter((t) => t.is_active).map(truckView),
     loads,
     staging,
   };
@@ -440,7 +440,7 @@ async function route(req, res, url) {
   if (path === "/_stub/reset") {
     world = seedWorld();
     armed = null;
-    caller = { can_reopen: true, can_commit: true };
+    caller = { can_reopen: true, can_commit: true, can_manage: true };
     holdAmount = false;
     manyBranches = false;
     return json(res, { ok: true });
@@ -498,8 +498,10 @@ async function route(req, res, url) {
       const date = validDate(q("date")) ? q("date") : TODAY;
       return json(res, yard ? { branch_id: OTHER_BRANCH, date, runs: [], stops: [], unassigned: [] } : dayBoard(date));
     }
-    if (rest === "trucks") return json(res, { items: yard ? [] : world.trucks.map(truckView), limit: 50 });
-    if (rest === "drivers") return json(res, { items: yard ? [] : world.drivers, limit: 50 });
+    // A retired truck or driver leaves the pick lists and stays in the registry (include_inactive).
+    const withInactive = q("include_inactive") === "true";
+    if (rest === "trucks") return json(res, { items: yard ? [] : world.trucks.filter((t) => withInactive || t.is_active).map(truckView), limit: 50 });
+    if (rest === "drivers") return json(res, { items: yard ? [] : world.drivers.filter((d) => withInactive || d.is_active), limit: 50 });
     if (rest === "loadboard/gaps") {
       const items = [
         { stop_id: stopOf("5a000001-0000-4000-9000-000000000002").id, order_no: "ORD-0030", sku: "PVR-CBL-60", description: "Copperline cobble paver, 60 mm", qty_needed: 480, qty_on_hand: 310, qty_short: 170, uom: "sq ft" },
@@ -533,9 +535,65 @@ async function route(req, res, url) {
     return fail(res, 404, "not found");
   }
 
-  if (method !== "POST") return fail(res, 404, "not found");
+  if (method !== "POST" && method !== "PUT") return fail(res, 404, "not found");
   const body = await readBody(req);
   if (body === null) return fail(res, 400, "bad request");
+
+  // ---- the registry: the role gate answers a bare Forbidden below the manage level
+  if ((rest === "trucks" || rest === "drivers" || /^(trucks|drivers)\/[^/]+$/.test(rest)) && (method === "POST" || method === "PUT")) {
+    if (!caller.can_manage) return fail(res, 403, "Forbidden");
+    const isTruck = rest.startsWith("trucks");
+    const existing = (isTruck ? world.trucks : world.drivers).find((r) => r.id === rest.split("/")[1]);
+    if (method === "PUT" && !existing) return fail(res, 404, "not found");
+    if (method === "POST" && body.branch_id !== BRANCH) return fail(res, 400, "dispatch: no branch with that id");
+    if (method === "PUT" && body.branch_id !== existing.branch_id) {
+      return fail(res, 400, isTruck ? "dispatch: a truck's branch does not move; retire it here and register it at the other yard" : "dispatch: a driver's branch does not move; retire them here and register them at the other yard");
+    }
+    if (isTruck) {
+      const code = String(body.code ?? "").trim();
+      if (code === "") return fail(res, 400, "dispatch: a truck needs a code");
+      const type = String(body.truck_type || "FLATBED").toUpperCase();
+      if (!["FLATBED", "BOOM", "DUMP", "PICKUP", "TRAILER"].includes(type)) return fail(res, 400, `dispatch: unknown truck_type "${type}"`);
+      if (typeof body.capacity_kg === "number" && body.capacity_kg < 0) return fail(res, 400, "dispatch: capacity_kg must not be negative");
+      if (world.trucks.some((t) => t.code === code && t.id !== existing?.id)) return fail(res, 409, "dispatch: a truck with that code already exists at this branch");
+      const row = {
+        id: existing?.id ?? `t0000001-0000-4000-9000-0000000000${String(world.seq.truck++).padStart(2, "0")}`,
+        branch_id: BRANCH,
+        code,
+        name: String(body.name ?? ""),
+        truck_type: type,
+        capacity_kg: body.capacity_kg ?? null,
+        capacity_m3: body.capacity_m3 ?? null,
+        pallet_positions: body.pallet_positions ?? null,
+        is_active: method === "POST" ? true : body.is_active !== false,
+      };
+      if (existing) Object.assign(existing, row);
+      else world.trucks.push(row);
+      return method === "POST" ? json(res, { id: row.id }, 201) : json(res, truckView(row));
+    }
+    const name = String(body.name ?? "").trim();
+    if (name === "") return fail(res, 400, "dispatch: a driver needs a name");
+    const login = String(body.user_id ?? "");
+    if (login !== "" && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(login)) {
+      return fail(res, 400, "dispatch: user_id must be a user id, or left out for a driver with no login");
+    }
+    const row = {
+      id: existing?.id ?? `d0000001-0000-4000-9000-0000000000${String(world.seq.driver++).padStart(2, "0")}`,
+      branch_id: BRANCH,
+      name,
+      phone: String(body.phone ?? ""),
+      licence_class: String(body.licence_class ?? ""),
+      is_active: method === "POST" ? true : body.is_active !== false,
+    };
+    if (login !== "") row.user_id = login;
+    if (existing) {
+      delete existing.user_id;
+      Object.assign(existing, row);
+    } else world.drivers.push(row);
+    return method === "POST" ? json(res, { id: row.id }, 201) : json(res, row);
+  }
+
+  if (method !== "POST") return fail(res, 404, "not found");
 
   // ---- the auto assign seam: the core build answers 501 and says what would answer it
   if (rest === "auto-assign") {

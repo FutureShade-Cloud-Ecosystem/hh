@@ -25,6 +25,13 @@ import type {
 } from "@hardscapehouse/api-client";
 import {
   BOARD_COLUMNS,
+  TRUCK_TYPES,
+  TRUCK_TYPE_LABEL,
+  capacityText,
+  driverLine,
+  fleetStateWord,
+  truckLine,
+  volumeText,
   CARD_LABEL,
   CARD_ORDER,
   RUN_LABEL,
@@ -68,13 +75,17 @@ import {
   type CardId,
 } from "./dispatch-logic.js";
 
-export type Tab = "load" | "day" | "schedule";
+export type Tab = "load" | "day" | "schedule" | "fleet";
 export type Axis = "TRUCK" | "STATUS";
 
 /** An inline form open on one card: a date and a reason, a reason alone, or a new truck. */
 export interface Sheet {
-  readonly kind: "reschedule-stop" | "reschedule-run" | "reopen-stop" | "reopen-run" | "fail-stop" | "new-run" | "cancel-run";
+  readonly kind:
+    | "reschedule-stop" | "reschedule-run" | "reopen-stop" | "reopen-run" | "fail-stop" | "new-run" | "cancel-run"
+    | "add-truck" | "edit-truck" | "add-driver" | "edit-driver";
   readonly id: string;
+  /** What was typed when a refusal sent the sheet back, so the person keeps their work. */
+  readonly values?: Readonly<Record<string, string>>;
   /** The sheet's own refusal, shown beside its own button. */
   readonly error: string;
 }
@@ -183,9 +194,55 @@ export function renderMessages(model: Pick<BoardModel, "error" | "notice" | "inf
   `;
 }
 
+// ---- the registry sheets -------------------------------------------------------------------------
+
+function fleetSheet(sheet: Sheet, model: BoardModel): TemplateResult {
+  const truck = sheet.kind === "edit-truck" ? model.trucks.find((t) => t.id === sheet.id) : undefined;
+  const driver = sheet.kind === "edit-driver" ? model.drivers.find((d) => d.id === sheet.id) : undefined;
+  const isTruck = sheet.kind === "add-truck" || sheet.kind === "edit-truck";
+  const editing = sheet.kind === "edit-truck" || sheet.kind === "edit-driver";
+  const initial = (value: string | undefined): string | typeof nothing => (editing ? (value ?? "") : nothing);
+  return html`
+    <form class="sheet" data-sheet=${sheet.kind} data-sheet-id=${sheet.id} novalidate>
+      <h4>${isTruck ? (editing ? "Change this truck" : "Add a truck") : editing ? "Change this driver" : "Add a driver"}</h4>
+      ${isTruck
+        ? html`
+            <div class="sheet-grid">
+              <label>Code<input class="control" type="text" data-field="code" data-initial=${initial(truck?.code)} maxlength="40" autocomplete="off" /></label>
+              <label>Description<input class="control" type="text" data-field="name" data-initial=${initial(truck?.name)} maxlength="120" autocomplete="off" /></label>
+              <label>Type
+                <select class="control" data-field="type" data-initial=${initial(truck?.truck_type)}>
+                  ${TRUCK_TYPES.map((t) => html`<option data-id=${t}>${TRUCK_TYPE_LABEL[t]}</option>`)}
+                </select>
+              </label>
+              <label>Capacity, pounds<input class="control" type="text" inputmode="decimal" data-field="capacity" data-initial=${initial(capacityText(truck?.capacity_kg))} autocomplete="off" /></label>
+              <label>Volume, cubic yards<input class="control" type="text" inputmode="decimal" data-field="volume" data-initial=${initial(volumeText(truck?.capacity_m3))} autocomplete="off" /></label>
+              <label>Pallet positions<input class="control" type="text" inputmode="numeric" data-field="pallets" data-initial=${initial(truck?.pallet_positions == null ? "" : String(truck.pallet_positions))} autocomplete="off" /></label>
+            </div>
+            <p class="small dim">Capacity is advisory. It draws the board's gauge; nothing refuses a full truck.</p>
+          `
+        : html`
+            <div class="sheet-grid">
+              <label>Name<input class="control" type="text" data-field="name" data-initial=${initial(driver?.name)} maxlength="120" autocomplete="off" /></label>
+              <label>Phone<input class="control" type="tel" data-field="phone" data-initial=${initial(driver?.phone)} autocomplete="off" /></label>
+              <label>Licence class<input class="control" type="text" data-field="licence" data-initial=${initial(driver?.licence_class)} maxlength="20" autocomplete="off" /></label>
+              <label>Staff login id, optional<input class="control" type="text" data-field="login" data-initial=${initial(driver?.user_id)} autocomplete="off" /></label>
+            </div>
+            <p class="small dim">A driver with a staff login signs in to HH Drive and sees their own runs. Leave it empty for a casual or contract driver.</p>
+          `}
+      ${sheet.error !== "" ? html`<p class="alert alert-error" role="alert" data-sheet-error>${sheet.error}</p>` : nothing}
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-action="sheet-submit" ?disabled=${model.busy}>${editing ? "Save" : isTruck ? "Add truck" : "Add driver"}</button>
+        <button type="button" class="btn btn-secondary" data-action="sheet-cancel">Cancel</button>
+      </div>
+    </form>
+  `;
+}
+
 // ---- the inline sheet ----------------------------------------------------------------------------
 
 function sheetPanel(sheet: Sheet, model: BoardModel): TemplateResult {
+  if (sheet.kind === "add-truck" || sheet.kind === "edit-truck" || sheet.kind === "add-driver" || sheet.kind === "edit-driver") return fleetSheet(sheet, model);
   const dated = sheet.kind === "reschedule-stop" || sheet.kind === "reschedule-run";
   const title =
     sheet.kind === "reschedule-stop"
@@ -275,7 +332,7 @@ function toolbar(model: BoardModel): TemplateResult {
             </label>`
           : html`<span class="yard" data-branch-name>${model.branchName}</span>`}
       </div>
-      <div class="when" role="group" aria-label="Delivery day">
+      ${model.tab === "fleet" ? nothing : html`<div class="when" role="group" aria-label="Delivery day">
         <button type="button" class="btn btn-secondary day-btn" data-action="day-prev" aria-label="Previous day">&lsaquo;</button>
         <input class="control" type="date" data-field="date" aria-label="Delivery day" data-current=${model.date} />
         <button type="button" class="btn btn-secondary day-btn" data-action="day-next" aria-label="Next day">&rsaquo;</button>
@@ -283,7 +340,7 @@ function toolbar(model: BoardModel): TemplateResult {
         ${model.date !== model.today
           ? html`<button type="button" class="btn btn-secondary small-btn" data-action="day-today">Today</button>`
           : nothing}
-      </div>
+      </div>`}
       ${model.tab === "load"
         ? html`<div class="segs" role="group" aria-label="Span">
             <button type="button" class="seg" data-action="span" data-span="DAY" aria-pressed=${model.span === "DAY" ? "true" : "false"}>Day</button>
@@ -292,7 +349,7 @@ function toolbar(model: BoardModel): TemplateResult {
         : nothing}
       <div class="tools">
         <button type="button" class="btn btn-secondary small-btn" data-action="refresh" ?disabled=${model.busy}>Refresh</button>
-        <button type="button" class="btn btn-primary small-btn" data-action="new-run" ?disabled=${model.busy}>New truck</button>
+        ${model.tab === "fleet" ? nothing : html`<button type="button" class="btn btn-primary small-btn" data-action="new-run" ?disabled=${model.busy}>New truck</button>`}
       </div>
     </div>
     ${sheetFor(model, ["new-run"], "new")}
@@ -307,7 +364,7 @@ function tabs(model: BoardModel): TemplateResult {
   return html`
     <nav class="tabs" aria-label="Dispatch screens">
       ${tab("load", "Load board")}${tab("day", "Day board")}${tab("schedule", "Schedule")}
-      ${later("Trucks and drivers")}${later("Will call")}${later("Settings")}
+      ${tab("fleet", "Trucks and drivers")}${later("Will call")}${later("Settings")}
     </nav>
   `;
 }
@@ -430,12 +487,14 @@ function crewLine(model: BoardModel, run: DispatchRun, editable: boolean): Templ
         <label>Truck
           <select class="control" data-action="crew-pick" data-run-id=${run.id} data-field="crew-truck" data-current=${run.truck_id ?? ""}>
             <option data-id="">No truck yet</option>
+            ${run.truck_id && !model.trucks.some((t) => t.id === run.truck_id) ? html`<option data-id=${run.truck_id}>${run.truck_code ?? "This truck"}, out of use</option>` : nothing}
             ${model.trucks.map((t) => html`<option data-id=${t.id}>${t.code}</option>`)}
           </select>
         </label>
         <label>Driver
           <select class="control" data-action="crew-pick" data-run-id=${run.id} data-field="crew-driver" data-current=${run.driver_id ?? ""}>
             <option data-id="">No driver yet</option>
+            ${run.driver_id && !model.drivers.some((d) => d.id === run.driver_id) ? html`<option data-id=${run.driver_id}>${run.driver_name ?? "This driver"}, out of use</option>` : nothing}
             ${model.drivers.map((d) => html`<option data-id=${d.id}>${d.name}</option>`)}
           </select>
         </label>
@@ -856,6 +915,75 @@ export function renderSchedule(model: BoardModel): TemplateResult {
   `;
 }
 
+// ---- the registry --------------------------------------------------------------------------------
+
+function toggleButton(model: BoardModel, kind: "truck" | "driver", id: string, active: boolean): TemplateResult {
+  return html`<button type="button" class="btn btn-secondary small-btn" data-action="fleet-toggle" data-fleet-kind=${kind} data-fleet-id=${id} data-active-to=${active ? "false" : "true"} ?disabled=${model.busy}>${active ? "Take out of use" : "Put back in use"}</button>`;
+}
+
+function truckCard(model: BoardModel, t: DispatchTruck): TemplateResult {
+  return html`
+    <li class="load" data-truck-id=${t.id} data-truck-code=${t.code} data-active=${t.is_active ? "true" : "false"}>
+      <div class="load-head">
+        <span class="order">${t.code}</span>
+        <span class="status ${t.is_active ? "status-good" : "status-plain"}" data-fleet-state>${fleetStateWord(t.is_active)}</span>
+      </div>
+      <div class="who">${TRUCK_TYPE_LABEL[t.truck_type] ?? t.truck_type}</div>
+      ${t.name ? html`<div class="small dim">${t.name}</div>` : nothing}
+      <div class="facts">${truckLine(t).map((f) => html`<span class="fact">${f}</span>`)}</div>
+      <div class="actions">
+        <button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="edit-truck" data-fleet-id=${t.id} ?disabled=${model.busy}>Change</button>
+        ${toggleButton(model, "truck", t.id, t.is_active)}
+      </div>
+      ${sheetFor(model, ["edit-truck"], t.id)}
+    </li>
+  `;
+}
+
+function driverCard(model: BoardModel, d: DispatchDriver): TemplateResult {
+  return html`
+    <li class="load" data-driver-id=${d.id} data-driver-name=${d.name} data-active=${d.is_active ? "true" : "false"}>
+      <div class="load-head">
+        <span class="who">${d.name}</span>
+        <span class="status ${d.is_active ? "status-good" : "status-plain"}" data-fleet-state>${fleetStateWord(d.is_active)}</span>
+      </div>
+      <div class="facts">${driverLine(d).map((f) => html`<span class="fact">${f}</span>`)}</div>
+      <div class="actions">
+        <button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="edit-driver" data-fleet-id=${d.id} ?disabled=${model.busy}>Change</button>
+        ${toggleButton(model, "driver", d.id, d.is_active)}
+      </div>
+      ${sheetFor(model, ["edit-driver"], d.id)}
+    </li>
+  `;
+}
+
+/** The registry tab: every truck and driver of the yard, in use or not, each changeable by the manage level. */
+export function renderFleet(model: BoardModel): TemplateResult {
+  return html`
+    <section class="panel" data-trucks>
+      <div class="panel-head">
+        <h2>Trucks<span class="count">${model.trucks.length}</span></h2>
+        <button type="button" class="btn btn-primary small-btn" data-action="open-sheet" data-sheet-kind="add-truck" data-fleet-id="new" ?disabled=${model.busy}>Add truck</button>
+      </div>
+      ${sheetFor(model, ["add-truck"], "new")}
+      ${model.trucks.length > 0
+        ? html`<ul class="loads wide">${model.trucks.map((t) => truckCard(model, t))}</ul>`
+        : html`<p class="dim">No trucks at this yard yet. Add the first one.</p>`}
+    </section>
+    <section class="panel" data-drivers>
+      <div class="panel-head">
+        <h2>Drivers<span class="count">${model.drivers.length}</span></h2>
+        <button type="button" class="btn btn-primary small-btn" data-action="open-sheet" data-sheet-kind="add-driver" data-fleet-id="new" ?disabled=${model.busy}>Add driver</button>
+      </div>
+      ${sheetFor(model, ["add-driver"], "new")}
+      ${model.drivers.length > 0
+        ? html`<ul class="loads wide">${model.drivers.map((d) => driverCard(model, d))}</ul>`
+        : html`<p class="dim">No drivers at this yard yet. Add the first one.</p>`}
+    </section>
+    <p class="small dim" data-fleet-note>Adding and changing trucks and drivers is for the Logistics Manager and a Branch Manager. A truck or driver out of use stays on the books and leaves the pick lists.</p>
+  `;
+}
+
 // ---- the screen ----------------------------------------------------------------------------------
 
 export function renderDesk(model: BoardModel): TemplateResult {
@@ -881,6 +1009,8 @@ export function renderDesk(model: BoardModel): TemplateResult {
         ? renderLoadBoard(model)
         : model.tab === "schedule"
           ? renderSchedule(model)
-          : renderDayBoard(model)}
+          : model.tab === "fleet"
+            ? renderFleet(model)
+            : renderDayBoard(model)}
   `;
 }
