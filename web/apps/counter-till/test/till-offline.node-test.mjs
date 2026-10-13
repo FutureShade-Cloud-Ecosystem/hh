@@ -70,12 +70,11 @@ test("the till's scope book is the manifest's read cache only block: no writable
   assert.equal(OfflineStore.name, "OfflineStore");
 });
 
-test("offline, the till's reads are answered from the copy: catalogue with the price band, customers, parked tickets", async () => {
+test("offline, the till's reads are answered from the copy: catalogue with the price band, parked tickets", async () => {
   const { desk } = await rig();
   const routes = tillRoutes(() => desk.reader());
   const hits = await ask(routes, "/api/v1/products/counter-search?q=holland&limit=20");
   assert.equal(hits.body.items[0].list_price_cents, 400);
-  assert.equal((await ask(routes, "/api/v1/customers/search?q=maple")).body[0].id, C1);
   const parked = await ask(routes, "/api/v1/pos/parked?branch_id=" + BRANCH);
   assert.equal(parked.body.items.length, 1);
   assert.equal(parked.body.items[0].ticket_no, "PARK-1");
@@ -89,7 +88,7 @@ test("composed: a read is served from the copy and every write is refused, in bo
   const base = async (url, init) => (dialed.push(`${init.method} ${url}`), { status: 200, ok: true, text: async () => "{}", arrayBuffer: async () => new ArrayBuffer(0) });
   signal.set(false);
   const client = new ApiClient({ baseUrl: "", fetch: noSignalFetch(readThroughFetch(base, signal, routes, desk.hooks), signal) });
-  const read = await client.request({ method: "GET", path: "/api/v1/customers/search", query: { q: "maple" } });
+  const read = await client.request({ method: "GET", path: "/api/v1/products/counter-search", query: { q: "holland", limit: "20" } });
   assert.equal(read.ok, true);
   assert.equal(desk.cachedWords().startsWith("Pulled"), true);
   for (const [method, path] of [["POST", "/api/v1/pos/sales"], ["POST", "/api/v1/pos/sales/s/refund"], ["POST", "/api/v1/pos/parked"], ["POST", "/api/v1/pos/parked/p/resume"], ["DELETE", "/api/v1/pos/parked/p"], ["POST", "/api/v1/payments"], ["PUT", "/api/v1/pricing/rules/r"]]) {
@@ -111,10 +110,10 @@ test("the copy's age is shown after a cached read, and a live read clears it", a
   const base = async () => ({ status: 200, ok: true, text: async () => "[]", arrayBuffer: async () => new ArrayBuffer(0) });
   const client = new ApiClient({ baseUrl: "", fetch: readThroughFetch(base, signal, routes, desk.hooks) });
   signal.set(false);
-  await client.request({ method: "GET", path: "/api/v1/customers/search", query: { q: "maple" } });
+  await client.request({ method: "GET", path: "/api/v1/products/counter-search", query: { q: "holland", limit: "20" } });
   assert.match(desk.cachedWords(), /^Pulled /);
   signal.set(true);
-  await client.request({ method: "GET", path: "/api/v1/customers/search", query: { q: "maple" } });
+  await client.request({ method: "GET", path: "/api/v1/products/counter-search", query: { q: "holland", limit: "20" } });
   assert.equal(desk.cachedWords(), "");
 });
 

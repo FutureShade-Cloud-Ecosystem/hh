@@ -1,7 +1,7 @@
 // CP-3, the Work shell's offline behaviour at the Counter Till, in a real
 // browser against the stubbed harness. The till is READ CACHE ONLY (plan D5,
 // manifest mode read_cache_only): after sign in it pulls the catalogue, the
-// customers, the price band and the parked tickets into the copy on the
+// customers (not read back: no terms or credit in the copy), the price band and the parked tickets into the copy on the
 // device. With the network gone the till reads them from the copy with the
 // copy's age shown; it has NO outbox, so it queues nothing; and every money
 // action (the tender, a park, a resume) resolves online with the honest "no
@@ -82,7 +82,7 @@ test("a signed in till says nothing about the connection while all is well, and 
   expect((await syncLog(page)).pushes).toEqual([]);
 });
 
-test("with no signal: the catalogue and customers read from the copy, a tender is refused with no signal and nothing is queued, and back online the same sale rings once", async ({ page, context }) => {
+test("with no signal: the catalogue reads from the copy, a tender is refused with no signal and nothing is queued, and back online the same sale rings once", async ({ page, context }) => {
   await signIn(page);
   await ensureSession(page);
   await addLine(page, "holland", "Holland Stone 60 mm");
@@ -104,13 +104,6 @@ test("with no signal: the catalogue and customers read from the copy, a tender i
   await expect(hit).toContainText("prices on add");
   await expect(page.getByTestId("ct-cache-note")).toContainText("Showing the copy on this device");
   await page.getByTestId("pos-scan-input").fill("");
-
-  // The customer search reads from the copy.
-  await openStep(page, "customer");
-  await page.getByRole("button", { name: /Select customer/ }).click();
-  await page.getByPlaceholder("Search name or account #…").fill("Maple");
-  await expect(page.locator("button.row").filter({ hasText: "Maple Ridge Contracting" }).first()).toBeVisible();
-  await page.keyboard.press("Escape");
 
   // The tender: refused with no signal, sends nothing, and the sale stays on the glass.
   await openStep(page, "payment");
@@ -185,8 +178,8 @@ test("with no signal a customer is never shown with invented credit or terms", a
   await page.getByRole("button", { name: /Select customer/ }).click();
   await page.getByPlaceholder("Search name or account #…").fill("Maple");
   const row = page.locator("button.row").filter({ hasText: "Maple Ridge Contracting" }).first();
-  // Either the search is refused with no signal or a row is offered; wait for one of them, then read what the screen says.
-  await expect(row.or(page.getByText(/No signal/).first())).toBeVisible();
+  // Either the search cannot run (no signal) or a row is offered; wait for one of them, then read what the screen says.
+  await expect(row.or(page.getByRole("alert").filter({ hasText: "account search could not run" }))).toBeVisible();
   if (await row.isVisible()) {
     await expect(row).not.toContainText("$0.00");
     await row.click();

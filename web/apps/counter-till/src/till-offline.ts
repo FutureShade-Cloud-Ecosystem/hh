@@ -1,15 +1,15 @@
 // The Counter Till's offline layer: READ CACHE ONLY. The till has no outbox
 // (plan D5, the manifest's read_cache_only block): it pulls the catalogue, the
 // customers, the price band, the parked tickets and the invoices into the
-// device's copy, and answers those reads from it, with the copy's age shown,
-// when the network does not answer. It carries no keeper and queues nothing:
+// device's copy, and answers the catalogue and the parked tickets from it, with
+// the copy's age shown, when the network does not answer (customers are not
+// answered: see tillRoutes). It carries no keeper and queues nothing:
 // every write the till makes (the ring, every tender, a refund, a payment, a
 // park, a resume) is refused with no signal by the guard its client is built
 // on, and a refused write is never stored or retried by anything but the
 // person pressing it again with the signal back (the ring's idempotency key and
 // its held key behaviour are the terminal's own and are untouched).
 import {
-  customerRoutes,
   openWorkOfflineOpfs,
   parkedRoute,
   productRoutes,
@@ -29,9 +29,14 @@ export function dbNameFor(userId: string): string {
   return `hh-counter-till-${userId.replace(/[^A-Za-z0-9_-]/g, "_")}`;
 }
 
-/** The till's cached reads: the catalogue, the customer type-ahead and the branch's parked tickets. */
+/**
+ * The till's cached reads: the catalogue and the branch's parked tickets. The customer type-ahead is NOT
+ * answered from the copy: the copy holds no terms, credit or balance, the till's picker and card render
+ * those as numbers, and an unknown figure must never read as zero (review of item 8b, P2-1). The till
+ * cannot ring offline, so a customer search with no signal is the plain no signal refusal.
+ */
 export function tillRoutes(reader: () => WorkReader | null): CachedRoute[] {
-  return [...productRoutes(reader), ...customerRoutes(reader), parkedRoute(reader)];
+  return [...productRoutes(reader), parkedRoute(reader)];
 }
 
 export function createTillDesk(options: {
