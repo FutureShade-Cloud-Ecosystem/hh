@@ -57,7 +57,7 @@ import { QuickApi, type QuickActionConfig } from "./quick-api.js";
 import { WeightsApi } from "./weights-api.js";
 import { hasWeightsWork, mergeWeights, unsourcedFor } from "./weights-logic.js";
 import { publishIntent } from "./quick-intent.js";
-import { openingKind } from "./approvals-logic.js";
+import { waitingKinds } from "./approvals-logic.js";
 import { isLiveHref } from "./landing-links.js";
 import { actionHref, findAction } from "./quick-logic.js";
 import { renderQuickAdmin, renderQuickBar, type QuickAdminModel, type QuickBarModel } from "./quick-views.js";
@@ -330,6 +330,7 @@ export class ManagerHomeApp extends HHElement {
     if (action === "pick-kind") {
       const kind = control?.getAttribute("data-kind") ?? "";
       if (kind !== this.#approvals.kind && APPROVAL_KINDS.some((k) => k.kind === kind)) {
+        this.#approvalsOpening += 1;
         this.#approvals = { ...this.#approvals, kind, rows: [], refusal: "", error: "", phase: "loading" };
         this.requestUpdate();
         void this.#loadApprovals();
@@ -1530,15 +1531,30 @@ export class ManagerHomeApp extends HHElement {
 
   // -- Approvals ----------------------------------------------------------------------------------------
 
-  // Opening from the landing: the whole list the caller decides names what is
-  // waiting, and the view opens on the first kind that has a row (approvals-logic.ts).
-  // A list that did not load leaves the first kind, whose own read words the refusal.
+  // Opening from the landing: the whole list names what is waiting, which can
+  // include kinds this caller may not decide. The waiting kinds are read in the
+  // vocabulary's order and the first the core does not refuse opens; none opens
+  // the first kind, whose own read words the refusal (approvals-logic.ts). A tab
+  // picked while this was in flight wins: the late answer is dropped.
+  #approvalsOpening = 0;
+
   async #openApprovals(): Promise<void> {
+    const opening = ++this.#approvalsOpening;
     this.#approvals = { ...this.#approvals, phase: "loading", rows: [], error: "", refusal: "" };
     this.requestUpdate();
-    const all = await this.#api.approvals("");
-    const kind = all.ok ? openingKind(all.value) : APPROVAL_KINDS[0].kind;
-    this.#approvals = { ...this.#approvals, kind };
+    const all = await this.#api.approvals("", true);
+    const candidates = all.ok ? waitingKinds(all.value) : [];
+    for (const kind of candidates) {
+      const result = await this.#api.approvals(kind);
+      if (opening !== this.#approvalsOpening) return;
+      if (result.ok) {
+        this.#approvals = { ...this.#approvals, kind, phase: "ready", rows: result.value, error: "", refusal: "" };
+        this.requestUpdate();
+        return;
+      }
+    }
+    if (opening !== this.#approvalsOpening) return;
+    this.#approvals = { ...this.#approvals, kind: APPROVAL_KINDS[0].kind };
     await this.#loadApprovals();
   }
 

@@ -2,7 +2,7 @@
 // has something waiting, not on Margin whatever is waiting.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { openingKind } from "../src/approvals-logic.ts";
+import { openingKind, waitingKinds } from "../src/approvals-logic.ts";
 
 const row = (policy_type, status = "PENDING") => ({ id: "", branch_id: "", policy_type, detail: "", subject_ref: "", amount_cents: 0, status });
 
@@ -22,4 +22,12 @@ test("a decided row does not count as waiting", () => {
 test("nothing waiting, or a kind outside the vocabulary, keeps the first kind", () => {
   assert.equal(openingKind([]), "MARGIN_BELOW_MINIMUM");
   assert.equal(openingKind([row("SOMETHING_NEW")]), "MARGIN_BELOW_MINIMUM");
+});
+
+test("waitingKinds lists every waiting kind in the vocabulary's order, once", () => {
+  assert.deepEqual(
+    waitingKinds([row("FREIGHT_ABOVE_QUOTE"), row("COD_CONSTRAINT"), row("FREIGHT_ABOVE_QUOTE"), row("MARGIN_BELOW_MINIMUM", "APPROVED")]),
+    ["COD_CONSTRAINT", "FREIGHT_ABOVE_QUOTE"],
+  );
+  assert.deepEqual(waitingKinds([]), []);
 });

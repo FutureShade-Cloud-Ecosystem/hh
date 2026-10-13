@@ -103,3 +103,14 @@ test("a caller with Margin waiting opens on Margin, the first kind", async ({ re
   await expect(page.locator(".kind-tab[aria-selected='true']")).toHaveText("Margin");
   await expect(page.locator("[data-approval]")).toHaveCount(1);
 });
+
+test("a sales manager with only freight raises waiting opens on Margin, not on a refused Freight tab", async ({ request, page }) => {
+  await resetStub(request);
+  await useScenario(request, "freight-only");
+  await page.goto("/");
+  await page.locator("[data-flow='sales-manager']").click();
+  await page.locator(".view-link", { hasText: "Approvals" }).click();
+  await expect(page.getByText("No Margin approvals waiting.")).toBeVisible();
+  await expect(page.locator(".kind-tab[aria-selected='true']")).toHaveText("Margin");
+  await expect(page.locator("[data-test='approvals-refusal']")).toHaveCount(0);
+});

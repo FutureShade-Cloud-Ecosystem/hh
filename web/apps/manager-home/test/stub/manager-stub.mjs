@@ -1656,8 +1656,14 @@ async function handle(req, res) {
       }
     }
     const status = url.searchParams.get("status") ?? "";
+    // An empty kind is the core's ListApprovals unchanged: every request in the
+    // caller's branch, and a margin row only to a caller who decides margin
+    // (mayReadRequestWith); every other kind is readable by everyone.
     const items = seededApprovals().filter(
-      (a) => (kind === "" || a.policy_type === kind) && (status === "" || a.status === status) && decidesKind(flow, a.policy_type),
+      (a) =>
+        (kind === "" || a.policy_type === kind) &&
+        (status === "" || a.status === status) &&
+        (kind !== "" ? decidesKind(flow, a.policy_type) : a.policy_type !== "MARGIN_BELOW_MINIMUM" || decidesKind(flow, a.policy_type)),
     );
     return json(res, { items, next_cursor: null, limit: 50 });
   }
