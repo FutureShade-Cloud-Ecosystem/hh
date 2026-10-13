@@ -292,3 +292,37 @@ test("the pack refusals are the core's sentences, in the core's order", async ()
   refused(await call(IDS.controller, "DELETE", "/api/v1/finstmt/schedules/not-a-uuid"), 400, "id must be a uuid");
   refused(await call(IDS.controller, "DELETE", "/api/v1/finstmt/schedules/5c4a0000-0000-4000-9000-0000000000ff"), 404, "not found");
 });
+
+test("each statement exports the core's own CSV, stamped as an export, with the core's title and headers", async () => {
+  await reset();
+  const { year } = await (await fetch(`${base}/_stub/finstmt-calls`)).json();
+  const csv = async (path) => {
+    const res = await fetch(`${base}${path}`, { headers: { Authorization: `Bearer ${tokenFor(IDS.controller)}` } });
+    return { status: res.status, type: res.headers.get("content-type"), text: await res.text() };
+  };
+  const cases = [
+    [`/api/v1/finstmt/income-statement?year=${year}&format=csv`, "Income Statement", "Section,Account,Name,Amount"],
+    [`/api/v1/finstmt/balance-sheet?year=${year}&format=csv`, "Balance Sheet", "Section,Account,Name,Amount"],
+    [`/api/v1/finstmt/trial-balance?year=${year}&format=csv`, "Trial Balance", "Account,Name,Type,Debit,Credit"],
+    [`/api/v1/finstmt/gl-detail?year=${year}&format=csv`, "GL Detail", "Entry,Posted,Account,Name,Branch,Debit,Credit,Memo"],
+    ["/api/v1/finstmt/ar-aging?format=csv", "AR Aging", "Customer,Source,Ref,Branch,Bucket,AgeDays,Amount"],
+  ];
+  for (const [path, title, headers] of cases) {
+    const got = await csv(path);
+    assert.equal(got.status, 200);
+    assert.match(got.type, /^text\/csv/);
+    assert.ok(got.text.startsWith(`${title}\r\n${headers}\r\n`), `${path} does not start with the core's title and headers`);
+    // The title and the headers are the core's: they must appear in its export source.
+    assert.ok(coreSource.includes(`Title: "${title}"`), `the core has no table titled ${title}`);
+    assert.ok(coreSource.includes(headers.split(",").map((h) => `"${h}"`).join(", ")), `the core's headers for ${title} differ`);
+  }
+  const marked = await (await fetch(`${base}/_stub/finstmt-calls`)).json();
+  assert.equal(marked.exports, 5);
+  // The comparison answers JSON whatever the format, as the core does, and is not an export.
+  const compared = await get(IDS.controller, `/api/v1/finstmt/income-statement?year=${year}&compare=1&format=csv`);
+  holds("FinStmtComparativeRows", compared.json);
+  refused(await get(IDS.controller, `/api/v1/finstmt/trial-balance?year=${year}&format=pdf`), 400, "format must be csv or xlsx");
+  // The branch fence is first: a scoped manager is refused before any file is made.
+  refused(await get(IDS.manager, `/api/v1/finstmt/ar-aging?format=csv`), 403, "finstmt: caller cannot access this branch");
+  assert.equal((await (await fetch(`${base}/_stub/finstmt-calls`)).json()).exports, 5);
+});

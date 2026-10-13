@@ -120,6 +120,29 @@ export class FinstmtApi {
     return checked(answer, readAging, "The receivables aging");
   }
 
+  /**
+   * The core's own CSV for one statement, read as text through the staff client so the core stamps the export on
+   * its access trail. The generated function for these routes reads JSON, so this goes through the client's text
+   * response seam with the contract's operation id and query. The comparison answers JSON whatever the format, so it
+   * is not asked for here.
+   */
+  exportCsv(tab: "income" | "balance" | "trial" | "gl" | "aging", filter: DetailFilter): Promise<Result<string>> {
+    const route = {
+      income: ["/api/v1/finstmt/income-statement", "finstmtIncomeStatement"],
+      balance: ["/api/v1/finstmt/balance-sheet", "finstmtBalanceSheet"],
+      trial: ["/api/v1/finstmt/trial-balance", "finstmtTrialBalance"],
+      gl: ["/api/v1/finstmt/gl-detail", "finstmtGLDetail"],
+      aging: ["/api/v1/finstmt/ar-aging", "finstmtARAging"],
+    }[tab];
+    const query: Record<string, string | number> = { format: "csv" };
+    if (tab !== "aging") query["year"] = filter.year;
+    if ((tab === "income" || tab === "gl") && filter.month > 0) query["month"] = filter.month;
+    if (tab === "gl" && filter.accountCode !== "") query["account_code"] = filter.accountCode;
+    if (tab === "gl" && filter.accountType !== "") query["account_type"] = filter.accountType;
+    if (tab !== "trial" && filter.branchId !== "") query["branch_id"] = filter.branchId;
+    return this.#client.request<string>({ method: "GET", path: route[0], query, textResponse: true, operationId: route[1] });
+  }
+
   async packs(): Promise<Result<FinStmtSchedule[]>> {
     const answer = await staffFinstmt.finstmtListSchedules(this.#client, { limit: 100 });
     return checked(answer, readSchedules, "The list of saved packs");

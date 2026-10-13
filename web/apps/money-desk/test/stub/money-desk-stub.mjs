@@ -566,7 +566,7 @@ async function handle(req, res) {
     finstmtWorld.reset();
     return send(res, 200, { ok: true });
   }
-  if (method === "GET" && path === "/_stub/finstmt-calls") return send(res, 200, { calls: finstmtWorld.calls(), year: finstmtWorld.fiscalYear });
+  if (method === "GET" && path === "/_stub/finstmt-calls") return send(res, 200, { calls: finstmtWorld.calls(), exports: finstmtWorld.exports(), year: finstmtWorld.fiscalYear });
   if (method === "POST" && path === "/_stub/scenario") {
     const body = await readBody(req);
     reset(body?.name === "empty" ? "empty" : body?.name === "wide" ? "wide" : "full");
@@ -590,6 +590,10 @@ async function handle(req, res) {
     const raw = method === "POST" || method === "PUT" ? await readRaw(req) : "";
     const answer = finstmtWorld.handle(req, url, raw);
     if (answer === null) return refuse(res, 404, "not found");
+    if (typeof answer.csv === "string") {
+      res.writeHead(answer.status, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="export.csv"' });
+      return res.end(answer.csv);
+    }
     if (answer.status === 204) {
       res.writeHead(204);
       return res.end();

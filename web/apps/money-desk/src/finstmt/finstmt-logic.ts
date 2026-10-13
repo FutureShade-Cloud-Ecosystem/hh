@@ -248,8 +248,9 @@ export function validatePack(form: PackForm): PackCheck {
 // ---- the CSV --------------------------------------------------------------------------------------
 
 function csvCell(cell: string): string {
-  // A text cell that a spreadsheet would run as a formula is made plain text; a signed number is left alone.
-  const defanged = /^[=+@]/.test(cell) || /^-(?![\d.])/.test(cell) ? `'${cell}` : cell;
+  // A cell that a spreadsheet would run as a formula is made plain text. Only the one shape the core writes for money
+  // (an optional minus, digits, a point, two digits) is left alone; typed text never is, even when it starts with a digit after a minus.
+  const defanged = /^[=+\-@\t\r]/.test(cell) && !/^-?\d+\.\d{2}$/.test(cell) ? `'${cell}` : cell;
   return /[",\r\n]/.test(defanged) ? `"${defanged.replace(/"/g, '""')}"` : defanged;
 }
 
@@ -259,66 +260,58 @@ export function csvDocument(rows: ReadonlyArray<readonly string[]>): string {
 
 type StatementRows = Array<string[]>;
 
-function section(out: StatementRows, title: string, rows: ReadonlyArray<{ account_code: string; account_name: string; amount_cents: number }>, totalLabel: string, totalCents: number, width: number): void {
-  out.push([title, ...Array<string>(width - 1).fill("")]);
-  for (const r of rows) out.push([r.account_code, r.account_name, centsDecimal(r.amount_cents)]);
-  out.push(["", totalLabel, centsDecimal(totalCents)]);
-}
-
-export function incomeRows(report: FinStmtIncomeStatementReport): StatementRows {
-  const out: StatementRows = [["Account", "Name", "Amount"]];
-  section(out, "Revenue", report.revenue, "Total revenue", report.revenue_cents, 3);
-  section(out, "Expenses", report.expenses, "Total expenses", report.expense_cents, 3);
-  out.push(["", "Net income", centsDecimal(report.net_income_cents)]);
-  return out;
-}
-
-export function balanceRows(report: FinStmtBalanceSheetReport): StatementRows {
-  const out: StatementRows = [["Account", "Name", "Amount"]];
-  section(out, "Assets", report.assets, "Total assets", report.total_assets_cents, 3);
-  section(out, "Liabilities", report.liabilities, "Total liabilities", report.total_liabilities_cents, 3);
-  section(out, "Equity", report.equity, "Total equity", report.total_equity_cents, 3);
-  out.push(["", "Net income for the year", centsDecimal(report.net_income_cents)]);
-  return out;
-}
-
-export function trialRows(report: FinStmtTrialBalanceReport): StatementRows {
-  const out: StatementRows = [["Account", "Name", "Type", "Debit", "Credit", "Balance"]];
-  for (const r of report.rows) {
-    out.push([r.account_code, r.account_name, accountTypeWord(r.account_type), centsDecimal(r.total_debit_cents), centsDecimal(r.total_credit_cents), centsDecimal(r.balance_cents)]);
-  }
-  out.push(["", "Total", "", centsDecimal(report.total_debit_cents), centsDecimal(report.total_credit_cents), ""]);
-  return out;
-}
-
 export function comparativeRows(rows: readonly FinStmtComparativeRow[]): StatementRows {
   const out: StatementRows = [["Account", "Name", "This year", "Last year", "Change"]];
   for (const r of rows) out.push([r.account_code, r.account_name, centsDecimal(r.current_cents), centsDecimal(r.prior_cents), centsDecimal(r.delta_cents)]);
   return out;
 }
 
-export function glDetailRows(rows: readonly FinStmtGLDetailRow[]): StatementRows {
-  const out: StatementRows = [["Entry", "Period", "Account", "Name", "Source", "Memo", "Debit", "Credit"]];
-  for (const r of rows) {
-    out.push([
-      entryLabel(r.entry_no),
-      periodLabel(r.period_year, r.period_month),
-      r.account_code,
-      r.account_name,
-      sourceWord(r.source),
-      r.memo,
-      r.debit_cents === 0 ? "" : centsDecimal(r.debit_cents),
-      r.credit_cents === 0 ? "" : centsDecimal(r.credit_cents),
-    ]);
+/** Reads a CSV text into rows: quoted cells, doubled quotes and line breaks inside a cell are kept. */
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  let started = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.charAt(i);
+    if (quoted) {
+      if (c === '"' && text.charAt(i + 1) === '"') {
+        cell += '"';
+        i += 1;
+      } else if (c === '"') quoted = false;
+      else cell += c;
+    } else if (c === '"') {
+      quoted = true;
+      started = true;
+    } else if (c === ",") {
+      row.push(cell);
+      cell = "";
+      started = true;
+    } else if (c === "\n" || c === "\r") {
+      if (c === "\r" && text.charAt(i + 1) === "\n") i += 1;
+      if (started || cell !== "") {
+        row.push(cell);
+        rows.push(row);
+      }
+      row = [];
+      cell = "";
+      started = false;
+    } else {
+      cell += c;
+      started = true;
+    }
   }
-  return out;
+  if (started || cell !== "") {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
 }
 
-export function agingRows(summary: FinStmtAgingSummary): StatementRows {
-  const out: StatementRows = [["Customer", "Source", "Age in days", "Band", "Amount"]];
-  for (const r of summary.rows) out.push([r.customer_name, sourceWord(r.source_type), String(r.age_days), bucketWord(r.bucket), centsDecimal(r.amount_cents)]);
-  out.push(["", "Total", "", "", centsDecimal(summary.grand_total_cents)]);
-  return out;
+/** The core's CSV, read and written again so no cell can run as a formula when the file is opened. */
+export function defangCsv(text: string): string {
+  return csvDocument(parseCsv(text));
 }
 
 const FILE_BASE: Record<string, string> = {

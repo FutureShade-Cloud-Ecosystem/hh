@@ -25,16 +25,12 @@ import type {
 } from "@hardscapehouse/api-client";
 import type { FinstmtApi } from "./finstmt-api.js";
 import {
-  agingRows,
-  balanceRows,
   comparativeRows,
   csvDocument,
   csvFilename,
-  glDetailRows,
-  incomeRows,
+  defangCsv,
   periodYears,
   refusalWords,
-  trialRows,
   validatePack,
   type StmtTab,
 } from "./finstmt-logic.js";
@@ -150,7 +146,7 @@ export class FinstmtDesk {
         void this.#ensure(this.#tab);
         return true;
       case "fs-csv":
-        this.#csv();
+        void this.#csv();
         return true;
       case "fs-print":
         this.#host.print();
@@ -367,20 +363,39 @@ export class FinstmtDesk {
     void this.#ensure("gl");
   }
 
-  #csv(): void {
-    let rows: ReadonlyArray<readonly string[]> | null = null;
-    if (this.#tab === "income") {
-      if (this.#compare && this.#incomeCompare !== null) rows = comparativeRows(this.#incomeCompare);
-      else if (!this.#compare && this.#income !== null) rows = incomeRows(this.#income);
-    } else if (this.#tab === "balance") {
-      if (this.#compare && this.#balanceCompare !== null) rows = comparativeRows(this.#balanceCompare);
-      else if (!this.#compare && this.#balance !== null) rows = balanceRows(this.#balance);
-    } else if (this.#tab === "trial" && this.#trial !== null) rows = trialRows(this.#trial);
-    else if (this.#tab === "gl" && this.#detail !== null) rows = glDetailRows(this.#detail.rows);
-    else if (this.#tab === "aging" && this.#aging !== null) rows = agingRows(this.#aging);
-    if (rows === null) return;
-    this.#host.download(csvDocument(rows), csvFilename(this.#tab, this.#year, this.#month));
-    this.#notice = "The file is made from the figures on this page.";
+  async #csv(): Promise<void> {
+    if (this.#busy) return;
+    const tab = this.#tab;
+    const filename = csvFilename(tab, this.#year, this.#month);
+    if ((tab === "income" || tab === "balance") && this.#compare) {
+      // The core answers the comparison as JSON whatever the format, so this file is made from the rows on the page.
+      const rows = tab === "income" ? this.#incomeCompare : this.#balanceCompare;
+      if (rows === null) return;
+      this.#host.download(csvDocument(comparativeRows(rows)), filename);
+      this.#notice = "The file is made from the figures on this page.";
+      this.#host.repaint();
+      return;
+    }
+    if (tab === "packs") return;
+    this.#busy = true;
+    this.#error = "";
+    this.#notice = "";
+    this.#host.repaint();
+    const answer = await this.#api.exportCsv(tab, {
+      year: this.#year,
+      month: this.#month,
+      accountCode: this.#account,
+      accountType: this.#drill?.accountType ?? "",
+      branchId: this.#branchId,
+    });
+    this.#busy = false;
+    if (!answer.ok) {
+      this.#error = refusalWords("read", answer.error, answer.status ?? 0);
+    } else {
+      // The core's own file, with its export recorded; read and written again so no cell can run as a formula.
+      this.#host.download(defangCsv(answer.value), filename);
+      this.#notice = "The file is the core's own export of these books, and the export is recorded.";
+    }
     this.#host.repaint();
   }
 

@@ -47,10 +47,10 @@ system against the Money Desk references (`hh-sup/design-refs/money-desk/`, tria
 | Drill down to the ledger and the tie | `finstmt-gl-detail.ts` | `detailView`, `tieWords` | The tie is the server's `tie_cents` held against the line's figure, said in words either way |
 | Receivables aging | `finstmt-aging.ts` | `agingView` | Five bands in the core's order, cards on a phone |
 | Saved packs (schedules) | `finstmt-home.ts` schedules panel | `packsView`, `packForm`, `validatePack` | Change and delete added; delete asks first; the form is checked in the core's order before anything is sent |
-| CSV export | `finstmt-export.ts`, `_csv.ts` | `csvDocument`, `*Rows` | Made from the figures on the page (the generated client types the export route as JSON); decimal strings cut from the cents' digits; text cells that would run as formulas are defanged |
+| CSV export | `finstmt-export.ts`, `_csv.ts` | `exportCsv`, `defangCsv` | The core's own CSV fetched as text through the staff client so the core records the export, then read and written again so no cell can run as a formula; the comparison, which the core answers as JSON, is made from the rows on the page |
 | Print | `renderStatementHtml`, `printStatement` | the print stylesheet | A print stylesheet on the page itself rather than a hidden frame |
 
-Not ported on purpose: the Excel download (the core builds it, the generated client cannot carry bytes for this route),
+Not ported on purpose: the Excel download (bytes, not text),
 the entity name on the sheet (the app holds no tenant name), a cash flow statement (the contract has none; marked later in
 words), and sending packs by e-mail (the core keeps a registry only; marked later in words).
 

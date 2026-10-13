@@ -3,7 +3,7 @@
 // the receivables aging, the saved packs, the CSV and the printed sheet; and each refusal and state: a manager
 // who holds one branch, a role that may read but not save, a failed load, an empty list, a shape the contract
 // does not send. The stub's books are cut from the host's own clock, so no calendar value is written here.
-import { test, expect, openStatements, openStatementsAs, stubCalls, stubYear, MANAGER, PAYREC } from "./finstmt-helpers.js";
+import { test, expect, openStatements, openStatementsAs, stubCalls, stubExports, stubYear, MANAGER, PAYREC } from "./finstmt-helpers.js";
 import { openDesk } from "./helpers.js";
 
 // The shared stub names its two branches this way.
@@ -184,23 +184,49 @@ test("the receivables aging shows its bands and total, and a branch narrows it",
   await expect(page.locator("[data-statement-sub]")).toHaveText(`As of now · ${TRENTON}`);
 });
 
-test("the CSV is made from the figures on the page, in plain decimals, and named for the period", async ({ page, request }) => {
+test("the CSV is the core's own export, recorded as an export, in plain decimals and named for the period", async ({ page, request }) => {
   const year = await stubYear(request);
   await openStatements(page, request);
   await page.getByLabel("Period").selectOption({ label: "Period 3 · closed" });
   await expect(page.locator("[data-statement-sub]")).toContainText("Period 3");
   const net = await tile(page, "net").innerText();
+  const exportsBefore = await stubExports(request);
   const [download] = await Promise.all([page.waitForEvent("download"), page.locator("[data-csv]").click()]);
   expect(download.suggestedFilename()).toBe(`income-statement-fiscal-year-${year}-period-3.csv`);
   const path = await download.path();
   const { readFileSync } = await import("node:fs");
   const text = readFileSync(path, "utf8");
-  expect(text.startsWith("Account,Name,Amount\r\n")).toBe(true);
-  expect(text).toContain("Revenue,,\r\n");
-  expect(text).toMatch(/\r\n4000,Product Revenue,\d+\.\d\d\r\n/);
-  expect(text).toContain(`,Net income,${net.replace(/[$,]/g, "")}\r\n`);
+  expect(text.startsWith("Income Statement\r\nSection,Account,Name,Amount\r\n")).toBe(true);
+  expect(text).toMatch(/\r\nREVENUE,4000,Product Revenue,\d+\.\d\d\r\n/);
+  expect(text).toContain(`,Net Income,${net.replace(/[$,]/g, "")}\r\n`);
   expect(text).not.toContain("$");
-  await expect(page.locator("[data-notice]")).toContainText("The file is made from the figures on this page.");
+  // The core was asked for the file, so the export is on its trail.
+  expect(await stubExports(request)).toBe(exportsBefore + 1);
+  await expect(page.locator("[data-notice]")).toContainText("the export is recorded");
+});
+
+test("a typed memo that would run as a formula is made plain text in the file", async ({ page, request }) => {
+  await openStatements(page, request);
+  await tab(page, "gl").click();
+  await page.route("**/api/v1/finstmt/gl-detail*", (route) =>
+    route.request().url().includes("format=csv")
+      ? route.fulfill({ status: 200, contentType: "text/csv", body: "GL Detail\r\nEntry,Posted,Account,Name,Branch,Debit,Credit,Memo\r\n7,x,1000,Cash,,5.00,0.00,-2+3+cmd|' /C calc'!A0\r\n8,x,1000,Cash,,0.00,-1.50,=1+1\r\n" })
+      : route.continue(),
+  );
+  const [download] = await Promise.all([page.waitForEvent("download"), page.locator("[data-csv]").click()]);
+  const { readFileSync } = await import("node:fs");
+  const text = readFileSync(await download.path(), "utf8");
+  expect(text).toContain(",'-2+3+cmd|' /C calc'!A0\r\n");
+  expect(text).toContain(",'=1+1\r\n");
+  expect(text).toContain(",0.00,-1.50,");
+});
+
+test("a refused export says so in words and downloads nothing", async ({ page, request }) => {
+  await openStatements(page, request);
+  await page.route("**/api/v1/finstmt/income-statement*", (route) => (route.request().url().includes("format=csv") ? route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "Forbidden" }) }) : route.continue()));
+  await page.locator("[data-csv]").click();
+  await expect(page.locator("[data-error]")).toHaveText("Statements are for the Financial Controller or a manager.");
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
 });
 
 test("a printed statement carries its title, period and scope and nothing around it", async ({ page, request }) => {

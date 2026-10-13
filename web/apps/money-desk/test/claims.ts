@@ -155,7 +155,11 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "stmt-balance": [{ file: FINSTMT, test: "the balance sheet balances by the server's own flag and carries each section's total" }],
   "stmt-trial": [{ file: FINSTMT, test: "the trial balance reads in balance with the server's totals and takes no branch" }],
   "stmt-aging": [{ file: FINSTMT, test: "the receivables aging shows its bands and total, and a branch narrows it" }],
-  "stmt-csv": [{ file: FINSTMT, test: "the CSV is made from the figures on the page, in plain decimals, and named for the period" }],
+  "stmt-csv": [
+    { file: FINSTMT, test: "the CSV is the core's own export, recorded as an export, in plain decimals and named for the period" },
+    { file: FINSTMT, test: "a typed memo that would run as a formula is made plain text in the file" },
+    { file: FINSTMT, test: "a refused export says so in words and downloads nothing" },
+  ],
   "stmt-print": [{ file: FINSTMT, test: "a printed statement carries its title, period and scope and nothing around it" }],
   "stmt-packs": [
     { file: FINSTMT, test: "a saved pack is saved, changed and deleted after asking, and the list follows" },

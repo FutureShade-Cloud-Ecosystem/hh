@@ -6,15 +6,13 @@ import assert from "node:assert/strict";
 import { centsDecimal, formatChange, formatMoney, MONEY_PLACEHOLDER } from "../src/finstmt/finstmt-money.ts";
 import {
   accountTypeWord,
-  agingRows,
-  balanceRows,
   bucketWord,
   cadenceWord,
   comparativeRows,
   csvDocument,
   csvFilename,
-  glDetailRows,
-  incomeRows,
+  defangCsv,
+  parseCsv,
   periodLabel,
   periodYears,
   readAging,
@@ -29,7 +27,6 @@ import {
   reportWord,
   scopeLabel,
   sourceWord,
-  trialRows,
   validatePack,
 } from "../src/finstmt/finstmt-logic.ts";
 
@@ -144,45 +141,20 @@ test("a CSV is quoted the way a spreadsheet reads it, and a text cell that would
   assert.equal(csvDocument([["=SUM(A1)", "+1", "@x", "-y", "fine"]]), "'=SUM(A1),'+1,'@x,'-y,fine\r\n");
 });
 
-test("the income statement exports its sections and the server's totals in decimal", () => {
-  assert.deepEqual(incomeRows(INCOME), [
-    ["Account", "Name", "Amount"],
-    ["Revenue", "", ""],
-    ["4000", "Product Revenue", "12000.00"],
-    ["", "Total revenue", "12000.00"],
-    ["Expenses", "", ""],
-    ["5000", "Cost of Goods Sold", "7000.00"],
-    ["", "Total expenses", "7000.00"],
-    ["", "Net income", "5000.00"],
-  ]);
+test("only the app's own decimal shape is left alone: any other cell that starts like a formula is defanged", () => {
+  assert.equal(csvDocument([["-2+3+cmd|' /C calc'!A0", "\t=1+1", "\rx", "-12.50", "12.50", "-5"]]), "'-2+3+cmd|' /C calc'!A0,'\t=1+1,\"'\rx\",-12.50,12.50,'-5\r\n");
 });
 
-test("the balance sheet, the trial balance, the comparison, the detail and the aging export the server's figures", () => {
-  const balance = { year: 2000, branch_id: "", assets: [{ account_code: "1000", account_name: "Cash", account_type: "ASSET", amount_cents: 300 }], liabilities: [], equity: [{ account_code: "3000", account_name: "Owner's Equity", account_type: "EQUITY", amount_cents: 200 }], total_assets_cents: 300, total_liabilities_cents: 0, total_equity_cents: 200, net_income_cents: 100, balanced: true };
-  assert.deepEqual(balanceRows(balance), [
-    ["Account", "Name", "Amount"],
-    ["Assets", "", ""], ["1000", "Cash", "3.00"], ["", "Total assets", "3.00"],
-    ["Liabilities", "", ""], ["", "Total liabilities", "0.00"],
-    ["Equity", "", ""], ["3000", "Owner's Equity", "2.00"], ["", "Total equity", "2.00"],
-    ["", "Net income for the year", "1.00"],
-  ]);
-  assert.deepEqual(trialRows({ year: 2000, rows: [{ account_code: "1000", account_name: "Cash", account_type: "ASSET", normal_balance: "DEBIT", total_debit_cents: 500, total_credit_cents: 200, balance_cents: 300 }], total_debit_cents: 500, total_credit_cents: 500, in_balance: true }), [
-    ["Account", "Name", "Type", "Debit", "Credit", "Balance"],
-    ["1000", "Cash", "Asset", "5.00", "2.00", "3.00"],
-    ["", "Total", "", "5.00", "5.00", ""],
-  ]);
+test("a CSV text is read back into rows the way a spreadsheet reads it, quotes and line breaks inside a cell kept", () => {
+  assert.deepEqual(parseCsv('Title\r\nA,B\r\n"a,b","say ""hi""","two\nlines"\r\n,,x\r\n'), [["Title"], ["A", "B"], ["a,b", 'say "hi"', "two\nlines"], ["", "", "x"]]);
+  assert.deepEqual(parseCsv(""), []);
+  assert.equal(defangCsv('a,"=1+1"\n-3.00,x\n'), "a,'=1+1\r\n-3.00,x\r\n");
+});
+
+test("the comparison exports the server's figures", () => {
   assert.deepEqual(comparativeRows([{ account_code: "4000", account_name: "Product Revenue", account_type: "REVENUE", current_cents: 900, prior_cents: 400, delta_cents: 500 }]), [
     ["Account", "Name", "This year", "Last year", "Change"],
     ["4000", "Product Revenue", "9.00", "4.00", "5.00"],
-  ]);
-  assert.deepEqual(glDetailRows([{ line_id: "l", journal_id: "j", entry_no: 7, source: "INVOICE", period_year: 2000, period_month: 2, account_code: "1100", account_name: "Accounts Receivable", account_type: "ASSET", branch_id: "", debit_cents: 700, credit_cents: 0, memo: "Invoice posted", posted_at: "x" }]), [
-    ["Entry", "Period", "Account", "Name", "Source", "Memo", "Debit", "Credit"],
-    ["JE-0007", "Period 2 of fiscal year 2000", "1100", "Accounts Receivable", "Invoice", "Invoice posted", "7.00", ""],
-  ]);
-  assert.deepEqual(agingRows({ branch_id: "", buckets: [{ bucket: "CURRENT", cents: 400 }], rows: [{ customer_id: "c", customer_name: "Summit Ridge Builders", source_type: "INVOICE", source_ref_id: "r", branch_id: "", amount_cents: 400, age_days: 3, bucket: "CURRENT" }], grand_total_cents: 400 }), [
-    ["Customer", "Source", "Age in days", "Band", "Amount"],
-    ["Summit Ridge Builders", "Invoice", "3", "Current", "4.00"],
-    ["", "Total", "", "", "4.00"],
   ]);
 });
 

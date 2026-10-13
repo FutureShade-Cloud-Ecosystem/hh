@@ -53,6 +53,12 @@ export function handoffFor(account: { id: string }): void {
 export const MANAGER = { id: "de110000-0000-4000-9000-000000000002" };
 export const PAYREC = { id: "de110000-0000-4000-9000-000000000007" };
 
+/** How many exports the core would have stamped since the last reset. */
+export async function stubExports(request: APIRequestContext): Promise<number> {
+  const response = await request.get("/_stub/finstmt-calls");
+  return ((await response.json()) as { exports: number }).exports;
+}
+
 /** Signs in through the front door's handoff and opens the Statements area, on the income statement or on its refusal. */
 export async function openStatementsAs(page: Page, request: APIRequestContext, account: { id: string }): Promise<void> {
   await resetStub(request);

@@ -166,9 +166,26 @@ export function createFinstmtWorld() {
   // The stub counts what the screen asked, so a leg can hold "nothing was sent".
   let calls = 0;
 
+  let exports = 0;
+
   const reset = () => {
     packs = freshPacks();
     calls = 0;
+    exports = 0;
+  };
+
+  const dollars = (cents) => `${cents < 0 ? "-" : ""}${Math.floor(Math.abs(cents) / 100)}.${String(Math.abs(cents) % 100).padStart(2, "0")}`;
+  const csvCell = (v) => (/[",\r\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v));
+  /** The core's renderCSV: the title as a one cell row, the headers, then the rows. */
+  const renderCsv = (t) => [[t.title], t.headers, ...t.rows].map((r) => r.map(csvCell).join(",") + "\r\n").join("");
+
+  /** JSON by default; with ?format=csv the core's CSV (and its export stamp), any other format its 400. */
+  const done = (url, body, table) => {
+    const format = url.searchParams.get("format") ?? "";
+    if (format === "") return { status: 200, body };
+    if (format !== "csv") return bad("format must be csv or xlsx");
+    exports += 1;
+    return { status: 200, csv: renderCsv(table(body)) };
   };
 
   /** The caller, read from the stub token's subject. */
@@ -260,10 +277,18 @@ export function createFinstmtWorld() {
     const rows = incomeRows(y.year, month, branch);
     const revenue = rows.filter((r) => r.account_type === "REVENUE");
     const expenses = rows.filter((r) => r.account_type === "EXPENSE");
-    return {
-      status: 200,
-      body: { year: y.year, month, branch_id: branch, revenue, expenses, revenue_cents: sum(revenue), expense_cents: sum(expenses), net_income_cents: sum(revenue) - sum(expenses) },
-    };
+    const body = { year: y.year, month, branch_id: branch, revenue, expenses, revenue_cents: sum(revenue), expense_cents: sum(expenses), net_income_cents: sum(revenue) - sum(expenses) };
+    return done(url, body, (r) => ({
+      title: "Income Statement",
+      headers: ["Section", "Account", "Name", "Amount"],
+      rows: [
+        ...r.revenue.map((x) => ["REVENUE", x.account_code, x.account_name, dollars(x.amount_cents)]),
+        ["", "", "Total Revenue", dollars(r.revenue_cents)],
+        ...r.expenses.map((x) => ["EXPENSE", x.account_code, x.account_name, dollars(x.amount_cents)]),
+        ["", "", "Total Expenses", dollars(r.expense_cents)],
+        ["", "", "Net Income", dollars(r.net_income_cents)],
+      ],
+    }));
   }
 
   function balance(url, caller) {
@@ -281,21 +306,31 @@ export function createFinstmtWorld() {
     const liabilities = rows.filter((r) => r.account_type === "LIABILITY");
     const equity = rows.filter((r) => r.account_type === "EQUITY");
     const net = sum(incomeRows(y.year, 0, branch).filter((r) => r.account_type === "REVENUE")) - sum(incomeRows(y.year, 0, branch).filter((r) => r.account_type === "EXPENSE"));
-    return {
-      status: 200,
-      body: {
-        year: y.year,
-        branch_id: branch,
-        assets,
-        liabilities,
-        equity,
-        total_assets_cents: sum(assets),
-        total_liabilities_cents: sum(liabilities),
-        total_equity_cents: sum(equity),
-        net_income_cents: net,
-        balanced: sum(assets) === sum(liabilities) + sum(equity) + net,
-      },
+    const body = {
+      year: y.year,
+      branch_id: branch,
+      assets,
+      liabilities,
+      equity,
+      total_assets_cents: sum(assets),
+      total_liabilities_cents: sum(liabilities),
+      total_equity_cents: sum(equity),
+      net_income_cents: net,
+      balanced: sum(assets) === sum(liabilities) + sum(equity) + net,
     };
+    return done(url, body, (r) => {
+      const add = (section, list) => list.map((x) => [section, x.account_code, x.account_name, dollars(x.amount_cents)]);
+      return {
+        title: "Balance Sheet",
+        headers: ["Section", "Account", "Name", "Amount"],
+        rows: [
+          ...add("ASSET", r.assets), ["", "", "Total Assets", dollars(r.total_assets_cents)],
+          ...add("LIABILITY", r.liabilities), ["", "", "Total Liabilities", dollars(r.total_liabilities_cents)],
+          ...add("EQUITY", r.equity), ["", "", "Total Equity", dollars(r.total_equity_cents)],
+          ["", "", "Net Income", dollars(r.net_income_cents)],
+        ],
+      };
+    });
   }
 
   function trial(url, caller) {
@@ -319,7 +354,12 @@ export function createFinstmtWorld() {
     });
     const total_debit_cents = rows.reduce((n, r) => n + r.total_debit_cents, 0);
     const total_credit_cents = rows.reduce((n, r) => n + r.total_credit_cents, 0);
-    return { status: 200, body: { year: y.year, rows, total_debit_cents, total_credit_cents, in_balance: total_debit_cents === total_credit_cents } };
+    const body = { year: y.year, rows, total_debit_cents, total_credit_cents, in_balance: total_debit_cents === total_credit_cents };
+    return done(url, body, (r) => ({
+      title: "Trial Balance",
+      headers: ["Account", "Name", "Type", "Debit", "Credit"],
+      rows: [...r.rows.map((x) => [x.account_code, x.account_name, x.account_type, dollars(x.total_debit_cents), dollars(x.total_credit_cents)]), ["", "TOTAL", "", dollars(r.total_debit_cents), dollars(r.total_credit_cents)]],
+    }));
   }
 
   function glDetail(url, caller) {
@@ -337,7 +377,11 @@ export function createFinstmtWorld() {
     const credit = rows.reduce((n, r) => n + r.credit_cents, 0);
     const type = url.searchParams.get("account_type") ?? "";
     const tie_cents = type === "REVENUE" || type === "LIABILITY" || type === "EQUITY" ? credit - debit : debit - credit;
-    return { status: 200, body: { rows, tie_cents } };
+    return done(url, { rows, tie_cents }, (r) => ({
+      title: "GL Detail",
+      headers: ["Entry", "Posted", "Account", "Name", "Branch", "Debit", "Credit", "Memo"],
+      rows: r.rows.map((x) => [String(x.entry_no), x.posted_at, x.account_code, x.account_name, x.branch_id, dollars(x.debit_cents), dollars(x.credit_cents), x.memo]),
+    }));
   }
 
   function arAging(url, caller) {
@@ -348,7 +392,12 @@ export function createFinstmtWorld() {
     const rows = aging.filter((r) => branch === "" || r.branch_id === branch);
     const order = ["CURRENT", "1_30", "31_60", "61_90", "90_PLUS"];
     const buckets = order.map((bucket) => ({ bucket, cents: rows.filter((r) => r.bucket === bucket).reduce((n, r) => n + r.amount_cents, 0) }));
-    return { status: 200, body: { branch_id: branch, buckets, rows, grand_total_cents: rows.reduce((n, r) => n + r.amount_cents, 0) } };
+    const body = { branch_id: branch, buckets, rows, grand_total_cents: rows.reduce((n, r) => n + r.amount_cents, 0) };
+    return done(url, body, (r) => ({
+      title: "AR Aging",
+      headers: ["Customer", "Source", "Ref", "Branch", "Bucket", "AgeDays", "Amount"],
+      rows: [...r.rows.map((x) => [x.customer_id, x.source_type, x.source_ref_id, x.branch_id, x.bucket, String(x.age_days), dollars(x.amount_cents)]), ["", "", "", "", "GRAND TOTAL", "", dollars(r.grand_total_cents)]],
+    }));
   }
 
   /** The service's checks on a pack, in the core's order (validateScheduleInput). */
@@ -446,5 +495,5 @@ export function createFinstmtWorld() {
     return null;
   }
 
-  return { handle, reset, fiscalYear: FY, calls: () => calls };
+  return { handle, reset, fiscalYear: FY, calls: () => calls, exports: () => exports };
 }
