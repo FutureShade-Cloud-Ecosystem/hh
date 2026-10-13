@@ -275,3 +275,49 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
     },
   };
 }
+
+export type PersonaRefusal = "unauthorized" | "forbidden" | "rate_limited" | "bad_request" | "unavailable" | "offline";
+
+/**
+ * POST /api/v1/auth/persona {persona}: the answer is the exchange's shape. The
+ * caller's core bearer rides only when there is one (the testers' copy); the
+ * public copy sends none. Nothing is stored here, and the answer's token goes
+ * back to the caller alone.
+ */
+export async function enterPersona(
+  fetchFn: typeof fetch,
+  coreBaseUrl: string,
+  org: string,
+  persona: string,
+  bearer: string | null,
+): Promise<{ ok: true; answer: ExchangeAnswer } | { ok: false; reason: PersonaRefusal }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json", "X-Org": org };
+  if (bearer !== null) headers["Authorization"] = `Bearer ${bearer}`;
+  let response: Response;
+  try {
+    response = await fetchFn(`${coreBaseUrl.replace(/\/+$/, "")}/api/v1/auth/persona`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ persona }),
+      credentials: "omit",
+      redirect: "error",
+    });
+  } catch {
+    return { ok: false, reason: "offline" };
+  }
+  if (response.status === 401) return { ok: false, reason: "unauthorized" };
+  if (response.status === 403) return { ok: false, reason: "forbidden" };
+  if (response.status === 429) return { ok: false, reason: "rate_limited" };
+  if (response.status === 400) return { ok: false, reason: "bad_request" };
+  if (response.status !== 200) return { ok: false, reason: "unavailable" };
+  const answer = readExchangeAnswer(await readJsonBody(response));
+  return answer === null ? { ok: false, reason: "unavailable" } : { ok: true, answer };
+}
+
+async function readJsonBody(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}

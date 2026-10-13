@@ -15,22 +15,22 @@ import {
   SessionStore,
   ThrowSafeMirror,
   SESSION_MIRROR_KEY,
+  tapIdentity,
   type AccountSurface,
   type ExchangeUser,
   type RefreshTimers,
   type SignInFailureReason,
   type StorageLike,
 } from "@hardscapehouse/auth";
+import { enterPersona } from "@hardscapehouse/auth/appwrite-adapter";
 import type { ConsoleRuntimeConfig } from "@hardscapehouse/auth/runtime-config";
 import { LIVE_ROLES } from "./roles.js";
 import {
   PERSONA_REFUSAL_WORDS,
   SIGN_IN_WORDS,
-  enterPersona,
   fetchMethods,
   focusAfter,
   signInNotice,
-  tapIdentity,
   type SignInMethod,
 } from "./signin.js";
 
