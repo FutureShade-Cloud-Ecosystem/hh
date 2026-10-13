@@ -101,7 +101,11 @@ export class DriveOffline {
   /** Ask for a cycle without waiting for it (a write just landed in the outbox). */
   requestSync(): void {
     this.#onChange?.();
-    void this.runner.request().then(() => this.#onChange?.());
+    void this.runner.request().then(() => {
+      // The cycle's pull has landed: the rows carry the server's seq again.
+      this.#writtenSincePull.clear();
+      this.#onChange?.();
+    });
   }
 
   /** The last connectivity word the machine was fed, so a watcher that polls
