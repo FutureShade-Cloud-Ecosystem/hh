@@ -34,6 +34,7 @@ import { ShellHeader } from '../src/shell-header.js';
 import { ShellRail } from '../src/shell-rail.js';
 import { ShellBanner } from '../src/shell-banner.js';
 import { ShellUpdate } from '../src/shell-update.js';
+import { ShellConflictList, type ShellCardInput } from '../src/shell-cards.js';
 
 export const DEMO_TITLE = '@hardscapehouse/shell-chrome demo';
 
@@ -89,8 +90,50 @@ export function demoSheets(): ReadonlyArray<{ tag: string; css: string }> {
     { tag: 'hh-shell-rail', css: cssTextOf(ShellRail.styles) },
     { tag: 'hh-shell-offline-banner', css: cssTextOf(ShellBanner.styles) },
     { tag: 'hh-shell-update-prompt', css: cssTextOf(ShellUpdate.styles) },
+    { tag: 'hh-shell-conflict-list', css: cssTextOf(ShellConflictList.styles) },
   ];
 }
+
+/** The demo cards: one outcome of each family the sync engine answers, the
+ * words the elements themselves paint. */
+export const DEMO_CARDS: ReadonlyArray<ShellCardInput> = [
+  {
+    id: 'card:demo-stop',
+    kind: 'superseded',
+    scope: 'stops',
+    policy: 'server_wins',
+    serverState: { id: 'st-demo', stop_no: 3, customer_name: 'Northline Hardscapes (demo)' },
+    clientPayload: { id: 'st-demo', time_window: 'morning' },
+    error: null,
+  },
+  {
+    id: 'card:demo-shortage',
+    kind: 'review',
+    scope: 'shortages',
+    policy: 'manual',
+    serverState: { id: 'sh-demo', description: 'Flagstone, random, mixed grey', qty_short: '22' },
+    clientPayload: { id: 'sh-demo', resolution: 'Settled from Bulk 2' },
+    error: null,
+  },
+  {
+    id: 'card:demo-merge',
+    kind: 'merge_report',
+    scope: 'attachments',
+    policy: 'last_write_wins_by_field',
+    serverState: { id: 'at-demo', checksum: 'sha256:demo' },
+    clientPayload: { id: 'at-demo', mime: 'image/jpeg' },
+    error: null,
+  },
+  {
+    id: 'card:demo-refused',
+    kind: 'rejected',
+    scope: 'pick_tasks',
+    policy: null,
+    serverState: {},
+    clientPayload: { id: 'tk-demo' },
+    error: 'line 2 is short, give the reason',
+  },
+];
 
 function cell(tag: string, title: string, markup: string): string {
   return (
@@ -186,6 +229,8 @@ export function buildDemoPage(opts: { theme?: DemoTheme } = {}): string {
   const bannerReadOnly = renderMarkup(ShellBanner, { mode: 'read-only' });
   const bannerAuth = renderMarkup(ShellBanner, { mode: 'auth-expired' });
   const updateOpen = renderMarkup(ShellUpdate, { open: true, shellName: 'HH Field', version: 'r18' });
+  const cardsFull = renderMarkup(ShellConflictList, { cards: DEMO_CARDS });
+  const cardsEmpty = renderMarkup(ShellConflictList, { cards: [] });
 
   return `<!doctype html>
 <html lang="en"${themeAttr}>
@@ -252,6 +297,12 @@ ${cell('hh-shell-offline-banner', 'sign in expired, the work safe', bannerAuth)}
 <section class="width-frame" data-section="update"><h2>The update prompt: quiet until the download is whole</h2>
 <div class="grid">
 ${cell('hh-shell-update-prompt', 'HH Field update ready, Update now and Later', updateOpen)}
+</div>
+</section>
+<section class="width-frame" data-section="cards"><h2>The conflict cards: every outcome shows, and a card is dismissed, never deleted</h2>
+<div class="grid">
+${cell('hh-shell-conflict-list', 'one card of each outcome the sync engine answers', cardsFull)}
+${cell('hh-shell-conflict-list', 'the empty list, before the first conflict comes back', cardsEmpty)}
 </div>
 </section>
 </body>

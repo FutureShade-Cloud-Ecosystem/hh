@@ -1634,5 +1634,75 @@ rendered output and the package's tests hold the wiring contract.</p>
     <!--/lit-part--></template></hh-shell-update-prompt></figure>
 </div>
 </section>
+<section class="width-frame" data-section="cards"><h2>The conflict cards: every outcome shows, and a card is dismissed, never deleted</h2>
+<div class="grid">
+<figure class="cell"><figcaption>one card of each outcome the sync engine answers</figcaption><hh-shell-conflict-list><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-conflict-list.css"><!--lit-part J3rnCAMTJl4=-->
+      <section class="card" role="region" aria-label="Cards waiting for review">
+        <div class="list-head">
+          <h2 class="list-title">Waiting for review</h2>
+          <span class="count"><!--lit-part-->4 to review<!--/lit-part--></span>
+        </div>
+        <!--lit-part AjV5zmcyqQE=--> <ol class="rows"><!--lit-part--><!--lit-part PuAyB/F8cHw=--><li><!--lit-part /eZS7Ba4WGI=-->
+    <!--lit-node 0--><article class="card" data-card-id="card:demo-stop" data-card-kind="superseded">
+      <span class="tag"><!--lit-part-->Server wins · stops<!--/lit-part--></span>
+      <p class="heading"><!--lit-part-->Superseded on the server<!--/lit-part--></p>
+      <p class="body"><!--lit-part-->The stop moved on the server while you were offline. Your queued change was dropped; the server row is shown.<!--/lit-part--></p>
+      <!--lit-part 9LghomJCohU=--><p class="fact">The server holds: <!--lit-part-->Northline Hardscapes (demo)<!--/lit-part--></p><!--/lit-part-->
+      <div class="row">
+        <!--lit-node 9--><button class="btn btn-secondary" type="button" data-action="dismiss-card" data-card-id="card:demo-stop" aria-label="Dismiss: Superseded on the server">
+          Dismiss
+        </button>
+      </div>
+    </article>
+  <!--/lit-part--></li><!--/lit-part--><!--lit-part PuAyB/F8cHw=--><li><!--lit-part /eZS7Ba4WGI=-->
+    <!--lit-node 0--><article class="card" data-card-id="card:demo-shortage" data-card-kind="review">
+      <span class="tag"><!--lit-part-->Manual · shortages<!--/lit-part--></span>
+      <p class="heading"><!--lit-part-->Needs a person&#39;s review<!--/lit-part--></p>
+      <p class="body"><!--lit-part-->The shortage waits for a person: it never merges on its own. The right role confirms it before anyone else hears.<!--/lit-part--></p>
+      <!--lit-part 9LghomJCohU=--><p class="fact">The server holds: <!--lit-part-->Flagstone, random, mixed grey<!--/lit-part--></p><!--/lit-part-->
+      <div class="row">
+        <!--lit-node 9--><button class="btn btn-secondary" type="button" data-action="dismiss-card" data-card-id="card:demo-shortage" aria-label="Dismiss: Needs a person&#39;s review">
+          Dismiss
+        </button>
+      </div>
+    </article>
+  <!--/lit-part--></li><!--/lit-part--><!--lit-part PuAyB/F8cHw=--><li><!--lit-part /eZS7Ba4WGI=-->
+    <!--lit-node 0--><article class="card" data-card-id="card:demo-merge" data-card-kind="merge_report">
+      <span class="tag"><!--lit-part-->Merge · attachments<!--/lit-part--></span>
+      <p class="heading"><!--lit-part-->Merged with a newer change<!--/lit-part--></p>
+      <p class="body"><!--lit-part-->Your change merged with the server&#39;s newer row, field by field: the fields you sent landed, the server&#39;s other fields stand.<!--/lit-part--></p>
+      <!--lit-part--><!--/lit-part-->
+      <div class="row">
+        <!--lit-node 9--><button class="btn btn-secondary" type="button" data-action="dismiss-card" data-card-id="card:demo-merge" aria-label="Dismiss: Merged with a newer change">
+          Dismiss
+        </button>
+      </div>
+    </article>
+  <!--/lit-part--></li><!--/lit-part--><!--lit-part PuAyB/F8cHw=--><li><!--lit-part /eZS7Ba4WGI=-->
+    <!--lit-node 0--><article class="card" data-card-id="card:demo-refused" data-card-kind="rejected">
+      <span class="tag"><!--lit-part-->Refused · pick tasks<!--/lit-part--></span>
+      <p class="heading"><!--lit-part-->Not accepted<!--/lit-part--></p>
+      <p class="body"><!--lit-part-->line 2 is short, give the reason<!--/lit-part--></p>
+      <!--lit-part--><!--/lit-part-->
+      <div class="row">
+        <!--lit-node 9--><button class="btn btn-secondary" type="button" data-action="dismiss-card" data-card-id="card:demo-refused" aria-label="Dismiss: Not accepted">
+          Dismiss
+        </button>
+      </div>
+    </article>
+  <!--/lit-part--></li><!--/lit-part--><!--/lit-part--></ol> <!--/lit-part-->
+      </section>
+    <!--/lit-part--></template></hh-shell-conflict-list></figure>
+<figure class="cell"><figcaption>the empty list, before the first conflict comes back</figcaption><hh-shell-conflict-list><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-conflict-list.css"><!--lit-part J3rnCAMTJl4=-->
+      <section class="card" role="region" aria-label="Cards waiting for review">
+        <div class="list-head">
+          <h2 class="list-title">Waiting for review</h2>
+          <span class="count"><!--lit-part--><!--/lit-part--></span>
+        </div>
+        <!--lit-part jMFIaYynKsI=--><p class="empty">Nothing waits for review. Conflicts land here when the server answers a queued change.</p><!--/lit-part-->
+      </section>
+    <!--/lit-part--></template></hh-shell-conflict-list></figure>
+</div>
+</section>
 </body>
 </html>
