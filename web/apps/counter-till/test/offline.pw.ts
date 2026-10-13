@@ -94,6 +94,8 @@ test("with no signal: the catalogue reads from the copy, a tender is refused wit
   await expect(banner(page)).toBeVisible();
   await expect(banner(page)).toContainText("offline");
   await expect(banner(page)).not.toContainText("outbox");
+  // The headline never promises that writes wait: the till keeps nothing for later.
+  await expect(banner(page)).not.toContainText("wait");
   await expect(page.getByTestId("ct-money-line")).toContainText("Nothing is kept for later");
 
   // The catalogue reads from the copy: the hit is offered, and its price is said to come on add, never guessed.
