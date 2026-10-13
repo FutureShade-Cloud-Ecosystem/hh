@@ -43,6 +43,9 @@ FROM node:22-alpine AS web-build
 # The whole workspace is copied before the install: npm resolves the
 # workspaces from the packages' directories on disk, so a manifest-only
 # copy installs nothing but the root.
+# The drive app's offline data layer imports the sync statechart, which sits beside the
+# web workspace (web/apps/drive-run/src/drive-offline.ts), so that one folder comes too.
+COPY statecharts/ /src/statecharts/
 WORKDIR /src/web
 COPY web/ ./
 RUN npm ci
