@@ -564,8 +564,9 @@ func TestRequireTenantLegs(t *testing.T) {
 // and a row that is not active (inactive or pending: the resolver reports
 // both statuses through the one sentinel) answers 401 with the shared
 // unauthorized body on every plain tenant route, handler unreached, while
-// an unreadable row answers the 503 family. The no-row leg records the
-// one boundary no pin rules: admission today, changed only by a ruling.
+// an unreadable row answers the 503 family. The no-row leg is closed by
+// the ruling of FROM-PRINCIPAL 10: a tenant bearer whose claim has no
+// portal row for the subject is the shared RBAC-403, handler unreached.
 func TestRequireTenantPortalStatus(t *testing.T) {
 	f := newFixture(t)
 	reached := 0
@@ -603,13 +604,15 @@ func TestRequireTenantPortalStatus(t *testing.T) {
 
 	f.portal.err = nil
 	f.portal.ok = false
-	if code, body := call(t, h, http.MethodGet, "/api/v1/tenant/me", f.tenantToken(t), nil); code != http.StatusOK {
-		t.Fatalf("no portal row (unpinned boundary, admitted): %d %s", code, body)
+	for _, m := range []string{http.MethodGet, http.MethodPut, http.MethodPost} {
+		if code, body := call(t, h, m, "/api/v1/tenant/me", f.tenantToken(t), nil); code != http.StatusForbidden || body != string(authz.BodyForbidden) {
+			t.Fatalf("no portal row on %s: %d %s", m, code, body)
+		}
 	}
 	f.portal.ok = true
 
-	if reached != 2 {
-		t.Fatalf("handler reached %d times, want the active and no-row admissions", reached)
+	if reached != 1 {
+		t.Fatalf("handler reached %d times, want the active admission only", reached)
 	}
 }
 
@@ -643,6 +646,11 @@ func TestRequireSyncTenantPortalStatus(t *testing.T) {
 	}
 
 	f.portal.err = nil
+	f.portal.ok = false
+	if code, body := call(t, h, http.MethodPost, "/api/v1/sync/orders", f.tenantToken(t), nil); code != http.StatusForbidden || body != string(authz.BodyForbidden) {
+		t.Fatalf("sync tenant with no portal row: %d %s", code, body)
+	}
+	f.portal.ok = true
 	if code, body := call(t, h, http.MethodPost, "/api/v1/sync/orders", f.tenantToken(t), nil); code != http.StatusOK {
 		t.Fatalf("sync tenant active portal: %d %s", code, body)
 	}
