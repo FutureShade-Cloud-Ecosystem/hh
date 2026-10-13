@@ -572,7 +572,7 @@ export interface ChangesModel {
 /**
  * The change sheet: the row's facts, and the acknowledge. The yard answers
  * one question here, "can we still do this", so the sheet carries what the
- * row carried and nothing priced; the button is the server's own offer (it
+ * row carried and no figure; the button is the server's own offer (it
  * renders only where next_actions names yard_ack), and the refusal lands in
  * the sheet, in the server's words.
  */
