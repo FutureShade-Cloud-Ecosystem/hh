@@ -8,6 +8,7 @@
   "permissions": [
     "core:default",
     "allow-keychain-set",
-    "allow-keychain-get"
+    "allow-keychain-get",
+    "updater:default"
   ]
 }

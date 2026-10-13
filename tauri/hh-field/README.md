@@ -24,6 +24,23 @@ exists):
 - `NSLocationWhenInUseUsageDescription`: HH Field reads your position while
   you drive a delivery run, to place the stop you are on.
 
+## Updates
+
+The updater is registered for the Field channel: the endpoint and the verify
+key sit in `tauri.conf.json` under `plugins.updater`, and both are
+placeholders until the releases path on the demo host and the signing pair
+exist. The endpoint is a configuration value of this file (one Field channel
+URL carrying `{{target}}`, `{{arch}}` and `{{current_version}}`); the
+configuration is pinned by a test in `src/lib.rs`, so no real key material
+can enter a tracked file silently. Nothing polls at start: the shell chrome's
+update prompt (the shells brief's item 5) is the only caller, through the
+`updater:default` grants of this profile's capability.
+
+Release builds (`bundle.createUpdaterArtifacts`) produce the signed update
+artifacts. The signing keys are the principal's, held in FB Vault, never in
+git: at a release build the principal supplies `TAURI_SIGNING_PRIVATE_KEY`
+and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as build environment values.
+
 ## What ships inside the profile
 
 The micro app bundles ship inside the app, never loaded from a host (plan
