@@ -435,6 +435,9 @@ async function handle(req, res) {
     const entityType = decodeURIComponent(transactionMatch[1]);
     const entityId = decodeURIComponent(transactionMatch[2]);
     const items = audit.filter((e) => e.entity_type === entityType && e.entity_id === entityId);
+    // The real core's reopen handler writes a bare array, not the page.
+    if (scenario === "bare-trail") return json(res, items);
+    if (scenario === "empty-trail") return json(res, []);
     return json(res, { items, next_cursor: null, limit: 200 });
   }
 

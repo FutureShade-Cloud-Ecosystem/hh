@@ -126,6 +126,11 @@ export function auditEmptyWords(filtered: boolean): string {
   return "Nothing has been recorded yet. The audit log holds one row for every mutating action: who changed what, when, where and why. It is empty on a database where nobody has changed anything yet.";
 }
 
+/** An entity whose trail came back with no entries: a statement about the read, not the entity's history. */
+export function trailEmptyWords(): string {
+  return "The trail holds no entries for this entity. Entries are written when an action changes it, so an entity nobody has changed since the log began has none.";
+}
+
 /**
  * The since input (a datetime-local value) goes onto the wire as an instant.
  * An empty or unparsable value goes as it came, and the empty one is

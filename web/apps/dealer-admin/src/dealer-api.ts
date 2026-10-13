@@ -244,7 +244,9 @@ export class DealerApi {
   async auditTransaction(entityType: string, entityId: string): Promise<Result<readonly AuditRow[]>> {
     const answer = await staffAudit.auditReopenTransaction(this.#client, entityType, entityId, { limit: 200 });
     if (!answer.ok) return answer;
-    const page = bag(answer.value);
-    return { ok: true, value: list(page.items).map(toAuditRow) };
+    // The core's reopen handler writes a bare array where the contract draws
+    // a page; both read, and neither is ever mistaken for an empty trail.
+    const rows = Array.isArray(answer.value) ? answer.value : bag(answer.value).items;
+    return { ok: true, value: list(rows).map(toAuditRow) };
   }
 }

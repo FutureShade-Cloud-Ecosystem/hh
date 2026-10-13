@@ -180,3 +180,26 @@ test("a refused role change says so beside the register", async ({ page }) => {
   await expect(page.locator("[data-test=staff-count]")).toHaveText("5 staff");
   await page.request.post("/_stub/reset");
 });
+
+async function openSaleTrail(page: import("@playwright/test").Page): Promise<void> {
+  await page.goto("/");
+  await page.locator("[data-flow]").first().click();
+  await page.locator('.surface-link[data-surface="audit"]').click();
+  await page.locator("[data-test^=audit-row-]").filter({ hasText: "SALE_COMPLETED" }).click();
+  await expect(page.locator("[data-detail-state=ready]")).toBeVisible();
+  await page.locator('[data-action="open-audit-trail"]').click();
+}
+
+test("the entity's trail reads the bare array the real core writes", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "bare-trail" } });
+  await openSaleTrail(page);
+  await expect(page.locator("[data-test^=audit-trail-row-]")).toHaveCount(2);
+  await page.request.post("/_stub/reset");
+});
+
+test("an entity trail with no entries says so in its own words", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "empty-trail" } });
+  await openSaleTrail(page);
+  await expect(page.locator("[data-test=audit-trail-empty]")).toContainText("holds no entries");
+  await page.request.post("/_stub/reset");
+});
