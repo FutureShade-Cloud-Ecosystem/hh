@@ -4,8 +4,12 @@ use hh_shell_core::keychain::{self, Slot};
 use hh_shell_core::profiles;
 use hh_shell_core::store::{self, SqlRow, SqlStatement, SqlValue, Store};
 
-const KEYCHAIN_SERVICE: &str = "ai.futurebuild.hh.field";
-
+// The contract's service name: `ai.futurebuild.hh.<profile>`, which is the
+// profile's own identifier. One source: the profile model is the definition
+// (the test below pins the two together).
+fn keychain_service() -> &'static str {
+    profiles::field().identifier
+}
 // The offline store's fixed database file, named per profile (plan B.3: the
 // declared scopes pull into one durable local store). It lives in the app
 // config dir; the webview never names a path.
@@ -25,12 +29,12 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 
 #[tauri::command]
 async fn keychain_set(slot: Slot, value: String) -> Result<(), String> {
-    blocking(move || keychain::set(KEYCHAIN_SERVICE, slot.name(), &value)).await
+    blocking(move || keychain::set(keychain_service(), slot.name(), &value)).await
 }
 
 #[tauri::command]
 async fn keychain_get(slot: Slot) -> Result<String, String> {
-    blocking(move || keychain::get(KEYCHAIN_SERVICE, slot.name())).await
+    blocking(move || keychain::get(keychain_service(), slot.name())).await
 }
 
 // The offline store's executor seam: the store package's SQLite backend
@@ -60,7 +64,7 @@ async fn run_atomic(statements: Vec<SqlStatement>, store: tauri::State<'_, Store
 #[cfg(feature = "probe")]
 #[tauri::command]
 async fn keychain_delete(slot: Slot) -> Result<(), String> {
-    blocking(move || keychain::delete(KEYCHAIN_SERVICE, slot.name())).await
+    blocking(move || keychain::delete(keychain_service(), slot.name())).await
 }
 
 // PROBE SCAFFOLDING, removed when the real shell lands: compiled only with
@@ -155,6 +159,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     // Pins from the probe 4 reviews, plus this item's device permissions. The
     // generated Android tree is source and tracked, so these strings are
     // stable; if Tauri regenerates the project, these tests say what must
@@ -214,6 +219,28 @@ mod tests {
         assert!(perms.contains(&"allow-run-statement"), "run_statement is allowed by name");
         assert!(perms.contains(&"allow-run-atomic"), "run_atomic is allowed by name");
         assert!(!CAPABILITY.contains("sql:"), "no open SQL grant reaches a real build");
+    }
+
+    #[test]
+    fn the_keychain_service_is_the_profiles_identifier() {
+        // AUTH-SHELL-CONTRACT r5: the service is ai.futurebuild.hh.<profile>,
+        // one entry per profile and project; the account dimension and the
+        // writers are the sign in item (item 7), not this crate.
+        assert_eq!(keychain_service(), profiles::field().identifier);
+        assert_eq!(keychain_service(), "ai.futurebuild.hh.field");
+        assert!(keychain_service().starts_with("ai.futurebuild.hh."));
+        // The real slot set is the session token only (the probe build adds
+        // its own scaffolding slot); the webview's own token stays in memory
+        // per the contract.
+        let slots: Vec<&str> = hh_shell_core::keychain::Slot::ALL
+            .iter()
+            .map(|s| s.name())
+            .collect();
+        #[cfg(feature = "probe")]
+        let expected = ["session_token", "probe"];
+        #[cfg(not(feature = "probe"))]
+        let expected = ["session_token"];
+        assert_eq!(slots, expected);
     }
 
     #[test]
