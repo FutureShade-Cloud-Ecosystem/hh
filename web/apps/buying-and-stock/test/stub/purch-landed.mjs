@@ -44,8 +44,8 @@ export function makeLanded(kit) {
   function reset() {
     counter = 0;
     docs = [];
-    // One landed cost already applied on the received order PO-TRT-66, so a late freight can follow it.
-    const po = kit.world().pos.find((p) => p.no === "PO-TRT-66");
+    // One landed cost already applied on the received order PO-PLM-66, so a late freight can follow it.
+    const po = kit.world().pos.find((p) => p.no === "PO-PLM-66");
     docs.push(
       stamp({
         po_id: po.id,

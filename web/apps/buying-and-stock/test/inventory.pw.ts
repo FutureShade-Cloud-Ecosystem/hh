@@ -172,17 +172,17 @@ test("shipping more than the yard holds is refused in the server's own words", a
 
 test("receiving asks first, names the order, the yard and the quantity, then the stock lands", async ({ page, request }) => {
   await openInventory(page, request, "receive");
-  const order = page.locator('[data-receive-order="PO-TRT-136"]');
+  const order = page.locator('[data-receive-order="PO-PLM-136"]');
   await expect(order).toBeVisible();
   await order.getByRole("button", { name: "Receive" }).click();
   const confirm = page.locator("[data-receive-confirm]");
   await expect(confirm).toBeVisible();
-  await expect(confirm).toContainText("PO-TRT-136");
-  await expect(confirm).toContainText("Trenton yard");
+  await expect(confirm).toContainText("PO-PLM-136");
+  await expect(confirm).toContainText("Loma yard");
   await expect(confirm).toContainText("10 pc");
   await confirm.getByRole("button", { name: "Confirm receive" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("PO-TRT-136 received");
-  await expect(page.locator('[data-receive-order="PO-TRT-136"]')).toHaveCount(0);
+  await expect(page.locator("[data-notice]")).toContainText("PO-PLM-136 received");
+  await expect(page.locator('[data-receive-order="PO-PLM-136"]')).toHaveCount(0);
 });
 
 test("a read-only role is refused the receive in words that name who may", async ({ page, request }) => {
@@ -192,7 +192,7 @@ test("a read-only role is refused the receive in words that name who may", async
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
   await showArea(page, "inventory");
   await tab(page, "receive").click();
-  const order = page.locator('[data-receive-order="PO-TRT-136"]');
+  const order = page.locator('[data-receive-order="PO-PLM-136"]');
   await order.getByRole("button", { name: "Receive" }).click();
   await page.locator("[data-receive-confirm]").getByRole("button", { name: "Confirm receive" }).click();
   await expect(page.locator("[data-error]")).toContainText("Receiving an order into stock is a work move");
@@ -265,10 +265,10 @@ test("a yard manager receives the buyer's order and is refused the truck's paper
   await showArea(page, "inventory");
   // Receiving is the yard manager's work: the confirm names the facts, the stock lands.
   await tab(page, "receive").click();
-  const order = page.locator('[data-receive-order="PO-TRT-136"]');
+  const order = page.locator('[data-receive-order="PO-PLM-136"]');
   await order.getByRole("button", { name: "Receive" }).click();
   await page.locator("[data-receive-confirm]").getByRole("button", { name: "Confirm receive" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("PO-TRT-136 received");
+  await expect(page.locator("[data-notice]")).toContainText("PO-PLM-136 received");
   // Raising a transfer is a manage seat's move: refused in the ruled words.
   await tab(page, "transfers").click();
   await page.locator('[data-field="tr-from"]').selectOption({ label: "Point Loma yard" });

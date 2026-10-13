@@ -28,7 +28,7 @@ import { refusalWords } from "../src/po/po-logic.ts";
 
 const PO = {
   id: "c1",
-  po_no: "PO-TRT-67",
+  po_no: "PO-PLM-67",
   currency: "CAD",
   lines: [
     { id: "L1", sku: "UNI-WALL-CAP", description: "Unilock Wall Cap", qty_ordered_base: 10, qty_received_base: 6, qty_billed_base: 2, unit_cost_cents: 24000, uom: "pc" },
@@ -139,8 +139,8 @@ test("a bill that cannot be right is refused in words before anything is sent", 
 });
 
 test("the post step names the bill, the vendor, the order and the server's total", () => {
-  const words = postConfirmWords({ bill_no: "INV-7790", vendor_name: "Unilock (demo)", po_no: "PO-TRT-67", total_cents: 96000, match_state: "MATCHED" });
-  assert.match(words, /Post bill INV-7790 from Unilock \(demo\) for \$960\.00 against PO-TRT-67/);
+  const words = postConfirmWords({ bill_no: "INV-7790", vendor_name: "Unilock (demo)", po_no: "PO-PLM-67", total_cents: 96000, match_state: "MATCHED" });
+  assert.match(words, /Post bill INV-7790 from Unilock \(demo\) for \$960\.00 against PO-PLM-67/);
   assert.match(words, /books the amount owed/i);
   assert.match(words, /cannot be edited after/i);
   assert.match(postConfirmWords({ bill_no: "A", vendor_name: "V", po_no: "P", total_cents: undefined, match_state: "MATCHED" }), /\(no figure\)/);
