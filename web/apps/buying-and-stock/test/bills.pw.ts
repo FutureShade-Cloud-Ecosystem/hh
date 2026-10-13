@@ -257,3 +257,14 @@ test("a caller with no branch reach reads the core's refusal and can try again",
   await page.getByRole("button", { name: "Try again" }).click();
   await expect(page.locator("[data-bill-row]")).toHaveCount(3);
 });
+
+test("a tolerance change whose answer was lost is not called unchanged: the rules are read again", async ({ page, request }) => {
+  await openAreaAs(page, request, SUPER, "Vendor bills");
+  await page.locator("[data-tol-qty]").fill("5");
+  await page.getByRole("button", { name: "Change the tolerance" }).click();
+  await request.post("/_stub/flag", { data: { name: "dropNext", value: true } });
+  await page.getByRole("button", { name: "Change the tolerance" }).last().click();
+  await expect(page.locator("[data-error]")).toContainText("it is not known whether the change was made");
+  await expect(page.locator("[data-error]")).not.toContainText("Nothing was changed");
+  await expect(page.locator("[data-tolerance-words]")).toContainText("within 5%");
+});

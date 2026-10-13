@@ -177,7 +177,7 @@ function receiptPanel(model: ReceivingModel, rc: PurchasingReceipt): TemplateRes
         </table>
       </div>
       ${applied
-        ? html`<p class="alert alert-ok" data-landed-applied><strong>A landed cost is applied to this receipt.</strong> It is in Landed cost, and the cost of these goods includes it.</p>`
+        ? html`<p class="alert alert-ok" data-landed-applied><strong>A landed cost is applied to this receipt.</strong> It is in Landed cost, and the cost of these goods includes it.</p>${noteAt(model, "receipt")}`
         : attachForm(model, rc)}
     </section>
   `;

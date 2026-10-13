@@ -285,3 +285,19 @@ test("at 390 px the page never scrolls sideways: the queue is cards, the order a
   await expect(page.locator("[data-receipt-panel]")).toBeVisible();
   await noSidewaysScroll(page);
 });
+
+test("a landed cost attach whose answer was lost never advises applying again", async ({ page, request }) => {
+  await openArea(page, request, "Receiving");
+  await openOrder(page, "PO-TRT-136");
+  await recv(page).fill("10");
+  await page.getByRole("button", { name: "Receive goods", exact: true }).click();
+  await page.getByRole("button", { name: "Receive the goods" }).click();
+  await page.locator("[data-receipt-row]").getByRole("button", { name: "Open" }).click();
+  await page.locator("[data-at-freight]").fill("480.00");
+  await page.getByRole("button", { name: "Apply a landed cost" }).click();
+  await request.post("/_stub/flag", { data: { name: "dropNext", value: true } });
+  await page.getByRole("button", { name: "Apply the landed cost" }).click();
+  const error = page.locator("[data-error]");
+  await expect(error).toContainText("check Landed cost for one on PO-TRT-136/R1");
+  await expect(error).not.toContainText("apply it again");
+});

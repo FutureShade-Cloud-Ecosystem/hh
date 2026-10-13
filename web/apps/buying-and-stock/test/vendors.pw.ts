@@ -173,3 +173,15 @@ test("at 390 px the page never scrolls sideways: the list is cards and the vendo
   await expect(page.locator("[data-codes]")).toBeVisible();
   await noSidewaysScroll(page);
 });
+
+test("a vendor create whose answer was lost is not called unchanged: the list is read again and the person told", async ({ page, request }) => {
+  await openArea(page, request, "Vendors");
+  await page.getByRole("button", { name: "New vendor" }).click();
+  await page.locator("[data-v-name]").fill("Rymar Turf (demo)");
+  await request.post("/_stub/flag", { data: { name: "dropNext", value: true } });
+  await page.getByRole("button", { name: "Add the vendor" }).click();
+  await expect(page.locator("[data-error]")).toContainText("it is not known whether the change was made");
+  await expect(page.locator("[data-error]")).not.toContainText("Nothing was changed");
+  // The write was made: the list read again shows it, so a second save would have doubled it.
+  await expect(page.locator("[data-vendor-row]", { hasText: "Rymar Turf" })).toHaveCount(1);
+});

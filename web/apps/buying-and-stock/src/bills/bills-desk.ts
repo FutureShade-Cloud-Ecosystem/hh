@@ -237,6 +237,14 @@ export class BillsDesk implements AreaDesk {
     this.#notice = "";
   }
 
+  /** A rules write whose answer was lost may have been made: read the rules again and say it is not known. */
+  async #failRules(result: Failure): Promise<void> {
+    this.#fail(result, "rules");
+    if (!answerLost(result)) return;
+    await this.#readRules();
+    this.#error = "No clear answer came back, so it is not known whether the change was made. The rules have been read again: check them before changing them a second time.";
+  }
+
   #fail(result: Failure, at: "bill" | "rules"): void {
     this.#notice = "";
     this.#error = refusalWords(at === "rules" ? "tolerance" : "bill", result.error, result.status);
@@ -408,7 +416,7 @@ export class BillsDesk implements AreaDesk {
       this.#tolerance = done.value;
       this.#seedRules = "";
       this.#notice = "The match tolerance is changed.\nIt applies to bills entered or posted from now on.";
-    } else this.#fail(done, "rules");
+    } else await this.#failRules(done);
     this.#busy = false;
     this.#host.repaint();
   }
@@ -447,7 +455,7 @@ export class BillsDesk implements AreaDesk {
       this.#ruleVisibility = done.value.cost_visibility;
       this.#ruleFallback = done.value.untagged_fallback;
       this.#notice = "The purchasing policy is changed.";
-    } else this.#fail(done, "rules");
+    } else await this.#failRules(done);
     this.#busy = false;
     this.#host.repaint();
   }

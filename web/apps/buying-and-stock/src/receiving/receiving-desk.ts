@@ -329,7 +329,11 @@ export class ReceivingDesk implements AreaDesk {
       const again = await this.#api.receipt(rc.id);
       if (again.ok) this.#receipt = again.value;
       if (answerLost(done)) {
-        this.#error = "No clear answer came back. The receipt has been read again: if a landed cost shows on it, it was applied; if not, apply it again.";
+        // The core applies the landed cost before it marks the receipt, so a bare receipt proves nothing:
+        // never advise applying again; send the person to the landed costs, which carry the receipt's number.
+        this.#error = again.ok
+          ? `No clear answer came back, so it is not known whether the landed cost was applied. The receipt has been read again. Before applying anything, check Landed cost for one on ${rc.grn_no}: a second would double the cost of these goods.`
+          : "No clear answer came back and the receipt could not be read back. Refresh, and check Landed cost for one on this receipt, before doing anything else.";
         this.#errorAt = "receipt";
       } else this.#fail(done, "receipt");
     }

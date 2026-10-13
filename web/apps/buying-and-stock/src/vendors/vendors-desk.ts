@@ -11,6 +11,7 @@ import type { TemplateResult } from "lit";
 import type { Product, PurchasingPO, PurchasingVendor, PurchasingVendorContactResult, PurchasingVendorSKU, Result } from "@hardscapehouse/api-client";
 import type { AreaDesk, DeskHost } from "../purch/area.js";
 import { refusalWords } from "../po/po-logic.js";
+import { answerLost } from "../purch/purch-logic.js";
 import { VendorsApi } from "./vendors-api.js";
 import { contactBody, mappingBody, refWords, vendorBody, vendorRows } from "./vendors-logic.js";
 import { renderVendors, type Removal, type VendorTab } from "./vendors-views.js";
@@ -205,6 +206,23 @@ export class VendorsDesk implements AreaDesk {
     this.#error = refusalWords("vendor", result.error, result.status);
   }
 
+  /**
+   * A write that was refused reads as the core words it; a write whose answer never came, or came as a
+   * server fault, may have been made (a vendor create has no key and the core mints the number), so the
+   * screen reads the vendors, contact and codes again and says it is not known, never "nothing changed".
+   */
+  async #failWrite(result: Failure): Promise<void> {
+    this.#fail(result);
+    if (!answerLost(result)) return;
+    const id = this.#currentId();
+    await this.#reloadVendors();
+    if (id !== "") {
+      if (this.#contact !== null) await this.#loadContact(id);
+      if (this.#codes !== null) await this.#loadCodes(id);
+    }
+    this.#error = "No clear answer came back, so it is not known whether the change was made. The vendors have been read again: check them before saving a second time.";
+  }
+
   #select(vendor: PurchasingVendor | "new" | null): void {
     this.#selected = vendor;
     this.#tab = "details";
@@ -264,7 +282,7 @@ export class VendorsDesk implements AreaDesk {
       this.#seedDetails = "";
       this.#version += 1;
       this.#notice = vendor === "new" ? `Added ${saved.name}.\nIts number is ${saved.vendor_no}.` : `Saved changes to ${saved.name}.`;
-    } else this.#fail(done);
+    } else await this.#failWrite(done);
     this.#busy = false;
     this.#host.repaint();
   }
@@ -279,7 +297,7 @@ export class VendorsDesk implements AreaDesk {
     if (done.ok) {
       await this.#reloadVendors();
       this.#notice = done.value.is_active ? `${done.value.name} is active again.` : `${done.value.name} is inactive: it stays on its past orders.`;
-    } else this.#fail(done);
+    } else await this.#failWrite(done);
     this.#busy = false;
     this.#host.repaint();
   }
@@ -302,7 +320,7 @@ export class VendorsDesk implements AreaDesk {
       this.#seedContact = "";
       this.#version += 1;
       this.#notice = "The ordering contact is tagged.\nOrders to this vendor go to it.";
-    } else this.#fail(done);
+    } else await this.#failWrite(done);
     this.#busy = false;
     this.#host.repaint();
   }
@@ -319,7 +337,7 @@ export class VendorsDesk implements AreaDesk {
       this.#seedContact = "";
       this.#version += 1;
       this.#notice = "The ordering contact is removed.";
-    } else this.#fail(done);
+    } else await this.#failWrite(done);
     this.#removal = null;
     this.#busy = false;
     this.#host.repaint();
@@ -349,7 +367,7 @@ export class VendorsDesk implements AreaDesk {
       await this.#loadCodes(id);
       this.#editingCode = null;
       this.#notice = "The vendor code is saved.";
-    } else this.#fail(done);
+    } else await this.#failWrite(done);
     this.#busy = false;
     this.#host.repaint();
   }
@@ -365,7 +383,7 @@ export class VendorsDesk implements AreaDesk {
     if (done.ok) {
       await this.#loadCodes(id);
       this.#notice = "The vendor code is removed.";
-    } else this.#fail(done);
+    } else await this.#failWrite(done);
     this.#removal = null;
     this.#removalCode = null;
     this.#busy = false;
