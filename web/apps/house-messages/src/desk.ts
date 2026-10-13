@@ -24,6 +24,7 @@ import {
   streamOrder,
   timeWords,
   totalUnread,
+  unreadSignature,
   youAcked,
   type AckProgress,
   type Channel,
@@ -112,8 +113,10 @@ export class MessagesDesk {
   // When the last read failed, so the screen can say it is showing what it read before.
   #staleAt: number | null = null;
 
+  #unreadSignature: string | null = null;
   #refreshing = false;
   #refreshAgain = false;
+  #refreshFull = false;
   #stopped = false;
 
   constructor(api: MessagesApi, host: DeskHost, meId: string) {
@@ -165,31 +168,61 @@ export class MessagesDesk {
     if (state === "live" && !wasLive) void this.refresh();
   }
 
-  #onNudge(_kind: NudgeKind): void {
-    void this.refresh();
+  #onNudge(kind: NudgeKind): void {
+    // The timer's nudge is the cheap read; the stream's says something changed.
+    void this.refresh(kind === "poll" ? "poll" : "full");
   }
 
   /**
    * Reads again what the screen shows: the channel list with its unread counts and, when a channel
    * is open, its newest page. Reads that arrive while one runs are folded into one more pass.
    */
-  async refresh(): Promise<void> {
+  async refresh(mode: "poll" | "full" = "full"): Promise<void> {
     if (this.#refreshing) {
       this.#refreshAgain = true;
+      if (mode === "full") this.#refreshFull = true;
       return;
     }
     this.#refreshing = true;
+    let pass: "poll" | "full" = mode;
     try {
       do {
         this.#refreshAgain = false;
-        await this.#readOnce();
+        this.#refreshFull = false;
+        await this.#readOnce(pass);
+        pass = this.#refreshFull ? "full" : "poll";
       } while (this.#refreshAgain && !this.#stopped);
     } finally {
       this.#refreshing = false;
     }
   }
 
-  async #readOnce(): Promise<void> {
+  /**
+   * The timer's read goes to the core's unread summary, built for exactly that (it does not resync
+   * membership), and reads the lists again only when the summary moved or the last read failed. What
+   * the unread summary does not show (who else acknowledged, who claimed) is read on every pass.
+   */
+  async #pollOnce(): Promise<boolean> {
+    const unread = await this.#api.unread();
+    if (this.#stopped) return false;
+    if (!unread.ok) {
+      if (this.#staleAt === null) this.#staleAt = this.#host.now();
+      this.#host.repaint();
+      return false;
+    }
+    const signature = unreadSignature(unread.value);
+    const moved = signature !== this.#unreadSignature || this.#staleAt !== null;
+    this.#unreadSignature = signature;
+    if (!moved) {
+      await this.#readAcks();
+      await this.#readQueue();
+      this.#host.repaint();
+    }
+    return moved;
+  }
+
+  async #readOnce(mode: "poll" | "full"): Promise<void> {
+    if (mode === "poll" && !(await this.#pollOnce())) return;
     const channels = await this.#api.channels();
     if (this.#stopped) return;
     if (channels.ok) {
@@ -268,7 +301,7 @@ export class MessagesDesk {
     if (done.ok) this.#queueNote = `You now own ${row?.customer_name || "this customer"}. Their next message goes straight to your DM.`;
     else this.#queueError = refusalWords("The claim", done.error, done.status ?? null);
     await this.#readQueue();
-    await this.#readOnce();
+    await this.#readOnce("full");
     this.#host.repaint();
   }
 

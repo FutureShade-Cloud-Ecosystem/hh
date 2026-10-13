@@ -131,7 +131,7 @@ function renderStrip(m: Model): TemplateResult {
   const state = m.live;
   const words = state === null ? "Connecting" : liveWords(state);
   const tone = state === "offline" ? "strip strip-stop" : state === "reconnecting" || state === "polling" ? "strip strip-warn" : "strip";
-  const retry = state === "reconnecting" || state === "offline" || state === "polling";
+  const retry = state === "reconnecting" || state === "offline";
   return html`
     <div class="${tone}" role="status" data-live>
       <span class="live"><span class="${liveDot(state)}"></span><span data-live-words>${words}</span></span>

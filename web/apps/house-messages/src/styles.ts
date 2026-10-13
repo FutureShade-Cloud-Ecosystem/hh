@@ -14,6 +14,8 @@ export const messagesStyles = css`
   p { margin: 0 0 var(--hh-s-8); }
   ul { list-style: none; margin: 0; padding: 0; }
   .dim { color: var(--hh-text-dim); }
+  /* Words are not columns of figures: the kit's tabular figure setting stretches a hyphen in a room's name. */
+  .ch-name, .ch-line, h2, .text, .who, .why, .titles p, .excerpt { font-variant-numeric: normal; font-feature-settings: normal; }
   .small { font-size: 14px; }
   .code { font-family: var(--hh-font-mono); }
 
@@ -103,13 +105,15 @@ export const messagesStyles = css`
   .queue-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); padding: var(--hh-s-8) 0; border-top: 1px solid var(--hh-line); }
   .queue-row:first-of-type { border-top: 0; }
   .queue-row .who-line { flex: 1 1 200px; min-width: 0; }
+  .queue-row .who-line .dim { display: block; }
+  .queue p { margin-top: var(--hh-s-8); }
   .queue-row.open { border-inline-start: 3px solid var(--hh-state-watch); padding-inline-start: var(--hh-s-12); }
 
   /* The inline sheet: notify prefs and payment notice rules. */
   .sheet { background: var(--hh-row-alt); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-16); display: grid; gap: var(--hh-s-12); }
   .sheet-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--hh-s-8); }
-  .segs { display: flex; flex-wrap: wrap; gap: var(--hh-s-4); padding: var(--hh-s-4); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-pill); background: var(--hh-card); width: fit-content; max-width: 100%; }
-  .seg { min-height: 44px; padding: 0 var(--hh-s-16); white-space: nowrap; border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid transparent; }
+  .segs { display: flex; flex-wrap: wrap; gap: var(--hh-s-4); padding: var(--hh-s-4); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-card); background: var(--hh-card); width: fit-content; max-width: 100%; }
+  .seg { min-height: 44px; padding: 0 var(--hh-s-16); white-space: nowrap; border-radius: var(--hh-radius-control); background: transparent; color: var(--hh-text); border: 1px solid transparent; }
   .seg[aria-pressed="true"] { background: var(--hh-text); color: var(--hh-page); font-weight: 700; }
   .toggle-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--hh-s-8) var(--hh-s-16); }
   .toggle-row .grow { flex: 1 1 220px; min-width: 0; }
@@ -133,6 +137,8 @@ export const messagesStyles = css`
     h1 { font-size: 24px; }
     .convo-body, .composer, .convo-head { padding-inline: var(--hh-s-12); }
     .bubble .btn { width: 100%; }
+    .segs { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr); }
+    .seg { width: 100%; text-align: start; }
     .composer-row .btn { flex: 1 1 100%; }
     .thread { margin-inline-start: var(--hh-s-8); }
   }

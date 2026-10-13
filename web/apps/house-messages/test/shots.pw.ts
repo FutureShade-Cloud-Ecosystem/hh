@@ -7,7 +7,7 @@
 // The brand theme is the design system's dark half; light is this app's default, one tap on the
 // header's theme control moves between them.
 import type { Page } from "@playwright/test";
-import { test, expect, openAs, channel, CH, says } from "./helpers.js";
+import { test, expect, openAs, channel, CH, says, stubPost } from "./helpers.js";
 import { join } from "node:path";
 
 const dir = process.env.MSG_SHOT_DIR ?? "";
@@ -30,6 +30,12 @@ for (const size of SIZES) {
       test.setTimeout(120_000);
       await page.setViewportSize(size);
       const take = (order: string, name: string) => shot(page, theme, size.width, order, name);
+      // Back to the channel list on the one column width; on two panes the list is always there.
+      const toList = async () => {
+        const back = page.locator("[data-conversation] [data-action='back'], [data-rules] [data-action='close-panel'].back").first();
+        if (await back.isVisible()) await back.click();
+        await expect(page.locator("[data-channel-list]")).toBeVisible();
+      };
       const brandOn = async () => {
         if (theme === "brand") await page.getByRole("button", { name: "Theme: Light" }).click();
       };
@@ -58,6 +64,43 @@ for (const size of SIZES) {
       await expect(page.locator("[data-conversation] li[data-msg]").last()).toContainText("Truck 03 is at the gate");
       await page.locator("textarea[data-field='draft']").fill("a".repeat(8300));
       await take("05", "over-the-size-limit");
+
+      // The forced acknowledgement is on the list already: the bubble above the panes.
+      await page.locator("textarea[data-field='draft']").fill("");
+      await toList();
+      await expect(page.locator("[data-bubble]")).toBeVisible();
+      await take("06", "ack-bubble-on-the-list");
+      await channel(page, CH.esc).click();
+      await expect(page.locator("[data-ack-progress]").first()).toBeVisible();
+      await take("07", "escalation-room-with-ack-count");
+      await page.locator("[data-bubble]").getByRole("button", { name: "I got it" }).click();
+      await expect(page.locator("[data-bubble]")).toHaveCount(0);
+      await take("08", "acknowledged");
+
+      await toList();
+      await channel(page, CH.house).click();
+      await expect(page.locator("[data-queue-row]").first()).toBeVisible();
+      await take("09", "house-queue");
+      await page.locator("[data-queue-row]").first().getByRole("button", { name: "Claim" }).click();
+      await expect(page.locator("[data-queue-note]")).toBeVisible();
+      await take("10", "claimed");
+
+      await page.getByRole("button", { name: "Notifications" }).click();
+      await expect(page.locator("[data-prefs]")).toBeVisible();
+      await take("11", "notify-prefs");
+
+      await toList();
+      await page.getByRole("button", { name: "Payment notice rules" }).click();
+      await expect(page.locator("[data-rules]")).toBeVisible();
+      await take("12", "payment-notice-rules");
+
+      await page.locator("[data-rules]").getByRole("button", { name: "Close" }).click();
+      await toList();
+      await stubPost(request, "offline", { on: true });
+      await stubPost(request, "drop-streams");
+      await expect(page.locator("[data-live]")).toContainText("Offline");
+      await take("13", "offline-strip");
+      await stubPost(request, "offline", { on: false });
     });
   }
 }

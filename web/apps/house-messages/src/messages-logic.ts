@@ -7,6 +7,7 @@
 import type {
   MessagingAckProgress,
   MessagingChannel,
+  MessagingChannelUnread,
   MessagingEventRef,
   MessagingHouseConversation,
   MessagingMessage,
@@ -119,6 +120,18 @@ export function unreadWord(channel: Pick<Channel, "unread_count" | "mentioned">)
   if (n <= 0) return "";
   const count = n > 99 ? "99+" : String(n);
   return channel.mentioned ? `${count} unread, you are mentioned` : `${count} unread`;
+}
+
+/**
+ * One string that is the same for the same unread picture and moves when anything the badges show
+ * moves (a count, a mention, the latest time in a room). The core builds the unread read for the
+ * hot path, so the screen polls it and reads the heavier lists only when this changes.
+ */
+export function unreadSignature(summary: { total: number; channels?: readonly Pick<MessagingChannelUnread, "channel_id" | "unread_count" | "mentioned" | "latest_at">[] | null }): string {
+  const rows = [...(summary.channels ?? [])]
+    .sort((a, b) => (a.channel_id < b.channel_id ? -1 : a.channel_id > b.channel_id ? 1 : 0))
+    .map((c) => `${c.channel_id}:${c.unread_count}:${c.mentioned ? 1 : 0}:${c.latest_at ?? ""}`);
+  return `${summary.total}|${rows.join(",")}`;
 }
 
 export function totalUnread(channels: readonly Pick<Channel, "unread_count">[]): number {

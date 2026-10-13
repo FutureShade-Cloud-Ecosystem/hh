@@ -30,6 +30,7 @@ import {
   streamOrder,
   timeWords,
   totalUnread,
+  unreadSignature,
   unreadWord,
   waitedWords,
   youAcked,
@@ -265,4 +266,15 @@ test("you acknowledged when your user id is among the acks", () => {
   assert.equal(youAcked(progress, "u1"), true);
   assert.equal(youAcked(progress, "u2"), false);
   assert.equal(youAcked(null, "u1"), false);
+});
+
+test("the unread signature is the same for the same counts in any order, and moves when a count, a mention or a latest time does", () => {
+  const a = { channel_id: "a", unread_count: 1, mentioned: false, latest_at: "2025-01-01T00:00:00Z" };
+  const b = { channel_id: "b", unread_count: 2, mentioned: false, latest_at: "2025-01-02T00:00:00Z" };
+  const base = unreadSignature({ total: 3, channels: [a, b] });
+  assert.equal(unreadSignature({ total: 3, channels: [b, a] }), base);
+  assert.notEqual(unreadSignature({ total: 4, channels: [{ ...a, unread_count: 2 }, b] }), base);
+  assert.notEqual(unreadSignature({ total: 3, channels: [{ ...a, mentioned: true }, b] }), base);
+  assert.notEqual(unreadSignature({ total: 3, channels: [a, { ...b, latest_at: "2025-01-03T00:00:00Z" }] }), base);
+  assert.equal(unreadSignature({ total: 0, channels: [] }), unreadSignature({ total: 0, channels: null }));
 });
