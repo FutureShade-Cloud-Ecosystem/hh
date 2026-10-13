@@ -36,7 +36,7 @@ test("L wall: a field crew role is refused the landing with no call, and the pro
   await page.getByTestId("frame-selector").click();
   const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
   await expect(panel).toBeVisible();
-  for (const surface of ["Board", "Catalog", "Quote studio", "Projects"]) {
+  for (const surface of ["Today", "Board", "Projects", "Catalog", "Quotes"]) {
     await expect(panel.getByRole("button", { name: surface, exact: true })).toHaveCount(0);
   }
   // What the role does hold is still offered (Pro Field's tracking; another
@@ -44,24 +44,20 @@ test("L wall: a field crew role is refused the landing with no call, and the pro
   await expect(panel.getByRole("button", { name: /Tracking/ })).toBeVisible();
 });
 
-test("L wall: accounts payable reads the account, is not offered the buying surfaces, and the kit catalogue's Projects entry still ends at the wall", async ({ page }) => {
+test("L wall: accounts payable reads the account, is not offered the buying surfaces, and Projects is not offered either", async ({ page }) => {
   const calls: string[] = [];
   page.on("request", (r) => calls.push(new URL(r.url()).pathname));
   await signIn(page, "ap");
   await expect(page.getByTestId("today-rows")).toBeVisible();
   await page.getByTestId("frame-selector").click();
   const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
-  for (const surface of ["Board", "Catalog", "Quote studio"]) {
+  for (const surface of ["Board", "Projects", "Catalog", "Quotes"]) {
     await expect(panel.getByRole("button", { name: surface, exact: true })).toHaveCount(0);
   }
   await expect(panel.getByRole("button", { name: /Invoices/ })).toBeVisible();
-  // The kit's catalogue gates Projects with view_billing; the procurement
-  // routes answer to submit_rfq, which accounts payable does not hold. The
-  // entry is offered, the app refuses it at the gate, and no call is made:
-  // the server's boundary holds even where the chrome is wrong.
-  await panel.getByRole("button", { name: "Projects", exact: true }).click();
-  const state = page.getByTestId("surface-state");
-  await expect(state).toHaveAttribute("data-state", "refusal");
+  // The catalogue gates Projects with submit_rfq, as the routes do: the entry is not
+  // offered, and no procurement call is made.
+  await expect(panel.getByRole("button", { name: "Today", exact: true })).toBeVisible();
   expect(calls).not.toContain("/api/v1/tenant/procurement/projects");
 });
 

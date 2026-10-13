@@ -20,12 +20,30 @@ import "@hardscapehouse/design-system/src/header.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+// The offline strip and the conflict cards ride the shell chrome package,
+// wired here through their properties (the injected seams): this app maps the
+// runner's state, the backend's ownership and the store's cards onto them.
+import "@hardscapehouse/shell-chrome";
+import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
+import { DriveOffline, bannerMode, openDriveOfflineOpfs, type RunsAnswer } from "./drive-offline.js";
 import { HANDBACK_TITLE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
 import { driveStyles } from "./styles.js";
 import { readyPhoto } from "./photo.js";
-import { renderClose, renderEntry, renderFail, renderPod, renderRunSheet, renderStopDetail, type EntryView } from "./views.js";
+import {
+  renderClose,
+  renderConflicts,
+  renderEntry,
+  renderFail,
+  renderPod,
+  renderRunSheet,
+  renderStopDetail,
+  stalenessWords,
+  type EntryView,
+} from "./views.js";
+
+import type { Card, OutboxStall, Staleness } from "@hardscapehouse/offline-store";
 
 const DEMO_ORG = "hh-demo";
 
@@ -57,6 +75,18 @@ export class DriveRunApp extends HHElement {
   // The driver's calls, over the staff client.
   readonly #drive = new DriveApi(this.#staffClient);
 
+  // The offline data layer over the store, opened once the person is in. Null
+  // means the host cannot carry a store: the app then behaves online as
+  // today, over the direct api above, and the strip keeps quiet.
+  #driveOffline: DriveOffline | null = null;
+  #offlineBooted = false;
+  #readOnlyTab = false;
+  #syncState = "offline";
+  #waiting = 0;
+  #stalls: OutboxStall[] = [];
+  #openCards: Card[] = [];
+  #runStaleness: Staleness | null = null;
+
   // The run sheet's state. The runs are the server's answer for the dealer's
   // day; the view is which screen shows.
   #phase: "loading" | "ready" | "error" = "loading";
@@ -64,8 +94,13 @@ export class DriveRunApp extends HHElement {
   #error = "";
   #notice = "";
   #busy = false;
-  #view: { kind: "run" } | { kind: "stop"; id: string } | { kind: "pod"; id: string } | { kind: "fail"; id: string } | { kind: "close" } =
-    { kind: "run" };
+  #view:
+    | { kind: "run" }
+    | { kind: "stop"; id: string }
+    | { kind: "pod"; id: string }
+    | { kind: "fail"; id: string }
+    | { kind: "close" }
+    | { kind: "conflicts" } = { kind: "run" };
 
   // Proof of delivery's draft. The name field is not bound (the position
   // rules allow no value binding), so these mirror it from the input events.
@@ -174,6 +209,20 @@ export class DriveRunApp extends HHElement {
       if (to === "LOADED" || to === "EN_ROUTE") void this.#advance(to);
       return;
     }
+    if (action === "open-conflicts") {
+      this.#view = { kind: "conflicts" };
+      this.#error = "";
+      this.#notice = "";
+      void this.#refreshOfflineChrome();
+      return;
+    }
+    if (action === "dismiss-card") {
+      const id = control?.getAttribute("data-card-id") ?? "";
+      if (id !== "" && this.#driveOffline !== null) {
+        void this.#driveOffline.dismissCard(id).then(() => this.#refreshOfflineChrome());
+      }
+      return;
+    }
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
@@ -210,6 +259,11 @@ export class DriveRunApp extends HHElement {
     // not composed), so the form listeners sit on the root itself.
     this.renderRoot.addEventListener("input", this.#onField);
     this.renderRoot.addEventListener("change", this.#onField);
+    window.addEventListener("online", this.#onConnectivity);
+    window.addEventListener("offline", this.#onConnectivity);
+    // Some hosts deliver the platform's word late or not at all; a short
+    // watcher repeats it, and the layer dispatches only on a change.
+    this.#connectivityWatch = setInterval(this.#onConnectivity, 1_000);
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -236,7 +290,77 @@ export class DriveRunApp extends HHElement {
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onField);
     this.renderRoot.removeEventListener("change", this.#onField);
+    window.removeEventListener("online", this.#onConnectivity);
+    window.removeEventListener("offline", this.#onConnectivity);
+    if (this.#connectivityWatch !== null) clearInterval(this.#connectivityWatch);
     super.disconnectedCallback();
+  }
+
+  // The platform's connectivity word, fed straight to the machine.
+  #connectivityWatch: ReturnType<typeof setInterval> | null = null;
+  readonly #onConnectivity = (): void => {
+    if (this.#driveOffline !== null) void this.#driveOffline.setOnline(navigator.onLine);
+  };
+
+  // The strip's mode: a second tab says read only whether or not a layer
+  // opened; otherwise the runner's state through the layer's ownership.
+  #bannerModeNow(): string {
+    if (this.#driveOffline === null) return this.#readOnlyTab ? "read-only" : "";
+    return bannerMode(this.#syncState, this.#driveOffline.store.ownership());
+  }
+
+  // The offline layer's chrome: the outbox depth, the stalls, the open cards.
+  async #refreshOfflineChrome(): Promise<void> {
+    const layer = this.#driveOffline;
+    if (layer === null) return;
+    this.#waiting = await layer.waiting();
+    this.#stalls = await layer.stalls();
+    this.#openCards = await layer.openCards();
+    this.requestUpdate();
+  }
+
+  // The offline door, opened once per sign in: the store over its OPFS
+  // backend when the host can carry one, the first pull through the runner,
+  // and the chrome fed from then on.
+  async #bootOffline(): Promise<void> {
+    if (this.#offlineBooted) return;
+    this.#offlineBooted = true;
+    const opened = await openDriveOfflineOpfs({
+      dbName: "hh-drive-run",
+      transport: apiClientTransport(this.#staffClient),
+      direct: this.#drive,
+      onChange: () => void this.#refreshOfflineChrome(),
+    });
+    // A second tab reads an empty cache: it keeps the online sheet and only
+    // says it is read only.
+    this.#readOnlyTab = opened.readOnly;
+    const layer = opened.layer;
+    if (layer === null) {
+      this.requestUpdate();
+      return;
+    }
+    this.#driveOffline = layer;
+    layer.runner.onState((state) => {
+      // The state is on the glass in this update, not behind the health read.
+      this.#syncState = state;
+      this.requestUpdate();
+      void this.#refreshOfflineChrome();
+      // A cycle that came to rest has pulled the server's truth into the
+      // store: the sheet re-reads, so a row the server moved shows moved.
+      if (state === "idle" || state === "conflict") void this.#refreshRuns();
+    });
+    await layer.setOnline(navigator.onLine);
+    await layer.cycle();
+    await this.#refreshOfflineChrome();
+  }
+
+  // The door the driver's stop moves and proofs go through: the offline layer
+  // when it opened, the direct api when it did not. The photos and the run
+  // close keep their direct doors (the attachments queue is item 6's other
+  // half, and the manifest gives the runs scope no writable policy); the
+  // layer's close waits for the outbox first.
+  #door(): DriveApi | DriveOffline {
+    return this.#driveOffline ?? this.#drive;
   }
 
   // The role label is the one header input the position gate keeps out of a
@@ -249,6 +373,16 @@ export class DriveRunApp extends HHElement {
       header.roleLabel = this.#roleLabel;
       header.theme = this.#theme;
     }
+    // The offline strip and the card list take their state through properties
+    // (the position gate refuses a bound value outside data- and aria-), the
+    // same pass the header's label rides.
+    const banner = this.renderRoot.querySelector("hh-shell-offline-banner") as (HTMLElement & { mode: string; waiting: number }) | null;
+    if (banner !== null) {
+      banner.mode = this.#bannerModeNow();
+      banner.waiting = this.#waiting;
+    }
+    const cards = this.renderRoot.querySelector("hh-shell-conflict-list") as (HTMLElement & { cards: Card[] }) | null;
+    if (cards !== null) cards.cards = this.#openCards;
     // The name field's first value, set once when proof of delivery opens.
     if (this.#podPrefill !== null) {
       const field = this.renderRoot.querySelector<HTMLInputElement>("input[data-field=name]");
@@ -295,7 +429,27 @@ export class DriveRunApp extends HHElement {
   async #loadRuns(): Promise<void> {
     this.#phase = "loading";
     this.requestUpdate();
-    const result = await this.#drive.myRuns(await this.#drive.dealersDay());
+    await this.#bootOffline();
+    const day = await this.#drive.dealersDay();
+    if (this.#driveOffline !== null) {
+      // The run sheet reads answer from the store, with the scope's staleness.
+      const answer: RunsAnswer = await this.#driveOffline.runs(day);
+      if (answer.ok) {
+        this.#runs = answer.value.runs;
+        this.#phase = "ready";
+        this.#error = "";
+        this.#runStaleness = answer.staleness;
+      } else {
+        this.#runs = [];
+        this.#phase = "error";
+        this.#error = roadsideError(answer.error, answer.status, "Your run did not load. Check your signal and try again.", {
+          notFound: "You are not set up as a driver. Ask your branch manager to link your login.",
+        });
+      }
+      this.requestUpdate();
+      return;
+    }
+    const result = await this.#drive.myRuns(day);
     if (result.ok) {
       this.#runs = result.value;
       this.#phase = "ready";
@@ -335,7 +489,7 @@ export class DriveRunApp extends HHElement {
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
-    const result = await this.#drive.advance(stopId, to);
+    const result = await this.#door().advance(stopId, to);
     if (result.ok) {
       await this.#refreshRuns();
     } else {
@@ -368,7 +522,7 @@ export class DriveRunApp extends HHElement {
     this.#busy = true;
     this.#error = "";
     this.requestUpdate();
-    const result = await this.#drive.advance(stopId, "FAILED", this.#failReason.trim());
+    const result = await this.#door().advance(stopId, "FAILED", this.#failReason.trim());
     this.#busy = false;
     if (result.ok) {
       await this.#refreshRuns();
@@ -387,12 +541,15 @@ export class DriveRunApp extends HHElement {
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
-    const result = await this.#drive.completeRun(runId);
+    // Through the layer when it opened: the close waits for the queued moves.
+    const result = await this.#door().completeRun(runId);
     if (result.ok) {
       this.#notice = `${run?.run_no ?? "The run"} is closed. Thanks: that is the day.`;
     } else {
       this.#error = roadsideError(result.error, result.status, "The run did not close. Check your signal and try again.");
     }
+    // The layer's close already waited for the pull that carries the closed
+    // run into the store; read it.
     await this.#refreshRuns();
     this.#closing = false;
     this.requestUpdate();
@@ -407,7 +564,7 @@ export class DriveRunApp extends HHElement {
     this.#podBusy = true;
     this.#error = "";
     this.requestUpdate();
-    const result = await this.#drive.pod(stopId, normalizeName(this.#podName));
+    const result = await this.#door().pod(stopId, normalizeName(this.#podName));
     this.#podBusy = false;
     if (result.ok) {
       await this.#refreshRuns();
@@ -424,7 +581,9 @@ export class DriveRunApp extends HHElement {
   // it is a late photo and is folded into the proof once it is up. A failure
   // never touches the signature.
   async #sendPhoto(file: File): Promise<void> {
-    if (this.#view.kind === "run" || this.#view.kind === "close" || this.#view.kind === "fail" || this.#photoBusy) return;
+    if (this.#view.kind === "run" || this.#view.kind === "close" || this.#view.kind === "fail" || this.#view.kind === "conflicts" || this.#photoBusy) {
+      return;
+    }
     const stopId = this.#view.id;
     const late = this.#view.kind === "stop";
     this.#photoBusy = true;
@@ -449,6 +608,9 @@ export class DriveRunApp extends HHElement {
             this.#error = roadsideError(folded.error, folded.status, "The photo is up but is not on the proof yet. Add it again in a moment.");
           }
         }
+        // The photo door is direct, so the count it moved lands in the store
+        // only through the next pull; wait for it, then read.
+        if (this.#driveOffline !== null) await this.#driveOffline.syncNow();
         await this.#refreshRuns();
       }
     }
@@ -459,6 +621,12 @@ export class DriveRunApp extends HHElement {
   // Re-read the day without blanking the screen: the server's order and
   // statuses win, and a failed re-read keeps what is on the glass.
   async #refreshRuns(): Promise<void> {
+    if (this.#driveOffline !== null) {
+      const answer = await this.#driveOffline.runs(await this.#drive.dealersDay());
+      if (answer.ok) this.#runs = answer.value.runs;
+      await this.#refreshOfflineChrome();
+      return;
+    }
     const result = await this.#drive.myRuns(await this.#drive.dealersDay());
     if (result.ok) this.#runs = result.value;
   }
@@ -474,10 +642,10 @@ export class DriveRunApp extends HHElement {
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
         void this.#loadRuns();
       } else {
-        this.#entryView = { ...this.#entryView, busy: false, message: "Demo sign-in refused: the mint's session was not usable." };
+        this.#entryView = { ...this.#entryView, busy: false, message: "Sign-in did not go through. Try the role again." };
       }
     } else {
-      this.#entryView = { ...this.#entryView, busy: false, message: `Demo sign-in refused: ${result.error}` };
+      this.#entryView = { ...this.#entryView, busy: false, message: `Sign-in did not go through. ${result.error}` };
     }
     this.requestUpdate();
   }
@@ -527,15 +695,39 @@ export class DriveRunApp extends HHElement {
         return renderStopDetail({ ...found, busy: this.#busy, photoBusy: this.#photoBusy, error: this.#error, notice: this.#notice });
       }
     }
+    if (this.#view.kind === "conflicts") {
+      return renderConflicts({ cards: this.#openCards.length });
+    }
     return html`
-      ${renderRunSheet({ phase: this.#phase, runs: this.#runs, error: this.#error, notice: this.#notice })}
+      ${renderRunSheet({
+        phase: this.#phase,
+        runs: this.#runs,
+        error: this.#error,
+        notice: this.#notice,
+        staleness: this.#driveOffline !== null ? stalenessWords(this.#runStaleness ?? { neverPulled: true, ageMs: null }) : "",
+        conflicts: this.#openCards.length,
+      })}
       ${this.#phase === "error" ? html`<button type="button" class="btn btn-secondary big" data-action="reload" data-tap>Try again</button>` : nothing}
     `;
   }
 
+  // The stall strip: what the outbox's health says is stuck, in the store's
+  // own words. One attempt on a write is not a stall; a stall shows at once.
+  private renderStallStrip(): TemplateResult | typeof nothing {
+    if (this.#stalls.length === 0) return nothing;
+    return html`
+      <div class="stall-strip" role="status" data-stall-strip>
+        ${this.#stalls.map((stall) => html`<p data-stall data-stall-kind=${stall.kind}>${stall.message}</p>`)}
+      </div>
+    `;
+  }
+
   private renderSignedIn(): TemplateResult {
+    const mode = this.#bannerModeNow();
     return html`
       <hos-app-header signed-in demo compact product-name="Drive" product-sub="HH Drive · HH Field shell">${this.renderThemeControl()}</hos-app-header>
+      ${mode !== "" ? html`<hh-shell-offline-banner data-offline-banner></hh-shell-offline-banner>` : nothing}
+      ${this.renderStallStrip()}
       <main>${this.renderWork()}</main>
     `;
   }

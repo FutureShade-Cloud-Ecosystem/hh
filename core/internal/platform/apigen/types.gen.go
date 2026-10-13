@@ -288,6 +288,7 @@ type DemoSessionResponse struct {
 	Token      *string         `json:"token,omitempty"`
 	User       *map[string]any `json:"user,omitempty"`
 	Flow       *string         `json:"flow,omitempty"`
+	Class      *string         `json:"class,omitempty"`
 	ChapterKey *string         `json:"chapter_key,omitempty"`
 }
 
@@ -295,6 +296,7 @@ type DemoFlow struct {
 	Flow     *string `json:"flow,omitempty"`
 	RoleCode *string `json:"role_code,omitempty"`
 	Label    *string `json:"label,omitempty"`
+	Class    *string `json:"class,omitempty"`
 }
 
 type DemoFlowList struct {
