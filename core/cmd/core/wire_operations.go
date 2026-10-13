@@ -361,7 +361,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// same idiom the will-call pick hold gate carries.
 	runsSync := dispatch.NewRunsSyncStore(pool, link).WithDriverRole(driverRole)
 	stopsSync := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
-	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole)
+	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole).WithStaffAuthority(syncStaff)
 	if pool != nil && (!runsSync.DriverRoleWired() || !stopsSync.DriverRoleWired() || !podSync.DriverRoleWired()) {
 		panic("dispatch: driver fence role seam not wired - a driver login's sync pull would answer every run in the org")
 	}
@@ -588,6 +588,12 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	dispatchSvc.WithCostRoles(spine.roleCfg)
 	if !dispatchSvc.CostRolesWired() {
 		panic("dispatch: cost roles not wired - the payment hold would answer the door money figure to every caller")
+	}
+	// The pod scope's typed name attestation door (Field CP-2) runs the same CapturePOD body the REST
+	// door runs; the boot fail fast keeps a deploy from serving with the door dark.
+	podSync.WithAttestor(dispatchSvc)
+	if pool != nil && !podSync.AttestDoorWired() {
+		panic("dispatch: pod attestation sync door not wired - a driver's offline proof of delivery would refuse every replay")
 	}
 	dispatchHandler := dispatch.NewHandler(dispatchSvc, log).WithUserLinker(link)
 	dispatchHandler.RegisterRoutes(r, g)

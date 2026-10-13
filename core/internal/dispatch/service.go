@@ -1260,7 +1260,7 @@ func (s *Service) CapturePOD(ctx context.Context, stopID string, in PODInput) (S
 		return StopDetail{}, err
 	}
 	at := s.now().UTC()
-	ok, err := s.repo.SetPOD(ctx, stop.ID, stop.Status, ref, name, caller.UserID, at)
+	ok, err := s.repo.SetPOD(ctx, stop.ID, stop.Status, ref, name, caller.UserID, in.IdempotencyKey, at)
 	if err != nil {
 		return StopDetail{}, err
 	}
