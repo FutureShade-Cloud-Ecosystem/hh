@@ -17,6 +17,7 @@ import {
   rolesForShape,
   workspaceSplitError,
   newWorkspaceKey,
+  inPool,
 } from "../src/config-logic.js";
 
 test("the grid's rows are the thirteen profiles the core's validProfiles holds: five base shapes and eight manager refinements", () => {
@@ -250,4 +251,19 @@ test("my workspace save PUTs with the idempotency key and reset DELETEs the row"
   assert.equal((await api.resetMyWorkspace("counter-till")).ok, true);
   assert.equal(calls[1].init.method, "DELETE");
   assert.match(calls[1].url, /\/api\/v1\/surfaces\/counter-till\/my-workspace$/);
+});
+
+test("a bounded pool runs every task and never more than the limit at once", async () => {
+  let running = 0;
+  let peak = 0;
+  const done = [];
+  await inPool(Array.from({ length: 20 }, (_, i) => i), 4, async (n) => {
+    running += 1;
+    peak = Math.max(peak, running);
+    await new Promise((r) => setTimeout(r, 1));
+    running -= 1;
+    done.push(n);
+  });
+  assert.equal(done.length, 20);
+  assert.equal(peak, 4);
 });

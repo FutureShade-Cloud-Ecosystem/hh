@@ -69,6 +69,24 @@ export function surfaceWord(id: string): string {
   return CONFIG_SURFACES.find((s) => s.id === id)?.word ?? id;
 }
 
+// -- a bounded pool ----------------------------------------------------------------------------------
+
+/** How many cell reads ride at once: the grid is 130 reads, the core is not asked for them all together. */
+export const GRID_READ_POOL = 6;
+
+/** Run a task over every item with at most `limit` in flight at once. */
+export async function inPool<T>(items: readonly T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const lane = async (): Promise<void> => {
+    while (next < items.length) {
+      const item = items[next];
+      next += 1;
+      await task(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+}
+
 // -- the seeded role to shape catalog ----------------------------------------------------------------
 
 /** The seed of record's mapping (migrations 0140, the dashboard_role_profiles rows, as amended by 0381). */

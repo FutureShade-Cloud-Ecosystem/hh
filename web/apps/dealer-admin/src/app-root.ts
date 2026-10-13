@@ -44,6 +44,8 @@ import {
 import {
   CONFIG_SURFACES,
   JOB_SHAPES,
+  GRID_READ_POOL,
+  inPool,
   configRefusalWords,
   itemRowError,
   itemSetError,
@@ -936,26 +938,26 @@ export class DealerAdminApp extends HHElement {
     let refusal = "";
     let fault = "";
     const rolesRead = this.#api.roles();
-    await Promise.all(
-      CONFIG_SURFACES.flatMap((s) =>
-        JOB_SHAPES.map(async (shape) => {
-          const result = await this.#configApi.surfaceConfig(s.id, shape.profile);
-          loaded += 1;
-          if (!result.ok) {
-            if (result.status === 403) {
-              if (refusal === "") refusal = configRefusalWords(result.error, result.status);
-            } else if (fault === "") {
-              fault = `The role grid did not load. ${errorWords(result.error)}`;
-            }
-            return;
+    await inPool(
+      CONFIG_SURFACES.flatMap((s) => JOB_SHAPES.map((shape) => ({ s, shape }))),
+      GRID_READ_POOL,
+      async ({ s, shape }) => {
+        const result = await this.#configApi.surfaceConfig(s.id, shape.profile);
+        loaded += 1;
+        if (!result.ok) {
+          if (result.status === 403) {
+            if (refusal === "") refusal = configRefusalWords(result.error, result.status);
+          } else if (fault === "") {
+            fault = `The role grid did not load. ${errorWords(result.error)}`;
           }
-          cells.set(cellKey(s.id, shape.profile), { config: result.value });
-          if (this.#roleConfig.phase === "loading") {
-            this.#roleConfig = { ...this.#roleConfig, loaded, cells: new Map(cells) };
-            this.requestUpdate();
-          }
-        }),
-      ),
+          return;
+        }
+        cells.set(cellKey(s.id, shape.profile), { config: result.value });
+        if (this.#roleConfig.phase === "loading") {
+          this.#roleConfig = { ...this.#roleConfig, loaded, cells: new Map(cells) };
+          this.requestUpdate();
+        }
+      },
     );
     const roles = await rolesRead;
     if (refusal !== "") {
