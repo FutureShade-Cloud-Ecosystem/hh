@@ -49,7 +49,7 @@ before(async () => {
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(appDir, "test", "stub", "buying-stock-stub.mjs")], {
-    env: { ROLE_STUB_PORT: String(port) },
+    env: { ROLE_STUB_PORT: String(port), ...(process.env.TZ === undefined ? {} : { TZ: process.env.TZ }) },
     stdio: "ignore",
   });
   for (let i = 0; i < 100; i += 1) {
@@ -182,7 +182,7 @@ function domainKey(res, key, rowDescriptor) {
 const later = (days) => {
   const at = new Date();
   at.setUTCDate(at.getUTCDate() + days);
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
 };
 
 const world = async () => {

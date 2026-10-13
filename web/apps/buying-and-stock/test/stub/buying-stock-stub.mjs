@@ -83,12 +83,16 @@ function mintToken(sub) {
   return `${part({ alg: "ES256", typ: "JWT" })}.${part(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
 }
 
+// One day source for every date the stub writes: the UTC day, so a day offset
+// never straddles a boundary between the stub's zone and a test's.
+function utcDay(at) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+}
+
 function dayOffset(offset) {
   const at = new Date();
   at.setUTCDate(at.getUTCDate() + offset);
-  // The app's own "today" is the reader's local day: the same zone here, so a
-  // seeded "in 2 days" reads as 2 days at any hour of any machine's clock.
-  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  return utcDay(at);
 }
 
 function uuid(kind, n) {
@@ -1208,9 +1212,7 @@ async function handle(req, res) {
       else {
         const route = world.transit.find((p) => p.from === t.from && p.to === t.to);
         if (route !== undefined) {
-          const eta = new Date();
-          eta.setUTCDate(eta.getUTCDate() + route.days);
-          t.eta = new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(eta);
+          t.eta = dayOffset(route.days);
         } else {
           t.eta = "";
         }
