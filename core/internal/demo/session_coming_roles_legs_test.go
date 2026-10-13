@@ -534,4 +534,77 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 			}
 		}
 	})
+	t.Run("outside-sales", func(t *testing.T) {
+		os := mint(t, "outside-sales")
+		// L-card: the flow table's account, a frontline credential bound to a
+		// branch, and a bearer that reaches the surfaces the role holds: the Quote
+		// Desk (work), House Messages (work) and the dispatch board (read).
+		if os.user.UserID != "de5b2000-0000-4000-9000-000000000005" || os.user.RoleCode != "outside_sales" ||
+			os.user.RoleName != "Outside Sales" || os.user.Tier != 3 || os.user.Scope != "BRANCH" {
+			t.Errorf("the credential is %+v, want Outside Sales at tier 3 BRANCH", os.user)
+		}
+		wantOK(t, "the Quote Desk's quotes (quote-desk, work)", "/api/v1/quotes", os)
+		wantOK(t, "House Messages (work): the channel list", "/api/v1/messaging/channels", os)
+		wantOK(t, "the dispatch board at Trenton (dispatch-board, read)", "/api/v1/dispatch/trucks?branch_id="+trentonID, os)
+		// L-branch: the role's own branch only.
+		if codes := branchCodes(t, os); !sameSet(codes, []string{"TRT"}) {
+			t.Errorf("Outside Sales reaches %v, want Trenton alone", codes)
+		}
+		if status, raw := get(t, "/api/v1/dispatch/trucks?branch_id="+kingstonID, os); status != http.StatusForbidden {
+			t.Errorf("the dispatch board at Kingston: status %d body %s, want the branch fence's 403", status, raw)
+		}
+		// L-wall: the till (Outside Sales has no till), Manager Home, Yard Pick,
+		// HH Drive and Dealer Admin sit at None for the role, and the Money Desk
+		// is a read cell: its credit holds need the manager tier beside it.
+		wantWall(t, "the till's policy (counter-till, None)", "/api/v1/pos/policy", os)
+		wantWall(t, "Manager Home (manager-home, None)", "/api/v1/dashboard", os)
+		wantWall(t, "the needs queue (manager-home, None)", "/api/v1/dashboard/needs", os)
+		wantWall(t, "the yard pick queue (yard-pick, None)", "/api/v1/yard/pick-queue?branch_id="+trentonID, os)
+		wantWall(t, "the pricing rules (dealer-admin, None)", "/api/v1/pricing/rules", os)
+		wantWall(t, "the Money Desk's credit holds (money-desk, read, manager tier)", "/api/v1/ar/credit-holds", os)
+		for _, kind := range []string{"MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE"} {
+			if status, raw := get(t, "/api/v1/staff/approvals?status=PENDING&kind="+kind, os); status != http.StatusForbidden {
+				t.Errorf("Outside Sales listing %s approvals: status %d body %s, want 403", kind, status, raw)
+			}
+		}
+		// L-cost: the role is on the cost and margin list, so a quote the role owns,
+		// with a line on it, answers the Quote Desk's margin glance with the
+		// line's cost and margin (cost is SEEN, as the decided matrix says); the
+		// till's glance is refused with the till itself (counter-till at None).
+		cfg, err := roleconfig.Default()
+		if err != nil {
+			t.Fatalf("roleconfig.Default: %v", err)
+		}
+		if !contains(cfg.CostVisibility(), "outside_sales") {
+			t.Errorf("the decided matrix does not list Outside Sales on the cost and margin list: %v", cfg.CostVisibility())
+		}
+		var custID, productID string
+		if err := pool.QueryRow(context.Background(), `SELECT id::text FROM customers WHERE account_no = 'DEMO-C02'`).Scan(&custID); err != nil {
+			t.Fatalf("the demo contractor: %v", err)
+		}
+		if err := pool.QueryRow(context.Background(), `SELECT id::text FROM products WHERE sku = 'DEMO-PAV-HOLLAND'`).Scan(&productID); err != nil {
+			t.Fatalf("the demo paver: %v", err)
+		}
+		status, raw := do(t, http.MethodPost, "/api/v1/quotes", os.headers, `{"customer_id":"`+custID+`","branch_id":"`+trentonID+`"}`)
+		if status != http.StatusCreated {
+			t.Fatalf("Outside Sales starting a quote: status %d, want 201 (body: %s)", status, raw)
+		}
+		var quote struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(raw), &quote); err != nil || quote.ID == "" {
+			t.Fatalf("the quote does not decode: %v (body: %s)", err, raw)
+		}
+		if status, raw := do(t, http.MethodPost, "/api/v1/quotes/"+quote.ID+"/lines", os.headers,
+			`{"product_id":"`+productID+`","qty_entered":"10","uom_entered":"PC"}`); status != http.StatusOK {
+			t.Fatalf("Outside Sales adding a line: status %d, want 200 (body: %s)", status, raw)
+		}
+		if status, raw := get(t, "/api/v1/quotes/"+quote.ID+"/margin-glance", os); status != http.StatusOK ||
+			!strings.Contains(raw, "cost_cents") || !strings.Contains(raw, "margin_bps") {
+			t.Errorf("the quote's margin glance for Outside Sales: status %d body %s, want the line's cost and margin", status, raw)
+		}
+		if status, raw := marginGlance(t, os); status != http.StatusForbidden {
+			t.Errorf("the till's margin glance for Outside Sales: status %d body %s, want 403 (counter-till at None)", status, raw)
+		}
+	})
 }
