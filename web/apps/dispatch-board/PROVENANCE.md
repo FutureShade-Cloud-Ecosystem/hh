@@ -51,9 +51,8 @@ lead's Sonnet visual read uses. Screens are looked at in `hh-s4/modules/reports/
 | Print manifest and the scan trail (read) | `app/src/dispatch-board.ts` (`printManifest`), `dispatch-scan-trail.ts`, `receipt-print-logic.ts` | `printManifestButton`, `src/print-window.ts`, `scanTrailSheet`, `scanStageLabel`, `trailSummary`, `scanLoadLine`, `manifestRefusal` | The window opens inside the click, before the core is asked, so a blocked window stops the flow before anything is recorded; the document is read, then the print is recorded, then the window takes it; the trail is a sheet on any load card (the load board, the day board, the schedule), read only, the spine kept to one row at 390; the yard and driver scan buttons are not here (the yard and HH Drive scan) |
 | The date move and its reason | `app/src/dispatch-reschedule.ts` | the part A `validateReschedule` and sheet, now also reached from the schedule tab | One sheet, two doors |
 
-## Not ported on purpose (part B or never)
+## Not ported on purpose (never, or later)
 
-The schedule (`dispatch-schedule.ts`, which turns an order into a stop: the board starts from
-stops), the truck and driver registry, will call, the settings tab and the policy, the freight
-split and raise, the load facts editor, the manifest print, the pickups list, the driver view
-(HH Drive is it), and the curation substrate behind the cards.
+The freight split and raise (sub item 6, held for its state note), the load facts editor, the pickups
+list, the customer's public will call page, the driver view (HH Drive is it), the scan buttons (the yard and
+HH Drive scan), and the curation substrate behind the cards and the settings sheet's second half.

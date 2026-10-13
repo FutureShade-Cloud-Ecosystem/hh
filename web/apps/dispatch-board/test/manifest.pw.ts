@@ -127,3 +127,15 @@ for (const size of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) 
     expect(small).toEqual([]);
   });
 }
+
+test("at 390 no stage word of the spine breaks inside itself", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openBoard(page, request);
+  await card(page, "ORD-0012").getByRole("button", { name: "Scan trail" }).click();
+  await expect(page.locator("[data-trail-load='PLT-0012-A']")).toBeVisible();
+  const broken = await page.evaluate(() => {
+    const root = document.querySelector("dispatch-board-app")?.shadowRoot;
+    return [...(root?.querySelectorAll("[data-stage]") ?? [])].filter((el) => (el as HTMLElement).scrollWidth > (el as HTMLElement).clientWidth + 1).map((el) => el.textContent);
+  });
+  expect(broken).toEqual([]);
+});

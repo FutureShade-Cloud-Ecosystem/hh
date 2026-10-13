@@ -190,7 +190,7 @@ export const boardStyles = css`
   .trail-summary { margin: 0 0 var(--hh-s-8); font-weight: 700; font-size: 18px; }
   .trail-load { margin: var(--hh-s-8) 0; }
   .spine { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--hh-s-4); }
-  .stage { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: var(--hh-s-4); font-size: 12px; font-weight: 600; border: 1px dashed var(--hh-control-line); border-radius: var(--hh-radius-control); color: var(--hh-text-dim); overflow-wrap: anywhere; }
+  .stage { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: var(--hh-s-4); font-size: 12px; font-weight: 600; border: 1px dashed var(--hh-control-line); border-radius: var(--hh-radius-control); color: var(--hh-text-dim); overflow-wrap: normal; }
   .stage.reached { border-style: solid; border-color: var(--hh-text); background: var(--hh-card); color: var(--hh-text); }
   .stage[data-furthest="true"] { outline: 3px solid var(--hh-text); outline-offset: 1px; font-weight: 700; }
 
@@ -245,6 +245,8 @@ export const boardStyles = css`
     .stack td::before { content: attr(data-label); display: block; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--hh-text-dim); font-weight: 700; }
   }
   @media (max-width: 520px) {
+    .spine { gap: var(--hh-s-2); }
+    .stage { font-size: 10px; padding: var(--hh-s-2); letter-spacing: -0.01em; }
     .desk { padding: var(--hh-s-16) var(--hh-s-12) var(--hh-s-40); }
     h1 { font-size: 24px; }
     .actions .btn, .actions select { flex: 1 1 140px; }

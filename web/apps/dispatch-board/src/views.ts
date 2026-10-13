@@ -478,8 +478,6 @@ function toolbar(model: BoardModel): TemplateResult {
 function tabs(model: BoardModel): TemplateResult {
   const tab = (id: Tab, label: string): TemplateResult =>
     html`<button type="button" class="tab" data-action="tab" data-tab-id=${id} aria-current=${model.tab === id ? "true" : "false"}>${label}</button>`;
-  const later = (label: string): TemplateResult =>
-    html`<span class="tag-later">${label}<em>Later</em></span>`;
   return html`
     <nav class="tabs" aria-label="Dispatch screens">
       ${tab("load", "Load board")}${tab("day", "Day board")}${tab("schedule", "Schedule")}
