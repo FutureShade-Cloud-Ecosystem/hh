@@ -85,6 +85,8 @@ test("a quantity above what was ordered is refused in the server's own words", a
   await page.locator("[data-field=qty]").fill("3");
   await page.getByRole("button", { name: "Done" }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
+  // The pick record is on its direct door (the core's pick_tasks sync set has
+  // no picked field), so the refusal is the server's sentence, right there.
   await expect(page.locator("[data-error]")).toContainText("that is more than was ordered, the yard cannot raise a quantity");
 });
 
@@ -143,6 +145,8 @@ test("the record goes to the server as one call, in the ticket's own order", asy
   await page.getByRole("button", { name: /^All \d+/ }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("pulled");
+  // The record is one call on its direct door, the lines in the ticket's own
+  // order (the core's pick_tasks sync set has no picked field).
   const calls = (await stubLog(request)).filter((c) => c.path.endsWith("/lines"));
   expect(calls).toHaveLength(1);
   expect(calls[0]?.body?.lines).toEqual([

@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MONEY_WORDS, describeHits, scanPayload, scanText, textFiles } from "./_lib/fence.mjs";
+import { MONEY_WORDS, describeHits, exemptBundleHit, scanPayload, scanText, textFiles } from "./_lib/fence.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -47,10 +47,18 @@ test("the built bundle carries no money field and no money figure", () => {
     assert.ok(all.includes("Pick queue"), "the built bundle does not hold the board screens");
     const hits = [];
     for (const [name, text] of files) hits.push(...scanText(name, text));
-    assert.deepEqual(describeHits(hits), []);
+    assert.deepEqual(describeHits(hits.filter((h) => !exemptBundleHit(h))), []);
   } finally {
     rmSync(out, { recursive: true, force: true });
   }
+});
+
+test("the bundle exemptions are narrow: a money word outside them still fails", () => {
+  // The engine chunk exemption names the engine's file, not every file.
+  assert.equal(exemptBundleHit({ file: "assets/index-abc.js", kind: "word", word: "cost", count: 1, window: "estimatedCost=x" }), false);
+  // The registry exemption names the registry's row, not the word alone.
+  assert.equal(exemptBundleHit({ file: "assets/index-abc.js", kind: "word", word: "price", count: 1, window: "the price is on the ticket" }), false);
+  assert.equal(exemptBundleHit({ file: "assets/index-abc.js", kind: "word", word: "price", count: 1, window: "price_matrix:`server_wins`" }), true);
 });
 
 test("the payload scan reads keys and money figures, and leaves a word inside a name alone", () => {
