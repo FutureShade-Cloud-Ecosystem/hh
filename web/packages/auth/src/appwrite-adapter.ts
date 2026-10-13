@@ -20,7 +20,7 @@
 // this adapter never reads that response header, never sets it on a request,
 // and touches no storage of any kind (a test holds that line with storage
 // doubles that throw on any write, and a scan of this source).
-import { PlatformUnreachableError } from "./client.js";
+import { PlatformRefusedError, PlatformUnreachableError } from "./client.js";
 import type {
   AccountSurface,
   AccountUser,
@@ -89,7 +89,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** The core's 200 body, read field by field; anything short of a usable answer is null. */
-function readAnswer(body: unknown): ExchangeAnswer | null {
+export function readExchangeAnswer(body: unknown): ExchangeAnswer | null {
   if (!isRecord(body)) return null;
   const { token, expiresAtMs, user } = body;
   if (typeof token !== "string" || token === "") return null;
@@ -199,7 +199,7 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
     }
     jwt = ""; // the attempt is over; the JWT is not kept
     if (response.status !== 200) return { ok: false, code: coreRefusal(response.status) };
-    const answer = readAnswer(await readJson(response));
+    const answer = readExchangeAnswer(await readJson(response));
     return answer === null ? { ok: false, code: "unavailable" } : { ok: true, answer };
   }
 
@@ -238,7 +238,7 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
         response = await create();
       }
       if (response.status < 200 || response.status > 299) {
-        throw new Error(`the console refused the sign-in (status ${response.status})`);
+        throw new PlatformRefusedError(response.status, `the console refused the sign-in (status ${response.status})`);
       }
       return account();
     },

@@ -4,7 +4,7 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createAppwriteAccountSurface } from "../src/appwrite-adapter.ts";
-import { PlatformUnreachableError } from "../src/index.ts";
+import { PlatformRefusedError, PlatformUnreachableError } from "../src/index.ts";
 
 const ENDPOINT = "https://console.example.test/v1";
 const PROJECT = "fake-project";
@@ -318,5 +318,15 @@ test("the package root takes no SDK dependency", async () => {
     const text = readFileSync(new URL(file, import.meta.url), "utf8");
     assert.equal(/from\s+["']appwrite["']/.test(text), false, file);
     assert.equal(/from\s+["']\.\/appwrite-adapter/.test(text), false, `${file} does not import the adapter`);
+  }
+});
+
+test("a refused sign in throws a PlatformRefusedError that carries the status and nothing else the screen could echo", async () => {
+  for (const status of [401, 429, 503]) {
+    const { surface } = world({ sessionAnswers: [{ status }] });
+    await assert.rejects(
+      () => surface.createEmailPasswordSession("fake.user@example.invalid", "fake-password"),
+      (error) => error instanceof PlatformRefusedError && error.status === status && !error.message.includes("fake-password"),
+    );
   }
 });

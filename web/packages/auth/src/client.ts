@@ -45,7 +45,7 @@
 // getSession is the reload's re-sign-in: FB Console's own session is an
 // httpOnly first party cookie script cannot read, so the platform answers
 // for the sign-in while this package holds nothing to trade.
-import { err, ok, type HeaderProvider, type Result } from "@hardscapehouse/api-client";
+import type { HeaderProvider } from "@hardscapehouse/api-client";
 import type { DeviceLockHandle } from "./lock.js";
 import type { SessionStore } from "./session.js";
 
@@ -192,6 +192,54 @@ export class PlatformUnreachableError extends Error {
   }
 }
 
+/**
+ * What an adapter throws from a sign in when the platform answered and
+ * refused: the HTTP status is the only fact the controller reads from it
+ * (never a message, never a body), so the screen can tell a wrong password
+ * from a throttle from an outage.
+ */
+export class PlatformRefusedError extends Error {
+  readonly status: number;
+  constructor(status: number, message = `the platform refused the request (status ${status})`) {
+    super(message);
+    this.name = "PlatformRefusedError";
+    this.status = status;
+  }
+}
+
+/**
+ * Why a sign in or a resume did not land, as a closed set the screen words
+ * itself. `bad_credentials` is the platform's refusal of the email and
+ * password; the exchange codes are the shells contract's; `cancelled` and
+ * `superseded` are the sequence guards; `failed` is anything else.
+ */
+export type SignInFailureReason =
+  | "bad_credentials"
+  | ExchangeRefusalCode
+  | "cancelled"
+  | "superseded"
+  | "failed";
+
+/** A sign in or resume result: the Result convention, with a reason on the failure leg. */
+export type SignInResult =
+  | { ok: true; value: AccountUser }
+  | { ok: false; error: string; status?: number; reason: SignInFailureReason };
+
+function fail(error: string, reason: SignInFailureReason): SignInResult {
+  return { ok: false, error, reason };
+}
+
+/** The reason a thrown platform error stands for. */
+function reasonOfThrow(error: unknown): SignInFailureReason {
+  if (error instanceof PlatformUnreachableError) return "offline";
+  if (error instanceof PlatformRefusedError) {
+    if (error.status === 429) return "rate_limited";
+    if (error.status >= 500) return "unavailable";
+    return "bad_credentials";
+  }
+  return "failed";
+}
+
 const ENDS_SESSION: ReadonlySet<ExchangeRefusalCode> = new Set(["unauthorized", "forbidden", "no_session"]);
 
 /**
@@ -246,6 +294,12 @@ export interface AdoptSessionInput {
   token: string;
   tokenExpiresAtMs: number;
   user: AccountUser;
+  /**
+   * False for a session with no platform session behind it (a persona
+   * entry): nothing can be re-exchanged, so no refresh is armed and the
+   * token simply ends at its expiry. Defaults to true.
+   */
+  refresh?: boolean;
 }
 
 /**
@@ -435,7 +489,7 @@ export class AuthController {
    * by what custody holds: the same person, success; anybody else, or
    * nobody, superseded, and the screen says so.
    */
-  async signInWithPassword(email: string, password: string): Promise<Result<AccountUser>> {
+  async signInWithPassword(email: string, password: string): Promise<SignInResult> {
     this.#signIns += 1;
     const signIns = this.#signIns;
     // This submit's settlement: what every older submit still in flight
@@ -452,23 +506,23 @@ export class AuthController {
     }
   }
 
-  async #signInFlow(email: string, password: string, signIns: number): Promise<Result<AccountUser>> {
+  async #signInFlow(email: string, password: string, signIns: number): Promise<SignInResult> {
     const org = this.#org();
-    if (org === null) return err("sign-in failed: no active organisation is set, so there is nothing to sign in to");
+    if (org === null) return fail("sign-in failed: no active organisation is set, so there is nothing to sign in to", "failed");
     const signOuts = this.#signOuts.count;
     let user: AccountUser;
     try {
       user = await this.#account.createEmailPasswordSession(email, password);
     } catch (error) {
-      return err(`sign-in failed: ${asMessage(error)}`);
+      return fail(`sign-in failed: ${asMessage(error)}`, reasonOfThrow(error));
     }
     if (this.#signOuts.count !== signOuts) {
-      return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
+      return fail("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted", "cancelled");
     }
     if (this.#signIns !== signIns) return this.#staleSignIn(signIns, user);
     const exchanged = await this.#callExchange(org);
     if (this.#signOuts.count !== signOuts) {
-      return err("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted");
+      return fail("sign-in cancelled: sign-out landed while the sign-in was in flight, so nothing was adopted", "cancelled");
     }
     if (this.#signIns !== signIns) return this.#staleSignIn(signIns, user);
     if (!exchanged.ok) {
@@ -477,7 +531,7 @@ export class AuthController {
       // session is active. The delete is only for the newest submit, which
       // the checks above established.
       await this.#deleteQuietly();
-      return err(`sign-in failed: the exchange was refused (${exchanged.code})`);
+      return fail(`sign-in failed: the exchange was refused (${exchanged.code})`, exchanged.code);
     }
     const profile = profileOf(exchanged.answer);
     const adopted = this.#sessions.adopt({
@@ -485,11 +539,11 @@ export class AuthController {
       tokenExpiresAtMs: exchanged.answer.expiresAtMs,
       user: profile,
     });
-    if (!adopted) return err("sign-in failed: the exchange returned an unusable session");
+    if (!adopted) return fail("sign-in failed: the exchange returned an unusable session", "failed");
     this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
     this.#armRefresh(exchanged.answer.expiresAtMs);
     this.#lock?.disengageUnlessBoundTo(profile.userId);
-    return ok({ ...profile });
+    return { ok: true, value: { ...profile } };
   }
 
   async #deleteQuietly(): Promise<void> {
@@ -583,7 +637,7 @@ export class AuthController {
    * superseded, an error Result whose message is the screen's, so a person
    * whose answer landed late sees why they are not the one signed in.
    */
-  async #staleSignIn(signIns: number, user: AccountUser): Promise<Result<AccountUser>> {
+  async #staleSignIn(signIns: number, user: AccountUser): Promise<SignInResult> {
     // Wait for every submit newer than this one to settle. Each pass awaits
     // the newest submit there is and raises the high-water mark to its
     // number, so a newer submit landing mid wait extends the wait, and a
@@ -598,8 +652,8 @@ export class AuthController {
       await newest.settled;
       waited = newest.signIns;
     }
-    if (this.#sessions.current?.user.userId === user.userId) return ok({ ...user });
-    return err("sign-in superseded: a newer sign-in landed while this one was in flight, so nothing was adopted");
+    if (this.#sessions.current?.user.userId === user.userId) return { ok: true, value: { ...user } };
+    return fail("sign-in superseded: a newer sign-in landed while this one was in flight, so nothing was adopted", "superseded");
   }
 
   /**
@@ -620,7 +674,8 @@ export class AuthController {
     });
     if (adopted) {
       this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
-      this.#armRefresh(input.tokenExpiresAtMs);
+      if (input.refresh === false) this.#disarmRefresh();
+      else this.#armRefresh(input.tokenExpiresAtMs);
       this.#lock?.disengageUnlessBoundTo(user.userId);
     }
     return adopted;
@@ -656,27 +711,27 @@ export class AuthController {
    * signed in resolves its error Result and leaves the new user's custody
    * alone.
    */
-  async resume(): Promise<Result<AccountUser>> {
+  async resume(): Promise<SignInResult> {
     const generation = this.#generation;
     const org = this.#org();
-    if (org === null) return err("no platform session to resume: no active organisation is set");
+    if (org === null) return fail("no platform session to resume: no active organisation is set", "failed");
     try {
       await this.#account.getSession(); // proves the platform still holds a session; the exchange names the person
     } catch (error) {
       if (this.#generation !== generation) {
-        return err(`no platform session to resume: ${asMessage(error)}`);
+        return fail(`no platform session to resume: ${asMessage(error)}`, "cancelled");
       }
       // No network says nothing about the person: keep the profile and the
       // lock, and try again when the network may be back.
       if (error instanceof PlatformUnreachableError) {
         this.#backoffRefresh();
-        return err(`no platform session to resume: ${asMessage(error)}`);
+        return fail(`no platform session to resume: ${asMessage(error)}`, "offline");
       }
       this.#failSignedOut();
-      return err(`no platform session to resume: ${asMessage(error)}`);
+      return fail(`no platform session to resume: ${asMessage(error)}`, "no_session");
     }
     if (this.#generation !== generation) {
-      return err("resume cancelled: sign-out or another adoption landed while the resume was in flight, so nothing was adopted");
+      return fail("resume cancelled: sign-out or another adoption landed while the resume was in flight, so nothing was adopted", "cancelled");
     }
     const exchanged = await this.#callExchange(org);
     if (!exchanged.ok) {
@@ -691,10 +746,10 @@ export class AuthController {
           this.#backoffRefresh();
         }
       }
-      return err(`the token exchange failed (${exchanged.code})`);
+      return fail(`the token exchange failed (${exchanged.code})`, exchanged.code);
     }
     if (this.#generation !== generation) {
-      return err("resume cancelled: sign-out or another adoption landed while the resume was in flight, so nothing was adopted");
+      return fail("resume cancelled: sign-out or another adoption landed while the resume was in flight, so nothing was adopted", "cancelled");
     }
     const profile = profileOf(exchanged.answer);
     const adopted = this.#sessions.adopt({
@@ -704,12 +759,12 @@ export class AuthController {
     });
     if (!adopted) {
       this.#failSignedOut();
-      return err("the platform returned an unusable session");
+      return fail("the platform returned an unusable session", "failed");
     }
     this.#generation += 1; // the adoption is a structural change: it supersedes anything already in flight
     this.#armRefresh(exchanged.answer.expiresAtMs);
     this.#lock?.disengageUnlessBoundTo(profile.userId);
-    return ok({ ...profile });
+    return { ok: true, value: { ...profile } };
   }
 
   /**
