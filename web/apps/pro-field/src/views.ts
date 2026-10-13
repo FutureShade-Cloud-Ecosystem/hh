@@ -11,7 +11,7 @@
 // never a binding; every control names itself with data-field or data-action
 // so the root's one click and one input listener act for the whole app.
 import { html, nothing, type TemplateResult } from "lit";
-import type { TenantInvite, TenantOrder, TenantOrderDetail, TenantProjectDashboard, TenantProjectSummary, TenantReturnEligibility, TenantReturnRequest, TenantUser } from "@hardscapehouse/api-client";
+import type { TenantAddress, TenantInvite, TenantMe, TenantOrder, TenantOrderDetail, TenantProjectDashboard, TenantProjectSummary, TenantReturnEligibility, TenantReturnRequest, TenantUser } from "@hardscapehouse/api-client";
 import {
   houseDay,
   money,
@@ -28,6 +28,7 @@ import type { SectionRef } from "./sections.js";
 import { fulfillmentWords, promisedWords, lateWords, timelineSteps } from "./timeline.js";
 import { varianceWords } from "./projects.js";
 import { RETURN_STATUS_WORDS, returnChipTone, returnLineWords, returnReasonWords } from "./returns.js";
+import { addressKindWords } from "./account.js";
 
 // ---- the section row ----------------------------------------------------------------------------
 
@@ -376,6 +377,107 @@ function roleOptions(): TemplateResult {
     <option value="buyer_no_pay">Project manager</option>
     <option value="ap_finance">Accounts payable</option>
     <option value="field_crew">Field crew</option>`;
+}
+
+// ---- account ------------------------------------------------------------------------------------
+
+export interface AccountProps {
+  phase: Phase;
+  me: TenantMe | null;
+  addresses: readonly TenantAddress[] | null;
+  address: TenantAddress | null;
+  nameDirty: boolean;
+  profileBusy: boolean;
+  profileSaved: boolean;
+  profileError: string;
+  passwordBusy: boolean;
+  passwordError: string;
+}
+
+export function accountView(props: AccountProps): TemplateResult {
+  if (props.phase !== "ready" || props.me === null) {
+    if (props.phase === "refusal") return html`<hh-pro-state data-state="refusal" data-testid="account-state"></hh-pro-state>`;
+    if (props.phase === "error") return html`<hh-pro-state data-state="error" data-testid="account-state">This did not load. Nothing was changed.</hh-pro-state>`;
+    return html`<hh-pro-state data-state="loading" data-testid="account-state"></hh-pro-state>`;
+  }
+  return html`<div class="card" data-testid="account-profile">
+      <h3>Profile</h3>
+      ${props.profileSaved ? html`<p class="notice" role="status" data-testid="profile-saved">Profile saved.</p>` : nothing}
+      ${props.profileError === "" ? nothing : html`<p class="fault" role="alert" data-testid="profile-error">${props.profileError}</p>`}
+      <div class="form">
+        <label for="account-name">Name</label>
+        <input class="control" id="account-name" type="text" data-field="name" data-testid="account-name" autocomplete="name" />
+        <p class="facts">
+          <span><span class="dim">Email</span> <span class="mono">${props.me.email}</span></span>
+          <span><span class="dim">Role</span> ${roleLabel(props.me.role)}</span>
+        </p>
+        <div class="formrow">
+          <span class="grow"></span>
+          ${button({ label: "Save profile", action: "save-profile", disabled: props.profileBusy || !props.nameDirty })}
+        </div>
+      </div>
+    </div>
+    <div class="card" data-testid="account-password">
+      <h3>Change password</h3>
+      <div class="form">
+        <label>
+          Current password
+          <input class="control" type="password" data-field="pw-current" data-testid="pw-current" autocomplete="current-password" />
+        </label>
+        <label>
+          New password
+          <input class="control" type="password" data-field="pw-new" data-testid="pw-new" autocomplete="new-password" />
+        </label>
+        <label>
+          Confirm the new password
+          <input class="control" type="password" data-field="pw-confirm" data-testid="pw-confirm" autocomplete="new-password" />
+        </label>
+        ${props.passwordError === "" ? nothing : html`<p class="fault" role="alert" data-testid="password-error">${props.passwordError}</p>`}
+        <div class="formrow">
+          <span class="grow"></span>
+          ${button({ label: "Change password", kind: "secondary", action: "change-password", disabled: props.passwordBusy })}
+        </div>
+      </div>
+    </div>
+    ${addressesCard(props)}
+    ${props.address !== null ? addressDetail(props.address) : nothing}`;
+}
+
+function addressesCard(props: AccountProps): TemplateResult {
+  if (props.addresses === null) {
+    return html`<div class="card" data-testid="account-addresses"><h3>Addresses</h3><hh-pro-state data-state="loading"></hh-pro-state></div>`;
+  }
+  return html`<div class="card" data-testid="account-addresses">
+    <h3>Addresses</h3>
+    ${props.addresses.length === 0
+      ? html`<p class="dim">No addresses yet. The dealer's ones appear here.</p>`
+      : html`<ul class="lines" data-testid="address-rows">
+          ${props.addresses.map(
+            (address) => html`<li class="line">
+              <button type="button" class="rowbtn slim" data-action="open-address" data-address-id="${address.id}" data-testid="address-row">
+                <span class="cell"><span class="name">${address.label}</span><span class="dim">${addressKindWords(address.kind)}</span></span>
+                <span class="cell"><span class="dim">${address.line1}${address.line2 === "" ? "" : `, ${address.line2}`}, ${address.city}, ${address.province} ${address.postal}</span></span>
+              </button>
+            </li>`,
+          )}
+        </ul>`}
+  </div>`;
+}
+
+function addressDetail(address: TenantAddress): TemplateResult {
+  const used = typeof address.last_used_at === "string" && address.last_used_at !== "" ? houseDay(address.last_used_at) : "Not used yet";
+  return html`<div class="card" data-testid="address-detail">
+    ${button({ label: "Back", kind: "secondary", action: "back-to-addresses" })}
+    <h2>${address.label}</h2>
+    <p class="facts">
+      <span><span class="dim">Kind</span> ${addressKindWords(address.kind)}</span>
+      <span><span class="dim">Last used</span> ${used}</span>
+    </p>
+    <p class="readonly-note">
+      ${address.line1}${address.line2 === "" ? "" : html`<br />${address.line2}`}<br />
+      ${address.city}, ${address.province} ${address.postal}
+    </p>
+  </div>`;
 }
 
 // ---- delivery instructions ----------------------------------------------------------------------

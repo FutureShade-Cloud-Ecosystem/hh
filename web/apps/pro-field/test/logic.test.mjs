@@ -10,6 +10,7 @@ import { sectionsFor, ordersSurfaceOf } from "../src/sections.ts";
 import { RETURN_STATUS_WORDS, RETURN_REASON_WORDS, returnChipTone, returnLineWords, returnRequestLines } from "../src/returns.ts";
 import { varianceWords, projectsEmptyWords } from "../src/projects.ts";
 import { ROLE_OPTIONS, memberRowWords } from "../src/team.ts";
+import { addressKindWords, addressRowWords, passwordProblem } from "../src/account.ts";
 
 function order(status, fulfillment, extra = {}) {
   return { status, fulfillment, requested_date: "2042-05-01", ...extra };
@@ -204,4 +205,24 @@ test("a member row reads the name, the email, the role label and the status word
   assert.ok(words.includes("Active"));
   assert.doesNotMatch(words, /field_crew|account_admin/);
   assert.doesNotMatch(words, /undefined|null|NaN/);
+});
+
+test("an address kind reads as the words a person uses, and the row reads its facts", () => {
+  assert.equal(addressKindWords("billing"), "Billing");
+  assert.equal(addressKindWords("job_site"), "Job site");
+  assert.equal(addressKindWords("delivery"), "Delivery");
+  assert.equal(addressKindWords("SOMETHING"), "");
+  const words = addressRowWords({ id: "d3-2", kind: "job_site", label: "La Jolla job", line1: "88 Terrace Rise", line2: "", city: "La Jolla", province: "CA", postal: "92037", last_used_at: null });
+  assert.ok(words.includes("La Jolla job"));
+  assert.ok(words.includes("Job site"));
+  assert.ok(words.includes("88 Terrace Rise"));
+  assert.ok(words.includes("La Jolla, CA 92037"));
+  assert.doesNotMatch(words, /job_site|undefined|null|NaN/);
+});
+
+test("the password form is checked locally before the server is asked, in plain words", () => {
+  assert.equal(passwordProblem("", "new-pass", "new-pass"), "Type your current password and a new one.");
+  assert.equal(passwordProblem("current", "", "new-pass"), "Type your current password and a new one.");
+  assert.equal(passwordProblem("current", "new-pass", "other"), "The new passwords do not match.");
+  assert.equal(passwordProblem("current", "new-pass", "new-pass"), "");
 });

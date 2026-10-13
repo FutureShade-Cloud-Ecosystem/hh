@@ -21,7 +21,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, tenantAuth, tenantTeam, type TenantInvite, type TenantOrder, type TenantOrderDetail, type TenantProjectDashboard, type TenantProjectSummary, type TenantReturnEligibility, type TenantReturnRequest, type TenantUser } from "@hardscapehouse/api-client";
+import { ApiClient, tenantAuth, tenantTeam, type TenantAddress, type TenantInvite, type TenantMe, type TenantOrder, type TenantOrderDetail, type TenantProjectDashboard, type TenantProjectSummary, type TenantReturnEligibility, type TenantReturnRequest, type TenantUser } from "@hardscapehouse/api-client";
 import {
   CAPABILITIES,
   InMemoryTenantSession,
@@ -41,7 +41,8 @@ import { liveFieldPort, type FieldPort } from "./port.js";
 import { ordersSurfaceOf, sectionsFor, type Section } from "./sections.js";
 import { houseToday, instructionsEditable, instructionsNote } from "./timeline.js";
 import { returnRequestLines } from "./returns.js";
-import { instructionsCard, orderView, ordersList, projectStates, projectView, projectsList, returnsCard, sectionNav, sectionPlaceholder, teamView, type EligibilityState, type Phase, type ReturnFormState } from "./views.js";
+import { instructionsCard, accountView, orderView, ordersList, projectStates, projectView, projectsList, returnsCard, sectionNav, sectionPlaceholder, teamView, type EligibilityState, type Phase, type ReturnFormState } from "./views.js";
+import { passwordProblem } from "./account.js";
 import { fieldStyles } from "./styles.js";
 
 interface OrdersState {
@@ -95,6 +96,25 @@ interface TeamState {
   error: string;
 }
 
+interface AccountState {
+  phase: Phase;
+  me: TenantMe | null;
+  addresses: TenantAddress[] | null;
+  address: TenantAddress | null;
+  addressPhase: Phase;
+  name: string;
+  nameDirty: boolean;
+  namePrefill: string | null;
+  profileBusy: boolean;
+  profileSaved: boolean;
+  profileError: string;
+  pwCurrent: string;
+  pwNew: string;
+  pwConfirm: string;
+  passwordBusy: boolean;
+  passwordError: string;
+}
+
 const CANNOT_RETURN_WORDS = "This order cannot be returned through Pro. Ask the dealer to arrange it.";
 const RETURN_FAULT_WORDS = "Returns did not load. Try again in a moment.";
 
@@ -104,6 +124,10 @@ function freshInstructions(): InstructionsState {
 
 function freshReturns(): ReturnsState {
   return { requests: null, listError: false, eligibility: { phase: "idle", data: null, words: "", canRetry: false }, form: { qty: new Map(), reason: "DAMAGED", note: "", busy: false, error: "" }, notice: "" };
+}
+
+function freshAccount(): AccountState {
+  return { phase: "idle", me: null, addresses: null, address: null, addressPhase: "idle", name: "", nameDirty: false, namePrefill: null, profileBusy: false, profileSaved: false, profileError: "", pwCurrent: "", pwNew: "", pwConfirm: "", passwordBusy: false, passwordError: "" };
 }
 
 export class ProFieldApp extends HHElement {
@@ -122,11 +146,13 @@ export class ProFieldApp extends HHElement {
   #projects: ProjectsState = { phase: "idle", items: [] };
   #project: ProjectState | null = null;
   #team: TeamState = { phase: "idle", users: [], invites: [], inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
+  #account: AccountState = freshAccount();
   #ordersSeq = 0;
   #orderSeq = 0;
   #projectsSeq = 0;
   #projectSeq = 0;
   #teamSeq = 0;
+  #accountSeq = 0;
   #unsubscribe: (() => void) | null = null;
 
   constructor() {
@@ -146,6 +172,8 @@ export class ProFieldApp extends HHElement {
         else void this.#loadProjects();
       } else if (this.#section === "team") {
         void this.#loadTeam();
+      } else if (this.#section === "account") {
+        void this.#loadAccount();
       } else if (this.#order !== null) {
         void this.#loadOrder(this.#order.id);
       } else {
@@ -199,6 +227,24 @@ export class ProFieldApp extends HHElement {
       void this.#setUserStatus(control?.getAttribute("data-user-id") ?? "", control?.getAttribute("data-status") ?? "");
       return;
     }
+    if (action === "save-profile") {
+      void this.#saveProfile();
+      return;
+    }
+    if (action === "change-password") {
+      void this.#changePassword();
+      return;
+    }
+    if (action === "open-address") {
+      void this.#openAddress(control?.getAttribute("data-address-id") ?? "");
+      return;
+    }
+    if (action === "back-to-addresses") {
+      this.#account.address = null;
+      this.#account.addressPhase = "idle";
+      this.requestUpdate();
+      return;
+    }
     if (action === "section") {
       this.#selectSection(control?.getAttribute("data-value") ?? "");
     }
@@ -222,6 +268,25 @@ export class ProFieldApp extends HHElement {
     }
     if (field === "member-role" && target instanceof HTMLSelectElement) {
       void this.#setUserRole(target.getAttribute("data-user-id") ?? "", target.value);
+      return;
+    }
+    if (field === "name" && target instanceof HTMLInputElement) {
+      this.#account.name = target.value;
+      this.#account.nameDirty = true;
+      this.#account.profileSaved = false;
+      this.requestUpdate();
+      return;
+    }
+    if (field === "pw-current" && target instanceof HTMLInputElement) {
+      this.#account.pwCurrent = target.value;
+      return;
+    }
+    if (field === "pw-new" && target instanceof HTMLInputElement) {
+      this.#account.pwNew = target.value;
+      return;
+    }
+    if (field === "pw-confirm" && target instanceof HTMLInputElement) {
+      this.#account.pwConfirm = target.value;
       return;
     }
     const order = this.#order;
@@ -287,6 +352,7 @@ export class ProFieldApp extends HHElement {
         this.#projects = { phase: "idle", items: [] };
         this.#project = null;
         this.#team = { phase: "idle", users: [], invites: [], inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
+        this.#account = freshAccount();
       }
       this.requestUpdate();
     });
@@ -341,6 +407,15 @@ export class ProFieldApp extends HHElement {
       }
       const inviteRole = this.renderRoot.querySelector<HTMLSelectElement>("select[data-field=invite-role]");
       if (inviteRole !== null) inviteRole.value = this.#team.inviteRole;
+    }
+    // The profile name's first value, set once when the account opens.
+    if (this.#section === "account" && this.#account.namePrefill !== null) {
+      const name = this.renderRoot.querySelector<HTMLInputElement>("input[data-field=name]");
+      if (name !== null) {
+        name.value = this.#account.namePrefill;
+        this.#account.name = this.#account.namePrefill;
+        this.#account.namePrefill = null;
+      }
     }
   }
 
@@ -526,6 +601,104 @@ export class ProFieldApp extends HHElement {
       this.#team.error = "";
       void this.#loadTeam();
     }
+    if (to === "account") {
+      this.#account.address = null;
+      this.#account.addressPhase = "idle";
+      void this.#loadAccount();
+    }
+  }
+
+  async #loadAccount(): Promise<void> {
+    const sequence = (this.#accountSeq += 1);
+    this.#account.phase = "loading";
+    this.requestUpdate();
+    const [me, addresses] = await Promise.all([this.#port.getMe(), this.#port.listAddresses()]);
+    if (sequence !== this.#accountSeq || this.#session.profile() === null || this.#section !== "account") return;
+    const refused = me.ok === false ? me : addresses.ok === false ? addresses : null;
+    if (refused !== null) {
+      if (refused.status === 401) {
+        this.#signinMessage = "You are signed out. Sign in again.";
+        await this.#session.signOut();
+        return;
+      }
+      this.#account.phase = refused.status === 403 ? "refusal" : "error";
+    } else if (me.ok && addresses.ok) {
+      const nameUnchanged = this.#account.me === null || this.#account.me.name !== me.value.name;
+      this.#account = {
+        ...this.#account,
+        phase: "ready",
+        me: me.value,
+        addresses: addresses.value,
+        namePrefill: this.#account.namePrefill ?? (nameUnchanged ? me.value.name : this.#account.namePrefill),
+      };
+    }
+    this.requestUpdate();
+  }
+
+  async #saveProfile(): Promise<void> {
+    const account = this.#account;
+    if (account.me === null || account.profileBusy || !account.nameDirty) return;
+    account.profileBusy = true;
+    account.profileError = "";
+    this.requestUpdate();
+    const answer = await tenantAuth.tenantUpdateMe(this.#client, { name: account.name.trim() });
+    if (this.#section !== "account" || this.#session.profile() === null) return;
+    account.profileBusy = false;
+    if (answer.ok) {
+      account.me = answer.value as typeof account.me;
+      account.nameDirty = false;
+      account.profileSaved = true;
+    } else {
+      account.profileError = answer.error;
+    }
+    this.requestUpdate();
+  }
+
+  async #changePassword(): Promise<void> {
+    const account = this.#account;
+    if (account.passwordBusy) return;
+    const problem = passwordProblem(account.pwCurrent, account.pwNew, account.pwConfirm);
+    if (problem !== "") {
+      account.passwordError = problem;
+      this.requestUpdate();
+      return;
+    }
+    account.passwordBusy = true;
+    account.passwordError = "";
+    this.requestUpdate();
+    const answer = await tenantAuth.tenantChangePassword(this.#client, { current_password: account.pwCurrent, new_password: account.pwNew });
+    if (this.#section !== "account" || this.#session.profile() === null) return;
+    account.passwordBusy = false;
+    if (answer.ok) {
+      account.pwCurrent = "";
+      account.pwNew = "";
+      account.pwConfirm = "";
+      for (const field of Array.from(this.renderRoot.querySelectorAll<HTMLInputElement>("input[data-field^=pw-]"))) field.value = "";
+      account.passwordError = "Your password is changed. Use it next time you sign in.";
+    } else {
+      account.passwordError = answer.error;
+    }
+    this.requestUpdate();
+  }
+
+  async #openAddress(id: string): Promise<void> {
+    if (id === "") return;
+    this.#account.address = null;
+    this.#account.addressPhase = "loading";
+    this.requestUpdate();
+    const answer = await this.#port.getAddress(id);
+    if (this.#section !== "account" || this.#session.profile() === null) return;
+    if (answer.ok) {
+      this.#account.address = answer.value;
+      this.#account.addressPhase = "ready";
+    } else if (answer.status === 401) {
+      this.#signinMessage = "You are signed out. Sign in again.";
+      await this.#session.signOut();
+      return;
+    } else {
+      this.#account.addressPhase = "error";
+    }
+    this.requestUpdate();
   }
 
   // The team reads ride the port; the team's writes stay off it on purpose
@@ -720,6 +893,20 @@ export class ProFieldApp extends HHElement {
         inviteEmail: this.#team.inviteEmail,
         notice: this.#team.notice,
         error: this.#team.error,
+      });
+    }
+    if (this.#section === "account") {
+      return accountView({
+        phase: this.#account.phase,
+        me: this.#account.me,
+        addresses: this.#account.addresses,
+        address: this.#account.addressPhase === "ready" ? this.#account.address : null,
+        nameDirty: this.#account.nameDirty,
+        profileBusy: this.#account.profileBusy,
+        profileSaved: this.#account.profileSaved,
+        profileError: this.#account.profileError,
+        passwordBusy: this.#account.passwordBusy,
+        passwordError: this.#account.passwordError,
       });
     }
     return sectionPlaceholder();

@@ -281,6 +281,55 @@ test.describe("phone", () => {
     await expect(state.getByRole("button", { name: "Try again" })).toHaveCount(0);
   });
 
+  test("the account shows the person's profile, and saving a new name says so", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("surface-title")).toHaveText("Account");
+    await expect(page.getByTestId("account-name")).toHaveValue("Contractor owner");
+    await expect(page.locator("hh-pro-frame")).toContainText("Owner");
+    await expect(page.locator("hh-pro-frame")).toContainText("contractor.owner@hh-demo.invalid");
+    const save = page.getByRole("button", { name: "Save profile" });
+    await expect(save).toBeDisabled();
+    await page.getByTestId("account-name").fill("Summit Ridge owner");
+    await save.click();
+    await expect(page.getByTestId("profile-saved")).toHaveText("Profile saved.");
+    await page.screenshot({ path: test.info().outputPath("account-phone.png") });
+  });
+
+  test("the password form carries the server's answer in its own words", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await page.getByTestId("pw-current").fill("stub-password");
+    await page.getByTestId("pw-new").fill("another-password");
+    await page.getByTestId("pw-confirm").fill("another-password");
+    await page.getByRole("button", { name: "Change password" }).click();
+    await expect(page.getByTestId("password-error")).toHaveText("changing your password here is not available yet");
+  });
+
+  test("the password form is checked before the server is asked", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await page.getByTestId("pw-current").fill("stub-password");
+    await page.getByTestId("pw-new").fill("another-password");
+    await page.getByTestId("pw-confirm").fill("different");
+    await page.getByRole("button", { name: "Change password" }).click();
+    await expect(page.getByTestId("password-error")).toHaveText("The new passwords do not match.");
+  });
+
+  test("the addresses list the jobs, and one opens in detail and back returns", async ({ page }) => {
+    await signIn(page, "field");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    const rows = page.getByTestId("address-rows").getByTestId("address-row");
+    await expect(rows).toHaveCount(4);
+    await page.screenshot({ path: test.info().outputPath("addresses-phone.png") });
+    await rows.filter({ hasText: "La Jolla job" }).click();
+    await expect(page.getByTestId("address-detail")).toBeVisible();
+    await expect(page.getByTestId("address-detail")).toContainText("Job site");
+    await expect(page.getByTestId("address-detail")).toContainText("88 Terrace Rise");
+    await page.getByRole("button", { name: "Back" }).click();
+    await expect(page.getByTestId("address-rows")).toBeVisible();
+  });
+
   test("a surface in another app says it opens that app and asks to sign in again, one in this app says nothing", async ({ page }) => {
     await signIn(page, "owner");
     await page.getByTestId("frame-selector").click();
