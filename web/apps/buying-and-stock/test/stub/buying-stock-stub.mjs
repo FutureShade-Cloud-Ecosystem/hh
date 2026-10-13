@@ -21,6 +21,7 @@
 // so the negative-stock read has its row. Dates are cut from the host's own
 // day so no calendar literal is written.
 import { createServer } from "node:http";
+import { createPurchRoutes } from "./purch-routes.mjs";
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4969);
 
@@ -91,6 +92,15 @@ function localDay(at) {
   return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
 }
 
+// A transfer's eta is the one date the core cuts in its house zone, not the machine's
+// (core/internal/inventory/transfer_eta.go etaZone), so the stub cuts it there too.
+function houseDayOffset(offset) {
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const at = new Date(`${day}T12:00:00Z`);
+  at.setUTCDate(at.getUTCDate() + offset);
+  return at.toISOString().slice(0, 10);
+}
+
 function dayOffset(offset) {
   const at = new Date();
   at.setDate(at.getDate() + offset);
@@ -130,12 +140,18 @@ const VENDORS = [
   { n: 2, no: "V-TEC", name: "Techo Bloc (demo)", terms: 30 },
   { n: 3, no: "V-UNI", name: "Unilock (demo)", terms: 45 },
   { n: 4, no: "V-RYM", name: "Rymar (demo)", terms: 30 },
-  // The inventory and counts half's makers, invented names in the trade's own shapes.
+];
+
+// The inventory and counts half's makers, invented names in the trade's own shapes. They are not the
+// purchasing areas' vendor list (the vendors area reads VENDORS); a lookup by number reads both.
+const GLS_VENDORS = [
   { n: 5, no: "V-CP", name: "Copperline Pavers (demo)", terms: 30 },
   { n: 6, no: "V-GRQ", name: "Granite Run Quarry (demo)", terms: 30 },
   { n: 7, no: "V-HS", name: "Heronfield Stone (demo)", terms: 45 },
   { n: 8, no: "V-PBS", name: "Prairie Bend Soils (demo)", terms: 30 },
 ];
+
+const ALL_VENDORS = [...VENDORS, ...GLS_VENDORS];
 
 // The managed lines: what the worklist grades. Quantities are base units.
 const PRODUCTS = [
@@ -152,7 +168,7 @@ const SEEDED_POS = [
   { n: 141, vendor: 2, status: "ORDERED", expect: 2, method: "DELIVERY", lines: [{ product: 4, qty: 12, cost: 82_000 }] },
   { n: 136, vendor: 1, status: "ORDERED", expect: 4, method: "PICKUP", lines: [{ product: 6, qty: 10, cost: 2500 }] },
   { n: 67, vendor: 3, status: "PARTIAL", expect: null, method: "DELIVERY", lines: [{ product: 5, qty: 10, cost: 24_000, received: 6 }] },
-  { n: 66, vendor: 1, status: "RECEIVED", expect: -3, method: "PICKUP", lines: [{ product: 6, qty: 10, cost: 2500, received: 10 }] },
+  { n: 66, vendor: 1, status: "RECEIVED", expect: -3, method: "PICKUP", lines: [{ product: 6, qty: 10, cost: 2500, received: 10 }, { product: 3, qty: 4, cost: 2500, received: 4 }] },
 ];
 
 // ---- the inventory and counts world (Point Loma and Julian) -------------------------------------
@@ -227,7 +243,7 @@ function productRow(p) {
   const projected = available + onOrder;
   const short = Math.max(p.point - projected, 0);
   const suggested = short === 0 ? 0 : Math.ceil(short / p.multiple) * p.multiple;
-  const vendor = VENDORS.find((v) => v.n === p.vendor);
+  const vendor = ALL_VENDORS.find((v) => v.n === p.vendor);
   return {
     product_id: uuid("f", p.n),
     sku: p.sku,
@@ -337,7 +353,7 @@ function resetInventoryWorld() {
   world.transfers = [
     {
       id: uuid("t", 1), no: "TRF-PLM-0001", from: PLM, to: JUL, status: "IN_TRANSIT",
-      shipped: NOW_ISO(), received: "", eta: dayOffset(2), created: NOW_ISO(), notes: "the week's cap run",
+      shipped: NOW_ISO(), received: "", eta: houseDayOffset(2), created: NOW_ISO(), notes: "the week's cap run",
       lines: [{ id: uuid("u", 1), product: 2, qty: 40, shipped: 40, received: 0, cost: 5400 }],
     },
     {
@@ -399,17 +415,15 @@ function lineView(l, n) {
     description: p.name,
     qty_ordered_base: l.qty,
     qty_received_base: received,
-    qty_billed_base: 0,
+    qty_billed_base: l.billed ?? 0,
     qty_outstanding_base: l.qty - received,
     uom: p.uom,
-    unit_cost_cents: l.cost,
-    line_total_cents: l.qty * l.cost,
-    billed_cents: 0,
+    ...(flags.costsHidden ? {} : { unit_cost_cents: l.cost, line_total_cents: l.qty * l.cost, billed_cents: l.billedCents ?? 0 }),
   };
 }
 
 function poView(po) {
-  const vendor = VENDORS.find((v) => v.n === po.vendor);
+  const vendor = ALL_VENDORS.find((v) => v.n === po.vendor);
   const view = {
     id: po.id,
     po_no: po.no,
@@ -422,8 +436,12 @@ function poView(po) {
     currency: "CAD",
     fx_rate: 1,
     delivery_method: po.method,
-    subtotal_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
-    subtotal_cad_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
+    ...(flags.costsHidden
+      ? {}
+      : {
+          subtotal_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
+          subtotal_cad_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
+        }),
     created_at: po.created,
     updated_at: po.created,
   };
@@ -433,7 +451,7 @@ function poView(po) {
 }
 
 function poDetail(po) {
-  return { ...poView(po), lines: po.lines.map((l, i) => lineView(l, i + 1)), receipts: [] };
+  return { ...poView(po), lines: po.lines.map((l, i) => lineView(l, i + 1)), receipts: purch.receiptsFor(po.id) };
 }
 
 // ---- inventory and counts view helpers -------------------------------------------------------------
@@ -725,12 +743,19 @@ function readBody(req) {
 // named branch is out of reach, the fence's own 403 in words).
 let walled = false;
 let fenced = false;
+// Who the caller is for the purchasing areas' role walls: the demo's Procurement manager unless a
+// test switches it (payables-receivables enters and posts bills; super-admin sets the tolerances).
+let role = "procurement-manager";
+// Switches a test can set: cost hidden from the caller (the purchasing policy), the mail transport
+// failing, the untagged send refused by policy, and the answer to the next write lost on the way back.
+const flags = { costsHidden: false, sendFails: false, refuseUntagged: false, dropNext: false };
+// The reach covers the Trenton buyer branch and the two Gable yards the inventory and counts areas read.
+const reach = () => (fenced ? [] : [BRANCH, PLM, JUL]);
 // The caller's seat on this surface, per the role matrix: the procurement manager holds manage,
 // the yard manager work, payables and receivables read. roleMode names the seat the writes test.
 let roleMode = "procurement";
 // The tech admin the transit-days write needs; no demo role holds that tier.
 let adminMode = false;
-const reach = () => (fenced ? [] : [BRANCH, PLM, JUL]);
 // The route levels the contract's x-access carries for this surface, and what each seat passes.
 // Read routes pass for everyone; the role wall answers the shared Forbidden body, the core's
 // {"error":"Forbidden"}, before any handler runs.
@@ -771,6 +796,29 @@ const seatPasses = (move, seat) => {
   return SEAT_LEVEL[seat] >= level;
 };
 
+// The purchasing areas (landed cost and the rest): parts of their own, fed the world through the kit.
+const purch = createPurchRoutes({
+  world: () => world,
+  uuid,
+  json: (res, data, status) => json(res, data, status),
+  refuse: (res, status, error) => refuse(res, status, error),
+  readBody: (req) => readBody(req),
+  isUuid,
+  NOW_ISO,
+  dayOffset,
+  BRANCH,
+  VENDORS,
+  PRODUCTS,
+  reach,
+  flags: () => flags,
+  // A scoped caller must name a branch; only a global one may read across all of them.
+  global: () => false,
+  poView: (po) => poView(po),
+  poDetail: (po) => poDetail(po),
+  role: () => role,
+});
+purch.reset();
+
 // The core's fenceNamedBranch: a branch the caller named outside its reach is refused in words;
 // an unnamed one is left to the caller (the reach set applies itself).
 function outOfReach(branchId) {
@@ -790,7 +838,22 @@ async function handle(req, res) {
     fenced = false;
     roleMode = "procurement";
     adminMode = false;
+    role = "procurement-manager";
+    Object.assign(flags, { costsHidden: false, sendFails: false, refuseUntagged: false, dropNext: false });
+    purch.reset();
     return json(res, { ok: true });
+  }
+  if (method === "POST" && path === "/_stub/flag") {
+    const body = await readBody(req);
+    if (body?.name in flags) flags[body.name] = Boolean(body.value);
+    return json(res, { ok: true, flags });
+  }
+  if (method === "POST" && path === "/_stub/role") {
+    const body = await readBody(req);
+    // The inventory and counts areas' seat: procurement (manage), yard (work) or payables (read).
+    if (body?.as !== undefined) roleMode = ["procurement", "yard", "payables"].includes(body.as) ? body.as : "procurement";
+    role = ["procurement-manager", "payables-receivables", "super-admin"].includes(body?.role) ? body.role : role;
+    return json(res, { ok: true, role, as: roleMode });
   }
   if (method === "POST" && path === "/_stub/wall") {
     walled = true;
@@ -799,11 +862,6 @@ async function handle(req, res) {
   if (method === "POST" && path === "/_stub/fence") {
     fenced = true;
     return json(res, { ok: true });
-  }
-  if (method === "POST" && path === "/_stub/role") {
-    const body = await readBody(req);
-    roleMode = ["procurement", "yard", "payables"].includes(body?.as) ? body.as : "procurement";
-    return json(res, { ok: true, as: roleMode });
   }
   if (method === "POST" && path === "/_stub/admin") {
     adminMode = true;
@@ -831,6 +889,13 @@ async function handle(req, res) {
   if (!path.startsWith("/api/v1/")) return refuse(res, 404, "not found");
   if (!(req.headers.authorization ?? "").startsWith("Bearer ")) return refuse(res, 401, "Unauthorized");
 
+  // The answer to the next write is lost on the way back: the write happens, the caller hears nothing.
+  if (flags.dropNext && method !== "GET" && path.startsWith("/api/v1/")) {
+    flags.dropNext = false;
+    res.end = () => req.socket.destroy();
+  }
+  if (await purch.handle({ req, res, url, path, method, role })) return;
+
   // ---- reads ----
   if (method === "GET" && path === "/api/v1/inventory/shortfall") {
     if (outOfReach(url.searchParams.get("branch_id"))) return refuse(res, 403, "you do not have access to that branch");
@@ -854,19 +919,6 @@ async function handle(req, res) {
       { id: JUL, code: "JUL", name: "Julian yard", address: { line1: "7 Main Street", city: "Julian", province: "CA", postal: "92036", country: "US" }, is_default: false, is_system_default: false, is_active: true },
     ]);
   }
-  const skus = path.match(/^\/api\/v1\/purchasing\/vendors\/([^/]+)\/skus$/);
-  if (method === "GET" && skus) {
-    const vendor = VENDORS.find((v) => uuid("a", v.n) === skus[1]);
-    if (vendor === undefined) return json(res, { items: [] });
-    const items = PRODUCTS.filter((p) => p.vendor === vendor.n).map((p) => ({
-      vendor_id: skus[1],
-      product_id: uuid("f", p.n),
-      sku: p.sku,
-      product_name: p.name,
-      vendor_sku: p.sku === "DBS-BRUS-DIM" ? "ALC-BRU-DIM-60" : `${vendor.no}-${p.sku}`,
-    }));
-    return json(res, { items });
-  }
   if (method === "GET" && path === "/api/v1/purchasing/pos") {
     const status = url.searchParams.get("status");
     const rows = world.pos.filter((p) => status === null || p.status === status).map(poView);
@@ -886,7 +938,7 @@ async function handle(req, res) {
       if (po.status === "RECEIVED" || po.status === "CLOSED" || po.status === "CANCELLED") continue;
       po.lines.forEach((l) => {
         if (uuid("f", l.product) !== productId || l.qty <= (l.received ?? 0)) return;
-        const vendor = VENDORS.find((v) => v.n === po.vendor);
+        const vendor = ALL_VENDORS.find((v) => v.n === po.vendor);
         const line = {
           po_id: po.id,
           po_no: po.no,
@@ -1214,7 +1266,7 @@ async function handle(req, res) {
       else {
         const route = world.transit.find((p) => p.from === t.from && p.to === t.to);
         if (route !== undefined) {
-          t.eta = dayOffset(route.days);
+          t.eta = houseDayOffset(route.days);
         } else {
           t.eta = "";
         }
@@ -1301,7 +1353,7 @@ async function handle(req, res) {
     if (linesReceived > 0) {
       po.status = allFull || po.lines.every((l) => l.qty - (l.received ?? 0) <= 1e-9) ? "RECEIVED" : "PARTIAL";
     }
-    const vendor = VENDORS.find((v) => v.n === po.vendor);
+    const vendor = ALL_VENDORS.find((v) => v.n === po.vendor);
     void vendor;
     return json(res, {
       receipt_id: uuid("p", ++world.receiptCounter),
@@ -1404,7 +1456,7 @@ async function handle(req, res) {
       }
       lines.push({ product_id: r.product_id, qty_base: r.suggested_qty_base, unit_cost_cents: r.avg_cost_cents ?? 0 });
     }
-    const vendor = VENDORS.find((v) => uuid("a", v.n) === vendorId);
+    const vendor = ALL_VENDORS.find((v) => uuid("a", v.n) === vendorId);
     const n = world.counter++;
     const po = {
       id: uuid("c", n), no: `PO-TRT-${n}`, vendor: vendor.n, status: "DRAFT", expect: null,
@@ -1606,8 +1658,6 @@ async function handle(req, res) {
     (method === "POST" && (path === "/api/v1/inventory/reorder-po" || path === "/api/v1/purchasing/pos")) ||
     (method !== "GET" && /^\/api\/v1\/purchasing\/pos\//.test(path));
   if (isOrdering && walled) return json(res, { error: "Forbidden" }, 403);
-  // A vendor bill is posted in the Money Desk: this role's matrix refuses it at the gate.
-  if (/^\/api\/v1\/purchasing\/bills/.test(path) && method !== "GET") return json(res, { error: "Forbidden" }, 403);
 
   // ---- writes ----
   if (method === "POST" && path === "/api/v1/inventory/reorder-po") {

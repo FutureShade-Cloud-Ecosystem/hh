@@ -13,77 +13,24 @@
 // contract fragment, is what a request meets.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
-import { createServer } from "node:net";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { SCHEMA_DESCRIPTORS } from "../../../packages/api-client/src/testing.ts";
-import { validateValue } from "../../../packages/api-client/test/_validate.mjs";
+import { coreSourceOf, holds, refusedBy, startStub } from "./contract-kit.mjs";
 
-const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
-const coreInternal = join(appDir, "..", "..", "..", "core", "internal");
+const coreSource = coreSourceOf(["inventory", "invcount", "platform/authz", "platform/httpx"]);
+const refused = refusedBy(coreSource);
 
-const coreSource = ["inventory", "invcount", join("platform", "authz"), join("platform", "httpx")]
-  .flatMap((dir) =>
-    readdirSync(join(coreInternal, dir))
-      .filter((f) => f.endsWith(".go") && !f.endsWith("_test.go"))
-      .map((f) => readFileSync(join(coreInternal, dir, f), "utf8")),
-  )
-  .join("\n");
-
-let child;
+let stub;
 let base;
-
-async function freePort() {
-  return new Promise((resolve) => {
-    const probe = createServer();
-    probe.listen(0, "127.0.0.1", () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
-  });
-}
+let call;
 
 before(async () => {
-  const port = await freePort();
-  base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [join(appDir, "test", "stub", "buying-stock-stub.mjs")], {
-    env: { ROLE_STUB_PORT: String(port), ...(process.env.TZ === undefined ? {} : { TZ: process.env.TZ }) },
-    stdio: "ignore",
-  });
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      if ((await fetch(`${base}/healthz`)).ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error("the stub did not start");
+  stub = await startStub();
+  base = stub.base;
+  call = stub.call;
 });
 
 after(() => {
-  child?.kill();
+  stub?.stop();
 });
-
-async function call(method, path, body) {
-  const headers = { Authorization: "Bearer stub-token", "X-Org": "hh-demo" };
-  let payload;
-  if (body !== undefined) {
-    headers["Content-Type"] = "application/json";
-    payload = JSON.stringify(body);
-  }
-  const res = await fetch(`${base}${path}`, { method, headers, body: payload });
-  const text = await res.text();
-  let json = null;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    /* not json */
-  }
-  return { status: res.status, json };
-}
 
 // The counts gate reads the token's sub as the caller (the maker against the
 // checker), so the maker and checker calls mint real tokens, the way the stub
@@ -98,76 +45,15 @@ function tokenFor(sub) {
   return `${part({ alg: "ES256", typ: "JWT" })}.${part(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
 }
 
-async function callAs(method, path, sub, body) {
-  const headers = { Authorization: `Bearer ${tokenFor(sub)}`, "X-Org": "hh-demo" };
-  let payload;
-  if (body !== undefined) {
-    headers["Content-Type"] = "application/json";
-    payload = JSON.stringify(body);
-  }
-  const res = await fetch(`${base}${path}`, { method, headers, body: payload });
-  const text = await res.text();
-  let json = null;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    /* not json */
-  }
-  return { status: res.status, json };
-}
+// The counts gate reads the token's sub as the caller; the kit's call takes the headers.
+const callAs = (method, path, sub, body) => call(method, path, body, { Authorization: `Bearer ${tokenFor(sub)}` });
 
-const reset = () => fetch(`${base}/_stub/reset`, { method: "POST" });
-const role = (name) => fetch(`${base}/_stub/role`, { method: "POST", body: JSON.stringify({ as: name }) });
-const admin = () => fetch(`${base}/_stub/admin`, { method: "POST" });
+const reset = () => stub.reset();
+const role = (name) => stub.post("/_stub/role", { as: name });
+const admin = () => stub.post("/_stub/admin");
 
 const PLM = "e1000000-0000-4000-8000-000000000001";
 const JUL = "e1000000-0000-4000-8000-000000000002";
-
-function declared(d) {
-  if (d.k === "ref") return declared(SCHEMA_DESCRIPTORS[d.name]);
-  if (d.k === "allOf") return Object.assign({}, ...d.of.map(declared));
-  if (d.k === "object") return d.props;
-  return {};
-}
-
-function undeclared(value, d, path = "value", out = []) {
-  if (d.k === "ref") return undeclared(value, SCHEMA_DESCRIPTORS[d.name], path, out);
-  if (d.k === "allOf") {
-    const props = declared(d);
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-      for (const key of Object.keys(value)) if (props[key] === undefined) out.push(`${path}.${key}`);
-      for (const [key, leg] of Object.entries(props)) if (value[key] !== undefined) undeclared(value[key], leg, `${path}.${key}`, out);
-    }
-    return out;
-  }
-  if (d.k === "object") {
-    if (value === null || typeof value !== "object" || Array.isArray(value)) return out;
-    for (const key of Object.keys(value)) if (d.props[key] === undefined) out.push(`${path}.${key}`);
-    for (const [key, leg] of Object.entries(d.props)) if (value[key] !== undefined) undeclared(value[key], leg, `${path}.${key}`, out);
-    return out;
-  }
-  if (d.k === "array" && Array.isArray(value)) value.forEach((v, i) => undeclared(v, d.of, `${path}[${i}]`, out));
-  if (d.k === "record" && value !== null && typeof value === "object") for (const [k, v] of Object.entries(value)) undeclared(v, d.of, `${path}.${k}`, out);
-  if (d.k === "union") {
-    const leg = d.of.find((l) => l.k !== "null");
-    if (leg !== undefined && value !== null) undeclared(value, leg, path, out);
-  }
-  return out;
-}
-
-function holds(schemaName, value) {
-  const descriptor = SCHEMA_DESCRIPTORS[schemaName];
-  assert.ok(descriptor !== undefined, `no descriptor named ${schemaName}`);
-  assert.deepEqual(validateValue(value, descriptor), [], `${schemaName} does not fit the contract`);
-  assert.deepEqual(undeclared(value, descriptor), [], `${schemaName} carries fields the contract does not declare`);
-}
-
-function refused(res, status, fragment, inSource = fragment) {
-  assert.equal(res.status, status);
-  holds("Error", res.json);
-  assert.ok(res.json.error.includes(fragment), `expected "${fragment}" in "${res.json.error}"`);
-  assert.ok(coreSource.includes(inSource), `the core's source does not contain the sentence "${inSource}": the stub invented it`);
-}
 
 /** The core's envelope for a domain-keyed list: the key is the core's, and the core's
  * source really writes it (the write site is quoted, as the shortfall test pins items). */
@@ -179,10 +65,14 @@ function domainKey(res, key, rowDescriptor) {
   return res.json[key];
 }
 
+// The core's transfer eta is the ship day plus the transit days in the house zone
+// (core/internal/inventory/transfer_eta.go etaZone), whatever zone this runner is in.
+const HOUSE_ZONE = "America/Toronto";
 const later = (days) => {
-  const at = new Date();
-  at.setDate(at.getDate() + days);
-  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: HOUSE_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const at = new Date(`${day}T12:00:00Z`);
+  at.setUTCDate(at.getUTCDate() + days);
+  return at.toISOString().slice(0, 10);
 };
 
 const world = async () => {

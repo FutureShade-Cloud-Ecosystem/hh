@@ -245,6 +245,13 @@ export function bootstrapConfirm(yard: string): ConfirmWords {
   };
 }
 
+/** The seat a role code holds on this surface, per the role matrix: the Procurement Manager manages, the Yard Manager works, the rest read. */
+export function seatFor(roleCode: string): "manage" | "work" | "read" {
+  if (roleCode === "procurement_manager") return "manage";
+  if (roleCode === "yard_manager") return "work";
+  return "read";
+}
+
 // ---- words for a refusal ------------------------------------------------------------------------------
 
 /**

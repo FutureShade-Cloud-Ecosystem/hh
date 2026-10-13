@@ -8,10 +8,6 @@
 import { css } from "lit";
 
 export const areaStyles = css`
-  .areas { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); max-width: 1440px; margin: 0 auto; padding: var(--hh-s-16) var(--hh-s-24) 0; }
-  .area-tab { min-height: 44px; border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text-dim); border: 1px solid transparent; padding: 0 var(--hh-s-20); }
-  .area-tab[aria-current="true"] { background: var(--hh-card); color: var(--hh-text); border-color: var(--hh-control-line); font-weight: 700; }
-  .area-tab:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
 
   .desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-16) var(--hh-s-24) var(--hh-s-48); }
   h1 { margin: 0; font-size: 28px; line-height: 1.2; font-weight: 700; }
@@ -105,6 +101,5 @@ export const areaStyles = css`
   }
   @media (max-width: 520px) {
     .desk { padding: var(--hh-s-16) var(--hh-s-12) var(--hh-s-40); }
-    .areas { padding-inline: var(--hh-s-12); }
   }
 `;

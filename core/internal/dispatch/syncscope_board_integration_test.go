@@ -100,7 +100,7 @@ func newBoardFixture(t *testing.T) *boardFixture {
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE order_no LIKE '#SO-FXSYNC-%'`)
 		_, _ = pool.Exec(c, `DELETE FROM scope_sequences WHERE scope IN ('stops','will_call')`)
 		_, _ = pool.Exec(c, `DELETE FROM audit_log WHERE entity_type IN ('sync.loads','sync.delivery_stops','sync.will_call')`)
-		_ = testkit.Cleanup(c, testkit.PgxPool(pool))
+		cleanFixtureWorld(t, c, pool)
 	})
 	return f
 }

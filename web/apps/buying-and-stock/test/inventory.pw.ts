@@ -3,7 +3,7 @@
 // and the replenishment list, with the walled moves refused in words. The stub
 // is held to the core's shapes and sentences by test/inventory-contract.test.mjs.
 import type { Page } from "@playwright/test";
-import { expect, openArea, openInventory, payablesHandoff, resetStub, test, yardHandoff, procurementHandoff } from "./helpers.js";
+import { expect, openInventory, PAYABLES_SEAT, resetStub, roleHandoff, showArea, test, YARD_SEAT, procurementHandoff } from "./helpers.js";
 
 const tab = (page: Page, id: string) => page.locator(`[data-inv-tab="${id}"]`);
 
@@ -12,16 +12,16 @@ async function runLookup(page: Page, label: string): Promise<void> {
   await page.getByRole("button", { name: "Look up" }).click();
 }
 
-test("the areas bar offers Purchasing, Inventory and Cycle counts, and the card still lands on purchasing", async ({ page, request }) => {
+test("the areas bar holds every purchasing area and Inventory and Cycle counts, and the card still lands on purchase orders", async ({ page, request }) => {
   await resetStub(request);
   await page.addInitScript(procurementHandoff);
   await page.goto("/");
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
   const bar = page.locator("nav.areas");
-  await expect(bar.locator('[data-area="purchasing"]')).toHaveText("Purchasing");
-  await expect(bar.locator('[data-area="inventory"]')).toHaveText("Inventory");
-  await expect(bar.locator('[data-area="counts"]')).toHaveText("Cycle counts");
-  await expect(bar.locator('[data-area="purchasing"][aria-current="true"]')).toBeVisible();
+  for (const [id, label] of [["orders", "Purchase orders"], ["receiving", "Receiving"], ["vendors", "Vendors"], ["bills", "Vendor bills"], ["landed", "Landed cost"], ["inventory", "Inventory"], ["counts", "Cycle counts"]]) {
+    await expect(bar.locator(`[data-area-id="${id}"]`)).toHaveText(label);
+  }
+  await expect(bar.locator('[data-area-id="orders"][aria-current="true"]')).toBeVisible();
 });
 
 test("the stock lookup answers the per-branch buckets and the ledger for the paver", async ({ page, request }) => {
@@ -91,10 +91,10 @@ test("a reservation is held through the policy, listed, and released; the expiry
 
 test("a read-only role is refused the hold in words that name who may", async ({ page, request }) => {
   await resetStub(request);
-  await page.addInitScript(payablesHandoff);
+  await page.addInitScript(roleHandoff, PAYABLES_SEAT);
   await page.goto("/");
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
-  await openArea(page, "inventory");
+  await showArea(page, "inventory");
   await tab(page, "reservations").click();
   await page.locator('[data-field="res-product"]').selectOption({ label: "GLS-PAV-60 Copperline Paver 60mm" });
   await page.locator('[data-field="res-qty"]').fill("5");
@@ -187,10 +187,10 @@ test("receiving asks first, names the order, the yard and the quantity, then the
 
 test("a read-only role is refused the receive in words that name who may", async ({ page, request }) => {
   await resetStub(request);
-  await page.addInitScript(payablesHandoff);
+  await page.addInitScript(roleHandoff, PAYABLES_SEAT);
   await page.goto("/");
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
-  await openArea(page, "inventory");
+  await showArea(page, "inventory");
   await tab(page, "receive").click();
   const order = page.locator('[data-receive-order="PO-TRT-136"]');
   await order.getByRole("button", { name: "Receive" }).click();
@@ -259,10 +259,10 @@ test("the transit table lists every ordered pair and names the admin wall in wor
 
 test("a yard manager receives the buyer's order and is refused the truck's papers in words", async ({ page, request }) => {
   await resetStub(request);
-  await page.addInitScript(yardHandoff);
+  await page.addInitScript(roleHandoff, YARD_SEAT);
   await page.goto("/");
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
-  await openArea(page, "inventory");
+  await showArea(page, "inventory");
   // Receiving is the yard manager's work: the confirm names the facts, the stock lands.
   await tab(page, "receive").click();
   const order = page.locator('[data-receive-order="PO-TRT-136"]');

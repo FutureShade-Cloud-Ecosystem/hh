@@ -9,10 +9,11 @@
 // reads in words (inventory-logic.ts); a walled move in words naming who may
 // do it. Nothing is stored.
 import type { TemplateResult } from "lit";
+import type { DeskHost } from "../purch/area.js";
 import type { InventoryAllocationPolicy, InventoryBranchStock, InventoryInTransitLine, InventoryOnHand, InventoryPendingFulfilment, InventoryReorderPoint, InventoryReservation, InventoryStockMove, InventoryTransitDaysPair, InventoryTransfer, Result } from "@hardscapehouse/api-client";
 import { formatMoney } from "../po/po-money.js";
 import { InventoryApi, browseAnswer, branchRows, incomingRows, moveRows, onHandRows, pendingRows, pointRows, reservationRows, transitPairs, transferRows, type BrowseAnswer } from "./inventory-api.js";
-import { bootstrapConfirm, cancelTransferConfirm, defaultShipETA, expireConfirm, receiveTransferConfirm, refusalWords, releaseConfirm, reorderFieldsFromTyped } from "./inventory-logic.js";
+import { bootstrapConfirm, cancelTransferConfirm, defaultShipETA, expireConfirm, receiveTransferConfirm, refusalWords, releaseConfirm, reorderFieldsFromTyped, seatFor } from "./inventory-logic.js";
 import { renderInventory, type InvConfirm, type InvModel, type InvTab, type ReceiveOrder } from "./inventory-views.js";
 import { formatQty } from "../po/po-money.js";
 
@@ -70,22 +71,22 @@ export class InventoryDesk {
   // The one press waiting on its confirm: a move that cannot be taken back asks first.
   #confirm: InvConfirm | null = null;
 
-  // The seat the caller holds: it picks the words a walled move is named with.
-  readonly #seat: "manage" | "work" | "read";
+  // The signed in role's code decides the seat: it picks the words a walled move is named with.
+  readonly #role: () => string;
 
-  constructor(api: InventoryApi, host: { repaint: () => void; field: (name: string) => string; seat: "manage" | "work" | "read" }) {
+  constructor(api: InventoryApi, host: DeskHost) {
     this.#api = api;
     this.#repaint = host.repaint;
     this.#field = host.field;
-    this.#seat = host.seat;
+    this.#role = host.role;
   }
 
   /** The action key the refusal words answer: the moves with words of their own keep them; the
    * rest name the seat's wall. The gate's body is wordless, so the seat is what says who may. */
   #words(action: string): string {
     if (action === "receive" || action === "count-approve") return action;
-    if (this.#seat === "read") return "write";
-    if (this.#seat === "work") return "manage";
+    if (seatFor(this.#role()) === "read") return "write";
+    if (seatFor(this.#role()) === "work") return "manage";
     return action;
   }
 

@@ -3,10 +3,11 @@
 // maker's submission, the checker's approval and the post are the core's to
 // refuse, and a refusal reads in words naming who may do the move.
 import type { TemplateResult } from "lit";
+import type { DeskHost } from "../purch/area.js";
 import type { InvCountLine, InvCountNegativeStockRow, InvCountReasonCode, InvCountSheet, Result } from "@hardscapehouse/api-client";
 import { CountsApi } from "./counts-api.js";
 import { countsFromTyped, varianceNeedsReason } from "./counts-logic.js";
-import { refusalWords } from "../inventory/inventory-logic.js";
+import { refusalWords, seatFor } from "../inventory/inventory-logic.js";
 import { renderCounts, type CountsModel, type CountsTab } from "./counts-views.js";
 
 type Field = (name: string, key?: string) => string;
@@ -40,21 +41,21 @@ export class CountsDesk {
   #negatives: readonly InvCountNegativeStockRow[] = [];
   #reconBusy = false;
 
-  // The seat the caller holds: it picks the words a walled move is named with.
-  readonly #seat: "manage" | "work" | "read";
+  // The signed in role's code decides the seat: it picks the words a walled move is named with.
+  readonly #role: () => string;
 
-  constructor(api: CountsApi, host: { repaint: () => void; field: (name: string, key?: string) => string; seat: "manage" | "work" | "read" }) {
+  constructor(api: CountsApi, host: DeskHost) {
     this.#api = api;
     this.#repaint = host.repaint;
     this.#field = host.field;
-    this.#seat = host.seat;
+    this.#role = host.role;
   }
 
   /** The action key the refusal words answer; the seat names the wall for the rest. */
   #words(action: string): string {
     if (action === "count-approve") return action;
-    if (this.#seat === "read") return "write";
-    if (this.#seat === "work") return "manage";
+    if (seatFor(this.#role()) === "read") return "write";
+    if (seatFor(this.#role()) === "work") return "manage";
     return action;
   }
 
@@ -372,8 +373,8 @@ export class CountsDesk {
   }
 
   /** A counted figure as typed, kept so a re-render keeps the row's select and variance. */
-  typed(id: string, value: string): void {
-    if (id === "") return;
+  typed(name: string, value: string, id?: string): void {
+    if (name !== "counted" || id === undefined || id === "") return;
     this.#counts = new Map(this.#counts).set(id, value);
     this.#seededLine = null;
     this.#repaint();

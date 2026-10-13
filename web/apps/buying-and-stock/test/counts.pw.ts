@@ -4,7 +4,7 @@
 // seat refusals in words; the recon and the negative stock. The stub is held
 // to the core's shapes and sentences by test/inventory-contract.test.mjs.
 import type { Page } from "@playwright/test";
-import { expect, openCounts, payablesHandoff, resetStub, switchRole, test, yardHandoff, procurementHandoff } from "./helpers.js";
+import { expect, openCounts, PAYABLES_SEAT, resetStub, roleHandoff, showArea, switchRole, test, YARD_SEAT, procurementHandoff } from "./helpers.js";
 
 const tab = (page: Page, id: string) => page.locator(`[data-counts-tab="${id}"]`);
 
@@ -101,10 +101,10 @@ test("a negative counted quantity is refused in words before any request", async
 test("the yard manager counts, the procurement manager approves and posts after the confirm names the facts", async ({ page, request }) => {
   // The maker: the yard manager, a work seat, counts the frozen sheet.
   await resetStub(request);
-  await page.addInitScript(yardHandoff);
+  await page.addInitScript(roleHandoff, YARD_SEAT);
   await page.goto("/");
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
-  await page.locator('[data-area="counts"]').click();
+  await showArea(page, "counts");
   await startSheet(page);
   await freeze(page);
   // The book quantity is hidden under the blind count; lifting it shows the snapshot.
@@ -120,7 +120,7 @@ test("the yard manager counts, the procurement manager approves and posts after 
   await expect(page.locator("[data-error]")).toContainText("manager seats' moves");
   // The checker: the procurement manager approves, then posts through the confirm.
   await switchRole(page, procurementHandoff);
-  await page.locator('[data-area="counts"]').click();
+  await showArea(page, "counts");
   await page.locator("[data-sheet-row]", { hasText: "Counted" }).getByRole("button", { name: "Open" }).click();
   await expect(page.locator("[data-count-variance]")).toBeVisible();
   await page.getByRole("button", { name: "Approve (checker)" }).click();
@@ -143,10 +143,10 @@ test("the yard manager counts, the procurement manager approves and posts after 
 
 test("a read-only role is refused the new sheet in words that name who may", async ({ page, request }) => {
   await resetStub(request);
-  await page.addInitScript(payablesHandoff);
+  await page.addInitScript(roleHandoff, PAYABLES_SEAT);
   await page.goto("/");
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
-  await page.locator('[data-area="counts"]').click();
+  await showArea(page, "counts");
   await page.getByRole("button", { name: "New sheet" }).click();
   await expect(page.locator("[data-error]")).toContainText("look but not touch");
 });
