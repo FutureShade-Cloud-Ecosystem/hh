@@ -864,3 +864,30 @@ test("a conversion upsert saves whole; a delete is two taps", async () => {
   assert.ok(door.calls.find((x) => Array.isArray(x) && x[0] === "deleteUom"));
   assert.match(c.model.uom.notice, /Deleted/);
 });
+
+test("opening a batch re-reads the batch whole, so the panel holds the server's state", async () => {
+  const door = fakeBreaksDoor({
+    batches: async () => {
+      door.calls.push("batches");
+      return { ok: true, value: [BREAKS[0]] };
+    },
+    importProfiles: async () => {
+      door.calls.push("importProfiles");
+      return { ok: true, value: [] };
+    },
+    batch: async (id) => {
+      door.calls.push(["batch", id]);
+      return { ok: true, value: { ...BREAKS[0], status: "APPROVED" } };
+    },
+    batchLines: async (id) => {
+      door.calls.push(["batchLines", id]);
+      return { ok: true, value: [] };
+    },
+  });
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "batches" });
+  await c.click("pr-batch-open", { id: BREAKS[0].id });
+  assert.deepEqual(door.calls.find((x) => Array.isArray(x) && x[0] === "batch"), ["batch", BREAKS[0].id]);
+  assert.equal(c.model.batches.openRow.status, "APPROVED", "the panel holds the fresh read, not the list's");
+});

@@ -1847,12 +1847,13 @@ function renderBatchCreate(model: PricingModel): TemplateResult | typeof nothing
 function renderOpenBatch(model: PricingModel): TemplateResult | typeof nothing {
   const m = model.batches.open;
   if (m === null) return nothing;
-  const row = model.batches.rows.find((b) => b.id === m.id);
+  const row = model.batches.openRow;
   const status = row?.status ?? "";
   return html`
     <section class="card" data-test="pr-batch-open">
       <div class="card-head">
         <h2 class="card-title">Batch ${row?.batch_no ?? m.id.slice(0, 8)}</h2>
+        ${row?.effective_date ? html`<span class="chip">effective ${row.effective_date.slice(0, 10)}</span>` : nothing}
         <span class="chip">${batchStatusWord(status)}</span>
         <button type="button" class="btn btn-secondary btn-small" data-action="pr-batch-close">Close</button>
       </div>

@@ -1280,6 +1280,13 @@ export class PricingApi {
     return { ok: true, value: toBatchRow(answer.value) };
   }
 
+  /** One batch, read whole: the panel opens on the server's current state. */
+  async batch(id: string): Promise<Result<BatchRow>> {
+    const answer = await staffPricing.pricingGetBatch(this.#client, id);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toBatchRow(answer.value) };
+  }
+
   /** One batch's change lines. */
   async batchLines(id: string): Promise<Result<readonly BatchLineRow[]>> {
     const answer = await staffPricing.pricingListBatchLines(this.#client, id, { limit: 500 });

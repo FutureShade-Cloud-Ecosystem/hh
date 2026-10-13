@@ -108,6 +108,7 @@ export interface PricingDoor {
   planUom(body: Record<string, unknown>): Promise<{ ok: true; value: UomPlanRow } | { ok: false; error: string; status?: number }>;
   batches(status?: string): Promise<{ ok: true; value: readonly BatchRow[] } | { ok: false; error: string; status?: number }>;
   createBatch(body: Record<string, unknown>): Promise<{ ok: true; value: BatchRow } | { ok: false; error: string; status?: number }>;
+  batch(id: string): Promise<{ ok: true; value: BatchRow } | { ok: false; error: string; status?: number }>;
   batchLines(id: string): Promise<{ ok: true; value: readonly { readonly id: string; readonly sku: string; readonly before_retail_cents: number | null; readonly after_retail_cents: number | null; readonly is_outlier: boolean; readonly unmatched: boolean; readonly derived_from: string }[] } | { ok: false; error: string; status?: number }>;
   importBatch(id: string, csv: string): Promise<{ ok: true; value: BatchImportResult } | { ok: false; error: string; status?: number }>;
   approveBatch(id: string): Promise<{ ok: true; value: BatchRow } | { ok: false; error: string; status?: number }>;
@@ -497,6 +498,8 @@ export interface BatchesModel {
   readonly notice: string;
   readonly creating: BatchCreateForm | null;
   readonly open: OpenBatch | null;
+  /** The open batch's header, read whole from the server. */
+  readonly openRow: BatchRow | null;
   readonly profiles: readonly ImportProfileRow[];
   readonly profilesPhase: LoadPhase;
   readonly profilesError: string;
@@ -708,6 +711,7 @@ function emptyBatches(): BatchesModel {
     notice: "",
     creating: null,
     open: null,
+    openRow: null,
     profiles: [],
     profilesPhase: "idle",
     profilesError: "",
@@ -3197,7 +3201,13 @@ export class PricingController {
         actionError: "",
         actionNotice: "",
       },
+      openRow: this.model.batches.rows.find((b) => b.id === id) ?? null,
     });
+    // The header re-reads whole: the panel holds the server's current state,
+    // not the possibly stale list row.
+    const read = await this.#door.batch(id);
+    if (this.model.batches.open?.id !== id) return;
+    if (read.ok) this.#setBatches({ openRow: read.value });
     const lines = await this.#door.batchLines(id);
     if (this.model.batches.open?.id !== id) return;
     if (!lines.ok) {
