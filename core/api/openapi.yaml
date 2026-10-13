@@ -2357,7 +2357,7 @@ paths:
       tags:
         - staff-billing
       summary: List the card charge attempts that need a person
-      description: "The list a person reconciling a Run settlement report reads: every trans_id with no sale behind it, and why. With state=open it answers every attempt that needs a person (UNKNOWN, VOID_UNKNOWN, VOID_DECLINED), whatever its date; from and to (RFC3339) bound the second arm, every attempt in the range that carries a charge ref and is not BOUND. A missing from and to default from to the seven day window, so the range arm is bounded whatever the caller sends. Newest first, bounded at 500 rows."
+      description: "The list a person reconciling a Run settlement report reads: every trans_id with no sale behind it, and why. With state=open it answers every attempt that needs a person (UNKNOWN, VOID_UNKNOWN, VOID_DECLINED), whatever its date; from and to (RFC3339) bound the second arm, every attempt in the range that carries a charge ref and is not BOUND. A missing from and to default from to the seven day window, so the range arm is bounded whatever the caller sends. Newest first, bounded at 500 rows. The list is fenced by the caller's branch reach: a global role reads every branch, a branch scoped caller reads only the attempts of its granted branches, and an attempt of a branch the caller does not reach is simply absent (the bound counts reachable rows only)."
       x-role: requireManager
       x-access:
         surfaces:
