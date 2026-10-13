@@ -1,0 +1,25 @@
+{
+  "name": "@hardscapehouse/work-offline",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Work shell's offline layer for the desk apps: a read cache over the offline store with the staleness shown, the quote draft outbox (last write wins by field, only the fields the core admits), and the no signal guard that keeps every money moving action online only and never queues it",
+  "sideEffects": false,
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "test": "node --import ./test/_ts-js-loader.mjs --test test/signal.test.mjs test/contract.test.mjs test/cache.node-test.mjs test/quote-drafts.node-test.mjs test/sync.node-test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
+    "@hardscapehouse/offline-store": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3"
+  }
+}
