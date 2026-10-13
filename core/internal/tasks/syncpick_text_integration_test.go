@@ -9,25 +9,46 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
+// Text a picker can type on several lines (the Yard note is a textarea; the description is copied from the
+// ticket line) keeps tab, LF and CR; every other C0 control, DEL and the bidi controls are refused in every
+// text leg, and the single line legs refuse tab, LF and CR too.
+var pickAlwaysBad = map[string]string{
+	"NUL":                     "dock\x00two",
+	"bell":                    "dock\x07two",
+	"escape":                  "dock\x1btwo",
+	"unit separator":          "dock\x1ftwo",
+	"DEL":                     "dock\x7ftwo",
+	"right to left override":  "dock\u202etwo",
+	"left to right isolate":   "dock\u2066two",
+	"pop directional isolate": "dock\u2069two",
+}
+
+var pickLayout = map[string]string{"newline": "dock\ntwo", "carriage return": "dock\r\ntwo", "tab": "dock\ttwo"}
+
 func TestPickDoor_ControlCharactersInAnyTextLegAreRejectedBeforeTheOrderMoves(t *testing.T) {
-	bad := map[string]string{
-		"NUL":                    "dock\x00two",
-		"newline":                "dock\ntwo",
-		"bell":                   "dock\x07two",
-		"DEL":                    "dock\x7ftwo",
-		"right to left override": "dock‮two",
-		"left to right isolate":  "dock⁦two",
-	}
+	multiline := map[string]bool{"description": true, "short_note": true}
 	legs := []string{"product_id", "sku", "description", "qty_ordered", "qty_picked", "uom", "short_reason", "short_note"}
 	for _, leg := range legs {
-		for name, text := range bad {
+		cases := map[string]string{}
+		for k, v := range pickAlwaysBad {
+			cases[k] = v
+		}
+		if !multiline[leg] {
+			for k, v := range pickLayout {
+				cases[k] = v
+			}
+		}
+		for name, text := range cases {
 			t.Run(leg+" "+name, func(t *testing.T) {
 				d := newPickDoor(t)
 				id := d.task(d.branchA)
@@ -42,6 +63,67 @@ func TestPickDoor_ControlCharactersInAnyTextLegAreRejectedBeforeTheOrderMoves(t 
 				}
 			})
 		}
+	}
+}
+
+func TestPickDoor_NoteAndDescriptionKeepTabNewlineAndCarriageReturn(t *testing.T) {
+	for name, text := range pickLayout {
+		t.Run(name, func(t *testing.T) {
+			d := newPickDoor(t)
+			id := d.task(d.branchA)
+			l := pickLine(1)
+			l["short_note"], l["description"] = "first\n"+text, "ticket "+text
+			res := d.push(recordOp(uuid.NewString(), id, l))
+			if res[0].Status != "applied" {
+				t.Fatalf("an ordinary multi line note is a record, not a refusal: %+v (%v)", res[0], res[0].Error)
+			}
+			var note, desc string
+			if err := d.pool.QueryRow(context.Background(),
+				`SELECT short_note, description FROM task_pick_lines WHERE task_id = $1::uuid AND order_line_no = 1`, id).Scan(&note, &desc); err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			if note != "first\n"+text || !strings.HasPrefix(desc, "ticket") {
+				t.Fatalf("stored verbatim: %q %q", note, desc)
+			}
+		})
+	}
+}
+
+// The direct door shares the rule through RecordPick: a refusal is a 400 BadRequest before the order is
+// told, where a NUL used to be a 500 after ApplyPicks had moved the order.
+func TestRecordPick_DirectDoorRefusesTheSameTextBeforeTheOrderMoves(t *testing.T) {
+	for name, text := range pickAlwaysBad {
+		for _, leg := range []string{"description", "short_note", "sku", "uom"} {
+			t.Run(leg+" "+name, func(t *testing.T) {
+				d := newPickDoor(t)
+				id := d.task(d.branchA)
+				in := PickedLineInput{OrderLineNo: 1, QtyOrdered: "10", QtyPicked: "7", UOM: "EA", ShortReason: ShortReasonNotInYard}
+				switch leg {
+				case "description":
+					in.Description = text
+				case "short_note":
+					in.ShortNote = text
+				case "sku":
+					in.SKU = text
+				case "uom":
+					in.UOM = text
+				}
+				_, err := d.svc.RecordPick(context.Background(), id, d.user, []PickedLineInput{in})
+				var bad httpx.BadRequestError
+				if !errors.As(err, &bad) {
+					t.Fatalf("want the module's BadRequest, got %v", err)
+				}
+				if len(d.yard.picks) != 0 || len(d.lines(id)) != 0 {
+					t.Fatalf("a refused record moves nothing: order told %d times", len(d.yard.picks))
+				}
+			})
+		}
+	}
+	d := newPickDoor(t)
+	id := d.task(d.branchA)
+	in := PickedLineInput{OrderLineNo: 1, QtyOrdered: "10", QtyPicked: "7", UOM: "EA", ShortReason: ShortReasonNotInYard, ShortNote: "a\nb\r\nc\td"}
+	if _, err := d.svc.RecordPick(context.Background(), id, d.user, []PickedLineInput{in}); err != nil {
+		t.Fatalf("the direct door keeps a multi line note: %v", err)
 	}
 }
 
