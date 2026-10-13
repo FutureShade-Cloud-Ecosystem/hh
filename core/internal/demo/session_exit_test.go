@@ -96,7 +96,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, eight flows, the contract's three
+	// The flow listing: the closed table, nine flows, the contract's three
 	// fields, the labels the entry page renders. The yard-manager flow
 	// (Manager Home's first per-role landing) shows on the front door's
 	// picker, never on the till's own entry.

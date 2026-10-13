@@ -131,6 +131,12 @@ test("a delivery moves to another day in the customer's view, and the sheet chec
 test("a whole truck cancels and its loads come back to the staging lane", async ({ page, request }) => {
   await openBoard(page, request);
   await truck(page, "RUN-PLM-2").getByRole("button", { name: "Cancel truck" }).click();
+  // One tap does not cancel: the sheet asks, and Keep it leaves the truck as it was.
+  await expect(truck(page, "RUN-PLM-2").locator("[data-sheet='cancel-run']")).toContainText("A cancelled truck stays cancelled");
+  await truck(page, "RUN-PLM-2").getByRole("button", { name: "Keep it" }).click();
+  await expect(truck(page, "RUN-PLM-2")).toHaveAttribute("data-run-status", "PLANNED");
+  await truck(page, "RUN-PLM-2").getByRole("button", { name: "Cancel truck" }).click();
+  await truck(page, "RUN-PLM-2").getByRole("button", { name: "Cancel the truck" }).click();
   await expect(page.locator("[data-notice]")).toContainText("RUN-PLM-2 cancelled");
   await expect(truck(page, "RUN-PLM-2")).toHaveCount(0);
   await expect(page.locator("[data-staging-count]")).toHaveText("4");
@@ -344,4 +350,14 @@ test("weights read in pounds and tons for the San Diego yard", async ({ page, re
   await openBoard(page, request);
   await expect(page.locator("main")).not.toContainText(" kg");
   await expect(truck(page, "RUN-PLM-3").locator("[data-gauge='weight']")).toContainText("3,351 of 2,425 lb");
+});
+
+test("a reopen the role gate refuses with a bare Forbidden reads as who may do it, not as one word", async ({ page, request }) => {
+  await openBoard(page, request);
+  await stubPost(request, "refuse", { status: 403, error: "Forbidden", path: "/reopen" });
+  await truck(page, "RUN-PLM-1").getByRole("button", { name: "Reopen truck" }).click();
+  await truck(page, "RUN-PLM-1").locator("[data-field='reason']").fill("A better fit turned up");
+  await truck(page, "RUN-PLM-1").getByRole("button", { name: "Reopen it" }).click();
+  await expect(page.locator("[data-sheet-error]")).toHaveText("That is not yours to do. The Logistics Manager or a Branch Manager can.");
+  await expect(page.locator("[data-sheet-error]")).not.toHaveText("Forbidden");
 });

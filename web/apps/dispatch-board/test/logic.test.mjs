@@ -357,7 +357,10 @@ test("a refusal reads in words by status, and a transport error says the board c
   assert.match(refusalWords("The reopen", "", 401), /session ended/);
   assert.equal(refusalWords("The reopen", "dispatch: only a dispatch manager can reopen a committed load", 403), "only a dispatch manager can reopen a committed load");
   assert.equal(refusalWords("Auto assign", "dispatch: automatic load assignment is part of the Pro module, build the loads here in the meantime", 501), "automatic load assignment is part of the Pro module, build the loads here in the meantime");
-  assert.match(refusalWords("The reopen", "", 403), /dispatch manager can/);
+  assert.match(refusalWords("The reopen", "", 403), /Logistics Manager or a Branch Manager can/);
+  assert.match(refusalWords("The reopen", "Forbidden", 403), /Logistics Manager or a Branch Manager can/, "the gate's bare word is no sentence");
+  assert.match(refusalWords("The reopen", "forbidden", 403), /Logistics Manager or a Branch Manager can/);
+  assert.equal(refusalWords("The reopen", "Forbidden", 409), "Forbidden", "only a 403 gets the fallback");
   assert.match(refusalWords("The reopen", "", 500), /nothing changed/);
   assert.match(refusalWords("The reopen", "internal error", 500), /nothing changed/, "a server fault is not shown as the server's raw word");
 });

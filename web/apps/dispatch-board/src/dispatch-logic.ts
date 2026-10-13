@@ -222,14 +222,6 @@ export function gaugeLabel(kind: string, used: number | null | undefined, capaci
   return `${kind} ${fmtNum(used)} of ${fmtNum(capacity as number)} ${unit}, ${bandWord(band).toLowerCase()}`;
 }
 
-/**
- * fmtMoney formats a figure the core sent. It never computes one. An absent figure is not
- * drawn at all by the screens; this is only called with a number.
- */
-export function fmtMoney(cents: number): string {
-  return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
-
 // ---- requested and committed --------------------------------------------------------------------
 
 /** The pill's word. A requested date is an ask and must never read like a promise. */
@@ -745,9 +737,11 @@ export function refusalWords(what: string, error: string, status: number | null)
   if (status === 401) return "Your session ended. Sign in again from the front door.";
   if (status === 501) return plainSentence(error);
   if (status >= 500) return `The server could not finish. ${what} did not go through, and nothing changed.`;
-  const sentence = plainSentence(error);
+  // The role gate answers a bare "Forbidden" where the service would have named who may do it, so a bare
+  // one is no sentence at all: say who may (the core's capability flag and its gate can disagree).
+  const sentence = status === 403 && /^forbidden\.?$/i.test(plainSentence(error)) ? "" : plainSentence(error);
   if (sentence !== "") return sentence;
-  if (status === 403) return "That is not yours to do. A dispatch manager can.";
+  if (status === 403) return "That is not yours to do. The Logistics Manager or a Branch Manager can.";
   return `${what} was refused.`;
 }
 

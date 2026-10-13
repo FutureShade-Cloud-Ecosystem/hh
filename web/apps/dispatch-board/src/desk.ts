@@ -643,6 +643,10 @@ export class DispatchDesk {
         if (!ok) this.#restoreSheet(sheet);
         return;
       }
+      case "cancel-run": {
+        await this.#runAction(sheet.id, "cancel");
+        return;
+      }
       case "fail-stop": {
         if (reason.trim() === "") return this.#sheetRefused("Say what stopped this delivery. The yard reads it.");
         await this.#advance(sheet.id, "FAILED", reason.trim());

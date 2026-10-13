@@ -4,7 +4,7 @@
 // pair of the box's flow table, which mints more logins than any one app
 // offers cards for) wearing the ported token sheet's surfaces and borders,
 // an icon from the ported icon registry and one line of what the role opens,
-// then the other five roles of the decided matrix as coming: shown in a
+// then the other four roles of the decided matrix as coming: shown in a
 // ruled card, labelled Coming, and not tappable, because their screens do not
 // exist in this release (the roles with a live card at the front door are
 // not listed here). When the flows route answers nothing (a default-build

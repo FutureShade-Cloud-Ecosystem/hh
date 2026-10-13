@@ -73,7 +73,7 @@ export type Axis = "TRUCK" | "STATUS";
 
 /** An inline form open on one card: a date and a reason, a reason alone, or a new truck. */
 export interface Sheet {
-  readonly kind: "reschedule-stop" | "reschedule-run" | "reopen-stop" | "reopen-run" | "fail-stop" | "new-run";
+  readonly kind: "reschedule-stop" | "reschedule-run" | "reopen-stop" | "reopen-run" | "fail-stop" | "new-run" | "cancel-run";
   readonly id: string;
   /** The sheet's own refusal, shown beside its own button. */
   readonly error: string;
@@ -196,7 +196,9 @@ function sheetPanel(sheet: Sheet, model: BoardModel): TemplateResult {
             ? "Reopen this truck"
             : sheet.kind === "fail-stop"
               ? "Why could this not be delivered?"
-              : "Open a truck for this day";
+              : sheet.kind === "cancel-run"
+                ? "Cancel this truck?"
+                : "Open a truck for this day";
   const prompt =
     sheet.kind === "fail-stop"
       ? "What stopped this delivery"
@@ -210,7 +212,9 @@ function sheetPanel(sheet: Sheet, model: BoardModel): TemplateResult {
       ? "Record it"
       : sheet.kind === "new-run"
         ? "Open truck"
-        : dated
+        : sheet.kind === "cancel-run"
+          ? "Cancel the truck"
+          : dated
           ? "Move it"
           : "Reopen it";
   return html`
@@ -237,11 +241,13 @@ function sheetPanel(sheet: Sheet, model: BoardModel): TemplateResult {
       ${dated
         ? html`<label>New delivery day<input class="control" type="date" data-field="to_date" /></label>`
         : nothing}
-      <label>${prompt}<input class="control" type="text" maxlength="400" data-field="reason" /></label>
+      ${sheet.kind === "cancel-run"
+        ? html`<p class="small">A cancelled truck stays cancelled. Every ready load on it goes back to the staging lane.</p>`
+        : html`<label>${prompt}<input class="control" type="text" maxlength="400" data-field="reason" /></label>`}
       ${sheet.error !== "" ? html`<p class="alert alert-error" role="alert" data-sheet-error>${sheet.error}</p>` : nothing}
       <div class="actions">
         <button type="button" class="btn btn-primary" data-action="sheet-submit" ?disabled=${model.busy}>${submit}</button>
-        <button type="button" class="btn btn-secondary" data-action="sheet-cancel">Cancel</button>
+        <button type="button" class="btn btn-secondary" data-action="sheet-cancel">${sheet.kind === "cancel-run" ? "Keep it" : "Cancel"}</button>
       </div>
     </form>
   `;
@@ -475,7 +481,7 @@ function truckLane(model: BoardModel, view: DispatchLoadBoardView, row: Dispatch
           : nothing}
         ${run.status === "PLANNED" && editable
           ? html`<button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="reschedule-run" data-run-id=${run.id}>Move truck date</button>
-              <button type="button" class="btn btn-secondary small-btn" data-action="cancel-run" data-run-id=${run.id} ?disabled=${model.busy}>Cancel truck</button>`
+              <button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="cancel-run" data-run-id=${run.id} ?disabled=${model.busy}>Cancel truck</button>`
           : nothing}
         ${row.commit.committed && row.commit.can_reopen && run.status === "PLANNED"
           ? html`<button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="reopen-run" data-run-id=${run.id}>Reopen truck</button>`
@@ -484,7 +490,7 @@ function truckLane(model: BoardModel, view: DispatchLoadBoardView, row: Dispatch
           ? html`<button type="button" class="btn btn-secondary small-btn" data-action="clear-reopen" data-run-id=${run.id} ?disabled=${model.busy}>Clear the reopen marker</button>`
           : nothing}
       </div>
-      ${sheetFor(model, ["reopen-run", "reschedule-run"], run.id)}
+      ${sheetFor(model, ["reopen-run", "reschedule-run", "cancel-run"], run.id)}
     </section>
   `;
 }
@@ -704,7 +710,7 @@ function dayRun(model: BoardModel, day: DispatchBoard, run: DispatchRun): Templa
         ${run.status === "PLANNED"
           ? html`<button type="button" class="btn btn-primary small-btn" data-action="dispatch-run" data-run-id=${run.id}
                 ?disabled=${model.busy}>Dispatch</button>
-              <button type="button" class="btn btn-secondary small-btn" data-action="cancel-run" data-run-id=${run.id} ?disabled=${model.busy || !editable}>Cancel truck</button>`
+              <button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="cancel-run" data-run-id=${run.id} ?disabled=${model.busy || !editable}>Cancel truck</button>`
           : nothing}
         ${run.status === "DISPATCHED"
           ? html`<button type="button" class="btn btn-secondary small-btn" data-action="complete-run" data-run-id=${run.id} ?disabled=${model.busy}>Complete run</button>`
@@ -730,7 +736,7 @@ function dayRun(model: BoardModel, day: DispatchBoard, run: DispatchRun): Templa
         ? html`<div class="col did-not" data-col="DID_NOT_GO"><h4>Did not go<span class="count">${didNot.length}</span></h4>
             <ul class="loads">${didNot.map((s) => dayStopCard(model, s, day.runs))}</ul></div>`
         : nothing}
-      ${sheetFor(model, ["reopen-run", "reschedule-run"], run.id)}
+      ${sheetFor(model, ["reopen-run", "reschedule-run", "cancel-run"], run.id)}
     </section>
   `;
 }

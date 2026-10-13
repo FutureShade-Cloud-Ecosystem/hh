@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -357,12 +358,28 @@ func (s *Service) CreateDriver(ctx context.Context, d Driver) (string, error) {
 	if d.Name == "" {
 		return "", httpx.BadRequestf("dispatch: a driver needs a name")
 	}
+	if err := checkDriverUserID(d.UserID); err != nil {
+		return "", err
+	}
 	id, err := s.repo.InsertDriver(ctx, d)
 	if err != nil {
 		return "", err
 	}
 	s.record(ctx, audit.SensitiveAccess{Action: "DISPATCH_DRIVER_CREATED", EntityType: "dispatch_driver", EntityID: id})
 	return id, nil
+}
+
+// driverUserIDShape is a canonical uuid: the repository casts the linked login to one, and a cast that
+// fails is a 500, so the shape is refused in words first.
+var driverUserIDShape = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// checkDriverUserID answers a 400 in words for a linked login that is not a user id. Empty is a
+// driver with no login. Whether the id names a real staff login is not checked here (a backlog item).
+func checkDriverUserID(userID string) error {
+	if userID == "" || driverUserIDShape.MatchString(userID) {
+		return nil
+	}
+	return httpx.BadRequestf("dispatch: user_id must be a user id, or left out for a driver with no login")
 }
 
 // UpdateDriver rewrites a driver's registry facts: the fields the create takes (including the login
@@ -390,6 +407,9 @@ func (s *Service) UpdateDriver(ctx context.Context, driverID string, in Driver) 
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" {
 		return Driver{}, httpx.BadRequestf("dispatch: a driver needs a name")
+	}
+	if err := checkDriverUserID(in.UserID); err != nil {
+		return Driver{}, err
 	}
 	updated, err := s.repo.UpdateDriver(ctx, driverID, in)
 	if err != nil {
