@@ -37,8 +37,13 @@ test("a quantity keeps the core's decimal string and appends its unit", () => {
 });
 
 test("a day reads in the dealer's own zone, not UTC", () => {
-  // 2000-03-02 03:30 UTC is still the evening of March 1 in San Diego.
-  assert.equal(houseDay("2000-03-02T03:30:00Z"), "Mar 1");
+  // 03:30 UTC is the evening of the day before in San Diego in every season (UTC minus seven or eight hours),
+  // so the dealer's day is the UTC day less one.
+  const moment = new Date();
+  moment.setUTCHours(3, 30, 0, 0);
+  const utcDayBefore = new Date(moment.getTime() - 86_400_000);
+  const expected = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", month: "short", day: "numeric" }).format(utcDayBefore);
+  assert.equal(houseDay(moment.toISOString()), expected);
   assert.equal(houseDay("not a date"), NO_FIGURE);
   assert.equal(houseDay(null), NO_FIGURE);
 });

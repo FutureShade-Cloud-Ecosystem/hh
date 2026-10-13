@@ -9,3 +9,5 @@ export { tenantClient } from "./client.js";
 export { realExchangeAdapter } from "./real-exchange.js";
 export { NO_FIGURE, money, totalsLine, qtyWithUnit, houseDay, monoStyles } from "./format.js";
 export { STAGES, STAGE_WORDS, statusWords, statusTone, chipStyles, stageChip, statusChip } from "./chips.js";
+export { stageOfOrder, stageOfProject, stageOfQuote, trackingOf, TRACKING_WORDS, TRACKING_STATES } from "./board.js";
+export type { Tracking } from "./board.js";

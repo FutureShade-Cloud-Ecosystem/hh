@@ -23,8 +23,8 @@ function me(role, over = {}) {
     role,
     status: "active",
     notification_prefs: {},
-    created_at: "2000-01-01T00:00:00Z",
-    updated_at: "2000-01-01T00:00:00Z",
+    created_at: new Date(NOW).toISOString(),
+    updated_at: new Date(NOW).toISOString(),
     capabilities: Object.fromEntries(all.map((c) => [c, held.includes(c)])),
     ...over,
   };
