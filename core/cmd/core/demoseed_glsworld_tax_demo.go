@@ -2,31 +2,36 @@
 
 // demoseed_glsworld_tax_demo.go, the demo world seam's money and tax words: the demo dealer sells
 // in San Diego County, so it charges the combined California sales tax, 7.75 percent, in US
-// dollars. This is configuration and seed data only; no shared money path moves. The default
-// build's side is nothing at all (the build gate's proof is demoseed_glsworld_build_test.go).
+// dollars, on the Pacific business day. This is configuration and seed data only; no shared money
+// path moves. The default build's side is nothing at all (the build gate's proof is
+// demoseed_glsworld_build_test.go).
 //
 // TWO PARTS.
 //
 //  1. init() sets the rate the seed prices its invoices, orders and quotes at, before any plan is
 //     built, so the seeded documents carry the tax the engine writes at the configured rate and
 //     the books tie out. The shared arithmetic (taxOn) is untouched.
-//  2. glsConvergeSalesTax moves the rows the MIGRATIONS plant onto the same rate and the same
-//     words: the settings the quote header and the receipt read, the engine's standard and manual
-//     review rows, the status card profiles (retired) and the ledger account names. It runs from
+//  2. glsConvergeSalesTax gives the demo dealer its own configuration and rows: the dealer
+//     configuration through the settings module's seam (jurisdiction CA, USD, America/Los_Angeles,
+//     775), the engine's California standard and manual review rows (their own reason code, the
+//     Ontario rows left exactly as the migrations plant them and inert for this dealer), the
+//     status card profiles retired and the ledger account names made neutral. It runs from
 //     glsRenamePlanted, so it is inside the apply's transaction and only while the world is being
-//     built, never on a built box. Each update names the value it replaces, by key, code or
-//     reason, so a row a person changed is left alone and a second run matches nothing. Nothing is
+//     built, never on a built box. Each rename names the value it replaces, by code and old name,
+//     so a row a person changed is left alone and a second run matches nothing. Nothing is
 //     deleted and no code, id or posting rule moves.
 //
-// The relief rows (the reduced and zero rates behind evidence) stay as the migrations plant them.
-// They bind only when evidence is attached, and the counter's adapters pin evidence to false, so a
-// relief reason rung at the counter binds the standard 775. They are inert here, not removed.
+// The relief rows (the reduced and zero rates behind evidence) stay as the migrations plant them
+// under the Ontario jurisdiction. This dealer's jurisdiction has none, so a relief reason rung at
+// the counter falls back to the dealer's own standard 775.
 package main
 
 import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
 // glsSalesTaxBps is the San Diego County combined rate, in basis points.
@@ -37,14 +42,17 @@ const glsSalesTaxNote = "San Diego County combined sales tax rate."
 
 func init() { hstBps = glsSalesTaxBps }
 
-// glsSetting is a settings key whose planted value moves: the update fires only on the planted one.
-type glsSetting struct{ key, from, to string }
-
-var glsSettings = []glsSetting{
-	{"currency", `"CAD"`, `"USD"`},
-	{"tax_region", `"ON"`, `"CA"`},
-	{"hst_rate_bps", `1300`, `775`},
+// glsDealerConfig is the demo dealer's own configuration: the jurisdiction the engine binds by, US
+// dollars, the Pacific business day and the flat rate the quote header and receipt fall back to.
+var glsDealerConfig = settings.DealerConfig{
+	Currency:     "USD",
+	TaxRegion:    "CA",
+	BusinessZone: "America/Los_Angeles",
+	HSTRateBps:   glsSalesTaxBps,
 }
+
+// glsDealerRates are the demo dealer's rate rows, on its own jurisdiction and reason codes.
+var glsDealerRates = []string{"STD_SALES_TAX", "MANUAL_TAX_REVIEW"}
 
 // glsAccount is a ledger account whose planted name moves; code and exact old name guard it.
 type glsAccount struct{ code, from, to string }
@@ -78,20 +86,17 @@ const glsProfileNote = "Retired. This dealer holds no status card exemption."
 // currency, rate and words, and returns how many rows it changed.
 func glsConvergeSalesTax(ctx context.Context, tx glsTx, now time.Time) (int, error) {
 	changed := 0
-	for _, s := range glsSettings {
-		tag, err := tx.Exec(ctx,
-			`UPDATE system_settings SET value = $3::jsonb, updated_at = $4 WHERE key = $1 AND value = $2::jsonb`,
-			s.key, s.from, s.to, now)
-		if err != nil {
-			return changed, fmt.Errorf("demoseed: setting %s: %w", s.key, err)
-		}
-		changed += int(tag.RowsAffected())
+	if err := settings.WriteDealerConfigTx(ctx, tx, glsDealerConfig); err != nil {
+		return changed, fmt.Errorf("demoseed: the dealer configuration: %w", err)
 	}
-	for _, reason := range []string{"STD_ON_HST_13", "MANUAL_TAX_REVIEW"} {
+	changed += 4
+	for _, reason := range glsDealerRates {
+		// Guarded by existence: a second run, or a row a person already planted, matches nothing.
 		tag, err := tx.Exec(ctx,
-			`UPDATE tax_rates SET rate_bps = $2, notes = $3, updated_at = $4
-			  WHERE jurisdiction = 'ON' AND reason_code = $1 AND rate_bps = 1300 AND effective_to IS NULL`,
-			reason, glsSalesTaxBps, glsSalesTaxNote, now)
+			`INSERT INTO tax_rates (jurisdiction, reason_code, rate_bps, notes)
+			 SELECT $1, $2, $3, $4
+			  WHERE NOT EXISTS (SELECT 1 FROM tax_rates WHERE jurisdiction = $1 AND reason_code = $2)`,
+			glsDealerConfig.TaxRegion, reason, glsSalesTaxBps, glsSalesTaxNote)
 		if err != nil {
 			return changed, fmt.Errorf("demoseed: tax rate %s: %w", reason, err)
 		}

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -183,20 +184,19 @@ func (r *DealerConfigReader) DealerConfig(ctx context.Context) (DealerConfig, er
 	}), nil
 }
 
-// WriteDealerConfig validates and upserts the four keys in one transaction: the seam the demo
-// build's first build and a dealer admin surface write through.
-func (r *DealerConfigReader) WriteDealerConfig(ctx context.Context, c DealerConfig) error {
+// DealerConfigExecer is the one write capability WriteDealerConfigTx needs: pgx.Tx and the demo
+// build's apply transaction both satisfy it.
+type DealerConfigExecer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// WriteDealerConfigTx validates and upserts the four keys on the caller's transaction, the seam the
+// demo build's first build writes the dealer through so the configuration commits or rolls back with
+// the rest of the build.
+func WriteDealerConfigTx(ctx context.Context, tx DealerConfigExecer, c DealerConfig) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	if r == nil || r.pool == nil {
-		return errors.New("settings: reader has no database pool")
-	}
-	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 	for _, kv := range []struct {
 		key string
 		val any
@@ -216,6 +216,26 @@ func (r *DealerConfigReader) WriteDealerConfig(ctx context.Context, c DealerConf
 			 WHERE system_settings.value IS DISTINCT FROM EXCLUDED.value`, kv.key, string(b)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// WriteDealerConfig validates and upserts the four keys in one transaction: the seam a dealer admin
+// surface writes through.
+func (r *DealerConfigReader) WriteDealerConfig(ctx context.Context, c DealerConfig) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	if r == nil || r.pool == nil {
+		return errors.New("settings: reader has no database pool")
+	}
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := WriteDealerConfigTx(ctx, tx, c); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }
