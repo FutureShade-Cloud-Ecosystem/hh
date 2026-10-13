@@ -48,6 +48,8 @@ export interface Page {
   touch(): void;
   /** Fields the modal's inputs start with, assigned after render (the position gate refuses every value binding). */
   openModal(testid: string, build: (page: Page) => TemplateResult, fields?: Record<string, string>): void;
+  /** Field values to assign after the next render (a restored search, a prefilled modal field). */
+  assign(fields: Record<string, string>): void;
   closeModal(): void;
 }
 

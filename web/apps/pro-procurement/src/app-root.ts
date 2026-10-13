@@ -88,6 +88,8 @@ export class ProProcurementApp extends HHElement {
       }
       .result .name { flex: 1; }
       .line-actions { gap: var(--hh-s-8); }
+      .result.chosen { border-color: var(--hh-focus-ring); background: var(--hh-widget); font-weight: 600; }
+      .facts { display: flex; flex-direction: column; gap: var(--hh-s-8); margin-top: var(--hh-s-12); font-size: 0.875rem; }
       @media (min-width: 64rem) {
         .board-columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
       }
@@ -103,7 +105,7 @@ export class ProProcurementApp extends HHElement {
   #heading = "";
   #notice: { kind: "ok" | "alert"; words: string } | null = null;
   #modal: { testid: string; build: (page: Page) => TemplateResult } | null = null;
-  #modalFields: Record<string, string> | null = null;
+  #pendingAssign: Record<string, string> | null = null;
   #busy = false;
   #dealerName = "";
   #signinMessage = "";
@@ -143,9 +145,13 @@ export class ProProcurementApp extends HHElement {
       this.requestUpdate();
     },
     touch: () => this.requestUpdate(),
+    assign: (fields) => {
+      this.#pendingAssign = { ...(this.#pendingAssign ?? {}), ...fields };
+      this.requestUpdate();
+    },
     openModal: (testid, build, fields) => {
       this.#modal = { testid, build };
-      this.#modalFields = fields ?? null;
+      if (fields !== undefined) this.#pendingAssign = { ...(this.#pendingAssign ?? {}), ...fields };
       this.requestUpdate();
     },
     closeModal: () => this.#closeModal(),
@@ -159,7 +165,7 @@ export class ProProcurementApp extends HHElement {
     this.#route = route;
     this.#notice = null;
     this.#modal = null;
-    this.#modalFields = null;
+    this.#pendingAssign = null;
     this.#busy = false;
     this.#view = { kind: "loading" };
     this.#data = null;
@@ -170,7 +176,6 @@ export class ProProcurementApp extends HHElement {
 
   #closeModal(): void {
     this.#modal = null;
-    this.#modalFields = null;
     this.#busy = false;
     this.#page.busy = false;
     this.requestUpdate();
@@ -375,11 +380,14 @@ export class ProProcurementApp extends HHElement {
       signin.message = this.#signinMessage;
       signin.busy = this.#busy;
     }
-    if (this.#modalFields !== null) {
-      // A modal's inputs start where its state says, once: after this they are
-      // the person's, and a re-render never rewrites what they typed.
-      const fields = this.#modalFields;
-      this.#modalFields = null;
+    if (this.#pendingAssign !== null && this.#view.kind === "ready") {
+      // Inputs start where the state says, once, and only once the view they
+      // belong to is on the page: an assign that landed during a loading
+      // render would find no field and be lost, so it waits here. After this
+      // the fields are the person's, and a re-render never rewrites what they
+      // typed.
+      const fields = this.#pendingAssign;
+      this.#pendingAssign = null;
       for (const [name, value] of Object.entries(fields)) {
         const el = this.#page.field(name);
         if (el !== null) el.value = value;
