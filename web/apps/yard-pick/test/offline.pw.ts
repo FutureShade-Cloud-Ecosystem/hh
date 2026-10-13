@@ -230,3 +230,32 @@ test("offline, the pick record and a shortage report drain in order and land cle
   await page.getByRole("button", { name: "Back to the queue" }).click();
   await expect(page.getByRole("button", { name: /^Review [1-9]/ })).toHaveCount(0);
 });
+
+test("offline, a shortage reported before the record does not make the record come back superseded", async ({ page, request }) => {
+  await loadBoard(page);
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
+  await platformWord(page, false, "You're offline");
+  // The picker reports the shortage first: on the server it moves the task's seq.
+  await page.getByRole("button", { name: "Report a shortage" }).click();
+  await page.getByLabel("How many are short").fill("4");
+  await page.getByRole("radio", { name: "Not enough on the yard" }).click();
+  await page.getByRole("button", { name: "Report short pick" }).click();
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
+  // Then records the pick.
+  await page.locator("[data-line]", { hasText: "Flagstone" }).locator(".line-row").click();
+  await page.getByRole("button", { name: "Add one on" }).click();
+  await page.getByRole("button", { name: "Add one on" }).click();
+  await page.getByRole("radio", { name: "Damaged stock" }).click();
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Save pick" }).click();
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
+  await platformWord(page, true);
+  await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
+  await expect(page.locator("[data-pick-pending]")).toHaveCount(0);
+  // The record applied: the rep was told, and no card came back for the device's own report.
+  const notice = (await repNotices(request)).find((n) => n.topic === "yard.short_pick" && n.order_no === "SO-1041");
+  expect(notice?.body).toContain("44.0000 SQFT on backorder");
+  await page.getByRole("button", { name: "Back to the queue" }).click();
+  await expect(page.getByRole("button", { name: /^Review [1-9]/ })).toHaveCount(0);
+});

@@ -1052,7 +1052,12 @@ function syncApplyShortageCreate(op) {
   };
   world.shortages.push(shortage);
   const t = findTask(shortage.task_id);
-  if (t) t.updated_at = new Date().toISOString();
+  if (t) {
+    // The core's create bumps the parent task's pick seq (the task projection
+    // carries the shortage counts), so the task row re-appears in the pull.
+    t.updated_at = new Date().toISOString();
+    syncTouch("pick_tasks", t.id);
+  }
   syncTouch("shortages", id);
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("shortages", id) };
 }

@@ -466,6 +466,9 @@ export class YardOffline {
       id,
       JSON.stringify(data),
     ]);
+    // The report moves the task row's seq on the server: later writes to the
+    // task go blind until a pull has carried that seq.
+    this.#markWritten(`pick_tasks:${taskId}`);
     this.requestSync();
     return { ok: true, value: toShortage(data) };
   }
@@ -547,7 +550,15 @@ export class YardOffline {
     if (input.row !== null) {
       const key = `${input.scope}:${input.row.id}`;
       const pending = await this.store.outbox.pending();
-      const queued = pending.some((row) => row.scope === input.scope && row.entityId === input.row!.id);
+      // A shortage this device queued for the task moves the task row's seq on
+      // the server too (the report bumps its pick seq so the pull carries the
+      // counts), so it counts as a write to the task: a base named before it
+      // would come back superseded for the device's own report.
+      const queued = pending.some(
+        (row) =>
+          (row.scope === input.scope && row.entityId === input.row!.id) ||
+          (input.scope === "pick_tasks" && row.scope === "shortages" && row.payload["task_id"] === input.row!.id),
+      );
       // The row is read again here, after the checks: a pull that landed since
       // the caller read it moved its seq, and a base named from the older read
       // would meet the device's own earlier write as a conflict.

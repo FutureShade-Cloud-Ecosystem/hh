@@ -295,3 +295,12 @@ test("pick_tasks update: picked is its own operation (the sync doors CI leg)", a
   const ok = await push("pick_tasks", "update", { id, picked: [{ ...line, qty_picked: "0", short_reason: "NOT_IN_YARD", short_note: "two\nlines\tand\r\nmore" }] });
   assert.equal(ok.status, "applied", JSON.stringify(ok));
 });
+
+test("shortages create: the parent task's seq moves, as the core's create bumps the task's pick seq", async () => {
+  await resetStub();
+  const { id } = await aTaskWithLines();
+  const before = (await pullRow("pick_tasks", id)).seq;
+  const answer = await push("shortages", "create", { id: "3a000000-0000-4000-9000-0000000fbb01", task_id: id, order_line_no: 1, description: "Flagstone", qty_short: "2", uom: "SQFT" });
+  assert.equal(answer.status, "applied", JSON.stringify(answer));
+  assert.ok((await pullRow("pick_tasks", id)).seq > before, "the task row re-appears in the pull with the counts");
+});

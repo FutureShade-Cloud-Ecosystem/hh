@@ -559,3 +559,25 @@ test("the shortage report's payload drops the stamped legs the core refuses", as
   await layer.cycle();
   assert.deepEqual(payloadOffenders(server.requests), []);
 });
+
+test("a record queued behind this device's own shortage report goes blind: the report moves the task row's seq on the server, and a base named before it would come back superseded", async () => {
+  const { layer, server } = await rig();
+  server.setOffline(true);
+  const reported = await layer.reportShortage(TASK, { orderLineNo: 2, description: "Polymeric sand, grey, 18 kg", qtyShort: "2", uom: "BAG", note: "" });
+  assert.equal(reported.ok, true);
+  // The picker takes their time: the cycle the report asked for has come to rest before the record.
+  await layer.runner.settled();
+  const recorded = await layer.recordLines(TASK, [recordLine(), SHORT]);
+  assert.equal(recorded.ok, true);
+  await layer.runner.settled();
+  const claimed = await layer.claim(TASK);
+  assert.equal(claimed.ok, true);
+  const queued = await layer.store.outbox.pending();
+  for (const op of queued.filter((row) => row.scope === "pick_tasks")) {
+    assert.equal(op.baseSeq, null, `the ${Object.keys(op.payload).filter((k) => k !== "id").join(",")} write names no base after the report`);
+  }
+  server.setOffline(false);
+  await layer.cycle();
+  assert.equal(await layer.waiting(), 0);
+  assert.equal((await layer.openCards()).length, 0, "no server wins card for the device's own earlier report");
+});
