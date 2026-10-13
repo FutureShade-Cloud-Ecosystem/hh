@@ -20,6 +20,7 @@ const LIENS = "test/liens.pw.ts";
 const COMPLIANCE = "test/compliance.pw.ts";
 const BANKREC = "test/bankrec.pw.ts";
 const FRONT_DOOR = "../front-door/test/acceptance/front-door.pw.ts";
+const TAX = "test/tax.pw.ts";
 const CORE = "../../../core/cmd/core/";
 
 const PAYREC_CARD = { file: CARD, test: "the front door's Payables and Receivables card opens the Money Desk on the receivables landing" };
@@ -140,7 +141,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "bare-array": [{ file: LEDGER, test: "a bare array where the contract says a page is refused, never half read" }],
   "phone-decision": [{ file: LEDGER, test: "on a phone a chosen request brings its decision into view" }],
   "liens-areas": [
-    { file: LIENS, test: "the General Manager's area switch holds Liens and Compliance, and the controller's holds all five" },
+    { file: LIENS, test: "the General Manager's area switch holds Liens and Compliance, and the controller's holds all six" },
     { file: LIENS, test: "Payables and Receivables reads the jobs and the calendar and is offered no write" },
     { file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of eight" },
   ],
@@ -271,4 +272,29 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   ],
   "phone-sideways": [{ file: RECEIVABLES, test: "on a phone no screen scrolls the page sideways" }],
   "empty-world": [{ file: RECEIVABLES, test: "the empty world: each screen says so in words" }],
+  "tax-area": [
+    { file: TAX, test: "the controller's Tax area lists the rate table in California words, and Payables and Receivables does not have it" },
+    { file: "test/no-tax-money.test.mjs", source: "no screen word names a Canadian tax or currency" },
+  ],
+  "tax-rates": [{ file: TAX, test: "the controller's Tax area lists the rate table in California words, and Payables and Receivables does not have it" }],
+  "tax-rate-add": [{ file: TAX, test: "a rate is added through a confirm step that names what changes, and a wrong one sends nothing" }],
+  "tax-rate-refused": [{ file: TAX, test: "a rate the gate refuses, a server fault and a lost answer are each said in words, and a lost answer rereads the table" }],
+  "tax-queue": [{ file: TAX, test: "the review queue lists what waits, the tab counts it, and a profile is put in force through a confirm step" }],
+  "tax-profile": [{ file: TAX, test: "a new profile is saved, an existing one edited, and a wrong one is held or refused in words without the core's old ones" }],
+  "tax-certificates": [
+    { file: TAX, test: "the certificates on file: masked numbers only, newest first, opened, checked against their dates and downloaded" },
+    { file: TAX, test: "the certificates filter by order, hold an id that is not an id, and say when none is on file" },
+  ],
+  "tax-capture": [{ file: TAX, test: "a certificate is recorded with its number masked and thrown away, and what the profile forces is held before anything is sent" }],
+  "tax-settings": [{ file: TAX, test: "the settings read the company wide row, ask before a change, and keep the two switches that are not available off" }],
+  "tax-recon": [{ file: TAX, test: "the reconciliation ties out one month, is off in another in words, and holds a year that is not a year" }],
+  "tax-recompute": [{ file: TAX, test: "the recompute asks first, adds once, and a second run says nothing new; a bad range is held" }],
+  "tax-states": [
+    { file: TAX, test: "while the tables load the screen says so, a failed load offers Try again, and a wall on the read is named" },
+    { file: TAX, test: "an empty world says so on each tab, and a list that is not the shape the core sends is refused, never half read" },
+  ],
+  "tax-phone": [
+    { file: TAX, test: "on a phone every tab becomes cards and none scrolls the page sideways" },
+    { file: TAX, test: "every control works from the keyboard and focus lands on the confirm step" },
+  ],
 };

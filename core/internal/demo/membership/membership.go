@@ -38,13 +38,20 @@ func (s *Source) OrgMember(_ context.Context, platformUserID, orgSlug string) (b
 	if orgSlug != flows.OrgSlug {
 		return false, nil
 	}
-	_, ok := flows.ByPlatformUserID(platformUserID)
-	return ok, nil
+	a, ok := flows.ByPlatformUserID(platformUserID)
+	// A contractor persona is a tenant principal, never a staff member:
+	// the staff leg answers no for it, whatever token it carries.
+	return ok && a.Class() == flows.ClassStaff, nil
 }
 
-// TenantOrgs answers empty for every subject: the demo issues staff
-// bearers only, and the gate's tenant leg fails closed on an empty org
-// list, so a demo token can never ride the tenant path.
-func (s *Source) TenantOrgs(_ context.Context, _ string) ([]string, error) {
-	return nil, nil
+// TenantOrgs answers the demo org for a contractor persona, the one
+// tenant team its portal user holds, and empty for every other subject: a
+// staff account has no tenant team, so a staff subject can never ride the
+// tenant path, and the gate's tenant leg fails closed on an empty list.
+func (s *Source) TenantOrgs(_ context.Context, platformUserID string) ([]string, error) {
+	a, ok := flows.ByPlatformUserID(platformUserID)
+	if !ok || a.Class() != flows.ClassTenant {
+		return nil, nil
+	}
+	return []string{flows.OrgSlug}, nil
 }

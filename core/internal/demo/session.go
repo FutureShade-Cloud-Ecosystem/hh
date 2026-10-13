@@ -27,6 +27,16 @@
 // always exists by the time its credential does, and a burst leaves
 // neither.
 //
+// A contractor flow (the Pro apps' sign in, class tenant) follows the same
+// order with the portal resolver in the staff resolver's place: the live
+// portal_users row for the flow's platform user in the flow's contractor
+// account must hold the flow's portal role, and the token is a tenant
+// class bearer whose tenant claim is that account's id. Contractor
+// personas have no branch reach: the tenant leg scopes by org and by
+// contractor account only. This is the demo mode path; the auth cycle's
+// persona route (console mode) takes contractor personas through the same
+// closed table and the same MintTenant seam.
+//
 // Everything after the token is the real path: the token is an ordinary
 // staff bearer the unchanged verifier classifies, and the org, the role
 // grants and the dealer's role configuration hold it per request exactly
@@ -70,6 +80,23 @@ type StaffResolver interface {
 	ResolveStaff(ctx context.Context, platformUserID, orgID string) (identity.StaffAuthority, bool, error)
 }
 
+// TenantMinter is the narrow seam the module needs of the demo issuer for
+// a contractor flow (issuer.Issuer satisfies it): sign one tenant class
+// token for one portal user's platform user id and the contractor account
+// id the flow table names. Neither value is ever taken from the request.
+type TenantMinter interface {
+	MintTenant(subject, tenantID string) (string, error)
+}
+
+// PortalResolver is the narrow seam the module needs of the core's portal
+// role resolver (identity.PortalRoleResolver satisfies it): the live
+// answer to "what role does this portal user hold in this contractor
+// account", read from portal_users per call. A contractor mint trusts it,
+// never the flow table alone.
+type PortalResolver interface {
+	PortalRole(ctx context.Context, platformUserID, tenantID string) (string, bool, error)
+}
+
 // AuditRecorder is the narrow seam the module needs of the audit module
 // (audit.Service satisfies it): the one way a sibling writes to
 // audit_log, where the ledger already writes. The mint's row is the
@@ -98,6 +125,12 @@ type MintDeps struct {
 	Orgs authz.OrgResolver
 	// Staff resolves the flow account's live authority; required.
 	Staff StaffResolver
+	// TenantMinter and Portal serve the contractor flows. Both are
+	// optional at construction and a module wired without either refuses
+	// every contractor flow with a 500 and mints nothing (fail closed),
+	// so a staff only wiring cannot serve a contractor token.
+	TenantMinter TenantMinter
+	Portal       PortalResolver
 	// Audit writes the mint's trail row; required.
 	Audit AuditRecorder
 	// Limit refuses a burst from the mint's own key: the visitor id when
@@ -115,6 +148,8 @@ type MintDeps struct {
 
 // Mint is the demo module: the two routes the entry page calls.
 type Mint struct {
+	tenant  TenantMinter
+	portal  PortalResolver
 	minter  Minter
 	orgs    authz.OrgResolver
 	staff   StaffResolver
@@ -145,7 +180,7 @@ func NewMint(d MintDeps) (*Mint, error) {
 	if ceiling == nil {
 		ceiling = NewAddressLimit(DefaultAddressCeiling, 0, d.Now)
 	}
-	return &Mint{minter: d.Minter, orgs: d.Orgs, staff: d.Staff, audit: d.Audit, limit: limit, ceiling: ceiling}, nil
+	return &Mint{tenant: d.TenantMinter, portal: d.Portal, minter: d.Minter, orgs: d.Orgs, staff: d.Staff, audit: d.Audit, limit: limit, ceiling: ceiling}, nil
 }
 
 // flowRow is one DemoFlow of the contract: the flow name, the staff role
@@ -156,6 +191,9 @@ type flowRow struct {
 	Flow     string `json:"flow"`
 	RoleCode string `json:"role_code"`
 	Label    string `json:"label"`
+	// Class is the bearer class the flow mints, "staff" or "tenant", so
+	// the front door routes a contractor to the Pro apps.
+	Class string `json:"class"`
 }
 
 // flowList is the DemoFlowList envelope.
@@ -173,7 +211,7 @@ func (m *Mint) Flows(w http.ResponseWriter, r *http.Request) {
 	all := flows.All()
 	rows := make([]flowRow, 0, len(all))
 	for _, a := range all {
-		rows = append(rows, flowRow{Flow: a.Flow, RoleCode: a.Role, Label: a.Label})
+		rows = append(rows, flowRow{Flow: a.Flow, RoleCode: a.Role, Label: a.Label, Class: a.Class()})
 	}
 	httpx.WriteJSON(w, http.StatusOK, flowList{Flows: rows})
 }
@@ -206,6 +244,26 @@ type sessionResponse struct {
 	Token string      `json:"token"`
 	User  sessionUser `json:"user"`
 	Flow  string      `json:"flow"`
+	Class string      `json:"class"`
+}
+
+// tenantUser is the user block of a contractor session: the identity facts
+// and the portal role, with no tier and no scope, which are staff
+// vocabulary (and the tenant API shows no tier either).
+type tenantUser struct {
+	UserID      string `json:"user_id"`
+	Email       string `json:"email"`
+	DisplayName string `json:"display_name"`
+	RoleCode    string `json:"role_code"`
+	RoleName    string `json:"role_name"`
+}
+
+// tenantSessionResponse is the contractor session answer.
+type tenantSessionResponse struct {
+	Token string     `json:"token"`
+	User  tenantUser `json:"user"`
+	Flow  string     `json:"flow"`
+	Class string     `json:"class"`
 }
 
 // maxSessionBodyBytes bounds the request body: the contract's request is
@@ -285,6 +343,11 @@ func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if account.Class() == flows.ClassTenant {
+		m.tenantSession(w, r, account)
+		return
+	}
+
 	authority, ok, err := m.staff.ResolveStaff(r.Context(), account.PlatformUserID, orgID)
 	if err != nil {
 		if errors.Is(err, identity.ErrStaffUserInactive) {
@@ -337,7 +400,66 @@ func (m *Mint) Session(w http.ResponseWriter, r *http.Request) {
 			Tier:        authority.Tier,
 			Scope:       strings.ToUpper(authority.Scope),
 		},
-		Flow: account.Flow,
+		Flow:  account.Flow,
+		Class: flows.ClassStaff,
+	})
+}
+
+// tenantSession is the contractor half of a mint, after the body, the
+// limits and the demo org are settled: the portal resolver must answer the
+// flow's role for the flow's portal user in the flow's contractor account
+// (the live grant, as the staff resolver is for staff), the audit row is
+// written, and only then is the tenant class token minted. A module wired
+// without the tenant seams refuses here.
+func (m *Mint) tenantSession(w http.ResponseWriter, r *http.Request, account flows.Account) {
+	if m.tenant == nil || m.portal == nil {
+		httpx.Error(w, http.StatusInternalServerError, "demo: contractor sign-in is not wired, no session is minted")
+		return
+	}
+	role, ok, err := m.portal.PortalRole(r.Context(), account.PlatformUserID, account.Tenant)
+	if err != nil {
+		if errors.Is(err, identity.ErrPortalUserInactive) {
+			httpx.Error(w, http.StatusForbidden, "demo: the flow's account is not active, no session is minted")
+			return
+		}
+		httpx.Error(w, http.StatusInternalServerError, "demo: the flow's portal role could not be resolved")
+		return
+	}
+	if !ok {
+		httpx.Error(w, http.StatusForbidden, "demo: the flow's account holds no portal grant in its contractor account, no session is minted")
+		return
+	}
+	if role != account.Role {
+		httpx.Error(w, http.StatusForbidden, "demo: the flow's account holds "+role+", the flow requires "+account.Role+", no session is minted")
+		return
+	}
+	err = m.audit.Record(r.Context(), audit.SensitiveAccess{
+		Action:     auditAction,
+		EntityType: auditEntityType,
+		EntityID:   account.PlatformUserID,
+		ActorID:    account.PlatformUserID,
+		Purpose:    auditPurpose,
+	})
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "demo: the session's audit row could not be written, no session is minted")
+		return
+	}
+	token, err := m.tenant.MintTenant(account.PlatformUserID, account.Tenant)
+	if err != nil {
+		httpx.Error(w, http.StatusInternalServerError, "demo: the session could not be minted")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, tenantSessionResponse{
+		Token: token,
+		User: tenantUser{
+			UserID:      account.PlatformUserID,
+			Email:       account.Email,
+			DisplayName: account.DisplayName,
+			RoleCode:    account.Role,
+			RoleName:    account.Label,
+		},
+		Flow:  account.Flow,
+		Class: flows.ClassTenant,
 	})
 }
 
