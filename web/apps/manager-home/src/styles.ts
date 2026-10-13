@@ -738,4 +738,86 @@ export const homeStyles = css`
     font-size: 14px;
     color: var(--hh-text-dim);
   }
+
+  /* -- the Drivers board ------------------------------------------------------------------ */
+
+  /* The bar above the groups: the day's count and the one control, refresh. */
+  .board-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--hh-s-12);
+    flex-wrap: wrap;
+  }
+
+  .driver-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-8);
+  }
+  .driver-group .eyebrow {
+    margin: var(--hh-s-8) 0 0;
+  }
+
+  /* One driver row: the state bar, the driver and its run, the day's place,
+     and the change line at the right. The words carry the state; the bar
+     never travels alone. */
+  .driver-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-16);
+    flex-wrap: wrap;
+    padding: var(--hh-s-12) var(--hh-s-16);
+    border: 1px solid var(--hh-hairline);
+    border-radius: var(--hh-radius-control);
+    background: var(--hh-widget-raised);
+    overflow: hidden;
+  }
+  .driver-row .sev {
+    flex: none;
+    align-self: stretch;
+    width: 4px;
+    margin: calc(var(--hh-s-12) * -1) 0 calc(var(--hh-s-12) * -1) calc(var(--hh-s-16) * -1);
+    background: var(--hh-text-dim);
+  }
+  .driver-row.trouble .sev {
+    background: var(--hh-state-stop);
+  }
+  .driver-row .who {
+    flex: 1 1 12em;
+    min-width: 0;
+  }
+  .driver-row .driver {
+    font-size: var(--hh-s-16);
+    font-weight: 650;
+  }
+  .driver-row .detail {
+    font-size: 14px;
+    color: var(--hh-text-dim);
+    margin-top: var(--hh-s-2);
+  }
+  .driver-row .place {
+    flex: 1 1 14em;
+    min-width: 0;
+  }
+  .driver-row .state-word {
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+  }
+  .driver-row .place .detail {
+    display: flex;
+    gap: var(--hh-s-12);
+    flex-wrap: wrap;
+  }
+  .driver-row .did-not-go {
+    color: var(--hh-danger);
+  }
+  .driver-row .since {
+    flex: none;
+    margin-inline-start: auto;
+    font-size: 14px;
+    color: var(--hh-text-dim);
+    white-space: nowrap;
+  }
 `;
