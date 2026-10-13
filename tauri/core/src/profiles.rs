@@ -40,7 +40,7 @@ impl UpdateChannel {
 /// The conflict policies a scope can carry. Closed set: the manifest's own
 /// vocabulary (context section 4.5), so an unknown value in the manifest is a
 /// deserialize error here, not a silent default.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConflictPolicy {
     ServerWins,
@@ -49,7 +49,7 @@ pub enum ConflictPolicy {
 }
 
 /// How far offline a micro app goes (the manifest's offline modes).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OfflineMode {
     Full,

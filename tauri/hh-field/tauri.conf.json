@@ -3,8 +3,8 @@
   "productName": "HH Field",
   "identifier": "ai.futurebuild.hh.field",
   "build": {
-    "frontendDist": "../../web/apps/front-door/dist",
-    "beforeBuildCommand": "npm --prefix \"$(git rev-parse --show-toplevel)/web/apps/front-door\" run build"
+    "frontendDist": "dist",
+    "beforeBuildCommand": "bash \"$(git rev-parse --show-toplevel)/tauri/hh-field/assemble-dist.sh\""
   },
   "app": {
     "withGlobalTauri": false,

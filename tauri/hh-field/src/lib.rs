@@ -1,6 +1,7 @@
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 use hh_shell_core::keychain::{self, Slot};
+use hh_shell_core::profiles;
 
 const KEYCHAIN_SERVICE: &str = "ai.futurebuild.hh.field";
 
@@ -40,6 +41,32 @@ fn probe_report(app: tauri::AppHandle, json: String) {
     }
 }
 
+// One startup line naming the profile the shell is running (the gates and
+// device legs read it; nothing here is secret: profile facts only, never
+// tokens or keys). Config values that land with their own items (the store
+// file, the update endpoint) are appended by those items.
+fn profile_line() -> String {
+    let p = profiles::field();
+    serde_json::json!({
+        "identifier": p.identifier,
+        "product": p.product_name,
+        "brand": p.brand,
+        "channel": p.channel.as_str(),
+        "window": { "title": p.window.title, "width": p.window.width, "height": p.window.height },
+        "permissions": { "camera": p.permissions.camera, "fine_location": p.permissions.fine_location },
+        "apps": p.apps.iter().map(|a| serde_json::json!({
+            "id": a.id,
+            "name": a.name,
+            "offline": a.offline.as_ref().map(|o| serde_json::json!({
+                "mode": o.mode,
+                "scopes": o.scopes,
+                "conflict_policy": o.conflict_policy,
+            })),
+        })).collect::<Vec<_>>(),
+    })
+    .to_string()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -51,7 +78,11 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![keychain_set, keychain_get]);
     builder
         .setup(|app| {
-            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default()).title("HH Field");
+            let profile = profiles::field();
+            println!("HH_PROFILE {}", profile_line());
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                .title(profile.window.title)
+                .inner_size(profile.window.width, profile.window.height);
             // PROBE SCAFFOLDING, removed when the real shell lands (see probe.js).
             #[cfg(feature = "probe")]
             let window = window.initialization_script(include_str!("../probe.js"));

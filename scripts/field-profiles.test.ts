@@ -6,11 +6,13 @@
 // test is the drift gate CI collects with the repo's other bun tests.
 
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   buildDoc,
   loadManifest,
   PROFILE_FILES,
+  REPO_ROOT,
   serialize,
   type GeneratedDoc,
 } from "./generate-field-profiles";
@@ -67,8 +69,7 @@ describe("generated field profile", () => {
 });
 
 describe("declared skeleton profiles", () => {
-  test("work and pro equal a fresh build and carry id and name only", () => {
-    for (const shell of ["work", "pro"] as const) {
+  test("work and pro equal a fresh build and carry id and name only", () => {    for (const shell of ["work", "pro"] as const) {
       const fresh = serialize(buildDoc(manifest, shell));
       const current = readFileSync(PROFILE_FILES[shell], "utf8");
       expect(current).toBe(fresh);
@@ -88,5 +89,38 @@ describe("declared skeleton profiles", () => {
     const pro = readProfile("pro");
     expect(pro.shell).toBe("hh-pro");
     expect(pro.apps.map((a) => a.id)).toEqual(["pro-procurement", "pro-pay", "pro-field"]);
+  });
+});
+
+describe("field launcher paths", () => {
+  // The assembly script (tauri/hh-field/assemble-dist.sh) ships each Field
+  // app's web bundle inside the profile at the serve path the demo box uses
+  // (deploy/demo/Caddyfile.template) and the front door's role tiles open.
+  // This section pins the three together: a launch map entry must name a
+  // manifest app of the field shell, an existing web app, and a path the
+  // front door's own tile table carries, so a rename on any side turns this
+  // test red instead of shipping a dead tile inside the shell.
+  function launchEntries(): { app: string; dir: string; path: string }[] {
+    const script = readFileSync(resolve(REPO_ROOT, "tauri/hh-field/assemble-dist.sh"), "utf8");
+    const block = script.match(/LAUNCH_MAP=\(\n([\s\S]*?)\n\)/);
+    if (!block) return [];
+    return [...block[1].matchAll(/"([a-z-]+) ([a-z0-9-]+) (\/[a-z0-9-]+\/)"/g)].map((m) => ({
+      app: m[1],
+      dir: m[2],
+      path: m[3],
+    }));
+  }
+
+  test("the launch map names every field app that has a web bundle", () => {
+    const fieldApps = readProfile("field").apps.map((a) => a.id);
+    const withBundle = fieldApps.filter((id) => existsSync(resolve(REPO_ROOT, "web/apps", id)));
+    expect(launchEntries().map((e) => e.app)).toEqual(withBundle);
+  });
+
+  test("each launch path is the front door's own tile href for that app", () => {
+    const roles = readFileSync(resolve(REPO_ROOT, "web/apps/front-door/src/roles.ts"), "utf8");
+    for (const entry of launchEntries()) {
+      expect(roles).toContain(`href: "${entry.path}"`);
+    }
   });
 });
