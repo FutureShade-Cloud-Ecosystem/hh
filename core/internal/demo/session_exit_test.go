@@ -500,6 +500,7 @@ func startDemoServe(t *testing.T, bin, dsn string) string {
 		"APP_ENV=demo",
 		"CORE_DATABASE_URL=" + dsn,
 		"CORE_STAFF_AUDIENCE=hh-staff",
+		"CORE_SIGNIN_MODE=demo",
 		"CORE_TENANT_AUDIENCE=hh-tenant",
 		"PAYMENT_VAULT_KEY=" + testVaultKey,
 		"HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1",

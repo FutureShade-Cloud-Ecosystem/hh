@@ -2466,6 +2466,18 @@ export type IdentityPing = {
   module: string;
   status: string;
 };
+export type SessionJwkSet = {
+  keys: SessionJwk[];
+};
+export type SessionJwk = {
+  kty: "EC";
+  crv: "P-256";
+  x: string;
+  y: string;
+  kid: string;
+  use: "sig";
+  alg: "ES256";
+};
 export type IdentityLoginRequest = {
   email: string;
   password: string;
@@ -2482,6 +2494,18 @@ export type IdentityUser = {
 export type IdentityLoginResponse = {
   token: string;
   user: IdentityUser;
+};
+export type IdentityExchangeRequest = {
+  jwt: string;
+  org: string;
+};
+export type IdentityExchangeResponse = {
+  token: string;
+  expiresAtMs: number;
+  user: IdentityUser;
+};
+export type IdentityAuthMethodsResponse = {
+  methods: ("email_password" | "google" | "microsoft" | "magic_link")[];
 };
 export type IdentityChangePasswordRequest = {
   current_password: string;

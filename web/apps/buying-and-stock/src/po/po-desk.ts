@@ -10,6 +10,7 @@
 // a walled move in words naming who may do it. Nothing is stored.
 import type { TemplateResult } from "lit";
 import type { InventoryShortfallRow, Product, PurchasingPO, PurchasingPODetail, Result } from "@hardscapehouse/api-client";
+import type { AreaDesk } from "../purch/area.js";
 import { PoApi, type DeliveryMethod } from "./po-api.js";
 import { draftOf, landedWords, poRows, refusalWords, shortfallRows, validateExpectedDate } from "./po-logic.js";
 import { costCentsFromTyped, formatMoney, formatQty } from "./po-money.js";
@@ -24,7 +25,7 @@ export interface DeskHost {
 
 const DELIVERY: readonly DeliveryMethod[] = ["PICKUP", "DELIVERY", "UNKNOWN"];
 
-export class PoDesk {
+export class PoDesk implements AreaDesk {
   readonly #api: PoApi;
   readonly #host: DeskHost;
 
@@ -465,7 +466,8 @@ export class PoDesk {
   }
 
   /** The draft's date field changed: the words under it follow what was typed. */
-  expectedTyped(text: string): void {
+  typed(name: string, text: string): void {
+    if (name !== "expected") return;
     this.#expectedText = text;
     this.#host.repaint();
   }
