@@ -347,6 +347,7 @@ test('the walk finds this package and names the workspace packages it must also 
       '@hardscapehouse/quote-desk',
       '@hardscapehouse/role-template',
       '@hardscapehouse/shell-chrome',
+      '@hardscapehouse/work-shell',
       '@hardscapehouse/yard-pick',
     ],
     'a package now depends on @hardscapehouse/design-system; its sources are scanned below, and this lock must name it deliberately',

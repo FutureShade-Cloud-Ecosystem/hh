@@ -70,6 +70,14 @@ import { payBalanceStyles, renderPayBalance } from "./views/pay-balance.js";
 // host wiring (ports.ts) answers its seams.
 import "./ported/pos-terminal.js";
 import { clearSessionState, setBranches, wirePorts, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
+// The Work shell's offline layer (item 8b): the till is READ CACHE ONLY. Its client is built on the no signal
+// guard, so every write (the ring, every tender, a refund, a payment, a park) is refused with no signal and
+// never queues; its reads fall back to the copy on the device, with the copy's age shown.
+import { browserSignal, noSignalFetch, noSignalWebFetch, readThroughFetch, readThroughWebFetch, type CachedRoute, type ReadThroughHooks, type WorkDesk } from "@hardscapehouse/work-offline";
+import { apiClientTransport, createTillDesk, dbNameFor, tillRoutes } from "./till-offline.js";
+// The strip registers itself; the wiring pass hands it the controller.
+import "./offline-strip.js";
+import type { CtOfflineStrip } from "./offline-strip.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -367,6 +375,12 @@ export class CounterTillApp extends HHElement {
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
   readonly #tillClient: TillClient;
+  /** The staff client with no guard: only the offline store's pull rides it (the till pushes nothing). */
+  readonly #syncClient: ApiClient;
+  /** The device's connection, read each time it is asked. */
+  readonly #signal = browserSignal();
+  /** The Work shell's read cache for the signed in person; null before the till is up and after sign out. */
+  #offline: WorkDesk | null = null;
   /** The theme choice: Auto follows the system, Light and Brand pin it; tab memory only (see theme.ts). */
   readonly #theme = new ThemeController(() => this.requestUpdate());
   /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
@@ -452,7 +466,19 @@ export class CounterTillApp extends HHElement {
     });
     // The pay balance refusal's money fields ride the same transport: one more wrapper, same rule.
     const payBalanceCapture = new PayBalanceCapture(capture.fetch);
-    const client = new ApiClient({ baseUrl: "", fetch: payBalanceCapture.fetch, headers: staffHeaders });
+    // The Work shell's guard: a write with no signal is refused before it dials (never queued: money never
+    // queues), and a read the device holds a copy of is answered from it when the network does not answer.
+    const routes: CachedRoute[] = tillRoutes(() => this.#offline?.reader() ?? null);
+    const hooks: ReadThroughHooks = {
+      onCached: (words) => this.#offline?.hooks.onCached?.(words),
+      onLive: () => this.#offline?.hooks.onLive?.(),
+    };
+    const client = new ApiClient({
+      baseUrl: "",
+      fetch: noSignalFetch(readThroughFetch(payBalanceCapture.fetch, this.#signal, routes, hooks), this.#signal),
+      headers: staffHeaders,
+    });
+    this.#syncClient = new ApiClient({ baseUrl: "", headers: staffHeaders });
     // The feedback widget's sender rides the staff client: the feedback
     // route is staff guarded and the till's own custody holds the bearer.
     this.#feedbackSender = async (request) => {
@@ -490,6 +516,8 @@ export class CounterTillApp extends HHElement {
     const approverCredential = new OneTimeCredential();
     const approverClient = new ApiClient({
       baseUrl: "",
+      // The credit note is a money write: it is refused with no signal like every other.
+      fetch: noSignalFetch(undefined, this.#signal),
       headers: async () => {
         const headers = await staffHeaders();
         const token = approverCredential.take();
@@ -544,6 +572,8 @@ export class CounterTillApp extends HHElement {
       // picture shows its category's tile for every dealer, and keeps the stone-stack glyph only
       // where the tiles do not know the category (test/product-tiles-build.test.mjs).
       productTile: productTileUrl,
+      // The ported surface's request door: the ring and every tender go through it, so the guard rides it too.
+      fetch: noSignalWebFetch(readThroughWebFetch(undefined, this.#signal, routes, hooks), this.#signal),
     });
   }
 
@@ -927,6 +957,9 @@ export class CounterTillApp extends HHElement {
     this.#busy = true;
     this.requestUpdate();
     await this.#controller.signOut();
+    // The copy on this device is released with the session.
+    await this.#offline?.close();
+    this.#offline = null;
     // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
     clearFrontDoorHandoff();
     this.#busy = false;
@@ -983,6 +1016,16 @@ export class CounterTillApp extends HHElement {
     // names beside stock): filled in place from the route's own answer, before
     // anything mounts.
     setBranches([{ id: branch.value.id, name: branch.value.name }]);
+    // The Work shell's read cache on this device, the person's own: opened before the terminal mounts so a read
+    // that loses the network has something to answer from; the first pull runs behind the till.
+    const offline = createTillDesk({
+      signal: this.#signal,
+      transport: apiClientTransport(this.#syncClient),
+      dbName: dbNameFor(this.#sessions.current?.user.userId ?? ""),
+    });
+    this.#offline = offline;
+    await offline.open(branch.value.id);
+    void offline.cycle();
     this.#surface = "terminal";
     this.#openPayBalanceOnOrder();
     this.requestUpdate();
@@ -1127,6 +1170,7 @@ export class CounterTillApp extends HHElement {
                   </button>
                 </p>
               </div>
+              <ct-offline-strip></ct-offline-strip>
               <div class="surface" data-hidden="${this.#route !== "sale" ? "true" : "false"}">
                 <hos-pos-terminal
                   data-paused="${this.#route !== "sale" ? "true" : "false"}"
@@ -1180,6 +1224,7 @@ export class CounterTillApp extends HHElement {
       termField.value = this.#payBalance.term;
     }
     this.#syncReturnsFields();
+    this.renderRoot.querySelector<CtOfflineStrip>("ct-offline-strip")?.attach(this.#offline);
     const widget = this.renderRoot.querySelector("hh-feedback");
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
       widget.send = this.#feedbackSender;

@@ -45,6 +45,34 @@ async fn run_atomic(statements: Vec<SqlStatement>, store: tauri::State<'_, Store
     blocking(move || store.atomic(statements)).await
 }
 
+// The built shell's role leg proof (feature `shell-proof`, off by default,
+// compiled out of every shipped build): proof.js is injected into every frame
+// of the main window, drives the host page through its role leg and reports
+// one JSON string here. The command prints the single HH_SHELL_PROOF line
+// and ends the run. The webview cannot turn the mode on (the gate is a
+// compile time feature, there is no command that enables it) and the command
+// grants nothing else: it reads and writes nothing.
+#[cfg(feature = "shell-proof")]
+#[tauri::command]
+fn proof_report(app: tauri::AppHandle, json: String) {
+    println!("HH_SHELL_PROOF {json}");
+    app.exit(0);
+}
+
+// The proof run ends by itself even if the page never reports: after this
+// long it prints a timeout line and exits non zero.
+#[cfg(feature = "shell-proof")]
+const PROOF_WATCHDOG_SECS: u64 = 120;
+
+#[cfg(feature = "shell-proof")]
+fn start_proof_watchdog(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(PROOF_WATCHDOG_SECS));
+        println!("HH_SHELL_PROOF {{\"ok\":false,\"error\":\"the page did not report in time\"}}");
+        app.exit(1);
+    });
+}
+
 // One startup line naming the profile the shell is running (the gates and
 // device legs read it; nothing here is secret: profile facts only, never
 // tokens or keys). The update values are the Work channel's configuration
@@ -90,19 +118,31 @@ fn print_profile_only(args: impl Iterator<Item = String>) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // The Work channel's updater (see tauri.conf.json plugins.updater and
         // the README): registered, but nothing polls until the shell chrome's
         // update prompt asks, so the placeholder endpoint stays idle.
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![
-            run_statement,
-            run_atomic,
-            auth::auth_sign_in,
-            auth::auth_resume,
-            auth::auth_exchange,
-            auth::auth_sign_out
-        ])
+        .plugin(tauri_plugin_updater::Builder::new().build());
+    #[cfg(feature = "shell-proof")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        proof_report,
+        run_statement,
+        run_atomic,
+        auth::auth_sign_in,
+        auth::auth_resume,
+        auth::auth_exchange,
+        auth::auth_sign_out
+    ]);
+    #[cfg(not(feature = "shell-proof"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        run_statement,
+        run_atomic,
+        auth::auth_sign_in,
+        auth::auth_resume,
+        auth::auth_exchange,
+        auth::auth_sign_out
+    ]);
+    builder
         .setup(|app| {
             let profile = profiles::work();
             println!("HH_PROFILE {}", profile_line(&app.config().plugins));
@@ -110,10 +150,16 @@ pub fn run() {
             // The sign in commands' state: custody and the Console client, built
             // from the profile's fixed configuration (never the webview's).
             app.manage(auth::AuthState::for_profile());
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+            #[cfg(feature = "shell-proof")]
+            start_proof_watchdog(app.handle().clone());
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title(profile.window.title)
-                .inner_size(profile.window.width, profile.window.height)
-                .build()?;
+                .inner_size(profile.window.width, profile.window.height);
+            // The proof driver reaches the front door's frame as well, which
+            // answers the demo mint locally (there is no core in this run).
+            #[cfg(feature = "shell-proof")]
+            let window = window.initialization_script_for_all_frames(include_str!("../proof.js"));
+            window.build()?;
             if print_profile_only(std::env::args()) {
                 app.handle().exit(0);
             }
@@ -200,11 +246,77 @@ mod tests {
     }
 
     #[test]
-    fn the_work_crate_has_no_probe_feature() {
-        // Field keeps a probe feature for the probe 4 proof runs, off by
-        // default; Work never had a probe, so there is nothing to turn on.
+    fn the_work_crate_has_no_probe_feature_and_one_gated_proof_feature() {
+        // Field keeps a probe feature for the probe 4 proof runs; Work never had
+        // a probe. Work has exactly one cargo feature, `shell-proof` (the built
+        // shell's role leg proof, item 8c), off by default.
         assert!(!CARGO_TOML.contains("probe"), "Work carries no probe scaffolding");
-        assert!(!CARGO_TOML.contains("[features]"), "Work declares no cargo features");
+        let features = CARGO_TOML.split("[features]").nth(1).expect("a [features] table");
+        let features = features.split("\n[").next().unwrap();
+        let declared: Vec<&str> = features.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+        assert_eq!(declared, ["default = []", "shell-proof = []"], "the feature table is exactly default and shell-proof");
+    }
+
+    // The proof mode's source files, read from disk so a missing file is an
+    // assertion failure here and not a build break in the default build.
+    fn crate_file(rel: &str) -> String {
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/").to_string() + rel).unwrap_or_default()
+    }
+
+    #[test]
+    fn the_proof_mode_is_compiled_in_only_with_its_feature() {
+        let lib = include_str!("lib.rs");
+        let production = lib.split("#[cfg(test)]").next().unwrap();
+        // every use of the script and the report command sits under the gate
+        for needle in ["include_str!(\"../proof.js\")", "fn proof_report", "proof_report,"] {
+            let at = production.find(needle).unwrap_or_else(|| panic!("{needle} is missing from lib.rs"));
+            let before = &production[..at];
+            let gate = before.rfind("#[cfg(feature = \"shell-proof\")]").unwrap_or_else(|| panic!("no gate before {needle}"));
+            assert!(at - gate < 400, "{needle} is not directly under the shell-proof gate");
+        }
+        let build = crate_file("build.rs");
+        assert!(build.contains("#[cfg(feature = \"shell-proof\")]"), "build.rs gates the proof command");
+        assert!(build.contains("\"proof_report\""), "build.rs declares the proof command by name");
+        assert!(build.contains("./capabilities*/*.json") && build.contains("./capabilities/*.json"), "build.rs reads the proof capability folder only with the feature");
+    }
+
+    #[test]
+    fn a_default_build_carries_no_proof_command_grant_or_capability() {
+        #[cfg(not(feature = "shell-proof"))]
+        for built in [BUILT_ACL_MANIFEST, BUILT_CAPABILITIES] {
+            assert!(!built.contains("proof"), "proof scaffolding is in the default build's ACL");
+        }
+        assert!(!CAPABILITY.contains("proof"), "default.json grants no proof command");
+        assert!(!TAURI_CONF.contains("proof"), "tauri.conf.json names no proof mode");
+        let cap: serde_json::Value = serde_json::from_str(&crate_file("capabilities-proof/proof.json")).expect("the proof capability parses");
+        assert_eq!(cap["permissions"], serde_json::json!(["allow-proof-report"]), "the proof capability grants the report command and nothing else");
+        assert_eq!(cap["windows"], serde_json::json!(["main"]));
+        assert!(cap.get("remote").is_none());
+    }
+
+    #[test]
+    fn the_proof_script_drives_the_host_through_its_own_page_and_opens_no_remote_origin() {
+        let script = crate_file("proof.js");
+        assert!(!script.is_empty(), "proof.js exists");
+        assert!(script.contains("proof_report"), "the script reports through the one proof command");
+        assert!(script.contains("HH_SHELL_PROOF") || !script.contains("println"), "the Rust side prints the line, not the script");
+        for banned in ["eval(", "new Function", "http://", "https://", "keychain", "auth_sign_in", "run_statement", "innerHTML", "WebSocket"] {
+            assert!(!script.contains(banned), "proof.js contains {banned}");
+        }
+        // it answers the demo mint locally, only for the two demo paths
+        assert!(script.contains("/api/v1/demo/session") && script.contains("/api/v1/demo/flows"));
+    }
+
+    #[test]
+    fn the_proof_mode_ends_the_run_by_itself_with_one_line() {
+        let lib = include_str!("lib.rs");
+        let production = lib.split("#[cfg(test)]").next().unwrap();
+        assert!(production.contains("HH_SHELL_PROOF"), "one HH_SHELL_PROOF line is printed");
+        assert!(production.contains("app.exit("), "the run ends itself");
+        assert!(production.contains("initialization_script_for_all_frames"), "the script reaches the door frame");
+        // the webview cannot enable the mode: there is no command that sets it,
+        // and the report command only prints and exits
+        assert!(!production.contains("fn enable_proof"), "no command turns the proof mode on");
     }
 
     #[test]
@@ -259,9 +371,17 @@ mod tests {
     fn the_csp_is_strict_and_the_window_is_built_by_the_shell() {
         let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
         let csp = conf["app"]["security"]["csp"].as_str().expect("a CSP is set");
-        for directive in ["default-src 'self'", "script-src 'self'", "object-src 'none'", "frame-ancestors 'none'"] {
+        for directive in [
+            "default-src 'self'",
+            "script-src 'self'",
+            "object-src 'none'",
+            "frame-src 'self'",
+            "frame-ancestors 'self'",
+        ] {
             assert!(csp.contains(directive), "the CSP holds {directive}");
         }
+        assert!(!csp.contains("frame-ancestors 'none'"), "the host frames its own desk apps, so 'none' is gone");
+        assert!(!csp.contains("child-src"), "frame-src alone carries the frames");
         assert!(!csp.contains("unsafe-eval"), "no eval");
         assert!(!csp.contains("script-src 'self' 'unsafe-inline'"), "no inline script");
         assert_eq!(conf["app"]["withGlobalTauri"], serde_json::json!(false));
