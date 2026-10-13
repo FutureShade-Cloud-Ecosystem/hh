@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { SIGNED_OUT_MESSAGE, SIGN_OUT_REQUEST_MESSAGE } from "@hardscapehouse/design-system/src/framed.js";
 import { SIGN_OUT_WAIT_MS } from "../src/config.js";
+import { UNSENT_WAIT_MS } from "../../quote-desk/src/quote-context.js";
 import { requestFrameSignOut } from "../src/sign-out.js";
 
 const ORIGIN = "http://127.0.0.1:9";
@@ -40,8 +41,9 @@ function rig() {
   return { deps, sent, listeners, timers, frameWindow, deliver };
 }
 
-test("the wait is a named constant of two seconds", () => {
-  assert.equal(SIGN_OUT_WAIT_MS, 2000);
+test("the wait is a named constant that outlasts the slowest app's own unsent work bound with room for its sign out", () => {
+  assert.equal(SIGN_OUT_WAIT_MS, UNSENT_WAIT_MS + 1500);
+  assert.ok(SIGN_OUT_WAIT_MS > UNSENT_WAIT_MS, "a framed Switch role must not cut the Quote Desk's unsent work guard");
 });
 
 test("the frame is asked once with a nonce, and its acknowledgement ends the wait early", async () => {
