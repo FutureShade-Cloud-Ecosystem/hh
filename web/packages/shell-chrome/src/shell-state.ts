@@ -26,7 +26,7 @@ export interface KeyValueStorage {
   write(key: string, value: string): void;
 }
 
-/** The pins seam: a KeyValueStorage whose keys are user ids. */
+/** The pins seam: a KeyValueStorage whose keys are `pinStorageKey(userId)`. */
 export interface PinStorage extends KeyValueStorage {}
 
 /** One row of the rail: the person's own pinned surface. The glyph is a
@@ -38,15 +38,15 @@ export interface RailPin {
   glyph: string;
 }
 
-/** An in-memory seam, for tests and the demo. Keyed by user id. */
-export function memoryPinStorage(): PinStorage & { entries(userId: string): string[] } {
+/** An in-memory seam, for tests and the demo. Keyed by the seam key. */
+export function memoryPinStorage(): PinStorage & { entries(key: string): string[] } {
   const mem = new Map<string, string>();
   return {
-    read: (userId) => (mem.has(userId) ? (mem.get(userId) as string) : null),
-    write: (userId, value) => {
-      mem.set(userId, value);
+    read: (key) => (mem.has(key) ? (mem.get(key) as string) : null),
+    write: (key, value) => {
+      mem.set(key, value);
     },
-    entries: (userId) => visibleKeysOf(mem.get(userId) ?? null),
+    entries: (key) => visibleKeysOf(mem.get(key) ?? null),
   };
 }
 
@@ -62,9 +62,17 @@ interface StoredPayload {
 
 /** The storage key for one person's pins: the person is in the key, so two
  * users on one device never share pins. The user id is the FB Console user id
- * the session carries (or the core subject, for a persona). */
+ * the session carries (or the core subject, for a persona). It is encoded, so
+ * an odd id (a slash, dots, spaces) stays one key under the pin prefix and
+ * never reaches another key on the origin. */
 export function pinStorageKey(userId: string): string {
-  return `hh-shell.pins.v1.${userId}`;
+  return `hh-shell.pins.v1.${encodeURIComponent(userId)}`;
+}
+
+/** A blank id is no one: a shell that calls the book before sign in or after
+ * sign out must not share one book under the empty key. */
+function hasUser(userId: unknown): userId is string {
+  return typeof userId === 'string' && userId.trim() !== '';
 }
 
 function parsePayload(raw: string | null): StoredPin[] {
@@ -98,7 +106,7 @@ function visibleKeysOf(raw: string | null): string[] {
  * map; the selector is the whole map. */
 export const SHELL_PIN_CAP = 8;
 
-export type PinChange = { ok: true; changed: boolean } | { ok: false; reason: 'cap' };
+export type PinChange = { ok: true; changed: boolean } | { ok: false; reason: 'cap' | 'no-user' };
 
 /**
  * The person's own pinned surfaces, across every micro app they hold. Every
@@ -122,6 +130,7 @@ export class PinBook {
 
   /** The pinned keys for one person, in rail order. */
   pins(userId: string): string[] {
+    if (!hasUser(userId)) return [];
     return this.#read(userId)
       .filter((p) => p.visible)
       .map((p) => p.key);
@@ -138,6 +147,7 @@ export class PinBook {
    * not a new row, so the cap does not refuse it.
    */
   add(userId: string, key: string): PinChange {
+    if (!hasUser(userId)) return { ok: false, reason: 'no-user' };
     const rows = this.#read(userId);
     const found = rows.find((p) => p.key === key);
     if (found && found.visible) return { ok: true, changed: false };
@@ -157,6 +167,7 @@ export class PinBook {
    * where it was, which turns an undo into a rearrangement.
    */
   remove(userId: string, key: string): PinChange {
+    if (!hasUser(userId)) return { ok: false, reason: 'no-user' };
     const rows = this.#read(userId);
     if (!rows.some((p) => p.key === key && p.visible)) return { ok: true, changed: false };
     this.#write(userId, rows.map((p) => (p.key === key ? { ...p, visible: false } : { ...p })));
@@ -169,6 +180,7 @@ export class PinBook {
    * and renumbers by rewrite: the array is the order.
    */
   move(userId: string, key: string, delta: -1 | 1): PinChange {
+    if (!hasUser(userId)) return { ok: false, reason: 'no-user' };
     const rows = this.#read(userId);
     const visible = rows.filter((p) => p.visible).map((p) => p.key);
     const at = visible.indexOf(key);
@@ -185,6 +197,7 @@ export class PinBook {
 
   /** Drop every row for one person: the fresh start is whole or absent. */
   reset(userId: string): PinChange {
+    if (!hasUser(userId)) return { ok: false, reason: 'no-user' };
     const rows = this.#read(userId);
     if (rows.length === 0) return { ok: true, changed: false };
     this.#write(userId, []);
@@ -193,7 +206,7 @@ export class PinBook {
 
   #read(userId: string): StoredPin[] {
     try {
-      const rows = parsePayload(this.#storage.read(userId));
+      const rows = parsePayload(this.#storage.read(pinStorageKey(userId)));
       this.#cache.set(userId, rows);
       return rows;
     } catch {
@@ -205,7 +218,7 @@ export class PinBook {
     const payload: StoredPayload = { v: 1, pins: rows };
     this.#cache.set(userId, rows.map((p) => ({ ...p })));
     try {
-      this.#storage.write(userId, JSON.stringify(payload));
+      this.#storage.write(pinStorageKey(userId), JSON.stringify(payload));
     } catch {
       // blocked or full storage: the answer stands, persistence is skipped
     }

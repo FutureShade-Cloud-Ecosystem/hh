@@ -78,7 +78,7 @@ const storage = {
   read: (key) => localStorage.getItem(key),
   write: (key, value) => localStorage.setItem(key, value),
 };
-const pins = new PinBook({ storage });
+const pins = new PinBook({ storage });  // keys pins under pinStorageKey(userId); a blank user id is refused
 rail.storage = storage;                 // the rail's collapsed posture seam
 
 // the model, over the manifest slice the shell injects
