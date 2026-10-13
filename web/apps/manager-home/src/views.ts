@@ -444,7 +444,7 @@ function renderResolvePanel(draft: ResolveDraft, entry: QueueEntry, s: QueueEntr
         <p class="panel-line">${orderLabel} · ${s.description}</p>
         <p class="panel-qty">${quantityLine(entry, s)}</p>
         <div class="reported">
-          <p class="reported-who">Reported by the yard team</p>
+          <p class="reported-who">Reported by staff</p>
           ${s.note !== "" ? html`<p class="reported-note">${s.note}</p>` : nothing}
         </div>
         <div class="choices">
