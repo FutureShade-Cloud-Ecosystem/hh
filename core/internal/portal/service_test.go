@@ -236,7 +236,7 @@ func TestPortal_Login_IssuesJWT(t *testing.T) {
 	store := newFakeStore()
 	hash, _ := hashPassword("hunter2pw")
 	store.addUser(User{ID: "u1", CustomerID: "c1", Email: "admin@acme.test", Role: "account_admin", Status: "active", passwordHash: hash})
-	svc := NewService(store, testSecret)
+	svc := NewService(store, testSecret).WithConfig(Config{ID: "acme", DealerName: "Acme Yard"})
 
 	resp, err := svc.Login(context.Background(), "admin@acme.test", "hunter2pw")
 	if err != nil {
@@ -252,8 +252,28 @@ func TestPortal_Login_IssuesJWT(t *testing.T) {
 	if c.UserID != "u1" || c.CustomerID != "c1" || c.Role != "account_admin" {
 		t.Fatalf("claims mismatch: %+v", c)
 	}
-	if resp.Config.DealerName == "" {
-		t.Fatal("expected branding config in login response")
+	if resp.Config.DealerName != "Acme Yard" {
+		t.Fatalf("login config = %+v, want the dealer config the service was given", resp.Config)
+	}
+}
+
+// A service given no dealer config names no dealer: the login and refresh
+// answers carry the neutral default, never one dealer's identity (decision
+// log row 1592).
+func TestPortal_NoDealerConfigNamesNoDealer(t *testing.T) {
+	store := newFakeStore()
+	hash, _ := hashPassword("hunter2pw")
+	store.addUser(User{ID: "u1", CustomerID: "c1", Email: "admin@acme.test", Role: "account_admin", Status: "active", passwordHash: hash})
+	resp, err := NewService(store, testSecret).Login(context.Background(), "admin@acme.test", "hunter2pw")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	c := resp.Config
+	if c.ID != "default" || c.DealerName != "" || c.LogoURL != "" || c.PrimaryColor != "" || c.SupportEmail != "" || c.SupportPhone != "" {
+		t.Fatalf("the default config names a dealer: %+v", c)
+	}
+	if strings.Contains(strings.ToLower(c.ID+c.DealerName+c.SupportEmail), "dibbits") {
+		t.Fatalf("the default config names another dealer: %+v", c)
 	}
 }
 

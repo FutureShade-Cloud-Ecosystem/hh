@@ -85,9 +85,9 @@ func (k dispatchDriverSessionKnob) DriverSessionHours(ctx context.Context, orgID
 	return p.DriverSessionHours, nil
 }
 
-// tasksDefaultChannelSlug is the fallback chat channel for a task EVENT
+// tasksDefaultChannelSlug is a variable, not a constant, so the demo build can point it at its own room. It is the fallback chat channel for a task EVENT
 // when the task carries no branch (the pin's constant, carried).
-const tasksDefaultChannelSlug = "yard-trenton"
+var tasksDefaultChannelSlug = "yard-trenton"
 
 // yardCounterFallbackSlug is where a counter-audience EVENT lands when the
 // branch has no counter channel (or no branch at all), the pin's constant.
@@ -505,7 +505,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("approvals", identity.NewApprovalsSyncStore(pool, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	syncRoutes, err := sync.NewHandler(syncEngine, log)
+	syncStaffRoles, syncPortalRoles := syncFenceSeams(pool)
+	syncRoutes, err := sync.NewHandler(syncEngine, syncStaffRoles, syncPortalRoles, log)
 	if err != nil {
 		panic("sync: handler construction refused to boot: " + err.Error())
 	}
@@ -623,6 +624,10 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// and the decide path's authority is the guard's resolution (nothing
 	// on it reads the scaffold tables).
 	identity.NewApprovalsHandler(spine.approvals, link).RegisterRoutes(r, g)
+
+	// The staff roster read (identityListStaff): the identity package answers it over its own tables and
+	// the route sits behind the manager tier. Read only; FB Console issues users (D38).
+	identity.NewStaffRosterHandler(erpidentity.NewStaffRosterReader(pool)).RegisterRoutes(r, g)
 
 	// SWARM-W3-B: payments (F-1's assignment to this batch). The gateway
 	// selector is fail-closed at boot exactly as at the pin (DIB-416):

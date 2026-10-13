@@ -13,8 +13,8 @@ import "testing"
 // facts the other lanes share.
 func TestTableIsTheClosedSet(t *testing.T) {
 	all := All()
-	if len(all) != 9 {
-		t.Fatalf("table holds %d flows, want the closed set of nine", len(all))
+	if len(all) != 14 {
+		t.Fatalf("table holds %d flows, want the closed set of nine staff flows and five contractor flows", len(all))
 	}
 	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" ||
 		all[2].Flow != "yard-manager" || all[3].Flow != "yard-team" ||
@@ -25,6 +25,9 @@ func TestTableIsTheClosedSet(t *testing.T) {
 		t.Fatalf("flow order drifted: %q, %q, %q, %q, %q, %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow, all[4].Flow, all[5].Flow, all[6].Flow, all[7].Flow, all[8].Flow)
 	}
 	for _, a := range all {
+		if a.Class() == ClassTenant {
+			continue // the contractor rows are held by flows_tenant_test.go
+		}
 		if a.PlatformUserID == "" || a.Email == "" || a.DisplayName == "" || a.Label == "" || a.Role == "" {
 			t.Fatalf("flow %q carries an empty fact: %+v", a.Flow, a)
 		}

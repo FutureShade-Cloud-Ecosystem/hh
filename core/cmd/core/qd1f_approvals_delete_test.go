@@ -115,6 +115,9 @@ func TestQD1F_ApprovalsSyncStaleUpdateEnvelopeCarriesNoFloorRequestItsCallerCann
 		code, body := qd1bCall(t, q, http.MethodPost, "/api/v1/sync/approvals", sub, map[string]any{
 			"ops": []map[string]any{{"client_id": uuid.NewString(), "op": "update",
 				"payload": map[string]any{"id": id, "detail": "words"}, "base_seq": stale}}})
+		if qd1bFenced(code, body) {
+			continue // refused before the engine: no envelope, no floor request
+		}
 		if code != http.StatusOK {
 			t.Fatalf("stale push as %s: %d %s", sub, code, body)
 		}

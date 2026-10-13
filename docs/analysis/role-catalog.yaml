@@ -1,5 +1,5 @@
 # Origin: `analysis/role-catalog.yaml` in `futurebuildai/hh_pro_dibbits` at commit 829d387baec93556ffa0e9242f4091e9be9544ec (read only source).
-# Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged except the role lines a recorded decision has touched: the `public-desk` roles line, amended by D23, and the internal surfaces' role lists, reconciled to the decided access matrix by D48.
+# Copied into `hh/docs/analysis/` by Session HH-2 lane HH-2.5; content below this header is unchanged except the role lines a recorded decision has touched: the `public-desk` roles line, amended by D23, the internal surfaces' role lists, reconciled to the decided access matrix by D48, and the contractor roles, reconciled to the core's five stored portal roles by decision log row 1592.
 # This copy is the live role catalog from D23 onward; the copy in hh_pro_dibbits is frozen at the close of HH-1.
 # In-body `analysis/...` paths resolve to `docs/analysis/...` in this copy.
 
@@ -117,7 +117,7 @@ roles:
       - Decide the override requests only leadership may decide (margin below floor, journal over threshold, freight above quote).
       - Read the business across both branches from the reporting console and the commission register.
       - Approve a credit or COD exception that a branch cannot clear on its own.
-    micro_apps: [manager-home, money-desk, dealer-admin, house-messages]
+    micro_apps: [manager-home, money-desk, dealer-admin, buying-and-stock, counter-till, dispatch-board, quote-desk, house-messages]
     sources:
       - hardscapeos_dibbits/backend/internal/identity/rbac.go
       - hardscapeos_dibbits/backend/migrations/0015_rbac_roles.sql
@@ -137,7 +137,7 @@ roles:
       - Work the general ledger and the posting queue, and close the period from the statements pack.
       - Reconcile the bank import through match and rules.
       - Decide rail approvals and credit or COD overrides that carry money.
-    micro_apps: [money-desk, manager-home, dealer-admin]
+    micro_apps: [money-desk, manager-home, dealer-admin, buying-and-stock, house-messages]
     sources:
       - hardscapeos_dibbits/backend/internal/identity/rbac.go
       - hardscapeos_dibbits/app/src/ar-console.ts
@@ -176,7 +176,7 @@ roles:
       - Open a branch Home that leads with what needs a person, then the branch numbers.
       - Commit a delivery date and stand behind it when dispatch escalates.
       - Sell on credit at the counter when a clerk is blocked, and clear the branch queues.
-    micro_apps: [manager-home, dispatch-board, counter-till, buying-and-stock, house-messages]
+    micro_apps: [manager-home, dispatch-board, counter-till, buying-and-stock, drive-run, money-desk, quote-desk, house-messages]
     sources:
       - hardscapeos_dibbits/backend/internal/identity/rbac.go
       - hardscapeos_dibbits/.claude/skills/hardscape-dashboard-widgets/SKILL.md
@@ -195,7 +195,7 @@ roles:
       - Govern pricing rules, customer overrides and quantity breaks.
       - Read the commission register and the sales reports.
       - Take over a quote or an order the counter cannot commit.
-    micro_apps: [manager-home, quote-desk, counter-till, dealer-admin]
+    micro_apps: [manager-home, quote-desk, counter-till, dealer-admin, buying-and-stock, dispatch-board, house-messages, money-desk]
     sources:
       - hardscapeos_dibbits/backend/internal/identity/rbac.go
       - hardscapeos_dibbits/app/src/nav-access.ts
@@ -214,7 +214,7 @@ roles:
       - Run the pick queue, resolve shortages and stage what is going out.
       - Commit a delivery date on a load being built.
       - Count stock and settle the on-hand ledger against what is on the ground.
-    micro_apps: [yard-pick, dispatch-board, buying-and-stock, manager-home, house-messages]
+    micro_apps: [yard-pick, dispatch-board, buying-and-stock, manager-home, drive-run, money-desk, house-messages]
     sources:
       - hardscapeos_dibbits/backend/internal/identity/rbac.go
       - hardscapeos_dibbits/app/src/yard-console.ts
@@ -233,7 +233,7 @@ roles:
       - Build the loads on the load board, which is the screen this person opens first.
       - Commit and re-time delivery dates, including the freight raise that needs an approval.
       - Keep the truck and driver registry and mint will-call codes.
-    micro_apps: [dispatch-board, manager-home, house-messages]
+    micro_apps: [dispatch-board, manager-home, drive-run, house-messages]
     sources:
       - hardscapeos_dibbits/app/src/dispatch-surface.ts
       - hardscapeos_dibbits/backend/internal/identity/rbac.go
@@ -252,7 +252,7 @@ roles:
       - Draft and place purchase orders and read where each one got to.
       - Close the gaps the yard reports between what was sold and what is on hand.
       - Watch landed cost and the weighted average behind it.
-    micro_apps: [buying-and-stock, manager-home, house-messages]
+    micro_apps: [buying-and-stock, manager-home, money-desk, house-messages]
     sources:
       - hardscapeos_dibbits/app/src/purchasing-console.ts
       - hardscapeos_dibbits/app/src/inventory-home.ts
@@ -271,7 +271,7 @@ roles:
       - Enter the vendor bill, read the three-way match and post it or name the variance.
       - "Work the receivables console: aging, credit holds, statements, the bounced-payment queue."
       - Run a collections campaign against what is past due.
-    micro_apps: [money-desk, buying-and-stock, house-messages]
+    micro_apps: [money-desk, buying-and-stock, manager-home, house-messages]
     sources:
       - hardscapeos_dibbits/app/src/purchasing-console.ts
       - hardscapeos_dibbits/app/src/ar-console.ts
@@ -291,7 +291,7 @@ roles:
       - "Ring a sale at the till: scan or search, resolve the customer, take the tender, hand over the receipt."
       - Find an invoice, print it, email it, take a cheque against it.
       - Build a quote off the catalogue and the material calculator while the customer is standing there.
-    micro_apps: [counter-till, quote-desk, house-messages]
+    micro_apps: [counter-till, quote-desk, buying-and-stock, money-desk, house-messages]
     sources:
       - hardscapeos_dibbits/app/src/pos-terminal.ts
       - hardscapeos_dibbits/app/src/nav-access.ts
@@ -310,7 +310,7 @@ roles:
       - Size a job on the customer's driveway with the material calculator and turn it into a quote.
       - Convert an accepted quote into an order against the customer's credit.
       - Read the customer's open orders and deliveries before walking in.
-    micro_apps: [quote-desk, counter-till, house-messages]
+    micro_apps: [quote-desk, buying-and-stock, dispatch-board, money-desk, house-messages]
     sources:
       - hardscapeos_dibbits/backend/internal/identity/rbac.go
       - hardscapeos_dibbits/app/src/dashboard-nav.ts
@@ -329,7 +329,7 @@ roles:
       - Take the next pick ticket, pick it, weigh it and stage it.
       - Report a shortage against a line instead of silently picking short.
       - Receive a truck against the outstanding purchase order lines.
-    micro_apps: [yard-pick, house-messages]
+    micro_apps: [yard-pick, buying-and-stock, dispatch-board, house-messages]
     sources:
       - hardscapeos_dibbits/app/src/yard-console.ts
       - hardscapeos_dibbits/app/src/purchasing-console.ts
@@ -401,6 +401,7 @@ roles:
     audience: external
     origin: both
     origin_codes: [owner, account_admin]
+    core_role: account_admin
     tier: external
     scope: tenant
     devices: [phone, desktop]
@@ -417,10 +418,11 @@ roles:
       - hardscapeos_dibbits/app/src/portal/portal-shell.ts
 
   - id: contractor_buyer
-    label: Contractor Project Manager
+    label: Contractor Buyer
     audience: external
-    origin: both
-    origin_codes: [pm, buyer]
+    origin: erp
+    origin_codes: [buyer]
+    core_role: buyer
     tier: external
     scope: tenant
     devices: [phone, desktop]
@@ -428,7 +430,27 @@ roles:
     top_jobs:
       - Build the scope of an order from the catalogue at the account price, not list.
       - Push an order to the supplier quote desk when a line has no price behind it.
-      - Track the order to the truck and reschedule before it is out for delivery.
+      - Track the order to the truck, reschedule before it is out for delivery, and pay the invoices the order raises.
+    micro_apps: [pro-procurement, pro-pay, pro-field]
+    sources:
+      - hardscapeos_dibbits/app/src/portal/portal-api.ts
+      - hh_pro_dibbits/src/core/selectors/pricing.ts
+      - hh_pro_dibbits/src/ui/pages/OrderPage.tsx
+
+  - id: contractor_buyer_no_pay
+    label: Contractor Project Manager
+    audience: external
+    origin: both
+    origin_codes: [pm, buyer_no_pay]
+    core_role: buyer_no_pay
+    tier: external
+    scope: tenant
+    devices: [phone, desktop]
+    environment: site
+    top_jobs:
+      - Build the scope of an order from the catalogue at the account price, not list.
+      - Push an order to the supplier quote desk when a line has no price behind it.
+      - Track the order to the truck and reschedule before it is out for delivery; payment stays with the buyer, accounts payable and the owner.
     micro_apps: [pro-procurement, pro-field]
     sources:
       - hh_pro_dibbits/src/core/domain/team.ts
@@ -441,6 +463,7 @@ roles:
     audience: external
     origin: hhpro
     origin_codes: [ap]
+    core_role: ap_finance
     tier: external
     scope: tenant
     devices: [desktop, phone]
@@ -461,6 +484,7 @@ roles:
     audience: external
     origin: both
     origin_codes: [field, field_crew]
+    core_role: field_crew
     tier: external
     scope: tenant
     devices: [phone]
@@ -872,7 +896,7 @@ micro_apps:
   - id: pro-procurement
     name: Pro Procurement Board
     audience: external
-    roles: [contractor_owner, contractor_buyer]
+    roles: [contractor_owner, contractor_buyer, contractor_buyer_no_pay]
     devices: [phone, desktop]
     kit: list-detail
     brand: hh-pro
@@ -914,7 +938,7 @@ micro_apps:
   - id: pro-pay
     name: Pro Pay
     audience: external
-    roles: [contractor_ap, contractor_owner]
+    roles: [contractor_ap, contractor_owner, contractor_buyer]
     devices: [desktop, phone]
     kit: list-detail
     brand: hh-pro
@@ -950,7 +974,7 @@ micro_apps:
   - id: pro-field
     name: Pro Field
     audience: external
-    roles: [contractor_field, contractor_buyer, contractor_owner]
+    roles: [contractor_field, contractor_buyer, contractor_buyer_no_pay, contractor_owner]
     devices: [phone]
     kit: list-detail
     brand: hh-pro

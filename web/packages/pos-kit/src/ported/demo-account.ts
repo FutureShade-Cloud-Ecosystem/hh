@@ -19,7 +19,7 @@
 // this app.
 import { err, ok, type ApiClient, type DemoFlow, type DemoSessionResponse, type Result } from "@hardscapehouse/api-client";
 import { staffDemo } from "@hardscapehouse/api-client";
-import type { AccountSurface, AccountUser } from "@hardscapehouse/auth";
+import type { AccountSurface, AccountUser, ExchangeResult } from "@hardscapehouse/auth";
 
 /** A mint answer in custody's own shape: exactly what AuthController.adopt takes. */
 export interface MintedSession {
@@ -66,12 +66,14 @@ export class DemoAccount implements AccountSurface {
   /**
    * The role cards: the flows route's rows, or the refusal. An error here is
    * the no-demo page's whole story: a default-build core or a non-demo box
-   * answers nothing, so there are no cards.
+   * answers nothing, so there are no cards. Staff rows only: the contractor
+   * flows (class "tenant") belong to the Pro apps' front door, and a row with
+   * no class is a staff row.
    */
   async listFlows(): Promise<Result<DemoFlow[]>> {
     const result = await staffDemo.demoListFlows(this.#client);
     if (!result.ok) return result;
-    return ok(result.value.flows);
+    return ok(result.value.flows.filter((row) => row.class !== "tenant"));
   }
 
   /** Mint a session for one flow name from the cards. */
@@ -122,12 +124,27 @@ export class DemoAccount implements AccountSurface {
     return { ...mint.user };
   }
 
-  async createJWT(): Promise<{ jwt: string; expiresAtMs: number }> {
+  // The demo has no exchange route to ask: the held mint IS the session the
+  // demo core issued, so the exchange answers it back in the exchange's shape.
+  async exchange(): Promise<ExchangeResult> {
     const mint = this.#mint;
-    if (mint === null) {
-      throw new Error("no demo session to present: tap a role first");
-    }
-    return { jwt: mint.token, expiresAtMs: mint.tokenExpiresAtMs };
+    if (mint === null) return { ok: false, code: "no_session" };
+    return {
+      ok: true,
+      answer: {
+        token: mint.token,
+        expiresAtMs: mint.tokenExpiresAtMs,
+        user: {
+          user_id: mint.user.userId,
+          email: mint.user.email,
+          display_name: mint.user.name,
+          role_code: mint.roleCode,
+          role_name: mint.identity.roleName,
+          tier: mint.identity.tier,
+          scope: mint.identity.scope,
+        },
+      },
+    };
   }
 
   async deleteSession(): Promise<void> {

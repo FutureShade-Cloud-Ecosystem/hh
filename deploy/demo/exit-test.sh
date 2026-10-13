@@ -44,7 +44,7 @@
 #   a marked build holding a real user or a real payment configuration is
 #     refused by the resume refusals before migrate or the seed write;
 #   the forwarded address discipline (W2's review): the source pin (the
-#     template the image carries holds the three overwrite lines), a
+#     template the image carries holds the four overwrite lines), a
 #     client-written X-Forwarded-For never survives the image's Caddy
 #     (proven at the traffic level, one capture behind the proxy), and
 #     rotating forged values buy the mint's limit no bucket;
@@ -208,6 +208,7 @@ docker run -d --name "$HAPPY" --network "$NET" -p "127.0.0.1:$APP_PORT:8080" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_happy)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" >/dev/null
@@ -253,6 +254,7 @@ page_has /home/ manager-home-app "Manager Home at /home/"
 page_has /yard/ yard-pick-app "Yard Pick at /yard/"
 page_has /money-desk/ money-desk-app "the Money Desk at /money-desk/"
 page_has /dispatch/ dispatch-board-app "the dispatch board at /dispatch/"
+page_has /dealer-admin/ dealer-admin-app "Dealer Admin at /dealer-admin/"
 page_has /q/ pd-quote-public "the public desk at /q/"
 page_has "/quote.html?t=x" pd-quote-public "the public desk at /quote.html"
 page_gated /till/ "the counter till at /till/"
@@ -262,6 +264,7 @@ page_gated /home/ "Manager Home at /home/"
 page_gated /yard/ "Yard Pick at /yard/"
 page_gated /money-desk/ "the Money Desk at /money-desk/"
 page_gated /dispatch/ "the dispatch board at /dispatch/"
+page_gated /dealer-admin/ "Dealer Admin at /dealer-admin/"
 page_gated /q/ "the public desk at /q/"
 page_gated /quote/ "the /quote/ prefix"
 # Never indexed, gate open or shut (decision log row 981): the header rides the
@@ -410,6 +413,7 @@ nohash_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_nohash)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	"$IMAGE" 2>&1)" && nohash_ok=0 || nohash_ok=1
 [ "$nohash_ok" = "1" ] && pass "without the hash the image exits non-zero" \
@@ -426,6 +430,29 @@ esac
 	&& pass "the refused boot wrote nothing to the database" \
 	|| fail "the refused boot left user tables behind"
 
+echo "== without the sign in mode, before serve and before anything writes"
+freshdb "$DBPFX"_nomode
+nomode_log="$(docker run --rm --network "$NET" \
+	-e "DATABASE_URL=$(dsn_for "$DBPFX"_nomode)" \
+	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
+	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
+	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
+	"$IMAGE" 2>&1)" && nomode_ok=0 || nomode_ok=1
+[ "$nomode_ok" = "1" ] && pass "without the sign in mode the image exits non-zero" \
+	|| fail "without the sign in mode the image exited 0"
+case "$nomode_log" in
+	*CORE_SIGNIN_MODE*"is not set"*) pass "the refusal names the missing sign in mode" ;;
+	*) fail "the refusal does not name the missing sign in mode" ;;
+esac
+case "$nomode_log" in
+	*listening*) fail "the image reached serve without the sign in mode" ;;
+	*) pass "the image exited before serve" ;;
+esac
+[ "$(tables_count "$DBPFX"_nomode)" = "0" ] \
+	&& pass "the refused boot wrote nothing to the database" \
+	|| fail "the refused boot left user tables behind"
+
 echo "== an interrupted build this image started resumes"
 freshdb "$DBPFX"_build
 migrate_only "$DBPFX"_build marked
@@ -433,6 +460,7 @@ docker run -d --name "$RESUME" --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_build)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" >/dev/null
@@ -465,6 +493,7 @@ foreign_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_foreign)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && foreign_ok=0 || foreign_ok=1
@@ -496,6 +525,7 @@ app_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_appdb)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && app_ok=0 || app_ok=1
@@ -523,6 +553,7 @@ realuser_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_realuser)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && realuser_ok=0 || realuser_ok=1
@@ -552,6 +583,7 @@ realpay_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_realpay)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && realpay_ok=0 || realpay_ok=1
@@ -574,8 +606,8 @@ fi
 echo "== the forwarded address discipline, at the source"
 pin_template="$(docker run --rm --entrypoint sh "$IMAGE" \
 	-c 'grep -c "header_up X-Forwarded-For" /srv/templates/Caddyfile.template' 2>/dev/null || true)"
-[ "$pin_template" = "3" ] && pass "the template the image carries holds the three overwrite lines" \
-	|| fail "the template in the image holds $pin_template header_up lines, want 3"
+[ "$pin_template" = "4" ] && pass "the template the image carries holds the four overwrite lines" \
+	|| fail "the template in the image holds $pin_template header_up lines, want 4"
 
 echo "== the forwarded address discipline, at the proxy"
 # One capture behind a Caddy built from the image's own template: the
@@ -607,8 +639,8 @@ while [ "$probes" -lt 30 ]; do
 done
 [ "$ready" = "1" ] || fail "the capture proxy never came up"
 pin_generated="$(docker exec "$CAP" grep -c "header_up X-Forwarded-For" /tmp/cf 2>/dev/null || true)"
-[ "$pin_generated" = "3" ] && pass "the generated configuration carries the three overwrite lines" \
-	|| fail "the generated configuration holds $pin_generated header_up lines, want 3"
+[ "$pin_generated" = "4" ] && pass "the generated configuration carries the four overwrite lines" \
+	|| fail "the generated configuration holds $pin_generated header_up lines, want 4"
 docker run -d --name "$CAPCLI" --network "$NET" \
 	--entrypoint curl \
 	curlimages/curl:8.22.0 \
@@ -685,7 +717,7 @@ esac
 # stays for the next run.
 # --------------------------------------------------------------------------
 docker rm -f "$HAPPY" "$RESUME" "$CAP" "$CAPCLI" >/dev/null 2>&1 || true
-for db in "$DBPFX"_happy "$DBPFX"_nohash "$DBPFX"_build "$DBPFX"_foreign "$DBPFX"_appdb "$DBPFX"_realuser "$DBPFX"_realpay; do
+for db in "$DBPFX"_happy "$DBPFX"_nohash "$DBPFX"_nomode "$DBPFX"_build "$DBPFX"_foreign "$DBPFX"_appdb "$DBPFX"_realuser "$DBPFX"_realpay; do
 	docker exec "$PG_NAME" psql -U postgres -q -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
 done
 
