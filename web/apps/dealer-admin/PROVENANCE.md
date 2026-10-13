@@ -35,6 +35,14 @@ dealer-admin in any file ("No built app, no boards in any file").
 | The drawer's generation guard: opening a second row, filtering or closing voids the answer still in flight | `app/src/audit-log.ts` (`detailGen`, `openDetail`, `cancelDetail`) | `#auditDetailGen`, `#openAuditEntry`, `#closeAuditDetail` in `src/app-root.ts` | The counter carried over; the abort half is not, because the calls go through the generated client (a Result, no res.json() window); the drawer's three self describing attributes kept |
 | The actor cell | `app/src/audit-log.ts` with `app/src/_audit-actor.ts` (`renderActorCell`) | `actorWords` in `src/audit-logic.ts` | The honest change: the HH core's audit projection carries no resolved name and production reads the role word empty (the core attributes by the linked users id), so the cell shows the role's words when a row carries one, else the id's own block, never a blank |
 | The drilldown to one entity's whole trail | `app/src/audit-log.ts` with `app/src/_audit-drilldown.ts` | the trail card in `src/views-audit.ts`, `#openAuditTrail` in `src/app-root.ts` | The original's kind aware viewer became the one generic question the transaction route answers: this entity's rows |
+| The assist admin's three panels in their order (spend, budgets by role, settings) | `app/src/assist-admin.ts` | `src/admin-assist.ts`, the Assist case in `src/admin-work.ts`, `assistSpend`/`assistLimits`/`assistSettings` and the writes in `src/admin-api.ts` | Rebuilt on HH's sheet over the generated client; the same three reads answered together and the same write-then-re-read discipline |
+| The spend words: exchanges first, tokens second, a zero row as a fact | `app/src/assist-model.ts` (`spendSummary`, `spendTotal`, `formatTokens`) | `src/admin-logic.ts` | Kept in meaning; the budget sentence's em dashes became commas (the house dash rule, the hotkeys port's precedent) |
+| The budget source printed, never inferred; the boundary `spent >= budget`; a zero budget reads full | `app/src/assist-model.ts` (`budgetSentence`, `overBudget`, `usedFraction`) | `src/admin-logic.ts` | The source still comes from the server's own `budget.source`, never by comparing to the role default; the operator matches the core's OverBudget exactly |
+| The allowance meter, dimmed not red at the limit | `app/src/assist-admin.ts` (`.track`, `.fill.spent`) | the meter in `src/admin-assist.ts`, the mirror in `src/admin-work.ts` | The width is set in code through a data- attribute (the position gate binds no style); the at-limit dimming kept |
+| The settings block: the four keys, the key variable's NAME and a yes/no, never a credential | `app/src/assist-admin.ts` (`renderSettings`, SOP-1) | `renderSettings` in `src/admin-assist.ts`, `assistSettings`/`putSetting` in `src/admin-api.ts` | The two toggles unrolled as static blocks (the position gate takes bound id and for attributes off the table) |
+| The product editor's description fields and the changed-only save | `app/src/product-edit.ts` (the attribute form, `save`) | `src/admin-catalog.ts`, `PRODUCT_TEXT_FIELDS`/`productDraftFrom`/`productChangedPatch` in `src/admin-logic.ts`, `productUpdate` in `src/admin-api.ts` | The description allowlist the contract names; the body is the partial map (only changed fields ride the wire), which the original sent whole |
+| The picture: set through the product's own image route, remove beside it | `app/src/product-edit.ts` (the image controls) | `renderPicture` in `src/admin-catalog.ts`, `productPutImage`/`productDeleteImage` in `src/admin-api.ts` | The contract's image route carries the bytes itself, so the attachments routes have nothing to add and are not called |
+| The list price absent is not zero | `app/src/product-edit.ts` with `app/src/_quickview.ts` (DIB-404) | `listPriceWords` in `src/admin-logic.ts` | Through the shared `formatDollars` (pos-kit), no currency literal; an absent anchor reads as words |
 
 What the original's audit surface carried that this port does not, said
 plainly: the roving tabindex cursor with its arrow key model and the
@@ -56,3 +64,24 @@ reference:
 - The demo door's own cards and marks: the template's entry, drawn with this
   app's flows (the stub's two; the demo image's closed flow table is the
   lead's wiring).
+- The Print jobs surface (`src/admin-print.ts`, `printingListJobs`): the
+  original app never called the print queue's list, so the screen is new.
+  Visual reference: this app's own filter form and table (the audit trail's),
+  on HH's tokens.
+- The Exports surface (`src/admin-exports.ts`, `exportAuditXlsx` and
+  `messagingExport`): one call, one file, no queue. The workbook's filters
+  are the audit trail's own four; the messages card carries the server's
+  masking rule as its own words. No original screen; same visual reference.
+- The Platform keys surface (`src/admin-keys.ts`, `listPlatformKeys`): the
+  contract marks the read for this surface (staff wide) and the write is the
+  operator's alone, so the screen renders no write. The 404 the unregistered
+  route answers is the waits state's input, the staff register's own
+  precedent. No original screen; same visual reference.
+- The catalog's finder and the units and categories cards: the original
+  opened its editor from a catalogue list this app does not carry, so the
+  finder (the catalogue's own list read, narrowed) and the two staff reads
+  are new. The editor is the port, see the table above.
+- The admin-rest controller (`src/admin-work.ts`) and the door
+  (`src/admin-api.ts`): the Money Desk's receivables desk pattern (a
+  controller the root element owns), so the root's own file stays small and
+  the registry's surfaces land one file at a time.
