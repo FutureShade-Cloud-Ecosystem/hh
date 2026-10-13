@@ -69,10 +69,8 @@ func newFenceWorld(t *testing.T) *fenceWorld {
 		t.Fatalf("fixture build: %v", err)
 	}
 
-	driverA := seedLinkedDriver(t, pool, testkit.BranchNorthAID, testkit.UserDriverID)
-	subB, userB := seedFenceLogin(t, pool)
-	driverB := seedLinkedDriver(t, pool, testkit.BranchNorthAID, userB)
-
+	// Registered before the logins below: cleanups run last in, first out, and the kit's world cannot
+	// go while a login's grant still points at its branch.
 	t.Cleanup(func() {
 		c := context.Background()
 		_, _ = pool.Exec(c, `DELETE FROM delivery_pod_photos p USING delivery_stops s
@@ -82,8 +80,12 @@ func newFenceWorld(t *testing.T) *fenceWorld {
 		_, _ = pool.Exec(c, `DELETE FROM dispatch_drivers WHERE user_id = $1::uuid`, testkit.UserDriverID)
 		_, _ = pool.Exec(c, `DELETE FROM orders WHERE order_no LIKE '#SO-FXSYNC-%%' AND org_id = $1::uuid`, testkit.OrgNorthID)
 		_, _ = pool.Exec(c, `DELETE FROM scope_sequences WHERE scope IN ('runs','stops','pod')`)
-		_ = testkit.Cleanup(c, testkit.PgxPool(pool))
+		cleanFixtureWorld(t, c, pool)
 	})
+
+	driverA := seedLinkedDriver(t, pool, testkit.BranchNorthAID, testkit.UserDriverID)
+	subB, userB := seedFenceLogin(t, pool)
+	driverB := seedLinkedDriver(t, pool, testkit.BranchNorthAID, userB)
 
 	// The role seam the composition root wires: identity's own
 	// resolver, bridged to the ERP role code, so the fence binds the
