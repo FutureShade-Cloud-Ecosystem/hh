@@ -93,7 +93,7 @@ export type CreateCheck = { ok: true; body: LandedCostCreateRequest } | { ok: fa
 
 const AMOUNT_WORDS = (what: string): string => `Write the ${what} as dollars and cents, two decimals at most.`;
 
-function amount(textValue: string, what: string): { ok: true; cents: number } | { ok: false; words: string } {
+export function amountCents(textValue: string, what: string): { ok: true; cents: number } | { ok: false; words: string } {
   if (textValue.trim() === "") return { ok: true, cents: 0 };
   const cents = parseAmountToCents(textValue);
   return cents === null ? { ok: false, words: AMOUNT_WORDS(what) } : { ok: true, cents };
@@ -102,11 +102,11 @@ function amount(textValue: string, what: string): { ok: true; cents: number } | 
 /** The capture form's text, checked, as the body the core expects. Nothing is sent when a check fails. */
 export function buildCreate(form: CaptureText, po: OrderLines | null): CreateCheck {
   if (po === null || form.poNo === "") return { ok: false, words: "Pick the purchase order the freight belongs to." };
-  const freight = amount(form.freight, "freight");
+  const freight = amountCents(form.freight, "freight");
   if (!freight.ok) return freight;
-  const duty = amount(form.duty, "duty");
+  const duty = amountCents(form.duty, "duty");
   if (!duty.ok) return duty;
-  const handling = amount(form.handling, "handling");
+  const handling = amountCents(form.handling, "handling");
   if (!handling.ok) return handling;
   if (freight.cents === 0 && duty.cents === 0 && handling.cents === 0) {
     return { ok: false, words: "Write at least one of freight, duty or handling: a landed cost of nothing costs nothing." };

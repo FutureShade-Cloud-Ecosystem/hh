@@ -84,7 +84,8 @@ export function makeLanded(kit) {
 
   function receivedLines(poId) {
     const po = kit.world().pos.find((p) => p.id === poId);
-    if (po === undefined) return [];
+    // A landed cost attached to a receipt carries the receiving document's id: its lines are the receipt's.
+    if (po === undefined) return kit.receiptLines(poId);
     return po.lines
       .filter((l) => (l.received ?? 0) > 0)
       .map((l) => ({
@@ -277,5 +278,14 @@ export function makeLanded(kit) {
     return true;
   }
 
-  return { reset, handle };
+  // The attach route of the receipts: a landed cost created and applied in one step, the core's CreateAndApply.
+  function createAndApply(draft) {
+    const doc = stamp({ ...draft, retro_of_id: "", status: "DRAFT", exclude_special_buys: true });
+    docs.push(doc);
+    applyDoc(doc);
+    doc.status = "POSTED";
+    return doc.id;
+  }
+
+  return { reset, handle, createAndApply };
 }

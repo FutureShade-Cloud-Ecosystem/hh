@@ -175,9 +175,7 @@ function lineView(l, n) {
     qty_billed_base: 0,
     qty_outstanding_base: l.qty - received,
     uom: p.uom,
-    unit_cost_cents: l.cost,
-    line_total_cents: l.qty * l.cost,
-    billed_cents: 0,
+    ...(flags.costsHidden ? {} : { unit_cost_cents: l.cost, line_total_cents: l.qty * l.cost, billed_cents: 0 }),
   };
 }
 
@@ -195,8 +193,12 @@ function poView(po) {
     currency: "CAD",
     fx_rate: 1,
     delivery_method: po.method,
-    subtotal_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
-    subtotal_cad_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
+    ...(flags.costsHidden
+      ? {}
+      : {
+          subtotal_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
+          subtotal_cad_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
+        }),
     created_at: po.created,
     updated_at: po.created,
   };
@@ -206,7 +208,7 @@ function poView(po) {
 }
 
 function poDetail(po) {
-  return { ...poView(po), lines: po.lines.map((l, i) => lineView(l, i + 1)), receipts: [] };
+  return { ...poView(po), lines: po.lines.map((l, i) => lineView(l, i + 1)), receipts: purch.receiptsFor(po.id) };
 }
 
 // ---- http --------------------------------------------------------------------------------------
@@ -243,6 +245,9 @@ let fenced = false;
 // Who the caller is for the purchasing areas' role walls: the demo's Procurement manager unless a
 // test switches it (payables-receivables enters and posts bills; super-admin sets the tolerances).
 let role = "procurement-manager";
+// Switches a test can set: cost hidden from the caller (the purchasing policy), the mail transport
+// failing, the untagged send refused by policy, and the answer to the next write lost on the way back.
+const flags = { costsHidden: false, sendFails: false, refuseUntagged: false, dropNext: false };
 const reach = () => (fenced ? [] : [BRANCH]);
 
 // The purchasing areas (landed cost and the rest): parts of their own, fed the world through the kit.
@@ -259,6 +264,7 @@ const purch = createPurchRoutes({
   VENDORS,
   PRODUCTS,
   reach,
+  flags: () => flags,
   // A scoped caller must name a branch; only a global one may read across all of them.
   global: () => false,
   poView: (po) => poView(po),
@@ -285,8 +291,14 @@ async function handle(req, res) {
     walled = false;
     fenced = false;
     role = "procurement-manager";
+    Object.assign(flags, { costsHidden: false, sendFails: false, refuseUntagged: false, dropNext: false });
     purch.reset();
     return json(res, { ok: true });
+  }
+  if (method === "POST" && path === "/_stub/flag") {
+    const body = await readBody(req);
+    if (body?.name in flags) flags[body.name] = Boolean(body.value);
+    return json(res, { ok: true, flags });
   }
   if (method === "POST" && path === "/_stub/role") {
     const body = await readBody(req);
@@ -323,6 +335,11 @@ async function handle(req, res) {
   if (!path.startsWith("/api/v1/")) return refuse(res, 404, "not found");
   if (!(req.headers.authorization ?? "").startsWith("Bearer ")) return refuse(res, 401, "Unauthorized");
 
+  // The answer to the next write is lost on the way back: the write happens, the caller hears nothing.
+  if (flags.dropNext && method !== "GET" && path.startsWith("/api/v1/")) {
+    flags.dropNext = false;
+    res.end = () => req.socket.destroy();
+  }
   if (await purch.handle({ req, res, url, path, method, role })) return;
 
   // ---- reads ----

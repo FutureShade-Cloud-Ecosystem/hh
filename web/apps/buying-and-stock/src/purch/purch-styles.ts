@@ -28,6 +28,10 @@ export const purchStyles = css`
 
   .split { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--hh-s-16); align-items: start; }
   .split > * { min-width: 0; }
+  .split-rev { grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr); }
+  .panel.inner { background: var(--hh-row-alt); margin-top: var(--hh-s-16); }
+  .inline-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--hh-s-8); align-items: end; }
+  .code-line { grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) auto; }
   .badge-row { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }
   .btn-danger { white-space: nowrap; }
   .mono { font-family: var(--hh-font-mono); }
@@ -39,7 +43,8 @@ export const purchStyles = css`
   textarea:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
 
   @media (max-width: 1100px) {
-    .detail-grid, .split { grid-template-columns: minmax(0, 1fr); }
+    .detail-grid, .split, .split-rev { grid-template-columns: minmax(0, 1fr); }
+    .code-line { grid-template-columns: minmax(0, 1fr); }
   }
   @media (max-width: 700px) {
     .tiles-3 { grid-template-columns: minmax(0, 1fr); }

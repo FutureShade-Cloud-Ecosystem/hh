@@ -202,5 +202,13 @@ export function makeVendors(kit) {
     return writes && false;
   }
 
-  return { reset, handle };
+  return {
+    reset,
+    handle,
+    contactOf: (vendorId) => contacts.get(vendorId),
+    emailsOf: (vendorId) => {
+      const v = vendors.find((x) => x.id === vendorId);
+      return v === undefined || v.order_email === "" ? [] : [v.order_email];
+    },
+  };
 }

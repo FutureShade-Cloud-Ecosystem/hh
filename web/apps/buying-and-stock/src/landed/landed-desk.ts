@@ -14,6 +14,7 @@ import type { TemplateResult } from "lit";
 import type { Branch, LandedCost, LandedCostBasis, LandedCostStatus, PurchasingPO, Result } from "@hardscapehouse/api-client";
 import type { AreaDesk, DeskHost } from "../purch/area.js";
 import { poRows, refusalWords } from "../po/po-logic.js";
+import { answerLost } from "../purch/purch-logic.js";
 import { LandedApi } from "./landed-api.js";
 import { BASES, buildCreate, landedRows, receivedOrders, retroCandidates, settleWords, statusWord, type Action } from "./landed-logic.js";
 import { orderOptionText, priorOptionText, renderLanded, type CaptureModel, type DetailModel, type LandedModel, type LandedView } from "./landed-views.js";
@@ -292,10 +293,10 @@ export class LandedDesk implements AreaDesk {
       await this.#open(made.value.id, `Saved as a draft on ${check.body.po_ref}.\nNothing is added to the cost of the goods until it is applied.`);
       return;
     }
-    if (made.status === undefined) {
+    if (answerLost(made)) {
       // The answer never arrived: the draft may exist. Read the list so the person sees it before saving again.
       await this.#reloadList();
-      this.#error = "The answer did not arrive, so it is not known whether the draft was saved. The list has been read again: look for it before saving a second time.";
+      this.#error = "No clear answer came back, so it is not known whether the draft was saved. The list has been read again: look for it before saving a second time.";
       this.#view = "list";
     } else {
       this.#fail(made);
@@ -325,7 +326,7 @@ export class LandedDesk implements AreaDesk {
     }
     const before = fresh.ok ? fresh.value.status : detail.doc.status;
     const answered = action === "apply" ? await this.#api.apply(id) : action === "retro" ? await this.#api.retro(id) : await this.#api.void(id);
-    if (!answered.ok && answered.status !== undefined) {
+    if (!answered.ok && !answerLost(answered)) {
       this.#fail(answered);
       this.#busy = false;
       this.#host.repaint();
@@ -336,7 +337,7 @@ export class LandedDesk implements AreaDesk {
     if (!doc.ok) {
       this.#error = answered.ok
         ? "The core accepted it, but the document could not be read back. Refresh before doing anything else."
-        : "The answer did not arrive and the document could not be read back. Refresh before doing anything else.";
+        : "No clear answer came back and the document could not be read back. Refresh before doing anything else.";
       this.#confirm = null;
       this.#busy = false;
       this.#host.repaint();

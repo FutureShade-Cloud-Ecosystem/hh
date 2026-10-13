@@ -108,6 +108,22 @@ test("a draft that changed while it was open is not pressed on, and the screen s
   await expect(page.locator("[data-landed-detail] [data-status]").first()).toHaveText("Applied");
 });
 
+test("an apply whose answer was lost is settled by reading the document, so the screen shows what the core holds", async ({ page, request }) => {
+  await openArea(page, request, "Landed cost");
+  await newCapture(page);
+  await page.locator("[data-lc-po]").selectOption({ label: ORDER });
+  await fill(page, "100", "", "");
+  await page.getByRole("button", { name: "Save as a draft" }).click();
+  await expect(page.locator("[data-landed-detail]")).toBeVisible();
+  await page.getByRole("button", { name: "Apply", exact: true }).click();
+  await request.post("/_stub/flag", { data: { name: "dropNext", value: true } });
+  await page.getByRole("button", { name: "Apply it" }).click();
+  // The apply was made; nothing came back; the screen read the document and says what it now is.
+  await expect(page.locator("[data-landed-detail] [data-status]").first()).toHaveText("Applied");
+  await expect(page.locator("[data-notice]")).toContainText("Applied to PO-TRT-66.");
+  await expect(page.getByRole("button", { name: "Apply", exact: true })).toHaveCount(0);
+});
+
 test("a capture that cannot be right is refused in words and sends nothing", async ({ page, request }) => {
   await openArea(page, request, "Landed cost");
   await newCapture(page);

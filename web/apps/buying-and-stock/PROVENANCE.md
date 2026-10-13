@@ -34,6 +34,15 @@ role app template's shell, held to the procurement references in
 | The vendor's own codes for our products | `app/src/purchasing-console.ts` | `codesTab`, `mappingBody` | Add, correct and remove from a picker over the catalogue; the unit and the number of ours it holds are asked for together |
 | The order a vendor quoted back | `app/src/purchasing-logic.ts` | `lookup`, `refWords` | Found by the number however the vendor wrote it |
 
+## Receiving (`src/receiving/`)
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| The receiving queue (orders with something still to arrive) | `app/src/inventory-receiving.ts`, `app/src/purchasing-console.ts` | `queue` in `src/receiving/receiving-views.ts` | Soonest promised first, as the core orders it; the value open is the core's and is said to be hidden where the policy hides cost |
+| Receive goods against an order | `app/src/inventory-receiving.ts` | `receiveBody`, `receiveConfirmWords`, `receiveBlock` | A per line count checked in the core's own words (including its over receipt sentence at four decimals), a confirm step naming every line, and no retry of a lost answer: the order is read again instead, because the receive carries no key |
+| Receipts and a landed cost attached to one | `app/src/landed-cost.ts` | `receiptPanel`, `attachBody`, `attachConfirmWords` | One landed cost per receipt, applied at once, behind a confirm step that lists each amount and adds none |
+| The order document and the send to the vendor | `app/src/purchasing-document-api.ts`, `app/src/purchasing-document-logic.ts` | `documentAndSends`, `sendOutcome` | The document downloads as a spreadsheet or to print; a send names the desk it goes to before it goes, asks for the fallback address only when the core says so, keeps one key for one attempt across every retry, and reads the delivery status because the request succeeds even when the delivery failed |
+
 Not ported on purpose (later, named on screen as Later): receiving a truck
 (the yard team's, Yard Pick and Receive), the vendor screens (the core has no
 vendor create or edit route yet), vendor bills and the three way match (the
