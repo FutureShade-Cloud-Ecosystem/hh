@@ -286,6 +286,7 @@ pub fn work() -> &'static Profile {
             apps: file.apps,
             permissions: Permissions { camera: false, fine_location: false },
             window: WindowDefaults { title: "HH Work", width: 1280.0, height: 800.0 },
+            auth: AuthConfig::from_build(),
         }
     })
 }

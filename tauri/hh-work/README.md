@@ -56,7 +56,15 @@ the macOS minimum system version) but not built on this workstation. Tablets
 (iPad, Android) share the lib's mobile entry point; no mobile project is
 generated yet.
 
-## Not wired yet
+## Sign in
 
-Sign in. The auth commands wire in after the sign in item (shells item 7)
-merges; the webview holds no keychain command until then and after.
+The four contract commands (`auth_sign_in`, `auth_resume`, `auth_exchange`,
+`auth_sign_out`, in `src/auth.rs`) mirror Field's over the shared core's
+`AuthService` and custody. They are declared in `build.rs` and allowed by name
+in the capability for the bundled local origin only. The Console endpoint, the
+project id and the core URL are the profile's `AuthConfig`, fixed at build time
+from `HH_CONSOLE_ENDPOINT`, `HH_CONSOLE_PROJECT_ID` and `HH_CORE_URL`; a build
+without them answers `unavailable`. The keychain service is
+`ai.futurebuild.hh.work`; custody is the desktop keyring only (no Android
+Keystore for Work). The webview holds no keychain command, and the CSP needs
+no network origin because the calls run in Rust.

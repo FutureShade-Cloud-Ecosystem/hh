@@ -1,3 +1,5 @@
+mod auth;
+
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 use hh_shell_core::profiles;
@@ -93,11 +95,21 @@ pub fn run() {
         // the README): registered, but nothing polls until the shell chrome's
         // update prompt asks, so the placeholder endpoint stays idle.
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![run_statement, run_atomic])
+        .invoke_handler(tauri::generate_handler![
+            run_statement,
+            run_atomic,
+            auth::auth_sign_in,
+            auth::auth_resume,
+            auth::auth_exchange,
+            auth::auth_sign_out
+        ])
         .setup(|app| {
             let profile = profiles::work();
             println!("HH_PROFILE {}", profile_line(&app.config().plugins));
             app.manage(open_store(app.handle()).expect("the profile's store opens"));
+            // The sign in commands' state: custody and the Console client, built
+            // from the profile's fixed configuration (never the webview's).
+            app.manage(auth::AuthState::for_profile());
             WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title(profile.window.title)
                 .inner_size(profile.window.width, profile.window.height)
