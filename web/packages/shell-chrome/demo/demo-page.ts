@@ -83,6 +83,30 @@ function renderMarkup(element: new () => { render(): TemplateResult }, props: Re
   return collectResultSync(render(instance.render()));
 }
 
+/** The update card mid install, rendered through the element's own click path: a pending
+ * updater, the captured click listener, one press on Update now. The in flight flag is
+ * private to the element, so the page drives the real code instead of editing the markup. */
+function installingMarkup(props: Record<string, unknown>): string {
+  const el = new ShellUpdate() as unknown as Record<string, unknown> & {
+    render(): TemplateResult;
+    connectedCallback(): void;
+  };
+  let click: ((event: unknown) => void) | undefined;
+  el['addEventListener'] = (type: string, fn: (event: unknown) => void) => {
+    if (type === 'click') click = fn;
+  };
+  el['dispatchEvent'] = () => true;
+  el['performUpdate'] = () => {};
+  el['updater'] = { install: () => new Promise<void>(() => {}) };
+  for (const [name, value] of Object.entries(props)) el[name] = value;
+  el.connectedCallback();
+  const control = Object.create(Element.prototype) as Element;
+  control.hasAttribute = (name: string) => name === 'data-action';
+  control.getAttribute = (name: string) => (name === 'data-action' ? 'install' : null);
+  click?.({ composedPath: () => [control] });
+  return collectResultSync(render(el.render()));
+}
+
 export function demoSheets(): ReadonlyArray<{ tag: string; css: string }> {
   return [
     { tag: 'hh-shell-header', css: cssTextOf(ShellHeader.styles) },
@@ -92,12 +116,22 @@ export function demoSheets(): ReadonlyArray<{ tag: string; css: string }> {
   ];
 }
 
-function cell(tag: string, title: string, markup: string): string {
+interface CellOptions {
+  /** A phone or tablet width for the host, so its own container query answers at that width. */
+  width?: number;
+  /** A demo-only rule for a state that needs a pointer or a key: forced here so the page can show it. */
+  force?: string;
+}
+
+function cell(tag: string, title: string, markup: string, options: CellOptions = {}): string {
+  const host = options.width === undefined ? `<${tag}>` : `<${tag} style="display:block;width:min(${options.width}px, 100%)">`;
+  const force = options.force === undefined ? '' : `<style>${options.force}</style>`;
   return (
     `<figure class="cell"><figcaption>${title}</figcaption>` +
-    `<${tag}>` +
+    host +
     `<template shadowrootmode="open">` +
     `<link rel="stylesheet" href="./sheets/${tag}.css">` +
+    `${force}` +
     `${markup}` +
     `</template>` +
     `</${tag}>` +
@@ -131,13 +165,19 @@ function headerProps(over: Record<string, unknown> = {}): Record<string, unknown
 
 /** One shell frame: band, offline banner, and the rail over a working
  * surface, composed the way a shell composes them. */
-function frameCell(title: string, width: number, banner: string, headerOver: Record<string, unknown>): string {
+function frameCell(
+  title: string,
+  width: number,
+  banner: string,
+  headerOver: Record<string, unknown>,
+  railCollapsed = false,
+): string {
   const header = renderMarkup(ShellHeader, headerProps(headerOver));
   const bannerMarkup =
     banner === ''
     ? ''
     : renderMarkup(ShellBanner, banner === 'read-only' ? { mode: banner } : { mode: banner, waiting: 3 });
-  const rail = renderMarkup(ShellRail, { pins: DEMO_PINS, active: DEMO_CURRENT, collapsed: false, heading: 'Pinned' });
+  const rail = renderMarkup(ShellRail, { pins: DEMO_PINS, active: DEMO_CURRENT, collapsed: railCollapsed, heading: 'Pinned' });
   return (
     `<figure class="cell"><figcaption>${title}</figcaption>` +
     `<div class="shell-frame" style="width:min(${width}px, 100%)">` +
@@ -163,6 +203,8 @@ const SYNC_STATES_CELLS: ReadonlyArray<{ state: string; over?: Record<string, un
   { state: 'conflict', over: { cards: 1 }, note: 'cards wait for a person' },
   { state: 'auth_expired', over: { attempts: 0 }, note: 'the session is gone; the outbox is parked' },
   { state: 'pushing', over: { waiting: 4, attempts: 2 }, note: 'stuck: two attempts, the chip alarms in words' },
+  { state: 'idle', over: { stalls: 1 }, note: 'a stall alone: a check needs you' },
+  { state: 'conflict', over: { cards: 2, stalls: 1 }, note: 'conflict with a stall' },
 ];
 
 function syncSection(): string {
@@ -179,13 +221,35 @@ export function buildDemoPage(opts: { theme?: DemoTheme } = {}): string {
   const themeAttr = theme === 'light' ? ' data-theme="light"' : '';
 
   const selectorOpen = renderMarkup(ShellHeader, headerProps({ selectorOpen: true }));
+  const selectorPhone = renderMarkup(
+    ShellHeader,
+    headerProps({
+      selectorOpen: true,
+      groups: [
+        { app: DEMO_FRONTENDS[0], surfaces: DEMO_SURFACES.get('yard-pick') },
+        { app: DEMO_FRONTENDS[1], surfaces: DEMO_SURFACES.get('drive-run') },
+        { app: DEMO_FRONTENDS[2], surfaces: [] },
+      ],
+    }),
+  );
+  const bandAt = (over: Record<string, unknown> = {}) => renderMarkup(ShellHeader, headerProps(over));
   const railCollapsedPhone = renderMarkup(ShellRail, { pins: DEMO_PINS, active: DEMO_CURRENT, collapsed: true });
+  const railExpanded = renderMarkup(ShellRail, { pins: DEMO_PINS, active: DEMO_CURRENT, collapsed: false, heading: 'Pinned' });
   const railEmpty = renderMarkup(ShellRail, { pins: [], active: '', collapsed: false });
   const bannerOffline = renderMarkup(ShellBanner, { mode: 'offline', waiting: 3 });
+  const bannerOfflineEmpty = renderMarkup(ShellBanner, { mode: 'offline', waiting: 0 });
+  const bannerOfflineOne = renderMarkup(ShellBanner, { mode: 'offline', waiting: 1 });
   const bannerUnreachable = renderMarkup(ShellBanner, { mode: 'unreachable', waiting: 2 });
   const bannerReadOnly = renderMarkup(ShellBanner, { mode: 'read-only' });
   const bannerAuth = renderMarkup(ShellBanner, { mode: 'auth-expired' });
   const updateOpen = renderMarkup(ShellUpdate, { open: true, shellName: 'HH Field', version: 'r18' });
+  const updateNoVersion = renderMarkup(ShellUpdate, { open: true, shellName: 'HH Field' });
+  const updateInstalling = installingMarkup({ open: true, shellName: 'HH Field', version: 'r18' });
+
+  // The states that need a pointer or a key are forced here, in this page's own cells only:
+  // the same declarations the element's hover and focus rules carry, held to a fixed row.
+  const FORCE_TOOLTIP = `.rail[data-collapsed='true'] .row[data-key='${DEMO_CURRENT}'] .label { opacity: 1; }`;
+  const FORCE_FOCUS = ".mi[data-key='yard-pick/receiving'] { outline: 2px solid var(--hh-focus-ring); outline-offset: -2px; }";
 
   return `<!doctype html>
 <html lang="en"${themeAttr}>
@@ -227,23 +291,42 @@ rendered output and the package's tests hold the wiring contract.</p>
 <div class="grid">
 ${frameCell('the frame, tablet 834, offline with three writes waiting', 834, 'offline', { syncState: 'offline', waiting: 3 })}
 ${frameCell('the frame, phone 390, brand idle (the phone band drops the chip and the org word)', 390, '', {})}
+${frameCell('the frame, phone 390, offline with three writes waiting, collapsed rail', 390, 'offline', { syncState: 'offline', waiting: 3 }, true)}
+${frameCell('the frame, desktop 1280, idle', 1280, '', {})}
+</div>
+</section>
+<section class="width-frame" data-section="band"><h2>The band, state by state</h2>
+<div class="grid">
+${cell('hh-shell-header', 'band at rest, pinned (the active pin marked)', bandAt())}
+${cell('hh-shell-header', 'band at rest, unpinned', bandAt({ pinned: false }))}
+${cell('hh-shell-header', 'band, pin disabled: no current surface', bandAt({ currentKey: '', pinned: false }))}
+${cell('hh-shell-header', 'band, bell at zero', bandAt({ notifications: 0 }))}
+${cell('hh-shell-header', 'band, the Account fallback (no role label)', bandAt({ user: '' }))}
+${cell('hh-shell-header', 'band, empty breadcrumb reads Surfaces', bandAt({ breadcrumb: '' }))}
+${cell('hh-shell-header', 'band, no org', bandAt({ org: '' }))}
+${cell('hh-shell-header', 'band, phone 390: no chip, no org word', bandAt(), { width: 390 })}
 </div>
 </section>
 <section class="width-frame" data-section="selector"><h2>The selector open: the whole map, the current marked</h2>
 <div class="grid">
-${cell('hh-shell-header', 'the selector panel over the fake manifest', selectorOpen)}
+${cell('hh-shell-header', 'the selector panel over the fake manifest, desktop, a keyboard focus ring on Receiving (forced for this page)', selectorOpen, { force: FORCE_FOCUS })}
+${cell('hh-shell-header', 'the selector panel, phone 390, House Messages as a front door only row', selectorPhone, { width: 390 })}
 </div>
 </section>
 ${syncSection()}
 <section class="width-frame" data-section="rail"><h2>The pinned rail: collapsed, expanded, and the empty first impression</h2>
 <div class="grid">
-${cell('hh-shell-rail', 'collapsed, the pins only, icons and tooltips', railCollapsedPhone)}
-${cell('hh-shell-rail', 'expanded, the words on, the active pin marked', railEmpty)}
+${cell('hh-shell-rail', 'collapsed, phone 390, the pins only, icons and tooltips', railCollapsedPhone, { width: 390 })}
+${cell('hh-shell-rail', 'collapsed, a tooltip revealed (the hover and focus state, forced for this page), the active bar', railCollapsedPhone, { force: FORCE_TOOLTIP })}
+${cell('hh-shell-rail', 'expanded, the words on, the active pin marked', railExpanded)}
+${cell('hh-shell-rail', 'empty, expanded: the first impression', railEmpty)}
 </div>
 </section>
 <section class="width-frame" data-section="banner"><h2>The offline banner: the connection's truth, or nothing</h2>
 <div class="grid">
 ${cell('hh-shell-offline-banner', 'offline, three writes in the outbox', bannerOffline)}
+${cell('hh-shell-offline-banner', 'offline, empty outbox (writes wait)', bannerOfflineEmpty)}
+${cell('hh-shell-offline-banner', 'offline, one write waiting (the plural check)', bannerOfflineOne)}
 ${cell('hh-shell-offline-banner', 'the server can\'t be reached', bannerUnreachable)}
 ${cell('hh-shell-offline-banner', 'read only: a second tab owns the sync', bannerReadOnly)}
 ${cell('hh-shell-offline-banner', 'sign in expired, the work safe', bannerAuth)}
@@ -252,6 +335,9 @@ ${cell('hh-shell-offline-banner', 'sign in expired, the work safe', bannerAuth)}
 <section class="width-frame" data-section="update"><h2>The update prompt: quiet until the download is whole</h2>
 <div class="grid">
 ${cell('hh-shell-update-prompt', 'HH Field update ready, Update now and Later', updateOpen)}
+${cell('hh-shell-update-prompt', 'HH Field update ready, no version', updateNoVersion)}
+${cell('hh-shell-update-prompt', 'update prompt, installing: both buttons disabled', updateInstalling)}
+${cell('hh-shell-update-prompt', 'update prompt, phone 390, the card wraps', updateOpen, { width: 390 })}
 </div>
 </section>
 </body>
