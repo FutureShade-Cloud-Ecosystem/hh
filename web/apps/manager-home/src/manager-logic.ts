@@ -284,12 +284,13 @@ export function kindWord(kind: string): string {
 
 /**
  * Who decides each kind of approval, as the matrix names the lists (exception_approvers, with
- * the own-branch floor clearers on margin). The words the approvals view carries when the core
+ * the own-branch sales manager on margin; the branch manager decides no kind, the core's
+ * DecidesKind refuses it every one). The words the approvals view carries when the core
  * refuses a kind this caller does not decide.
  */
 export const APPROVAL_DECIDER_WORDS: Readonly<Record<string, string>> = Object.freeze({
   MARGIN_BELOW_MINIMUM:
-    "Margin approvals are decided by the financial controller, the general manager, and a sales manager or branch manager in their own branch.",
+    "Margin approvals are decided by the financial controller, the general manager, and a sales manager in their own branch.",
   CREDIT_LIMIT_EXCEEDED: "Credit approvals are decided by the financial controller and the general manager.",
   COD_CONSTRAINT: "Cash On Demand approvals are decided by the financial controller and the general manager.",
   JE_OVER_THRESHOLD: "Journal entry approvals are decided by the financial controller and the general manager.",
