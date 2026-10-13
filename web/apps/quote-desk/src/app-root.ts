@@ -27,6 +27,7 @@ import {
 } from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
@@ -117,6 +118,8 @@ export class QuoteDeskApp extends HHElement {
   readonly #sessions = new SessionStore();
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
+  /** The custody the served config chose: the demo controller as always, or this page recovering its own session (boot-custody.ts). */
+  readonly #custody: Custody;
   readonly #client: QdClient;
   readonly #pricing: PricingClient;
   /** Which of the desk's two screens shows: the quotes (always mounted, so a draft survives), or the pricing panel (mounted only while open). */
@@ -151,12 +154,22 @@ export class QuoteDeskApp extends HHElement {
 
   constructor() {
     super();
+    // The demo adapter's own client carries no staff bearer: the demo routes
+    // are pre-auth by design (the tap a role sign-in).
+    const demoClient = new ApiClient({
+      baseUrl: "",
+      headers: async () => ({ "X-Org": DEMO_ORG }),
+    });
+    this.#account = new DemoAccount({ client: demoClient });
+    this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
+    this.#custody = bootCustody(servedConsoleConfig(), { sessions: this.#sessions, demoAccount: this.#account, demoOrg: DEMO_ORG });
+    this.#controller = this.#custody.controller;
     const staffHeaders = authHeaderProvider({
       callerClass: "staff",
       sessions: this.#sessions,
-      activeOrg: () => DEMO_ORG,
+      activeOrg: () => this.#custody.org,
     });
-    const client = new ApiClient({ baseUrl: "", headers: staffHeaders });
+    const client = new ApiClient({ baseUrl: this.#custody.coreBaseUrl, headers: staffHeaders });
     // The feedback widget's sender rides the staff client: the feedback
     // route is staff guarded and the desk's own custody holds the bearer.
     this.#feedbackSender = async (request) => {
@@ -173,14 +186,6 @@ export class QuoteDeskApp extends HHElement {
       }
       return { ok: false, error: answer.error };
     };
-    // The demo adapter's own client carries no staff bearer: the demo routes
-    // are pre-auth by design (the tap a role sign-in).
-    const demoClient = new ApiClient({
-      baseUrl: "",
-      headers: async () => ({ "X-Org": DEMO_ORG }),
-    });
-    this.#account = new DemoAccount({ client: demoClient });
-    this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
     // The caller's own id is read from the live session, not from the sign-in answer kept beside it.
     this.#client = new QdClient(client, () => this.#sessions.current?.user.userId ?? "");
     this.#pricing = new PricingClient(client);
@@ -192,6 +197,7 @@ export class QuoteDeskApp extends HHElement {
       houseDay: () => houseDayInZone(HOUSE_ZONE),
       user: () => this.#deskIdentity,
       token: () => this.#sessions.current?.token ?? "",
+      baseUrl: this.#custody.coreBaseUrl,
     });
   }
 
@@ -208,6 +214,11 @@ export class QuoteDeskApp extends HHElement {
     window.addEventListener("hashchange", this.#onHashChange);
     // The system's light setting is honoured from the first paint.
     this.#theme.start();
+    // Console mode: this page recovers its own session and the demo cards never apply.
+    if (this.#custody.mode === "console") {
+      this.#custody.begin("quote-desk", (outcome) => this.#onRecovered(outcome));
+      return;
+    }
     void this.#loadFlows();
     // The seam rule (decision log rows 893 and 899): the front door's
     // handoff is adopted only where the demo is compiled in. Vite
@@ -383,6 +394,38 @@ export class QuoteDeskApp extends HHElement {
   }
 
   /**
+   * Console mode: this page recovered its own session, or could not. The person's role comes from the
+   * exchange (not a flow table). An unavailable page shows the entry's unavailable state while the
+   * custody retries; a session the front door must settle goes back there.
+   */
+  #onRecovered(outcome: AppStart): void {
+    if (outcome.kind === "ready") {
+      const entry = outcome.entry;
+      this.#deskUserId = entry.userId;
+      this.#deskIdentity = {
+        user_id: entry.userId,
+        email: entry.email,
+        display_name: entry.name,
+        role_code: entry.roleCode,
+        role_name: entry.roleLabel,
+        tier: entry.tier,
+        scope: entry.scope,
+      };
+      this.#roleLabel = entry.roleLabel;
+      this.requestUpdate();
+      void this.#initDesk(true);
+      return;
+    }
+    if (outcome.kind === "front-door" && outcome.why === "ended") {
+      void this.#signOut();
+      return;
+    }
+    this.#flowsState = { kind: "unavailable", status: null };
+    if (outcome.kind === "front-door") this.#custody.toFrontDoor();
+    this.requestUpdate();
+  }
+
+  /**
    * A demo build that finds no session sends the person to the front door to pick a role (decision log row
    * 1040), never to the shared entry page. Only where the desk is served under its own prefix (the box:
    * BASE_URL is /quote/): at the origin root the desk's own entry cards are the way in, and the front door
@@ -478,7 +521,8 @@ export class QuoteDeskApp extends HHElement {
     window.dispatchEvent(new CustomEvent(SIGN_OUT_EVENT, { detail }));
     // Bounded: a save that never answers must not hold the session open for good.
     const sent = await waitUpTo(UNSENT_WAIT_MS, Promise.allSettled(detail.waits));
-    await this.#controller.signOut();
+    // Console mode also forgets the persona id and stops the recovery loops, then goes to the front door.
+    await (this.#custody.mode === "console" ? this.#custody.leave() : this.#controller.signOut());
     // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
     clearFrontDoorHandoff();
     this.#busy = false;
