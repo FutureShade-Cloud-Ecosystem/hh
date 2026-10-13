@@ -294,7 +294,7 @@ export class ManagerHomeApp extends HHElement {
 
   #prefill(field: string, want: string): void {
     const input = this.renderRoot.querySelector<HTMLInputElement>(`[data-field='${field}']`);
-    if (input !== null && document.activeElement !== input && input.value !== want) {
+    if (input !== null && (this.renderRoot as ShadowRoot).activeElement !== input && input.value !== want) {
       input.value = want;
     }
   }
