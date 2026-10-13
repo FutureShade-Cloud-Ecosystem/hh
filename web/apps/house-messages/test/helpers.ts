@@ -70,6 +70,8 @@ export async function openAs(page: Page, request: APIRequestContext, who: Person
 }
 
 export const FORCED = "b9000000-0000-4000-9000-000000000001";
+/** The escalation room's copy of the forced notice: the core never flags a mirror. */
+export const MIRROR = "b9000000-0000-4000-9000-000000000002";
 
 export const channel = (page: Page, id: string) => page.locator(`[data-action='open-channel'][data-id='${id}']`);
 

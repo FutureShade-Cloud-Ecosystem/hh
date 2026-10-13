@@ -169,9 +169,15 @@ function reset() {
     id: id("b"), channel_id: CH.pay, kind: "EVENT", body: "Day total: 4 payments, $6,810.50.", created_at: at(20),
     ref: { topic: "payment.rollup", count: 4, amount_cents: 681050, rollup_day: new Date(T0).toISOString().slice(0, 10) },
   });
-  // The forced acknowledgement: a system notice on a credit hold, in the escalations room.
+  // The forced acknowledgement lives on the HOME message, in a room the credit hold belongs to. The
+  // escalation room holds a mirror that does not ask anyone to acknowledge (the core's copies never set
+  // requires_ack: acking is done once, on the home message).
   world.messages.push({
-    id: "b9000000-0000-4000-9000-000000000001", channel_id: CH.esc, kind: "EVENT", body: "Order SO-1042 is on credit hold. Do not release it to the yard.", created_at: at(25), requires_ack: true, priority: "HIGH", state_key: "order:SO-1042",
+    id: "b9000000-0000-4000-9000-000000000001", channel_id: CH.branch, kind: "EVENT", body: "Order SO-1042 is on credit hold. Do not release it to the yard.", created_at: at(25), requires_ack: true, priority: "HIGH", state_key: "order:SO-1042",
+    ref: { topic: "order.credit_hold", entity: "order:SO-1042", summary: "Credit hold" },
+  });
+  world.messages.push({
+    id: "b9000000-0000-4000-9000-000000000002", channel_id: CH.esc, kind: "EVENT", body: "Order SO-1042 is on credit hold. Do not release it to the yard.", created_at: at(25), priority: "HIGH", state_key: "order:SO-1042",
     ref: { topic: "order.credit_hold", entity: "order:SO-1042", summary: "Credit hold" },
   });
   // House conversation messages, so the room reads.

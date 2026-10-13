@@ -227,14 +227,13 @@ export function bubblePersistsAfter(messages: readonly Message[], ackedId: strin
 }
 
 /**
- * Whether a message asks the room to acknowledge it. The core flags a forced acknowledgement on the
- * messages it hands the unacked read, but its message pages do not carry the flag, and it mirrors
- * every high priority event into the escalation room, so a system notice there is one. A person's
- * own words are never asked to be acknowledged.
+ * Whether a message asks the room to acknowledge it: only when the core flagged it. The core flags
+ * the forced acknowledgement on the home message (the unacked read carries the flag; its message
+ * pages do not), and the mirrors it posts into the escalation room never carry it, because acking
+ * is done once, on the home message. The room's tier says nothing about it.
  */
-export function isAckable(message: Pick<Message, "requires_ack" | "kind">, tier: ChannelTier | undefined): boolean {
-  if (message.requires_ack === true) return true;
-  return message.kind === "EVENT" && tier === "ESCALATION";
+export function isAckable(message: Pick<Message, "requires_ack">): boolean {
+  return message.requires_ack === true;
 }
 
 /** A newer fact about the same record replaced this notice; it stops asking and is never acknowledged. */

@@ -85,6 +85,9 @@ export class MessagesDesk {
   // Acknowledgement: what the core lists as waiting on the caller, its arithmetic per message, and
   // the one write in flight with its refusal. Nothing is shown as acknowledged before the core says.
   #unacked: readonly Message[] = [];
+  // Ids the core has asked this caller to acknowledge, kept after the ack: the message pages do not
+  // carry the flag, so the ack line on the home message is remembered here.
+  readonly #asked = new Set<string>();
   readonly #progress = new Map<string, AckProgress>();
   #ackBusy = "";
   #ackError: { id: string; text: string } | null = null;
@@ -255,13 +258,16 @@ export class MessagesDesk {
   async #readAcks(): Promise<void> {
     const waiting = await this.#api.unacked();
     if (this.#stopped) return;
-    if (waiting.ok) this.#unacked = waiting.value;
+    if (waiting.ok) {
+      this.#unacked = waiting.value;
+      for (const m of waiting.value) this.#asked.add(m.id);
+    }
     const ask = new Map<string, string>();
     const bubble = bubbleFor(this.#unacked);
     if (bubble !== null) ask.set(bubble.id, bubble.channel_id);
     const channel = this.#channels.find((c) => c.id === this.#activeId);
     if (channel !== undefined) {
-      const rows = this.#held.filter((m) => isAckable(m, channel.tier) || this.#unacked.some((u) => u.id === m.id));
+      const rows = this.#held.filter((m) => this.#asked.has(m.id) || isAckable(m));
       for (const m of rows.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, PROGRESS_LIMIT)) ask.set(m.id, m.channel_id);
     }
     await Promise.all(
@@ -631,11 +637,11 @@ export class MessagesDesk {
     };
   }
 
-  #ackViews(channel: Channel, messages: readonly Message[]): Map<string, AckView> {
+  #ackViews(messages: readonly Message[]): Map<string, AckView> {
     const out = new Map<string, AckView>();
     for (const m of messages) {
       const waiting = this.#unacked.some((u) => u.id === m.id);
-      if (!waiting && !isAckable(m, channel.tier)) continue;
+      if (!waiting && !this.#asked.has(m.id) && !isAckable(m)) continue;
       const progress = this.#progress.get(m.id);
       out.set(m.id, {
         superseded: isSuperseded(m),
@@ -674,7 +680,7 @@ export class MessagesDesk {
       queue,
       loading: this.#loadingChannel,
       messages,
-      acks: this.#ackViews(channel, messages),
+      acks: this.#ackViews(messages),
       hasOlder: this.#nextCursor !== null,
       olderBusy: this.#olderBusy,
       threads: this.#threads,

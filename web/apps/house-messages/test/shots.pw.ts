@@ -70,9 +70,9 @@ for (const size of SIZES) {
       await toList();
       await expect(page.locator("[data-bubble]")).toBeVisible();
       await take("06", "ack-bubble-on-the-list");
-      await channel(page, CH.esc).click();
+      await channel(page, CH.branch).click();
       await expect(page.locator("[data-ack-progress]").first()).toBeVisible();
-      await take("07", "escalation-room-with-ack-count");
+      await take("07", "home-room-with-ack-count");
       await page.locator("[data-bubble]").getByRole("button", { name: "I got it" }).click();
       await expect(page.locator("[data-bubble]")).toHaveCount(0);
       await take("08", "acknowledged");

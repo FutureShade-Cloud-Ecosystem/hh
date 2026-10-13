@@ -248,11 +248,10 @@ test("time words: a clock time today, a short date and time before, a year only 
   assert.equal(timeWords("not a time", now), "");
 });
 
-test("a message asks for an acknowledgement when the core flagged it or it is a system notice in the escalation room", () => {
-  assert.equal(isAckable(msg({ requires_ack: true }), "STANDARD"), true);
-  assert.equal(isAckable(msg({ kind: "EVENT" }), "ESCALATION"), true, "every high priority event is mirrored into the escalation room");
-  assert.equal(isAckable(msg({ kind: "TEXT" }), "ESCALATION"), false, "a person's words are not asked to be acknowledged");
-  assert.equal(isAckable(msg({ kind: "EVENT" }), "STANDARD"), false);
+test("a message asks for an acknowledgement only when the core flagged it, in any room", () => {
+  assert.equal(isAckable(msg({ requires_ack: true })), true);
+  assert.equal(isAckable(msg({ kind: "EVENT" })), false, "the escalation room's mirror is not asked of anyone: acking is done on the home message");
+  assert.equal(isAckable(msg({ kind: "TEXT" })), false, "a person's words are not asked to be acknowledged");
 });
 
 test("a superseded notice is one a newer fact replaced, by either of the core's two markers", () => {

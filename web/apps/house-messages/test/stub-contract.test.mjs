@@ -176,15 +176,15 @@ test("the core's page names its rows messages, the contract names them items: bo
 });
 
 test("a message page is cursor paginated newest first, and the cursor walks to the end without a repeat", async () => {
-  const first = await call("sales", "GET", `/api/v1/messaging/channels/${CH.branch}/messages?limit=1`);
+  const first = await call("sales", "GET", `/api/v1/messaging/channels/${CH.yard}/messages?limit=1`);
   assert.equal(first.json.messages.length, 1);
   assert.ok(first.json.next_cursor);
-  const second = await call("sales", "GET", `/api/v1/messaging/channels/${CH.branch}/messages?limit=1&cursor=${encodeURIComponent(first.json.next_cursor)}`);
+  const second = await call("sales", "GET", `/api/v1/messaging/channels/${CH.yard}/messages?limit=1&cursor=${encodeURIComponent(first.json.next_cursor)}`);
   assert.equal(second.json.messages.length, 1);
   assert.notEqual(second.json.messages[0].id, first.json.messages[0].id);
   assert.ok(first.json.messages[0].created_at > second.json.messages[0].created_at);
   assert.equal(second.json.next_cursor, undefined);
-  refused(await call("sales", "GET", `/api/v1/messaging/channels/${CH.branch}/messages?cursor=garbage`), 400, "malformed pagination cursor");
+  refused(await call("sales", "GET", `/api/v1/messaging/channels/${CH.yard}/messages?cursor=garbage`), 400, "malformed pagination cursor");
 });
 
 test("a message row fits the contract and a reply is counted under its root", async () => {
@@ -243,7 +243,7 @@ test("unread counts fall to zero when the channel is marked read, and own posts 
   const own = await call("sales", "GET", "/api/v1/messaging/unread");
   assert.equal(own.json.channels.some((c) => c.channel_id === CH.branch), false);
   const other = await call("yard-manager", "GET", "/api/v1/messaging/unread");
-  assert.equal(other.json.channels.find((c) => c.channel_id === CH.branch)?.unread_count, 2);
+  assert.equal(other.json.channels.find((c) => c.channel_id === CH.branch)?.unread_count, 3, "the person who did not post sees the other side, the forced notice and the new post");
 });
 
 test("the forced acknowledgement: listed until acked, progress counts distinct users, a re-ack never double counts", async () => {
@@ -252,19 +252,19 @@ test("the forced acknowledgement: listed until acked, progress counts distinct u
   holds("MessagingMessageList", before.json);
   assert.deepEqual(before.json.messages.map((m) => m.id), [FORCED]);
   assert.equal(before.json.messages[0].requires_ack, true);
-  const ack = await call("sales", "POST", `/api/v1/messaging/channels/${CH.esc}/messages/${FORCED}/ack`);
+  const ack = await call("sales", "POST", `/api/v1/messaging/channels/${CH.branch}/messages/${FORCED}/ack`);
   assert.equal(ack.status, 200);
   holds("MessagingAck", ack.json);
   assert.equal(ack.json.method, "TAP");
-  await call("sales", "POST", `/api/v1/messaging/channels/${CH.esc}/messages/${FORCED}/ack`, { method: "TAP" });
-  const progress = await call("yard-manager", "GET", `/api/v1/messaging/channels/${CH.esc}/messages/${FORCED}/ack-progress`);
+  await call("sales", "POST", `/api/v1/messaging/channels/${CH.branch}/messages/${FORCED}/ack`, { method: "TAP" });
+  const progress = await call("yard-manager", "GET", `/api/v1/messaging/channels/${CH.branch}/messages/${FORCED}/ack-progress`);
   holds("MessagingAckProgress", progress.json);
   assert.deepEqual({ required: progress.json.required, acked: progress.json.acked, remaining: progress.json.remaining, complete: progress.json.complete }, { required: 3, acked: 1, remaining: 2, complete: false });
   const after = await call("sales", "GET", "/api/v1/messaging/unacked");
   assert.deepEqual(after.json.messages, []);
   const still = await call("yard-manager", "GET", "/api/v1/messaging/unacked");
   assert.equal(still.json.messages.length, 1);
-  refused(await call("sales", "POST", `/api/v1/messaging/channels/${CH.esc}/messages/${FORCED}/ack`, { method: "SHOUT" }), 400, "ack method must be one of TAP, QUICK_REPLY, VOICE");
+  refused(await call("sales", "POST", `/api/v1/messaging/channels/${CH.branch}/messages/${FORCED}/ack`, { method: "SHOUT" }), 400, "ack method must be one of TAP, QUICK_REPLY, VOICE");
 });
 
 test("notify prefs: defaults inherited, a choice kept, an escalation room can not be muted, a bad mode is refused", async () => {
