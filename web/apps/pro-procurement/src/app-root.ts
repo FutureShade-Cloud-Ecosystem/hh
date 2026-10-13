@@ -39,7 +39,7 @@ import { sheetStyles, stateBlock, noticeLine, type LoadState, type Page, type Ro
 import { todayLoad, todayView, TODAY_EMPTY } from "./today.js";
 import { boardLoad, boardView, boardCommand, BOARD_EMPTY } from "./board.js";
 import { projectsLoad, projectsView, projectsCommand, PROJECTS_EMPTY } from "./projects.js";
-import { scopeLoad, scopeView, scopeCommand, scopeHeading } from "./scope.js";
+import { scopeLoad, scopeView, scopeCommand, scopeHeading, scopeInput, SCOPE_MISSING } from "./scope.js";
 import { catalogLoad, catalogView, catalogCommand, catalogInput, CATALOG_WORDS } from "./catalog.js";
 import { productLoad, productView, productCommand, productHeading } from "./product.js";
 import { quotesLoad, quotesView, quotesCommand, quotesHeading, QUOTES_EMPTY } from "./quotes.js";
@@ -69,6 +69,25 @@ export class ProProcurementApp extends HHElement {
       ul.lane-body { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--hh-s-8); }
       ul.lane-body > li { margin: 0; }
       .lane-empty { margin: 0; padding: var(--hh-s-12); border: 1px dashed var(--hh-line); border-radius: var(--hh-radius-card); text-align: center; font-size: 0.875rem; }
+      ul.picker-results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--hh-s-8); max-height: 40vh; overflow: auto; }
+      ul.picker-results > li { margin: 0; }
+      .result {
+        display: flex;
+        width: 100%;
+        align-items: baseline;
+        gap: var(--hh-s-8);
+        min-height: 44px;
+        padding: var(--hh-s-8) var(--hh-s-12);
+        border: 1px solid var(--hh-line);
+        border-radius: var(--hh-radius-control);
+        background: transparent;
+        color: var(--hh-text);
+        font: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .result .name { flex: 1; }
+      .line-actions { gap: var(--hh-s-8); }
       @media (min-width: 64rem) {
         .board-columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
       }
@@ -84,6 +103,7 @@ export class ProProcurementApp extends HHElement {
   #heading = "";
   #notice: { kind: "ok" | "alert"; words: string } | null = null;
   #modal: { testid: string; build: (page: Page) => TemplateResult } | null = null;
+  #modalFields: Record<string, string> | null = null;
   #busy = false;
   #dealerName = "";
   #signinMessage = "";
@@ -123,8 +143,9 @@ export class ProProcurementApp extends HHElement {
       this.requestUpdate();
     },
     touch: () => this.requestUpdate(),
-    openModal: (testid, build) => {
+    openModal: (testid, build, fields) => {
       this.#modal = { testid, build };
+      this.#modalFields = fields ?? null;
       this.requestUpdate();
     },
     closeModal: () => this.#closeModal(),
@@ -138,6 +159,7 @@ export class ProProcurementApp extends HHElement {
     this.#route = route;
     this.#notice = null;
     this.#modal = null;
+    this.#modalFields = null;
     this.#busy = false;
     this.#view = { kind: "loading" };
     this.#data = null;
@@ -148,6 +170,7 @@ export class ProProcurementApp extends HHElement {
 
   #closeModal(): void {
     this.#modal = null;
+    this.#modalFields = null;
     this.#busy = false;
     this.#page.busy = false;
     this.requestUpdate();
@@ -253,7 +276,7 @@ export class ProProcurementApp extends HHElement {
       projects: undefined,
       catalog: catalogInput,
       quotes: undefined,
-      scope: undefined,
+      scope: scopeInput,
       product: undefined,
     };
     inputs[this.#route.surface]?.(name, value, this.#page);
@@ -352,6 +375,16 @@ export class ProProcurementApp extends HHElement {
       signin.message = this.#signinMessage;
       signin.busy = this.#busy;
     }
+    if (this.#modalFields !== null) {
+      // A modal's inputs start where its state says, once: after this they are
+      // the person's, and a re-render never rewrites what they typed.
+      const fields = this.#modalFields;
+      this.#modalFields = null;
+      for (const [name, value] of Object.entries(fields)) {
+        const el = this.#page.field(name);
+        if (el !== null) el.value = value;
+      }
+    }
   }
 
   #headingFor(): string {
@@ -375,7 +408,7 @@ export class ProProcurementApp extends HHElement {
         projects: PROJECTS_EMPTY,
         catalog: CATALOG_WORDS.empty,
         quotes: QUOTES_EMPTY,
-        scope: "",
+        scope: SCOPE_MISSING,
         product: "",
       };
       return stateBlock(this.#view, { empty: empties[this.#route.surface] }, "surface-state");

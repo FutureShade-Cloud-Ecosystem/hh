@@ -10,6 +10,8 @@ import type { ApiClient } from "@hardscapehouse/api-client";
 import type { TenantSession } from "@hardscapehouse/pro-kit";
 import type { SurfaceId } from "./registry.js";
 
+export { button };
+
 /** Where in the app a person is: a surface and, for a drill-down, what is open. */
 export interface Route {
   surface: SurfaceId;
@@ -44,7 +46,8 @@ export interface Page {
   hold(busy: boolean): void;
   /** Re-render without changing anything; a modal's own state lives in its open closure. */
   touch(): void;
-  openModal(testid: string, build: (page: Page) => TemplateResult): void;
+  /** Fields the modal's inputs start with, assigned after render (the position gate refuses every value binding). */
+  openModal(testid: string, build: (page: Page) => TemplateResult, fields?: Record<string, string>): void;
   closeModal(): void;
 }
 
