@@ -52,7 +52,7 @@ RUN npm ci
 # The builds run from inside each app's directory so npm puts the
 # workspace root's binaries on PATH (vite is hoisted there). Every app lands
 # in /out under the name of its prefix, so the final stage copies one tree.
-RUN mkdir -p /out/till /out/q /out/quote /out/drive /out/home /out/yard /out/money-desk /out/dealer-admin /out/pro-procurement /out/pro-pay /out/pro-field
+RUN mkdir -p /out/till /out/q /out/quote /out/drive /out/home /out/yard /out/money-desk /out/dispatch /out/dealer-admin /out/pro-procurement /out/pro-pay /out/pro-field
 WORKDIR /src/web/apps/front-door
 RUN npx vite build --outDir /out/root
 WORKDIR /src/web/apps/counter-till
@@ -79,6 +79,10 @@ RUN npx vite build --mode demo --base=/yard/ --outDir /out/yard --emptyOutDir
 # compiles the front door's handoff in, under its own prefix.
 WORKDIR /src/web/apps/money-desk
 RUN npx vite build --mode demo --base=/money-desk/ --outDir /out/money-desk --emptyOutDir
+# The dispatch board, the Logistics Manager's load board and day board: a staff
+# app, the same shape as HH Drive.
+WORKDIR /src/web/apps/dispatch-board
+RUN npx vite build --mode demo --base=/dispatch/ --outDir /out/dispatch --emptyOutDir
 # Dealer Admin, staff, roles, pricing rules and the audit log: a staff app,
 # so the demo mode compiles the front door's handoff in, under its own prefix.
 WORKDIR /src/web/apps/dealer-admin
@@ -119,6 +123,7 @@ COPY --from=web-build /out/drive /srv/app/drive
 COPY --from=web-build /out/home /srv/app/home
 COPY --from=web-build /out/yard /srv/app/yard
 COPY --from=web-build /out/money-desk /srv/app/money-desk
+COPY --from=web-build /out/dispatch /srv/app/dispatch
 COPY --from=web-build /out/dealer-admin /srv/app/dealer-admin
 COPY --from=web-build /out/pro-procurement /srv/app/pro-procurement
 COPY --from=web-build /out/pro-pay /srv/app/pro-pay

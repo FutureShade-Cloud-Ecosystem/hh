@@ -29,7 +29,7 @@
 #   each app serves under its own prefix behind the phrase gate (refused
 #     without, served with): the front door at /, the till at /till/, the
 #     public desk at /q/ and /quote.html, /quote/ per the desk being present;
-#   /api/v1/demo/flows answers the closed table's eight flows, the five contractor
+#   /api/v1/demo/flows answers the closed table's nine staff flows, the five contractor
 #     flows and both classes; the three Pro apps serve under /pro-procurement/,
 #     /pro-pay/ and /pro-field/ (gated, assets under their own prefixes); the five
 #     contractor cards mint a tenant bearer whose role tenant me answers (L-card),
@@ -287,6 +287,7 @@ page_has /drive/ drive-run-app "HH Drive at /drive/"
 page_has /home/ manager-home-app "Manager Home at /home/"
 page_has /yard/ yard-pick-app "Yard Pick at /yard/"
 page_has /money-desk/ money-desk-app "the Money Desk at /money-desk/"
+page_has /dispatch/ dispatch-board-app "the dispatch board at /dispatch/"
 page_has /dealer-admin/ dealer-admin-app "Dealer Admin at /dealer-admin/"
 page_has /pro-procurement/ pro-procurement-app "Pro Procurement at /pro-procurement/"
 page_has /pro-pay/ pro-pay-app "Pro Pay at /pro-pay/"
@@ -299,6 +300,7 @@ page_gated /drive/ "HH Drive at /drive/"
 page_gated /home/ "Manager Home at /home/"
 page_gated /yard/ "Yard Pick at /yard/"
 page_gated /money-desk/ "the Money Desk at /money-desk/"
+page_gated /dispatch/ "the dispatch board at /dispatch/"
 page_gated /dealer-admin/ "Dealer Admin at /dealer-admin/"
 page_gated /pro-procurement/ "Pro Procurement at /pro-procurement/"
 page_gated /pro-pay/ "Pro Pay at /pro-pay/"
@@ -368,11 +370,11 @@ done
 
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
-		pass "/api/v1/demo/flows answers the closed table's eight flows"
+*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"logistics-manager"'*)
+		pass "/api/v1/demo/flows answers the closed table's nine flows"
 		;;
 	*)
-		fail "/api/v1/demo/flows did not answer the eight flows: $flows"
+		fail "/api/v1/demo/flows did not answer the nine flows: $flows"
 		;;
 esac
 
