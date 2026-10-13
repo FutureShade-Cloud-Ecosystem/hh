@@ -129,11 +129,14 @@ export class YardOffline {
   readonly #onChange: (() => void) | undefined;
   readonly #now: () => string;
   readonly #newKey: () => string;
-  /** Rows this device has written since the last completed cycle: a write to
-   * one of them goes blind even when the earlier operation has already
-   * drained, because the pulled seq that a base would name is stale until the
-   * cycle's pull lands. */
-  readonly #writtenSincePull = new Set<string>();
+  /** Rows this device has written since the last completed cycle, each with
+   * the number of its latest write: a write to one of them goes blind even
+   * when the earlier operation has already drained, because the pulled seq
+   * that a base would name is stale until the cycle's pull lands. A cycle
+   * forgets only the writes made before it was asked for: a write made while
+   * it ran may reach the server in the next cycle, after this one's pull. */
+  readonly #writtenSincePull = new Map<string, number>();
+  #writes = 0;
 
   constructor(options: YardOfflineOptions) {
     this.store = options.store;
@@ -150,11 +153,11 @@ export class YardOffline {
    * from any resting state: an ONLINE the machine is past is a no-op, and the
    * request that follows runs the cycle the state can take. */
   async cycle(): Promise<void> {
+    const mark = this.#writes;
     await this.runner.dispatch({ type: "ONLINE" });
     await this.runner.request();
     await this.runner.settled();
-    // The pull has landed: the rows carry the server's seq again.
-    this.#writtenSincePull.clear();
+    this.#pulled(mark);
     this.#onChange?.();
   }
 
@@ -162,9 +165,9 @@ export class YardOffline {
   requestSync(): void {
     // The count moved now, and it moves again when the replay lands or fails.
     this.#onChange?.();
+    const mark = this.#writes;
     void this.runner.request().then(() => {
-      // The cycle's pull has landed: the rows carry the server's seq again.
-      this.#writtenSincePull.clear();
+      this.#pulled(mark);
       this.#onChange?.();
     });
   }
@@ -178,6 +181,19 @@ export class YardOffline {
     if (this.#lastOnline === online) return Promise.resolve();
     this.#lastOnline = online;
     return this.runner.dispatch(online ? { type: "ONLINE" } : { type: "OFFLINE" });
+  }
+
+  #markWritten(key: string): void {
+    this.#writes += 1;
+    this.#writtenSincePull.set(key, this.#writes);
+  }
+
+  /** A cycle rested with its pull landed: the rows carry the server's seq for
+   * every write made up to `mark`. A cycle that rested offline or unreachable
+   * pulled nothing, so it forgets nothing. */
+  #pulled(mark: number): void {
+    if (this.runner.state !== "idle" && this.runner.state !== "conflict") return;
+    for (const [key, written] of this.#writtenSincePull) if (written <= mark) this.#writtenSincePull.delete(key);
   }
 
   async waiting(): Promise<number> {
@@ -355,13 +371,13 @@ export class YardOffline {
   // ---- internals ------------------------------------------------------
 
   /** Send what is queued and wait for the cycle to rest. True when the
-   * outbox is empty after it: only then has the pull landed too, so only then
-   * does the written since pull set clear. */
+   * outbox is empty after it: the direct door may then go. */
   async #drain(): Promise<boolean> {
+    const mark = this.#writes;
     await this.runner.request();
     await this.runner.settled();
     const empty = (await this.waiting()) === 0;
-    if (empty) this.#writtenSincePull.clear();
+    if (empty) this.#pulled(mark);
     this.#onChange?.();
     return empty;
   }
@@ -396,7 +412,7 @@ export class YardOffline {
     });
     if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };
     await this.#patchRow("pick_tasks", taskId, (data) => ({ ...data, ...fields }));
-    this.#writtenSincePull.add(`pick_tasks:${taskId}`);
+    this.#markWritten(`pick_tasks:${taskId}`);
     return { ok: true, value: toTask({ ...found.row.data, ...fields }) };
   }
 

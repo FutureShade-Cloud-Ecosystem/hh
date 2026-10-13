@@ -78,11 +78,14 @@ export class DriveOffline {
   readonly #direct: Pick<DriveApi, "completeRun" | "pod">;
   readonly #onChange: (() => void) | undefined;
   readonly #now: () => string;
-  /** Rows this device has written since the last completed cycle: a write to
-   * one of them goes blind even when the earlier operation has already
-   * drained, because the pulled seq that a base would name is stale until the
-   * cycle's pull lands. */
-  readonly #writtenSincePull = new Set<string>();
+  /** Rows this device has written since the last completed cycle, each with
+   * the number of its latest write: a write to one of them goes blind even
+   * when the earlier operation has already drained, because the pulled seq
+   * that a base would name is stale until the cycle's pull lands. A cycle
+   * forgets only the writes made before it was asked for: a write made while
+   * it ran may reach the server in the next cycle, after this one's pull. */
+  readonly #writtenSincePull = new Map<string, number>();
+  #writes = 0;
 
   constructor(options: DriveOfflineOptions) {
     this.store = options.store;
@@ -97,20 +100,20 @@ export class DriveOffline {
    * from any resting state: an ONLINE the machine is past is a no-op, and the
    * request that follows runs the cycle the state can take. */
   async cycle(): Promise<void> {
+    const mark = this.#writes;
     await this.runner.dispatch({ type: "ONLINE" });
     await this.runner.request();
     await this.runner.settled();
-    // The pull has landed: the rows carry the server's seq again.
-    this.#writtenSincePull.clear();
+    this.#pulled(mark);
     this.#onChange?.();
   }
 
   /** Ask for a cycle without waiting for it (a write just landed in the outbox). */
   requestSync(): void {
     this.#onChange?.();
+    const mark = this.#writes;
     void this.runner.request().then(() => {
-      // The cycle's pull has landed: the rows carry the server's seq again.
-      this.#writtenSincePull.clear();
+      this.#pulled(mark);
       this.#onChange?.();
     });
   }
@@ -129,19 +132,20 @@ export class DriveOffline {
   /** One cycle the caller waits on (a direct door just moved server state the
    * next pull should carry: a photo uploaded beside the proof). */
   async syncNow(): Promise<void> {
+    const mark = this.#writes;
     await this.runner.request();
-    this.#writtenSincePull.clear();
+    this.#pulled(mark);
     this.#onChange?.();
   }
 
   /** Send what is queued and wait for the cycle to rest. True when the
-   * outbox is empty after it: only then has the pull landed too, so only then
-   * does the written since pull set clear. */
+   * outbox is empty after it: the direct door may then go. */
   async #drain(): Promise<boolean> {
+    const mark = this.#writes;
     await this.runner.request();
     await this.runner.settled();
     const empty = (await this.waiting()) === 0;
-    if (empty) this.#writtenSincePull.clear();
+    if (empty) this.#pulled(mark);
     this.#onChange?.();
     return empty;
   }
@@ -173,6 +177,19 @@ export class DriveOffline {
     // The closed run lands in the store only through the next pull.
     await this.#drain();
     return answer;
+  }
+
+  #markWritten(key: string): void {
+    this.#writes += 1;
+    this.#writtenSincePull.set(key, this.#writes);
+  }
+
+  /** A cycle rested with its pull landed: the rows carry the server's seq for
+   * every write made up to `mark`. A cycle that rested offline or unreachable
+   * pulled nothing, so it forgets nothing. */
+  #pulled(mark: number): void {
+    if (this.runner.state !== "idle" && this.runner.state !== "conflict") return;
+    for (const [key, written] of this.#writtenSincePull) if (written <= mark) this.#writtenSincePull.delete(key);
   }
 
   async waiting(): Promise<number> {
@@ -267,7 +284,7 @@ export class DriveOffline {
       ...(status === "LOADED" ? { loaded_at: at } : {}),
       ...(status === "EN_ROUTE" ? { en_route_at: at } : {}),
     }));
-    this.#writtenSincePull.add(`stops:${stopId}`);
+    this.#markWritten(`stops:${stopId}`);
     this.requestSync();
     return { ok: true, value: toStop({ ...found.row.data, ...fields }) };
   }
