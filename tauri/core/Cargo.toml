@@ -13,6 +13,7 @@ probe = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 # keyring 3.6 with its pure Rust Secret Service path (zbus, no libsecret and
 # no libdbus headers). Desktop Linux only: Android has no keyring backend in
