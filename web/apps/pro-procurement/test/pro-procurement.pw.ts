@@ -1,7 +1,8 @@
 // Pro Procurement Board in a real browser against the shared tenant stub. Visual references: the sign in screen is
 // HH: Pro shell-signin-phone-brand; the frame is shell-frame-phone-light-r2 and shell-selector-phone-light; the
-// landing is proc-board-phone-light (the board's first rows). Phone first (390 wide), then desktop. The legs cover the sign in, the frame, the
-// selector and the landing surface's loading, ready, empty, error and refusal states.
+// landing (Today) follows the ref's TodayPage (the morning briefing, the account and the recent orders). Phone first
+// (390 wide), then desktop (1440). The legs here cover the shell: the sign in, the frame, the selector, and the
+// landing surface's loading, ready, empty, error and refusal states. Each surface's own legs live beside it.
 import { test, expect, type Page } from "@playwright/test";
 
 const PASSWORD = "stub-password";
@@ -40,15 +41,16 @@ test.describe("phone", () => {
     await expect(page.getByTestId("signin-password")).toHaveValue("");
   });
 
-  test("signing in shows the frame with the dealer, the surface and the landing rows", async ({ page }) => {
+  test("signing in shows the frame with the dealer, Today as the landing, and the account's recent orders", async ({ page }) => {
     await signIn(page, "owner");
     await expect(page.locator("hh-pro-frame")).toBeVisible();
     await expect(page.getByTestId("frame-dealer")).toHaveText("Gable Landscape Supply");
-    await expect(page.getByTestId("frame-selector")).toContainText("Board");
-    await expect(page.getByTestId("surface-title")).toHaveText("Board");
-    await expect(page.getByTestId("landing-rows")).toContainText("Point Loma retaining wall");
+    await expect(page.getByTestId("frame-selector")).toContainText("Pro Procurement");
+    await expect(page.getByTestId("surface-title")).toHaveText("Today");
+    await expect(page.getByTestId("today-account")).toContainText("Summit Ridge Builders");
+    await expect(page.getByTestId("today-rows")).toContainText("SO-30506");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-    await page.screenshot({ path: test.info().outputPath("landing-phone.png") });
+    await page.screenshot({ path: test.info().outputPath("today-phone.png") });
   });
 
   test("the selector lists only the surfaces this role opens, and signing out returns to the sign in screen", async ({ page }) => {
@@ -56,7 +58,7 @@ test.describe("phone", () => {
     await page.getByTestId("frame-selector").click();
     const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
     await expect(panel).toBeVisible();
-    await expect(panel.getByRole("button", { name: "Board" })).toHaveAttribute("aria-current", "page");
+    await expect(panel.getByRole("button", { name: "Board" })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath("selector-phone.png") });
     await page.keyboard.press("Escape");
     await expect(panel).toHaveCount(0);
@@ -79,78 +81,51 @@ test.describe("phone", () => {
   test("the landing shows a loading state while the server answers", async ({ page, request }) => {
     await request.post("/_stub/control", { data: { delayMs: 900 } });
     await signIn(page, "owner");
-    await expect(page.getByTestId("landing-state")).toHaveAttribute("data-state", "loading");
-    await expect(page.getByTestId("landing-rows")).toBeVisible();
+    await expect(page.getByTestId("surface-state")).toHaveAttribute("data-state", "loading");
+    await expect(page.getByTestId("today-rows")).toBeVisible();
   });
 
-  test("an empty answer shows this app's own empty words", async ({ page, request }) => {
-    await request.post("/_stub/control", { data: { empty: "projects" } });
+  test("an empty orders world shows Today's own empty words", async ({ page, request }) => {
+    await request.post("/_stub/control", { data: { empty: "orders" } });
     await signIn(page, "owner");
-    const state = page.getByTestId("landing-state");
-    await expect(state).toHaveAttribute("data-state", "empty");
-    await expect(state).toContainText("No projects yet");
+    await expect(page.getByTestId("recent-empty")).toContainText("No orders yet");
   });
 
   test("a failure shows the error state, and Try again recovers once the server does", async ({ page, request }) => {
-    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/procurement/projects", status: 503 } } });
+    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/dashboard", status: 503 } } });
     await signIn(page, "owner");
-    const state = page.getByTestId("landing-state");
+    const state = page.getByTestId("surface-state");
     await expect(state).toHaveAttribute("data-state", "error");
     await expect(state).toContainText("Nothing was changed.");
     await request.post("/_stub/reset");
     await state.getByRole("button", { name: "Try again" }).click();
-    await expect(page.getByTestId("landing-rows")).toBeVisible();
+    await expect(page.getByTestId("today-rows")).toBeVisible();
   });
 
-  test("a server refusal shows the refusal state with no retry", async ({ page, request }) => {
-    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/procurement/projects", status: 403 } } });
+  test("a server refusal on the landing shows the refusal state with no retry", async ({ page, request }) => {
+    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/dashboard", status: 403 } } });
     await signIn(page, "owner");
-    const state = page.getByTestId("landing-state");
+    const state = page.getByTestId("surface-state");
     await expect(state).toHaveAttribute("data-state", "refusal");
     await expect(state).toContainText("Your role does not open this");
     await expect(state.getByRole("button", { name: "Try again" })).toHaveCount(0);
   });
 
   test("a lapsed session on the landing signs the person out with a plain message, not a role refusal", async ({ page, request }) => {
-    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/procurement/projects", status: 401 } } });
+    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/dashboard", status: 401 } } });
     await signIn(page, "owner");
     await expect(page.getByTestId("signin-message")).toHaveText("You are signed out. Sign in again.");
     await expect(page.locator("hh-pro-frame")).toHaveCount(0);
-    await expect(page.getByTestId("landing-state")).toHaveCount(0);
+    await expect(page.getByTestId("surface-state")).toHaveCount(0);
   });
 
-  test("a role that does not hold the surface sees the refusal state and no call is made for it", async ({ page }) => {
+  test("a role that does not hold the landing sees the refusal state and no call is made for it", async ({ page }) => {
     const calls: string[] = [];
     page.on("request", (r) => calls.push(new URL(r.url()).pathname));
-    await signIn(page, "ap");
+    await signIn(page, "field");
     await expect(page.locator("hh-pro-frame")).toBeVisible();
-    await expect(page.getByTestId("landing-state")).toHaveAttribute("data-state", "refusal");
-    expect(calls).not.toContain("/api/v1/tenant/procurement/projects");
-  });
-
-  test("an unbuilt surface says it is not open yet and the selector moves between them", async ({ page }) => {
-    await signIn(page, "owner");
-    await page.getByTestId("frame-selector").click();
-    const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
-    const other = panel.locator("button[data-app='procurement']:not([aria-current='page'])").first();
-    const label = (await other.innerText()).trim();
-    await other.click();
-    await expect(page.getByTestId("surface-title")).toHaveText(label);
-    await expect(page.getByTestId("landing-state")).toContainText("This surface is not open yet.");
-  });
-
-  test("a surface in another app says it opens that app and asks to sign in again, one in this app says nothing", async ({ page }) => {
-    await signIn(page, "owner");
-    await page.getByTestId("frame-selector").click();
-    const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
-    const elsewhere = panel.locator("button[data-app]:not([data-app='procurement'])");
-    expect(await elsewhere.count()).toBeGreaterThan(0);
-    for (const button of await elsewhere.all()) {
-      const app = await button.getAttribute("data-app");
-      const name = app === "pay" ? "Pro Pay" : app === "field" ? "Pro Field" : "Pro Procurement";
-      await expect(button.getByTestId("opens-note")).toHaveText(`opens ${name}, sign in again`);
-    }
-    await expect(panel.locator("button[data-app='procurement'] [data-testid='opens-note']")).toHaveCount(0);
+    await expect(page.getByTestId("surface-state")).toHaveAttribute("data-state", "refusal");
+    expect(calls).not.toContain("/api/v1/tenant/dashboard");
   });
 
   test("choosing another app's surface goes to that app's own address", async ({ page }) => {
@@ -162,17 +137,17 @@ test.describe("phone", () => {
     const target = await elsewhere.getAttribute("data-app");
     await elsewhere.click();
     await page.waitForURL(/\/pro-[a-z]+\/$/);
-    expect(new URL(page.url()).pathname).toBe(`/pro-${target === "procurement" ? "procurement" : target}/`);
+    expect(new URL(page.url()).pathname).toBe(`/pro-${target}/`);
   });
 });
 
 test.describe("desktop", () => {
-  test.use({ viewport: { width: 1280, height: 800 } });
+  test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("the frame shows the role beside the sign out and the rows fit the page", async ({ page }) => {
+  test("the frame shows the role beside the sign out and Today fits the page", async ({ page }) => {
     await signIn(page, "owner");
     await expect(page.getByTestId("frame-role")).toBeVisible();
-    await expect(page.getByTestId("landing-rows")).toBeVisible();
-    await page.screenshot({ path: test.info().outputPath("landing-desktop.png") });
+    await expect(page.getByTestId("today-rows")).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath("today-desktop.png") });
   });
 });

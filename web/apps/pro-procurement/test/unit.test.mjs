@@ -1,101 +1,65 @@
-// Unit leg of Pro Procurement Board: its landing surface against the catalogue, against the shared tenant stub (the
-// route is held by the capability the surface names: allowed roles read it, the others are refused by the
-// server with the shared 403) and the words its rows carry.
-import { test, before, after } from "node:test";
+// Unit leg of Pro Procurement Board: the surface registry (the surfaces the
+// cycle brief names, each gated by the one capability its routes answer to),
+// the mapping from the Pro kit catalogue's ids to this app's surfaces (the
+// frame's selector reads the kit catalogue; this app answers it), and the
+// shared view helpers. Each surface's data leg lives in its own test file
+// beside it; the app root's behaviour is the browser legs'.
+import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { landing } from "../src/landing.ts";
-import { InMemoryTenantSession, tenantClient, stubAdapter, surfaceOf, can, TENANT_ROLES } from "@hardscapehouse/pro-kit";
-import { PERSONAS, STUB_PASSWORD } from "@hardscapehouse/pro-kit/test-stub/tenant-data.mjs";
+import { SURFACES, LANDING, TOP_SURFACES, isSurfaceId, surfaceRouteFromCatalogue, frameSurfaceOf } from "../src/registry.ts";
+import { can, CAPABILITIES } from "@hardscapehouse/pro-kit";
 
-const stubFile = fileURLToPath(new URL("../../../packages/pro-kit/test-stub/tenant-stub.mjs", import.meta.url));
-let child;
-let base;
-
-// A free port inside the Pro cycle's own range (the kit's block is 56800 to 56809), never an ephemeral one.
-async function freePort(start, count) {
-  for (let port = start; port < start + count; port += 1) {
-    const free = await new Promise((resolve) => {
-      const probe = createServer();
-      probe.once("error", () => resolve(false));
-      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
-    });
-    if (free) return port;
+test("the app carries the surfaces the brief names, each gated by a capability the core stores", () => {
+  for (const id of ["today", "board", "projects", "catalog", "quotes", "scope", "product"]) {
+    const surface = SURFACES[id];
+    assert.ok(surface, `the ${id} surface is missing from the registry`);
+    assert.ok(CAPABILITIES.includes(surface.capability), `${id} names a capability the core does not store`);
+    assert.match(surface.label, /^[A-Z]/, `${id} label is not sentence case`);
+    assert.doesNotMatch(surface.label, /!/);
   }
-  throw new Error(`no free port in ${start} to ${start + count - 1}`);
-}
+});
 
-before(async () => {
-  const port = await freePort(56812, 4);
-  base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [stubFile], { env: { ROLE_STUB_PORT: String(port), ROLE_STUB_IDLE_EXIT_MS: "120000" }, stdio: "ignore" });
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      if ((await fetch(`${base}/healthz`)).ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 50));
+test("the landing is Today, held by view_billing, and every other surface answers to submit_rfq", () => {
+  assert.equal(LANDING, "today");
+  assert.equal(SURFACES.today.capability, "view_billing");
+  for (const id of ["board", "projects", "catalog", "quotes", "scope", "product"]) {
+    assert.equal(SURFACES[id].capability, "submit_rfq", `${id} should answer to submit_rfq`);
   }
-  throw new Error("the stub did not start");
+  assert.deepEqual([...TOP_SURFACES].sort(), ["board", "catalog", "projects", "quotes", "today"]);
 });
 
-// End the stub by its own door: no signal is ever sent to a process.
-after(async () => {
-  await fetch(`${base}/_stub/exit`, { method: "POST" }).catch(() => {});
+test("a role without the capability is refused at the gate, and one with it passes", () => {
+  assert.equal(can("field_crew", SURFACES.today.capability), false, "field crew should not open Today");
+  assert.equal(can("account_admin", SURFACES.today.capability), true);
+  assert.equal(can("ap_finance", SURFACES.board.capability), false, "accounts payable should not open the Board");
+  assert.equal(can("buyer_no_pay", SURFACES.board.capability), true);
+  assert.equal(can("buyer", SURFACES.quotes.capability), true);
 });
 
-// Every string and value of a template, joined: what a person would read, close enough to assert words on.
-function words(template) {
-  if (template === null || template === undefined || template === false) return "";
-  if (Array.isArray(template)) return template.map(words).join(" ");
-  if (typeof template === "object" && "strings" in template) {
-    return template.strings.map((s, i) => s + (i < template.values.length ? words(template.values[i]) : "")).join("");
+test("the kit catalogue's ids for this app land on this app's surfaces", () => {
+  assert.equal(surfaceRouteFromCatalogue("board")?.surface, "board");
+  assert.equal(surfaceRouteFromCatalogue("projects")?.surface, "projects");
+  assert.equal(surfaceRouteFromCatalogue("catalog")?.surface, "catalog");
+  // The kit catalogue names the ref's quote builder; the surface the core serves is the dealer's quotes.
+  assert.equal(surfaceRouteFromCatalogue("quote-studio")?.surface, "quotes");
+  assert.equal(surfaceRouteFromCatalogue("no-such-surface"), null);
+});
+
+test("isSurfaceId and frameSurfaceOf keep the frame's selector honest about where the person is", () => {
+  assert.equal(isSurfaceId("today"), true);
+  assert.equal(isSurfaceId("calendar"), false);
+  // A drill-down keeps its parent's selector entry marked, so the selector never lies.
+  assert.equal(frameSurfaceOf({ surface: "catalog", productId: "a1" }), "catalog");
+  assert.equal(frameSurfaceOf({ surface: "product", productId: "a1" }), "catalog");
+  assert.equal(frameSurfaceOf({ surface: "scope", projectId: "9a1", from: "projects" }), "projects");
+  assert.equal(frameSurfaceOf({ surface: "scope", projectId: "9a1", from: "board" }), "board");
+  assert.equal(frameSurfaceOf({ surface: "scope", projectId: "9a1" }), "board", "order scope defaults to the board as its parent");
+  assert.equal(frameSurfaceOf({ surface: "quotes" }), "quotes");
+});
+
+test("no surface word carries an exclamation mark or a stored status string", () => {
+  for (const [id, surface] of Object.entries(SURFACES)) {
+    assert.doesNotMatch(surface.label, /!/, `${id}`);
+    assert.doesNotMatch(surface.label, /\b[A-Z]{2,}_[A-Z]{2,}\b/, `${id}`);
   }
-  return String(template);
-}
-
-test("the landing surface is a surface of this app and needs the capability the catalogue names", () => {
-  const surface = surfaceOf("procurement", landing.surface);
-  assert.ok(surface, "the landing surface is not in the catalogue");
-  assert.equal(surface.id, "board");
-  assert.equal(surface.label, "Board");
-  assert.equal(landing.capability, surface.capability);
-  assert.equal(landing.capability, "submit_rfq");
-});
-
-test("the route behind the landing is held by exactly the roles that hold the capability", async () => {
-  for (const [key, persona] of Object.entries(PERSONAS)) {
-    const session = new InMemoryTenantSession({ adapter: stubAdapter({ baseUrl: base }), baseUrl: base });
-    assert.equal((await session.signIn(persona.email, STUB_PASSWORD)).ok, true, key);
-    const answer = await landing.load(tenantClient(session, { baseUrl: base }));
-    if (can(persona.role, landing.capability)) {
-      assert.equal(answer.ok, true, `${persona.role} should read it: ${answer.error ?? ""}`);
-      assert.ok(Array.isArray(answer.value) && answer.value.length > 0, `${persona.role} read nothing`);
-    } else {
-      assert.equal(answer.ok, false, `${persona.role} should be refused`);
-      assert.equal(answer.status, 403);
-    }
-  }
-  assert.ok(TENANT_ROLES.length === 5);
-});
-
-test("a row carries the words a person reads, never a stored string", async () => {
-  const session = new InMemoryTenantSession({ adapter: stubAdapter({ baseUrl: base }), baseUrl: base });
-  await session.signIn(PERSONAS.owner.email, STUB_PASSWORD);
-  const answer = await landing.load(tenantClient(session, { baseUrl: base }));
-  // Markup is stripped: attributes may carry the stored string (data-status), the text a person reads must not.
-  const text = answer.value.map((item) => words(landing.row(item)).replace(/<[^>]*>/g, " ")).join(" | ");
-  assert.ok(text.includes("Point Loma retaining wall"), `the rows do not show Point Loma retaining wall: ${text}`);
-  assert.ok(text.includes("Planning"), `the rows do not show a Planning chip: ${text}`);
-  assert.doesNotMatch(text, /\b[A-Z]{2,}_[A-Z]{2,}\b/, "a stored status string reached a screen");
-  assert.doesNotMatch(text, /undefined|null|NaN/);
-});
-
-test("the empty words are this app's own, sentence case, with no exclamation", () => {
-  assert.ok(landing.emptyWords.startsWith("No projects yet"));
-  assert.doesNotMatch(landing.emptyWords, /!/);
 });
