@@ -2502,6 +2502,9 @@ export type IdentityExchangeResponse = {
   expiresAtMs: number;
   user: IdentityUser;
 };
+export type IdentityAuthMethodsResponse = {
+  methods: ("email_password" | "google" | "microsoft" | "magic_link")[];
+};
 export type IdentityChangePasswordRequest = {
   current_password: string;
   new_password: string;
