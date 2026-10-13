@@ -11,7 +11,7 @@ import type { BillingInvoiceDetail, BillingStatement } from "@hardscapehouse/api
 import { formatMoney } from "./ar-money.js";
 import { cardTitle, relativeDay } from "./ar-logic.js";
 import type { Listing, OfficeModel } from "./office-desk.js";
-import { DISPUTE_OUTCOMES, DISPUTE_REASONS, channelWord, contactLine, deliveryWord, disputeOutcomeWord, disputeReasonWord, recipientWords, relativeStamp, reminderPreview, runModeWord, runNoticeWords, sendStatusWord, statementGoes } from "./office-logic.js";
+import { DISPUTE_OUTCOMES, DISPUTE_REASONS, channelWord, contactLine, deliveryWord, disputeOutcomeWord, disputeReasonWord, recipientWords, relativeStamp, reminderPreview, runModeWord, runNoticeWords, sendStatusWord, statementHow, STATEMENT_ROUTE_LINE } from "./office-logic.js";
 
 function deliveryPill(statement: BillingStatement): TemplateResult {
   const tone = statement.delivery_status === "FAILED" ? "stop" : statement.delivery_status === "NOT_QUEUED" ? "plain" : "good";
@@ -35,6 +35,7 @@ export function renderRunPanel(om: OfficeModel, asOf: string): TemplateResult {
         <dt>As of</dt><dd>${relativeDay(r.as_of_date, asOf)}</dd>
         <dt>Statements made</dt><dd data-run-count>${r.generated_count}</dd>
         <dt>Sent out</dt><dd data-run-notices>${runNoticeWords(r)}</dd>
+        <dt>How</dt><dd data-run-how>${STATEMENT_ROUTE_LINE}</dd>
         ${r.error !== undefined && r.error !== "" ? html`<dt>Problem</dt><dd>${r.error}</dd>` : nothing}
       </dl>
       ${rows.length === 0
@@ -42,7 +43,7 @@ export function renderRunPanel(om: OfficeModel, asOf: string): TemplateResult {
         : html`
             <div class="scroll">
               <table class="stack">
-                <thead><tr><th>Account</th><th class="num">Total due</th><th>Delivery</th><th>Goes to</th></tr></thead>
+                <thead><tr><th>Account</th><th class="num">Total due</th><th>Delivery</th><th>How</th></tr></thead>
                 <tbody>
                   ${rows.map(
                     (s) => html`
@@ -50,7 +51,7 @@ export function renderRunPanel(om: OfficeModel, asOf: string): TemplateResult {
                         <td><span class="who">${s.customer_name ?? "Account"}</span></td>
                         <td class="num">${formatMoney(s.closing_balance_cents)}</td>
                         <td>${deliveryPill(s)}</td>
-                        <td data-run-goes>${statementGoes(om.contacts.get(s.customer_id) ?? null, s.delivery_status)}</td>
+                        <td data-run-goes>${statementHow(s.delivery_status)}</td>
                       </tr>
                     `,
                   )}
@@ -75,7 +76,7 @@ export function renderContacts(om: OfficeModel, account: { customerId: string; n
         : read === "error"
           ? html`<p class="alert alert-error" role="alert" data-contact-error>The contact could not be read. Nothing was changed.</p>`
           : html`<p data-contact-line>${contactLine(read)}</p>`}
-      <p class="dim small">Statements, reminders and invoices for this account go to this contact, through the messaging sink. The address and number are not shown back, here or anywhere on this desk.</p>
+      <p class="dim small">Reminders for this account go to this contact, through the messaging sink. The address and number are not shown back, here or anywhere on this desk.</p>
       <form class="held-form" aria-label="Tag or replace the AP contact">
         <label>Name or role at the customer<input type="text" data-field="contact-name" placeholder="Such as Accounts payable desk" autocomplete="off" maxlength="120" /></label>
         <label>Email<input type="text" inputmode="email" data-field="contact-email" placeholder="Enter the email to keep" autocomplete="off" /></label>

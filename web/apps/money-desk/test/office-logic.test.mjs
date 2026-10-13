@@ -2,7 +2,7 @@
 // answered, and the rule that no address is ever drawn on a screen. Nothing here computes money.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { relativeStamp, contactLine, deliveryWord, runModeWord, runNoticeWords, statementGoes, validateApContact } from "../src/ar/office-logic.ts";
+import { relativeStamp, contactLine, deliveryWord, runModeWord, runNoticeWords, statementHow, STATEMENT_ROUTE_LINE, SAVED_NOTICE, validateApContact } from "../src/ar/office-logic.ts";
 
 test("an AP contact is checked before it is sent, in the core's limits", () => {
   assert.deepEqual(validateApContact({ name: "Accounts payable desk", email: "ap@gls-demo.invalid", phone: "" }), { ok: true, contact: { contact_name: "Accounts payable desk", email: "ap@gls-demo.invalid", phone: "" } });
@@ -23,6 +23,8 @@ test("a contact reads as what is on file and never as an address or a number", (
   assert.match(line, /email on file/);
   assert.match(line, /phone on file/);
   assert.ok(!/@|gls-demo|5550100/.test(line), line);
+  assert.ok(!/Statements/.test(SAVED_NOTICE), "the saved notice does not claim statements or invoices");
+  assert.equal(SAVED_NOTICE, "The AP contact is saved. Reminders for this account go to it through the messaging sink.");
   assert.equal(contactLine({ tagged: false }), "No AP contact is tagged on this account.");
   assert.match(contactLine({ tagged: true, contact: { customer_id: "c", contact_name: "", email: "x@y.invalid", phone: "" } }), /^AP contact on file: email on file, no phone\.$/);
 });
@@ -39,12 +41,12 @@ test("a statement run reads in the words of what it did", () => {
   assert.equal(deliveryWord("FAILED"), "Failed");
 });
 
-test("where a statement would go is the AP contact, by its role label, or nowhere", () => {
-  const tagged = { tagged: true, contact: { customer_id: "c", contact_name: "Accounts payable desk", email: "ap@x.invalid", phone: "" } };
-  assert.equal(statementGoes(tagged, "QUEUED"), "To the AP contact (Accounts payable desk), by email");
-  assert.equal(statementGoes({ tagged: false }, "NOT_QUEUED"), "Nowhere: no AP contact is tagged");
-  assert.equal(statementGoes(null, "QUEUED"), "Checking the contact");
-  assert.equal(statementGoes({ tagged: true, contact: { customer_id: "c", contact_name: "", email: "", phone: "5550100" } }, "QUEUED"), "To the AP contact, by phone");
+test("how a statement goes reads from its delivery word, never from the AP contact", () => {
+  assert.equal(statementHow("QUEUED"), "Queued as a text to the account's consented number");
+  assert.equal(statementHow("SENT"), "Sent as a text to the account's consented number");
+  assert.equal(statementHow("NOT_QUEUED"), "Not queued");
+  assert.equal(statementHow("FAILED"), "Did not send");
+  assert.equal(STATEMENT_ROUTE_LINE, "A statement with a balance is queued as a text to the account's consented number when notices are on.");
 });
 
 // ---- reminders and the paper path ----------------------------------------------------------------------------------

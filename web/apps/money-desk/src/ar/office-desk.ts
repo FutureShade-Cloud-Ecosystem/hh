@@ -28,6 +28,7 @@ import {
   reminderResultWords,
   reversalCheck,
   reversalWords,
+  SAVED_NOTICE,
   sendInvoiceWords,
   validateApContact,
   DISPUTE_OUTCOMES,
@@ -193,7 +194,6 @@ export class OfficeDesk {
     }
     this.#run = { phase: "ready", result: got.value };
     this.#host.repaint();
-    await Promise.all(got.value.statements.map((s) => this.ensureContact(s.customer_id)));
   }
 
   // ---- AP contacts -------------------------------------------------------------------------------------------
@@ -233,7 +233,7 @@ export class OfficeDesk {
     this.#contacts.set(customerId, result.value);
     this.#host.setField("contact-email", "");
     this.#host.setField("contact-phone", "");
-    this.#host.notice("The AP contact is saved. Statements, reminders and invoices for this account go to it through the messaging sink.");
+    this.#host.notice(SAVED_NOTICE);
     this.#host.reveal("[data-notice]");
     this.#host.repaint();
   }

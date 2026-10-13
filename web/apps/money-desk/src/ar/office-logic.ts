@@ -103,17 +103,18 @@ function reach(c: BillingAPContact): string {
   return "";
 }
 
-/** Where a statement would go: the AP contact by its role label, or nowhere. */
-export function statementGoes(read: BillingAPContactRead | null | "error", delivery: string): string {
-  if (read === null) return "Checking the contact";
-  if (read === "error") return "The contact could not be read";
-  if (!read.tagged || read.contact === undefined) return "Nowhere: no AP contact is tagged";
-  const label = read.contact.contact_name.trim();
-  const via = reach(read.contact);
-  const to = label === "" ? "To the AP contact" : `To the AP contact (${label})`;
-  void delivery;
-  return via === "" ? to : `${to}, ${via}`;
+/** How a statement goes: the core queues it as a text on the notice topic, to the number the account consented to. The AP contact takes no part. */
+export const STATEMENT_ROUTE_LINE = "A statement with a balance is queued as a text to the account's consented number when notices are on.";
+
+export function statementHow(delivery: string): string {
+  if (delivery === "QUEUED") return "Queued as a text to the account's consented number";
+  if (delivery === "SENT") return "Sent as a text to the account's consented number";
+  if (delivery === "FAILED") return "Did not send";
+  return "Not queued";
 }
+
+/** The notice after an AP contact is saved: only reminders go to it. */
+export const SAVED_NOTICE = "The AP contact is saved. Reminders for this account go to it through the messaging sink.";
 
 // ---- statement runs ------------------------------------------------------------------------------------------------
 

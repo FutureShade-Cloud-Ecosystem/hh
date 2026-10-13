@@ -40,8 +40,9 @@ test("a statement run is read back with what went to whom, and no address is dra
   await expect(page.locator("[data-run-count]")).toHaveText("5");
   await expect(page.locator("[data-run-notices]")).toHaveText("4 statements went to the messaging sink; 1 had no AP contact or was held back.");
   await expect(page.locator("[data-run-row]")).toHaveCount(5);
-  await expect(page.locator("[data-run-row]", { hasText: "Granite Edge" }).locator("[data-run-goes]")).toHaveText("To the AP contact (Accounts payable desk), by email");
-  await expect(page.locator("[data-run-row]", { hasText: "Cedar Ridge" }).locator("[data-run-goes]")).toHaveText("Nowhere: no AP contact is tagged");
+  await expect(page.locator("[data-run-row]", { hasText: "Granite Edge" }).locator("[data-run-goes]")).toHaveText("Queued as a text to the account's consented number");
+  await expect(page.locator("[data-run-how]")).toHaveText("A statement with a balance is queued as a text to the account's consented number when notices are on.");
+  await expect(page.locator("[data-run-row]", { hasText: "Cedar Ridge" }).locator("[data-run-goes]")).toHaveText("Not queued");
   await expect(page.locator("[data-run-row]", { hasText: "Cedar Ridge" })).toContainText("Not queued");
   expect(await page.locator("[data-run]").innerText()).not.toMatch(/@|gls-demo/);
 });
@@ -66,7 +67,7 @@ test("an account's AP contact is tagged, replaced and removed, and checked befor
 
   await page.locator("[data-field='contact-email']").fill("ap@gls-demo.invalid");
   await page.getByRole("button", { name: "Tag the contact" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("The AP contact is saved.");
+  await expect(page.locator("[data-notice]")).toHaveText("The AP contact is saved. Reminders for this account go to it through the messaging sink.");
   await expect(page.locator("[data-contact-line]")).toHaveText("AP contact on file, Accounts payable desk: email on file, no phone.");
   expect(await page.locator("[data-contact-panel]").innerText()).not.toMatch(/@|gls-demo/);
   expect(await page.locator("[data-field='contact-email']").inputValue()).toBe("");
