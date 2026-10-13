@@ -29,6 +29,8 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
+import { BuilderApi } from "./builder-api.js";
+import { BuilderDesk } from "./builder-desk.js";
 import { ManagerApi, type BranchRef, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
 import {
   APPROVAL_KINDS,
@@ -43,6 +45,8 @@ import {
   type ViewKind,
 } from "./manager-logic.js";
 import { homeStyles } from "./styles.js";
+import { builderStyles } from "./builder-styles.js";
+import { renderBuilder } from "./builder-views.js";
 import {
   renderApprovals,
   renderEntry,
@@ -59,7 +63,7 @@ import {
 const DEMO_ORG = "hh-demo";
 
 export class ManagerHomeApp extends HHElement {
-  static styles = [baseStyles, homeStyles];
+  static styles = [baseStyles, homeStyles, builderStyles];
 
   // The demo account surface: listFlows() and chooseFlow() over the core's
   // demo routes. It is the injected AccountSurface for the auth package.
@@ -85,6 +89,14 @@ export class ManagerHomeApp extends HHElement {
 
   // The manager's calls, over the staff client.
   readonly #api = new ManagerApi(this.#staffClient);
+
+  // The builder desk: the arrange view's calls and edit state, in the one
+  // plain class the arrange surface renders from. It re-renders the app
+  // element through the same requestUpdate the other views use.
+  readonly #desk = new BuilderDesk(
+    { builder: new BuilderApi(this.#staffClient), mine: { branches: () => this.#api.branches() } },
+    () => this.requestUpdate(),
+  );
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
@@ -147,6 +159,13 @@ export class ManagerHomeApp extends HHElement {
       if (view === "shortages" || view === "receiving" || view === "approvals") {
         this.#openView(view);
       }
+      if (view === "builder") {
+        this.#openBuilder();
+      }
+      return;
+    }
+    if (action === "builder") {
+      if (control !== undefined) this.#desk.act(control);
       return;
     }
     if (action === "back") {
@@ -203,7 +222,8 @@ export class ManagerHomeApp extends HHElement {
     }
   };
 
-  // The resolve note field: mirrored from input events, never bound.
+  // The resolve note field and the builder's fields: mirrored from input
+  // events, never bound.
   readonly #onField = (event: Event): void => {
     const target = event.target;
     if (target instanceof HTMLTextAreaElement && target.getAttribute("data-field") === "resolution-note") {
@@ -213,6 +233,11 @@ export class ManagerHomeApp extends HHElement {
           resolving: { ...this.#shortages.resolving, note: target.value },
         };
       }
+      return;
+    }
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      const field = target.getAttribute("data-field");
+      if (field !== null && field.startsWith("builder-")) this.#desk.field(field, target.value);
     }
   };
 
@@ -252,13 +277,25 @@ export class ManagerHomeApp extends HHElement {
 
   // The role label is the one header input the position gate keeps out of a
   // template (only data- and aria- attributes take a bound value), so it is
-  // set on the element here, after each render.
+  // set on the element here, after each render. The builder's two text fields
+  // prefill the same way: their values live in the desk, mirrored back into
+  // the inputs after each render, never while a person is typing in them.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
     const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
     if (header !== null) {
       header.roleLabel = this.#roleLabel;
       header.theme = this.#theme;
+    }
+    this.#prefill("builder-title", this.#desk.state.draft?.title ?? "");
+    this.#prefill("builder-landing-unit", this.#desk.state.role?.home.landing_unit ?? "");
+    this.#prefill("builder-landing-module", this.#desk.state.role?.home.landing_module ?? "");
+  }
+
+  #prefill(field: string, want: string): void {
+    const input = this.renderRoot.querySelector<HTMLInputElement>(`[data-field='${field}']`);
+    if (input !== null && document.activeElement !== input && input.value !== want) {
+      input.value = want;
     }
   }
 
@@ -307,6 +344,7 @@ export class ManagerHomeApp extends HHElement {
   #onSignOut(): void {
     this.#sessions.clear();
     this.#view = "home";
+    this.#desk.close();
     this.#branch = null;
     this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "" };
     this.#shortages = {
@@ -381,12 +419,24 @@ export class ManagerHomeApp extends HHElement {
   }
 
   #openView(view: ViewKind): void {
+    const leaving = this.#view;
     this.#view = view;
     this.#shortages = { ...this.#shortages, error: "", notice: "", resolving: null };
     this.requestUpdate();
+    // Leaving the builder re-reads the landing: the desk may have saved a new
+    // layout, and the board below must be what the server now answers.
+    if (leaving === "builder" && view === "home") void this.#loadLanding();
     if (view === "shortages" && this.#shortages.phase === "loading") void this.#loadShortages();
     if (view === "receiving" && this.#receiving.phase === "loading") void this.#loadReceiving();
     if (view === "approvals" && this.#approvals.phase === "loading") void this.#loadApprovals();
+  }
+
+  // The arrange view: opened once, loaded once; the desk keeps its state while
+  // the caller reads the other views.
+  #openBuilder(): void {
+    this.#view = "builder";
+    this.requestUpdate();
+    if (this.#desk.state.phase === "closed") void this.#desk.open();
   }
 
   // -- Shortages · open -----------------------------------------------------------------------------
@@ -534,6 +584,7 @@ export class ManagerHomeApp extends HHElement {
   }
 
   private renderWork(): TemplateResult {
+    if (this.#view === "builder") return renderBuilder(this.#desk.state);
     if (this.#view === "shortages") return renderShortages(this.#shortages);
     if (this.#view === "receiving") return renderReceiving(this.#receiving);
     if (this.#view === "approvals") return renderApprovals(this.#approvals);

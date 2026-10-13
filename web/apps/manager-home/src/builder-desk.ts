@@ -44,6 +44,7 @@ import {
   draftFromCatalog,
   layoutBody,
   layoutChanged,
+  reconcileDraft,
   moveBy,
   movePin,
   nextSize,
@@ -247,7 +248,9 @@ export class BuilderDesk {
     await this.#write(async () => {
       const answer = await this.#doors.builder.saveMyWidgets(layoutBody(this.#state.widgets));
       if (!answer.ok) return `Your home did not save. ${answer.error}`;
-      this.#set({ notice: "Your home is saved.", savedWidgets: this.#state.widgets });
+      // The save stored the caller's override: the layout is theirs from here,
+      // which is what the source chip says and what arms the reset button.
+      this.#set({ notice: "Your home is saved.", savedWidgets: this.#state.widgets, source: "user" });
       return "";
     });
   }
@@ -313,8 +316,7 @@ export class BuilderDesk {
   pick(field: string, value: string): void {
     const draft = this.#state.draft;
     if (draft === null || this.#state.catalog === null) return;
-    const next = draftFromCatalog(this.#state.catalog.measures, this.#state.catalog.ranges);
-    const patched = { ...next, ...draft, [field]: value };
+    const patched = reconcileDraft({ ...draft, [field]: value }, this.#state.catalog.measures, this.#state.catalog.ranges);
     this.#set({ draft: patched });
     this.#previewRun = this.#refreshPreview();
   }
@@ -647,7 +649,12 @@ export class BuilderDesk {
       case "reset-tabs": void this.resetTabs(); return;
       case "save-tiles": void this.saveTiles(); return;
       case "reset-tiles": void this.resetTiles(); return;
+      case "tile-toggle": this.tileToggle(key); return;
+      case "tile-move": this.tileMove(key, delta); return;
       case "scope": void this.openRole(); return;
+      case "scope-mine": this.#set({ scope: "mine" }); return;
+      case "home-takeover": this.setHome({ takeover: !(this.#state.role?.home.takeover ?? false) }); return;
+      case "home-mobile": this.setHome({ mobile_only: !(this.#state.role?.home.mobile_only ?? false) }); return;
       case "pick-profile": void this.pickProfile(control.getAttribute("data-profile") ?? ""); return;
       case "role-move": this.roleMove(key, delta); return;
       case "role-size": this.roleSizeTo(key, control.getAttribute("data-size") ?? ""); return;
@@ -668,9 +675,11 @@ export class BuilderDesk {
     }
   }
 
-  /** The one input the app element's field mirror forwards: the form's title. */
+  /** The inputs the app element's field mirror forwards: the form's title and the landing's two words. */
   field(name: string, value: string): void {
     if (name === "builder-title") this.setDraftTitle(value);
+    if (name === "builder-landing-unit") this.setHome({ landing_unit: value.trim() });
+    if (name === "builder-landing-module") this.setHome({ landing_module: value.trim() });
   }
 
   // One write at a time, the refusal words land in writeError, a success in
