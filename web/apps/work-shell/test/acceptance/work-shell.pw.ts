@@ -163,3 +163,15 @@ test("the host loads nothing from outside its own origin", async ({ page, shellU
   await switchRole(page);
   expect(foreign).toEqual([]);
 });
+
+test("offline over the Counter Till: the banner shows the copy on the device and never says writes wait", async ({ page, context, shellUrl }) => {
+  await signInAs(page, shellUrl, "Sales");
+  await expect(page.getByTestId("ws-shell")).toHaveAttribute("data-current-app", "counter-till");
+  await context.setOffline(true);
+  const banner = page.locator('hh-shell-offline-banner .banner[data-mode="offline"]');
+  await expect(banner).toBeVisible();
+  await expect(banner).toContainText("showing the copy on this device");
+  const words = (await banner.innerText()).toLowerCase();
+  expect(words).not.toMatch(/writes? wait|outbox|send/);
+  await context.setOffline(false);
+});

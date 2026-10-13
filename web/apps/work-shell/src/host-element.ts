@@ -46,7 +46,7 @@ import type { ShellBanner } from "@hardscapehouse/shell-chrome/src/shell-banner.
 import "@hardscapehouse/shell-chrome/src/shell-header.js";
 import "@hardscapehouse/shell-chrome/src/shell-rail.js";
 import "@hardscapehouse/shell-chrome/src/shell-banner.js";
-import { bannerModeFor, chipInputFor, pinStorageFrom } from "./chrome-feed.js";
+import { bannerFor, chipInputFor, pinStorageFrom } from "./chrome-feed.js";
 import { createConsoleSession, type ConsoleSession } from "./console-session.js";
 import { DEMO_ORG_NAME, DEMO_ORG_SLUG, DOOR_PATH, LAUNCH_FILE, PROFILE_FILE } from "./config.js";
 import { acceptChromeControls, framedAddress, type ChromeAction } from "@hardscapehouse/design-system/src/framed.js";
@@ -533,7 +533,12 @@ export class WorkShellHost extends HHElement {
       rail.heading = "Pinned";
       rail.storage = this.#pinStorage;
     }
-    if (banner !== null) banner.mode = bannerModeFor({ online: this.#online });
+    if (banner !== null) {
+      const feed = bannerFor({ online: this.#online });
+      banner.mode = feed.mode;
+      banner.cacheOnly = feed.cacheOnly;
+      banner.waiting = feed.waiting;
+    }
   }
 }
 

@@ -650,7 +650,7 @@ UPDATE delivery_stops
 // first and the status second would leave a window where a crash produces a stop with proof and no
 // delivery; writing status first is simply refused by the CHECK. Doing both together means the
 // constraint and the write agree by construction, and a partial POD is not a state that exists.
-func (r *Repository) SetPOD(ctx context.Context, stopID, from, sigRef, receivedBy, podBy string, at time.Time) (updated bool, err error) {
+func (r *Repository) SetPOD(ctx context.Context, stopID, from, sigRef, receivedBy, podBy, idemKey string, at time.Time) (updated bool, err error) {
 	pool, err := r.db()
 	if err != nil {
 		return false, err
@@ -659,8 +659,9 @@ func (r *Repository) SetPOD(ctx context.Context, stopID, from, sigRef, receivedB
 UPDATE delivery_stops
    SET pod_signature_ref = $3, pod_received_by = $4, pod_at = $6, pod_by = NULLIF($5,'')::uuid,
        status = 'DELIVERED', delivered_at = $6, updated_at = now(),
+       idempotency_key = COALESCE(NULLIF($7,'')::uuid, idempotency_key),
        seq = (SELECT next_value FROM seq)
- WHERE id = $1 AND status = $2`, stopID, from, sigRef, receivedBy, podBy, at)
+ WHERE id = $1 AND status = $2`, stopID, from, sigRef, receivedBy, podBy, at, idemKey)
 	if err != nil {
 		return false, err
 	}
