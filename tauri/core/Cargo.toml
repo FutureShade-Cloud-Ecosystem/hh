@@ -22,6 +22,21 @@ serde_json = "1"
 # library allow exactly one of it in the graph.
 rusqlite = { version = "=0.31.0", features = ["bundled", "limits", "hooks"] }
 
+# The FB Console and core REST client (src/console.rs). reqwest is already in
+# the graph through the updater; this takes it with no default features and
+# the rustls path without a bundled provider, so the graph gains no OpenSSL
+# and no aws-lc. The TLS config is built here with the ring provider (the one
+# the updater installs) and the Mozilla roots compiled in, so one trust path
+# serves Linux and Android and nothing needs the platform verifier's JNI setup.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+# Secret values (the session secret, a JWT, the core token) are wiped on drop.
+zeroize = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+
 # keyring 3.6 with its pure Rust Secret Service path (zbus, no libsecret and
 # no libdbus headers). Desktop Linux only: Android has no keyring backend in
 # this crate, so the core reports that plainly (see keychain.rs).
