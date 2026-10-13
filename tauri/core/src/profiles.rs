@@ -282,14 +282,105 @@ mod tests {
     }
 
     #[test]
-    fn work_and_pro_are_declared_skeletons() {
-        let work = work();
-        assert_eq!(work.identifier, "ai.futurebuild.hh.work");
-        assert_eq!(work.product_name, "HH Work");
-        assert_eq!(work.channel, UpdateChannel::Work);
-        let work_ids: Vec<&str> = work.apps.iter().map(|a| a.id.as_str()).collect();
-        assert!(work_ids.contains(&"counter-till"));
-        assert!(work_ids.contains(&"money-desk"));
+    fn work_profile_is_complete() {
+        let p = work();
+        assert_eq!(p.identifier, "ai.futurebuild.hh.work");
+        assert_eq!(p.product_name, "HH Work");
+        assert_eq!(p.brand, "fb-tokens");
+        assert_eq!(p.channel, UpdateChannel::Work);
+        assert_eq!(p.window.title, "HH Work");
+        // Desktop and tablet defaults: wider than tall, unlike Field's phone.
+        assert!(p.window.width > p.window.height);
+        assert!(p.window.width >= 1024.0);
+    }
+
+    #[test]
+    fn camera_and_fine_location_are_field_only() {
+        // Plan B.3: Work and Pro must never copy Field's grants.
+        assert_eq!(work().permissions, Permissions { camera: false, fine_location: false });
+        assert_eq!(field().permissions, Permissions { camera: true, fine_location: true });
+    }
+
+    #[test]
+    fn work_identifier_matches_the_tauri_config() {
+        let config = include_str!("../../hh-work/tauri.conf.json");
+        let value: serde_json::Value = serde_json::from_str(config).expect("tauri.conf.json parses");
+        assert_eq!(
+            value["identifier"].as_str(),
+            Some(work().identifier),
+            "tauri.conf.json identifier and the Work profile drifted"
+        );
+        assert_eq!(value["productName"].as_str(), Some(work().product_name));
+    }
+
+    #[test]
+    fn work_holds_the_manifests_work_apps_with_offline_blocks() {
+        let ids: Vec<&str> = work().apps.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "counter-till",
+                "quote-desk",
+                "dispatch-board",
+                "buying-and-stock",
+                "money-desk",
+                "manager-home",
+                "house-messages",
+                "dealer-admin"
+            ]
+        );
+        for app in &work().apps {
+            assert!(app.offline.is_some(), "{} carries its offline block", app.id);
+        }
+    }
+
+    #[test]
+    fn work_offline_blocks_match_the_plan() {
+        let apps = &work().apps;
+        let offline = |id: &str| apps.iter().find(|a| a.id == id).unwrap().offline.clone().unwrap();
+        // The till has no outbox (D5): read cache only.
+        assert_eq!(offline("counter-till").mode, OfflineMode::ReadCacheOnly);
+        // Money Desk and Dealer Admin are online only.
+        assert_eq!(offline("money-desk").mode, OfflineMode::None);
+        assert!(offline("money-desk").scopes.is_empty());
+        assert_eq!(offline("dealer-admin").mode, OfflineMode::None);
+        // Quote drafts carry an outbox, last write wins by field.
+        let quote = offline("quote-desk");
+        assert_eq!(quote.mode, OfflineMode::ReadCachePlusOutbox);
+        assert_eq!(quote.conflict_policy.get("quotes"), Some(&ConflictPolicy::LastWriteWinsByField));
+        assert_eq!(
+            offline("buying-and-stock").conflict_policy.get("cycle_counts"),
+            Some(&ConflictPolicy::Manual)
+        );
+    }
+
+    #[test]
+    fn work_scope_union_spans_its_apps_and_holds_no_money_queue() {
+        let scopes = work().offline_scopes();
+        for scope in ["customers", "products", "price_matrix", "quotes", "purchase_orders", "approvals"] {
+            assert!(scopes.contains(&scope), "the union holds {scope}");
+        }
+        assert!(scopes.windows(2).all(|w| w[0] < w[1]), "the union is sorted and deduplicated");
+        // No app with an outbox lists a money scope (money never queues).
+        for app in &work().apps {
+            let o = app.offline.as_ref().unwrap();
+            if matches!(o.mode, OfflineMode::ReadCachePlusOutbox | OfflineMode::Full) {
+                for money in ["tenders", "payments", "invoices", "ledger"] {
+                    assert!(!o.scopes.iter().any(|s| s == money), "{} queues {money}", app.id);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn profile_identifiers_and_channels_are_distinct() {
+        let ids = [field().identifier, work().identifier, pro().identifier];
+        assert_eq!(ids.iter().collect::<std::collections::BTreeSet<_>>().len(), 3);
+        assert_ne!(field().channel, work().channel);
+    }
+
+    #[test]
+    fn pro_is_a_declared_skeleton() {
         let pro = pro();
         assert_eq!(pro.identifier, "ai.futurebuild.hh.pro");
         assert_eq!(pro.brand, "hh-pro");

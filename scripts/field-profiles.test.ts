@@ -68,24 +68,87 @@ describe("generated field profile", () => {
   });
 });
 
-describe("declared skeleton profiles", () => {
-  test("work and pro equal a fresh build and carry id and name only", () => {    for (const shell of ["work", "pro"] as const) {
-      const fresh = serialize(buildDoc(manifest, shell));
-      const current = readFileSync(PROFILE_FILES[shell], "utf8");
-      expect(current).toBe(fresh);
-      const doc = JSON.parse(current) as GeneratedDoc;
-      expect(doc.apps.length).toBeGreaterThan(0);
-      for (const app of doc.apps) {
-        expect(Object.keys(app).sort()).toEqual(["id", "name"]);
+describe("generated work profile", () => {
+  test("the checked in file equals a fresh build of manifest.yaml", () => {
+    const fresh = serialize(buildDoc(manifest, "work"));
+    const current = readFileSync(PROFILE_FILES.work, "utf8");
+    expect(current).toBe(fresh);
+  });
+
+  test("work holds exactly the manifest's hh-work apps, manifest order", () => {
+    const doc = readProfile("work");
+    expect(doc.shell).toBe("hh-work");
+    expect(doc.apps.map((a) => a.id)).toEqual([
+      "counter-till",
+      "quote-desk",
+      "dispatch-board",
+      "buying-and-stock",
+      "money-desk",
+      "manager-home",
+      "house-messages",
+      "dealer-admin",
+    ]);
+  });
+
+  test("every work app carries a known offline mode and closed policy set", () => {
+    const doc = readProfile("work");
+    const modes = ["full", "read_cache_plus_outbox", "read_cache_only", "none"];
+    const policies = ["server_wins", "last_write_wins_by_field", "manual"];
+    for (const app of doc.apps) {
+      const offline = app.offline as { mode: string; scopes: string[]; conflict_policy: Record<string, string> };
+      expect(modes).toContain(offline.mode);
+      for (const policy of Object.values(offline.conflict_policy)) {
+        expect(policies).toContain(policy);
       }
     }
   });
 
-  test("the skeletons hold the manifest's own app sets", () => {
-    const work = readProfile("work");
-    expect(work.shell).toBe("hh-work");
-    expect(work.apps.map((a) => a.id)).toContain("counter-till");
-    expect(work.apps.map((a) => a.id)).toContain("money-desk");
+  test("pinned offline shapes from the plan (plan B.3 and B.4)", () => {
+    const doc = readProfile("work");
+    const byId = new Map(doc.apps.map((a) => [a.id, a]));
+    type Offline = { mode: string; scopes: string[]; conflict_policy: Record<string, string> };
+    const offline = (id: string) => byId.get(id)!.offline as Offline;
+    // The till has no outbox (D5); the money desk and dealer admin are online only.
+    expect(offline("counter-till").mode).toBe("read_cache_only");
+    expect(offline("money-desk").mode).toBe("none");
+    expect(offline("money-desk").scopes).toEqual([]);
+    expect(offline("dealer-admin").mode).toBe("none");
+    // Quote drafts carry an outbox, last write wins by field.
+    expect(offline("quote-desk").mode).toBe("read_cache_plus_outbox");
+    expect(offline("quote-desk").conflict_policy["quotes"]).toBe("last_write_wins_by_field");
+    expect(offline("buying-and-stock").conflict_policy["cycle_counts"]).toBe("manual");
+    expect(offline("manager-home").conflict_policy["approvals"]).toBe("server_wins");
+  });
+
+  test("no money scope queues: no work app with an outbox lists a money scope", () => {
+    const doc = readProfile("work");
+    const money = ["tenders", "payments", "invoices", "ledger", "receivables", "payables"];
+    for (const app of doc.apps) {
+      const offline = app.offline as { mode: string; scopes: string[] };
+      if (offline.mode === "read_cache_plus_outbox" || offline.mode === "full") {
+        for (const scope of offline.scopes) expect(money).not.toContain(scope);
+      }
+    }
+  });
+
+  test("one brand across the shell's apps, read from the manifest", () => {
+    expect(readProfile("work").brand).toBe("fb-tokens");
+  });
+});
+
+describe("declared skeleton profiles", () => {
+  test("pro equals a fresh build and carries id and name only", () => {
+    const fresh = serialize(buildDoc(manifest, "pro"));
+    const current = readFileSync(PROFILE_FILES.pro, "utf8");
+    expect(current).toBe(fresh);
+    const doc = JSON.parse(current) as GeneratedDoc;
+    expect(doc.apps.length).toBeGreaterThan(0);
+    for (const app of doc.apps) {
+      expect(Object.keys(app).sort()).toEqual(["id", "name"]);
+    }
+  });
+
+  test("the pro skeleton holds the manifest's own app set", () => {
     const pro = readProfile("pro");
     expect(pro.shell).toBe("hh-pro");
     expect(pro.apps.map((a) => a.id)).toEqual(["pro-procurement", "pro-pay", "pro-field"]);
