@@ -117,6 +117,9 @@ interface AccountState {
 
 const CANNOT_RETURN_WORDS = "This order cannot be returned through Pro. Ask the dealer to arrange it.";
 const RETURN_FAULT_WORDS = "Returns did not load. Try again in a moment.";
+// The core's last owner refusal (409) in the words a person reads; the core's
+// stored words stay the core's.
+const LAST_OWNER_WORDS = "The account needs at least one active owner.";
 
 function freshInstructions(): InstructionsState {
   return { draft: "", busy: false, saved: false, error: "", prefill: null };
@@ -748,7 +751,7 @@ export class ProFieldApp extends HHElement {
     if (answer.ok) {
       this.#team.notice = "Role saved.";
     } else {
-      this.#team.error = answer.error;
+      this.#team.error = answer.status === 409 ? LAST_OWNER_WORDS : answer.error;
     }
     await this.#loadTeam();
   }
@@ -763,7 +766,7 @@ export class ProFieldApp extends HHElement {
     if (answer.ok) {
       this.#team.notice = status === "inactive" ? "The member is deactivated. They cannot sign in until reactivated." : "The member is active again.";
     } else {
-      this.#team.error = answer.error;
+      this.#team.error = answer.status === 409 ? LAST_OWNER_WORDS : answer.error;
     }
     await this.#loadTeam();
   }

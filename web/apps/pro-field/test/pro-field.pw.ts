@@ -261,6 +261,17 @@ test.describe("phone", () => {
     await expect(crewRow).toContainText("Active");
   });
 
+  test("the last owner's refusal reads in plain words, for the role picker and for Deactivate", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    const ownerRow = page.getByTestId("team-members").getByTestId("member-row").filter({ hasText: "contractor.owner@hh-demo.invalid" });
+    await ownerRow.getByTestId("member-role").selectOption({ label: "Buyer" });
+    await expect(page.getByTestId("team-error")).toHaveText("The account needs at least one active owner.");
+    await ownerRow.getByTestId("member-deactivate").click();
+    await expect(page.getByTestId("team-error")).toHaveText("The account needs at least one active owner.");
+    await expect(page.getByTestId("team-error")).not.toContainText("account_admin");
+  });
+
   test("the invite form asks the server and carries its answer in plain words", async ({ page }) => {
     await signIn(page, "owner");
     await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
