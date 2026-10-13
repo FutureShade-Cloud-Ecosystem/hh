@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { nodeSqliteExecutor, FakeSyncServer } from "@hardscapehouse/offline-store/testing";
 import { OfflineStore, createSqliteBackend, scopeBookFor } from "@hardscapehouse/offline-store";
 import { YardOffline, bannerMode } from "../src/yard-offline.js";
+import { payloadOffenders } from "./_lib/gosets.mjs";
 
 const ACTOR = "d0200000-0000-4000-9000-000000000002";
 const BRANCH = "5d1b3f6e-0000-4000-9000-000000000001";
@@ -25,7 +26,7 @@ function nextKey() {
   return `00000000-0000-4000-8000-${String(keyCounter).padStart(12, "0")}`;
 }
 
-async function rig() {
+async function rig(extra = {}) {
   const server = new FakeSyncServer();
   // The world, in the projection the demo sync surface serves: the task rows
   // carry the task and the ticket words; the shortage rows carry the shortage.
@@ -70,6 +71,7 @@ async function rig() {
     transport: server.transport(),
     actorId: ACTOR,
     newKey: nextKey,
+    ...extra,
   });
   await layer.cycle();
   return { layer, server, store };
@@ -302,4 +304,62 @@ test("a second tab (read cache only) opens no layer, so the app stays online, an
   const owner = await openYardOfflineOver(createSqliteBackend(nodeSqliteExecutor()), { transport: server.transport(), direct: {}, actorId: ACTOR });
   assert.equal(owner.readOnly, false);
   assert.notEqual(owner.layer, null);
+});
+
+test("every queued write declares only fields the core's sync stores admit (the Go writable sets)", async () => {
+  const { layer, server } = await rig();
+  server.setOffline(true);
+  await layer.claim(TASK);
+  await layer.start(TASK);
+  await layer.stage(TASK, "Bay 4", "");
+  const reported = await layer.reportShortage(TASK, { orderLineNo: 2, description: "Polymeric sand, grey, 18 kg", qtyShort: "4", uom: "BAG", note: "Split bags" });
+  assert.equal(reported.ok, true);
+  server.setOffline(false);
+  await layer.cycle();
+  assert.equal(await layer.waiting(), 0);
+  assert.deepEqual(payloadOffenders(server.requests), []);
+});
+
+test("the pick record, the skid count and the shortage settle never queue: they go to their direct doors, in order, after the outbox", async () => {
+  const calls = [];
+  const direct = {
+    recordLines: async (id, lines) => (calls.push(["recordLines", id, server.appliedOrder.length]), { ok: true, value: [] }),
+    recordSkids: async (id, count) => (calls.push(["recordSkids", id, count]), { ok: true, value: { skid_count: count, previous_skid_count: null, changed: true, order_no: "SO-1042" } }),
+    resolveShortage: async (id, shortageId) => (calls.push(["resolveShortage", shortageId]), { ok: true, value: { id: shortageId, resolution: "done" } }),
+  };
+  const { layer, server } = await rig({ direct });
+  await layer.claim(TASK);
+  await layer.runner.settled();
+  const recorded = await layer.recordLines(TASK, []);
+  assert.equal(recorded.ok, true);
+  await layer.recordSkids(TASK, 3, "COUNT_CORRECTION", "");
+  await layer.resolveShortage(TASK, "3a000000-0000-4000-9000-000000000001", "done");
+  assert.deepEqual(calls.map((c) => c[0]), ["recordLines", "recordSkids", "resolveShortage"]);
+  assert.equal(calls[0][2], 1, "the claim had applied before the record went");
+  assert.equal(await layer.waiting(), 0, "nothing was queued for them");
+  const pushedScopes = server.requests.filter((r) => r.kind === "push").map((r) => r.scope);
+  assert.deepEqual([...new Set(pushedScopes)], ["pick_tasks"]);
+});
+
+test("a direct door refuses in words while a write is still waiting, and says no signal when the platform is offline", async () => {
+  const calls = [];
+  const direct = {
+    recordLines: async () => (calls.push("recordLines"), { ok: true, value: [] }),
+    recordSkids: async () => (calls.push("recordSkids"), { ok: false, error: "x", status: 400 }),
+    resolveShortage: async () => (calls.push("resolveShortage"), { ok: false, error: "x", status: 400 }),
+  };
+  const { layer, server } = await rig({ direct });
+  server.setOffline(true);
+  await layer.claim(TASK);
+  const waiting = await layer.recordLines(TASK, []);
+  assert.equal(waiting.ok, false);
+  if (waiting.ok) return;
+  assert.match(waiting.error, /still waiting/);
+  server.setOffline(false);
+  await layer.setOnline(false);
+  const nosignal = await layer.recordSkids(TASK, 2, "COUNT_CORRECTION", "");
+  assert.equal(nosignal.ok, false);
+  if (nosignal.ok) return;
+  assert.equal(nosignal.status, undefined, "no answer from a server: the app's own check your signal words show");
+  assert.deepEqual(calls, [], "no direct door was reached");
 });

@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { nodeSqliteExecutor, FakeSyncServer } from "@hardscapehouse/offline-store/testing";
 import { OfflineStore, createSqliteBackend, scopeBookFor } from "@hardscapehouse/offline-store";
 import { DriveOffline, bannerMode } from "../src/drive-offline.js";
+import { payloadOffenders } from "./_lib/gosets.mjs";
 
 const DRIVER = "de110000-0000-4000-9000-000000000003";
 const RUN = "a1000000-0000-4000-9000-000000000005";
@@ -324,4 +325,43 @@ test("a second tab (read cache only) opens no layer, so the app stays online, an
   const owner = await openDriveOfflineOver(createSqliteBackend(nodeSqliteExecutor()), { transport: server.transport(), direct: {} });
   assert.equal(owner.readOnly, false);
   assert.notEqual(owner.layer, null);
+});
+
+test("every queued write declares only fields the core's sync stores admit (the Go writable sets)", async () => {
+  const { layer, server } = await rig();
+  server.setOffline(true);
+  await layer.advance(STOP_1, "LOADED");
+  await layer.advance(STOP_1, "EN_ROUTE");
+  await layer.advance(STOP_1, "FAILED", "Gate locked, no answer");
+  server.setOffline(false);
+  await layer.cycle();
+  assert.equal(await layer.waiting(), 0);
+  const pushed = server.requests.filter((r) => r.kind === "push").flatMap((r) => r.ops);
+  const failed = pushed.find((op) => op.payload.status === "FAILED");
+  assert.equal(failed.payload.failure_reason, "Gate locked, no answer", "the failed stop carries the core's own key");
+  assert.deepEqual(payloadOffenders(server.requests), []);
+});
+
+test("the proof of delivery never queues: it goes to its direct door after the outbox, and refuses in words while a move waits", async () => {
+  const proofs = [];
+  const direct = {
+    completeRun: async () => ({ ok: true, value: true }),
+    pod: async (id, name) => (proofs.push({ id, name, applied: server.appliedOrder.length }), { ok: true, value: { id, status: "DELIVERED" } }),
+  };
+  const { layer, server } = await rig({ direct });
+  server.setOffline(true);
+  await layer.advance(STOP_1, "LOADED");
+  await layer.advance(STOP_1, "EN_ROUTE");
+  const refused = await layer.pod(STOP_1, "Receiver (demo)");
+  assert.equal(refused.ok, false);
+  if (refused.ok) return;
+  assert.match(refused.error, /still waiting/);
+  assert.equal(proofs.length, 0);
+  server.setOffline(false);
+  const signed = await layer.pod(STOP_1, "Receiver (demo)");
+  assert.equal(signed.ok, true);
+  assert.equal(proofs.length, 1);
+  assert.equal(proofs[0].applied, 2, "both queued moves had applied before the proof went");
+  assert.equal(await layer.waiting(), 0, "the proof queued nothing");
+  assert.equal(server.requests.some((r) => r.kind === "push" && r.scope === "pod"), false);
 });
