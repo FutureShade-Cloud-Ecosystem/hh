@@ -27,7 +27,10 @@
 //     is "general-manager" and its live modules are the Money Desk and
 //     Manager Home, with House Messages and Dealer Admin still href null;
 //     HR's flow is "hr" and both its tiles (House Messages, Dealer Admin) are
-//     still href null, so its home reads "coming" until those apps exist.
+//     still href null, so its home reads "coming" until those apps exist;
+//     the Branch Manager's flow is "branch-manager" and its tiles are the
+//     Counter Till, the Quote Desk and Manager Home (live) with Dispatch and
+//     Load Building and House Messages still href null.
 //   - The others are COMING. Each shows the modules the matrix gives
 //     that role at work, manage or admin level, by the surfaces table's own
 //     names; read cells (and none) show nothing. A coming role is never
@@ -96,7 +99,8 @@ export interface LiveRole {
     | "driver"
     | "financial_controller"
     | "general_manager"
-    | "hr";
+    | "hr"
+    | "branch_manager";
   /** The demo flow id the mint takes, the flows table's own mapping. */
   readonly flow:
     | "sales"
@@ -108,7 +112,8 @@ export interface LiveRole {
     | "driver"
     | "financial-controller"
     | "general-manager"
-    | "hr";
+    | "hr"
+    | "branch-manager";
   /**
    * The card's label and its accessible name, alone: the demo adapter's
    * contract words, never decorated.
@@ -216,6 +221,14 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     icon: "lucide:users",
     tiles: [HOUSE_MESSAGES_TILE, DEALER_ADMIN_TILE],
   },
+  {
+    id: "branch_manager",
+    flow: "branch-manager",
+    label: "Branch Manager",
+    line: "Run the branch: the counter, quotes, dispatch and approvals.",
+    icon: "lucide:store",
+    tiles: [TILL_TILE, QUOTE_TILE, DISPATCH_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
+  },
 ];
 
 /**
@@ -231,17 +244,6 @@ export const COMING_ROLES: readonly ComingRole[] = [
     id: "logistics_manager",
     label: "Logistics Manager",
     modules: ["Dispatch and Load Building", "Manager Home", "House Messages"],
-  },
-  {
-    id: "branch_manager",
-    label: "Branch Manager",
-    modules: [
-      "Counter Till",
-      "Quote Desk",
-      "Dispatch and Load Building",
-      "Manager Home",
-      "House Messages",
-    ],
   },
 ];
 

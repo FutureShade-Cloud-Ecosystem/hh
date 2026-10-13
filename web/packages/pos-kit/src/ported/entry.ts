@@ -30,7 +30,6 @@ import { drawIcon, iconForId } from "./_icon-consumer.js";
 export const COMING_ROLES: readonly string[] = [
   "Outside Sales",
   "Logistics Manager",
-  "Branch Manager",
 ];
 
 export type FlowsState =
@@ -62,6 +61,7 @@ const FLOW_ICONS: Record<string, string> = {
   "financial-controller": "lucide:landmark",
   "general-manager": "lucide:shield-check",
   hr: "lucide:users",
+  "branch-manager": "lucide:store",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
@@ -72,6 +72,7 @@ const FLOW_BLURBS: Record<string, string> = {
   "financial-controller": "Decide approvals and keep the ledger.",
   "general-manager": "Decide what only leadership may decide.",
   hr: "People, messages and the dealer's staff settings.",
+  "branch-manager": "Run the branch: the counter, quotes, dispatch and approvals.",
 };
 
 export const entryStyles = css`

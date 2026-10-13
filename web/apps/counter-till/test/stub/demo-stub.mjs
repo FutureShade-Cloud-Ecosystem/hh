@@ -95,6 +95,7 @@ const FLOWS = [
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
   { flow: "general-manager", role_code: "general_manager", label: "General Manager" },
   { flow: "hr", role_code: "hr", label: "HR" },
+  { flow: "branch-manager", role_code: "branch_manager", label: "Branch Manager" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
@@ -162,6 +163,15 @@ const USERS = {
     role_name: "HR",
     tier: 1,
     scope: "GLOBAL",
+  },
+  "branch-manager": {
+    user_id: "demo-account-branch-manager",
+    email: "branch-manager@demo.invalid",
+    display_name: "Branch manager (demo)",
+    role_code: "branch_manager",
+    role_name: "Branch Manager",
+    tier: 2,
+    scope: "BRANCH",
   },
   driver: {
     user_id: "demo-account-driver",

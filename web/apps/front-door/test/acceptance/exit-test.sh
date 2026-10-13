@@ -32,14 +32,14 @@
 #   the served bundle carries the picker's structure: the live card
 #     labels ("Sales", "Sales manager", "Yard manager", "Yard Team", "Payables
 #     and Receivables", "Procurement manager", "Driver", "Financial
-#     Controller", "General Manager", "HR"), the coming rows' labels, the Coming heading, and
+#     Controller", "General Manager", "HR", "Branch Manager"), the coming rows' labels, the Coming heading, and
 #     the demo badge's copy;
 #   /api/v1/demo/flows answers the closed table's flows, every
 #     one of the live roles the front door maps, in order;
 #   POST /api/v1/demo/session without the phrase is refused by the gate, and
 #     with it mints for every flow id the front door maps (sales,
 #     sales-manager, yard-manager, yard-team, payables-receivables,
-#     procurement-manager, driver, financial-controller, general-manager, hr);
+#     procurement-manager, driver, financial-controller, general-manager, hr, branch-manager);
 #   the gate stands down on a staff route behind a bearer and no phrase.
 #
 # Cleanup removes every process, container, network and temporary path the
@@ -276,7 +276,7 @@ done
 echo "== the demo routes through the gate"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"general-manager"'*'"flow":"hr"'*)
+	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"general-manager"'*'"flow":"hr"'*'"flow":"branch-manager"'*)
 		pass "/api/v1/demo/flows answers the closed table's flows, every live role the front door maps"
 		;;
 	*) fail "/api/v1/demo/flows did not answer the closed table's flows, every live role the front door maps: $flows" ;;
@@ -288,7 +288,7 @@ code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
 [ "$code" = "401" ] && pass "the mint without the phrase is refused by the gate" \
 	|| fail "the mint without the phrase answered $code, want 401"
 
-for flow in sales sales-manager yard-manager yard-team driver payables-receivables procurement-manager financial-controller general-manager hr; do
+for flow in sales sales-manager yard-manager yard-team driver payables-receivables procurement-manager financial-controller general-manager hr branch-manager; do
 	mint="$(curl -s -u "demo:$PHRASE" -H 'Content-Type: application/json' \
 		-d "{\"flow\":\"$flow\"}" "$BASE/api/v1/demo/session")"
 	case "$mint" in
