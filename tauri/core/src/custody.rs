@@ -470,6 +470,24 @@ mod tests {
         assert_eq!(c.snapshot_len(), 0, "a wrong value is removed so the next run starts clean");
     }
 
+    /// The real Secret Service on a desktop Linux session (not run by default:
+    /// CI has no keyring daemon). Run with `cargo test -p hh-shell-core --lib
+    /// -- --ignored real_secret_service`. It uses the self check's proof
+    /// address (a fixed non secret value, removed at the end).
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "needs a running Secret Service"]
+    fn real_secret_service_round_trips_and_deletes() {
+        let c = KeyringCustody;
+        let a = Address::console_session("ai.futurebuild.hh.field", "custody-proof").unwrap();
+        c.delete(&a).unwrap();
+        assert_eq!(self_check(&c, &a), Ok(SelfCheck::Stored));
+        assert_eq!(c.get(&a), Ok(Some(SELF_CHECK_VALUE.to_string())));
+        assert_eq!(self_check(&c, &a), Ok(SelfCheck::PersistedAndCleared));
+        assert_eq!(c.get(&a), Ok(None));
+        c.delete(&a).unwrap();
+    }
+
     #[test]
     fn the_error_carries_a_code_and_no_input() {
         assert_eq!(CustodyError::KeychainUnavailable.code(), "keychain_unavailable");

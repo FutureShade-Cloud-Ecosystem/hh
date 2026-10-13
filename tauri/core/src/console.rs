@@ -10,7 +10,7 @@
 //!   the secret is read from the `a_session_<project>` cookie; nothing else
 //!   of the response is kept.
 //! - `GET {endpoint}/account` (resume), `POST {endpoint}/account/jwts` (a
-//!   JWT with a 900 second life) and `DELETE {endpoint}/account/sessions/current`
+//!   short lived JWT) and `DELETE {endpoint}/account/sessions/current`
 //!   carry the secret as that same cookie, with `X-Appwrite-Project`.
 //! - `POST {core}/api/v1/auth/exchange` `{jwt, org}` with no cookie and no
 //!   Console header. The JWT is consumed by the call: a `Jwt` is passed by
@@ -714,6 +714,19 @@ mod tests {
         let big = format!(r#"{{"token":"{}","expiresAtMs":1,"user":{{}}}}"#, "x".repeat(200_000));
         let server = MockServer::start(vec![Reply::json(200, &big)]);
         assert_eq!(run(client(&server).core_exchange(jwt("j"), "gable")).unwrap_err(), AuthCode::Unavailable);
+    }
+
+    /// A real TLS handshake with the compiled in roots (not run by default:
+    /// it needs the network). A neutral public host stands in for Console:
+    /// the answer to the unknown route is a refusal or an outage word, but a
+    /// handshake that failed (an untrusted or unreachable host) reads as
+    /// `offline`. Run with `-- --ignored live_tls`.
+    #[test]
+    #[ignore = "needs the network"]
+    fn live_tls_handshake_uses_the_compiled_roots() {
+        let cfg = AuthConfig::new("https://example.com/v1", "proj-1", "https://example.com").unwrap();
+        let got = run(ConsoleClient::new(&cfg).unwrap().account(&secret()));
+        assert!(!matches!(got, Err(AuthCode::Offline)), "the handshake failed: {got:?}");
     }
 
     // ---- nothing echoed ------------------------------------------------
