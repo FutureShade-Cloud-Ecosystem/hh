@@ -400,6 +400,14 @@ jobs:
               exit 1
             fi
           done
+      # The demo image build, no push and no secrets. Nothing built the image
+      # in CI, so a Dockerfile, .dockerignore or web import break (the drive
+      # app importing a statechart the context excluded) went unseen until a
+      # hand build. The step runs on every run of this job, so a change to
+      # anything the image reads is caught without a path filter that could
+      # miss an import.
+      - name: Build the demo image, no push
+        run: docker build -f deploy/demo/Dockerfile -t hh-demo-ci-build .
       # The integration tag suite runs in its own job beside this one
       # (HH-191): the composition fixture's migration glob, the break
       # that kept the suite out of this job, is fixed there, along with
