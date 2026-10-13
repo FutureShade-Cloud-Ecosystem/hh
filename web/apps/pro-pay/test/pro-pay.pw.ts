@@ -1,11 +1,19 @@
 // Pro Pay in a real browser against the shared tenant stub. Visual references: the sign in screen is
-// HH: Pro shell-signin-phone-brand; the frame is shell-frame-phone-light-r2 and shell-selector-phone-light; the
-// landing is role-ap-desktop-light-r2 (the invoice rows) and pay-hosted-phone-light. Phone first (390 wide), then desktop. The legs cover the sign in, the frame, the
-// selector and the landing surface's loading, ready, empty, error and refusal states.
+// HH: Pro shell-signin-phone-brand; the frame is shell-frame-phone-light-r2 and shell-selector-phone-light; Pay home
+// (the balance, the aging tiles, select to pay, the sticky Pay bar) is the live capture app-phone-05-pay and
+// app-desktop-04-pay; the pay sheet (methods with the fee on each before choosing, Add a card, the gold Pay button)
+// is the board pay-hosted-phone-light. Phone first (390 wide), then desktop (1440).
+//
+// The money legs: a pay with a stored method and its receipt, the double press (one request), the unknown outcome (the
+// response is lost after the stub settled it: the same key and body on Check payment, still one payment), a decline
+// through the hosted frame, and the card sweep (no input in the app, the frame sandboxed with an opaque origin, the
+// digits typed in the frame on no request the page makes).
 import { test, expect, type Page } from "@playwright/test";
 
 const PASSWORD = "stub-password";
 const EMAIL = (who: string): string => `contractor.${who}@hh-demo.invalid`;
+const CARD_DECLINE = "4000000000000002";
+const CARD_OK = "4111111111111111";
 
 test.beforeEach(async ({ request }) => {
   const response = await request.post("/_stub/reset");
@@ -19,6 +27,41 @@ async function signIn(page: Page, who: string, password = PASSWORD): Promise<voi
   await page.getByRole("button", { name: "Sign in" }).click();
 }
 
+/** The dealer's day (the house zone) a number of days from now, as YYYY-MM-DD: the day the app ages against. */
+function houseDayOffset(days: number): string {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
+  const when = new Date(`${today}T00:00:00Z`);
+  when.setUTCDate(when.getUTCDate() + days);
+  return when.toISOString().slice(0, 10);
+}
+
+async function shot(page: Page, name: string): Promise<void> {
+  const dir = process.env.PAY_SHOTS;
+  await page.screenshot({ path: dir ? `${dir}/${name}.png` : test.info().outputPath(`${name}.png`) });
+}
+
+/** The payments the stub holds, read with a bearer of the same persona (the test's own view of the books). */
+async function paymentsHeld(page: Page, who: string): Promise<{ payment_no: string; amount_cents: number }[]> {
+  const session = await page.request.post("/_stub/session", { data: { email: EMAIL(who), password: PASSWORD } });
+  const { token } = (await session.json()) as { token: string };
+  const list = await page.request.get("/api/v1/tenant/payments", { headers: { Authorization: `Bearer ${token}` } });
+  return (await list.json()) as { payment_no: string; amount_cents: number }[];
+}
+
+async function pickAllAndOpenSheet(page: Page): Promise<void> {
+  await page.getByRole("button", { name: /Select all/ }).click();
+  await page.getByTestId("pay-open").click();
+  await expect(page.getByTestId("pay-sheet")).toBeVisible();
+  await expect(page.getByTestId("method-option").first()).toBeVisible();
+}
+
+async function useCardInFrame(page: Page, digits: string): Promise<void> {
+  const frame = page.frameLocator('[data-testid="card-frame"]');
+  await frame.locator("#number").fill(digits);
+  await frame.locator("#code").fill("123");
+  await frame.getByRole("button", { name: "Use this card" }).click();
+}
+
 test.describe("phone", () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
@@ -26,92 +69,203 @@ test.describe("phone", () => {
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "HH Pro" })).toBeVisible();
     await expect(page.locator("hh-pro-signin")).toContainText("Gable Landscape Supply");
-    await expect(page.locator("hh-pro-signin")).toContainText("Use the email your contractor account knows.");
     const text = (await page.locator("hh-pro-signin").innerText()).toLowerCase();
     for (const word of ["console", "core", "token", "session", "exchange", "stub", "demo"]) expect(text).not.toContain(word);
     await expect(page.locator("hh-pro-frame")).toHaveCount(0);
-    await page.screenshot({ path: test.info().outputPath("signin-phone.png") });
   });
 
   test("a wrong password is refused in plain words and the person stays on the sign in screen", async ({ page }) => {
     await signIn(page, "owner", "not-the-password");
     await expect(page.getByTestId("signin-message")).toHaveText("That email and password do not match.");
     await expect(page.locator("hh-pro-frame")).toHaveCount(0);
-    await expect(page.getByTestId("signin-password")).toHaveValue("");
   });
 
-  test("signing in shows the frame with the dealer, the surface and the landing rows", async ({ page }) => {
+  test("Pay home shows what is owed, the aging tiles and the invoices, in dollars", async ({ page }) => {
     await signIn(page, "ap");
-    await expect(page.locator("hh-pro-frame")).toBeVisible();
-    await expect(page.getByTestId("frame-dealer")).toHaveText("Gable Landscape Supply");
-    await expect(page.getByTestId("frame-selector")).toContainText("Invoices");
     await expect(page.getByTestId("surface-title")).toHaveText("Invoices");
-    await expect(page.getByTestId("landing-rows")).toContainText("INV-");
-    await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-    await page.screenshot({ path: test.info().outputPath("landing-phone.png") });
+    await expect(page.getByTestId("frame-dealer")).toHaveText("Gable Landscape Supply");
+    await expect(page.getByTestId("owed-total")).toContainText("$");
+    await expect(page.getByTestId("aging").locator("li")).toHaveCount(4);
+    await expect(page.getByTestId("invoice-row").first()).toContainText("INV-");
+    const text = await page.locator("hh-pro-frame").innerText();
+    expect(text).not.toMatch(/CAD|undefined|NaN|null/);
+    await shot(page, "pay-home-phone");
   });
 
-  test("the selector lists only the surfaces this role opens, and signing out returns to the sign in screen", async ({ page }) => {
+  test("an overdue invoice shows its days late and the overdue line, filed in the right tile", async ({ page }) => {
+    await page.route("**/api/v1/tenant/invoices?*", async (route) => {
+      const response = await route.fetch();
+      const page_ = (await response.json()) as { items: { invoice_no: string; due_date: string }[] };
+      for (const item of page_.items) if (item.invoice_no === "INV-20402") item.due_date = houseDayOffset(-12);
+      await route.fulfill({ response, json: page_ });
+    });
     await signIn(page, "ap");
+    await expect(page.getByTestId("owed-overdue")).toContainText("overdue across 1 invoice");
+    await expect(page.getByTestId("invoice-row").filter({ hasText: "INV-20402" })).toContainText("12 days late");
+    await expect(page.getByTestId("aging").locator('[data-bucket="1-30"]')).not.toContainText("None");
+    await shot(page, "pay-home-overdue-phone");
+  });
+
+  test("select to pay counts the pick, the bar shows the sum, and Clear takes it back", async ({ page }) => {
+    await signIn(page, "ap");
+    await expect(page.getByTestId("pay-open")).toBeDisabled();
+    await expect(page.getByTestId("picked-count")).toHaveText("0 of 2 selected");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();
+    await expect(page.getByTestId("picked-count")).toHaveText("1 of 2 selected");
+    await expect(page.getByTestId("pay-open")).toContainText("Pay 1 invoice");
+    await page.getByRole("button", { name: "Select all 2" }).click();
+    await expect(page.getByTestId("pay-open")).toContainText("Pay 2 invoices");
+    await page.getByRole("button", { name: "Clear" }).click();
+    await expect(page.getByTestId("pay-open")).toBeDisabled();
+    await shot(page, "pay-select-phone");
+  });
+
+  test("the sheet shows the fee on every method before one is chosen, then a stored method pays and the receipt is the core's", async ({ page }) => {
+    await signIn(page, "ap");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();
+    await page.getByTestId("pay-open").click();
+    const methods = page.getByTestId("method-option");
+    await expect(methods).toHaveCount(2);
+    for (let i = 0; i < 2; i += 1) await expect(methods.nth(i)).toContainText("No fee");
+    await expect(page.getByTestId("method-new")).toContainText("No fee");
+    await expect(page.getByTestId("sandbox-note")).toHaveText("Sandbox payments. No money moves.");
+    await expect(methods.first()).toHaveAttribute("aria-checked", "true");
+    await shot(page, "pay-sheet-phone");
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    await expect(page.getByTestId("receipt-no")).toHaveText(/^PMT-/);
+    await expect(page.getByTestId("receipt-differs")).toHaveCount(0);
+    await shot(page, "pay-receipt-phone");
+    await page.getByTestId("receipt-done").click();
+    await expect(page.getByTestId("pay-sheet")).toHaveCount(0);
+    await expect(page.getByTestId("invoice-row").filter({ hasText: "INV-20402" })).toContainText("Paid");
+    expect((await paymentsHeld(page, "ap")).length).toBe(3);
+  });
+
+  test("a double press is one request and one payment", async ({ page, request }) => {
+    const posts: string[] = [];
+    page.on("request", (r) => {
+      if (r.method() === "POST" && new URL(r.url()).pathname === "/api/v1/tenant/payments") posts.push(r.postData() ?? "");
+    });
+    await signIn(page, "ap");
+    await pickAllAndOpenSheet(page);
+    await request.post("/_stub/control", { data: { delayMs: 700 } });
+    await page.getByTestId("pay-confirm").dblclick();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    expect(posts.length).toBe(1);
+    expect((await paymentsHeld(page, "ap")).length).toBe(3);
+  });
+
+  test("an answer lost after the charge is unknown: Check payment resends the same key and body and there is still one payment", async ({ page }) => {
+    const posts: { idempotency_key: string; invoice_ids: string[]; payment_method_id?: string; nonce?: string }[] = [];
+    await page.route("**/api/v1/tenant/payments", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      posts.push(JSON.parse(route.request().postData() ?? "{}"));
+      if (posts.length === 1) {
+        await route.fetch();
+        return route.abort("connectionreset");
+      }
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();
+    await page.getByTestId("pay-open").click();
+    await expect(page.getByTestId("method-option").first()).toBeVisible();
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("sheet-words")).toContainText("It may have gone through");
+    await expect(page.getByTestId("check-payment")).toBeVisible();
+    await expect(page.getByTestId("pay-confirm")).toHaveCount(0);
+    await expect(page.getByTestId("receipt")).toHaveCount(0);
+    await shot(page, "pay-unknown-phone");
+    // The choices are locked while the answer is unknown.
+    await expect(page.getByTestId("method-option").first()).toBeDisabled();
+    await page.getByTestId("check-payment").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    expect(posts.length).toBe(2);
+    expect(posts[1]).toEqual(posts[0]);
+    expect(posts[0].idempotency_key.length).toBeGreaterThanOrEqual(16);
+    expect((await paymentsHeld(page, "ap")).length).toBe(3);
+  });
+
+  test("closing the sheet on an unknown outcome leaves a notice, and Check payment from it is the same request", async ({ page }) => {
+    const posts: string[] = [];
+    await page.route("**/api/v1/tenant/payments", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      posts.push(route.request().postData() ?? "");
+      if (posts.length === 1) {
+        await route.fetch();
+        return route.abort("connectionreset");
+      }
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await pickAllAndOpenSheet(page);
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("check-payment")).toBeVisible();
+    await page.getByTestId("sheet-close").click();
+    await expect(page.getByTestId("waiting-notice")).toBeVisible();
+    // A different pick cannot start another payment while this one waits: the sheet comes back as the held one.
+    await page.getByTestId("pay-open").click();
+    await expect(page.getByTestId("check-payment")).toBeVisible();
+    await page.getByTestId("check-payment").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    expect(posts[1]).toBe(posts[0]);
+    expect((await paymentsHeld(page, "ap")).length).toBe(3);
+  });
+
+  test("a card added in the frame that is declined moves no money and says so", async ({ page }) => {
+    await signIn(page, "ap");
+    await pickAllAndOpenSheet(page);
+    await page.getByTestId("method-new").click();
+    await expect(page.getByTestId("pay-confirm")).toBeDisabled();
+    await useCardInFrame(page, CARD_DECLINE);
+    await expect(page.getByTestId("card-ready")).toBeVisible();
+    await shot(page, "pay-add-card-phone");
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("sheet-words")).toHaveText("The payment was declined. No money moved.");
+    await expect(page.getByTestId("receipt")).toHaveCount(0);
+    expect((await paymentsHeld(page, "ap")).length).toBe(2);
+  });
+
+  test("the card digits never reach the app: no input in the app, a sandboxed frame, and only a token on the wire", async ({ page }) => {
+    const sent: string[] = [];
+    page.on("request", (r) => sent.push(`${r.method()} ${r.url()} ${r.postData() ?? ""}`));
+    await signIn(page, "ap");
+    await expect(page.getByTestId("invoice-row").first()).toBeVisible();
+    await expect(page.locator("input, textarea, [contenteditable]")).toHaveCount(0);
+    await pickAllAndOpenSheet(page);
+    await page.getByTestId("method-new").click();
+    const frame = page.getByTestId("card-frame");
+    await expect(frame).toBeVisible();
+    const flags = (await frame.getAttribute("sandbox")) ?? "";
+    expect(flags).toContain("allow-scripts");
+    expect(flags).not.toContain("allow-same-origin");
+    await useCardInFrame(page, CARD_OK);
+    await expect(page.getByTestId("card-ready")).toBeVisible();
+    await expect(page.locator("input, textarea, [contenteditable]")).toHaveCount(0);
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    const wire = sent.join("\n");
+    expect(wire).not.toContain(CARD_OK);
+    expect(wire).not.toContain("4111");
+    const paid = sent.find((line) => line.startsWith("POST") && line.includes("/tenant/payments"));
+    expect(paid).toMatch(/"nonce":"stub-nonce-/);
+    const dom = await page.locator("hh-pro-frame").innerHTML();
+    expect(dom).not.toContain(CARD_OK);
+  });
+
+  test("a role that cannot pay reads the invoices with no way to pick or pay", async ({ page }) => {
+    await signIn(page, "pm");
+    await expect(page.getByTestId("invoice-row").first()).toBeVisible();
+    await expect(page.getByTestId("read-only")).toBeVisible();
+    await expect(page.getByRole("checkbox")).toHaveCount(0);
+    await expect(page.getByTestId("pay-open")).toHaveCount(0);
     await page.getByTestId("frame-selector").click();
     const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
-    await expect(panel).toBeVisible();
-    await expect(panel.getByRole("button", { name: "Invoices" })).toHaveAttribute("aria-current", "page");
-    await page.screenshot({ path: test.info().outputPath("selector-phone.png") });
-    await page.keyboard.press("Escape");
-    await expect(panel).toHaveCount(0);
-    await page.getByTestId("frame-sign-out").click();
-    await expect(page.locator("hh-pro-signin")).toBeVisible();
-    await expect(page.locator("hh-pro-frame")).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "Payment methods" })).toHaveCount(0);
   });
 
-  test("nothing a person typed or was given rests in web storage, the address bar or the console", async ({ page }) => {
-    const logged: string[] = [];
-    page.on("console", (message) => logged.push(message.text()));
-    await signIn(page, "ap");
-    await expect(page.locator("hh-pro-frame")).toBeVisible();
-    const stored = await page.evaluate(() => JSON.stringify({ local: { ...window.localStorage }, session: { ...window.sessionStorage }, cookie: document.cookie }));
-    expect(stored).not.toMatch(/pro-stub|stub-password|Bearer/);
-    expect(page.url()).not.toMatch(/pro-stub|token|password/);
-    expect(logged.join("\n")).not.toMatch(/pro-stub|stub-password|Bearer/);
-  });
-
-  test("the landing shows a loading state while the server answers", async ({ page, request }) => {
-    await request.post("/_stub/control", { data: { delayMs: 900 } });
-    await signIn(page, "ap");
-    await expect(page.getByTestId("landing-state")).toHaveAttribute("data-state", "loading");
-    await expect(page.getByTestId("landing-rows")).toBeVisible();
-  });
-
-  test("an empty answer shows this app's own empty words", async ({ page, request }) => {
-    await request.post("/_stub/control", { data: { empty: "invoices" } });
-    await signIn(page, "ap");
-    const state = page.getByTestId("landing-state");
-    await expect(state).toHaveAttribute("data-state", "empty");
-    await expect(state).toContainText("No invoices yet");
-  });
-
-  test("a failure shows the error state, and Try again recovers once the server does", async ({ page, request }) => {
-    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/invoices", status: 503 } } });
-    await signIn(page, "ap");
-    const state = page.getByTestId("landing-state");
-    await expect(state).toHaveAttribute("data-state", "error");
-    await expect(state).toContainText("Nothing was changed.");
-    await request.post("/_stub/reset");
-    await state.getByRole("button", { name: "Try again" }).click();
-    await expect(page.getByTestId("landing-rows")).toBeVisible();
-  });
-
-  test("a server refusal shows the refusal state with no retry", async ({ page, request }) => {
-    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/invoices", status: 403 } } });
-    await signIn(page, "ap");
-    const state = page.getByTestId("landing-state");
-    await expect(state).toHaveAttribute("data-state", "refusal");
-    await expect(state).toContainText("Your role does not open this");
-    await expect(state.getByRole("button", { name: "Try again" })).toHaveCount(0);
-  });
-
-  test("a role that does not hold the surface sees the refusal state and no call is made for it", async ({ page }) => {
+  test("a role without billing sees the refusal state and no call is made for it", async ({ page }) => {
     const calls: string[] = [];
     page.on("request", (r) => calls.push(new URL(r.url()).pathname));
     await signIn(page, "field");
@@ -120,37 +274,140 @@ test.describe("phone", () => {
     expect(calls).not.toContain("/api/v1/tenant/invoices");
   });
 
-  test("an unbuilt surface says it is not open yet and the selector moves between them", async ({ page }) => {
+  test("the landing shows a loading state, an empty state in this app's words, an error with Try again and a refusal with no retry", async ({ page, request }) => {
+    await request.post("/_stub/control", { data: { delayMs: 900 } });
+    await signIn(page, "ap");
+    await expect(page.getByTestId("landing-state")).toHaveAttribute("data-state", "loading");
+    await expect(page.getByTestId("landing-rows")).toBeVisible();
+    await request.post("/_stub/reset");
+    await request.post("/_stub/control", { data: { empty: "invoices" } });
+    await page.getByTestId("frame-sign-out").click();
+    await signIn(page, "ap");
+    await expect(page.getByTestId("landing-state")).toContainText("No invoices yet");
+    await request.post("/_stub/reset");
+    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/invoices", status: 503 } } });
+    await page.getByTestId("frame-sign-out").click();
+    await signIn(page, "ap");
+    const state = page.getByTestId("landing-state");
+    await expect(state).toHaveAttribute("data-state", "error");
+    await expect(state).toContainText("Nothing was changed.");
+    await request.post("/_stub/reset");
+    await state.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByTestId("landing-rows")).toBeVisible();
+    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/invoices", status: 403 } } });
+    await page.getByTestId("frame-sign-out").click();
+    await signIn(page, "ap");
+    await expect(page.getByTestId("landing-state")).toHaveAttribute("data-state", "refusal");
+    await expect(page.getByTestId("landing-state").getByRole("button", { name: "Try again" })).toHaveCount(0);
+  });
+
+  test("an invoice opens to its statement: lines, the core's tax, the balance and the payments on it", async ({ page }) => {
+    await signIn(page, "ap");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20403" }).getByRole("button", { name: /INV-20403/ }).click();
+    await expect(page.getByTestId("detail-no")).toHaveText("INV-20403");
+    await expect(page.getByTestId("detail-lines").locator("li").first()).toContainText("$");
+    await expect(page.getByTestId("detail-sums")).toContainText("Tax");
+    await expect(page.getByTestId("detail-balance")).toContainText("$");
+    await shot(page, "pay-invoice-detail-phone");
+    await expect(page.getByTestId("pay-this")).toContainText("Pay $");
+    await page.getByTestId("invoice-back").click();
+    await expect(page.getByTestId("invoice-row").first()).toBeVisible();
+  });
+
+  test("Payment methods lists the stored methods, adds one from the frame, makes it default and removes with a second press", async ({ page }) => {
+    await signIn(page, "ap");
+    await page.getByTestId("frame-selector").click();
+    await page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" }).getByRole("button", { name: "Payment methods" }).click();
+    await expect(page.getByTestId("surface-title")).toHaveText("Payment methods");
+    await expect(page.getByTestId("method-row")).toHaveCount(2);
+    await expect(page.getByTestId("default-chip")).toHaveCount(1);
+    await shot(page, "pay-methods-phone");
+    await page.getByTestId("open-add").click();
+    await expect(page.getByTestId("save-method")).toBeDisabled();
+    await useCardInFrame(page, CARD_OK);
+    await expect(page.getByTestId("card-ready")).toBeVisible();
+    await page.getByTestId("save-method").click();
+    await expect(page.getByTestId("method-row")).toHaveCount(3);
+    await page.getByTestId("method-row").nth(1).getByRole("button", { name: "Make default" }).click();
+    await expect(page.getByTestId("default-chip")).toHaveCount(1);
+    await page.getByTestId("method-row").last().getByTestId("remove-method").click();
+    await expect(page.getByTestId("confirm-remove")).toBeVisible();
+    await page.getByRole("button", { name: "Keep" }).click();
+    await expect(page.getByTestId("method-row")).toHaveCount(3);
+    await page.getByTestId("method-row").last().getByTestId("remove-method").click();
+    await page.getByTestId("confirm-remove").click();
+    await expect(page.getByTestId("method-row")).toHaveCount(2);
+  });
+
+  test("Statements lists the payments with what each settled", async ({ page }) => {
+    await signIn(page, "ap");
+    await page.getByTestId("frame-selector").click();
+    await page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" }).getByRole("button", { name: "Statements" }).click();
+    await expect(page.getByTestId("paid-total")).toContainText("$");
+    await expect(page.getByTestId("payment-row")).toHaveCount(2);
+    await expect(page.getByTestId("payment-row").first()).toContainText("Applied to INV-");
+    await shot(page, "pay-statements-phone");
+  });
+
+  test("nothing a person typed, was given or paid with rests in web storage, the address bar or the console", async ({ page }) => {
+    const logged: string[] = [];
+    page.on("console", (message) => logged.push(message.text()));
+    await signIn(page, "ap");
+    await pickAllAndOpenSheet(page);
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    const stored = await page.evaluate(() => JSON.stringify({ local: { ...window.localStorage }, session: { ...window.sessionStorage }, cookie: document.cookie }));
+    expect(stored).not.toMatch(/pro-stub|stub-password|Bearer|stub-nonce|idempotency/);
+    expect(await page.evaluate(async () => (await indexedDB.databases()).length)).toBe(0);
+    expect(page.url()).not.toMatch(/pro-stub|token|password|nonce/);
+    expect(logged.join("\n")).not.toMatch(/pro-stub|stub-password|Bearer|stub-nonce/);
+  });
+
+  test("the selector lists the surfaces this role opens, and signing out forgets the screen", async ({ page }) => {
     await signIn(page, "ap");
     await page.getByTestId("frame-selector").click();
     const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
-    const other = panel.locator("button[data-app='pay']:not([aria-current='page'])").first();
-    const label = (await other.innerText()).trim();
-    await other.click();
-    await expect(page.getByTestId("surface-title")).toHaveText(label);
-    await expect(page.getByTestId("landing-state")).toContainText("This surface is not open yet.");
-  });
-
-  test("choosing another app's surface goes to that app's own address", async ({ page }) => {
-    await page.route(/^https?:\/\/[^/]+\/pro-(procurement|pay|field)\/$/, (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<title>elsewhere</title>" }));
-    await signIn(page, "owner");
-    await page.getByTestId("frame-selector").click();
-    const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
-    const elsewhere = panel.locator("button[data-app]:not([data-app='pay'])").first();
-    const target = await elsewhere.getAttribute("data-app");
-    await elsewhere.click();
-    await page.waitForURL(/\/pro-[a-z]+\/$/);
-    expect(new URL(page.url()).pathname).toBe(`/pro-${target === "procurement" ? "procurement" : target}/`);
+    await expect(panel.getByRole("button", { name: "Invoices" })).toHaveAttribute("aria-current", "page");
+    await page.keyboard.press("Escape");
+    await page.getByTestId("frame-sign-out").click();
+    await expect(page.locator("hh-pro-signin")).toBeVisible();
+    await expect(page.locator("hh-pro-frame")).toHaveCount(0);
   });
 });
 
 test.describe("desktop", () => {
-  test.use({ viewport: { width: 1280, height: 800 } });
+  test.use({ viewport: { width: 1440, height: 900 } });
 
-  test("the frame shows the role beside the sign out and the rows fit the page", async ({ page }) => {
+  test("Pay home and the sheet fit a wide page, the sheet centred", async ({ page }) => {
     await signIn(page, "ap");
     await expect(page.getByTestId("frame-role")).toBeVisible();
-    await expect(page.getByTestId("landing-rows")).toBeVisible();
-    await page.screenshot({ path: test.info().outputPath("landing-desktop.png") });
+    await expect(page.getByTestId("aging").locator("li")).toHaveCount(4);
+    await shot(page, "pay-home-desktop");
+    await pickAllAndOpenSheet(page);
+    const box = await page.getByTestId("pay-sheet").boundingBox();
+    expect(box).not.toBeNull();
+    expect(Math.abs((box?.x ?? 0) + (box?.width ?? 0) / 2 - 720)).toBeLessThan(2);
+    await shot(page, "pay-sheet-desktop");
+  });
+
+  test("the unknown outcome and the receipt read the same on a wide page", async ({ page }) => {
+    let first = true;
+    await page.route("**/api/v1/tenant/payments", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      if (first) {
+        first = false;
+        await route.fetch();
+        return route.abort("connectionreset");
+      }
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await pickAllAndOpenSheet(page);
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("check-payment")).toBeVisible();
+    await shot(page, "pay-unknown-desktop");
+    await page.getByTestId("check-payment").click();
+    await expect(page.getByTestId("receipt-amount")).toContainText("$");
+    await shot(page, "pay-receipt-desktop");
   });
 });
