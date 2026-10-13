@@ -1043,7 +1043,9 @@ components:
 
     IdentityUser:
       type: object
-      description: The non-secret staff identity returned on login
+      description: >-
+        The non-secret identity returned on login and by the exchange; scope
+        is TENANT (tier 0, a portal role code) on the exchange's tenant leg
       required: [user_id, email, display_name, role_code, role_name, tier, scope]
       properties:
         user_id: { type: string }
@@ -1054,7 +1056,7 @@ components:
         tier: { type: integer, format: int32 }
         scope:
           type: string
-          enum: [GLOBAL, BRANCH]
+          enum: [GLOBAL, BRANCH, TENANT]
 
     IdentityLoginResponse:
       type: object

@@ -35841,7 +35841,7 @@ components:
           format: password
     IdentityUser:
       type: object
-      description: The non-secret staff identity returned on login
+      description: The non-secret identity returned on login and by the exchange; scope is TENANT (tier 0, a portal role code) on the exchange's tenant leg
       required:
         - user_id
         - email
@@ -35869,6 +35869,7 @@ components:
           enum:
             - GLOBAL
             - BRANCH
+            - TENANT
     IdentityLoginResponse:
       type: object
       required:

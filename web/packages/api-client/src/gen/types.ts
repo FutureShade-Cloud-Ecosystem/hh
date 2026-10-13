@@ -2489,7 +2489,7 @@ export type IdentityUser = {
   role_code: string;
   role_name: string;
   tier: number;
-  scope: "GLOBAL" | "BRANCH";
+  scope: "GLOBAL" | "BRANCH" | "TENANT";
 };
 export type IdentityLoginResponse = {
   token: string;
