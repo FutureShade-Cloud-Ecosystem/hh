@@ -169,6 +169,29 @@ func (r *Repository) CloseReservationsBySource(ctx context.Context, tx pgx.Tx, s
 		`($1 = '' OR source_type = $1) AND source_ref_id = $2::uuid`, status, sourceType, sourceRefID)
 }
 
+// LockHardHoldBalancesTx takes the stock_balances rows one source document's ACTIVE HARD holds
+// will unwind, FOR UPDATE, sorted by product then location, on the caller's transaction. The order
+// cancel calls it ahead of the deposit settlement that draws the invoices feed counter, because the
+// release hook writes these same rows later in that one transaction and the POS ring takes a stock
+// row first and that counter later: a cancel that drew the counter first could meet the ring head
+// on. The sort and the strength are LockBalances' own, the one order every balance locking caller
+// in this module uses, so two stock taking writers queue instead of crossing.
+func (r *Repository) LockHardHoldBalancesTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID string) error {
+	rows, err := r.q(tx).Query(ctx, `
+		SELECT 1
+		  FROM stock_reservations sr
+		  JOIN stock_balances sb ON sb.product_id = sr.product_id AND sb.location_id = sr.location_id
+		 WHERE sr.status = 'ACTIVE' AND sr.hold_mode = 'HARD'
+		   AND ($1 = '' OR sr.source_type = $1) AND sr.source_ref_id = $2::uuid
+		 ORDER BY sb.product_id, sb.location_id
+		   FOR UPDATE OF sb`, sourceType, sourceRefID)
+	if err != nil {
+		return err
+	}
+	rows.Close()
+	return rows.Err()
+}
+
 // CloseReservationByID closes one hold. Returns 0 when the id is unknown or already closed.
 func (r *Repository) CloseReservationByID(ctx context.Context, tx pgx.Tx, reservationID, status string) (int, error) {
 	return r.closeReservations(ctx, tx, `id = $1::uuid`, status, reservationID)
