@@ -27,6 +27,8 @@ the header of each file below.
 | The service levels: timers, the durable breach alerts with their notification status, the configured targets, the sweep | `app/src/warranty-sla.ts` | `renderSlaTab` in `src/warranty-views.ts`, `#sweep`, `#ack` in `src/warranty-desk.ts` | The targets section reads the targets route (the board's own target rows are dropped at the projection door); acknowledging closes the alert |
 | The FR-7 reports: funnel, by manufacturer with win/loss, time to settlement, exposure by vendor, open claims by age | `app/src/warranty-reports.ts` | `renderReportsTab` in `src/warranty-views.ts` | The funnel bars reuse the landing's quantized width classes and the landing's data ink, never the action gold |
 | The board tabs (Board, Claims, Vendor registry, Recovery, Service levels, Reports) and the claim overlay | `app/src/warranty-surface.ts` | `renderWarranty` in `src/warranty-views.ts`, `WarrantyDesk` in `src/warranty-desk.ts` | One Warranty view kind on the landing, reachable for every staff role (the core's reads are RequireStaff); per-call refusals carry the core's words |
+| The landing's quick-action bar: the caller's resolved registry rows, the visible word minus one leading plus, the add mark for a leading-plus label, the one-sentence accessible name, instruct then navigate on click | `app/src/quick-action-bar.ts`, `app/src/quick-action-registry.ts` (`QuickAction`, `findAction`), `app/src/quick-action-intent.ts` | `renderQuickBar` in `src/quick-views.ts`, `src/quick-logic.ts`, `src/quick-intent.ts`, `#runQuick`, `#loadQuickBar` in `src/app-root.ts`, `QuickApi.mine` in `src/quick-api.ts` | The one shell's `#unit/module` hash becomes this box's closed table of app prefixes (`sales/pos` opens the till at `/till/`, the front door's own tile address); the bar wears the original's quiet variant because the landing already spends its one gold on the day's hero; an action never starts money or a write, it navigates; empty, loading and failed all draw nothing, the optional chrome's honest degradation; the intent channel is the publisher half, and the destination's own guard and start-guard dialog stay in the counter-till app that consumes them (no second copy of the never-discard decision outside the till) |
+| The admin's quick-actions config: one row per registered action, the global switch first (its off is final, the core's own gate order), every job shape resolved so no cell is blank, drafts local until Save, the saved answer drawn in place | `app/src/quick-action-admin.ts` | `renderQuickAdmin` in `src/quick-views.ts`, `QuickApi.config`, `QuickApi.putConfig`, `toQuickActionConfig`, `toQuickConfigAnswer` in `src/quick-api.ts`, `#loadQuickAdmin`, `#patchQuick`, `#saveQuick` in `src/app-root.ts` | The switches are gate-clean buttons with aria-pressed (the position gate allows no checked binding); the thirteen shapes render as words, never raw profile keys; the gate is the server's alone and its shared Forbidden body shows verbatim; a save re-reads the bar so an admin sees their own change without a reload |
 
 What has no source in the original app and is new here, each from its named
 reference:
@@ -53,6 +55,21 @@ reference:
   `manager-home__needs-you-resolve-shortage.png` (PROPOSED, row 1199), with
   the two CYCLE-2-NOTES defects not copied (this board has neither of the
   named defects).
+- The quick actions' destination table (`sales/pos` opens the till at
+  `/till/`): HH's shell is one micro app per unit, so the original's frozen
+  `#unit/module` deep link becomes the closed map to the deployment prefixes
+  the front door names (roles.ts's tile hrefs). A destination no app serves
+  yet answers null and the bar says so in words, never a dead button.
+- The quick actions' job-shape words (`Counter`, `Yard manager`, `Payables and
+  Receivables`): the core sends the closed set of profile keys, and this app
+  renders them as the role names the core's own comments and the demo flow
+  table carry.
+- The bar's visual reference is the original's quick-action bar (its glyph,
+  words and one-sentence title kept; its gold stood down per its own union
+  train ruling) beside Manager Home's landing style (the pill chips, the HH
+  tokens); the config view's visual reference is the original's
+  quick-action-admin card (switch first, shapes under a dashed rule, the
+  shipped-default note) rebuilt on this app's list cards.
 - The walled refusal words (who may resolve a shortage, who decides each
   approval kind): `shortage_resolvers` and `exception_approvers` as the role
   matrix names them (FROM-PRINCIPAL 39, ROLE-APP-OBLIGATIONS 1).
