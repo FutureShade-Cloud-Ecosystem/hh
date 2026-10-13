@@ -17,6 +17,14 @@ role app template's shell, held to the procurement references in
 | `formatQty` and the dollars formatter | the Counter Till's `_money-format` port in pos-kit | `src/po/po-money.ts` | Absent figures read as placeholders |
 | Visual references | `walkthrough-w4b/`, `walkthrough-w4c/`, `walkthrough-472/` | the screens | Rebuilt to HH's design system, light and brand |
 
+## Landed cost (`src/landed/`)
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Landed cost list, its statuses and the bases | `app/src/landed-cost.ts`, `app/src/landedcost-api.ts` | `list`, `statusWord`, `basisWord` in `src/landed/` | Counts beside the list; a filter by state; the figures are the core's, never summed in the app (freight, duty and handling stand in their own columns) |
+| Capture form (freight, duty, handling, USD with a manual rate, the basis, special buys, late freight) | `app/src/landedcost-capture.ts` | `capture`, `buildCreate` | The order is picked from the register (the original typed a reference and no order id, so an apply was refused 422); the branch comes from the order; amounts parse through the decimal string; a late freight counts what is left per received line, picked from the order's own lines instead of typed product ids |
+| Allocate (per basis preview, apply, retro, void) | `app/src/landedcost-allocate.ts` | `detailView`, `confirmWords`, `settleWords` | A confirm step before apply, late freight apply and void, naming the order, the basis and the server's total; the screen says the compared basis is not the one applied (the original's note implied it was); each press re-reads the document first and settles against what the core holds, because the core answers an apply of a document that is not a draft like a real one |
+
 Not ported on purpose (later, named on screen as Later): receiving a truck
 (the yard team's, Yard Pick and Receive), the vendor screens (the core has no
 vendor create or edit route yet), vendor bills and the three way match (the

@@ -15,6 +15,7 @@
 // four purchase orders. Dates are cut from the host's own day so no calendar
 // literal is written.
 import { createServer } from "node:http";
+import { createPurchRoutes } from "./purch-routes.mjs";
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4969);
 
@@ -98,7 +99,7 @@ const SEEDED_POS = [
   { n: 141, vendor: 2, status: "ORDERED", expect: 2, method: "DELIVERY", lines: [{ product: 4, qty: 12, cost: 82_000 }] },
   { n: 136, vendor: 1, status: "ORDERED", expect: 4, method: "PICKUP", lines: [{ product: 6, qty: 10, cost: 2500 }] },
   { n: 67, vendor: 3, status: "PARTIAL", expect: null, method: "DELIVERY", lines: [{ product: 5, qty: 10, cost: 24_000, received: 6 }] },
-  { n: 66, vendor: 1, status: "RECEIVED", expect: -3, method: "PICKUP", lines: [{ product: 6, qty: 10, cost: 2500, received: 10 }] },
+  { n: 66, vendor: 1, status: "RECEIVED", expect: -3, method: "PICKUP", lines: [{ product: 6, qty: 10, cost: 2500, received: 10 }, { product: 3, qty: 4, cost: 2500, received: 4 }] },
 ];
 
 let world;
@@ -239,7 +240,32 @@ function readBody(req) {
 // named branch is out of reach, the fence's own 403 in words).
 let walled = false;
 let fenced = false;
+// Who the caller is for the purchasing areas' role walls: the demo's Procurement manager unless a
+// test switches it (payables-receivables enters and posts bills; super-admin sets the tolerances).
+let role = "procurement-manager";
 const reach = () => (fenced ? [] : [BRANCH]);
+
+// The purchasing areas (landed cost and the rest): parts of their own, fed the world through the kit.
+const purch = createPurchRoutes({
+  world: () => world,
+  uuid,
+  json: (res, data, status) => json(res, data, status),
+  refuse: (res, status, error) => refuse(res, status, error),
+  readBody: (req) => readBody(req),
+  isUuid,
+  NOW_ISO,
+  dayOffset,
+  BRANCH,
+  VENDORS,
+  PRODUCTS,
+  reach,
+  // A scoped caller must name a branch; only a global one may read across all of them.
+  global: () => false,
+  poView: (po) => poView(po),
+  poDetail: (po) => poDetail(po),
+  role: () => role,
+});
+purch.reset();
 
 // The core's fenceNamedBranch: a branch the caller named outside its reach is refused in words;
 // an unnamed one is left to the caller (the reach set applies itself).
@@ -258,7 +284,14 @@ async function handle(req, res) {
     reset();
     walled = false;
     fenced = false;
+    role = "procurement-manager";
+    purch.reset();
     return json(res, { ok: true });
+  }
+  if (method === "POST" && path === "/_stub/role") {
+    const body = await readBody(req);
+    role = ["procurement-manager", "payables-receivables", "super-admin"].includes(body?.role) ? body.role : role;
+    return json(res, { ok: true, role });
   }
   if (method === "POST" && path === "/_stub/wall") {
     walled = true;
@@ -289,6 +322,8 @@ async function handle(req, res) {
 
   if (!path.startsWith("/api/v1/")) return refuse(res, 404, "not found");
   if (!(req.headers.authorization ?? "").startsWith("Bearer ")) return refuse(res, 401, "Unauthorized");
+
+  if (await purch.handle({ req, res, url, path, method, role })) return;
 
   // ---- reads ----
   if (method === "GET" && path === "/api/v1/inventory/shortfall") {

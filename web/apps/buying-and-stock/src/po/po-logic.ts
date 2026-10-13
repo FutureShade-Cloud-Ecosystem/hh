@@ -106,6 +106,14 @@ const WHO_MAY: Record<string, string> = {
     "Drafting, placing, editing and cancelling a purchase order is for the Procurement Manager, the General Manager and the super admin only. The Yard Manager receives goods only; other roles can read.",
   "post-bill":
     "Posting a vendor bill is for Payables and Receivables. The Procurement Manager can read the bills against its own orders and the three way match, but does not post them.",
+  landed:
+    "Capturing, applying and voiding a landed cost is for the Procurement Manager, the General Manager and the super admin. Other roles can read.",
+  vendor:
+    "Adding and changing vendors, their contacts and their codes is for the Procurement Manager, the General Manager and the super admin. Other roles can read.",
+  receive:
+    "Receiving goods is for the Yard Manager, the Procurement Manager, the General Manager and the super admin. Other roles can read.",
+  tolerance: "The match tolerances are set by the super admin only. Everyone who reads the bills can see them.",
+  policy: "The cost visibility policy is set by the super admin only. Everyone who reads the orders can see it.",
 };
 
 const SERVER_PREFIX = /^[a-z][a-z0-9]*: /;
