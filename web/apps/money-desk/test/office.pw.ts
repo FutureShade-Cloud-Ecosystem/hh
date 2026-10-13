@@ -92,7 +92,7 @@ test("on a phone the run and the contact fit the screen and work from the keyboa
   await page.getByRole("button", { name: "Run for every account" }).first().click();
   await expect(page.locator("[data-run-row]")).toHaveCount(5);
   await noSidewaysScroll(page);
-  await page.getByRole("button", { name: "Receivables", exact: true }).first().click();
+  await page.getByRole("button", { name: "Receivables", exact: true }).last().click();
   await openAccount(page, "Cedar Ridge");
   await page.getByRole("button", { name: "Contacts", exact: true }).click();
   await expect(page.locator("[data-contact-panel]")).toBeVisible();
