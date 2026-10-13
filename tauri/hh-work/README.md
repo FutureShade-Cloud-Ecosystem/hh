@@ -39,7 +39,7 @@ every Work app's web bundle with the demo image's flags
 front door at the root is the entry (sign in and the role picker) until the
 shell chrome mounts in item 8b; each desk app sits at the path the front
 door's tile opens; `profile.json` carries the generated profile data. Apps
-with no web bundle yet (Dispatch and Load Building, House Messages) are
+with no web bundle yet (House Messages) are
 skipped with a note. Like Field's, it needs a git checkout and bash.
 
 ## Updates
