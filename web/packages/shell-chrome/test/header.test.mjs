@@ -192,6 +192,17 @@ test('FLOOR: every title in the band is matched, character for character, by an 
   }
 });
 
+test('an unknown sync state throws from willUpdate: the chip is never painted quietly wrong', () => {
+  const el = new ShellHeader();
+  el.syncState = 'warp';
+  assert.throws(() => el.willUpdate(new Map([['syncState', undefined]])), /unknown sync state "warp"/);
+  // A state the machine has passes, and an update that leaves syncState alone is not checked.
+  el.syncState = 'idle';
+  assert.doesNotThrow(() => el.willUpdate(new Map([['syncState', undefined]])));
+  el.syncState = 'warp';
+  assert.doesNotThrow(() => el.willUpdate(new Map([['breadcrumb', undefined]])));
+});
+
 test('FLOOR: the band is drawn in tokens only, no hex colour literals anywhere in the source', () => {
   const hexes = [...headerSrc.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map((m) => m[0]);
   assert.deepEqual(hexes, [], `shell-header.ts must stay literal-free, found: ${hexes.join(', ')}`);

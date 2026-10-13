@@ -123,6 +123,83 @@ test('the updater seam is a public property the shell injects, never fetched her
   assert.ok(!/fetch\(|import\s*\(.?tauri/i.test(updateSrc), 'no updater is reached from inside the package');
 });
 
+// The install seam, driven through the click listener the element registers on itself.
+// The Node render never connects an element, so the test captures the listener and the
+// events, stops Lit's update loop, and hands the listener a fake event whose path holds a
+// control with the wanted data-action. A deferred promise stands in for the updater.
+
+function installRig(updater) {
+  const el = new ShellUpdate();
+  const listeners = {};
+  const events = [];
+  el.addEventListener = (type, fn) => {
+    listeners[type] = fn;
+  };
+  el.dispatchEvent = (event) => {
+    events.push(event.type);
+    return true;
+  };
+  el.performUpdate = () => {};
+  el.open = true;
+  el.updater = updater;
+  el.connectedCallback();
+  const press = (action) => {
+    const control = Object.create(Element.prototype);
+    control.hasAttribute = (name) => name === 'data-action';
+    control.getAttribute = (name) => (name === 'data-action' ? action : null);
+    listeners.click({ composedPath: () => [control] });
+  };
+  const buttons = () => {
+    const html = renderTemplate(el.render());
+    const tag = (action) => new RegExp(`<button[^>]*data-action="${action}"[^>]*>`).exec(html)?.[0] ?? '';
+    return { html: visible(html), install: tag('install'), later: tag('later') };
+  };
+  return { el, events, press, buttons };
+}
+
+const deferred = () => {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
+test('Update now calls updater.install() once, disables both buttons, and recovers when it settles', async () => {
+  const gate = deferred();
+  let calls = 0;
+  const rig = installRig({
+    install: () => {
+      calls += 1;
+      return gate.promise;
+    },
+  });
+  assert.ok(!/disabled/.test(rig.buttons().install), 'enabled before the press');
+  rig.press('install');
+  assert.equal(calls, 1, 'the seam is called');
+  assert.deepEqual(rig.events, ['hh-shell-update-install'], 'the install event rides out');
+  const during = rig.buttons();
+  assert.ok(during.html.includes('Installing'), 'the card says Installing');
+  assert.ok(/disabled/.test(during.install) && /disabled/.test(during.later), 'both buttons are disabled');
+  rig.press('install');
+  assert.equal(calls, 1, 'a second press while installing does not call the seam again');
+  gate.resolve();
+  await gate.promise;
+  await Promise.resolve();
+  const after = rig.buttons();
+  assert.ok(after.html.includes('Update now'), 'the card returns to Update now');
+  assert.ok(!/disabled/.test(after.install) && !/disabled/.test(after.later), 'and both buttons come back');
+});
+
+test('Later closes the card and emits, and is the other action name', () => {
+  const rig = installRig(null);
+  rig.press('later');
+  assert.deepEqual(rig.events, ['hh-shell-update-later']);
+  assert.equal(rig.el.open, false);
+});
+
 // ── FLOORS, as source scans in the house split ───────────────────────────────────────────────────
 
 test('FLOOR: tokens only, no hex colour literals in the banner or the prompt', () => {
