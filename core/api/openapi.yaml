@@ -13635,6 +13635,49 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/order-changes:
+    get:
+      operationId: orderListChangeQueue
+      tags:
+        - staff-order
+      summary: List change requests across orders by status, oldest first
+      description: The cross order read behind "changes waiting on the yard" (status PENDING_YARD, Yard Pick) and "changes waiting on you" (status PENDING_FINANCE, Manager Home). The caller sees the changes of its own branches and no other branch's. Rows are ordered oldest first with the id as the tie-break, paged by an opaque cursor. delta_cents and finance_threshold_cents are the numbers stored when the delta was priced at request time; nothing is recomputed. next_actions are the ones the single read gives this caller, and on a PENDING_FINANCE row finance_approve is dropped when the caller is not a named ORDER_CHANGE_OVER_THRESHOLD approver for the change's branch (the row stays listed). Absent status lists every status.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - yard-pick
+          - manager-home
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: Restrict to one change status; absent lists every status
+          schema:
+            type: string
+            enum:
+              - PENDING_YARD
+              - PENDING_FINANCE
+              - APPROVED
+              - APPLIED
+              - REJECTED
+              - CANCELLED
+      responses:
+        "200":
+          description: The page of change requests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderChangeQueuePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/order-changes/{changeId}:
     get:
       operationId: orderGetChange
@@ -39933,6 +39976,93 @@ components:
               - apply
               - reject
               - cancel
+    OrderChangeQueueItem:
+      type: object
+      description: "One row of the cross order change read: the change, the order it belongs to, the stored priced delta, and what this caller may do to it right now. Lines are not carried; the single read has them."
+      required:
+        - id
+        - change_no
+        - order_id
+        - order_no
+        - branch_id
+        - status
+        - reason
+        - delta_cents
+        - finance_threshold_cents
+        - finance_required
+        - requested_by_role
+        - requested_at
+        - next_actions
+      properties:
+        id:
+          type: string
+          format: uuid
+        change_no:
+          type: string
+        order_id:
+          type: string
+          format: uuid
+        order_no:
+          type: string
+          description: The visible order number
+        branch_id:
+          type: string
+        status:
+          type: string
+          description: The stage of the ladder the change is at
+          enum:
+            - PENDING_YARD
+            - PENDING_FINANCE
+            - APPROVED
+            - APPLIED
+            - REJECTED
+            - CANCELLED
+        reason:
+          type: string
+          description: The requester's note
+        delta_cents:
+          type: integer
+          format: int64
+          description: The stored priced delta
+          signed: null
+        finance_threshold_cents:
+          type: integer
+          format: int64
+        finance_required:
+          type: boolean
+        requested_by_role:
+          type: string
+          description: The requester's staff role label; blank when it cannot be resolved
+        requested_at:
+          type: string
+        yard_ack_note:
+          type: string
+        next_actions:
+          type: array
+          items:
+            type: string
+            enum:
+              - yard_ack
+              - finance_approve
+              - apply
+              - reject
+              - cancel
+    OrderChangeQueuePage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderChangeQueueItem"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
     OrderChangesResponse:
       type: object
       required:
