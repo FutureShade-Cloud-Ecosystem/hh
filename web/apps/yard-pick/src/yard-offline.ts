@@ -256,6 +256,19 @@ export class YardOffline {
     }
   }
 
+  /** Send the queue now (the picker is standing at a connected device and
+   * wants the server's answer) and give back the core's words if it refused
+   * the pick's record during the send; empty when it took it or could not be
+   * reached. The refusal is also a card, which waits to be dismissed. */
+  async sendRecordNow(taskId: string): Promise<string> {
+    const before = new Set((await this.openCards()).map((card) => card.id));
+    await this.#drain();
+    const fresh = (await this.openCards()).find(
+      (card) => !before.has(card.id) && card.kind === "rejected" && card.scope === "pick_tasks" && card.clientPayload["id"] === taskId && "picked" in card.clientPayload,
+    );
+    return fresh?.error ?? "";
+  }
+
   /** True while a record of this pick waits in the outbox. */
   async pendingRecord(taskId: string): Promise<boolean> {
     return (await this.store.outbox.pending()).some((row) => row.scope === "pick_tasks" && row.entityId === taskId && "picked" in row.payload);

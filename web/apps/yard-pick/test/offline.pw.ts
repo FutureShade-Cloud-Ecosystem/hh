@@ -7,7 +7,7 @@
 // The banner is the chrome package's, fed through its properties; the cards
 // are the chrome package's conflict cards; the reads answer from the store.
 import { test, expect } from "@playwright/test";
-import { resetStub, reassignTicket, stubLog, yardHandoff, type LoggedCall } from "./helpers.js";
+import { repNotices, resetStub, reassignTicket, stubLog, yardHandoff, type LoggedCall } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -68,7 +68,7 @@ function payloadOf(op: unknown): Record<string, unknown> {
   return ((op as { payload?: unknown })?.payload ?? {}) as Record<string, unknown>;
 }
 
-/** Claims SO-1039 offline and starts it; the record then says no signal. */
+/** Claims SO-1039 offline, starts it and records the pick with a short line: all three wait in the outbox. */
 async function claimAndPickOffline(page: import("@playwright/test").Page): Promise<void> {
   await platformWord(page, false, "You're offline");
   // The claim goes through the door: queued, not lost, and the pick opens.
@@ -88,11 +88,12 @@ async function claimAndPickOffline(page: import("@playwright/test").Page): Promi
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();
   await page.getByRole("button", { name: "Done" }).click();
-  // The record is on its direct door (the core's pick_tasks sync set has no
-  // picked field): offline it says so, in words, and queues nothing.
+  // The record queues as its own operation on the pick_tasks door: saved on
+  // the device, shown as waiting, counted in the outbox, nobody told yet.
   await page.getByRole("button", { name: "Save pick" }).click();
-  await expect(page.locator("[data-error]")).toContainText("Check your signal");
-  await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
+  await expect(page.locator("[data-notice]")).toContainText("Pick saved on this device. It sends when you have signal.");
+  await expect(page.locator("[data-pick-pending]")).toContainText("Waiting to send");
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("3 changes in the outbox");
 }
 
 test("offline, the claim and the pick wait in the outbox, and the banner carries the count", async ({ page }) => {
@@ -109,15 +110,22 @@ test("back online, the outbox drains in order, and a ticket the test reassigned 
   await platformWord(page, true);
   await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
   const ops = await pushedOps(request, "pick_tasks");
-  expect(ops.length).toBe(2);
+  expect(ops.length).toBe(3);
   expect(String(payloadOf(ops[0]).status)).toBe("ACCEPTED");
   expect(String(payloadOf(ops[1]).status)).toBe("IN_PROGRESS");
+  expect(Object.keys(payloadOf(ops[2])).sort()).toEqual(["id", "picked"]);
+  const picked = payloadOf(ops[2]).picked as Array<Record<string, unknown>>;
+  expect(picked).toHaveLength(3);
+  for (const line of picked) {
+    expect(Object.keys(line).sort()).toEqual(["description", "order_line_no", "product_id", "qty_ordered", "qty_picked", "short_note", "short_reason", "sku", "uom"]);
+  }
   // Only fields the core's sync set admits ride the outbox.
-  for (const op of ops) expect(Object.keys(payloadOf(op)).filter((k) => !["id", "status"].includes(k))).toEqual([]);
+  for (const op of ops.slice(0, 2)) expect(Object.keys(payloadOf(op)).filter((k) => !["id", "status"].includes(k))).toEqual([]);
   // The chained writes on one row go blind: the only stale base the device
   // could name is its own first write.
   expect((ops[0] as Record<string, unknown>).base_seq).toBeDefined();
   expect((ops[1] as Record<string, unknown>).base_seq).toBeUndefined();
+  expect((ops[2] as Record<string, unknown>).base_seq).toBeUndefined();
   // The server wins: the claim was superseded, and the start and the record
   // landed on a cancelled pick, so each answer is a card, in the board's words.
   await page.getByRole("button", { name: "Back to the queue" }).click();
@@ -166,6 +174,52 @@ test("offline, a shortage report waits in the outbox and drains clean, and the s
   expect(createOps.length).toBe(1);
   expect(Object.keys(payloadOf(createOps[0])).sort()).toEqual(["description", "id", "order_line_no", "qty_short", "task_id", "uom"]);
   // No card: the report applied clean.
+  await page.getByRole("button", { name: "Back to the queue" }).click();
+  await expect(page.getByRole("button", { name: /^Review [1-9]/ })).toHaveCount(0);
+});
+
+test("offline, the pick record and a shortage report drain in order and land clean, and the rep is told when they send", async ({ page, request }) => {
+  await loadBoard(page);
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
+  await platformWord(page, false, "You're offline");
+  // The short line: two of forty six flagstone, with its reason.
+  await page.locator("[data-line]", { hasText: "Flagstone" }).locator(".line-row").click();
+  await page.getByRole("button", { name: "Add one on" }).click();
+  await page.getByRole("button", { name: "Add one on" }).click();
+  await page.getByRole("radio", { name: "Damaged stock" }).click();
+  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Save pick" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Pick saved on this device. It sends when you have signal.");
+  await expect(page.locator("[data-notice]")).toContainText("short line goes on backorder and the order's rep is told when it sends");
+  await expect(page.locator("[data-pick-pending]")).toBeVisible();
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
+  // The rep has not heard: the record has not left the device.
+  expect((await repNotices(request)).filter((n) => n.topic === "yard.short_pick")).toHaveLength(0);
+  // The deliberate shortage report queues behind it.
+  await page.getByRole("button", { name: "Report a shortage" }).click();
+  await page.getByLabel("How many are short").fill("4");
+  await page.getByRole("radio", { name: "Not enough on the yard" }).click();
+  await page.getByRole("button", { name: "Report short pick" }).click();
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
+  // Back online: the outbox drains in the order the writes were made.
+  await platformWord(page, true);
+  await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
+  await expect(page.locator("[data-pick-pending]")).toHaveCount(0);
+  const pushes = (await stubLog(request)).filter((c) => c.path.startsWith("/api/v1/sync/") && c.method === "POST");
+  const scopes = pushes.map((c) => c.path.slice("/api/v1/sync/".length));
+  expect(scopes.indexOf("pick_tasks")).toBeGreaterThanOrEqual(0);
+  expect(scopes.indexOf("pick_tasks")).toBeLessThan(scopes.indexOf("shortages"));
+  // The record landed: the rep was told, and the server's backorder figure shows.
+  const notice = (await repNotices(request)).find((n) => n.topic === "yard.short_pick" && n.order_no === "SO-1041");
+  expect(notice?.body).toContain("44.0000 SQFT on backorder");
+  await expect(page.locator("[data-line]", { hasText: "Flagstone" })).toContainText("44 SQFT on backorder");
+  // Only the fields the core's doors admit rode the outbox, and no card came back.
+  const ops = pushes.flatMap((c) => ((c.body as { ops?: Array<{ payload: Record<string, unknown> }> } | null)?.ops ?? []));
+  const record = ops.find((op) => "picked" in op.payload)!;
+  expect(Object.keys(record.payload).sort()).toEqual(["id", "picked"]);
+  const report = ops.find((op) => "qty_short" in op.payload)!;
+  for (const stamped of ["reported_at", "resolved_at", "resolved_by", "resolution"]) expect(Object.keys(report.payload)).not.toContain(stamped);
   await page.getByRole("button", { name: "Back to the queue" }).click();
   await expect(page.getByRole("button", { name: /^Review [1-9]/ })).toHaveCount(0);
 });
