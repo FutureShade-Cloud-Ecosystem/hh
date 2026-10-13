@@ -123,9 +123,9 @@ test("the front door walk: pick a role, open each module signed in, Switch role,
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toContainText("Sign in as Sales");
   const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Two more roles are coming");
-  await disclosure.getByText("Two more roles are coming").click();
-  await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("listitem")).toHaveCount(2);
+  await expect(disclosure).toContainText("One more role is coming");
+  await disclosure.getByText("One more role is coming").click();
+  await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("listitem")).toHaveCount(1);
 
   // ── Sales signs in, and the home shows the two live tiles ───────────────
   await signInFrontDoor(page, "Sales");

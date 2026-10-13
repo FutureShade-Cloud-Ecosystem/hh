@@ -13,7 +13,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 const COMING_LABELS = [
   "Outside Sales",
-  "Logistics Manager",
 ];
 
 const SESSION_KEY = "hh-demo.front-door.session.v1";
@@ -162,15 +161,24 @@ test("the picker renders the live cards and the coming rows", async ({ page }) =
   await expect(branch).toContainText("Counter Till");
   await expect(branch).toContainText("Dispatch and Load Building");
 
+  // The Logistics Manager's card is live: Manager Home opens, Dispatch and
+  // Load Building and House Messages read as chips.
+  const logistics = page.getByRole("button", { name: "Logistics Manager", exact: true });
+  await expect(logistics).toBeVisible();
+  await expect(logistics).toBeEnabled();
+  await expect(logistics).toContainText("Sign in as Logistics Manager");
+  await expect(logistics).toContainText("Dispatch and Load Building");
+  await expect(logistics).toContainText("Manager Home");
+
   // Coming recedes: the disclosure starts collapsed and opens to today's
   // list, unchanged, its rows disabled with their muted chips.
   const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Two more roles are coming");
+  await expect(disclosure).toContainText("One more role is coming");
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).not.toBeVisible();
-  await disclosure.getByText("Two more roles are coming").click();
+  await disclosure.getByText("One more role is coming").click();
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(2);
+  await expect(coming.getByRole("listitem")).toHaveCount(1);
   for (const label of COMING_LABELS) {
     const row = coming.getByRole("listitem").filter({ hasText: label });
     await expect(row).toBeVisible();
@@ -284,6 +292,22 @@ test("a Branch Manager sign in shows the matrix tiles, three live and two coming
     await expect(tile).not.toHaveAttribute("data-href", /.+/);
   }
   expect(await storedFlow(page)).toBe("branch-manager");
+  expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
+});
+
+test("a Logistics Manager sign in shows the matrix tiles, one live and two coming", async ({ page }) => {
+  await signIn(page, "Logistics Manager");
+  await expect(page.getByTestId("header-word")).toHaveText("Logistics Manager");
+  const home = page.getByRole("button", { name: "Manager Home", exact: true });
+  await expect(home).toBeVisible();
+  await expect(home).toHaveAttribute("data-href", "/home/");
+  await expect(page.getByRole("heading", { name: "Coming next" })).toBeVisible();
+  for (const name of ["Dispatch and Load Building", "House Messages"]) {
+    const tile = page.getByRole("button", { name, exact: true });
+    await expect(tile).toBeVisible();
+    await expect(tile).not.toHaveAttribute("data-href", /.+/);
+  }
+  expect(await storedFlow(page)).toBe("logistics-manager");
   expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
 });
 

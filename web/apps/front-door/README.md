@@ -6,16 +6,17 @@ It replaces the Counter Till's entry view as the box's first screen
 role's home with its modules as tiles, one header across the states with the
 demo badge, the role's name, Switch role and Sign out.
 
-- The eleven live roles are the demo mint's own with their screens on the box
+- The twelve live roles are the demo mint's own with their screens on the box
   (`inside_sales` to flow `sales`, `sales_manager` to flow `sales-manager`,
   `yard_manager` to flow `yard-manager`, `yard_team` to flow `yard-team`,
   `payables_receivables` to flow `payables-receivables`,
   `procurement_manager` to flow `procurement-manager`, `driver` to flow
   `driver`, `financial_controller` to flow `financial-controller`, `general_manager` to
-  flow `general-manager`, `hr` to flow `hr`, `branch_manager` to flow `branch-manager`), labelled
+  flow `general-manager`, `hr` to flow `hr`, `branch_manager` to flow `branch-manager`, `logistics_manager` to flow
+  `logistics-manager`), labelled
   on the cards the way the demo adapter's contract names them ("Sales",
   "Sales manager", "Yard manager", "Yard Team", "Payables and Receivables",
-  "Procurement manager", "Driver", "Financial Controller", "General Manager", "HR", "Branch Manager"), the same rule the
+  "Procurement manager", "Driver", "Financial Controller", "General Manager", "HR", "Branch Manager", "Logistics Manager"), the same rule the
   till's entry view follows. The yard manager's live module is Manager Home
   at `/home/`; the Yard Team's live module is the Yard Pick app at `/yard/`;
   the Money Desk at `/money-desk/` is the live module of Payables and

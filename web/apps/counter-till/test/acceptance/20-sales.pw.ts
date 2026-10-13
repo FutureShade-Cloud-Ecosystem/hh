@@ -71,7 +71,7 @@ test("the way in: two cards, the coming roles untapped, every other live role st
   // Financial Controller have live cards on the front door, so the till's
   // list drops them, as it dropped the Driver: its coming list is the front
   // door's coming rows.
-  for (const role of ["Yard manager", "Yard Team", "Payables and Receivables", "Financial Controller", "General Manager", "HR", "Branch Manager"]) {
+  for (const role of ["Yard manager", "Yard Team", "Payables and Receivables", "Financial Controller", "General Manager", "HR", "Branch Manager", "Logistics Manager"]) {
     await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role })).toHaveCount(0);
   }
   await shot(page, "sales-01-way-in", testInfo);

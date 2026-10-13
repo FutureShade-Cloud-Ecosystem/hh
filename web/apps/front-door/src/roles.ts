@@ -30,7 +30,9 @@
 //     still href null, so its home reads "coming" until those apps exist;
 //     the Branch Manager's flow is "branch-manager" and its tiles are the
 //     Counter Till, the Quote Desk and Manager Home (live) with Dispatch and
-//     Load Building and House Messages still href null.
+//     Load Building and House Messages still href null; the Logistics
+//     Manager's flow is "logistics-manager" and its only live tile is Manager
+//     Home, with Dispatch and Load Building and House Messages href null.
 //   - The others are COMING. Each shows the modules the matrix gives
 //     that role at work, manage or admin level, by the surfaces table's own
 //     names; read cells (and none) show nothing. A coming role is never
@@ -100,7 +102,8 @@ export interface LiveRole {
     | "financial_controller"
     | "general_manager"
     | "hr"
-    | "branch_manager";
+    | "branch_manager"
+    | "logistics_manager";
   /** The demo flow id the mint takes, the flows table's own mapping. */
   readonly flow:
     | "sales"
@@ -113,7 +116,8 @@ export interface LiveRole {
     | "financial-controller"
     | "general-manager"
     | "hr"
-    | "branch-manager";
+    | "branch-manager"
+    | "logistics-manager";
   /**
    * The card's label and its accessible name, alone: the demo adapter's
    * contract words, never decorated.
@@ -229,6 +233,14 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     icon: "lucide:store",
     tiles: [TILL_TILE, QUOTE_TILE, DISPATCH_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
   },
+  {
+    id: "logistics_manager",
+    flow: "logistics-manager",
+    label: "Logistics Manager",
+    line: "The dock and the day's deliveries.",
+    icon: "lucide:route",
+    tiles: [DISPATCH_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
+  },
 ];
 
 /**
@@ -240,11 +252,6 @@ export const LIVE_ROLES: readonly LiveRole[] = [
  */
 export const COMING_ROLES: readonly ComingRole[] = [
   { id: "outside_sales", label: "Outside Sales", modules: ["Quote Desk", "House Messages"] },
-  {
-    id: "logistics_manager",
-    label: "Logistics Manager",
-    modules: ["Dispatch and Load Building", "Manager Home", "House Messages"],
-  },
 ];
 
 const COUNT_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
