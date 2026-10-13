@@ -29,7 +29,7 @@ func TestDealerConfigIsGableLandscapeSupply(t *testing.T) {
 		if strings.Contains(strings.ToLower(v), "dibbits") {
 			t.Fatalf("the demo dealer names another dealer: %+v", c)
 		}
-		if strings.ContainsAny(v, "!") || strings.ContainsRune(v, '—') || strings.ContainsRune(v, '–') {
+		if strings.ContainsAny(v, "!") || strings.ContainsRune(v, '\u2014') || strings.ContainsRune(v, '\u2013') {
 			t.Fatalf("field %q breaks the kit's voice or the house rules", v)
 		}
 	}
