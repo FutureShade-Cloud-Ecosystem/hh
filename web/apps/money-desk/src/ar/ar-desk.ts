@@ -23,6 +23,7 @@ import {
   renderHome,
   renderLoadFailed,
   renderLoading,
+  renderReminders,
   renderStatements,
   shownInvoiceIds,
   type AccountModel,
@@ -118,6 +119,12 @@ export class ArDesk {
       error: (words) => {
         this.#notice = "";
         this.#error = words;
+        host.repaint();
+      },
+      accounts: () => this.#aging,
+      policy: () => this.#landing?.policy ?? null,
+      reloadBook: async () => {
+        await this.#reloadBook();
         host.repaint();
       },
     };
@@ -399,6 +406,7 @@ export class ArDesk {
 
   /** A change (the field is left): the amount reads back as money, formatted only. */
   change(control: Element): void {
+    if (this.#office.change(control)) return;
     if (control.getAttribute("data-field") !== "receive-amount" || this.#account === null) return;
     const cents = parseAmountToCents((control as HTMLInputElement).value);
     if (cents === null) return;
@@ -448,6 +456,7 @@ export class ArDesk {
     this.#clearMessages();
     this.#host.repaint();
     if (tab === "statements") await Promise.all(this.#aging.map((a) => this.#loadStatement(a.customer_id)));
+    if (tab === "reminders") await this.#office.openReminders();
   }
 
   async #loadPaid(): Promise<void> {
@@ -950,6 +959,7 @@ export class ArDesk {
     const model = this.#model();
     if (model.account !== null) return html`${renderAccount(model, model.account)}`;
     if (model.tab === "statements") return html`${renderStatements(model)}`;
+    if (model.tab === "reminders") return html`${renderReminders(model)}`;
     if (model.tab === "holds") return html`${renderHolds(model)}`;
     return html`${renderHome(model)}`;
   }

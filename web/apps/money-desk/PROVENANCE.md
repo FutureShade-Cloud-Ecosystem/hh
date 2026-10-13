@@ -40,4 +40,5 @@ sink, so every screen says what would go and to which contact by its role label,
 | --- | --- | --- | --- |
 | Statement run, read back by id | `app/src/ar-monthend-api.ts`, `app/src/ar-monthend.ts` | `showRun`, `renderRunPanel` | The run's own counts and one row per statement with where it would go; read back from the server, not echoed from the press |
 | AP contact tag, replace, remove | `app/src/ar-reminders.ts`, `app/src/ar-console.ts` | `renderContacts`, `validateApContact`, `contactLine` | Said as what is on file, never the address; the core's limits checked before a request is sent |
-
+| Send a reminder, reminder history | `app/src/ar-reminders.ts`, `app/src/ar-console.ts` | `remindForm`, `historyTable`, `reminderPreview`, `reminderResultWords` | Says before the send what would go and to which contact by role; the base plan and a switched off channel are said in words; one key per attempt, kept on a lost answer; the history reads recipient kind, never the address |
+| Paper path: list, sweep, close with a note | `app/src/ar-console.ts`, `app/src/ar-landing-surface.ts` | `paperPanel`, `paperResolveCheck` | A flag closes as moved to paper or dismissed only with a note, said before the request is sent; Needs you reloads |

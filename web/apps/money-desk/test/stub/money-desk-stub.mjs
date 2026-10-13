@@ -167,6 +167,11 @@ let parkedApplyMs = 0;
 // The receivables office's world (AP contacts, reminders, the paper path, dispute, settings), answered by its own module.
 const officeWorld = createOfficeWorld({
   isController: (req) => isController(req),
+  uuid: (kind, n) => uuid(kind, n),
+  accounts: () => ACCOUNTS.map((a) => ({ id: uuid("e", a.n), name: a.name, no: a.no })),
+  customerIdOfNo: (no) => uuid("e", ACCOUNTS.find((a) => a.no === no).n),
+  openInvoices: (customerId) =>
+    world.invoices.filter((i) => uuid("e", i.acct) === customerId && i.balance_cents > 0).map((i) => ({ id: i.id, invoice_no: i.invoice_no, late: i.late, balance_cents: i.balance_cents })),
   taggedAccounts: () => ACCOUNTS.filter((a) => a.n !== 5).map((a) => ({ id: uuid("e", a.n), label: "Accounts payable desk" })),
 });
 
@@ -369,31 +374,10 @@ function landing() {
   });
   return {
     as_of: dayOffset(0),
-    policy: {
-      aging_warn_days: 60,
-      aging_escalate_days: 90,
-      reminder_cadence_days: 7,
-      reminder_max_per_cycle: 3,
-      black_hole_window_days: 45,
-      black_hole_min_sends: 3,
-      reminder_email_enabled: true,
-      reminder_sms_enabled: false,
-      untagged_fallback: "CONFIRM",
-      ar_tier: "BASE",
-    },
+    policy: officeWorld.policy(),
     cards,
     escalation_queue: queue,
-    paper_path: world.empty ? [] : [
-      {
-        flag_id: uuid("6", 1),
-        customer_id: custId(4),
-        customer_name: acct(4).name,
-        account_no: acct(4).no,
-        delivered_sends: 3,
-        window_days: 45,
-        raised_at: NOW_ISO(),
-      },
-    ],
+    paper_path: officeWorld.paperPath(),
     capabilities: {},
   };
 }
@@ -566,7 +550,7 @@ async function handle(req, res) {
   }
   if (method === "POST" && path === "/_stub/scenario") {
     const body = await readBody(req);
-    reset(body?.name === "empty" ? "empty" : body?.name === "wide" ? "wide" : "full");
+    reset(body?.name === "empty" ? "empty" : body?.name === "wide" ? "wide" : body?.name === "pro" ? "pro" : "full");
     return send(res, 200, { ok: true });
   }
   if (method === "POST" && path === "/_stub/park-apply") {

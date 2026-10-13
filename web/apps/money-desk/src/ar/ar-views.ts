@@ -32,9 +32,9 @@ import type { ApplyAnswer } from "./ar-api.js";
 import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
-import { renderContacts, renderRunPanel } from "./office-views.js";
+import { renderContacts, renderRemindersPanels, renderRunPanel } from "./office-views.js";
 
-export type Tab = "receivables" | "statements" | "holds";
+export type Tab = "receivables" | "statements" | "holds" | "reminders";
 export type RegisterFilter = "open" | "overdue" | "promised" | "disputed" | "paid";
 export type RightMode = "receive" | "invoice" | "promise";
 export type PayMethod = "CHEQUE" | "EFT" | "CARD" | "CASH";
@@ -146,7 +146,7 @@ function tabsBar(model: DeskModel): TemplateResult {
   const tab = (id: Tab, word: string): TemplateResult => html`<button type="button" class="tab" data-action="tab" data-tab="${id}" aria-current="${model.tab === id ? "true" : "false"}">${word}</button>`;
   return html`
     <nav class="tabs" aria-label="Money Desk views">
-      ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")}
+      ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")} ${tab("reminders", "Reminders")}
       <span class="tab tab-later" aria-disabled="true">Payables ${later()}</span>
     </nav>
   `;
@@ -161,7 +161,7 @@ function frame(body: TemplateResult): TemplateResult {
       <div><h1>Receivables</h1><p class="dim">The AR register with its aging, overdue first. Bounced payments and accounts on hold wait in Needs you.</p></div>
     </div>
     <nav class="tabs" aria-label="Money Desk views">
-      <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span>
+      <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span><span class="tab" aria-disabled="true">Reminders</span>
     </nav>
     ${body}
   `;
@@ -431,6 +431,18 @@ export function renderStatements(model: DeskModel): TemplateResult {
         </table>
       </div>
     </section>
+  `;
+}
+
+// ---- reminders tab -----------------------------------------------------------------------------
+
+export function renderReminders(model: DeskModel): TemplateResult {
+  return html`
+    <div class="head">
+      <div><h1>Reminders</h1><p class="dim">Chase an account's overdue invoice, see what has been sent, and work the accounts that ignore reminders. Everything leaves through the messaging sink and goes to the AP contact by its role.</p></div>
+    </div>
+    ${tabsBar(model)} ${messages(model)}
+    ${renderRemindersPanels(model.office)}
   `;
 }
 

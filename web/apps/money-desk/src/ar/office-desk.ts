@@ -6,10 +6,19 @@
 // the screen then shows the core's answer. A refusal reads in words (office-logic.ts), a walled move in words naming
 // who may do it. Each write that carries a key sends one key per attempt and the same key again on a retry whose
 // answer was lost. No address or number a customer gave is ever put on screen.
-import type { BillingAPContactRead, BillingStatementRunResult, Result } from "@hardscapehouse/api-client";
+import type {
+  BillingAgingRow,
+  BillingAPContactRead,
+  BillingLandingPolicy,
+  BillingPaperPathEntry,
+  BillingRegisterRow,
+  BillingReminderSend,
+  BillingStatementRunResult,
+  Result,
+} from "@hardscapehouse/api-client";
 import { OfficeApi } from "./office-api.js";
 import { newKey } from "./held-keys.js";
-import { AttemptKeys, officeRefusal, validateApContact } from "./office-logic.js";
+import { AttemptKeys, officeRefusal, outcomeUnknown, paperResolveCheck, reminderResultWords, validateApContact, type Channel } from "./office-logic.js";
 
 export interface OfficeHost {
   /** Asks the root to repaint. */
@@ -24,6 +33,12 @@ export interface OfficeHost {
   readonly notice: (words: string) => void;
   /** Says a refusal in the desk's error banner (and clears the notice). */
   readonly error: (words: string) => void;
+  /** The accounts the aging lists: the choices a reminder or a history filter offers. */
+  readonly accounts: () => readonly BillingAgingRow[];
+  /** The dealer's receivables policy as the landing read it. */
+  readonly policy: () => BillingLandingPolicy | null;
+  /** Reads the book again (cards, aging, register, holds, Needs you) after a write that moves it. */
+  readonly reloadBook: () => Promise<void>;
 }
 
 export interface OfficeWho {
@@ -38,8 +53,29 @@ export type RunView =
   | { readonly phase: "error"; readonly words: string }
   | { readonly phase: "ready"; readonly result: BillingStatementRunResult };
 
+export type Listing<T> = { readonly phase: "none" | "loading" } | { readonly phase: "error"; readonly words: string } | { readonly phase: "ready"; readonly items: readonly T[] };
+
+export interface RemindForm {
+  readonly customerId: string;
+  /** The account's invoices, once read: "loading" until then. */
+  readonly invoices: readonly BillingRegisterRow[] | "loading";
+  readonly invoiceId: string;
+  readonly channel: Channel;
+  readonly resend: boolean;
+  readonly confirm: boolean;
+}
+
 export interface OfficeModel {
   readonly busy: boolean;
+  readonly nowMs: number;
+  readonly accounts: readonly BillingAgingRow[];
+  readonly policy: BillingLandingPolicy | null;
+  readonly remind: RemindForm;
+  readonly history: Listing<BillingReminderSend>;
+  readonly historyFor: string;
+  readonly paper: Listing<BillingPaperPathEntry>;
+  /** The paper path flag being closed and the way it closes, waiting on a note. */
+  readonly closing: { readonly flagId: string; readonly status: "MOVED_TO_PAPER" | "DISMISSED" } | null;
   readonly run: RunView;
   /** The AP contact read for each account asked about: the read, or "error" when it could not be read. */
   readonly contacts: ReadonlyMap<string, BillingAPContactRead | "error">;
@@ -57,6 +93,11 @@ export class OfficeDesk {
   #run: RunView = { phase: "none" };
   #contacts = new Map<string, BillingAPContactRead | "error">();
   #removing: string | null = null;
+  #remind: RemindForm = { customerId: "", invoices: [], invoiceId: "", channel: "EMAIL", resend: false, confirm: false };
+  #history: Listing<BillingReminderSend> = { phase: "none" };
+  #historyFor = "";
+  #paper: Listing<BillingPaperPathEntry> = { phase: "none" };
+  #closing: { flagId: string; status: "MOVED_TO_PAPER" | "DISMISSED" } | null = null;
   /** The account whose name field the next paint must fill from its contact. */
   #fillContactFor: string | null = null;
 
@@ -71,7 +112,20 @@ export class OfficeDesk {
   }
 
   model(): OfficeModel {
-    return { busy: this.#busy, run: this.#run, contacts: this.#contacts, removing: this.#removing };
+    return {
+      busy: this.#busy,
+      nowMs: Date.now(),
+      accounts: this.#host.accounts(),
+      policy: this.#host.policy(),
+      remind: this.#remind,
+      history: this.#history,
+      historyFor: this.#historyFor,
+      paper: this.#paper,
+      closing: this.#closing,
+      run: this.#run,
+      contacts: this.#contacts,
+      removing: this.#removing,
+    };
   }
 
   #fail(action: string, result: Extract<Result<unknown>, { ok: false }>): void {
@@ -157,6 +211,130 @@ export class OfficeDesk {
     this.#host.repaint();
   }
 
+  // ---- reminders and the paper path --------------------------------------------------------------------------
+
+  /** Opens the Reminders tab: the history and the paper path are read afresh. */
+  async openReminders(): Promise<void> {
+    await Promise.all([this.#loadHistory(), this.#loadPaper()]);
+  }
+
+  async #loadHistory(): Promise<void> {
+    this.#history = { phase: "loading" };
+    this.#host.repaint();
+    const got = await this.#api.reminders(this.#historyFor);
+    this.#history = got.ok ? { phase: "ready", items: got.value.items } : { phase: "error", words: officeRefusal("reminders", got.error, got.status) };
+    this.#host.repaint();
+  }
+
+  async #loadPaper(): Promise<void> {
+    this.#paper = { phase: "loading" };
+    this.#host.repaint();
+    const got = await this.#api.paperPath();
+    this.#paper = got.ok ? { phase: "ready", items: got.value.items } : { phase: "error", words: officeRefusal("paper-path", got.error, got.status) };
+    this.#host.repaint();
+  }
+
+  async #chooseAccount(customerId: string): Promise<void> {
+    this.#remind = { ...this.#remind, customerId, invoices: customerId === "" ? [] : "loading", invoiceId: "", confirm: false };
+    this.#host.repaint();
+    if (customerId === "") return;
+    const [invoices] = await Promise.all([this.#api.accountInvoices(customerId), this.ensureContact(customerId)]);
+    if (this.#remind.customerId !== customerId) return;
+    const open = invoices.ok ? invoices.value.items.filter((r) => r.status !== "PAID" && r.balance_cents > 0) : [];
+    this.#remind = { ...this.#remind, invoices: open, invoiceId: open[0]?.id ?? "" };
+    if (!invoices.ok) this.#fail("load", invoices);
+    this.#host.repaint();
+  }
+
+  async #sendReminder(): Promise<void> {
+    const form = this.#remind;
+    if (this.#busy) return;
+    if (form.customerId === "") return this.#stop("Choose the account to remind.");
+    if (form.invoices === "loading") return this.#stop("The account's invoices are still loading.");
+    const invoice = form.invoices.find((r) => r.id === form.invoiceId);
+    if (invoice === undefined) return this.#stop("Choose the invoice the reminder is about.");
+    const attempt = `remind:${form.customerId}:${invoice.id}:${form.channel}:${form.resend}:${form.confirm}`;
+    const key = this.#keys.keyFor(attempt);
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.sendReminder({ customerId: form.customerId, invoiceId: invoice.id, channel: form.channel, resend: form.resend, confirmFallback: form.confirm, key });
+    this.#busy = false;
+    if (!result.ok) {
+      // A lost answer keeps the key, so the same press sent again cannot send a second reminder; any answer ends it.
+      if (!outcomeUnknown(result.status)) this.#keys.settle(attempt);
+      this.#fail("reminder", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    this.#keys.settle(attempt);
+    this.#host.notice(reminderResultWords(result.value, invoice.invoice_no));
+    this.#host.reveal("[data-notice]");
+    await this.#loadHistory();
+  }
+
+  async #sweepPaper(): Promise<void> {
+    if (this.#busy) return;
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.sweepPaperPath();
+    this.#busy = false;
+    if (!result.ok) {
+      this.#fail("paper-path", result);
+      this.#host.repaint();
+      return;
+    }
+    const { evaluated, raised } = result.value;
+    this.#host.notice(`The sweep looked at ${evaluated} ${evaluated === 1 ? "account" : "accounts"} and raised ${raised} new ${raised === 1 ? "flag" : "flags"}.`);
+    await Promise.all([this.#loadPaper(), this.#host.reloadBook()]);
+  }
+
+  async #resolvePaper(flagId: string): Promise<void> {
+    const closing = this.#closing;
+    if (closing === null || closing.flagId !== flagId || this.#busy) return;
+    const check = paperResolveCheck(closing.status, this.#host.field("paper-note", flagId));
+    if (!check.ok) return this.#stop(check.words);
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.resolvePaperPath(flagId, check.status, check.note);
+    this.#busy = false;
+    if (!result.ok) {
+      this.#fail("paper-path", result);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    this.#closing = null;
+    this.#host.notice(check.status === "MOVED_TO_PAPER" ? "The account is marked as moved to paper, with your note on the record." : "The flag is dismissed, with your note on the record.");
+    await Promise.all([this.#loadPaper(), this.#host.reloadBook()]);
+  }
+
+  #stop(words: string): void {
+    this.#host.error(words);
+    this.#host.reveal("[data-error]");
+  }
+
+  /** A field the screen carries was changed (a select, a checkbox); only the choices that move the form matter. */
+  change(control: Element): boolean {
+    const name = control.getAttribute("data-field");
+    const value = (control as HTMLSelectElement).value;
+    if (name === "remind-account") {
+      void this.#chooseAccount(value);
+      return true;
+    }
+    if (name === "remind-invoice") {
+      this.#remind = { ...this.#remind, invoiceId: (control as HTMLSelectElement).selectedOptions[0]?.getAttribute("data-id") ?? "" };
+      this.#host.repaint();
+      return true;
+    }
+    if (name === "history-account") {
+      this.#historyFor = (control as HTMLSelectElement).selectedOptions[0]?.getAttribute("data-id") ?? "";
+      void this.#loadHistory();
+      return true;
+    }
+    return false;
+  }
+
   // ---- the press ---------------------------------------------------------------------------------------------
 
   /** Acts on a control carrying data-action. Returns true when the press was this slice's. */
@@ -178,6 +356,31 @@ export class OfficeDesk {
       case "contact-remove-confirm":
         void this.#removeContact(attr("data-customer-id"));
         return true;
+      case "remind-channel":
+        this.#remind = { ...this.#remind, channel: attr("data-choice") === "SMS" ? "SMS" : "EMAIL", confirm: false };
+        this.#host.repaint();
+        return true;
+      case "remind-toggle":
+        this.#remind = attr("data-choice") === "resend" ? { ...this.#remind, resend: !this.#remind.resend } : { ...this.#remind, confirm: !this.#remind.confirm };
+        this.#host.repaint();
+        return true;
+      case "remind-send":
+        void this.#sendReminder();
+        return true;
+      case "paper-sweep":
+        void this.#sweepPaper();
+        return true;
+      case "paper-close":
+        this.#closing = { flagId: attr("data-flag-id"), status: attr("data-choice") === "DISMISSED" ? "DISMISSED" : "MOVED_TO_PAPER" };
+        this.#host.repaint();
+        return true;
+      case "paper-close-cancel":
+        this.#closing = null;
+        this.#host.repaint();
+        return true;
+      case "paper-close-confirm":
+        void this.#resolvePaper(attr("data-flag-id"));
+        return true;
       default:
         return false;
     }
@@ -197,5 +400,8 @@ export class OfficeDesk {
     this.#contacts.clear();
     this.#run = { phase: "none" };
     this.#removing = null;
+    this.#history = { phase: "none" };
+    this.#paper = { phase: "none" };
+    this.#closing = null;
   }
 }

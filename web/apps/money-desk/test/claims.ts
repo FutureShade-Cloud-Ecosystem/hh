@@ -143,6 +143,17 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: OFFICE, test: "an account's AP contact is tagged, replaced and removed, and checked before it is sent" },
     { file: OFFICE, test: "on a phone the run and the contact fit the screen and work from the keyboard" },
   ],
+  "office-reminders": [
+    { file: OFFICE, test: "on the base plan a reminder says why nothing goes, and the server's own sentence is what a press shows" },
+    { file: OFFICE, test: "a reminder goes to the AP contact by its role, is stamped on a resend, and lists without an address" },
+    { file: OFFICE, test: "the channel and the account's contact decide what a reminder would do, and the server's refusal is said as written" },
+    { file: OFFICE, test: "a reminder whose answer was lost is sent again with the same key and is recorded once" },
+  ],
+  "office-paper": [
+    { file: OFFICE, test: "the paper path closes a flag with a note, and the Needs you list follows" },
+    { file: OFFICE, test: "the sweep raises the account that ignored three reminders" },
+    { file: OFFICE, test: "on a phone the reminders screen fits, the history becomes cards, and the form works from the keyboard" },
+  ],
   "phone-sideways": [{ file: RECEIVABLES, test: "on a phone no screen scrolls the page sideways" }],
   "empty-world": [{ file: RECEIVABLES, test: "the empty world: each screen says so in words" }],
 };

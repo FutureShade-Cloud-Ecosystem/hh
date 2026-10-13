@@ -87,3 +87,107 @@ async function baseOf() {
   const { baseUrl } = await import("./office-harness.mjs");
   return baseUrl();
 }
+
+// ---- reminders and the paper path ----------------------------------------------------------------------------------
+
+const SEND = "/api/v1/ar/reminders";
+
+async function openInvoice(customerNo) {
+  const register = await call("GET", "/api/v1/ar/register");
+  const row = register.json.items.find((r) => r.account_no === customerNo && r.balance_cents > 0);
+  return { customer_id: row.customer_id, invoice_id: row.id };
+}
+
+const sendBody = (target, over = {}) => ({ ...target, channel: "EMAIL", resend: false, confirm_fallback: false, idempotency_key: `k-${Math.random()}`, ...over });
+
+test("a reminder is refused on the base plan in the core's own sentence, and is not the gate's shared body", async () => {
+  await reset();
+  const target = await openInvoice("GE-100");
+  const res = await call("POST", SEND, sendBody(target));
+  refused(res, 403, "reminders are part of accelerated AR, this account is on the base plan");
+  assert.notEqual(res.json.error, "Forbidden");
+  const history = await call("GET", SEND);
+  assert.equal(history.status, 200, "the history read is not tier gated");
+  holds("BillingReminderSendPage", history.json);
+  assert.deepEqual(history.json.items, []);
+});
+
+test("a reminder on the accelerated plan goes to the AP contact, replays on its key, and lists newest first", async () => {
+  await reset("pro");
+  const target = await openInvoice("GE-100");
+  const body = sendBody(target, { idempotency_key: "r-1" });
+  const first = await call("POST", SEND, body);
+  assert.equal(first.status, 201);
+  holds("BillingReminderSend", first.json);
+  assert.equal(first.json.recipient_kind, "AP_CONTACT");
+  assert.equal(first.json.status, "DELIVERED");
+  assert.equal(first.json.provider, "stub");
+  const again = await call("POST", SEND, body);
+  assert.equal(again.status, 201);
+  assert.equal(again.json.id, first.json.id, "the same key answers the first send");
+  const second = await call("POST", SEND, sendBody(target, { resend: true }));
+  assert.equal(second.status, 201);
+  assert.equal(second.json.resend, true);
+  assert.ok(second.json.watermark !== undefined && second.json.watermark !== "");
+  const history = await call("GET", `${SEND}?customer_id=${target.customer_id}`);
+  holds("BillingReminderSendPage", history.json);
+  assert.equal(history.json.items.length, 2);
+  assert.equal(history.json.items[0].id, second.json.id);
+  const other = await call("GET", `${SEND}?customer_id=${(await openInvoice("OB-200")).customer_id}`);
+  assert.equal(other.json.items.length, 0);
+});
+
+test("a reminder is refused in the core's words, in the core's order", async () => {
+  await reset("pro");
+  const tagged = await openInvoice("GE-100");
+  refused(await call("POST", SEND, sendBody(tagged, { channel: "FAX" })), 422, "ar: channel must be EMAIL or SMS");
+  refused(await call("POST", SEND, sendBody(tagged, { channel: "SMS" })), 422, "ar: text reminders are switched off for this dealer, turn them on in AR policy first");
+  // An invoice that is not this account's open one is the refusal; none named means the account's oldest open one.
+  const foreign = await openInvoice("OB-200");
+  refused(await call("POST", SEND, sendBody({ customer_id: tagged.customer_id, invoice_id: foreign.invoice_id })), 422, "ar: there is no open invoice to remind about for this request");
+  refused(await call("POST", SEND, sendBody({ customer_id: "e0000000-0000-4000-8000-0000000000ff", invoice_id: "" })), 404, "not found");
+  const oldest = await call("POST", SEND, sendBody({ customer_id: tagged.customer_id, invoice_id: "" }));
+  assert.equal(oldest.status, 201);
+  assert.equal(oldest.json.bucket, "ESCALATION", "the account's worst open invoice is the one the message names");
+  // The untagged account (Cedar Ridge) needs the fallback confirmed, and then has exactly one address.
+  const bare = await openInvoice("CR-500");
+  refused(await call("POST", SEND, sendBody(bare)), 422, "ar: nobody is tagged for AP on this account, confirm the fallback recipient or tag a contact");
+  const confirmed = await call("POST", SEND, sendBody(bare, { confirm_fallback: true }));
+  assert.equal(confirmed.status, 201);
+  assert.equal(confirmed.json.recipient_kind, "FALLBACK");
+  assert.ok(confirmed.json.fallback_reason.includes("no AP contact tagged"));
+  assert.ok(coreSource.includes("no AP contact tagged; operator confirmed the account address"));
+  // A dealer that refuses the fallback says so; an account with no address on a channel says that.
+  await call("PUT", "/api/v1/ar/landing/policy", { ...(await call("GET", "/api/v1/ar/landing/policy")).json, untagged_fallback: "REFUSE" });
+  refused(await call("POST", SEND, sendBody(bare, { confirm_fallback: true })), 422, "ar: no AP contact is tagged on this account, tag one and the reminder goes to the right desk");
+  assert.ok(coreSource.includes("ar: no AP contact is tagged on this account, tag one and the reminder goes to the right desk"));
+});
+
+test("the paper path lists flags, a sweep raises the account that ignored three reminders, and a flag closes with a note", async () => {
+  await reset("pro");
+  const list = await call("GET", "/api/v1/ar/paper-path");
+  assert.equal(list.status, 200);
+  holds("BillingPaperPathPage", list.json);
+  assert.equal(list.json.items.length, 1, "the demo world starts with one flag");
+  const target = await openInvoice("RP-300");
+  for (let i = 0; i < 3; i += 1) assert.equal((await call("POST", SEND, sendBody(target))).status, 201);
+  const sweep = await call("POST", "/api/v1/ar/paper-path/sweep");
+  assert.equal(sweep.status, 200);
+  holds("BillingPaperPathSweepResult", sweep.json);
+  assert.equal(sweep.json.raised, 1);
+  assert.equal((await call("POST", "/api/v1/ar/paper-path/sweep")).json.raised, 0, "a second sweep raises nothing new");
+  const after = await call("GET", "/api/v1/ar/paper-path");
+  assert.equal(after.json.items.length, 2);
+  const flag = after.json.items[0];
+  const path = `/api/v1/ar/paper-path/${flag.flag_id}/resolve`;
+  refused(await call("POST", path, { status: "OPEN", note: "n" }), 422, "ar: a paper-path flag closes as MOVED_TO_PAPER or DISMISSED, both are decisions, and both need one");
+  refused(await call("POST", path, { status: "DISMISSED", note: "  " }), 422, "ar: say why in a few words, the next person to open this account reads it, not the flag");
+  refused(await call("POST", path, { status: "DISMISSED", note: "x".repeat(301) }), 422, "ar: that note is longer than 300 characters");
+  refused(await call("POST", "/api/v1/ar/paper-path/nope/resolve", { status: "DISMISSED", note: "n" }), 404, "not found");
+  const done = await call("POST", path, { status: "MOVED_TO_PAPER", note: "Moved to paper statements" });
+  assert.equal(done.status, 200);
+  assert.deepEqual(done.json, { ok: true });
+  assert.equal((await call("GET", "/api/v1/ar/paper-path")).json.items.length, 1);
+  const landing = await call("GET", "/api/v1/ar/landing");
+  assert.equal(landing.json.paper_path.length, 1, "the landing's Needs you list reads the same flags");
+});

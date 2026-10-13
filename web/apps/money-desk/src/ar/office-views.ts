@@ -9,9 +9,9 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { BillingStatement } from "@hardscapehouse/api-client";
 import { formatMoney } from "./ar-money.js";
-import { relativeDay } from "./ar-logic.js";
-import type { OfficeModel } from "./office-desk.js";
-import { contactLine, deliveryWord, runModeWord, runNoticeWords, statementGoes } from "./office-logic.js";
+import { cardTitle, relativeDay } from "./ar-logic.js";
+import type { Listing, OfficeModel } from "./office-desk.js";
+import { channelWord, contactLine, deliveryWord, recipientWords, relativeStamp, reminderPreview, runModeWord, runNoticeWords, sendStatusWord, statementGoes } from "./office-logic.js";
 
 function deliveryPill(statement: BillingStatement): TemplateResult {
   const tone = statement.delivery_status === "FAILED" ? "stop" : statement.delivery_status === "NOT_QUEUED" ? "plain" : "good";
@@ -91,5 +91,155 @@ export function renderContacts(om: OfficeModel, account: { customerId: string; n
         </div>
       </form>
     </section>
+  `;
+}
+
+// ---- reminders (Reminders tab) ---------------------------------------------------------------------------------
+
+function listingState<T>(listing: Listing<T>, what: string): TemplateResult | null {
+  if (listing.phase === "none" || listing.phase === "loading") return html`<p class="dim" role="status" aria-busy="true">Loading ${what}.</p><div class="ghost"></div>`;
+  if (listing.phase === "error") return html`<p class="alert alert-error" role="alert" data-error>${listing.words}</p>`;
+  return null;
+}
+
+function checkbox(label: string, action: string, choice: string, on: boolean, note: string): TemplateResult {
+  return html`
+    <div class="check-row">
+      <button type="button" class="pick" role="checkbox" aria-checked="${on ? "true" : "false"}" aria-label="${label}" data-action="${action}" data-choice="${choice}"></button>
+      <span><strong>${label}</strong><span class="dim small">${note}</span></span>
+    </div>
+  `;
+}
+
+function remindForm(om: OfficeModel): TemplateResult {
+  const f = om.remind;
+  const policy = om.policy;
+  const contact = f.customerId === "" ? null : (om.contacts.get(f.customerId) ?? null);
+  const preview = policy === null || f.customerId === "" ? null : reminderPreview({ policy, channel: f.channel, contact, confirm: f.confirm });
+  const blocked = policy !== null && policy.ar_tier !== "PRO" ? "Reminders are part of accelerated AR, and this dealer is on the base plan." : (preview?.blocked ?? "");
+  const invoices = f.invoices === "loading" ? [] : f.invoices;
+  return html`
+    <section class="panel side" aria-label="Send a reminder" data-remind-form>
+      <div class="panel-head"><h2>Send a reminder</h2><span class="pill pill-${policy?.ar_tier === "PRO" ? "good" : "watch"}" data-plan>${policy?.ar_tier === "PRO" ? "Accelerated AR" : "Base plan"}</span></div>
+      <form>
+        <label>Account
+          <select data-field="remind-account">
+            <option value="" ?selected=${f.customerId === ""}>Choose an account</option>
+            ${om.accounts.map((a) => html`<option value="${a.customer_id}" ?selected=${f.customerId === a.customer_id}>${a.customer_name}</option>`)}
+          </select>
+        </label>
+        <label>Invoice
+          <select data-field="remind-invoice" ?disabled=${f.customerId === "" || f.invoices === "loading"}>
+            ${f.customerId === "" ? html`<option>Choose an account first</option>` : f.invoices === "loading" ? html`<option>Loading the invoices</option>` : invoices.length === 0 ? html`<option>Nothing is owing</option>` : invoices.map((r) => html`<option data-id="${r.id}" ?selected=${f.invoiceId === r.id}>${r.invoice_no}, ${formatMoney(r.balance_cents)}${r.days_overdue > 0 ? `, ${r.days_overdue} days over` : ""}</option>`)}
+          </select>
+        </label>
+        <div><div class="label" id="remind-channel-label">Channel</div>
+          <div class="seg" role="group" aria-labelledby="remind-channel-label">
+            <button type="button" class="seg-item" data-action="remind-channel" data-choice="EMAIL" aria-pressed="${f.channel === "EMAIL" ? "true" : "false"}">Email</button>
+            <button type="button" class="seg-item" data-action="remind-channel" data-choice="SMS" aria-pressed="${f.channel === "SMS" ? "true" : "false"}">Text</button>
+          </div>
+        </div>
+        ${checkbox("Send it again", "remind-toggle", "resend", f.resend, "A resend carries a watermark with the days past due.")}
+        ${checkbox("Confirm the account's own address", "remind-toggle", "confirm", f.confirm, "Used only when nobody is tagged for AP and the dealer's policy allows it.")}
+      </form>
+      <div class="preview" data-remind-preview aria-live="polite">
+        <h3>What would go</h3>
+        ${f.customerId === "" ? html`<p class="dim">Choose an account to see where a reminder would go.</p>` : nothing}
+        ${blocked !== "" ? html`<p class="alert alert-warn" data-remind-blocked>${blocked}</p>` : nothing}
+        ${blocked === "" ? (preview?.lines ?? []).map((l) => html`<p data-remind-line>${l}</p>`) : nothing}
+        ${f.customerId !== "" ? html`<p class="dim small">${contactLine(contact === "error" ? null : contact)}</p>` : nothing}
+      </div>
+      <div class="actions">
+        <button type="button" class="btn btn-primary ${blocked !== "" ? "held" : ""}" data-action="remind-send" aria-disabled="${blocked !== "" ? "true" : "false"}" ?disabled=${om.busy}>Send reminder</button>
+      </div>
+    </section>
+  `;
+}
+
+function historyTable(om: OfficeModel): TemplateResult {
+  const h = om.history;
+  return html`
+    <section class="panel" aria-label="Reminders sent" data-history>
+      <div class="panel-head">
+        <h3>Reminders sent</h3>
+        <label class="inline-select"><span class="visually-hidden">Show reminders for</span>
+          <select data-field="history-account">
+            <option data-id="" ?selected=${om.historyFor === ""}>Every account</option>
+            ${om.accounts.map((a) => html`<option data-id="${a.customer_id}" ?selected=${om.historyFor === a.customer_id}>${a.customer_name}</option>`)}
+          </select>
+        </label>
+      </div>
+      ${listingState(h, "the reminders") ??
+      (h.phase === "ready" && h.items.length === 0
+        ? html`<p class="dim" data-history-empty>No reminder has been sent${om.historyFor === "" ? "" : " to this account"} yet.</p>`
+        : h.phase === "ready"
+          ? html`
+              <div class="scroll">
+                <table class="stack hist">
+                  <thead><tr><th>Sent</th><th>Account</th><th>Goes to</th><th>Age</th><th>Status</th><th>Opened</th></tr></thead>
+                  <tbody>
+                    ${h.items.map(
+                      (r) => html`
+                        <tr data-history-row>
+                          <td class="nowrap">${relativeStamp(r.sent_at, om.nowMs)}</td>
+                          <td>${om.accounts.find((a) => a.customer_id === r.customer_id)?.customer_name ?? "Account"}</td>
+                          <td>${recipientWords(r)}, by ${channelWord(r.channel)}</td>
+                          <td>${cardTitle(r.bucket)}${r.resend ? " (resend)" : ""}</td>
+                          <td><span class="pill pill-${r.status === "FAILED" ? "stop" : r.status === "QUEUED" ? "watch" : "good"}">${sendStatusWord(r.status)}</span></td>
+                          <td>${r.open_count === 0 ? "Not opened" : `Opened ${r.open_count}`}${r.click_count > 0 ? `, clicked ${r.click_count}` : ""}</td>
+                        </tr>
+                      `,
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            `
+          : nothing)}
+    </section>
+  `;
+}
+
+function paperPanel(om: OfficeModel): TemplateResult {
+  const p = om.paper;
+  return html`
+    <section class="panel" aria-label="Paper path" data-paper>
+      <div class="panel-head"><h3>Paper path</h3><button type="button" class="btn btn-secondary small-btn" data-action="paper-sweep" ?disabled=${om.busy}>Run the sweep</button></div>
+      <p class="dim small">An account that has been sent several reminders and opened none is flagged here. Move it to paper statements, or dismiss the flag, and say why: the note stays on the account.</p>
+      ${listingState(p, "the paper path") ??
+      (p.phase === "ready" && p.items.length === 0
+        ? html`<p class="dim" data-paper-empty>No account is flagged.</p>`
+        : p.phase === "ready"
+          ? html`
+              <ul class="alloc paper-list">
+                ${p.items.map(
+                  (e) => html`
+                    <li data-paper-row>
+                      <span class="who-block"><span class="who">${e.customer_name}</span><span class="dim small">${e.account_no} · ${e.delivered_sends} reminders in ${e.window_days} days, none opened · flagged ${relativeStamp(e.raised_at, om.nowMs)}</span></span>
+                      ${om.closing !== null && om.closing.flagId === e.flag_id
+                        ? html`<span class="close-form">
+                            <label><span class="visually-hidden">Why</span><input type="text" data-field="paper-note" data-key="${e.flag_id}" placeholder="${om.closing.status === "MOVED_TO_PAPER" ? "Why it moves to paper" : "Why it is dismissed"}" maxlength="300" autocomplete="off" /></label>
+                            <button type="button" class="btn btn-primary small-btn" data-action="paper-close-confirm" data-flag-id="${e.flag_id}" ?disabled=${om.busy}>${om.closing.status === "MOVED_TO_PAPER" ? "Move to paper" : "Dismiss the flag"}</button>
+                            <button type="button" class="btn btn-secondary small-btn" data-action="paper-close-cancel">Cancel</button>
+                          </span>`
+                        : html`<span class="close-form">
+                            <button type="button" class="btn btn-secondary small-btn" data-action="paper-close" data-flag-id="${e.flag_id}" data-choice="MOVED_TO_PAPER">Moved to paper</button>
+                            <button type="button" class="btn btn-secondary small-btn" data-action="paper-close" data-flag-id="${e.flag_id}" data-choice="DISMISSED">Dismiss</button>
+                          </span>`}
+                    </li>
+                  `,
+                )}
+              </ul>
+            `
+          : nothing)}
+    </section>
+  `;
+}
+
+export function renderRemindersPanels(om: OfficeModel): TemplateResult {
+  return html`
+    <div class="cols remind-cols">
+      <div class="col-main">${historyTable(om)}${paperPanel(om)}</div>
+      <div class="col-side">${remindForm(om)}</div>
+    </div>
   `;
 }
