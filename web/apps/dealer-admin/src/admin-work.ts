@@ -16,14 +16,16 @@ import { AdminApi } from "./admin-api.js";
 import {
   assistBudgetInputWords,
   assistRefusalWords,
+  printDocTypeFromLabel,
   spendTotal,
   usedFraction,
   wholeAmount,
 } from "./admin-logic.js";
 import { renderAssist, type AssistEditTarget, type AssistModel } from "./admin-assist.js";
+import { renderPrint, type PrintModel } from "./admin-print.js";
 
 /** The surfaces this controller owns, as the registry names them. */
-export const ADMIN_WORK_SURFACES: readonly string[] = ["assist"];
+export const ADMIN_WORK_SURFACES: readonly string[] = ["assist", "printing"];
 
 /** Is this surface id this controller's? The root's router line asks once. */
 export function isAdminWorkSurface(surface: string): boolean {
@@ -58,12 +60,27 @@ const emptyAssist = (): AssistModel => ({
   busy: false,
 });
 
+const emptyPrint = (): PrintModel => ({
+  // idle: the surface asks a question (paper, reference) before it reads, so
+  // its first paint is the question, not an empty answer. The paper is the
+  // select's own first option, answered in its own words.
+  phase: "idle",
+  busy: false,
+  error: "",
+  docType: "Receipt",
+  ref: "",
+  rows: [],
+});
+
 export class AdminWork {
   readonly #api: AdminApi;
   readonly #host: AdminHost;
 
   // The assist surface's state.
   #assist: AssistModel = emptyAssist();
+
+  // The print jobs surface's state.
+  #print: PrintModel = emptyPrint();
 
   constructor(api: AdminApi, host: AdminHost) {
     this.#api = api;
@@ -110,6 +127,10 @@ export class AdminWork {
       void this.#resetAssistUserLimit(control?.getAttribute("data-user-id") ?? "");
       return true;
     }
+    if (action === "print-find") {
+      void this.#findPrintJobs();
+      return true;
+    }
     return false;
   }
 
@@ -130,8 +151,14 @@ export class AdminWork {
 
   /** A field's words moved. Answers true when the field was this controller's. */
   input(field: string, value: string): boolean {
-    void field;
-    void value;
+    if (field === "print-doc-type") {
+      this.#print = { ...this.#print, docType: value };
+      return true;
+    }
+    if (field === "print-ref") {
+      this.#print = { ...this.#print, ref: value };
+      return true;
+    }
     return false;
   }
 
@@ -153,17 +180,23 @@ export class AdminWork {
     for (const row of users) {
       this.#host.meter(row.user_id, usedFraction(spendTotal(row), row.budget.tokens));
     }
+    // The print form's fields: the paper's select and the reference field
+    // mirror the model, so a refused search leaves the person's words up.
+    this.#host.setField("print-doc-type", this.#print.docType);
+    this.#host.setField("print-ref", this.#print.ref);
   }
 
   /** The active surface's template, for the root's router line. */
   view(surface: string): TemplateResult | null {
     if (surface === "assist") return renderAssist(this.#assist);
+    if (surface === "printing") return renderPrint(this.#print);
     return null;
   }
 
   /** A sign out empties every surface, so the next sign in starts fresh. */
   signOut(): void {
     this.#assist = emptyAssist();
+    this.#print = emptyPrint();
   }
 
   // -- the assist surface ------------------------------------------------------------------------
@@ -286,4 +319,48 @@ export class AdminWork {
     this.#host.repaint();
     await this.#loadAssist();
   }
+
+  // -- the print jobs surface ---------------------------------------------------------------------
+
+  /**
+   * One document's history, on the person's own words. An empty ref asks for
+   * nothing; a refusal keeps the form's words on the glass and names the
+   * server's own reason.
+   */
+  async #findPrintJobs(): Promise<void> {
+    if (this.#print.busy) return;
+    const docType = printDocTypeFromLabel(this.#print.docType);
+    const ref = this.#print.ref.trim();
+    if (ref === "") {
+      // The hotkeys' own empty draft guard: a question with no reference is
+      // named beside the form, and no call leaves.
+      this.#print = { ...this.#print, error: "Give the document's reference to look up its print history." };
+      this.#host.repaint();
+      return;
+    }
+    this.#print = { ...this.#print, phase: "ready", busy: true, rows: [], error: "" };
+    this.#host.repaint();
+    const result = await this.#api.printJobs(docType, ref);
+    if (!result.ok) {
+      // The server's own words: an unknown paper names the paper, an unknown
+      // document is the bare not found. No paraphrase, no invention.
+      this.#print = { ...this.#print, busy: false, error: serverWords(result.error) };
+      this.#host.repaint();
+      return;
+    }
+    this.#print = { ...this.#print, busy: false, rows: result.value, error: "" };
+    this.#host.repaint();
+  }
+}
+
+/**
+ * A server error a person reads, for the reads whose refusals are already
+ * sentences (the print queue names its paper). A one word token is not a
+ * sentence; it becomes plain words. The same rule errorWords carries; apps do
+ * not import apps, so it lives here too.
+ */
+function serverWords(error: string): string {
+  const trimmed = error.trim();
+  if (trimmed === "" || !trimmed.includes(" ")) return "Try again in a moment.";
+  return trimmed;
 }

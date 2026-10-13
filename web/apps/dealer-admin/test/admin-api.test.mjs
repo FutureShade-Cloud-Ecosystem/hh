@@ -108,3 +108,45 @@ test("a setting write answers the key and the value it landed", async () => {
   assert.equal(result.value.key, "chat_enabled");
   assert.equal(result.value.value, "false");
 });
+
+// -- the print queue --------------------------------------------------------------------------
+
+const JOBS = {
+  jobs: [
+    {
+      id: "9a000000-0000-4000-9000-000000000001",
+      doc_type: "RECEIPT",
+      ref_id: "0f000000-0000-4000-9000-0000000000s1",
+      branch_id: "5d1b3f6e-0000-4000-9000-0000000000pl",
+      render_target: "BROWSER",
+      status: "PRINTED",
+      requested_by: "da110000-0000-4000-9000-000000000001",
+      requested_at: "2000-01-01T10:00:00Z",
+      printed_at: "2000-01-01T10:00:01Z",
+    },
+    {
+      id: "9a000000-0000-4000-9000-000000000002",
+      doc_type: "RECEIPT",
+      ref_id: "0f000000-0000-4000-9000-0000000000s1",
+      branch_id: "5d1b3f6e-0000-4000-9000-0000000000pl",
+      render_target: "ZPL",
+      status: "QUEUED",
+      requested_at: "2000-01-01T11:00:00Z",
+    },
+  ],
+};
+
+test("the print queue read projects one document's jobs, newest first as served", async () => {
+  const result = await apiAnswering(JOBS).printJobs("RECEIPT", "0f000000-0000-4000-9000-0000000000s1");
+  assert.equal(result.ok, true);
+  assert.equal(result.value.length, 2);
+  assert.equal(result.value[0].status, "PRINTED");
+  assert.equal(result.value[0].printed_at, "2000-01-01T10:00:01Z");
+  assert.equal(result.value[1].failure_reason, "");
+});
+
+test("the print queue read passes a refusal through as the transport's error", async () => {
+  const result = await apiAnswering({ error: 'unknown print doc_type "LABEL"' }, 400).printJobs("LABEL", "x");
+  assert.equal(result.ok, false);
+  assert.match(result.error, /unknown print doc_type/);
+});

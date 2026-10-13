@@ -102,3 +102,49 @@ test.describe("the assist admin surface", () => {
     await expect(page.locator("[data-test=assist-error]")).toContainText("assistant");
   });
 });
+
+test.describe("the print jobs surface", () => {
+  const findDocument = async (page: import("@playwright/test").Page, ref: string): Promise<void> => {
+    await page.goto("/");
+    await page.locator("[data-flow]").first().click();
+    await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+    await page.locator('.surface-link[data-surface="printing"]').click();
+    await page.locator('[data-field="print-doc-type"]').selectOption({ label: "Receipt" });
+    await page.locator('[data-field="print-ref"]').fill(ref);
+    await page.locator('[data-action="print-find"]').click();
+  };
+
+  test("one sale's receipt history: a print and a reprint", async ({ page }) => {
+    await findDocument(page, "0f000000-0000-4000-9000-000000000001");
+    await expect(page.locator("[data-test=print-count]")).toHaveText("2 jobs");
+    // The queued reprint and the printed first copy, each in its own words.
+    await expect(page.locator("[data-test^=print-row-]").filter({ hasText: "Queued" })).toHaveCount(1);
+    await expect(page.locator("[data-test^=print-row-]").filter({ hasText: "Printed" })).toHaveCount(1);
+    await expect(page.locator("[data-test^=print-row-]").filter({ hasText: "Printed" })).toContainText("Browser");
+  });
+
+  test("a document that has printed nothing says so about itself", async ({ page }) => {
+    await findDocument(page, "0f000000-0000-4000-9000-0000000000s9");
+    await expect(page.locator("[data-test=print-empty]")).toContainText("No print jobs for this document");
+    await expect(page.locator("[data-test=print-count]")).toHaveCount(0);
+  });
+
+  test("a reference that is no document id is refused in the server's own words", async ({ page }) => {
+    await findDocument(page, "not-a-document");
+    // The core answers the bare not found; the surface does not dress it up.
+    await expect(page.locator("[data-test=print-error]")).toHaveText("not found");
+    // The person's words stay on the glass, so the question is still there.
+    await expect(page.locator('[data-field="print-ref"]')).toHaveValue("not-a-document");
+  });
+
+  test("an empty reference asks for the question, it does not search", async ({ page }) => {
+    await page.goto("/");
+    await page.locator("[data-flow]").first().click();
+    await page.locator('.surface-link[data-surface="printing"]').click();
+    await expect(page.locator("[data-test=print-idle]")).toBeVisible();
+    await page.locator('[data-action="print-find"]').click();
+    await expect(page.locator("[data-test=print-error]")).toContainText("Give the document's reference");
+    // No search ran, so the empty state keeps its own words.
+    await expect(page.locator("[data-test=print-idle]")).toContainText("Choose the paper");
+  });
+});

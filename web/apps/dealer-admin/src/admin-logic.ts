@@ -141,3 +141,61 @@ export function assistRefusalWords(error: string, status: number | undefined): s
   }
   return error !== "" ? error : "Try again in a moment.";
 }
+
+// -- the print queue ---------------------------------------------------------------------------
+//
+// One document's print history: how many times it was printed, by whom. The
+// read is staff wide (the core registers it on RequireStaff), so the screen
+// invents no gate of its own; the refusals it can meet are the server's own
+// words about the doc type and the reference.
+
+/** The three papers the core's print queue knows, as the select offers them. */
+export const PRINT_DOC_TYPES: readonly { readonly value: string; readonly label: string }[] = [
+  { value: "RECEIPT", label: "Receipt" },
+  { value: "LABEL_ZPL", label: "Label (ZPL)" },
+  { value: "DELIVERY_DOC", label: "Delivery document" },
+];
+
+/** A doc type as a person reads it, degrading honestly: an unknown value as itself, opened out. */
+export function printDocLabel(value: string): string {
+  const hit = PRINT_DOC_TYPES.find((t) => t.value === value);
+  if (hit !== undefined) return hit.label;
+  return plainlyWords(value);
+}
+
+/**
+ * The select answers in its option's own words (the register's role select is
+ * the precedent: the option list carries the names, the answer maps back to
+ * the code). An answer the papers do not name falls back to the receipt.
+ */
+export function printDocTypeFromLabel(label: string): string {
+  return PRINT_DOC_TYPES.find((t) => t.label === label)?.value ?? "RECEIPT";
+}
+
+/** A job's status as words. */
+export function printStatusWords(status: string): string {
+  if (status === "QUEUED") return "Queued";
+  if (status === "PRINTED") return "Printed";
+  if (status === "FAILED") return "Failed";
+  return plainlyWords(status);
+}
+
+/** What the job was rendered for. */
+export function printTargetWords(target: string): string {
+  if (target === "BROWSER") return "Browser";
+  if (target === "ZPL") return "ZPL";
+  return plainlyWords(target);
+}
+
+/** The closed-set fallback the app carries everywhere: lowercased, separators opened out. */
+function plainlyWords(value: string): string {
+  return value.trim().toLowerCase().replace(/[_.-]+/g, " ").replace(/\s+/g, " ");
+}
+
+/**
+ * The empty history: a document prints its way into this list, so an empty
+ * answer is about the document, never about the queue.
+ */
+export function printEmptyWords(): string {
+  return "No print jobs for this document. A document prints its way into this list, and nothing has been sent to the printer for this one yet.";
+}

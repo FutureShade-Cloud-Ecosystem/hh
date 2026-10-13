@@ -11,6 +11,10 @@ import {
   budgetSentence,
   formatTokens,
   overBudget,
+  printDocLabel,
+  printEmptyWords,
+  printStatusWords,
+  printTargetWords,
   spendSummary,
   spendTotal,
   usedFraction,
@@ -83,4 +87,29 @@ test("the assist admin refusal names leadership, and other statuses pass the ser
   assert.match(words, /assistant/);
   assert.equal(assistRefusalWords("not found", 404), "not found");
   assert.equal(assistRefusalWords("", undefined), "Try again in a moment.");
+});
+
+// -- the print queue: one document's history --------------------------------------------------
+
+test("the print doc types read as the papers they are, and degrade honestly", () => {
+  assert.equal(printDocLabel("RECEIPT"), "Receipt");
+  assert.equal(printDocLabel("LABEL_ZPL"), "Label (ZPL)");
+  assert.equal(printDocLabel("DELIVERY_DOC"), "Delivery document");
+  assert.equal(printDocLabel("STRANGE_TYPE"), "strange type");
+});
+
+test("a job's status and render target read as words, never a stored enum", () => {
+  assert.equal(printStatusWords("QUEUED"), "Queued");
+  assert.equal(printStatusWords("PRINTED"), "Printed");
+  assert.equal(printStatusWords("FAILED"), "Failed");
+  assert.equal(printStatusWords("ELSE"), "else");
+  assert.equal(printTargetWords("BROWSER"), "Browser");
+  assert.equal(printTargetWords("ZPL"), "ZPL");
+  assert.equal(printTargetWords(""), "");
+});
+
+test("an empty print history says the document has printed nothing yet, not that nothing happened", () => {
+  const words = printEmptyWords();
+  assert.match(words, /No print jobs/);
+  assert.match(words, /prints/);
 });

@@ -170,6 +170,50 @@ let audit;
 let scenario;
 let log;
 let assist;
+let printJobs;
+
+// The print queue: one sale's receipt history, a first print and a reprint,
+// and one label nobody has printed. The reference is the stub sale's own id,
+// the same document the audit world's trail spans.
+function buildPrintJobs() {
+  const ago = (minutes) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+  return [
+    {
+      id: "9a000000-0000-4000-9000-000000000001",
+      doc_type: "RECEIPT",
+      ref_id: SALE_REF,
+      branch_id: BRANCHES[0].id,
+      render_target: "BROWSER",
+      status: "PRINTED",
+      requested_by: USERS["dealer-admin"].user_id,
+      requested_at: ago(40),
+      printed_at: ago(39),
+    },
+    {
+      id: "9a000000-0000-4000-9000-000000000002",
+      doc_type: "RECEIPT",
+      ref_id: SALE_REF,
+      branch_id: BRANCHES[0].id,
+      render_target: "BROWSER",
+      status: "QUEUED",
+      requested_by: USERS["dealer-admin"].user_id,
+      requested_at: ago(5),
+    },
+    {
+      id: "9a000000-0000-4000-9000-000000000003",
+      doc_type: "LABEL_ZPL",
+      ref_id: "0f000000-0000-4000-9000-0000000000s2",
+      branch_id: BRANCHES[1].id,
+      render_target: "ZPL",
+      status: "FAILED",
+      failure_reason: "the label printer was not reachable",
+      requested_at: ago(30),
+    },
+  ];
+}
+
+const SALE_REF = "0f000000-0000-4000-9000-000000000001";
+const DOC_TYPES = new Set(["RECEIPT", "LABEL_ZPL", "DELIVERY_DOC"]);
 
 // The assist admin world, the core's own shapes: the spend report zero filled
 // from the staff list (every active person appears, the ones who never opened
@@ -196,6 +240,7 @@ function reset() {
   hotkeys = buildHotkeys();
   audit = buildAudit();
   assist = buildAssist();
+  printJobs = buildPrintJobs();
   scenario = "";
   log = [];
 }
@@ -564,6 +609,21 @@ async function handle(req, res) {
     }
     assist.settings.settings[key] = value === "true";
     return json(res, { key, value });
+  }
+
+  // ---- the print queue (the core's RequireStaff: any signed in caller) ----
+
+  if (req.method === "GET" && path === "/api/v1/printing/jobs") {
+    const docType = url.searchParams.get("doc_type") ?? "";
+    const refId = url.searchParams.get("ref_id") ?? "";
+    // The core's own refusals, in its own words and in its own order: the
+    // paper first, then the reference.
+    if (!DOC_TYPES.has(docType)) return refuse(res, 400, `unknown print doc_type "${docType}"`);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(refId)) {
+      return refuse(res, 404, "not found");
+    }
+    const jobs = printJobs.filter((j) => j.doc_type === docType && j.ref_id === refId);
+    return json(res, { jobs });
   }
 
   return notFound(res);

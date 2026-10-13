@@ -19,7 +19,7 @@
 // product-edit.ts reads (repository hardscapeos_dibbits, read only; see
 // PROVENANCE.md), rebuilt on HH's generated client and narrowed to what this
 // app's screens use.
-import { ApiClient, staffAssist, type Result } from "@hardscapehouse/api-client";
+import { ApiClient, staffAssist, staffPrinting, type Result } from "@hardscapehouse/api-client";
 import type { AssistSpendRow } from "./admin-logic.js";
 
 // -- the assistant's spend, budgets and settings --------------------------------------------------
@@ -67,6 +67,38 @@ function toSpendRow(raw: unknown): AssistSpendRow {
     tokens_in: num(r.tokens_in),
     tokens_out: num(r.tokens_out),
     budget: { tokens: num(b.tokens), source: text(b.source) },
+  };
+}
+
+// -- the print queue -----------------------------------------------------------------------------
+
+/** One row of the print queue, as the screens use it. */
+export interface PrintJobRow {
+  readonly id: string;
+  readonly doc_type: string;
+  readonly ref_id: string;
+  readonly branch_id: string;
+  readonly render_target: string;
+  readonly status: string;
+  readonly requested_by: string;
+  readonly failure_reason: string;
+  readonly requested_at: string;
+  readonly printed_at: string;
+}
+
+function toPrintJobRow(raw: unknown): PrintJobRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    doc_type: text(r.doc_type),
+    ref_id: text(r.ref_id),
+    branch_id: text(r.branch_id),
+    render_target: text(r.render_target),
+    status: text(r.status),
+    requested_by: text(r.requested_by),
+    failure_reason: text(r.failure_reason),
+    requested_at: text(r.requested_at),
+    printed_at: text(r.printed_at),
   };
 }
 
@@ -160,5 +192,24 @@ export class AdminApi {
     if (!answer.ok) return answer;
     const r = bag(answer.value);
     return { ok: true, value: { key: text(r.key), value: text(r.value) } };
+  }
+
+  // -- the print queue ---------------------------------------------------------------------------
+
+  /**
+   * One document's print history, newest first as the core serves it. Both
+   * parameters are the route's own: the doc type is one of the three papers,
+   * and the reference is the document's id. A bad pair is refused by the core
+   * in its own words (an unknown paper with a 400, a reference that is not a
+   * document id with the bare not found).
+   */
+  async printJobs(docType: string, refId: string): Promise<Result<readonly PrintJobRow[]>> {
+    const answer = await staffPrinting.printingListJobs(this.#client, {
+      doc_type: docType as "RECEIPT" | "LABEL_ZPL" | "DELIVERY_DOC",
+      ref_id: refId,
+    });
+    if (!answer.ok) return answer;
+    const page = bag(answer.value);
+    return { ok: true, value: list(page.jobs).map(toPrintJobRow) };
   }
 }
