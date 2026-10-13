@@ -21,15 +21,19 @@ import { AuthController, authHeaderProvider, SessionStore, type AccountSurface }
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { entryStyles, renderEntry, type EntryView, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
+import { MessagesApi } from "./messages-api.js";
+import { MessagesDesk } from "./desk.js";
+import { messagesStyles } from "./styles.js";
 
 const DEMO_ORG = "hh-demo";
 
 // Every flow the box mints holds House Messages (the decided matrix gives the cell to all thirteen
 // roles), so the entry offers every card the flows route answers.
 export class HouseMessagesApp extends HHElement {
-  static styles = [baseStyles, entryStyles, css`
+  static styles = [baseStyles, entryStyles, messagesStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
-    main { padding: var(--hh-s-24); max-width: 1440px; margin: 0 auto; }
+    main { max-width: 1440px; margin: 0 auto; }
+    main.entry { padding: var(--hh-s-24); }
   `];
 
   readonly #demoAccount: AccountSurface;
@@ -45,6 +49,32 @@ export class HouseMessagesApp extends HHElement {
     baseUrl: "",
     headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
   });
+
+  // The desk (src/desk.ts): its state, its reads, its presses. The fields it reads are looked up in
+  // this element's own shadow root. Built once a session is adopted, dropped on sign out.
+  #desk: MessagesDesk | null = null;
+
+  #newDesk(): MessagesDesk | null {
+    const session = this.#sessions.current;
+    if (session === null) return null;
+    return new MessagesDesk(
+      new MessagesApi(this.#staffClient),
+      {
+        repaint: () => this.requestUpdate(),
+        find: (selector) => this.renderRoot.querySelector(selector),
+        now: () => Date.now(),
+        openStream: (url) => new EventSource(url),
+        timers: { set: (fn, ms) => window.setTimeout(fn, ms), clear: (handle) => window.clearTimeout(handle as number) },
+      },
+      session.user.userId,
+    );
+  }
+
+  #startDesk(): void {
+    this.#desk?.dispose();
+    this.#desk = this.#newDesk();
+    void this.#desk?.load();
+  }
 
   #theme: "light" | "dark" = "light";
   #roleLabel = "";
@@ -89,13 +119,22 @@ export class HouseMessagesApp extends HHElement {
       this.requestUpdate();
       return;
     }
+    if (this.#desk?.press(control) === true) return;
     const flow = control.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") void this.#chooseFlow(flow);
+  };
+
+  // The composer's text changed: the desk follows every keystroke. An input event is composed, and
+  // listening on the shadow root keeps its real target.
+  readonly #onHostInput = (event: Event): void => {
+    const target = event.target;
+    if (target instanceof HTMLTextAreaElement) this.#desk?.typed();
   };
 
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener("click", this.#onHostClick);
+    this.renderRoot.addEventListener("input", this.#onHostInput);
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -110,6 +149,7 @@ export class HouseMessagesApp extends HHElement {
       if (adopted) {
         this.#roleLabel = handoff.session.roleName;
         clearFrontDoorHandoff();
+        this.#startDesk();
       }
       this.requestUpdate();
     } else {
@@ -119,6 +159,8 @@ export class HouseMessagesApp extends HHElement {
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.renderRoot.removeEventListener("input", this.#onHostInput);
+    this.#desk?.dispose();
     super.disconnectedCallback();
   }
 
@@ -131,6 +173,7 @@ export class HouseMessagesApp extends HHElement {
     }
     const widget = this.renderRoot.querySelector("hh-feedback");
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) widget.send = this.#feedbackSender;
+    this.#desk?.seed();
   }
 
   private async loadFlows(): Promise<void> {
@@ -156,6 +199,7 @@ export class HouseMessagesApp extends HHElement {
       if (adopted) {
         this.#roleLabel = result.value.identity.roleName;
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
+        this.#startDesk();
       } else {
         this.#entryView = { ...this.#entryView, busy: false, message: "Demo sign-in refused: the mint's session was not usable." };
       }
@@ -166,6 +210,8 @@ export class HouseMessagesApp extends HHElement {
   }
 
   #onSignOut(): void {
+    this.#desk?.dispose();
+    this.#desk = null;
     this.#sessions.clear();
     clearFrontDoorHandoff();
     void this.loadFlows();
@@ -181,13 +227,13 @@ export class HouseMessagesApp extends HHElement {
     if (session !== null) {
       return html`
         <hos-app-header signed-in demo compact product-name="House Messages">${this.renderThemeControl()}</hos-app-header>
-        <main><h1>House Messages</h1></main>
+        <main class="desk-host">${this.#desk?.render()}</main>
         <hh-feedback screen="House Messages" trigger="external"></hh-feedback>
       `;
     }
     return html`
       <hos-app-header demo compact product-name="House Messages">${this.renderThemeControl()}</hos-app-header>
-      <main>
+      <main class="entry">
         <h1>House Messages</h1>
         <p>Read what the house is saying and acknowledge what needs you. Demo data only.</p>
         ${renderEntry({ ...this.#entryView, flows: this.#entryFlows() })}

@@ -26,6 +26,7 @@ import {
   refusalWords,
   repliesWord,
   streamOrder,
+  timeWords,
   totalUnread,
   unreadWord,
   waitedWords,
@@ -232,4 +233,13 @@ test("refusals with no sentence still say who and what", () => {
   assert.match(refusalWords("The post", "", 403), /not a member/);
   assert.match(refusalWords("The post", "boom", 500), /nothing changed/);
   assert.match(refusalWords("The post", "", 404), /no longer there/);
+});
+
+test("time words: a clock time today, a short date and time before, a year only when it is not this one", () => {
+  const now = new Date(2025, 8, 10, 15, 0).getTime();
+  const iso = (y, m, d, h, min) => new Date(y, m, d, h, min).toISOString();
+  assert.equal(timeWords(iso(2025, 8, 10, 10, 40), now), "10:40 AM");
+  assert.equal(timeWords(iso(2025, 8, 3, 6, 5), now), "Sep 3, 6:05 AM");
+  assert.equal(timeWords(iso(2024, 11, 24, 13, 15), now), "Dec 24, 2024, 1:15 PM");
+  assert.equal(timeWords("not a time", now), "");
 });

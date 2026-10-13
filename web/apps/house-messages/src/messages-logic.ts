@@ -152,6 +152,24 @@ export function mergeOlder(held: readonly Message[], older: readonly Message[]):
   return out.sort(byTime);
 }
 
+const CLOCK = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" });
+const SHORT_DATE = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
+const LONG_DATE = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+/**
+ * When a message was sent, in the dealer's local time: a clock time today, a short date and time
+ * before today, and the year only when it is not this one. Empty for a time that does not parse.
+ */
+export function timeWords(iso: string, now: number): string {
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return "";
+  const today = new Date(now);
+  const clock = CLOCK.format(then);
+  if (then.toDateString() === today.toDateString()) return clock;
+  const date = then.getFullYear() === today.getFullYear() ? SHORT_DATE.format(then) : LONG_DATE.format(then);
+  return `${date}, ${clock}`;
+}
+
 export function repliesWord(count: number): string {
   if (count <= 0) return "Reply";
   return count === 1 ? "1 reply" : `${count} replies`;
