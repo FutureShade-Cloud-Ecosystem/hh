@@ -32,7 +32,7 @@ const APPS = [
   ["dealer-admin", "/dealer-admin/", "Dealer Admin"],
 ] as const;
 
-type ConsoleState = () => Promise<{ live: boolean; signOuts: number; opened: number }>;
+type ConsoleState = () => Promise<{ live: boolean; signOuts: number; opened: number; calls: string[] }>;
 
 async function openConsoleShell(page: Page, shellUrl: string): Promise<ConsoleState> {
   const state = await useConsole(page, shellUrl);
@@ -193,7 +193,7 @@ test.describe("real bundles: one leg per desk app", () => {
       expect(removals, "the app's own script cleared its custody").toContain(MIRROR_KEY);
       const after = await state();
       expect(after.live, "the Console session is gone on the server").toBe(false);
-      expect(after.signOuts).toBe(1);
+      expect(after.signOuts, `one sign out command, sent by the host: ${after.calls.join(", ")}`).toBe(1);
     });
   }
 

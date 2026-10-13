@@ -32,10 +32,10 @@ export const test = base.extend<{ shellUrl: string }, { served: { url: string } 
  * the stub. The host then resumes that session at boot, as it does in the
  * Tauri shell. Returns the stub's recorded state.
  */
-export async function useConsole(page: Page, shellUrl: string): Promise<() => Promise<{ live: boolean; signOuts: number; opened: number }>> {
-  const state = async (): Promise<{ live: boolean; signOuts: number; opened: number }> => {
+export async function useConsole(page: Page, shellUrl: string): Promise<() => Promise<{ live: boolean; signOuts: number; opened: number; calls: string[] }>> {
+  const state = async (): Promise<{ live: boolean; signOuts: number; opened: number; calls: string[] }> => {
     const response = await fetch(`${shellUrl}/__console/state`);
-    return (await response.json()) as { live: boolean; signOuts: number; opened: number };
+    return (await response.json()) as { live: boolean; signOuts: number; opened: number; calls: string[] };
   };
   await fetch(`${shellUrl}/__console/open`, { method: "POST" });
   await page.addInitScript(() => {

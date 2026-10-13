@@ -12,3 +12,10 @@ export const DOOR_PATH = "/door/";
 /** The two files the assembly script ships beside the host. */
 export const PROFILE_FILE = "/profile.json";
 export const LAUNCH_FILE = "/launch.json";
+
+/**
+ * The longest Switch role waits for the framed app to say its own sign out has
+ * run. After this the host revokes what it can reach without the answer, so a
+ * frame that is busy, offline or broken never holds the person at the desk.
+ */
+export const SIGN_OUT_WAIT_MS = 2000;

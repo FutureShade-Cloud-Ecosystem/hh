@@ -20,6 +20,7 @@ import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // itself; the app feeds it through the wiring pass below, the same
 // no-template-binding discipline the builder's client rides.
 import "@hardscapehouse/design-system/src/header.js";
+import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import {
   HHFeedback,
@@ -222,8 +223,12 @@ export class QuoteDeskApp extends HHElement {
   /** The feedback widget's sender; built once beside the staff client. */
   #feedbackSender: FeedbackSender = async () => ({ ok: false, error: "not ready" });
 
+  /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
+  #stopHostSignOut: (() => void) | null = null;
+
   override connectedCallback(): void {
     super.connectedCallback();
+    this.#stopHostSignOut = listenForHostSignOut(() => this.#signOut());
     // The kits' wiring rule: listen on the HOST and read the control off
     // composedPath(), never an event binding in a template.
     this.addEventListener("click", this.#onHostClick);
@@ -290,6 +295,8 @@ export class QuoteDeskApp extends HHElement {
   }
 
   override disconnectedCallback(): void {
+    this.#stopHostSignOut?.();
+    this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
     window.removeEventListener("hashchange", this.#onHashChange);
     this.#theme.stop();

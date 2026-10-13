@@ -42,15 +42,19 @@ function token(sub) {
  * so there is nothing for a stub core to record beyond this.
  */
 function consoleStub() {
-  const state = { live: false, signOuts: 0, opened: 0 };
+  const state = { live: false, signOuts: 0, opened: 0, calls: [] };
   const user = USERS["sales-manager"];
   const [userId, roleCode, roleName, tier, scope] = user;
   return {
     state,
     handle(command) {
+      if (command.startsWith("auth_")) state.calls.push(`${Date.now() % 100000} ${command}`);
       if (command === "open") {
+        // each leg starts from its own count: the server lives for the whole worker
         state.live = true;
         state.opened += 1;
+        state.signOuts = 0;
+        state.calls = [];
         return [200, { live: true }];
       }
       if (command === "state") return [200, { ...state }];
