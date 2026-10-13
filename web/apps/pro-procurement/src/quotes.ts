@@ -10,7 +10,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { tenantQuotes, type TenantQuote, type TenantQuoteDetail } from "@hardscapehouse/api-client";
 import { calendarDay, houseDay, money, qtyWithUnit, statusChip, totalsLine } from "@hardscapehouse/pro-kit";
-import { backHeader, button, cancelButton, confirmModal, metaLine, modalSheet, type Page, type SurfaceAnswer } from "./views.js";
+import { backHeader, button, cancelButton, confirmModal, metaLine, modalSheet, actionFailure, type Page, type SurfaceAnswer } from "./views.js";
 
 export const QUOTES_EMPTY = "No quotes yet. Submit an RFQ and the dealer's quotes land here.";
 const NO_QUOTE_WORDS = "That quote is not here anymore.";
@@ -152,23 +152,24 @@ function quoteModal(ui: QuoteUi): TemplateResult {
 
 // ---- the moves -----------------------------------------------------------------------------------
 
-function toAnswer(result: { ok: boolean; error?: string; status?: number }, page: Page): { ok: true } | { ok: false; error: string; status?: number } {
-  if (result.ok) return { ok: true } as { ok: true };
-  const error = result.error ?? "";
-  page.say("alert", error);
-  return { ok: false, error, status: result.status };
+function toAnswer(result: { ok: boolean; error?: string; status?: number }, page: Page): Promise<{ ok: true } | { ok: false; error: string; status?: number }> {
+  if (result.ok) return Promise.resolve({ ok: true } as { ok: true });
+  return actionFailure(page, result).then((words) => {
+    page.say("alert", words);
+    return { ok: false, error: words, status: result.status };
+  });
 }
 
 export async function quotesAccept(page: Page, id: string): Promise<{ ok: true } | { ok: false; error: string; status?: number }> {
   const answer = await tenantQuotes.tenantAcceptQuote(page.client, id);
-  const said = toAnswer(answer, page);
+  const said = await toAnswer(answer, page);
   if (!said.ok) return said;
   return { ok: true };
 }
 
 export async function quotesReject(page: Page, id: string): Promise<{ ok: true } | { ok: false; error: string; status?: number }> {
   const answer = await tenantQuotes.tenantRejectQuote(page.client, id);
-  const said = toAnswer(answer, page);
+  const said = await toAnswer(answer, page);
   if (!said.ok) return said;
   page.say("ok", "The quote was rejected.");
   return { ok: true };
@@ -180,8 +181,11 @@ export async function quotesConvert(page: Page, id: string, fulfillment: string)
     page.say("ok", `Converted to order ${answer.value.order_no}.`);
     return { ok: true, order_id: answer.value.order_id, order_no: answer.value.order_no };
   }
-  page.say("alert", answer.error);
-  return { ok: false, error: answer.error, status: answer.status };
+  // A conversion the transport lost may stand on the core's side: the words
+  // send the person to look, they never promise nothing changed.
+  const words = await actionFailure(page, answer, true);
+  page.say("alert", words);
+  return { ok: false, error: words, status: answer.status };
 }
 
 export function quotesCommand(action: string, control: Element, page: Page): boolean {

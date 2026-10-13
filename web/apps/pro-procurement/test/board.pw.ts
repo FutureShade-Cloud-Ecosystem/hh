@@ -99,6 +99,18 @@ test.describe("phone 390", () => {
     await expect(panel.getByRole("button", { name: "Board", exact: true })).toHaveCount(0);
     await expect(panel.getByRole("button", { name: "Catalog", exact: true })).toHaveCount(0);
   });
+
+  test("a lapsed session on an action signs the person out with the load's words", async ({ page, request }) => {
+    await signIn(page, "buyer");
+    await openBoard(page);
+    // The session lapses after the board read: the next write answers 401.
+    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/procurement/projects", status: 401 } } });
+    await page.getByTestId("new-plan").click();
+    await page.getByTestId("plan-name").fill("Cedar fence run");
+    await page.getByTestId("plan-modal-sheet").getByRole("button", { name: "Create" }).click();
+    await expect(page.locator("hh-pro-signin")).toBeVisible();
+    await expect(page.getByTestId("signin-message")).toHaveText("You are signed out. Sign in again.");
+  });
 });
 
 test.describe("desktop 1440", () => {

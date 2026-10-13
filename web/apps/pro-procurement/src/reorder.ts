@@ -11,7 +11,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { tenantOrders, type TenantReorderLine, type TenantReorderPreview } from "@hardscapehouse/api-client";
 import { money, qtyWithUnit } from "@hardscapehouse/pro-kit";
-import { button, cancelButton, modalSheet, type Page, type SurfaceAnswer } from "./views.js";
+import { actionFailure, button, cancelButton, modalSheet, type Page, type SurfaceAnswer } from "./views.js";
 
 export function reorderModalWords(): string {
   return "Prices are today's rates, not the originals. The reorder lands as a draft you can review before it is placed.";
@@ -160,7 +160,9 @@ async function createDraft(page: Page): Promise<void> {
     state.mayCreate = false;
     page.touch();
   } else {
-    state.error = answer.error;
+    // A create the transport lost may stand on the core's side: the words send
+    // the person to look, they never promise nothing changed.
+    state.error = await actionFailure(page, answer, true);
     page.touch();
   }
 }

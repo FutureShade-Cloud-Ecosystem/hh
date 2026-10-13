@@ -22,7 +22,7 @@ import {
   trackingOf,
   calendarDay,
 } from "@hardscapehouse/pro-kit";
-import { confirmModal, metaLine, type Page, type SurfaceAnswer } from "./views.js";
+import { confirmModal, metaLine, actionFailure, type Page, type SurfaceAnswer } from "./views.js";
 import { openReorder, reorderCommand } from "./reorder.js";
 
 export const BOARD_EMPTY = "Nothing is in motion. Start a plan from the catalog.";
@@ -181,7 +181,7 @@ async function createPlan(page: Page): Promise<void> {
     page.closeModal();
     page.goto({ surface: "scope", projectId: answer.value.id, from: "board" });
   } else {
-    state.error = answer.error;
+    state.error = await actionFailure(page, answer);
     page.touch();
   }
 }

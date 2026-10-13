@@ -35,7 +35,7 @@ import "@hardscapehouse/pro-kit/src/signin.js";
 import "@hardscapehouse/pro-kit/src/state-view.js";
 import type { HHProSignIn, SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
 import { SURFACES, LANDING, frameSurfaceOf, surfaceRouteFromCatalogue, type SurfaceId } from "./registry.js";
-import { sheetStyles, stateBlock, noticeLine, type LoadState, type Page, type Route, type SurfaceAnswer } from "./views.js";
+import { sheetStyles, stateBlock, noticeLine, SIGNED_OUT_WORDS, type LoadState, type Page, type Route, type SurfaceAnswer } from "./views.js";
 import { todayLoad, todayView, TODAY_EMPTY } from "./today.js";
 import { boardLoad, boardView, boardCommand, BOARD_EMPTY } from "./board.js";
 import { projectsLoad, projectsView, projectsCommand, PROJECTS_EMPTY } from "./projects.js";
@@ -140,6 +140,12 @@ export class ProProcurementApp extends HHElement {
       this.#notice = { kind, words };
       this.requestUpdate();
     },
+    signOut: async (words) => {
+      // The session is gone: say so on the sign in screen, then end it. The
+      // same move a load's 401 takes, so the words never differ by path.
+      this.#signinMessage = words;
+      await this.#session.signOut();
+    },
     hold: (busy) => {
       this.#busy = busy;
       this.#page.busy = busy;
@@ -212,8 +218,7 @@ export class ProProcurementApp extends HHElement {
       this.#heading = answer.heading ?? "";
     } else if (answer.kind === "error" && answer.status === 401) {
       // The session is gone (expired, or the person was deactivated): sign out and say so, never blame the role.
-      this.#signinMessage = "You are signed out. Sign in again.";
-      await this.#session.signOut();
+      await this.#page.signOut(SIGNED_OUT_WORDS);
       return;
     } else {
       this.#view = { kind: answer.kind };

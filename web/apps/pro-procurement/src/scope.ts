@@ -11,7 +11,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { tenantCatalog, tenantProcurement, type TenantCatalogResult, type TenantProjectDetail, type TenantProjectLine } from "@hardscapehouse/api-client";
 import { money, qtyWithUnit, statusChip } from "@hardscapehouse/pro-kit";
-import { backHeader, button, cancelButton, confirmModal, metaLine, modalSheet, type Page, type SurfaceAnswer } from "./views.js";
+import { backHeader, button, cancelButton, confirmModal, metaLine, modalSheet, actionFailure, type Page, type SurfaceAnswer } from "./views.js";
 
 export const SCOPE_MISSING = "That plan is not here anymore. It may have been deleted.";
 const NO_LINES_WORDS = "No lines yet. Add materials from the catalog.";
@@ -166,9 +166,9 @@ async function runPickerSearch(page: Page, term: string): Promise<void> {
   page.touch();
 }
 
-export async function scopeAddLine(page: Page, productId: string, qty: string, uom: string): Promise<{ ok: boolean; error?: string }> {
+export async function scopeAddLine(page: Page, productId: string, qty: string, uom: string): Promise<{ ok: boolean; error?: string; status?: number }> {
   const answer = await tenantProcurement.tenantAddProcurementLine(page.client, page.route.projectId ?? "", { product_id: productId, qty_entered: qty, uom });
-  return answer.ok ? { ok: true } : { ok: false, error: answer.error };
+  return answer.ok ? { ok: true } : { ok: false, error: answer.error, status: answer.status };
 }
 
 // ---- the line editor ---------------------------------------------------------------------------------
@@ -286,7 +286,7 @@ async function pickProduct(page: Page, productId: string): Promise<void> {
     picker.error = "";
     page.refresh();
   } else {
-    picker.error = answer.error ?? "The line did not go on.";
+    picker.error = await actionFailure(page, answer);
   }
   page.touch();
 }
@@ -335,7 +335,7 @@ async function saveLine(page: Page): Promise<void> {
     page.say("ok", "Line updated.");
     page.refresh();
   } else {
-    edit.error = answer.error;
+    edit.error = await actionFailure(page, answer);
     page.touch();
   }
 }
@@ -348,7 +348,7 @@ async function removeLine(page: Page, lineId: string): Promise<void> {
     page.say("ok", "Line removed.");
     page.refresh();
   } else {
-    page.say("alert", answer.error);
+    page.say("alert", await actionFailure(page, answer));
   }
 }
 
@@ -358,7 +358,7 @@ export async function scopeSubmitRfq(page: Page): Promise<void> {
     page.say("ok", "RFQ submitted. Lines priced indicatively.");
     page.refresh();
   } else {
-    page.say("alert", answer.error);
+    page.say("alert", await actionFailure(page, answer));
   }
 }
 
@@ -370,7 +370,7 @@ async function recall(page: Page): Promise<void> {
     page.say("ok", "Recalled to planning.");
     page.refresh();
   } else {
-    page.say("alert", answer.error);
+    page.say("alert", await actionFailure(page, answer));
   }
 }
 
@@ -393,7 +393,7 @@ async function saveRename(page: Page): Promise<void> {
     page.say("ok", "Plan renamed.");
     page.refresh();
   } else {
-    rename.error = answer.error;
+    rename.error = await actionFailure(page, answer);
     page.touch();
   }
 }
@@ -410,7 +410,7 @@ async function deletePlan(page: Page): Promise<void> {
     page.closeModal();
     page.goto({ surface: "board", from: page.route.from });
   } else {
-    page.say("alert", answer.error);
+    page.say("alert", await actionFailure(page, answer));
     page.closeModal();
   }
 }

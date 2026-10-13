@@ -44,6 +44,12 @@ export interface Page {
   /** The inline notice an action answers with. */
   say(kind: "ok" | "alert", words: string): void;
   hold(busy: boolean): void;
+  /**
+   * Sign the person out and say why on the sign in screen. The one move a
+   * lapsed session takes, the load's and every action's, so the words are
+   * the same wherever the session ends.
+   */
+  signOut(words: string): Promise<void>;
   /** Re-render without changing anything; a modal's own state lives in its open closure. */
   touch(): void;
   /** Fields the modal's inputs start with, assigned after render (the position gate refuses every value binding). */
@@ -160,6 +166,36 @@ export function noticeLine(notice: { kind: "ok" | "alert"; words: string } | nul
   if (notice === null) return nothing;
   const role = notice.kind === "ok" ? "status" : "alert";
   return html`<p class="notice ${notice.kind}" role="${role}" data-testid="notice">${notice.words}</p>`;
+}
+
+// ---- the one door an action's failure goes through ------------------------------------------------
+
+/** What a load says when the session is gone; every action says the same words the same way. */
+export const SIGNED_OUT_WORDS = "You are signed out. Sign in again.";
+// The kit's refusal words (state-view.ts), as a notice: the screen's gate and the server's agree.
+const ROLE_WORDS = "Your role does not open this. Ask the Owner on your account to change your access.";
+const LOST_WORDS = "This did not go through. Nothing was changed.";
+// For a move the core may have taken anyway (a keyed create, a conversion): it never promises nothing changed.
+const LOST_UNSETTLED_WORDS = "This did not go through. Check the Board before you try again.";
+
+/**
+ * Classify one action's failure and say it. A lapsed session signs the person
+ * out with the load's words; a role refusal says the kit's refusal words; a
+ * failure the server did not answer with words for (a transport error, a
+ * timeout, an empty body) says so in this app's own words, never the client's
+ * operation id; only a 4xx the core answered with a body shows the core's
+ * words. Returns the words to show where the action was taken.
+ */
+export async function actionFailure(page: Page, answer: { error?: string; status?: number }, unsettled = false): Promise<string> {
+  if (answer.status === 401) {
+    await page.signOut(SIGNED_OUT_WORDS);
+    return SIGNED_OUT_WORDS;
+  }
+  if (answer.status === 403) return ROLE_WORDS;
+  const error = answer.error ?? "";
+  const bareStatus = /^HTTP [0-9]{3}$/.test(error);
+  if (answer.status !== undefined && answer.status < 500 && !bareStatus && error !== "") return error;
+  return unsettled ? LOST_UNSETTLED_WORDS : LOST_WORDS;
 }
 
 /**

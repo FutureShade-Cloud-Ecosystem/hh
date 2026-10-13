@@ -9,7 +9,7 @@
 // serve (no photos, no price breaks, no alternates).
 import { html, nothing, type TemplateResult } from "lit";
 import { tenantCatalog, tenantProcurement, type TenantCatalogProduct, type TenantProject } from "@hardscapehouse/api-client";
-import { backHeader, button, cancelButton, metaLine, modalSheet, type Page, type SurfaceAnswer } from "./views.js";
+import { backHeader, button, cancelButton, metaLine, modalSheet, actionFailure, type Page, type SurfaceAnswer } from "./views.js";
 
 export interface ProductData {
   product: TenantCatalogProduct;
@@ -155,13 +155,13 @@ export async function productAddToPlan(
   target: { planId: string } | { newPlanName: string },
   qty: string,
   uom: string,
-): Promise<{ ok: boolean; error?: string; projectId?: string; projectName?: string }> {
+): Promise<{ ok: boolean; error?: string; status?: number; projectId?: string; projectName?: string }> {
   const id = page.route.productId ?? "";
   let planId = "planId" in target ? target.planId : "";
   let projectName = "newPlanName" in target ? target.newPlanName : "";
   if ("newPlanName" in target) {
     const created = await tenantProcurement.tenantCreateProcurementProject(page.client, { name: target.newPlanName });
-    if (!created.ok) return { ok: false, error: created.error };
+    if (!created.ok) return { ok: false, error: created.error, status: created.status };
     planId = created.value.id;
   } else {
     const projects = await tenantProcurement.tenantListProcurementProjects(page.client);
@@ -169,7 +169,7 @@ export async function productAddToPlan(
     projectName = plan?.name ?? "the plan";
   }
   const line = await tenantProcurement.tenantAddProcurementLine(page.client, planId, { product_id: id, qty_entered: qty, uom });
-  if (!line.ok) return { ok: false, error: line.error };
+  if (!line.ok) return { ok: false, error: line.error, status: line.status };
   return { ok: true, projectId: planId, projectName };
 }
 
@@ -206,7 +206,7 @@ async function addToChosenPlan(page: Page): Promise<void> {
   );
   state.busy = false;
   if (!answer.ok) {
-    state.error = answer.error ?? "The line did not go on.";
+    state.error = await actionFailure(page, answer);
     page.touch();
     return;
   }
