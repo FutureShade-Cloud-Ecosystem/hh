@@ -345,7 +345,7 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	// mode): the deployment's own key signs, and the core verifies its own
 	// tokens through an in process source over the same public keys, with
 	// no HTTP hop. A missing or unparseable key stops the boot here.
-	session, err := loadSessionComposition(getenv, auth.issuer, auth.staffAudience)
+	session, err := loadSessionComposition(getenv, auth.issuer, auth.staffAudience, auth.tenantAudience)
 	if err != nil {
 		return nil, err
 	}

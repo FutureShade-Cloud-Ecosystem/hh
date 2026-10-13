@@ -298,7 +298,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		claimIss  string
 	)
 	if demoCfg.signin == signinConsole {
-		session, err = loadSessionComposition(getenv, demoCfg.issuer, demoCfg.staffAudience)
+		session, err = loadSessionComposition(getenv, demoCfg.issuer, demoCfg.staffAudience, demoCfg.tenantAudience)
 		if err != nil {
 			return nil, err
 		}

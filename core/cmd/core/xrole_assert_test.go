@@ -397,10 +397,10 @@ func xrFamilyFor(t *testing.T, cfg *roleconfig.Config, route apigen.Route) (map[
 			"staff financial controller global": f, "staff branch manager branch": f,
 			"staff procurement manager branch": f, "staff yard team branch": f,
 			// No capability is consulted: a role that holds nothing is still
-			// admitted, and the no-row boundary is the unpinned leg guards.go
-			// records as admitted.
+			// admitted, but a tenant claim with no portal row for the subject
+			// is the shared 403 (FROM-PRINCIPAL 10).
 			"tenant account admin": xrAdmitted(), "tenant field crew": xrAdmitted(), "tenant buyer": xrAdmitted(),
-			"tenant buyer no pay": xrAdmitted(), "tenant ap finance": xrAdmitted(), "tenant no portal row": xrAdmitted(),
+			"tenant buyer no pay": xrAdmitted(), "tenant ap finance": xrAdmitted(), "tenant no portal row": f,
 			"tenant bearer carrying X-Org": shape,
 		}
 		return wants, "RequireTenant (tenant bearer, portal row status)", true
@@ -414,7 +414,7 @@ func xrFamilyFor(t *testing.T, cfg *roleconfig.Config, route apigen.Route) (map[
 			"staff financial controller global": xrAdmitted(), "staff branch manager branch": xrAdmitted(),
 			"staff procurement manager branch": xrAdmitted(), "staff yard team branch": xrAdmitted(),
 			"tenant account admin": xrAdmitted(), "tenant field crew": xrAdmitted(), "tenant buyer": xrAdmitted(),
-			"tenant buyer no pay": xrAdmitted(), "tenant ap finance": xrAdmitted(), "tenant no portal row": xrAdmitted(),
+			"tenant buyer no pay": xrAdmitted(), "tenant ap finance": xrAdmitted(), "tenant no portal row": f,
 			"tenant bearer carrying X-Org": shape,
 		}
 		return wants, "RequireSync (either bearer, G4 bearer-conditioned)", true

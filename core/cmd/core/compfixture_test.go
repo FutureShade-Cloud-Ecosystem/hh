@@ -47,8 +47,8 @@ const fixtureAcceptanceKeyID = "fx-accept-sign-key"
 
 // xrNoPortalRowSub is the platform subject that HOLDS a tenant team in the
 // membership double but has NO portal_users row in the fixture database:
-// the no-row boundary leg (membership passes, authority absent), which the
-// guard rules by no pin.
+// the no-row leg (membership passes, authority absent), which every tenant
+// route class refuses with the shared 403 (FROM-PRINCIPAL 10).
 const xrNoPortalRowSub = "fxportal-norow-alpha"
 
 // appwriteFake serves the Appwrite membership listing shape over invented

@@ -83,6 +83,15 @@ func getMethods(h http.Handler, query string) *httptest.ResponseRecorder {
 	return rec
 }
 
+func postTenantExchange(h http.Handler, jwt, org string) *httptest.ResponseRecorder {
+	body, _ := json.Marshal(map[string]string{"jwt": jwt, "org": org, "class": "tenant"})
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/exchange", strings.NewReader(string(body)))
+	r.RemoteAddr = "198.51.100.22:4000"
+	h.ServeHTTP(rec, r)
+	return rec
+}
+
 func postExchange(h http.Handler, jwt, org string) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(map[string]string{"jwt": jwt, "org": org})
 	rec := httptest.NewRecorder()
@@ -281,5 +290,89 @@ func TestBootConsoleSignInMethods(t *testing.T) {
 	}
 	if r := postExchange(h, stack.jwtFor(sub, email, true), testkit.OrgNorthSlug); r.Code != 503 {
 		t.Fatalf("exchange with an unknown code = %d %s", r.Code, r.Body)
+	}
+}
+
+// The tenant leg over the real database: a contractor with a linked ACTIVE
+// portal row exchanges for a tenant token whose tenant claim is the row's
+// account, and the token works on a real tenant route behind the gate and
+// the guards. A person with the tenant Team and no row, an inactive row,
+// the staff Team alone and a session method outside the tenant table each
+// refuse with the shared bodies and write no AUTH_EXCHANGE row.
+func TestBootConsoleTenantExchangeEndToEnd(t *testing.T) {
+	env := newCompEnv(t)
+	stack := newConsoleStack(t, env)
+	env.set("CORE_APPWRITE_ENDPOINT", stack.server.URL)
+	rec, graph := registeredSurface(t, env)
+	h := rec.inner
+	count := func() int {
+		var n int
+		if err := graph.pool.QueryRow(context.Background(), `SELECT count(*) FROM audit_log WHERE action = 'AUTH_EXCHANGE'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	base := count()
+
+	sub := testkit.SubPortalAdminAlpha
+	jwt := stack.jwtFor(sub, "fxportal.admin.alpha@fixture.test", true)
+	stack.setProvider(sub, "magic-url")
+	rsp := postTenantExchange(h, jwt, testkit.OrgNorthSlug)
+	if rsp.Code != http.StatusOK {
+		t.Fatalf("tenant exchange = %d %s", rsp.Code, rsp.Body)
+	}
+	var out struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(rsp.Body.Bytes(), &out)
+	if out.Token == "" || count() != base+1 {
+		t.Fatalf("token %q, audit rows %d -> %d", out.Token, base, count())
+	}
+	var actor string
+	if err := graph.pool.QueryRow(context.Background(),
+		`SELECT actor_id::text FROM audit_log WHERE action = 'AUTH_EXCHANGE' ORDER BY created_at DESC LIMIT 1`).Scan(&actor); err != nil || actor != testkit.PortalAdminAlphaID {
+		t.Fatalf("audit actor = %q (%v), want the portal row", actor, err)
+	}
+
+	// The minted token works on a real tenant route, no X-Org, and reads
+	// the row of the exchange's own tenant.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/tenant/me", nil)
+	req.Header.Set("Authorization", "Bearer "+out.Token)
+	got := httptest.NewRecorder()
+	h.ServeHTTP(got, req)
+	if got.Code != http.StatusOK {
+		t.Fatalf("tenant route with the minted token = %d %s", got.Code, got.Body)
+	}
+	// The same token is no staff bearer.
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/needs", nil)
+	req.Header.Set("Authorization", "Bearer "+out.Token)
+	req.Header.Set("X-Org", testkit.OrgNorthSlug)
+	got = httptest.NewRecorder()
+	h.ServeHTTP(got, req)
+	if got.Code != http.StatusForbidden {
+		t.Fatalf("tenant token on a staff route = %d", got.Code)
+	}
+
+	refused := func(name string, rsp *httptest.ResponseRecorder, status int) {
+		t.Helper()
+		if rsp.Code != status || strings.Contains(rsp.Body.String(), "token") {
+			t.Fatalf("%s = %d %s, want %d and no token", name, rsp.Code, rsp.Body, status)
+		}
+	}
+	before := count()
+	mk := func(sub, email, provider string) string {
+		j := stack.jwtFor(sub, email, true)
+		stack.setProvider(sub, provider)
+		return j
+	}
+	refused("replay", postTenantExchange(h, jwt, testkit.OrgNorthSlug), 401)
+	refused("team but no portal row", postTenantExchange(h, mk(xrNoPortalRowSub, "norow@fixture.test", "magic-url"), testkit.OrgNorthSlug), 403)
+	refused("inactive row", postTenantExchange(h, mk(testkit.SubPortalInactiveAlpha, "fxportal.inactive.alpha@fixture.test", "magic-url"), testkit.OrgNorthSlug), 403)
+	refused("account email is not the row's", postTenantExchange(h, mk(testkit.SubPortalCrewAlpha, "someone.else@fixture.test", "magic-url"), testkit.OrgNorthSlug), 403)
+	refused("password session", postTenantExchange(h, mk(testkit.SubPortalCrewAlpha, "fxportal.crew.alpha@fixture.test", "email"), testkit.OrgNorthSlug), 403)
+	refused("the staff Team does not open the tenant leg", postTenantExchange(h, mk(testkit.SubSalesManager, "fxstaff.sales.manager@fixture.test", "magic-url"), testkit.OrgNorthSlug), 403)
+	refused("another org", postTenantExchange(h, mk(testkit.SubPortalCrewAlpha, "fxportal.crew.alpha@fixture.test", "magic-url"), testkit.OrgSouthSlug), 403)
+	if count() != before {
+		t.Fatalf("a refusal wrote an AUTH_EXCHANGE row (%d -> %d)", before, count())
 	}
 }
