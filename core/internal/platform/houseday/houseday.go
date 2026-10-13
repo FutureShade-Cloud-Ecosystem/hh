@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // houseZone is the dealer's own zone: Dibbits sells out of Ontario yards, and UTC rolls over in
@@ -170,6 +172,28 @@ func (z Zone) EndOfDay(s string) (time.Time, error) {
 // live at the next business day decision.
 type Source interface {
 	BusinessZone(ctx context.Context) (Zone, error)
+}
+
+// TxSource is a Source that can also read the zone on a caller's open transaction. A service that
+// writes inside a transaction its caller owns reads the zone through it, never through the pool: the
+// caller's transaction holds a connection, and a pool read beside it waits on a second one, which a
+// full pool of such callers never frees.
+type TxSource interface {
+	Source
+	BusinessZoneTx(ctx context.Context, tx pgx.Tx) (Zone, error)
+}
+
+// ResolveTx is Resolve for a service running inside its caller's transaction: with a TxSource and a
+// transaction the zone is read on that transaction, otherwise it is Resolve.
+func ResolveTx(ctx context.Context, src Source, tx pgx.Tx) (Zone, error) {
+	if ts, ok := src.(TxSource); ok && tx != nil {
+		z, err := ts.BusinessZoneTx(ctx, tx)
+		if err != nil {
+			return Zone{}, fmt.Errorf("houseday: the dealer's business zone could not be read: %w", err)
+		}
+		return z, nil
+	}
+	return Resolve(ctx, src)
 }
 
 // Resolve answers a service's zone for one decision: the Ontario dealer's with no source wired (the

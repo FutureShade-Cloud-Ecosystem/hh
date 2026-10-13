@@ -560,7 +560,7 @@ func (w *InvoiceWriter) writeCore(ctx context.Context, ctxTx pgx.Tx, f OrderInvo
 	// yard has not reached, so an evening invoice would be dated tomorrow and age a day early from
 	// the moment it is written. The due date counts the terms from the SAME day the document is
 	// issued, so the two dates can never name different "todays".
-	zone, err := houseday.Resolve(ctx, w.zone)
+	zone, err := houseday.ResolveTx(ctx, w.zone, ctxTx)
 	if err != nil {
 		return InvoiceDoc{}, err
 	}

@@ -29,7 +29,7 @@ func TestIntegrationInvoiceWriter_DatesFollowTheDealersZone(t *testing.T) {
 			WithOrderSource(houseDaySource{customer: cust, branch: trentonBranch}).
 			WithClock(func() time.Time { return at }).
 			WithZone(tc.src)
-		doc, err := w.InvoiceOrder(ctx, "")
+		doc, err := w.InvoiceOrder(ctx, "zone-"+tc.name+"-"+ns(t))
 		if err != nil {
 			t.Fatalf("%s: raise the order invoice: %v", tc.name, err)
 		}

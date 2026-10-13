@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Item 3b slice 3: the business day is the dealer's own zone, injected per service. The package level
@@ -102,3 +104,39 @@ func TestResolve_NoSourceIsTheOntarioDealerAndAFailedReadRefuses(t *testing.T) {
 		t.Fatalf("a failed read must refuse, got %v", err)
 	}
 }
+
+type txFixed struct {
+	fixedSource
+	txReads, poolReads int
+}
+
+func (s *txFixed) BusinessZone(ctx context.Context) (Zone, error) {
+	s.poolReads++
+	return s.z, nil
+}
+
+func (s *txFixed) BusinessZoneTx(context.Context, pgx.Tx) (Zone, error) {
+	s.txReads++
+	return s.z, nil
+}
+
+// A service inside its caller's transaction reads the zone on that transaction, never the pool.
+func TestResolveTx_ReadsOnTheCallersTransactionWhenThereIsOne(t *testing.T) {
+	la, _ := NewZone("America/Los_Angeles")
+	s := &txFixed{fixedSource: fixedSource{z: la}}
+	var tx pgx.Tx = txStub{}
+	if z, err := ResolveTx(context.Background(), s, tx); err != nil || z.Name() != "America/Los_Angeles" {
+		t.Fatalf("with a tx: %v %v", z.Name(), err)
+	}
+	if s.txReads != 1 || s.poolReads != 0 {
+		t.Fatalf("tx reads %d pool reads %d, want the transaction only", s.txReads, s.poolReads)
+	}
+	if _, err := ResolveTx(context.Background(), s, nil); err != nil || s.poolReads != 1 {
+		t.Fatalf("with no tx the pool read serves: %v pool reads %d", err, s.poolReads)
+	}
+	if z, err := ResolveTx(context.Background(), nil, tx); err != nil || z.Name() != "America/Toronto" {
+		t.Fatalf("no source: %v %v", z.Name(), err)
+	}
+}
+
+type txStub struct{ pgx.Tx }
