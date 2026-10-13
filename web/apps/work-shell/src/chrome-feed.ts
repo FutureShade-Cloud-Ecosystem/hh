@@ -31,6 +31,25 @@ export function bannerModeFor(input: { online: boolean }): "" | "offline" {
   return input.online ? "" : "offline";
 }
 
+/**
+ * What the banner element is fed. With no outbox handed in (the host opens no
+ * store, and the desk apps are read cache or online only: money never queues)
+ * the banner runs the chrome's cacheOnly words, which say what the screen
+ * shows and never that writes wait or send later. An outbox, when a store is
+ * open, brings its depth and the outbox words back.
+ */
+export function bannerFor(input: { online: boolean; outbox?: { waiting: number } | undefined }): {
+  mode: "" | "offline";
+  cacheOnly: boolean;
+  waiting: number;
+} {
+  const mode = bannerModeFor(input);
+  if (mode === "") return { mode, cacheOnly: false, waiting: 0 };
+  return input.outbox === undefined
+    ? { mode, cacheOnly: true, waiting: 0 }
+    : { mode, cacheOnly: false, waiting: input.outbox.waiting };
+}
+
 interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
