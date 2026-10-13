@@ -154,6 +154,10 @@ func TestRoleGateAdmissionRuleOverTheDefaultMatrix(t *testing.T) {
 		{"yard manager is held off the low margin report", []string{"yard_manager"}, RouteAccess{Surfaces: []string{"quote-desk", "money-desk"}, Level: roleconfig.LevelRead, List: ListLowMarginReport}, false},
 		{"hr is held off the low margin report", []string{"hr"}, RouteAccess{Surfaces: []string{"quote-desk", "money-desk"}, Level: roleconfig.LevelRead, List: ListLowMarginReport}, false},
 		{"hr is refused the price writes the list names", []string{"hr"}, RouteAccess{Surfaces: []string{"dealer-admin"}, Level: roleconfig.LevelManage, List: "pricing_editors"}, false},
+		{"logistics manager sets the dispatch policy, the list beside the level", []string{"logistics_manager"}, RouteAccess{Surfaces: []string{"dispatch-board"}, Level: roleconfig.LevelManage, List: "dispatch_policy_setters"}, true},
+		{"branch manager sets the dispatch policy, the list beside the level", []string{"branch_manager"}, RouteAccess{Surfaces: []string{"dispatch-board"}, Level: roleconfig.LevelManage, List: "dispatch_policy_setters"}, true},
+		{"yard manager is held off the dispatch policy write", []string{"yard_manager"}, RouteAccess{Surfaces: []string{"dispatch-board"}, Level: roleconfig.LevelManage, List: "dispatch_policy_setters"}, false},
+		{"general manager is held off the dispatch policy write under the decided default", []string{"general_manager"}, RouteAccess{Surfaces: []string{"dispatch-board"}, Level: roleconfig.LevelManage, List: "dispatch_policy_setters"}, false},
 		{"two roles get both: the manager's read and the seller's work", []string{"general_manager", "inside_sales"}, RouteAccess{Surfaces: []string{"counter-till"}, Level: roleconfig.LevelWork}, true},
 		{"two roles refuse only when both rows fall short", []string{"general_manager", "inside_sales"}, RouteAccess{Surfaces: []string{"drive-run"}, Level: roleconfig.LevelWork}, false},
 		{"two surfaces admit through the stronger cell", []string{"sales_manager"}, RouteAccess{Surfaces: []string{"dispatch-board", "quote-desk"}, Level: roleconfig.LevelManage}, true},
@@ -326,6 +330,95 @@ func TestRoleGateReadsTheDealerConfiguration(t *testing.T) {
 	if code != http.StatusForbidden {
 		t.Fatalf("a read cell must not carry a work route: status %d body %s", code, body)
 	}
+}
+
+// TestRoleGateDispatchPolicySettersIsTheRulesOwnWall, X13 beside X6: the policy write names the
+// configuration's dispatch_policy_setters list, so only a listed role sets the dispatch policy
+// whatever its cells say. The decided default's list (the logistics and branch managers) equals the
+// dispatch board's manage row, so the default's behaviour is exactly the unlisted gate's; the wall
+// itself shows when a dealer moves a cell without moving the list, the same seam the pricing
+// editors leg rides. The platform roles' pass never opens the list.
+func TestRoleGateDispatchPolicySettersIsTheRulesOwnWall(t *testing.T) {
+	access := RouteAccess{Surfaces: []string{"dispatch-board"}, Level: roleconfig.LevelManage, List: "dispatch_policy_setters"}
+	t.Run("the default list is the manage row: the logistics manager writes the policy", func(t *testing.T) {
+		f := newFixture(t)
+		g := gateOverRoles(t, f, []string{"logistics_manager"}, mustConfig(t))
+		code, body, _ := runGated(t, f, g, access, gatedStaffHeaders(t, f))
+		if code != http.StatusOK {
+			t.Fatalf("the listed logistics manager was refused: status %d body %s", code, body)
+		}
+	})
+	t.Run("the platform pass does not open the list", func(t *testing.T) {
+		f := newFixture(t)
+		g := gateOverRoles(t, f, []string{PlatformRoleDealerAdmin}, mustConfig(t))
+		code, body, _ := runGated(t, f, g, access, gatedStaffHeaders(t, f))
+		if code != http.StatusForbidden || body != string(BodyForbidden) {
+			t.Fatalf("status %d body %s, want the RBAC-403: the list is a rule's own wall", code, body)
+		}
+	})
+	t.Run("a configured manage cell off the list is refused the shared body", func(t *testing.T) {
+		doc := mustDefaultDocument(t)
+		changed := false
+		for i := range doc.Cells {
+			if doc.Cells[i].Role == "yard_manager" && doc.Cells[i].Surface == "dispatch-board" {
+				doc.Cells[i].Level = roleconfig.LevelManage
+				changed = true
+			}
+		}
+		if !changed {
+			t.Fatal("the default document lacks the yard manager's dispatch-board cell")
+		}
+		cfg, err := roleconfig.Validate(doc)
+		if err != nil {
+			t.Fatalf("Validate on the modified document: %v", err)
+		}
+		f := newFixture(t)
+		g := gateOverRoles(t, f, []string{"yard_manager"}, cfg)
+		code, body, _ := runGated(t, f, g, access, gatedStaffHeaders(t, f))
+		if code != http.StatusForbidden || body != string(BodyForbidden) {
+			t.Fatalf("status %d body %s, want the RBAC-403 the gate writes for every named-list refusal", code, body)
+		}
+		// The same configuration keeps the listed branch manager admitted, so the refusal is the
+		// list and not the cell edit.
+		gListed := gateOverRoles(t, f, []string{"branch_manager"}, cfg)
+		code, body, _ = runGated(t, f, gListed, access, gatedStaffHeaders(t, f))
+		if code != http.StatusOK {
+			t.Fatalf("the listed branch manager was refused under the same configuration: status %d body %s", code, body)
+		}
+	})
+	t.Run("a dealer adding a setter admits it with no code change", func(t *testing.T) {
+		doc := mustDefaultDocument(t)
+		cellChanged := false
+		for i := range doc.Cells {
+			if doc.Cells[i].Role == "general_manager" && doc.Cells[i].Surface == "dispatch-board" {
+				doc.Cells[i].Level = roleconfig.LevelManage
+				cellChanged = true
+			}
+		}
+		if !cellChanged {
+			t.Fatal("the default document lacks the general manager's dispatch-board cell")
+		}
+		var setters []string
+		if err := json.Unmarshal(doc.Settings[roleconfig.SettingDispatchPolicySetters], &setters); err != nil {
+			t.Fatalf("decode the default setters list: %v", err)
+		}
+		setters = append(setters, "general_manager")
+		raw, err := json.Marshal(setters)
+		if err != nil {
+			t.Fatalf("encode the edited setters list: %v", err)
+		}
+		doc.Settings[roleconfig.SettingDispatchPolicySetters] = raw
+		cfg, err := roleconfig.Validate(doc)
+		if err != nil {
+			t.Fatalf("Validate on the modified document: %v", err)
+		}
+		f := newFixture(t)
+		g := gateOverRoles(t, f, []string{"general_manager"}, cfg)
+		code, body, _ := runGated(t, f, g, access, gatedStaffHeaders(t, f))
+		if code != http.StatusOK {
+			t.Fatalf("the configured setter was refused the policy write: status %d body %s", code, body)
+		}
+	})
 }
 
 // mustDefaultDocument decodes the embedded decided default into its
