@@ -340,4 +340,18 @@ export const yardStyles = css`
   .branch-pill { background: transparent; border: 2px solid var(--hh-control-line); }
   .pick-no, [data-pick-order] { font-variant-numeric: normal; font-feature-settings: normal; }
   .pick-head-pills { display: inline-flex; gap: var(--hh-s-8); align-items: center; flex-wrap: wrap; }
+
+  /* The changes waiting on the yard: the landing's door, and the waiting
+     rows. The door names its count; the rows are the pull list's shape (one
+     big tappable row, the change's own words under the order number). */
+  .door-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--hh-s-12);
+    margin: 0 0 var(--hh-s-12);
+  }
+  .change-card { padding: 0; }
+  .change-card .line-row { width: 100%; border: 0; background: transparent; }
+  .change-card .line-sub { overflow-wrap: anywhere; }
 `;

@@ -23,12 +23,13 @@
 // row 563 (take the existing and improve it).
 import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
-import type { YardLine, YardPick, YardPickedLine, YardShortage, YardTask } from "./yard-api.js";
+import type { YardChange, YardLine, YardPick, YardPickedLine, YardShortage, YardTask } from "./yard-api.js";
 import {
   STATUS_LABEL,
   SHORT_REASONS,
   actionLabel,
   ageLabel,
+  changeStatusWord,
   isUnclaimed,
   lineIsShort,
   mtoLabel,
@@ -109,6 +110,8 @@ export interface QueueModel {
   readonly error: string;
   readonly notice: string;
   readonly moreBehind: boolean;
+  /** The waiting changes' count as the last read left it, or null when it is not known. */
+  readonly changesWaiting: string | null;
 }
 
 function pickCard(entry: YardPick, me: string, busy: boolean): TemplateResult {
@@ -190,6 +193,10 @@ export function renderQueue(model: QueueModel): TemplateResult {
       <button type="button" class="btn btn-secondary" data-action="reload" data-tap>Refresh</button>
     </div>
     <h1>Pick queue</h1>
+    <button type="button" class="btn btn-secondary big door-row" data-action="open-changes" data-changes-door data-tap>
+      <span>Changes waiting on the yard</span>
+      ${model.changesWaiting !== null ? html`<span class="pill branch-pill" data-changes-count>${model.changesWaiting}</span>` : nothing}
+    </button>
     ${renderMessages(model.error, model.notice)}
     ${body}
     ${model.picks.length > 0 || model.phase === "ready"
@@ -541,6 +548,68 @@ export function renderPick(model: PickModel): TemplateResult {
         ${t.status === "STAGED" || t.status === "DONE" ? stageBox(t) : t.status === "IN_PROGRESS" ? stageCard() : nothing}
       </div>
     </div>
+  `;
+}
+
+// ---- the changes waiting on the yard (change orders, the yard's stage) ----
+
+export interface ChangesModel {
+  readonly phase: "loading" | "ready" | "error";
+  readonly changes: readonly YardChange[];
+  readonly moreBehind: boolean;
+  readonly busy: boolean;
+  readonly error: string;
+  readonly notice: string;
+}
+
+/** One waiting change, the board's row shape: what it is, who asked, how long it has waited. */
+function changeRow(change: YardChange): TemplateResult {
+  return html`
+    <section class="card change-card" data-change-row data-change-id=${change.id}>
+      <button
+        type="button"
+        class="line-row"
+        data-action="open-change"
+        data-change-id=${change.id}
+        aria-label=${`Change ${change.change_no} on ${change.order_no}`}
+        data-tap
+      >
+        <span class="line-main">
+          <span class="line-desc" data-change-no>${change.order_no}</span>
+          <span class="line-sub">"${change.reason}"</span>
+          <span class="line-sub">asked by ${change.requested_by_role !== "" ? change.requested_by_role : "the counter"} · waiting ${ageLabel(change.requested_at, new Date())}</span>
+        </span>
+        <span class="status status-active" data-change-status>${changeStatusWord(change.status)}</span>
+      </button>
+    </section>
+  `;
+}
+
+/** The yard's own stage of the ladder: the changes the counter has asked the yard to answer. */
+export function renderChanges(model: ChangesModel): TemplateResult {
+  let body: TemplateResult;
+  if (model.phase === "loading" && model.changes.length === 0) {
+    body = html`<p class="dim" role="status">Checking for changes.</p>`;
+  } else if (model.phase === "ready" && model.changes.length === 0) {
+    body = html`
+      <div class="card empty" data-changes-empty>
+        <p class="empty-head">Nothing is waiting on the yard.</p>
+        <p class="dim">The counter raises a change on an order once the pick has started. It lands here for you to acknowledge.</p>
+      </div>
+    `;
+  } else {
+    body = html`
+      ${model.changes.map(changeRow)}
+      ${model.moreBehind
+        ? html`<button type="button" class="btn btn-secondary big" data-action="more-changes" data-tap>Show more behind</button>`
+        : nothing}
+    `;
+  }
+  return html`
+    <button type="button" class="back" data-action="back" data-tap>Back to the queue</button>
+    <h1>Changes waiting on the yard</h1>
+    ${renderMessages(model.error, model.notice)}
+    ${body}
   `;
 }
 

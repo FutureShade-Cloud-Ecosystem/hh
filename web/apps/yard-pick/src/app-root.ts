@@ -29,7 +29,7 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
-import { YardApi, type YardPick, type YardRecordLine } from "./yard-api.js";
+import { YardApi, type YardChange, type YardPick, type YardRecordLine } from "./yard-api.js";
 import {
   RESOLVE_WALL_NAMES,
   actionDone,
@@ -47,7 +47,7 @@ import {
   yardError,
 } from "./yard-logic.js";
 import { yardStyles } from "./styles.js";
-import { renderEntry, renderPick, renderQueue, type EntryView } from "./views.js";
+import { renderEntry, renderChanges, renderPick, renderQueue, type EntryView } from "./views.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -99,8 +99,15 @@ export class YardPickApp extends HHElement {
   #moreBehind = false;
   #nextCursor = "";
 
-  // The open pick.
-  #view: { kind: "queue" } | { kind: "pick"; id: string } = { kind: "queue" };
+  // The changes waiting on the yard: the list behind the landing's door, the
+  // door's count, and the open one. The count is the last read's answer as a
+  // word ("2", "50+" when a page came back full), null when nothing is known.
+  #view: { kind: "queue" } | { kind: "pick"; id: string } | { kind: "changes" } = { kind: "queue" };
+  #changes: YardChange[] = [];
+  #changesPhase: "loading" | "ready" | "error" = "loading";
+  #changesWaiting: string | null = null;
+  #moreChangesBehind = false;
+  #nextChangesCursor = "";
   #pick: YardPick | null = null;
   #drafts = new Map<number, Draft>();
   #editing: number | null = null;
@@ -164,14 +171,24 @@ export class YardPickApp extends HHElement {
       if (flow !== "") void this.#chooseFlow(flow);
       return;
     }
+    if (action === "open-changes") {
+      this.#openChanges();
+      return;
+    }
+    if (action === "more-changes") {
+      void this.#loadChanges(false);
+      return;
+    }
     if (action === "back") {
       this.#view = { kind: "queue" };
       this.#pick = null;
       this.#error = "";
       this.#notice = "";
       // Back re-reads the whole board: a pick that moved while it was open
-      // must not ride beside its own stale row.
+      // must not ride beside its own stale row. The waiting changes' count
+      // re-reads with it: a change answered elsewhere must not linger.
       void this.#loadQueue(true);
+      void this.#loadChangesCount();
       return;
     }
     if (action === "claim") {
@@ -414,6 +431,45 @@ export class YardPickApp extends HHElement {
     this.#branchId = branches.value[0]?.id ?? "";
     this.#branchName = branches.value[0]?.name ?? "";
     await this.#loadQueue(true);
+    void this.#loadChangesCount();
+  }
+
+  /** The landing door's count: one light read, the word the board shows ("2", "50+"). */
+  async #loadChangesCount(): Promise<void> {
+    const answer = await this.#yard.changeQueue("PENDING_YARD");
+    this.#changesWaiting = answer.ok
+      ? answer.value.nextCursor !== ""
+        ? `${answer.value.changes.length}+`
+        : String(answer.value.changes.length)
+      : null;
+    this.requestUpdate();
+  }
+
+  /** The changes view's list: one page at a time, oldest first, the server's order. */
+  async #loadChanges(reset: boolean): Promise<void> {
+    if (reset) this.#changesPhase = "loading";
+    this.requestUpdate();
+    const cursor = reset ? "" : this.#nextChangesCursor;
+    const answer = await this.#yard.changeQueue("PENDING_YARD", cursor);
+    if (answer.ok) {
+      this.#changes = reset ? answer.value.changes : [...this.#changes, ...answer.value.changes];
+      this.#nextChangesCursor = answer.value.nextCursor;
+      this.#moreChangesBehind = answer.value.nextCursor !== "";
+      this.#changesPhase = "ready";
+      this.#changesWaiting = this.#moreChangesBehind ? `${this.#changes.length}+` : String(this.#changes.length);
+      this.#error = "";
+    } else {
+      this.#changesPhase = this.#changes.length > 0 ? "ready" : "error";
+      this.#error = yardError(answer.error, answer.status, "The changes did not load. Check your signal and try again.");
+    }
+    this.requestUpdate();
+  }
+
+  #openChanges(): void {
+    this.#view = { kind: "changes" };
+    this.#error = "";
+    this.#notice = "";
+    this.#loadChanges(true);
   }
 
   async #loadQueue(reset: boolean): Promise<void> {
@@ -789,6 +845,11 @@ export class YardPickApp extends HHElement {
     this.#notice = "";
     this.#view = { kind: "queue" };
     this.#pick = null;
+    this.#changes = [];
+    this.#changesPhase = "loading";
+    this.#changesWaiting = null;
+    this.#moreChangesBehind = false;
+    this.#nextChangesCursor = "";
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -824,6 +885,16 @@ export class YardPickApp extends HHElement {
         skidReason: this.#skidReason,
       });
     }
+    if (this.#view.kind === "changes") {
+      return renderChanges({
+        phase: this.#changesPhase,
+        changes: this.#changes,
+        moreBehind: this.#moreChangesBehind,
+        busy: this.#busy,
+        error: this.#error,
+        notice: this.#notice,
+      });
+    }
     return renderQueue({
       phase: this.#phase,
       branchName: this.#branchName,
@@ -832,6 +903,7 @@ export class YardPickApp extends HHElement {
       error: this.#error,
       notice: this.#notice,
       moreBehind: this.#moreBehind,
+      changesWaiting: this.#changesWaiting,
     });
   }
 
