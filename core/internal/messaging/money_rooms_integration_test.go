@@ -14,9 +14,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
@@ -210,5 +213,112 @@ func TestIntegration_MoneyRooms_AddMemberRefusesANonFinanceRole(t *testing.T) {
 	}
 	if !errors.Is(err, ErrTargetNotInRoom) {
 		t.Fatalf("refusal = %v, want ErrTargetNotInRoom", err)
+	}
+}
+
+// plantMoneyProbe makes one active user holding one role, granted Trenton, and
+// cleans every row of it up at the end.
+func plantMoneyProbe(t *testing.T, ctx context.Context, pool *pgxpool.Pool, email, role string) string {
+	t.Helper()
+	var id string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO users (email, display_name, status) VALUES ($1, 'Money room probe', 'ACTIVE') RETURNING id::text`,
+		email).Scan(&id); err != nil {
+		t.Fatalf("plant %s: %v", role, err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM msg_members WHERE user_id = $1`, id)
+		_, _ = pool.Exec(ctx, `DELETE FROM user_branch_grants WHERE user_id = $1`, id)
+		_, _ = pool.Exec(ctx, `DELETE FROM user_roles WHERE user_id = $1`, id)
+		_, _ = pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
+	})
+	if _, err := pool.Exec(ctx, `INSERT INTO user_roles (user_id, role_id) SELECT $1, r.id FROM roles r WHERE r.code = $2`, id, role); err != nil {
+		t.Fatalf("role %s: %v", role, err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO user_branch_grants (user_id, branch_id) VALUES ($1, $2)`, id, branchTrenton); err != nil {
+		t.Fatalf("grant %s: %v", role, err)
+	}
+	return id
+}
+
+// Case A: an EXPLICIT seat an admin legitimately gave a finance user must not
+// outlive the finance role. The sync that follows the role change takes it.
+func TestIntegration_MoneyRooms_SyncDropsAnExplicitSeatAfterTheRoleChange(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	repo := NewRepository(pool)
+	id := plantMoneyProbe(t, ctx, pool, "money-room-explicit@fixture.test", "PAYABLES_RECEIVABLES")
+	var room string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM msg_channels WHERE slug = 'payments-trenton'`).Scan(&room); err != nil {
+		t.Fatalf("the payments room: %v", err)
+	}
+	if _, err := repo.AddChannelMember(ctx, room, id); err != nil {
+		t.Fatalf("seat the finance user: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE user_roles SET role_id = (SELECT id FROM roles WHERE code = 'INSIDE_SALES') WHERE user_id = $1`, id); err != nil {
+		t.Fatalf("change the role: %v", err)
+	}
+	if err := repo.SyncMembership(ctx, id); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if ok, _ := repo.IsMember(ctx, room, id); ok {
+		t.Fatalf("an inside sales user keeps an EXPLICIT seat in payments-trenton after the role change and sync")
+	}
+}
+
+// Case B: seats the rooms already held when the list arrived (derived by the
+// old open rule, or explicit under the old add that had no role wall) are
+// removed by the migration itself, not at each user's next sync.
+func TestIntegration_MoneyRooms_MigrationRemovesTheSeatsOfNonFinanceUsers(t *testing.T) {
+	ctx := context.Background()
+	pool := intPool(t)
+	bad := plantMoneyProbe(t, ctx, pool, "money-room-pre-bad@fixture.test", "INSIDE_SALES")
+	good := plantMoneyProbe(t, ctx, pool, "money-room-pre-good@fixture.test", "FINANCIAL_CONTROLLER")
+	for _, u := range []struct{ id, src string }{{bad, "DERIVED"}, {good, "DERIVED"}} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO msg_members (channel_id, user_id, role, source)
+			SELECT ch.id, $1, 'MEMBER', $2 FROM msg_channels ch
+			WHERE ch.auto_scope IS NOT NULL AND (ch.slug = 'finance' OR ch.slug = 'payments' OR ch.slug LIKE 'payments-%')`,
+			u.id, u.src); err != nil {
+			t.Fatalf("plant the old seats: %v", err)
+		}
+	}
+	// A second non finance user holds only explicit seats, as the old add allowed.
+	badExplicit := plantMoneyProbe(t, ctx, pool, "money-room-pre-explicit@fixture.test", "YARD_MANAGER")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO msg_members (channel_id, user_id, role, source)
+		SELECT ch.id, $1, 'MEMBER', 'EXPLICIT' FROM msg_channels ch
+		WHERE ch.auto_scope IS NOT NULL AND (ch.slug = 'finance' OR ch.slug = 'payments' OR ch.slug LIKE 'payments-%')`,
+		badExplicit); err != nil {
+		t.Fatalf("plant the old explicit seats: %v", err)
+	}
+
+	sqlText, err := os.ReadFile("../../db/migrations/0389_msg_money_rooms_member_roles.sql")
+	if err != nil {
+		t.Fatalf("read the migration: %v", err)
+	}
+	if _, err := pool.Exec(ctx, string(sqlText)); err != nil {
+		t.Fatalf("re-apply the migration: %v", err)
+	}
+
+	count := func(id string) int {
+		var n int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM msg_members m JOIN msg_channels ch ON ch.id = m.channel_id
+			WHERE m.user_id = $1 AND ch.auto_scope IS NOT NULL
+			  AND (ch.slug = 'finance' OR ch.slug = 'payments' OR ch.slug LIKE 'payments-%')`, id).Scan(&n); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		return n
+	}
+	if n := count(bad); n != 0 {
+		t.Errorf("the migration left %d derived money room seats of an inside sales user", n)
+	}
+	if n := count(badExplicit); n != 0 {
+		t.Errorf("the migration left %d explicit money room seats of a yard manager", n)
+	}
+	if n := count(good); n == 0 {
+		t.Errorf("the migration removed the seats of a finance user")
 	}
 }

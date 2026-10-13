@@ -207,6 +207,40 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 		changed = append(changed, pruned...)
 	}
 
+	// A room carrying a member_roles list is a fence for EVERY seat source: an EXPLICIT row the
+	// user holds there, given while they held one of the roles (or before the list existed), goes
+	// when they hold none of them now. It owes the feed the same bump as any other prune.
+	if status == "ACTIVE" {
+		rows, err := tx.Query(ctx, `
+			DELETE FROM msg_members m
+			USING msg_channels ch
+			WHERE m.user_id = $1
+			  AND m.source = 'EXPLICIT'
+			  AND ch.id = m.channel_id
+			  AND ch.member_roles IS NOT NULL
+			  AND NOT EXISTS (
+			        SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+			        WHERE ur.user_id = $1 AND ro.code::text = ANY(ch.member_roles))
+			RETURNING m.channel_id`, userID)
+		if err != nil {
+			return fmt.Errorf("prune fenced explicit members: %w", err)
+		}
+		var pruned []string
+		for rows.Next() {
+			var ch string
+			if err := rows.Scan(&ch); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan pruned channel: %w", err)
+			}
+			pruned = append(pruned, ch)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("prune fenced explicit members: %w", err)
+		}
+		changed = append(changed, pruned...)
+	}
+
 	// Each changed room owes the feed one bump, and each bump takes the room's row lock. The ids are
 	// bumped in ONE sorted order across seats and prunes alike, so two syncs that cross (one gaining
 	// room A and losing room B while another gains B and loses A) take their locks in the same order

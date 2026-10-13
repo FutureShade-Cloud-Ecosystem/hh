@@ -21,7 +21,8 @@
 -- a system row carries; a caller founded room is never touched (and the
 -- payments- family is reserved against founding besides).
 --
--- Forward only, additive only.
+-- Forward only. The column is additive; the closing DELETE removes the seats
+-- the list forbids (see its note below).
 
 ALTER TABLE msg_channels ADD COLUMN IF NOT EXISTS member_roles TEXT[];
 
@@ -29,3 +30,15 @@ UPDATE msg_channels
    SET member_roles = ARRAY['PAYABLES_RECEIVABLES','FINANCIAL_CONTROLLER','GENERAL_MANAGER']
  WHERE auto_scope IS NOT NULL
    AND (slug = 'finance' OR slug = 'payments' OR slug LIKE 'payments-%');
+
+-- Seats the rooms already held, under the old open rule (derived) or the old
+-- add that had no role wall (explicit), go now: a session already open must
+-- not keep reading until its user's own next sync. The sync fences every seat
+-- source from here on. Own table only.
+DELETE FROM msg_members m
+ USING msg_channels ch
+ WHERE ch.id = m.channel_id
+   AND ch.member_roles IS NOT NULL
+   AND NOT EXISTS (
+         SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+         WHERE ur.user_id = m.user_id AND ro.code::text = ANY(ch.member_roles));
