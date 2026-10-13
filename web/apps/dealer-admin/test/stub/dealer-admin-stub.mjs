@@ -1380,6 +1380,87 @@ async function handle(req, res) {
     return json(res, { items: priceFileRuns, next_cursor: null, limit: 100 });
   }
 
+  // ---- the low margin report ----
+
+  if (req.method === "GET" && path === "/api/v1/pricing/reports/low-margin/scan") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const items = scenario === "empty-pricing"
+      ? []
+      : [
+          {
+            doc_type: "quote",
+            line_id: "0c110000-0000-4000-9000-0000000000a1",
+            doc_id: "0c110000-0000-4000-9000-0000000000b1",
+            doc_no: "Q-1042",
+            doc_at: "2026-09-20T15:30:00Z",
+            branch_id: BRANCHES[0].id,
+            customer_id: "cu110000-0000-4000-9000-0000000000a1",
+            customer_type: "RETAIL",
+            product_id: "fa110000-0000-4000-9000-0000000000a1",
+            sku: "PAV-60-CH",
+            product_name: "Paver 60 Charcoal",
+            qty_entered: 120,
+            uom_entered: "SF",
+            unit_price_cents: 420,
+            price_uom: "SF",
+            cost_in_price_uom_cents: 300,
+            margin_bps: 2857,
+            target_bps: 3500,
+            floor_bps: 2000,
+            level: "warn",
+            salesperson_id: "da110000-0000-4000-9000-000000000002",
+            salesperson: "Inside sales (demo)",
+            cleared_below_floor: false,
+          },
+          {
+            doc_type: "order",
+            line_id: "0c110000-0000-4000-9000-0000000000a2",
+            doc_id: "0c110000-0000-4000-9000-0000000000b2",
+            doc_no: "SO-2077",
+            doc_at: "2026-09-28T11:00:00Z",
+            branch_id: BRANCHES[0].id,
+            customer_id: "cu110000-0000-4000-9000-0000000000a1",
+            customer_type: "CONTRACTOR",
+            product_id: "fa110000-0000-4000-9000-0000000000a2",
+            sku: "WAL-8",
+            product_name: "Wall block 8",
+            qty_entered: 40,
+            uom_entered: "EA",
+            unit_price_cents: 210,
+            price_uom: "EA",
+            cost_in_price_uom_cents: 190,
+            margin_bps: 952,
+            target_bps: 3000,
+            floor_bps: 1500,
+            level: "critical",
+            cleared_below_floor: true,
+            cleared_by_id: "da110000-0000-4000-9000-000000000001",
+            cleared_by: "Branch manager (demo)",
+            clear_authority: "MANAGER_SCOPE",
+            clear_disc_pct: 10,
+            clear_margin_bps: 1100,
+          },
+        ];
+    return json(res, { items, next_cursor: null, limit: 200 });
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/reports/low-margin") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const lines = Array.isArray(body?.lines) ? body.lines : [];
+    return json(res, lines.map((line) => ({
+      product_id: String(line?.product_id ?? ""),
+      final_cents: 210,
+      margin_bps: 952,
+      target_bps: 3000,
+      floor_bps: 1500,
+      level: "critical",
+      source: "TIER_CATEGORY",
+      price_uom: String(line?.uom_entered ?? "EA"),
+      invalid: false,
+      reason: "",
+    })));
+  }
+
   // ---- the audit trail ----
 
   if (req.method === "GET" && path === "/api/v1/audit") {

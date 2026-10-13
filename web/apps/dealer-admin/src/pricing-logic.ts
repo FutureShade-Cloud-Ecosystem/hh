@@ -794,6 +794,38 @@ export function priceFileCountsWords(counts: {
   return parts.join(" ");
 }
 
+// -- the low margin tab ------------------------------------------------------------------------------------
+
+/** The low margin tab's empty words. */
+export function lowMarginEmptyWords(): string {
+  return "No committed lines under target or floor in the window. A clean report is the floors working, not the report broken.";
+}
+
+/** One scanned line as the report shows it: the margin against its bounds, the stamp named. */
+export function lowMarginWords(line: {
+  readonly doc_no: string;
+  readonly sku: string;
+  readonly product_name: string;
+  readonly unit_price_cents: number;
+  readonly margin_bps: number;
+  readonly target_bps: number;
+  readonly floor_bps: number;
+  readonly level: string;
+  readonly cleared_below_floor: boolean;
+  readonly cleared_by?: string;
+}): string {
+  const parts: string[] = [
+    `${line.doc_no}: ${line.sku} ${line.product_name}`.trim(),
+    `priced at ${moneyWords(line.unit_price_cents)}`,
+    `margin ${pctWords(line.margin_bps)}, target ${pctWords(line.target_bps)}, floor ${pctWords(line.floor_bps)}`,
+  ];
+  if (line.level === "critical") parts.push("below floor");
+  else if (line.level === "warn") parts.push("below target");
+  else if (line.level === "invalid") parts.push("cannot be graded");
+  if (line.cleared_below_floor) parts.push(`cleared by ${line.cleared_by ?? "a manager"}`);
+  return parts.join(", ");
+}
+
 /** An import's answer, told from the server's own counts. */
 export function importResultWords(result: {
   readonly total_lines: number;

@@ -752,6 +752,90 @@ function toPriceFileRunRow(raw: unknown): PriceFileRunRow {
   };
 }
 
+// -- the low margin report ---------------------------------------------------------------------------------
+
+/** One scanned line: a committed document line graded at cost. */
+export interface LowMarginScanRow {
+  readonly doc_type: string;
+  readonly doc_id: string;
+  readonly doc_no: string;
+  readonly doc_at: string;
+  readonly sku: string;
+  readonly product_name: string;
+  readonly qty_entered: number;
+  readonly uom_entered: string;
+  readonly unit_price_cents: number;
+  readonly margin_bps: number;
+  readonly target_bps: number;
+  readonly floor_bps: number;
+  readonly level: string;
+  readonly reason: string;
+  readonly salesperson: string;
+  readonly cleared_below_floor: boolean;
+  readonly cleared_by: string;
+}
+
+function toLowMarginScanRow(raw: unknown): LowMarginScanRow {
+  const r = bag(raw);
+  return {
+    doc_type: text(r.doc_type),
+    doc_id: text(r.doc_id),
+    doc_no: text(r.doc_no),
+    doc_at: text(r.doc_at),
+    sku: text(r.sku),
+    product_name: text(r.product_name),
+    qty_entered: num(r.qty_entered),
+    uom_entered: text(r.uom_entered),
+    unit_price_cents: num(r.unit_price_cents),
+    margin_bps: num(r.margin_bps),
+    target_bps: num(r.target_bps),
+    floor_bps: num(r.floor_bps),
+    level: text(r.level),
+    reason: text(r.reason),
+    salesperson: text(r.salesperson),
+    cleared_below_floor: bool(r.cleared_below_floor),
+    cleared_by: text(r.cleared_by),
+  };
+}
+
+/** One graded line of a proposed batch: clean lines are omitted by the server. */
+export interface LowMarginEntry {
+  readonly product_id: string;
+  readonly final_cents: number;
+  readonly margin_bps: number;
+  readonly target_bps: number;
+  readonly floor_bps: number;
+  readonly level: string;
+  readonly source: string;
+  readonly price_uom: string;
+  readonly invalid: boolean;
+  readonly reason: string;
+}
+
+function toLowMarginEntry(raw: unknown): LowMarginEntry {
+  const r = bag(raw);
+  return {
+    product_id: text(r.product_id),
+    final_cents: num(r.final_cents),
+    margin_bps: num(r.margin_bps),
+    target_bps: num(r.target_bps),
+    floor_bps: num(r.floor_bps),
+    level: text(r.level),
+    source: text(r.source),
+    price_uom: text(r.price_uom),
+    invalid: bool(r.invalid),
+    reason: text(r.reason),
+  };
+}
+
+export interface LowMarginScanQuery {
+  readonly from?: string;
+  readonly to?: string;
+  readonly doc_type?: string;
+  readonly cleared_only?: boolean;
+  readonly sort?: string;
+}
+
 // -- the customer overrides --------------------------------------------------------------------------
 
 /** One customer category override as the screens use it. */
@@ -1218,6 +1302,43 @@ export class PricingApi {
     const answer = await staffPricing.pricingListPriceFileRuns(this.#client, { limit: 100 });
     if (!answer.ok) return answer;
     return { ok: true, value: page(answer.value).map(toPriceFileRunRow) };
+  }
+
+  // -- the low margin report --------------------------------------------------------------------------------
+
+  /** The committed lines under target or floor, graded at cost, newest window first. */
+  async lowMarginScan(query: LowMarginScanQuery = {}): Promise<Result<readonly LowMarginScanRow[]>> {
+    const answer = await staffPricing.pricingLowMarginScan(this.#client, {
+      limit: 200,
+      from: query.from === "" ? undefined : query.from,
+      to: query.to === "" ? undefined : query.to,
+      doc_type: query.doc_type === "" || query.doc_type === undefined ? undefined : (query.doc_type as "quotes" | "orders" | "both"),
+      cleared_only: query.cleared_only === undefined ? undefined : query.cleared_only,
+      sort: query.sort === "" || query.sort === undefined ? undefined : (query.sort as "margin_asc" | "margin_desc"),
+    });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toLowMarginScanRow) };
+  }
+
+  /** Grade proposed lines through the resolver: the server names the breaches. */
+  async lowMarginReport(lines: readonly { customer_id: string; customer_type: string; product_id: string; category_id: string; branch_id: string; qty_entered: number; uom_entered: string; cost_cents: number }[]): Promise<Result<readonly LowMarginEntry[]>> {
+    const answer = await staffPricing.pricingLowMarginReport(this.#client, {
+      lines: lines.map((l) => ({
+        customer_id: l.customer_id,
+        customer_type: l.customer_type,
+        product_id: l.product_id,
+        category_id: l.category_id,
+        branch_id: l.branch_id,
+        qty_entered: l.qty_entered,
+        uom_entered: l.uom_entered,
+        cost_cents: l.cost_cents,
+        has_approved_override: false,
+        doc_ref_type: "quote",
+        doc_ref_id: "",
+      })),
+    });
+    if (!answer.ok) return answer;
+    return { ok: true, value: (Array.isArray(answer.value) ? answer.value : []).map(toLowMarginEntry) };
   }
 
   // -- the floor warning ------------------------------------------------------------------------------

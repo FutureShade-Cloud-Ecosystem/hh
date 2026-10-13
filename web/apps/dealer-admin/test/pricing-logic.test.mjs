@@ -472,3 +472,35 @@ test("the preview's counts are the whole file's, with the unpriced diagnostic sa
 test("the price file tab's empty words are its own", () => {
   assert.match(priceFileEmptyWords(), /No manufacturer price files yet/);
 });
+
+// -- the low margin tab -----------------------------------------------------------------------------------
+
+import {
+  lowMarginEmptyWords,
+  lowMarginWords,
+} from "../src/pricing-logic.ts";
+
+test("a scanned line reads as its margin against its target and floor, the stamp named", () => {
+  const words = lowMarginWords({
+    doc_no: "Q-1042",
+    sku: "PAV-60-CH",
+    product_name: "Paver 60 Charcoal",
+    unit_price_cents: 420,
+    margin_bps: 1500,
+    target_bps: 3500,
+    floor_bps: 2000,
+    level: "critical",
+    cleared_below_floor: true,
+    cleared_by: "Branch manager (demo)",
+  });
+  assert.match(words, /Q-1042/);
+  assert.match(words, /PAV-60-CH/);
+  assert.match(words, /15\.00%/);
+  assert.match(words, /floor 20\.00%/);
+  assert.match(words, /cleared by Branch manager \(demo\)/);
+  assert.match(lowMarginWords({ doc_no: "Q-2", sku: "S", product_name: "P", unit_price_cents: 100, margin_bps: 3600, target_bps: 3500, floor_bps: 2000, level: "warn", cleared_below_floor: false }), /below target/);
+});
+
+test("the low margin tab's empty words are its own", () => {
+  assert.match(lowMarginEmptyWords(), /No committed lines under target or floor/);
+});

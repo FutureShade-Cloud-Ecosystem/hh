@@ -57,6 +57,8 @@ import type {
   PriceFileApplyResult,
   PriceFilePreview,
   PriceFileVendorRow,
+  LowMarginEntry,
+  LowMarginScanRow,
 } from "./pricing-api.js";
 import type { PricingOverrideWrite, PricingRulePatch, PricingRuleWrite } from "@hardscapehouse/api-client";
 
@@ -115,6 +117,8 @@ export interface PricingDoor {
   previewPriceFile(vendorId: string, filename: string, file: string, effective?: string): Promise<{ ok: true; value: PriceFilePreview } | { ok: false; error: string; status?: number }>;
   applyPriceFile(vendorId: string, filename: string, file: string, digest: string, effective?: string): Promise<{ ok: true; value: PriceFileApplyResult } | { ok: false; error: string; status?: number }>;
   priceFileRuns(): Promise<{ ok: true; value: readonly { readonly id: string; readonly batch_no: string; readonly source_name: string; readonly source_format: string; readonly created_at: string; readonly counts: { readonly rows: number; readonly changed: number; readonly unknown: number }; readonly imported_by_name: string }[] } | { ok: false; error: string; status?: number }>;
+  lowMarginScan(query?: { from?: string; to?: string; doc_type?: string; cleared_only?: boolean; sort?: string }): Promise<{ ok: true; value: readonly LowMarginScanRow[] } | { ok: false; error: string; status?: number }>;
+  lowMarginReport(lines: readonly { customer_id: string; customer_type: string; product_id: string; category_id: string; branch_id: string; qty_entered: number; uom_entered: string; cost_cents: number }[]): Promise<{ ok: true; value: readonly LowMarginEntry[] } | { ok: false; error: string; status?: number }>;
   previewFloor(body: PricingFloorPreviewRequest): Promise<
     { ok: true; value: FloorPreview } | { ok: false; error: string; status?: number }
   >;
@@ -414,6 +418,38 @@ export interface ProfileEdit {
 }
 
 /** The price file form: the vendor, the file, the date, the digest echo. */
+/** The low margin scan's filters, as the controls last answered. */
+export interface LowMarginFilters {
+  readonly docType: string;
+  readonly clearedOnly: boolean;
+  readonly sort: string;
+  readonly from: string;
+  readonly to: string;
+}
+
+/** The one proposed line the grader carries. */
+export interface LowMarginProbe {
+  readonly customerId: string;
+  readonly customerType: string;
+  readonly productId: string;
+  readonly categoryId: string;
+  readonly qtyInput: string;
+  readonly uomInput: string;
+  readonly costInput: string;
+  readonly busy: boolean;
+  readonly error: string;
+  readonly entries: readonly LowMarginEntry[];
+}
+
+export interface LowMarginModel {
+  readonly phase: LoadPhase;
+  readonly rows: readonly LowMarginScanRow[];
+  readonly filters: LowMarginFilters;
+  readonly error: string;
+  readonly busy: boolean;
+  readonly probe: LowMarginProbe;
+}
+
 export interface PriceFileModel {
   readonly vendorsPhase: LoadPhase;
   readonly vendors: readonly PriceFileVendorRow[];
@@ -505,6 +541,7 @@ export interface PricingModel {
   readonly uom: UomModel;
   readonly batches: BatchesModel;
   readonly priceFile: PriceFileModel;
+  readonly lowMargin: LowMarginModel;
 }
 
 function emptyMargin(): MarginModel {
@@ -600,6 +637,28 @@ function emptyPriceFile(): PriceFileModel {
   };
 }
 
+function emptyLowMargin(): LowMarginModel {
+  return {
+    phase: "idle",
+    rows: [],
+    filters: { docType: "both", clearedOnly: false, sort: "margin_asc", from: "", to: "" },
+    error: "",
+    busy: false,
+    probe: {
+      customerId: "",
+      customerType: "RETAIL",
+      productId: "",
+      categoryId: "",
+      qtyInput: "",
+      uomInput: "SF",
+      costInput: "",
+      busy: false,
+      error: "",
+      entries: [],
+    },
+  };
+}
+
 function emptyBatches(): BatchesModel {
   return {
     phase: "idle",
@@ -674,6 +733,7 @@ function emptyModel(): PricingModel {
     uom: emptyUom(),
     batches: emptyBatches(),
     priceFile: emptyPriceFile(),
+    lowMargin: emptyLowMargin(),
   };
 }
 
@@ -762,6 +822,14 @@ export class PricingController {
 
   #setPriceFile(patch: Partial<PriceFileModel>): void {
     this.#set({ priceFile: { ...this.model.priceFile, ...patch } });
+  }
+
+  #setLowMargin(patch: Partial<LowMarginModel>): void {
+    this.#set({ lowMargin: { ...this.model.lowMargin, ...patch } });
+  }
+
+  #setProbeMargin(patch: Partial<LowMarginProbe>): void {
+    this.#set({ lowMargin: { ...this.model.lowMargin, probe: { ...this.model.lowMargin.probe, ...patch } } });
   }
 
   #setOpen(patch: Partial<OpenBatch>): void {
@@ -956,6 +1024,21 @@ export class PricingController {
     }
     if (field === "batch-csv") this.#setOpen({ importText: value });
     if (field === "pf-effective") this.#setPriceFile({ effective: value });
+    {
+      const probe = this.model.lowMargin.probe;
+      const lmText: Partial<Record<string, keyof LowMarginProbe>> = {
+        "lm-customer": "customerId",
+        "lm-product": "productId",
+        "lm-category": "categoryId",
+        "lm-qty": "qtyInput",
+        "lm-uom": "uomInput",
+        "lm-cost": "costInput",
+      };
+      const lmKey = lmText[field];
+      if (lmKey !== undefined) this.#setProbeMargin({ [lmKey]: value } as Partial<LowMarginProbe>);
+      if (field === "lm-from") this.#setLowMargin({ filters: { ...this.model.lowMargin.filters, from: value } });
+      if (field === "lm-to") this.#setLowMargin({ filters: { ...this.model.lowMargin.filters, to: value } });
+    }
     const profileEdit = this.model.batches.profileEdit;
     if (profileEdit !== null) {
       const profileText: Partial<Record<string, keyof ProfileEdit>> = {
@@ -1047,6 +1130,10 @@ export class PricingController {
     }
     if (field === "acc-source-type") this.#setAccrual({ sourceType: value });
     if (field === "batches-status") this.#setBatches({ statusFilter: value });
+    if (field === "lm-doc-type") this.#setLowMargin({ filters: { ...this.model.lowMargin.filters, docType: value } });
+    if (field === "lm-sort") this.#setLowMargin({ filters: { ...this.model.lowMargin.filters, sort: value } });
+    if (field === "lm-cleared") this.#setLowMargin({ filters: { ...this.model.lowMargin.filters, clearedOnly: value === "yes" } });
+    if (field === "lm-customer-type") this.#setProbeMargin({ customerType: value });
     if (field === "pf-vendor") {
       const hit = this.model.priceFile.vendors.find((v) => v.name === value);
       if (hit !== undefined) this.#setPriceFile({ vendorId: hit.vendor_id });
@@ -1297,6 +1384,30 @@ export class PricingController {
       }
       case "pf-effective":
         return this.model.priceFile.effective;
+      case "lm-doc-type":
+        return this.model.lowMargin.filters.docType;
+      case "lm-sort":
+        return this.model.lowMargin.filters.sort;
+      case "lm-cleared":
+        return this.model.lowMargin.filters.clearedOnly ? "yes" : "no";
+      case "lm-from":
+        return this.model.lowMargin.filters.from;
+      case "lm-to":
+        return this.model.lowMargin.filters.to;
+      case "lm-customer":
+        return this.model.lowMargin.probe.customerId;
+      case "lm-customer-type":
+        return this.model.lowMargin.probe.customerType;
+      case "lm-product":
+        return this.model.lowMargin.probe.productId;
+      case "lm-category":
+        return this.model.lowMargin.probe.categoryId;
+      case "lm-qty":
+        return this.model.lowMargin.probe.qtyInput;
+      case "lm-uom":
+        return this.model.lowMargin.probe.uomInput;
+      case "lm-cost":
+        return this.model.lowMargin.probe.costInput;
       case "batch-no":
         return this.model.batches.creating?.batchNo ?? "";
       case "batch-vendor":
@@ -1372,6 +1483,7 @@ export class PricingController {
         if (tab === "uom" && this.model.uom.phase === "idle") await this.loadUom();
         if (tab === "batches" && this.model.batches.phase === "idle") await this.loadBatches();
         if (tab === "pricefile" && this.model.priceFile.vendorsPhase === "idle") await this.loadPriceFile();
+        if (tab === "lowmargin" && this.model.lowMargin.phase === "idle") await this.loadLowMargin();
         return;
       }
       case "pr-reload-margin":
@@ -1606,6 +1718,20 @@ export class PricingController {
         return;
       case "pr-pf-apply":
         await this.#applyPriceFile();
+        return;
+      // -- the low margin tab --
+      case "pr-lm-apply":
+        await this.loadLowMargin();
+        return;
+      case "pr-lm-clear":
+        this.#setLowMargin({ filters: { ...this.model.lowMargin.filters, docType: "both", clearedOnly: false, sort: "margin_asc", from: "", to: "" } });
+        await this.loadLowMargin();
+        return;
+      case "pr-lm-reload":
+        await this.loadLowMargin();
+        return;
+      case "pr-lm-grade":
+        await this.#gradeLine();
         return;
       case "pr-break-drop-item": {
         const editing = this.model.breaks.editing;
@@ -3155,6 +3281,65 @@ export class PricingController {
     await this.loadPriceFile();
     // The runs re-read answered the load; the staged words stay on the glass.
     this.#setPriceFile({ applyResult: `Staged into batch ${r.batch_no}: ${r.staged} change lines written.${profile}` });
+  }
+  // -- the low margin tab ---------------------------------------------------------------------------------
+
+  async loadLowMargin(): Promise<void> {
+    this.#setLowMargin({ ...emptyLowMargin(), filters: this.model.lowMargin.filters, probe: this.model.lowMargin.probe });
+    const f = this.model.lowMargin.filters;
+    const result = await this.#door.lowMarginScan({
+      doc_type: f.docType,
+      cleared_only: f.clearedOnly,
+      sort: f.sort,
+      from: f.from === "" ? undefined : `${f.from}T00:00:00Z`,
+      to: f.to === "" ? undefined : `${f.to}T23:59:59Z`,
+    });
+    if (!result.ok) {
+      this.#setLowMargin({
+        phase: result.status === 403 ? "refused" : "error",
+        error: pricingRefusalWords(result.error, result.status, "read"),
+      });
+      return;
+    }
+    this.#setLowMargin({ phase: "ready", rows: result.value });
+  }
+
+  /** One proposed line through the resolver; the server names the breaches. */
+  async #gradeLine(): Promise<void> {
+    const probe = this.model.lowMargin.probe;
+    if (probe.busy) return;
+    const qty = Number(probe.qtyInput.trim());
+    const cost = centsFromMoneyInput(probe.costInput);
+    if (probe.productId.trim() === "" || probe.customerId.trim() === "") {
+      this.#setProbeMargin({ error: "The line names its customer and its product, by id." });
+      return;
+    }
+    if (probe.qtyInput.trim() === "" || !Number.isFinite(qty) || qty <= 0) {
+      this.#setProbeMargin({ error: "Enter the quantity as a number above zero." });
+      return;
+    }
+    if (cost === null) {
+      this.#setProbeMargin({ error: "Enter the cost basis in dollars per the product's base unit." });
+      return;
+    }
+    this.#setProbeMargin({ busy: true, error: "", entries: [] });
+    const result = await this.#door.lowMarginReport([
+      {
+        customer_id: probe.customerId.trim(),
+        customer_type: probe.customerType,
+        product_id: probe.productId.trim(),
+        category_id: probe.categoryId.trim(),
+        branch_id: "",
+        qty_entered: qty,
+        uom_entered: probe.uomInput.trim(),
+        cost_cents: cost,
+      },
+    ]);
+    if (!result.ok) {
+      this.#setProbeMargin({ busy: false, error: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setProbeMargin({ busy: false, entries: result.value });
   }
 }
 

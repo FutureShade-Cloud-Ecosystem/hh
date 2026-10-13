@@ -34,6 +34,8 @@ import {
   derivationWord,
   importResultWords,
   outcomeWord,
+  lowMarginEmptyWords,
+  lowMarginWords,
   priceFileCountsWords,
   priceFileEmptyWords,
   priceFileOriginWords,
@@ -52,6 +54,7 @@ import {
   overrideValueWords,
   pctWords,
   pricingEmptyWords,
+  priceSourceWord,
   RULE_SCOPES,
   ruleEmptyWords,
   ruleValueWords,
@@ -59,9 +62,11 @@ import {
   validityWords,
   PRICING_TABS,
 } from "./pricing-logic.js";
-import type { BreakRow, ClearanceRow, OverrideRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
+import type { BreakRow, ClearanceRow, LowMarginScanRow as LowMarginScanRowApi, OverrideRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
 type BatchLineRow = Parameters<typeof batchLineWords>[0];
 type PriceFileModel = PricingModel["priceFile"];
+type LowMarginScanRow = LowMarginScanRowApi;
+type LowMarginEntry = PricingModel["lowMargin"]["probe"]["entries"][number];
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
 
 export function renderPricing(model: PricingModel): TemplateResult {
@@ -101,6 +106,7 @@ function renderTab(model: PricingModel): TemplateResult {
   if (model.tab === "uom") return renderUom(model);
   if (model.tab === "batches") return renderBatches(model);
   if (model.tab === "pricefile") return renderPriceFile(model);
+  if (model.tab === "lowmargin") return renderLowMargin(model);
   const tab = PRICING_TABS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
@@ -2167,6 +2173,164 @@ function renderPriceFileRuns(model: PricingModel): TemplateResult {
               </table>
             </div>
           `}
+    </section>
+  `;
+}
+
+// -- the low margin tab ---------------------------------------------------------------------------------
+
+function lowMarginLevelChip(level: string): string {
+  if (level === "critical") return "chip-danger";
+  if (level === "invalid") return "chip-dim";
+  return "chip-warn-word";
+}
+
+export function renderLowMargin(model: PricingModel): TemplateResult {
+  const m = model.lowMargin;
+  return html`
+    ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-lm-loading">Scanning the committed lines…</p>` : nothing}
+    ${m.phase === "error" || m.phase === "refused"
+      ? html`<p class="error-line" data-test="pr-lm-error">${m.error}</p>
+          <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-lm-reload">Try again</button></div>`
+      : nothing}
+    ${m.phase === "ready"
+      ? html`
+          <section class="card">
+            <div class="card-head">
+              <h2 class="card-title">Committed lines under target or floor</h2>
+              <span class="count" data-test="pr-lm-count">${m.rows.length} ${m.rows.length === 1 ? "line" : "lines"}</span>
+            </div>
+            <div class="filters" role="group" aria-label="Scan filters">
+              <select class="select" aria-label="Document type" data-field="pr-lm-doc-type">
+                <option value="both">Quotes and orders</option>
+                <option value="quotes">Quotes only</option>
+                <option value="orders">Orders only</option>
+              </select>
+              <select class="select" aria-label="Sort" data-field="pr-lm-sort">
+                <option value="margin_asc">Thinnest margin first</option>
+                <option value="margin_desc">Fattest margin first</option>
+              </select>
+              <span class="branch-choice"><input type="checkbox" data-field="pr-lm-cleared" /> <span>Cleared only</span></span>
+              <input class="text-field" type="date" aria-label="From" data-field="pr-lm-from" />
+              <input class="text-field" type="date" aria-label="To" data-field="pr-lm-to" />
+              <button type="button" class="btn btn-secondary" data-action="pr-lm-apply">Apply</button>
+              <button type="button" class="btn btn-secondary" data-action="pr-lm-clear">Clear</button>
+            </div>
+            ${m.rows.length === 0
+              ? html`<p class="notice-line" data-test="pr-lm-empty">${lowMarginEmptyWords()}</p>`
+              : html`
+                  <div class="tablewrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th scope="col">Document</th>
+                          <th scope="col">Line</th>
+                          <th scope="col" class="num">Price</th>
+                          <th scope="col" class="num">Margin</th>
+                          <th scope="col">Level</th>
+                          <th scope="col">Sold by</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${m.rows.map((row) => renderLowMarginRow(row))}
+                      </tbody>
+                    </table>
+                  </div>
+                `}
+          </section>
+          ${renderLowMarginProbe(model)}
+        `
+      : nothing}
+  `;
+}
+
+function renderLowMarginRow(row: LowMarginScanRow): TemplateResult {
+  return html`
+    <tr data-lm=${row.doc_id}>
+      <td>
+        <div class="mono">${row.doc_no}</div>
+        <div class="mono dim">${row.doc_at.slice(0, 10)}</div>
+      </td>
+      <td>${lowMarginWords(row)}</td>
+      <td class="num">${moneyWords(row.unit_price_cents)}</td>
+      <td class="num">${pctWords(row.margin_bps)}</td>
+      <td>
+        <span class="chip ${lowMarginLevelChip(row.level)}">${row.level}</span>
+        ${row.cleared_below_floor ? html`<span class="chip chip-good">cleared: ${row.cleared_by === "" ? "a manager" : row.cleared_by}</span>` : nothing}
+      </td>
+      <td class="dim">${row.salesperson === "" ? "-" : row.salesperson}</td>
+    </tr>
+  `;
+}
+
+function renderLowMarginProbe(model: PricingModel): TemplateResult {
+  const m = model.lowMargin.probe;
+  return html`
+    <section class="card">
+      <div class="card-head"><h2 class="card-title">Grade a proposed line</h2></div>
+      <p class="pr-hint">
+        One line through the resolver, before it is quoted: the server grades it against the category's target and floor
+        and names the breach, if there is one.
+      </p>
+      <div class="form-grid">
+        <label class="field"><span class="field-label">Customer id</span>
+          <input class="text-field" type="text" data-field="pr-lm-customer" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Customer type</span>
+          <select class="select" data-field="pr-lm-customer-type" ?disabled=${m.busy}>
+            <option value="CONTRACTOR">Contractor</option>
+            <option value="RETAIL">Retail</option>
+            <option value="BUILDER">Builder</option>
+            <option value="GOVERNMENT">Government</option>
+            <option value="INTERNAL">Internal</option>
+          </select>
+        </label>
+        <label class="field"><span class="field-label">Product id</span>
+          <input class="text-field" type="text" data-field="pr-lm-product" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Category id</span>
+          <input class="text-field" type="text" data-field="pr-lm-category" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Quantity</span>
+          <input class="text-field" type="text" inputmode="decimal" data-field="pr-lm-qty" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Unit</span>
+          <input class="text-field" type="text" placeholder="SF" data-field="pr-lm-uom" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Cost basis, dollars per base unit</span>
+          <input class="text-field" type="text" inputmode="decimal" data-field="pr-lm-cost" ?disabled=${m.busy} /></label>
+      </div>
+      ${m.error === "" ? nothing : html`<p class="error-line" data-test="pr-lm-probe-error">${m.error}</p>`}
+      ${m.entries.length === 0
+        ? nothing
+        : html`
+            <div class="tablewrap" data-test="pr-lm-entries">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col" class="num">Price</th>
+                    <th scope="col" class="num">Margin</th>
+                    <th scope="col">Level</th>
+                    <th scope="col">Source</th>
+                    <th scope="col">Why</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.entries.map(
+                    (entry) => html`
+                      <tr data-entry=${entry.product_id}>
+                        <td class="num">${moneyWords(entry.final_cents)}</td>
+                        <td class="num">${pctWords(entry.margin_bps)}</td>
+                        <td><span class="chip ${lowMarginLevelChip(entry.level)}">${entry.level}</span></td>
+                        <td>${priceSourceWord(entry.source)}</td>
+                        <td class="dim">${entry.invalid ? entry.reason : entry.reason === "" ? "-" : entry.reason}</td>
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+            </div>
+          `}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-lm-grade" ?disabled=${m.busy}>
+          ${m.busy ? "Grading…" : "Grade the line"}
+        </button>
+      </div>
     </section>
   `;
 }

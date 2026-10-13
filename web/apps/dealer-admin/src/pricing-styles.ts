@@ -89,6 +89,10 @@ export const pricingStyles = css`
   .chip-dim {
     color: var(--hh-text-dim);
   }
+  .chip-warn-word {
+    color: var(--hh-accent-text);
+    border-color: var(--hh-accent-text);
+  }
 
   /* -- the editor's row of buttons and its hint ------------------------------------------ */
 

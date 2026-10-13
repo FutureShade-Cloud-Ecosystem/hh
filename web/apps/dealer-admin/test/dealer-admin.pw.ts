@@ -494,3 +494,26 @@ test("the price file tab: the vendor, the preview with its digest, and the stage
   await expect(page.locator("[data-test=pr-pf-apply-result]")).toContainText("Staged into batch");
   await expect(page.locator("[data-test=pr-pf-runs-count]")).toHaveText("2 runs");
 });
+
+test("the low margin tab: the scan, the cleared stamp, and a proposed line graded", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+  await page.locator('.pr-tab[data-tab="lowmargin"]').click();
+
+  await expect(page.locator("[data-test=pr-lm-count]")).toHaveText("2 lines");
+  const criticalRow = page.locator('tr[data-lm="0c110000-0000-4000-9000-0000000000b2"]');
+  await expect(criticalRow).toContainText("SO-2077");
+  await expect(criticalRow).toContainText("cleared: Branch manager (demo)");
+
+  // A proposed line grades through the resolver; the server names the breach.
+  await page.locator('[data-field="pr-lm-customer"]').fill("cu110000-0000-4000-9000-0000000000a1");
+  await page.locator('[data-field="pr-lm-product"]').fill("fa110000-0000-4000-9000-0000000000a2");
+  await page.locator('[data-field="pr-lm-qty"]').fill("40");
+  await page.locator('[data-field="pr-lm-cost"]').fill("1.90");
+  await page.locator('[data-action="pr-lm-grade"]').click();
+  await expect(page.locator("[data-test=pr-lm-entries]")).toContainText("critical");
+  await expect(page.locator("[data-test=pr-lm-entries]")).toContainText("Tier + category");
+});
