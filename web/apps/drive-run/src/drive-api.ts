@@ -12,7 +12,8 @@
 // Port provenance: the call set is the original app's app/src/dispatch-api.ts
 // (the original HardscapeOS app, repository hardscapeos_dibbits, commit
 // f8f4973db317b92296ae8ec7e62a3f54f5dc82ab), rebuilt on HH's generated client.
-import { ApiClient, staffDispatch, type Result } from "@hardscapehouse/api-client";
+import { ApiClient, staffDispatch, staffSettings, type Result } from "@hardscapehouse/api-client";
+import { houseDay, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 
 export interface DriverLine {
   readonly line_no: number;
@@ -123,6 +124,17 @@ export class DriveApi {
 
   constructor(client: ApiClient) {
     this.#client = client;
+  }
+
+  /**
+   * The dealer's day to ask for runs on. The dealer's zone is served on the drive-run surface's
+   * config read (business_zone) and held by the kit; a read that fails keeps the Ontario default,
+   * so the driver still gets a day, never a blank screen.
+   */
+  async dealersDay(now: Date = new Date()): Promise<string> {
+    const config = await staffSettings.settingsGetSurfaceConfig(this.#client, "drive-run", {});
+    if (config.ok) serveHouseZoneFrom(config.value);
+    return houseDay(now);
   }
 
   /** The runs assigned to this login on one day. The day is the dealer's, named by the caller. */

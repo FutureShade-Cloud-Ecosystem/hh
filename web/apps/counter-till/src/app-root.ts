@@ -39,8 +39,7 @@ import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js"
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import {
   TillClient,
-  HOUSE_ZONE,
-  houseDayInZone,
+  houseDay,
   type BranchRef,
 } from "./till-client.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
@@ -537,7 +536,7 @@ export class CounterTillApp extends HHElement {
     // the house zone's day, the conversion the sale's ring already rides.
     wirePorts({
       headers: staffHeaders,
-      houseDay: () => houseDayInZone(HOUSE_ZONE),
+      houseDay: () => houseDay(),
       user: () => this.#clerkIdentity,
       token: () => this.#sessions.current?.token ?? "",
       // The drawn category tiles ship in every build (decision log row 1057): a product with no

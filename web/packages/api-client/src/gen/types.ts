@@ -1521,6 +1521,7 @@ export type SettingsSurfaceConfig = {
   user_items: SettingsItem[];
   workspace: SettingsWorkspaceView;
   policy?: { [key: string]: unknown };
+  business_zone?: string;
 };
 export type SettingsRoleItemsBody = {
   profile: DashboardProfile;

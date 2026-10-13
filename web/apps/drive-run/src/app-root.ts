@@ -21,7 +21,6 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
-import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
 import { HANDBACK_TITLE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
 import { driveStyles } from "./styles.js";
@@ -296,7 +295,7 @@ export class DriveRunApp extends HHElement {
   async #loadRuns(): Promise<void> {
     this.#phase = "loading";
     this.requestUpdate();
-    const result = await this.#drive.myRuns(houseDayInZone(HOUSE_ZONE));
+    const result = await this.#drive.myRuns(await this.#drive.dealersDay());
     if (result.ok) {
       this.#runs = result.value;
       this.#phase = "ready";
@@ -460,7 +459,7 @@ export class DriveRunApp extends HHElement {
   // Re-read the day without blanking the screen: the server's order and
   // statuses win, and a failed re-read keeps what is on the glass.
   async #refreshRuns(): Promise<void> {
-    const result = await this.#drive.myRuns(houseDayInZone(HOUSE_ZONE));
+    const result = await this.#drive.myRuns(await this.#drive.dealersDay());
     if (result.ok) this.#runs = result.value;
   }
 
