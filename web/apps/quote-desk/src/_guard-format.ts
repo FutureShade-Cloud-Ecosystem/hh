@@ -73,6 +73,20 @@ export function guardVerdictWords(check: GuardCheck): string {
   return `Blocked. The margin is ${margin}, below the margin policy.`;
 }
 
+/** The core's margin block sentence (staffcontext CheckMarginAt): "margin <bps> bps is below the <bps> bps floor". */
+const MARGIN_SENTENCE = /^margin -?\d+ bps is below the \d+ bps floor$/i;
+
+/**
+ * sentenceBlock reads a margin policy block from the sentence the core's 403 carries in its error field, the
+ * one field the transport hands a screen (the block key itself is dropped on the way). Only the core's own
+ * margin sentence counts: the route's other 403s (a branch outside the grants, the role gate) are access
+ * refusals and answer null, so they are never worded as a price below the floor.
+ */
+export function sentenceBlock(sentence: string, policyType: string): { policyType: string; detail: string } | null {
+  const text = sentence.trim();
+  return MARGIN_SENTENCE.test(text) ? { policyType, detail: humanizeBps(text) } : null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }

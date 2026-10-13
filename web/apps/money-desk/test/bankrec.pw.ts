@@ -38,7 +38,8 @@ test("Payables and Receivables has no bank reconciliation area", async ({ page, 
   await page.goto("/");
   await expect(page.locator("[data-card]")).toHaveCount(4);
   await expect(page.getByRole("button", { name: "Bank reconciliation" })).toHaveCount(0);
-  await expect(page.locator("nav.areas")).toHaveCount(0);
+  // The switch holds the ledger as a reader, the receivables desk, and the liens and the calendar, and nothing else.
+  await expect(page.locator("nav[aria-label='Money Desk areas'] button")).toHaveText(["Ledger", "Receivables", "Liens", "Compliance"]);
 });
 
 test("a statement pasted in imports, the same rows again add nothing, and a file the core cannot read says what it lacked", async ({ page, request }) => {

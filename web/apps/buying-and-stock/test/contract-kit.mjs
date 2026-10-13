@@ -39,7 +39,8 @@ export async function startStub() {
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, [join(appDir, "test", "stub", "buying-stock-stub.mjs")], {
-    env: { ROLE_STUB_PORT: String(port) },
+    // TZ rides through so a test can read the stub's dates in the zone it set.
+    env: { ROLE_STUB_PORT: String(port), ...(process.env.TZ === undefined ? {} : { TZ: process.env.TZ }) },
     stdio: "ignore",
   });
   let up = false;

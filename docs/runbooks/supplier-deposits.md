@@ -37,3 +37,12 @@ one night. Look at these keys first.
 
 Backfill: orders delivered before the delivery stamp existed carry no `delivered_at` and are not
 healed by the sweep. There is no prior emission to heal for them.
+
+## Who may cancel a special order and keep its deposit
+
+The Sales Manager, the Branch Manager and the General Manager may cancel an order, and keep what the
+customer paid of its supplier deposit, each giving a reason that is recorded on the order's history.
+A branch scoped manager reaches only the orders of their own branches. Nobody else may: when another
+role tries, the answer in plain words is "Cancelling an order, and keeping its deposit, is for the Sales
+Manager, the Branch Manager and the General Manager, with a reason. Ask one of them." The route answers
+the shared forbidden body at the role gate; the words above are the ones a screen shows for it.

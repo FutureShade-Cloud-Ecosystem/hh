@@ -8,8 +8,11 @@
 // shows, and the view function the app-root line calls for it.
 //
 // Today: Staff (the original's staff-roles.ts and staff-reset.ts), Hotkeys
-// (the original's platform-hotkeys.ts), and Audit (the original's
-// audit-log.ts), each with its PROVENANCE rows.
+// (the original's platform-hotkeys.ts), Audit (the original's audit-log.ts),
+// Role configuration (the settings kit's surface curation, no original
+// screen), Deployment settings (the brand, the card rail, the counter's
+// policy, the walkthrough), and Pricing (the original's pricing-admin.ts
+// console and its sub screens, twelve tabs), each with its PROVENANCE rows.
 export interface SurfaceSpec {
   /** The id the list button, the router line and the tests name. */
   readonly id: string;
@@ -23,6 +26,9 @@ export const SURFACES: readonly SurfaceSpec[] = [
   { id: "staff", title: "Staff", blurb: "The register, the roles, the branch grants, the reset links." },
   { id: "hotkeys", title: "Hotkeys", blurb: "The keyboard rosters every dealer inherits, until they set their own." },
   { id: "audit", title: "Audit", blurb: "Who changed what, when, where and why." },
+  { id: "role-config", title: "Role configuration", blurb: "What each job shape sees on every surface, curated per role." },
+  { id: "deployment", title: "Deployment settings", blurb: "The brand, the card rail, the counter's policy, the walkthrough." },
+  { id: "pricing", title: "Pricing", blurb: "The margin floors, the rules, the ladders, the imports and the ledgers." },
 ];
 
 export function isSurfaceId(value: string): value is SurfaceSpec["id"] {
