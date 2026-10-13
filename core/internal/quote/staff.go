@@ -114,6 +114,10 @@ type StaffService struct {
 	// fails closed: no request is filed and no approval is consumed.
 	floorRail FloorApprovalRail
 
+	// standardRate is the dealer's standard tax rate (builder.go's terms write stamps the tax at
+	// it). Nil keeps the system_settings figure the terms write has always read.
+	standardRate StandardRateReader
+
 	// invoicer and payer are the QD-5 money door's seams (order_payment.go); nil fails the door closed.
 	invoicer OrderInvoicer
 	payer    CounterPayer

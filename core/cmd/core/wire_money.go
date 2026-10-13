@@ -198,6 +198,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// admin and fails closed to owner-only.
 	messaging.PublishRoleConfig(roleCfg)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
+		WithStandardRate(newTaxEngine(pool)). // the terms write stamps the dealer's standard rate
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithPricing(pricingSvc).

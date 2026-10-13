@@ -8,6 +8,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 )
 
@@ -27,6 +28,21 @@ type ReceiptService struct {
 	audit      audit.Recorder
 	callerFrom func(context.Context) (identity.StaffContext, bool)
 	now        func() time.Time
+	// standardRate is the dealer's standard tax rate, read on the sale date for the tax line's label.
+	// Nil keeps the letterhead's settings figure.
+	standardRate StandardRateReader
+}
+
+// StandardRateReader answers the dealer's standard tax rate in basis points on a date ("YYYY-MM-DD", "" is
+// today). The composition root binds an adapter over the tax engine.
+type StandardRateReader interface {
+	StandardRateBps(ctx context.Context, asOf string) (int, error)
+}
+
+// WithStandardRate injects the dealer's standard rate seam.
+func (s *ReceiptService) WithStandardRate(r StandardRateReader) *ReceiptService {
+	s.standardRate = r
+	return s
 }
 
 // NewReceiptService composes the sale reads with the print queue. The queue is REQUIRED, not
@@ -105,6 +121,15 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 	head, err := s.store.ReadBranchHeader(ctx, sale.BranchID)
 	if err != nil {
 		return Receipt{}, err
+	}
+	// The tax line names the dealer's standard rate on the day of the sale when the engine is wired. A failed
+	// read keeps the letterhead's figure: the label is the one fact a receipt can degrade on, since the
+	// amounts printed beside it are the sale's own stored figures.
+	if s.standardRate != nil {
+		soldAt := sale.SoldAt
+		if bps, err := s.standardRate.StandardRateBps(ctx, houseday.Today(func() time.Time { return soldAt })); err == nil {
+			head.HSTRateBps = bps
+		}
 	}
 	lines, err := s.store.ReadReceiptLines(ctx, sale.OrderID)
 	if err != nil {
