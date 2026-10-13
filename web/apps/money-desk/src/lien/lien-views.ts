@@ -148,9 +148,7 @@ function jobRow(model: LiensModel, j: LienJob): TemplateResult {
   const selected = model.selectedJob === j.id;
   return html`
     <tr data-row="job" data-job-no=${j.job_no} aria-current="${selected ? "true" : "false"}">
-      <td><strong class="li-mono">${j.job_no}</strong><span class="li-sub">${j.description}</span></td>
-      <td>${branchName(model.branches, j.branch_id)}</td>
-      <td>${directionWord(j.holdback_direction)}</td>
+      <td><strong class="li-mono">${j.job_no}</strong><span class="li-sub">${branchName(model.branches, j.branch_id)} · ${directionWord(j.holdback_direction)}</span></td>
       <td class="num">${j.contract_cents === 0 ? "Not set" : formatMoney(j.contract_cents)}</td>
       <td>${pill(jobStatusTone(j.status), jobStatusWord(j.status))}</td>
       <td><button type="button" class="li-link" data-action="li-select-job" data-id=${j.id} aria-pressed="${selected ? "true" : "false"}">Open</button></td>
@@ -239,7 +237,7 @@ function jobs(model: LiensModel): TemplateResult {
           : html`
               <div class="li-scroll li-hide-narrow">
                 <table aria-label="Jobs">
-                  <thead><tr><th>Job</th><th>Branch</th><th>Holdback</th><th class="num">Contract</th><th>Status</th><th></th></tr></thead>
+                  <thead><tr><th>Job</th><th class="num">Contract</th><th>Status</th><th></th></tr></thead>
                   <tbody>${model.jobs.map((j) => jobRow(model, j))}</tbody>
                 </table>
               </div>
@@ -264,14 +262,13 @@ function agingRow(model: LiensModel, r: LienAgingRow): TemplateResult {
   const status = releaseStatusWord(r.holdback_direction, r.release_eligible);
   return html`
     <tr data-row="aging" data-job-no=${r.job_no} aria-current="${open ? "true" : "false"}">
-      <td><strong class="li-mono">${r.job_no}</strong></td>
-      <td>${branchName(model.branches, r.branch_id)}</td>
-      <td>${directionWord(r.holdback_direction)}</td>
+      <td><strong class="li-mono">${r.job_no}</strong><span class="li-sub">${branchName(model.branches, r.branch_id)} · ${directionWord(r.holdback_direction)}</span></td>
       <td class="num">${formatMoney(r.outstanding_cents)}</td>
-      <td class="num">${ageWords(r.oldest_days)}</td>
-      <td>${bucketWord(r.bucket)}</td>
-      <td>${pill(r.release_eligible ? "watch" : "plain", status)}</td>
-      <td>${r.holdback_direction === "RECEIVABLE" ? html`<button type="button" class="li-link" data-action="li-release-open" data-id=${r.job_id} aria-pressed="${open ? "true" : "false"}">Release</button>` : nothing}</td>
+      <td class="num li-nowrap">${ageWords(r.oldest_days)}<span class="li-sub">${bucketWord(r.bucket)}</span></td>
+      <td>
+        <div>${pill(r.release_eligible ? "watch" : "plain", status)}</div>
+        ${r.holdback_direction === "RECEIVABLE" ? html`<button type="button" class="li-link" data-action="li-release-open" data-id=${r.job_id} aria-pressed="${open ? "true" : "false"}">Release</button>` : nothing}
+      </td>
     </tr>
   `;
 }
@@ -342,7 +339,7 @@ function holdbacks(model: LiensModel): TemplateResult {
           : html`
               <div class="li-scroll li-hide-narrow">
                 <table aria-label="Holdback aging">
-                  <thead><tr><th>Job</th><th>Branch</th><th>Holdback</th><th class="num">Held</th><th class="num">Oldest</th><th>Age</th><th>Release</th><th></th></tr></thead>
+                  <thead><tr><th>Job</th><th class="num">Held</th><th class="num">Oldest</th><th>Release</th></tr></thead>
                   <tbody>${model.aging.map((r) => agingRow(model, r))}</tbody>
                 </table>
               </div>
