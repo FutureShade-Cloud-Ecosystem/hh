@@ -251,8 +251,9 @@ type resolveRequest struct {
 // own user id as the resolver). The row is read before the move, so an
 // unknown id answers 404 and a bound attempt answers 409 without asking the
 // store for a move it would refuse; the move's own guard stays the arbiter
-// for the window between the read and the move.
-func (h *Handler) resolveAttempt(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+// for the window between the read and the move. The caller must reach the
+// attempt's branch (a global role reaches every branch).
+func (h *Handler) resolveAttempt(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	var req resolveRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err := dec.Decode(&req); err != nil {
@@ -278,7 +279,10 @@ func (h *Handler) resolveAttempt(w http.ResponseWriter, r *http.Request, _ guard
 		httpx.Error(w, http.StatusServiceUnavailable, "resolve failed")
 		return
 	}
-	if !ok {
+	// An attempt of a branch the caller does not reach answers exactly as an unknown id: 404 with the same
+	// words, so the route neither confirms the row exists nor names its branch (the till's convention for
+	// another branch's payment records), and it is checked before any status answer can leak the row's state.
+	if !ok || !caller.CanAccessBranch(cur.BranchID) {
 		httpx.Error(w, http.StatusNotFound, "no card attempt with that id")
 		return
 	}

@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 import { renderKit } from './lib/render.mjs';
 import { ShellHeader } from '../src/shell-header.ts';
+import { parseRules, declsFor, px } from './lib/css.mjs';
 
 const headerSrc = readFileSync(
   fileURLToPath(new URL('../src/shell-header.ts', import.meta.url)),
@@ -191,14 +192,36 @@ test('FLOOR: every title in the band is matched, character for character, by an 
   }
 });
 
+test('an unknown sync state throws from willUpdate: the chip is never painted quietly wrong', () => {
+  const el = new ShellHeader();
+  el.syncState = 'warp';
+  assert.throws(() => el.willUpdate(new Map([['syncState', undefined]])), /unknown sync state "warp"/);
+  // A state the machine has passes, and an update that leaves syncState alone is not checked.
+  el.syncState = 'idle';
+  assert.doesNotThrow(() => el.willUpdate(new Map([['syncState', undefined]])));
+  el.syncState = 'warp';
+  assert.doesNotThrow(() => el.willUpdate(new Map([['breadcrumb', undefined]])));
+});
+
 test('FLOOR: the band is drawn in tokens only, no hex colour literals anywhere in the source', () => {
   const hexes = [...headerSrc.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map((m) => m[0]);
   assert.deepEqual(hexes, [], `shell-header.ts must stay literal-free, found: ${hexes.join(', ')}`);
 });
 
-test('FLOOR: phone and tablet targets are at least 44 px', () => {
-  assert.ok(headerSrc.includes('min-height: 44px'), 'the narrow container raises every target to 44 px');
-  assert.ok(headerSrc.includes('@container'), 'the narrow layout rides the host\u2019s own width');
+const headerRules = parseRules(ShellHeader.styles.map((sheet) => sheet.cssText).join('\n'));
+const NARROW = '@container (max-width: 834px)';
+
+test('FLOOR: phone and tablet targets are at least 44 px, each control named by its selector', () => {
+  for (const selector of ['.selector', '.icon-btn', '.account', '.mi']) {
+    const narrow = declsFor(headerRules, selector, NARROW);
+    assert.ok(px(narrow['min-height']) >= 44, `${selector} is 44 px tall in the narrow container`);
+  }
+  // The bell and the pin are fixed 34 px squares at rest, so the narrow container must lift the width too.
+  const base = declsFor(headerRules, '.icon-btn');
+  const narrow = declsFor(headerRules, '.icon-btn', NARROW);
+  const widest = Math.max(px(base['width']) ?? 0, px(narrow['width']) ?? 0, px(narrow['min-width']) ?? 0);
+  assert.ok(widest >= 44, `.icon-btn is 44 px wide in the narrow container (found ${widest})`);
+  assert.ok(px(narrow['min-width']) >= 44 || px(narrow['width']) >= 44, 'the lift is on the narrow container, not the base');
 });
 
 test('FLOOR: the phone band drops the sync chip and the org word, the r4 frame\u2019s own rule', () => {

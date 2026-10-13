@@ -352,6 +352,9 @@ const styles = css`
     .mi {
       min-height: 44px;
     }
+    .icon-btn {
+      min-width: 44px;
+    }
     .account {
       padding: 2px 12px 2px 6px;
     }

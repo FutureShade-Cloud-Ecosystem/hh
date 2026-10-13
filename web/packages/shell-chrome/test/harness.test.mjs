@@ -29,6 +29,7 @@ const TEXT_FILES = [
   'demo/demo-page.ts',
   'demo/build.mjs',
   'demo/serve.mjs',
+  'demo/respond.mjs',
   'test/shell-state.test.mjs',
   'test/header.test.mjs',
   'test/rail.test.mjs',
@@ -170,6 +171,57 @@ test('the demo page carries the whole state list the fidelity pass renders', () 
   assert.ok(!/<html[^>]*data-theme/.test(page), 'the default page is the brand mode');
   const light = read('demo/index-light.html');
   assert.ok(/<html[^>]*data-theme="light"/.test(light), 'the light build carries the theme attribute');
+});
+
+// The fidelity pass renders from this page, so every cell is checked by its caption AND by a
+// word its markup must carry: a caption that says one thing over another cell's markup (the
+// expanded rail captioned over the empty one) is the defect this guards.
+const decodeEntities = (s) =>
+  s.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
+const cellsOf = (page) =>
+  [...page.matchAll(/<figure class="cell"><figcaption>([\s\S]*?)<\/figcaption>([\s\S]*?)<\/figure>/g)].map((m) => ({
+    caption: decodeEntities(m[1]),
+    markup: decodeEntities(m[2].replace(/<!--[\s\S]*?-->/g, '')),
+  }));
+
+const FIDELITY_CELLS = [
+  // [a caption fragment, words the cell's own markup must carry, words it must not carry]
+  ['the frame, desktop 1280, idle', ['Gable Landscape Supply', 'Pinned'], []],
+  ['the frame, phone 390, offline with three writes waiting, collapsed rail', ["You're offline", 'data-collapsed="true"'], []],
+  ['band at rest, pinned', ['aria-pressed="true"'], ['disabled']],
+  ['band at rest, unpinned', ['aria-pressed="false"'], ['disabled']],
+  ['band, pin disabled: no current surface', ['disabled'], []],
+  ['band, bell at zero', ['Notifications'], ['class="badge"']],
+  ['band, the Account fallback', ['Account'], ['Yard Team']],
+  ['band, empty breadcrumb reads Surfaces', ['<span class="crumb">'], ['Pick queue</span>']],
+  ['band, no org', ['Synced'], ['Gable Landscape Supply']],
+  ['band, phone 390: no chip, no org word', ['width:min(390px'], []],
+  ['the selector panel over the fake manifest, desktop', ['Receiving', 'Inbox', 'here'], []],
+  ['the selector panel, phone 390', ['role="menu"', 'House Messages'], ['Inbox']],
+  ['sync chip / idle (a stall alone', ['a check needs you'], ['retrying']],
+  ['sync chip / conflict (conflict with a stall', ['to review', 'a check needs you'], []],
+  ['collapsed, phone 390, the pins only', ['data-collapsed="true"', 'My run'], []],
+  ['collapsed, a tooltip revealed', ['data-collapsed="true"', 'opacity: 1'], []],
+  ['expanded, the words on, the active pin marked', ['data-collapsed="false"', 'My run', 'aria-current="true"'], ['No surfaces pinned yet']],
+  ['empty, expanded', ['No surfaces pinned yet'], ['My run']],
+  ['offline, empty outbox', ["You're offline"], ['class="count"']],
+  ['offline, one write waiting', ['1 changes in the outbox'], []],
+  ['HH Field update ready, no version', ['HH Field update ready'], ['is downloaded']],
+  ['update prompt, installing: both buttons disabled', ['Installing'], ['>Update now<']],
+  ['update prompt, phone 390', ['width:min(390px', 'Update now'], []],
+];
+
+test('the demo page carries a cell for every state the fidelity pass is asked to render', () => {
+  for (const file of ['demo/index.html', 'demo/index-light.html']) {
+    const cells = cellsOf(read(file));
+    for (const [fragment, must, mustNot] of FIDELITY_CELLS) {
+      const found = cells.filter((c) => c.caption.includes(fragment));
+      assert.equal(found.length, 1, `${file}: exactly one cell is captioned "${fragment}" (found ${found.length})`);
+      for (const word of must) assert.ok(found[0].markup.includes(word), `${file}: "${fragment}" must carry ${word}`);
+      for (const word of mustNot) assert.ok(!found[0].markup.includes(word), `${file}: "${fragment}" must not carry ${word}`);
+    }
+  }
 });
 
 test('the sheets travel with the pages', () => {

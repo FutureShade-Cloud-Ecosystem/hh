@@ -69,6 +69,10 @@ delegation on `data-action` names.
 
 ## Wiring a shell (the contract the tests hold)
 
+The state module answers on the package root; each element has its deep path, as the design system's do:
+`@hardscapehouse/shell-chrome/src/shell-header.js`, `shell-rail.js`, `shell-banner.js`, `shell-update.js`. Importing an
+element module registers its custom element, which is why `package.json` lists those files under `sideEffects`.
+
 ```js
 import { PinBook, currentBreadcrumb, switcherGroups, surfaceKey, syncChipView } from '@hardscapehouse/shell-chrome';
 
@@ -78,7 +82,7 @@ const storage = {
   read: (key) => localStorage.getItem(key),
   write: (key, value) => localStorage.setItem(key, value),
 };
-const pins = new PinBook({ storage });
+const pins = new PinBook({ storage });  // keys pins under pinStorageKey(userId); a blank user id is refused
 rail.storage = storage;                 // the rail's collapsed posture seam
 
 // the model, over the manifest slice the shell injects

@@ -147,6 +147,7 @@ docker run -d --name "$BOX_NAME" --network "$NET" -p 127.0.0.1:5801:8080 \
 	-e "DATABASE_URL=postgres://postgres:hardscape@$PG_NAME:5432/w9_exit?sslmode=disable" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" >/dev/null

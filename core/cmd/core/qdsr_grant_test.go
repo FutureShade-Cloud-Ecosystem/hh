@@ -54,7 +54,7 @@ func qdsrPlantRole(t *testing.T, env *compEnv, pool *pgxpool.Pool, sub, userID, 
 			t.Fatalf("plant %s branch grant: %v", role, err)
 		}
 	}
-	env.appwrite.setTeam(sub, "org:"+testkit.OrgNorthSlug)
+	env.appwrite.setTeam(sub, "org-"+testkit.OrgNorthSlug)
 }
 
 // qdsrPlantOutsideSales plants the one role the matrix fixtures lack: outside sales, a Quote Desk

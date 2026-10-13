@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { renderKit } from './lib/render.mjs';
 import { ShellRail } from '../src/shell-rail.ts';
+import { parseRules, declsFor, px } from './lib/css.mjs';
 import { memoryPinStorage, RAIL_COLLAPSED_KEY } from '../src/shell-state.ts';
 
 const railSrc = readFileSync(fileURLToPath(new URL('../src/shell-rail.ts', import.meta.url)), 'utf8');
@@ -83,7 +84,7 @@ test('collapsed, the rows are one roving stop: one row holds the tab, the rest w
   const stops = rows.map((r) => /data-tab="(-?\d)"/.exec(r)?.[1]);
   assert.equal(stops.filter((t) => t === '0').length, 1, 'exactly one row tab stop');
   assert.equal(stops.filter((t) => t === '-1').length, 2, 'the other rows wait for the arrows');
-  assert.ok(markup.includes('title="Keep your pins open"'), 'the toggle keeps its natural stop');
+  assert.ok(markup.includes('data-title="Keep your pins open"'), 'the toggle keeps its natural stop');
 });
 
 test('expanded, every control is in the tab order', () => {
@@ -132,6 +133,48 @@ test('the nav names itself as the person\u2019s pins, never a navigation tree', 
   assert.ok(markup.includes('aria-label="Pinned surfaces"'), 'the nav\u2019s own name');
 });
 
+// ── the toggle is one button across postures, so it keeps keyboard focus ─────────────────────────
+
+const toggleOf = (markup) => /<button[^>]*data-action="rail-toggle"[^>]*>[\s\S]*?<\/button>/.exec(markup)?.[0] ?? '';
+
+test('the toggle is one template in both postures: Lit keeps the focused button instead of replacing it', () => {
+  const collapsed = renderKit(ShellRail, { pins: PINS });
+  const expanded = renderKit(ShellRail, { pins: PINS, collapsed: false });
+  // Lit swaps the DOM when the template changes, and the focused button is lost.
+  // The server render keeps the template hash in its part comments, so two
+  // templates show as two different skeletons once the bound values are blanked.
+  const skeleton = (markup) => {
+    const head = /<div class="rhead">[\s\S]*?<\/button>/.exec(markup)?.[0] ?? '';
+    return head.replace(/="[^"]*"/g, '=""');
+  };
+  assert.notEqual(skeleton(collapsed), '', 'the header band is found');
+  assert.equal(skeleton(expanded), skeleton(collapsed), 'one button, posture bound on its attributes');
+  assert.equal(railSrc.match(/data-action="rail-toggle"/g)?.length, 1, 'the source spells the toggle once');
+});
+
+test('the toggle carries the posture on aria-expanded and says the words for it', () => {
+  const collapsed = toggleOf(renderKit(ShellRail, { pins: PINS }));
+  const expanded = toggleOf(renderKit(ShellRail, { pins: PINS, collapsed: false }));
+  assert.ok(collapsed.includes('aria-expanded="false"') && collapsed.includes('Keep your pins open'));
+  assert.ok(expanded.includes('aria-expanded="true"') && expanded.includes('Let your pins hide again'));
+  for (const markup of [collapsed, expanded]) {
+    const title = /data-title="([^"]*)"/.exec(markup)?.[1];
+    const label = /aria-label="([^"]*)"/.exec(markup)?.[1];
+    assert.ok(title && title === label, 'title and aria-label say the same words, character for character');
+  }
+});
+
+test('the toggle\u2019s native title is applied from data-title after render (a bound title is refused by the position gate)', () => {
+  const el = new ShellRail();
+  const toggle = { title: '', getAttribute: (name) => (name === 'data-title' ? 'Let your pins hide again' : null) };
+  el.renderRoot = {
+    querySelectorAll: () => [],
+    querySelector: (selector) => (selector === 'button.toggle' ? toggle : null),
+  };
+  el.updated(new Map());
+  assert.equal(toggle.title, 'Let your pins hide again');
+});
+
 // ── the actions: one select verb, one toggle verb ────────────────────────────────────────────────
 
 test('every row routes through one action name carrying its key', () => {
@@ -161,10 +204,14 @@ test('FLOOR: the toggle still writes the stored mark through the one writer', ()
 });
 
 test('FLOOR: every title in the rail is matched, character for character, by an aria-label', () => {
-  const titles = [...railSrc.matchAll(/\btitle="([^"]*)"/g)].map((m) => m[1]);
-  assert.ok(titles.length > 0, 'the icon-only controls still need their tooltips');
-  for (const t of titles) {
-    assert.ok(railSrc.includes(`aria-label="${t}"`), `the title "${t}" has no matching aria-label`);
+  // The toggle's words are bound per posture, so the floor reads the render of both.
+  for (const collapsed of [true, false]) {
+    const markup = renderKit(ShellRail, { pins: PINS, collapsed });
+    const titles = [...markup.matchAll(/\bdata-title="([^"]*)"/g)].map((m) => m[1]);
+    assert.ok(titles.length > 0, 'the icon-only controls still need their tooltips');
+    for (const t of titles) {
+      assert.ok(markup.includes(`aria-label="${t}"`), `the title "${t}" has no matching aria-label`);
+    }
   }
 });
 
@@ -173,6 +220,10 @@ test('FLOOR: the rail is drawn in tokens only, no hex colour literals anywhere i
   assert.deepEqual(hexes, [], `shell-rail.ts must stay literal-free, found: ${hexes.join(', ')}`);
 });
 
-test('FLOOR: every row is a 44 px target, at every size, because the rail is the phone rail too', () => {
-  assert.ok(railSrc.includes('min-height: 44px'), 'the rows carry the 44 px floor');
+test('FLOOR: every row and the toggle are 44 px targets, at every size, because the rail is the phone rail too', () => {
+  const rules = parseRules(ShellRail.styles.map((sheet) => sheet.cssText).join('\n'));
+  assert.ok(px(declsFor(rules, '.row')['min-height']) >= 44, 'the rows carry the 44 px floor');
+  const toggle = declsFor(rules, '.toggle');
+  assert.ok(px(toggle['width']) >= 44 && px(toggle['height']) >= 44, 'the toggle is a 44 px square');
 });
+
