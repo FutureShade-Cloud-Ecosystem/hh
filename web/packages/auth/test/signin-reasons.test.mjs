@@ -133,3 +133,32 @@ test("adopt without the option still arms the refresh", async () => {
   await clock.advance(560_000);
   assert.equal(account.exchangeCount, 1);
 });
+
+test("a console outage or throttle on the resume's account read keeps the profile and the lock and backs off, never no_session", async () => {
+  for (const [status, reason] of [[503, "unavailable"], [500, "unavailable"], [429, "rate_limited"]]) {
+    class Down extends FakeAccountSurface {
+      async getSession() {
+        throw new PlatformRefusedError(status);
+      }
+    }
+    const { clock, controller, sessions } = rig(new Down());
+    sessions.adopt({ token: "fake-old", tokenExpiresAtMs: START_MS + 600_000, user: { ...FAKE_ACCOUNT } });
+    const result = await controller.resume();
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, reason, `status ${status}`);
+    assert.deepEqual(sessions.profile, { ...FAKE_ACCOUNT }, "the profile is kept");
+    assert.equal(clock.pending, 1, "a backoff refresh is armed");
+  }
+});
+
+test("a console 401 on the resume's account read is still no_session and clears", async () => {
+  class Gone extends FakeAccountSurface {
+    async getSession() {
+      throw new PlatformRefusedError(401);
+    }
+  }
+  const { controller, sessions } = rig(new Gone());
+  sessions.adopt({ token: "fake-old", tokenExpiresAtMs: START_MS + 600_000, user: { ...FAKE_ACCOUNT } });
+  assert.equal((await controller.resume()).reason, "no_session");
+  assert.equal(sessions.profile, null);
+});

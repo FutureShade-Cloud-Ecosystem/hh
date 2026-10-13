@@ -216,7 +216,7 @@ export function createAppwriteAccountSurface(options: AppwriteAccountSurfaceOpti
     } catch {
       throw new PlatformUnreachableError("the console could not be reached (network)");
     }
-    if (response.status !== 200) throw new Error(`the console refused the account read (status ${response.status})`);
+    if (response.status !== 200) throw new PlatformRefusedError(response.status, `the console refused the account read (status ${response.status})`);
     return readAccount(await readJson(response));
   }
 

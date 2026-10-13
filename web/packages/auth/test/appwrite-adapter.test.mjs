@@ -47,7 +47,7 @@ const GOOD_ANSWER = {
 
 // The world: a fake FB Console and a fake core behind one fetch.
 // coreAnswers and consoleAnswers are queues of {status, body} per route key.
-function world({ coreAnswers = [], jwtAnswers = [], sessionAnswers = [], fallbackHeader = false, throwOn = null } = {}) {
+function world({ coreAnswers = [], jwtAnswers = [], sessionAnswers = [], fallbackHeader = false, throwOn = null, accountStatus = 200 } = {}) {
   // Any touch of any storage that writes fails the test loudly.
   Object.defineProperty(globalThis, "localStorage", { value: throwingStorage(), configurable: true });
   Object.defineProperty(globalThis, "sessionStorage", { value: throwingStorage(), configurable: true });
@@ -76,6 +76,7 @@ function world({ coreAnswers = [], jwtAnswers = [], sessionAnswers = [], fallbac
       jwtSeq += 1;
       return json(201, { jwt: `fake.jwt.${jwtSeq}` }, fallback);
     }
+    if (u === `${ENDPOINT}/account` && accountStatus !== 200) return json(accountStatus, { message: "simulated" });
     if (u === `${ENDPOINT}/account`) return json(200, { $id: "fake-user-1", email: "fake.user@example.invalid", name: "Fake User" }, fallback);
     throw new Error(`unexpected fake call: ${call.method} ${u}`);
   };
@@ -329,4 +330,9 @@ test("a refused sign in throws a PlatformRefusedError that carries the status an
       (error) => error instanceof PlatformRefusedError && error.status === status && !error.message.includes("fake-password"),
     );
   }
+});
+
+test("a refused account read throws a PlatformRefusedError with the status", async () => {
+  const { surface } = world({ accountStatus: 503 });
+  await assert.rejects(() => surface.getSession(), (e) => e instanceof PlatformRefusedError && e.status === 503);
 });

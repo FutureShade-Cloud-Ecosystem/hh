@@ -179,7 +179,7 @@ export class ConsoleSession {
       return;
     }
     this.#phase = "signed-out";
-    if (resumed.reason === "forbidden" || resumed.reason === "offline") this.#error(signInNotice(resumed.reason));
+    if (["forbidden", "offline", "unavailable", "rate_limited"].includes(resumed.reason)) this.#error(signInNotice(resumed.reason));
     this.#changed();
   }
 

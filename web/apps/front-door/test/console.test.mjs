@@ -416,3 +416,13 @@ test("the persona id sent is the core's flow id, not the role code (sales-manage
   assert.equal(w2.personaCalls.length, 0, "a role code is not a persona id");
   assert.equal(w2.session.phase, "signed-out");
 });
+
+test("a console outage on start says unavailable, not session ended", async () => {
+  class Down extends FakeAccountSurface {
+    async getSession() { throw new PlatformRefusedError(503); }
+  }
+  const w = new World({ account: new Down() });
+  await w.session.start();
+  assert.equal(w.session.phase, "signed-out");
+  assert.equal(w.session.notice.text, SIGN_IN_WORDS.unavailable);
+});
