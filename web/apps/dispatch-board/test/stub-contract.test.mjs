@@ -477,9 +477,9 @@ test("the manifest and the scan trail: a run's document, a print recorded, an or
   assert.equal(doc.status, 200);
   assert.match(doc.headers.get("content-type") ?? "", /^text\/html/);
   assert.equal(doc.headers.get("cache-control"), "no-store", "a manifest is a point in time document");
-  const html = await doc.text();
-  assert.ok(html.includes("Run manifest RUN-PLM-1"));
-  assert.ok(html.includes("ORD-0012"));
+  const markup = await doc.text();
+  assert.ok(markup.includes("Run manifest RUN-PLM-1"));
+  assert.ok(markup.includes("ORD-0012"));
   const printed = await call("POST", `/api/v1/dispatch/runs/${run("RUN-PLM-1").id}/manifest/print`);
   assert.equal(printed.status, 201);
   holds("DispatchPrintJobRef", printed.json);

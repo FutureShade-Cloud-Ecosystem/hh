@@ -23,8 +23,8 @@ function fakeWindow() {
   };
 }
 const deps = (log) => ({
-  toUrl: (html) => {
-    log.push(["toUrl", html]);
+  toUrl: (markup) => {
+    log.push(["toUrl", markup]);
     return "blob:manifest-1";
   },
   revoke: (url) => log.push(["revoke", url]),

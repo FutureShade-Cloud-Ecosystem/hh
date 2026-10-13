@@ -44,7 +44,7 @@ test("a code is printed once: shown on the tag, listed as live, gone from the sc
   await openWillCall(page, request);
   await box(page).fill("ORD-0044");
   await mint(page).click();
-  await expect(page.locator("[data-notice]")).toContainText("Pickup code printed for ORD-0044, good until");
+  await expect(page.locator("[data-notice]")).toContainText("Pickup code made for ORD-0044, good until");
   await expect(page.locator("[data-once]")).toContainText("Shown once.");
   const token = await page.locator("[data-tag-code]").innerText();
   expect(token.length).toBeGreaterThanOrEqual(32);

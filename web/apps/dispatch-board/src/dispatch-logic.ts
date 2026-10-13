@@ -879,7 +879,7 @@ function wireFigure(typed: string, shown: string, original: number | null | unde
   const text = typed.trim();
   if (text === "") return null;
   if (typeof original === "number" && text === shown) return original;
-  return Math.round(toWire(Number(text)) * 10) / 10;
+  return Math.round(toWire(Number(text)) * 100) / 100;
 }
 
 export function validateTruck(f: TruckFields): string {
@@ -993,7 +993,7 @@ export function willCallRefusal(error: string, status: number | null): string {
 }
 
 export function willCallNotice(minted: { order_no?: string; expires_at: string }): string {
-  return `Pickup code printed for ${minted.order_no ?? "the order"}, good until ${shortDate(minted.expires_at)}. It is shown once: print the tag now.`;
+  return `Pickup code made for ${minted.order_no ?? "the order"}, good until ${shortDate(minted.expires_at)}. It is shown once: print the tag now.`;
 }
 
 // ---- the dispatch rules (part B) --------------------------------------------------------------------------
