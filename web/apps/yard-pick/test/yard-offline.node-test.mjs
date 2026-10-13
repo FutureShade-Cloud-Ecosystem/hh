@@ -373,3 +373,40 @@ test("a write made while an earlier request settles keeps its mark, so a third w
   assert.equal(staged.base_seq, undefined, "the third write went blind");
   assert.equal((await layer.openCards()).length, 0, "no false conflict against the device's own move");
 });
+
+test("a write that read its row before a cycle's pull landed does not name the stale seq as its base", async () => {
+  const { server } = await rig();
+  const backend = createSqliteBackend(nodeSqliteExecutor());
+  const store = await OfflineStore.open({ backend, scopes: scopeBookFor(["yard-pick"]) });
+  const inner = server.transport();
+  const delayedTransport = {
+    push: (scope, ops) => inner.push(scope, ops),
+    pull: (scope, since, limit) =>
+      scope === "pick_tasks" && since > 0
+        ? new Promise((resolve) => setTimeout(() => resolve(inner.pull(scope, since, limit)), 100))
+        : inner.pull(scope, since, limit),
+  };
+  const layer = new YardOffline({ store, sql: backend.sql, transport: delayedTransport, direct: {}, actorId: ACTOR, newKey: nextKey });
+  await layer.cycle();
+  const before = server.appliedOrder.length;
+  await layer.claim(TASK);
+  for (let waited = 0; server.appliedOrder.length < before + 1 && waited < 5_000; waited += 10) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(server.appliedOrder.length, before + 1, "the claim applied");
+  let release;
+  const gate = new Promise((resolve) => (release = resolve));
+  const read = store.read.bind(store);
+  store.read = async (scope, id) => {
+    const out = await read(scope, id);
+    if (scope === "pick_tasks") await gate;
+    return out;
+  };
+  const second = layer.start(TASK);
+  await layer.runner.settled();
+  store.read = read;
+  release();
+  await second;
+  await layer.runner.settled();
+  await layer.runner.settled();
+  assert.equal(server.appliedOrder.length, before + 2, "the start applied, never superseded by the device's own claim");
+  assert.equal((await layer.openCards()).length, 0);
+});

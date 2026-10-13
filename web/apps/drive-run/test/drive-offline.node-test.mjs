@@ -382,3 +382,50 @@ test("a write made while an earlier request settles keeps its mark, so a third w
   assert.equal(failed.base_seq, undefined, "the third write went blind");
   assert.equal((await layer.openCards()).length, 0, "no false conflict against the device's own move");
 });
+
+test("a write that read its row before a cycle's pull landed does not name the stale seq as its base", async () => {
+  // The row is read, the cycle for the earlier write settles (its pull lands,
+  // the mark clears), and only then is the base decided: it must come from the
+  // row as it stands then, not from the read made before the pull.
+  const server = new FakeSyncServer();
+  server.seed("runs", RUN, { id: RUN, run_no: "RUN-R5", truck_code: "FLAT-1", status: "DISPATCHED", scheduled_date: "2026-10-08" });
+  server.seed("stops", STOP_1, {
+    id: STOP_1, run_id: RUN, stop_no: 1, order_no: "SO-1001", customer_name: "Northline Hardscapes Ltd (demo)",
+    status: "READY", time_window: "AM", contact_name: "", contact_phone: "", address_line: "95 Bagot St", city: "Kingston",
+    postal_code: "K7K 6X4", instructions: "", pod_received_by: "", pod_at: "", failure_reason: "", photo_count: 0,
+    weight_kg: 400,
+    lines: [{ line_no: 1, sku: "", description: "Natural stone pavers, grey", qty: "120.000", uom: "sqft" }],
+  });
+  const backend = createSqliteBackend(nodeSqliteExecutor());
+  const store = await OfflineStore.open({ backend, scopes: scopeBookFor(["drive-run"]) });
+  const inner = server.transport();
+  const delayedTransport = {
+    push: (scope, ops) => inner.push(scope, ops),
+    pull: (scope, since, limit) =>
+      scope === "stops" && since > 0
+        ? new Promise((resolve) => setTimeout(() => resolve(inner.pull(scope, since, limit)), 100))
+        : inner.pull(scope, since, limit),
+  };
+  const layer = new DriveOffline({ store, sql: backend.sql, transport: delayedTransport, direct: {} });
+  await layer.cycle();
+  await layer.advance(STOP_1, "LOADED");
+  for (let waited = 0; server.appliedOrder.length < 1 && waited < 5_000; waited += 10) await new Promise((r) => setTimeout(r, 10));
+  assert.equal(server.appliedOrder.length, 1, "the load applied");
+  let release;
+  const gate = new Promise((resolve) => (release = resolve));
+  const read = store.read.bind(store);
+  store.read = async (scope, id) => {
+    const out = await read(scope, id);
+    if (scope === "stops") await gate;
+    return out;
+  };
+  const second = layer.advance(STOP_1, "EN_ROUTE");
+  await layer.runner.settled();
+  store.read = read;
+  release();
+  await second;
+  await layer.runner.settled();
+  await layer.runner.settled();
+  assert.equal(server.appliedOrder.length, 2, "the second move applied, never superseded by the device's own first");
+  assert.equal((await layer.openCards()).length, 0);
+});
