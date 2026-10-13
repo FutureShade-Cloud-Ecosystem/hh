@@ -80,3 +80,24 @@ test("a rejection records its own word beside the request", async ({ page }) => 
   await row.getByRole("button", { name: "Reject" }).click();
   await expect(row.locator(".meta")).toContainText("Rejected");
 });
+
+test("the controller's Review opens on Freight above quote, where the two raises are waiting", async ({ request, page }) => {
+  await resetStub(request);
+  await useScenario(request, "freight-only");
+  await page.goto("/");
+  await page.locator("[data-flow='financial-controller']").click();
+  await page.locator("[data-needs='approvals.waiting'] button", { hasText: "Review" }).click();
+  const selected = page.locator(".kind-tab[aria-selected='true']");
+  await expect(selected).toHaveText("Freight above quote");
+  await expect(page.locator("[data-approval]")).toHaveCount(2);
+});
+
+test("a caller with Margin waiting opens on Margin, the first kind", async ({ request, page }) => {
+  await resetStub(request);
+  await page.goto("/");
+  await page.locator("[data-flow='general-manager']").click();
+  await page.locator(".view-link", { hasText: "Approvals" }).click();
+  // The general manager decides every kind and the margin one waits too, so Margin is first and has its row.
+  await expect(page.locator(".kind-tab[aria-selected='true']")).toHaveText("Margin");
+  await expect(page.locator("[data-approval]")).toHaveCount(1);
+});

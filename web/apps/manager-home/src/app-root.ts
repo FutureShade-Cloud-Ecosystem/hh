@@ -55,6 +55,7 @@ import { warrantyStyles } from "./warranty-styles.js";
 import { quickStyles } from "./quick-styles.js";
 import { QuickApi, type QuickActionConfig } from "./quick-api.js";
 import { publishIntent } from "./quick-intent.js";
+import { openingKind } from "./approvals-logic.js";
 import { isLiveHref } from "./landing-links.js";
 import { actionHref, findAction } from "./quick-logic.js";
 import { renderQuickAdmin, renderQuickBar, type QuickAdminModel, type QuickBarModel } from "./quick-views.js";
@@ -780,7 +781,7 @@ export class ManagerHomeApp extends HHElement {
     if (leaving === "builder" && view === "home") void this.#loadLanding();
     if (view === "shortages" && this.#shortages.phase === "loading") void this.#loadShortages();
     if (view === "receiving" && this.#receiving.phase === "loading") void this.#loadReceiving();
-    if (view === "approvals" && this.#approvals.phase === "loading") void this.#loadApprovals();
+    if (view === "approvals" && leaving !== "approvals") void this.#openApprovals();
     if (view === "drivers" && this.#drivers.phase === "loading") void this.#loadDrivers();
     if (view === "reporting") void this.#openReporting();
     if (view === "warranty") this.#warranty.open();
@@ -1509,6 +1510,18 @@ export class ManagerHomeApp extends HHElement {
   }
 
   // -- Approvals ----------------------------------------------------------------------------------------
+
+  // Opening from the landing: the whole list the caller decides names what is
+  // waiting, and the view opens on the first kind that has a row (approvals-logic.ts).
+  // A list that did not load leaves the first kind, whose own read words the refusal.
+  async #openApprovals(): Promise<void> {
+    this.#approvals = { ...this.#approvals, phase: "loading", rows: [], error: "", refusal: "" };
+    this.requestUpdate();
+    const all = await this.#api.approvals("");
+    const kind = all.ok ? openingKind(all.value) : APPROVAL_KINDS[0].kind;
+    this.#approvals = { ...this.#approvals, kind };
+    await this.#loadApprovals();
+  }
 
   async #loadApprovals(): Promise<void> {
     this.#approvals = { ...this.#approvals, phase: "loading", error: "", refusal: "" };

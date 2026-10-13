@@ -1267,6 +1267,12 @@ function decidesMargin(flow) {
 // The matrix's lists: the financial controller and the general manager decide
 // every kind; a sales manager decides margin in their own branch; no one else
 // decides any.
+// The demo seeds only the two freight raises; the scenario "freight-only" is
+// that world, without the stub's own margin approval.
+function seededApprovals() {
+  return scenario === "freight-only" ? world.approvals.filter((a) => a.policy_type === "FREIGHT_ABOVE_QUOTE") : world.approvals;
+}
+
 function decidesKind(flow, kind) {
   if (flow === "financial-controller" || flow === "general-manager") return true;
   return kind === "MARGIN_BELOW_MINIMUM" && decidesMargin(flow);
@@ -1431,7 +1437,7 @@ function needsFor(flow) {
   if (flow === "yard-manager") return yardNeeds();
   // Recomputed per read, the way the core recounts: the approvals row counts
   // what is still pending for a caller who decides it.
-  const waiting = world.approvals.filter((a) => a.status === "PENDING" && decidesKind(flow, a.policy_type)).length;
+  const waiting = seededApprovals().filter((a) => a.status === "PENDING" && decidesKind(flow, a.policy_type)).length;
   return needsQueue(profileOf(flow), waiting);
 }
 
@@ -1616,7 +1622,7 @@ async function handle(req, res) {
       }
     }
     const status = url.searchParams.get("status") ?? "";
-    const items = world.approvals.filter(
+    const items = seededApprovals().filter(
       (a) => (kind === "" || a.policy_type === kind) && (status === "" || a.status === status) && decidesKind(flow, a.policy_type),
     );
     return json(res, { items, next_cursor: null, limit: 50 });
