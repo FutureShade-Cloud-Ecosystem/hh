@@ -5,7 +5,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { shot } from "./shot";
 
-const TRENTON_ID = "6f1c2b3a-0000-4000-8000-000000000001";
+const POINT_LOMA_ID = "6f1c2b3a-0000-4000-8000-000000000001";
 const MAPLE_RIDGE = "c-maple-ridge";
 
 test.beforeEach(async ({ request }) => {
@@ -33,7 +33,7 @@ async function mountBox(page: Page): Promise<{ box: Locator; input: Locator }> {
       host.addEventListener("quote-line-add", (event) => w.__adds.push((event as CustomEvent).detail));
       document.body.append(host);
     },
-    { branch: TRENTON_ID, customer: MAPLE_RIDGE },
+    { branch: POINT_LOMA_ID, customer: MAPLE_RIDGE },
   );
   const box = page.getByTestId("search-add-host");
   return { box, input: box.getByRole("combobox", { name: "Search products by name, code or category" }) };
@@ -344,7 +344,7 @@ test("a branch change reads the rows' stock again", async ({ page }) => {
     const branch = new URL(route.request().url()).searchParams.get("branch_id");
     const real = await route.fetch();
     const body = (await real.json()) as { items: Array<{ on_hand_branch: number }> };
-    for (const item of body.items) item.on_hand_branch = branch === TRENTON_ID ? 400 : 7;
+    for (const item of body.items) item.on_hand_branch = branch === POINT_LOMA_ID ? 400 : 7;
     await route.fulfill({ json: body });
   });
   await input.fill("polymeric");

@@ -59,7 +59,7 @@ test("every screen and state fits the 390 frame, in both themes", async ({ page,
     await noSideways(page, `${theme}: the pick started`);
 
     // The line editor open on a short line, before and after the reason.
-    await page.locator("[data-line]", { hasText: "Granular A gravel" }).locator(".line-row").click();
+    await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
     for (let i = 0; i < 4; i += 1) await page.getByRole("button", { name: "Add one on" }).click();
     await noSideways(page, `${theme}: the line editor open`);
     await chooseReason(page, "line", "NOT_IN_YARD");
