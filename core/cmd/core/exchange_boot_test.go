@@ -192,3 +192,22 @@ func TestBootConsoleExchangeWithEmptyListsRefusesEveryone(t *testing.T) {
 		t.Fatalf("= %d %s", rsp.Code, rsp.Body)
 	}
 }
+
+// The default build has no persona route: the entry exists only in the demo
+// build's console mode (item 7c), so the path is the mux's 404 whatever the
+// request, and the exchange beside it is mounted.
+func TestBootDefaultBuildHasNoPersonaRoute(t *testing.T) {
+	env := newCompEnv(t)
+	rec, _ := registeredSurface(t, env)
+	for _, body := range []string{``, `{"persona":"sales"}`} {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/persona", strings.NewReader(body))
+		got := httptest.NewRecorder()
+		rec.inner.ServeHTTP(got, req)
+		if got.Code != http.StatusNotFound {
+			t.Fatalf("default build persona route = %d, want 404", got.Code)
+		}
+	}
+	if rsp := postExchange(rec.inner, "", ""); rsp.Code != http.StatusBadRequest {
+		t.Fatalf("exchange = %d", rsp.Code)
+	}
+}

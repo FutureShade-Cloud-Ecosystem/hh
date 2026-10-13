@@ -93,6 +93,7 @@ type demoServeConfig struct {
 	appwriteURL    string
 	appwriteProj   string
 	appwriteKey    string
+	persona        personaConfig
 	databaseURL    string
 	staffAudience  string
 	tenantAudience string
@@ -155,6 +156,12 @@ func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
 		}
 		if len(missing) > 0 {
 			return demoServeConfig{}, fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
+		}
+		// The persona route's caller rule is declared by every console
+		// copy of the demo build, with no default.
+		cfg.persona, err = loadPersonaConfig(getenv)
+		if err != nil {
+			return demoServeConfig{}, err
 		}
 		return cfg, nil
 	}
@@ -461,6 +468,19 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 			return nil, err
 		}
 		r.Handle("POST /api/v1/auth/exchange", g.Public(exch))
+
+		// The persona route (item 7c): the tap-a-role entry under the real
+		// sign in. It mints the persona's own session with the same signing
+		// key, behind the copy's declared caller rule. Console mode only.
+		pers, err := buildPersona(personaDeps{
+			cfg: demoCfg.persona, log: log, verify: verifier, session: session, orgs: orgs, staff: staff,
+			knob: dispatchDriverSessionKnob{repo: dispatch.NewRepository(pool)}, audit: money.auditSvc,
+		})
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		r.Handle("POST /api/v1/auth/persona", g.Public(pers))
 	}
 
 	// The demo module's mint routes (W2): the tap-a-role sign-in, the
@@ -493,13 +513,17 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	}, nil
 }
 
-// demoConsoleMembership is the seam item 7 fills: under the console mode
-// the demo build's membership is FB Console's behind its cache, and item 7
-// wraps it in the composite that answers the persona subjects from a static
-// source compiled into this build only. Until then it is the console source
-// alone, exactly the default build's.
+// demoConsoleMembership is the demo build's console mode membership: the
+// composite that answers the persona subjects from a static source compiled
+// into this build only, and every other subject from FB Console behind its
+// cache (state note section 5). A subject with a colon never reaches FB
+// Console, and a subject without one is never looked up in the static map.
 func demoConsoleMembership(cfg demoServeConfig) (authz.MembershipSource, error) {
-	return consoleMembership(cfg.appwriteURL, cfg.appwriteProj, cfg.appwriteKey)
+	console, err := consoleMembership(cfg.appwriteURL, cfg.appwriteProj, cfg.appwriteKey)
+	if err != nil {
+		return nil, err
+	}
+	return membership.NewComposite(console)
 }
 
 // demoRoleConfig is the default's demo path: the decided default document
