@@ -31,7 +31,7 @@ async function freePort(start, count) {
 }
 
 before(async () => {
-  const port = await freePort(56824, 4);
+  const port = await freePort(56836, 4);
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [stubFile], { env: { ROLE_STUB_PORT: String(port), ROLE_STUB_IDLE_EXIT_MS: "120000" }, stdio: "ignore" });
   for (let i = 0; i < 100; i += 1) {
