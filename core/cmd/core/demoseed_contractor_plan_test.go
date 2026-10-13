@@ -92,9 +92,11 @@ func TestContractorPlan_TheWorldHoldsTheStatesTheAppsNeed(t *testing.T) {
 	}
 }
 
-// Every figure is the core's own arithmetic at the California rate: lines add to the header, the header
-// tax is half up once, the line taxes add to the header tax, an invoice mirrors its order, and a balance
-// is the total less what its payment allocated.
+// Every figure is the core's own arithmetic at the California rate: lines add to the header, the line
+// taxes add to the header tax, an invoice mirrors its order, and a balance is the total less what its
+// payment allocated. The header figures are asserted against literal cents (worked by hand from the
+// catalogue's list prices at fifteen percent off, the price rounded half up, tax at 7.75 percent half
+// up once), so a change to the seed's formula cannot move the test with it.
 func TestContractorPlan_MoneyIsIntegerCentsAtTheCaliforniaRate(t *testing.T) {
 	rows, sum, err := buildPlan(testInput(t))
 	if err != nil {
@@ -113,13 +115,27 @@ func TestContractorPlan_MoneyIsIntegerCentsAtTheCaliforniaRate(t *testing.T) {
 		}
 		return total, tax
 	}
+	// subtotal, tax, total in cents, by the key after the last dash of the document number. An invoice
+	// carries its order's figures.
+	wantMoney := map[string][3]int64{
+		"CO1": {278580, 21590, 300170}, "CO2": {352056, 27284, 379340}, "CO3": {91888, 7121, 99009},
+		"CO4": {227880, 17661, 245541}, "CO5": {241160, 18690, 259850}, "CO6": {349500, 27086, 376586},
+		"CO7": {187960, 14567, 202527}, "CO8": {87606, 6789, 94395},
+		"IV1": {278580, 21590, 300170}, "IV2": {352056, 27284, 379340}, "IV3": {91888, 7121, 99009},
+		"IV4": {227880, 17661, 245541},
+		"CQ1": {400279, 31022, 431301}, "CQ2": {508950, 39444, 548394}, "CQ3": {302800, 23467, 326267},
+	}
+	wantBalance := map[string]int64{"IV1": 0, "IV2": 227604, "IV3": 99009, "IV4": 245541}
+	wantPaid := map[string]int64{"IV1": 300170, "IV2": 151736}
 	check := func(doc string, header map[string]any, lines, lineTax int64) {
 		sub, tax, total := header["subtotal_cents"].(int64), header["tax_cents"].(int64), header["total_cents"].(int64)
 		if sub != lines {
 			t.Errorf("%s: subtotal %d but lines sum to %d", doc, sub, lines)
 		}
-		if tax != (sub*775+5000)/10000 {
-			t.Errorf("%s: tax %d is not 7.75 percent of %d half up", doc, tax, sub)
+		if w, ok := wantMoney[doc[strings.LastIndex(doc, "-")+1:]]; !ok {
+			t.Errorf("%s: no pinned figures", doc)
+		} else if sub != w[0] || tax != w[1] || total != w[2] {
+			t.Errorf("%s: subtotal %d tax %d total %d, pinned %d %d %d", doc, sub, tax, total, w[0], w[1], w[2])
 		}
 		if lineTax != 0 && lineTax != tax {
 			t.Errorf("%s: line taxes add to %d, header tax %d", doc, lineTax, tax)
@@ -156,6 +172,11 @@ func TestContractorPlan_MoneyIsIntegerCentsAtTheCaliforniaRate(t *testing.T) {
 	}
 	for _, f := range c["invoices"] {
 		id, total, balance := f["id"].(string), f["total_cents"].(int64), f["balance_cents"].(int64)
+		key := f["invoice_no"].(string)
+		key = key[strings.LastIndex(key, "-")+1:]
+		if balance != wantBalance[key] || paid[id] != wantPaid[key] {
+			t.Errorf("invoice %s: balance %d paid %d, pinned %d and %d", f["invoice_no"], balance, paid[id], wantBalance[key], wantPaid[key])
+		}
 		if balance != total-paid[id] {
 			t.Errorf("invoice %s: balance %d but total %d less paid %d", f["invoice_no"], balance, total, paid[id])
 		}
@@ -201,6 +222,45 @@ func TestContractorPlan_CarriesNoCardDataNoDashesNoCosts(t *testing.T) {
 		}
 		if f["method_type"] == "BANK" && f["exp_month"] != nil {
 			t.Errorf("a bank method carries an expiry")
+		}
+	}
+}
+
+// The contractor unit price is the pricing engine's: list times (10000 less the tier) over ten thousand,
+// the PRICE rounded half up (internal/pricing applyPctOff), not the discount rounded and subtracted.
+// The four products here sit on half a cent and differ by one cent between the two forms. Literal cents,
+// worked by hand from the catalogue's list prices (890, 1250, 4950, 3250 at fifteen percent off).
+func TestContractorPlan_UnitPricesAreTheEnginesOnHalfCentDiscounts(t *testing.T) {
+	rows, sum, err := buildPlan(testInput(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int64{"P03": 757, "P04": 1063, "P06": 4208, "P07": 2763}
+	seen := map[string]bool{}
+	for _, f := range contractorRows(rows, sum)["order_lines"] {
+		for prod, cents := range want {
+			if f["product_id"] == demoID("product:"+prod) {
+				seen[prod] = true
+				if got := f["unit_price_cents"].(int64); got != cents {
+					t.Errorf("%s unit price %d, the pricing engine strikes %d", prod, got, cents)
+				}
+			}
+		}
+	}
+	for prod := range want {
+		if !seen[prod] {
+			t.Errorf("no contractor order line carries %s", prod)
+		}
+	}
+	// The two priced procurement projects' indicative totals, by hand: 640 x 1063 + 20 x 2763, and
+	// 500 x 633 + 14 x 4208 + 9 x 2763.
+	for _, w := range []string{"indicative 735580 cents", "indicative 400279 cents"} {
+		found := false
+		for _, l := range sum.ContractorLines {
+			found = found || strings.HasSuffix(l, w)
+		}
+		if !found {
+			t.Errorf("no project line ends %q: %v", w, sum.ContractorLines)
 		}
 	}
 }

@@ -22,7 +22,7 @@
 // MONEY. Integer cents, half up, struck the way the core strikes them:
 //
 //   - a contractor line prices at list less the CONTRACTOR tier (fifteen percent, the migrations'
-//     TIER_DEFAULT row, half up once on the unit), times a whole quantity;
+//     TIER_DEFAULT row, the price half up once on the unit, as pricing applyPctOff), times a whole quantity;
 //   - the header tax is the subtotal times the San Diego County rate (775 basis points, GLS-TENANT-r3)
 //     over ten thousand, half up ONCE at the header (tax.hstOn), and the per line tax splits that
 //     header figure by largest remainder over the line totals (moneyutil.AllocateLargestRemainder),
@@ -202,10 +202,12 @@ var contractorMethods = []struct {
 	{"bank", "BANK", "Sandbox bank", "0002", "tok_sandbox_demo_bank", 0, 0, false},
 }
 
-// contractorUnit is a contractor's unit price: list less the tier, half up once.
+// contractorUnit is a contractor's unit price, struck as the pricing engine's applyPctOff does: the
+// PRICE (list times ten thousand less the tier, over ten thousand) rounded half up, not the discount
+// rounded and subtracted, which lands a cent low on every half cent discount.
 func (b *builder) contractorUnit(prod string) int64 {
 	list := b.prod[prod].ListCents
-	return list - (list*contractorTierBps+5000)/10000
+	return (list*(10000-contractorTierBps) + 5000) / 10000
 }
 
 // contractorTax is the header tax: subtotal times the rate over ten thousand, half up, once.
