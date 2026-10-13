@@ -182,7 +182,7 @@ test("the catalog holds the eight live roles with the contract's labels and the 
   );
   assert.deepEqual(
     manager.tiles.map((tile) => tile.href),
-    ["/till/", "/quote/", "/home/", null, null],
+    ["/till/", "/quote/", "/home/", "/dealer-admin/", null],
   );
   assert.deepEqual(
     buyer.tiles.map((tile) => tile.href),
@@ -204,8 +204,13 @@ test("the catalog holds the eight live roles with the contract's labels and the 
   assert.equal(controller.id, "financial_controller");
   assert.equal(controller.label, "Financial Controller");
   assert.equal(controller.flow, "financial-controller");
-  assert.deepEqual(controller.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
-  assert.deepEqual(controller.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", null]);
+  // Dealer Admin opens at /dealer-admin/ for the two live roles whose catalog lists it.
+  assert.deepEqual(
+    controller.tiles.map((tile) => tile.name),
+    ["Money Desk", "Manager Home", "Dealer Admin", "House Messages"],
+  );
+  assert.deepEqual(controller.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", "/dealer-admin/", null]);
+  assert.equal(controller.tiles[2], manager.tiles[3], "both roles open the one Dealer Admin tile");
   assert.equal(controller.tiles[0], payRec.tiles[0], "both roles open the one Money Desk tile");
 });
 

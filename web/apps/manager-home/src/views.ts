@@ -52,6 +52,8 @@ export interface LandingModel {
   readonly data: ReadonlyMap<string, WidgetDatum>;
   readonly needs: NeedsQueue | null;
   readonly error: string;
+  /** Whether the landing draws the reporting link: the core's manager roles only, mirrored from the mint's tier. */
+  readonly canOpenReporting: boolean;
 }
 
 const NOT_HERE = "not on this box yet";
@@ -92,6 +94,9 @@ export function renderLanding(model: LandingModel): TemplateResult {
       ${(["shortages", "receiving", "approvals", "drivers", "warranty"] as const).map((v) => html`
         <button type="button" class="view-link" data-action="open-view" data-view=${v}>${VIEW_TITLE[v]}<span class="chev" aria-hidden="true">›</span></button>
       `)}
+      ${model.canOpenReporting ? html`
+        <button type="button" class="view-link" data-action="open-view" data-view="reporting">${VIEW_TITLE.reporting}<span class="chev" aria-hidden="true">›</span></button>
+      ` : nothing}
     </nav>
   `;
 }
