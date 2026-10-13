@@ -2969,8 +2969,9 @@ type IdentityLoginResponse struct {
 }
 
 type IdentityExchangeRequest struct {
-	Jwt string `json:"jwt"`
-	Org string `json:"org"`
+	Jwt   string  `json:"jwt"`
+	Org   string  `json:"org"`
+	Class *string `json:"class,omitempty"`
 }
 
 type IdentityExchangeResponse struct {

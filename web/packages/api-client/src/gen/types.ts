@@ -2496,6 +2496,7 @@ export type IdentityLoginResponse = {
 export type IdentityExchangeRequest = {
   jwt: string;
   org: string;
+  class?: "staff" | "tenant";
 };
 export type IdentityExchangeResponse = {
   token: string;

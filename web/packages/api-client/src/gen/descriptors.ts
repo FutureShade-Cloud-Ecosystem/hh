@@ -375,7 +375,7 @@ export const SCHEMA_DESCRIPTORS = {
   "IdentityLoginRequest": {"k":"object","req":["email","password"],"props":{"email":{"k":"string"},"password":{"k":"string"}}},
   "IdentityUser": {"k":"object","req":["user_id","email","display_name","role_code","role_name","tier","scope"],"props":{"user_id":{"k":"string"},"email":{"k":"string"},"display_name":{"k":"string"},"role_code":{"k":"string"},"role_name":{"k":"string"},"tier":{"k":"integer"},"scope":{"k":"lit","v":["GLOBAL","BRANCH"]}}},
   "IdentityLoginResponse": {"k":"object","req":["token","user"],"props":{"token":{"k":"string"},"user":{"k":"ref","name":"IdentityUser"}}},
-  "IdentityExchangeRequest": {"k":"object","req":["jwt","org"],"props":{"jwt":{"k":"string"},"org":{"k":"string"}},"closed":true},
+  "IdentityExchangeRequest": {"k":"object","req":["jwt","org"],"props":{"jwt":{"k":"string"},"org":{"k":"string"},"class":{"k":"lit","v":["staff","tenant"]}},"closed":true},
   "IdentityExchangeResponse": {"k":"object","req":["token","expiresAtMs","user"],"props":{"token":{"k":"string"},"expiresAtMs":{"k":"integer"},"user":{"k":"ref","name":"IdentityUser"}}},
   "IdentityAuthMethodsResponse": {"k":"object","req":["methods"],"props":{"methods":{"k":"array","of":{"k":"lit","v":["email_password","google","microsoft","magic_link"]}}}},
   "IdentityChangePasswordRequest": {"k":"object","req":["current_password","new_password"],"props":{"current_password":{"k":"string"},"new_password":{"k":"string"}}},
