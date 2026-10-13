@@ -9,6 +9,7 @@
 // (repository hardscapeos_dibbits, read only; see PROVENANCE.md). The bento's
 // bound style attributes become the sheet's static, five percent classes, the
 // way the bars already do, because the position gate refuses a bound style.
+import { figureFor } from "./manager-logic.js";
 import type { WidgetPoint } from "./manager-api.js";
 
 function quantized(share: number): number {
@@ -18,6 +19,8 @@ function quantized(share: number): number {
 export interface GaugeSegment {
   readonly label: string;
   readonly number: number;
+  /** The point's exact figure in the card's own unit (dollars for money_cents), the text beside the meter. */
+  readonly figure: string;
   readonly widthClass: string;
   readonly toneClass: string;
 }
@@ -25,7 +28,7 @@ export interface GaugeSegment {
 const TONES: ReadonlySet<string> = new Set(["good", "watch", "stop"]);
 
 /** Each point's share of the points' own sum, with the tone the server named; null when there is no meter to draw. */
-export function gaugeSegments(points: readonly WidgetPoint[]): readonly GaugeSegment[] | null {
+export function gaugeSegments(points: readonly WidgetPoint[], kind = "count"): readonly GaugeSegment[] | null {
   if (points.length === 0 || points.some((p) => p.number < 0)) return null;
   const sum = points.reduce((total, p) => total + p.number, 0);
   if (sum <= 0) return null;
@@ -34,6 +37,7 @@ export function gaugeSegments(points: readonly WidgetPoint[]): readonly GaugeSeg
     return {
       label: p.label,
       number: p.number,
+      figure: figureFor({ key: "", state: "ok", total: p.number, points: [], note: "", range: "" }, kind) ?? "",
       widthClass: `w${width}`,
       toneClass: TONES.has(p.tone) ? `tone-${p.tone}` : "tone-none",
     };

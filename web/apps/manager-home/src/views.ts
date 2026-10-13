@@ -200,15 +200,15 @@ function renderFoot(w: WidgetView, profile: string): TemplateResult {
  * with no ceiling, so the meter shows composition, never "how full": no invented scale.
  */
 function renderGauge(datum: WidgetDatum, w: WidgetView): TemplateResult | typeof nothing {
-  const segments = gaugeSegments(datum.points);
+  const segments = gaugeSegments(datum.points, w.kind);
   if (segments === null) return nothing;
-  const spoken = `${w.title}: ${segments.map((g) => `${g.label} ${grouped(g.number)}`).join(", ")}`;
+  const spoken = `${w.title}: ${segments.map((g) => `${g.label} ${g.figure}`).join(", ")}`;
   return html`
     <div class="meter" role="img" aria-label=${spoken}>
       ${segments.map((g) => html`<span class="seg ${g.widthClass} ${g.toneClass}"></span>`)}
     </div>
     <ul class="legend">
-      ${segments.map((g) => html`<li class="legend-row"><span class="swatch ${g.toneClass}" aria-hidden="true"></span><span class="label">${g.label}</span><span class="value">${grouped(g.number)}</span></li>`)}
+      ${segments.map((g) => html`<li class="legend-row"><span class="swatch ${g.toneClass}" aria-hidden="true"></span><span class="label">${g.label}</span><span class="value">${g.figure}</span></li>`)}
     </ul>
   `;
 }
