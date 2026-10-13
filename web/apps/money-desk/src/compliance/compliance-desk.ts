@@ -12,11 +12,12 @@
 import { html, type TemplateResult } from "lit";
 import type { ComplianceDeadline, ComplianceReviewStatus, LienJob } from "@hardscapehouse/api-client";
 import type { ComplianceApi, StatusFilter } from "./compliance-api.js";
+import { canWrite } from "../lien/lien-logic.js";
 import { COCKPIT_SUBJECT, horizonDays, refusalWords, reviewForm, reviewStateWord, STATUS_FILTERS } from "./compliance-logic.js";
 import { renderCompliance, type ComplianceModel, type ComplianceTab } from "./compliance-views.js";
 import type { LienHost } from "../lien/lien-desk.js";
 
-export type ComplianceHost = Pick<LienHost, "repaint" | "field" | "choice" | "setField" | "reveal">;
+export type ComplianceHost = Pick<LienHost, "repaint" | "field" | "choice" | "setField" | "reveal" | "roleCode">;
 
 export class ComplianceDesk {
   readonly #api: ComplianceApi;
@@ -164,7 +165,7 @@ export class ComplianceDesk {
   }
 
   async #save(): Promise<void> {
-    if (this.#busy) return;
+    if (this.#busy || !canWrite(this.#host.roleCode())) return;
     const subject = this.#subjectOf();
     const form = reviewForm(subject.type, subject.id, this.#host.choice("review_state"), this.#host.field("review_banner"));
     this.#error = "";
@@ -212,6 +213,7 @@ export class ComplianceDesk {
       subject: this.#subject,
       review: this.#review,
       reviewPhase: this.#reviewPhase,
+      canWrite: canWrite(this.#host.roleCode()),
       busy: this.#busy,
       error: this.#error,
       notice: this.#notice,

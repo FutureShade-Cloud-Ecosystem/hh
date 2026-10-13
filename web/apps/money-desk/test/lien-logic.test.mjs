@@ -22,6 +22,7 @@ import {
   badgeWord,
   bucketWord,
   canRelease,
+  canWrite,
   directionLine,
   directionWord,
   documentStatusWord,
@@ -166,6 +167,13 @@ test("every document form's merge fields are the core's own template keys, and t
   assert.deepEqual(templateFields("UNKNOWN"), []);
 });
 
+test("only the Financial Controller and the General Manager write; Payables and Receivables reads", () => {
+  assert.equal(canWrite("financial_controller"), true);
+  assert.equal(canWrite("general_manager"), true);
+  assert.equal(canWrite("payables_receivables"), false);
+  assert.equal(canWrite(""), false);
+});
+
 test("only the General Manager releases a holdback, and the confirm names the job and the amount", () => {
   assert.equal(canRelease("general_manager"), true);
   assert.equal(canRelease("financial_controller"), false);
@@ -189,7 +197,7 @@ test("a refusal reads in the core's own sentence, with who may do it when the co
   );
   assert.equal(refusalWords("release", "lien: no outstanding retention to release for this job", 422), "No outstanding retention to release for this job.");
   assert.equal(refusalWords("release", "Forbidden", 403), "Releasing a holdback is for the General Manager, co-signed by a Financial Controller or Payables and Receivables.");
-  assert.equal(refusalWords("job", "Forbidden", 403), "That is for the Financial Controller, Payables and Receivables or the General Manager.");
+  assert.equal(refusalWords("job", "Forbidden", 403), "That is for the Financial Controller or the General Manager.");
   assert.equal(refusalWords("job", "lien: job_no is required", 422), "Job_no is required.");
   assert.equal(refusalWords("job", "lien: job not found", 404), "Job not found.");
   assert.equal(refusalWords("load", "", 0), "The liens did not answer. Reload to try again.");

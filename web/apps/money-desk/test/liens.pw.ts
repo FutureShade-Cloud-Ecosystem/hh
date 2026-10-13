@@ -85,8 +85,8 @@ test("a new job is refused in words before anything is sent, then it lands first
   await form.getByLabel("Holdback percent").fill("");
   await form.getByLabel("Substantial performance date").fill(dayFrom(-3));
   await form.getByRole("button", { name: "Create job" }).click();
-  expect(sent).toBe(1);
   await expect(page.locator("[data-notice]")).toContainText("Job GLS-2201 created.");
+  expect(sent).toBe(1);
   await expect(page.locator("[data-row='job']:visible").first()).toContainText("GLS-2201");
   await expect(page.locator("[data-row='job']:visible").first()).toContainText("$64,000.00");
   // The job's release deadline reached the calendar through the core.
@@ -253,16 +253,27 @@ test("an empty worklist, an empty aging and an empty job list say they are empty
   await expect(page.locator("[data-empty='jobs']")).toContainText("No jobs yet");
 });
 
-test("Payables and Receivables reaches Liens from the area switch, works the jobs and the sync, and reads the release without making it", async ({ page, request }) => {
+test("Payables and Receivables reads the jobs and the calendar and is offered no write", async ({ page, request }) => {
   await openLiens(page, request, "payrec");
   await expect(page.getByRole("button", { name: "Receivables", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Approvals and ledger" })).toHaveCount(0);
-  await row(page, "GLS-2103").getByRole("button", { name: "Open job" }).click();
-  await page.getByRole("button", { name: "Sync holdbacks" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Synced:");
+  await expect(page.locator("[data-row='triage']:visible")).toHaveCount(4);
+  await liensTab(page, "jobs");
+  await expect(page.getByRole("button", { name: "New job" })).toHaveCount(0);
+  await expect(page.locator("[data-read-only]")).toContainText("Payables and Receivables reads the liens here. Creating a job, syncing holdbacks and rendering a document are for the Financial Controller or the General Manager.");
+  await row(page, "GLS-2103", "job").getByRole("button", { name: "Open" }).click();
+  await expect(page.locator("[data-job-panel]")).toContainText("GLS-2103");
+  await expect(page.getByRole("button", { name: "Sync holdbacks" })).toHaveCount(0);
+  await liensTab(page, "documents");
+  await expect(page.getByRole("button", { name: "Render draft" })).toHaveCount(0);
   await liensTab(page, "holdbacks");
   await row(page, "GLS-2101", "aging").getByRole("button", { name: "Release" }).click();
   await expect(page.locator("[data-release-panel]")).toContainText("Releasing a holdback is for the General Manager");
+  await page.getByRole("button", { name: "Compliance", exact: true }).click();
+  await expect(page.locator("[data-row='deadline']:visible")).toHaveCount(5);
+  await page.locator("[data-compliance] [data-tab-id='review']").click();
+  await expect(page.getByRole("button", { name: "Save review status" })).toHaveCount(0);
+  await expect(page.locator("[data-read-only]")).toContainText("Setting the review status is for the Financial Controller or the General Manager.");
 });
 
 test("the General Manager's area switch holds Liens and Compliance, and the controller's holds all four", async ({ page, request }) => {

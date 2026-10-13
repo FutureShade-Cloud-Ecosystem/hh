@@ -225,6 +225,19 @@ export function jobForm(values: JobFormValues): JobFormResult {
 // ---- release ------------------------------------------------------------------------------------------
 
 const RELEASER = "general_manager";
+const WRITERS = ["financial_controller", "general_manager"];
+
+/**
+ * Who may write here: the two roles the default role configuration gives manage on the Money Desk and Manager Home.
+ * Payables and Receivables holds work on both, which reads the liens and the calendar. The core's role gate enforces
+ * it again; the app shows it before a press.
+ */
+export function canWrite(roleCode: string): boolean {
+  return WRITERS.includes(roleCode.toLowerCase());
+}
+
+/** The line a role that only reads is shown where the write controls would be. */
+export const READ_ONLY_LIENS = "Payables and Receivables reads the liens here. Creating a job, syncing holdbacks and rendering a document are for the Financial Controller or the General Manager.";
 
 /** The core's gate: the gatekeeper is the General Manager. The app shows it before a press; the core enforces it again. */
 export function canRelease(roleCode: string): boolean {
@@ -255,7 +268,7 @@ export function refusalWords(action: string, message: string, status: number): s
   if (status === 403 && generic) {
     return action === "release"
       ? `Releasing a holdback is for ${WHO_RELEASES}.`
-      : "That is for the Financial Controller, Payables and Receivables or the General Manager.";
+      : "That is for the Financial Controller or the General Manager.";
   }
   if (generic && status === 0) return "The liens did not answer. Reload to try again.";
   const words = sentence(message);

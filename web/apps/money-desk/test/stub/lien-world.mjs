@@ -271,6 +271,10 @@ export function createLienWorld() {
       return page(world.roster);
     }
     if (caller.tier > 2) return forbidden();
+    // The role gate beside the tier guard: the default role configuration gives payables_receivables work on
+    // money-desk and manager-home, and the census puts every lien write and the review status write at manage.
+    // Reads pass; every write, the release included, answers the gate's shared body.
+    if (method !== "GET" && caller.role === "PAYABLES_RECEIVABLES") return forbidden();
     let body = {};
     try {
       body = bodyText === "" ? {} : JSON.parse(bodyText);

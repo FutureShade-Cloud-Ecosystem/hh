@@ -141,8 +141,13 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "trial-balance": [{ file: LEDGER, test: "it reads the trial balance in balance, with the server's totals" }],
   "liens-areas": [
     { file: LIENS, test: "the General Manager's area switch holds Liens and Compliance, and the controller's holds all four" },
-    { file: LIENS, test: "Payables and Receivables reaches Liens from the area switch, works the jobs and the sync, and reads the release without making it" },
+    { file: LIENS, test: "Payables and Receivables reads the jobs and the calendar and is offered no write" },
     { file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of eight" },
+  ],
+  "liens-payrec-reads": [
+    { file: LIENS, test: "Payables and Receivables reads the jobs and the calendar and is offered no write" },
+    { file: "test/lien-stub-contract.test.mjs", test: "the role gate: Payables and Receivables reads the liens and the calendar and is refused every write, as the default configuration and the census say" },
+    { file: "../../../core/internal/roleconfig/default.json", source: '"role": "payables_receivables",\n      "surface": "money-desk",\n      "level": "work"' },
   ],
   "liens-banner": [
     { file: LIENS, test: "the controller opens Liens on the Monday triage: the core's banner and four jobs, oldest first, each with the core's badge and note" },

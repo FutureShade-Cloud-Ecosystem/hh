@@ -85,7 +85,7 @@ test("the shared banner is the core's own words, and a missing answer is said, n
 });
 
 test("a refusal reads in the core's own sentence, with who may do it when the core says only Forbidden", () => {
-  assert.equal(refusalWords("Forbidden", 403), "That is for the Financial Controller, Payables and Receivables or the General Manager.");
+  assert.equal(refusalWords("Forbidden", 403), "That is for the Financial Controller or the General Manager.");
   assert.equal(refusalWords("compliance: invalid review state \"MAYBE\"", 422), "Invalid review state \"MAYBE\".");
   assert.equal(refusalWords("compliance: subject_id is required", 400), "Subject_id is required.");
   assert.equal(refusalWords("", 0), "The compliance calendar did not answer. Reload to try again.");

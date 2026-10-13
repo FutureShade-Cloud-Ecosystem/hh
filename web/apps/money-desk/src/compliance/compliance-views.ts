@@ -9,7 +9,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { ComplianceDeadline, ComplianceReviewStatus, LienJob } from "@hardscapehouse/api-client";
 import { empty, loadFailed, loading, messages, pill, tabsNav } from "../lien/lien-kit.js";
-import { deadlineKindWord, deadlineStatusWord, deadlineTone, dueWords, REVIEW_STATES, reviewStateWord, reviewTone, STATUS_FILTERS } from "./compliance-logic.js";
+import { deadlineKindWord, deadlineStatusWord, deadlineTone, dueWords, READ_ONLY_REVIEW, REVIEW_STATES, reviewStateWord, reviewTone, STATUS_FILTERS } from "./compliance-logic.js";
 
 export type ComplianceTab = "upcoming" | "calendar" | "review";
 
@@ -23,6 +23,7 @@ export interface ComplianceModel {
   readonly subject: string;
   readonly review: ComplianceReviewStatus | null;
   readonly reviewPhase: "loading" | "ready" | "error";
+  readonly canWrite: boolean;
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
@@ -129,6 +130,13 @@ function review(model: ComplianceModel): TemplateResult {
                 ${r.reviewed_at === undefined ? nothing : html`<p class="li-hint">Last set ${dueWords(r.reviewed_at.slice(0, 10))}.</p>`}
               </div>
             `}
+      ${model.canWrite ? reviewForm(model) : html`<p class="li-note" data-read-only>${READ_ONLY_REVIEW}</p>`}
+    </section>
+  `;
+}
+
+function reviewForm(model: ComplianceModel): TemplateResult {
+  return html`
       <div class="li-form">
         <label class="li-field">State
           <select data-field="review_state" aria-label="State">${REVIEW_STATES.map((s) => html`<option data-id=${s}>${reviewStateWord(s)}</option>`)}</select>
@@ -137,7 +145,6 @@ function review(model: ComplianceModel): TemplateResult {
       </div>
       <p class="li-hint">Blank banner words are the core's default words.</p>
       <div class="li-actions"><button type="button" class="btn btn-primary" data-action="co-save-review" ?disabled=${model.busy}>Save review status</button></div>
-    </section>
   `;
 }
 

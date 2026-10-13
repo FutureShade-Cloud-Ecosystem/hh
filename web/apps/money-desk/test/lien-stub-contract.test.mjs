@@ -377,3 +377,41 @@ test("the staff roster is the dealer admin's read and carries the stored role co
   for (const code of ["FINANCIAL_CONTROLLER", "PAYABLES_RECEIVABLES", "GENERAL_MANAGER"]) assert.ok(coreSource.includes(`"${code}"`), `the core has no role ${code}`);
   assert.equal((await get(IDS.payrec, "/api/v1/staff")).status, 403);
 });
+
+test("the role gate: Payables and Receivables reads the liens and the calendar and is refused every write, as the default configuration and the census say", async () => {
+  await reset();
+  // The default role configuration: payables_receivables holds money-desk and manager-home at work, the
+  // controller and the General Manager at manage or above. The census puts the lien writes at money-desk manage
+  // and the review status write at manager-home manage.
+  const config = JSON.parse(readFileSync(join(coreInternal, "roleconfig", "default.json"), "utf8"));
+  const level = (role, surface) => config.cells.find((c) => c.role === role && c.surface === surface)?.level;
+  for (const surface of ["money-desk", "manager-home"]) {
+    assert.equal(level("payables_receivables", surface), "work", `payables_receivables on ${surface}`);
+    for (const role of ["financial_controller", "general_manager"]) assert.ok(["manage", "admin"].includes(level(role, surface)), `${role} on ${surface}`);
+  }
+  const census = readFileSync(join(coreInternal, "platform", "apigen", "routes.gen.go"), "utf8");
+  for (const [op, surface] of [["lienCreateJob", "money-desk"], ["lienSyncJobHoldbacks", "money-desk"], ["lienCreateDocument", "money-desk"], ["lienReleaseHoldback", "money-desk"], ["complianceUpsertReviewStatus", "manager-home"]]) {
+    const line = census.split("\n").find((l) => l.includes(`OperationID: "${op}"`)) ?? "";
+    assert.ok(line.includes(`Surfaces: []string{"${surface}"}, Level: "manage"`), `${op} is not ${surface} manage in the census`);
+  }
+  // Reads pass for Payables and Receivables.
+  for (const route of ["/api/v1/lien/jobs", "/api/v1/lien/triage", "/api/v1/lien/holdback/aging", `/api/v1/lien/jobs/${IDS.job1}/documents`, "/api/v1/compliance/calendar", "/api/v1/compliance/upcoming"]) {
+    assert.equal((await get(IDS.payrec, route)).status, 200, route);
+  }
+  // The four writes, and the release, answer the role gate's shared body.
+  const writes = [
+    ["POST", "/api/v1/lien/jobs", { job_no: "J", branch_id: IDS.branch1 }],
+    ["POST", `/api/v1/lien/jobs/${IDS.job1}/sync`, {}],
+    ["POST", "/api/v1/lien/documents", { job_id: IDS.job1, template_kind: "NOTICE", data: {} }],
+    ["PUT", "/api/v1/compliance/review-status", { subject_type: "OTHER", subject_id: IDS.job1, state: "DRAFT" }],
+    ["POST", `/api/v1/lien/holdback/${IDS.job1}/release`, { approver_id: IDS.controller, approver_role: "FINANCIAL_CONTROLLER" }],
+  ];
+  for (const [method, path, body] of writes) {
+    const res = await call(IDS.payrec, method, path, body);
+    assert.equal(res.status, 403, path);
+    holds("Error", res.json);
+    assert.equal(res.json.error, "Forbidden", path);
+    // The controller passes the gate on the same calls (the release then meets its own gatekeeper check).
+    assert.notEqual((await call(IDS.controller, method, path, body)).json?.error, "Forbidden", path);
+  }
+});

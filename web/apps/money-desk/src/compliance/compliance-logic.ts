@@ -104,6 +104,9 @@ export function banner(status: { state: string; banner_text: string; is_draft: b
   return { text: status.banner_text, tone: reviewTone(status.state), draft: status.is_draft };
 }
 
+/** The line a role that only reads is shown where the review form would be. */
+export const READ_ONLY_REVIEW = "Setting the review status is for the Financial Controller or the General Manager.";
+
 function sentence(message: string): string {
   const trimmed = message.replace(/^(lien|compliance): /, "").trim();
   if (trimmed === "") return "";
@@ -114,7 +117,7 @@ function sentence(message: string): string {
 /** A refusal in words: the shared Forbidden body names who may do it, any other keeps the core's sentence. */
 export function refusalWords(message: string, status: number): string {
   const lower = message.toLowerCase().trim();
-  if (status === 403 && (lower === "" || lower === "forbidden")) return "That is for the Financial Controller, Payables and Receivables or the General Manager.";
+  if (status === 403 && (lower === "" || lower === "forbidden")) return "That is for the Financial Controller or the General Manager.";
   const words = sentence(message);
   return words === "" ? "The compliance calendar did not answer. Reload to try again." : words;
 }

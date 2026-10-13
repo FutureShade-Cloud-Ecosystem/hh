@@ -16,6 +16,7 @@ import { banner, type BannerView } from "../compliance/compliance-logic.js";
 import type { LienApi } from "./lien-api.js";
 import {
   canRelease,
+  canWrite,
   cosigners,
   jobForm,
   mergeData,
@@ -160,6 +161,7 @@ export class LienDesk {
         this.#select(id);
         return true;
       case "li-new-job":
+        if (!canWrite(this.#host.roleCode())) return true;
         this.#newJob = true;
         this.#clearMessages();
         this.#reveal = "[data-job-form]";
@@ -255,7 +257,7 @@ export class LienDesk {
   }
 
   async #createJob(): Promise<void> {
-    if (this.#busy) return;
+    if (this.#busy || !canWrite(this.#host.roleCode())) return;
     const form = jobForm({
       job_no: this.#host.field("job_no"),
       branch_id: this.#host.choice("branch_id"),
@@ -290,7 +292,7 @@ export class LienDesk {
 
   async #sync(): Promise<void> {
     const id = this.#selectedJob;
-    if (id === null || this.#busy) return;
+    if (id === null || this.#busy || !canWrite(this.#host.roleCode())) return;
     this.#busy = true;
     this.#clearMessages();
     this.#host.repaint();
@@ -377,7 +379,7 @@ export class LienDesk {
   }
 
   async #render(): Promise<void> {
-    if (this.#busy || this.#docJob === "") return;
+    if (this.#busy || this.#docJob === "" || !canWrite(this.#host.roleCode())) return;
     const kind = this.#docKind as LienDocument["template_kind"];
     const data = mergeData(templateFields(kind).map((f) => ({ key: f.key, value: this.#host.field("merge", f.key) })));
     this.#busy = true;
@@ -431,6 +433,7 @@ export class LienDesk {
       phase: this.#phase,
       tab: this.#tab,
       canRelease: canRelease(this.#host.roleCode()),
+      canWrite: canWrite(this.#host.roleCode()),
       userId: this.#host.userId(),
       banner: this.#banner,
       bannerState: this.#bannerState,

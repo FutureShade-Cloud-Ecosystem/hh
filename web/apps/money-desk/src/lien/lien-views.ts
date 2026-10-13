@@ -25,6 +25,7 @@ import {
   jobStatusTone,
   jobStatusWord,
   noteWords,
+  READ_ONLY_LIENS,
   refusalWords,
   releaseConfirmWords,
   releaseStatusWord,
@@ -48,6 +49,7 @@ export interface LiensModel {
   readonly phase: "loading" | "ready" | "error";
   readonly tab: LienTab;
   readonly canRelease: boolean;
+  readonly canWrite: boolean;
   readonly userId: string;
   readonly banner: BannerView;
   readonly bannerState: string;
@@ -212,7 +214,7 @@ function jobPanel(model: LiensModel, job: LienJob): TemplateResult {
         <dt>Held now</dt><dd data-held-now>${heldNowWords(held === undefined ? null : formatMoney(held.outstanding_cents), held?.oldest_days ?? 0)}</dd>
       </dl>
       <div class="li-actions">
-        <button type="button" class="btn btn-primary" data-action="li-sync" ?disabled=${model.busy}>Sync holdbacks</button>
+        ${model.canWrite ? html`<button type="button" class="btn btn-primary" data-action="li-sync" ?disabled=${model.busy}>Sync holdbacks</button>` : nothing}
         <button type="button" class="btn btn-secondary" data-action="li-go-docs" data-id=${job.id}>Documents</button>
         ${held !== undefined && held.holdback_direction === "RECEIVABLE"
           ? html`<button type="button" class="btn btn-secondary" data-action="li-release-open" data-id=${job.id}>Release</button>`
@@ -229,9 +231,10 @@ function jobs(model: LiensModel): TemplateResult {
       <section class="li-panel">
         <div class="li-panel-head">
           <h2>Jobs</h2>
-          <button type="button" class="btn btn-secondary" data-action="li-new-job">New job</button>
+          ${model.canWrite ? html`<button type="button" class="btn btn-secondary" data-action="li-new-job">New job</button>` : nothing}
         </div>
         <p class="li-dim">The jobs a holdback and its release attach to, newest first.</p>
+        ${model.canWrite ? nothing : html`<p class="li-note" data-read-only>${READ_ONLY_LIENS}</p>`}
         ${model.jobs.length === 0
           ? empty("jobs", "No jobs yet", "Create the first job to start recording its holdback.")
           : html`
@@ -245,7 +248,7 @@ function jobs(model: LiensModel): TemplateResult {
             `}
       </section>
       <div>
-        ${model.newJob
+        ${model.newJob && model.canWrite
           ? jobForm(model)
           : selected !== undefined
             ? jobPanel(model, selected)
@@ -397,6 +400,7 @@ function versionCard(d: LienDocument, jobNo: string): TemplateResult {
 }
 
 function renderForm(model: LiensModel): TemplateResult {
+  if (!model.canWrite) return html`<section class="li-panel"><p class="li-note" data-read-only>${READ_ONLY_LIENS}</p></section>`;
   const fields = templateFields(model.docKind);
   return html`
     <section class="li-panel">
