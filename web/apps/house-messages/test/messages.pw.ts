@@ -122,3 +122,30 @@ test("a message from another person arrives in the open channel without a reload
   await says(request, "yard-manager", CH.branch, "Truck 03 is at the gate");
   await expect(page.locator("[data-conversation] li[data-msg]").last()).toContainText("Truck 03 is at the gate");
 });
+
+test("switching rooms while a post is in flight keeps the new room's draft, and the sent words are gone from the old room's box when it is reopened", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  const box = page.locator("textarea[data-field='draft']");
+  await page.route("**/api/v1/messaging/channels/*/messages", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await new Promise((done) => setTimeout(done, 1500));
+    return route.continue();
+  });
+  await channel(page, CH.deliveries).click();
+  await box.fill("half written about the trucks");
+  await channel(page, CH.yard).click();
+  await expect(box).toHaveValue("");
+  await box.fill("Counted again, 13 on the pallet");
+  const answered = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/channels/${CH.yard}/messages`));
+  await page.getByRole("button", { name: "Send" }).click();
+  await channel(page, CH.deliveries).click();
+  await expect(box).toHaveValue("half written about the trucks");
+  await answered;
+  await expect(page.locator("[data-conversation]").getByRole("heading", { level: 2 })).toHaveText("Deliveries");
+  await expect(box).toHaveValue("half written about the trucks");
+  await channel(page, CH.yard).click();
+  await expect(page.locator("[data-conversation] li[data-msg]").last()).toContainText("Counted again, 13 on the pallet");
+  await expect(box).toHaveValue("");
+  await channel(page, CH.deliveries).click();
+  await expect(box).toHaveValue("half written about the trucks");
+});

@@ -525,10 +525,13 @@ export class MessagesDesk {
       this.#host.repaint();
       return;
     }
-    field.value = "";
-    this.#draft = "";
-    this.#replyTo = null;
+    // The sent words are no one's draft now. The box and the reply belong to the room that is open: if
+    // the person moved on while the post was in flight, the box holds the other room's words.
+    this.#drafts.delete(channelId);
     if (channelId === this.#activeId) {
+      field.value = "";
+      this.#draft = "";
+      this.#replyTo = null;
       if (reply === null) {
         this.#held = mergeNewest(this.#held, [posted.value]);
       } else {
