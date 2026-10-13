@@ -38,6 +38,8 @@ test("one method only shows no alternatives and no divider", () => {
   assert.equal(link.hint, "This dealer allows one method.");
   const password = signInPlan({ methods: ["futurebuild"], dealer: "" });
   assert.deepEqual(labels(password), ["Sign in"]);
+  // The password way alone is the plain card the apps always had, so it keeps the plain hint.
+  assert.equal(password.hint, "Use the email your contractor account knows.");
   assert.equal(password.password, true);
   assert.equal(password.email, true);
 });

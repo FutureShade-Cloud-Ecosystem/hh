@@ -27,7 +27,12 @@
 #   each app serves under its own prefix behind the phrase gate (refused
 #     without, served with): the front door at /, the till at /till/, the
 #     public desk at /q/ and /quote.html, /quote/ per the desk being present;
-#   /api/v1/demo/flows answers the closed table's eight flows;
+#   /api/v1/demo/flows answers the closed table's eight flows, the five contractor
+#     flows and both classes; the three Pro apps serve under /pro-procurement/,
+#     /pro-pay/ and /pro-field/ (gated, assets under their own prefixes); the five
+#     contractor cards mint a tenant bearer whose role tenant me answers (L-card),
+#     the server refuses what a role lacks (L-wall) and no cost key reaches a
+#     contractor (L-cost);
 #   POST /api/v1/demo/session without the phrase is refused by the gate,
 #     and with the phrase mints a token;
 #   GET /api/v1/quotes with a valid demo bearer and no phrase answers 200
@@ -254,6 +259,9 @@ page_has /home/ manager-home-app "Manager Home at /home/"
 page_has /yard/ yard-pick-app "Yard Pick at /yard/"
 page_has /money-desk/ money-desk-app "the Money Desk at /money-desk/"
 page_has /dealer-admin/ dealer-admin-app "Dealer Admin at /dealer-admin/"
+page_has /pro-procurement/ pro-procurement-app "Pro Procurement at /pro-procurement/"
+page_has /pro-pay/ pro-pay-app "Pro Pay at /pro-pay/"
+page_has /pro-field/ pro-field-app "Pro Field at /pro-field/"
 page_has /q/ pd-quote-public "the public desk at /q/"
 page_has "/quote.html?t=x" pd-quote-public "the public desk at /quote.html"
 page_gated /till/ "the counter till at /till/"
@@ -263,6 +271,9 @@ page_gated /home/ "Manager Home at /home/"
 page_gated /yard/ "Yard Pick at /yard/"
 page_gated /money-desk/ "the Money Desk at /money-desk/"
 page_gated /dealer-admin/ "Dealer Admin at /dealer-admin/"
+page_gated /pro-procurement/ "Pro Procurement at /pro-procurement/"
+page_gated /pro-pay/ "Pro Pay at /pro-pay/"
+page_gated /pro-field/ "Pro Field at /pro-field/"
 page_gated /q/ "the public desk at /q/"
 page_gated /quote/ "the /quote/ prefix"
 # Never indexed, gate open or shut (decision log row 981): the header rides the
@@ -310,6 +321,16 @@ else
 	fail "Yard Pick's script asset did not resolve under /yard/ (found: ${asset:-none})"
 fi
 
+# The three Pro apps' script assets resolve under their own prefixes (the base flag reached each build).
+for pp in pro-procurement pro-pay pro-field; do
+	asset="$(curl -s -u "demo:$PHRASE" "$BASE/$pp/" | sed -n "s/.*src=\"\(\/$pp\/assets\/[^\"]*\.js\)\".*/\1/p" | head -1)"
+	if [ -n "$asset" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' -u "demo:$PHRASE" "$BASE$asset")" = "200" ]; then
+		pass "$pp's script asset resolves under /$pp/"
+	else
+		fail "$pp's script asset did not resolve under /$pp/ (found: ${asset:-none})"
+	fi
+done
+
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
 *'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
@@ -318,6 +339,18 @@ case "$flows" in
 	*)
 		fail "/api/v1/demo/flows did not answer the eight flows: $flows"
 		;;
+esac
+
+# The listing carries each row's class and the five contractor flows (Summit Ridge Builders): the front door
+# routes a tenant row to the Pro app for its role.
+case "$flows" in
+*'"flow":"contractor-account-admin"'*'"flow":"contractor-buyer"'*'"flow":"contractor-buyer-no-pay"'*'"flow":"contractor-ap-finance"'*'"flow":"contractor-field-crew"'*)
+		pass "/api/v1/demo/flows answers the five contractor flows" ;;
+	*) fail "/api/v1/demo/flows did not answer the five contractor flows: $flows" ;;
+esac
+case "$flows" in
+	*'"class":"tenant"'*'"class":"staff"'* | *'"class":"staff"'*'"class":"tenant"'*) pass "/api/v1/demo/flows carries both classes, staff and tenant" ;;
+	*) fail "/api/v1/demo/flows does not carry both classes: $flows" ;;
 esac
 
 code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
@@ -339,6 +372,46 @@ code="$(curl -s -o /dev/null -w '%{http_code}' \
 	"$BASE/api/v1/quotes")"
 [ "$code" = "200" ] && pass "a staff read with a valid demo bearer and no phrase answers 200" \
 	|| fail "GET /api/v1/quotes with a bearer and no phrase answered $code, want 200"
+
+# A contractor persona's card (L-card): the mint answers a tenant class bearer, tenant me answers the role, and the
+# role's wall is the server's (L-wall): accounts payable reads invoices and is refused the buying routes, the field
+# crew reads orders and is refused billing, the buyer reads the buying routes. Tenant routes carry no X-Org and no
+# phrase: the bearer is the credential.
+tenant_mint() {
+	curl -s -u "demo:$PHRASE" -H 'Content-Type: application/json' -d "{\"flow\":\"$1\"}" "$BASE/api/v1/demo/session" \
+		| sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
+}
+tenant_code() {
+	# bearer, path
+	curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $1" "$BASE$2"
+}
+for pair in "contractor-account-admin account_admin" "contractor-buyer buyer" "contractor-buyer-no-pay buyer_no_pay" "contractor-ap-finance ap_finance" "contractor-field-crew field_crew"; do
+	flow="${pair% *}"
+	role="${pair#* }"
+	tok="$(tenant_mint "$flow")"
+	if [ -z "$tok" ]; then fail "the mint for $flow answered no token"; continue; fi
+	me="$(curl -s -H "Authorization: Bearer $tok" "$BASE/api/v1/tenant/me")"
+	case "$me" in
+		*"\"role\":\"$role\""*) pass "L-card: $flow mints a tenant bearer and tenant me answers the $role role" ;;
+		*) fail "L-card: $flow's tenant me did not answer the $role role: $me" ;;
+	esac
+done
+ap="$(tenant_mint contractor-ap-finance)"
+crew="$(tenant_mint contractor-field-crew)"
+buyer="$(tenant_mint contractor-buyer)"
+[ "$(tenant_code "$ap" /api/v1/tenant/invoices)" = "200" ] && pass "L-wall: accounts payable reads invoices" || fail "L-wall: accounts payable could not read invoices"
+[ "$(tenant_code "$ap" /api/v1/tenant/procurement/projects)" = "403" ] && pass "L-wall: accounts payable is refused the buying routes by the server" || fail "L-wall: accounts payable was not refused the buying routes"
+[ "$(tenant_code "$crew" /api/v1/tenant/orders)" = "200" ] && pass "L-wall: the field crew reads orders" || fail "L-wall: the field crew could not read orders"
+[ "$(tenant_code "$crew" /api/v1/tenant/invoices)" = "403" ] && pass "L-wall: the field crew is refused billing by the server" || fail "L-wall: the field crew was not refused billing"
+[ "$(tenant_code "$buyer" /api/v1/tenant/procurement/projects)" = "200" ] && pass "L-wall: the buyer reads the buying routes" || fail "L-wall: the buyer could not read the buying routes"
+[ "$(tenant_code "" /api/v1/tenant/orders)" = "401" ] && pass "L-wall: a tenant route with no bearer answers 401" || fail "L-wall: a tenant route with no bearer did not answer 401"
+# L-cost: nothing a contractor reads carries a dealer cost, margin or markup key.
+costs="$(curl -s -H "Authorization: Bearer $buyer" "$BASE/api/v1/tenant/catalog/search?q=a"; curl -s -H "Authorization: Bearer $buyer" "$BASE/api/v1/tenant/orders"; curl -s -H "Authorization: Bearer $buyer" "$BASE/api/v1/tenant/quotes")"
+if printf '%s' "$costs" | grep -qiE '"[a-z_]*(cost|margin|markup)[a-z_]*"[[:space:]]*:'; then
+	fail "L-cost: a catalog, order or quote answer carries a cost, margin or markup key"
+else
+	pass "L-cost: no cost, margin or markup key in the contractor's catalog, order and quote answers"
+fi
 
 pay="$(curl -s -H "Authorization: Bearer $TOKEN" -H 'X-Org: hh-demo' \
 	"$BASE/api/v1/payments/config")"

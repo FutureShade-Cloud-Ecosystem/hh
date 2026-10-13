@@ -126,7 +126,7 @@ export function signInPlan(input: SignInPlanInput): SignInPlan {
       ? `${dealer} allows no way to sign in yet. Ask the dealer.`
       : state === "every"
         ? `${dealer} chooses the methods its contractors use.`
-        : state === "one"
+        : state === "one" && allowed[0] !== "futurebuild"
           ? "This dealer allows one method."
           : "Use the email your contractor account knows.";
   const emailWays = allowed.filter((m) => m === "email_link" || m === "futurebuild").length;
