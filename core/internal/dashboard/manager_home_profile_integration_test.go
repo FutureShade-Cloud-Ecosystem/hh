@@ -370,3 +370,99 @@ func TestIntegration_0389_TheBranchManagerCommitsDeliveries(t *testing.T) {
 	wantKeys(t, "manager.branch", needsOf(t, "manager.branch"),
 		[]string{NeedsDueToCommit, NeedsUnassigned, NeedsApprovals, NeedsAREscalation, NeedsParkedTickets})
 }
+
+// widgetsOf reads one profile's seeded widgets in order, and runs them through the write gate: a
+// default the gate would refuse is a hole on first login and a "my Home will not save" later.
+func widgetsOf(t *testing.T, profile string) []Widget {
+	t.Helper()
+	rows, err := widgetRepo(t).ProfileWidgets(context.Background(), profile)
+	if err != nil {
+		t.Fatalf("ProfileWidgets(%s): %v", profile, err)
+	}
+	if err := ValidateWidgets(rows, MetricByID, NoBranch); err != nil {
+		t.Fatalf("%s: the seeded widgets fail the write gate: %v", profile, err)
+	}
+	return rows
+}
+
+// wantWidgets compares key, shape, measure and split position for position, and that the hero is
+// the first widget at L with Needs you beside it (the doctrine's two rules).
+func wantWidgets(t *testing.T, profile string, want [][4]string) {
+	t.Helper()
+	got := widgetsOf(t, profile)
+	if len(got) != len(want) {
+		t.Fatalf("%s holds %d widgets, want %d", profile, len(got), len(want))
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.Key != w[0] || g.Shape != w[1] || g.Measure != w[2] || g.Split != w[3] {
+			t.Errorf("%s widget %d is %s/%s/%s/%s, want %s/%s/%s/%s", profile, i,
+				g.Key, g.Shape, g.Measure, g.Split, w[0], w[1], w[2], w[3])
+		}
+	}
+	if got[0].Size != SizeL || got[1].Measure != string(MeasureNeedsYou) {
+		t.Errorf("%s must lead with a hero at L and Needs you second", profile)
+	}
+}
+
+// TestIntegration_0389_TheSalesManagersHomeIsAboutSellingAndPricing pins 2D gap 5: sales today is
+// the hero, the branch split and the trend say how selling is going, margin by branch and the gross
+// margin figure are the pricing facts, and the receivables book is gone (the controller's).
+func TestIntegration_0389_TheSalesManagersHomeIsAboutSellingAndPricing(t *testing.T) {
+	wantWidgets(t, "manager.sales", [][4]string{
+		{"hero.sales", WidgetStat, MetricSalesByBranch, SplitNone},
+		{"needs.you", WidgetList, string(MeasureNeedsYou), SplitNone},
+		{"sales.branch", WidgetBars, MetricSalesByBranch, DimBranch},
+		{"margin.branch", WidgetBars, MetricGrossMargin, DimBranch},
+		{"sales.trend", WidgetTrend, MetricSalesByBranch, SplitNone},
+		{"orders.status", WidgetBars, MetricOrdersOpen, DimStatus},
+		{"orders.open", WidgetStat, MetricOrdersOpen, SplitNone},
+		{"margin.gross", WidgetStat, MetricGrossMargin, SplitNone},
+	})
+}
+
+// TestIntegration_0389_TheProcurementManagersHomeIsStock pins the re-seed half of 2D gap 4: the
+// hero is the stock on hand, not the receivables book, built from existing measures only (no
+// purchase order measure exists yet).
+func TestIntegration_0389_TheProcurementManagersHomeIsStock(t *testing.T) {
+	wantWidgets(t, "manager.procurement", [][4]string{
+		{"hero.inventory", WidgetStat, MetricInventoryValue, SplitNone},
+		{"needs.you", WidgetList, string(MeasureNeedsYou), SplitNone},
+		{"inventory.branch", WidgetBars, MetricInventoryValue, DimBranch},
+		{"orders.status", WidgetBars, MetricOrdersOpen, DimStatus},
+		{"picks.board", WidgetBoard, MetricPickQueue, DimStatus},
+		{"picks.gauge", WidgetGauge, MetricPickQueue, SplitNone},
+		{"orders.open", WidgetStat, MetricOrdersOpen, SplitNone},
+		{"warranty.open", WidgetStat, MetricWarrantyOpen, SplitNone},
+	})
+}
+
+// TestIntegration_0389_NeitherLandingCarriesTheReceivablesBook keeps the two roles off the book.
+func TestIntegration_0389_NeitherLandingCarriesTheReceivablesBook(t *testing.T) {
+	for _, p := range []string{"manager.sales", "manager.procurement"} {
+		for _, w := range widgetsOf(t, p) {
+			if w.Measure == MetricARBalance {
+				t.Errorf("%s still carries the receivables book (%s)", p, w.Key)
+			}
+		}
+	}
+}
+
+// TestIntegration_0389_TheControllerAndPayablesKeepTheBook is the control: the roles that own the
+// book keep the manager shape's whole widget set.
+func TestIntegration_0389_TheControllerAndPayablesKeepTheBook(t *testing.T) {
+	pool := testPool(t)
+	for _, p := range []string{"manager.controller", "manager.payables", "manager.branch"} {
+		var n int
+		if err := pool.QueryRow(context.Background(),
+			`SELECT count(*) FROM dashboard_profile_widgets w
+			   JOIN dashboard_profile_widgets b ON b.profile = 'manager' AND b.widget_key = w.widget_key
+			    AND b.shape = w.shape AND b.measure = w.measure AND b.position = w.position
+			 WHERE w.profile = $1`, p).Scan(&n); err != nil {
+			t.Fatalf("%s: %v", p, err)
+		}
+		if n != 8 {
+			t.Errorf("%s matches the manager shape on %d of 8 widgets", p, n)
+		}
+	}
+}
