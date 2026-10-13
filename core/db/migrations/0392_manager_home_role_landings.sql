@@ -1,4 +1,4 @@
--- 0389: the per-role Manager Home landings, second pass (HH Session 4, item 2D).
+-- 0392: the per-role Manager Home landings, second pass (HH Session 4, item 2D).
 --
 -- 0381 filed eight manager roles under their own profile but BORN seven of them as byte copies of a
 -- base shape, so five roles shared the controller's landing. This migration gives three of them

@@ -357,16 +357,16 @@ func wantKeys(t *testing.T, profile string, got, want []string) {
 	}
 }
 
-// TestIntegration_0389_TheProcurementManagersNeedsAreTheBuyersOwn pins the seeded rows of 2D gap 3:
+// TestIntegration_0392_TheProcurementManagersNeedsAreTheBuyersOwn pins the seeded rows of 2D gap 3:
 // shortages and receiving differences, approvals kept, the AR edge and the parked tickets gone.
-func TestIntegration_0389_TheProcurementManagersNeedsAreTheBuyersOwn(t *testing.T) {
+func TestIntegration_0392_TheProcurementManagersNeedsAreTheBuyersOwn(t *testing.T) {
 	wantKeys(t, "manager.procurement", needsOf(t, "manager.procurement"),
 		[]string{NeedsOpenShortages, NeedsReceivingDifferences, NeedsApprovals})
 }
 
-// TestIntegration_0389_TheBranchManagerCommitsDeliveries pins the seeded rows of 2D gap 6: the two
+// TestIntegration_0392_TheBranchManagerCommitsDeliveries pins the seeded rows of 2D gap 6: the two
 // dispatch sources lead, the manager shape's three follow.
-func TestIntegration_0389_TheBranchManagerCommitsDeliveries(t *testing.T) {
+func TestIntegration_0392_TheBranchManagerCommitsDeliveries(t *testing.T) {
 	wantKeys(t, "manager.branch", needsOf(t, "manager.branch"),
 		[]string{NeedsDueToCommit, NeedsUnassigned, NeedsApprovals, NeedsAREscalation, NeedsParkedTickets})
 }
@@ -405,10 +405,10 @@ func wantWidgets(t *testing.T, profile string, want [][4]string) {
 	}
 }
 
-// TestIntegration_0389_TheSalesManagersHomeIsAboutSellingAndPricing pins 2D gap 5: sales today is
+// TestIntegration_0392_TheSalesManagersHomeIsAboutSellingAndPricing pins 2D gap 5: sales today is
 // the hero, the branch split and the trend say how selling is going, margin by branch and the gross
 // margin figure are the pricing facts, and the receivables book is gone (the controller's).
-func TestIntegration_0389_TheSalesManagersHomeIsAboutSellingAndPricing(t *testing.T) {
+func TestIntegration_0392_TheSalesManagersHomeIsAboutSellingAndPricing(t *testing.T) {
 	wantWidgets(t, "manager.sales", [][4]string{
 		{"hero.sales", WidgetStat, MetricSalesByBranch, SplitNone},
 		{"needs.you", WidgetList, string(MeasureNeedsYou), SplitNone},
@@ -421,10 +421,10 @@ func TestIntegration_0389_TheSalesManagersHomeIsAboutSellingAndPricing(t *testin
 	})
 }
 
-// TestIntegration_0389_TheProcurementManagersHomeIsStock pins the re-seed half of 2D gap 4: the
+// TestIntegration_0392_TheProcurementManagersHomeIsStock pins the re-seed half of 2D gap 4: the
 // hero is the stock on hand, not the receivables book, built from existing measures only (no
 // purchase order measure exists yet).
-func TestIntegration_0389_TheProcurementManagersHomeIsStock(t *testing.T) {
+func TestIntegration_0392_TheProcurementManagersHomeIsStock(t *testing.T) {
 	wantWidgets(t, "manager.procurement", [][4]string{
 		{"hero.inventory", WidgetStat, MetricInventoryValue, SplitNone},
 		{"needs.you", WidgetList, string(MeasureNeedsYou), SplitNone},
@@ -437,8 +437,8 @@ func TestIntegration_0389_TheProcurementManagersHomeIsStock(t *testing.T) {
 	})
 }
 
-// TestIntegration_0389_NeitherLandingCarriesTheReceivablesBook keeps the two roles off the book.
-func TestIntegration_0389_NeitherLandingCarriesTheReceivablesBook(t *testing.T) {
+// TestIntegration_0392_NeitherLandingCarriesTheReceivablesBook keeps the two roles off the book.
+func TestIntegration_0392_NeitherLandingCarriesTheReceivablesBook(t *testing.T) {
 	for _, p := range []string{"manager.sales", "manager.procurement"} {
 		for _, w := range widgetsOf(t, p) {
 			if w.Measure == MetricARBalance {
@@ -448,9 +448,9 @@ func TestIntegration_0389_NeitherLandingCarriesTheReceivablesBook(t *testing.T) 
 	}
 }
 
-// TestIntegration_0389_TheControllerAndPayablesKeepTheBook is the control: the roles that own the
+// TestIntegration_0392_TheControllerAndPayablesKeepTheBook is the control: the roles that own the
 // book keep the manager shape's whole widget set.
-func TestIntegration_0389_TheControllerAndPayablesKeepTheBook(t *testing.T) {
+func TestIntegration_0392_TheControllerAndPayablesKeepTheBook(t *testing.T) {
 	pool := testPool(t)
 	for _, p := range []string{"manager.controller", "manager.payables", "manager.branch"} {
 		var n int

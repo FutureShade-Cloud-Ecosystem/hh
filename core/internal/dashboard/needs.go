@@ -199,7 +199,7 @@ var yardManagerNeeds = []NeedsPolicy{
 	{SourceKey: NeedsReceivingDifferences, Position: 2, Visible: true, WarnAt: 1, StopAt: 3},
 }
 
-// procurementManagerNeeds is the procurement manager's own policy, the Go copy of 0389 §1: the
+// procurementManagerNeeds is the procurement manager's own policy, the Go copy of 0392 §1: the
 // gaps the yard reports and where each purchase order got to come first, and approvals stay (the
 // AR escalation and the parked tickets are the controller's and the counter's work, not the buyer's).
 var procurementManagerNeeds = []NeedsPolicy{
@@ -208,7 +208,7 @@ var procurementManagerNeeds = []NeedsPolicy{
 	{SourceKey: NeedsApprovals, Position: 2, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
 }
 
-// branchManagerNeeds is the branch manager's own policy, the Go copy of 0389 §3: the branch manager
+// branchManagerNeeds is the branch manager's own policy, the Go copy of 0392 §2: the branch manager
 // commits a delivery date and stands behind it when dispatch escalates, so the two dispatch sources
 // lead (with the dock shape's edges), and the manager shape's three rows follow.
 var branchManagerNeeds = []NeedsPolicy{
