@@ -395,7 +395,7 @@ func TestInvariant_TaxSnapshotsInsertOnly(t *testing.T) {
 
 // The GL carries no currency; only the scoped DX-19 PO/landed-cost DOCUMENT tables and the card rail's
 // configuration row may carry a currency column. The currency-column scan ALLOWLISTS exactly payment_config
-// (the dealer's own currency since item 3b slice 2, checked as a three letter code by 0392; it was a
+// (the dealer's own currency since item 3b slice 2, checked as a three letter code by 0393; it was a
 // constant-CAD CHECK in 0027), purchase_orders, and landed_costs, any other currency column, or a currency
 // column on the GL journals, is a violation. The dealer's currency itself lives in system_settings, a key
 // and not a column, so no table gained a column for it and this list gained no name.

@@ -80,7 +80,7 @@ test("a vendor code mapping is all or nothing on its unit, and never empty", () 
 
 test("the echoed reference is asked for in words, and a miss reads as one", () => {
   assert.equal(refWords("  "), "Type the order number the vendor quoted.");
-  assert.equal(refWords("PO TRT 66"), "");
+  assert.equal(refWords("PO PLM 66"), "");
 });
 
 test("a wall refusal names who may change a vendor", () => {

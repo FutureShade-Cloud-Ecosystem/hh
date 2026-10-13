@@ -624,7 +624,7 @@ export function createGlWorld() {
         if (branch !== "" && j.branch_id !== branch) continue;
         for (const l of j.lines) if (l.account_code === "1100") gl += l.debit_cents - l.credit_cents;
       }
-      const subledger = branch === "" || branch === IDS.trenton ? 700000 : 0;
+      const subledger = branch === "" || branch === IDS.pointLoma ? 700000 : 0;
       const delta = subledger - gl;
       const key = branch === "" ? "all" : branch;
       if (delta !== 0 && world.tieSince[key] === undefined) world.tieSince[key] = new Date(NOW).toISOString();

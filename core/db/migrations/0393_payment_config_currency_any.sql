@@ -1,4 +1,4 @@
--- 0392: payment_config.currency is the dealer's currency, no longer CAD only (item 3b slice 2).
+-- 0393: payment_config.currency is the dealer's currency, no longer CAD only (item 3b slice 2).
 --
 -- 0027 pinned the card rail row to CAD (CHECK (currency = 'CAD')) because every dealer was an
 -- Ontario dealer. The currency is now the dealer's own (system_settings.currency, read through the
