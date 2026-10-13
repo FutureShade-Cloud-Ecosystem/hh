@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { flowFor, timelineSteps, promisedWords, lateWords, houseToday, fulfillmentWords, instructionsEditable, instructionsNote } from "../src/timeline.ts";
 import { sectionsFor, ordersSurfaceOf } from "../src/sections.ts";
 import { RETURN_STATUS_WORDS, RETURN_REASON_WORDS, returnChipTone, returnLineWords, returnRequestLines } from "../src/returns.ts";
+import { varianceWords, projectsEmptyWords } from "../src/projects.ts";
 
 function order(status, fulfillment, extra = {}) {
   return { status, fulfillment, requested_date: "2042-05-01", ...extra };
@@ -170,4 +171,16 @@ test("a return request is built from the typed quantities, or refused in plain w
   const junk = returnRequestLines(new Map([["l1", "1.5 pizzas"]]), lines);
   assert.equal(junk.ok, false);
   assert.ok(junk.words.includes("whole number"));
+});
+
+test("the variance reads the dealer's own numbers as words, never a recomputation", () => {
+  assert.deepEqual(varianceWords(true, 25_000), { words: "$250.00 over the quote", tone: "stop" });
+  assert.deepEqual(varianceWords(true, -25_000), { words: "$250.00 under the quote", tone: "good" });
+  assert.deepEqual(varianceWords(true, 0), { words: "On the quote", tone: "neutral" });
+  assert.deepEqual(varianceWords(false, 0), { words: "No quote to measure against", tone: "neutral" });
+});
+
+test("the projects empty words are this app's own, sentence case, with no exclamation", () => {
+  assert.ok(projectsEmptyWords.startsWith("No projects"));
+  assert.doesNotMatch(projectsEmptyWords, /!/);
 });

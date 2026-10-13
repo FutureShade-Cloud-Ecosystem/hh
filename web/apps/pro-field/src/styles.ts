@@ -110,4 +110,13 @@ export const fieldStyles = css`
   .notice { margin: 0; color: var(--hh-state-good); }
   .fault { margin: 0; color: var(--hh-danger); }
   .readonly-note { margin: 0; white-space: pre-wrap; }
+
+  /* The projects rollup: the variance against the quote, in the platform's
+     state colours with the words carrying it beside. */
+  .variance-stop { color: var(--hh-state-stop); }
+  .variance-good { color: var(--hh-state-good); }
+  .variance-neutral { color: var(--hh-text); }
+  .rowbtn.slim { padding: var(--hh-s-4) 0; }
+  .qty { max-width: 7rem; }
+  .returnline { flex: 1; min-width: 12rem; }
 `;

@@ -200,6 +200,41 @@ test.describe("phone", () => {
     await expect(page.getByTestId("request-return")).toHaveCount(0);
   });
 
+  test("the projects section lists the jobs, and one opens its rollup with its orders and invoices", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Projects" }).click();
+    await expect(page.getByTestId("surface-title")).toHaveText("Projects");
+    const rows = page.getByTestId("projects-rows").getByTestId("project-row");
+    await expect(rows).toHaveCount(3);
+    await page.screenshot({ path: test.info().outputPath("projects-phone.png") });
+    await rows.filter({ hasText: "La Jolla terrace" }).click();
+    await expect(page.getByTestId("surface-title")).toHaveText("La Jolla terrace");
+    await expect(page.getByTestId("project-stats")).toContainText("Spend");
+    await expect(page.getByTestId("project-orders").getByTestId("project-order-row")).not.toHaveCount(0);
+    await expect(page.locator("hh-pro-frame")).toContainText("Invoices");
+    await page.screenshot({ path: test.info().outputPath("project-phone.png") });
+  });
+
+  test("an order inside a project rollup opens in the orders section with its journey", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Projects" }).click();
+    await page.getByTestId("projects-rows").getByTestId("project-row").first().click();
+    await page.getByTestId("project-orders").getByTestId("project-order-row").first().click();
+    await expect(page.getByTestId("order-head")).toBeVisible();
+    await expect(page.getByTestId("order-timeline")).toBeVisible();
+    await page.getByRole("button", { name: "Orders" }).click();
+    await expect(page.getByTestId("landing-rows")).toBeVisible();
+  });
+
+  test("a role that cannot read billing sees no projects section at all", async ({ page }) => {
+    await signIn(page, "field");
+    const nav = page.getByTestId("section-nav");
+    await expect(nav.getByRole("button", { name: "Orders" })).toBeVisible();
+    await expect(nav.getByRole("button", { name: "Account" })).toBeVisible();
+    await expect(nav.getByRole("button", { name: "Projects" })).toHaveCount(0);
+    await expect(nav.getByRole("button", { name: "Team" })).toHaveCount(0);
+  });
+
   test("a surface in another app says it opens that app and asks to sign in again, one in this app says nothing", async ({ page }) => {
     await signIn(page, "owner");
     await page.getByTestId("frame-selector").click();

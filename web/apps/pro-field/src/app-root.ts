@@ -21,7 +21,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, tenantAuth, type TenantOrder, type TenantOrderDetail, type TenantReturnEligibility, type TenantReturnRequest } from "@hardscapehouse/api-client";
+import { ApiClient, tenantAuth, type TenantOrder, type TenantOrderDetail, type TenantProjectDashboard, type TenantProjectSummary, type TenantReturnEligibility, type TenantReturnRequest } from "@hardscapehouse/api-client";
 import {
   CAPABILITIES,
   InMemoryTenantSession,
@@ -41,7 +41,7 @@ import { liveFieldPort, type FieldPort } from "./port.js";
 import { ordersSurfaceOf, sectionsFor, type Section } from "./sections.js";
 import { houseToday, instructionsEditable, instructionsNote } from "./timeline.js";
 import { returnRequestLines } from "./returns.js";
-import { instructionsCard, orderView, ordersList, returnsCard, sectionNav, sectionPlaceholder, type EligibilityState, type Phase, type ReturnFormState } from "./views.js";
+import { instructionsCard, orderView, ordersList, projectStates, projectView, projectsList, returnsCard, sectionNav, sectionPlaceholder, type EligibilityState, type Phase, type ReturnFormState } from "./views.js";
 import { fieldStyles } from "./styles.js";
 
 interface OrdersState {
@@ -73,6 +73,17 @@ interface OrderState {
   returns: ReturnsState;
 }
 
+interface ProjectsState {
+  phase: Phase;
+  items: TenantProjectSummary[];
+}
+
+interface ProjectState {
+  id: string;
+  phase: Phase;
+  data: TenantProjectDashboard | null;
+}
+
 const CANNOT_RETURN_WORDS = "This order cannot be returned through Pro. Ask the dealer to arrange it.";
 const RETURN_FAULT_WORDS = "Returns did not load. Try again in a moment.";
 
@@ -97,8 +108,12 @@ export class ProFieldApp extends HHElement {
   #surface = "tracking";
   #orders: OrdersState = { phase: "idle", items: [] };
   #order: OrderState | null = null;
+  #projects: ProjectsState = { phase: "idle", items: [] };
+  #project: ProjectState | null = null;
   #ordersSeq = 0;
   #orderSeq = 0;
+  #projectsSeq = 0;
+  #projectSeq = 0;
   #unsubscribe: (() => void) | null = null;
 
   constructor() {
@@ -113,12 +128,31 @@ export class ProFieldApp extends HHElement {
     const control = event.composedPath().find((node): node is Element => node instanceof Element && node.hasAttribute("data-action"));
     const action = control?.getAttribute("data-action");
     if (action === "retry") {
-      if (this.#order !== null) void this.#loadOrder(this.#order.id);
-      else void this.#loadOrders();
+      if (this.#section === "projects") {
+        if (this.#project !== null) void this.#loadProject(this.#project.id);
+        else void this.#loadProjects();
+      } else if (this.#order !== null) {
+        void this.#loadOrder(this.#order.id);
+      } else {
+        void this.#loadOrders();
+      }
       return;
     }
     if (action === "open-order") {
+      if (this.#section !== "orders") {
+        this.#section = "orders";
+        this.#project = null;
+      }
       this.#openOrder(control?.getAttribute("data-order-id") ?? "");
+      return;
+    }
+    if (action === "open-project") {
+      this.#openProject(control?.getAttribute("data-project-id") ?? "");
+      return;
+    }
+    if (action === "back-to-projects") {
+      this.#project = null;
+      this.requestUpdate();
       return;
     }
     if (action === "back-to-orders") {
@@ -214,6 +248,8 @@ export class ProFieldApp extends HHElement {
         this.#surface = "tracking";
         this.#orders = { phase: "idle", items: [] };
         this.#order = null;
+        this.#projects = { phase: "idle", items: [] };
+        this.#project = null;
       }
       this.requestUpdate();
     });
@@ -436,6 +472,55 @@ export class ProFieldApp extends HHElement {
     if (to === this.#section) return;
     this.#section = to;
     this.#order = null;
+    this.#project = null;
+    this.requestUpdate();
+    if (to === "projects") void this.#loadProjects();
+  }
+
+  async #loadProjects(): Promise<void> {
+    const sequence = (this.#projectsSeq += 1);
+    this.#projects = { phase: "loading", items: this.#projects.items };
+    this.requestUpdate();
+    const answer = await this.#port.listProjects();
+    if (sequence !== this.#projectsSeq || this.#session.profile() === null || this.#section !== "projects") return;
+    if (answer.ok) {
+      this.#projects = { phase: answer.value.length === 0 ? "empty" : "ready", items: answer.value };
+    } else if (answer.status === 401) {
+      this.#signinMessage = "You are signed out. Sign in again.";
+      await this.#session.signOut();
+      return;
+    } else if (answer.status === 403) {
+      this.#projects = { phase: "refusal", items: [] };
+    } else {
+      this.#projects = { phase: "error", items: [] };
+    }
+    this.requestUpdate();
+  }
+
+  #openProject(id: string): void {
+    if (id === "") return;
+    this.#project = { id, phase: "loading", data: null };
+    this.requestUpdate();
+    void this.#loadProject(id);
+  }
+
+  async #loadProject(id: string): Promise<void> {
+    const sequence = (this.#projectSeq += 1);
+    this.#project = { id, phase: "loading", data: null };
+    this.requestUpdate();
+    const answer = await this.#port.getProject(id);
+    if (sequence !== this.#projectSeq || this.#session.profile() === null) return;
+    if (answer.ok) {
+      this.#project = { id, phase: "ready", data: answer.value };
+    } else if (answer.status === 401) {
+      this.#signinMessage = "You are signed out. Sign in again.";
+      await this.#session.signOut();
+      return;
+    } else if (answer.status === 403) {
+      this.#project = { id, phase: "refusal", data: null };
+    } else {
+      this.#project = { id, phase: "error", data: null };
+    }
     this.requestUpdate();
   }
 
@@ -444,7 +529,10 @@ export class ProFieldApp extends HHElement {
       if (this.#order !== null) return "Order";
       return ordersSurfaceOf(this.#surface)?.label ?? "Orders";
     }
-    if (this.#section === "projects") return "Projects";
+    if (this.#section === "projects") {
+      if (this.#project !== null) return this.#project.data?.name ?? "Project";
+      return "Projects";
+    }
     if (this.#section === "team") return "Team";
     return "Account";
   }
@@ -488,6 +576,14 @@ export class ProFieldApp extends HHElement {
         orders: this.#orders.items,
         emptyWords: ordersSurfaceOf(this.#surface)?.emptyWords ?? "",
       });
+    }
+    if (this.#section === "projects") {
+      if (this.#project !== null) {
+        return this.#project.phase === "ready" && this.#project.data !== null
+          ? projectView(this.#project.data)
+          : projectStates(this.#project.phase);
+      }
+      return projectsList({ phase: this.#projects.phase, projects: this.#projects.items });
     }
     return sectionPlaceholder();
   }

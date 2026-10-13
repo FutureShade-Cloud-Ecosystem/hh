@@ -11,7 +11,7 @@
 // never a binding; every control names itself with data-field or data-action
 // so the root's one click and one input listener act for the whole app.
 import { html, nothing, type TemplateResult } from "lit";
-import type { TenantOrder, TenantOrderDetail, TenantReturnEligibility, TenantReturnRequest } from "@hardscapehouse/api-client";
+import type { TenantOrder, TenantOrderDetail, TenantProjectDashboard, TenantProjectSummary, TenantReturnEligibility, TenantReturnRequest } from "@hardscapehouse/api-client";
 import {
   money,
   qtyWithUnit,
@@ -24,6 +24,7 @@ import {
 import { button, segmented } from "@hardscapehouse/design-system/src/primitives.js";
 import type { SectionRef } from "./sections.js";
 import { fulfillmentWords, promisedWords, lateWords, timelineSteps } from "./timeline.js";
+import { varianceWords } from "./projects.js";
 import { RETURN_STATUS_WORDS, returnChipTone, returnLineWords, returnReasonWords } from "./returns.js";
 
 // ---- the section row ----------------------------------------------------------------------------
@@ -199,6 +200,94 @@ function itemsCard(o: TenantOrderDetail): TemplateResult {
 
 export function sectionPlaceholder(): TemplateResult {
   return html`<hh-pro-state data-state="empty" data-testid="section-state">This section is not open yet.</hh-pro-state>`;
+}
+
+// ---- projects -----------------------------------------------------------------------------------
+
+export interface ProjectsProps {
+  phase: Phase;
+  projects: readonly TenantProjectSummary[];
+}
+
+export function projectsList(props: ProjectsProps): TemplateResult {
+  switch (props.phase) {
+    case "ready":
+      return html`<ul class="orows" data-testid="projects-rows">
+        ${props.projects.map(
+          (project) => html`<li class="orow">
+            <button type="button" class="rowbtn" data-action="open-project" data-project-id="${project.id}" data-testid="project-row">
+              <span class="cell head"><span class="name">${project.name}</span></span>
+              <span class="cell">
+                <span class="dim">${project.job_address === "" ? "No address on the job" : project.job_address}</span>
+                <span class="dim">${project.order_count} ${project.order_count === 1 ? "order" : "orders"} · ${project.delivery_count} ${project.delivery_count === 1 ? "delivery" : "deliveries"}</span>
+                <span class="mono total">${money(project.spend_cents)}</span>
+              </span>
+            </button>
+          </li>`,
+        )}
+      </ul>`;
+    case "empty":
+      return html`<hh-pro-state data-state="empty" data-testid="projects-state">No projects yet. They appear here once the dealer tags an order to a job.</hh-pro-state>`;
+    case "error":
+      return html`<hh-pro-state data-state="error" data-testid="projects-state">This did not load. Nothing was changed.</hh-pro-state>`;
+    case "refusal":
+      return html`<hh-pro-state data-state="refusal" data-testid="projects-state"></hh-pro-state>`;
+    default:
+      return html`<hh-pro-state data-state="loading" data-testid="projects-state"></hh-pro-state>`;
+  }
+}
+
+export function projectView(data: TenantProjectDashboard): TemplateResult {
+  const variance = varianceWords(data.has_quote, data.variance_cents);
+  return html`<div class="card" data-testid="project-head">
+      ${button({ label: "Projects", kind: "secondary", action: "back-to-projects" })}
+      <h2>${data.name}</h2>
+      ${data.job_address === "" ? nothing : html`<p class="dim">${data.job_address}</p>`}
+      <p class="facts" data-testid="project-stats">
+        <span><span class="dim">Spend</span> <span class="mono">${money(data.spend_cents)}</span></span>
+        <span><span class="dim">Orders</span> ${data.order_count}</span>
+        <span><span class="dim">Deliveries</span> ${data.delivery_count}</span>
+        <span class="variance-${variance.tone}" data-testid="project-variance"><span class="dim">Against the quote</span> ${variance.words}</span>
+      </p>
+    </div>
+    <div class="card">
+      <h3>Orders</h3>
+      ${data.orders.length === 0
+        ? html`<p class="dim">This job has no orders yet.</p>`
+        : html`<ul class="lines" data-testid="project-orders">
+            ${data.orders.map(
+              (order) => html`<li class="line">
+                <button type="button" class="rowbtn slim" data-action="open-order" data-order-id="${order.id}" data-testid="project-order-row">
+                  <span class="cell"><span class="mono name">${order.order_no}</span>${statusChip("order", order.status)}<span class="mono total">${money(order.total_cents)}</span></span>
+                </button>
+              </li>`,
+            )}
+          </ul>`}
+    </div>
+    <div class="card">
+      <h3>Invoices</h3>
+      ${data.invoices.length === 0
+        ? html`<p class="dim">No invoices for this job yet.</p>`
+        : html`<ul class="lines" data-testid="project-invoices">
+            ${data.invoices.map(
+              (invoice) => html`<li class="line">
+                <span class="linehead"><span class="mono name">${invoice.invoice_no}</span><span class="mono">${money(invoice.balance_cents)}</span></span>
+                <span class="cell">${statusChip("invoice", invoice.status)}<span class="dim">of ${money(invoice.total_cents)}</span></span>
+              </li>`,
+            )}
+          </ul>`}
+    </div>`;
+}
+
+export function projectStates(phase: Phase): TemplateResult {
+  switch (phase) {
+    case "refusal":
+      return html`<hh-pro-state data-state="refusal" data-testid="project-state"></hh-pro-state>`;
+    case "error":
+      return html`<hh-pro-state data-state="error" data-testid="project-state">This did not load. Nothing was changed.</hh-pro-state>`;
+    default:
+      return html`<hh-pro-state data-state="loading" data-testid="project-state"></hh-pro-state>`;
+  }
 }
 
 // ---- delivery instructions ----------------------------------------------------------------------
