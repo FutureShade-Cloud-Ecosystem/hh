@@ -321,4 +321,47 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 			t.Errorf("the decided matrix lists HR on the cost and margin list: %v", cfg.CostVisibility())
 		}
 	})
+	t.Run("branch-manager", func(t *testing.T) {
+		bm := mint(t, "branch-manager")
+		if bm.user.UserID != "de5b2000-0000-4000-9000-000000000003" || bm.user.RoleCode != "branch_manager" ||
+			bm.user.RoleName != "Branch Manager" || bm.user.Tier != 2 || bm.user.Scope != "BRANCH" {
+			t.Errorf("the credential is %+v, want the Branch Manager at tier 2 BRANCH", bm.user)
+		}
+		// Manager Home opens the role's own profile (migration 0381's manager.branch,
+		// born from the shared manager shape) and its needs queue counts the branch's
+		// own work: the parked ticket at Trenton, not the one parked at Kingston. No
+		// profile is invented here: the dashboard module carries it.
+		var dash struct {
+			Profile string `json:"profile"`
+			Source  string `json:"source"`
+		}
+		if err := json.Unmarshal([]byte(wantOK(t, "the Manager Home landing", "/api/v1/dashboard", bm)), &dash); err != nil {
+			t.Fatalf("the landing does not decode: %v", err)
+		}
+		if dash.Profile != "manager.branch" || dash.Source != "role" {
+			t.Errorf("the landing is profile %q from %q, want the role's own manager.branch", dash.Profile, dash.Source)
+		}
+		var needs struct {
+			Profile string `json:"profile"`
+			Rows    []struct {
+				SourceKey string `json:"source_key"`
+				Count     int    `json:"count"`
+			} `json:"rows"`
+		}
+		if err := json.Unmarshal([]byte(wantOK(t, "the needs queue", "/api/v1/dashboard/needs", bm)), &needs); err != nil {
+			t.Fatalf("the needs queue does not decode: %v", err)
+		}
+		if needs.Profile != "manager.branch" {
+			t.Errorf("the needs queue is profile %q, want manager.branch", needs.Profile)
+		}
+		parked := -1
+		for _, r := range needs.Rows {
+			if r.SourceKey == "pos.parked" {
+				parked = r.Count
+			}
+		}
+		if parked != 1 {
+			t.Errorf("the needs queue counts %d parked tickets, want the one at Trenton (rows: %+v)", parked, needs.Rows)
+		}
+	})
 }
