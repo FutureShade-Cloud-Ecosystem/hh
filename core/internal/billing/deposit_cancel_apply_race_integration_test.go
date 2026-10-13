@@ -283,8 +283,8 @@ func TestIntegration_CancelDeposits_TheWalkTakesTheDocumentsInIdOrder(t *testing
 	const createdFirst = "00000000-0000-4000-8000-0000000000bb"
 	const createdLast = "00000000-0000-4000-8000-0000000000aa"
 	for _, d := range []struct {
-		id       string
-		older    bool
+		id    string
+		older bool
 	}{
 		{createdFirst, true},
 		{createdLast, false},
