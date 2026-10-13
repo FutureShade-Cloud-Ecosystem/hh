@@ -197,3 +197,128 @@ test("the real exchange seam is named, and refuses in plain words until the auth
   assert.doesNotMatch(answer.error, /console|core|token|session|exchange|keychain/i);
   await adapter.signOut();
 });
+
+// Overlapping calls: a sign out or a newer sign in wins over a sign in still in flight.
+function gate() {
+  let open;
+  const promise = new Promise((resolve) => (open = resolve));
+  return { promise, open };
+}
+
+function gatedRig() {
+  const adapterGates = [];
+  const meGates = [];
+  const roles = [];
+  const adapter = {
+    async signIn(email) {
+      const g = gate();
+      adapterGates.push(g);
+      const token = await g.promise;
+      return { ok: true, value: { token, expiresAtMs: NOW + 3_600_000, user: { userId: "u-1", email, name: "Contractor owner" } } };
+    },
+    async signOut() {},
+  };
+  const fetchLike = async (url, init) => {
+    const g = gate();
+    meGates.push(g);
+    const role = await g.promise;
+    roles.push(role);
+    return { status: 200, ok: true, text: async () => JSON.stringify(me(role)), arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  const session = new InMemoryTenantSession({ adapter, fetch: fetchLike, now: () => NOW });
+  return { session, adapterGates, meGates };
+}
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test("a sign out while the adapter is still answering wins: the late answer is not adopted", async () => {
+  const { session, adapterGates } = gatedRig();
+  const pending = session.signIn("a@hh-demo.invalid", "pw");
+  await tick();
+  await session.signOut();
+  adapterGates[0].open("tok-late");
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.match(result.error, /^[A-Z].*\.$/, "plain words, no machinery");
+  assert.equal(session.current(), null);
+  assert.equal(session.profile(), null);
+});
+
+test("a sign out while tenant me is pending wins: no profile is kept, the sign in fails", async () => {
+  const { session, adapterGates, meGates } = gatedRig();
+  const pending = session.signIn("a@hh-demo.invalid", "pw");
+  await tick();
+  adapterGates[0].open("tok-a");
+  await tick();
+  await session.signOut();
+  meGates[0].open("account_admin");
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(session.current(), null);
+  assert.equal(session.profile(), null);
+  assert.equal(session.can("view_billing"), false);
+});
+
+test("the newer of two overlapping sign ins wins, whichever answers first", async () => {
+  const { session, adapterGates, meGates } = gatedRig();
+  const first = session.signIn("a@hh-demo.invalid", "pw");
+  await tick();
+  const second = session.signIn("b@hh-demo.invalid", "pw");
+  await tick();
+  adapterGates[1].open("tok-b");
+  await tick();
+  meGates[0].open("field_crew");
+  const secondResult = await second;
+  assert.equal(secondResult.ok, true);
+  adapterGates[0].open("tok-a");
+  const firstResult = await first;
+  assert.equal(firstResult.ok, false);
+  assert.match(firstResult.error, /^[A-Z].*\.$/);
+  assert.equal(session.current().token, "tok-b");
+  assert.equal(session.profile().role, "field_crew");
+});
+
+test("a superseded sign in whose tenant me answers late never clears the newer custody", async () => {
+  const { session, adapterGates, meGates } = gatedRig();
+  const first = session.signIn("a@hh-demo.invalid", "pw");
+  await tick();
+  adapterGates[0].open("tok-a");
+  await tick();
+  const second = session.signIn("b@hh-demo.invalid", "pw");
+  await tick();
+  adapterGates[1].open("tok-b");
+  await tick();
+  meGates[1].open("ap_finance");
+  assert.equal((await second).ok, true);
+  meGates[0].open("field_crew");
+  assert.equal((await first).ok, false);
+  assert.equal(session.current().token, "tok-b");
+  assert.equal(session.profile().role, "ap_finance");
+});
+
+test("a new sign in clears the earlier profile, so none is readable over the new bearer", async () => {
+  const { session, adapterGates, meGates } = gatedRig();
+  const first = session.signIn("a@hh-demo.invalid", "pw");
+  await tick();
+  adapterGates[0].open("tok-a");
+  await tick();
+  meGates[0].open("account_admin");
+  assert.equal((await first).ok, true);
+  const second = session.signIn("b@hh-demo.invalid", "pw");
+  assert.equal(session.profile(), null);
+  await tick();
+  adapterGates[1].open("tok-b");
+  await tick();
+  assert.equal(session.profile(), null);
+  meGates[1].open("field_crew");
+  assert.equal((await second).ok, true);
+  assert.equal(session.profile().role, "field_crew");
+});
+
+test("an unusable adapter answer is refused in plain words", async () => {
+  const { session } = rig({ adapterAnswer: { ok: true, value: { token: "", expiresAtMs: NOW + 1000, user: { userId: "u-1", email: "a@hh-demo.invalid", name: "x" } } } });
+  const result = await session.signIn("a@hh-demo.invalid", "pw");
+  assert.equal(result.ok, false);
+  assert.doesNotMatch(result.error, /sign-in failed|unusable|session/i);
+  assert.equal(session.current(), null);
+});
