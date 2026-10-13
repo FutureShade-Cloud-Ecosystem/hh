@@ -127,8 +127,9 @@ export function parseRuntimeConfig(raw: unknown): RuntimeConfigResult {
 }
 
 /**
- * Fetch /config.json and parse it. No credentials and no cache: it is public,
- * and a stale copy is a wrong mode.
+ * Fetch /config.json and parse it. Same origin credentials only (a gated copy
+ * needs the browser's own authentication entry, and omit would drop it) and no
+ * cache: a stale copy is a wrong mode.
  */
 export async function loadRuntimeConfig(
   fetchFn: typeof fetch = globalThis.fetch.bind(globalThis),
@@ -136,7 +137,7 @@ export async function loadRuntimeConfig(
 ): Promise<RuntimeConfigResult> {
   let response: Response;
   try {
-    response = await fetchFn(url, { cache: "no-store", credentials: "omit", headers: { Accept: "application/json" } });
+    response = await fetchFn(url, { cache: "no-store", credentials: "same-origin", headers: { Accept: "application/json" } });
   } catch {
     return { ok: false, reason: "unreachable" };
   }

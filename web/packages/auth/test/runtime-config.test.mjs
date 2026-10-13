@@ -89,7 +89,7 @@ test("loading: a 200 with json parses; every other outcome has its own reason", 
   assert.deepEqual(await loadRuntimeConfig(answer(200, JSON.stringify({ mode: "x" }))), { ok: false, reason: "unknown_mode" });
 });
 
-test("loading asks for the file without credentials and without the cache", async () => {
+test("loading asks for the file same origin and without the cache", async () => {
   let seen;
   await loadRuntimeConfig(async (url, init) => {
     seen = { url: String(url), init };
@@ -97,5 +97,5 @@ test("loading asks for the file without credentials and without the cache", asyn
   });
   assert.equal(seen.url, "/config.json");
   assert.equal(seen.init.cache, "no-store");
-  assert.equal(seen.init.credentials, "omit");
+  assert.equal(seen.init.credentials, "same-origin", "a gated copy asks for the file with the browser's own authentication, never cross origin");
 });
