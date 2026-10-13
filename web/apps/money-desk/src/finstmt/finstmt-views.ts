@@ -183,12 +183,14 @@ function controls(model: FinstmtModel): TemplateResult {
 // ---- a statement's heading -------------------------------------------------------------------------
 
 /** The title, the period and the scope of a statement: on the screen and, with the print stylesheet, on the sheet. */
-function heading(model: FinstmtModel, subtitle?: TemplateResult): TemplateResult {
+function heading(model: FinstmtModel, subtitle?: TemplateResult, read?: { readonly year: number; readonly month: number }): TemplateResult {
   const byPeriod = BY_PERIOD.has(model.tab);
-  const month = byPeriod ? model.month : 0;
-  const period = model.tab === "aging" ? "As of now" : periodLabel(model.year, month);
+  // The period is the report's own when the report carries it, so a heading can never name other books than the figures.
+  const month = read !== undefined ? read.month : byPeriod ? model.month : 0;
+  const year = read !== undefined ? read.year : model.year;
+  const period = model.tab === "aging" ? "As of now" : periodLabel(year, month);
   const scope = model.tab === "trial" ? "All branches" : BY_BRANCH.has(model.tab) ? scopeLabel(model.branchId, model.branches) : "";
-  const status = periodStatusWord(model.periods, model.year, month);
+  const status = periodStatusWord(model.periods, year, month);
   return html`
     <div class="fs-panel-head">
       <div>
@@ -279,7 +281,7 @@ function incomeView(model: FinstmtModel): TemplateResult {
   const none = r.revenue.length === 0 && r.expenses.length === 0;
   return html`
     <section class="fs-panel fs-statement" aria-label="Income statement" data-statement>
-      ${heading(model)}
+      ${heading(model, undefined, r)}
       ${tiles([["Revenue", r.revenue_cents, "revenue"], ["Expenses", r.expense_cents, "expenses"], [r.net_income_cents < 0 ? "Net loss" : "Net income", r.net_income_cents, "net"]])}
       ${none
         ? empty("No posted journals in this period.", "The statement fills as journals post.")
@@ -313,7 +315,7 @@ function balanceView(model: FinstmtModel): TemplateResult {
   const mark = r.balanced ? pill("good", "Balanced") : pill("stop", "Out of balance: assets do not equal liabilities plus equity plus net income");
   return html`
     <section class="fs-panel fs-statement" aria-label="Balance sheet" data-statement>
-      ${heading(model, mark)}
+      ${heading(model, mark, { year: r.year, month: 0 })}
       ${tiles([["Assets", r.total_assets_cents, "assets"], ["Liabilities", r.total_liabilities_cents, "liabilities"], ["Equity", r.total_equity_cents, "equity"], ["Net income for the year", r.net_income_cents, "net"]])}
       ${none
         ? empty("No posted journals in this year.", "The balance sheet fills as journals post.")

@@ -353,7 +353,12 @@ export class FinstmtDesk {
       statementCents: Number.isInteger(amount) ? amount : null,
     };
     // A balance sheet is a fiscal year's position, so the detail behind it is the whole year.
-    if (this.#tab === "balance") this.#month = 0;
+    // The month is shared with the income statement, so moving it makes every statement stale.
+    if (this.#tab === "balance" && this.#month !== 0) {
+      this.#month = 0;
+      this.#epoch += 1;
+      for (const tab of ["income", "balance", "trial", "aging"] as const) this.#status[tab] = "idle";
+    }
     this.#account = this.#drill.accountCode;
     this.#tab = "gl";
     this.#status.gl = "idle";

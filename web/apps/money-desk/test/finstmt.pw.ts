@@ -404,3 +404,20 @@ test("the tabs and the controls work from the keyboard, and focus is visible", a
   await page.keyboard.press("Enter");
   await expect(page.locator("[data-statement-title]")).toHaveText("General ledger detail");
 });
+
+test("a line opened from the balance sheet does not leave the income statement under the wrong period", async ({ page, request }) => {
+  const year = await stubYear(request);
+  await openStatements(page, request);
+  const whole = await tile(page, "revenue").innerText();
+  await page.getByLabel("Period").selectOption({ label: "Period 3 · closed" });
+  await expect(page.locator("[data-statement-sub]")).toContainText("Period 3");
+  await tab(page, "balance").click();
+  await page.locator('[data-account="1000"] [data-action="fs-drill"]:visible').first().click();
+  await expect(page.locator("[data-tie]")).toContainText("Ties to the statement line");
+  await page.locator("[data-back]").click();
+  await tab(page, "income").click();
+  // The period choice and the figures agree: the whole year, read again, not period 3 under a year heading.
+  await expect(page.getByLabel("Period")).toHaveValue("Whole fiscal year");
+  await expect(page.locator("[data-statement-sub]")).toHaveText(`Fiscal year ${year} · All branches`);
+  await expect(tile(page, "revenue")).toHaveText(whole);
+});
