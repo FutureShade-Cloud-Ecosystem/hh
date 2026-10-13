@@ -153,10 +153,12 @@ func newFreightHarness(t *testing.T) *frtHarness {
 	// drove the decide route through its handler with an HS256 login
 	// token; that session world stayed behind. Under the carry the rail
 	// is *identity.Approvals and the decide path takes the bridged caller
-	// the guard resolved (the A3 re-point), so the harness resolves the
-	// seeded person's authority through the rail's canonical read and
-	// hands the caller in directly: the graded-against-the-database
-	// property the login leg used to buy is preserved by the read, not by
+	// the guard resolved (the A3 re-point). The guard's own resolution is
+	// not exercised here: the seed links no platform user and plants no
+	// staff_role_grant rows, so the harness stamps the seeded person from
+	// the seed's scaffold tables (seededCaller) and hands the caller in
+	// directly. What stays proven is the rail's role allowlist and branch
+	// reach against the database, which the login leg used to buy through
 	// a token.
 	identitySvc := identity.NewApprovals(identity.NewApprovalRepository(pool))
 	svc := NewService(NewRepository(pool)).
@@ -176,11 +178,8 @@ func newFreightHarness(t *testing.T) *frtHarness {
 // returning the HTTP status the handler would answer for the same error.
 func (h *frtHarness) decide(t *testing.T, email, approvalID string, approve bool, reason string) int {
 	t.Helper()
-	caller, err := identity.NewApprovalRepository(h.pool).ResolveStaff(context.Background(), h.userID(t, email))
-	if err != nil {
-		t.Skipf("seeded user %s unresolvable: %v", email, err)
-	}
-	err = h.identity.DecideApproval(context.Background(), approvalID, caller, approve, reason)
+	caller := h.seededCaller(t, email)
+	err := h.identity.DecideApproval(context.Background(), approvalID, caller, approve, reason)
 	if err == nil {
 		return http.StatusOK
 	}
@@ -188,6 +187,45 @@ func (h *frtHarness) decide(t *testing.T, email, approvalID string, approve bool
 		return status
 	}
 	return http.StatusInternalServerError
+}
+
+// seededCaller stamps the seeded person as the guard would, from the role and branch grants the seed
+// plants (users, user_roles, roles, user_branch_grants). The seed links no platform user and plants
+// no staff_role_grant rows, so the rail's canonical read (ResolveStaff) resolves every seeded person
+// to no authority and refuses even the ruled approver; the guard's resolution is not what this file
+// proves, the rail's role allowlist is.
+func (h *frtHarness) seededCaller(t *testing.T, email string) identity.StaffContext {
+	t.Helper()
+	ctx := context.Background()
+	caller := identity.StaffContext{Branches: map[string]bool{}, Status: identity.StatusActive}
+	var tier int
+	var scope string
+	if err := h.pool.QueryRow(ctx, `
+SELECT u.id::text, r.code, r.tier, r.scope
+  FROM users u JOIN user_roles ur ON ur.user_id = u.id JOIN roles r ON r.id = ur.role_id
+ WHERE u.email = $1 AND u.deleted_at IS NULL
+ ORDER BY r.tier LIMIT 1`, email).Scan(&caller.UserID, &caller.RoleCode, &tier, &scope); err != nil {
+		t.Skipf("seeded user %s has no role: %v", email, err)
+	}
+	caller.Tier = identity.Tier(tier)
+	caller.Scope = identity.Scope(scope)
+	rows, err := h.pool.Query(ctx,
+		`SELECT branch_id::text FROM user_branch_grants WHERE user_id = $1 AND deleted_at IS NULL`, caller.UserID)
+	if err != nil {
+		t.Fatalf("read branch grants for %s: %v", email, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			t.Fatalf("scan branch grant: %v", err)
+		}
+		caller.Branches[b] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("branch grants for %s: %v", email, err)
+	}
+	return caller
 }
 
 func (h *frtHarness) userID(t *testing.T, email string) string {

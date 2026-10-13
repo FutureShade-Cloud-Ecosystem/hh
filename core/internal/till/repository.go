@@ -896,6 +896,11 @@ func (r *Repository) RecordPaymentAttempt(ctx context.Context, in PaymentAttempt
 		 ON CONFLICT (idempotency_key) WHERE idempotency_key <> '' DO NOTHING`,
 		in.IdempotencyKey, nullStr(in.CustomerID), in.AmountCents, in.Method, in.Processor, in.Result, in.Detail, nullStr(in.BranchID), nullStr(in.AttemptedBy))
 	if err != nil {
+		// A well formed branch id that is no location: the client's error, not a 500.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" && pgErr.ConstraintName == "payment_attempts_branch_id_fkey" {
+			return unprocessable("till: branch_id must be a branch id")
+		}
 		return fmt.Errorf("till: record payment attempt: %w", err)
 	}
 	return nil

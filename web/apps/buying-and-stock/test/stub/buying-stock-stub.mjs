@@ -15,6 +15,7 @@
 // four purchase orders. Dates are cut from the host's own day so no calendar
 // literal is written.
 import { createServer } from "node:http";
+import { createPurchRoutes } from "./purch-routes.mjs";
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4969);
 
@@ -98,7 +99,7 @@ const SEEDED_POS = [
   { n: 141, vendor: 2, status: "ORDERED", expect: 2, method: "DELIVERY", lines: [{ product: 4, qty: 12, cost: 82_000 }] },
   { n: 136, vendor: 1, status: "ORDERED", expect: 4, method: "PICKUP", lines: [{ product: 6, qty: 10, cost: 2500 }] },
   { n: 67, vendor: 3, status: "PARTIAL", expect: null, method: "DELIVERY", lines: [{ product: 5, qty: 10, cost: 24_000, received: 6 }] },
-  { n: 66, vendor: 1, status: "RECEIVED", expect: -3, method: "PICKUP", lines: [{ product: 6, qty: 10, cost: 2500, received: 10 }] },
+  { n: 66, vendor: 1, status: "RECEIVED", expect: -3, method: "PICKUP", lines: [{ product: 6, qty: 10, cost: 2500, received: 10 }, { product: 3, qty: 4, cost: 2500, received: 4 }] },
 ];
 
 let world;
@@ -171,12 +172,10 @@ function lineView(l, n) {
     description: p.name,
     qty_ordered_base: l.qty,
     qty_received_base: received,
-    qty_billed_base: 0,
+    qty_billed_base: l.billed ?? 0,
     qty_outstanding_base: l.qty - received,
     uom: p.uom,
-    unit_cost_cents: l.cost,
-    line_total_cents: l.qty * l.cost,
-    billed_cents: 0,
+    ...(flags.costsHidden ? {} : { unit_cost_cents: l.cost, line_total_cents: l.qty * l.cost, billed_cents: l.billedCents ?? 0 }),
   };
 }
 
@@ -194,8 +193,12 @@ function poView(po) {
     currency: "CAD",
     fx_rate: 1,
     delivery_method: po.method,
-    subtotal_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
-    subtotal_cad_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
+    ...(flags.costsHidden
+      ? {}
+      : {
+          subtotal_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
+          subtotal_cad_cents: po.lines.reduce((sum, l) => sum + l.qty * l.cost, 0),
+        }),
     created_at: po.created,
     updated_at: po.created,
   };
@@ -205,7 +208,7 @@ function poView(po) {
 }
 
 function poDetail(po) {
-  return { ...poView(po), lines: po.lines.map((l, i) => lineView(l, i + 1)), receipts: [] };
+  return { ...poView(po), lines: po.lines.map((l, i) => lineView(l, i + 1)), receipts: purch.receiptsFor(po.id) };
 }
 
 // ---- http --------------------------------------------------------------------------------------
@@ -239,7 +242,36 @@ function readBody(req) {
 // named branch is out of reach, the fence's own 403 in words).
 let walled = false;
 let fenced = false;
+// Who the caller is for the purchasing areas' role walls: the demo's Procurement manager unless a
+// test switches it (payables-receivables enters and posts bills; super-admin sets the tolerances).
+let role = "procurement-manager";
+// Switches a test can set: cost hidden from the caller (the purchasing policy), the mail transport
+// failing, the untagged send refused by policy, and the answer to the next write lost on the way back.
+const flags = { costsHidden: false, sendFails: false, refuseUntagged: false, dropNext: false };
 const reach = () => (fenced ? [] : [BRANCH]);
+
+// The purchasing areas (landed cost and the rest): parts of their own, fed the world through the kit.
+const purch = createPurchRoutes({
+  world: () => world,
+  uuid,
+  json: (res, data, status) => json(res, data, status),
+  refuse: (res, status, error) => refuse(res, status, error),
+  readBody: (req) => readBody(req),
+  isUuid,
+  NOW_ISO,
+  dayOffset,
+  BRANCH,
+  VENDORS,
+  PRODUCTS,
+  reach,
+  flags: () => flags,
+  // A scoped caller must name a branch; only a global one may read across all of them.
+  global: () => false,
+  poView: (po) => poView(po),
+  poDetail: (po) => poDetail(po),
+  role: () => role,
+});
+purch.reset();
 
 // The core's fenceNamedBranch: a branch the caller named outside its reach is refused in words;
 // an unnamed one is left to the caller (the reach set applies itself).
@@ -258,7 +290,20 @@ async function handle(req, res) {
     reset();
     walled = false;
     fenced = false;
+    role = "procurement-manager";
+    Object.assign(flags, { costsHidden: false, sendFails: false, refuseUntagged: false, dropNext: false });
+    purch.reset();
     return json(res, { ok: true });
+  }
+  if (method === "POST" && path === "/_stub/flag") {
+    const body = await readBody(req);
+    if (body?.name in flags) flags[body.name] = Boolean(body.value);
+    return json(res, { ok: true, flags });
+  }
+  if (method === "POST" && path === "/_stub/role") {
+    const body = await readBody(req);
+    role = ["procurement-manager", "payables-receivables", "super-admin"].includes(body?.role) ? body.role : role;
+    return json(res, { ok: true, role });
   }
   if (method === "POST" && path === "/_stub/wall") {
     walled = true;
@@ -289,6 +334,13 @@ async function handle(req, res) {
 
   if (!path.startsWith("/api/v1/")) return refuse(res, 404, "not found");
   if (!(req.headers.authorization ?? "").startsWith("Bearer ")) return refuse(res, 401, "Unauthorized");
+
+  // The answer to the next write is lost on the way back: the write happens, the caller hears nothing.
+  if (flags.dropNext && method !== "GET" && path.startsWith("/api/v1/")) {
+    flags.dropNext = false;
+    res.end = () => req.socket.destroy();
+  }
+  if (await purch.handle({ req, res, url, path, method, role })) return;
 
   // ---- reads ----
   if (method === "GET" && path === "/api/v1/inventory/shortfall") {
@@ -336,19 +388,6 @@ async function handle(req, res) {
       { id: BRANCH, code: "TRT", name: "Trenton yard", address: { line1: "1 Yard Road", city: "Trenton", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
     ]);
   }
-  const skus = path.match(/^\/api\/v1\/purchasing\/vendors\/([^/]+)\/skus$/);
-  if (method === "GET" && skus) {
-    const vendor = VENDORS.find((v) => uuid("a", v.n) === skus[1]);
-    if (vendor === undefined) return json(res, { items: [] });
-    const items = PRODUCTS.filter((p) => p.vendor === vendor.n).map((p) => ({
-      vendor_id: skus[1],
-      product_id: uuid("f", p.n),
-      sku: p.sku,
-      product_name: p.name,
-      vendor_sku: p.sku === "DBS-BRUS-DIM" ? "ALC-BRU-DIM-60" : `${vendor.no}-${p.sku}`,
-    }));
-    return json(res, { items });
-  }
   if (method === "GET" && path === "/api/v1/purchasing/pos") {
     const status = url.searchParams.get("status");
     const rows = world.pos.filter((p) => status === null || p.status === status).map(poView);
@@ -395,8 +434,6 @@ async function handle(req, res) {
     (method === "POST" && (path === "/api/v1/inventory/reorder-po" || path === "/api/v1/purchasing/pos")) ||
     (method !== "GET" && /^\/api\/v1\/purchasing\/pos\//.test(path));
   if (isOrdering && walled) return json(res, { error: "Forbidden" }, 403);
-  // A vendor bill is posted in the Money Desk: this role's matrix refuses it at the gate.
-  if (/^\/api\/v1\/purchasing\/bills/.test(path) && method !== "GET") return json(res, { error: "Forbidden" }, 403);
 
   // ---- writes ----
   if (method === "POST" && path === "/api/v1/inventory/reorder-po") {

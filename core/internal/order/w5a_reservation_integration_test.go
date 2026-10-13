@@ -72,6 +72,10 @@ func (a w5aInvReserver) ReleaseBySourceTx(ctx context.Context, tx pgx.Tx, source
 	return a.svc.ReleaseBySourceTx(ctx, tx, sourceType, sourceRefID, status)
 }
 
+func (a w5aInvReserver) LockHardHoldBalancesTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID string) error {
+	return a.svc.LockHardHoldBalancesTx(ctx, tx, sourceType, sourceRefID)
+}
+
 // - fixtures -
 
 // w5aWidePool is intPool with an explicit, generous MaxConns. The default is max(4, NumCPU), which

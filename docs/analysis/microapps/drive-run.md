@@ -4,7 +4,7 @@
 
 # drive-run: HH Drive
 
-Audience: internal   Roles: driver   Devices: phone   Environment: truck
+Audience: internal   Roles: driver, yard_manager, logistics_manager, branch_manager   Devices: phone   Environment: truck
 Kit: guided-flow   Brand: fb-tokens   Shell: hh-field
 Offline: full. Scopes: runs, stops, pod, attachments. Conflict policy: stops server_wins, pod manual, attachments last_write_wins_by_field. Why full: the run is read at the side of a road on cellular, which the shipped file states as the reason this became its own entry at all (`hardscapeos_dibbits/app/src/drive.ts`). Proof of delivery is `manual` on conflict because it is an attestation with a name attached, and the product's standing rule is that an artifact must not imply more than it captured (`app/src/quote-public.ts`). The shipped app deliberately has no service worker yet and says so in the document (`app/drive.html`); declaring the scopes is what closes that gap.
 
