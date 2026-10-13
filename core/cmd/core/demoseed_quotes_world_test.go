@@ -33,7 +33,6 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
@@ -206,7 +205,7 @@ func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables
 // in, minus the three columns the stamp itself moves (see qwDriverStampColumns), and the assertion
 // below checks the stamp landed on exactly them, so the exception is named and held, not a hole.
 func qwDriverDayIDs() []string {
-	stamp := qwClock.In(houseday.Location()).Format("20060102")
+	stamp := qwClock.In(seedLocation()).Format("20060102")
 	ids := []string{demoID(dayKey(stamp, "driver-run"))}
 	ids = append(ids, driverDayStopIDs(stamp)...)
 	return ids
