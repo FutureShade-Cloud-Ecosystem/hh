@@ -342,8 +342,11 @@ var (
 	errConflict       = clientError{status: http.StatusConflict, msg: "till: conflict"}
 	errOffline        = clientError{status: http.StatusUnprocessableEntity, msg: "till: card tender needs connectivity (cannot be taken offline)"}
 	errNotImplemented = clientError{status: http.StatusNotImplemented, msg: "till: not yet implemented"}
-	errUnauthorized   = clientError{status: http.StatusUnauthorized, msg: "till: unauthenticated"}
-	errCardDeclined   = clientError{status: http.StatusPaymentRequired, msg: "till: card declined"}
+	// errSharedForbidden is the refusal that answers with the shared role refusal body (authz.RefuseForbidden),
+	// byte identical to every other role refusal and naming no branch.
+	errSharedForbidden = errors.New("till: refused")
+	errUnauthorized    = clientError{status: http.StatusUnauthorized, msg: "till: unauthenticated"}
+	errCardDeclined    = clientError{status: http.StatusPaymentRequired, msg: "till: card declined"}
 	// errAlreadyBounced is the idempotent-replay guard for the NSF flow: a payment already marked BOUNCED
 	// cannot be bounced a second time (409). Returned by the store's in-tx FOR UPDATE status check.
 	errAlreadyBounced = clientError{status: http.StatusConflict, msg: "till: payment already marked BOUNCED"}
