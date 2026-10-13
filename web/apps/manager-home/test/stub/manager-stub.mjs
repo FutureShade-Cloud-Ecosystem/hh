@@ -106,7 +106,7 @@ function readBody(req) {
 
 // ---- the world -----------------------------------------------------------------------
 //
-// Trenton, the one branch the demo grants reach. Two open shortages on two
+// Point Loma, the one branch the demo grants reach. Two open shortages on two
 // picks, one resolved shortage beside them (the counter-case), one stale
 // pick past its accept deadline, one purchase order PARTIAL with a short
 // line (the receiving difference), and one margin approval the sales
@@ -222,7 +222,7 @@ function buildWorld() {
       order_line_no: 1,
       product_id: "00000000-0000-4000-9000-0000000000p9",
       sku: "GRAN-A-CYD",
-      description: "Granular A gravel",
+      description: "Class 2 base rock gravel",
       qty_short: "4.0000",
       uom: "CYD",
       note: "Only 8 yards left in the bin",
@@ -256,7 +256,7 @@ function buildWorld() {
       reported_at: ago(48),
       resolved_at: ago(47),
       resolved_by: "de110000-0000-4000-9000-000000000003",
-      resolution: "Substituted from the Trenton skid",
+      resolution: "Substituted from the Point Loma skid",
     },
   ];
   const tasks = [
@@ -278,11 +278,11 @@ function buildWorld() {
       },
       ticket: {
         order_id: "0d000000-0000-4000-9000-000000000008",
-        order_no: "SO-TRT-1042",
-        customer_name: "K. Villeneuve (demo)",
+        order_no: "SO-PLM-1042",
+        customer_name: "Site foreman",
         fulfillment: "WILL_CALL",
         lines: [
-          { line_no: 1, product_id: "00000000-0000-4000-9000-0000000000p9", sku: "GRAN-A-CYD", description: "Granular A gravel", qty_ordered: "12.0000", uom: "CYD" },
+          { line_no: 1, product_id: "00000000-0000-4000-9000-0000000000p9", sku: "GRAN-A-CYD", description: "Class 2 base rock gravel", qty_ordered: "12.0000", uom: "CYD" },
         ],
         source: "DISPATCH",
       },
@@ -307,8 +307,8 @@ function buildWorld() {
       },
       ticket: {
         order_id: "0d000000-0000-4000-9000-000000000001",
-        order_no: "SO-TRT-1038",
-        customer_name: "Northline Hardscapes Ltd (demo)",
+        order_no: "SO-PLM-1038",
+        customer_name: "Summit Ridge Builders",
         fulfillment: "DELIVERY",
         lines: [],
         source: "DISPATCH",
@@ -440,8 +440,8 @@ function buildWorld() {
           total: 14,
           range: "today",
           points: [
-            { label: "Trenton", number: 10 },
-            { label: "Kingston", number: 4 },
+            { label: "Point Loma", number: 10 },
+            { label: "Julian", number: 4 },
           ],
         },
         "picks.gauge": { widget_key: "picks.gauge", state: "ok", total: 20, range: "open" },
@@ -459,9 +459,9 @@ function buildWorld() {
     receiving: [
       {
         po_id: PO_PARTIAL,
-        po_no: "PO-TRT-77",
+        po_no: "PO-PLM-77",
         vendor_id: "0c000000-0000-4000-9000-0000000000v1",
-        vendor_name: "Northland Stone Supply (demo)",
+        vendor_name: "Prairie Bend Soils",
         branch_id: BRANCH_ID,
         status: "PARTIAL",
         expected_at: ago(-24).slice(0, 10),
@@ -471,7 +471,7 @@ function buildWorld() {
       },
       {
         po_id: "0b000000-0000-4000-9000-0000000000p2",
-        po_no: "PO-TRT-78",
+        po_no: "PO-PLM-78",
         vendor_id: "0c000000-0000-4000-9000-0000000000v2",
         vendor_name: "Bay Aggregate (demo)",
         branch_id: BRANCH_ID,
@@ -1373,9 +1373,9 @@ async function handle(req, res) {
     return json(res, [
       {
         id: BRANCH_ID,
-        code: "TRT",
-        name: "Dibbits Landscape Supply · Trenton",
-        address: { line1: "TBD", city: "Trenton", province: "ON", postal: "K8V 0A0", country: "CA" },
+        code: "PLM",
+        name: "Gable Landscape Supply · Point Loma",
+        address: { line1: "TBD", city: "Point Loma", province: "CA", postal: "92106", country: "US" },
         is_default: true,
         is_system_default: false,
         is_active: true,

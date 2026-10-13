@@ -87,9 +87,9 @@ const LINES = {
 };
 
 const STOPS_SEED = [
-  { n: 1, customer: "Northline Hardscapes Ltd (demo)", order: "SO-1001", address: "95 Bagot St", postal: "K7L 3E7", window: "AM", contact: "Site contact (demo)", phone: "613-555-0101", note: "Gate code on the paperwork. Unload on the driveway." },
-  { n: 2, customer: "Harbourview Builders (demo)", order: "SO-1002", address: "1201 Division St", postal: "K7K 6X4", window: "AM", contact: "", phone: "", note: "" },
-  { n: 3, customer: "County of Hastings (demo)", order: "SO-1003", address: "216 Ontario St", postal: "K7L 2Z3", window: "PM", contact: "Yard lead (demo)", phone: "613-555-0103", note: "Call ahead. Forklift on site." },
+  { n: 1, customer: "Summit Ridge Builders", order: "SO-1001", address: "418 Oak Hollow Road", postal: "92036", window: "AM", contact: "Site contact (demo)", phone: "619-555-0101", note: "Gate code on the paperwork. Unload on the driveway." },
+  { n: 2, customer: "Harbourview Builders", order: "SO-1002", address: "77 Kentwood Lane", postal: "92036", window: "AM", contact: "", phone: "", note: "" },
+  { n: 3, customer: "Valley Municipal Works", order: "SO-1003", address: "1500 Farmers Road", postal: "92036", window: "PM", contact: "Yard lead (demo)", phone: "619-555-0103", note: "Call ahead. Forklift on site." },
 ];
 
 let world;
@@ -135,7 +135,7 @@ function buildWorld() {
     ...(seed.contact ? { contact_name: seed.contact } : {}),
     ...(seed.phone ? { contact_phone: seed.phone } : {}),
     address_line: seed.address,
-    city: "Kingston",
+    city: "Julian",
     postal_code: seed.postal,
     ...(seed.note ? { instructions: seed.note } : {}),
     photo_count: 0,

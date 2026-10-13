@@ -27,8 +27,8 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: "30-manager.pw.ts", test: "beyond the till: the manager's reach past the counter's walls, and the cards come back" },
   ],
   "world-invented": [
-    { file: "10-world.pw.ts", test: "the catalogue's ten demo products answer, every name carrying (demo)" },
-    { file: "10-world.pw.ts", test: "the account picker answers the branch's demo accounts, every name carrying (demo)" },
+    { file: "10-world.pw.ts", test: "the catalogue's ten demo products answer under invented trade names" },
+    { file: "10-world.pw.ts", test: "the account picker answers the branch's demo accounts under invented names" },
   ],
   "world-dated": [
     { file: "10-world.pw.ts", test: "the world's newest rows are dated to the moment the box was rebuilt" },
@@ -80,7 +80,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
     { file: "20-sales.pw.ts", test: "a swap: the credit pays a new order, the leftover goes back by cash, both documents name each other" },
   ],
   "other-branch": [
-    { file: "10-world.pw.ts", test: "a Kingston sale is refused at this counter: the lookup, its ticket, and all three refund rails" },
+    { file: "10-world.pw.ts", test: "a Julian sale is refused at this counter: the lookup, its ticket, and all three refund rails" },
   ],
   "role-matrix": [
     { file: "10-world.pw.ts", test: "the walls the box holds: the role matrix, and the price rule write beside it" },

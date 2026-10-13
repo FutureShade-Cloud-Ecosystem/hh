@@ -172,7 +172,7 @@ var accounts = map[string]Account{
 	"yard-team": {
 		Flow:           "yard-team",
 		PlatformUserID: "d0200000-0000-4000-9000-000000000002",
-		Email:          "yard.demo@dibbits.example",
+		Email:          "yard.demo@" + ReservedDomain,
 		DisplayName:    "Yard persona (demo)",
 		Label:          "Yard Team",
 		Role:           "yard_team",
@@ -180,7 +180,7 @@ var accounts = map[string]Account{
 	"driver": {
 		Flow:           "driver",
 		PlatformUserID: "d0200000-0000-4000-9000-000000000003",
-		Email:          "driver.demo@dibbits.example",
+		Email:          "driver.demo@" + ReservedDomain,
 		DisplayName:    "Driver persona (demo)",
 		Label:          "Driver",
 		Role:           "driver",

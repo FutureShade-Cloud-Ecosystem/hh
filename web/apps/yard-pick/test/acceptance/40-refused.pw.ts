@@ -4,7 +4,7 @@
 // refused (the dispatch capability's own sentence). Proved on the demo
 // image; this machine cannot build it.
 import { expect, test } from "./helpers.js";
-import { TRENTON, arriveFromFrontDoor, staff } from "./helpers.js";
+import { POINT_LOMA, arriveFromFrontDoor, staff } from "./helpers.js";
 
 test("starting a sale is refused, in the role gate's shared body", async ({ page }) => {
   await arriveFromFrontDoor(page);

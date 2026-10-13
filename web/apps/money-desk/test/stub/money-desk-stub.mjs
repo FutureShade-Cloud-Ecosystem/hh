@@ -44,8 +44,8 @@ const FLOWS = [
 ];
 
 const BRANCHES = [
-  { id: "b0000000-0000-4000-8000-000000000001", code: "TRT", name: "Trenton (demo)", address: { line1: "1 Demo Road", city: "Trenton", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
-  { id: "b0000000-0000-4000-8000-000000000002", code: "KGN", name: "Kingston (demo)", address: { line1: "2 Demo Road", city: "Kingston", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: false, is_system_default: false, is_active: true },
+  { id: "b0000000-0000-4000-8000-000000000001", code: "PLM", name: "Point Loma (demo)", address: { line1: "1 Demo Road", city: "Point Loma", province: "CA", postal: "92106", country: "US" }, is_default: true, is_system_default: false, is_active: true },
+  { id: "b0000000-0000-4000-8000-000000000002", code: "JUL", name: "Julian (demo)", address: { line1: "2 Demo Road", city: "Julian", province: "CA", postal: "92036", country: "US" }, is_default: false, is_system_default: false, is_active: true },
 ];
 const branchOf = (n) => (n <= 3 ? BRANCHES[0].id : BRANCHES[1].id);
 

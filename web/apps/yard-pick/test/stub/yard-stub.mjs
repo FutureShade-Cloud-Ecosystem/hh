@@ -35,7 +35,7 @@ const FLOWS = [
 const USERS = {
   "yard-team": {
     user_id: "d0200000-0000-4000-9000-000000000002",
-    email: "yard.demo@dibbits.example",
+    email: "yard.demo@hh-demo.invalid",
     display_name: "Yard persona (demo)",
     role_code: "yard_team",
     role_name: "Yard Team",
@@ -145,22 +145,22 @@ function readBody(req) {
 
 // ---- the world ---------------------------------------------------------
 //
-// One branch the yard team reaches (Trenton, the populate's own id), five
+// One branch the yard team reaches (Point Loma, the populate's own id), five
 // pick tasks: two unclaimed, one claimed by the yard persona, one held from
 // picking (the pay before release wall), one in progress with an open
 // shortage and a resolved one.
 
 const YARD_USER = "d0200000-0000-4000-9000-000000000002";
-const TRENTON = "5d1b3f6e-0000-4000-9000-000000000001";
+const POINT_LOMA = "5d1b3f6e-0000-4000-9000-000000000001";
 
-const BRANCH = { id: TRENTON, code: "TRT", name: "Hardscape House (demo), Trenton", address: { line1: "857 Bayly Rd", city: "Trenton", province: "ON", postal: "K8V 1N1", country: "CA" }, is_default: true, is_system_default: false, is_active: true };
+const BRANCH = { id: POINT_LOMA, code: "PLM", name: "Gable Landscape Supply, Point Loma", address: { line1: "857 Bayly Rd", city: "Point Loma", province: "CA", postal: "92106", country: "US" }, is_default: true, is_system_default: false, is_active: true };
 
 const TICKETS = {
   "0b000000-0000-4000-9000-000000000042": {
     order_id: "0b000000-0000-4000-9000-000000000042",
     order_no: "SO-1042",
-    branch_id: TRENTON,
-    customer_name: "Northline Hardscapes Ltd (demo)",
+    branch_id: POINT_LOMA,
+    customer_name: "Summit Ridge Builders",
     fulfillment: "PICKUP",
     mto_class: "STANDARD",
     priority: "URGENT",
@@ -175,8 +175,8 @@ const TICKETS = {
   "0b000000-0000-4000-9000-000000000039": {
     order_id: "0b000000-0000-4000-9000-000000000039",
     order_no: "SO-1039",
-    branch_id: TRENTON,
-    customer_name: "Harbourview Builders (demo)",
+    branch_id: POINT_LOMA,
+    customer_name: "Harbourview Builders",
     fulfillment: "DELIVERY",
     mto_class: "MIXED",
     priority: "HIGH",
@@ -193,8 +193,8 @@ const TICKETS = {
   "0b000000-0000-4000-9000-000000000040": {
     order_id: "0b000000-0000-4000-9000-000000000040",
     order_no: "SO-1040",
-    branch_id: TRENTON,
-    customer_name: "County of Hastings (demo)",
+    branch_id: POINT_LOMA,
+    customer_name: "Valley Municipal Works",
     fulfillment: "DELIVERY",
     mto_class: "STANDARD",
     priority: "NORMAL",
@@ -202,7 +202,7 @@ const TICKETS = {
     requested_at: "2026-10-08T16:00:00Z",
     source: "DISPATCH",
     lines: [
-      { line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Granular A gravel, bulk", qty_ordered: "10.0000", uom: "TONNE", location: "Bulk 1" },
+      { line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Class 2 base rock gravel, bulk", qty_ordered: "10.0000", uom: "TONNE", location: "Bulk 1" },
       { line_no: 2, product_id: "1a000000-0000-4000-9000-0000000000c2", sku: "GRAN-B", description: "Granular B gravel, bulk", qty_ordered: "6.0000", uom: "TONNE", location: "Bulk 1" },
       { line_no: 3, product_id: "1a000000-0000-4000-9000-0000000000c3", sku: "FAB-GEO", description: "Geotextile fabric, 4 by 300 ft", qty_ordered: "2.0000", uom: "ROLL", location: "Rack 2" },
       { line_no: 4, product_id: "1a000000-0000-4000-9000-0000000000c4", sku: "PIPE-CORR-4", description: "Corrugated pipe, 4 in", qty_ordered: "8.0000", uom: "EA", location: "Rack 5" },
@@ -211,7 +211,7 @@ const TICKETS = {
   "0b000000-0000-4000-9000-000000000044": {
     order_id: "0b000000-0000-4000-9000-000000000044",
     order_no: "SO-1044",
-    branch_id: TRENTON,
+    branch_id: POINT_LOMA,
     customer_name: "Bayside Landscaping (demo)",
     fulfillment: "PICKUP",
     mto_class: "STANDARD",
@@ -223,13 +223,13 @@ const TICKETS = {
     hold_words: "Balance due",
     still_owed_cents: 43210,
     lines: [
-      { line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000d1", sku: "PAVER-HOLLAND", description: "Holland paver, sandstone", qty_ordered: "30.0000", uom: "EA", location: "Yard A" },
+      { line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000d1", sku: "PAVER-HOLLAND", description: "Charcoal paver, sandstone", qty_ordered: "30.0000", uom: "EA", location: "Yard A" },
     ],
   },
   "0b000000-0000-4000-9000-000000000041": {
     order_id: "0b000000-0000-4000-9000-000000000041",
     order_no: "SO-1041",
-    branch_id: TRENTON,
+    branch_id: POINT_LOMA,
     customer_name: "Ridgeway Stone (demo)",
     fulfillment: "DELIVERY",
     mto_class: "MTO",
@@ -284,7 +284,7 @@ function buildWorld() {
     id: seed.id,
     task_type: "PICK",
     order_id: TICKETS[seed.ticket].order_id,
-    branch_id: TRENTON,
+    branch_id: POINT_LOMA,
     priority: seed.priority,
     status: seed.status,
     ...(seed.claimed ? { claimed_by: YARD_USER, claimed_at: new Date(now - 30 * 60000).toISOString() } : {}),
@@ -534,7 +534,7 @@ async function handle(req, res) {
     // reachable branch, and a branch out of reach is refused.
     const branchId = url.searchParams.get("branch_id") ?? "";
     if (branchId === "") return refuse(res, 403, "a branch-scoped caller must name a reachable branch_id");
-    if (branchId !== TRENTON) return refuse(res, 403, "branch out of scope");
+    if (branchId !== POINT_LOMA) return refuse(res, 403, "branch out of scope");
     const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? "50")));
     let tasks = world.tasks.map(taskOut);
     const status = url.searchParams.get("status");

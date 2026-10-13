@@ -478,10 +478,10 @@ export class MoneyDeskApp extends HHElement {
         this.#startGl();
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
-        this.#entryView = { ...this.#entryView, busy: false, message: "Demo sign-in refused: the mint's session was not usable." };
+        this.#entryView = { ...this.#entryView, busy: false, message: "Sign-in did not go through. Try the role again." };
       }
     } else {
-      this.#entryView = { ...this.#entryView, busy: false, message: `Demo sign-in refused: ${result.error}` };
+      this.#entryView = { ...this.#entryView, busy: false, message: `Sign-in did not go through. ${result.error}` };
     }
     this.requestUpdate();
   }
