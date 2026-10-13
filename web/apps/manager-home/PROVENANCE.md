@@ -17,10 +17,28 @@ the header of each file below.
 | Needs-you queue shape (rows, total, worst) | `app/src/home-bento-logic.ts` (`NeedsQueue`) | `src/manager-api.ts` | Whitelist projection over the generated client |
 | The approvals surface's shape | `app/src/pending-approvals.ts` | `renderApprovals` in `src/views.ts` | By-kind tabs over the core's `kind` filter; decide actions; refusal words naming who decides |
 | API call set | `app/src/home-bento-logic.ts` (the widget reads) | `src/manager-api.ts` | Over the generated client; every read goes through a whitelist projection |
+| The one-branch-one-day board shape (runs, stops, unassigned lane) | `app/src/dispatch-board.ts` (`fetchBoard`, the `hos-dispatch-board` day view) | `src/drivers-api.ts` (`toDispatchBoard`, `DriversApi.board`) | The core's `dispatchGetBoard` answers the whole day in one read, so the Drivers view needs no per run follow-ups; date never sent, the server's own today answers |
+| The run and stop status words (`Planned`, `Dispatched`, `Completed`, `Cancelled`; `Ready`, `Loaded`, `En route`, `Delivered`, `Failed`, `Cancelled`) | `app/src/dispatch-logic.ts` (`RUN_LABEL`, `STOP_LABEL`) | `runStatusWord`, `stopStatusWord` in `src/drivers-logic.ts` | Kept verbatim; an unknown value is omitted, never shown raw |
+| The run row's crew line (`truck · driver`) and the status word as the row's state | `app/src/dispatch-board.ts` (`runHeader`: `run.truck_code · run.driver_name`, the status pill) | `renderDriverRow` in `src/drivers-views.ts` | Read only: no actions, no crew pickers; the row is a manager's glance, not a dispatcher's controls |
+| The refresh control and the empty board's sentence | `app/src/dispatch-board.ts` (`#refresh` button, `no-runs` empty words) | `renderBoard` in `src/drivers-views.ts` | The empty words are this item's brief's own sentence ("No runs on the board today"); no auto-refresh anywhere |
 
 What has no source in the original app and is new here, each from its named
 reference:
 
+- The whole Drivers view (item 2E) has no original screen: the original's
+  day board serves a dispatcher, this view serves the three manager roles
+  (Logistics Manager, Branch Manager, General Manager) asking where the
+  drivers are, read only. The four state groups (On a stop, Between stops,
+  Not started, Done) with the row's place line (stop n of m, done, left, did
+  not go) and the change line (last change, from the wire's own status
+  timestamps) are new, built on the same board read. Visual reference: the
+  original's dispatch day board and this app's own landing style (the view
+  header, the sheet, the eyebrow labels).
+- The roster line ("N of the M drivers on the roster hold no run today"),
+  counted from `dispatchListDrivers` against the board's runs: the demo
+  tenant sheet names drivers by role label only (GLS-TENANT-r2), so the board
+  shows the registry's names as the wire carries them and the fixtures use
+  role labels.
 - The needs links' own views (`Shortages · open`, `Receiving · short`), the
   resolve sheet and its three resolution choices: the FB Design boards
   `manager-home__yard-manager-light.png` and

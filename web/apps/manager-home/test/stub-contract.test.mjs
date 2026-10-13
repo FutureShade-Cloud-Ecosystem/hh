@@ -267,6 +267,43 @@ test("the receiving dock fits the purchasing contract", async () => {
   assert.ok(list.json.items.some((i) => i.status === "PARTIAL"), "the stub's dock holds the difference the needs row counts");
 });
 
+test("the drivers board and its registries fit the dispatch contract", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+  const board = await call("GET", "/api/v1/dispatch/board?branch_id=5d1b3f6e-0000-4000-9000-000000000001", { token });
+  assert.equal(board.status, 200);
+  holds("DispatchBoard", board.json);
+  assert.ok(board.json.runs.length > 0, "the world holds runs for the board's groups");
+  for (const run of board.json.runs) {
+    assert.ok(["PLANNED", "DISPATCHED", "COMPLETED", "CANCELLED"].includes(run.status), `run status ${run.status} outside the closed set`);
+  }
+  for (const stop of board.json.stops) {
+    assert.ok(["READY", "LOADED", "EN_ROUTE", "DELIVERED", "FAILED", "CANCELLED"].includes(stop.status), `stop status ${stop.status} outside the closed set`);
+  }
+
+  const drivers = await call("GET", "/api/v1/dispatch/drivers?branch_id=5d1b3f6e-0000-4000-9000-000000000001&limit=100", { token });
+  assert.equal(drivers.status, 200);
+  holds("DispatchDriverPage", drivers.json);
+
+  const trucks = await call("GET", "/api/v1/dispatch/trucks?branch_id=5d1b3f6e-0000-4000-9000-000000000001&limit=100", { token });
+  assert.equal(trucks.status, 200);
+  holds("DispatchTruckPage", trucks.json);
+
+  // The empty day, the same shape with nothing on it.
+  await scenario("no-runs");
+  const empty = await call("GET", "/api/v1/dispatch/board?branch_id=5d1b3f6e-0000-4000-9000-000000000001", { token });
+  assert.equal(empty.status, 200);
+  holds("DispatchBoard", empty.json);
+  assert.equal(empty.json.runs.length, 0);
+
+  // The wall: the role gate's shared Forbidden body, the one word, exactly as
+  // the middleware writes it, the same answer every staff surface gives.
+  await scenario("drivers-refused");
+  const refused = await call("GET", "/api/v1/dispatch/board?branch_id=5d1b3f6e-0000-4000-9000-000000000001", { token });
+  assert.equal(refused.status, 403);
+  assert.deepEqual(refused.json, { error: "Forbidden" });
+});
+
 test("the approvals list fits the identity contract, and the refusals are the core's own words", async () => {
   await reset();
   const yard = await mint("yard-manager");
