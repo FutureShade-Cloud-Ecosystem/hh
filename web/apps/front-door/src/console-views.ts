@@ -99,6 +99,9 @@ function googleButton(busy: boolean): TemplateResult {
   `;
 }
 
+// The fields are read only while a sign in is in flight so focus and the typed values stay; the
+// root sets that in its own update pass (the design system's position gate keeps ?readonly out of
+// templates, the same wiring pass the shared header and the widget use).
 function emailForm(session: ConsoleSession, busy: boolean, invalid: boolean): TemplateResult {
   const signingIn = session.phase === "signing-in";
   return html`
@@ -116,7 +119,6 @@ function emailForm(session: ConsoleSession, busy: boolean, invalid: boolean): Te
           autocorrect="off"
           spellcheck="false"
           required
-          ?readonly=${busy}
         />
       </div>
       <div class="field">
@@ -129,7 +131,6 @@ function emailForm(session: ConsoleSession, busy: boolean, invalid: boolean): Te
           autocomplete="current-password"
           required
           aria-invalid=${invalid ? "true" : "false"}
-          ?readonly=${busy}
         />
       </div>
       <button type="submit" class="btn btn-primary btn-wide" data-testid="signin-submit" ?disabled=${busy}>

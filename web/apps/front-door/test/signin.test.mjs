@@ -23,7 +23,7 @@ const answer = (status, body) => async () => new Response(body === undefined ? n
 test("the words of each sign in state are the ones the brief names", () => {
   assert.equal(signInNotice("forbidden"), "This account is not set up for this site. Ask your administrator to add you.");
   assert.equal(signInNotice("bad_credentials"), "That email and password do not match. Check them and try again.");
-  assert.equal(signInNotice("rate_limited"), "Too many attempts. Wait a minute, then try again.");
+  assert.equal(signInNotice("rate_limited"), "Too many attempts. Wait a moment, then try again.");
   assert.equal(signInNotice("unavailable"), "Sign in is unavailable right now. Try again in a moment.");
   assert.equal(signInNotice("offline"), "You are offline. Connect to the internet, then try again.");
   assert.equal(signInNotice("no_session"), "Your session ended. Sign in again.");
@@ -45,7 +45,7 @@ test("every word is plain: no dash, no exclamation mark, no raw status or code",
   ];
   assert.ok(all.length > 12);
   for (const text of all) {
-    assert.equal(/[–—!]/.test(text), false, text);
+    assert.equal(/[\u2013\u2014!]/.test(text), false, text);
     assert.equal(/\b(40\d|50\d|http|json|token|exchange|jwt)\b/i.test(text), false, text);
   }
 });

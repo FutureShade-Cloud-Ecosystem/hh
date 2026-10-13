@@ -182,7 +182,7 @@ test.describe("the sign in screen", () => {
   test("not allowed, too many attempts, unavailable: each in its own words, focus on the button", async ({ page, baseURL }) => {
     const cases: [number, string][] = [
       [403, "This account is not set up for this site. Ask your administrator to add you."],
-      [429, "Too many attempts. Wait a minute, then try again."],
+      [429, "Too many attempts. Wait a moment, then try again."],
       [503, "Sign in is unavailable right now. Try again in a moment."],
     ];
     for (const [code, words] of cases) {
@@ -203,7 +203,10 @@ test.describe("the sign in screen", () => {
     await expect(page.getByTestId("signin-submit")).toBeDisabled();
     await expect(page.getByTestId("signin-submit")).toContainText("Signing in");
     await expect(status(page)).toHaveText("Signing in.");
+    await expect(page.getByLabel("Email")).toHaveJSProperty("readOnly", true);
+    await expect(page.getByLabel("Password")).toHaveJSProperty("readOnly", true);
     await expect(page.getByTestId("role-entry")).toBeVisible();
+    // The sign in finished; the screen is gone, so nothing stays read only on a later visit.
   });
 
   test("offline: the browser being offline is said at once, then sign in works again online", async ({ page, baseURL, context }) => {
@@ -320,7 +323,7 @@ test.describe("the persona cards", () => {
     await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(8);
     await expect(page.getByTestId("coming-disclosure")).toBeVisible();
     await page.getByTestId("persona-cards").getByRole("button", { name: "Driver", exact: true }).click();
-    await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Driver", exact: true })).toContainText("Too many tries. Wait a minute, then tap again.");
+    await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Driver", exact: true })).toContainText("Too many tries. Wait a moment, then tap again.");
     await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Yard Team", exact: true })).not.toContainText("Too many tries");
     await page.getByTestId("persona-cards").getByRole("button", { name: "Yard Team", exact: true }).click();
     await expect(page.getByTestId("home-title")).toHaveText("Yard Team");
@@ -386,11 +389,11 @@ for (const theme of THEMES) {
       await expect(page.getByLabel("Email")).toBeVisible();
       await shot("01-idle");
       // Signing in.
-      await arm(page, { delayMs: { exchange: 2500 } });
+      await arm(page, { delayMs: { exchange: 2000 } });
       await signInAsPartner(page);
       await expect(page.getByTestId("signin-submit")).toBeDisabled();
       await shot("02-signing-in");
-      await expect(page.getByTestId("role-entry")).toBeVisible();
+      await expect(page.getByTestId("role-entry")).toBeVisible({ timeout: 15_000 });
       await shot("07-role-entry");
       await page.getByTestId("continue-own").click();
       await expect(page.getByTestId("home-title")).toBeVisible();

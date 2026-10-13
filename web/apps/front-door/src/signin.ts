@@ -18,7 +18,7 @@ import { LIVE_ROLES, type LiveRole } from "./roles.js";
 export const SIGN_IN_WORDS: Readonly<Record<string, string>> = {
   bad_credentials: "That email and password do not match. Check them and try again.",
   forbidden: "This account is not set up for this site. Ask your administrator to add you.",
-  rate_limited: "Too many attempts. Wait a minute, then try again.",
+  rate_limited: "Too many attempts. Wait a moment, then try again.",
   unavailable: "Sign in is unavailable right now. Try again in a moment.",
   offline: "You are offline. Connect to the internet, then try again.",
   no_session: "Your session ended. Sign in again.",
@@ -43,7 +43,7 @@ export function focusAfter(reason: SignInFailureReason): "password" | "submit" {
 export const PERSONA_REFUSAL_WORDS: Readonly<Record<string, string>> = {
   unauthorized: "Sign in first, then pick a role.",
   forbidden: "This site does not let you enter as that role.",
-  rate_limited: "Too many tries. Wait a minute, then tap again.",
+  rate_limited: "Too many tries. Wait a moment, then tap again.",
   bad_request: "That role could not be opened. Try again.",
   unavailable: "That role is not available right now. Try again in a moment.",
   offline: "You are offline. Connect to the internet, then tap again.",

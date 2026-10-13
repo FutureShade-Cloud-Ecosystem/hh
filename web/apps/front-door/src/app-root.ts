@@ -1084,6 +1084,12 @@ export class FrontDoorApp extends HHElement {
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
       widget.send = this.#feedbackSender;
     }
+    // The fields stay put (value and focus) and only stop taking input while a sign in is in flight.
+    const signingIn = this.#console?.phase === "signing-in";
+    for (const id of ["#signin-email", "#signin-password"]) {
+      const field = this.renderRoot.querySelector<HTMLInputElement>(id);
+      if (field !== null) field.readOnly = signingIn;
+    }
     // Focus returns to where the person was after a refused sign in: the
     // password field after wrong credentials, the button otherwise.
     const focus = this.#console?.takeFocus() ?? null;
