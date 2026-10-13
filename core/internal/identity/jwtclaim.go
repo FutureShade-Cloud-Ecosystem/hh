@@ -62,13 +62,18 @@ func NewJWTClaims(pool *pgxpool.Pool, bound time.Duration) (*JWTClaims, error) {
 // ClaimJWT records the JWT as spent with one atomic INSERT ... ON CONFLICT
 // DO NOTHING: claimed is true for exactly one of any number of concurrent
 // presentations of one signature, across replicas and restarts. An exp that
-// is the zero time or beyond now plus the bound is ErrJWTExpOutOfBound and
-// writes nothing. After the decision, up to JWTClaimPurgeBatch rows past
-// their exp are removed in the same call; a purge failure never changes
-// the claim's answer (the next claim purges again).
+// is the zero time, at or before now, or beyond now plus the bound is
+// ErrJWTExpOutOfBound and writes nothing: a JWT already past its exp by the
+// core's clock is refused (the shell mints a fresh one), so a row is never
+// inserted only to be purged. After the decision, up to JWTClaimPurgeBatch
+// rows whose exp is older than now minus the bound are removed in the same
+// call, so a row outlives its JWT's exp by a whole bound, which covers a
+// Console that accepts a JWT a little past its exp or a clock ahead of
+// Console's. A purge failure never changes the claim's answer (the next
+// claim purges again).
 func (c *JWTClaims) ClaimJWT(ctx context.Context, sigHash [32]byte, exp time.Time) (bool, error) {
 	now := c.now()
-	if exp.IsZero() || exp.After(now.Add(c.bound)) {
+	if exp.IsZero() || !exp.After(now) || exp.After(now.Add(c.bound)) {
 		return false, ErrJWTExpOutOfBound
 	}
 	tag, err := c.pool.Exec(ctx,
@@ -80,6 +85,6 @@ func (c *JWTClaims) ClaimJWT(ctx context.Context, sigHash [32]byte, exp time.Tim
 	claimed := tag.RowsAffected() == 1
 	_, _ = c.pool.Exec(ctx,
 		`DELETE FROM console_jwt_claim WHERE sig_hash IN (
-		   SELECT sig_hash FROM console_jwt_claim WHERE exp < $1 LIMIT $2)`, now, JWTClaimPurgeBatch)
+		   SELECT sig_hash FROM console_jwt_claim WHERE exp < $1 LIMIT $2)`, now.Add(-c.bound), JWTClaimPurgeBatch)
 	return claimed, nil
 }

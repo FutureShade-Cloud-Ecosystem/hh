@@ -5,3 +5,5 @@ Drive Run, plus House Messages. Phone-first, with camera and GPS permissions
 and offline full mode for the declared yard-style scopes. Loads role-allowed
 micro-apps from `web/apps/` with the shared `@hardscapehouse/shell-chrome`. Yard apps
 assume gloves, sunlight, one hand, noise.
+
+Build note: `beforeBuildCommand` in `tauri.conf.json` finds the front door with `git rev-parse --show-toplevel`, so a build needs a git checkout, not a source archive.
