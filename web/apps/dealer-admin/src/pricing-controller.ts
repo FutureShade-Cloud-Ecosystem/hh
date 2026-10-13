@@ -19,6 +19,8 @@ import type {
   PricingTab,
 } from "./pricing-logic.js";
 import {
+  accrualResultWords,
+  vendorWords,
   bpsFromPctInput,
   centsFromMoneyInput,
   affectedFloorItems,
@@ -31,15 +33,18 @@ import {
   shownProductIds,
 } from "./pricing-logic.js";
 import type {
+  AccrualResult,
   BreakRow,
   ClearanceRow,
   CreatedRef,
   FloorPreview,
+  LedgerRow,
   OverrideRow,
   PolicyRow,
   PolicyWrite,
   PricingApi,
   PromotionRow,
+  RebateRow,
   RuleQuery,
   RuleRow,
   StatusResult,
@@ -78,6 +83,12 @@ export interface PricingDoor {
   clearance(): Promise<{ ok: true; value: readonly ClearanceRow[] } | { ok: false; error: string; status?: number }>;
   upsertClearance(productId: string, body: Record<string, unknown>): Promise<{ ok: true; value: ClearanceRow } | { ok: false; error: string; status?: number }>;
   deleteClearance(productId: string): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
+  rebatePrograms(): Promise<{ ok: true; value: readonly RebateRow[] } | { ok: false; error: string; status?: number }>;
+  createRebate(body: Record<string, unknown>): Promise<{ ok: true; value: RebateRow } | { ok: false; error: string; status?: number }>;
+  updateRebate(id: string, body: Record<string, unknown>): Promise<{ ok: true; value: RebateRow } | { ok: false; error: string; status?: number }>;
+  deleteRebate(id: string, opts: { version: number }): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
+  vendorLedger(vendorId: string): Promise<{ ok: true; value: LedgerRow } | { ok: false; error: string; status?: number }>;
+  accrueRebates(body: Record<string, unknown>): Promise<{ ok: true; value: AccrualResult } | { ok: false; error: string; status?: number }>;
   previewFloor(body: PricingFloorPreviewRequest): Promise<
     { ok: true; value: FloorPreview } | { ok: false; error: string; status?: number }
   >;
@@ -271,6 +282,62 @@ export interface ClearancePanel {
   readonly confirmingId: string;
 }
 
+/** The rebate editor's own words, as the person last left them. */
+export interface RebateEdit {
+  readonly id: string;
+  readonly version: number;
+  readonly code: string;
+  readonly nameInput: string;
+  readonly vendorId: string;
+  readonly categoryId: string;
+  readonly productId: string;
+  readonly basis: string;
+  readonly rateInput: string;
+  readonly starts: string;
+  readonly ends: string;
+  readonly notes: string;
+  readonly active: boolean;
+}
+
+/** The ledger panel: one vendor's claim side. */
+export interface LedgerPanel {
+  readonly phase: LoadPhase;
+  readonly vendorId: string;
+  readonly vendorName: string;
+  readonly totalCents: number;
+  readonly count: number;
+  readonly rows: readonly { readonly accrued_at: string; readonly program_code: string; readonly product_sku: string; readonly source_type: string; readonly source_id: string; readonly basis_cents: number; readonly rate_note: string; readonly accrual_cents: number }[];
+  readonly error: string;
+}
+
+/** The accrual form and its verdict. */
+export interface AccrualPanel {
+  readonly sourceType: string;
+  readonly sourceId: string;
+  readonly occurred: string;
+  readonly productId: string;
+  readonly categoryId: string;
+  readonly qtyInput: string;
+  readonly saleInput: string;
+  readonly costInput: string;
+  readonly busy: boolean;
+  readonly formError: string;
+  readonly result: string;
+}
+
+export interface RebatesModel {
+  readonly phase: LoadPhase;
+  readonly rows: readonly RebateRow[];
+  readonly error: string;
+  readonly editing: RebateEdit | null;
+  readonly busy: boolean;
+  readonly formError: string;
+  readonly notice: string;
+  readonly confirmingId: string;
+  readonly ledger: LedgerPanel;
+  readonly accrual: AccrualPanel;
+}
+
 export interface PromosModel {
   readonly promotions: PromotionsPanel;
   readonly clearance: ClearancePanel;
@@ -298,6 +365,7 @@ export interface PricingModel {
   readonly customers: CustomersModel;
   readonly breaks: BreaksModel;
   readonly promos: PromosModel;
+  readonly rebates: RebatesModel;
 }
 
 function emptyMargin(): MarginModel {
@@ -345,6 +413,33 @@ function emptyClearance(): ClearancePanel {
   return { phase: "idle", rows: [], error: "", editing: null, busy: false, formError: "", notice: "", confirmingId: "" };
 }
 
+function emptyRebates(): RebatesModel {
+  return {
+    phase: "idle",
+    rows: [],
+    error: "",
+    editing: null,
+    busy: false,
+    formError: "",
+    notice: "",
+    confirmingId: "",
+    ledger: { phase: "idle", vendorId: "", vendorName: "", totalCents: 0, count: 0, rows: [], error: "" },
+    accrual: {
+      sourceType: "POS_SALE",
+      sourceId: "",
+      occurred: "",
+      productId: "",
+      categoryId: "",
+      qtyInput: "",
+      saleInput: "",
+      costInput: "",
+      busy: false,
+      formError: "",
+      result: "",
+    },
+  };
+}
+
 function emptyPromos(): PromosModel {
   return { promotions: emptyPromotions(), clearance: emptyClearance() };
 }
@@ -373,6 +468,7 @@ function emptyModel(): PricingModel {
     customers: emptyCustomers(),
     breaks: emptyBreaks(),
     promos: emptyPromos(),
+    rebates: emptyRebates(),
   };
 }
 
@@ -433,6 +529,18 @@ export class PricingController {
 
   #setClearance(patch: Partial<ClearancePanel>): void {
     this.#set({ promos: { ...this.model.promos, clearance: { ...this.model.promos.clearance, ...patch } } });
+  }
+
+  #setRebates(patch: Partial<RebatesModel>): void {
+    this.#set({ rebates: { ...this.model.rebates, ...patch } });
+  }
+
+  #setLedger(patch: Partial<LedgerPanel>): void {
+    this.#set({ rebates: { ...this.model.rebates, ledger: { ...this.model.rebates.ledger, ...patch } } });
+  }
+
+  #setAccrual(patch: Partial<AccrualPanel>): void {
+    this.#set({ rebates: { ...this.model.rebates, accrual: { ...this.model.rebates.accrual, ...patch } } });
   }
 
   /** The app opens the surface: the categories once, then the open tab's group. */
@@ -545,6 +653,35 @@ export class PricingController {
       const clearKey = clearText[field];
       if (clearKey !== undefined) this.#setClearance({ editing: { ...clear, [clearKey]: value } });
     }
+    const rebate = this.model.rebates.editing;
+    if (rebate !== null) {
+      const rebText: Partial<Record<string, keyof RebateEdit>> = {
+        "reb-code": "code",
+        "reb-name": "nameInput",
+        "reb-vendor": "vendorId",
+        "reb-product": "productId",
+        "reb-rate": "rateInput",
+        "reb-starts": "starts",
+        "reb-ends": "ends",
+        "reb-notes": "notes",
+      };
+      const rebKey = rebText[field];
+      if (rebKey !== undefined) this.#setRebates({ editing: { ...rebate, [rebKey]: value } });
+    }
+    const accrual = this.model.rebates.accrual;
+    {
+      const accText: Partial<Record<string, keyof AccrualPanel>> = {
+        "acc-source-id": "sourceId",
+        "acc-occurred": "occurred",
+        "acc-product": "productId",
+        "acc-category": "categoryId",
+        "acc-qty": "qtyInput",
+        "acc-sale": "saleInput",
+        "acc-cost": "costInput",
+      };
+      const accKey = accText[field];
+      if (accKey !== undefined) this.#setAccrual({ [accKey]: value } as Partial<AccrualPanel>);
+    }
     const brk = this.model.breaks.editing;
     if (brk !== null) {
       if (field === "brk-code") this.#setBreaks({ editing: { ...brk, code: value } });
@@ -612,6 +749,22 @@ export class PricingController {
       }
       if (field === "prm-calc") this.#setPromotions({ editing: { ...promo, calc: value } });
       if (field === "prm-active") this.#setPromotions({ editing: { ...promo, active: value === "yes" } });
+    }
+    const rebate = this.model.rebates.editing;
+    if (rebate !== null) {
+      if (field === "reb-category") {
+        const hit = this.model.categories.find((c) => c.name === value);
+        this.#setRebates({ editing: { ...rebate, categoryId: value === "" || hit !== undefined ? (hit?.id ?? "") : rebate.categoryId } });
+      }
+      if (field === "reb-basis") this.#setRebates({ editing: { ...rebate, basis: value } });
+      if (field === "reb-active") this.#setRebates({ editing: { ...rebate, active: value === "yes" } });
+    }
+    if (field === "acc-source-type") this.#setAccrual({ sourceType: value });
+    if (field === "ledger-name") {
+      // The picker's options carry the vendors' display words; the answer is
+      // mapped back to the id it stands for, as the register's role select does.
+      const hit = this.model.rebates.rows.find((r) => vendorWords(r.vendor_name, r.vendor_id) === value);
+      if (hit !== undefined) this.#setLedger({ vendorId: hit.vendor_id, vendorName: hit.vendor_name });
     }
     const brk = this.model.breaks.editing;
     if (brk !== null) {
@@ -760,6 +913,58 @@ export class PricingController {
         return this.model.promos.promotions.editing?.calc ?? "";
       case "prm-active":
         return (this.model.promos.promotions.editing?.active ?? false) ? "yes" : "no";
+      case "reb-code":
+      case "reb-name":
+      case "reb-vendor":
+      case "reb-product":
+      case "reb-rate":
+      case "reb-starts":
+      case "reb-ends":
+      case "reb-notes": {
+        const rebate = this.model.rebates.editing;
+        if (rebate === null) return "";
+        const rebMap: Record<string, keyof RebateEdit> = {
+          "reb-code": "code",
+          "reb-name": "nameInput",
+          "reb-vendor": "vendorId",
+          "reb-product": "productId",
+          "reb-rate": "rateInput",
+          "reb-starts": "starts",
+          "reb-ends": "ends",
+          "reb-notes": "notes",
+        };
+        return String(rebate[rebMap[field]]);
+      }
+      case "reb-category": {
+        const cat = this.model.rebates.editing?.categoryId ?? "";
+        return cat === "" ? "" : categoryName(cat, this.model.categories);
+      }
+      case "reb-basis":
+        return this.model.rebates.editing?.basis ?? "";
+      case "reb-active":
+        return (this.model.rebates.editing?.active ?? false) ? "yes" : "no";
+      case "acc-source-type":
+        return this.model.rebates.accrual.sourceType;
+      case "acc-source-id":
+        return this.model.rebates.accrual.sourceId;
+      case "acc-occurred":
+        return this.model.rebates.accrual.occurred;
+      case "acc-product":
+        return this.model.rebates.accrual.productId;
+      case "acc-category":
+        return this.model.rebates.accrual.categoryId;
+      case "acc-qty":
+        return this.model.rebates.accrual.qtyInput;
+      case "acc-sale":
+        return this.model.rebates.accrual.saleInput;
+      case "acc-cost":
+        return this.model.rebates.accrual.costInput;
+      case "ledger-name": {
+        const ledger = this.model.rebates.ledger;
+        if (ledger.vendorId === "") return "";
+        const row = this.model.rebates.rows.find((r) => r.vendor_id === ledger.vendorId);
+        return row === undefined ? "" : vendorWords(row.vendor_name, row.vendor_id);
+      }
       case "clr-product":
       case "clr-reason":
       case "clr-price":
@@ -809,6 +1014,7 @@ export class PricingController {
         if (tab === "rules" && this.model.rules.phase === "idle") await this.loadRules();
         if (tab === "breaks" && this.model.breaks.phase === "idle") await this.loadBreaks();
         if (tab === "promos" && this.model.promos.promotions.phase === "idle") await this.loadPromosTab();
+        if (tab === "rebates" && this.model.rebates.phase === "idle") await this.loadRebates();
         return;
       }
       case "pr-reload-margin":
@@ -942,6 +1148,28 @@ export class PricingController {
         return;
       case "pr-clear-del":
         await this.#deleteClearance(attrs.product ?? "");
+        return;
+      // -- the rebates tab --
+      case "pr-rebates-reload":
+        await this.loadRebates();
+        return;
+      case "pr-rebate-edit":
+        this.#openRebateEditor(attrs.id ?? "");
+        return;
+      case "pr-rebate-cancel":
+        this.#setRebates({ editing: null, formError: "" });
+        return;
+      case "pr-rebate-save":
+        await this.#saveRebate();
+        return;
+      case "pr-rebate-del":
+        await this.#deleteRebate(attrs.id ?? "");
+        return;
+      case "pr-ledger-vendor":
+        await this.loadLedger(this.model.rebates.ledger.vendorId);
+        return;
+      case "pr-accrue":
+        await this.#accrue();
         return;
       case "pr-break-drop-item": {
         const editing = this.model.breaks.editing;
@@ -1957,6 +2185,196 @@ export class PricingController {
     }
     this.#setClearance({ busy: false, notice: "Taken off. The item prices through the waterfall again." });
     await this.reloadClearance();
+  }
+
+  // -- the rebates tab ------------------------------------------------------------------------------------
+
+  async loadRebates(): Promise<void> {
+    // The notice outlives the re-read a save triggers, and the accrual form
+    // keeps what the person typed.
+    this.#setRebates({ ...emptyRebates(), notice: this.model.rebates.notice, accrual: this.model.rebates.accrual });
+    const result = await this.#door.rebatePrograms();
+    if (!result.ok) {
+      this.#setRebates({
+        phase: result.status === 403 ? "refused" : "error",
+        error: pricingRefusalWords(result.error, result.status, "read"),
+      });
+      return;
+    }
+    this.#setRebates({ phase: "ready", rows: result.value });
+    // The ledger follows the first vendor the programs name, so the screen
+    // demonstrates itself instead of waiting for a pick.
+    const firstVendor = result.value.find((r) => r.is_active && r.vendor_id !== "") ?? result.value.find((r) => r.vendor_id !== "");
+    if (firstVendor !== undefined) await this.loadLedger(firstVendor.vendor_id);
+  }
+
+  async loadLedger(vendorId: string): Promise<void> {
+    if (vendorId === "") return;
+    this.#setLedger({ phase: "loading", vendorId, error: "" });
+    const result = await this.#door.vendorLedger(vendorId);
+    if (!result.ok) {
+      this.#setLedger({ phase: "error", error: pricingRefusalWords(result.error, result.status, "read") });
+      return;
+    }
+    this.#setLedger({
+      phase: "ready",
+      vendorId: result.value.vendor_id,
+      vendorName: result.value.vendor_name,
+      totalCents: result.value.total_cents,
+      count: result.value.accrual_count,
+      rows: result.value.rows,
+    });
+  }
+
+  #openRebateEditor(id: string): void {
+    const row = id === "" ? undefined : this.model.rebates.rows.find((r) => r.id === id);
+    this.#setRebates({
+      editing: {
+        id: row?.id ?? "",
+        version: row?.version ?? 0,
+        code: row?.code ?? "",
+        nameInput: row?.name ?? "",
+        vendorId: row?.vendor_id ?? "",
+        categoryId: row?.category_id ?? "",
+        productId: row?.product_id ?? "",
+        basis: row?.basis ?? "",
+        rateInput: row === undefined ? "" : (row.rate_bps ?? row.rate_cents_per_unit ?? null) === null ? "" : ((row.rate_bps ?? row.rate_cents_per_unit) as number / 100).toString(),
+        starts: (row?.starts_at ?? "").slice(0, 10),
+        ends: (row?.ends_at ?? "").slice(0, 10),
+        notes: row?.notes ?? "",
+        active: row?.is_active ?? true,
+      },
+      formError: "",
+      notice: "",
+    });
+  }
+
+  #rebateWrite(): { write: Record<string, unknown> | null; error: string } {
+    const editing = this.model.rebates.editing;
+    if (editing === null) return { write: null, error: "" };
+    if (editing.vendorId.trim() === "") return { write: null, error: "A rebate program names its vendor; the vendor is immutable after create." };
+    if (editing.starts.trim() === "") return { write: null, error: "A program needs its start day." };
+    const body: Record<string, unknown> = {
+      code: editing.code.trim(),
+      name: editing.nameInput.trim(),
+      vendor_id: editing.vendorId.trim(),
+      product_id: editing.productId.trim(),
+      category_id: editing.categoryId,
+      basis: editing.basis,
+      rate_bps: null,
+      rate_cents_per_unit: null,
+      starts_at: `${editing.starts.trim()}T00:00:00Z`,
+      ends_at: editing.ends.trim() === "" ? "" : `${editing.ends.trim()}T23:59:59Z`,
+      notes: editing.notes,
+      version: editing.version,
+      is_active: editing.active,
+    };
+    if (editing.basis === "PCT_OF_SALE" || editing.basis === "PCT_OF_COST") {
+      const bps = bpsFromPctInput(editing.rateInput);
+      if (bps === null) return { write: null, error: "Enter the rate as a percent, like 2." };
+      body.rate_bps = bps;
+    } else if (editing.basis === "AMT_PER_UNIT") {
+      const cents = centsFromMoneyInput(editing.rateInput);
+      if (cents === null) return { write: null, error: "Enter the rate in dollars per base unit, like 0.40." };
+      body.rate_cents_per_unit = cents;
+    } else {
+      return { write: null, error: "Choose the basis the rate rides." };
+    }
+    return { write: body, error: "" };
+  }
+
+  async #saveRebate(): Promise<void> {
+    const editing = this.model.rebates.editing;
+    if (editing === null || this.model.rebates.busy) return;
+    const { write, error } = this.#rebateWrite();
+    if (error !== "" || write === null) {
+      this.#setRebates({ formError: error });
+      return;
+    }
+    this.#setRebates({ busy: true, formError: "" });
+    if (editing.id === "") {
+      const created = await this.#door.createRebate(write);
+      if (!created.ok) {
+        this.#setRebates({ busy: false, formError: pricingWriteError(created.error, created.status) });
+        return;
+      }
+    } else {
+      const updated = await this.#door.updateRebate(editing.id, write);
+      if (!updated.ok) {
+        this.#setRebates({ busy: false, formError: pricingWriteError(updated.error, updated.status) });
+        return;
+      }
+    }
+    this.#setRebates({ busy: false, editing: null, notice: "Saved." });
+    await this.loadRebates();
+  }
+
+  /** Retire is two taps: the first asks, the second carries the row's version. */
+  async #deleteRebate(id: string): Promise<void> {
+    if (id === "" || this.model.rebates.busy) return;
+    if (this.model.rebates.confirmingId !== id) {
+      this.#setRebates({ confirmingId: id });
+      return;
+    }
+    const row = this.model.rebates.rows.find((r) => r.id === id);
+    if (row === undefined) {
+      this.#setRebates({ confirmingId: "" });
+      return;
+    }
+    this.#setRebates({ busy: true, confirmingId: "" });
+    const result = await this.#door.deleteRebate(id, { version: row.version });
+    if (!result.ok) {
+      this.#setRebates({ busy: false, formError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setRebates({ busy: false, notice: "Retired. Covered lines stop accruing to it." });
+    await this.loadRebates();
+  }
+
+  /** One sale event offered to the engine; the verdict is the server's own counts. */
+  async #accrue(): Promise<void> {
+    const accrual = this.model.rebates.accrual;
+    if (accrual.busy) return;
+    const qty = Number(accrual.qtyInput.trim());
+    if (accrual.productId.trim() === "" || accrual.categoryId.trim() === "") {
+      this.#setAccrual({ formError: "The line names its product and its category, by id." });
+      return;
+    }
+    if (accrual.qtyInput.trim() === "" || !Number.isFinite(qty) || qty <= 0) {
+      this.#setAccrual({ formError: "Enter the quantity in the product's base unit." });
+      return;
+    }
+    const sale = centsFromMoneyInput(accrual.saleInput);
+    const cost = centsFromMoneyInput(accrual.costInput);
+    if (sale === null || cost === null) {
+      this.#setAccrual({ formError: "Enter the extended sale and cost in dollars; both are the basis the engine reads." });
+      return;
+    }
+    if (accrual.sourceType !== "ADJUSTMENT" && accrual.sourceId.trim() === "") {
+      this.#setAccrual({ formError: "A sale or an order names its source id; the pair is the idempotency key." });
+      return;
+    }
+    this.#setAccrual({ busy: true, formError: "", result: "" });
+    const result = await this.#door.accrueRebates({
+      source_type: accrual.sourceType,
+      source_id: accrual.sourceId.trim(),
+      ...(accrual.occurred.trim() === "" ? {} : { occurred_at: `${accrual.occurred.trim()}T12:00:00Z` }),
+      lines: [
+        {
+          product_id: accrual.productId.trim(),
+          category_id: accrual.categoryId.trim(),
+          qty_base: qty,
+          sale_cents: sale,
+          ext_cost_cents: cost,
+        },
+      ],
+    });
+    if (!result.ok) {
+      this.#setAccrual({ busy: false, formError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setAccrual({ busy: false, result: accrualResultWords(result.value) });
+    if (this.model.rebates.ledger.vendorId !== "") await this.loadLedger(this.model.rebates.ledger.vendorId);
   }
 }
 

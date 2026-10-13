@@ -214,6 +214,8 @@ let overrides;
 let breaks;
 let promotions;
 let clearance;
+let rebates;
+let ledgerRows;
 
 // The customer overrides: one yard account's price on Retaining Walls.
 const CUST_YARD = "cu110000-0000-4000-9000-0000000000a1";
@@ -270,6 +272,50 @@ const CLEARANCE_WORLD = [
   },
 ];
 
+// The rebates: one vendor program for Pavers, and its claim side.
+const REBATES_WORLD = [
+  {
+    id: "5a110000-0000-4000-9000-0000000000a1",
+    code: "NL-2026",
+    name: "Northline rebate",
+    vendor_id: "vd110000-0000-4000-9000-0000000000a1",
+    vendor_name: "Northline Supply",
+    category_id: "",
+    product_id: "",
+    basis: "PCT_OF_SALE",
+    rate_bps: 200,
+    rate_cents_per_unit: null,
+    starts_at: "2026-01-01T00:00:00Z",
+    ends_at: null,
+    notes: "Yearly program",
+    is_active: true,
+    version: 2,
+  },
+];
+const LEDGER_WORLD = {
+  vendor_id: "vd110000-0000-4000-9000-0000000000a1",
+  vendor_name: "Northline Supply",
+  total_cents: 14000,
+  accrual_count: 1,
+  rows: [
+    {
+      id: "5b110000-0000-4000-9000-0000000000a1",
+      program_id: "5a110000-0000-4000-9000-0000000000a1",
+      program_code: "NL-2026",
+      vendor_id: "vd110000-0000-4000-9000-0000000000a1",
+      product_id: "fa110000-0000-4000-9000-0000000000a1",
+      product_sku: "PAV-60-CH",
+      source_type: "POS_SALE",
+      source_id: "0f110000-0000-4000-9000-0000000000a1",
+      qty_base: 12,
+      basis_cents: 700000,
+      accrual_cents: 14000,
+      rate_note: "2.00% of sale",
+      accrued_at: "2026-09-15T18:00:00Z",
+    },
+  ],
+};
+
 // The quantity breaks: one category schedule for Pavers, one open top tier.
 const BREAKS_WORLD = [
   {
@@ -307,6 +353,8 @@ function reset() {
   breaks = structuredClone(BREAKS_WORLD);
   promotions = structuredClone(PROMOS_WORLD);
   clearance = structuredClone(CLEARANCE_WORLD);
+  rebates = structuredClone(REBATES_WORLD);
+  ledgerRows = structuredClone(LEDGER_WORLD.rows);
   scenario = "";
   log = [];
 }
@@ -863,6 +911,78 @@ async function handle(req, res) {
     if (idx < 0) return refuse(res, 404, "clearance item not found");
     clearance.splice(idx, 1);
     return json(res, { status: "deleted" });
+  }
+
+  // ---- the rebates ----
+
+  if (req.method === "GET" && path === "/api/v1/pricing/rebates/programs") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    return json(res, { items: scenario === "empty-pricing" ? [] : rebates, next_cursor: null, limit: 200 });
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/rebates/programs") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const id = `5a110000-0000-4000-9000-${Math.random().toString(16).slice(2, 14).padStart(12, "0")}`;
+    const program = { id, ...body, version: 1 };
+    rebates.push(program);
+    return json(res, program);
+  }
+
+  const rebateMatch = path.match(/^\/api\/v1\/pricing\/rebates\/programs\/([^/]+)$/);
+  if (req.method === "PUT" && rebateMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const program = rebates.find((r) => r.id === decodeURIComponent(rebateMatch[1]));
+    if (program === undefined) return refuse(res, 404, "program not found");
+    if (typeof body?.version === "number" && body.version !== program.version) return refuse(res, 409, "version conflict: the program changed since you opened it");
+    Object.assign(program, body, { version: program.version + 1 });
+    return json(res, program);
+  }
+
+  if (req.method === "DELETE" && rebateMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const program = rebates.find((r) => r.id === decodeURIComponent(rebateMatch[1]));
+    if (program === undefined) return refuse(res, 404, "program not found");
+    const version = Number(url.searchParams.get("version") ?? "0");
+    if (version !== program.version) return refuse(res, 409, "version conflict: the program changed since you opened it");
+    program.is_active = false;
+    program.version += 1;
+    return json(res, { status: "retired" });
+  }
+
+  const ledgerMatch = path.match(/^\/api\/v1\/pricing\/rebates\/vendors\/([^/]+)\/ledger$/);
+  if (req.method === "GET" && ledgerMatch) {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const vendorId = decodeURIComponent(ledgerMatch[1]);
+    const rows = ledgerRows.filter((r) => r.vendor_id === vendorId);
+    return json(res, {
+      vendor_id: vendorId,
+      vendor_name: "Northline Supply",
+      total_cents: rows.reduce((sum, r) => sum + r.accrual_cents, 0),
+      accrual_count: rows.length,
+      rows,
+    });
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/rebates/accrue") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const lines = Array.isArray(body?.lines) ? body.lines : [];
+    const accrued = lines.map((line, i) => ({
+      id: `5b110000-0000-4000-9000-${i.toString().padStart(12, "0")}`,
+      program_id: "5a110000-0000-4000-9000-0000000000a1",
+      program_code: "NL-2026",
+      vendor_id: "vd110000-0000-4000-9000-0000000000a1",
+      product_id: String(line?.product_id ?? ""),
+      product_sku: "PAV-60-CH",
+      source_type: String(body?.source_type ?? ""),
+      source_id: String(body?.source_id ?? ""),
+      qty_base: Number(line?.qty_base ?? 0),
+      basis_cents: Number(line?.sale_cents ?? 0),
+      accrual_cents: Math.round(Number(line?.sale_cents ?? 0) * 0.02),
+      rate_note: "2.00% of sale",
+      accrued_at: new Date().toISOString(),
+    }));
+    ledgerRows.push(...accrued);
+    return json(res, { accrued, skipped_count: 0, total_cents: accrued.reduce((sum, r) => sum + r.accrual_cents, 0) });
   }
 
   // ---- the audit trail ----

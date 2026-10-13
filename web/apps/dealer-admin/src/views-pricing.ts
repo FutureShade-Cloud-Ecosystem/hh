@@ -21,6 +21,10 @@ import {
   clearanceValueWords,
   promoValueWords,
   promosEmptyWords,
+  accrualResultWords,
+  rebateEmptyWords,
+  rebateRateWords,
+  vendorWords,
   categoryName,
   CUSTOMER_TYPES,
   customerTypeWord,
@@ -37,7 +41,7 @@ import {
   validityWords,
   PRICING_TABS,
 } from "./pricing-logic.js";
-import type { BreakRow, ClearanceRow, OverrideRow, PromotionRow, RuleRow } from "./pricing-api.js";
+import type { BreakRow, ClearanceRow, OverrideRow, PromotionRow, RebateRow, RuleRow } from "./pricing-api.js";
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
 
 export function renderPricing(model: PricingModel): TemplateResult {
@@ -73,6 +77,7 @@ function renderTab(model: PricingModel): TemplateResult {
   if (model.tab === "customers") return renderCustomers(model);
   if (model.tab === "breaks") return renderBreaks(model);
   if (model.tab === "promos") return renderPromos(model);
+  if (model.tab === "rebates") return renderRebates(model);
   const tab = PRICING_TABS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
@@ -1177,6 +1182,313 @@ function renderClearanceEditor(model: PricingModel): TemplateResult | typeof not
           ${m.busy ? "Saving…" : "Save the mark"}
         </button>
         <button type="button" class="btn btn-secondary" data-action="pr-clear-cancel" ?disabled=${m.busy}>Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+// -- the rebates tab ---------------------------------------------------------------------------------------
+
+function rebateCoversWords(row: RebateRow, model: PricingModel): string {
+  if (row.product_id !== "") return "one product";
+  if (row.category_id !== "") return categoryName(row.category_id, model.categories);
+  return "all this vendor supplies";
+}
+
+function rebateVendorOptions(model: PricingModel): ReadonlyMap<string, string> {
+  const seen = new Map<string, string>();
+  for (const row of model.rebates.rows) {
+    if (row.vendor_id !== "" && !seen.has(row.vendor_id)) seen.set(row.vendor_id, vendorWords(row.vendor_name, row.vendor_id));
+  }
+  return seen;
+}
+
+export function renderRebates(model: PricingModel): TemplateResult {
+  const m = model.rebates;
+  return html`
+    ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-rebates-loading">Loading the rebate programs…</p>` : nothing}
+    ${m.phase === "error" || m.phase === "refused"
+      ? html`<p class="error-line" data-test="pr-rebates-error">${m.error}</p>
+          <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-rebates-reload">Try again</button></div>`
+      : nothing}
+    ${m.phase === "ready" ? renderRebatePrograms(model) : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderRebateEditor(model) : nothing}
+    ${m.phase === "ready" ? renderLedger(model) : nothing}
+    ${m.phase === "ready" ? renderAccrual(model) : nothing}
+  `;
+}
+
+function renderRebatePrograms(model: PricingModel): TemplateResult {
+  const m = model.rebates;
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Rebate programs</h2>
+        <span class="count" data-test="pr-rebate-count">${m.rows.length} ${m.rows.length === 1 ? "program" : "programs"}</span>
+        <button type="button" class="btn btn-primary btn-small" data-action="pr-rebate-edit">New program</button>
+      </div>
+      ${m.notice === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-rebate-notice">${m.notice}</p>`}
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-rebate-form-error">${m.formError}</p>`}
+      ${m.rows.length === 0
+        ? html`<p class="notice-line" data-test="pr-rebates-empty">${rebateEmptyWords()}</p>`
+        : html`
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Program</th>
+                    <th scope="col">Vendor</th>
+                    <th scope="col">Covers</th>
+                    <th scope="col">Rate</th>
+                    <th scope="col">From</th>
+                    <th scope="col">State</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.rows.map((row) => renderRebateRowView(row, model))}
+                </tbody>
+              </table>
+            </div>
+          `}
+    </section>
+  `;
+}
+
+function renderRebateRowView(row: RebateRow, model: PricingModel): TemplateResult {
+  const m = model.rebates;
+  const confirming = m.confirmingId === row.id;
+  return html`
+    <tr data-rebate=${row.id}>
+      <td>
+        <div class="person">${row.name}</div>
+        <div class="mono dim">${row.code} · ${row.notes}</div>
+      </td>
+      <td>${vendorWords(row.vendor_name, row.vendor_id)}</td>
+      <td>${rebateCoversWords(row, model)}</td>
+      <td class="num" data-test="pr-rebate-rate">${rebateRateWords(row)}</td>
+      <td class="mono dim">${row.starts_at.slice(0, 10)}</td>
+      <td>${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
+      <td>
+        <div class="pr-actions">
+          <button
+            type="button"
+            class="btn btn-secondary btn-small"
+            data-action="pr-rebate-edit"
+            data-id=${row.id}
+            aria-label=${`Edit the program ${row.name}`}
+          >
+            Edit
+          </button>
+          ${row.is_active
+            ? html`
+                <button type="button" class="btn btn-secondary btn-small" data-action="pr-rebate-del" data-id=${row.id} ?disabled=${m.busy}>
+                  ${confirming ? "Retire: tap again" : "Retire"}
+                </button>
+              `
+            : nothing}
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderRebateEditor(model: PricingModel): TemplateResult | typeof nothing {
+  const m = model.rebates;
+  const e = m.editing;
+  if (e === null) return nothing;
+  const heading = e.id === "" ? "New program" : `Program: ${e.nameInput === "" ? e.code : e.nameInput}`;
+  return html`
+    <section class="card" data-test="pr-rebate-editor">
+      <div class="card-head">
+        <h2 class="card-title">${heading}</h2>
+        ${e.id === "" ? html`<span class="chip chip-wait">create</span>` : html`<span class="chip">version ${e.version}</span>`}
+      </div>
+      <div class="form-grid">
+        <label class="field">
+          <span class="field-label">Code</span>
+          <input class="text-field" type="text" data-field="pr-reb-code" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input class="text-field" type="text" data-field="pr-reb-name" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Vendor id (immutable after create)</span>
+          <input class="text-field" type="text" data-field="pr-reb-vendor" ?disabled=${m.busy || e.id !== ""} />
+        </label>
+        <label class="field">
+          <span class="field-label">Category</span>
+          <select class="select" data-field="pr-reb-category" ?disabled=${m.busy}>
+            <option value="">All this vendor supplies</option>
+            ${model.categories.map((c) => html`<option>${c.name}</option>`)}
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Product id (empty unless the program names one)</span>
+          <input class="text-field" type="text" data-field="pr-reb-product" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Basis</span>
+          <select class="select" data-field="pr-reb-basis" ?disabled=${m.busy}>
+            <option value="">Choose a basis</option>
+            <option value="PCT_OF_SALE">Percent of sale</option>
+            <option value="PCT_OF_COST">Percent of cost</option>
+            <option value="AMT_PER_UNIT">Amount per base unit</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Rate (percent, or dollars per base unit)</span>
+          <input class="text-field" type="text" inputmode="decimal" data-field="pr-reb-rate" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">From</span>
+          <input class="text-field" type="date" data-field="pr-reb-starts" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Ends (empty is open)</span>
+          <input class="text-field" type="date" data-field="pr-reb-ends" ?disabled=${m.busy} />
+        </label>
+        <label class="field field-full">
+          <span class="field-label">Notes</span>
+          <input class="text-field" type="text" data-field="pr-reb-notes" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Active</span>
+          <span class="branch-choice">
+            <input type="checkbox" data-field="pr-reb-active" ?disabled=${m.busy} />
+            <span>A retired program stops accruing</span>
+          </span>
+        </label>
+      </div>
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-rebate-error">${m.formError}</p>`}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-rebate-save" ?disabled=${m.busy}>
+          ${m.busy ? "Saving…" : e.id === "" ? "Create" : "Save"}
+        </button>
+        <button type="button" class="btn btn-secondary" data-action="pr-rebate-cancel" ?disabled=${m.busy}>Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderLedger(model: PricingModel): TemplateResult {
+  const m = model.rebates.ledger;
+  const vendors = rebateVendorOptions(model);
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Accrual ledger</h2>
+        ${m.phase === "ready"
+          ? html`<span class="count" data-test="pr-ledger-total">${moneyWords(m.totalCents)} over ${m.count} ${m.count === 1 ? "claim" : "claims"}</span>`
+          : nothing}
+      </div>
+      <div class="filters" role="group" aria-label="The ledger's vendor">
+        <select class="select" aria-label="Vendor" data-field="pr-ledger-name">
+          <option value="">Choose a vendor</option>
+          ${Array.from(vendors.values()).map((name) => html`<option>${name}</option>`)}
+        </select>
+        <button type="button" class="btn btn-secondary" data-action="pr-ledger-vendor" ?disabled=${m.phase === "loading"}>Load ledger</button>
+      </div>
+      ${m.phase === "loading" ? html`<p class="notice-line">Loading the ledger…</p>` : nothing}
+      ${m.phase === "error" ? html`<p class="error-line" data-test="pr-ledger-error">${m.error}</p>` : nothing}
+      ${m.phase === "ready" && m.rows.length === 0
+        ? html`<p class="notice-line" data-test="pr-ledger-empty">No accruals for this vendor yet. Claims appear here as covered products sell.</p>`
+        : nothing}
+      ${m.phase === "ready" && m.rows.length > 0
+        ? html`
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Accrued</th>
+                    <th scope="col">Program</th>
+                    <th scope="col">SKU</th>
+                    <th scope="col">Source</th>
+                    <th scope="col" class="num">Basis</th>
+                    <th scope="col">Rate note</th>
+                    <th scope="col" class="num">Claim</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.rows.map(
+                    (row) => html`
+                      <tr data-accrual=${row.accrual_cents}>
+                        <td class="mono dim">${row.accrued_at.slice(0, 10)}</td>
+                        <td class="mono">${row.program_code === "" ? "-" : row.program_code}</td>
+                        <td class="mono">${row.product_sku === "" ? row.product_sku : row.product_sku}</td>
+                        <td><span class="chip">${row.source_type}</span></td>
+                        <td class="num">${moneyWords(row.basis_cents)}</td>
+                        <td class="mono dim">${row.rate_note}</td>
+                        <td class="num">${moneyWords(row.accrual_cents)}</td>
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+            </div>
+          `
+        : nothing}
+      <p class="pr-hint">The ledger is the claim side: what the programs have accrued, not what the vendor has paid.</p>
+    </section>
+  `;
+}
+
+function renderAccrual(model: PricingModel): TemplateResult {
+  const m = model.rebates.accrual;
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Accrue one sale event</h2>
+      </div>
+      <p class="pr-hint">
+        The caller supplies the facts; the engine reads no sales table. The source type and id are the idempotency key:
+        a retry answers skipped, not an error.
+      </p>
+      <div class="form-grid">
+        <label class="field">
+          <span class="field-label">Source type</span>
+          <select class="select" data-field="pr-acc-source-type" ?disabled=${m.busy}>
+            <option value="POS_SALE">Counter sale</option>
+            <option value="ORDER">Order</option>
+            <option value="ADJUSTMENT">Adjustment</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Source id (empty only on an adjustment)</span>
+          <input class="text-field" type="text" data-field="pr-acc-source-id" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">When it happened (empty is the server clock)</span>
+          <input class="text-field" type="date" data-field="pr-acc-occurred" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Product id</span>
+          <input class="text-field" type="text" data-field="pr-acc-product" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Category id</span>
+          <input class="text-field" type="text" data-field="pr-acc-category" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Quantity, base unit</span>
+          <input class="text-field" type="text" inputmode="decimal" data-field="pr-acc-qty" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Extended sale, dollars, pre-tax</span>
+          <input class="text-field" type="text" inputmode="decimal" data-field="pr-acc-sale" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Extended cost, dollars</span>
+          <input class="text-field" type="text" inputmode="decimal" data-field="pr-acc-cost" ?disabled=${m.busy} />
+        </label>
+      </div>
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-accrue-error">${m.formError}</p>`}
+      ${m.result === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-accrue-result">${m.result}</p>`}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-accrue" ?disabled=${m.busy}>
+          ${m.busy ? "Accruing…" : "Offer to the accrual engine"}
+        </button>
       </div>
     </section>
   `;

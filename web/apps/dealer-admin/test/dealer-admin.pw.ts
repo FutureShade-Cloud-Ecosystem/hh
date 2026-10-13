@@ -367,3 +367,33 @@ test("the promotions and clearance tab: both panels, a promo saved, the badge on
   await expect(page.locator("[data-test=pr-promo-notice]")).toContainText("Saved.");
   await expect(page.locator('tr[data-promo="6a110000-0000-4000-9000-0000000000a1"] [data-test=pr-promo-value]')).toHaveText("12.00% off");
 });
+
+test("the rebates tab: the programs, the vendor's ledger, and an accrual with its verdict", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+  await page.locator('.pr-tab[data-tab="rebates"]').click();
+
+  // The program's rate reads in the shape its basis means.
+  await expect(page.locator("[data-test=pr-rebate-count]")).toHaveText("1 program");
+  const row = page.locator('tr[data-rebate="5a110000-0000-4000-9000-0000000000a1"]');
+  await expect(row).toContainText("Northline Supply");
+  await expect(row.locator("[data-test=pr-rebate-rate]")).toHaveText("2.00% of sale");
+
+  // The ledger follows the first vendor: the claim side, with its total.
+  await expect(page.locator("[data-test=pr-ledger-total]")).toContainText("CA$140.00");
+  await expect(page.locator("[data-accrual]")).toHaveCount(1);
+
+  // An accrual: the facts in, the server's counts out, and the ledger re-read.
+  await page.locator('[data-field="pr-acc-source-id"]').fill("0f110000-0000-4000-9000-0000000000a2");
+  await page.locator('[data-field="pr-acc-product"]').fill("fa110000-0000-4000-9000-0000000000a1");
+  await page.locator('[data-field="pr-acc-category"]').fill("ca7a0000-0000-4000-9000-0000000000a1");
+  await page.locator('[data-field="pr-acc-qty"]').fill("6");
+  await page.locator('[data-field="pr-acc-sale"]').fill("3500.00");
+  await page.locator('[data-field="pr-acc-cost"]').fill("2500.00");
+  await page.locator('[data-action="pr-accrue"]').click();
+  await expect(page.locator("[data-test=pr-accrue-result]")).toContainText("1 accrual written");
+  await expect(page.locator("[data-test=pr-ledger-total]")).toContainText("CA$210.00");
+});

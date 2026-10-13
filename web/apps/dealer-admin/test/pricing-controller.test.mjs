@@ -644,3 +644,127 @@ test("a clearance price without its unit is refused at the form", async () => {
   await c.click("pr-clear-save", {});
   assert.match(c.model.promos.clearance.formError, /unit/);
 });
+
+// -- the rebates tab ------------------------------------------------------------------------------------
+
+const PROGRAMS = [
+  {
+    id: "5a110000-0000-4000-9000-0000000000a1",
+    code: "NL-2026",
+    name: "Northline rebate",
+    vendor_id: "vd110000-0000-4000-9000-0000000000a1",
+    vendor_name: "Northline Supply",
+    category_id: "",
+    product_id: "",
+    basis: "PCT_OF_SALE",
+    rate_bps: 200,
+    rate_cents_per_unit: null,
+    starts_at: "2026-01-01T00:00:00Z",
+    ends_at: null,
+    notes: "Yearly program",
+    is_active: true,
+    version: 2,
+  },
+];
+const LEDGER = {
+  vendor_id: "vd110000-0000-4000-9000-0000000000a1",
+  vendor_name: "Northline Supply",
+  total_cents: 14000,
+  accrual_count: 1,
+  rows: [
+    {
+      id: "5b110000-0000-4000-9000-0000000000a1",
+      program_id: "5a110000-0000-4000-9000-0000000000a1",
+      program_code: "NL-2026",
+      vendor_id: "vd110000-0000-4000-9000-0000000000a1",
+      product_id: "fa110000-0000-4000-9000-0000000000a1",
+      product_sku: "PAV-60-CH",
+      source_type: "POS_SALE",
+      qty_base: 12,
+      basis_cents: 700000,
+      accrual_cents: 14000,
+      rate_note: "2.00% of sale",
+      accrued_at: "2026-09-15T18:00:00Z",
+    },
+  ],
+};
+
+function fakeRebatesDoor(over = {}) {
+  const door = fakePromosDoor({
+    rebatePrograms: async () => {
+      door.calls.push("rebatePrograms");
+      return { ok: true, value: PROGRAMS };
+    },
+    vendorLedger: async (vendorId) => {
+      door.calls.push(["vendorLedger", vendorId]);
+      return { ok: true, value: LEDGER };
+    },
+    accrueRebates: async (body) => {
+      door.calls.push(["accrueRebates", body]);
+      return { ok: true, value: { accrued: [{ id: "5b110000-0000-4000-9000-0000000000a2" }], skipped_count: 0, total_cents: 140 } };
+    },
+    ...over,
+  });
+  return door;
+}
+
+test("the rebates tab loads the programs and the first vendor's ledger", async () => {
+  const door = fakeRebatesDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "rebates" });
+  assert.equal(c.model.rebates.phase, "ready");
+  assert.equal(c.model.rebates.rows.length, 1);
+  assert.deepEqual(door.calls.find((x) => Array.isArray(x) && x[0] === "vendorLedger"), ["vendorLedger", PROGRAMS[0].vendor_id]);
+  assert.equal(c.model.rebates.ledger.totalCents, 14000);
+});
+
+test("an accrual write posts the sale's facts and shows the server's verdict", async () => {
+  const door = fakeRebatesDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "rebates" });
+  c.input("acc-source-id", "0f110000-0000-4000-9000-0000000000a1");
+  c.input("acc-qty", "12");
+  c.input("acc-sale", "7000.00");
+  c.input("acc-cost", "5000.00");
+  c.input("acc-product", "fa110000-0000-4000-9000-0000000000a1");
+  c.input("acc-category", "ca7a0000-0000-4000-9000-0000000000a1");
+  await c.click("pr-accrue", {});
+  const accrue = door.calls.find((x) => Array.isArray(x) && x[0] === "accrueRebates");
+  assert.ok(accrue);
+  assert.equal(accrue[1].source_type, "POS_SALE");
+  assert.equal(accrue[1].lines[0].sale_cents, 700000);
+  assert.equal(accrue[1].lines[0].qty_base, 12);
+  assert.equal(accrue[1].lines[0].product_id, "fa110000-0000-4000-9000-0000000000a1");
+  assert.match(c.model.rebates.accrual.result, /1 accrual/);
+});
+
+test("a rebate program edit saves without a floor walk; retire is two taps", async () => {
+  const door = fakeRebatesDoor({
+    updateRebate: async (id, body) => {
+      door.calls.push(["updateRebate", id, body]);
+      return { ok: true, value: { ...PROGRAMS[0], ...body, version: body.version + 1 } };
+    },
+    deleteRebate: async (id, opts) => {
+      door.calls.push(["deleteRebate", id, opts]);
+      return { ok: true, value: { status: "retired" } };
+    },
+  });
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "rebates" });
+  c.click("pr-rebate-edit", { id: PROGRAMS[0].id });
+  c.input("reb-rate", "2.5");
+  await c.click("pr-rebate-save", {});
+  const update = door.calls.find((x) => Array.isArray(x) && x[0] === "updateRebate");
+  assert.ok(update);
+  assert.equal(update[2].rate_bps, 250);
+  assert.equal(c.model.rebates.notice, "Saved.");
+
+  c.click("pr-rebate-del", { id: PROGRAMS[0].id });
+  await c.click("pr-rebate-del", { id: PROGRAMS[0].id });
+  const del = door.calls.find((x) => Array.isArray(x) && x[0] === "deleteRebate");
+  assert.deepEqual(del[2], { version: 2 });
+  assert.match(c.model.rebates.notice, /Retired/);
+});

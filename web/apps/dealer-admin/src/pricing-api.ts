@@ -291,6 +291,120 @@ export function toClearanceRow(raw: unknown): ClearanceRow {
   };
 }
 
+  // -- the rebates ---------------------------------------------------------------------------------------
+
+/** One rebate program as the screens use it. */
+export interface RebateRow {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly vendor_id: string;
+  readonly vendor_name: string;
+  readonly category_id: string;
+  readonly product_id: string;
+  readonly basis: string;
+  readonly rate_bps: number | null;
+  readonly rate_cents_per_unit: number | null;
+  readonly starts_at: string;
+  readonly ends_at: string;
+  readonly notes: string;
+  readonly is_active: boolean;
+  readonly version: number;
+}
+
+export function toRebateRow(raw: unknown): RebateRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    code: text(r.code),
+    name: text(r.name),
+    vendor_id: text(r.vendor_id),
+    vendor_name: text(r.vendor_name),
+    category_id: text(r.category_id),
+    product_id: text(r.product_id),
+    basis: text(r.basis),
+    rate_bps: maybeNum(r.rate_bps),
+    rate_cents_per_unit: maybeNum(r.rate_cents_per_unit),
+    starts_at: text(r.starts_at),
+    ends_at: text(r.ends_at),
+    notes: text(r.notes),
+    is_active: bool(r.is_active),
+    version: num(r.version),
+  };
+}
+
+/** One accrual row as the ledger shows it. */
+export interface AccrualRow {
+  readonly id: string;
+  readonly program_id: string;
+  readonly program_code: string;
+  readonly vendor_id: string;
+  readonly product_id: string;
+  readonly product_sku: string;
+  readonly source_type: string;
+  readonly source_id: string;
+  readonly qty_base: number;
+  readonly basis_cents: number;
+  readonly accrual_cents: number;
+  readonly rate_note: string;
+  readonly accrued_at: string;
+}
+
+function toAccrualRow(raw: unknown): AccrualRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    program_id: text(r.program_id),
+    program_code: text(r.program_code),
+    vendor_id: text(r.vendor_id),
+    product_id: text(r.product_id),
+    product_sku: text(r.product_sku),
+    source_type: text(r.source_type),
+    source_id: text(r.source_id),
+    qty_base: num(r.qty_base),
+    basis_cents: num(r.basis_cents),
+    accrual_cents: num(r.accrual_cents),
+    rate_note: text(r.rate_note),
+    accrued_at: text(r.accrued_at),
+  };
+}
+
+/** One vendor's ledger: the claim side, with its totals. */
+export interface LedgerRow {
+  readonly vendor_id: string;
+  readonly vendor_name: string;
+  readonly total_cents: number;
+  readonly accrual_count: number;
+  readonly rows: readonly AccrualRow[];
+}
+
+function toLedgerRow(raw: unknown): LedgerRow {
+  const r = bag(raw);
+  return {
+    vendor_id: text(r.vendor_id),
+    vendor_name: text(r.vendor_name),
+    total_cents: num(r.total_cents),
+    accrual_count: num(r.accrual_count),
+    rows: list(r.rows).map(toAccrualRow),
+  };
+}
+
+/** What an accrual run wrote, as the server reports it. */
+export interface AccrualResult {
+  readonly accrued: readonly AccrualRow[];
+  readonly skipped_count: number;
+  readonly total_cents: number;
+}
+
+function toAccrualResult(raw: unknown): AccrualResult {
+  const r = bag(raw);
+  return {
+    accrued: list(r.accrued).map(toAccrualRow),
+    skipped_count: num(r.skipped_count),
+    total_cents: num(r.total_cents),
+  };
+}
+
 // -- the customer overrides --------------------------------------------------------------------------
 
 /** One customer category override as the screens use it. */
@@ -459,7 +573,7 @@ export class PricingApi {
     return { ok: true, value: toStatus(answer.value) };
   }
 
-  // -- the customer overrides ---------------------------------------------------------------------------
+// -- the customer overrides ---------------------------------------------------------------------------
 
   /** One customer's category overrides, the prices that ride over their tier. */
   async overrides(customerId: string): Promise<Result<readonly OverrideRow[]>> {
@@ -572,6 +686,47 @@ export class PricingApi {
     const answer = await staffPricing.pricingDeleteClearance(this.#client, productId);
     if (!answer.ok) return answer;
     return { ok: true, value: toStatus(answer.value) };
+  }
+
+  // -- the rebates -------------------------------------------------------------------------------------
+
+  /** The rebate programs, active and retired. */
+  async rebatePrograms(): Promise<Result<readonly RebateRow[]>> {
+    const answer = await staffPricing.pricingListRebatePrograms(this.#client, { limit: 200, include_inactive: true });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toRebateRow) };
+  }
+
+  async createRebate(body: unknown): Promise<Result<RebateRow>> {
+    const answer = await staffPricing.pricingCreateRebateProgram(this.#client, body as Parameters<typeof staffPricing.pricingCreateRebateProgram>[1]);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toRebateRow(answer.value) };
+  }
+
+  async updateRebate(id: string, body: unknown): Promise<Result<RebateRow>> {
+    const answer = await staffPricing.pricingUpdateRebateProgram(this.#client, id, body as Parameters<typeof staffPricing.pricingUpdateRebateProgram>[2]);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toRebateRow(answer.value) };
+  }
+
+  async deleteRebate(id: string, opts: { version: number }): Promise<Result<StatusResult>> {
+    const answer = await staffPricing.pricingDeleteRebateProgram(this.#client, id, opts);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toStatus(answer.value) };
+  }
+
+  /** One vendor's accrual ledger: the claim side, with its totals. */
+  async vendorLedger(vendorId: string): Promise<Result<LedgerRow>> {
+    const answer = await staffPricing.pricingVendorRebateLedger(this.#client, vendorId);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toLedgerRow(answer.value) };
+  }
+
+  /** Offer one sale event to the accrual engine; the answer is the server's counts. */
+  async accrueRebates(body: unknown): Promise<Result<AccrualResult>> {
+    const answer = await staffPricing.pricingAccrueRebates(this.#client, body as Parameters<typeof staffPricing.pricingAccrueRebates>[1]);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toAccrualResult(answer.value) };
   }
 
   // -- the floor warning ------------------------------------------------------------------------------

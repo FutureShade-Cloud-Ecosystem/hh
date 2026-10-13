@@ -605,3 +605,60 @@ export function clearanceValueWords(item: { readonly clearance_price_cents: numb
   if (item.clearance_price_cents === null) return "badge only, prices through the waterfall";
   return `${moneyWords(item.clearance_price_cents)} ${ruleCalcWords(item.price_uom)}`.trim();
 }
+
+// -- the rebates tab --------------------------------------------------------------------------------------
+
+/** The rebates tab's empty words. */
+export function rebateEmptyWords(): string {
+  return "No rebate programs yet. Claims accrue per covered line as the covered products sell; the ledger is the claim side, not a scorecard.";
+}
+
+/** A rebate's basis for people. */
+export function rebateBasisWords(basis: string): string {
+  switch (basis) {
+    case "PCT_OF_SALE":
+      return "of sale";
+    case "PCT_OF_COST":
+      return "of cost";
+    case "AMT_PER_UNIT":
+      return "per base unit";
+    default:
+      return "";
+  }
+}
+
+/** A rebate's rate in the shape its basis means: the original's own rule. */
+export function rebateRateWords(program: {
+  readonly basis: string;
+  readonly rate_bps?: number | null;
+  readonly rate_cents_per_unit?: number | null;
+}): string {
+  switch (program.basis) {
+    case "PCT_OF_SALE":
+      return program.rate_bps === null || program.rate_bps === undefined ? "" : `${pctWords(program.rate_bps)} of sale`;
+    case "PCT_OF_COST":
+      return program.rate_bps === null || program.rate_bps === undefined ? "" : `${pctWords(program.rate_bps)} of cost`;
+    case "AMT_PER_UNIT":
+      return program.rate_cents_per_unit === null || program.rate_cents_per_unit === undefined
+        ? ""
+        : `${moneyWords(program.rate_cents_per_unit)} a base unit`;
+    default:
+      return "";
+  }
+}
+
+/** A vendor as a person reads it: the name when the read knows it, else the id's block. */
+export function vendorWords(name: string, vendorId: string): string {
+  if (name !== "") return name;
+  if (vendorId === "") return "";
+  return vendorId.slice(0, 8);
+}
+
+/** The accrual run's verdict, told from the server's own counts. */
+export function accrualResultWords(result: { readonly accrued: readonly unknown[]; readonly skipped_count: number; readonly total_cents: number }): string {
+  const parts: string[] = [];
+  const n = result.accrued.length;
+  parts.push(`${n} ${n === 1 ? "accrual" : "accruals"} written, ${moneyWords(result.total_cents)} total.`);
+  if (result.skipped_count > 0) parts.push(`${result.skipped_count} ${result.skipped_count === 1 ? "line was" : "lines were"} already accrued (a retry, not an error).`);
+  return parts.join(" ");
+}

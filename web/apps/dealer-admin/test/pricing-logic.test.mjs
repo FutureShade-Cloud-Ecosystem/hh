@@ -320,3 +320,36 @@ test("a clearance item without a price is the badge only case, said plainly", ()
 test("the promotions tab's empty words are its own", () => {
   assert.match(promosEmptyWords(), /No promotions or clearance yet/);
 });
+
+// -- the rebates tab -----------------------------------------------------------------------------------
+
+import {
+  accrualResultWords,
+  rebateEmptyWords,
+  rebateRateWords,
+  vendorWords,
+} from "../src/pricing-logic.ts";
+
+test("a rebate's rate renders in the shape its basis means, the original's own rule", () => {
+  assert.equal(rebateRateWords({ basis: "PCT_OF_SALE", rate_bps: 200, rate_cents_per_unit: null }), "2.00% of sale");
+  assert.equal(rebateRateWords({ basis: "PCT_OF_COST", rate_bps: 150, rate_cents_per_unit: null }), "1.50% of cost");
+  assert.equal(rebateRateWords({ basis: "AMT_PER_UNIT", rate_bps: null, rate_cents_per_unit: 40 }), "CA$0.40 a base unit");
+  assert.equal(rebateRateWords({ basis: "ODD", rate_bps: null, rate_cents_per_unit: null }), "");
+});
+
+test("a vendor shows its name, else the id's own block", () => {
+  assert.equal(vendorWords("Northline Supply", "vd1"), "Northline Supply");
+  assert.equal(vendorWords("", "vd110000-0000-4000-9000-0000000000a1"), "vd110000");
+  assert.equal(vendorWords("", ""), "");
+});
+
+test("the accrual verdict is the server's own counts, told as what happened", () => {
+  const words = accrualResultWords({ accrued: [{ id: "1" }], skipped_count: 2, total_cents: 140 });
+  assert.match(words, /1 accrual/);
+  assert.match(words, /2 lines were already accrued/);
+  assert.match(words, /CA\$1\.40/);
+});
+
+test("the rebates tab's empty words are its own", () => {
+  assert.match(rebateEmptyWords(), /No rebate programs yet/);
+});
