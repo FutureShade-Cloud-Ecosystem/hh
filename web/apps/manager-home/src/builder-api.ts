@@ -553,6 +553,12 @@ export class BuilderApi {
     return { ok: true, value: { cleared: num(r.cleared), tabs: toTabStrip(r.tabs) } };
   }
 
+  /** MY resolved bento: the rows in force, plus which tier they came from. */
+  async myWidgets(): Promise<Result<BuilderLayout>> {
+    const answer = await staffDashboard.dashboardGetWidgets(this.#client);
+    return answer.ok ? { ok: true, value: toLayout(answer.value) } : answer;
+  }
+
   /** The measures THIS caller may build from, with each one's own windows and forms. */
   async widgetCatalog(): Promise<Result<BuilderWidgetCatalog>> {
     const answer = await staffDashboard.dashboardGetWidgetCatalog(this.#client);
