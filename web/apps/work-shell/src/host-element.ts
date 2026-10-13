@@ -50,7 +50,8 @@ import { bannerModeFor, chipInputFor, pinStorageFrom } from "./chrome-feed.js";
 import { createConsoleSession, type ConsoleSession } from "./console-session.js";
 import { DEMO_ORG_NAME, DEMO_ORG_SLUG, DOOR_PATH, LAUNCH_FILE, PROFILE_FILE } from "./config.js";
 import { acceptSwitchRole } from "./frames.js";
-import { clearHandoff, readDoorSession, writeHandoff } from "./handoff.js";
+import { readDoorSession, writeHandoff } from "./handoff.js";
+import { endSession } from "./switch-role.js";
 import {
   initialState,
   openApp,
@@ -320,12 +321,10 @@ export class WorkShellHost extends HHElement {
 
   /** Switch role: the session is dropped everywhere, the door is back. Pins and stores stay for their person. */
   #switchRole(): void {
-    const wasConsole = this.#state.phase === "desk" && this.#state.session.source === "console";
     this.#state = switchRole(this.#state);
     this.#menuOpen = false;
     this.#notice = "";
-    clearHandoff();
-    if (wasConsole && this.#consoleSession !== null) void this.#consoleSession.signOut();
+    void endSession({ consoleSession: this.#consoleSession });
     this.#startDoorPoll();
     this.requestUpdate();
   }
