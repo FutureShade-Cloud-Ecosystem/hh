@@ -94,7 +94,7 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 	//   - BRANCH auto_scope: the user is GLOBAL-scoped (reaches every branch) OR holds a grant for
 	//     ch.branch_id (mirrors StaffContext.CanAccessBranch);
 	//   - auto_role narrows to a role code ('*'/NULL = any role);
-	//   - member_roles (the money rooms, 0388) narrows to a list of role codes, NULL = no list.
+	//   - member_roles (the money rooms, 0389) narrows to a list of role codes, NULL = no list.
 	const qualifies = `
 		ch.auto_scope IS NOT NULL
 		AND ch.is_archived = FALSE

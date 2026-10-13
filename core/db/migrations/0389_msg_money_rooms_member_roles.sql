@@ -1,4 +1,4 @@
--- 0388: the money rooms keep their seats for the finance roles.
+-- 0389: the money rooms keep their seats for the finance roles.
 -- Owner: internal/messaging.
 --
 -- WHAT WAS WRONG. #finance (0052), #payments and #payments-<branch> (0152)
@@ -23,7 +23,7 @@
 --
 -- Forward only, additive only.
 
-ALTER TABLE msg_channels ADD COLUMN member_roles TEXT[];
+ALTER TABLE msg_channels ADD COLUMN IF NOT EXISTS member_roles TEXT[];
 
 UPDATE msg_channels
    SET member_roles = ARRAY['PAYABLES_RECEIVABLES','FINANCIAL_CONTROLLER','GENERAL_MANAGER']

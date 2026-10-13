@@ -141,20 +141,23 @@ func (f *fakeAudit) Record(_ context.Context, a audit.SensitiveAccess) error {
 
 type fakeMethods struct {
 	mu       sync.Mutex
-	calls    []string
-	allowed  bool
+	calls    []string // the org id of each read
+	set      []string
 	err      error
 	callsLog *[]string
 }
 
-func (f *fakeMethods) SignInMethodAllowed(_ context.Context, orgID, provider string) (bool, error) {
+func (f *fakeMethods) AllowedSignInMethods(_ context.Context, orgID string) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, provider)
+	f.calls = append(f.calls, orgID)
 	if f.callsLog != nil {
 		*f.callsLog = append(*f.callsLog, "methods")
 	}
-	return f.allowed, f.err
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]string(nil), f.set...), nil
 }
 
 // recordingMinter wraps the real minter and notes each mint.
@@ -295,7 +298,7 @@ func newFx(t *testing.T) *fx {
 	}
 	f.knob = fakeKnob{hours: 8}
 	f.audit = &fakeAudit{log: &f.order}
-	f.methods = &fakeMethods{allowed: true, callsLog: &f.order}
+	f.methods = &fakeMethods{set: []string{"email_password", "google"}, callsLog: &f.order}
 	f.logBuf = &bytes.Buffer{}
 	f.cfg = Config{
 		Console: client, Members: f.members, Orgs: f.orgs, Claims: f.claims, Staff: f.staff,
