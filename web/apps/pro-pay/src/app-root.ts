@@ -41,7 +41,9 @@ const NEEDS: Readonly<Record<SurfaceId, Capability>> = { invoices: "view_billing
 
 /** The dealer's own day (the house zone the kit's words use), as YYYY-MM-DD, for aging. */
 function houseToday(): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const of = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
+  return `${of("year")}-${of("month")}-${of("day")}`;
 }
 
 /** A 401 is a lapsed session (sign out and say so, never blame the role); a 403 is the role's refusal; anything else is an error. */

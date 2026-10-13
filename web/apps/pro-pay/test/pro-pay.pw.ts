@@ -29,8 +29,9 @@ async function signIn(page: Page, who: string, password = PASSWORD): Promise<voi
 
 /** The dealer's day (the house zone) a number of days from now, as YYYY-MM-DD: the day the app ages against. */
 function houseDayOffset(days: number): string {
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
-  const when = new Date(`${today}T00:00:00Z`);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const of = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
+  const when = new Date(`${of("year")}-${of("month")}-${of("day")}T00:00:00Z`);
   when.setUTCDate(when.getUTCDate() + days);
   return when.toISOString().slice(0, 10);
 }
