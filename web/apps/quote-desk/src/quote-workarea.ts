@@ -3555,7 +3555,7 @@ export class QdQuoteWorkarea extends LitElement {
       ${b.deliveryFeeCents > 0
         ? html`<div class="trow"><span>Delivery</span><span class="num">${money(b.deliveryFeeCents)}</span></div>`
         : nothing}
-      <div class="trow"><span>HST</span><span class="num">${money(b.taxCents)}</span></div>
+      <div class="trow"><span>${b.taxLabel}</span><span class="num">${money(b.taxCents)}</span></div>
       <div class="grand">
         <span class="lbl">Quote total</span>
         ${showMargin

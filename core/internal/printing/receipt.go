@@ -3,6 +3,7 @@ package printing
 import (
 	"context"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"strings"
 	"time"
 
@@ -31,6 +32,9 @@ type ReceiptService struct {
 	// standardRate is the dealer's standard tax rate, read on the sale date for the tax line's label.
 	// Nil keeps the letterhead's settings figure.
 	standardRate StandardRateReader
+	// taxWords is the dealer's tax word for the tax line ("HST", "Sales tax"). Nil is the Ontario
+	// dealer's "HST".
+	taxWords taxwords.Source
 }
 
 // StandardRateReader answers the dealer's standard tax rate in basis points on a date ("YYYY-MM-DD", "" is
@@ -42,6 +46,12 @@ type StandardRateReader interface {
 // WithStandardRate injects the dealer's standard rate seam.
 func (s *ReceiptService) WithStandardRate(r StandardRateReader) *ReceiptService {
 	s.standardRate = r
+	return s
+}
+
+// WithTaxLabel injects the dealer's tax word seam (platform/taxwords).
+func (s *ReceiptService) WithTaxLabel(src taxwords.Source) *ReceiptService {
+	s.taxWords = src
 	return s
 }
 
@@ -131,6 +141,8 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 			head.HSTRateBps = bps
 		}
 	}
+	// The word is the dealer's own; a failed read prints the neutral "Tax", true for every dealer.
+	word, _ := taxwords.Resolve(ctx, s.taxWords)
 	lines, err := s.store.ReadReceiptLines(ctx, sale.OrderID)
 	if err != nil {
 		return Receipt{}, err
@@ -207,7 +219,7 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 		BalanceCents:   sale.BalanceCents,
 		ChangeDueCents: changeDue,
 		DepositCents:   deposit,
-		TaxLabel:       hstLabel(head.HSTRateBps),
+		TaxLabel:       taxLabel(word, head.HSTRateBps),
 		ReprintCount:   priorPrints,
 		PrintedAt:      s.now(),
 		QuantityNotice: head.QuantityNotice,
@@ -272,18 +284,18 @@ func (s *ReceiptService) record(ctx context.Context, a audit.SensitiveAccess) {
 	_ = s.audit.Record(ctx, a)
 }
 
-// hstLabel names the tax line with the rate actually configured, so a rate change shows on paper
-// without a code change.
-func hstLabel(rateBps int) string {
+// taxLabel names the tax line with the dealer's word and the rate actually configured, so a rate
+// change shows on paper without a code change.
+func taxLabel(word string, rateBps int) string {
 	if rateBps <= 0 {
-		return "HST"
+		return word
 	}
 	whole := rateBps / 100
 	frac := rateBps % 100
 	if frac == 0 {
-		return fmt.Sprintf("HST (%d%%)", whole)
+		return fmt.Sprintf("%s (%d%%)", word, whole)
 	}
-	return fmt.Sprintf("HST (%d.%02d%%)", whole, frac)
+	return fmt.Sprintf("%s (%d.%02d%%)", word, whole, frac)
 }
 
 // - the receipt document (DIB-410) -
@@ -322,7 +334,7 @@ type Receipt struct {
 	TaxCents      int64
 	TotalCents    int64
 	BalanceCents  int64
-	TaxLabel      string // "HST (13%)", the rate comes from system_settings, never a literal
+	TaxLabel      string // "HST (13%)" or "Sales tax (7.75%)", the rate comes from system_settings, never a literal
 
 	// ChangeDueCents is the cash over-tender's change (tendered minus total), read from the
 	// committed sale's own cash-tendered fact (orders.metadata), the ring's own derivation. It is

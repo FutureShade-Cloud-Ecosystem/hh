@@ -148,6 +148,8 @@ export interface ReliefOutcome {
   automated: boolean;
   requires_evidence: boolean;
   evidence_satisfied: boolean;
+  /** The name of the dealer's tax ("HST", "Sales tax"), the server's own word. */
+  tax_label: string;
 }
 
 export interface StockGlance {

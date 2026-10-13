@@ -4299,6 +4299,7 @@ export type PosReliefOutcome = {
   automated: boolean;
   requires_evidence: boolean;
   evidence_satisfied: boolean;
+  tax_label: string;
 };
 export type PosSignatureCapture = {
   purpose: "TAX_ATTESTATION" | "PROOF_OF_DELIVERY" | "CARD_PRESENT" | "ORDER_SIGNOFF";
@@ -4434,6 +4435,7 @@ export type PosTaxRate = {
   jurisdiction: string;
   reason_code: "STD_ON_HST_13" | "STD_SALES_TAX";
   rate_bps: number;
+  tax_label: string;
   round_mode: "INVOICE_TOTAL" | "PER_LINE";
 };
 export type PosPolicy = {
@@ -6414,6 +6416,7 @@ export type QuoteTerms = {
   deposit_cents: number;
   subtotal_cents: number;
   tax_cents: number;
+  tax_label: string;
   total_cents: number;
   lines: QuoteTermsLine[];
 };
@@ -6485,6 +6488,7 @@ export type QuotePublicView = {
   lines: QuotePublicLine[];
   subtotal_cents: number;
   tax_cents: number;
+  tax_label: string;
   total_cents: number;
   as_of: string;
   acceptable: boolean;
@@ -6523,6 +6527,7 @@ export type QuoteAcceptanceResult = {
   accepted_at: string;
   subtotal_cents: number;
   tax_cents: number;
+  tax_label: string;
   total_cents: number;
   repeat_acceptance?: boolean;
 };

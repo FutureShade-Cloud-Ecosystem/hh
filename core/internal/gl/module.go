@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"log/slog"
 	"time"
 
@@ -200,6 +201,7 @@ type Service struct {
 	audit           audit.Recorder
 	approvalFiler   ApprovalFiler        // 0075: nil-able JE park → approvals-rail filing seam
 	standardRate    StandardRateReader   // the dealer's standard tax rate; nil is the Ontario 13 percent
+	taxWords        taxwords.Source      // the name of the dealer's tax in journal memos; nil is "HST"
 	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
 	log             *slog.Logger
 	now             func() time.Time
@@ -283,6 +285,17 @@ type StandardRateReader interface {
 
 // WithStandardRate injects the dealer's standard rate seam.
 func (s *Service) WithStandardRate(r StandardRateReader) *Service { s.standardRate = r; return s }
+
+// WithTaxLabel injects the dealer's tax word seam (platform/taxwords): the word the tax legs' memos
+// carry. Unwired is the Ontario dealer's "HST".
+func (s *Service) WithTaxLabel(src taxwords.Source) *Service { s.taxWords = src; return s }
+
+// taxWord reads the word a journal memo names the tax by. A posting never fails for a word: a failed
+// read memos the neutral "Tax", true for every dealer.
+func (s *Service) taxWord(ctx context.Context) string {
+	w, _ := taxwords.Resolve(ctx, s.taxWords)
+	return w
+}
 
 // WithInvoiceReader injects the billing invoice-facts seam.
 func (s *Service) WithInvoiceReader(r InvoiceReader) *Service { s.invoices = r; return s }

@@ -5028,6 +5028,7 @@ type PosReliefOutcome struct {
 	Automated         bool   `json:"automated"`
 	RequiresEvidence  bool   `json:"requires_evidence"`
 	EvidenceSatisfied bool   `json:"evidence_satisfied"`
+	TaxLabel          string `json:"tax_label"`
 }
 
 type PosSignatureCapture struct {
@@ -5186,6 +5187,7 @@ type PosTaxRate struct {
 	Jurisdiction string `json:"jurisdiction"`
 	ReasonCode   string `json:"reason_code"`
 	RateBps      int32  `json:"rate_bps"`
+	TaxLabel     string `json:"tax_label"`
 	RoundMode    string `json:"round_mode"`
 }
 
@@ -7431,6 +7433,7 @@ type QuoteTerms struct {
 	DepositCents     int64            `json:"deposit_cents"`
 	SubtotalCents    int64            `json:"subtotal_cents"`
 	TaxCents         int64            `json:"tax_cents"`
+	TaxLabel         string           `json:"tax_label"`
 	TotalCents       int64            `json:"total_cents"`
 	Lines            []QuoteTermsLine `json:"lines"`
 }
@@ -7511,6 +7514,7 @@ type QuotePublicView struct {
 	Lines            []QuotePublicLine `json:"lines"`
 	SubtotalCents    int64             `json:"subtotal_cents"`
 	TaxCents         int64             `json:"tax_cents"`
+	TaxLabel         string            `json:"tax_label"`
 	TotalCents       int64             `json:"total_cents"`
 	AsOf             time.Time         `json:"as_of"`
 	Acceptable       bool              `json:"acceptable"`
@@ -7552,6 +7556,7 @@ type QuoteAcceptanceResult struct {
 	AcceptedAt          time.Time `json:"accepted_at"`
 	SubtotalCents       int64     `json:"subtotal_cents"`
 	TaxCents            int64     `json:"tax_cents"`
+	TaxLabel            string    `json:"tax_label"`
 	TotalCents          int64     `json:"total_cents"`
 	RepeatAcceptance    *bool     `json:"repeat_acceptance,omitempty"`
 }

@@ -325,6 +325,7 @@ const customerById = new Map([
 ]);
 
 const HST_RATE_BPS = 1300;
+const TAX_LABEL = "HST"; // the Ontario dealer's word, as the core sends it
 
 // ---------------------------------------------------------------------------
 // The stub's own switches, held in memory.
@@ -917,6 +918,7 @@ function termsOf(quote) {
     subtotal_cents: quote.subtotal_cents,
     tax_cents: quote.tax_cents,
     total_cents: quote.total_cents,
+    tax_label: TAX_LABEL,
     lines: quote.lines.map((line) => ({
       line_no: line.line_no,
       disc_pct: line.disc_pct,
@@ -2034,6 +2036,7 @@ const server = createServer(async (request, response) => {
       subtotal_cents: quote.subtotal_cents,
       tax_cents: quote.tax_cents,
       total_cents: quote.total_cents,
+      tax_label: TAX_LABEL,
       as_of: "2026-01-01T00:00:00Z",
       acceptable: false,
       preview: true,
