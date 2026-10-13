@@ -30,7 +30,9 @@ export const purchStyles = css`
 
   .split { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: var(--hh-s-16); align-items: start; }
   .split > * { min-width: 0; }
-  .split-rev { grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr); }
+  .split-rev { grid-template-columns: minmax(440px, 1fr) minmax(0, 1.5fr); }
+  .link-inline { white-space: nowrap; }
+  .panel > p.dim + .forms, .panel > .forms { margin-top: var(--hh-s-8); }
   .panel.inner { background: var(--hh-row-alt); margin-top: var(--hh-s-16); }
   .inline-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--hh-s-8); align-items: end; }
   .code-line { grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) auto; }

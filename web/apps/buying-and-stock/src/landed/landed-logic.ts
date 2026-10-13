@@ -15,7 +15,7 @@ import type {
   LandedCostPage,
   LandedCostStatus,
 } from "@hardscapehouse/api-client";
-import { formatMoney, parseAmountToCents, parseQty, parseRate } from "../purch/purch-money.js";
+import { formatMoney, formatQty, parseAmountToCents, parseQty, parseRate } from "../purch/purch-money.js";
 import type { Tone } from "../po/po-logic.js";
 
 export const BASES: readonly LandedCostBasis[] = ["VALUE", "WEIGHT", "QUANTITY"];
@@ -186,4 +186,11 @@ export function settleWords(action: Action, answered: string, before: string): s
   if (action === "void") return `It was not voided: the core reads it as ${statusWord(after).toLowerCase()}.`;
   if (after === "DRAFT") return "It is still a draft: the core did not apply it.";
   return `It was not applied: the core reads it as ${statusWord(after).toLowerCase()}.`;
+}
+
+/** The weight a share was split by, as the core wrote it: cents for a value split, kilograms, or a quantity. */
+export function basisFigure(basis: string, weight: number): string {
+  if (basis === "VALUE") return formatMoney(weight);
+  if (basis === "WEIGHT") return `${weight.toLocaleString("en-CA", { maximumFractionDigits: 4 })} kg`;
+  return formatQty(weight, "");
 }

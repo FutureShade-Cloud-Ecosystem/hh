@@ -17,7 +17,7 @@ import type {
 } from "@hardscapehouse/api-client";
 import { areaHead, checkBox, confirmBox, dateOnly, emptyState, errorNote, loadFailed, loadingNote, noticeBox, pill, segs } from "../purch/purch-views.js";
 import { formatMoney, formatQty } from "../purch/purch-money.js";
-import { BASES, basisWord, confirmWords, retroCandidates, retroLines, statusTone, statusWord, type Action } from "./landed-logic.js";
+import { BASES, basisFigure, basisWord, confirmWords, retroCandidates, retroLines, statusTone, statusWord, type Action } from "./landed-logic.js";
 
 export type LandedView = "list" | "capture" | "detail";
 
@@ -272,14 +272,14 @@ function allocationTable(detail: DetailModel): TemplateResult {
     return html`
       <div class="scroll">
         <table class="stack" data-allocations>
-          <thead><tr><th>SKU</th><th>Product</th><th class="num">Basis</th><th class="num">Added to cost</th><th class="num">Sold through</th></tr></thead>
+          <thead><tr><th>SKU</th><th>Product</th><th class="num">Split by</th><th class="num">Added to cost</th><th class="num">Sold through</th></tr></thead>
           <tbody>
             ${doc.allocations.map((a) => {
               const p = productWords(detail.po, a.po_line_id, a.product_id);
               return html`<tr data-allocation-row>
                 <td class="sku" data-label="SKU">${p.sku}</td>
                 <td class="full" data-label="Product">${p.name}</td>
-                <td class="num" data-label="Basis">${a.basis_weight}</td>
+                <td class="num" data-label="Split by">${basisFigure(doc.allocation_basis, a.basis_weight)}</td>
                 <td class="num" data-label="Added to cost">${formatMoney(a.allocated_cad_cents)}</td>
                 <td class="num" data-label="Sold through">${formatMoney(a.sold_through_cad_cents)}</td>
               </tr>`;
@@ -296,14 +296,14 @@ function allocationTable(detail: DetailModel): TemplateResult {
     : html`
         <div class="scroll">
           <table class="stack" data-allocations>
-            <thead><tr><th>SKU</th><th>Product</th><th class="num">Basis</th><th class="num">Share</th></tr></thead>
+            <thead><tr><th>SKU</th><th>Product</th><th class="num">Split by</th><th class="num">Share</th></tr></thead>
             <tbody>
               ${preview.lines.map((l) => {
                 const p = productWords(detail.po, l.po_line_id, l.product_id);
                 return html`<tr data-allocation-row>
                   <td class="sku" data-label="SKU">${p.sku}</td>
                   <td class="full" data-label="Product">${p.name}${l.is_special_buy ? html` <span class="status status-plain">Special buy: takes no share</span>` : nothing}</td>
-                  <td class="num" data-label="Basis">${l.basis_weight}</td>
+                  <td class="num" data-label="Split by">${basisFigure(preview.basis, l.basis_weight)}</td>
                   <td class="num" data-label="Share">${formatMoney(l.allocated_cad_cents)}</td>
                 </tr>`;
               })}

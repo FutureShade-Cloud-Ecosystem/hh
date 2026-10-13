@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  basisFigure,
   basisWord,
   buildCreate,
   confirmWords,
@@ -158,4 +159,10 @@ test("a wall refusal names who may capture a landed cost", () => {
   assert.match(refusalWords("landed", "Forbidden", 403), /Procurement Manager/);
   assert.match(refusalWords("landed", "caller cannot access this branch", 403), /^Caller cannot access this branch\.$/);
   assert.match(refusalWords("landed", "landed cost has no po_id to allocate across", 422), /no po_id to allocate across/);
+});
+
+test("the weight a share was split by reads in its own unit, never as bare cents", () => {
+  assert.equal(basisFigure("VALUE", 25000), "$250.00");
+  assert.equal(basisFigure("WEIGHT", 35), "35 kg");
+  assert.equal(basisFigure("QUANTITY", 10), "10");
 });
