@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/sinks.test.mjs test/unit.test.mjs test/today.test.mjs test/board.test.mjs test/scope.test.mjs test/catalog.test.mjs test/quotes.test.mjs test/reorder.test.mjs test/projects.test.mjs && playwright test",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/sinks.test.mjs test/unit.test.mjs test/today.test.mjs test/board.test.mjs test/scope.test.mjs test/catalog.test.mjs test/quotes.test.mjs test/reorder.test.mjs test/projects.test.mjs && playwright test && playwright test -c test/acceptance.config.ts",
     "test:acceptance": "playwright test --config test/acceptance.config.ts"
   },
   "dependencies": {
