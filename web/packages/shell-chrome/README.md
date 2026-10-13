@@ -69,6 +69,10 @@ delegation on `data-action` names.
 
 ## Wiring a shell (the contract the tests hold)
 
+The state module answers on the package root; each element has its deep path, as the design system's do:
+`@hardscapehouse/shell-chrome/src/shell-header.js`, `shell-rail.js`, `shell-banner.js`, `shell-update.js`. Importing an
+element module registers its custom element, which is why `package.json` lists those files under `sideEffects`.
+
 ```js
 import { PinBook, currentBreadcrumb, switcherGroups, surfaceKey, syncChipView } from '@hardscapehouse/shell-chrome';
 
