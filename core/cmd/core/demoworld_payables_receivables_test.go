@@ -92,6 +92,7 @@ func TestDemoWorld_PayablesReceivables(t *testing.T) {
 		"CORE_APPWRITE_PROJECT": "fx-appwrite-project", "CORE_APPWRITE_API_KEY": "fx-appwrite-key-placeholder",
 		customerquote.EnvKeyID: "fx-accept-sign-key", customerquote.EnvKey: hex.EncodeToString(acceptKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.getenv = func(k string) string { return values[k] }
 	rec, _ := registeredSurface(t, env)
 	controller := &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, prControllerSubject), who: "Financial controller"}

@@ -154,6 +154,14 @@ type Service struct {
 	// pickHold is the billing read behind the pay before release hold (pick_hold.go,
 	// item 9.3): nil leaves the lane off (the composition root asserts the wiring at boot).
 	pickHold PickHoldReader
+	// depositCanceller is billing's settlement of the order's live deposit
+	// documents on a manual cancel (deposit_cancel_seam.go, row 1193); nil
+	// leaves the deposit exit dark (the composition root asserts the wiring
+	// at boot).
+	depositCanceller DepositCanceller
+	// depositDefault is the dealer's default deposit disposition read
+	// (pos_policy through the pos module); nil answers the ruling's default.
+	depositDefault DepositCancelDefaultReader
 }
 
 // txRecorder is the transactional half of the audit seam: write one row on the caller's transaction so
@@ -517,6 +525,23 @@ func (r transitionRule) fromList() []string {
 // A current status outside the set returns ErrIllegalTransition (409); target == current returns
 // ErrNoTransition (409, already there). On success exactly one timeline row is emitted, actor = caller.
 func (s *Service) TransitionManual(ctx context.Context, orderID string, action ManualAction, reason string) (newStatus string, err error) {
+	return s.transitionManual(ctx, orderID, action, reason, false)
+}
+
+// CancelOrderManual is TransitionManual's cancel with the deposit disposition
+// the ruling named (row 1193): a manager may KEEP the order's supplier
+// deposit, giving a reason; otherwise the cancel applies the dealer's default
+// (pos_policy.supplier_deposit_cancel, credit back unless the dealer says
+// kept). The money predicate beside it no longer blocks an order whose only
+// money is a deposit document: the cancel settles it (credit back clears the
+// open document or credits the account; kept stands the document and books
+// the liability to other income), on the same transaction the status flip
+// commits in.
+func (s *Service) CancelOrderManual(ctx context.Context, orderID, reason string, keepDeposit bool) (newStatus string, err error) {
+	return s.transitionManual(ctx, orderID, ActionCancel, reason, keepDeposit)
+}
+
+func (s *Service) transitionManual(ctx context.Context, orderID string, action ManualAction, reason string, keepDeposit bool) (newStatus string, err error) {
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return "", err
@@ -569,9 +594,26 @@ func (s *Service) TransitionManual(ctx context.Context, orderID string, action M
 	// the order-row lock so no writer can finalize an invoice in a check→write gap. So rather than run
 	// the predicate here (unlocked), the cancel hands it to the guarded write as a precheck, which runs
 	// it under the same lock and transaction as the status flip. Non-cancel actions pass nil.
+	//
+	// Row 1193 widened the precheck's back half: the order's deposit documents
+	// are the money the cancel HAS an exit for, so once the predicate has
+	// proved every other exit the settlement runs beside it, on the same
+	// transaction. The disposition (a manager's keep override, else the
+	// dealer's default) is resolved before the write: it is a settings read,
+	// not money state, and an unreadable answer refuses the cancel before the
+	// lock is taken.
 	var precheck func(context.Context) error
 	if action == ActionCancel {
-		precheck = func(ctx context.Context) error { return s.assertCancellable(ctx, orderID) }
+		disposition, derr := s.resolveDepositDisposition(ctx, branchID, keepDeposit)
+		if derr != nil {
+			return "", derr
+		}
+		precheck = func(ctx context.Context) error {
+			if err := s.assertCancellable(ctx, orderID); err != nil {
+				return err
+			}
+			return s.settleDepositsOnCancel(ctx, orderID, disposition, reason)
+		}
 	}
 	if err := s.setStatusGuarded(ctx, caller.UserID, orderID, rule.target, reason, rule.fromList(), precheck); err != nil {
 		return "", err

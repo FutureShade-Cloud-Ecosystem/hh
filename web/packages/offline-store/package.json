@@ -2,5 +2,24 @@
   "name": "@hardscapehouse/offline-store",
   "version": "0.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "description": "The offline store: one schema over two SQL backends (the Tauri SQLite plugin and wa-sqlite on OPFS), the durable outbox, pull with staleness, conflict cards, and the sync runner that drives the sync statechart",
+  "sideEffects": false,
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "scripts": {
+    "test": "node --import ./test/_ts-js-loader.mjs --test test/canonical.test.mjs test/scopes.test.mjs test/schema.node-test.mjs test/backends.node-test.mjs test/outbox.node-test.mjs test/store.node-test.mjs test/transport-api.test.mjs test/runner.node-test.mjs test/model.node-test.mjs ../../../statecharts/sync/test/machine.test.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
+    "wa-sqlite": "1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3"
+  }
 }

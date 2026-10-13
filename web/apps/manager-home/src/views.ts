@@ -91,7 +91,7 @@ export function renderLanding(model: LandingModel): TemplateResult {
     </div>
     <nav class="view-links" aria-label="Views">
       <span class="nav-label">Open a view</span>
-      ${(["shortages", "receiving", "approvals"] as const).map((v) => html`
+      ${(["shortages", "receiving", "approvals", "warranty"] as const).map((v) => html`
         <button type="button" class="view-link" data-action="open-view" data-view=${v}>${VIEW_TITLE[v]}<span class="chev" aria-hidden="true">›</span></button>
       `)}
       ${model.canOpenReporting ? html`

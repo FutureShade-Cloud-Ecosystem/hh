@@ -460,6 +460,18 @@ var allowedExtraKeys = map[string]bool{
 	"fulfilment":      true, // the fulfilment code
 	"source_order_id": true, // CP-04 reorder provenance (uuid; admin-only, NOT in operatorSafeKeys)
 	"lines":           true, // CP-04 reorder line count (an int, never an identifier)
+	// The DEPOSIT_CANCELLED settlement row (billing/deposit_cancel.go): the
+	// disposition is the CHECK-constrained vocabulary word (CREDIT_BACK/KEPT,
+	// migration 0375) and the invoice number is the '#INV-...' sequence shape
+	// payment_no already carries. The reason rides the top-level Reason field.
+	"disposition": true,
+	"invoice_no":  true,
+	// The settlement's money split (row 1228): what the customer paid and the
+	// dealer kept or credited back, and the unpaid rest the cancel closed. Ints
+	// like amount_cents, so the digits never reach the string redactor.
+	"paid_kept_cents":     true,
+	"paid_credited_cents": true,
+	"closed_cents":        true,
 	// DIB-159 order-status history: from→to status codes on an ORDER_STATUS_CHANGED row.
 	// These are CHECK-constrained status codes (DRAFT..CANCELLED), codes, never identifiers,
 	// and free of any 7-digit run so they pass redactCleartext cleanly. The transition's optional

@@ -95,7 +95,7 @@ export function shareNote(part: number, total: number): string {
 // -- the landing's views ---------------------------------------------------------------------------
 
 /** The views this app owns. The needs links name them with these words. */
-export type ViewKind = "home" | "shortages" | "receiving" | "approvals" | "reporting";
+export type ViewKind = "home" | "shortages" | "receiving" | "approvals" | "reporting" | "warranty";
 
 export const VIEW_TITLE: Readonly<Record<ViewKind, string>> = Object.freeze({
   home: "Home",
@@ -103,6 +103,7 @@ export const VIEW_TITLE: Readonly<Record<ViewKind, string>> = Object.freeze({
   receiving: "Receiving · short",
   approvals: "Approvals",
   reporting: "Reporting",
+  warranty: "Warranty",
 });
 
 /**

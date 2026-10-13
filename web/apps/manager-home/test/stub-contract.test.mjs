@@ -25,6 +25,7 @@ const coreDirs = [
   join(appDir, "..", "..", "..", "core", "internal", "tasks"),
   join(appDir, "..", "..", "..", "core", "internal", "purchasing"),
   join(appDir, "..", "..", "..", "core", "internal", "identity", "staffcontext"),
+  join(appDir, "..", "..", "..", "core", "internal", "warranty"),
   join(appDir, "..", "..", "..", "core", "internal", "platform", "authz"),
   join(appDir, "..", "..", "..", "core", "internal", "platform", "httpx"),
   join(appDir, "..", "..", "..", "core", "internal", "reporting"),
@@ -515,4 +516,215 @@ test("the commission register fits the contract, and the rule wall is the shared
   const managerRetire = await call("DELETE", `/api/v1/reporting/commission/rules/${rules.json.items[0].id}`, { token: manager });
   assert.equal(managerRetire.status, 403);
   assert.deepEqual(managerRetire.json, { error: "Forbidden" });
+});
+
+test("the warranty board and the claims list fit the warranty contract, field by field", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+  const board = await call("GET", "/api/v1/warranty/board", { token });
+  assert.equal(board.status, 200);
+  holds("WarrantyBoard", board.json);
+  const populated = board.json.columns.filter((c) => c.claims.length > 0);
+  assert.ok(populated.length >= 3, "the world carries claims in at least three phases");
+  for (const col of board.json.columns) holds("WarrantyBoardColumn", col);
+  for (const claim of board.json.columns.flatMap((c) => c.claims)) holds("WarrantyClaim", claim);
+
+  const claims = await call("GET", "/api/v1/warranty/claims", { token });
+  assert.equal(claims.status, 200);
+  holds("WarrantyClaimPage", claims.json);
+
+  const triage = await call("GET", "/api/v1/warranty/claims?phase=TRIAGE", { token });
+  assert.equal(triage.status, 200);
+  holds("WarrantyClaimPage", triage.json);
+  assert.equal(triage.json.items.length, 1);
+});
+
+test("a warranty claim's detail, events, checklist and postings fit the contract, and the checklist gate speaks the core's sentence", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+  const board = (await (await call("GET", "/api/v1/warranty/board", { token })).json);
+  const triageClaim = board.columns.find((c) => c.phase === "TRIAGE").claims[0];
+
+  const detail = await call("GET", `/api/v1/warranty/claims/${triageClaim.id}`, { token });
+  assert.equal(detail.status, 200);
+  holds("WarrantyClaim", detail.json);
+
+  const events = await call("GET", `/api/v1/warranty/claims/${triageClaim.id}/events`, { token });
+  assert.equal(events.status, 200);
+  holds("WarrantyClaimEventPage", events.json);
+
+  const checklist = await call("GET", `/api/v1/warranty/claims/${triageClaim.id}/checklist`, { token });
+  assert.equal(checklist.status, 200);
+  holds("WarrantyChecklistStatePage", checklist.json);
+
+  // The gate: the one required item still open is named in the core's own words.
+  const blocked = await call("POST", `/api/v1/warranty/claims/${triageClaim.id}/advance`, {
+    body: { to_phase: "SUBMITTED", note: "", occurred_at: "" },
+    token,
+  });
+  refused(blocked, 422, "required checklist items incomplete", "warranty: cannot advance, required checklist items incomplete: %s");
+
+  const tick = await call("POST", `/api/v1/warranty/claims/${triageClaim.id}/checklist`, {
+    body: { item_key: "invoice_copy", checked: true },
+    token,
+  });
+  assert.equal(tick.status, 200);
+  holds("WarrantyChecklistState", tick.json);
+
+  const moved = await call("POST", `/api/v1/warranty/claims/${triageClaim.id}/advance`, {
+    body: { to_phase: "SUBMITTED", note: "", occurred_at: "" },
+    token,
+  });
+  assert.equal(moved.status, 200);
+  holds("WarrantyClaim", moved.json);
+  assert.equal(moved.json.phase, "SUBMITTED");
+});
+
+test("a settlement records through the settle route and refuses a second one in the core's words", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+  const board = (await (await call("GET", "/api/v1/warranty/board", { token })).json);
+  const decisionClaim = board.columns.find((c) => c.phase === "DECISION").claims[0];
+
+  // Settlement books only from DECISION or SETTLEMENT: an early claim is refused, named.
+  const early = await call("POST", `/api/v1/warranty/claims/${board.columns.find((c) => c.phase === "TRIAGE").claims[0].id}/settle`, {
+    body: { outcome: "WRITE_OFF", expected_cents: 1, realized_cents: 1, note: "" },
+    token,
+  });
+  refused(
+    early,
+    422,
+    "cannot be settled from TRIAGE",
+    "warranty: claim %s cannot be settled from %s, advance to DECISION or SETTLEMENT first",
+  );
+
+  // Advance to SETTLEMENT first (the phase's required item is ticked in the world).
+  const advance = await call("POST", `/api/v1/warranty/claims/${decisionClaim.id}/advance`, {
+    body: { to_phase: "SETTLEMENT", note: "", occurred_at: "" },
+    token,
+  });
+  assert.equal(advance.status, 200);
+
+  const settled = await call("POST", `/api/v1/warranty/claims/${decisionClaim.id}/settle`, {
+    body: { outcome: "VENDOR_CREDIT", expected_cents: 24000, realized_cents: 24000, note: "credit approved" },
+    token,
+  });
+  assert.equal(settled.status, 200);
+  holds("WarrantySettlementResult", settled.json);
+  assert.equal(settled.json.gl_posted, true);
+
+  const postings = await call("GET", `/api/v1/warranty/claims/${decisionClaim.id}/postings`, { token });
+  assert.equal(postings.status, 200);
+  holds("WarrantySettlementPostingPage", postings.json);
+  assert.equal(postings.json.items.length, 1);
+
+  const again = await call("POST", `/api/v1/warranty/claims/${decisionClaim.id}/settle`, {
+    body: { outcome: "WRITE_OFF", expected_cents: 1, realized_cents: 1, note: "" },
+    token,
+  });
+  refused(
+    again,
+    409,
+    "is already settled (VENDOR_CREDIT), re-settlement is not permitted in P1",
+    "warranty: claim %s is already settled (%s), re-settlement is not permitted in P1",
+  );
+});
+
+test("the vendor registry, the recovery board, the service levels and the reports fit the contract", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+
+  const vendors = await call("GET", "/api/v1/warranty/vendors", { token });
+  assert.equal(vendors.status, 200);
+  holds("WarrantyVendorProfilePage", vendors.json);
+  assert.ok(vendors.json.items.some((v) => v.status === "UNDOCUMENTED"), "the world carries the explicit undocumented state");
+
+  const one = await call("GET", `/api/v1/warranty/vendors/${vendors.json.items[0].vendor_id}`, { token });
+  assert.equal(one.status, 200);
+  holds("WarrantyVendorProfile", one.json);
+
+  // The registry write is admin-gated: the shared Forbidden body, one word.
+  const save = await call("PUT", `/api/v1/warranty/vendors/${vendors.json.items[0].vendor_id}`, {
+    body: { vendor_id: vendors.json.items[0].vendor_id, status: "DOCUMENTED", coverage: "", term_months: null, channel: "EMAIL", channel_ref: "", docs: [], notes: "" },
+    token,
+  });
+  assert.equal(save.status, 403);
+  assert.deepEqual(save.json, { error: "Forbidden" });
+  assert.ok(coreSource.includes('{"error":"Forbidden"}'), "the core's authz middleware does not write the shared Forbidden body");
+
+  const recovery = await call("GET", "/api/v1/warranty/recovery", { token });
+  assert.equal(recovery.status, 200);
+  holds("WarrantyRecoveryBoard", recovery.json);
+  assert.ok(recovery.json.total_outstanding_cents > 0, "the world carries the outstanding credit the chase log works down");
+
+  const claimId = recovery.json.vendors[0].claims[0].claim_id;
+  const chase = await call("GET", `/api/v1/warranty/claims/${claimId}/recovery`, { token });
+  assert.equal(chase.status, 200);
+  holds("WarrantyRecoveryActionPage", chase.json);
+
+  const overReceipt = await call("POST", `/api/v1/warranty/claims/${claimId}/recovery`, {
+    body: { action: "RECEIVED", amount_cents: recovery.json.total_outstanding_cents + 1, promised_date: "", reference: "", note: "", occurred_at: "" },
+    token,
+  });
+  refused(
+    overReceipt,
+    422,
+    "violates the amount rule",
+    "warranty: the recovery action references an unknown claim/vendor, or violates the amount rule",
+  );
+
+  const receipt = await call("POST", `/api/v1/warranty/claims/${claimId}/recovery`, {
+    body: { action: "RECEIVED", amount_cents: 15000, promised_date: "", reference: "CN-7719", note: "", occurred_at: "" },
+    token,
+  });
+  assert.equal(receipt.status, 200);
+  holds("WarrantyRecoveryAction", receipt.json);
+  const after = await (await call("GET", "/api/v1/warranty/recovery", { token })).json;
+  assert.equal(after.total_received_cents, 15000, "the board recomputes the subtraction server side");
+
+  const sla = await call("GET", "/api/v1/warranty/sla", { token });
+  assert.equal(sla.status, 200);
+  holds("WarrantySLABoard", sla.json);
+  assert.equal(sla.json.breached_count, 1);
+
+  const targets = await call("GET", "/api/v1/warranty/sla/targets", { token });
+  assert.equal(targets.status, 200);
+  holds("WarrantySLATargetPage", targets.json);
+
+  const ack = await call("POST", `/api/v1/warranty/claims/${sla.json.alerts[0].claim_id}/sla/${sla.json.alerts[0].id}/ack`, { token });
+  assert.equal(ack.status, 200);
+
+  const sweep = await call("POST", "/api/v1/warranty/sla/sweep", { token });
+  assert.equal(sweep.status, 200);
+  holds("WarrantySLASweepResult", sweep.json);
+
+  const reports = await call("GET", "/api/v1/warranty/reports", { token });
+  assert.equal(reports.status, 200);
+  holds("WarrantyReportBundle", reports.json);
+});
+
+test("the warranty walls answer the shared Forbidden body, and the intake photos serve their bytes", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+  await scenario("refused-settle");
+  const board = (await (await call("GET", "/api/v1/warranty/board", { token })).json);
+  const decisionClaim = board.columns.find((c) => c.phase === "DECISION").claims[0];
+  const walled = await call("POST", `/api/v1/warranty/claims/${decisionClaim.id}/settle`, {
+    body: { outcome: "WRITE_OFF", expected_cents: 1, realized_cents: 1, note: "" },
+    token,
+  });
+  assert.equal(walled.status, 403);
+  assert.deepEqual(walled.json, { error: "Forbidden" });
+  await reset();
+
+  const webClaim = board.columns.find((c) => c.phase === "INTAKE").claims.find((c) => c.source === "WEB");
+  assert.ok(webClaim !== undefined, "the world carries the public intake claim");
+  const photos = await call("GET", `/api/v1/warranty/claims/${webClaim.id}/photos`, { token });
+  assert.equal(photos.status, 200);
+  holds("WarrantyIntakePhotoPage", photos.json);
+  const res = await fetch(`${base}/api/v1/warranty/claims/${webClaim.id}/photos/${photos.json.items[0].id}`, {
+    headers: { Authorization: `Bearer ${token}`, "X-Org": "hh-demo" },
+  });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("content-type") ?? "", /image\/png/);
 });
