@@ -2,6 +2,7 @@ package tax
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -35,21 +36,43 @@ func (s *Service) assessSale(ctx context.Context, in SaleAssessment) (Quote, err
 	if err != nil {
 		return Quote{}, err
 	}
-	reason := in.ReasonCode
-	if reason == "" {
-		reason = ReasonStdON13
+	// The dealer's own jurisdiction, read live at every assessment: the rate rows, the standard
+	// reason and the standard rate all belong to it.
+	jur, err := s.jurisdiction(ctx)
+	if err != nil {
+		return Quote{}, err
 	}
+	stdReason := StandardReasonFor(jur)
+	reason := in.ReasonCode
 	// The lawful reason universe (the mirror of the snapshot CHECK): the caller sent a reason the engine
 	// cannot lawfully bind, refuse it, never resolve it through the table. The refusal is TYPED: the
 	// composition's adapters key on the type, so no other 400-shaped engine refusal can reach the
 	// counter worded as an unknown tax reason.
-	if !LegalReasonCodes[reason] {
+	if reason != "" && !LegalReasonCodes[reason] {
 		return Quote{}, UnknownReasonError{ReasonCode: reason}
 	}
+	// Blank, or either spelling of a standard sale, is the dealer's own standard: the Ontario code for an
+	// Ontario dealer, the neutral code for every other jurisdiction.
+	if reason == "" || isStandardReason(reason) {
+		reason = stdReason
+	}
 
-	rateBps, found, err := s.rate(ctx, reason, asOf)
+	rateBps, found, err := s.rate(ctx, jur, reason, asOf)
 	if err != nil {
 		return Quote{}, err
+	}
+	// stdBps is the jurisdiction's standard on the sale date, read at most once per assessment.
+	var stdBps int
+	var stdRead, stdFound bool
+	standard := func() (int, bool, error) {
+		if !stdRead {
+			bps, ok, err := s.rate(ctx, jur, stdReason, asOf)
+			if err != nil {
+				return 0, false, err
+			}
+			stdBps, stdFound, stdRead = bps, ok, true
+		}
+		return stdBps, stdFound, nil
 	}
 	if !found {
 		// No configured row for this reason on this date → fall back to the standard rate. The fallback read
@@ -57,35 +80,35 @@ func (s *Service) assessSale(ctx context.Context, in SaleAssessment) (Quote, err
 		// A zero-rate Quote with a nil error would ring every ticket untaxed while the ledger believes a rate is
 		// configured (row 680 item 2).
 		s.log.Warn("tax: no effective rate row for the reason; trying the standard rate row", "reason", reason, "as_of", asOf)
-		stdBps, stdFound, err := s.rate(ctx, ReasonStdON13, asOf)
+		std, ok, err := standard()
 		if err != nil {
 			return Quote{}, err
 		}
-		if !stdFound {
+		if !ok {
 			s.log.Warn("tax: no standard rate row in effect; refusing the assessment (never a silent 0%)", "reason", reason, "as_of", asOf)
-			return Quote{}, noStandardRate(jurisdictionON, asOf)
+			return Quote{}, noStandardRate(jur, asOf)
 		}
-		rateBps = stdBps
+		rateBps = std
 	}
 	// The ungated-below-standard refusal: EVERY reason that resolves below the standard IN EFFECT for the
 	// date must be evidence gated (ReasonManual is the stated exception, its row is a person's decision;
-	// ReasonStdON13 is the reference itself, never the subject, because the dealer may lawfully raise or
+	// the standard reason is the reference itself, never the subject, because the dealer may lawfully raise or
 	// lower the standard row). The comparison is against the standard row resolved for the same date, not
-	// the hard-coded constant: the table exists to replace the constant, and a raised standard must not
+	// a hard-coded constant: the table exists to replace the constant, and a raised standard must not
 	// open a gap below it that an ungated reason can bind in. With no standard row in effect there is no
 	// reference to fall short of, so nothing is refused on this check (the absent-standard world is the
 	// silent-zero item's, not this one's).
-	if reason != ReasonStdON13 && reason != ReasonManual && !evidenceGatedReasons[reason] {
-		stdBps, stdFound, err := s.rate(ctx, ReasonStdON13, asOf)
+	if reason != stdReason && reason != ReasonManual && !evidenceGatedReasons[reason] {
+		std, ok, err := standard()
 		if err != nil {
 			return Quote{}, err
 		}
-		if stdFound && rateBps < stdBps {
-			return Quote{}, MisconfiguredRateError{ReasonCode: reason, RateBps: rateBps, StdBps: stdBps}
+		if ok && rateBps < std {
+			return Quote{}, MisconfiguredRateError{ReasonCode: reason, RateBps: rateBps, StdBps: std}
 		}
 	}
 
-	q := Quote{ReasonCode: reason, RateBps: rateBps}
+	q := Quote{ReasonCode: reason, RateBps: rateBps, Jurisdiction: jur}
 
 	// HARD GATE: an evidence-gated relief reason binds its relief rate only with evidence attached. Without
 	// evidence the BINDING rate falls back to standard, bit-identical to the W4/pos behavior, while the reason
@@ -98,16 +121,32 @@ func (s *Service) assessSale(ctx context.Context, in SaleAssessment) (Quote, err
 		q.RequiresEvidence = true
 		if !in.EvidenceAttached {
 			reliefBinds = false
-			std, stdFound, rerr := s.rate(ctx, ReasonStdON13, asOf)
+			std, ok, rerr := standard()
 			if rerr != nil {
 				return Quote{}, rerr
 			}
-			if !stdFound {
+			if !ok {
 				s.log.Warn("tax: no standard rate row in effect for the relief fallback; refusing the assessment (never a silent 0%)", "reason", reason, "as_of", asOf)
-				return Quote{}, noStandardRate(jurisdictionON, asOf)
+				return Quote{}, noStandardRate(jur, asOf)
 			}
 			q.RateBps = std
 		}
+	}
+
+	// The standard rate the full-tax figures are computed at. An Ontario dealer whose standard row is
+	// absent but whose bound reason resolved keeps the Ontario 13 percent the engine always used; any
+	// other jurisdiction refuses, since there is no honest standard to fall back to.
+	std, ok, err := standard()
+	if err != nil {
+		return Quote{}, err
+	}
+	switch {
+	case ok:
+		q.StandardRateBps = std
+	case jur == jurisdictionON:
+		q.StandardRateBps = stdRateBps
+	default:
+		return Quote{}, noStandardRate(jur, asOf)
 	}
 
 	q.TaxCents = hstOn(in.SubtotalCents, q.RateBps)
@@ -121,15 +160,56 @@ func (s *Service) assessSale(ctx context.Context, in SaleAssessment) (Quote, err
 	return q, nil
 }
 
-// rate resolves the effective rate for a reason on a date, tolerating a nil repo (offline → standard fallback).
-func (s *Service) rate(ctx context.Context, reason, asOf string) (int, bool, error) {
+// jurisdiction answers the dealer's tax jurisdiction code: the injected source's answer, Ontario when
+// there is no source or the source answers blank. A failed read is an error, never a guess at Ontario
+// for a dealer that is not.
+func (s *Service) jurisdiction(ctx context.Context) (string, error) {
+	if s.region == nil {
+		return jurisdictionON, nil
+	}
+	r, err := s.region.TaxRegion(ctx)
+	if err != nil {
+		return "", err
+	}
+	r = strings.ToUpper(strings.TrimSpace(r))
+	if r == "" {
+		return jurisdictionON, nil
+	}
+	return r, nil
+}
+
+// standardToday resolves the dealer's own standard rate for today, for the rules that compare a rate
+// against it (the status-card profile rule). An Ontario dealer with no row keeps the Ontario 13
+// percent; any other jurisdiction refuses with the typed no standard rate error.
+func (s *Service) standardToday(ctx context.Context) (int, error) {
+	jur, err := s.jurisdiction(ctx)
+	if err != nil {
+		return 0, err
+	}
+	day := today(s.clock)
+	bps, ok, err := s.rate(ctx, jur, StandardReasonFor(jur), day)
+	if err != nil {
+		return 0, err
+	}
+	if ok {
+		return bps, nil
+	}
+	if jur == jurisdictionON {
+		return stdRateBps, nil
+	}
+	return 0, noStandardRate(jur, day)
+}
+
+// rate resolves the effective rate for a reason in a jurisdiction on a date, tolerating a nil repo
+// (offline → the Ontario standard fallback).
+func (s *Service) rate(ctx context.Context, jur, reason, asOf string) (int, bool, error) {
 	if s.repo == nil {
-		if reason == ReasonStdON13 || reason == ReasonManual {
+		if jur == jurisdictionON && (reason == ReasonStdON13 || reason == ReasonManual) {
 			return stdRateBps, true, nil
 		}
 		return 0, false, nil
 	}
-	return s.repo.ResolveRate(ctx, jurisdictionON, reason, asOf)
+	return s.repo.ResolveRate(ctx, jur, reason, asOf)
 }
 
 // -- rate table admin ----------------------------------------------------------
@@ -156,7 +236,15 @@ func (s *Service) CreateRate(ctx context.Context, r Rate) (Rate, error) {
 		return Rate{}, httpx.BadRequestf("rate_bps must be 0..10000")
 	}
 	if r.Jurisdiction == "" {
-		r.Jurisdiction = jurisdictionON
+		// A blank area is the dealer's own jurisdiction (Ontario for an Ontario dealer).
+		jur, err := s.jurisdiction(ctx)
+		if err != nil {
+			return Rate{}, err
+		}
+		r.Jurisdiction = jur
+	}
+	if isStandardReason(r.ReasonCode) && r.ReasonCode != StandardReasonFor(r.Jurisdiction) {
+		return Rate{}, httpx.BadRequestf("the standard reason for jurisdiction %s is %s", boundReason(r.Jurisdiction), StandardReasonFor(r.Jurisdiction))
 	}
 	if r.EffectiveFrom == "" {
 		r.EffectiveFrom = today(s.clock)
@@ -164,13 +252,13 @@ func (s *Service) CreateRate(ctx context.Context, r Rate) (Rate, error) {
 	if _, err := time.Parse("2006-01-02", r.EffectiveFrom); err != nil {
 		return Rate{}, httpx.BadRequestf("effective_from must be YYYY-MM-DD")
 	}
-	if r.ReasonCode != ReasonStdON13 && r.ReasonCode != ReasonManual && !evidenceGatedReasons[r.ReasonCode] {
+	if !isStandardReason(r.ReasonCode) && r.ReasonCode != ReasonManual && !evidenceGatedReasons[r.ReasonCode] {
 		// The guard measures the row's WHOLE life, not only its first day: the highest standard in
 		// effect anywhere the row's interval reaches (an open-ended row reaches into every standard
 		// era that follows it). A backdated row must clear the later raised standards it will govern
 		// beside, and a row planted today must clear today's (the round 2 review's P2: a backdated
 		// ungated row slipped in beside a later raise and the ring then refused it as a server fault).
-		maxStd, anyStd, err := s.repo.MaxRateInRange(ctx, r.Jurisdiction, ReasonStdON13, r.EffectiveFrom, r.EffectiveTo)
+		maxStd, anyStd, err := s.repo.MaxRateInRange(ctx, r.Jurisdiction, StandardReasonFor(r.Jurisdiction), r.EffectiveFrom, r.EffectiveTo)
 		if err != nil {
 			return Rate{}, err
 		}
@@ -197,7 +285,11 @@ func (s *Service) UpsertProfile(ctx context.Context, p StatusCardProfile) (Statu
 	if p.RateBps < 0 || p.RateBps > 10000 {
 		return StatusCardProfile{}, httpx.BadRequestf("rate_bps must be 0..10000")
 	}
-	if p.RateBps < stdRateBps && !p.RequiresNumber {
+	std, err := s.standardToday(ctx)
+	if err != nil {
+		return StatusCardProfile{}, err
+	}
+	if p.RateBps < std && !p.RequiresNumber {
 		return StatusCardProfile{}, httpx.BadRequestf("a relief profile must force the band-card number as evidence")
 	}
 	if p.Status == "" {
@@ -399,7 +491,8 @@ func (s *Service) deriveRecomputed(ctx context.Context, src Snapshot) (Snapshot,
 		ReasonCode:        q.ReasonCode,
 		RuleVersion:       ruleVersionM5,
 		RateBps:           q.RateBps,
-		FullHSTCents:      hstOn(base, stdRateBps),
+		FullHSTCents:      hstOn(base, q.StandardRateBps),
+		StandardRateBps:   q.StandardRateBps,
 		OnCreditCents:     q.OnCreditCents,
 		NetCollectedCents: q.NetCollectedCents,
 		Automated:         true, // M5 flips this true (automated engine, not a manual W4 decision)
@@ -408,14 +501,20 @@ func (s *Service) deriveRecomputed(ctx context.Context, src Snapshot) (Snapshot,
 
 // reconstructBase recovers the taxable subtotal from a W4 snapshot. tax_decision_snapshot carries no subtotal
 // column (frozen 0029 schema), so the base is recovered from full_hst, which is ALWAYS stored at the standard
-// rate (see snapshot build: FullHSTCents = hstOn(base, stdRateBps)), NOT at the relief rate. Dividing by the
-// relief rate (e.g. 5%, or 0% → fallback) inflated the base by up to 2.6× and broke the HST → GL tie-out
-// (S3 W6 H1). Always divide by the standard rate.
+// rate (see snapshot build: FullHSTCents = hstOn(base, the standard rate)), NOT at the relief rate. Dividing
+// by the relief rate (e.g. 5%, or 0% → fallback) inflated the base by up to 2.6× and broke the HST → GL
+// tie-out (S3 W6 H1). Always divide by the standard rate, and by the one the row itself was written under
+// (standard_rate_bps, 0389), never the dealer's current one: a rate change must not re-price history. A row
+// written before the column carries zero, which is an Ontario row at 13 percent.
 func reconstructBase(src Snapshot) int64 {
 	if src.FullHSTCents == 0 {
 		return 0
 	}
-	return (src.FullHSTCents * roundHalfUpBase) / int64(stdRateBps)
+	std := int64(src.StandardRateBps)
+	if std <= 0 {
+		std = stdRateBps
+	}
+	return (src.FullHSTCents * roundHalfUpBase) / std
 }
 
 // -- HST → GL reconciliation -----------------------------------------------------

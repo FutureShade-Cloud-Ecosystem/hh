@@ -13,6 +13,7 @@ import (
 // -- reason codes + rate constants (mirror pos/model.go + tax_decision_snapshot CHECK) ---------------------
 const (
 	ReasonStdON13    = "STD_ON_HST_13"           // 13% standard-rated Ontario HST
+	ReasonStdSales   = "STD_SALES_TAX"           // the neutral standard rate of a jurisdiction other than Ontario (0389)
 	ReasonONFNPos8   = "ON_FN_POS_8"             // Ontario First Nations point-of-sale: 8% credited → collect 5%
 	ReasonFedVendDel = "FED_S87_VENDOR_DELIVERY" // federal 0% provisional, Dibbits delivery to a reserve (evidence-gated)
 	ReasonFNGST5     = "FNGST_5"                 // First Nations GST 5%
@@ -30,7 +31,7 @@ const (
 
 	jurisdictionON = "ON"
 
-	stdRateBps      = 1300 // 13% default fallback (bit-identical to pos.flatHSTRateBps)
+	stdRateBps      = 1300 // the Ontario standard: the fallback for an Ontario dealer with no row, and the rate of every snapshot written before 0389
 	ontarioCredBps  = 800  // the 8% Ontario credit on the ON_FN_POS_8 path
 	ontarioNetBps   = 500  // 13% − 8% = the 5% net collected on the Ontario path
 	roundHalfUpBase = 10000
@@ -69,6 +70,7 @@ var evidenceGatedReasons = map[string]bool{
 // can exist that the engine cannot lawfully carry.
 var LegalReasonCodes = map[string]bool{
 	ReasonStdON13:        true,
+	ReasonStdSales:       true,
 	ReasonONFNPos8:       true,
 	ReasonFedGoodsOnRes:  true,
 	ReasonFedVendDel:     true,
@@ -80,6 +82,18 @@ var LegalReasonCodes = map[string]bool{
 	ReasonManual:         true,
 	ReasonReliefDeclined: true,
 }
+
+// StandardReasonFor is the standard reason code of a jurisdiction: the Ontario code for Ontario (an
+// Ontario dealer keeps today's behaviour exactly) and the neutral code for every other jurisdiction.
+func StandardReasonFor(jurisdiction string) string {
+	if jurisdiction == jurisdictionON {
+		return ReasonStdON13
+	}
+	return ReasonStdSales
+}
+
+// isStandardReason reports whether a reason code names a jurisdiction's standard rate.
+func isStandardReason(reason string) bool { return reason == ReasonStdON13 || reason == ReasonStdSales }
 
 // MisconfiguredRateError is the typed refusal for the ungated-below-standard shape: a reason that resolves
 // below the standard IN EFFECT for the date while being neither evidence gated nor the manual exception.
@@ -234,6 +248,10 @@ type Snapshot struct {
 	OnCreditCents     int64  `json:"on_credit_cents"`
 	NetCollectedCents int64  `json:"net_collected_cents"`
 	Automated         bool   `json:"automated"`
+
+	// StandardRateBps is the standard rate full_hst_cents was computed at (0389). Zero means a row
+	// written before the column existed, which is an Ontario row at 13 percent.
+	StandardRateBps int `json:"standard_rate_bps,omitempty"`
 }
 
 // RecomputeResult reports a recompute run (insert-only, audit-truth only, no retro GL correction).
