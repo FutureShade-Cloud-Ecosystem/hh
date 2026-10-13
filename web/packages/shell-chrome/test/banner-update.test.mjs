@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { renderKit, renderTemplate } from './lib/render.mjs';
 import { ShellBanner } from '../src/shell-banner.ts';
 import { ShellUpdate } from '../src/shell-update.ts';
+import { parseRules, declsFor, px } from './lib/css.mjs';
 import { icon } from '@hardscapehouse/design-system/src/state-icons.js';
 
 const bannerSrc = readFileSync(fileURLToPath(new URL('../src/shell-banner.ts', import.meta.url)), 'utf8');
@@ -134,4 +135,12 @@ test('FLOOR: tokens only, no hex colour literals in the banner or the prompt', (
 test('the state icons render as geometry through the svg tag', () => {
   const markup = renderTemplate(icon('wifiOff'));
   assert.ok(markup.includes('<svg'), 'the icon renders as svg');
+});
+
+test('FLOOR: the auth expired Sign in button keeps the 44 px target, at every size', () => {
+  const rules = parseRules(ShellBanner.styles.map((sheet) => sheet.cssText).join('\n'));
+  const own = declsFor(rules, '.sign-in');
+  for (const name of ['min-height', 'height']) {
+    if (name in own) assert.ok(px(own[name]) === null || px(own[name]) >= 44, `.sign-in ${name} is ${own[name]}, below 44 px`);
+  }
 });

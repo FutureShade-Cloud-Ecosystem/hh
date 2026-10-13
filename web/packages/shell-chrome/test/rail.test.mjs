@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { renderKit } from './lib/render.mjs';
 import { ShellRail } from '../src/shell-rail.ts';
+import { parseRules, declsFor, px } from './lib/css.mjs';
 import { memoryPinStorage, RAIL_COLLAPSED_KEY } from '../src/shell-state.ts';
 
 const railSrc = readFileSync(fileURLToPath(new URL('../src/shell-rail.ts', import.meta.url)), 'utf8');
@@ -208,6 +209,10 @@ test('FLOOR: the rail is drawn in tokens only, no hex colour literals anywhere i
   assert.deepEqual(hexes, [], `shell-rail.ts must stay literal-free, found: ${hexes.join(', ')}`);
 });
 
-test('FLOOR: every row is a 44 px target, at every size, because the rail is the phone rail too', () => {
-  assert.ok(railSrc.includes('min-height: 44px'), 'the rows carry the 44 px floor');
+test('FLOOR: every row and the toggle are 44 px targets, at every size, because the rail is the phone rail too', () => {
+  const rules = parseRules(ShellRail.styles.map((sheet) => sheet.cssText).join('\n'));
+  assert.ok(px(declsFor(rules, '.row')['min-height']) >= 44, 'the rows carry the 44 px floor');
+  const toggle = declsFor(rules, '.toggle');
+  assert.ok(px(toggle['width']) >= 44 && px(toggle['height']) >= 44, 'the toggle is a 44 px square');
 });
+

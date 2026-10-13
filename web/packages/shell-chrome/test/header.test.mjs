@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 import { renderKit } from './lib/render.mjs';
 import { ShellHeader } from '../src/shell-header.ts';
+import { parseRules, declsFor, px } from './lib/css.mjs';
 
 const headerSrc = readFileSync(
   fileURLToPath(new URL('../src/shell-header.ts', import.meta.url)),
@@ -196,9 +197,20 @@ test('FLOOR: the band is drawn in tokens only, no hex colour literals anywhere i
   assert.deepEqual(hexes, [], `shell-header.ts must stay literal-free, found: ${hexes.join(', ')}`);
 });
 
-test('FLOOR: phone and tablet targets are at least 44 px', () => {
-  assert.ok(headerSrc.includes('min-height: 44px'), 'the narrow container raises every target to 44 px');
-  assert.ok(headerSrc.includes('@container'), 'the narrow layout rides the host\u2019s own width');
+const headerRules = parseRules(ShellHeader.styles.map((sheet) => sheet.cssText).join('\n'));
+const NARROW = '@container (max-width: 834px)';
+
+test('FLOOR: phone and tablet targets are at least 44 px, each control named by its selector', () => {
+  for (const selector of ['.selector', '.icon-btn', '.account', '.mi']) {
+    const narrow = declsFor(headerRules, selector, NARROW);
+    assert.ok(px(narrow['min-height']) >= 44, `${selector} is 44 px tall in the narrow container`);
+  }
+  // The bell and the pin are fixed 34 px squares at rest, so the narrow container must lift the width too.
+  const base = declsFor(headerRules, '.icon-btn');
+  const narrow = declsFor(headerRules, '.icon-btn', NARROW);
+  const widest = Math.max(px(base['width']) ?? 0, px(narrow['width']) ?? 0, px(narrow['min-width']) ?? 0);
+  assert.ok(widest >= 44, `.icon-btn is 44 px wide in the narrow container (found ${widest})`);
+  assert.ok(px(narrow['min-width']) >= 44 || px(narrow['width']) >= 44, 'the lift is on the narrow container, not the base');
 });
 
 test('FLOOR: the phone band drops the sync chip and the org word, the r4 frame\u2019s own rule', () => {
