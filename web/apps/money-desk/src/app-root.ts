@@ -140,7 +140,13 @@ export class MoneyDeskApp extends HHElement {
         },
         setField: (name, value, key) => {
           const scope = key === undefined ? "" : `[data-key="${key}"]`;
-          const found = this.renderRoot.querySelector<HTMLInputElement>(`[data-field="${name}"]${scope}`);
+          const found = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]${scope}`);
+          if (found instanceof HTMLSelectElement && [...found.options].some((o) => o.hasAttribute("data-id"))) {
+            // A select whose options carry ids takes the option that names the value.
+            const at = [...found.options].findIndex((o) => o.getAttribute("data-id") === value);
+            if (at >= 0 && found.selectedIndex !== at) found.selectedIndex = at;
+            return;
+          }
           if (found !== null) {
             if (found.value !== value) found.value = value;
             return;

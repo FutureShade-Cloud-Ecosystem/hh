@@ -59,7 +59,7 @@ export interface OfficeHost {
   /** Reads the open account's invoices and the selected invoice again after a write that moves them. */
   readonly reloadAccount: () => Promise<void>;
   /** Puts an invoice document's HTML into the element matching the selector, in a sandboxed frame. */
-  readonly mountDocument: (selector: string, html: string) => void;
+  readonly mountDocument: (selector: string, text: string) => void;
 }
 
 /** The panel an invoice's extra actions open, and what it is about. */
@@ -366,7 +366,7 @@ export class OfficeDesk {
     const name = control.getAttribute("data-field");
     const value = (control as HTMLSelectElement).value;
     if (name === "remind-account") {
-      void this.#chooseAccount(value);
+      void this.#chooseAccount((control as HTMLSelectElement).selectedOptions[0]?.getAttribute("data-id") ?? "");
       return true;
     }
     if (name === "remind-invoice") {
@@ -628,6 +628,10 @@ export class OfficeDesk {
   /** After each paint: a contact's name fills its field once the contact has been read. */
   afterRender(): void {
     this.#settings.afterRender();
+    // The selects bind no value: each takes the option naming what the desk holds.
+    this.#host.setField("remind-account", this.#remind.customerId);
+    this.#host.setField("remind-invoice", this.#remind.invoiceId);
+    this.#host.setField("history-account", this.#historyFor);
     if (this.#documentHtml !== null) {
       const text = this.#documentHtml;
       this.#documentHtml = null;

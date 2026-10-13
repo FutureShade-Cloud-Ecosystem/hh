@@ -125,13 +125,13 @@ function remindForm(om: OfficeModel): TemplateResult {
       <form>
         <label>Account
           <select data-field="remind-account">
-            <option value="" ?selected=${f.customerId === ""}>Choose an account</option>
-            ${om.accounts.map((a) => html`<option value="${a.customer_id}" ?selected=${f.customerId === a.customer_id}>${a.customer_name}</option>`)}
+            <option data-id="">Choose an account</option>
+            ${om.accounts.map((a) => html`<option data-id="${a.customer_id}">${a.customer_name}</option>`)}
           </select>
         </label>
         <label>Invoice
           <select data-field="remind-invoice" ?disabled=${f.customerId === "" || f.invoices === "loading"}>
-            ${f.customerId === "" ? html`<option>Choose an account first</option>` : f.invoices === "loading" ? html`<option>Loading the invoices</option>` : invoices.length === 0 ? html`<option>Nothing is owing</option>` : invoices.map((r) => html`<option data-id="${r.id}" ?selected=${f.invoiceId === r.id}>${r.invoice_no}, ${formatMoney(r.balance_cents)}${r.days_overdue > 0 ? `, ${r.days_overdue} days over` : ""}</option>`)}
+            ${f.customerId === "" ? html`<option>Choose an account first</option>` : f.invoices === "loading" ? html`<option>Loading the invoices</option>` : invoices.length === 0 ? html`<option>Nothing is owing</option>` : invoices.map((r) => html`<option data-id="${r.id}">${r.invoice_no}, ${formatMoney(r.balance_cents)}${r.days_overdue > 0 ? `, ${r.days_overdue} days over` : ""}</option>`)}
           </select>
         </label>
         <div><div class="label" id="remind-channel-label">Channel</div>
@@ -165,8 +165,8 @@ function historyTable(om: OfficeModel): TemplateResult {
         <h3>Reminders sent</h3>
         <label class="inline-select"><span class="visually-hidden">Show reminders for</span>
           <select data-field="history-account">
-            <option data-id="" ?selected=${om.historyFor === ""}>Every account</option>
-            ${om.accounts.map((a) => html`<option data-id="${a.customer_id}" ?selected=${om.historyFor === a.customer_id}>${a.customer_name}</option>`)}
+            <option data-id="">Every account</option>
+            ${om.accounts.map((a) => html`<option data-id="${a.customer_id}">${a.customer_name}</option>`)}
           </select>
         </label>
       </div>
@@ -218,7 +218,7 @@ function paperPanel(om: OfficeModel): TemplateResult {
                       <span class="who-block"><span class="who">${e.customer_name}</span><span class="dim small">${e.account_no} · ${e.delivered_sends} reminders in ${e.window_days} days, none opened · flagged ${relativeStamp(e.raised_at, om.nowMs)}</span></span>
                       ${om.closing !== null && om.closing.flagId === e.flag_id
                         ? html`<span class="close-form">
-                            <label><span class="visually-hidden">Why</span><input type="text" data-field="paper-note" data-key="${e.flag_id}" placeholder="${om.closing.status === "MOVED_TO_PAPER" ? "Why it moves to paper" : "Why it is dismissed"}" maxlength="300" autocomplete="off" /></label>
+                            <label><span class="visually-hidden">Why</span><input type="text" data-field="paper-note" data-key="${e.flag_id}" placeholder="Why, in a few words" maxlength="300" autocomplete="off" /></label>
                             <button type="button" class="btn btn-primary small-btn" data-action="paper-close-confirm" data-flag-id="${e.flag_id}" ?disabled=${om.busy}>${om.closing.status === "MOVED_TO_PAPER" ? "Move to paper" : "Dismiss the flag"}</button>
                             <button type="button" class="btn btn-secondary small-btn" data-action="paper-close-cancel">Cancel</button>
                           </span>`
@@ -286,10 +286,14 @@ function disputeForm(om: OfficeModel, d: BillingInvoiceDetail): TemplateResult {
       <label>Why it is disputed
         <select data-field="dispute-reason">
           <option value="">Choose a reason</option>
-          ${DISPUTE_REASONS.map((r) => html`<option value="${r}">${disputeReasonWord(r)}</option>`)}
+          <option value="SHORT_DELIVERY">Short delivery</option>
+          <option value="DAMAGED">Damaged</option>
+          <option value="PRICING">Pricing</option>
+          <option value="NOT_ORDERED">Not ordered</option>
+          <option value="OTHER">Other</option>
         </select>
       </label>
-      <label>Amount disputed (dollars)<input type="text" inputmode="decimal" data-field="dispute-amount" placeholder="Up to ${formatMoney(d.totals.balance_cents)}" autocomplete="off" /></label>
+      <label>Amount disputed (dollars)<input type="text" inputmode="decimal" data-field="dispute-amount" placeholder="Up to the balance" autocomplete="off" /></label>
       <label>What the customer said<input type="text" data-field="dispute-note" placeholder="Such as two pallets arrived cracked" autocomplete="off" /></label>
       <div class="actions">
         <button type="button" class="btn btn-primary" data-action="dispute-open" data-invoice-id="${d.id}" data-balance-cents="${d.totals.balance_cents}" ?disabled=${om.busy}>Open the dispute</button>
@@ -305,7 +309,10 @@ function resolveForm(om: OfficeModel, d: BillingInvoiceDetail): TemplateResult {
       <label>How it ended
         <select data-field="dispute-outcome">
           <option value="">Choose an outcome</option>
-          ${DISPUTE_OUTCOMES.map((o) => html`<option value="${o}">${disputeOutcomeWord(o)}</option>`)}
+          <option value="PAID">Paid</option>
+          <option value="CREDITED">Credited</option>
+          <option value="WRITTEN_OFF">Written off</option>
+          <option value="WITHDRAWN">Withdrawn</option>
         </select>
       </label>
       <p class="dim small">Closing records how the argument ended. It does not itself move any money.</p>

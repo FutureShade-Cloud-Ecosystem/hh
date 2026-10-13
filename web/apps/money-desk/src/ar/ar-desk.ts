@@ -50,7 +50,7 @@ export interface DeskHost {
   /** Hands text to the person as a file. */
   readonly download: (text: string, filename: string) => void;
   /** Puts an invoice document's HTML into the element matching the selector, in a sandboxed frame with no scripts. */
-  readonly mountDocument: (selector: string, html: string) => void;
+  readonly mountDocument: (selector: string, text: string) => void;
 }
 
 export interface DeskWho {
