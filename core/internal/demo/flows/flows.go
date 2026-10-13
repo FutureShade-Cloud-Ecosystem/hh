@@ -186,6 +186,17 @@ var accounts = map[string]Account{
 		Label:          "Branch Manager",
 		Role:           "branch_manager",
 	},
+	// The Logistics Manager, the fourth of the coming roles cycle's logins
+	// (branch scoped, tier two): the dock and the day's deliveries, with
+	// Manager Home born from the dock shape.
+	"logistics-manager": {
+		Flow:           "logistics-manager",
+		PlatformUserID: "de5b2000-0000-4000-9000-000000000004",
+		Email:          "logistics.manager@" + ReservedDomain,
+		DisplayName:    "Logistics manager (demo)",
+		Label:          "Logistics Manager",
+		Role:           "logistics_manager",
+	},
 }
 
 // Get returns the account one flow name stands for. The second return is
@@ -211,6 +222,7 @@ func All() []Account {
 		accounts["general-manager"],
 		accounts["hr"],
 		accounts["branch-manager"],
+		accounts["logistics-manager"],
 	}
 }
 
