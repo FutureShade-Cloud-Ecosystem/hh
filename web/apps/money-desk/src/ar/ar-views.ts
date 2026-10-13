@@ -31,6 +31,8 @@ import type {
 import type { ApplyAnswer } from "./ar-api.js";
 import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
+import type { OfficeModel } from "./office-desk.js";
+import { renderContacts, renderRunPanel } from "./office-views.js";
 
 export type Tab = "receivables" | "statements" | "holds";
 export type RegisterFilter = "open" | "overdue" | "promised" | "disputed" | "paid";
@@ -46,7 +48,7 @@ export interface AccountModel {
   readonly branchName: string;
   readonly invoices: readonly BillingRegisterRow[];
   readonly showAll: boolean;
-  readonly sub: "invoices" | "statement";
+  readonly sub: "invoices" | "statement" | "contacts";
   readonly right: RightMode;
   readonly selectedInvoiceId: string | null;
   readonly detail: BillingInvoiceDetail | null;
@@ -93,6 +95,7 @@ export interface DeskModel {
   readonly holdPanel: "about" | "lift" | "place-later";
   readonly liftChoice: "lift" | "override";
   readonly account: AccountModel | null;
+  readonly office: OfficeModel;
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
@@ -406,6 +409,7 @@ export function renderStatements(model: DeskModel): TemplateResult {
       <div class="actions"><button type="button" class="btn btn-primary" data-action="run-statements" ?disabled=${model.busy}>Run for every account</button></div>
     </div>
     ${tabsBar(model)} ${messages(model)}
+    ${renderRunPanel(model.office, model.asOf)}
     <section class="panel" aria-label="Statements by account">
       <div class="panel-head"><h3>Statements</h3></div>
       <div class="scroll">
@@ -774,12 +778,14 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
       <button type="button" class="tab" data-action="sub" data-choice="invoices" aria-current="${account.sub === "invoices" ? "true" : "false"}">Open invoices</button>
       <button type="button" class="tab" data-action="sub" data-choice="statement" aria-current="${account.sub === "statement" ? "true" : "false"}">Statement</button>
       <span class="tab tab-later" aria-disabled="true">Activity ${later()}</span>
-      <span class="tab tab-later" aria-disabled="true">Contacts ${later()}</span>
+      <button type="button" class="tab" data-action="sub" data-choice="contacts" aria-current="${account.sub === "contacts" ? "true" : "false"}">Contacts</button>
     </nav>
     ${messages(model)}
     ${account.sub === "statement"
       ? statementDoc(model, account)
-      : html`
+      : account.sub === "contacts"
+        ? renderContacts(model.office, account)
+        : html`
           <div class="cols">
             <div class="col-main">${invoiceTable(model, account)}</div>
             <div class="col-side">${account.right === "invoice" ? invoicePanel(model, account) : account.right === "promise" ? promisePanel(model, account) : receivePanel(model, account)}</div>

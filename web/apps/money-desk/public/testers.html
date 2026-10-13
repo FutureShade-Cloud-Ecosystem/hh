@@ -72,7 +72,7 @@
 
 <h2>Receivables: bounced payments, statements and holds</h2>
 <p data-claim="bounced-work">A payment can be marked bounced from its invoice, with a reason, and it joins the queue. In the queue it is worked three ways: a replacement payment, a promise to pay, or a reminder to the account.</p>
-<p data-claim="statement">An account's Statement tab has none until you run it. Run a statement to read the aging strip, then send it to the AP contact. Download PDF, the Activity tab and the Contacts tab are marked later.</p>
+<p data-claim="statement">An account's Statement tab has none until you run it. Run a statement to read the aging strip, then send it to the AP contact. Download PDF and the Activity tab are marked later. The Contacts tab holds the account's AP contact.</p>
 <p data-claim="statements-all">The Statements tab lists every account, and Run for every account runs them all.</p>
 <p data-claim="holds-payrec">The Credit holds tab lists the holds. For Payables and Receivables, Lift and Override are held. Pressing Lift says in words that releasing a hold is for the Financial Controller or the General Manager, and the bare word Forbidden is not shown. Run the sweep is refused in words as the Financial Controller's. Place a hold is marked later: the core has no route for it yet.</p>
 <p data-claim="holds-controller">The Financial Controller lifts a hold with a reason, or overrides another, and has no Place a hold button.</p>
@@ -91,6 +91,10 @@
 <h2>The ledger: journals and the trial balance</h2>
 <p data-claim="journal-register">The Journals tab lists the journals with filters that carry counts, such as Pending. A journal number never wraps onto two lines. Void and Reverse are marked later.</p>
 <p data-claim="trial-balance">The Trial balance tab reads in balance with the server's totals, and takes All branches or one branch. The tie out, choosing a period and the Excel download are marked later.</p>
+
+<h2>Receivables office: statement runs and AP contacts</h2>
+<p data-claim="office-run">After a statement run the Statements tab shows the run read back from the server: its kind, the number of statements, how many went to the messaging sink and how many did not, and one row per account with its total due, a delivery word and where the statement would go. No address is shown, only the contact's own label and whether it goes by email or phone.</p>
+<p data-claim="office-contact">An account's Contacts tab tags, replaces or removes its AP contact. It says what is on file in words and never shows the address or number back. Saving replaces the whole contact, a contact with neither an email nor a phone is refused before anything is sent, and removing asks a second time.</p>
 
 <h2>Everywhere</h2>
 <p data-claim="phone-sideways">On a phone no screen scrolls the page sideways.</p>

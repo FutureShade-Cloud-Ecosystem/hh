@@ -28,6 +28,16 @@ Round 3: the payment panel no longer splits in the app; the received payment rou
 `paymentsApplyReceived`, with the stub held to the core's sentences). Final round: one key per payment, reused on a lost or
 5xx answer, which says the outcome is unknown.
 
-Not ported on purpose: auto credit hold settings, the paper path and reminders
-(Base tier extras, not this role's first increment), the pop out and duplicate
-windows.
+Not ported on purpose: the pop out and duplicate windows. (Auto credit hold settings, the paper path and reminders
+were on this list through the first increment; the office rows below bring them in.)
+
+## The receivables office (`src/ar/office-*.ts`, Session 4 item 1f)
+
+Same original, same rule: take the existing and improve it. Reminders and statements leave only through the messaging
+sink, so every screen says what would go and to which contact by its role label, and none draws an address or number.
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Statement run, read back by id | `app/src/ar-monthend-api.ts`, `app/src/ar-monthend.ts` | `showRun`, `renderRunPanel` | The run's own counts and one row per statement with where it would go; read back from the server, not echoed from the press |
+| AP contact tag, replace, remove | `app/src/ar-reminders.ts`, `app/src/ar-console.ts` | `renderContacts`, `validateApContact`, `contactLine` | Said as what is on file, never the address; the core's limits checked before a request is sent |
+

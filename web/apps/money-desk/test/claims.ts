@@ -16,6 +16,7 @@ export type ClaimProof = { readonly file: string; readonly test: string } | { re
 const CARD = "test/acceptance/card-lands.pw.ts";
 const RECEIVABLES = "test/receivables.pw.ts";
 const LEDGER = "test/ledger.pw.ts";
+const OFFICE = "test/office.pw.ts";
 const FRONT_DOOR = "../front-door/test/acceptance/front-door.pw.ts";
 const CORE = "../../../core/cmd/core/";
 
@@ -137,6 +138,11 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "phone-decision": [{ file: LEDGER, test: "on a phone a chosen request brings its decision into view" }],
   "journal-register": [{ file: LEDGER, test: "the journal register keeps a journal number on one line and says what is later" }],
   "trial-balance": [{ file: LEDGER, test: "it reads the trial balance in balance, with the server's totals" }],
+  "office-run": [{ file: OFFICE, test: "a statement run is read back with what went to whom, and no address is drawn" }],
+  "office-contact": [
+    { file: OFFICE, test: "an account's AP contact is tagged, replaced and removed, and checked before it is sent" },
+    { file: OFFICE, test: "on a phone the run and the contact fit the screen and work from the keyboard" },
+  ],
   "phone-sideways": [{ file: RECEIVABLES, test: "on a phone no screen scrolls the page sideways" }],
   "empty-world": [{ file: RECEIVABLES, test: "the empty world: each screen says so in words" }],
 };

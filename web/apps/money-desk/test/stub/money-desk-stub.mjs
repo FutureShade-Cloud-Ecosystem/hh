@@ -10,11 +10,13 @@
 // Dates are cut from the host's own day so no calendar literal is written.
 import { createServer } from "node:http";
 import { createGlWorld } from "./gl-world.mjs";
+import { createOfficeWorld } from "./ar-office-world.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
+
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
 // The core's closed table, in its order: the till's pair, the Yard manager, the Yard Team and the
@@ -162,8 +164,15 @@ let world;
 // the desk's typing answers at once while a writer is mid flight.
 let parkedApplyMs = 0;
 
+// The receivables office's world (AP contacts, reminders, the paper path, dispute, settings), answered by its own module.
+const officeWorld = createOfficeWorld({
+  isController: (req) => isController(req),
+  taggedAccounts: () => ACCOUNTS.filter((a) => a.n !== 5).map((a) => ({ id: uuid("e", a.n), label: "Accounts payable desk" })),
+});
+
 function reset(kind = "full") {
   parkedApplyMs = 0;
+  officeWorld.reset(kind);
   const source = kind === "wide" ? [...INVOICES, ...WIDE_EXTRA] : INVOICES;
   world = {
     empty: kind === "empty",
@@ -182,6 +191,7 @@ function reset(kind = "full") {
     payments: [],
     holds: [],
     statements: new Map(),
+    runs: new Map(),
     keys: new Map(),
     counter: 0,
   };
@@ -873,9 +883,20 @@ async function handle(req, res) {
     return send(res, 200, { sent: body.invoice_ids.length, replayed: 0, tone: body.tone });
   }
 
+  // The statement run (core/internal/billing monthend_handler.go statementRun and statements.go GenerateRun): the body
+  // must be JSON, the as_of a calendar day, the mode MASS or INTERIM, and an INTERIM run names exactly one account.
+  // A created run answers 201 and is stored, so the run reads back by its id.
   if (method === "POST" && path === "/api/v1/ar/statement-runs") {
     const body = await readBody(req);
-    const targets = body?.customer_id ? ACCOUNTS.filter((a) => custId(a.n) === body.customer_id) : ACCOUNTS;
+    if (body === null) return refuse(res, 400, "invalid JSON body");
+    if (body.as_of !== undefined && body.as_of !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(String(body.as_of))) return refuse(res, 400, "as_of must be YYYY-MM-DD");
+    const mode = body.mode === undefined || body.mode === "" ? "MASS" : body.mode;
+    if (mode !== "MASS" && mode !== "INTERIM") return refuse(res, 400, `billing: unknown statement mode "${mode}"`);
+    if (mode === "INTERIM" && !body.customer_id) return refuse(res, 400, "billing: an INTERIM run is for exactly one account");
+    const targets = body.customer_id ? ACCOUNTS.filter((a) => custId(a.n) === body.customer_id) : ACCOUNTS;
+    world.counter += 1;
+    const runId = uuid("9", world.counter);
+    const apTagged = (customerId) => officeWorld.state().apContacts.has(customerId);
     const statements = [];
     for (const a of targets) {
       const row = agingRows().find((r) => r.customer_id === custId(a.n));
@@ -883,7 +904,7 @@ async function handle(req, res) {
       world.counter += 1;
       const st = {
         id: uuid("8", world.counter),
-        run_id: uuid("9", world.counter),
+        run_id: runId,
         customer_id: custId(a.n),
         customer_name: a.name,
         as_of_date: dayOffset(0),
@@ -892,28 +913,38 @@ async function handle(req, res) {
         days_60_cents: row.days_60_cents,
         days_90_plus_cents: row.days_90_plus_cents,
         closing_balance_cents: row.total_cents,
-        delivery_status: "QUEUED",
+        delivery_status: apTagged(custId(a.n)) ? "QUEUED" : "NOT_QUEUED",
         created_at: NOW_ISO(),
       };
       world.statements.set(custId(a.n), st);
       statements.push(st);
     }
-    return send(res, 200, {
+    const queued = statements.filter((s) => s.delivery_status === "QUEUED").length;
+    const result = {
       run: {
-        id: uuid("9", 999),
-        mode: body?.mode ?? "MASS",
+        id: runId,
+        mode,
         as_of_date: dayOffset(0),
         status: "COMPLETED",
         generated_count: statements.length,
         queued_count: statements.length,
         created_at: NOW_ISO(),
+        finished_at: NOW_ISO(),
         notices_enabled: true,
-        notice_queued_count: statements.length,
-        notice_suppressed_count: 0,
+        notice_queued_count: queued,
+        notice_suppressed_count: statements.length - queued,
         notice_accounting_recorded: true,
       },
       statements,
-    });
+    };
+    world.runs.set(runId, result);
+    return send(res, 201, result);
+  }
+
+  m = path.match(/^\/api\/v1\/ar\/statement-runs\/([^/]+)$/);
+  if (m && method === "GET") {
+    const found = world.runs.get(m[1]);
+    return found === undefined ? refuse(res, 404, "not found") : send(res, 200, found);
   }
 
   if (method === "GET" && path === "/api/v1/ar/register/export") {
@@ -963,6 +994,11 @@ async function handle(req, res) {
     return send(res, 200, { accounts: custs.size, generated: custs.size, run_ids });
   }
 
+  {
+    const body = method === "POST" || method === "PUT" ? await readBody(req) : null;
+    const answer = officeWorld.handle(req, url, body);
+    if (answer !== null) return send(res, answer.status, answer.body);
+  }
   return refuse(res, 404, "not found");
 }
 
