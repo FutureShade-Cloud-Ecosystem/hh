@@ -74,7 +74,7 @@ async function rig(extra = {}) {
     ...extra,
   });
   await layer.cycle();
-  return { layer, server, store };
+  return { layer, server, store, backend };
 }
 
 test("the first cycle pulls the world, and the queue reads answer from the store with staleness", async () => {
@@ -581,3 +581,38 @@ test("a record queued behind this device's own shortage report goes blind: the r
   assert.equal(await layer.waiting(), 0);
   assert.equal((await layer.openCards()).length, 0, "no server wins card for the device's own earlier report");
 });
+
+// ---- review 6c: rollback and the connected supersede ----
+
+test("a refused second record puts the server's earlier lines back, not an empty list", async () => {
+  const { layer, server } = await rig();
+  await layer.recordLines(TASK, [recordLine({ qty_picked: "20", short_reason: "DAMAGED" })]);
+  await layer.cycle();
+  const first = await layer.pick(TASK);
+  assert.equal(first.value.picked[0].qty_picked, "20", "the server's first record is on the row");
+  server.setOffline(true);
+  await layer.recordLines(TASK, [recordLine({ qty_picked: "24" })]);
+  const [queued] = await layer.store.outbox.pending();
+  server.refuse(queued.key, "line 1: refused by test");
+  server.setOffline(false);
+  await layer.cycle();
+  const after = await layer.pick(TASK);
+  assert.equal(after.value.picked.length, 1);
+  assert.equal(after.value.picked[0].qty_picked, "20", "the earlier lines are back");
+  assert.equal(after.value.picked[0].id.startsWith("local:"), false);
+});
+
+test("a refused record is taken back when the refusal arrives after a restart", async () => {
+  const { layer, server, store, backend } = await rig();
+  server.setOffline(true);
+  await layer.recordLines(TASK, [recordLine()]);
+  const [queued] = await layer.store.outbox.pending();
+  server.refuse(queued.key, "line 1: refused by test");
+  server.setOffline(false);
+  const fresh = new YardOffline({ store, sql: backend.sql, transport: server.transport(), actorId: ACTOR, newKey: nextKey });
+  await fresh.cycle();
+  const after = await fresh.pick(TASK);
+  assert.equal(after.value.picked.length, 0);
+  assert.deepEqual((await fresh.openCards()).map((c) => c.kind), ["rejected"]);
+});
+

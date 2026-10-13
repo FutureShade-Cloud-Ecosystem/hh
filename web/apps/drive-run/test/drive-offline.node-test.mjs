@@ -89,7 +89,7 @@ async function rig(extra = {}) {
     ...extra,
   });
   await layer.cycle();
-  return { layer, server, store };
+  return { layer, server, store, backend };
 }
 
 test("the first cycle pulls the run, and the run sheet reads answer from the store with staleness", async () => {
@@ -527,4 +527,44 @@ test("the payload check flags a field the attestation form does not admit (a for
   assert.deepEqual(payloadOffenders(request({ ...good, created_at: "x" })), ["pod attest create: created_at"]);
   assert.deepEqual(payloadOffenders(request({ ...good, caption: "x" })), ["pod attest create: caption"]);
   assert.deepEqual(payloadOffenders(request({ ...good, affirmed: "yes" })), ["pod attest create: affirmed is not true"]);
+});
+
+// ---- review 6c: the proof's rollback ----
+
+async function toTheRoad(layer) {
+  await layer.advance(STOP_1, "LOADED");
+  await layer.advance(STOP_1, "EN_ROUTE");
+  await layer.cycle();
+}
+
+test("a proof the core refuses while the stop is unchanged on the server is taken back", async () => {
+  const { layer, server } = await rig();
+  await toTheRoad(layer);
+  server.setOffline(true);
+  assert.equal((await layer.pod(STOP_1, "Site lead")).ok, true);
+  const [proof] = (await layer.store.outbox.pending()).filter((r) => r.scope === "pod");
+  server.refuse(proof.key, "dispatch: no active staff authority in this org");
+  server.setOffline(false);
+  await layer.cycle();
+  const stop = await stopOf(layer);
+  assert.equal(stop.status, "EN_ROUTE");
+  assert.equal(stop.pod_received_by, "");
+  assert.equal(stop.proof_waiting, false);
+  assert.deepEqual((await layer.openCards()).map((c) => c.kind), ["rejected"]);
+});
+
+test("the same refusal arriving through a fresh layer over the same store (a restart) takes the proof back", async () => {
+  const { layer, server, store, backend } = await rig();
+  await toTheRoad(layer);
+  server.setOffline(true);
+  await layer.pod(STOP_1, "Site lead");
+  const [proof] = (await layer.store.outbox.pending()).filter((r) => r.scope === "pod");
+  server.refuse(proof.key, "dispatch: no active staff authority in this org");
+  server.setOffline(false);
+  const fresh = new DriveOffline({ store, sql: backend.sql, transport: server.transport(), newKey: nextKey });
+  await fresh.cycle();
+  const stop = await stopOf(fresh);
+  assert.equal(stop.status, "EN_ROUTE");
+  assert.equal(stop.pod_received_by, "");
+  assert.deepEqual((await fresh.openCards()).map((c) => c.kind), ["rejected"]);
 });
