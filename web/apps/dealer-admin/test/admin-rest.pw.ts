@@ -124,9 +124,21 @@ test.describe("the print jobs surface", () => {
   });
 
   test("a document that has printed nothing says so about itself", async ({ page }) => {
-    await findDocument(page, "0f000000-0000-4000-9000-0000000000s9");
+    await findDocument(page, "0f000000-0000-4000-9000-0000000000e9");
     await expect(page.locator("[data-test=print-empty]")).toContainText("No print jobs for this document");
     await expect(page.locator("[data-test=print-count]")).toHaveCount(0);
+  });
+
+  test("a search in flight says it is looking, never that nothing printed", async ({ page }) => {
+    // Hold the core's answer so the in-flight frame stays on the glass.
+    await page.route("**/api/v1/printing/jobs*", async (route) => {
+      await new Promise((r) => setTimeout(r, 800));
+      await route.continue();
+    });
+    await findDocument(page, "0f000000-0000-4000-9000-0000000000e9");
+    await expect(page.locator("[data-test=print-loading]")).toBeVisible();
+    await expect(page.locator("[data-test=print-empty]")).toHaveCount(0);
+    await expect(page.locator("[data-test=print-empty]")).toContainText("No print jobs for this document");
   });
 
   test("a reference that is no document id is refused in the server's own words", async ({ page }) => {

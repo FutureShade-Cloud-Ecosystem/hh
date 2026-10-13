@@ -499,17 +499,17 @@ export class AdminWork {
       this.#host.repaint();
       return;
     }
-    this.#print = { ...this.#print, phase: "ready", busy: true, rows: [], error: "" };
+    this.#print = { ...this.#print, phase: "loading", busy: true, rows: [], error: "" };
     this.#host.repaint();
     const result = await this.#api.printJobs(docType, ref);
     if (!result.ok) {
       // The server's own words: an unknown paper names the paper, an unknown
       // document is the bare not found. No paraphrase, no invention.
-      this.#print = { ...this.#print, busy: false, error: serverWords(result.error) };
+      this.#print = { ...this.#print, phase: "ready", busy: false, error: serverWords(result.error) };
       this.#host.repaint();
       return;
     }
-    this.#print = { ...this.#print, busy: false, rows: result.value, error: "" };
+    this.#print = { ...this.#print, phase: "ready", busy: false, rows: result.value, error: "" };
     this.#host.repaint();
   }
 
