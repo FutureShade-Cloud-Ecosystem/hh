@@ -16,6 +16,7 @@ export type ClaimProof = { readonly file: string; readonly test: string } | { re
 const CARD = "test/acceptance/card-lands.pw.ts";
 const RECEIVABLES = "test/receivables.pw.ts";
 const LEDGER = "test/ledger.pw.ts";
+const FINSTMT = "test/finstmt.pw.ts";
 const FRONT_DOOR = "../front-door/test/acceptance/front-door.pw.ts";
 const CORE = "../../../core/cmd/core/";
 
@@ -137,6 +138,43 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "phone-decision": [{ file: LEDGER, test: "on a phone a chosen request brings its decision into view" }],
   "journal-register": [{ file: LEDGER, test: "the journal register keeps a journal number on one line and says what is later" }],
   "trial-balance": [{ file: LEDGER, test: "it reads the trial balance in balance, with the server's totals" }],
+  "stmt-area": [{ file: FINSTMT, test: "the controller's Statements area opens on the income statement with the books' own periods" }],
+  "stmt-periods": [
+    { file: FINSTMT, test: "a period narrows the income statement and says whether it is closed or still open" },
+    { file: "src/finstmt/finstmt-logic.ts", source: "no calendar word is written here" },
+  ],
+  "stmt-branch": [
+    { file: FINSTMT, test: "a branch narrows the statements, and the whole company is the two branches together" },
+    { file: FINSTMT, test: "a manager who holds one branch is refused the consolidated books in words, and reads that branch" },
+  ],
+  "stmt-compare": [{ file: FINSTMT, test: "the year before sits beside this year and the change is the books' own figure" }],
+  "stmt-detail": [
+    { file: FINSTMT, test: "a statement line opens the ledger detail behind it, and the detail ties to the line" },
+    { file: FINSTMT, test: "the ledger detail narrows by account and shows more on request" },
+  ],
+  "stmt-balance": [{ file: FINSTMT, test: "the balance sheet balances by the server's own flag and carries each section's total" }],
+  "stmt-trial": [{ file: FINSTMT, test: "the trial balance reads in balance with the server's totals and takes no branch" }],
+  "stmt-aging": [{ file: FINSTMT, test: "the receivables aging shows its bands and total, and a branch narrows it" }],
+  "stmt-csv": [{ file: FINSTMT, test: "the CSV is made from the figures on the page, in plain decimals, and named for the period" }],
+  "stmt-print": [{ file: FINSTMT, test: "a printed statement carries its title, period and scope and nothing around it" }],
+  "stmt-packs": [
+    { file: FINSTMT, test: "a saved pack is saved, changed and deleted after asking, and the list follows" },
+    { file: "src/finstmt/finstmt-views.ts", source: "nothing is sent yet" },
+  ],
+  "stmt-pack-refused": [
+    { file: FINSTMT, test: "a pack that is not complete is refused in the browser and nothing is sent" },
+    { file: FINSTMT, test: "a pack refused by the core names who may save it, and changes nothing" },
+    { file: FINSTMT, test: "a recipient the core does not accept is said in the core's own words" },
+  ],
+  "stmt-refused": [{ file: FINSTMT, test: "a refused read names who may read, never the bare gate word" }],
+  "stmt-states": [
+    { file: FINSTMT, test: "while the books load the screen says so, a failed load offers Try again, and an empty list says so" },
+    { file: FINSTMT, test: "the core's page of packs and the key it writes today are both read, and anything else is refused, never half read" },
+  ],
+  "stmt-phone": [
+    { file: FINSTMT, test: "on a phone the text tables become cards and no screen scrolls the page sideways" },
+    { file: FINSTMT, test: "the tabs and the controls work from the keyboard, and focus is visible" },
+  ],
   "phone-sideways": [{ file: RECEIVABLES, test: "on a phone no screen scrolls the page sideways" }],
   "empty-world": [{ file: RECEIVABLES, test: "the empty world: each screen says so in words" }],
 };

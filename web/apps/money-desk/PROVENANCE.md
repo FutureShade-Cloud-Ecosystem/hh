@@ -31,3 +31,30 @@ Round 3: the payment panel no longer splits in the app; the received payment rou
 Not ported on purpose: auto credit hold settings, the paper path and reminders
 (Base tier extras, not this role's first increment), the pop out and duplicate
 windows.
+
+## Statements slice (`src/finstmt/`)
+
+Ported from the original app's financial statements screen (`finstmt-home.ts`, `finstmt-income.ts`, `finstmt-balance.ts`,
+`finstmt-gl-detail.ts`, `finstmt-aging.ts`, `finstmt-api.ts`, `finstmt-export.ts`, `_finstmt-heading.ts`), read only, at the
+commit the cycle names. The logic ports as plain code onto HH's generated api-client; the screens are rebuilt on HH's design
+system against the Money Desk references (`hh-sup/design-refs/money-desk/`, trial-balance for the frame).
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| The six tabs and their titles | `app/src/_finstmt-heading.ts` | `TABS`, `heading` | Plainer names ("Saved packs" for the schedules registry); the title, period and scope are on the page and the printed sheet |
+| Period words | `formatPeriod` in `finstmt-export.ts` | `periodLabel` | The books' own words (fiscal year, numbered period) from the ledger's period list; no month names in code; each period marked closed or open |
+| Income statement, balance sheet, trial balance | `finstmt-income.ts`, `finstmt-balance.ts`, `finstmt-home.ts` | `incomeView`, `balanceView`, `trialView` | The server's totals and flags are shown, never recomputed; compare with the year before reads the contract's comparative rows |
+| Drill down to the ledger and the tie | `finstmt-gl-detail.ts` | `detailView`, `tieWords` | The tie is the server's `tie_cents` held against the line's figure, said in words either way |
+| Receivables aging | `finstmt-aging.ts` | `agingView` | Five bands in the core's order, cards on a phone |
+| Saved packs (schedules) | `finstmt-home.ts` schedules panel | `packsView`, `packForm`, `validatePack` | Change and delete added; delete asks first; the form is checked in the core's order before anything is sent |
+| CSV export | `finstmt-export.ts`, `_csv.ts` | `csvDocument`, `*Rows` | Made from the figures on the page (the generated client types the export route as JSON); decimal strings cut from the cents' digits; text cells that would run as formulas are defanged |
+| Print | `renderStatementHtml`, `printStatement` | the print stylesheet | A print stylesheet on the page itself rather than a hidden frame |
+
+Not ported on purpose: the Excel download (the core builds it, the generated client cannot carry bytes for this route),
+the entity name on the sheet (the app holds no tenant name), a cash flow statement (the contract has none; marked later in
+words), and sending packs by e-mail (the core keeps a registry only; marked later in words).
+
+Contract notes: the core writes the saved packs under `schedules` while the contract's page names them `items` (recorded in
+the core's shape census); the slice reads both and refuses anything else. Saving a pack carries no idempotency key (the
+contract's route takes none), so the screen holds a second press while one is in flight and, when no answer comes back, says
+the pack may or may not be saved.

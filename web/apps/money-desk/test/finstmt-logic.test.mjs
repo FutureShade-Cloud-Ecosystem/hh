@@ -3,7 +3,7 @@
 // statement exports, and how a refusal reads out loud. No money is computed here; the cases hold words.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { centsDecimal, formatMoney, MONEY_PLACEHOLDER } from "../src/finstmt/finstmt-money.ts";
+import { centsDecimal, formatChange, formatMoney, MONEY_PLACEHOLDER } from "../src/finstmt/finstmt-money.ts";
 import {
   accountTypeWord,
   agingRows,
@@ -46,6 +46,13 @@ test("cents read as dollars, and a missing figure is never a plausible zero", ()
   assert.equal(formatMoney(0), "$0.00");
   assert.equal(formatMoney(undefined), MONEY_PLACEHOLDER);
   assert.equal(formatMoney(12.5), MONEY_PLACEHOLDER);
+});
+
+test("a change between two years is signed for the eye: up with a plus, down with a minus, and a missing figure is a placeholder", () => {
+  assert.equal(formatChange(500), "+$5.00");
+  assert.equal(formatChange(-500), "-$5.00");
+  assert.equal(formatChange(0), "$0.00");
+  assert.equal(formatChange(null), MONEY_PLACEHOLDER);
 });
 
 test("the plain decimal a spreadsheet reads is cut from the digits, with the sign kept and no grouping", () => {

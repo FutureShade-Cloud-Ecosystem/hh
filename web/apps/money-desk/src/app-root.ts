@@ -50,6 +50,7 @@ export class MoneyDeskApp extends HHElement {
     main { padding: var(--hh-s-4) 0; }
     main.gl-desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
     .areas { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); max-width: 1440px; margin: 0 auto; padding: var(--hh-s-16) var(--hh-s-24) 0; }
+    @media (max-width: 520px) { .areas { padding-inline: var(--hh-s-12); } }
   `];
 
   // The demo account surface: listFlows() and chooseFlow() over the core's

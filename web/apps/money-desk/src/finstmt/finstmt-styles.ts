@@ -84,6 +84,8 @@ export const finstmtStyles = css`
     main.fs-desk { padding: var(--hh-s-16) var(--hh-s-12) var(--hh-s-40); }
     .fs-tabs, .areas { gap: var(--hh-s-4); }
     .fs-tab { padding: 0 var(--hh-s-12); font-size: 14px; }
+    /* Three areas share one row on a phone. */
+    .areas .gl-tab { padding: 0 var(--hh-s-8); font-size: 13px; }
     .fs-panel { padding: var(--hh-s-16); }
     .fs-panel table { font-size: 14px; }
     .fs-panel th, .fs-panel td { padding: var(--hh-s-8) var(--hh-s-4); }

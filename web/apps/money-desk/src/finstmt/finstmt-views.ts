@@ -232,7 +232,7 @@ function line(row: FinStmtStatementRow, drillable: boolean): TemplateResult {
   return html`<tr data-account=${row.account_code}>
     <td class="fs-col-code fs-nowrap">${open}</td>
     <td><span class="fs-name">${row.account_name}</span><span class="fs-code-narrow">${open}</span></td>
-    <td class="num" data-amount>${formatMoney(row.amount_cents)}</td>
+    <td class="num" data-figure>${formatMoney(row.amount_cents)}</td>
   </tr>`;
 }
 
