@@ -104,23 +104,19 @@ test("a pick composes the task, its ticket and its shortages from the store", as
   assert.match(missing.error, /not found/);
 });
 
-test("offline, a claim and a pick record stay local, then drain in order", async () => {
-  const { layer, server, store } = await rig();
+test("offline, a claim and a start stay local, then drain in order", async () => {
+  const { layer, server } = await rig();
   server.setOffline(true);
   const claimed = await layer.claim(TASK);
   assert.equal(claimed.ok, true);
-  const recorded = await layer.recordLines(TASK, [
-    { order_line_no: 1, product_id: "p1", sku: "PAVER-CH-1212", description: "Charcoal pavers, 12 by 12 in", qty_ordered: "24.0000", qty_picked: "24", uom: "EA", short_reason: "", short_note: "" },
-    { order_line_no: 2, product_id: "p2", sku: "SAND-POLY-G", description: "Polymeric sand, grey, 18 kg", qty_ordered: "6.0000", qty_picked: "2", uom: "BAG", short_reason: "DAMAGED", short_note: "Split bags at the rack" },
-  ]);
-  assert.equal(recorded.ok, true);
+  const started = await layer.start(TASK);
+  assert.equal(started.ok, true);
   // The reads answer from the local projection while offline.
   const read = await layer.pick(TASK);
   assert.equal(read.ok, true);
   if (!read.ok) return;
-  assert.equal(read.value.task.status, "ACCEPTED");
+  assert.equal(read.value.task.status, "IN_PROGRESS");
   assert.equal(read.value.task.claimed_by, ACTOR);
-  assert.equal(read.value.picked.length, 2);
   assert.equal(await layer.waiting(), 2);
   // Back online: the outbox drains, in enqueue order, and the reads keep the truth.
   server.setOffline(false);
@@ -129,7 +125,7 @@ test("offline, a claim and a pick record stay local, then drain in order", async
   assert.equal(server.appliedOrder.length, 2);
   const after = await layer.pick(TASK);
   if (!after.ok) return assert.fail("the pick should read back");
-  assert.equal(after.value.task.status, "ACCEPTED");
+  assert.equal(after.value.task.status, "IN_PROGRESS");
   const pushes = server.requests.filter((r) => r.kind === "push");
   assert.equal(pushes.length, 1);
   assert.equal(pushes[0].scope, "pick_tasks");
@@ -141,18 +137,7 @@ test("offline, a claim and a pick record stay local, then drain in order", async
   assert.equal(pushes[0].ops[1].base_seq === undefined, true);
 });
 
-test("a short line recorded offline shows its backorder figure on the local read", async () => {
-  const { layer } = await rig();
-  await layer.recordLines(TASK, [
-    { order_line_no: 2, product_id: "p2", sku: "SAND-POLY-G", description: "Polymeric sand, grey, 18 kg", qty_ordered: "6.0000", qty_picked: "2", uom: "BAG", short_reason: "DAMAGED", short_note: "" },
-  ]);
-  const read = await layer.pick(TASK);
-  if (!read.ok) return assert.fail("the pick should read back");
-  const line = read.value.ticket.lines.find((l) => l.line_no === 2);
-  assert.equal(line.qty_backordered, "4.0000");
-});
-
-test("a shortage reported offline lands, and a later resolution the server moved first waits as a review card", async () => {
+test("a shortage reported offline lands, and a correction the server moved first waits as a review card", async () => {
   const { layer, server, store } = await rig();
   // Offline: the picker reports the shortage.
   server.setOffline(true);
@@ -172,20 +157,28 @@ test("a shortage reported offline lands, and a later resolution the server moved
   if (!first.ok) return assert.fail("the pick should read back");
   assert.equal(first.value.shortages.length, 1);
   const shortageId = first.value.shortages[0].id;
-  // Offline again: the picker settles it; meanwhile the desk moves the row.
+  // A correctable leg (the core's shortage set admits a note) queued against
+  // the pulled seq, while the desk moves the row first.
+  const row = await store.read("shortages", shortageId);
   server.setOffline(true);
-  const resolved = await layer.resolveShortage(TASK, shortageId, "Substituted from Bulk 2");
-  assert.equal(resolved.ok, true);
+  const corrected = await layer.enqueueRaw({
+    scope: "shortages",
+    op: "update",
+    entity: "shortages",
+    payload: { id: shortageId, note: "Four bags split, not three" },
+    baseSeq: row.row.seq,
+  });
+  assert.equal(corrected.ok, true);
   server.touch("shortages", shortageId, { qty_short: "5.0000" });
   server.setOffline(false);
   await layer.cycle();
-  // The stale resolution never merges on its own: a review card waits.
+  // The stale correction never merges on its own: a review card waits.
   const cards = await layer.openCards();
   const review = cards.find((c) => c.kind === "review");
   assert.ok(review !== undefined, "a review card waits for the person");
   assert.equal(review.scope, "shortages");
   assert.equal(review.policy, "manual");
-  assert.match(review.clientPayload.resolution, /Substituted from Bulk 2/);
+  assert.match(review.clientPayload.note, /Four bags split/);
   // Dismiss is the only exit, and the card stays dismissed, never deleted.
   await layer.dismissCard(review.id);
   assert.equal((await layer.openCards()).length, 0);
@@ -277,20 +270,6 @@ test("the banner mode maps the runner state and the ownership onto the chrome's 
   assert.equal(bannerMode("auth_expired", "owner"), "auth-expired");
   assert.equal(bannerMode("idle", "read_cache_only"), "read-only");
   assert.equal(bannerMode("offline", "read_cache_only"), "read-only");
-});
-
-test("a second skid count before any pull names the first count as its previous one", async () => {
-  const { layer, server } = await rig();
-  server.setOffline(true);
-  const first = await layer.recordSkids(TASK, 2, "COUNT_CORRECTION", "");
-  assert.equal(first.ok, true);
-  if (!first.ok) return;
-  assert.equal(first.value.previous_skid_count, null);
-  const second = await layer.recordSkids(TASK, 5, "CONDENSED_SKIDS", "");
-  assert.equal(second.ok, true);
-  if (!second.ok) return;
-  assert.equal(second.value.previous_skid_count, 2);
-  assert.equal(second.value.changed, true);
 });
 
 test("a second tab (read cache only) opens no layer, so the app stays online, and says it is read only", async () => {

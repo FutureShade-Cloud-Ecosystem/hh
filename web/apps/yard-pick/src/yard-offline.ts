@@ -1,12 +1,20 @@
 // Yard Pick's thin offline data layer: the api port over the offline store.
 // Reads compose from the store (the pulled pick_tasks and shortages rows, with
-// the scope's staleness); every write enqueues on the write's own scope with a
-// stored idempotency key and patches the local projection, so the glass shows
+// the scope's staleness); the writes the core admits through sync (claim,
+// start, stage, the shortage report) enqueue on the write's own scope with a
+// stored idempotency key and patch the local projection, so the glass shows
 // the work before the replay lands; a cycle pushes the outbox and pulls the
-// scopes back through the sync runner and the injected transport. No call in
-// this file opens a second door to the network: the transport is the one the
-// shell hands over (the api-client adapter in the app, the fake server's in
-// tests).
+// scopes back through the sync runner and the injected transport.
+//
+// The writes the core does not admit through sync stay on their direct doors
+// and need signal: the pick record (the pick_tasks set has no picked field),
+// the skid count (it moves the order's skid deposit, which is money, and the
+// weights scope is a different feed), and the shortage settle (the resolution
+// legs are the counter's act). They wait for the queued writes first and
+// answer an honest "no signal" offline; the pull that follows carries the
+// result into the store. The writable sets are the Go sets in
+// core/internal/tasks (syncscope.go, syncweights.go, syncshortage.go), pinned
+// by test/stub-sync-contract.test.mjs.
 //
 // The projection the reads compose from is the demo sync surface's: the
 // pick_tasks rows carry the task and its ticket words, the shortages rows the
@@ -261,91 +269,23 @@ export class YardOffline {
     return answer;
   }
 
-  /** Record what was pulled, the whole set in one queued operation. */
+  /** Record what was pulled: the direct door. The core's pick_tasks sync set
+   * has no picked field, so the record is sent as itself, after the queued
+   * writes of the pick, and the pull that follows lands it in the store. */
   async recordLines(taskId: string, lines: readonly YardRecordLine[]): Promise<Result<YardPickedLine[]>> {
-    const found = await this.store.read("pick_tasks", taskId);
-    if (found.row === null) return { ok: false, error: "task not found", status: 404 };
-    const at = this.#now();
-    const picked: YardPickedLine[] = lines.map((l) => ({
-      id: this.#newKey(),
-      task_id: taskId,
-      order_line_no: l.order_line_no,
-      sku: l.sku,
-      description: l.description,
-      qty_ordered: l.qty_ordered,
-      qty_picked: l.qty_picked,
-      uom: l.uom,
-      short_reason: l.short_reason,
-      short_note: l.short_note,
-      picked_at: at,
-    }));
-    const enqueued = await this.#enqueueWithBase({
-      scope: "pick_tasks",
-      op: "update",
-      entity: "pick_tasks",
-      payload: { id: taskId, picked: lines.map((l) => ({ ...l })) },
-      row: found.row,
-    });
-    if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };
-    // The local read mirrors what the replay will land: the picked set, and
-    // the backorder figure each short line leaves on its ticket line.
-    const ticket = toTicket(found.row.data["ticket"]);
-    const patchedTicket =
-      ticket === null
-        ? undefined
-        : {
-            ...ticket,
-            lines: ticket.lines.map((line) => {
-              const recorded = picked.find((p) => p.order_line_no === line.line_no);
-              if (recorded === undefined) return line;
-              const ordered = Number(line.qty_ordered);
-              const taken = Number(recorded.qty_picked);
-              const back = taken < ordered && Number.isFinite(ordered) ? (ordered - taken).toFixed(4) : "";
-              return { ...line, qty_backordered: back };
-            }),
-          };
-    await this.#patchRow("pick_tasks", taskId, (data) => ({
-      ...data,
-      picked,
-      ...(patchedTicket !== undefined ? { ticket: patchedTicket } : {}),
-    }));
-    this.#writtenSincePull.add(`pick_tasks:${taskId}`);
-    this.requestSync();
-    return { ok: true, value: picked };
+    const refused = this.#noSignal<YardPickedLine[]>() ?? (await this.#outboxFirst<YardPickedLine[]>("Record the pick"));
+    if (refused !== null) return refused;
+    const answer = await this.#direct.recordLines(taskId, lines);
+    if (answer.ok) await this.#drain();
+    return answer;
   }
 
-  /** Record or change the order's skid count: the weights scope's own write. */
+  /** Record or change the order's skid count: the direct door, always. The
+   * count moves the order's skid deposit, which is money, so it never queues. */
   async recordSkids(taskId: string, skidCount: number, reason: string, note: string): Promise<Result<YardSkidAnswer>> {
-    const weightsRow = await this.store.read("weights", taskId);
-    const previous =
-      weightsRow.row !== null && typeof weightsRow.row.data["skid_count"] === "number"
-        ? (weightsRow.row.data["skid_count"] as number)
-        : null;
-    const taskRow = await this.store.read("pick_tasks", taskId);
-    const enqueued = await this.#enqueueWithBase({
-      scope: "weights",
-      op: "update",
-      entity: "weights",
-      payload: { id: taskId, skid_count: skidCount, reason, ...(note !== "" ? { note } : {}) },
-      // No pulled weights row names no base: the count lands blind, and the
-      // server's own rules judge it at replay.
-      row: weightsRow.row,
-    });
-    if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };
-    if (weightsRow.row !== null) {
-      await this.#patchRow("weights", taskId, (data) => ({ ...data, skid_count: skidCount, reason }));
-    } else {
-      // No pulled row yet: the device keeps its own count, so a second save
-      // before any pull still names the first one as the previous count.
-      await this.#sql.run(`INSERT OR IGNORE INTO ${entityTable("weights")} (id, seq, data, deleted) VALUES (?, 0, ?, 0)`, [
-        taskId,
-        JSON.stringify({ id: taskId, task_id: taskId, skid_count: skidCount, reason }),
-      ]);
-    }
-    this.#writtenSincePull.add(`weights:${taskId}`);
-    this.requestSync();
-    const ticket = taskRow.row !== null ? toTicket(taskRow.row.data["ticket"]) : null;
-    return { ok: true, value: { skid_count: skidCount, previous_skid_count: previous, changed: previous !== skidCount, order_no: ticket?.order_no ?? "" } };
+    const refused = this.#noSignal<YardSkidAnswer>() ?? (await this.#outboxFirst<YardSkidAnswer>("Save the skid count"));
+    if (refused !== null) return refused;
+    return this.#direct.recordSkids(taskId, skidCount, reason, note);
   }
 
   /** Park the pick: where the material sits. A blank ref derives its short
@@ -380,7 +320,18 @@ export class YardOffline {
       resolved_by: "",
       resolution: "",
     };
-    const enqueued = await this.store.enqueue({ scope: "shortages", op: "create", entity: "shortages", payload: { ...data } });
+    // The create declares the report itself; the stamps and the resolution
+    // legs are the server's, so only the local row carries them.
+    const payload: Bag = {
+      id,
+      task_id: taskId,
+      ...(line.orderLineNo !== null ? { order_line_no: line.orderLineNo } : {}),
+      description: line.description,
+      qty_short: line.qtyShort,
+      uom: line.uom,
+      ...(line.note !== "" ? { note: line.note } : {}),
+    };
+    const enqueued = await this.store.enqueue({ scope: "shortages", op: "create", entity: "shortages", payload });
     if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };
     await this.#sql.run(`INSERT INTO ${entityTable("shortages")} (id, seq, data, deleted) VALUES (?, 0, ?, 0)`, [
       id,
@@ -390,31 +341,48 @@ export class YardOffline {
     return { ok: true, value: toShortage(data) };
   }
 
-  /** Clear one shortage with a stated resolution, queued on the same scope. */
+  /** Clear one shortage with a stated resolution: the direct door. The
+   * resolution legs are the counter's act and the core's shortage sync set
+   * refuses them, so the settle is sent as itself and the pull lands it. */
   async resolveShortage(taskId: string, shortageId: string, resolution: string): Promise<Result<YardShortage>> {
-    const found = await this.store.read("shortages", shortageId);
-    if (found.row === null) return { ok: false, error: "shortage not found", status: 404 };
-    const enqueued = await this.#enqueueWithBase({
-      scope: "shortages",
-      op: "update",
-      entity: "shortages",
-      payload: { id: shortageId, resolution },
-      row: found.row,
-    });
-    if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };
-    await this.#patchRow("shortages", shortageId, (data) => ({
-      ...data,
-      resolution,
-      resolved_at: this.#now(),
-      resolved_by: this.#actorId,
-    }));
-    this.#writtenSincePull.add(`shortages:${shortageId}`);
-    this.requestSync();
-    const patched = await this.store.read("shortages", shortageId);
-    return { ok: true, value: toShortage(patched.row?.data ?? {}) };
+    const refused = this.#noSignal<YardShortage>() ?? (await this.#outboxFirst<YardShortage>("Settle the shortage"));
+    if (refused !== null) return refused;
+    const answer = await this.#direct.resolveShortage(taskId, shortageId, resolution);
+    if (answer.ok) await this.#drain();
+    return answer;
   }
 
   // ---- internals ------------------------------------------------------
+
+  /** Send what is queued and wait for the cycle to rest. True when the
+   * outbox is empty after it: only then has the pull landed too, so only then
+   * does the written since pull set clear. */
+  async #drain(): Promise<boolean> {
+    await this.runner.request();
+    await this.runner.settled();
+    const empty = (await this.waiting()) === 0;
+    if (empty) this.#writtenSincePull.clear();
+    this.#onChange?.();
+    return empty;
+  }
+
+  /** The honest state of a direct door with no signal: no answer from a
+   * server (no status), so the app's own "check your signal" words show. */
+  #noSignal<T>(): Result<T> | null {
+    return this.runner.state === "offline" ? { ok: false, error: "no signal" } : null;
+  }
+
+  /** A direct door never jumps the outbox: the queued writes go first, and
+   * while any is still waiting the door is refused in words, since the core
+   * would judge the direct write against a pick that has not caught up. */
+  async #outboxFirst<T>(what: string): Promise<Result<T> | null> {
+    if (await this.#drain()) return null;
+    return {
+      ok: false,
+      error: `Your earlier work is still waiting to send. ${what} once it has gone through.`,
+      status: 409,
+    };
+  }
 
   async #taskWrite(taskId: string, fields: Bag, payloadFields: Bag = fields): Promise<Result<YardTask>> {
     const found = await this.store.read("pick_tasks", taskId);

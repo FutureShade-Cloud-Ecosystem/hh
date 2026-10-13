@@ -78,16 +78,26 @@ test("the open shortage is on the pick and can be settled with a stated resoluti
   await expect(page.locator("[data-shortage]", { hasText: "22 SQFT" })).toContainText("Cleared: Substituted mixed blue from Yard C");
 });
 
-test("the shortage resolvers wall parks the scope and the stall says so in words", async ({ page, request }) => {
+test("the shortage resolvers wall answers the settle in plain words", async ({ page, request }) => {
   await openInProgress(page);
   await page.locator("[data-shortage]", { hasText: "22 SQFT" }).getByRole("button", { name: "Mark it settled" }).click();
   await page.getByLabel("How the shortage was settled").fill("Substituted mixed blue from Yard C");
   await useScenario(request, "resolve-walled");
   await page.getByRole("button", { name: "Send" }).click();
-  // The settle queues (the glass shows it landed), then the replay meets the
+  await expect(page.locator("[data-error]")).toContainText("That is not yours to settle. Only the Yard Team and the Yard Manager may resolve a shortage.");
+});
+
+test("the shortage resolvers wall parks a queued shortage report and the stall says so in words", async ({ page, request }) => {
+  await openInProgress(page);
+  await page.getByRole("button", { name: "Report a shortage" }).click();
+  await page.getByLabel("How many are short").fill("4");
+  await page.getByRole("radio", { name: "Not enough on the yard" }).click();
+  await useScenario(request, "resolve-walled");
+  await page.getByRole("button", { name: "Report short pick" }).click();
+  // The report queues (the glass shows it landed), then the replay meets the
   // role gate's wall: the scope parks, the work is kept, and the stall names
   // the truth in the store's own words.
-  await expect(page.locator("[data-notice]")).toContainText("Shortage cleared");
+  await expect(page.locator("[data-notice]")).toContainText("Shortage sent");
   await expect(page.locator("[data-stall-strip]")).toBeVisible();
   await expect(page.locator("[data-stall]")).toContainText("The server refuses writes to shortages for this sign in (403)");
   await expect(page.locator("[data-stall]")).toContainText("kept, not sent, and tried again on every cycle");

@@ -7,7 +7,7 @@
 // The banner is the chrome package's, fed through its properties; the cards
 // are the chrome package's conflict cards; the reads answer from the store.
 import { test, expect } from "@playwright/test";
-import { deskResolve, resetStub, reassignTicket, stubLog, yardHandoff, type LoggedCall } from "./helpers.js";
+import { resetStub, reassignTicket, stubLog, yardHandoff, type LoggedCall } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -68,7 +68,7 @@ function payloadOf(op: unknown): Record<string, unknown> {
   return ((op as { payload?: unknown })?.payload ?? {}) as Record<string, unknown>;
 }
 
-/** Claims SO-1039 offline and records two full lines and one short line. */
+/** Claims SO-1039 offline and starts it; the record then says no signal. */
 async function claimAndPickOffline(page: import("@playwright/test").Page): Promise<void> {
   await platformWord(page, false, "You're offline");
   // The claim goes through the door: queued, not lost, and the pick opens.
@@ -88,12 +88,11 @@ async function claimAndPickOffline(page: import("@playwright/test").Page): Promi
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("radio", { name: "Damaged stock" }).click();
   await page.getByRole("button", { name: "Done" }).click();
+  // The record is on its direct door (the core's pick_tasks sync set has no
+  // picked field): offline it says so, in words, and queues nothing.
   await page.getByRole("button", { name: "Save pick" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("on backorder");
-  await expect(page.locator("hh-shell-offline-banner")).toContainText("3 changes in the outbox");
-  // The line's backorder figure reads from the local store's own projection.
-  const line = page.locator("[data-line]", { hasText: "Paver edge restraint" });
-  await expect(line).toContainText("on backorder");
+  await expect(page.locator("[data-error]")).toContainText("Check your signal");
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
 }
 
 test("offline, the claim and the pick wait in the outbox, and the banner carries the count", async ({ page }) => {
@@ -110,24 +109,20 @@ test("back online, the outbox drains in order, and a ticket the test reassigned 
   await platformWord(page, true);
   await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
   const ops = await pushedOps(request, "pick_tasks");
-  expect(ops.length).toBe(3);
+  expect(ops.length).toBe(2);
   expect(String(payloadOf(ops[0]).status)).toBe("ACCEPTED");
   expect(String(payloadOf(ops[1]).status)).toBe("IN_PROGRESS");
-  const picked = payloadOf(ops[2]).picked as Array<Record<string, unknown>>;
-  expect(picked).toHaveLength(3);
-  const shortLine = picked.find((l) => l.order_line_no === 3);
-  expect(String(shortLine?.qty_picked)).toBe("1");
-  expect(String(shortLine?.short_reason)).toBe("DAMAGED");
+  // Only fields the core's sync set admits ride the outbox.
+  for (const op of ops) expect(Object.keys(payloadOf(op)).filter((k) => !["id", "status"].includes(k))).toEqual([]);
   // The chained writes on one row go blind: the only stale base the device
   // could name is its own first write.
   expect((ops[0] as Record<string, unknown>).base_seq).toBeDefined();
   expect((ops[1] as Record<string, unknown>).base_seq).toBeUndefined();
-  expect((ops[2] as Record<string, unknown>).base_seq).toBeUndefined();
   // The server wins: the claim was superseded, and the start and the record
   // landed on a cancelled pick, so each answer is a card, in the board's words.
   await page.getByRole("button", { name: "Back to the queue" }).click();
-  await expect(page.getByRole("button", { name: "Review 3" })).toBeVisible();
-  await page.getByRole("button", { name: "Review 3" }).click();
+  await expect(page.getByRole("button", { name: "Review 2" })).toBeVisible();
+  await page.getByRole("button", { name: "Review 2" }).click();
   const list = page.locator("[data-conflict-list]");
   await expect(list).toContainText("Superseded on the server");
   await expect(list).toContainText("Server wins · pick tasks");
@@ -137,44 +132,40 @@ test("back online, the outbox drains in order, and a ticket the test reassigned 
   await page.getByRole("button", { name: "Back to the queue" }).click();
   await expect(page.locator("[data-pick-card]", { hasText: "SO-1039" }).locator("[data-task-status]")).toHaveText("Cancelled");
   // Dismiss is the exit: one card goes, the others wait.
-  await page.getByRole("button", { name: "Review 3" }).click();
+  await page.getByRole("button", { name: "Review 2" }).click();
   await page.getByRole("button", { name: /Dismiss: Superseded on the server/ }).click();
-  await expect(list).toContainText("2 to review");
+  await expect(list).toContainText("1 to review");
   // The list is reachable from the board, and the board names what is left.
   await page.getByRole("button", { name: "Back to the queue" }).click();
-  await expect(page.getByRole("button", { name: "Review 2" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review 1" })).toBeVisible();
 });
 
-test("offline, a shortage reported and settled waits as a review card for the person", async ({ page, request }) => {
+test("offline, a shortage report waits in the outbox and drains clean, and the settle says no signal", async ({ page, request }) => {
   await loadBoard(page);
-  // Online first: the shortage is reported and drains, so the row has a seq.
   await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
+  await platformWord(page, false, "You're offline");
   await page.getByRole("button", { name: "Report a shortage" }).click();
   await page.getByLabel("How many are short").fill("4");
   await page.getByRole("radio", { name: "Not enough on the yard" }).click();
   await page.getByRole("button", { name: "Report short pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Shortage sent");
-  await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
-  const createOps = await pushedOps(request, "shortages");
-  expect(createOps.length).toBe(1);
-  const shortageId = String(payloadOf(createOps[0]).id);
-  // Offline: the picker settles it; the desk answers the same shortage first.
-  await platformWord(page, false);
-  const shortage = page.locator("[data-shortage]", { hasText: "4 SQFT" });
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
+  // The settle is the counter's act: its direct door, so offline it says no
+  // signal and queues nothing.
+  const shortage = page.locator("[data-shortage]", { hasText: "22 SQFT" });
   await shortage.getByRole("button", { name: "Mark it settled" }).click();
   await page.getByLabel("How the shortage was settled").fill("Settled from the bulk pile");
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Shortage cleared");
+  await expect(page.locator("[data-error]")).toContainText("Check your signal");
   await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
-  await deskResolve(request, shortageId);
   await platformWord(page, true);
-  // The settle drain lands second, stale against the desk's answer.
+  await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
+  // The report drained with only the fields the core's shortage set admits.
+  const createOps = await pushedOps(request, "shortages");
+  expect(createOps.length).toBe(1);
+  expect(Object.keys(payloadOf(createOps[0])).sort()).toEqual(["description", "id", "order_line_no", "qty_short", "task_id", "uom"]);
+  // No card: the report applied clean.
   await page.getByRole("button", { name: "Back to the queue" }).click();
-  await expect(page.getByRole("button", { name: /Review 1/ })).toBeVisible();
-  await page.getByRole("button", { name: /Review 1/ }).click();
-  const list = page.locator("[data-conflict-list]");
-  await expect(list).toContainText("Needs a person's review");
-  await expect(list).toContainText("Manual · shortages");
-  await expect(list).toContainText("never merges on its own");
+  await expect(page.getByRole("button", { name: /^Review [1-9]/ })).toHaveCount(0);
 });

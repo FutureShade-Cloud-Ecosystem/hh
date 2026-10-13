@@ -381,10 +381,9 @@ function capturePod(res, stop, input) {
   stop.pod_received_by = name;
   stop.pod_at = now;
   stop.delivered_at = now;
-  const podId = `7b000000-0000-4000-9000-${String(stop.stop_no).padStart(12, "0")}`;
-  podRows.set(stop.id, { id: podId, stop_id: stop.id, received_by: name, affirmed: true, created_at: now });
+  // The attestation has no sync door in the core: the pod feed carries the
+  // photo records only, so the proof moves the stop and nothing else.
   syncTouch("stops", stop.id);
-  syncTouch("pod", podId);
   return json(res, stopDetail(stop));
 }
 
@@ -498,7 +497,8 @@ function syncRejected(op, message) {
 function syncApplyStopUpdate(stop, op) {
   const fields = op.payload ?? {};
   const declared = Object.keys(fields).filter((k) => k !== "id");
-  const allowed = new Set(["status", "reason"]);
+  // The core's stopWriteFields (core/internal/dispatch/syncscope_stops.go).
+  const allowed = new Set(["status", "failure_reason"]);
   for (const key of declared) {
     if (!allowed.has(key)) return syncRejected(op, `dispatch: field "${key}" is not writable through sync`);
   }
@@ -516,33 +516,32 @@ function syncApplyStopUpdate(stop, op) {
   if (to === "DELIVERED") return syncRejected(op, "a delivery must carry a proof-of-delivery attestation");
   if (!(TRANSITIONS[stop.status] ?? []).includes(to)) return syncRejected(op, "illegal status transition");
   if (to === "EN_ROUTE" && world.run.status !== "DISPATCHED") return syncRejected(op, "the run has not been dispatched");
-  if (to === "FAILED" && String(fields.reason ?? "").trim() === "") return syncRejected(op, "a failed stop needs a reason");
+  if (to === "FAILED" && String(fields.failure_reason ?? "").trim() === "") return syncRejected(op, "a failed stop needs a reason");
   const now = new Date(nowMs()).toISOString();
   stop.status = to;
   if (to === "LOADED") stop.loaded_at = now;
   if (to === "EN_ROUTE") stop.en_route_at = now;
-  if (to === "FAILED") stop.failure_reason = String(fields.reason ?? "").trim();
+  if (to === "FAILED") stop.failure_reason = String(fields.failure_reason ?? "").trim();
   syncTouch("stops", stop.id);
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("stops", stop.id) };
 }
 
+// The core's pod scope is the photo record (core/internal/dispatch/syncscope_pod.go
+// podCreateFields): the stop it proves, the content type, the bytes base64 and
+// a caption. The typed name attestation has no sync door, it rides the REST
+// proof, so a pod create here never delivers a stop.
+const POD_CREATE_FIELDS = new Set(["id", "stop_id", "content_type", "image_bytes_b64", "caption"]);
+
 function syncApplyPodCreate(op) {
   const input = op.payload ?? {};
+  for (const key of Object.keys(input)) {
+    if (!POD_CREATE_FIELDS.has(key)) return syncRejected(op, `dispatch: field "${key}" is not writable through sync`);
+  }
   const stop = findStop(String(input.stop_id ?? ""));
   if (!stop) return syncRejected(op, "stop not found");
-  if (stop.status !== "EN_ROUTE") return syncRejected(op, "illegal status transition");
-  const name = String(input.received_by ?? "").trim();
-  if (name === "") return syncRejected(op, "type the full name of the person receiving this delivery");
-  if (input.affirmed !== true) return syncRejected(op, "the recipient must confirm the delivery before it can be signed");
-  const now = new Date(nowMs()).toISOString();
-  stop.status = "DELIVERED";
-  stop.pod_signature_ref = `sig-${stop.stop_no}`;
-  stop.pod_received_by = name;
-  stop.pod_at = now;
-  stop.delivered_at = now;
-  syncTouch("stops", stop.id);
   const id = typeof input.id === "string" && UUID_RE.test(input.id) ? input.id : `7b000000-0000-4000-9000-${String(stop.stop_no).padStart(12, "0")}`;
-  podRows.set(stop.id, { id, stop_id: stop.id, received_by: name, affirmed: true, created_at: now });
+  const now = new Date(nowMs()).toISOString();
+  podRows.set(id, { id, stop_id: stop.id, content_type: String(input.content_type ?? ""), caption: String(input.caption ?? ""), captured_at: now });
   syncTouch("pod", id);
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("pod", id) };
 }

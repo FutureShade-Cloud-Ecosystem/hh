@@ -807,22 +807,14 @@ function projectShortageRow(s) {
   return { id: s.id, seq: syncSeqOf("shortages", s.id), data: shortageOut(s) };
 }
 
-function projectWeightRow(taskId) {
-  const task = findTask(taskId);
-  return {
-    id: taskId,
-    seq: syncSeqOf("weights", taskId),
-    data: { id: taskId, task_id: taskId, skid_count: world.skids.get(taskId) ?? 0, order_no: task ? ticketFor(task).order_no : "" },
-  };
-}
-
 function handleSyncPull(res, scope, url, moneyAllowed) {
   const since = Number(url.searchParams.get("since") ?? "0");
   const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") ?? "200")));
   let rows = [];
   if (scope === "pick_tasks") rows = scenario === "empty" ? [] : world.tasks.map((t) => projectTaskRow(t, moneyAllowed));
   else if (scope === "shortages") rows = world.shortages.map(projectShortageRow);
-  else if (scope === "weights") rows = [...world.skids.keys()].map(projectWeightRow);
+  // The core's weights feed is the NEED_WEIGHT task feed: the demo world has
+  // no such task (a skid count is a direct door, and money), so it is empty.
   // receiving and inventory_lookup answer empty pages in the demo: the yard's
   // receiving story rides the desk, and the lookup is the read seam, not this
   // slice's.
@@ -858,7 +850,9 @@ function syncApplyTaskUpdate(task, op, moneyAllowed) {
     };
   }
   const declared = Object.keys(fields).filter((k) => k !== "id");
-  const allowed = new Set(["status", "stage_location", "stage_ref", "picked"]);
+  // The core's writableFields (core/internal/tasks/syncscope.go): the pick
+  // record is not among them, it rides its direct door.
+  const allowed = new Set(["status", "photo_url", "stage_location", "stage_ref"]);
   for (const key of declared) {
     if (!allowed.has(key)) return syncRejected(op, `tasks: field "${key}" is not writable through sync`);
   }
@@ -878,21 +872,13 @@ function syncApplyTaskUpdate(task, op, moneyAllowed) {
     task.stage_location = String(fields.stage_location);
     task.stage_ref = String(fields.stage_ref ?? task.stage_ref ?? "");
   }
-  if (fields.picked !== undefined) {
-    // The record lands only while the pick is being worked, the same rule the
-    // glass holds (the record doors open on an in progress or staged pick).
-    if (task.status !== "IN_PROGRESS" && task.status !== "STAGED") {
-      return syncRejected(op, "illegal task transition");
-    }
-    const record = recordPickedLines(task, fields.picked);
-    if (record.error) return syncRejected(op, record.error);
-  }
+  if (fields.photo_url !== undefined) task.photo_url = String(fields.photo_url);
   task.updated_at = new Date().toISOString();
   syncTouch("pick_tasks", task.id);
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("pick_tasks", task.id) };
 }
 
-// The record half of the REST route, shared with the sync write: validate the
+// The record half of the REST route: validate the
 // whole set, replace what was there, tell the rep at once.
 function recordPickedLines(task, lines) {
   const ticket = ticketFor(task);
@@ -962,7 +948,24 @@ function recordPickedLines(task, lines) {
   return { picked };
 }
 
+// The core's shortageWritableCreate (core/internal/tasks/syncshortage.go): the
+// report itself. The resolution legs and the stamps are the server's.
+const SHORTAGE_CREATE_FIELDS = new Set(["id", "task_id", "order_line_no", "product_id", "sku", "description", "qty_short", "uom", "note"]);
+// The core's shortageWritable: the report's correctable legs. The resolution
+// legs are the counter's act and refuse here.
+const SHORTAGE_UPDATE_FIELDS = new Set(["id", "qty_short", "uom", "sku", "description", "note"]);
+const WEIGHT_UPDATE_FIELDS = new Set(["id", "status", "weight_entered", "weight_uom", "photo_url"]);
+
+function syncFieldRefusal(op, allowed) {
+  for (const key of Object.keys(op.payload ?? {})) {
+    if (!allowed.has(key)) return syncRejected(op, `tasks: field "${key}" is not writable through sync`);
+  }
+  return null;
+}
+
 function syncApplyShortageCreate(op) {
+  const refused = syncFieldRefusal(op, SHORTAGE_CREATE_FIELDS);
+  if (refused) return refused;
   const input = op.payload ?? {};
   const description = String(input.description ?? "").trim();
   if (description === "") return syncRejected(op, "description is required");
@@ -992,12 +995,12 @@ function syncApplyShortageCreate(op) {
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("shortages", id) };
 }
 
-function syncApplyShortageUpdate(op, moneyAllowed) {
+function syncApplyShortageUpdate(op) {
+  const refused = syncFieldRefusal(op, SHORTAGE_UPDATE_FIELDS);
+  if (refused) return refused;
   const id = String(op.payload?.id ?? "");
   const shortage = world.shortages.find((s) => s.id === id);
   if (!shortage) return syncRejected(op, "shortage not found");
-  const resolution = String(op.payload?.resolution ?? "").trim();
-  if (resolution === "") return syncRejected(op, "resolution is required");
   const rowSeq = syncSeqOf("shortages", id);
   if (op.base_seq !== undefined && rowSeq > op.base_seq) {
     // The manual policy: the server row is what stands, and a person reviews.
@@ -1007,42 +1010,19 @@ function syncApplyShortageUpdate(op, moneyAllowed) {
       conflict: { client_id: op.client_id, policy: "manual", server_state: shortageOut(shortage), applied: false },
     };
   }
-  if (shortage.resolved_at !== undefined && shortage.resolved_at !== "") {
-    return syncRejected(op, "shortage already resolved");
+  for (const key of ["qty_short", "uom", "sku", "description", "note"]) {
+    if (op.payload[key] !== undefined) shortage[key] = String(op.payload[key]);
   }
-  shortage.resolved_at = new Date().toISOString();
-  shortage.resolved_by = YARD_USER;
-  shortage.resolution = resolution;
   syncTouch("shortages", id);
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("shortages", id) };
 }
 
+// The core's weights feed is the NEED_WEIGHT task feed and the demo world has
+// no such task: the fields are judged first, then the row is not found.
 function syncApplyWeightsUpdate(op) {
-  const taskId = String(op.payload?.id ?? "");
-  const task = findTask(taskId);
-  if (!task) return syncRejected(op, "task not found");
-  if (op.payload.skid_count === undefined || op.payload.skid_count === null) {
-    return syncRejected(op, "skid_count is required, zero is an answer");
-  }
-  const count = Number(op.payload.skid_count);
-  if (!Number.isInteger(count) || count < 0) return syncRejected(op, "a skid count cannot be negative");
-  const reason = String(op.payload.reason ?? "").trim();
-  if (reason === "" || !SHORT_REASONS.includes(reason)) {
-    return syncRejected(op, `give the reason for the skid count (${SHORT_REASONS.join(", ")})`);
-  }
-  const note = String(op.payload.note ?? "").trim();
-  if (note.length > 400) return syncRejected(op, "the note is too long (max 400)");
-  const rowSeq = syncSeqOf("weights", taskId);
-  if (op.base_seq !== undefined && rowSeq > op.base_seq) {
-    return {
-      client_id: op.client_id,
-      status: "conflict",
-      conflict: { client_id: op.client_id, policy: "server_wins", server_state: projectWeightRow(taskId).data, applied: false },
-    };
-  }
-  world.skids.set(taskId, count);
-  syncTouch("weights", taskId);
-  return { client_id: op.client_id, status: "applied", seq: syncSeqOf("weights", taskId) };
+  const refused = syncFieldRefusal(op, WEIGHT_UPDATE_FIELDS);
+  if (refused) return refused;
+  return syncRejected(op, "row not found");
 }
 
 function handleSyncPush(res, scope, body, moneyAllowed) {
@@ -1077,7 +1057,7 @@ function handleSyncPush(res, scope, body, moneyAllowed) {
         else result = syncApplyTaskUpdate(task, op, moneyAllowed);
       }
     } else if (scope === "shortages") {
-      result = op.op === "create" ? syncApplyShortageCreate(op) : syncApplyShortageUpdate(op, moneyAllowed);
+      result = op.op === "create" ? syncApplyShortageCreate(op) : syncApplyShortageUpdate(op);
     } else if (scope === "weights") {
       result = op.op === "update" ? syncApplyWeightsUpdate(op) : syncRejected(op, "row not found");
     } else {

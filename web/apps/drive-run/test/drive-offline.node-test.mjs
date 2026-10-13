@@ -141,31 +141,6 @@ test("offline, loading and going en route stay local, then drain in order", asyn
   assert.equal(pushes[0].ops[1].base_seq === undefined, true);
 });
 
-test("offline, a proof of delivery lands on the local stop, then applies through the pod scope", async () => {
-  const { layer, server, store } = await rig();
-  server.setOffline(true);
-  await layer.advance(STOP_1, "LOADED");
-  await layer.advance(STOP_1, "EN_ROUTE");
-  const signed = await layer.pod(STOP_1, "Receiver (demo)");
-  assert.equal(signed.ok, true);
-  const read = await layer.runs("2026-10-08");
-  if (!read.ok) return assert.fail("the run sheet should read back");
-  const stop = read.value.runs[0].stops[0];
-  assert.equal(stop.status, "DELIVERED");
-  assert.equal(stop.pod_received_by, "Receiver (demo)");
-  server.setOffline(false);
-  await layer.cycle();
-  assert.equal(await layer.waiting(), 0);
-  // The pod create rides the pod scope, after the stop writes it belongs to.
-  const podPushes = server.requests.filter((r) => r.kind === "push" && r.scope === "pod");
-  assert.equal(podPushes.length, 1);
-  assert.equal(podPushes[0].ops[0].op, "create");
-  assert.equal(podPushes[0].ops[0].payload.received_by, "Receiver (demo)");
-  // No card and no stall: the proof applied clean.
-  assert.equal((await layer.openCards()).length, 0);
-  assert.equal((await layer.stalls()).length, 0);
-});
-
 test("a stop the server moved first comes back superseded, and the server row is what reads show", async () => {
   const { layer, server, store } = await rig();
   server.setOffline(true);

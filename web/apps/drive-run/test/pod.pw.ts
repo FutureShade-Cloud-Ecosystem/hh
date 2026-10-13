@@ -38,25 +38,15 @@ test("signing sends the core's POD shape and the stop reads delivered", async ({
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
   await expect(page.locator(".signed")).toContainText("Signed by Receiving clerk");
   await expect(page.getByRole("status")).toContainText("Delivery to Northline Hardscapes Ltd (demo) is signed for.");
-  // The proof rides the outbox, and the replay creates it on the pod scope:
-  // the core's own shape, with the recipient trimmed and the affirmation set.
-  interface PushCall extends LoggedCall {
-    body: { ops: Array<Record<string, unknown>> } | null;
-  }
-  let podOps: Array<Record<string, unknown>> = [];
-  await expect
-    .poll(async () => {
-      const pushes = (await stubLog(request)).filter(
-        (c): c is PushCall => c.path === "/api/v1/sync/pod" && c.method === "POST",
-      );
-      podOps = pushes.flatMap((p) => p.body?.ops ?? []);
-      return podOps.length;
-    })
-    .toBe(1);
-  const payload = (podOps[0]?.payload ?? {}) as Record<string, unknown>;
-  expect(payload.received_by).toBe("Receiving clerk");
-  expect(payload.affirmed).toBe(true);
-  expect(payload.stop_id).toBe("5a000000-0000-4000-9000-000000000001");
+  // The attestation has no sync door in the core (its pod scope is the photo
+  // record), so the proof is one call on its direct door, the recipient
+  // trimmed and the affirmation set; nothing rides the pod scope.
+  const calls = await stubLog(request);
+  const pod = calls.filter((c) => c.path.endsWith("/pod") && !c.path.includes("/sync/"));
+  expect(pod).toHaveLength(1);
+  expect(pod[0]?.method).toBe("POST");
+  expect(pod[0]?.body).toEqual({ received_by: "Receiving clerk", affirmed: true });
+  expect(calls.filter((c) => c.path === "/api/v1/sync/pod" && c.method === "POST")).toHaveLength(0);
   await page.getByRole("button", { name: "Back to my run" }).click();
   await expect(page.locator("[data-progress]")).toHaveText("2 stops left · 1 delivered");
 });

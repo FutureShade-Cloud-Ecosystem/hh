@@ -74,28 +74,29 @@ function payloadOf(op: unknown): Record<string, unknown> {
   return ((op as { payload?: unknown })?.payload ?? {}) as Record<string, unknown>;
 }
 
-test("offline, the stop moves and the proof wait in the outbox, then drain in order", async ({ page, request }) => {
+test("offline, the stop moves wait in the outbox and the proof says no signal, then the moves drain in order and the proof goes", async ({ page, request }) => {
   // The world is pulled and the runner rests before the word goes offline: a
   // boot still in flight would hear the word and then hear its own boot's
   // online, and the glass would show online while the radio was cut.
   await loadRunSheet(page);
   // The banner says the truth about the connection, with the outbox's depth.
   await platformWord(page, false, "You're offline");
-  // Stop one: loaded, en route, signed. Each move queues, the proof queues
-  // after the moves it belongs to.
+  // Stop one: loaded, en route. Each move queues.
   await page.locator("[data-stop]", { hasText: "Northline Hardscapes" }).click();
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
   await page.getByRole("button", { name: "Mark en route" }).click();
   await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
-  // The proof of delivery, captured offline: the stop shows delivered.
+  // The proof of delivery is on its direct door (the core's pod scope is the
+  // photo record, the typed name attestation has no sync door): offline it
+  // says so in words and queues nothing.
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await expect(page.locator("[data-pod]")).toBeVisible();
   await page.getByLabel("Full name of the person receiving").fill("Receiver (demo)");
   await page.getByLabel(/confirm/i).check();
   await page.getByRole("button", { name: "Sign for this delivery" }).click();
-  await expect(page.locator("main")).toContainText("is signed for.");
-  await expect(page.locator("hh-shell-offline-banner")).toContainText("3 changes in the outbox");
+  await expect(page.getByRole("alert")).toContainText("Check your signal");
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
   // Back online: the outbox drains, in the order the writes were made.
   await platformWord(page, true);
   await expect
@@ -105,9 +106,11 @@ test("offline, the stop moves and the proof wait in the outbox, then drain in or
   expect(stopOps.length).toBe(2);
   expect(String(payloadOf(stopOps[0]).status)).toBe("LOADED");
   expect(String(payloadOf(stopOps[1]).status)).toBe("EN_ROUTE");
-  const podOps = await pushedOps(request, "pod");
-  expect(podOps.length).toBe(1);
-  expect(String(payloadOf(podOps[0]).received_by)).toBe("Receiver (demo)");
+  // Nothing rode the pod scope; the signature goes on its direct door now.
+  await page.getByRole("button", { name: "Sign for this delivery" }).click();
+  await expect(page.locator("main")).toContainText("is signed for.");
+  const calls = (await (await request.get("/_stub/log")).json()) as PushCall[];
+  expect(calls.filter((c) => c.path === "/api/v1/sync/pod" && c.method === "POST")).toHaveLength(0);
   // The day board agrees: the stop is delivered on the pulled row.
   await page.getByRole("button", { name: "Back to my run" }).click();
   await expect(page.locator("[data-stop]", { hasText: "Northline Hardscapes" }).locator("[data-stop-status]")).toHaveText("Delivered");

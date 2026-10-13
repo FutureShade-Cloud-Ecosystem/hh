@@ -32,8 +32,8 @@ test("recording it sends the status and the reason, and closes the stop with the
   await expect(page.getByRole("status")).toContainText("Recorded. This stop is closed.");
   await expect(page.locator("[data-handback]")).toContainText("Nobody on site");
   await expect(page.locator("[data-handback]")).toContainText("Bring the load back to the yard");
-  // The move rides the outbox, and the replay declares the wire shape: the
-  // status and the reason, on the stops scope's push.
+  // The move rides the outbox, and the replay declares the core's wire shape:
+  // the status and the failure reason, on the stops scope's push.
   interface PushCall extends LoggedCall {
     body: { ops: Array<Record<string, unknown>> } | null;
   }
@@ -49,7 +49,8 @@ test("recording it sends the status and the reason, and closes the stop with the
     (c): c is PushCall => c.path === "/api/v1/sync/stops" && c.method === "POST",
   );
   const failedOp = pushes.flatMap((p) => p.body?.ops ?? []).find((op) => (op?.payload as Record<string, unknown>)?.status === "FAILED");
-  expect((failedOp?.payload as Record<string, unknown>).reason).toBe("Nobody on site");
+  expect((failedOp?.payload as Record<string, unknown>).failure_reason).toBe("Nobody on site");
+  expect(Object.keys(failedOp?.payload as Record<string, unknown>).sort()).toEqual(["failure_reason", "id", "status"]);
   await expect(page.getByRole("button", { name: "Delivered", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Could not deliver" })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to my run" }).click();
