@@ -82,7 +82,7 @@ test("a resolved widget view carries the catalog metadata beside the stored row"
   assert.equal(view.span_cols, 6);
   assert.equal(view.span_rows, 2);
   assert.equal("sneaky" in view, false);
-  assert.equal(view.branch_id, "");
+  assert.equal("branch_id" in view, false);
 });
 
 test("a layout keeps the profile and the tier the row came from", () => {

@@ -39,7 +39,8 @@ export interface BuilderWidgetRow {
   readonly shape: string;
   readonly measure: string;
   readonly split: string;
-  readonly branch_id: string;
+  /** Absent means "every branch I can see": a null or empty on this wire would be a fourth state. */
+  readonly branch_id?: string;
   readonly range: string;
   readonly size: string;
   /** The free span, as a PAIR or not at all: absent means the preset decides. */
@@ -246,19 +247,22 @@ export function toWidgetRow(raw: unknown): BuilderWidgetRow {
     shape: text(r.shape),
     measure: text(r.measure),
     split: text(r.split),
-    branch_id: text(r.branch_id),
     range: text(r.range),
     size: text(r.size),
     title: text(r.title),
     position: num(r.position),
     visible: r.visible === true,
   };
+  // Absent is the honest shape for "every branch I can see": the empty string
+  // and the null are never carried.
+  const branch = text(r.branch_id);
+  const withBranch = branch === "" ? row : { ...row, branch_id: branch };
   // THE PAIR TRAVELS AS A PAIR OR NOT AT ALL: a half pair is the omission an
   // older client makes, and the door hands the server "the preset decides"
   // rather than a half-fact.
   const cols = num(r.cols);
   const rows = num(r.rows);
-  return cols > 0 && rows > 0 ? { ...row, cols, rows } : row;
+  return cols > 0 && rows > 0 ? { ...withBranch, cols, rows } : withBranch;
 }
 
 export function toWidgetView(raw: unknown): BuilderWidgetView {
@@ -689,9 +693,7 @@ export class BuilderApi {
       position: w.position,
       visible: w.visible,
     };
-    // Absent is the honest shape for "every branch I can see": the empty
-    // string is never sent.
-    if (w.branch_id !== "") row.branch_id = w.branch_id;
+    if (w.branch_id !== undefined && w.branch_id !== "") row.branch_id = w.branch_id;
     if (w.cols !== undefined && w.rows !== undefined) {
       row.cols = w.cols;
       row.rows = w.rows;
