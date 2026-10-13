@@ -2933,7 +2933,7 @@ components:
         The branch-overridable POS behavior policy; branch_id empty is the
         org-wide default row. quick_chip_set empty on the wire means the service
         derived nothing and the client falls back to the full chip row.
-      required: [branch_id, cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled, workspace_split_pct, workspace_arrangement, lookup_presentation, margin_visibility, balance_visibility]
+      required: [branch_id, cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled, workspace_split_pct, workspace_arrangement, lookup_presentation, margin_visibility, balance_visibility, supplier_deposit_cancel]
       properties:
         branch_id: { type: string, description: Empty is the org-wide default row }
         cod_enabled: { type: boolean }
@@ -2952,6 +2952,12 @@ components:
           type: string
           enum: [ALL_STAFF, MANAGER_UP, HIDDEN]
           description: Who may receive a customer's past-due balance on the customer step
+        supplier_deposit_cancel:
+          type: string
+          enum: [CREDIT_BACK, KEPT]
+          description: >-
+            The dealer default a cancelled special order's supplier deposit
+            takes; a manager may keep it on a given order at the cancel itself
         quick_chip_set:
           type: array
           items: { type: string }

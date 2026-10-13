@@ -407,6 +407,18 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 		}
 	}
 
+	// The note's children restock through the same seam the single return does: every child's
+	// restock rows, one sorted pass over the union (the note is one branch, its own wall), taken
+	// BEFORE the note's first counter draw, the single return's own stock-first rule. The swap is
+	// the one caller that pre-locks itself: it takes the sorted union of BOTH its halves' products
+	// ahead of this body (swap.go), one pass, so the body adds none there and the swap's pre-lock
+	// stays the one call the review leg pins.
+	if !in.swap {
+		if err := s.lockRestockRowsTx(ctx, tx, ordered[0].oc.BranchID, noteRestockProducts(plan)); err != nil {
+			return ReturnNote{}, false, false, err
+		}
+	}
+
 	// Every invoice the note may touch, sorted, before any credit offset takes one and then the shared
 	// invoice sequence row (P2-1).
 	ocs := make([]returnOrderCtx, len(ordered))
@@ -535,6 +547,24 @@ func (s *Service) returnAcrossInTx(ctx context.Context, tx pgx.Tx, plan *returnA
 		out.Returns = append(out.Returns, ret)
 	}
 	return out, false, approvedHere, nil
+}
+
+// noteRestockProducts is the union of the note's children's restock products (one branch, the note's
+// own wall), the set the note's body pre-locks, sorted, before its first counter draw.
+func noteRestockProducts(plan *returnAcrossPlan) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, child := range plan.children {
+		for _, id := range child.restockProducts {
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // judgeNoteGate is the note's refund approval gate, ONE judgment for the transaction (exact, after the
