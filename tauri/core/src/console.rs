@@ -233,11 +233,13 @@ fn non_empty_str(m: &serde_json::Map<String, serde_json::Value>, key: &str) -> R
     }
 }
 
-/// A Console refusal of a call made with a session: the session is gone,
-/// blocked or never existed (`no_session`), or Console is throttling or down.
+/// A Console refusal of a call made with a session: only a 401 says the
+/// session is gone, blocked or never existed (`no_session`). A 403 or 404 can
+/// come from a proxy, a WAF or a redeploy, so it reads as `unavailable`, never
+/// as a verdict that would end a person's session.
 fn console_refusal(status: u16) -> AuthCode {
     match status {
-        401 | 403 | 404 => AuthCode::NoSession,
+        401 => AuthCode::NoSession,
         429 => AuthCode::RateLimited,
         _ => AuthCode::Unavailable,
     }
