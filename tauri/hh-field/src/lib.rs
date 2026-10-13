@@ -90,6 +90,26 @@ fn probe_report(app: tauri::AppHandle, json: String) {
     }
 }
 
+// The Android Keystore debug leg (feature `custody-proof`, off by default):
+// one line, `HH_CUSTODY_PROOF ok Stored` on the first launch and
+// `HH_CUSTODY_PROOF ok PersistedAndCleared` on the next, or `failed <step>`.
+// The value is a fixed non secret string under a proof address no real
+// session uses.
+#[cfg(feature = "custody-proof")]
+fn run_custody_proof() {
+    use hh_shell_core::custody;
+    let address = custody::Address::console_session(profiles::field().identifier, "custody-proof")
+        .expect("the proof address is valid");
+    let backend = custody::platform_custody();
+    tauri::async_runtime::spawn_blocking(move || {
+        let line = match custody::self_check(backend.as_ref(), &address) {
+            Ok(done) => format!("ok {done:?}"),
+            Err(step) => format!("failed {step}"),
+        };
+        println!("HH_CUSTODY_PROOF {line}");
+    });
+}
+
 // One startup line naming the profile the shell is running (the gates and
 // device legs read it; nothing here is secret: profile facts only, never
 // tokens or keys). The update values are the Field channel's configuration
@@ -164,6 +184,8 @@ pub fn run() {
             // The sign in commands' state: custody and the Console client, built
             // from the profile's fixed configuration (never the webview's).
             app.manage(auth::AuthState::for_profile());
+            #[cfg(feature = "custody-proof")]
+            run_custody_proof();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title(profile.window.title)
                 .inner_size(profile.window.width, profile.window.height);
@@ -377,5 +399,12 @@ mod tests {
         for banned in ["println!", "eprintln!", "print!(", "dbg!", "log::", "tracing::", "info!(", "warn!(", "error!("] {
             assert!(!production.contains(banned), "auth.rs contains {banned}");
         }
+    }
+
+    #[test]
+    fn the_custody_proof_is_not_a_default_feature() {
+        let manifest = include_str!("../Cargo.toml");
+        assert!(manifest.contains("default = []"), "no default feature");
+        assert!(manifest.contains("custody-proof = []"));
     }
 }

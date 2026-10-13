@@ -116,6 +116,96 @@ impl Custody for KeyringCustody {
     }
 }
 
+/// The failure of a platform bridge. It carries nothing: a Java exception
+/// message or a JNI error code could name a service or an account, and the
+/// caller needs only "it failed".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BridgeFailure;
+
+/// The few calls a platform keystore must answer, on plain strings: the
+/// Android Keystore bridge implements this over JNI, and the host tests
+/// implement it with a fake. `get` of an absent entry is `Ok(None)`; `delete`
+/// of an absent entry is `Ok(())`; anything else wrong is `BridgeFailure`.
+pub trait KeystoreBridge: Send + Sync {
+    fn put(&self, service: &str, account: &str, value: &str) -> Result<(), BridgeFailure>;
+    fn get(&self, service: &str, account: &str) -> Result<Option<String>, BridgeFailure>;
+    fn delete(&self, service: &str, account: &str) -> Result<(), BridgeFailure>;
+}
+
+/// A custody over a keystore bridge. It adds the address discipline (only the
+/// contract's service and account reach the bridge) and the fail closed
+/// mapping; there is no other storage behind it.
+pub struct BridgedCustody<B: KeystoreBridge>(B);
+
+impl<B: KeystoreBridge> BridgedCustody<B> {
+    pub fn new(bridge: B) -> Self {
+        Self(bridge)
+    }
+
+    #[cfg(test)]
+    fn bridge(&self) -> &B {
+        &self.0
+    }
+}
+
+impl<B: KeystoreBridge> Custody for BridgedCustody<B> {
+    fn get(&self, address: &Address) -> Result<Option<String>, CustodyError> {
+        self.0.get(address.service(), address.account()).map_err(|_| CustodyError::KeychainUnavailable)
+    }
+
+    fn set(&self, address: &Address, value: &str) -> Result<(), CustodyError> {
+        if value.is_empty() {
+            return Err(CustodyError::KeychainUnavailable);
+        }
+        self.0.put(address.service(), address.account(), value).map_err(|_| CustodyError::KeychainUnavailable)
+    }
+
+    fn delete(&self, address: &Address) -> Result<(), CustodyError> {
+        self.0.delete(address.service(), address.account()).map_err(|_| CustodyError::KeychainUnavailable)
+    }
+}
+
+/// What a self check run did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelfCheck {
+    /// The entry was absent: it was stored and read back, and left in place.
+    Stored,
+    /// The entry from an earlier run was found with the right value and removed.
+    PersistedAndCleared,
+}
+
+const SELF_CHECK_VALUE: &str = "hh-custody-self-check-value";
+
+/// The debug leg's proof that a custody really keeps a value: the first run
+/// stores a fixed, non secret value and reads it back and leaves it; the next
+/// run (after a restart) finds it, verifies it and deletes it. Run against an
+/// address no real session uses. Errors name the step only.
+pub fn self_check(custody: &dyn Custody, address: &Address) -> Result<SelfCheck, &'static str> {
+    match custody.get(address) {
+        Err(_) => Err("get"),
+        Ok(Some(found)) => {
+            let right = found == SELF_CHECK_VALUE;
+            custody.delete(address).map_err(|_| "delete")?;
+            if !right {
+                return Err("value");
+            }
+            match custody.get(address) {
+                Ok(None) => Ok(SelfCheck::PersistedAndCleared),
+                Ok(Some(_)) => Err("delete"),
+                Err(_) => Err("get"),
+            }
+        }
+        Ok(None) => {
+            custody.set(address, SELF_CHECK_VALUE).map_err(|_| "set")?;
+            match custody.get(address) {
+                Ok(Some(v)) if v == SELF_CHECK_VALUE => Ok(SelfCheck::Stored),
+                Ok(_) => Err("value"),
+                Err(_) => Err("get"),
+            }
+        }
+    }
+}
+
 /// A target with no keychain backend yet: every operation fails closed.
 pub struct NoBackend;
 
@@ -131,13 +221,18 @@ impl Custody for NoBackend {
     }
 }
 
-/// The custody this build's target uses.
+/// The custody this build's target uses: the Secret Service on desktop Linux,
+/// the Android Keystore on Android, and nothing (fail closed) elsewhere.
 pub fn platform_custody() -> Box<dyn Custody> {
+    #[cfg(target_os = "android")]
+    {
+        Box::new(BridgedCustody::new(crate::android_keystore::JniKeystore))
+    }
     #[cfg(target_os = "linux")]
     {
         Box::new(KeyringCustody)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         Box::new(NoBackend)
     }
@@ -269,6 +364,110 @@ mod tests {
         assert_eq!(c.delete(&addr()), Err(CustodyError::KeychainUnavailable));
         // A failed write stores nothing behind the caller's back.
         assert_eq!(c.snapshot_len(), 0);
+    }
+
+    // ---- the platform bridge seam (Android Keystore) -----------------------
+
+    use std::sync::Mutex;
+
+    /// Records what the bridge was asked and answers from a map; `fail` makes
+    /// every call fail the way a broken JNI call or a Keystore error would.
+    #[derive(Default)]
+    struct FakeBridge {
+        calls: Mutex<Vec<String>>,
+        store: Mutex<std::collections::HashMap<(String, String), String>>,
+        fail: bool,
+    }
+
+    impl KeystoreBridge for FakeBridge {
+        fn put(&self, service: &str, account: &str, value: &str) -> Result<(), BridgeFailure> {
+            self.calls.lock().unwrap().push(format!("put {service} {account}"));
+            if self.fail {
+                return Err(BridgeFailure);
+            }
+            self.store.lock().unwrap().insert((service.into(), account.into()), value.into());
+            Ok(())
+        }
+        fn get(&self, service: &str, account: &str) -> Result<Option<String>, BridgeFailure> {
+            self.calls.lock().unwrap().push(format!("get {service} {account}"));
+            if self.fail {
+                return Err(BridgeFailure);
+            }
+            Ok(self.store.lock().unwrap().get(&(service.into(), account.into())).cloned())
+        }
+        fn delete(&self, service: &str, account: &str) -> Result<(), BridgeFailure> {
+            self.calls.lock().unwrap().push(format!("delete {service} {account}"));
+            if self.fail {
+                return Err(BridgeFailure);
+            }
+            self.store.lock().unwrap().remove(&(service.into(), account.into()));
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn bridged_custody_passes_the_contracts_service_and_account_and_nothing_else() {
+        let c = BridgedCustody::new(FakeBridge::default());
+        c.set(&addr(), "v1").unwrap();
+        assert_eq!(c.get(&addr()), Ok(Some("v1".to_string())));
+        c.delete(&addr()).unwrap();
+        assert_eq!(c.get(&addr()), Ok(None));
+        let calls = c.bridge().calls.lock().unwrap().clone();
+        assert_eq!(
+            calls,
+            [
+                "put ai.futurebuild.hh.field console-session:proj-1",
+                "get ai.futurebuild.hh.field console-session:proj-1",
+                "delete ai.futurebuild.hh.field console-session:proj-1",
+                "get ai.futurebuild.hh.field console-session:proj-1",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failing_bridge_is_keychain_unavailable_on_every_operation_with_no_fallback() {
+        let c = BridgedCustody::new(FakeBridge { fail: true, ..Default::default() });
+        assert_eq!(c.get(&addr()), Err(CustodyError::KeychainUnavailable));
+        assert_eq!(c.set(&addr(), "v1"), Err(CustodyError::KeychainUnavailable));
+        assert_eq!(c.delete(&addr()), Err(CustodyError::KeychainUnavailable));
+        // Nothing was kept anywhere else.
+        assert!(c.bridge().store.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_bridged_custody_refuses_an_empty_secret() {
+        // An empty value is never a session secret; it must not be stored as one.
+        let c = BridgedCustody::new(FakeBridge::default());
+        assert_eq!(c.set(&addr(), ""), Err(CustodyError::KeychainUnavailable));
+        assert!(c.bridge().calls.lock().unwrap().is_empty(), "it never reached the Keystore");
+    }
+
+    // ---- the self check the Android debug leg runs --------------------------
+
+    #[test]
+    fn the_self_check_stores_then_proves_persistence_then_cleans_up() {
+        let c = MemoryCustody::new();
+        let a = Address::console_session("ai.futurebuild.hh.field", "custody-proof").unwrap();
+        // First run: nothing there, so it stores the value and reads it back.
+        assert_eq!(self_check(&c, &a), Ok(SelfCheck::Stored));
+        assert_eq!(c.snapshot_len(), 1, "the entry stays so the next launch can prove persistence");
+        // Second run (a restart): it finds the value, verifies it and deletes it.
+        assert_eq!(self_check(&c, &a), Ok(SelfCheck::PersistedAndCleared));
+        assert_eq!(c.snapshot_len(), 0);
+        assert_eq!(self_check(&c, &a), Ok(SelfCheck::Stored));
+    }
+
+    #[test]
+    fn the_self_check_reports_a_wrong_value_and_an_unavailable_keychain_by_step() {
+        let c = MemoryCustody::unavailable();
+        let a = Address::console_session("ai.futurebuild.hh.field", "custody-proof").unwrap();
+        assert_eq!(self_check(&c, &a), Err("get"));
+        let c = MemoryCustody::writes_fail();
+        assert_eq!(self_check(&c, &a), Err("set"));
+        let c = MemoryCustody::new();
+        c.set(&a, "some other value").unwrap();
+        assert_eq!(self_check(&c, &a), Err("value"));
+        assert_eq!(c.snapshot_len(), 0, "a wrong value is removed so the next run starts clean");
     }
 
     #[test]

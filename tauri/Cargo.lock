@@ -1749,7 +1749,9 @@ dependencies = [
 name = "hh-shell-core"
 version = "0.0.1"
 dependencies = [
+ "jni 0.21.1",
  "keyring",
+ "ndk-context",
  "reqwest",
  "rusqlite",
  "rustls",

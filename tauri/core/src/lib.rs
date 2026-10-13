@@ -1,4 +1,6 @@
 //! Shared core of the HH shells.
+#[cfg(target_os = "android")]
+pub mod android_keystore;
 pub mod auth;
 pub mod console;
 pub mod custody;

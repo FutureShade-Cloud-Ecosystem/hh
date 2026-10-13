@@ -44,3 +44,10 @@ tokio = { version = "1", features = ["rt", "macros", "time"] }
 # this crate, so the core reports that plainly (see keychain.rs).
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "=3.6.3", default-features = false, features = ["async-secret-service", "tokio", "crypto-rust"] }
+
+# The Android Keystore bridge (src/android_keystore.rs): JNI into the Kotlin
+# KeystoreCustody class. tao initialises ndk-context with the JavaVM and the
+# application context.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "=0.21.1"
+ndk-context = "0.1"
