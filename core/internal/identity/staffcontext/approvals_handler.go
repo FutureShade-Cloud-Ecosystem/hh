@@ -66,6 +66,8 @@ func (h *ApprovalsHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("POST /api/v1/staff/approvals", g.RequireStaff(h.staff(h.createApproval)))
 	r.Handle("GET /api/v1/staff/approvals", g.RequireStaff(h.staff(h.listApprovals)))
 	r.Handle("POST /api/v1/staff/approvals/{id}/decide", g.RequireStaff(h.staff(h.decideApproval)))
+	// The margin policy check rides the same stamp: the override lookup is keyed by the caller's ERP id.
+	r.Handle("POST /api/v1/staff/policy/check", g.RequireStaff(h.staff(h.checkPolicy)))
 }
 
 type createApprovalRequest struct {
@@ -165,6 +167,68 @@ func (h *ApprovalsHandler) decideApproval(w http.ResponseWriter, r *http.Request
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// maxPolicyCheckCents bounds the advisory check's amounts so the basis point arithmetic (amount times 10000
+// in int64) cannot wrap: ten billion dollars is far past any quote.
+const maxPolicyCheckCents int64 = 1_000_000_000_000
+
+// policyCheckRequest is the contract's IdentityPolicyCheckRequest. The amounts are pointers so a body
+// that leaves one out is a 400 rather than a quiet zero.
+type policyCheckRequest struct {
+	PriceCents *int64 `json:"price_cents"`
+	CostCents  *int64 `json:"cost_cents"`
+	BranchID   string `json:"branch_id"`
+}
+
+// checkPolicy evaluates the margin policy for a price and cost at a branch, consulting the caller's
+// approved overrides so the request, approve, proceed loop closes (identityCheckPolicy). Below the
+// floor with no approved override is a 403 whose error is the block's own sentence (the transport
+// hands a client only that field) and whose block key carries the IdentityActionBlocked object. A
+// branch outside the caller's grants is refused before anything is looked up.
+func (h *ApprovalsHandler) checkPolicy(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+	caller, ok := StaffContextFromContext(r.Context())
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "no caller")
+		return
+	}
+	var req policyCheckRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.PriceCents == nil || req.CostCents == nil || req.BranchID == "" {
+		httpx.Error(w, http.StatusBadRequest, "price_cents, cost_cents and branch_id are required")
+		return
+	}
+	if _, err := uuid.Parse(req.BranchID); err != nil {
+		// A global caller reaches any string, and a non uuid would raise in the lookup's uuid column as a 503.
+		httpx.Error(w, http.StatusBadRequest, "branch_id must be a branch id")
+		return
+	}
+	if *req.PriceCents < 0 || *req.CostCents < 0 || *req.PriceCents > maxPolicyCheckCents || *req.CostCents > maxPolicyCheckCents {
+		httpx.Error(w, http.StatusBadRequest, "price_cents and cost_cents must be between 0 and 1000000000000")
+		return
+	}
+	if !caller.CanAccessBranch(req.BranchID) {
+		httpx.Error(w, http.StatusForbidden, "that branch is outside your grants")
+		return
+	}
+	hasOverride, err := h.svc.HasUnusedApprovedOverride(r.Context(), caller.UserID, req.BranchID, PolicyMargin)
+	if err != nil {
+		httpx.Error(w, http.StatusServiceUnavailable, "the override lookup failed")
+		return
+	}
+	if b := CheckMargin(*req.PriceCents, *req.CostCents, req.BranchID, hasOverride); b != nil {
+		httpx.ErrorWith(w, http.StatusForbidden, b.Detail, map[string]any{"block": b})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"allowed":    true,
+		"margin_bps": MarginBps(*req.PriceCents, *req.CostCents),
+		"override":   hasOverride,
+	})
 }
 
 // writeApprovalErr maps the rail's errors to HTTP without leaking
