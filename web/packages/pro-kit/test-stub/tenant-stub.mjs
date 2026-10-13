@@ -43,6 +43,12 @@ const PORTAL_ACCEPT_REFUSAL =
 
 let world = createWorld();
 
+// Test controls (stub only, never core behaviour): a fault makes every gated request under a path answer a status
+// after the gate has passed, so a leg can show an error or a refusal on demand; a delay holds every handler for a
+// while so a leg can see the loading state; empty clears a collection. A reset clears all three.
+let faults = [];
+let delayMs = 0;
+
 function userFor(token) {
   // A tenant bearer is `pro-stub.<persona>.<expiresAtMs>`; a staff one is `staff-stub.x`.
   const parts = token.split(".");
@@ -812,8 +818,11 @@ async function handle(req, res) {
   if (url.pathname === "/healthz") return ok(res, { ok: true });
   if (url.pathname === "/_stub/reset" && req.method === "POST") {
     world = createWorld();
+    faults = [];
+    delayMs = 0;
     return ok(res, { status: "ok" });
   }
+  if (url.pathname === "/_stub/control" && req.method === "POST") return stubControl(req, res);
   if (url.pathname === "/_stub/session" && req.method === "POST") return stubSession(req, res);
 
   const found = match(req.method, url.pathname);
@@ -838,7 +847,28 @@ async function handle(req, res) {
     if (route.gate !== "tenant" && !capabilitiesOf(who.user.role)[route.gate]) return forbidden(res);
     ctx.user = who.user;
   }
+  const fault = faults.find((f) => url.pathname.startsWith(f.path));
+  if (fault) {
+    if (fault.status === 401) return unauthorized(res);
+    if (fault.status === 403) return forbidden(res);
+    return refuse(res, fault.status, "internal error");
+  }
+  if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
   return H[route.operationId](ctx);
+}
+
+// POST /_stub/control {fault: {path, status}} | {delayMs} | {empty: "orders" | "invoices" | "projects" | "quotes"}
+async function stubControl(req, res) {
+  const body = await readJson(req, res);
+  if (body === undefined) return;
+  if (body?.fault) faults.push({ path: String(body.fault.path), status: Number(body.fault.status) });
+  if (typeof body?.delayMs === "number") delayMs = Math.max(0, Math.min(5000, body.delayMs));
+  const collections = { orders: "orders", invoices: "invoices", projects: "projects", quotes: "quotes" };
+  if (body?.empty && collections[body.empty]) {
+    world[collections[body.empty]] = [];
+    world.recompute();
+  }
+  ok(res, { status: "ok" });
 }
 
 async function stubSession(req, res) {

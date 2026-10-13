@@ -8,6 +8,7 @@
 // Invoice. The statuses are the core's vocabularies, one table per kind,
 // translated to sentence case words a person reads (never the stored string).
 import { css, html, type TemplateResult } from "lit";
+import { TRACKING_WORDS, type Tracking } from "./board.js";
 
 export const STAGES = ["plan", "quote", "order", "invoice"] as const;
 export type Stage = (typeof STAGES)[number];
@@ -126,4 +127,24 @@ export function stageChip(stage: Stage, current = false): TemplateResult {
 export function statusChip(kind: string, status: string): TemplateResult {
   const tone = statusTone(kind, status);
   return html`<span class="pchip pchip-${tone}" data-status="${status}">${statusWords(kind, status)}</span>`;
+}
+
+const TRACKING_TONES: Readonly<Record<Tracking, Tone>> = {
+  submitted: "neutral",
+  confirmed: "good",
+  picking: "watch",
+  "ready-willcall": "good",
+  "out-for-delivery": "watch",
+  delivered: "good",
+  invoiced: "neutral",
+  cancelled: "stop",
+};
+
+export function trackingTone(tracking: Tracking): Tone {
+  return TRACKING_TONES[tracking];
+}
+
+/** The tracking word of an order as a chip (the contract's tracking vocabulary, board.ts). */
+export function trackingChip(tracking: Tracking): TemplateResult {
+  return html`<span class="pchip pchip-${trackingTone(tracking)}" data-tracking="${tracking}">${TRACKING_WORDS[tracking]}</span>`;
 }

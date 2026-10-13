@@ -3,7 +3,7 @@
 // never as a confident zero; ids and totals ride the mono face.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { NO_FIGURE, money, totalsLine, qtyWithUnit, houseDay, monoStyles } from "../src/format.ts";
+import { NO_FIGURE, money, totalsLine, qtyWithUnit, houseDay, calendarDay, monoStyles } from "../src/format.ts";
 
 test("money reads as US dollars with grouping and no currency letters", () => {
   assert.equal(money(123400), "$1,234.00");
@@ -50,4 +50,16 @@ test("a day reads in the dealer's own zone, not UTC", () => {
 
 test("the mono sheet names the mono token for ids and totals", () => {
   assert.match(String(monoStyles), /--hh-font-mono/);
+});
+
+test("a date only value reads as the same day in every zone, never shifted", () => {
+  // The core sends due and issue dates as a bare day. Reading one as a UTC instant and showing it in the dealer's
+  // zone would move it back a day; a bare day is already the dealer's day. The year is the current one, computed.
+  const year = String(new Date().getUTCFullYear());
+  assert.equal(calendarDay(`${year}-03-09`), "Mar 9");
+  assert.equal(calendarDay(`${year}-12-31`), "Dec 31");
+  assert.equal(calendarDay(`${year}-03-09T08:00:00Z`), "Mar 9", "a time on the end is ignored, not converted");
+  assert.equal(calendarDay("soon"), NO_FIGURE);
+  assert.equal(calendarDay(undefined), NO_FIGURE);
+  assert.equal(calendarDay(`${year}-13-40`), NO_FIGURE);
 });

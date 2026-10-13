@@ -51,6 +51,22 @@ export function houseDay(iso: string | null | undefined): string {
   return new Intl.DateTimeFormat("en-US", { timeZone: HOUSE_ZONE, month: "short", day: "numeric" }).format(when);
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * A bare day from the core (an issue or due date, `YYYY-MM-DD`) as short words. It is the dealer's day already,
+ * so it is read as written and never converted through a zone; anything after the day is ignored.
+ */
+export function calendarDay(value: string | null | undefined): string {
+  if (typeof value !== "string") return NO_FIGURE;
+  const m = /^\d{4}-(\d{2})-(\d{2})/.exec(value);
+  if (m === null) return NO_FIGURE;
+  const month = Number(m[1]);
+  const day = Number(m[2]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return NO_FIGURE;
+  return `${MONTHS[month - 1]} ${day}`;
+}
+
 /** The mono face for ids, quantities and totals, with tabular figures so a column lines up. */
 export const monoStyles = css`
   .mono {

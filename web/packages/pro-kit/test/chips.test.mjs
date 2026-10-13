@@ -5,7 +5,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { STAGES, STAGE_WORDS, statusWords, statusTone, chipStyles } from "../src/chips.ts";
+import { STAGES, STAGE_WORDS, statusWords, statusTone, chipStyles, trackingTone } from "../src/chips.ts";
+import { TRACKING_STATES } from "../src/board.ts";
 
 test("the four stages are Plan, Quote, Order, Invoice, in that order, in sentence case", () => {
   assert.deepEqual([...STAGES], ["plan", "quote", "order", "invoice"]);
@@ -53,4 +54,11 @@ test("the chip sheet uses design tokens only, and never the dealer's gold or bra
   assert.doesNotMatch(css, /\brgba?\(|\bhsla?\(|\boklch\(/);
   assert.doesNotMatch(css, /--hh-accent|--cbrand|gold/i, "gold is the dealer's, a status is the platform's");
   for (const stage of STAGES) assert.match(css, new RegExp(`stage-${stage}`));
+});
+
+test("every tracking state has a tone, and the ends of the road read as such", () => {
+  for (const state of TRACKING_STATES) assert.ok(["neutral", "good", "watch", "stop"].includes(trackingTone(state)), state);
+  assert.equal(trackingTone("delivered"), "good");
+  assert.equal(trackingTone("cancelled"), "stop");
+  assert.equal(trackingTone("out-for-delivery"), "watch");
 });

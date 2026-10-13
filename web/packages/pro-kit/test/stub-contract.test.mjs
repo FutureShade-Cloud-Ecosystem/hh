@@ -535,3 +535,19 @@ test("reset puts the world back", async () => {
   const quote = (await call("owner", "GET", `${T}/quotes/${i.quoteSent}`)).json;
   assert.equal(quote.status, "SENT");
 });
+
+test("the stub's test controls make a fault, a delay and an empty list on demand, and reset clears them", async () => {
+  await fetch(`${base}/_stub/control`, { method: "POST", body: JSON.stringify({ empty: "orders" }) });
+  assert.deepEqual((await call("owner", "GET", `${T}/orders`)).json.items, []);
+  await fetch(`${base}/_stub/reset`, { method: "POST" });
+  await fetch(`${base}/_stub/control`, { method: "POST", body: JSON.stringify({ fault: { path: `${T}/invoices`, status: 503 } }) });
+  assert.equal((await call("owner", "GET", `${T}/invoices`)).status, 503);
+  assert.equal((await call("field", "GET", `${T}/invoices`)).status, 403, "the gate still comes before a fault");
+  assert.equal((await call("owner", "GET", `${T}/orders`)).status, 200, "a fault names its own path only");
+  await fetch(`${base}/_stub/control`, { method: "POST", body: JSON.stringify({ delayMs: 250 }) });
+  const started = Date.now();
+  await call("owner", "GET", `${T}/orders`);
+  assert.ok(Date.now() - started >= 240, "the delay held the handler");
+  await fetch(`${base}/_stub/reset`, { method: "POST" });
+  assert.equal((await call("owner", "GET", `${T}/invoices`)).status, 200);
+});
