@@ -53,6 +53,16 @@ func testInput(t *testing.T) planInput {
 			// The controller login the populate plants beside them (the parked journals' decider).
 			personaController: "9e70a000-0000-4000-9000-00000000ad13",
 		},
+		// The contractor account the populate makes, present so every invariant in this file runs over
+		// the contractor world's rows too (demoseed_contractor_plan_test.go asserts them in particular).
+		Contractor: contractorFacts{
+			Ready:    true,
+			BranchID: "5d1b3f6e-0000-4000-9000-000000000001",
+			Users: map[string]string{
+				"account_admin": "9e70a000-0000-4000-9000-00000000ad21",
+				"buyer":         "9e70a000-0000-4000-9000-00000000ad22",
+			},
+		},
 		// A stub sealer: these tests are about the plan's shape, and the real sealer's AES nonce is
 		// random by design (see TestPlan_OnlyTheSealedBytesDifferBetweenRuns for that half).
 		Seal: func(refKey, typedName, purpose, refType, refID string, at time.Time) (string, []byte, error) {
@@ -538,8 +548,14 @@ func TestPlan_OrderTotalsAddUp(t *testing.T) {
 		if sub != lineTotals[id] {
 			t.Errorf("order %s: subtotal %d but its lines sum to %d", id, sub, lineTotals[id])
 		}
-		if want := taxOn(sub); tax != want {
-			t.Errorf("order %s: tax %d, expected %d at %d bps", id, tax, want, hstBps)
+		// The contractor world's orders carry the California rate, asserted in
+		// demoseed_contractor_plan_test.go; this test holds the Ontario world's.
+		want := taxOn(sub)
+		if f["tenant_id"] != nil {
+			want = contractorTax(sub)
+		}
+		if tax != want {
+			t.Errorf("order %s: tax %d, expected %d", id, tax, want)
 		}
 		if total != sub+tax {
 			t.Errorf("order %s: total %d != subtotal %d + tax %d", id, total, sub, tax)
