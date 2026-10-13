@@ -6,7 +6,15 @@
 // Every value these doubles mint is obviously fake and documented as fake;
 // no real credential, token, or secret exists anywhere in this package or
 // its fixtures.
-import type { AccountSurface, AccountUser, OAuth2Provider } from "./client.js";
+import type {
+  AccountSurface,
+  AccountUser,
+  ExchangeRefusalCode,
+  ExchangeResult,
+  ExchangeUser,
+  OAuth2Provider,
+  RefreshTimers,
+} from "./client.js";
 import type { CredentialProvider } from "./lock.js";
 import type { StorageLike } from "./session.js";
 
@@ -22,6 +30,96 @@ export const FAKE_ACCOUNT: AccountUser = {
   email: "fake.user@example.invalid",
   name: "Fake User",
 };
+
+/** The fake exchange user block for an account, in the core's snake case. Fake role values. */
+export function fakeExchangeUser(account: AccountUser = FAKE_ACCOUNT, overrides: Partial<ExchangeUser> = {}): ExchangeUser {
+  return {
+    user_id: account.userId,
+    email: account.email,
+    display_name: account.name,
+    role_code: "fake-role",
+    role_name: "Fake Role",
+    tier: 1,
+    scope: "fake-scope",
+    ...overrides,
+  };
+}
+
+/** A successful fake exchange: the token, its expiry and the user block (fields of the block can be overridden). */
+export function fakeExchangeAnswer(
+  token: string,
+  expiresAtMs: number,
+  userOverrides: Partial<ExchangeUser> = {},
+  account: AccountUser = FAKE_ACCOUNT,
+): ExchangeResult {
+  return { ok: true, answer: { token, expiresAtMs, user: fakeExchangeUser(account, userOverrides) } };
+}
+
+/** A refused fake exchange, by the shells contract's code. */
+export function fakeExchangeRefusal(code: ExchangeRefusalCode): ExchangeResult {
+  return { ok: false, code };
+}
+
+/**
+ * A fake clock and timer set in one: `now` is the clock, `setTimeout` and
+ * `clearTimeout` arm timers on it, and `advance(ms)` moves time forward,
+ * firing every timer that falls due in order (a timer armed by a firing
+ * timer fires too when it falls inside the window) and letting the work each
+ * firing starts settle before the next. Nothing waits in real time.
+ */
+export class FakeScheduler implements RefreshTimers {
+  #time: number;
+  #nextId = 1;
+  readonly #timers = new Map<number, { due: number; callback: () => void }>();
+
+  constructor(startMs: number) {
+    this.#time = startMs;
+  }
+
+  readonly now = (): number => this.#time;
+
+  setTimeout(callback: () => void, ms: number): unknown {
+    const id = this.#nextId;
+    this.#nextId += 1;
+    this.#timers.set(id, { due: this.#time + ms, callback });
+    return id;
+  }
+
+  clearTimeout(handle: unknown): void {
+    this.#timers.delete(handle as number);
+  }
+
+  /** Drop every armed timer (a test that wants to count only the timers armed afterwards). */
+  cancelAll(): void {
+    this.#timers.clear();
+  }
+
+  /** The timers armed and not yet fired or cleared. */
+  get pending(): number {
+    return this.#timers.size;
+  }
+
+  async advance(ms: number): Promise<void> {
+    const target = this.#time + ms;
+    for (;;) {
+      let nextId: number | null = null;
+      let nextDue = Infinity;
+      for (const [id, timer] of this.#timers) {
+        if (timer.due <= target && timer.due < nextDue) {
+          nextId = id;
+          nextDue = timer.due;
+        }
+      }
+      if (nextId === null) break;
+      const timer = this.#timers.get(nextId) as { due: number; callback: () => void };
+      this.#timers.delete(nextId);
+      this.#time = Math.max(this.#time, timer.due);
+      timer.callback();
+      await new Promise<void>((resolve) => setImmediate(resolve)); // let the firing's async work settle
+    }
+    this.#time = target;
+  }
+}
 
 /** A fake storage accessor that works (a Map): the mirror attaches and is not degraded. Every write is recorded for the gates. */
 export class RecordedStorage implements StorageLike {
@@ -136,11 +234,11 @@ export const FAKE_PASSWORD = "fake-password-not-real";
 
 /**
  * The fake of THIS package's AccountSurface (never a fake of Appwrite
- * itself): three scripted answers with obviously fake values, for the
- * controller and custody tests. The fake keeps no platform session beyond a
- * counter: createEmailPasswordSession flips the counter (the platform's
- * cookie-backed session exists), getSession answers while it does, and
- * deleteSession clears it.
+ * itself): scripted answers with obviously fake values, for the controller
+ * and custody tests. The fake keeps no platform session beyond a flag:
+ * createEmailPasswordSession sets it (the platform's cookie-backed session
+ * exists), getSession and exchange answer while it holds, and deleteSession
+ * clears it. script() queues refusals or errors for the next exchanges.
  */
 export class FakeAccountSurface implements AccountSurface {
   readonly #acceptedEmail: string;
@@ -151,15 +249,24 @@ export class FakeAccountSurface implements AccountSurface {
   creationCount = 0;
   oauthCount = 0;
   deleteCount = 0;
-  jwtCount = 0;
+  exchangeCount = 0;
   getSessionCount = 0;
-  jwtLifetimeMs = 900_000;
+  /** The life of the token each fake exchange answers with. */
+  tokenLifetimeMs = 900_000;
+  /** The organisation of every exchange asked, in order. */
+  readonly exchangeOrgs: string[] = [];
   user: AccountUser = { ...FAKE_ACCOUNT };
+  readonly #scripted: (ExchangeResult | Error)[] = [];
 
   constructor(options?: FakeAccountSurfaceOptions) {
     this.#acceptedEmail = options?.email ?? FAKE_ACCOUNT.email;
     this.#acceptedPassword = options?.password ?? FAKE_PASSWORD;
     this.#now = Date.now;
+  }
+
+  /** Queue results the next exchanges answer with, in order (an Error is thrown); once empty the fake answers a fresh token. */
+  script(...results: (ExchangeResult | Error)[]): void {
+    this.#scripted.push(...results);
   }
 
   /** Pin the fake's clock (tests advance it to prove expiry handling). */
@@ -189,11 +296,16 @@ export class FakeAccountSurface implements AccountSurface {
     return { ...this.user };
   }
 
-  async createJWT(): Promise<{ jwt: string; expiresAtMs: number }> {
-    this.jwtCount += 1;
-    // Each mint is distinct, so a test can tell a fresh token from the one it
-    // replaces; the value stays an obvious fake.
-    return { jwt: `${FAKE_JWT}-MINT-${this.jwtCount}`, expiresAtMs: this.#now() + this.jwtLifetimeMs };
+  async exchange(org: string): Promise<ExchangeResult> {
+    this.exchangeCount += 1;
+    this.exchangeOrgs.push(org);
+    const scripted = this.#scripted.shift();
+    if (scripted instanceof Error) throw scripted;
+    if (scripted !== undefined) return scripted;
+    if (!this.#hasPlatformSession) return { ok: false, code: "no_session" };
+    // Each exchange is distinct, so a test can tell a fresh token from the one
+    // it replaces; the value stays an obvious fake.
+    return fakeExchangeAnswer(`${FAKE_JWT}-EX-${this.exchangeCount}`, this.#now() + this.tokenLifetimeMs, {}, this.user);
   }
 
   async deleteSession(): Promise<void> {
@@ -241,10 +353,10 @@ export class DeferredCall<T> implements DeferredHandoff<T> {
 }
 
 /** The AccountSurface methods the deferred account surface holds open. */
-export type DeferredMethodName = "createEmailPasswordSession" | "getSession" | "createJWT" | "deleteSession";
+export type DeferredMethodName = "createEmailPasswordSession" | "getSession" | "exchange" | "deleteSession";
 
 /**
- * A deferred fake of THIS package's AccountSurface: the three platform calls
+ * A deferred fake of THIS package's AccountSurface: the platform calls
  * the controller's sign-in and resume paths make are handed to the test and
  * do not resolve until the test completes them. This is the fake the
  * in-flight races run against: begin a resume, sign out, then let the
@@ -263,7 +375,7 @@ export class DeferredAccountSurface implements AccountSurface {
   deleteCount = 0;
   readonly #createEmailPasswordSessions: DeferredCall<AccountUser>[] = [];
   readonly #getSessions: DeferredCall<AccountUser>[] = [];
-  readonly #createJWTs: DeferredCall<{ jwt: string; expiresAtMs: number }>[] = [];
+  readonly #exchanges: DeferredCall<ExchangeResult>[] = [];
   readonly #deleteSessions: DeferredCall<void>[] = [];
   #deferDeleteSession: boolean;
 
@@ -275,17 +387,17 @@ export class DeferredAccountSurface implements AccountSurface {
   /** Every handoff made for a method, in call order (an empty array before the first). */
   handoffs(
     name: DeferredMethodName,
-  ): DeferredHandoff<AccountUser | { jwt: string; expiresAtMs: number } | void>[] {
+  ): DeferredHandoff<AccountUser | ExchangeResult | void>[] {
     if (name === "createEmailPasswordSession") return [...this.#createEmailPasswordSessions];
     if (name === "getSession") return [...this.#getSessions];
     if (name === "deleteSession") return [...this.#deleteSessions];
-    return [...this.#createJWTs];
+    return [...this.#exchanges];
   }
 
   /** The handoff for the latest in-flight call of a method, or null until that call has been made. */
   handoff(
     name: DeferredMethodName,
-  ): DeferredHandoff<AccountUser | { jwt: string; expiresAtMs: number } | void> | null {
+  ): DeferredHandoff<AccountUser | ExchangeResult | void> | null {
     const all = this.handoffs(name);
     return all.length === 0 ? null : all[all.length - 1];
   }
@@ -306,9 +418,9 @@ export class DeferredAccountSurface implements AccountSurface {
     return call.promise;
   }
 
-  async createJWT(): Promise<{ jwt: string; expiresAtMs: number }> {
-    const call = new DeferredCall<{ jwt: string; expiresAtMs: number }>();
-    this.#createJWTs.push(call);
+  async exchange(_org: string): Promise<ExchangeResult> {
+    const call = new DeferredCall<ExchangeResult>();
+    this.#exchanges.push(call);
     return call.promise;
   }
 
