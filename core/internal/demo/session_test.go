@@ -325,6 +325,35 @@ func TestSessionMintsTheControllerFlow(t *testing.T) {
 	}
 }
 
+// The logistics-manager flow mints the dispatch persona's credential: a
+// branch scoped, tier two login whose subject is the id migration 0200 plants.
+func TestSessionMintsTheLogisticsManagerFlow(t *testing.T) {
+	minter := &fakeMinter{token: "demo-token-4"}
+	m, _, _ := newTestMint(t, minter, &fakeStaff{
+		auth: identity.StaffAuthority{
+			RoleID: "logistics_manager", Tier: identity.TierManager, Scope: identity.ScopeBranch,
+		},
+		ok: true,
+	})
+	rsp := postSession(t, m, `{"flow":"logistics-manager"}`)
+	if rsp.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200 (body: %s)", rsp.Code, rsp.Body.String())
+	}
+	if len(minter.subjects) != 1 || minter.subjects[0] != "d0200000-0000-4000-9000-000000000001" {
+		t.Fatalf("the minter was asked to sign %v, want exactly the dispatch persona's platform user id", minter.subjects)
+	}
+	var got sessionResponse
+	if err := json.Unmarshal(rsp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body does not decode: %v", err)
+	}
+	if got.User.RoleCode != "logistics_manager" || got.User.RoleName != "Logistics Manager" {
+		t.Errorf("block carries role %q named %q, want the flow table's row", got.User.RoleCode, got.User.RoleName)
+	}
+	if got.User.Tier != identity.TierManager || got.User.Scope != "BRANCH" {
+		t.Errorf("tier %d scope %q, want the resolver's answer", got.User.Tier, got.User.Scope)
+	}
+}
+
 // The request carries a flow name and nothing else: a malformed body, a
 // missing flow and a name outside the closed table are all 400, and none
 // of them reaches the issuer.
