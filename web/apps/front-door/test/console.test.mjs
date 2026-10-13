@@ -4,7 +4,7 @@
 // session that ends underneath the page. Every value is fake.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PlatformRefusedError, PlatformUnreachableError, ThrowSafeMirror } from "@hardscapehouse/auth";
+import { PERSONA_MIRROR_KEY, PersonaMemo, PlatformRefusedError, PlatformUnreachableError, ThrowSafeMirror } from "@hardscapehouse/auth";
 import {
   FAKE_ACCOUNT,
   FAKE_PASSWORD,
@@ -73,11 +73,12 @@ class World {
       }
       throw new Error(`unexpected fetch ${target}`);
     };
+    this.storage = new RecordedStorage();
     this.session = new ConsoleSession({
       config,
       account: this.account,
       fetch: fetchFn,
-      storage: new RecordedStorage(),
+      storage: this.storage,
       now: this.clock.now,
       timers: this.clock,
       online: () => this.online,
@@ -430,4 +431,52 @@ test("a console outage on start says unavailable, not session ended", async () =
 test("the page's own core calls take the configured core base, or the page's origin when it is empty", () => {
   assert.equal(coreBaseFor({ ...CONFIG, coreBaseUrl: "" }, "https://hh.example.test"), "https://hh.example.test");
   assert.equal(coreBaseFor({ ...CONFIG, coreBaseUrl: "https://core.example.test/" }, "https://hh.example.test"), "https://core.example.test");
+});
+
+// ── the persona memo the micro apps read (item 7d) ───────────────────────
+
+const memoOf = (w) => new PersonaMemo(w.storage).read();
+
+test("a persona entry leaves exactly its id in session storage, never a token", async () => {
+  const w = await signedOutWorld({ config: { ...CONFIG, personas: true, personasOpen: true } });
+  assert.equal(memoOf(w), null);
+  await w.session.persona("sales-manager");
+  assert.equal(memoOf(w), "sales-manager");
+  const memoWrites = w.storage.writes.filter((write) => write.key === PERSONA_MIRROR_KEY);
+  assert.deepEqual(memoWrites.map((write) => JSON.parse(write.value)), ["sales-manager"]);
+  for (const write of w.storage.writes) {
+    assert.equal(write.value.includes("fake-persona-token"), false, write.key);
+    assert.equal(write.value.includes("Bearer"), false, write.key);
+  }
+});
+
+test("a refused persona entry leaves no id behind", async () => {
+  const w = await signedOutWorld({ config: { ...CONFIG, personas: true, personasOpen: true } });
+  w.personaStatus = 403;
+  await w.session.persona("driver");
+  assert.equal(memoOf(w), null);
+});
+
+test("Continue as own role, Switch role and Sign out each clear the persona id", async () => {
+  for (const leave of [(s) => s.continueOwn(), (s) => s.switchRole(), (s) => s.signOut()]) {
+    const account = new FakeAccountSurface();
+    const w = await signedOutWorld({ account, config: { ...CONFIG, personas: true } });
+    account.script(ownAnswer("sales_manager", "Sales Manager")(1, w.clock.now() + 900_000));
+    await w.session.submit(EMAIL, FAKE_PASSWORD);
+    await w.session.persona("driver");
+    assert.equal(memoOf(w), "driver");
+    account.script(ownAnswer("sales_manager", "Sales Manager")(2, w.clock.now() + 900_000));
+    await leave(w.session);
+    assert.equal(memoOf(w), null);
+  }
+});
+
+test("a persona session that ends at its expiry takes its id with it", async () => {
+  const w = await signedOutWorld({ config: { ...CONFIG, personas: true, personasOpen: true } });
+  await w.session.persona("driver");
+  assert.equal(memoOf(w), "driver");
+  await w.clock.advance(700_000);
+  w.session.tick();
+  assert.equal(w.session.phase, "signed-out");
+  assert.equal(memoOf(w), null);
 });

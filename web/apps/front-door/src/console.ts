@@ -12,6 +12,7 @@
 // Both belong to the rules in web/packages/auth/README.md.
 import {
   AuthController,
+  PersonaMemo,
   SessionStore,
   ThrowSafeMirror,
   SESSION_MIRROR_KEY,
@@ -87,6 +88,8 @@ export class ConsoleSession {
   readonly #sessions: SessionStore;
   readonly #controller: AuthController;
   readonly #tap: ReturnType<typeof tapIdentity>;
+  /** The one persona id the micro apps read to recover a persona entry; never a token. */
+  readonly #memo: PersonaMemo;
   readonly #account: AccountSurface;
   #phase: ConsolePhase = "starting";
   #landed = false;
@@ -101,6 +104,7 @@ export class ConsoleSession {
     this.#deps = deps;
     this.config = deps.config;
     this.#tap = tapIdentity(deps.account);
+    this.#memo = new PersonaMemo(deps.storage);
     this.#account = this.#tap.surface;
     this.#sessions = new SessionStore({
       mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, deps.storage),
@@ -262,6 +266,7 @@ export class ConsoleSession {
   /** "Continue as" the person's own role: the session they signed in with lands them on its home. */
   continueOwn(): void {
     if (this.#phase !== "signed-in") return;
+    this.#memo.clear();
     this.#landed = true;
     this.#changed();
   }
@@ -299,6 +304,7 @@ export class ConsoleSession {
       return;
     }
     this.#persona = { ...answer.user };
+    this.#memo.write(id);
     this.#phase = "signed-in";
     this.#landed = true;
     this.#notice = NO_NOTICE;
@@ -308,6 +314,7 @@ export class ConsoleSession {
   /** Back to the role entry. From a persona, the person's own session is asked for again; with none, back to sign in. */
   async switchRole(): Promise<void> {
     if (this.#phase !== "signed-in") return;
+    this.#memo.clear();
     if (this.#persona === null) {
       this.#landed = false;
       this.#changed();
@@ -376,6 +383,7 @@ export class ConsoleSession {
   }
 
   #reset(): void {
+    this.#memo.clear();
     this.#landed = false;
     this.#persona = null;
     this.#tap.forget();

@@ -105,3 +105,17 @@ test("landing: a role code finds its live role and anything else finds none", ()
   assert.equal(landingFor("platform_admin"), null);
   assert.equal(landingFor(""), null);
 });
+
+test("the micro apps' role table is the front door's role catalog: each live role opens exactly the apps its tiles name", async () => {
+  const { APP_IDS, APP_ROLES, ROLE_FLOWS } = await import("@hardscapehouse/pos-kit/src/ported/boot-custody.js");
+  const appOfTile = (tile) => {
+    if (tile.name === "Dealer Admin") return "dealer-admin";
+    const byHref = { "/till/": "counter-till", "/quote/": "quote-desk", "/home/": "manager-home", "/drive/": "drive-run", "/buying-and-stock/": "buying-and-stock", "/money-desk/": "money-desk", "/yard/": "yard-pick" };
+    return byHref[tile.href] ?? null;
+  };
+  for (const appId of APP_IDS) {
+    const fromCatalog = LIVE_ROLES.filter((role) => role.tiles.some((tile) => appOfTile(tile) === appId)).map((role) => role.id);
+    assert.deepEqual([...APP_ROLES[appId]].sort(), fromCatalog.sort(), appId);
+  }
+  for (const role of LIVE_ROLES) assert.equal(ROLE_FLOWS[role.id], role.flow, role.id);
+});
