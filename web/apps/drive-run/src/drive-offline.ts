@@ -71,6 +71,11 @@ export class DriveOffline {
   readonly #onChange: (() => void) | undefined;
   readonly #now: () => string;
   readonly #newKey: () => string;
+  /** Rows this device has written since the last completed cycle: a write to
+   * one of them goes blind even when the earlier operation has already
+   * drained, because the pulled seq that a base would name is stale until the
+   * cycle's pull lands. */
+  readonly #writtenSincePull = new Set<string>();
 
   constructor(options: DriveOfflineOptions) {
     this.store = options.store;
@@ -88,6 +93,8 @@ export class DriveOffline {
     await this.runner.dispatch({ type: "ONLINE" });
     await this.runner.request();
     await this.runner.settled();
+    // The pull has landed: the rows carry the server's seq again.
+    this.#writtenSincePull.clear();
     this.#onChange?.();
   }
 
@@ -112,6 +119,7 @@ export class DriveOffline {
    * next pull should carry: a photo uploaded beside the proof). */
   async syncNow(): Promise<void> {
     await this.runner.request();
+    this.#writtenSincePull.clear();
     this.#onChange?.();
   }
 
@@ -207,6 +215,7 @@ export class DriveOffline {
       ...(status === "LOADED" ? { loaded_at: at } : {}),
       ...(status === "EN_ROUTE" ? { en_route_at: at } : {}),
     }));
+    this.#writtenSincePull.add(`stops:${stopId}`);
     this.requestSync();
     return { ok: true, value: toStop({ ...found.row.data, ...fields }) };
   }
@@ -226,6 +235,7 @@ export class DriveOffline {
     if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };
     const fields: Bag = { status: "DELIVERED", pod_received_by: receivedBy, pod_at: at, delivered_at: at };
     await this.#patchRow("stops", stopId, (data) => ({ ...data, ...fields }));
+    this.#writtenSincePull.add(`stops:${stopId}`);
     this.requestSync();
     return { ok: true, value: toStop({ ...found.row.data, ...fields }) };
   }
@@ -241,9 +251,10 @@ export class DriveOffline {
   }): Promise<{ ok: true } | { ok: false; message: string }> {
     let baseSeq: number | undefined;
     if (input.row !== null) {
+      const key = `${input.scope}:${input.row.id}`;
       const pending = await this.store.outbox.pending();
       const queued = pending.some((row) => row.scope === input.scope && row.entityId === input.row!.id);
-      baseSeq = queued ? undefined : input.row.seq;
+      baseSeq = queued || this.#writtenSincePull.has(key) ? undefined : input.row.seq;
     }
     const answer = await this.store.enqueue({
       scope: input.scope,

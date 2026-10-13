@@ -22,6 +22,27 @@ test.beforeEach(async ({ request, page }) => {
   await page.addInitScript(yardHandoff);
 });
 
+/** The platform's word, delivered by the harness beside the emulator's own
+ * events, then repeated if the glass has not answered, the way a real radio
+ * re-announces (the layer dispatches only on a change). The machine never
+ * sends while the word is offline, so the outbox behaviour the leg asserts
+ * does not depend on the network cut itself. */
+async function platformWord(page: import("@playwright/test").Page, online: boolean, expectWords: string | null = null): Promise<void> {
+  // The emulator cuts with the word, so the app's short watcher and the event
+  // carry one truth, never two.
+  await page.context().setOffline(!online);
+  await page.evaluate((on) => window.dispatchEvent(new Event(on ? "online" : "offline")), online);
+  if (expectWords !== null) {
+    const banner = page.locator("hh-shell-offline-banner");
+    try {
+      await expect(banner).toContainText(expectWords, { timeout: 4_000 });
+    } catch {
+      await page.evaluate((on) => window.dispatchEvent(new Event(on ? "online" : "offline")), online);
+      await expect(banner).toContainText(expectWords, { timeout: 6_000 });
+    }
+  }
+}
+
 async function loadBoard(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/");
   await expect(page.locator("[data-pick-card]")).toHaveCount(5);
@@ -49,8 +70,7 @@ function payloadOf(op: unknown): Record<string, unknown> {
 
 /** Claims SO-1039 offline and records two full lines and one short line. */
 async function claimAndPickOffline(page: import("@playwright/test").Page): Promise<void> {
-  await page.context().setOffline(true);
-  await expect(page.locator("hh-shell-offline-banner")).toContainText("You're offline");
+  await platformWord(page, false, "You're offline");
   // The claim goes through the door: queued, not lost, and the pick opens.
   await page.locator("[data-pick-card]", { hasText: "SO-1039" }).getByRole("button", { name: "Claim" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1039");
@@ -87,7 +107,7 @@ test("back online, the outbox drains in order, and a ticket the test reassigned 
   // The server reassigns the ticket while the device cannot hear it.
   await reassignTicket(request, TASK);
   // Back online: the outbox drains, in the order the writes were made.
-  await page.context().setOffline(false);
+  await platformWord(page, true);
   await expect(page.locator("hh-shell-offline-banner")).toHaveCount(0);
   const ops = await pushedOps(request, "pick_tasks");
   expect(ops.length).toBe(3);
@@ -140,7 +160,7 @@ test("offline, a shortage reported and settled waits as a review card for the pe
   expect(createOps.length).toBe(1);
   const shortageId = String(payloadOf(createOps[0]).id);
   // Offline: the picker settles it; the desk answers the same shortage first.
-  await page.context().setOffline(true);
+  await platformWord(page, false);
   const shortage = page.locator("[data-shortage]", { hasText: "4 SQFT" });
   await shortage.getByRole("button", { name: "Mark it settled" }).click();
   await page.getByLabel("How the shortage was settled").fill("Settled from the bulk pile");
@@ -148,7 +168,7 @@ test("offline, a shortage reported and settled waits as a review card for the pe
   await expect(page.locator("[data-notice]")).toContainText("Shortage cleared");
   await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
   await deskResolve(request, shortageId);
-  await page.context().setOffline(false);
+  await platformWord(page, true);
   // The settle drain lands second, stale against the desk's answer.
   await page.getByRole("button", { name: "Back to the queue" }).click();
   await expect(page.getByRole("button", { name: /Review 1/ })).toBeVisible();

@@ -203,7 +203,53 @@ test("a drive the run's own status refuses stays local, in the server's words", 
   assert.equal(await layer.waiting(), 0);
 });
 
+test("a chained write goes blind even when the earlier op drained before the pull landed", async () => {
+  // The rig, with the pull for stops delayed a beat once the device has
+  // pulled its first world: the window between a push applying and the pull
+  // landing is where a stale base could sneak in.
+  const server = new FakeSyncServer();
+  server.seed("runs", RUN, { id: RUN, run_no: "RUN-R5", truck_code: "FLAT-1", status: "DISPATCHED", scheduled_date: "2026-10-08" });
+  server.seed("stops", STOP_1, {
+    id: STOP_1, run_id: RUN, stop_no: 1, order_no: "SO-1001", customer_name: "Northline Hardscapes Ltd (demo)",
+    status: "READY", time_window: "AM", contact_name: "", contact_phone: "", address_line: "95 Bagot St", city: "Kingston",
+    postal_code: "K7K 6X4", instructions: "", pod_received_by: "", pod_at: "", failure_reason: "", photo_count: 0,
+    weight_kg: 400,
+    lines: [{ line_no: 1, sku: "", description: "Natural stone pavers, grey", qty: "120.000", uom: "sqft" }],
+  });
+  const backend = createSqliteBackend(nodeSqliteExecutor());
+  const store = await OfflineStore.open({ backend, scopes: scopeBookFor(["drive-run"]) });
+  const inner = server.transport();
+  const delayedTransport = {
+    push: (scope, ops) => inner.push(scope, ops),
+    pull: (scope, since, limit) => {
+      if (scope === "stops" && since > 0) {
+        return new Promise((resolve) => setTimeout(() => resolve(inner.pull(scope, since, limit)), 120));
+      }
+      return inner.pull(scope, since, limit);
+    },
+  };
+  const layer = new DriveOffline({ store, sql: backend.sql, transport: delayedTransport, newKey: nextKey });
+  await layer.cycle();
+  // First move: it queues with the row's pulled seq as its base and drains.
+  await layer.advance(STOP_1, "LOADED");
+  for (let waited = 0; server.appliedOrder.length < 1 && waited < 5_000; waited += 50) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(server.appliedOrder.length, 1, "the load applied");
+  // The pull is still delayed: the local row's seq is stale now. The second
+  // move on the same row must go blind, never name the stale base.
+  await layer.advance(STOP_1, "EN_ROUTE");
+  await layer.cycle();
+  const cards = await layer.openCards();
+  assert.equal(cards.length, 0, "no conflict: the chained write went blind");
+  const read = await layer.runs("2026-10-08");
+  if (!read.ok) return assert.fail("the run sheet should read back");
+  assert.equal(read.value.runs[0].stops[0].status, "EN_ROUTE");
+  assert.equal(await layer.waiting(), 0);
+});
+
 test("a money scope is refused at the door, before anything is stored", async () => {
+
 
   const { layer, store } = await rig();
   const refused = await layer.enqueueRaw({ scope: "price_matrix", op: "update", payload: { id: RUN } });

@@ -19,7 +19,10 @@ test.use({ viewport: { width: 390, height: 844 } });
 test.setTimeout(90_000);
 
 test.beforeEach(async ({ request, page }) => {
-  await resetStub(request);
+  // Pin the stub to NOTHING, explicitly: the reset helper remembers the last
+  // pin across the suite's files in one worker, and this leg's page runs on
+  // the wall clock, so the world must be built on the wall clock too.
+  await resetStub(request, null);
   await page.addInitScript(driverHandoff);
 });
 

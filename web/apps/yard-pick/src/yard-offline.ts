@@ -114,6 +114,11 @@ export class YardOffline {
   readonly #onChange: (() => void) | undefined;
   readonly #now: () => string;
   readonly #newKey: () => string;
+  /** Rows this device has written since the last completed cycle: a write to
+   * one of them goes blind even when the earlier operation has already
+   * drained, because the pulled seq that a base would name is stale until the
+   * cycle's pull lands. */
+  readonly #writtenSincePull = new Set<string>();
 
   constructor(options: YardOfflineOptions) {
     this.store = options.store;
@@ -125,10 +130,15 @@ export class YardOffline {
     this.runner = new SyncRunner({ store: options.store, transport: options.transport, machine: syncMachine });
   }
 
-  /** One full cycle, to rest: push the outbox, then pull the scopes. */
+  /** One full cycle, to rest: push the outbox, then pull the scopes. Works
+   * from any resting state: an ONLINE the machine is past is a no-op, and the
+   * request that follows runs the cycle the state can take. */
   async cycle(): Promise<void> {
     await this.runner.dispatch({ type: "ONLINE" });
+    await this.runner.request();
     await this.runner.settled();
+    // The pull has landed: the rows carry the server's seq again.
+    this.#writtenSincePull.clear();
     this.#onChange?.();
   }
 
@@ -136,11 +146,21 @@ export class YardOffline {
   requestSync(): void {
     // The count moved now, and it moves again when the replay lands or fails.
     this.#onChange?.();
-    void this.runner.request().then(() => this.#onChange?.());
+    void this.runner.request().then(() => {
+      // The cycle's pull has landed: the rows carry the server's seq again.
+      this.#writtenSincePull.clear();
+      this.#onChange?.();
+    });
   }
+
+  /** The last connectivity word the machine was fed, so a watcher that polls
+   * the platform dispatches only on a change. */
+  #lastOnline: boolean | null = null;
 
   /** Feed the platform's connectivity to the machine. */
   setOnline(online: boolean): Promise<void> {
+    if (this.#lastOnline === online) return Promise.resolve();
+    this.#lastOnline = online;
     return this.runner.dispatch(online ? { type: "ONLINE" } : { type: "OFFLINE" });
   }
 
@@ -281,6 +301,7 @@ export class YardOffline {
       picked,
       ...(patchedTicket !== undefined ? { ticket: patchedTicket } : {}),
     }));
+    this.#writtenSincePull.add(`pick_tasks:${taskId}`);
     this.requestSync();
     return { ok: true, value: picked };
   }
@@ -306,6 +327,7 @@ export class YardOffline {
     if (weightsRow.row !== null) {
       await this.#patchRow("weights", taskId, (data) => ({ ...data, skid_count: skidCount, reason }));
     }
+    this.#writtenSincePull.add(`weights:${taskId}`);
     this.requestSync();
     const ticket = taskRow.row !== null ? toTicket(taskRow.row.data["ticket"]) : null;
     return { ok: true, value: { skid_count: skidCount, previous_skid_count: previous, changed: previous !== skidCount, order_no: ticket?.order_no ?? "" } };
@@ -371,6 +393,7 @@ export class YardOffline {
       resolved_at: this.#now(),
       resolved_by: this.#actorId,
     }));
+    this.#writtenSincePull.add(`shortages:${shortageId}`);
     this.requestSync();
     const patched = await this.store.read("shortages", shortageId);
     return { ok: true, value: toShortage(patched.row?.data ?? {}) };
@@ -390,6 +413,7 @@ export class YardOffline {
     });
     if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };
     await this.#patchRow("pick_tasks", taskId, (data) => ({ ...data, ...fields }));
+    this.#writtenSincePull.add(`pick_tasks:${taskId}`);
     return { ok: true, value: toTask({ ...found.row.data, ...fields }) };
   }
 
@@ -407,9 +431,10 @@ export class YardOffline {
   }): Promise<{ ok: true; key: string; seq: number } | { ok: false; message: string }> {
     let baseSeq: number | undefined;
     if (input.row !== null) {
+      const key = `${input.scope}:${input.row.id}`;
       const pending = await this.store.outbox.pending();
       const queued = pending.some((row) => row.scope === input.scope && row.entityId === input.row!.id);
-      baseSeq = queued ? undefined : input.row.seq;
+      baseSeq = queued || this.#writtenSincePull.has(key) ? undefined : input.row.seq;
     }
     const answer = await this.store.enqueue({
       scope: input.scope,

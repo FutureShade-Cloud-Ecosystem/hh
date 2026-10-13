@@ -1,0 +1,458 @@
+
+> @hardscapehouse/yard-pick@0.0.0 test
+> node --import ../../packages/api-client/src/_ts-js-loader.mjs --test 'test/*.test.mjs' test/yard-offline.node-test.mjs && playwright test
+
+TAP version 13
+# Subtest: the scanner finds every money word, a money figure, and passes CSS spacing
+ok 1 - the scanner finds every money word, a money figure, and passes CSS spacing
+  ---
+  duration_ms: 1.422514
+  type: 'test'
+  ...
+# Subtest: no source of the app names a money field or carries a money figure
+ok 2 - no source of the app names a money field or carries a money figure
+  ---
+  duration_ms: 11.766931
+  type: 'test'
+  ...
+# Subtest: the built bundle carries no money field and no money figure
+ok 3 - the built bundle carries no money field and no money figure
+  ---
+  duration_ms: 825.725601
+  type: 'test'
+  ...
+# Subtest: the bundle exemptions are narrow: a money word outside them still fails
+ok 4 - the bundle exemptions are narrow: a money word outside them still fails
+  ---
+  duration_ms: 0.230826
+  type: 'test'
+  ...
+# Subtest: the payload scan reads keys and money figures, and leaves a word inside a name alone
+ok 5 - the payload scan reads keys and money figures, and leaves a word inside a name alone
+  ---
+  duration_ms: 0.483136
+  type: 'test'
+  ...
+# Subtest: the lifecycle offers claim, start and stage exactly where the core allows them
+ok 6 - the lifecycle offers claim, start and stage exactly where the core allows them
+  ---
+  duration_ms: 2.176807
+  type: 'test'
+  ...
+# Subtest: the ported matrix mirrors the core's allowedTransitions exactly
+ok 7 - the ported matrix mirrors the core's allowedTransitions exactly
+  ---
+  duration_ms: 0.453936
+  type: 'test'
+  ...
+# Subtest: the done words carry the two facts that move together on a stage
+ok 8 - the done words carry the two facts that move together on a stage
+  ---
+  duration_ms: 0.171745
+  type: 'test'
+  ...
+# Subtest: the unclaimed half of the board is the queue's own split
+ok 9 - the unclaimed half of the board is the queue's own split
+  ---
+  duration_ms: 0.103189
+  type: 'test'
+  ...
+# Subtest: queueOrder puts an open shortage first, then open work, priority, oldest
+ok 10 - queueOrder puts an open shortage first, then open work, priority, oldest
+  ---
+  duration_ms: 0.301134
+  type: 'test'
+  ...
+# Subtest: ageLabel speaks in the units a person uses, pinned to a passed clock
+ok 11 - ageLabel speaks in the units a person uses, pinned to a passed clock
+  ---
+  duration_ms: 0.123754
+  type: 'test'
+  ...
+# Subtest: qtyText trims the storage format and never rounds or edits what it cannot read
+ok 12 - qtyText trims the storage format and never rounds or edits what it cannot read
+  ---
+  duration_ms: 0.346734
+  type: 'test'
+  ...
+# Subtest: the shortage summary leads with the count and names the first item
+ok 13 - the shortage summary leads with the count and names the first item
+  ---
+  duration_ms: 0.302789
+  type: 'test'
+  ...
+# Subtest: priority words and the made to order note follow the feed's own rules
+ok 14 - priority words and the made to order note follow the feed's own rules
+  ---
+  duration_ms: 0.281079
+  type: 'test'
+  ...
+# Subtest: a row is called by its order number, never a uuid and never nothing
+ok 15 - a row is called by its order number, never a uuid and never nothing
+  ---
+  duration_ms: 0.408976
+  type: 'test'
+  ...
+# Subtest: the reason list is the core's own, in the order a screen shows it
+ok 16 - the reason list is the core's own, in the order a screen shows it
+  ---
+  duration_ms: 0.127752
+  type: 'test'
+  ...
+# Subtest: the picker's reason words are words on the board's pattern, never the core's codes
+ok 17 - the picker's reason words are words on the board's pattern, never the core's codes
+  ---
+  duration_ms: 0.148491
+  type: 'test'
+  ...
+# Subtest: the screens draw the reasons as radio rows from the closed list, and no reason select remains
+ok 18 - the screens draw the reasons as radio rows from the closed list, and no reason select remains
+  ---
+  duration_ms: 0.113822
+  type: 'test'
+  ...
+# Subtest: the shortage sheet banner reads in future tense, telling the picker what sending does
+ok 19 - the shortage sheet banner reads in future tense, telling the picker what sending does
+  ---
+  duration_ms: 0.051963
+  type: 'test'
+  ...
+# Subtest: the stage hint says the ref is generated for you, not made up
+ok 20 - the stage hint says the ref is generated for you, not made up
+  ---
+  duration_ms: 0.055327
+  type: 'test'
+  ...
+# Subtest: the empty queue card says 'Nothing to pick here', not 'at this branch'
+ok 21 - the empty queue card says 'Nothing to pick here', not 'at this branch'
+  ---
+  duration_ms: 0.046152
+  type: 'test'
+  ...
+# Subtest: short means the picked less the ordered, in the one place that decides it
+ok 22 - short means the picked less the ordered, in the one place that decides it
+  ---
+  duration_ms: 0.097602
+  type: 'test'
+  ...
+# Subtest: a picked quantity allows zero and refuses blank, negative and nonsense
+ok 23 - a picked quantity allows zero and refuses blank, negative and nonsense
+  ---
+  duration_ms: 0.099999
+  type: 'test'
+  ...
+# Subtest: the record is blocked until every short line carries a reason, and OTHER a note
+ok 24 - the record is blocked until every short line carries a reason, and OTHER a note
+  ---
+  duration_ms: 0.130752
+  type: 'test'
+  ...
+# Subtest: the pick summary says what was pulled, not what is missing
+ok 25 - the pick summary says what was pulled, not what is missing
+  ---
+  duration_ms: 0.139592
+  type: 'test'
+  ...
+# Subtest: the short pick's answer words name the backorder and the rep
+ok 26 - the short pick's answer words name the backorder and the rep
+  ---
+  duration_ms: 0.100749
+  type: 'test'
+  ...
+# Subtest: a shortage needs a positive number
+ok 27 - a shortage needs a positive number
+  ---
+  duration_ms: 0.11564
+  type: 'test'
+  ...
+# Subtest: a stage without a spot is refused before the round trip
+ok 28 - a stage without a spot is refused before the round trip
+  ---
+  duration_ms: 0.071337
+  type: 'test'
+  ...
+# Subtest: a skid count needs a whole number and a reason, and OTHER a note
+ok 29 - a skid count needs a whole number and a reason, and OTHER a note
+  ---
+  duration_ms: 0.127458
+  type: 'test'
+  ...
+# Subtest: a refusal in the core's words is shown as it came, capped and stopped
+ok 30 - a refusal in the core's words is shown as it came, capped and stopped
+  ---
+  duration_ms: 0.238611
+  type: 'test'
+  ...
+# Subtest: a 403 that carries the server's own sentence shows it; only an empty one gets the generic words, which name who works here
+ok 31 - a 403 that carries the server's own sentence shows it; only an empty one gets the generic words, which name who works here
+  ---
+  duration_ms: 0.185691
+  type: 'test'
+  ...
+# Subtest: the role gate's bare Forbidden body is answered with the wall's plain words
+ok 32 - the role gate's bare Forbidden body is answered with the wall's plain words
+  ---
+  duration_ms: 0.092635
+  type: 'test'
+  ...
+# Subtest: a ticket keeps the hold's words and drops the owed figure and every cost on a line
+ok 33 - a ticket keeps the hold's words and drops the owed figure and every cost on a line
+  ---
+  duration_ms: 1.090871
+  type: 'test'
+  ...
+# Subtest: a pick keeps its task, shortages and pulled lines and drops every figure the server might send
+ok 34 - a pick keeps its task, shortages and pulled lines and drops every figure the server might send
+  ---
+  duration_ms: 0.379239
+  type: 'test'
+  ...
+# Subtest: the skid answer keeps the count and drops the deposit figures the contract declares
+ok 35 - the skid answer keeps the count and drops the deposit figures the contract declares
+  ---
+  duration_ms: 0.694582
+  type: 'test'
+  ...
+# Subtest: a line is exactly the eight fields the yard's pull list names, and nothing else
+ok 36 - a line is exactly the eight fields the yard's pull list names, and nothing else
+  ---
+  duration_ms: 0.136324
+  type: 'test'
+  ...
+# Subtest: a task is the narrow shape the board reads, and a null ticket stays null
+ok 37 - a task is the narrow shape the board reads, and a null ticket stays null
+  ---
+  duration_ms: 0.212157
+  type: 'test'
+  ...
+# Subtest: garbage in is empty out, never a guess
+ok 38 - garbage in is empty out, never a guess
+  ---
+  duration_ms: 0.133166
+  type: 'test'
+  ...
+# Subtest: no source of the app carries a place a credential could rest in or surface from
+ok 39 - no source of the app carries a place a credential could rest in or surface from
+  ---
+  duration_ms: 4.078006
+  type: 'test'
+  ...
+# Subtest: no em or en dash anywhere this app writes
+ok 40 - no em or en dash anywhere this app writes
+  ---
+  duration_ms: 4.568178
+  type: 'test'
+  ...
+# Subtest: the demo way in answers the contract's shapes
+ok 41 - the demo way in answers the contract's shapes
+  ---
+  duration_ms: 155.171752
+  type: 'test'
+  ...
+# Subtest: the branches read answers the contract's row shape
+ok 42 - the branches read answers the contract's row shape
+  ---
+  duration_ms: 1.985477
+  type: 'test'
+  ...
+# Subtest: the pick queue answers the core's page and entry shapes, field by field
+ok 43 - the pick queue answers the core's page and entry shapes, field by field
+  ---
+  duration_ms: 5.740467
+  type: 'test'
+  ...
+# Subtest: one pick answers the detail: the task, the ticket, the whole shortage history, what was pulled
+ok 44 - one pick answers the detail: the task, the ticket, the whole shortage history, what was pulled
+  ---
+  duration_ms: 6.475606
+  type: 'test'
+  ...
+# Subtest: claim and start walk the lifecycle the generic tasks routes own
+ok 45 - claim and start walk the lifecycle the generic tasks routes own
+  ---
+  duration_ms: 6.641231
+  type: 'test'
+  ...
+# Subtest: recording a short pick answers the recorded lines and the ticket holds the backorder
+ok 46 - recording a short pick answers the recorded lines and the ticket holds the backorder
+  ---
+  duration_ms: 10.28559
+  type: 'test'
+  ...
+# Subtest: the skid answer keeps the count for the yard persona, and the deposit figures are byte-absent
+ok 47 - the skid answer keeps the count for the yard persona, and the deposit figures are byte-absent
+  ---
+  duration_ms: 2.373506
+  type: 'test'
+  ...
+# Subtest: the money fence follows the cost list: the yard persona receives no figure, the yard manager keeps them
+ok 48 - the money fence follows the cost list: the yard persona receives no figure, the yard manager keeps them
+  ---
+  duration_ms: 8.015033
+  type: 'test'
+  ...
+# Subtest: a shortage report and its resolve answer the shortage shape
+ok 49 - a shortage report and its resolve answer the shortage shape
+  ---
+  duration_ms: 3.532657
+  type: 'test'
+  ...
+# Subtest: staging answers the task with its spot and its handle
+ok 50 - staging answers the task with its spot and its handle
+  ---
+  duration_ms: 2.720762
+  type: 'test'
+  ...
+# Subtest: the refusals carry the core's statuses, envelope and sentences
+ok 51 - the refusals carry the core's statuses, envelope and sentences
+  ---
+  duration_ms: 32.444831
+  type: 'test'
+  ...
+# Subtest: the shortage resolvers list wall answers the role gate's shared body
+ok 52 - the shortage resolvers list wall answers the role gate's shared body
+  ---
+  duration_ms: 2.494514
+  type: 'test'
+  ...
+# Subtest: no record in the front door's key reads as absent
+ok 53 - no record in the front door's key reads as absent
+  ---
+  duration_ms: 0.794079
+  type: 'test'
+  ...
+# Subtest: a whole, unexpired record reads as ready with the session
+ok 54 - a whole, unexpired record reads as ready with the session
+  ---
+  duration_ms: 0.223925
+  type: 'test'
+  ...
+# Subtest: an expired record and a record missing a field both read as unusable
+ok 55 - an expired record and a record missing a field both read as unusable
+  ---
+  duration_ms: 0.139988
+  type: 'test'
+  ...
+# Subtest: clearing drops the front door's key
+ok 56 - clearing drops the front door's key
+  ---
+  duration_ms: 0.136413
+  type: 'test'
+  ...
+# Subtest: the default build's stub never reads a handoff
+ok 57 - the default build's stub never reads a handoff
+  ---
+  duration_ms: 0.524797
+  type: 'test'
+  ...
+# (node:2310577) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the first cycle pulls the world, and the queue reads answer from the store with staleness
+ok 58 - the first cycle pulls the world, and the queue reads answer from the store with staleness
+  ---
+  duration_ms: 4.443183
+  type: 'test'
+  ...
+# Subtest: a pick composes the task, its ticket and its shortages from the store
+ok 59 - a pick composes the task, its ticket and its shortages from the store
+  ---
+  duration_ms: 1.728767
+  type: 'test'
+  ...
+# Subtest: offline, a claim and a pick record stay local, then drain in order
+ok 60 - offline, a claim and a pick record stay local, then drain in order
+  ---
+  duration_ms: 10.415424
+  type: 'test'
+  ...
+# Subtest: a short line recorded offline shows its backorder figure on the local read
+ok 61 - a short line recorded offline shows its backorder figure on the local read
+  ---
+  duration_ms: 2.303288
+  type: 'test'
+  ...
+# Subtest: a shortage reported offline lands, and a later resolution the server moved first waits as a review card
+ok 62 - a shortage reported offline lands, and a later resolution the server moved first waits as a review card
+  ---
+  duration_ms: 9.812558
+  type: 'test'
+  ...
+# Subtest: a queued pick the server reassigned first comes back superseded, and the server row is what reads show
+ok 63 - a queued pick the server reassigned first comes back superseded, and the server row is what reads show
+  ---
+  duration_ms: 7.160365
+  type: 'test'
+  ...
+# Subtest: a money scope is refused at the door, before anything is stored
+ok 64 - a money scope is refused at the door, before anything is stored
+  ---
+  duration_ms: 2.07603
+  type: 'test'
+  ...
+# Subtest: the banner mode maps the runner state and the ownership onto the chrome's modes
+ok 65 - the banner mode maps the runner state and the ownership onto the chrome's modes
+  ---
+  duration_ms: 0.140299
+  type: 'test'
+  ...
+1..65
+# tests 65
+# suites 0
+# pass 65
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 932.865069
+
+Running 46 tests using 1 worker
+
+  ✓   1 test/contrast.pw.ts:113:1 › every word on the walked screens reads at 4.5 to 1 or more, in both themes (3.8s)
+  ✓   2 test/fit.pw.ts:41:1 › every screen and state fits the 390 frame, in both themes (4.8s)
+  ✓   3 test/fit.pw.ts:122:1 › the way in, with no handoff, fits the frame (259ms)
+  ✓   4 test/fit.pw.ts:131:1 › the empty branch fits the frame (465ms)
+  ✓   5 test/fit.pw.ts:138:1 › a login off the yard fits the frame (1.0s)
+  ✓   6 test/money.pw.ts:37:1 › with money laid on every read, no screen shows a figure or a money word (2.2s)
+  ✓   7 test/money.pw.ts:93:1 › nothing the app sends to the core carries a money field (1.3s)
+  ✓   8 test/offline.pw.ts:99:1 › offline, the claim and the pick wait in the outbox, and the banner carries the count (1.9s)
+  ✓   9 test/offline.pw.ts:104:1 › back online, the outbox drains in order, and a ticket the test reassigned first comes back superseded (2.4s)
+  ✓  10 test/offline.pw.ts:148:1 › offline, a shortage reported and settled waits as a review card for the person (1.9s)
+  ✓  11 test/pick.pw.ts:23:1 › a claimed pick opens, starts, and shows its pull list (1.7s)
+  ✓  12 test/pick.pw.ts:31:1 › a line opens the quantity editor: steppers, All, None, and the number holds (3.3s)
+  ✓  13 test/pick.pw.ts:48:1 › recording a full pick says so, and the line carries its tick (3.5s)
+  ✓  14 test/pick.pw.ts:59:1 › a short line needs its reason before the save, and the server backorders it (1.8s)
+  ✓  15 test/pick.pw.ts:82:1 › a quantity above what was ordered is refused in the server's own words (3.0s)
+  ✓  16 test/pick.pw.ts:99:1 › the skid stepper says Not counted until it is changed, then changes with a reason (1.8s)
+  ✓  17 test/pick.pw.ts:123:1 › the skids sit with the pull list, and the shortages come before the stage form (1.4s)
+  ✓  18 test/pick.pw.ts:146:1 › the record goes to the server as one call, in the ticket's own order (1.5s)
+  ✓  19 test/queue.pw.ts:14:1 › the board lands on the Trenton queue, in its two halves (489ms)
+  ✓  20 test/queue.pw.ts:23:1 › a card carries the order, the customer, the lines, the priority and the status (479ms)
+  ✓  21 test/queue.pw.ts:34:1 › a claimed pick is marked as yours, with the made to order note on the mixed load (465ms)
+  ✓  22 test/queue.pw.ts:43:1 › a held order waits on the board with its words and no claim to press (1.0s)
+  ✓  23 test/queue.pw.ts:52:1 › claiming a pick makes it mine and opens it (1.3s)
+  ✓  24 test/queue.pw.ts:64:1 › an open shortage leads its card with a Short pill and the first item (1.0s)
+  ✓  25 test/queue.pw.ts:72:1 › the board carries its footnote in the board's own words (1.1s)
+  ✓  26 test/queue.pw.ts:78:1 › the empty branch state says so in words (1.0s)
+  ✓  27 test/queue.pw.ts:84:1 › a login off the yard is told so, in words (1.0s)
+  ✓  28 test/shortage.pw.ts:23:1 › a short pick with a reason backorders the line and the rep's read holds the notice (1.4s)
+  ✓  29 test/shortage.pw.ts:41:1 › the shortage sheet is the board's: the asked and short figures, radio rows, a labelled note, the banner (1.4s)
+  ✓  30 test/shortage.pw.ts:68:1 › the open shortage is on the pick and can be settled with a stated resolution (1.3s)
+  ✓  31 test/shortage.pw.ts:81:1 › the shortage resolvers wall parks the scope and the stall says so in words (1.5s)
+  -  32 test/shots.pw.ts:31:5 › the whole walk at 390 px, light
+  -  33 test/shots.pw.ts:31:5 › the whole walk at 390 px, brand
+  -  34 test/shots.pw.ts:31:5 › the whole walk at 1024 px, light
+  -  35 test/shots.pw.ts:31:5 › the whole walk at 1024 px, brand
+  -  36 test/shots.pw.ts:31:5 › the whole walk at 1440 px, light
+  -  37 test/shots.pw.ts:31:5 › the whole walk at 1440 px, brand
+  ✓  38 test/stage.pw.ts:26:1 › the stage form demands a spot before it will stage (1.6s)
+  ✓  39 test/stage.pw.ts:34:1 › staging parks the pick with a derived ref, and the counter is told (2.0s)
+  ✓  40 test/stage.pw.ts:48:1 › a staged pick offers no stage door again, and the record stays readable (1.6s)
+  ✓  41 test/yard-pick.pw.ts:12:1 › the way in offers the Yard Team's own card, and no other role's (268ms)
+  ✓  42 test/yard-pick.pw.ts:21:1 › the shared header says the product's name, compact, in both halves of the app (286ms)
+  ✓  43 test/yard-pick.pw.ts:33:1 › the mint lands signed in through the front door's handoff (221ms)
+  ✓  44 test/yard-pick.pw.ts:39:1 › light is the default and brand is one tap away, and it stays put (264ms)
+  ✓  45 test/yard-pick.pw.ts:55:3 › the page never scrolls sideways at 390 px, signed in (197ms)
+  ✓  46 test/yard-pick.pw.ts:55:3 › the page never scrolls sideways at 1024 px, signed in (183ms)
+
+  6 skipped
+  40 passed (1.0m)

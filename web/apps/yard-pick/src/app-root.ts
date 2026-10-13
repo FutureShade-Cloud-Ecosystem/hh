@@ -357,6 +357,9 @@ export class YardPickApp extends HHElement {
     this.renderRoot.addEventListener("change", this.#onField);
     window.addEventListener("online", this.#onConnectivity);
     window.addEventListener("offline", this.#onConnectivity);
+    // Some hosts deliver the platform's word late or not at all; a short
+    // watcher repeats it, and the layer dispatches only on a change.
+    this.#connectivityWatch = setInterval(this.#onConnectivity, 1_000);
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -386,10 +389,12 @@ export class YardPickApp extends HHElement {
     this.renderRoot.removeEventListener("change", this.#onField);
     window.removeEventListener("online", this.#onConnectivity);
     window.removeEventListener("offline", this.#onConnectivity);
+    if (this.#connectivityWatch !== null) clearInterval(this.#connectivityWatch);
     super.disconnectedCallback();
   }
 
   // The platform's connectivity word, fed straight to the machine.
+  #connectivityWatch: ReturnType<typeof setInterval> | null = null;
   readonly #onConnectivity = (): void => {
     if (this.#yardOffline !== null) void this.#yardOffline.setOnline(navigator.onLine);
   };
@@ -470,7 +475,9 @@ export class YardPickApp extends HHElement {
     if (layer === null) return;
     this.#yardOffline = layer;
     layer.runner.onState((state) => {
+      // The state is on the glass in this update, not behind the health read.
       this.#syncState = state;
+      this.requestUpdate();
       void this.#refreshOfflineChrome();
     });
     await layer.setOnline(navigator.onLine);

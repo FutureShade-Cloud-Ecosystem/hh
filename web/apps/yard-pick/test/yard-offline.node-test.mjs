@@ -211,6 +211,52 @@ test("a queued pick the server reassigned first comes back superseded, and the s
   assert.equal(await layer.waiting(), 0);
 });
 
+test("a chained write goes blind even when the earlier op drained before the pull landed", async () => {
+  // The pull for pick tasks is delayed a beat once the device has pulled its
+  // first world: the window between a push applying and the pull landing is
+  // where a stale base could sneak in and drop the second move as a false
+  // server wins conflict.
+  const server = new FakeSyncServer();
+  server.seed("pick_tasks", TASK, {
+    id: TASK, order_id: TICKET, branch_id: BRANCH, task_type: "PICK", priority: "URGENT", status: "QUEUED",
+    claimed_by: "", created_at: "2026-10-08T13:00:00Z", updated_at: "2026-10-08T13:00:00Z",
+    open_shortages: 0, total_shortages: 0, stage_location: "", stage_ref: "",
+    ticket: {
+      order_id: TICKET, order_no: "SO-1042", customer_name: "Northline Hardscapes Ltd (demo)", fulfillment: "PICKUP",
+      mto_class: "STANDARD", priority: "URGENT", reference: "SO-1042", source: "DISPATCH",
+      held_from_picking: false, hold_words: "",
+      lines: [{ line_no: 1, product_id: "p1", sku: "PAVER-CH-1212", description: "Charcoal pavers, 12 by 12 in", qty_ordered: "24.0000", qty_backordered: "", uom: "EA", location: "Yard A" }],
+    },
+    picked: [],
+  });
+  const backend = createSqliteBackend(nodeSqliteExecutor());
+  const store = await OfflineStore.open({ backend, scopes: scopeBookFor(["yard-pick"]) });
+  const inner = server.transport();
+  const delayedTransport = {
+    push: (scope, ops) => inner.push(scope, ops),
+    pull: (scope, since, limit) => {
+      if (scope === "pick_tasks" && since > 0) {
+        return new Promise((resolve) => setTimeout(() => resolve(inner.pull(scope, since, limit)), 120));
+      }
+      return inner.pull(scope, since, limit);
+    },
+  };
+  const layer = new YardOffline({ store, sql: backend.sql, transport: delayedTransport, actorId: ACTOR, newKey: nextKey });
+  await layer.cycle();
+  await layer.claim(TASK);
+  for (let waited = 0; server.appliedOrder.length < 1 && waited < 5_000; waited += 50) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(server.appliedOrder.length, 1, "the claim applied");
+  // The pull is still delayed: the local row's seq is stale now. The start
+  // must go blind, never name the stale base.
+  await layer.start(TASK);
+  await layer.cycle();
+  const cards = await layer.openCards();
+  assert.equal(cards.length, 0, "no conflict: the chained write went blind");
+  assert.equal(await layer.waiting(), 0);
+});
+
 test("a money scope is refused at the door, before anything is stored", async () => {
   const { layer, store } = await rig();
   const refused = await layer.enqueueRaw({ scope: "price_matrix", op: "update", payload: { id: TASK } });
