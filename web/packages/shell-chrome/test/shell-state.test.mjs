@@ -13,6 +13,7 @@ import assert from 'node:assert/strict';
 import {
   PinBook,
   memoryPinStorage,
+  pinStorageKey,
   SHELL_PIN_CAP,
   railCollapsedFromStored,
   railCollapsedToStored,
@@ -117,10 +118,83 @@ test('two users on one device never share pins: each user reads and writes its o
   assert.deepEqual(book.pins('u1'), ['yard-pick/pick-queue']);
   assert.deepEqual(book.pins('u2'), ['drive-run/my-run']);
   assert.deepEqual(
-    [...storage.entries('u1')],
+    [...storage.entries(pinStorageKey('u1'))],
     ['yard-pick/pick-queue'],
-    'the seam is keyed by user id, and the payload holds only that user\u2019s pins',
+    'the seam is keyed by the pin key, and the payload holds only that user\u2019s pins',
   );
+});
+
+test('the seam receives the exact pin storage key, never the bare user id', () => {
+  const seen = [];
+  const book = new PinBook({
+    storage: {
+      read: (key) => {
+        seen.push(['read', key]);
+        return null;
+      },
+      write: (key) => {
+        seen.push(['write', key]);
+      },
+    },
+  });
+  book.add('u1', 'a/one');
+  assert.deepEqual(seen, [
+    ['read', 'hh-shell.pins.v1.u1'],
+    ['write', 'hh-shell.pins.v1.u1'],
+  ]);
+  assert.equal(pinStorageKey('u1'), 'hh-shell.pins.v1.u1');
+});
+
+test('odd user ids stay inside the pin keyspace and never collide', () => {
+  const seen = new Set();
+  const book = new PinBook({
+    storage: {
+      read: () => null,
+      write: (key) => {
+        seen.add(key);
+      },
+    },
+  });
+  const ids = ['a/b', '..', '__proto__', 'two words', 'a%2Fb', 'hh-shell.rail-collapsed'];
+  for (const id of ids) book.add(id, 'x/y');
+  assert.equal(seen.size, ids.length, 'every id has its own key');
+  for (const key of seen) {
+    assert.ok(key.startsWith('hh-shell.pins.v1.'), `${key} is under the pin prefix`);
+    assert.notEqual(key, RAIL_COLLAPSED_KEY, 'no id reaches the rail posture key');
+  }
+  assert.ok(seen.has('hh-shell.pins.v1.a%2Fb'), 'a slash is encoded');
+  assert.ok(seen.has('hh-shell.pins.v1.two%20words'), 'a space is encoded');
+  assert.ok(seen.has('hh-shell.pins.v1.__proto__'), 'a prototype name is just a key');
+  const second = new PinBook();
+  second.add('__proto__', 'x/y');
+  assert.deepEqual(second.pins('__proto__'), ['x/y']);
+  assert.deepEqual(second.pins('other'), []);
+});
+
+test('an empty user id is refused: no shared signed out book, nothing written', () => {
+  const writes = [];
+  const reads = [];
+  const book = new PinBook({
+    storage: {
+      read: (key) => {
+        reads.push(key);
+        return null;
+      },
+      write: (key) => {
+        writes.push(key);
+      },
+    },
+  });
+  for (const id of ['', '   ', undefined, null]) {
+    assert.deepEqual(book.add(id, 'a/one'), { ok: false, reason: 'no-user' });
+    assert.deepEqual(book.remove(id, 'a/one'), { ok: false, reason: 'no-user' });
+    assert.deepEqual(book.move(id, 'a/one', 1), { ok: false, reason: 'no-user' });
+    assert.deepEqual(book.reset(id), { ok: false, reason: 'no-user' });
+    assert.deepEqual(book.pins(id), []);
+    assert.equal(book.isPinned(id, 'a/one'), false);
+  }
+  assert.deepEqual(writes, [], 'nothing is written for no one');
+  assert.deepEqual(reads, [], 'nothing is read for no one');
 });
 
 test('pins persist through the seam: a new book over the same storage reads the same pins', () => {
@@ -132,10 +206,10 @@ test('pins persist through the seam: a new book over the same storage reads the 
 
 test('a corrupt or unknown payload reads as an empty book, never as a throw', () => {
   const storage = memoryPinStorage();
-  storage.write('u1', '{not json');
-  storage.write('u2', 'null');
-  storage.write('u3', JSON.stringify({ v: 99, pins: [] }));
-  storage.write('u4', JSON.stringify({ v: 1, pins: [{ key: 7, visible: true }] }));
+  storage.write(pinStorageKey('u1'), '{not json');
+  storage.write(pinStorageKey('u2'), 'null');
+  storage.write(pinStorageKey('u3'), JSON.stringify({ v: 99, pins: [] }));
+  storage.write(pinStorageKey('u4'), JSON.stringify({ v: 1, pins: [{ key: 7, visible: true }] }));
   const book = new PinBook({ storage });
   for (const user of ['u1', 'u2', 'u3', 'u4']) {
     assert.deepEqual(book.pins(user), [], `${user} reads as empty`);
