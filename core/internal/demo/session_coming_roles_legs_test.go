@@ -3,6 +3,7 @@
 package demo
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
 // The coming roles cycle's legs over the real serve role (decision log row
@@ -24,12 +27,21 @@ import (
 // subtest per role, added one signed off commit at a time. The mints use a
 // visitor cookie of their own each, so no role spends another's allowance.
 func TestDemoModule_ComingRolesLegs(t *testing.T) {
-	_, dsn := freshMigratedDB(t, "comingroles")
+	ctx := context.Background()
+	pool, dsn := freshMigratedDB(t, "comingroles")
 	bin := buildDemoCore(t)
 	seedAndPopulate(t, bin, dsn)
 	runStep(t, bin, []string{"demoseed", "-apply", "-now", seedClock.Format(time.RFC3339)}, subEnv(t, populateEnv(dsn)))
 	base := startDemoServe(t, bin, dsn)
 	client := &http.Client{Timeout: 20 * time.Second}
+
+	var trentonID, kingstonID string
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'TRT'`).Scan(&trentonID); err != nil {
+		t.Fatalf("the Trenton branch: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'KGN'`).Scan(&kingstonID); err != nil {
+		t.Fatalf("the Kingston branch: %v", err)
+	}
 
 	type minted struct {
 		headers map[string]string
@@ -98,6 +110,55 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		t.Helper()
 		return do(t, http.MethodGet, path, m.headers, "")
 	}
+	branchCodes := func(t *testing.T, m minted) []string {
+		t.Helper()
+		status, raw := get(t, "/api/v1/branches", m)
+		if status != http.StatusOK {
+			t.Fatalf("GET /api/v1/branches: status %d, want 200 (body: %s)", status, raw)
+		}
+		var rows []struct {
+			Code string `json:"code"`
+		}
+		if err := json.Unmarshal([]byte(raw), &rows); err != nil {
+			t.Fatalf("the branches body does not decode: %v", err)
+		}
+		codes := make([]string, 0, len(rows))
+		for _, r := range rows {
+			codes = append(codes, r.Code)
+		}
+		return codes
+	}
+	contains := func(list []string, want string) bool {
+		for _, v := range list {
+			if v == want {
+				return true
+			}
+		}
+		return false
+	}
+	sameSet := func(got, want []string) bool {
+		if len(got) != len(want) {
+			return false
+		}
+		seen := map[string]bool{}
+		for _, g := range got {
+			seen[g] = true
+		}
+		for _, w := range want {
+			if !seen[w] {
+				return false
+			}
+		}
+		return true
+	}
+	// wantWall holds a route refused by the role gate in its shared body.
+	wantWall := func(t *testing.T, what, path string, m minted) {
+		t.Helper()
+		status, raw := get(t, path, m)
+		if status != http.StatusForbidden || strings.TrimSpace(raw) != `{"error":"Forbidden"}` {
+			t.Errorf("%s: status %d body %s, want the gate's 403", what, status, raw)
+		}
+	}
 	wantOK := func(t *testing.T, what, path string, m minted) string {
 		t.Helper()
 		status, raw := get(t, path, m)
@@ -150,6 +211,73 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		}
 		if waiting == 0 {
 			t.Errorf("the needs queue holds no approvals waiting row for the role that decides the exceptions: %+v", needs.Rows)
+		}
+
+		// L-card: the bearer the card minted reaches the surfaces the role holds
+		// (Manager Home above; the till's policy is a read cell).
+		wantOK(t, "the till's policy (counter-till, read)", "/api/v1/pos/policy", gm)
+		// L-branch: a global role reaches every branch.
+		if codes := branchCodes(t, gm); !sameSet(codes, []string{"TRT", "KGN"}) {
+			t.Errorf("the General Manager reaches %v, want both branches", codes)
+		}
+		wantOK(t, "the Money Desk's credit holds (money-desk, manage)", "/api/v1/ar/credit-holds", gm)
+		wantOK(t, "the dispatch board at Kingston", "/api/v1/dispatch/trucks?branch_id="+kingstonID, gm)
+		wantOK(t, "the dispatch board at Trenton", "/api/v1/dispatch/trucks?branch_id="+trentonID, gm)
+		// L-wall: Yard Pick and HH Drive sit at None for the role.
+		wantWall(t, "the yard pick queue (yard-pick, None)", "/api/v1/yard/pick-queue?branch_id="+trentonID, gm)
+		wantWall(t, "the driver's runs (drive-run, None)", "/api/v1/dispatch/my-runs?date="+seedClock.UTC().Format("2006-01-02"), gm)
+		// L-cost: the cost and margin list names the role and Dealer Admin is its admin cell.
+		wantOK(t, "the pricing audit (cost and margin list)", "/api/v1/pricing/audit", gm)
+		cfg, err := roleconfig.Default()
+		if err != nil {
+			t.Fatalf("roleconfig.Default: %v", err)
+		}
+		if !contains(cfg.CostVisibility(), "general_manager") {
+			t.Errorf("the decided matrix does not list the General Manager on the cost and margin list: %v", cfg.CostVisibility())
+		}
+
+		// Decide legs: the kinds the original gave the role (Margin, Credit, COD,
+		// Journal entry, Freight above quote), only where the server decides them.
+		// Each kind's list answers 200 for the role and 403 for a login that does
+		// not decide the kind; the kinds the seed files are then decided.
+		sales := mint(t, "sales")
+		for _, kind := range []string{"MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE"} {
+			wantOK(t, "the "+kind+" list for the role that decides it", "/api/v1/staff/approvals?status=PENDING&kind="+kind, gm)
+			if status, raw := get(t, "/api/v1/staff/approvals?status=PENDING&kind="+kind, sales); status != http.StatusForbidden && kind != "MARGIN_BELOW_MINIMUM" {
+				t.Errorf("the %s list for the counter clerk: status %d body %s, want 403", kind, status, raw)
+			}
+		}
+		var pending struct {
+			Items []struct {
+				ID     string `json:"id"`
+				Policy string `json:"policy_type"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(wantOK(t, "the pending approvals", "/api/v1/staff/approvals?status=PENDING", gm)), &pending); err != nil {
+			t.Fatalf("the approvals page does not decode: %v", err)
+		}
+		decided := map[string]bool{}
+		for _, want := range []string{"MARGIN_BELOW_MINIMUM", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE"} {
+			id := ""
+			for _, it := range pending.Items {
+				if it.Policy == want {
+					id = it.ID
+					break
+				}
+			}
+			if id == "" {
+				t.Errorf("the role's queue holds no pending %s request the seed files", want)
+				continue
+			}
+			status, raw := do(t, http.MethodPost, "/api/v1/staff/approvals/"+id+"/decide", gm.headers, `{"approve":true,"reason":"demo decision"}`)
+			if status != http.StatusOK {
+				t.Errorf("the role deciding a %s request: status %d, want 200 (body: %s)", want, status, raw)
+				continue
+			}
+			decided[want] = true
+		}
+		if len(decided) != 3 {
+			t.Errorf("the role decided %v of the three seeded kinds", decided)
 		}
 	})
 }

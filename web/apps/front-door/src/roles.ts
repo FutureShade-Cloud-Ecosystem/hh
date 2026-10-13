@@ -207,7 +207,7 @@ export const LIVE_ROLES: readonly LiveRole[] = [
 ];
 
 /**
- * The five coming roles, in the till's entry view's own order, each with
+ * The coming roles, in the till's entry view's own order, each with
  * the modules ROLE-ACCESS-r3 gives it at work, manage or admin level (read
  * cells and none show nothing). Outside Sales has no till (rows 363 and 364);
  * HR's two are House Messages and Dealer Admin, and the matrix gives its

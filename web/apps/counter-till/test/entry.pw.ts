@@ -1,7 +1,7 @@
 // The Counter Till's exit test, run against the stubbed harness (the stub
 // serves the demo routes' contract shapes; the vite dev server proxies /api
 // to it). This is W6's slice of the plan's screen 1: two cards, a tapped card
-// lands on the till with the Demo banner and the role's name, the five coming
+// lands on the till with the Demo banner and the role's name, the coming
 // roles show as coming and cannot be tapped, sign out returns to the cards,
 // and against a flows route that answers there are no cards at all. The yard
 // manager's, the Yard Team's and the Driver's flows are in the stub's flows

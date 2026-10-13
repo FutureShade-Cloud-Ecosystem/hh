@@ -47,7 +47,7 @@ async function readSale(page: Page, bearer: string, orderId: string) {
   return answer.body;
 }
 
-test("the way in: two cards, the five coming roles untapped, the yard manager, the yard team, the driver and the financial controller start at the front door, and the banner", async ({
+test("the way in: two cards, the coming roles untapped, every other live role starts at the front door, and the banner", async ({
   page,
 }, testInfo) => {
   await page.goto("/");
