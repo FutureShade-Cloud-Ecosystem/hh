@@ -44,6 +44,11 @@ import {
 } from "./manager-logic.js";
 import { homeStyles } from "./styles.js";
 import { warrantyStyles } from "./warranty-styles.js";
+import { quickStyles } from "./quick-styles.js";
+import { QuickApi } from "./quick-api.js";
+import { publishIntent } from "./quick-intent.js";
+import { actionHref, findAction } from "./quick-logic.js";
+import { renderQuickBar, type QuickBarModel } from "./quick-views.js";
 import { WarrantyApi } from "./warranty-api.js";
 import { WarrantyDesk } from "./warranty-desk.js";
 import { renderWarranty } from "./warranty-views.js";
@@ -63,7 +68,7 @@ import {
 const DEMO_ORG = "hh-demo";
 
 export class ManagerHomeApp extends HHElement {
-  static styles = [baseStyles, homeStyles, warrantyStyles];
+  static styles = [baseStyles, homeStyles, warrantyStyles, quickStyles];
 
   // The demo account surface: listFlows() and chooseFlow() over the core's
   // demo routes. It is the injected AccountSurface for the auth package.
@@ -89,6 +94,10 @@ export class ManagerHomeApp extends HHElement {
 
   // The manager's calls, over the staff client.
   readonly #api = new ManagerApi(this.#staffClient);
+
+  // The quick actions' calls (src/quick-*): the caller's resolved registry
+  // rows, over the same staff client.
+  readonly #quickApi = new QuickApi(this.#staffClient);
 
   // The warranty desk (src/warranty-*): its own door over the same staff
   // client, its fields read from this element's shadow root by name.
@@ -116,6 +125,9 @@ export class ManagerHomeApp extends HHElement {
 
   // The landing's state.
   #landing: LandingModel = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "" };
+
+  // The landing's quick-action bar: the caller's resolved registry rows.
+  #quickBar: QuickBarModel = { phase: "loading", actions: [] };
 
   // The views' states.
   #shortages: ShortagesModel = {
@@ -159,6 +171,10 @@ export class ManagerHomeApp extends HHElement {
       if (view === "shortages" || view === "receiving" || view === "approvals" || view === "warranty") {
         this.#openView(view);
       }
+      return;
+    }
+    if (action === "quick-run") {
+      this.#runQuick(control?.getAttribute("data-action-id") ?? "");
       return;
     }
     if (action === "back") {
@@ -319,6 +335,7 @@ export class ManagerHomeApp extends HHElement {
       this.#branch = null;
     }
     this.#warranty.setBranch(this.#branch?.id ?? "", this.#branch?.name ?? "");
+    void this.#loadQuickBar();
     await this.#loadLanding();
   }
 
@@ -347,6 +364,7 @@ export class ManagerHomeApp extends HHElement {
     this.#branch = null;
     this.#warranty.reset();
     this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "" };
+    this.#quickBar = { phase: "loading", actions: [] };
     this.#shortages = {
       phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
       resolverWords: SHORTAGE_RESOLVER_WORDS,
@@ -397,6 +415,32 @@ export class ManagerHomeApp extends HHElement {
       error: "",
     };
     this.requestUpdate();
+  }
+
+  // The landing's quick-action bar, once per mount and on demand after an
+  // admin saves a change. The server resolved the role gate and the admin's
+  // config already; a failed read leaves the bar empty and said nothing, the
+  // optional chrome's honest degradation (quick-views.ts carries the reason).
+  async #loadQuickBar(): Promise<void> {
+    const result = await this.#quickApi.mine();
+    this.#quickBar = result.ok
+      ? { phase: "ready", actions: result.value.actions }
+      : { phase: "failed", actions: [] };
+    this.requestUpdate();
+  }
+
+  // ONE click = instruct + navigate, in that order: the intent is published
+  // before the navigation so a destination already mounted and a destination
+  // mounting from it both find it (quick-intent.ts). The action itself only
+  // ever navigates; the destination owns whatever the arrival does, and its
+  // own guard protects a live till.
+  #runQuick(id: string): void {
+    const action = findAction(this.#quickBar.actions, id);
+    if (action === null) return;
+    const href = actionHref(action);
+    if (href === null) return;
+    publishIntent({ module: action.screen, intent: action.intent, actionId: action.action_id });
+    window.location.assign(href);
   }
 
   // A landing refresh that keeps the screen standing: the server's answers
@@ -577,6 +621,7 @@ export class ManagerHomeApp extends HHElement {
     if (this.#view === "receiving") return renderReceiving(this.#receiving);
     if (this.#view === "approvals") return renderApprovals(this.#approvals);
     if (this.#view === "warranty") return renderWarranty(this.#warranty.model());
+    if (this.#view === "home") return html`${renderQuickBar(this.#quickBar)}${renderLanding(this.#landing)}`;
     return renderLanding(this.#landing);
   }
 

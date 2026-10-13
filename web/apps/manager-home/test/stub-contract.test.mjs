@@ -304,6 +304,36 @@ test("the approvals list fits the identity contract, and the refusals are the co
   refused(yardDecide, 403, "you do not decide MARGIN_BELOW_MINIMUM approvals", "you do not decide %s approvals");
 });
 
+test("the caller's quick actions are the core's registry resolved for the caller's job shape", async () => {
+  await reset();
+  const yard = await mint("yard-manager");
+  const sales = await mint("sales-manager");
+
+  const yardMine = await call("GET", "/api/v1/quick-actions", { token: yard });
+  assert.equal(yardMine.status, 200);
+  holds("DashboardQuickActionsMine", yardMine.json);
+  assert.equal(yardMine.json.profile, "manager.yard");
+  assert.deepEqual(yardMine.json.actions, [], "the yard shape does not sell, so the core resolves it no action");
+
+  const salesMine = await call("GET", "/api/v1/quick-actions", { token: sales });
+  assert.equal(salesMine.status, 200);
+  holds("DashboardQuickActionsMine", salesMine.json);
+  assert.equal(salesMine.json.profile, "manager.sales");
+  assert.equal(salesMine.json.actions.length, 1);
+  holds("DashboardActionMeta", salesMine.json.actions[0]);
+  assert.equal(salesMine.json.actions[0].action_id, "sale.new");
+  assert.equal(salesMine.json.actions[0].title, "Start a new counter sale at the till.");
+  assert.equal(salesMine.json.actions[0].intent, "pos.new_ticket");
+
+  // The stub's catalog row is the core's, not an invention: the id, the
+  // intent, the button's sentence and the admin's lead line all exist in the
+  // core's quick-action source.
+  assert.ok(coreSource.includes('ActionNewSale = "sale.new"'), "the stub's action id is not the core's constant");
+  assert.ok(coreSource.includes('IntentPosNewTicket = "pos.new_ticket"'), "the stub's intent is not the core's constant");
+  assert.ok(coreSource.includes("Start a new counter sale at the till."), "the stub's title is not the core's sentence");
+  assert.ok(coreSource.includes("Jumps to Point of Sale with a fresh ticket."), "the stub's lead is not the core's sentence");
+});
+
 test("a caller without a bearer is refused before any route answers", async () => {
   const res = await call("GET", "/api/v1/dashboard/needs", { token: "" });
   refused(res, 401, "unauthenticated");

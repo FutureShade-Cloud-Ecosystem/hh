@@ -757,10 +757,66 @@ let world;
 let scenario;
 let log;
 
+// The quick-action registry (core/internal/dashboard/quickaction.go): one
+// entry today, the core's own catalog row carried byte for byte, visible to
+// the counter, manager and admin job shapes and to nobody else. The answers
+// resolve per caller the way ResolveVisible runs: the global switch first and
+// its off is final, then the caller's own stored row (an admin's saved edit,
+// below), then the shape the caller's profile was born from (ManagerBaseShape,
+// the rows the stub's two manager profiles carry).
+const QUICK_ACTION = {
+  action_id: "sale.new",
+  label: "+ Sale",
+  glyph: "＋",
+  title: "Start a new counter sale at the till.",
+  unit: "sales",
+  screen: "pos",
+  intent: "pos.new_ticket",
+  lead: "Jumps to Point of Sale with a fresh ticket.",
+  default_enabled: true,
+  default_profiles: { counter: true, yard: false, driver: false, manager: true, admin: true },
+};
+const QUICK_BASE_SHAPE = { "manager.yard": "yard", "manager.sales": "manager" };
+let quickConfigs;
+
+function quickDefaultVisible(profile) {
+  if (Object.hasOwn(QUICK_ACTION.default_profiles, profile)) return QUICK_ACTION.default_profiles[profile];
+  const base = QUICK_BASE_SHAPE[profile];
+  return base !== undefined && QUICK_ACTION.default_profiles[base] === true;
+}
+
+function quickVisible(profile) {
+  const cfg = quickConfigs[QUICK_ACTION.action_id] ?? null;
+  const enabled = cfg !== null ? cfg.enabled : QUICK_ACTION.default_enabled;
+  if (!enabled) return false;
+  if (cfg !== null && Object.hasOwn(cfg.profiles, profile)) return cfg.profiles[profile];
+  return quickDefaultVisible(profile);
+}
+
+// One action as the ADMIN surface sees it: the catalog row plus the resolved
+// switch and a per-shape answer for every job shape, so an unstored shape
+// shows the default it is actually getting (EffectiveFor's rule).
+function quickEffective() {
+  const cfg = quickConfigs[QUICK_ACTION.action_id] ?? null;
+  const profiles = {};
+  for (const p of PROFILES) {
+    profiles[p] = cfg !== null && Object.hasOwn(cfg.profiles, p) ? cfg.profiles[p] : quickDefaultVisible(p);
+  }
+  return { ...QUICK_ACTION, enabled: cfg !== null ? cfg.enabled : QUICK_ACTION.default_enabled, profiles, stored: cfg !== null };
+}
+
+// The closed set of job shapes, the core's Profiles order.
+const PROFILES = [
+  "counter", "yard", "driver", "manager", "admin",
+  "manager.branch", "manager.sales", "manager.yard", "manager.logistics",
+  "manager.procurement", "manager.payables", "manager.controller", "manager.general",
+];
+
 function reset() {
   world = buildWorld();
   scenario = "";
   log = [];
+  quickConfigs = {};
 }
 reset();
 
@@ -909,6 +965,13 @@ async function handle(req, res) {
       return data[key] ?? { widget_key: key, state: "unwired", range: "open", note: "Not connected" };
     });
     return json(res, { data: out });
+  }
+
+  // The caller's quick actions, resolved for their job shape (staff, as the
+  // core gates it). An empty array is the honest answer for "you see none".
+  if (req.method === "GET" && path === "/api/v1/quick-actions") {
+    const actions = quickVisible(profile) ? [QUICK_ACTION] : [];
+    return json(res, { profile, actions });
   }
 
   if (req.method === "GET" && path === "/api/v1/yard/pick-queue") {
