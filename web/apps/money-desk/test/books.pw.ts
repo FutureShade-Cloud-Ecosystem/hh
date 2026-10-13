@@ -416,3 +416,29 @@ test("on a phone the seven tabs share one row, every tab fits the width, and the
   await expect(page.locator("[data-confirm]")).toBeInViewport();
   await expect.poll(sideways).toBeLessThanOrEqual(0);
 });
+
+test("a lost answer to a close period rereads the periods, never leaving the panel on Reading", async ({ page, request }) => {
+  await openApprovals(page, request);
+  await openTab(page, "periods");
+  await page.route("**/api/v1/gl/periods/*/close", (route) => route.abort("failed"));
+  await page.getByRole("button", { name: "Close August 2026" }).click();
+  await page.locator("[data-confirm]").getByRole("button", { name: "Close August 2026" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been saved");
+  await expect(page.getByRole("table", { name: "Periods" })).toContainText("August 2026");
+  await expect(page.getByText("Reading the fiscal periods.")).toHaveCount(0);
+});
+
+test("a lost answer to a reverse rereads the register", async ({ page, request }) => {
+  await openApprovals(page, request);
+  await openTab(page, "journals");
+  await page.getByRole("table", { name: "Journal register" }).getByRole("button", { name: "JE-0004" }).click();
+  await page.getByRole("button", { name: "Reverse", exact: true }).click();
+  // The server applies the reversal but the answer is lost: the register must show it without a reload.
+  await page.route("**/api/v1/gl/journals/*/reverse", async (route) => {
+    await route.fetch();
+    await route.abort("failed");
+  });
+  await page.locator("[data-confirm]").getByRole("button", { name: "Reverse JE-0004" }).click();
+  await expect(page.locator("[data-error]")).toContainText("may or may not have been saved");
+  await expect(page.getByRole("table", { name: "Journal register" }).getByRole("row", { name: /JE-0007/ })).toContainText("Posted");
+});

@@ -556,6 +556,11 @@ export class GlDesk {
         // Nothing says whether it landed: close the step and reread what it touched.
         this.#confirm = null;
         this.#invalidate(confirm.kind);
+        this.#reveal = "[data-error], [data-confirm-error]";
+        this.#host.repaint();
+        this.#ensure(this.#tab, true);
+        if (confirm.kind === "reverse" || confirm.kind === "void") await this.#refreshJournals();
+        return;
       }
       this.#reveal = "[data-error], [data-confirm-error]";
       this.#host.repaint();
