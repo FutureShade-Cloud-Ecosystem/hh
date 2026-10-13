@@ -312,3 +312,16 @@ test("the run close drains the outbox first, and refuses with words while a move
   assert.equal(closes.length, 1);
   assert.equal(closes[0].applied, 1, "the queued move had applied before the close went");
 });
+
+test("a second tab (read cache only) opens no layer, so the app stays online, and says it is read only", async () => {
+  const { openDriveOfflineOver } = await import("../src/drive-offline.js");
+  const executor = nodeSqliteExecutor();
+  const backend = { ...createSqliteBackend(executor), ownership: () => "read_cache_only" };
+  const server = new FakeSyncServer();
+  const opened = await openDriveOfflineOver(backend, { transport: server.transport(), direct: {} });
+  assert.equal(opened.layer, null, "no layer: the empty read cache must not stand in for the board");
+  assert.equal(opened.readOnly, true, "the strip still says read only");
+  const owner = await openDriveOfflineOver(createSqliteBackend(nodeSqliteExecutor()), { transport: server.transport(), direct: {} });
+  assert.equal(owner.readOnly, false);
+  assert.notEqual(owner.layer, null);
+});

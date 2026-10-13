@@ -290,3 +290,16 @@ test("a second skid count before any pull names the first count as its previous 
   assert.equal(second.value.previous_skid_count, 2);
   assert.equal(second.value.changed, true);
 });
+
+test("a second tab (read cache only) opens no layer, so the app stays online, and says it is read only", async () => {
+  const { openYardOfflineOver } = await import("../src/yard-offline.js");
+  const executor = nodeSqliteExecutor();
+  const backend = { ...createSqliteBackend(executor), ownership: () => "read_cache_only" };
+  const server = new FakeSyncServer();
+  const opened = await openYardOfflineOver(backend, { transport: server.transport(), direct: {}, actorId: ACTOR });
+  assert.equal(opened.layer, null, "no layer: the empty read cache must not stand in for the board");
+  assert.equal(opened.readOnly, true, "the strip still says read only");
+  const owner = await openYardOfflineOver(createSqliteBackend(nodeSqliteExecutor()), { transport: server.transport(), direct: {}, actorId: ACTOR });
+  assert.equal(owner.readOnly, false);
+  assert.notEqual(owner.layer, null);
+});
