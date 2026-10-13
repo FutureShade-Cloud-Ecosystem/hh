@@ -1,25 +1,38 @@
 //go:build demo
 
+// dealer.go (the data; the guarded writes live in populate.go, where the table census states them), the demo dealer's two yards: Gable Landscape Supply, Point Loma
+// (code PLM, the main yard, where every demo login is homed) and Julian (code
+// JUL). Migration 0003 plants the two BRANCH rows under the first dealer's
+// codes, names and addresses; the demo database converges them onto the
+// invented dealer here, on the demo database only. Real deployments keep
+// their own branches: nothing in a default build calls this.
+//
+// WHO CALLS IT, AND WHY TWICE. The populate calls it (renameDemoDealer) and the
+// demoseed's demo-build pre-step calls it before the seed resolves its
+// branches. The seed derives every order, purchase order, run and stock move
+// reference from the branch CODE, so the first seed pass must already see the
+// final codes: a seed that wrote DEMO-TRT-O01 and then met a branch coded PLM
+// would write a second set of stock moves on the next pass. Both callers are
+// guarded on the value they write, so whichever runs second writes nothing.
+//
+// THE ORDER OF THE TWO CODES MATTERS. The seed maps its branch 0 and branch 1
+// onto the active BRANCH rows ordered by code. The first dealer's codes sorted
+// KGN then TRT, so branch 1 (the branch every demo login reaches) was TRT.
+// JUL then PLM sorts the same way, so branch 1 is Point Loma and branch 0 is
+// Julian, and no seeded row changes yard.
 package demo
 
-import "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
+// DealerBranch is one yard of the demo dealer as the demo database carries it.
+type DealerBranch struct {
+	ID, Code, Name string
+	Line1, City    string
+	Province       string
+	Postal         string
+}
 
-// DealerConfig is the demo dealer's public config: Gable Landscape Supply,
-// the invented two yard dealer of GLS-TENANT-r3, in the brand kit's navy.
-// The demo wiring hands it to the tenant config handler's New, so the
-// public route names the demo's dealer and the shared default names none
-// (decision log row 1592). The values are invented: the support address
-// sits at the reserved demo domain, which no mail can reach, and the number
-// in the 555 0100 block; the logo is left to the apps, which carry the
-// kit's lockups. Gold is the action fill and never a chrome colour, so the
-// primary colour is the navy.
-func DealerConfig() apigen.TenantPublicConfig {
-	return apigen.TenantPublicConfig{
-		Id:           "gable",
-		DealerName:   "Gable Landscape Supply",
-		LogoUrl:      "",
-		PrimaryColor: "#0B2338",
-		SupportEmail: "support@" + demoDomain,
-		SupportPhone: "(619) 555-0142",
-	}
+// DealerBranches is the demo dealer's two yards, in the order Point Loma then
+// Julian. The addresses are invented, in San Diego County.
+var DealerBranches = []DealerBranch{
+	{trentonBranchID, "PLM", "Gable Landscape Supply, Point Loma", "2410 Harbor Yard Road", "San Diego", "CA", "92106"},
+	{kingstonBranchID, "JUL", "Gable Landscape Supply, Julian", "1180 Quarry Gate Road", "Julian", "CA", "92036"},
 }

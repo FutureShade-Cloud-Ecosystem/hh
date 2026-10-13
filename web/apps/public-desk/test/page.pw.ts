@@ -51,16 +51,16 @@ test("the lane's reference shots, against the stub, on demand", async ({ page })
 test("a quote is viewed by its token: header, lines, totals", async ({ page }) => {
   await page.goto(`/?t=${GOOD_TOKEN}`);
   await expect(page.getByRole("heading", { name: "Quote #Q-25" })).toBeVisible();
-  await expect(page.getByText("Prepared for Quinte Hardscapes Inc")).toBeVisible();
+  await expect(page.getByText("Prepared for Fieldstone Hardscapes Inc")).toBeVisible();
   await expect(page.getByText(/valid until /)).toBeVisible();
 
   const rows = page.locator("tbody tr");
   await expect(rows).toHaveCount(3);
-  await expect(rows.nth(0)).toContainText("Banas Natural Step");
+  await expect(rows.nth(0)).toContainText("Bluff Natural Step");
   await expect(rows.nth(0)).toContainText("1.0000");
   await expect(rows.nth(0)).toContainText("PC");
   await expect(rows.nth(0)).toContainText("$20.57");
-  await expect(rows.nth(1)).toContainText("Alliance Gator Polymeric Sand");
+  await expect(rows.nth(1)).toContainText("Tidewater Polymeric Sand");
   await expect(rows.nth(1)).toContainText("BAG");
   await expect(rows.nth(1)).toContainText("$22.08");
   await expect(rows.nth(2)).toContainText("Black Mulch");
@@ -721,7 +721,7 @@ async function convertInFlight(page: Page, token: string): Promise<void> {
     const body = (await response.json()) as { status: string; acceptable: boolean; order_no?: string };
     body.status = "CONVERTED";
     body.acceptable = false;
-    body.order_no = "SO-TRT-17";
+    body.order_no = "SO-PLM-17";
     await route.fulfill({ response, json: body });
   });
 }
@@ -739,7 +739,7 @@ test("the same quote reads blue before conversion and gold after, light and on p
     await convertInFlight(after, "q-flip-8");
     await after.goto(`/?t=q-flip-8${query}`);
     await expect(after.locator("pd-quote-public").getByRole("heading", { level: 1 })).toHaveText(
-      "Sales order SO-TRT-17, converted from #Q-7",
+      "Sales order SO-PLM-17, converted from #Q-7",
     );
     expectToken(await measureAgainstToken(after, "--hh-accent-text", ".totals .grand", "color"), "--hh-accent-text", `the order total (print ${print})`);
     expectToken(await measureAgainstToken(after, "--hh-accent", ".orderband", "backgroundColor"), "--hh-accent", `the order band (print ${print})`);
@@ -752,7 +752,7 @@ test("the same quote reads blue before conversion and gold after, light and on p
 test("a converted quote's page is the order's, in the gold family only: no quote blue, no Accept form", async ({ page }) => {
   await page.goto("/?t=q-conv-8");
   const heading = page.locator("pd-quote-public").getByRole("heading", { level: 1 });
-  await expect(heading).toHaveText("Sales order SO-TRT-17, converted from #Q-7");
+  await expect(heading).toHaveText("Sales order SO-PLM-17, converted from #Q-7");
   await expect(page.getByRole("button", { name: "Accept quote" })).toHaveCount(0);
   await expect(page.locator("#name")).toHaveCount(0);
   // No element on the page paints the quote family: walk every computed colour and refuse the blue.
@@ -799,7 +799,7 @@ test("a converted quote with no order number from the core says it became an ord
 // say what happened.
 test("a converted quote's page drops the valid until line and the notice, and says the quantities were confirmed", async ({ page }) => {
   await page.goto("/?t=q-conv-8");
-  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sales order SO-PLM-17, converted from #Q-7" })).toBeVisible();
   const confirmed = page.locator(".orderband").getByText("You confirmed the quantities on this quote.");
   await expect(confirmed).toBeVisible();
   const body = page.locator("pd-quote-public");
@@ -818,7 +818,7 @@ test("a converted quote's page drops the valid until line and the notice, and sa
 test("a converted quote's paper copy drops the same two and carries the confirmation line", async ({ page }) => {
   await page.emulateMedia({ media: "print" });
   await page.goto("/?t=q-conv-8&print=1");
-  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sales order SO-PLM-17, converted from #Q-7" })).toBeVisible();
   await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();
   const body = page.locator("pd-quote-public");
   await expect(body).not.toContainText("valid until");
@@ -846,7 +846,7 @@ test("multi-accept on: a converted quote the dealer left acceptable keeps the fo
     await route.fulfill({ response, json: body });
   });
   await page.goto("/?t=q-conv-8");
-  await expect(page.getByRole("heading", { name: "Sales order SO-TRT-17, converted from #Q-7" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sales order SO-PLM-17, converted from #Q-7" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Accept this quote" })).toBeVisible();
   await expect(page.getByText(REPEAT_NOTE)).toBeVisible();
   await expect(page.locator(".orderband").getByText("You confirmed the quantities on this quote.")).toBeVisible();

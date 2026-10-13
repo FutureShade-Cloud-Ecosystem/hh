@@ -82,7 +82,7 @@ export class DemoAccount implements AccountSurface {
     if (!result.ok) return result;
     const minted = validateMint(result.value, Date.now());
     if (minted === null) {
-      return err("the mint's answer is not a usable session: no token, no usable user block, or no readable expiry in the token");
+      return err("the sign-in did not return what the screen needs; pick the role again");
     }
     this.#mint = minted;
     return ok({ ...minted });
@@ -100,7 +100,7 @@ export class DemoAccount implements AccountSurface {
     if (!result.ok) return result;
     const minted = validateMint(result.value, Date.now());
     if (minted === null) {
-      return err("the approver mint's answer is not a usable session: no token, no usable user block, or no readable expiry in the token");
+      return err("the approver's sign-in did not return what the screen needs; try again");
     }
     return ok({ token: minted.token, approverName: minted.user.name, expiresAtMs: minted.tokenExpiresAtMs });
   }
@@ -119,7 +119,7 @@ export class DemoAccount implements AccountSurface {
   async getSession(): Promise<AccountUser> {
     const mint = this.#mint;
     if (mint === null) {
-      throw new Error("no demo session to resume: the mint lives only in this tab's memory, tap a role again");
+      throw new Error("no demo is held in this tab; tap a role again");
     }
     return { ...mint.user };
   }

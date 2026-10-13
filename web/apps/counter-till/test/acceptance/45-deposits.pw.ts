@@ -1,7 +1,7 @@
 // Item 9 (row 1047 item 6): the deposit and Pay balance story as the clerk, against the demo
 // world: a deposit for a credit customer (line one the deposit, line two on account), a deposit for
 // the Cash On Demand customer ending on the held card, and Pay balance finding the held order the
-// seed plants (DEMO-TRT-D02) and taking the rest to Paid in full. Every figure on the screen is
+// seed plants (DEMO-PLM-D02) and taking the rest to Paid in full. Every figure on the screen is
 // held against what the core answers through its own reads.
 import {
   expect,
@@ -40,7 +40,7 @@ test("a deposit for a credit customer: line one the deposit, line two on account
 }, testInfo) => {
   await signIn(page, "Sales");
   await pickCustomer(page, "C02", "C02");
-  await searchAndAdd(page, "holland", "Holland");
+  await searchAndAdd(page, "charcoal", "Charcoal");
   await chooseWillCall(page);
   await openStep(page, "payment");
   await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_ON_ACCOUNT").click();
@@ -75,7 +75,7 @@ test("a deposit for the Cash On Demand customer ends on the held card, and the c
 }, testInfo) => {
   await signIn(page, "Sales");
   await pickCustomer(page, "C10", "C10");
-  await searchAndAdd(page, "holland", "Holland");
+  await searchAndAdd(page, "charcoal", "Charcoal");
   await chooseWillCall(page);
   await openStep(page, "payment");
   await expect(page.getByTestId("pay-shape-ALL_ON_ACCOUNT")).toHaveCount(0);
@@ -110,10 +110,10 @@ test("Pay balance finds the held order the seed plants and takes the rest to Pai
 }, testInfo) => {
   await signIn(page, "Sales");
   await openPayBalance(page);
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
   await page.getByTestId("pay-balance-find").click();
   const card = page.getByTestId("pay-balance-order");
-  await expect(card).toContainText(/Order · DEMO-TRT-D02/i);
+  await expect(card).toContainText(/Order · DEMO-PLM-D02/i);
   await expect(page.getByTestId("held-chip-hold")).toHaveText("Held from picking");
   const owedText = (await page.getByTestId("pay-balance-owed").innerText()).replace(/\s+/g, " ");
   const owed = owedText.match(/\$([\d,]+\.\d\d)/);
@@ -132,7 +132,7 @@ test("Pay balance finds the held order the seed plants and takes the rest to Pai
   const taken = (await (await posted).json()) as { order_id: string; still_owed_cents: number; released_to_picking: boolean };
   expect(taken.still_owed_cents).toBe(0);
   expect(taken.released_to_picking).toBe(true);
-  await expect(page.getByTestId("pay-balance-done")).toContainText("DEMO-TRT-D02 reads Paid in full and is released to picking.");
+  await expect(page.getByTestId("pay-balance-done")).toContainText("DEMO-PLM-D02 reads Paid in full and is released to picking.");
   await expect(page.getByTestId("pay-balance-done")).toContainText("Money trail:");
   // The core's own read: the hold lifted with the last dollar.
   const bearer = await mint(page, "sales");

@@ -5,9 +5,9 @@
 // through the core's own close flow, signs in on the closed drawer (what a
 // clean box holds), and presses the button: the request it sends carries the
 // reference's own float, and the till then shows the session open.
-import { TRENTON_ID, expect, expectedCash, mint, staffGet, staffPost, tapRoleCard, test } from "./helpers.js";
+import { POINT_LOMA_ID, expect, expectedCash, mint, staffGet, staffPost, tapRoleCard, test } from "./helpers.js";
 
-const OPEN_PATH = `/api/v1/till/sessions/open?branch_id=${TRENTON_ID}&station=MAIN`;
+const OPEN_PATH = `/api/v1/till/sessions/open?branch_id=${POINT_LOMA_ID}&station=MAIN`;
 
 test("the closed drawer: the till's own Open Session button opens MAIN with the reference's float", async ({
   page,
@@ -58,7 +58,7 @@ test("the closed drawer: the till's own Open Session button opens MAIN with the 
     station: string;
     float_cents: number;
   };
-  expect(body.branch_id).toBe(TRENTON_ID);
+  expect(body.branch_id).toBe(POINT_LOMA_ID);
   expect(body.station).toBe("MAIN");
   expect(body.float_cents).toBe(30000);
   // The till shows the session open: the bar's dot, as a signed in till does.

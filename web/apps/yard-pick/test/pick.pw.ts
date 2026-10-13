@@ -24,13 +24,13 @@ test("a claimed pick opens, starts, and shows its pull list", async ({ page }) =
   await openInProgress(page);
   await expect(page.locator("[data-pull-list]")).toContainText("Pull list · 4 lines");
   await expect(page.locator("[data-line]")).toHaveCount(4);
-  await expect(page.locator("[data-line]", { hasText: "Granular A gravel" })).toContainText("10 TONNE");
+  await expect(page.locator("[data-line]", { hasText: "Class 2 base rock gravel" })).toContainText("10 TONNE");
   await expect(page.getByRole("button", { name: "Save pick" })).toBeVisible();
 });
 
 test("a line opens the quantity editor: steppers, All, None, and the number holds", async ({ page }) => {
   await openInProgress(page);
-  await page.locator("[data-line]", { hasText: "Granular A gravel" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
   await expect(page.locator("[data-qty-edit]")).toBeVisible();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
@@ -41,13 +41,13 @@ test("a line opens the quantity editor: steppers, All, None, and the number hold
   await expect(page.locator("[data-field=qty]")).toHaveValue("10");
   // The number holds through a re-render that opens another line.
   await page.locator("[data-line]", { hasText: "Geotextile fabric" }).locator(".line-row").click();
-  await page.locator("[data-line]", { hasText: "Granular A gravel" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
   await expect(page.locator("[data-field=qty]")).toHaveValue("10");
 });
 
 test("recording a full pick says so, and the line carries its tick", async ({ page }) => {
   await openInProgress(page);
-  for (const what of ["Granular A gravel", "Granular B gravel", "Geotextile fabric", "Corrugated pipe"]) {
+  for (const what of ["Class 2 base rock gravel", "Granular B gravel", "Geotextile fabric", "Corrugated pipe"]) {
     await page.locator("[data-line]", { hasText: what }).locator(".line-row").click();
     await page.getByRole("button", { name: /^All \d+/ }).click();
   }
@@ -58,7 +58,7 @@ test("recording a full pick says so, and the line carries its tick", async ({ pa
 
 test("a short line needs its reason before the save, and the server backorders it", async ({ page }) => {
   await openInProgress(page);
-  await page.locator("[data-line]", { hasText: "Granular A gravel" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
   await page.getByRole("button", { name: "Add one on" }).click();
@@ -70,7 +70,7 @@ test("a short line needs its reason before the save, and the server backorders i
   await page.getByRole("button", { name: "Done" }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("Picked 4 of 10 TONNE. The rest (6 TONNE) is on backorder");
-  const line = page.locator("[data-line]", { hasText: "Granular A gravel" });
+  const line = page.locator("[data-line]", { hasText: "Class 2 base rock gravel" });
   await expect(line).toContainText("6 TONNE on backorder");
   // Words only on the line: the core's code never reaches a picker.
   await expect(line).toContainText("Not enough on the yard");
@@ -141,7 +141,7 @@ test("the skids sit with the pull list, and the shortages come before the stage 
 
 test("the record goes to the server as one pick_tasks op, in the ticket's own order, with the door's nine line legs", async ({ page, request }) => {
   await openInProgress(page);
-  await page.locator("[data-line]", { hasText: "Granular A gravel" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
   await page.getByRole("button", { name: /^All \d+/ }).click();
   await page.locator("[data-line]", { hasText: "Geotextile fabric" }).locator(".line-row").click();
   await page.getByRole("button", { name: /^All \d+/ }).click();
@@ -159,7 +159,7 @@ test("the record goes to the server as one pick_tasks op, in the ticket's own or
   expect(ops).toHaveLength(1);
   expect(Object.keys(ops[0]!.payload).sort()).toEqual(["id", "picked"]);
   expect(ops[0]!.payload.picked).toEqual([
-    { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Granular A gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE", short_reason: "", short_note: "" },
+    { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Class 2 base rock gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE", short_reason: "", short_note: "" },
     { order_line_no: 3, product_id: "1a000000-0000-4000-9000-0000000000c3", sku: "FAB-GEO", description: "Geotextile fabric, 4 by 300 ft", qty_ordered: "2.0000", qty_picked: "2", uom: "ROLL", short_reason: "", short_note: "" },
   ]);
 });
@@ -169,7 +169,7 @@ test("a connected record the server superseded is an error in words, never a sav
   await page.waitForLoadState("networkidle");
   // The desk moves the ticket after the device's last pull.
   await reassignTicket(request, "0a000000-0000-4000-9000-000000000040");
-  await page.locator("[data-line]", { hasText: "Granular A gravel" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
   await page.getByRole("button", { name: /^All \d+/ }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-error]")).toContainText("changed on the server first");

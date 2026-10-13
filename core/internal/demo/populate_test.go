@@ -587,8 +587,8 @@ func TestPopulate_ReceiptHeaderCarriesTheInventedName(t *testing.T) {
 	if header.OrgName != demoOrgName {
 		t.Errorf("the receipt header's org field carries %q, want the invented demo name %q", header.OrgName, demoOrgName)
 	}
-	if header.Name != "Hardscape House (demo), Trenton" {
-		t.Errorf("the receipt header's branch field carries %q, want the invented branch name %q", header.Name, "Hardscape House (demo), Trenton")
+	if header.Name != "Gable Landscape Supply, Point Loma" {
+		t.Errorf("the receipt header's branch field carries %q, want the invented branch name %q", header.Name, "Gable Landscape Supply, Point Loma")
 	}
 }
 

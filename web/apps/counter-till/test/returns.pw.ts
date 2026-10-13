@@ -4,7 +4,7 @@
 // every order that customer holds, picks lines from SEVERAL orders into one draft, sets each line's
 // disposition, and watches the credit so far. There is no search by one sale's number.
 //
-// The stub's world: Maple Ridge Contracting holds CT-1001 (job Marina Road patio: 2 Holland pavers,
+// The stub's world: Maple Ridge Contracting holds CT-1001 (job Marina Road patio: 2 Charcoal pavers,
 // 6 wall blocks) and CT-1002 (job Front walk: 6 wall blocks), both at the first branch; Fenwick
 // Builders holds a card ring at the first branch and a quote conversion at a second branch; Harbour
 // holds nothing. The stub's world carries no tax, and the credit figure itself is the server's, so
@@ -35,7 +35,7 @@ async function pickCustomer(page: Page, search: string, name: string): Promise<v
   await expect(page.getByTestId("returns-customer-name")).toHaveText(name);
 }
 
-const HOLLAND = "Holland paver, bevelled, each";
+const HOLLAND = "Charcoal paver, bevelled, each";
 const WALL = "Wall block, charcoal, each";
 
 function lineOf(page: Page, orderNo: string, description: string) {
@@ -94,14 +94,14 @@ test("lines from two orders go into one draft, each with its own disposition, an
   await expect(page.getByRole("button", { name: "Continue to the refund" })).toBeDisabled();
 
   // Order one: a quantity first, then its disposition.
-  const holland = lineOf(page, "CT-1001", HOLLAND);
-  await holland.getByRole("button", { name: /One more/ }).click();
-  await holland.getByRole("button", { name: /One more/ }).click();
-  await expect(holland.getByLabel(/Return quantity/)).toHaveValue("2");
-  await expect(holland.getByRole("button", { name: /One more/ })).toBeDisabled();
-  await expect(holland.getByTestId("returns-line-choose")).toBeVisible();
-  await holland.getByRole("button", { name: "Return to stock" }).click();
-  await expect(holland.getByRole("button", { name: "Return to stock" })).toHaveAttribute("aria-pressed", "true");
+  const charcoal = lineOf(page, "CT-1001", HOLLAND);
+  await charcoal.getByRole("button", { name: /One more/ }).click();
+  await charcoal.getByRole("button", { name: /One more/ }).click();
+  await expect(charcoal.getByLabel(/Return quantity/)).toHaveValue("2");
+  await expect(charcoal.getByRole("button", { name: /One more/ })).toBeDisabled();
+  await expect(charcoal.getByTestId("returns-line-choose")).toBeVisible();
+  await charcoal.getByRole("button", { name: "Return to stock" }).click();
+  await expect(charcoal.getByRole("button", { name: "Return to stock" })).toHaveAttribute("aria-pressed", "true");
 
   // Order two: the disposition first, which picks one unit.
   const wall = lineOf(page, "CT-1002", WALL);
@@ -110,12 +110,12 @@ test("lines from two orders go into one draft, each with its own disposition, an
   await expect(wall.getByRole("button", { name: "Refund, do not restock (damaged)" })).toHaveAttribute("aria-pressed", "true");
 
   await expect(page.getByTestId("returns-credit-count")).toHaveText("2 lines from 2 orders");
-  // The credit so far is the server's priced total with tax (2 Holland at 60.00 plus 1 wall block at 60.00).
+  // The credit so far is the server's priced total with tax (2 Charcoal at 60.00 plus 1 wall block at 60.00).
   await expect(page.getByTestId("returns-credit-total")).toHaveText("$180.00");
   await expect(page.getByTestId("returns-credit-tax")).toContainText("with tax");
   const credit = page.getByTestId("returns-credit-line");
   await expect(credit).toHaveCount(2);
-  await expect(credit.nth(0)).toContainText("2 Holland paver, bevelled, each on CT-1001 · Return to stock");
+  await expect(credit.nth(0)).toContainText("2 Charcoal paver, bevelled, each on CT-1001 · Return to stock");
   await expect(credit.nth(1)).toContainText("1 Wall block, charcoal, each on CT-1002 · Refund, do not restock (damaged)");
   await expect(page.getByTestId("returns-credit-line-figure").nth(0)).toHaveText("$120.00 with $0.00 tax");
   await expect(page.getByTestId("returns-credit-line-figure").nth(1)).toHaveText("$60.00 with $0.00 tax");
@@ -141,11 +141,11 @@ test("lines from two orders go into one draft, each with its own disposition, an
 
 test("a quantity above what is open is refused before anything is sent, in words, and the field goes back", async ({ page }) => {
   await pickCustomer(page, "maple", "Maple Ridge Contracting");
-  const holland = lineOf(page, "CT-1001", HOLLAND);
-  await holland.getByLabel(/Return quantity/).fill("1");
-  await holland.getByLabel(/Return quantity/).fill("5");
+  const charcoal = lineOf(page, "CT-1001", HOLLAND);
+  await charcoal.getByLabel(/Return quantity/).fill("1");
+  await charcoal.getByLabel(/Return quantity/).fill("5");
   await expect(page.getByTestId("returns-draft-notice")).toContainText("only 2 open to return");
-  await expect(holland.getByLabel(/Return quantity/)).toHaveValue("1");
+  await expect(charcoal.getByLabel(/Return quantity/)).toHaveValue("1");
   await expect(page.getByTestId("returns-credit-count")).toHaveText("1 line from 1 order");
 });
 
@@ -170,8 +170,8 @@ test("one credit note is for one branch: a line from another branch's order is r
   await page.getByTestId("returns-order").filter({ hasText: "CT-2002" }).getByRole("button", { name: "Return to stock" }).click();
   await expect(page.getByTestId("returns-draft-notice")).toContainText("one branch");
   // The refusal names the two branches.
-  await expect(page.getByTestId("returns-draft-notice")).toContainText("Trenton");
-  await expect(page.getByTestId("returns-draft-notice")).toContainText("Kingston");
+  await expect(page.getByTestId("returns-draft-notice")).toContainText("Point Loma");
+  await expect(page.getByTestId("returns-draft-notice")).toContainText("Julian");
   await expect(page.getByTestId("returns-credit-count")).toHaveText("1 line from 1 order");
 });
 
@@ -296,7 +296,7 @@ test("a two order note in cash commits once: one body with both orders, the Done
   await expect(page.getByTestId("returns")).toHaveAttribute("data-step", "customer");
   await page.getByLabel("Search name or account number").fill("maple");
   await page.getByRole("button", { name: /Maple Ridge/ }).click();
-  // What went back is no longer open: the Holland line has one unit left.
+  // What went back is no longer open: the Charcoal line has one unit left.
   await expect(lineOf(page, "CT-1001", HOLLAND)).toContainText("1 open");
 });
 
@@ -336,7 +336,7 @@ test("a mix of back to stock and damaged is sent as it is, one disposition per l
 test("a refusal from the server shows in its own words, the note stays drafted, and a retry sends the same key", async ({ page }) => {
   await draftTwoOrders(page);
   await page.getByRole("button", { name: "On the account", exact: true }).click();
-  // Another till returns the same Holland units first: the server's guard refuses the whole note.
+  // Another till returns the same Charcoal units first: the server's guard refuses the whole note.
   const mint = await page.request.post("/api/v1/demo/session", { data: { flow: "sales" } });
   const token = ((await mint.json()) as { token: string }).token;
   const taken = await page.request.post("/api/v1/pos/returns-across", {
@@ -475,12 +475,12 @@ test("the credit so far is priced by the server on every change, a disposition r
 
 test("each order names its branch", async ({ page }) => {
   await pickCustomer(page, "fenwick", "Fenwick Builders Ltd");
-  await expect(page.getByTestId("returns-order").filter({ hasText: "CT-2001" })).toContainText("Trenton");
-  await expect(page.getByTestId("returns-order").filter({ hasText: "CT-2002" })).toContainText("Kingston");
+  await expect(page.getByTestId("returns-order").filter({ hasText: "CT-2001" })).toContainText("Point Loma");
+  await expect(page.getByTestId("returns-order").filter({ hasText: "CT-2002" })).toContainText("Julian");
 });
 
 test("an account that cannot spend a credit is refused in the server's words and the note stays drafted", async ({ page }) => {
-  await pickCustomer(page, "C07", "Lachance Retail");
+  await pickCustomer(page, "C07", "Homeowner B Retail");
   await lineOf(page, "CT-1003", WALL).getByRole("button", { name: "Return to stock" }).click();
   await page.getByRole("button", { name: "Continue to the refund" }).click();
   await page.getByRole("button", { name: "On the account", exact: true }).click();
@@ -532,7 +532,7 @@ test("a line sent twice is refused by the server in its words (the till itself n
 // ---- Stage 4: the converted order that is blocked, and the swap ----------------------------------
 
 test("an order a quote became with no live invoice is shown blocked with the server's reason, and its lines cannot be drafted", async ({ page }) => {
-  await pickCustomer(page, "C07", "Lachance Retail");
+  await pickCustomer(page, "C07", "Homeowner B Retail");
   const blocked = page.getByTestId("returns-order").filter({ hasText: "CT-1004" });
   await expect(blocked.getByTestId("returns-order-blocked")).toContainText(
     "no invoice has been raised for this order yet, so there is nothing to refund against",
@@ -801,7 +801,7 @@ test("a walk in card sale goes back to the card, and over the approval amount it
 
 test("an order not fully paid: the preview gives the cash or card part and the part off the open invoice, in the server's words, and cash pays out only the part", async ({ page }) => {
   const before = await drawerExpectedCash(page);
-  await pickCustomer(page, "C07", "Lachance Retail");
+  await pickCustomer(page, "C07", "Homeowner B Retail");
   await lineOf(page, "CT-3003", WALL).getByLabel(/Return quantity/).fill("2");
   await lineOf(page, "CT-3003", WALL).getByRole("button", { name: "Return to stock" }).click();
   await page.getByRole("button", { name: "Continue to the refund" }).click();
@@ -829,7 +829,7 @@ test("an order not fully paid: the preview gives the cash or card part and the p
 });
 
 test("an order not paid at all: cash or card say nothing can go back that way, in the server's words, and the account rail still works", async ({ page }) => {
-  await pickCustomer(page, "C07", "Lachance Retail");
+  await pickCustomer(page, "C07", "Homeowner B Retail");
   await lineOf(page, "CT-3004", WALL).getByRole("button", { name: "Return to stock" }).click();
   await page.getByRole("button", { name: "Continue to the refund" }).click();
   await page.getByRole("button", { name: "Cash", exact: true }).click();

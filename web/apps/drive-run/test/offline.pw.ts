@@ -80,7 +80,7 @@ function payloadOf(op: unknown): Record<string, unknown> {
 /** The stop one drive offline: loaded, en route, then the proof screen open. */
 async function toTheProofScreenOffline(page: import("@playwright/test").Page): Promise<void> {
   await platformWord(page, false, "You're offline");
-  await page.locator("[data-stop]", { hasText: "Northline Hardscapes" }).click();
+  await page.locator("[data-stop]", { hasText: "Summit Ridge Builders" }).click();
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
   await page.getByRole("button", { name: "Mark en route" }).click();
@@ -140,7 +140,7 @@ test("offline, the stop moves and the proof wait in the outbox, then all drain i
   expect(state.stops.find((s) => s.id === STOP_1)).toMatchObject({ status: "DELIVERED", pod_received_by: "Receiver (demo)" });
   await expect(page.locator("[data-proof-waiting]")).toHaveCount(0);
   await page.getByRole("button", { name: "Back to my run" }).click();
-  await expect(page.locator("[data-stop]", { hasText: "Northline Hardscapes" }).locator("[data-stop-status]")).toHaveText("Delivered");
+  await expect(page.locator("[data-stop]", { hasText: "Summit Ridge Builders" }).locator("[data-stop-status]")).toHaveText("Delivered");
   // No card: the whole chain applied clean.
   await expect(page.getByRole("button", { name: /^Review [1-9]/ })).toHaveCount(0);
 });
@@ -167,7 +167,7 @@ test("a stop the test moved first: the moves come back superseded and refused, t
   await expect(list).toContainText("illegal status transition");
   // The board shows the server's row, not the device's delivery.
   await page.getByRole("button", { name: "Back to the run" }).click();
-  await expect(page.locator("[data-stop]", { hasText: "Northline Hardscapes" }).locator("[data-stop-status]")).toHaveText("Cancelled");
+  await expect(page.locator("[data-stop]", { hasText: "Summit Ridge Builders" }).locator("[data-stop-status]")).toHaveText("Cancelled");
 });
 
 test("the proof photo stays a direct door: with no signal it says so and queues nothing", async ({ page }) => {

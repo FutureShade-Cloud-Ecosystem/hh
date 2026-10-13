@@ -51,6 +51,9 @@ func newAttestWorld(t *testing.T) *attestWorld {
 		}
 	}
 	a := &attestWorld{fenceWorld: w, tb: t, h: h, stopA2: stopA2}
+	// The engine runs as the composition root wires it: the key ledger (sync_op_hashes) in front of the
+	// door's own idempotency stamp.
+	w.engine.WithKeyLedger(sync.NewPgKeyLedger(h.pool))
 	// The driver logins hold the branch grants the REST door's guard reads (user_branch_grants), so the
 	// branch fence passes for them as it does for a real driver.
 	for _, sub := range []string{testkit.SubDriver, w.driverB.Actor} {
@@ -186,12 +189,14 @@ func TestPodAttest_EffectEqualsTheDirectDoor(t *testing.T) {
 func TestPodAttest_ReplayAppliesOnceAndAnswersApplied(t *testing.T) {
 	a := newAttestWorld(t)
 	key := syncFreshKey()
-	first := a.push(a.driverA, attestOp(key, a.stopA2, "Site Foreman", true))
+	// The outbox replays the very same operation (same local id, same body).
+	op := attestOp(key, a.stopA2, "Site Foreman", true)
+	first := a.push(a.driverA, op)
 	if first[0].Status != "applied" {
 		t.Fatalf("first: %+v %s", first[0], errText(first[0]))
 	}
 	seq := a.stop(a.stopA2).seq
-	second := a.push(a.driverA, attestOp(key, a.stopA2, "Site Foreman", true))
+	second := a.push(a.driverA, op)
 	if second[0].Status != "applied" || second[0].Seq == nil || *second[0].Seq != seq {
 		t.Fatalf("a replay answers applied with the stop's seq %d: %+v (%s)", seq, second[0], errText(second[0]))
 	}

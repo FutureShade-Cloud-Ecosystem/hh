@@ -112,7 +112,9 @@ func newPickDoor(t *testing.T) *pickDoor {
 	d.store = NewSyncStore(pool, pickDoorOrders{branch: d.branchA}, link).
 		WithPickRecorder(actorSpy{inner: d.svc, spy: &d.actors}).
 		WithStaffAuthority(func(context.Context, string, string) (identity.StaffContext, bool, error) { return d.authority() })
-	d.engine = hhsync.NewEngine()
+	// The engine runs as the composition root wires it: the key ledger (sync_op_hashes) in front of the
+	// door's own idempotency stamp.
+	d.engine = hhsync.NewEngine().WithKeyLedger(hhsync.NewPgKeyLedger(pool))
 	if err := d.engine.RegisterScope("pick_tasks", d.store); err != nil {
 		t.Fatalf("register: %v", err)
 	}

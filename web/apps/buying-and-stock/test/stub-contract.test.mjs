@@ -159,7 +159,7 @@ test("the shortfall worklist: the contract's key, and each row in the contract's
 
 test("the shortfall read is fenced to the caller's reach, in the core's words", async () => {
   await reset();
-  // The caller holds one branch (Trenton). A branch named outside that reach is refused in words
+  // The caller holds one branch (Point Loma). A branch named outside that reach is refused in words
   // on both reads that name one (the core's fenceNamedBranch: the worklist and the reorder control).
   const other = "b0000000-0000-4000-8000-000000000002";
   refused(await call("GET", `/api/v1/inventory/shortfall?branch_id=${other}`), 403, "you do not have access to that branch");
