@@ -242,6 +242,25 @@ func WriteDealerConfigTx(ctx context.Context, tx DealerConfigExecer, c DealerCon
 	return nil
 }
 
+// WriteDealerCurrencyTx validates and upserts the currency key alone on the caller's transaction. The
+// demo populate writes the currency with its card rail row, so the world it builds is internally
+// consistent before the build's seed writes the whole configuration; it must not write a jurisdiction
+// of its own, which would need rate rows it does not own.
+func WriteDealerCurrencyTx(ctx context.Context, tx DealerConfigExecer, currency string) error {
+	if !currencyShape.MatchString(currency) {
+		return fmt.Errorf("settings: currency must be a three letter uppercase ISO 4217 code")
+	}
+	b, err := json.Marshal(currency)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+		 WHERE system_settings.value IS DISTINCT FROM EXCLUDED.value`, KeyCurrency, string(b))
+	return err
+}
+
 // WriteDealerConfig validates and upserts the four keys in one transaction: the seam a dealer admin
 // surface writes through.
 func (r *DealerConfigReader) WriteDealerConfig(ctx context.Context, c DealerConfig) error {

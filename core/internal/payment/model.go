@@ -89,7 +89,7 @@ var ErrProcessorNotDispatched = errors.New("payment: processor request not dispa
 // ChargeInput is what A-03's TakeTender passes for a CARD tender. The till computes amountCents
 // (it already includes whatever tax the POS displayed, RUN-PAY is tax-blind).
 type ChargeInput struct {
-	AmountCents    int64  // > 0, cents, CAD
+	AmountCents    int64  // > 0, cents, the dealer's currency
 	PaymentToken   string // client-tokenized (Runner.js); the ONLY instrument arg, never a PAN
 	Reference      string // payment_no / order ref for processor-side correlation
 	IdempotencyKey string // client UUID, replay-safe; offline-first
@@ -110,7 +110,7 @@ var errBadRefund = errors.New("payment: invalid refund (original processor ref a
 // RefundInput is what a refund caller (the POS return flow, via its main.go adapter) passes to reverse
 // a prior capture. ProcessorRef is the ORIGINAL capture's gateway_ref, never a PAN, never a token.
 type RefundInput struct {
-	AmountCents    int64  // > 0, cents, CAD (full or partial)
+	AmountCents    int64  // > 0, cents, in the original capture's currency (full or partial)
 	ProcessorRef   string // the original capture's payments.gateway_ref
 	Reference      string // return_no / correlation ref
 	IdempotencyKey string // replay-safe refund key

@@ -393,9 +393,12 @@ func TestInvariant_TaxSnapshotsInsertOnly(t *testing.T) {
 	}
 }
 
-// GL + payments stay CAD; only the scoped DX-19 PO/landed-cost DOCUMENT tables may carry a currency column.
-// The currency-column scan ALLOWLISTS exactly payment_config (0027 constant-CAD CHECK), purchase_orders, and
-// landed_costs, any other currency column, or a currency column on the GL journals, is a violation.
+// The GL carries no currency; only the scoped DX-19 PO/landed-cost DOCUMENT tables and the card rail's
+// configuration row may carry a currency column. The currency-column scan ALLOWLISTS exactly payment_config
+// (the dealer's own currency since item 3b slice 2, checked as a three letter code by 0392; it was a
+// constant-CAD CHECK in 0027), purchase_orders, and landed_costs, any other currency column, or a currency
+// column on the GL journals, is a violation. The dealer's currency itself lives in system_settings, a key
+// and not a column, so no table gained a column for it and this list gained no name.
 func TestInvariant_GLStaysCADOnUSDPO(t *testing.T) {
 	ctx := context.Background()
 	pool := intPoolRaw(t)
@@ -423,7 +426,7 @@ func TestInvariant_GLStaysCADOnUSDPO(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !allow[tn] {
-			t.Fatalf("unexpected currency column on %q, GL/payments must stay CAD; only PO + landed-cost docs may carry currency (DX-19)", tn)
+			t.Fatalf("unexpected currency column on %q, the GL and payments carry no currency column; only PO + landed-cost docs and the card rail row may (DX-19)", tn)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -444,7 +447,7 @@ func TestInvariant_GLStaysCADOnUSDPO(t *testing.T) {
 		}
 	}
 
-	// The GL journals themselves never carry a currency column (a journal is always CAD).
+	// The GL journals themselves never carry a currency column (a journal is in the dealer's own money, never a mix).
 	var glCur int
 	if err := pool.QueryRow(ctx,
 		`SELECT count(*) FROM information_schema.columns
@@ -452,6 +455,6 @@ func TestInvariant_GLStaysCADOnUSDPO(t *testing.T) {
 		t.Fatal(err)
 	}
 	if glCur != 0 {
-		t.Fatal("gl journals must not carry a currency column, the GL is CAD-only")
+		t.Fatal("gl journals must not carry a currency column, the GL is in one currency, the dealer's")
 	}
 }
