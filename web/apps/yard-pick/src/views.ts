@@ -29,6 +29,7 @@ import {
   SHORT_REASONS,
   actionLabel,
   ageLabel,
+  canAcknowledge,
   changeStatusWord,
   isUnclaimed,
   lineIsShort,
@@ -560,6 +561,50 @@ export interface ChangesModel {
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
+  /** The change whose sheet is open, or null. */
+  readonly sheet: YardChange | null;
+  /** What the note field holds, mirrored, so a re-render never eats a typed word. */
+  readonly sheetNote: string;
+  /** A refused acknowledgement's own line, shown in the sheet. */
+  readonly sheetError: string;
+}
+
+/**
+ * The change sheet: the row's facts, and the acknowledge. The yard answers
+ * one question here, "can we still do this", so the sheet carries what the
+ * row carried and nothing priced; the button is the server's own offer (it
+ * renders only where next_actions names yard_ack), and the refusal lands in
+ * the sheet, in the server's words.
+ */
+function changeSheet(model: ChangesModel, change: YardChange): TemplateResult {
+  return html`
+    <section class="card sheet change-sheet" data-change-sheet data-change-id=${change.id}>
+      <p class="sheet-head">Change ${change.change_no} · ${change.order_no}</p>
+      <p class="dim">"${change.reason}"</p>
+      <p class="dim small">asked by ${change.requested_by_role !== "" ? change.requested_by_role : "the counter"} · waiting ${ageLabel(change.requested_at, new Date())}</p>
+      <p class="pill" data-change-status>${changeStatusWord(change.status)}</p>
+      <p class="sheet-banner">Acknowledging tells the counter the yard can still do this. It does not change the order.</p>
+      ${model.sheetError !== "" ? html`<p class="alert alert-error" role="alert" data-change-error>${model.sheetError}</p>` : nothing}
+      ${canAcknowledge(change)
+        ? html`
+            <span class="field-label">Note for the counter (optional)</span>
+            <input
+              class="text-field"
+              type="text"
+              autocomplete="off"
+              data-field="change-note"
+              placeholder="Something the counter should know"
+              ?disabled=${model.busy}
+              aria-label="A note for the counter, optional"
+            />
+            <div class="actions">
+              <button type="button" class="btn btn-primary big" data-action="ack-change" ?disabled=${model.busy} data-tap>Acknowledge</button>
+              <button type="button" class="btn btn-secondary big" data-action="close-change-sheet" ?disabled=${model.busy} data-tap>Not now</button>
+            </div>
+          `
+        : html`<p class="hint">This change is waiting on someone else.</p>`}
+    </section>
+  `;
 }
 
 /** One waiting change, the board's row shape: what it is, who asked, how long it has waited. */
@@ -609,6 +654,7 @@ export function renderChanges(model: ChangesModel): TemplateResult {
     <button type="button" class="back" data-action="back" data-tap>Back to the queue</button>
     <h1>Changes waiting on the yard</h1>
     ${renderMessages(model.error, model.notice)}
+    ${model.sheet !== null ? changeSheet(model, model.sheet) : nothing}
     ${body}
   `;
 }

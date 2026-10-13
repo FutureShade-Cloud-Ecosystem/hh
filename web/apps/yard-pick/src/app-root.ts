@@ -32,6 +32,8 @@ import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { YardApi, type YardChange, type YardPick, type YardRecordLine } from "./yard-api.js";
 import {
   RESOLVE_WALL_NAMES,
+  CHANGE_ACK_WALL,
+  ackDoneWords,
   actionDone,
   lineIsShort,
   pickSummary,
@@ -108,6 +110,11 @@ export class YardPickApp extends HHElement {
   #changesWaiting: string | null = null;
   #moreChangesBehind = false;
   #nextChangesCursor = "";
+  // The open change's sheet: the row's facts, the optional note, and the
+  // refusal's own line. A failed write keeps the sheet and says so in place.
+  #sheetChange: YardChange | null = null;
+  #changeNote = "";
+  #changeError = "";
   #pick: YardPick | null = null;
   #drafts = new Map<number, Draft>();
   #editing: number | null = null;
@@ -179,9 +186,27 @@ export class YardPickApp extends HHElement {
       void this.#loadChanges(false);
       return;
     }
+    if (action === "open-change") {
+      this.#openChange(control?.getAttribute("data-change-id") ?? "");
+      return;
+    }
+    if (action === "close-change-sheet") {
+      this.#sheetChange = null;
+      this.#changeNote = "";
+      this.#changeError = "";
+      this.requestUpdate();
+      return;
+    }
+    if (action === "ack-change") {
+      void this.#ackChange();
+      return;
+    }
     if (action === "back") {
       this.#view = { kind: "queue" };
       this.#pick = null;
+      this.#sheetChange = null;
+      this.#changeNote = "";
+      this.#changeError = "";
       this.#error = "";
       this.#notice = "";
       // Back re-reads the whole board: a pick that moved while it was open
@@ -323,6 +348,10 @@ export class YardPickApp extends HHElement {
         this.#resolveText = value;
         return;
       }
+      if (field === "change-note") {
+        this.#changeNote = value;
+        return;
+      }
       if (field === "stage-where") {
         this.#stageWhere = value;
         return;
@@ -394,6 +423,7 @@ export class YardPickApp extends HHElement {
       else if (name === "skid-note") value = this.#skidNote;
       else if (name === "stage-where") value = this.#stageWhere;
       else if (name === "resolution") value = this.#resolveText;
+      else if (name === "change-note") value = this.#changeNote;
       if (value !== null && field.value !== value) field.value = value;
     }
   }
@@ -470,6 +500,42 @@ export class YardPickApp extends HHElement {
     this.#error = "";
     this.#notice = "";
     this.#loadChanges(true);
+  }
+
+  #openChange(changeId: string): void {
+    const change = this.#changes.find((c) => c.id === changeId);
+    if (change === undefined) return;
+    this.#sheetChange = change;
+    this.#changeNote = "";
+    this.#changeError = "";
+    this.#error = "";
+    this.#notice = "";
+    this.requestUpdate();
+  }
+
+  /** The yard's word on a change: acknowledge, with the optional note. A
+   *  refusal keeps the sheet and shows the server's own sentence in place;
+   *  a landed acknowledgement moves the row out of the yard's stage and
+   *  names the next stage from the server's answer. */
+  async #ackChange(): Promise<void> {
+    const change = this.#sheetChange;
+    if (change === null || this.#busy) return;
+    this.#busy = true;
+    this.#changeError = "";
+    this.requestUpdate();
+    const answer = await this.#yard.acknowledgeChange(change.id, this.#changeNote);
+    this.#busy = false;
+    if (answer.ok) {
+      this.#notice = ackDoneWords(answer.value);
+      this.#sheetChange = null;
+      this.#changeNote = "";
+      await this.#loadChanges(true);
+    } else {
+      this.#changeError = yardError(answer.error, answer.status, "The acknowledgement did not go through. Check your signal and try again.", {
+        wallSentence: CHANGE_ACK_WALL,
+      });
+    }
+    this.requestUpdate();
   }
 
   async #loadQueue(reset: boolean): Promise<void> {
@@ -893,6 +959,9 @@ export class YardPickApp extends HHElement {
         busy: this.#busy,
         error: this.#error,
         notice: this.#notice,
+        sheet: this.#sheetChange,
+        sheetNote: this.#changeNote,
+        sheetError: this.#changeError,
       });
     }
     return renderQueue({

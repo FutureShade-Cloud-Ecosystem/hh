@@ -14,7 +14,7 @@
 //   with money laid on every read, none of it reaches the glass (the walk in
 //     money.pw.ts covers the poisoned half).
 import { test, expect } from "@playwright/test";
-import { resetStub, useScenario, yardHandoff } from "./helpers.js";
+import { resetStub, stubLog, useScenario, yardHandoff } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -57,4 +57,56 @@ test("an empty yard says who raises a change", async ({ page, request }) => {
   await expect(empty).toBeVisible();
   await expect(empty).toContainText("Nothing is waiting on the yard.");
   await expect(empty).toContainText("The counter raises a change");
+});
+
+test("the sheet's acknowledgement carries the note, and the row leaves the list", async ({ page, request }) => {
+  await page.goto("/");
+  await page.locator("[data-changes-door]").click();
+  await page.locator("[data-change-row]", { hasText: "SO-1042" }).locator(".line-row").click();
+  const sheet = page.locator("[data-change-sheet]");
+  await expect(sheet).toBeVisible();
+  await expect(sheet).toContainText("CO-2042");
+  await expect(sheet).toContainText("SO-1042");
+  await expect(sheet).toContainText("Customer added two more pallets");
+  await expect(sheet).toContainText("Inside Sales");
+  await page.getByLabel("A note for the counter, optional").fill("can still do it");
+  await page.getByRole("button", { name: "Acknowledge" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Acknowledged. The change is approved and waits to be applied.");
+  await expect(page.locator("[data-change-sheet]")).toHaveCount(0);
+  await expect(page.locator("[data-change-row]")).toHaveCount(1);
+  const calls = await stubLog(request);
+  const ack = calls.find((c) => c.method === "POST" && c.path.endsWith("/yard-ack"));
+  expect(ack?.body).toEqual({ note: "can still do it" });
+});
+
+test("a change over the threshold lands on finance's word after the yard", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("[data-changes-door]").click();
+  await page.locator("[data-change-row]", { hasText: "SO-1039" }).locator(".line-row").click();
+  await page.getByRole("button", { name: "Acknowledge" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Acknowledged. The change now waits on finance.");
+});
+
+test("a colleague's acknowledgement the screen never saw keeps the sheet and says so", async ({ page, request }) => {
+  await useScenario(request, "change-decided");
+  await page.goto("/");
+  await page.locator("[data-changes-door]").click();
+  await page.locator("[data-change-row]").first().locator(".line-row").click();
+  await page.getByRole("button", { name: "Acknowledge" }).click();
+  await expect(page.locator("[data-change-error]")).toHaveText(
+    "This change order is already closed: the yard has already acknowledged this change.",
+  );
+  await expect(page.locator("[data-change-sheet]")).toBeVisible();
+});
+
+test("back from the changes, the door's count has caught up", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("[data-changes-door]").click();
+  await page.locator("[data-change-row]", { hasText: "SO-1042" }).locator(".line-row").click();
+  await page.getByRole("button", { name: "Acknowledge" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Acknowledged");
+  await page.getByRole("button", { name: "Back to the queue" }).click();
+  const door = page.locator("[data-changes-door]");
+  await expect(door).toBeVisible();
+  await expect(door.locator("[data-changes-count]")).toHaveText("1");
 });
