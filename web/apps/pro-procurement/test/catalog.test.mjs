@@ -4,47 +4,22 @@
 // add to a plan move lands the line on a plan the contractor can then see.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import { fileURLToPath } from "node:url";
 import { catalogLoad, catalogView, catalogInput, CATALOG_WORDS } from "../src/catalog.ts";
 import { productLoad, productView, productCommand, productAddToPlan } from "../src/product.ts";
 import { InMemoryTenantSession, tenantClient, stubAdapter } from "@hardscapehouse/pro-kit";
 import { PERSONAS, STUB_PASSWORD } from "@hardscapehouse/pro-kit/test-stub/tenant-data.mjs";
+import { spawnStub } from "@hardscapehouse/pro-kit/test-stub/spawn-stub.mjs";
 
-const stubFile = fileURLToPath(new URL("../../../packages/pro-kit/test-stub/tenant-stub.mjs", import.meta.url));
-let child;
+let stub;
 let base;
 
-async function freePort(start, count) {
-  for (let port = start; port < start + count; port += 1) {
-    const free = await new Promise((resolve) => {
-      const probe = createServer();
-      probe.once("error", () => resolve(false));
-      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
-    });
-    if (free) return port;
-  }
-  throw new Error(`no free port in ${start} to ${start + count - 1}`);
-}
-
 before(async () => {
-  const port = await freePort(56824, 4);
-  base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [stubFile], { env: { ROLE_STUB_PORT: String(port), ROLE_STUB_IDLE_EXIT_MS: "120000" }, stdio: "ignore" });
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      if ((await fetch(`${base}/healthz`)).ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error("the stub did not start");
+  stub = await spawnStub();
+  base = stub.base;
 });
 
 after(async () => {
-  await fetch(`${base}/_stub/exit`, { method: "POST" }).catch(() => {});
+  await stub.stop();
 });
 
 function makePage(who, route) {
