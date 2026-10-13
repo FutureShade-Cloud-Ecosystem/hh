@@ -84,7 +84,7 @@ test('collapsed, the rows are one roving stop: one row holds the tab, the rest w
   const stops = rows.map((r) => /data-tab="(-?\d)"/.exec(r)?.[1]);
   assert.equal(stops.filter((t) => t === '0').length, 1, 'exactly one row tab stop');
   assert.equal(stops.filter((t) => t === '-1').length, 2, 'the other rows wait for the arrows');
-  assert.ok(markup.includes('title="Keep your pins open"'), 'the toggle keeps its natural stop');
+  assert.ok(markup.includes('data-title="Keep your pins open"'), 'the toggle keeps its natural stop');
 });
 
 test('expanded, every control is in the tab order', () => {
@@ -158,10 +158,21 @@ test('the toggle carries the posture on aria-expanded and says the words for it'
   assert.ok(collapsed.includes('aria-expanded="false"') && collapsed.includes('Keep your pins open'));
   assert.ok(expanded.includes('aria-expanded="true"') && expanded.includes('Let your pins hide again'));
   for (const markup of [collapsed, expanded]) {
-    const title = /title="([^"]*)"/.exec(markup)?.[1];
+    const title = /data-title="([^"]*)"/.exec(markup)?.[1];
     const label = /aria-label="([^"]*)"/.exec(markup)?.[1];
     assert.ok(title && title === label, 'title and aria-label say the same words, character for character');
   }
+});
+
+test('the toggle\u2019s native title is applied from data-title after render (a bound title is refused by the position gate)', () => {
+  const el = new ShellRail();
+  const toggle = { title: '', getAttribute: (name) => (name === 'data-title' ? 'Let your pins hide again' : null) };
+  el.renderRoot = {
+    querySelectorAll: () => [],
+    querySelector: (selector) => (selector === 'button.toggle' ? toggle : null),
+  };
+  el.updated(new Map());
+  assert.equal(toggle.title, 'Let your pins hide again');
 });
 
 // ── the actions: one select verb, one toggle verb ────────────────────────────────────────────────
@@ -196,7 +207,7 @@ test('FLOOR: every title in the rail is matched, character for character, by an 
   // The toggle's words are bound per posture, so the floor reads the render of both.
   for (const collapsed of [true, false]) {
     const markup = renderKit(ShellRail, { pins: PINS, collapsed });
-    const titles = [...markup.matchAll(/\btitle="([^"]*)"/g)].map((m) => m[1]);
+    const titles = [...markup.matchAll(/\bdata-title="([^"]*)"/g)].map((m) => m[1]);
     assert.ok(titles.length > 0, 'the icon-only controls still need their tooltips');
     for (const t of titles) {
       assert.ok(markup.includes(`aria-label="${t}"`), `the title "${t}" has no matching aria-label`);
