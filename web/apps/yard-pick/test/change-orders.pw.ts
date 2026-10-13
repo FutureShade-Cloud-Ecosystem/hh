@@ -99,6 +99,30 @@ test("a colleague's acknowledgement the screen never saw keeps the sheet and say
   await expect(page.locator("[data-change-sheet]")).toBeVisible();
 });
 
+test("the sheet and its typed note do not outlive the person: switch role, and sign out", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("[data-changes-door]").click();
+  await page.locator("[data-change-row]", { hasText: "SO-1039" }).locator(".line-row").click();
+  await expect(page.locator("[data-change-sheet]")).toBeVisible();
+  await page.getByLabel("A note for the counter, optional").fill("the truck can take it Friday");
+  // The shared phone changes hands: the next persona signs in and opens the
+  // list. Nothing of the last person's may be on the glass.
+  await page.getByRole("button", { name: "Switch role" }).click();
+  await page.getByRole("button", { name: "Yard Team" }).click();
+  await expect(page.locator("[data-pick-card]").first()).toBeVisible();
+  await page.locator("[data-changes-door]").click();
+  await expect(page.locator("[data-change-sheet]")).toHaveCount(0);
+  // The other way out leaves nothing behind either.
+  await page.locator("[data-change-row]", { hasText: "SO-1042" }).locator(".line-row").click();
+  await page.getByLabel("A note for the counter, optional").fill("the second pallet is damp");
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Yard Team" }).click();
+  await expect(page.locator("[data-pick-card]").first()).toBeVisible();
+  await page.locator("[data-changes-door]").click();
+  await expect(page.locator("[data-change-sheet]")).toHaveCount(0);
+  await expect(page.locator("[data-change-row]")).toHaveCount(2);
+});
+
 test("back from the changes, the door's count has caught up", async ({ page }) => {
   await page.goto("/");
   await page.locator("[data-changes-door]").click();

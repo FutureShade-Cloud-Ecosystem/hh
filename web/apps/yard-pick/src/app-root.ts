@@ -497,6 +497,11 @@ export class YardPickApp extends HHElement {
 
   #openChanges(): void {
     this.#view = { kind: "changes" };
+    // The door opens on a clean list: no sheet, note or refusal left over
+    // from whoever held the phone before this read.
+    this.#sheetChange = null;
+    this.#changeNote = "";
+    this.#changeError = "";
     this.#error = "";
     this.#notice = "";
     this.#loadChanges(true);
@@ -916,6 +921,11 @@ export class YardPickApp extends HHElement {
     this.#changesWaiting = null;
     this.#moreChangesBehind = false;
     this.#nextChangesCursor = "";
+    // The shared phone changes hands here: the open sheet, its typed note and
+    // its refusal line belong to the person who left, never to the next one.
+    this.#sheetChange = null;
+    this.#changeNote = "";
+    this.#changeError = "";
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
