@@ -439,3 +439,31 @@ func TestPickDoor_UnlinkedLoginIsRefusedLikeTheDirectDoor(t *testing.T) {
 		t.Fatalf("an unattributed caller moves nothing: actors %q, order told %d times, %d lines", d.actors, len(d.yard.picks), len(d.lines(id)))
 	}
 }
+
+// A record through the direct door must move the task's sync seq as every other write path does, or a
+// device's pulled row keeps a stale picked projection and a queued sync record based on the older seq
+// applies blind over the newer record (server wins must hold across both doors).
+func TestPickDoor_DirectDoorRecordMovesTheSeqSoServerWinsHoldsAcrossDoors(t *testing.T) {
+	d := newPickDoor(t)
+	id := d.task(d.branchA)
+	before := d.taskSeq(id)
+	if _, err := d.svc.RecordPick(context.Background(), id, d.user, []PickedLineInput{{OrderLineNo: 1, QtyOrdered: "10", QtyPicked: "10", UOM: "EA"}}); err != nil {
+		t.Fatal(err)
+	}
+	if after := d.taskSeq(id); after <= before {
+		t.Fatalf("a direct door record must move the task's seq: before %d after %d", before, after)
+	}
+	told := len(d.yard.picks)
+	op := recordOp(uuid.NewString(), id, pickLine(1))
+	op.BaseSeq = &before
+	res := d.push(op)
+	if res[0].Status != "conflict" || res[0].Conflict == nil || res[0].Conflict.Policy != "server_wins" {
+		t.Fatalf("a device record based on the older seq meets server wins: %+v", res[0])
+	}
+	if len(d.yard.picks) != told {
+		t.Fatalf("a conflicted record must not run: order told %d times, was %d", len(d.yard.picks), told)
+	}
+	if rows := d.lines(id); len(rows) != 1 || rows[0].picked != "10.0000" {
+		t.Fatalf("the newer record stands: %+v", rows)
+	}
+}
