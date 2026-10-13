@@ -1,6 +1,4 @@
-//go:build demo
-
-package demo
+package ratelimit
 
 import (
 	"fmt"

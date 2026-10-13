@@ -32,6 +32,27 @@ Not ported on purpose: auto credit hold settings, the paper path and reminders
 (Base tier extras, not this role's first increment), the pop out and duplicate
 windows.
 
+## Bank reconciliation slice (`src/bankrec/`)
+
+Ported from the original app's bank reconciliation console (the main bankrec screen under `app/src`, `bankrec-import.ts`,
+`bankrec-match.ts`, `bankrec-rules.ts`, `bankrec-shared.ts`, `_bankrec-line-actions.ts`), read only, at the commit the
+cycle names. The logic ports as plain code onto HH's generated api-client; the screens are rebuilt on HH's design system
+against the Money Desk references (`hh-sup/design-refs/money-desk/`, trial-balance and controller-home for the frame).
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| State words (account type, line, method, target, rule, month) | `app/src/bankrec-shared.ts` | `src/bankrec/bankrec-logic.ts` | Plainer words ("In use" for an approved rule, "Signed off" for a completed month); an unknown value is opened out, never hidden |
+| The row action a line admits | `app/src/_bankrec-line-actions.ts` | `lineAction` | Same three way rule; an excluded line gets nothing |
+| Account grid and monthly reconciliation | the main bankrec screen under `app/src` | `accountsView`, `reconRows` | Statement balance parsed through the decimal string (the original used a float multiply), signed; sign off held until the difference is zero and asked twice; Refresh figures added because the core stores the variance when the month is opened |
+| Statement import | `app/src/bankrec-import.ts` | `importView` | The core's parser sentences read as what the file lacked; the result says "nothing new" on a full re-import; the card format named from the account |
+| Auto match, hand match, unmatch, history | `app/src/bankrec-match.ts` | `matchView`, `linePanel` | The hand match is a panel with a target choice, not a browser prompt; a journal is picked from the ledger's posted journals; undo is confirmed; lines follow the core's cursor |
+| Match rule registry and approve | `app/src/bankrec-rules.ts` | `rulesView`, `ruleSpec` | A form for the spec the core stores instead of a JSON box; a stored rule fills the form to approve the next version |
+| `parseBalanceToCents` | the receivables slice's `parseAmountToCents` | `src/bankrec/bankrec-money.ts` | Same parse, with a minus sign or brackets for a negative |
+
+Not ported on purpose: excluding and restoring a line (the core has no route for either), adjusting entries (none on the
+bank routes: a fee or interest is booked as a journal and the line matched to it), the bank feed, and file upload to FB
+Console Storage (the contract has no storage seam on the import route: the rows ride the JSON body).
+
 ## Tax administration (`src/tax/`)
 
 The tax slice ports the original app's tax administration (`app/src/tax-admin.ts`, `tax-admin-logic.ts`,

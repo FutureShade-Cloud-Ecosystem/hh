@@ -30,6 +30,12 @@ type ProviderDeny struct {
 	CardVar string
 	// CardAllowed is the one value CardVar may carry: the simulator stub.
 	CardAllowed string
+	// ExplicitPrefix, when set, makes every variable under it refused
+	// unless its exact name is in ExplicitAllowed: the prefix is no longer
+	// allowed wholesale, so a future name under it fails the boot until
+	// someone states it. Empty means no such rule.
+	ExplicitPrefix  string
+	ExplicitAllowed []string
 }
 
 // RefuseProviderVars refuses an environment picture that carries any
@@ -60,6 +66,9 @@ func RefuseProviderVars(environ []string, deny ProviderDeny) error {
 				return fmt.Errorf("%s is set: the demo box carries no outbound provider, so this variable stops the boot", name)
 			}
 		}
+		if deny.ExplicitPrefix != "" && strings.HasPrefix(name, deny.ExplicitPrefix) && !contains(deny.ExplicitAllowed, name) {
+			return fmt.Errorf("%s is set but is on no list: a name under %q must be stated by name before a demo box may carry it", name, deny.ExplicitPrefix)
+		}
 		if name == deny.CardVar {
 			_, value, _ := strings.Cut(kv, "=")
 			if value != deny.CardAllowed {
@@ -68,4 +77,13 @@ func RefuseProviderVars(environ []string, deny ProviderDeny) error {
 		}
 	}
 	return nil
+}
+
+func contains(list []string, name string) bool {
+	for _, e := range list {
+		if e == name {
+			return true
+		}
+	}
+	return false
 }

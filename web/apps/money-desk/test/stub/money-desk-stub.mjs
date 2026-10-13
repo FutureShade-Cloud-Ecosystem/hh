@@ -10,10 +10,13 @@
 // Dates are cut from the host's own day so no calendar literal is written.
 import { createServer } from "node:http";
 import { createGlWorld } from "./gl-world.mjs";
+import { createBankrecWorld } from "./bankrec-world.mjs";
 import { createTaxWorld } from "./tax-world.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
+// The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own module.
+const bankrecWorld = createBankrecWorld();
 // The tax administration slice's world (rates, profiles, config, evidence, recompute, recon), answered by its own module.
 const taxWorld = createTaxWorld();
 
@@ -555,6 +558,7 @@ async function handle(req, res) {
   if (method === "POST" && path === "/_stub/reset") {
     reset();
     glWorld.reset();
+    bankrecWorld.reset();
     taxWorld.reset();
     return send(res, 200, { ok: true });
   }
@@ -586,6 +590,12 @@ async function handle(req, res) {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const body = method === "POST" ? await readBody(req) : null;
     const answer = taxWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
+  }
+  if (path.startsWith("/api/v1/bankrec/")) {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const body = method === "POST" ? await readBody(req) : null;
+    const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
     return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
   }
   if (!path.startsWith("/api/v1/ar/")) return refuse(res, 404, "not found");
