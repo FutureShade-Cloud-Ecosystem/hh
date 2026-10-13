@@ -86,7 +86,6 @@ const styles = css`
   }
   .sign-in {
     margin-left: auto;
-    min-height: 32px;
   }
 `;
 
