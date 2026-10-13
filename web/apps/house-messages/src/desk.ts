@@ -8,7 +8,8 @@
 // again), never what the app expected. A refusal reads in the core's own words. A post that fails
 // keeps its words in the box. Nothing is stored and nothing is queued: messages send while online.
 import type { TemplateResult } from "lit";
-import { MessagesApi } from "./messages-api.js";
+import { MessagesApi, type PaymentRuleId } from "./messages-api.js";
+import type { MessagingNotifyPrefs } from "@hardscapehouse/api-client";
 import { LiveFeed, type LiveState, type NudgeKind, type StreamSource, type Timers } from "./live.js";
 import {
   ackProgressLabel,
@@ -28,8 +29,9 @@ import {
   type Channel,
   type HouseConversation,
   type Message,
+  type NotifyMode,
 } from "./messages-logic.js";
-import { renderDesk, type AckView, type BubbleModel, type ConvoModel, type Model, type QueueModel } from "./views.js";
+import { renderDesk, type AckView, type BubbleModel, type ConvoModel, type Model, type PrefsModel, type QueueModel, type RulesModel } from "./views.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -93,6 +95,19 @@ export class MessagesDesk {
   // A refusal of the person's own claim stays until their next action; a failed read clears when a read succeeds.
   #queueError = "";
   #queueReadError = "";
+
+  // The notification sheet of the open room and the caller's payment notice rules. Each control
+  // moves only to what the core answers.
+  #prefsOpen = false;
+  #prefsLoading = false;
+  #prefs: MessagingNotifyPrefs | null = null;
+  #prefsBusy = false;
+  #prefsError = "";
+  #rulesOpen = false;
+  #rulesLoading = false;
+  #rules: Readonly<Record<string, boolean>> = {};
+  #rulesBusy = "";
+  #rulesError = "";
 
   #refreshing = false;
   #refreshAgain = false;
@@ -249,6 +264,62 @@ export class MessagesDesk {
     this.#host.repaint();
   }
 
+  async #openPrefs(): Promise<void> {
+    const channelId = this.#activeId;
+    this.#prefsOpen = true;
+    this.#prefsLoading = true;
+    this.#prefsError = "";
+    this.#host.repaint();
+    const prefs = await this.#api.notifyPrefs(channelId);
+    if (this.#stopped || channelId !== this.#activeId) return;
+    this.#prefsLoading = false;
+    if (prefs.ok) this.#prefs = prefs.value;
+    else this.#prefsError = refusalWords("Your notification choices", prefs.error, prefs.status ?? null);
+    this.#host.repaint();
+  }
+
+  async #writePrefs(patch: { mode?: NotifyMode; desktop_enabled?: boolean; escalation_override?: boolean }): Promise<void> {
+    const channelId = this.#activeId;
+    if (this.#prefsBusy || this.#prefs === null) return;
+    this.#prefsBusy = true;
+    this.#prefsError = "";
+    this.#host.repaint();
+    const done = await this.#api.setNotifyPrefs(channelId, patch);
+    this.#prefsBusy = false;
+    if (this.#stopped || channelId !== this.#activeId) return;
+    if (done.ok) this.#prefs = done.value;
+    else this.#prefsError = refusalWords("Your choice", done.error, done.status ?? null);
+    this.#host.repaint();
+    if (done.ok) void this.refresh();
+  }
+
+  async #openRules(): Promise<void> {
+    this.#rulesOpen = true;
+    this.#view = "conversation";
+    this.#rulesLoading = true;
+    this.#rulesError = "";
+    this.#host.repaint();
+    const rules = await this.#api.paymentRules();
+    if (this.#stopped) return;
+    this.#rulesLoading = false;
+    if (rules.ok) this.#rules = rules.value.rules;
+    else this.#rulesError = refusalWords("Your payment notice rules", rules.error, rules.status ?? null);
+    this.#host.repaint();
+  }
+
+  async #toggleRule(rule: string): Promise<void> {
+    if (this.#rulesBusy !== "") return;
+    this.#rulesBusy = rule;
+    this.#rulesError = "";
+    this.#host.repaint();
+    const done = await this.#api.setPaymentRule(rule as PaymentRuleId, this.#rules[rule] !== true);
+    this.#rulesBusy = "";
+    if (this.#stopped) return;
+    if (done.ok) this.#rules = done.value.rules;
+    else this.#rulesError = refusalWords("Your choice", done.error, done.status ?? null);
+    this.#host.repaint();
+  }
+
   async #ack(channelId: string, messageId: string): Promise<void> {
     if (this.#ackBusy !== "") return;
     this.#ackBusy = messageId;
@@ -302,6 +373,10 @@ export class MessagesDesk {
     this.#queueNote = "";
     this.#queueError = "";
     this.#queueReadError = "";
+    this.#prefsOpen = false;
+    this.#prefs = null;
+    this.#prefsError = "";
+    this.#rulesOpen = false;
     this.#draft = this.#drafts.get(channelId) ?? "";
     this.#loadingChannel = true;
     this.#host.repaint();
@@ -453,6 +528,32 @@ export class MessagesDesk {
       case "send":
         void this.#send();
         return true;
+      case "open-prefs":
+        void this.#openPrefs();
+        return true;
+      case "close-panel":
+        this.#prefsOpen = false;
+        if (this.#rulesOpen) {
+          this.#rulesOpen = false;
+          this.#view = this.#activeId === "" ? "list" : "conversation";
+        }
+        this.#host.repaint();
+        return true;
+      case "set-mode":
+        void this.#writePrefs({ mode: control.getAttribute("data-mode") as NotifyMode });
+        return true;
+      case "toggle-pref": {
+        const which = control.getAttribute("data-pref");
+        if (which === "desktop_enabled") void this.#writePrefs({ desktop_enabled: this.#prefs?.desktop_enabled !== true });
+        if (which === "escalation_override") void this.#writePrefs({ escalation_override: this.#prefs?.escalation_override !== true });
+        return true;
+      }
+      case "open-rules":
+        void this.#openRules();
+        return true;
+      case "toggle-rule":
+        void this.#toggleRule(control.getAttribute("data-rule") ?? "");
+        return true;
       case "claim":
         void this.#claim(id);
         return true;
@@ -512,11 +613,23 @@ export class MessagesDesk {
     if (channel === undefined) return null;
     const state = composerState(this.#draft);
     const messages = streamOrder(this.#held);
+    const prefs: PrefsModel | null = this.#prefsOpen
+      ? {
+          loading: this.#prefsLoading,
+          mode: (this.#prefs?.mode ?? "ALL") as NotifyMode,
+          inherited: this.#prefs?.inherited === true,
+          desktop: this.#prefs?.desktop_enabled !== false,
+          escalationOverride: this.#prefs?.escalation_override !== false,
+          busy: this.#prefsBusy,
+          error: this.#prefsError,
+        }
+      : null;
     const queue: QueueModel | null = isHouseChannel(channel)
       ? { rows: this.#queue, busyId: this.#claimBusy, note: this.#queueNote, error: this.#queueError || this.#queueReadError }
       : null;
     return {
       channel,
+      prefs,
       queue,
       loading: this.#loadingChannel,
       messages,
@@ -546,6 +659,7 @@ export class MessagesDesk {
       error: this.#error,
       notice: this.#notice,
       bubble: this.#bubble(),
+      rules: this.#rulesOpen ? { loading: this.#rulesLoading, values: this.#rules, busy: this.#rulesBusy, error: this.#rulesError } : null,
       convo: this.#convo(),
     });
   }

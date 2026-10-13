@@ -4,7 +4,11 @@
 // the disabled flag, no property or event bindings.
 import { html, nothing, type TemplateResult } from "lit";
 import {
+  MUTE_REFUSAL,
+  canMute,
   channelGroups,
+  modeWords,
+  modesFor,
   queueOrder,
   waitedWords,
   channelLine,
@@ -18,6 +22,7 @@ import {
   type ChannelGroup,
   type HouseConversation,
   type Message,
+  type NotifyMode,
 } from "./messages-logic.js";
 import { liveWords, type LiveState } from "./live.js";
 
@@ -35,7 +40,28 @@ export interface Model {
   readonly error: string;
   readonly notice: string;
   readonly bubble: BubbleModel | null;
+  readonly rules: RulesModel | null;
   readonly convo: ConvoModel | null;
+}
+
+/** The caller's own payment notice rules, drawn in place of the conversation while open. */
+export interface RulesModel {
+  readonly loading: boolean;
+  /** Keyed by rule id; the full closed set once read. */
+  readonly values: Readonly<Record<string, boolean>>;
+  readonly busy: string;
+  readonly error: string;
+}
+
+/** The caller's notification choices for the open room. */
+export interface PrefsModel {
+  readonly loading: boolean;
+  readonly mode: NotifyMode;
+  readonly inherited: boolean;
+  readonly desktop: boolean;
+  readonly escalationOverride: boolean;
+  readonly busy: boolean;
+  readonly error: string;
 }
 
 /** The persistent forced acknowledgement, above both panes. */
@@ -80,6 +106,8 @@ export interface ConvoModel {
   /** Thread roots that are open, with their replies read so far. */
   readonly threads: ReadonlyMap<string, readonly Message[]>;
   readonly acks: ReadonlyMap<string, AckView>;
+  /** The notification sheet, open or not. */
+  readonly prefs: PrefsModel | null;
   /** The house queue, only in a house room; null elsewhere. */
   readonly queue: QueueModel | null;
   readonly replyTo: { readonly rootId: string; readonly excerpt: string } | null;
@@ -155,6 +183,7 @@ function renderRail(m: Model): TemplateResult {
       ${groups.length === 0
         ? html`<p class="dim small" data-no-channels>You are not in any channel yet.</p>`
         : groups.map((g) => renderGroup(g, m.activeId))}
+      <div class="rail-foot"><button type="button" class="link" data-action="open-rules">Payment notice rules</button></div>
     </aside>
   `;
 }
@@ -237,6 +266,72 @@ function renderBubble(b: BubbleModel): TemplateResult {
   `;
 }
 
+const RULES: readonly { id: string; label: string; line: string }[] = [
+  { id: "ONLINE", label: "An online payment", line: "A customer paid on the web." },
+  { id: "CROSS_BRANCH", label: "A payment at another branch", line: "Money taken at a yard other than your own." },
+  { id: "OWN_ORDER", label: "A payment on your own order", line: "A payment against an order you wrote." },
+];
+
+function renderPrefs(ch: Channel, p: PrefsModel): TemplateResult {
+  const offered = modesFor(ch.tier);
+  return html`
+    <section class="sheet" data-prefs>
+      <div class="sheet-head">
+        <h4>Notifications for ${channelTitle(ch)}</h4>
+        <button type="button" class="link" data-action="close-panel">Close</button>
+      </div>
+      ${p.loading
+        ? html`<p class="dim" data-loading>Loading your choices</p>`
+        : html`
+            <div class="segs" role="group" aria-label="Notification mode">
+              ${offered.map(
+                (mo) => html`<button type="button" class="seg" data-action="set-mode" data-mode=${mo} aria-pressed=${p.mode === mo ? "true" : "false"} ?disabled=${p.busy}>${modeWords(mo)}</button>`,
+              )}
+            </div>
+            ${p.inherited ? html`<p class="dim small" data-inherited>You have not chosen. This is the room's default.</p>` : nothing}
+            ${canMute(ch.tier) ? nothing : html`<p class="small" data-mute-rule>${MUTE_REFUSAL}</p>`}
+            <div class="toggle-row">
+              <span class="grow">Desktop notifications</span>
+              <button type="button" class="switch" data-action="toggle-pref" data-pref="desktop_enabled" aria-pressed=${p.desktop ? "true" : "false"} ?disabled=${p.busy}>${p.desktop ? "On" : "Off"}</button>
+            </div>
+            <div class="toggle-row">
+              <span class="grow">A firehose escalation reaches you even when the room is muted</span>
+              <button type="button" class="switch" data-action="toggle-pref" data-pref="escalation_override" aria-pressed=${p.escalationOverride ? "true" : "false"} ?disabled=${p.busy}>${p.escalationOverride ? "On" : "Off"}</button>
+            </div>
+          `}
+      ${p.error === "" ? nothing : html`<p class="small words-bad" role="alert" data-prefs-error>${p.error}</p>`}
+    </section>
+  `;
+}
+
+function renderRules(r: RulesModel): TemplateResult {
+  return html`
+    <section class="convo" data-rules>
+      <div class="convo-head">
+        <button type="button" class="btn btn-secondary small-btn back" data-action="close-panel">Back</button>
+        <div class="titles">
+          <h2>Payment notices</h2>
+          <p class="dim small">Your own choices. Nobody else's change what reaches you.</p>
+        </div>
+        <button type="button" class="link" data-action="close-panel">Close</button>
+      </div>
+      <div class="convo-body">
+        ${r.loading
+          ? html`<p class="dim" data-loading>Loading your rules</p>`
+          : RULES.map(
+              (rule) => html`
+                <div class="toggle-row">
+                  <span class="grow"><strong>${rule.label}</strong><br /><span class="dim small">${rule.line}</span></span>
+                  <button type="button" class="switch" data-action="toggle-rule" data-rule=${rule.id} aria-pressed=${r.values[rule.id] === true ? "true" : "false"} ?disabled=${r.busy !== ""}>${r.values[rule.id] === true ? "On" : "Off"}</button>
+                </div>
+              `,
+            )}
+        ${r.error === "" ? nothing : html`<p class="small words-bad" role="alert" data-rules-error>${r.error}</p>`}
+      </div>
+    </section>
+  `;
+}
+
 function renderQueueRow(r: HouseConversation, q: QueueModel, now: number): TemplateResult {
   const claimed = r.claimed_by !== undefined && r.claimed_by !== "";
   const who = r.customer_name || "A customer";
@@ -302,8 +397,10 @@ function renderConvo(m: Model, c: ConvoModel): TemplateResult {
           ${channelLine(ch) === "" ? nothing : html`<p class="dim small">${channelLine(ch)}</p>`}
         </div>
         ${tier === "" ? nothing : html`<span class="tier">${tier}</span>`}
+        <button type="button" class="btn btn-secondary small-btn" data-action="open-prefs">Notifications</button>
       </div>
       <div class="convo-body">
+        ${c.prefs === null ? nothing : renderPrefs(ch, c.prefs)}
         ${c.queue === null ? nothing : renderQueue(c.queue, m.now)}
         ${c.loading
           ? html`<p class="dim" data-loading>Loading messages</p>`
@@ -352,7 +449,7 @@ export function renderDesk(m: Model): TemplateResult {
       ${m.bubble === null ? nothing : renderBubble(m.bubble)}
       <div class="panes">
         ${renderRail(m)}
-        ${m.convo === null ? renderEmptyConvo() : renderConvo(m, m.convo)}
+        ${m.rules !== null ? renderRules(m.rules) : m.convo === null ? renderEmptyConvo() : renderConvo(m, m.convo)}
       </div>
     </div>
   `;
