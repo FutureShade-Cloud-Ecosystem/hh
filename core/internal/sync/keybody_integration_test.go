@@ -1,7 +1,7 @@
 //go:build integration
 
 // keybody_integration_test.go: the fourth guarantee against a real
-// database. The ledger table is the engine's own (sync_op_hashes, 0388);
+// database. The ledger table is the engine's own (sync_op_hashes, 0389);
 // the pilot scope is the tasks module's real Store, so the dedup the body
 // check sits inside is the production one.
 package sync_test

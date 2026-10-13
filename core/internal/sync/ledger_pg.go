@@ -9,7 +9,7 @@ import (
 )
 
 // PgKeyLedger is the Postgres KeyLedger over sync_op_hashes (migration
-// 0388). The table is this package's own: the engine is the only reader and
+// 0389). The table is this package's own: the engine is the only reader and
 // the only writer.
 type PgKeyLedger struct {
 	pool *pgxpool.Pool
