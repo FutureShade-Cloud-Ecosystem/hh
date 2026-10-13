@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // yard_repository.go, persistence for the Wave 2 yard flow (0095). It follows the 0073 rules without
@@ -482,32 +483,85 @@ func scanPickedLine(row pgx.Row) (PickedLine, error) {
 // the task exists (a 23503 cannot tell "no such task" from a real failure) and it serialises two
 // pickers working the same ticket, which in a yard is a Tuesday rather than an edge case.
 func (r *Repository) UpsertPickedLines(ctx context.Context, taskID, actorID string, lines []PickedLineInput) ([]PickedLine, error) {
+	return r.RecordPickLocked(ctx, taskID, actorID, func(context.Context, Task) ([]PickedLineInput, error) { return lines, nil })
+}
+
+// ErrRecordPoolTooSmall is the refusal for a pool the record cannot work over. A record holds the task
+// row's transaction while the order module takes its own connection, and a sync record also holds the
+// key ledger's lock connection, so three connections are the least a pool can hold for one record.
+var ErrRecordPoolTooSmall = errors.New("tasks: the pick record needs a pool of at least 3 connections (pool_max_conns)")
+
+// RequireRecordPool is the boot check beside the key ledger's: it returns ErrRecordPoolTooSmall for a
+// pool the pick record cannot work over.
+func RequireRecordPool(pool *pgxpool.Pool) error {
+	if conns := pool.Config().MaxConns; conns < 3 {
+		return fmt.Errorf("%w, got %d", ErrRecordPoolTooSmall, conns)
+	}
+	return nil
+}
+
+// recordSlotsFor is how many records may hold the task row's transaction at once on a pool of n
+// connections. The key ledger lets at most n/2 pushes hold a lock connection; every record in flight
+// holds one more; the order module's transaction needs one beyond both. So that a pool full of ledger
+// holders and open records still has a connection for an order call to finish on (a record waiting
+// for a connection that only a finishing record could free would wait forever), records in flight
+// are capped at n - n/2 - 1.
+func recordSlotsFor(n int32) int { return int(n) - int(n)/2 - 1 }
+
+// RecordPickLocked records a pick in ONE transaction that holds the task row's lock across the order
+// call. begin, SELECT the task FOR UPDATE, refuse a CANCELLED or DONE one, run apply (the order call,
+// which hands back the lines to store), upsert them and draw the task's fresh seq, commit. Every status
+// move takes the same row FOR UPDATE, so a cancel or a complete that arrives during the order call waits
+// and lands after the record, which keeps its lines; the order module never locks a tasks row, so the
+// lock order (task, then order) cannot invert.
+//
+// UPSERT AND NOT INSERT, because this is a measurement and a picker corrects themselves. 0187's
+// UNIQUE (task_id, order_line_no) makes "one live number per line" a property of the schema rather
+// than of whoever wrote the last query; the correction HISTORY lives in task_events.
+//
+// The task row also draws a fresh seq here, as InsertShortage does: the row re-appears in a device's
+// pull with the recorded lines, and a queued sync record based on the older seq meets server wins
+// instead of applying blind over this one.
+//
+// The cost is a second pooled connection while the order call runs, which recordSlotsFor bounds.
+func (r *Repository) RecordPickLocked(ctx context.Context, taskID, actorID string, apply func(context.Context, Task) ([]PickedLineInput, error)) ([]PickedLine, error) {
 	if r.pool == nil {
 		return nil, errNoDB
 	}
 	if !looksLikeUUID(taskID) {
 		return nil, ErrNotFound
 	}
+	if r.recordSlots == nil {
+		return nil, ErrRecordPoolTooSmall
+	}
+	select {
+	case r.recordSlots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-r.recordSlots }()
+
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("tasks: begin pick lines: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var status, taskType string
-	if err := tx.QueryRow(ctx, `SELECT status, task_type FROM tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&status, &taskType); err != nil {
+	task, err := scanYardTask(tx.QueryRow(ctx, `SELECT `+yardColumns+` FROM tasks WHERE id = $1 FOR UPDATE`, taskID))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("tasks: lock %q for pick lines: %w", taskID, err)
 	}
-	if err := pickClosed(status); err != nil {
+	if err := pickClosed(task.Status); err != nil {
 		return nil, err
 	}
-	// The task row draws a fresh seq in the same transaction, as InsertShortage does: the row re-appears
-	// in a device's pull with the recorded lines, and a queued sync record based on the older seq meets
-	// server wins instead of applying blind over this one.
-	seq, err := allocateTaskSeqTx(ctx, tx, taskType)
+	lines, err := apply(ctx, task)
+	if err != nil {
+		return nil, err
+	}
+	seq, err := allocateTaskSeqTx(ctx, tx, task.TaskType)
 	if err != nil {
 		return nil, err
 	}
