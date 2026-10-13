@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import {
   api,
   branchName,
+  refusal,
   clearPanelLayoutRaw,
   clearSessionState,
   readPanelLayoutRaw,
@@ -221,4 +222,21 @@ test('the request door sends through the fetch the host supplies, and a host wit
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+// ── a refusal the host made before anything dialed (the no signal guard) ─────
+
+test('a failed read throws the status as ever, but a refusal the host marked speaks its own words', async () => {
+  wire();
+  const plain = await refusal(new Response('{"error":"nope"}', { status: 503 }), 'resume');
+  assert.equal(plain.message, 'resume 503');
+  const marked = await refusal(
+    new Response(JSON.stringify({ error: 'No signal. This needs the server.' }), { status: 503, headers: { 'X-HH-Host-Refusal': '1' } }),
+    'resume',
+  );
+  assert.equal(marked.message, 'No signal. This needs the server.');
+  const unreadable = await refusal(new Response('not json', { status: 503, headers: { 'X-HH-Host-Refusal': '1' } }), 'park');
+  assert.equal(unreadable.message, 'park 503');
+  const empty = await refusal(new Response('{}', { status: 503, headers: { 'X-HH-Host-Refusal': '1' } }), 'park');
+  assert.equal(empty.message, 'park 503');
 });

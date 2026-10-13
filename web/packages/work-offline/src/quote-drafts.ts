@@ -194,6 +194,8 @@ export class QuoteDrafts {
     const out: WaitingDraft[] = [];
     for (const [quoteId, rows] of byQuote) {
       const first = rows[0]!;
+      // A draft made and withdrawn here is moot: both still go in order (the server holds the truth), but there is nothing to show.
+      if (rows.some((r) => r.op === "create") && rows.some((r) => r.op === "delete")) continue;
       const kind = rows.some((r) => r.op === "delete") ? "withdraw" : rows.some((r) => r.op === "create") ? "new" : "edit";
       const create = rows.find((r) => r.op === "create");
       const local = (await this.#store.read("quotes", quoteId)).row;

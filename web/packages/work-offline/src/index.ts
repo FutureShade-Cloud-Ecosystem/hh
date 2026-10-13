@@ -2,7 +2,9 @@
 // test entry point and deliberately does not ride this entry into a bundle.
 export * from "./signal.js";
 export * from "./read-through.js";
+export * from "./desk-routes.js";
 export * from "./read-cache.js";
 export * from "./quote-drafts.js";
 export * from "./cards.js";
 export * from "./sync.js";
+export * from "./desk.js";

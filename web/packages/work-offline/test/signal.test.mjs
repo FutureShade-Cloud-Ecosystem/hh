@@ -113,6 +113,7 @@ test("the platform fetch form refuses a write offline with a real Response carry
     assert.equal(res.ok, false, method);
     assert.equal(res.status, 503, "a Response cannot carry status 0; 503 is the transient one");
     assert.deepEqual(await res.json(), { error: NO_SIGNAL_ERROR });
+    assert.equal(res.headers.get("X-HH-Host-Refusal"), "1", "marked as the host's own refusal");
   }
   assert.deepEqual(calls, [], "nothing dialed");
   const read = await web("/api/v1/pos/parked");

@@ -126,12 +126,18 @@ export interface Read<T> {
   rows: T[];
   staleness: Staleness;
   words: string;
+  /** The stored row behind each entry, by id, for a route that answers the server's shape whole. */
+  sources: Map<string, Record<string, unknown>>;
 }
 
 export interface Hits<T> {
   hits: T[];
   staleness: Staleness;
   words: string;
+}
+
+function sourcesOf(rows: StoredRow[]): Map<string, Record<string, unknown>> {
+  return new Map(rows.map((row) => [row.id, row.data]));
 }
 
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
@@ -246,7 +252,7 @@ export class WorkReader {
         };
       })
       .sort((a, b) => Number(b.waiting) - Number(a.waiting) || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
-    return { rows, staleness: found.staleness, words: found.words };
+    return { rows, staleness: found.staleness, words: found.words, sources: sourcesOf(found.rows) };
   }
 
   /** The branch's parked tickets, or every branch's when none is named. */
@@ -272,7 +278,7 @@ export class WorkReader {
         };
       })
       .sort((a, b) => a.ticketNo.localeCompare(b.ticketNo) || a.id.localeCompare(b.id));
-    return { rows, staleness: found.staleness, words: found.words };
+    return { rows, staleness: found.staleness, words: found.words, sources: sourcesOf(found.rows) };
   }
 
   /** The invoices the till can read (a read only scope). */
@@ -295,6 +301,6 @@ export class WorkReader {
         };
       })
       .sort((a, b) => a.invoiceNo.localeCompare(b.invoiceNo) || a.id.localeCompare(b.id));
-    return { rows, staleness: found.staleness, words: found.words };
+    return { rows, staleness: found.staleness, words: found.words, sources: sourcesOf(found.rows) };
   }
 }

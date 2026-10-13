@@ -98,7 +98,8 @@ export function noSignalWebFetch(base: WebFetch | undefined, signal: SignalSourc
   return async (input: string, init?: RequestInit): Promise<Response> => {
     const method = (init?.method ?? "GET").toUpperCase();
     if (!READ_VERBS.has(method) && !signal.online()) {
-      return new Response(JSON.stringify({ error: NO_SIGNAL_ERROR }), { status: 503, headers: { "Content-Type": "application/json" } });
+      // The marker lets the ported surface's failed reads speak these words instead of a bare status.
+      return new Response(JSON.stringify({ error: NO_SIGNAL_ERROR }), { status: 503, headers: { "Content-Type": "application/json", "X-HH-Host-Refusal": "1" } });
     }
     return inner(input, init);
   };

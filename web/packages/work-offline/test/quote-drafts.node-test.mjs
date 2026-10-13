@@ -166,6 +166,30 @@ test("a draft the person withdrew no longer reads as an open document", async ()
   assert.equal((await d.drafts.waiting()).some((w) => w.quoteId === NEW_ID(1) && w.kind === "new"), false);
 });
 
+test("a draft made and withdrawn on the device is not listed as waiting: its work cancels out, though both still go in order", async () => {
+  const d = await desk();
+  d.server.setOffline(true);
+  await d.drafts.createDraft({ customerId: CUSTOMER, validUntil: "" });
+  await d.drafts.withdraw(NEW_ID(1));
+  assert.deepEqual(await d.drafts.waiting(), []);
+  assert.equal((await d.store.outbox.health()).waiting, 2, "the outbox still holds both");
+});
+
+test("a withdrawal of a draft that already landed is listed, so the person sees it is still to be sent", async () => {
+  const d = await desk();
+  await d.drafts.createDraft({ customerId: CUSTOMER, validUntil: "" });
+  await sync(d);
+  // The real feed carries the status and the number the server minted; the fake keeps only the payload.
+  d.server.touch("quotes", NEW_ID(1), { status: "DRAFT", quote_no: "#Q-1" });
+  await d.store.pull(d.transport);
+  d.server.setOffline(true);
+  const gone = await d.drafts.withdraw(NEW_ID(1));
+  assert.equal(gone.ok, true);
+  const waiting = await d.drafts.waiting();
+  assert.equal(waiting.length, 1);
+  assert.equal(waiting[0].kind, "withdraw");
+});
+
 test("the inputs are checked before anything is queued: no garbage waits for a server that would refuse it", async () => {
   const d = await desk();
   for (const bad of [{ customerId: "", validUntil: "" }, { customerId: "not-a-uuid", validUntil: "" }, { customerId: CUSTOMER, validUntil: "31/12/2999" }, { customerId: CUSTOMER, validUntil: "2999-13-45" }]) {

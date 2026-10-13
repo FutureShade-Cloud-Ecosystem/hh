@@ -248,6 +248,26 @@ function enrichResolveBody(body: Record<string, unknown>): Record<string, unknow
 }
 
 /**
+ * The error a failed read throws. It names the route and the status, as it
+ * always has, except for one case: a refusal the HOST made before anything
+ * dialed (the Work shell's no signal guard marks it with a header). That
+ * refusal carries its own honest words in the shared error envelope, and those
+ * words are what the person reads, never a bare status.
+ */
+export async function refusal(response: Response, what: string): Promise<Error> {
+  if (response.headers.get('X-HH-Host-Refusal') === '1') {
+    try {
+      const body: unknown = await response.clone().json();
+      const words = body !== null && typeof body === 'object' ? (body as Record<string, unknown>)['error'] : undefined;
+      if (typeof words === 'string' && words !== '') return new Error(words);
+    } catch {
+      // an unreadable refusal falls back to the status below
+    }
+  }
+  return new Error(`${what} ${response.status}`);
+}
+
+/**
  * The authed request helper the whole ported surface talks through: relative
  * path in, the demo org and bearer attached, Response out.
  *
@@ -860,7 +880,7 @@ export async function putProductImage(productId: string, file: File): Promise<Re
   if (host === null) return unwired('putProductImage');
   const headers = new Headers(await host.headers());
   headers.set('Content-Type', file.type || 'image/png');
-  return fetch(`/api/v1/products/${encodeURIComponent(productId)}/image?alt=${encodeURIComponent(file.name)}`, {
+  return (host.fetch ?? fetch)(`/api/v1/products/${encodeURIComponent(productId)}/image?alt=${encodeURIComponent(file.name)}`, {
     method: 'PUT',
     headers,
     body: file,

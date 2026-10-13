@@ -158,7 +158,8 @@ export async function openWorkOfflineOpfs(options: {
   appId: string;
   dbName: string;
   transport: SyncTransport;
-  workerUrl: URL;
+  /** The app builds the worker itself (`new Worker(new URL(...), { type: "module" })`), so its bundler sees and bundles the entry. */
+  createWorker: () => WorkerLike;
   onChange?: () => void;
   onPulled?: () => void;
 }): Promise<WorkOpened> {
@@ -170,7 +171,7 @@ export async function openWorkOfflineOpfs(options: {
     const backend: StorageBackend = await createOpfsBackend({
       dbName: options.dbName,
       locks: locks as Parameters<typeof createOpfsBackend>[0]["locks"],
-      createWorker: () => new Worker(options.workerUrl, { type: "module" }) as unknown as WorkerLike,
+      createWorker: options.createWorker,
     });
     return await openWorkOfflineOver(backend, options);
   } catch {
