@@ -52,6 +52,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quoteassist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/reporting"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tour"
@@ -193,11 +194,12 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	bistrackSvc := bistrack.NewService(bistrack.NewRepository(pool)).WithConfigured(cfg.BisTrackConfigured())
 	bistrack.NewHandler(bistrackSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
-	// CP-07 customer surface: the write path validates Canadian addresses
-	// through localization; the variadic write guard's manager mapping is
+	// CP-07 customer surface: the write path validates addresses for the
+	// dealer's country through localization; the variadic write guard's manager mapping is
 	// named at the registrar.
 	customerRepo := customer.NewRepository(pool)
-	customerSvc := customer.NewService(customerRepo).WithWriter(customerRepo)
+	customerSvc := customer.NewService(customerRepo).WithWriter(customerRepo).
+		WithCountry(dealerCountryAdapter{r: settings.NewDealerConfigReader(pool)})
 	customer.NewHandler(customerSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// A-1 branches: the read the ledger claimed VERIFIED and the dashboard's

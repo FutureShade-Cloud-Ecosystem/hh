@@ -321,6 +321,15 @@ func (a dealerRegionAdapter) TaxRegion(ctx context.Context) (string, error) {
 	return c.TaxRegion, err
 }
 
+// dealerCountryAdapter binds the customer module's CountrySource to the same dealer configuration:
+// the country the address rules follow, read live at each customer write and each loaded item.
+type dealerCountryAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerCountryAdapter) DealerCountry(ctx context.Context) (string, error) {
+	c, err := a.r.DealerConfig(ctx)
+	return c.Country, err
+}
+
 // newTaxEngine builds a tax engine over the pool bound to the dealer's own jurisdiction. The engine
 // is stateless beyond its repository and its region source, so every composition that must assess a
 // tax builds its own, and two dealers in one process never share a jurisdiction.
