@@ -95,7 +95,9 @@ const CH = {
   pay: "c0000000-0000-4000-9000-000000000007",
 };
 
-const T0 = Date.now();
+// The world's clock starts at the last reset, so "40 minutes ago" is still 40 minutes ago when a
+// test reads it a few seconds after resetting, however long the stub has been up.
+let T0 = Date.now();
 const at = (minutesAgo) => new Date(T0 - minutesAgo * 60_000).toISOString();
 
 let world;
@@ -112,6 +114,7 @@ function id(prefix) {
 }
 
 function reset() {
+  T0 = Date.now();
   seq = 0;
   streams.forEach((s) => s.res.end());
   streams = [];
@@ -285,7 +288,7 @@ async function route(req, res, url) {
     }
     if (path === "/_stub/drop-streams") {
       const n = streams.length;
-      streams.forEach((s) => s.res.destroy());
+      streams.forEach((s) => s.res.end());
       streams = [];
       return json(res, { dropped: n });
     }

@@ -36,6 +36,8 @@ export interface Model {
   readonly view: "list" | "conversation";
   readonly totalUnread: number;
   readonly live: LiveState | null;
+  /** Words for a failed read, empty when the last read worked. */
+  readonly stale: string;
   readonly now: number;
   readonly error: string;
   readonly notice: string;
@@ -136,6 +138,7 @@ function renderStrip(m: Model): TemplateResult {
       <span class="spacer"></span>
       <span class="dim small" data-total-unread>${m.totalUnread === 0 ? "Nothing unread" : `${m.totalUnread} unread`}</span>
       ${retry ? html`<button type="button" class="btn btn-secondary small-btn" data-action="retry-live">Retry now</button>` : nothing}
+      ${m.stale === "" ? nothing : html`<span class="small words-bad" data-stale>${m.stale}</span>`}
     </div>
   `;
 }

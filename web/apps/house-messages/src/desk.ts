@@ -109,6 +109,9 @@ export class MessagesDesk {
   #rulesBusy = "";
   #rulesError = "";
 
+  // When the last read failed, so the screen can say it is showing what it read before.
+  #staleAt: number | null = null;
+
   #refreshing = false;
   #refreshAgain = false;
   #stopped = false;
@@ -189,7 +192,12 @@ export class MessagesDesk {
   async #readOnce(): Promise<void> {
     const channels = await this.#api.channels();
     if (this.#stopped) return;
-    if (channels.ok) this.#channels = channels.value;
+    if (channels.ok) {
+      this.#channels = channels.value;
+      this.#staleAt = null;
+    } else if (this.#staleAt === null) {
+      this.#staleAt = this.#host.now();
+    }
     const active = this.#activeId;
     if (active !== "" && this.#view === "conversation") {
       const page = await this.#api.messages(active, null, PAGE);
@@ -655,6 +663,7 @@ export class MessagesDesk {
       view: this.#view,
       totalUnread: totalUnread(this.#channels),
       live: this.#liveState,
+      stale: this.#staleAt === null ? "" : `The last read failed at ${timeWords(new Date(this.#staleAt).toISOString(), this.#host.now())}. You are looking at what was read before.`,
       now: this.#host.now(),
       error: this.#error,
       notice: this.#notice,
