@@ -53,6 +53,7 @@ cp -r "$ROOT/web/apps/front-door/dist/." "$DIST/"
 LAUNCH_MAP=(
   "counter-till counter-till /till/"
   "quote-desk quote-desk /quote/"
+  "dispatch-board dispatch-board /dispatch/"
   "buying-and-stock buying-and-stock /buying-and-stock/"
   "money-desk money-desk /money-desk/"
   "manager-home manager-home /home/"
