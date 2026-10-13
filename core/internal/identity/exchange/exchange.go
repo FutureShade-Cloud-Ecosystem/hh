@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -143,12 +144,37 @@ type Minter interface {
 	MintAt(subject string, window time.Duration, at time.Time) (string, error)
 }
 
-// SignInMethods is the seam of gate 4b (the dealer's allowed sign in
-// methods, item 6c). It receives the provider of the Console session that
-// gate 7b matched, and runs once that session is known, which is after
-// gate 4. Not allowed is the 403, an error the 503.
+// SignInMethods is the identity module's narrow reader of the dealer's
+// allowed sign in methods (item 6c): the codes the org allows, the default
+// set when it has none, and an error for a row it cannot trust. Gate 4b and
+// the public methods route both read through it.
 type SignInMethods interface {
-	SignInMethodAllowed(ctx context.Context, orgID, provider string) (bool, error)
+	AllowedSignInMethods(ctx context.Context, orgID string) ([]string, error)
+}
+
+// The provider values of a FB Console session (state note section 5b),
+// named so the closed table below reads as data.
+const (
+	// ProviderEmail is the house sign in, FB Console email and password.
+	ProviderEmail = "email"
+	// ProviderGoogle is a PLACEHOLDER: the Google provider value has not
+	// been read from a real sign in yet. A real Google sign in confirms or
+	// corrects this one constant before the Google method is relied on; an
+	// unconfirmed value fails closed (a Google session whose provider reads
+	// otherwise is refused at gate 4b).
+	ProviderGoogle = "google"
+	// ProviderMicrosoft is likewise unprobed; Microsoft is built after the
+	// demo.
+	ProviderMicrosoft = "microsoft"
+)
+
+// providerMethod maps a session provider to a method code. It is closed: a
+// provider not listed, including the empty value, is refused at gate 4b and
+// never assumed to be anything.
+var providerMethod = map[string]string{
+	ProviderEmail:     identity.MethodEmailPassword,
+	ProviderGoogle:    identity.MethodGoogle,
+	ProviderMicrosoft: identity.MethodMicrosoft,
 }
 
 // Config is the handler's constructor input; every collaborator is
@@ -215,7 +241,7 @@ func New(c Config) (*Handler, error) {
 	case c.Minter == nil:
 		return nil, errors.New("exchange: the session minter is required")
 	case c.Methods == nil:
-		return nil, errors.New("exchange: the sign in method seam is required")
+		return nil, errors.New("exchange: the sign in method reader is required")
 	case c.TokenTTL < identity.MinSessionWindow:
 		return nil, errors.New("exchange: the token window is required")
 	}
@@ -503,12 +529,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.refuse503(w, CodeSessionValue)
 		return
 	}
-	allowed, err := h.cfg.Methods.SignInMethodAllowed(ctx, orgID, session.Provider)
+	// Gate 4b rides the same session read: the provider maps through the
+	// closed table to a method code, and the code must be in the dealer's
+	// allowed set. An unmapped provider is refused before the set is read.
+	method, mapped := providerMethod[session.Provider]
+	if !mapped {
+		h.refuse403(w, CodeMethodNo)
+		return
+	}
+	allowedSet, err := h.cfg.Methods.AllowedSignInMethods(ctx, orgID)
 	if err != nil {
 		h.refuse503(w, CodeMethodError)
 		return
 	}
-	if !allowed {
+	if !slices.Contains(allowedSet, method) {
 		h.refuse403(w, CodeMethodNo)
 		return
 	}
