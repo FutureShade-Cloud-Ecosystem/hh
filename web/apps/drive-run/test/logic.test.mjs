@@ -123,10 +123,14 @@ test("a login that may not do this, or has no driver record, is told in the driv
 });
 
 // ---- sub item 3: proof of delivery ----
+import { goTypedNameBytes } from "./_lib/gosets.mjs";
 import {
   ATTESTATION,
+  MAX_NAME_BYTES,
   PHOTO_LIMIT_BYTES,
+  PROOF_QUEUED_NOTICE,
   canSign,
+  nameProblem,
   needsShrink,
   normalizeName,
   photoTypeFor,
@@ -233,4 +237,28 @@ test("a run that is not out, is closed, is cancelled or has no stops cannot be c
   assert.match(runClose({ status: "DISPATCHED" }, []).blocked, /There are no stops on this run yet/);
   assert.equal(runClose({ status: "DISPATCHED" }, []).can, false);
   assert.equal(runClose(null, null).can, false);
+});
+
+// ---- the typed name bound (item 6c) ----
+
+test("the client's name bound is the core's (dispatch.maxTypedNameBytes, read from the Go source)", () => {
+  assert.equal(MAX_NAME_BYTES, goTypedNameBytes());
+});
+
+test("nameProblem refuses what the attestation door would, in words, before the signature is queued", () => {
+  assert.equal(nameProblem("Site Foreman"), "");
+  assert.equal(nameProblem("  Site Foreman  "), "", "the core trims, so does the form");
+  assert.equal(nameProblem("e".repeat(MAX_NAME_BYTES)), "");
+  assert.match(nameProblem("e".repeat(MAX_NAME_BYTES + 1)), /too long/);
+  assert.match(nameProblem("\u00e9".repeat(MAX_NAME_BYTES / 2 + 1)), /too long/, "bytes, not characters");
+  assert.equal(nameProblem("\u00e9".repeat(MAX_NAME_BYTES / 2)), "");
+  for (const bad of ["a\u0000", "a\tb", "a\nb", "a\u007f", "a\u202e", "a\u2066"]) assert.match(nameProblem(bad), /control characters/, JSON.stringify(bad));
+});
+
+test("a name the door would refuse blocks the sign control, with the words", () => {
+  const long = { receivedBy: "e".repeat(MAX_NAME_BYTES + 1), affirmed: true, busy: false };
+  assert.equal(canSign(long), false);
+  assert.match(signBlockedReason(long), /too long/);
+  assert.equal(canSign({ receivedBy: "A\u202eB", affirmed: true, busy: false }), false);
+  assert.doesNotMatch(PROOF_QUEUED_NOTICE, /delivered|told/);
 });

@@ -49,6 +49,9 @@ export interface DriverStop {
   readonly load_count: number;
   readonly created_at: string;
   readonly photos: readonly DriverPhoto[];
+  /** True while this device holds the stop's signature and the server has not
+   * taken it yet (the offline layer sets it; the direct api never does). */
+  readonly proof_waiting: boolean;
 }
 
 export interface DriverRun {
@@ -97,6 +100,7 @@ export function toStop(raw: unknown): DriverStop {
     load_count: num(r.load_count),
     created_at: text(r.created_at),
     photos,
+    proof_waiting: r.proof_waiting === true,
   };
 }
 
