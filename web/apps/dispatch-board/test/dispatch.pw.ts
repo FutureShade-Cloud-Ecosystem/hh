@@ -234,7 +234,7 @@ test("a stop that could not be delivered needs a reason, and the run closes once
 test("the day board puts an unassigned stop on a planned run", async ({ page, request }) => {
   await openBoard(page, request);
   await load(page, "ORD-0029").locator("select").first().selectOption({ index: 1 });
-  // The move is a write in flight: a tab pressed while the board is busy is ignored by the desk, so wait for the core's answer.
+  // The move is a write in flight: a tab pressed while the board is busy switches the tab but drops its read, so wait for the core's answer.
   await expect(page.locator("[data-notice]")).toContainText("ORD-0029 moved to RUN-PLM-1");
   await page.locator("[data-tab-id='day']").first().click();
   await expect(truck(page, "RUN-PLM-1").locator("li.load", { hasText: "ORD-0029" })).toBeVisible();
