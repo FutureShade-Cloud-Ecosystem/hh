@@ -50,7 +50,7 @@ import { dealerStyles } from "./styles.js";
 import { renderStaff, type StaffModel } from "./views-staff.js";
 import { renderHotkeys, type HotkeysModel } from "./views-hotkeys.js";
 import { renderAudit, type AuditDetail, type AuditModel, type AuditTrail } from "./views-audit.js";
-import { EMPTY_FILTERS, sinceWire, type AuditFilters } from "./audit-logic.js";
+import { EMPTY_FILTERS, auditRefusalWords, sinceWire, type AuditFilters } from "./audit-logic.js";
 import type { AuditRow } from "./dealer-api.js";
 
 const DEMO_ORG = "hh-demo";
@@ -647,7 +647,7 @@ export class DealerAdminApp extends HHElement {
         this.#audit = {
           ...this.#audit,
           phase: "refused",
-          error: staffRefusalWords(errorWords(result.error), result.status),
+          error: auditRefusalWords(errorWords(result.error), result.status),
         };
       } else {
         this.#audit = {

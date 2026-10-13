@@ -126,6 +126,12 @@ export function auditEmptyWords(filtered: boolean): string {
   return "Nothing has been recorded yet. The audit log holds one row for every mutating action: who changed what, when, where and why. It is empty on a database where nobody has changed anything yet.";
 }
 
+/** The audit trail is leadership's read (tier 1, all branches): a refusal says who may open it. */
+export function auditRefusalWords(error: string, status: number | undefined): string {
+  if (status === 403) return "You may not open this. The audit trail is read by leadership only.";
+  return error !== "" ? error : "Try again in a moment.";
+}
+
 /** An entity whose trail came back with no entries: a statement about the read, not the entity's history. */
 export function trailEmptyWords(): string {
   return "The trail holds no entries for this entity. Entries are written when an action changes it, so an entity nobody has changed since the log began has none.";

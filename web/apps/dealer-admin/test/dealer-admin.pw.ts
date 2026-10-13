@@ -162,8 +162,10 @@ test("a frontline caller is refused the audit read", async ({ page }) => {
   await cards.nth(1).click();
   await page.locator('.surface-link[data-surface="audit"]').click();
 
-  // The trail is an admin read; the refusal names who may act.
-  await expect(page.locator("[data-test=audit-error]")).toContainText("managers and above");
+  // The trail is leadership's read; the refusal names who may act and the
+  // right surface, not the staff register's words.
+  await expect(page.locator("[data-test=audit-error]")).toContainText("leadership");
+  await expect(page.locator("[data-test=audit-error]")).not.toContainText("staff register");
 });
 
 test("a refused role change says so beside the register", async ({ page }) => {

@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { DealerApi } from "../src/dealer-api.js";
-import { trailEmptyWords } from "../src/audit-logic.js";
+import { auditRefusalWords, trailEmptyWords } from "../src/audit-logic.js";
 
 const ENTRY = (id) => ({
   id,
@@ -43,4 +43,12 @@ test("an empty entity trail has its own sentence, and it does not say nothing ha
   assert.notEqual(words, "");
   assert.match(words, /no entries/i);
   assert.doesNotMatch(words, /nothing happened/i);
+});
+
+test("the audit refusal names leadership and the trail, not the staff register", () => {
+  const words = auditRefusalWords("Forbidden", 403);
+  assert.match(words, /leadership/);
+  assert.match(words, /audit trail/i);
+  assert.doesNotMatch(words, /staff register|managers/);
+  assert.equal(auditRefusalWords("entry not found", 404), "entry not found");
 });
