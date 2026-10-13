@@ -29,7 +29,12 @@ import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
+import { groupDriverRows, idleDriverWords } from "./drivers-logic.js";
+import { rowsForBoard } from "./drivers-api.js";
+import { BuilderApi } from "./builder-api.js";
+import { BuilderDesk } from "./builder-desk.js";
 import { ManagerApi, type BranchRef, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
+import { DriversApi } from "./drivers-api.js";
 import {
   APPROVAL_KINDS,
   RECEIVING_DIFFERENCE_WORDS,
@@ -43,6 +48,8 @@ import {
   type ViewKind,
 } from "./manager-logic.js";
 import { homeStyles } from "./styles.js";
+import { builderStyles } from "./builder-styles.js";
+import { renderBuilder } from "./builder-views.js";
 import { reportingStyles } from "./reporting-styles.js";
 import { warrantyStyles } from "./warranty-styles.js";
 import { quickStyles } from "./quick-styles.js";
@@ -66,6 +73,7 @@ import {
   type ReceivingModel,
   type ShortagesModel,
 } from "./views.js";
+import { renderDrivers, type DriversModel } from "./drivers-views.js";
 import { ReportingApi, openReportDocument, saveCsv, type RunView } from "./reporting-api.js";
 import {
   BASIS_CHOICES,
@@ -96,7 +104,7 @@ function basisFromWord(word: string): string {
 const DEMO_ORG = "hh-demo";
 
 export class ManagerHomeApp extends HHElement {
-  static styles = [baseStyles, homeStyles, reportingStyles, warrantyStyles, quickStyles];
+  static styles = [baseStyles, homeStyles, builderStyles, reportingStyles, warrantyStyles, quickStyles];
 
   // The demo account surface: listFlows() and chooseFlow() over the core's
   // demo routes. It is the injected AccountSurface for the auth package.
@@ -127,6 +135,15 @@ export class ManagerHomeApp extends HHElement {
   // rows, over the same staff client.
   readonly #quickApi = new QuickApi(this.#staffClient);
 
+  // The Drivers view's calls, the dispatch reads, over the same staff client.
+  readonly #driversApi = new DriversApi(this.#staffClient);
+  // The builder desk: the arrange view's calls and edit state, in the one
+  // plain class the arrange surface renders from. It re-renders the app
+  // element through the same requestUpdate the other views use.
+  readonly #desk = new BuilderDesk(
+    { builder: new BuilderApi(this.#staffClient), mine: { branches: () => this.#api.branches() } },
+    () => this.requestUpdate(),
+  );
   // The reporting panes' calls, over the staff client too.
   readonly #reportingApi = new ReportingApi(this.#staffClient);
   // The warranty desk (src/warranty-*): its own door over the same staff
@@ -180,6 +197,9 @@ export class ManagerHomeApp extends HHElement {
   };
   #receiving: ReceivingModel = { phase: "loading", branchName: "", rows: [], error: "", definitionWords: RECEIVING_DIFFERENCE_WORDS };
   #approvals: ApprovalsModel = { phase: "loading", kind: APPROVAL_KINDS[0].kind, rows: [], error: "", refusal: "", busyId: "" };
+  #drivers: DriversModel = {
+    phase: "loading", branchName: "", groups: [], trucks: [], runCount: 0, idleWords: "", error: "", refused: "",
+  };
 
   // The reporting view's state: the four panes (templates, runs, commission
   // rules, accruals) and every call they make.
@@ -216,8 +236,18 @@ export class ManagerHomeApp extends HHElement {
     }
     if (action === "open-view") {
       const view = control?.getAttribute("data-view");
-      if (view === "shortages" || view === "receiving" || view === "approvals" || view === "reporting" || view === "warranty" || view === "quick-actions") {
+      if (view === "shortages" || view === "receiving" || view === "approvals" || view === "drivers" || view === "reporting" || view === "warranty" || view === "quick-actions") {
         this.#openView(view);
+      }
+      if (view === "builder") {
+        this.#openBuilder();
+      }
+      return;
+    }
+    if (action === "builder") {
+      if (control !== undefined) {
+        this.#keepFocus(control);
+        this.#desk.act(control);
       }
       return;
     }
@@ -250,6 +280,7 @@ export class ManagerHomeApp extends HHElement {
       if (this.#view === "receiving") void this.#loadReceiving();
       if (this.#view === "approvals") void this.#loadApprovals();
       if (this.#view === "quick-actions") void this.#loadQuickAdmin();
+      if (this.#view === "drivers") void this.#loadDrivers();
       return;
     }
     if (action !== null && action !== undefined && action.startsWith("reporting-")) {
@@ -304,9 +335,10 @@ export class ManagerHomeApp extends HHElement {
     }
   };
 
-  // The resolve note field: mirrored from input events, never bound. The
-  // warranty desk hears only the one field whose shape it changes (the chase
-  // form's action pick); every other field is read at press time.
+  // The resolve note field and the builder's fields: mirrored from input
+  // events, never bound. The warranty desk hears only the one field whose shape
+  // it changes (the chase form's action pick); every other field is read at
+  // press time.
   readonly #onField = (event: Event): void => {
     const target = event.target;
     if (target instanceof HTMLTextAreaElement && target.getAttribute("data-field") === "resolution-note") {
@@ -317,6 +349,10 @@ export class ManagerHomeApp extends HHElement {
         };
       }
       return;
+    }
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      const field = target.getAttribute("data-field");
+      if (field !== null && field.startsWith("builder-")) this.#desk.field(field, target.value);
     }
     if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement) {
       this.#reportingField(target);
@@ -365,9 +401,12 @@ export class ManagerHomeApp extends HHElement {
 
   // The role label is the one header input the position gate keeps out of a
   // template (only data- and aria- attributes take a bound value), so it is
-  // set on the element here, after each render. The reporting form's fields
-  // ride the same rule: the model's values are written onto the inputs here
-  // when they differ, the way the money desk's field seam does it. The warranty
+  // set on the element here, after each render. The builder's two text fields
+  // prefill the same way: their values live in the desk, mirrored back into
+  // the inputs after each render, never while a person is typing in them. The
+  // reporting form's fields ride the same rule: the model's values are written
+  // onto the inputs here when they differ, the way the money desk's field seam
+  // does it. The warranty
   // desk's seeds ride it too: a form's starting values and a photo's object
   // address are set on their elements after the render that drew them, never bound.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
@@ -377,6 +416,10 @@ export class ManagerHomeApp extends HHElement {
       header.roleLabel = this.#roleLabel;
       header.theme = this.#theme;
     }
+    this.#restoreFocus();
+    this.#prefill("builder-title", this.#desk.state.draft?.title ?? "");
+    this.#prefill("builder-landing-unit", this.#desk.state.role?.home.landing_unit ?? "");
+    this.#prefill("builder-landing-module", this.#desk.state.role?.home.landing_module ?? "");
     this.#syncReportingFields();
     this.#warranty.seedFields((name, value) => {
       const field = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[data-field="${name}"]`);
@@ -388,6 +431,46 @@ export class ManagerHomeApp extends HHElement {
       if (url !== undefined && img.getAttribute("src") !== url) img.setAttribute("src", url);
       const alt = this.#warranty.photoAlt(id);
       if (img.getAttribute("alt") !== alt) img.setAttribute("alt", alt);
+    }
+  }
+
+  // A list control keeps its keyboard focus through a move: the lists reuse
+  // their rows by index, so after a reorder the focused slot holds another
+  // card, and a control that disabled at a limit drops focus to the page.
+  // The clicked control is noted by its op and key, and refocused after the
+  // next render; when it disabled, the card's other enabled control of the
+  // same pair takes focus.
+  #focusTarget: { op: string; key: string; entry: string } | null = null;
+
+  #keepFocus(control: Element): void {
+    const key = control.getAttribute("data-key");
+    const entry = control.getAttribute("data-entry");
+    const op = control.getAttribute("data-op");
+    this.#focusTarget = op !== null && (key !== null || entry !== null) ? { op, key: key ?? "", entry: entry ?? "" } : null;
+  }
+
+  #restoreFocus(): void {
+    const target = this.#focusTarget;
+    if (target === null) return;
+    this.#focusTarget = null;
+    const owner = target.key !== "" ? `[data-key='${CSS.escape(target.key)}']` : `[data-entry='${CSS.escape(target.entry)}']`;
+    const same = this.renderRoot.querySelector<HTMLButtonElement>(`button[data-op='${CSS.escape(target.op)}']${owner}`);
+    if (same === null) return;
+    if (!same.disabled) {
+      same.focus();
+      return;
+    }
+    const row = same.closest("[data-widget], [data-tab], [data-tile], [data-entry], .edit-row") ?? same.parentElement;
+    const other = Array.from(row?.querySelectorAll<HTMLButtonElement>("button:not([disabled])") ?? []).find(
+      (b) => b.getAttribute("data-op") === target.op,
+    );
+    other?.focus();
+  }
+
+  #prefill(field: string, want: string): void {
+    const input = this.renderRoot.querySelector<HTMLInputElement>(`[data-field='${field}']`);
+    if (input !== null && (this.renderRoot as ShadowRoot).activeElement !== input && input.value !== want) {
+      input.value = want;
     }
   }
 
@@ -498,6 +581,7 @@ export class ManagerHomeApp extends HHElement {
   #onSignOut(): void {
     this.#sessions.clear();
     this.#view = "home";
+    this.#desk.close();
     this.#branch = null;
     this.#warranty.reset();
     this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false };
@@ -509,6 +593,7 @@ export class ManagerHomeApp extends HHElement {
     this.#approvals = { phase: "loading", kind: APPROVAL_KINDS[0].kind, rows: [], error: "", refusal: "", busyId: "" };
     this.#quickBar = { phase: "loading", actions: [] };
     this.#quickAdmin = { phase: "loading", actions: [], profiles: [], error: "", refusal: "", savedFor: "", busyId: "" };
+    this.#drivers = { phase: "loading", branchName: "", groups: [], trucks: [], runCount: 0, idleWords: "", error: "", refused: "" };
     this.#reporting = emptyReporting();
     this.#tier = 0;
     this.#scope = "";
@@ -679,15 +764,28 @@ export class ManagerHomeApp extends HHElement {
   }
 
   #openView(view: ViewKind): void {
+    const leaving = this.#view;
     this.#view = view;
     this.#shortages = { ...this.#shortages, error: "", notice: "", resolving: null };
     this.requestUpdate();
+    // Leaving the builder re-reads the landing: the desk may have saved a new
+    // layout, and the board below must be what the server now answers.
+    if (leaving === "builder" && view === "home") void this.#loadLanding();
     if (view === "shortages" && this.#shortages.phase === "loading") void this.#loadShortages();
     if (view === "receiving" && this.#receiving.phase === "loading") void this.#loadReceiving();
     if (view === "approvals" && this.#approvals.phase === "loading") void this.#loadApprovals();
+    if (view === "drivers" && this.#drivers.phase === "loading") void this.#loadDrivers();
     if (view === "reporting") void this.#openReporting();
     if (view === "warranty") this.#warranty.open();
     if (view === "quick-actions") void this.#loadQuickAdmin();
+  }
+
+  // The arrange view: opened once, loaded once; the desk keeps its state while
+  // the caller reads the other views.
+  #openBuilder(): void {
+    this.#view = "builder";
+    this.requestUpdate();
+    if (this.#desk.state.phase === "closed") void this.#desk.open();
   }
 
   // -- Reporting · the four panes -------------------------------------------------------------------
@@ -1349,6 +1447,60 @@ export class ManagerHomeApp extends HHElement {
     this.requestUpdate();
   }
 
+  // -- Drivers · where the drivers are ----------------------------------------------------------------
+
+  /**
+   * The drivers' day: the board read carries the whole day (runs and stops in
+   * one call; the date is the server's own today), the registry reads feed the
+   * roster line and the truck codes. The board governs: a refusal there is
+   * the view's refusal in the core's own words, a failure its load error. A
+   * registry read that fails omits only its own line, never the board.
+   */
+  async #loadDrivers(): Promise<void> {
+    this.#drivers = { ...this.#drivers, phase: "loading", error: "", refused: "", branchName: this.#branchName() };
+    this.requestUpdate();
+    if (this.#branch === null) {
+      this.#drivers = {
+        ...this.#drivers,
+        phase: "error",
+        error: "Your login reaches no branch, so the drivers' day cannot be listed.",
+      };
+      this.requestUpdate();
+      return;
+    }
+    const [board, roster, trucks] = await Promise.all([
+      this.#driversApi.board(this.#branch.id),
+      this.#driversApi.drivers(this.#branch.id),
+      this.#driversApi.trucks(this.#branch.id),
+    ]);
+    if (!board.ok) {
+      if (board.status === 403) {
+        // The role gate's own word, verbatim: no paraphrase, no invented authority.
+        this.#drivers = { ...this.#drivers, phase: "refused", refused: board.error };
+      } else {
+        this.#drivers = {
+          ...this.#drivers,
+          phase: "error",
+          error: `The drivers' board did not load. ${errorWords(board.error)}`,
+        };
+      }
+      this.requestUpdate();
+      return;
+    }
+    const rows = rowsForBoard(board.value.runs, board.value.stops);
+    this.#drivers = {
+      ...this.#drivers,
+      phase: "ready",
+      groups: groupDriverRows(rows),
+      trucks: trucks.ok ? trucks.value : [],
+      runCount: board.value.runs.length,
+      idleWords: roster.ok ? idleDriverWords(roster.value, board.value.runs) : "",
+      error: "",
+      refused: "",
+    };
+    this.requestUpdate();
+  }
+
   // -- Approvals ----------------------------------------------------------------------------------------
 
   async #loadApprovals(): Promise<void> {
@@ -1402,9 +1554,11 @@ export class ManagerHomeApp extends HHElement {
   }
 
   private renderWork(): TemplateResult {
+    if (this.#view === "builder") return renderBuilder(this.#desk.state);
     if (this.#view === "shortages") return renderShortages(this.#shortages);
     if (this.#view === "receiving") return renderReceiving(this.#receiving);
     if (this.#view === "approvals") return renderApprovals(this.#approvals);
+    if (this.#view === "drivers") return renderDrivers(this.#drivers);
     if (this.#view === "reporting") return renderReporting(this.#reporting);
     if (this.#view === "warranty") return renderWarranty(this.#warranty.model());
     if (this.#view === "quick-actions") return renderQuickAdmin(this.#quickAdmin);

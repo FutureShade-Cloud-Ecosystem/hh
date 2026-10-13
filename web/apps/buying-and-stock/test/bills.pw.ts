@@ -250,7 +250,7 @@ test("a caller with no branch reach reads the core's refusal and can try again",
   await request.post("/_stub/reset");
   await request.post("/_stub/fence");
   await page.goto("/");
-  await page.locator("[data-flow]").click();
+  await page.locator('[data-flow="procurement-manager"]').click();
   await page.locator("nav.areas").getByRole("button", { name: "Vendor bills" }).click();
   await expect(page.locator("[data-error]")).toContainText("Caller cannot access this branch.");
   await request.post("/_stub/reset");

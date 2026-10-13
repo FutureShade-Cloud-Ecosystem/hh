@@ -22,8 +22,11 @@ type savedDecision struct {
 type fakeStore struct {
 	ctxs      map[string]StaffContext
 	overrides map[string]bool // keyed by requestedBy|branchID|policy
-	approval  ApprovalRequest
-	saved     *savedDecision
+	// unusedOverrides is the same key space for HasUnusedApprovedOverride; overrideErr fails both lookups.
+	unusedOverrides map[string]bool
+	overrideErr     error
+	approval        ApprovalRequest
+	saved           *savedDecision
 	// lastFiled is the most recent request fileApproval handed the store
 	// (the quote floor door's binding assertions read it back).
 	lastFiled *ApprovalRequest
@@ -39,7 +42,11 @@ type fakeStore struct {
 }
 
 func (f *fakeStore) HasApprovedOverride(_ context.Context, requestedBy, branchID, _ string, policy PolicyType) (bool, error) {
-	return f.overrides[requestedBy+"|"+branchID+"|"+string(policy)], nil
+	return f.overrides[requestedBy+"|"+branchID+"|"+string(policy)], f.overrideErr
+}
+
+func (f *fakeStore) HasUnusedApprovedOverride(_ context.Context, requestedBy, branchID string, policy PolicyType) (bool, error) {
+	return f.unusedOverrides[requestedBy+"|"+branchID+"|"+string(policy)], f.overrideErr
 }
 
 func (f *fakeStore) ResolveStaff(_ context.Context, userID string) (StaffContext, error) {

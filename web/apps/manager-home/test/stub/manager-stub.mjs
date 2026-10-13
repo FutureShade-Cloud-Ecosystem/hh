@@ -23,6 +23,7 @@ const FLOWS = [
   { flow: "sales", role_code: "inside_sales", label: "Sales" },
   { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
   { flow: "yard-manager", role_code: "yard_manager", label: "Yard manager" },
+  { flow: "financial-controller", role_code: "financial_controller", label: "Financial controller" },
 ];
 
 const USERS = {
@@ -132,6 +133,87 @@ const CLAIM_WEB = "10000000-0000-4000-9000-0000000000c5";
 
 const ago = (hours) => new Date(Date.now() - hours * 3600 * 1000).toISOString();
 
+// ---- the dispatch day -------------------------------------------------------------------
+//
+// The Drivers view's world, in the core's board shape: one branch, today, its
+// runs and its stops. Four runs, one per board state (on a stop, between
+// stops, not started, done), five active drivers with one on no run, three
+// trucks. Every driver is a role label, per the demo tenant sheet (GLS-
+// TENANT-r2): no person's name rides this board.
+
+function buildDispatch() {
+  const day = new Date().toISOString().slice(0, 10);
+  const stop = (id, runId, stopNo, status, stamps = {}) => ({
+    id,
+    branch_id: BRANCH_ID,
+    order_id: `0d000000-0000-4000-9000-0000000000${stopNo}${runId.slice(-1)}`,
+    order_no: `SO-TRT-10${stopNo}${runId.slice(-1)}`,
+    customer_name: "Northline Hardscapes (demo)",
+    run_id: runId,
+    stop_no: stopNo,
+    scheduled_date: day,
+    status,
+    time_window: "",
+    loaded_at: stamps.loaded ?? null,
+    en_route_at: stamps.enRoute ?? null,
+    delivered_at: stamps.delivered ?? null,
+    pod_at: null,
+    photo_count: 0,
+    created_at: ago(5),
+  });
+  const run = (id, runNo, status, truckId, truckCode, driverId, driverName, stopCount, stamps = {}) => ({
+    id,
+    run_no: runNo,
+    branch_id: BRANCH_ID,
+    scheduled_date: day,
+    status,
+    truck_id: truckId,
+    driver_id: driverId,
+    truck_code: truckCode,
+    driver_name: driverName,
+    notes: "",
+    dispatched_at: stamps.dispatched ?? null,
+    completed_at: stamps.completed ?? null,
+    stop_count: stopCount,
+    created_at: ago(5),
+    commit_state: "AUTO",
+    reopened_at: "",
+    reopen_reason: "",
+  });
+  return {
+    runs: [
+      run("d1000000-0000-4000-9000-0000000000r1", "RUN-1", "DISPATCHED", "d1000000-0000-4000-9000-0000000000t1", "T1", "d1000000-0000-4000-9000-0000000000d1", "Driver persona (demo)", 3, { dispatched: ago(3) }),
+      run("d1000000-0000-4000-9000-0000000000r2", "RUN-2", "DISPATCHED", "d1000000-0000-4000-9000-0000000000t2", "T2", "d1000000-0000-4000-9000-0000000000d2", "Driver two (demo)", 2, { dispatched: ago(2) }),
+      run("d1000000-0000-4000-9000-0000000000r3", "RUN-3", "PLANNED", "d1000000-0000-4000-9000-0000000000t3", "", "d1000000-0000-4000-9000-0000000000d3", "Driver three (demo)", 1),
+      run("d1000000-0000-4000-9000-0000000000r4", "RUN-4", "COMPLETED", "d1000000-0000-4000-9000-0000000000t1", "T1", "d1000000-0000-4000-9000-0000000000d4", "Driver four (demo)", 2, { dispatched: ago(4), completed: ago(2) }),
+    ],
+    stops: [
+      stop("d1000000-0000-4000-9000-0000000000s1", "d1000000-0000-4000-9000-0000000000r1", 1, "DELIVERED", { loaded: ago(3.5), enRoute: ago(3), delivered: ago(1) }),
+      stop("d1000000-0000-4000-9000-0000000000s2", "d1000000-0000-4000-9000-0000000000r1", 2, "EN_ROUTE", { loaded: ago(3.5), enRoute: ago(0.3) }),
+      stop("d1000000-0000-4000-9000-0000000000s3", "d1000000-0000-4000-9000-0000000000r1", 3, "READY"),
+      stop("d1000000-0000-4000-9000-0000000000s4", "d1000000-0000-4000-9000-0000000000r2", 1, "DELIVERED", { loaded: ago(2.5), enRoute: ago(2), delivered: ago(0.7) }),
+      stop("d1000000-0000-4000-9000-0000000000s5", "d1000000-0000-4000-9000-0000000000r2", 2, "LOADED", { loaded: ago(0.5) }),
+      stop("d1000000-0000-4000-9000-0000000000s6", "d1000000-0000-4000-9000-0000000000r3", 1, "READY"),
+      stop("d1000000-0000-4000-9000-0000000000s7", "d1000000-0000-4000-9000-0000000000r4", 1, "DELIVERED", { loaded: ago(4), enRoute: ago(3.8), delivered: ago(3) }),
+      stop("d1000000-0000-4000-9000-0000000000s8", "d1000000-0000-4000-9000-0000000000r4", 2, "DELIVERED", { loaded: ago(4), enRoute: ago(3.5), delivered: ago(2.4) }),
+    ],
+    unassigned: [],
+    drivers: [
+      { id: "d1000000-0000-4000-9000-0000000000d1", branch_id: BRANCH_ID, name: "Driver persona (demo)", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000d2", branch_id: BRANCH_ID, name: "Driver two (demo)", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000d3", branch_id: BRANCH_ID, name: "Driver three (demo)", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000d4", branch_id: BRANCH_ID, name: "Driver four (demo)", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000d5", branch_id: BRANCH_ID, name: "Driver five (demo)", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000d6", branch_id: BRANCH_ID, name: "Driver off roster (demo)", is_active: false },
+    ],
+    trucks: [
+      { id: "d1000000-0000-4000-9000-0000000000t1", branch_id: BRANCH_ID, code: "T1", name: "Truck 1 flatbed", truck_type: "FLATBED", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000t2", branch_id: BRANCH_ID, code: "T2", name: "Truck 2 dump", truck_type: "DUMP", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000t3", branch_id: BRANCH_ID, code: "T3", name: "Truck 3 pickup", truck_type: "PICKUP", is_active: true },
+    ],
+  };
+}
+
 function buildWorld() {
   const shortages = [
     {
@@ -237,6 +319,7 @@ function buildWorld() {
   const world = {
     shortages,
     tasks,
+    dispatch: buildDispatch(),
     needsByProfile: {
       "manager.yard": {
         profile: "manager.yard",
@@ -327,6 +410,13 @@ function buildWorld() {
           { widget_key: "sales.today", shape: "stat", measure: "sales.today", split: "none", range: "today", size: "M", title: "Today's sales", position: 1, visible: true, label: "Today's sales", kind: "money_cents", module: "pos", span_cols: 6, span_rows: 1 },
         ],
       },
+      "admin": {
+        profile: "admin",
+        source: "role",
+        widgets: [
+          { widget_key: "needs.you", shape: "list", measure: "needs.you", split: "none", range: "open", size: "L", title: "Needs you", position: 0, visible: true, label: "Needs you", kind: "count", module: "dashboard", span_cols: 6, span_rows: 2 },
+        ],
+      },
     },
     dataByProfile: {
       "manager.yard": {
@@ -361,6 +451,9 @@ function buildWorld() {
       "manager.sales": {
         "needs.you": { widget_key: "needs.you", state: "ok", total: 1, range: "open" },
         "sales.today": { widget_key: "sales.today", state: "ok", total: 123456, range: "today" },
+      },
+      "admin": {
+        "needs.you": { widget_key: "needs.you", state: "ok", total: 0, range: "open" },
       },
     },
     receiving: [
@@ -1124,6 +1217,122 @@ function decidesMargin(flow) {
   return flow === "sales-manager";
 }
 
+// ---- the builder's world -------------------------------------------------------------
+//
+// The widget catalog THIS caller builds from, the gallery its Add widget sheet
+// opens on, the role defaults an admin edits, and the composed series the
+// builder's preview reads. The measures mirror the stub's own data keys, so a
+// placed widget draws from the same numbers the landing reads.
+
+const WIDGET_MEASURES = [
+  { metric_id: "deliveries.today", label: "Deliveries today", module: "dispatch", kind: "count", dimensions: ["branch", "status"], shapes: ["bar"], splits: ["none", "branch"], widget_shapes: ["stat", "bars"], ranges: ["today"], unit: "dispatch", screen: "dispatch", lead: "Deliveries booked today" },
+  { metric_id: "picks.queue", label: "Pick queue", module: "tasks", kind: "count", dimensions: ["status"], shapes: ["bar", "list"], splits: ["none", "status"], widget_shapes: ["board", "gauge", "bars"], ranges: ["open"], unit: "yard", screen: "yard", lead: "The pick queue by status" },
+  { metric_id: "orders.open", label: "Open orders", module: "order", kind: "count", dimensions: [], shapes: [], splits: ["none"], widget_shapes: ["stat"], ranges: ["open"], unit: "", screen: "", lead: "Orders nothing has closed yet" },
+  { metric_id: "sales.today", label: "Today's sales", module: "pos", kind: "money_cents", dimensions: ["branch"], shapes: ["bar"], splits: ["none", "branch"], widget_shapes: ["stat"], ranges: ["today"], unit: "", screen: "", lead: "Taken at the counter today" },
+  { metric_id: "warranty.open_claims", label: "Open claims", module: "warranty", kind: "count", dimensions: ["status"], shapes: ["list"], splits: ["none", "status"], widget_shapes: ["stat"], ranges: ["open"], unit: "", screen: "", lead: "Claims waiting on the yard" },
+];
+
+const GALLERY_CARDS = [
+  { entry_key: "deliveries-today", shape: "stat", measure: "deliveries.today", split: "none", range: "today", size: "M", title: "Deliveries today", blurb: "The day going out the gate, one number.", position: 0, visible: true, label: "Deliveries today", kind: "count", module: "dispatch", unit: "dispatch", screen: "dispatch", span_cols: 6, span_rows: 1 },
+  { entry_key: "picks-board", shape: "board", measure: "picks.queue", split: "status", range: "open", size: "L", title: "Pick queue", blurb: "Every pick in the yard, by the state it sits in.", position: 1, visible: true, label: "Pick queue", kind: "count", module: "tasks", unit: "yard", screen: "yard", span_cols: 6, span_rows: 2 },
+];
+
+const ROLE_GALLERY = {
+  "manager.yard": [
+    { entry_key: "deliveries-today", shape: "stat", measure: "deliveries.today", split: "none", range: "today", size: "M", title: "Deliveries today", blurb: "The day going out the gate, one number.", position: 0, visible: true },
+    { entry_key: "picks-board", shape: "board", measure: "picks.queue", split: "status", range: "open", size: "L", title: "Pick queue", blurb: "Every pick in the yard, by the state it sits in.", position: 1, visible: true },
+    { entry_key: "claims-open", shape: "stat", measure: "warranty.open_claims", split: "none", range: "open", size: "S", title: "Open claims", blurb: "What the warranty desk is holding.", position: 2, visible: true },
+  ],
+  "manager.sales": [
+    { entry_key: "sales-today", shape: "stat", measure: "sales.today", split: "none", range: "today", size: "M", title: "Today's sales", blurb: "Taken at the counter today.", position: 0, visible: true },
+  ],
+};
+
+function storedWidget(widget) {
+  return {
+    widget_key: widget.widget_key,
+    shape: widget.shape,
+    measure: widget.measure,
+    split: widget.split,
+    range: widget.range,
+    size: widget.size,
+    title: widget.title,
+    position: widget.position,
+    visible: widget.visible,
+  };
+}
+
+function roleWidgets(profile) {
+  return (world.widgetsByProfile[profile]?.widgets ?? []).map(storedWidget);
+}
+
+function tileCatalogEntries() {
+  return [
+    { tile_id: "orders.open", label: "Open orders", module: "order", kind: "count", glyph: "lucide:package", accent: "#64748b", default_visible: true, lead: "Orders nothing has closed yet", wired: true },
+    { tile_id: "picks.queued", label: "Queued picks", module: "tasks", kind: "count", glyph: "lucide:clipboard-list", accent: "#64748b", default_visible: false, lead: "The queue before a picker claims it", wired: false },
+  ];
+}
+
+function classicTile(profile) {
+  return {
+    tile_id: "orders.open",
+    label: "Open orders",
+    module: "order",
+    kind: "count",
+    glyph: "lucide:package",
+    accent: "#64748b",
+    default_visible: true,
+    lead: "Orders nothing has closed yet",
+    position: 0,
+    visible: true,
+    state: "ok",
+    number: 12,
+  };
+}
+
+function myHomeBody(profile) {
+  const pins = profile === "manager.sales"
+    ? [{ tab_key: "sales", position: 0, visible: true }]
+    : [{ tab_key: "yard", position: 0, visible: true }, { tab_key: "purchasing", position: 1, visible: false }];
+  return {
+    profile,
+    source: "user",
+    tiles: [classicTile(profile)],
+    home: { profile, takeover: false, mobile_only: false },
+    tabs: { source: "user", pins },
+    hotkeys: [],
+  };
+}
+
+function vizSeries(metricId) {
+  if (metricId === "picks.queue") {
+    return { total: 20, points: [
+      { label: "Waiting", number: 8 },
+      { label: "Claimed", number: 5 },
+      { label: "Picked", number: 3, tone: "good" },
+      { label: "Staged", number: 4 },
+    ] };
+  }
+  if (metricId === "deliveries.today") return { total: 14, points: [{ label: "Trenton", number: 10 }, { label: "Kingston", number: 4 }] };
+  if (metricId === "sales.today") return { total: 123456, points: [{ label: "Trenton", number: 123456 }] };
+  if (metricId === "warranty.open_claims") return { total: 3, points: [{ label: "Open", number: 3 }] };
+  if (metricId === "orders.open") return { total: 12, points: [] };
+  return null;
+}
+
+// The profile a bearer reads: the yard manager's board, the sales manager's,
+// and the controller's own admin profile. Whoever is an admin in this world is
+// the tier one global role, the way the core's guard decides it.
+function profileOf(flow) {
+  if (flow === "yard-manager") return "manager.yard";
+  if (flow === "financial-controller") return "admin";
+  return "manager.sales";
+}
+
+function isAdmin(flow) {
+  return flow === "financial-controller";
+}
+
 function flowOf(token) {
   for (const [flow, account] of Object.entries(USERS)) {
     const payload = token.split(".")[1];
@@ -1136,10 +1345,6 @@ function flowOf(token) {
     }
   }
   return null;
-}
-
-function profileOf(flow) {
-  return flow === "yard-manager" ? "manager.yard" : "manager.sales";
 }
 
 function openShortageCount() {
@@ -1249,6 +1454,11 @@ async function handle(req, res) {
   }
 
   if (req.method === "GET" && path === "/api/v1/dashboard/widgets") {
+    // The empty home: a profile whose rows carry nothing yet, the state the
+    // builder's empty words answer.
+    if (scenario === "no-widgets") {
+      return json(res, { profile, source: "catalog", widgets: [] });
+    }
     return json(res, world.widgetsByProfile[profile]);
   }
 
@@ -1363,6 +1573,178 @@ async function handle(req, res) {
     approval.status = body?.approve === true ? "APPROVED" : "REJECTED";
     approval.decided_by = USERS[flow].user_id;
     return json(res, { ok: true });
+  }
+
+  // ---- the dispatch reads the Drivers view uses ----
+  //
+  // The board answers its own today when no date rides the query, the way the
+  // core's Board does (service.go: date == "" becomes the server's today).
+  // drivers-refused is the role gate's own body, the one word.
+  if (req.method === "GET" && path === "/api/v1/dispatch/board") {
+    if (scenario === "drivers-refused") return refuse(res, 403, "Forbidden");
+    const day = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
+    const empty = scenario === "no-runs";
+    return json(res, {
+      branch_id: url.searchParams.get("branch_id") || BRANCH_ID,
+      date: day,
+      runs: empty ? [] : world.dispatch.runs,
+      stops: empty ? [] : world.dispatch.stops,
+      unassigned: empty ? [] : world.dispatch.unassigned,
+    });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/dispatch/drivers") {
+    return json(res, { items: world.dispatch.drivers, next_cursor: null, limit: 100 });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/dispatch/trucks") {
+    return json(res, { items: world.dispatch.trucks, next_cursor: null, limit: 100 });
+  }
+
+  // ---- the dashboard builder's routes ----
+  // The tile-era home: the classic rows, the landing config, and the pinned
+  // strip riding along, exactly the shape the core's Resolve answers.
+  if (req.method === "GET" && path === "/api/v1/dashboard") {
+    return json(res, myHomeBody(profile));
+  }
+
+  if (req.method === "GET" && path === "/api/v1/dashboard/catalog") {
+    return json(res, {
+      tiles: tileCatalogEntries(),
+      profiles: ["manager.yard", "manager.sales", "admin"],
+      profile,
+    });
+  }
+
+  if (req.method === "PUT" && path === "/api/v1/dashboard/layout") {
+    return json(res, { tiles: Array.isArray(body?.tiles) ? body.tiles : [] });
+  }
+  if (req.method === "DELETE" && path === "/api/v1/dashboard/layout") {
+    return json(res, { cleared: 1, layout: myHomeBody(profile) });
+  }
+
+  if (req.method === "PUT" && path === "/api/v1/dashboard/tabs") {
+    return json(res, { source: "user", pins: Array.isArray(body?.pins) ? body.pins : [] });
+  }
+  if (req.method === "DELETE" && path === "/api/v1/dashboard/tabs") {
+    const home = myHomeBody(profile);
+    return json(res, { cleared: 1, tabs: { source: "role", pins: home.tabs.pins } });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/dashboard/widgets/catalog") {
+    return json(res, {
+      measures: WIDGET_MEASURES,
+      shapes: ["stat", "trend", "bars", "list", "board", "gauge"],
+      sizes: ["S", "T", "M", "L", "XL"],
+      spans: { S: [3], T: [3], M: [6], L: [6], XL: [12] },
+      span_cols: [3, 4, 6, 8, 9, 12],
+      max_rows: 3,
+      splits: ["none", "branch", "status", "bucket"],
+      ranges: ["today", "wtd", "mtd", "qtd", "ytd", "last_7", "last_14", "last_30", "last_90", "open", "all_time", "now"],
+      profile,
+    });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/dashboard/widgets/gallery") {
+    return json(res, { profile, entries: GALLERY_CARDS });
+  }
+
+  if (req.method === "PUT" && path === "/api/v1/dashboard/widgets") {
+    return json(res, { widgets: Array.isArray(body?.widgets) ? body.widgets : [] });
+  }
+  if (req.method === "DELETE" && path === "/api/v1/dashboard/widgets") {
+    return json(res, { cleared: 1, layout: world.widgetsByProfile[profile] });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/dashboard/metrics") {
+    return json(res, {
+      metrics: WIDGET_MEASURES.filter((m) => m.dimensions.length > 0),
+      dimensions: ["branch", "status", "bucket"],
+      shapes: ["bar", "split", "list"],
+      profile,
+    });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/dashboard/viz") {
+    const tiles = url.searchParams.getAll("tile").slice(0, 24).map((id) => {
+      // The composed id grammar: viz.<measure>-<dimension>-<shape>.
+      const rest = id.startsWith("viz.") ? id.slice(4) : id;
+      const parts = rest.split("-");
+      const shape = parts[parts.length - 1];
+      const dimension = parts.length > 2 ? parts[parts.length - 2] : "";
+      const metricId = parts.slice(0, Math.max(1, parts.length - 2)).join("-");
+      const measure = WIDGET_MEASURES.find((m) => m.metric_id === metricId);
+      if (measure === undefined) return null;
+      const series = vizSeries(metricId);
+      if (series === null) return null;
+      return {
+        tile_id: id,
+        metric_id: metricId,
+        dimension,
+        shape,
+        label: measure.label,
+        kind: measure.kind,
+        module: measure.module,
+        unit: measure.unit === "" ? undefined : measure.unit,
+        screen: measure.screen === "" ? undefined : measure.screen,
+        position: 0,
+        state: "ok",
+        total: series.total,
+        points: series.points,
+        note: "",
+      };
+    }).filter((t) => t !== null);
+    return json(res, { tiles });
+  }
+
+  // ---- the role defaults: the server re-checks the admin gate on every route ----
+  const profileMatch = path.match(/^\/api\/v1\/dashboard\/profiles\/([^/]+)(\/.*)?$/);
+  if (profileMatch) {
+    if (!isAdmin(flow)) return refuse(res, 403, "Forbidden");
+    const target = decodeURIComponent(profileMatch[1]);
+    if (!knownProfiles().includes(target)) return refuse(res, 404, "unknown dashboard profile");
+    const sub = profileMatch[2] ?? "";
+    if (req.method === "GET" && sub === "") {
+      return json(res, {
+        profile: target,
+        tiles: target === "admin" ? [] : [{ tile_id: "orders.open", position: 0, visible: true }],
+        home: { profile: target, takeover: false, mobile_only: false },
+      });
+    }
+    if (req.method === "PUT" && sub === "") {
+      return json(res, { tiles: Array.isArray(body?.tiles) ? body.tiles : [] });
+    }
+    if (req.method === "GET" && sub === "/widgets") {
+      return json(res, { profile: target, widgets: roleWidgets(target) });
+    }
+    if (req.method === "PUT" && sub === "/widgets") {
+      return json(res, { profile: target, widgets: Array.isArray(body?.widgets) ? body.widgets : [] });
+    }
+    if (req.method === "GET" && sub === "/tabs") {
+      return json(res, { profile: target, pins: target === "manager.yard" ? [{ tab_key: "yard", position: 0, visible: true }] : [{ tab_key: "sales", position: 0, visible: true }] });
+    }
+    if (req.method === "PUT" && sub === "/tabs") {
+      return json(res, { profile: target, pins: Array.isArray(body?.pins) ? body.pins : [] });
+    }
+    if (req.method === "GET" && sub === "/gallery") {
+      return json(res, { profile: target, entries: ROLE_GALLERY[target] ?? [] });
+    }
+    if (req.method === "PUT" && sub === "/gallery") {
+      return json(res, { profile: target, entries: Array.isArray(body?.entries) ? body.entries : [] });
+    }
+    if (req.method === "PUT" && sub === "/home") {
+      const takeover = body?.takeover === true;
+      const unit = String(body?.landing_unit ?? "").trim();
+      // The core's own write gate, in its own words: a takeover must name where it lands.
+      if (takeover && unit === "") return refuse(res, 400, "a takeover must name a landing unit");
+      return json(res, {
+        profile: target,
+        takeover,
+        mobile_only: body?.mobile_only === true,
+        ...(unit === "" ? {} : { landing_unit: unit }),
+        ...(String(body?.landing_module ?? "").trim() === "" ? {} : { landing_module: String(body.landing_module).trim() }),
+      });
+    }
   }
 
   // ---- the reporting surface -------------------------------------------------------
@@ -1728,6 +2110,13 @@ async function handle(req, res) {
     }
   }
 
+  if (req.method === "GET" && path === "/api/v1/dashboard/profiles") {
+    if (!isAdmin(flow)) return refuse(res, 403, "Forbidden");
+    return json(res, {
+      profiles: knownProfiles().map((p) => ({ profile: p, home: { profile: p, takeover: false, mobile_only: false } })),
+    });
+  }
+
   // ---- the warranty module's routes (core/internal/warranty) ----
   // The tier gates, as the guards run them: reads and lifecycle are staff
   // (any mint here passes), settle and sweep are manager (tier 1 or 2, and
@@ -1735,7 +2124,7 @@ async function handle(req, res) {
   // no demo manager holds, so the shared Forbidden body answers).
   // The no-warranty scenario is the empty world: no claims anywhere.
   const warranty = scenario === "no-warranty" ? { ...world.warranty, claims: [] } : world.warranty;
-  const isAdmin = () => false; // no demo manager holds a tier 1 role
+  const warrantyIsAdmin = () => false; // no demo manager holds a tier 1 role
   const isManager = () => USERS[flow].tier <= 2;
   const forbiddenWall = (res) => refuse(res, 403, "Forbidden");
   const claimById = (id) => warranty.claims.find((c) => c.id === id);
@@ -2116,7 +2505,7 @@ async function handle(req, res) {
     }
     if (vendorMatch && req.method === "PUT") {
       if (scenario === "refused-vendor-save") return forbiddenWall(res);
-      if (!isAdmin()) return forbiddenWall(res);
+      if (!warrantyIsAdmin()) return forbiddenWall(res);
       const profile = warranty.vendors.find((v) => v.vendor_id === vendorMatch[1]);
       if (!profile) {
         return refuse(res, 422, `warranty: unknown vendor ${JSON.stringify(vendorMatch[1])}, create the vendor before configuring its warranty profile`);
@@ -2136,7 +2525,7 @@ async function handle(req, res) {
 
     const overrideMatch = path.match(/^\/api\/v1\/warranty\/vendors\/([^/]+)\/overrides$/);
     if (overrideMatch && req.method === "POST") {
-      if (!isAdmin()) return forbiddenWall(res);
+      if (!warrantyIsAdmin()) return forbiddenWall(res);
       const profile = warranty.vendors.find((v) => v.vendor_id === overrideMatch[1]);
       if (!profile) return refuse(res, 404, "warranty: vendor profile not found");
       const productId = String(body?.product_id ?? "");
@@ -2160,6 +2549,10 @@ async function handle(req, res) {
   }
 
   return notFound(res);
+}
+
+function knownProfiles() {
+  return ["manager.yard", "manager.sales", "admin"];
 }
 
 const server = createServer((req, res) => {
