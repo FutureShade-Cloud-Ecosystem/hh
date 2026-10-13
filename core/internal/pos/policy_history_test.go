@@ -75,7 +75,7 @@ func seedPolicy(h *harness, branchID string) PosPolicy {
 		LinePresentation: LinePresentationLines, QuickChipsEnabled: true,
 		WorkspaceSplitPct: 40, WorkspaceArrangement: "LOOKUP_LEFT",
 		LookupPresentation: "CARDS", MarginVisibility: "MANAGER_UP",
-		BalanceVisibility: "ALL_STAFF",
+		BalanceVisibility: "ALL_STAFF", SupplierDepositCancel: SupplierDepositCancelCreditBack,
 	}
 	h.store.policies[branchID] = p
 	return p

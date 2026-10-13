@@ -189,3 +189,55 @@ func TestIntegration_DepositSweep_SkipsWithoutTheLedgerRead(t *testing.T) {
 		t.Fatalf("got %+v, %v; want a skip", res, err)
 	}
 }
+
+// TestIntegration_DepositRelease_DocumentIDsAreReadOldestFirst: the shared reader's
+// order. depositDocumentIDs feeds three callers: the release's emit order, the cancel's
+// settle walk (which sorts the ids itself before it walks, so the reader's order is free
+// to be the documents' own), and the POS return's account rail, which offsets the order's
+// deposit documents in the order handed back (pos/returns.go applyAccountCredit). With
+// two live documents whose created order differs from their id order, the reader must
+// answer oldest first: a partial offset must land on the older document, not the lower
+// id.
+func TestIntegration_DepositRelease_DocumentIDsAreReadOldestFirst(t *testing.T) {
+	pool := intPool(t)
+	ctx := context.Background()
+	tag := ns(t)
+	cust := seedCustomer(t, pool, tag)
+	var orderID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO orders (order_no, customer_id, branch_id, status, fulfillment)
+		 VALUES ('ORD-DCO-'||$1, $2::uuid, $3::uuid, 'CONFIRMED', 'DELIVERY') RETURNING id::text`,
+		tag, cust, trentonBranch).Scan(&orderID); err != nil {
+		t.Fatalf("seed order: %v", err)
+	}
+	// createdFirst carries the HIGHER id; createdLast the LOWER, so the created order
+	// and the id order disagree and the leg can tell them apart.
+	const createdFirst = "00000000-0000-4000-8000-0000000000cb"
+	const createdLast = "00000000-0000-4000-8000-0000000000ca"
+	for _, d := range []struct {
+		id    string
+		older bool
+	}{{createdFirst, true}, {createdLast, false}} {
+		age := "now()"
+		if d.older {
+			age = "now() - interval '1 hour'"
+		}
+		if _, err := pool.Exec(ctx, fmt.Sprintf(`
+			INSERT INTO invoices (id, invoice_no, customer_id, order_id, branch_id, status, due_date,
+			                      subtotal_cents, tax_cents, total_cents, balance_cents,
+			                      source_kind, finalized_at, created_at)
+			VALUES ($1::uuid, 'INV-DCO-'||$2||$3, $4::uuid, $5::uuid, $6::uuid, 'FINALIZED', CURRENT_DATE,
+			        4000, 0, 4000, 4000, 'SUPPLIER_DEPOSIT', now(), %s)`, age),
+			d.id, tag, d.id[len(d.id)-2:], cust, orderID, trentonBranch); err != nil {
+			t.Fatalf("seed deposit document %s: %v", d.id, err)
+		}
+	}
+
+	ids, err := NewInvoiceWriter(pool).DepositDocumentIDsTx(ctx, nil, orderID)
+	if err != nil {
+		t.Fatalf("read the order's deposit documents: %v", err)
+	}
+	if len(ids) != 2 || ids[0] != createdFirst || ids[1] != createdLast {
+		t.Fatalf("the reader answered %v, want the oldest first [%s %s]: the POS return's account rail offsets the documents in this order, so a partial offset must land on the older document, not the lower id", ids, createdFirst, createdLast)
+	}
+}
