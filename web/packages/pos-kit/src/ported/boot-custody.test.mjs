@@ -6,7 +6,7 @@
 // a fake surface, a fake core fetch, a fake clock.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SessionStore, PERSONA_MIRROR_KEY, PersonaMemo, PlatformUnreachableError } from "@hardscapehouse/auth";
+import { SessionStore, SESSION_MIRROR_KEY, ThrowSafeMirror, PERSONA_MIRROR_KEY, PersonaMemo, PlatformUnreachableError } from "@hardscapehouse/auth";
 import { FakeScheduler, RecordedStorage, fakeExchangeAnswer, fakeExchangeRefusal, FAKE_ACCOUNT } from "@hardscapehouse/auth/testing";
 import { APP_IDS, APP_ROLES, ROLE_FLOWS, bootCustody, entryFor } from "./boot-custody.ts";
 
@@ -380,4 +380,83 @@ test("toFrontDoor navigates once under a prefix and never at the root", () => {
   assert.equal(custody.toFrontDoor("/"), false);
   assert.equal(custody.toFrontDoor("/till/"), true);
   assert.deepEqual(navigated, ["/"]);
+});
+
+// ── round 2 (the Opus review of item 7d) ──────────────────────────────────
+
+/** A custody whose session mirror sits on the given storage, so a profile the front door left is restored. */
+function bootOnStorage(config, { surface, fetchFn, storage, clock = new FakeScheduler(START) }) {
+  const sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, storage), now: clock.now });
+  const custody = bootCustody(config, { sessions, demoAccount: surface, demoOrg: "hh-demo", surface, fetch: fetchFn, storage, timers: clock, now: clock.now, navigate: () => {} });
+  return { custody, sessions, clock };
+}
+
+const personaProfile = JSON.stringify({ v: 2, userId: "persona:driver", email: "p@hh-demo.invalid", name: "Persona" });
+
+test("testers' copy: a transient fault at load after a persona entry does not delete the partner's console session", async () => {
+  const storage = new RecordedStorage();
+  storage.setItem(SESSION_MIRROR_KEY, personaProfile); // what the front door mirrored after the persona entry
+  new PersonaMemo(storage).write("driver");
+  const surface = fakeSurface({ session: "offline", exchange: () => answerFor("sales_manager", "fake-partner-token") });
+  const { custody, clock } = bootOnStorage(TESTERS_COPY, { surface, fetchFn: personaFetch([]), storage });
+  const seen = [];
+  custody.begin("drive-run", (outcome) => seen.push(outcome));
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(seen.map((o) => o.kind), ["unavailable"]);
+  surface.state.session = "ok";
+  await clock.advance(15_000);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(surface.calls.includes("deleteSession"), false, "the partner's console session was deleted");
+  assert.deepEqual(seen.map((o) => o.kind), ["unavailable", "ready"]);
+  await custody.leave("/");
+});
+
+// ── P2-3: a token that ran out is not a session that ended ──────────────────
+
+test("a person's token that runs out while custody still holds the profile is unavailable and recovers, never a sign out", async () => {
+  let live = true;
+  const clock = new FakeScheduler(START);
+  const fresh = () => fakeExchangeAnswer("fake-core-token", clock.now() + 900_000, { role_code: "driver", role_name: "Label of driver" });
+  const surface = fakeSurface({ exchange: () => (live ? fresh() : fakeExchangeRefusal("unavailable")) });
+  const { custody } = boot(CONSOLE, { surface, clock });
+  const seen = [];
+  custody.begin("drive-run", (outcome) => seen.push(outcome));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(seen[0].kind, "ready");
+  live = false; // the exchange is down for longer than the token lives (900 s)
+  await clock.advance(1_000_000);
+  assert.equal(seen.some((o) => o.kind === "front-door"), false, "an outage that outlasts the token must not end the session");
+  assert.equal(seen.at(-1).kind, "unavailable");
+  assert.equal(surface.calls.includes("deleteSession"), false);
+  live = true;
+  await clock.advance(200_000);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(seen.at(-1).kind, "ready");
+  await custody.leave("/");
+});
+
+test("a persona token that reaches its window clears the memo and the local custody and goes to the front door, without the console delete", async () => {
+  const storage = new RecordedStorage();
+  new PersonaMemo(storage).write("driver");
+  const surface = fakeSurface({ session: "none", exchange: () => fakeExchangeRefusal("no_session") });
+  const { custody, sessions, clock } = bootOnStorage(PUBLIC_COPY, { surface, fetchFn: personaFetch([]), storage });
+  const seen = [];
+  custody.begin("drive-run", (outcome) => seen.push(outcome));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(seen[0].kind, "ready");
+  await clock.advance(3_700_000); // past the persona window
+  assert.deepEqual(seen.at(-1), { kind: "front-door", why: "ended" });
+  assert.equal(new PersonaMemo(storage).read(), null);
+  assert.equal(sessions.profile, null);
+  assert.equal(surface.calls.includes("deleteSession"), false);
+});
+
+test("custody cleared elsewhere (no profile) is still reported as ended", async () => {
+  const { custody, sessions, clock } = boot(CONSOLE, { surface: fakeSurface({ exchange: () => answerFor("driver") }) });
+  const seen = [];
+  custody.begin("drive-run", (outcome) => seen.push(outcome));
+  await new Promise((r) => setImmediate(r));
+  sessions.clear();
+  await clock.advance(2_000);
+  assert.deepEqual(seen.at(-1), { kind: "front-door", why: "ended" });
 });

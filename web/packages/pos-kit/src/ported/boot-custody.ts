@@ -272,6 +272,8 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
   const testersCopy = cfg.personas && !cfg.personasOpen;
 
   let persona: ExchangeUser | null = null;
+  /** True once a persona session ended at its window and custody was cleared locally: leave() then has no console session to delete. */
+  let endedLocally = false;
   let generation = 0;
   let pending: unknown = null;
 
@@ -291,6 +293,10 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
     if (remembered !== null && cfg.personas) {
       let bearer: string | null = null;
       if (testersCopy) {
+        // After a persona entry the front door mirrored the persona's profile; resuming over it would let the
+        // controller's own refresh (armed by a transient) see the partner answer for someone else and sign out,
+        // which deletes the partner's console session. The profile is display only: forget it, keep the console.
+        if (deps.sessions.profile?.userId.startsWith("persona:")) deps.sessions.clear();
         const partner = await controller.resume();
         if (!partner.ok) {
           const transient = transientReason(partner.reason);
@@ -350,7 +356,30 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
           pending = null;
           if (!live()) return;
           if (deps.sessions.current === null) {
-            onOutcome({ kind: "front-door", why: "ended" });
+            if (deps.sessions.profile === null) {
+              // Custody was cleared (an ending refusal, a sign out elsewhere): the session is over.
+              onOutcome({ kind: "front-door", why: "ended" });
+              return;
+            }
+            if (persona !== null) {
+              // A persona has no console session and no refresh: its window ran out. Forget it locally and go to
+              // the front door; the partner's console session is not ours to delete.
+              memo.clear();
+              persona = null;
+              tap.forget();
+              deps.sessions.clear();
+              endedLocally = true;
+              onOutcome({ kind: "front-door", why: "ended" });
+              return;
+            }
+            // The token ran out but custody still holds the person (an exchange outage that outlasted it): not
+            // an end. Say unavailable and recover on the backoff; the console cookie decides.
+            onOutcome({ kind: "unavailable", reason: "unavailable" });
+            pending = timers.setTimeout(() => {
+              pending = null;
+              if (live()) void run();
+            }, wait);
+            wait = Math.min(wait * 2, RETRY_CAP_MS);
             return;
           }
           watch();
@@ -378,7 +407,12 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
       memo.clear();
       persona = null;
       tap.forget();
-      await controller.signOut();
+      if (endedLocally) {
+        endedLocally = false;
+        deps.sessions.clear();
+      } else {
+        await controller.signOut();
+      }
       return toFrontDoor(baseUrl);
     },
     toFrontDoor,
