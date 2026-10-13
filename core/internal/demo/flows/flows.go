@@ -18,7 +18,7 @@
 // Manager Home app's yard manager, and the live role logins the roles
 // roadmap adds one reviewed row at a time (the yard personas, Payables and
 // Receivables and the Procurement Manager and the Financial Controller
-// after PRs 300 and 303). A new flow is an edit here, reviewed, never a
+// after PRs 300 and 303, then the coming roles cycle's five). A new flow is an edit here, reviewed, never a
 // runtime input: the entry page may only ever offer what this file lists.
 package flows
 
@@ -153,6 +153,17 @@ var accounts = map[string]Account{
 		Label:          "Financial Controller",
 		Role:           "financial_controller",
 	},
+	// The General Manager, the first of the coming roles cycle's five
+	// logins (global, tier one). The id block is the cycle's own, so the
+	// five rows cannot collide with the role lanes' blocks.
+	"general-manager": {
+		Flow:           "general-manager",
+		PlatformUserID: "de5b2000-0000-4000-9000-000000000001",
+		Email:          "general.manager@" + ReservedDomain,
+		DisplayName:    "General manager (demo)",
+		Label:          "General Manager",
+		Role:           "general_manager",
+	},
 }
 
 // Get returns the account one flow name stands for. The second return is
@@ -175,6 +186,7 @@ func All() []Account {
 		accounts["payables-receivables"],
 		accounts["procurement-manager"],
 		accounts["financial-controller"],
+		accounts["general-manager"],
 	}
 }
 
