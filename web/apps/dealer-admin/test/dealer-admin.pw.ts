@@ -165,3 +165,18 @@ test("a frontline caller is refused the audit read", async ({ page }) => {
   // The trail is an admin read; the refusal names who may act.
   await expect(page.locator("[data-test=audit-error]")).toContainText("managers and above");
 });
+
+test("a refused role change says so beside the register", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "refused-assign" } });
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toHaveText("5 staff");
+
+  // The server refuses the write: the select snaps back and the words stay
+  // on the glass beside the register, in the ready phase.
+  await page.locator(`select[data-user-id=${YARD_TEAM_ROW}]`).selectOption({ label: "Yard Manager" });
+  await expect(page.locator("[data-test=assign-error]")).toContainText("The role did not change.");
+  await expect(page.locator("[data-test=staff-count]")).toHaveText("5 staff");
+  await page.request.post("/_stub/reset");
+});

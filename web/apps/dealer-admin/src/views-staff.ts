@@ -61,6 +61,9 @@ export function renderStaff(model: StaffModel): TemplateResult {
           <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="reload-staff">Try again</button></div>
         `
       : nothing}
+    ${model.phase === "ready" && model.error !== ""
+      ? html`<p class="error-line" data-test="assign-error">${model.error}</p>`
+      : nothing}
     ${model.phase === "ready" ? renderRegister(model) : nothing}
     ${model.phase === "ready" ? renderCreate(model.roles, model.branches) : nothing}
     ${model.phase === "ready" ? renderRolesCatalog(model.roles) : nothing}
