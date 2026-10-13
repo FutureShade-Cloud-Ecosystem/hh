@@ -1214,7 +1214,7 @@ export function centsText(cents: number): string {
 
 export interface SplitFields {
   readonly loads: string;
-  /** The charge for the extra truck, dollars, optional. */
+  /** The order's whole freight after the split, dollars, optional (empty keeps it as it is). */
   readonly freight: string;
   /** Each truck's share by hand, dollars, comma separated, optional. */
   readonly amounts: string;
@@ -1225,7 +1225,7 @@ const shares = (text: string): string[] => text.split(",").map((p) => p.trim()).
 /** The form's own check: a whole number of trucks and amounts that are dollars. The bounds and the sum are the core's. */
 export function validateSplit(f: SplitFields): string {
   if (!/^\d+$/.test(f.loads.trim())) return "Trucks is a whole number, like 2.";
-  if (dollarsToCents(f.freight) === undefined) return "The charge is dollars and cents, like 150.00.";
+  if (dollarsToCents(f.freight) === undefined) return "The freight is dollars and cents, like 150.00.";
   if (f.amounts.trim() !== "" && shares(f.amounts).some((p) => typeof dollarsToCents(p) !== "number")) return "Each share is dollars and cents, like 100.00, separated by commas.";
   return "";
 }
@@ -1242,7 +1242,7 @@ export function splitBody(f: SplitFields, orderId: string): DispatchSplitInput {
 export function splitNotice(r: DispatchSplitResult): string {
   const n = r.loads.length;
   const trucks = `${n} ${n === 1 ? "truck" : "trucks"}`;
-  if (r.parked) return "Nothing changed. The extra charge is waiting for approval; the loads and the charge are as they were.";
+  if (r.parked) return "Nothing changed. The new freight is waiting for approval; the loads and the freight are as they were.";
   const each = r.loads.map((l) => l.freight_cents);
   const known = each.length > 0 && each.every((c): c is number => typeof c === "number");
   if (n === 1) return typeof r.freight_cents === "number" ? `Freight ${centsText(r.freight_cents)} on 1 truck.` : "Freight on 1 truck.";

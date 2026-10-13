@@ -42,7 +42,7 @@ test("amounts that are not dollars are answered before the core is asked", async
   await openSplit(page, "ORD-0012");
   await field(page, "freight").fill("12.345");
   await submit(page).click();
-  await expect(page.locator("[data-sheet-error]")).toHaveText("The charge is dollars and cents, like 150.00.");
+  await expect(page.locator("[data-sheet-error]")).toHaveText("The freight is dollars and cents, like 150.00.");
   await field(page, "freight").fill("");
   await field(page, "loads").fill("two");
   await submit(page).click();
@@ -54,7 +54,7 @@ test("a raise above the quote parks: nothing changes, the card says what is aske
   await openSplit(page, "ORD-0014");
   await field(page, "freight").fill("150.00");
   await submit(page).click();
-  await expect(page.locator("[data-notice]")).toContainText("Nothing changed. The extra charge is waiting for approval");
+  await expect(page.locator("[data-notice]")).toContainText("Nothing changed. The new freight is waiting for approval");
   const raise = page.locator("[data-raise]");
   await expect(raise).toContainText("Waiting for approval");
   await expect(raise).toContainText("ORD-0014 for Summit Ridge Builders");
@@ -146,3 +146,18 @@ for (const size of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) 
     expect(small).toEqual([]);
   });
 }
+
+test("the sheet and the parked notice never speak of an extra charge: the field is the order's freight after the split", async ({ page, request }) => {
+  await openBoard(page, request);
+  await openSplit(page, "ORD-0014");
+  const sheet = page.locator("[data-sheet='split-freight']");
+  await expect(sheet).toContainText("The order's freight after the split, dollars, optional; empty keeps it as it is");
+  await expect(sheet).not.toContainText(/extra/i);
+  await field(page, "freight").fill("150.00");
+  await submit(page).click();
+  await expect(page.locator("[data-notice]")).toContainText("The new freight is waiting for approval");
+  await expect(page.locator("[data-notice]")).not.toContainText(/extra/i);
+  await expect(page.locator("[data-raise]")).not.toContainText(/extra/i);
+  await openSplit(page, "ORD-0014");
+  await expect(page.locator("[data-sheet='split-freight']")).not.toContainText(/extra/i);
+});

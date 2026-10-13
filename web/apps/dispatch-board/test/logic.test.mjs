@@ -704,7 +704,7 @@ test("the split form wants a whole number of trucks and amounts that are dollars
   assert.match(validateSplit(f({ loads: "" })), /Trucks is a whole number/);
   assert.match(validateSplit(f({ loads: "2.5" })), /Trucks is a whole number/);
   assert.equal(validateSplit(f({ loads: "300" })), "", "300 trucks is the core's to refuse in its words");
-  assert.match(validateSplit(f({ freight: "abc" })), /The charge is dollars and cents/);
+  assert.match(validateSplit(f({ freight: "abc" })), /The freight is dollars and cents/);
   assert.match(validateSplit(f({ amounts: "10, x" })), /Each share is dollars and cents/);
   assert.equal(validateSplit(f({ freight: "$300", amounts: "100, 200" })), "");
 });
@@ -720,7 +720,7 @@ test("an applied split says the order's freight and each truck's share only from
   assert.equal(splitNotice({ order_id: "o", freight_cents: 100, override: false, loads: [load(34), load(33), load(33)] }), "Freight $1.00 split across 3 trucks: $0.34, $0.33, $0.33.");
   assert.equal(splitNotice({ order_id: "o", freight_cents: 30000, override: false, loads: [load(), load()] }), "Freight split across 2 trucks.", "a share the core did not send is not drawn");
   assert.equal(splitNotice({ order_id: "o", freight_cents: 30000, override: false, loads: [load(30000)] }), "Freight $300.00 on 1 truck.");
-  assert.match(splitNotice({ order_id: "o", freight_cents: 10000, override: false, loads: [load(10000)], parked: { id: "r", order_id: "o", branch_id: "b", loads: 2, asked_by: "a dispatch manager", asked_at: "x", state: "PARKED" } }), /^Nothing changed\. The extra charge is waiting for approval/);
+  assert.match(splitNotice({ order_id: "o", freight_cents: 10000, override: false, loads: [load(10000)], parked: { id: "r", order_id: "o", branch_id: "b", loads: 2, asked_by: "a dispatch manager", asked_at: "x", state: "PARKED" } }), /^Nothing changed\. The new freight is waiting for approval/);
 });
 
 test("a parked raise reads by state, and its figures show only when the core sent them", () => {

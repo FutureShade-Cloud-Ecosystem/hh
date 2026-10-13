@@ -281,10 +281,10 @@ function splitSheet(sheet: Sheet, model: BoardModel): TemplateResult {
       <h4>Split the freight on ${stop?.order_no ?? "this order"} across trucks</h4>
       <div class="sheet-grid">
         <label>Trucks the order goes out on<input class="control" type="text" inputmode="numeric" data-field="loads" data-initial=${String(now + 1)} autocomplete="off" /></label>
-        <label>Charge for the extra truck, dollars, optional<input class="control" type="text" inputmode="decimal" data-field="freight" autocomplete="off" /></label>
+        <label>The order's freight after the split, dollars, optional; empty keeps it as it is<input class="control" type="text" inputmode="decimal" data-field="freight" autocomplete="off" /></label>
         <label class="wide">Each truck's share by hand, dollars, separated by commas, optional<input class="control" type="text" data-field="amounts" autocomplete="off" /></label>
       </div>
-      <p class="small dim">Left empty, the core divides the freight evenly. A charge above what the customer was quoted waits for an approver and changes nothing until it is approved. Asking the same thing twice is safe.</p>
+      <p class="small dim">Left empty, the core divides the freight evenly. Freight above what the customer was quoted waits for an approver and changes nothing until it is approved. Asking the same thing twice is safe.</p>
       ${sheet.error !== "" ? html`<p class="alert alert-error" role="alert" data-sheet-error>${sheet.error}</p>` : nothing}
       <div class="actions">
         <button type="button" class="btn btn-primary" data-action="sheet-submit" ?disabled=${model.busy}>Split it</button>
