@@ -18,7 +18,9 @@
 #
 # The script force-removes only the containers it names with its own
 # prefix, never a substring match, so another lane's or a reviewer's
-# containers are never touched.
+# containers are never touched. An EXIT trap removes, on a passing and on a
+# failing run alike, the Postgres container and the network this run
+# started (by name, and only if this run started them); ones it found stay.
 #
 # What is asserted, clause by clause:
 #
@@ -88,6 +90,30 @@ CAP="$PREFIX-cap"
 CAPCLI="$PREFIX-capcli"
 
 FAILURES=0
+net_made=0
+pg_started=0
+
+# Runs on every exit, pass or fail: removes by exact name only what this run
+# started. The exit status of the run is kept.
+cleanup() {
+	status=$?
+	trap - EXIT
+	docker rm -f "$HAPPY" "$RESUME" "$CAP" "$CAPCLI" >/dev/null 2>&1 || true
+	if [ "$pg_started" = "1" ]; then
+		docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
+	elif [ "$pg_found" = "1" ]; then
+		for db in "$DBPFX"_happy "$DBPFX"_nohash "$DBPFX"_nomode "$DBPFX"_build "$DBPFX"_foreign "$DBPFX"_appdb "$DBPFX"_realuser "$DBPFX"_realpay; do
+			docker exec "$PG_NAME" psql -U postgres -q -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
+		done
+	fi
+	if [ "$net_made" = "1" ]; then
+		docker network rm "$NET" >/dev/null 2>&1 || true
+	fi
+	exit "$status"
+}
+pg_found=0
+trap cleanup EXIT
+
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
 
@@ -187,15 +213,14 @@ case "$HASH" in
 esac
 
 echo "== the throwaway Postgres"
-net_made=0
 if ! docker network inspect "$NET" >/dev/null 2>&1; then
 	docker network create "$NET" >/dev/null
 	net_made=1
 fi
 if docker ps --format '{{.Names}}' | grep -qx "$PG_NAME"; then
-	pg_up=1
+	pg_found=1
 else
-	pg_up=0
+	pg_started=1
 	docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
 	docker run -d --name "$PG_NAME" --network "$NET" \
 		-p "127.0.0.1:$PG_PORT:5432" \
@@ -802,22 +827,8 @@ esac
 [ "$forged" = "0" ] && pass "rotating forged forwarded values bought no bucket" \
 	|| fail "$forged mint(s) bought by forged forwarded values"
 
-# --------------------------------------------------------------------------
-# Cleanup: the containers and the throwaway databases go; the Postgres
-# stays for the next run.
-# --------------------------------------------------------------------------
-docker rm -f "$HAPPY" "$RESUME" "$CAP" "$CAPCLI" >/dev/null 2>&1 || true
-for db in "$DBPFX"_happy "$DBPFX"_nohash "$DBPFX"_nomode "$DBPFX"_build "$DBPFX"_foreign "$DBPFX"_appdb "$DBPFX"_realuser "$DBPFX"_realpay; do
-	docker exec "$PG_NAME" psql -U postgres -q -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
-done
-
-# A Postgres and network this run created go too; ones it found stay.
-if [ "$pg_up" = "0" ]; then
-	docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
-fi
-if [ "$net_made" = "1" ]; then
-	docker network rm "$NET" >/dev/null 2>&1 || true
-fi
+# Cleanup is the EXIT trap above: the containers, the databases of a
+# Postgres that was found, and the Postgres and network this run started.
 
 echo "== done: $FAILURES failure(s)"
 [ "$FAILURES" -eq 0 ]
