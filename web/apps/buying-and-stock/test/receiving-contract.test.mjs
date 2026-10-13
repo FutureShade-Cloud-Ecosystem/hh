@@ -116,9 +116,9 @@ test("the order document is a file in either form, without prices when cost is h
   assert.equal(csv.status, 200);
   assert.match(csv.headers.get("content-type"), /text\/csv/);
   assert.match(csv.text, /Unit cost/);
-  const html = await stub.call("GET", `${P}/pos/${po.id}/document`);
-  assert.match(html.headers.get("content-type"), /text\/html/);
-  assert.match(html.text, /Purchase order PO-TRT-141/);
+  const printable = await stub.call("GET", `${P}/pos/${po.id}/document`);
+  assert.match(printable.headers.get("content-type"), /text\/html/);
+  assert.match(printable.text, /Purchase order PO-TRT-141/);
   await stub.post("/_stub/flag", { name: "costsHidden", value: true });
   assert.doesNotMatch((await stub.call("GET", `${P}/pos/${po.id}/document.csv`)).text, /Unit cost/);
 });

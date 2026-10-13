@@ -160,9 +160,9 @@ test("the order document downloads as a spreadsheet and to print, under the orde
   const text = await (await import("node:fs/promises")).readFile((await file.path()) ?? "", "utf8");
   expect(text).toContain("Purchase order,PO-TRT-141");
   expect(text).toContain("Unit cost");
-  const html = page.waitForEvent("download");
+  const printed = page.waitForEvent("download");
   await page.getByRole("button", { name: "Download to print" }).click();
-  expect((await html).suggestedFilename()).toBe("PO-TRT-141.html");
+  expect((await printed).suggestedFilename()).toBe("PO-TRT-141.html");
 });
 
 test("a send goes to the tagged desk behind a confirm step and the history keeps it", async ({ page, request }) => {
