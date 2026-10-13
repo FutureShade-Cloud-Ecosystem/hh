@@ -35,10 +35,17 @@ import (
 // spelling: the bridge maps the canonical words onto the staff context the services read.
 func fleetMux(t *testing.T, h *harness, scope string, branches ...string) (*http.ServeMux, map[string]string) {
 	t.Helper()
+	return fleetMuxAs(t, h, "logistics_manager", identity2.TierManager, scope, branches...)
+}
+
+// fleetMuxAs is fleetMux for any role and tier, so a leg can send the same real bearer as a caller
+// below the manager tier and read the mux's own refusal.
+func fleetMuxAs(t *testing.T, h *harness, role string, tier int, scope string, branches ...string) (*http.ServeMux, map[string]string) {
+	t.Helper()
 	sg := testkit.NewStaffGuards(t)
 	sg.SetAuthority(identity2.StaffAuthority{
-		RoleID:   "logistics_manager",
-		Tier:     identity2.TierManager,
+		RoleID:   role,
+		Tier:     tier,
 		Scope:    scope,
 		Branches: branches,
 	})
@@ -290,9 +297,10 @@ func TestFleetUpdate_DriverValidatesLikeTheCreate(t *testing.T) {
 	mux, headers := fleetMux(t, h, identity2.ScopeGlobal)
 
 	for name, body := range map[string]string{
-		"an empty name":    fmt.Sprintf(`{"branch_id":%q,"name":"  "}`, d.BranchID),
-		"a branch move":    fmt.Sprintf(`{"branch_id":%q,"name":"x"}`, branchKGN),
-		"no branch at all": `{"name":"x"}`,
+		"an empty name":                fmt.Sprintf(`{"branch_id":%q,"name":"  "}`, d.BranchID),
+		"a branch move":                fmt.Sprintf(`{"branch_id":%q,"name":"x"}`, branchKGN),
+		"no branch at all":             `{"name":"x"}`,
+		"a user id that is not a uuid": fmt.Sprintf(`{"branch_id":%q,"name":"x","user_id":"not-a-uuid"}`, d.BranchID),
 	} {
 		code, resp := fleetDo(t, mux, headers, http.MethodPut, "/api/v1/dispatch/drivers/"+d.ID, body)
 		if code != http.StatusBadRequest {
@@ -311,5 +319,36 @@ func TestFleetUpdate_MissingDriverIs404(t *testing.T) {
 		if code != http.StatusNotFound {
 			t.Errorf("PUT %s answered %d: %s, want 404", id, code, resp)
 		}
+	}
+}
+
+// TestFleetUpdate_BelowManagerIsRefusedOnBothRoutes: the update routes are manager gated at the mux.
+// A frontline caller with the same real bearer, reaching the same branch, is refused with a 403 on
+// the truck and on the driver update, and neither row moves.
+func TestFleetUpdate_BelowManagerIsRefusedOnBothRoutes(t *testing.T) {
+	h := newHarness(t)
+	tr := seedTruckAt(t, h, branchTRT)
+	d := seedDriverAt(t, h, branchTRT)
+	mux, headers := fleetMuxAs(t, h, "yard_team", identity2.TierFrontline, identity2.ScopeBranch, branchTRT)
+
+	code, resp := fleetDo(t, mux, headers, http.MethodPut, "/api/v1/dispatch/trucks/"+tr.ID,
+		fmt.Sprintf(`{"branch_id":%q,"code":%q,"name":"Frontline rename","is_active":true}`, tr.BranchID, tr.Code))
+	if code != http.StatusForbidden {
+		t.Fatalf("a frontline truck update answered %d: %s, want 403", code, resp)
+	}
+	code, resp = fleetDo(t, mux, headers, http.MethodPut, "/api/v1/dispatch/drivers/"+d.ID,
+		fmt.Sprintf(`{"branch_id":%q,"name":"Frontline rename (demo)","is_active":true}`, d.BranchID))
+	if code != http.StatusForbidden {
+		t.Fatalf("a frontline driver update answered %d: %s, want 403", code, resp)
+	}
+	var truckName, driverName string
+	if err := h.pool.QueryRow(context.Background(), `SELECT name FROM dispatch_trucks WHERE id = $1`, tr.ID).Scan(&truckName); err != nil {
+		t.Fatalf("read the truck back: %v", err)
+	}
+	if err := h.pool.QueryRow(context.Background(), `SELECT name FROM dispatch_drivers WHERE id = $1`, d.ID).Scan(&driverName); err != nil {
+		t.Fatalf("read the driver back: %v", err)
+	}
+	if truckName != "First spelling" || driverName != "First spelling (demo)" {
+		t.Fatalf("a refused caller changed a row: truck %q, driver %q", truckName, driverName)
 	}
 }

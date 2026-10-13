@@ -30,6 +30,8 @@ const stubPort = process.env.DISPATCH_STUB_PORT ?? String(20000 + slot + 1);
 export default defineConfig({
   testDir: "./test",
   testMatch: "**/*.pw.ts",
+  // The image acceptance legs run against a booted image with their own config.
+  testIgnore: "acceptance/**",
   workers: 1,
   use: {
     baseURL: `http://127.0.0.1:${appPort}`,

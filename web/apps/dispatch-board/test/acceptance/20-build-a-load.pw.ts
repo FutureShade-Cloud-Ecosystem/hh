@@ -41,7 +41,8 @@ test("a waiting load goes onto the truck that needs a crew, and the truck goes o
   expect(moved.body.commit_state).toBe("COMMITTED");
 
   const lane = page.locator(`[data-run-no='${run.run_no}']`);
-  await expect(lane.getByRole("button", { name: "Dispatch" })).toBeDisabled();
+  await lane.getByRole("button", { name: "Dispatch" }).click();
+  await expect(lane.locator("[data-lane-error]")).toContainText("a run needs both a truck and a driver before it can be dispatched");
   await expect(lane.locator("[data-dispatch-why]")).toContainText("truck and a driver");
   await lane.locator("select[data-field='crew-truck']").selectOption({ index: 1 });
   await expect(page.locator("[data-notice]")).toHaveText("Crew set.");

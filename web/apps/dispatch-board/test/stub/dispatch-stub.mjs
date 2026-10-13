@@ -82,6 +82,19 @@ const BRANCHES = [
   },
 ];
 
+// A second yard the caller may reach, offered only when a test arms it (/_stub/branches).
+const OTHER_BRANCH = "5d1b3f6e-0000-4000-9000-000000000002";
+const JULIAN = {
+  id: OTHER_BRANCH,
+  code: "JUL",
+  name: "Julian",
+  address: { line1: "1500 Farmers Road", city: "Julian", province: "CA", postal: "92036", country: "US" },
+  is_default: false,
+  is_system_default: false,
+  is_active: true,
+};
+let manyBranches = false;
+
 const POLICY = {
   branch_id: BRANCH,
   commit_prompt_hours: 48,
@@ -421,6 +434,7 @@ async function route(req, res, url) {
     armed = null;
     caller = { can_reopen: true, can_commit: true };
     holdAmount = false;
+    manyBranches = false;
     return json(res, { ok: true });
   }
   if (path === "/_stub/refuse" && method === "POST") {
@@ -433,6 +447,10 @@ async function route(req, res, url) {
   }
   if (path === "/_stub/hold-amount" && method === "POST") {
     holdAmount = Boolean((await readBody(req)).on);
+    return json(res, { ok: true });
+  }
+  if (path === "/_stub/branches" && method === "POST") {
+    manyBranches = Boolean((await readBody(req)).many);
     return json(res, { ok: true });
   }
   if (path === "/_stub/world") {
@@ -451,7 +469,7 @@ async function route(req, res, url) {
   // everything else is a staff route behind a bearer
   if (!String(req.headers.authorization ?? "").startsWith("Bearer ")) return fail(res, 401, "Missing or invalid credentials");
 
-  if (path === "/api/v1/branches") return json(res, BRANCHES);
+  if (path === "/api/v1/branches") return json(res, manyBranches ? [...BRANCHES, JULIAN] : BRANCHES);
 
   if (!path.startsWith("/api/v1/dispatch/")) return fail(res, 404, "not found");
   const rest = path.slice("/api/v1/dispatch/".length);
@@ -460,16 +478,20 @@ async function route(req, res, url) {
 
   // ---- reads
   if (method === "GET") {
+    // The other yard is a quiet one: no trucks, no drivers, nothing on its board.
+    const yard = q("branch_id") === OTHER_BRANCH;
     if (rest === "loadboard") {
       const date = validDate(q("date")) ? q("date") : TODAY;
-      return json(res, loadBoard(date));
+      const view = loadBoard(date);
+      if (!yard) return json(res, view);
+      return json(res, { ...view, branch_id: OTHER_BRANCH, trucks: [], loads: [], staging: [], counts: { ...view.counts, deliveries: 0, unassigned: 0, ready: 0, requested: 0, committed: 0, due: 0 } });
     }
     if (rest === "board") {
       const date = validDate(q("date")) ? q("date") : TODAY;
-      return json(res, dayBoard(date));
+      return json(res, yard ? { branch_id: OTHER_BRANCH, date, runs: [], stops: [], unassigned: [] } : dayBoard(date));
     }
-    if (rest === "trucks") return json(res, { items: world.trucks.map(truckView), limit: 50 });
-    if (rest === "drivers") return json(res, { items: world.drivers, limit: 50 });
+    if (rest === "trucks") return json(res, { items: yard ? [] : world.trucks.map(truckView), limit: 50 });
+    if (rest === "drivers") return json(res, { items: yard ? [] : world.drivers, limit: 50 });
     if (rest === "loadboard/gaps") {
       const items = [
         { stop_id: stopOf("5a000001-0000-4000-9000-000000000002").id, order_no: "ORD-0030", sku: "PVR-CBL-60", description: "Copperline cobble paver, 60 mm", qty_needed: 480, qty_on_hand: 310, qty_short: 170, uom: "sq ft" },

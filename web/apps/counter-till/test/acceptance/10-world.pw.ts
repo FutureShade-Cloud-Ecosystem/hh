@@ -51,7 +51,7 @@ const TEN_NAMES: Record<string, string> = {
   "DEMO-EDGE-ALU": "Aluminum Edging 8 ft",
 };
 
-test("the way in's data: eight flows with role codes and labels", async ({ page }) => {
+test("the way in's data: nine flows with role codes and labels", async ({ page }) => {
   const flows = await page.request.get("/api/v1/demo/flows");
   expect(flows.ok()).toBe(true);
   const body = (await flows.json()) as {

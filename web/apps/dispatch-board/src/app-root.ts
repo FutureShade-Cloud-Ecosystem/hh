@@ -104,6 +104,15 @@ export class DispatchBoardApp extends HHElement {
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
+  // A phone: the header band carries only the brand, the role and Switch role and Sign out; the
+  // theme and feedback buttons move into the page so the band stays one compact band.
+  #narrow = false;
+  readonly #phone = window.matchMedia("(max-width: 520px)");
+  readonly #onPhone = (): void => {
+    this.#narrow = this.#phone.matches;
+    this.requestUpdate();
+  };
+
   // The entry cards carry data-action="choose" and data-flow; one host listener reads them, as the
   // till's does.
   readonly #onHostClick = (event: MouseEvent): void => {
@@ -144,6 +153,8 @@ export class DispatchBoardApp extends HHElement {
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener("click", this.#onHostClick);
+    this.#phone.addEventListener("change", this.#onPhone);
+    this.#narrow = this.#phone.matches;
     // A change event is not composed, so it stops at the shadow root and never reaches the host.
     this.renderRoot.addEventListener("change", this.#onHostChange);
     const handoff = readFrontDoorHandoff();
@@ -170,6 +181,7 @@ export class DispatchBoardApp extends HHElement {
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.#phone.removeEventListener("change", this.#onPhone);
     this.renderRoot.removeEventListener("change", this.#onHostChange);
     super.disconnectedCallback();
   }
@@ -237,14 +249,21 @@ export class DispatchBoardApp extends HHElement {
   // The theme and feedback controls ride the header's named slot; the theme word names the theme a
   // tap moves to.
   private renderThemeControl(): TemplateResult {
+    if (this.#narrow) return html``;
     const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
     return html`<button slot="theme" type="button" class="theme-btn" data-action="feedback">Feedback</button><button slot="theme" type="button" class="theme-btn" data-action="theme">${label}</button>`;
+  }
+
+  #mobileTools(): TemplateResult {
+    const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
+    return html`<div class="mob-tools"><button type="button" class="theme-btn" data-action="feedback">Feedback</button><button type="button" class="theme-btn" data-action="theme">${label}</button></div>`;
   }
 
   private renderSignedIn(): TemplateResult {
     return html`
       <hos-app-header signed-in demo compact product-name="Dispatch">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
+        ${this.#narrow ? this.#mobileTools() : html``}
         ${this.#desk.render()}
       </main>
       <hh-feedback screen="Dispatch and Load Building" trigger="external"></hh-feedback>
@@ -257,9 +276,10 @@ export class DispatchBoardApp extends HHElement {
     return html`
       <hos-app-header demo compact product-name="Dispatch">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
+        ${this.#narrow ? this.#mobileTools() : html``}
         <h1>Dispatch and Load Building</h1>
         <p class="dim">Build the day's loads, crew the trucks and send them out. Demo data only.</p>
-        ${renderEntry({ ...this.#entryView, flows: this.#entryFlows() })}
+        ${renderEntry({ ...this.#entryView, flows: this.#entryFlows() }, { headline: "Who is dispatching?", intro: "Tap a role to open the dispatch board.", coming: false })}
       </main>
     `;
   }

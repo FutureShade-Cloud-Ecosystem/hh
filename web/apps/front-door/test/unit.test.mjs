@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
-// the rule the D2 brief fixes (the eight live roles with the contract's
-// labels and the flows they mint; five coming roles, each carrying the modules
+// the rule the D2 brief fixes (the nine live roles with the contract's
+// labels and the flows they mint; four coming roles, each carrying the modules
 // the matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test

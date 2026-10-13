@@ -19,6 +19,11 @@ import {
   dayOfLabel,
   filterBoard,
   fmtNum,
+  fmtWeight,
+  shortDay,
+  toCuYd,
+  toWeight,
+  weightUnit,
   formatDue,
   groupByStatus,
   holdWords,
@@ -209,7 +214,7 @@ test("the committed card keeps a truck whose load is committed and drops one tha
 test("a lane says it holds another day's work only when it does", () => {
   assert.equal(laneScopeNote([stop()], "2026-01-15", 14), "");
   assert.equal(laneScopeNote([stop({ scheduled_date: "2026-01-16" })], "2026-01-15", 14), "next 14 days");
-  assert.equal(dayOfLabel(stop({ scheduled_date: "2026-01-16" }), "2026-01-15"), "01-16");
+  assert.equal(dayOfLabel(stop({ scheduled_date: "2026-01-16" }), "2026-01-15"), "Jan 16");
   assert.equal(dayOfLabel(stop(), "2026-01-15"), "");
 });
 
@@ -228,7 +233,7 @@ test("the move list projects each truck's gauge with the load on it, and blocks 
   assert.equal(targets[0].blocked, "");
   assert.match(targets[1].blocked, /A dispatch manager can reopen it/);
   assert.equal(targets[2].blocked, "Already on this load");
-  assert.equal(targetLine(targets[0]), "9,000 of 9,000 kg · Near full");
+  assert.equal(targetLine(targets[0]), "9.9 of 9.9 tons · Near full");
   assert.equal(targetLine(targets[2]), "Already on this load");
 });
 
@@ -250,7 +255,7 @@ test("the announcement repeats the fact that changed", () => {
   assert.equal(moveAnnouncement(stop(), null), "ORD-1 taken off its truck. It is back in the staging lane.");
   const v = view({ loads: [row("a", [], { gauge: gauge({ weight_kg: 1000, capacity_kg: 9000 }) })] });
   const [target] = assignTargets(v, stop({ weight_kg: 500 }));
-  assert.equal(moveAnnouncement(stop(), target), "ORD-1 moved to RUN-a · T-a. 1,500 of 9,000 kg, room.");
+  assert.equal(moveAnnouncement(stop(), target), "ORD-1 moved to RUN-a · T-a. 1.7 of 9.9 tons, room.");
 });
 
 test("a bulk selection prunes the loads the board no longer draws and keeps the rest", () => {
@@ -334,7 +339,7 @@ test("a payment hold is a hold in words, with an amount only when the core sent 
   assert.equal(holdWords(null), "");
   assert.equal(holdWords({ held: false, reason: "AR" }), "");
   assert.equal(holdWords({ held: true }), "Payment is due on this order before it can be delivered.");
-  assert.equal(holdWords({ held: true, reason: "payment needed before release, call the office" }), "payment needed before release, call the office");
+  assert.equal(holdWords({ held: true, reason: "payment needed before release, call the office" }), "Payment needed before release, call the office.");
   assert.equal(holdWords({ held: true, reason: "Balance open.", amount_due_cents: 125050 }), "Balance open. $1,250.50 due.");
   assert.equal(holdWords({ held: true, reason: "Balance open.", amount_due_cents: 0 }), "Balance open.");
   assert.equal(formatDue(0), "");
@@ -352,7 +357,30 @@ test("a refusal reads in words by status, and a transport error says the board c
   assert.match(refusalWords("The reopen", "", 401), /session ended/);
   assert.equal(refusalWords("The reopen", "dispatch: only a dispatch manager can reopen a committed load", 403), "only a dispatch manager can reopen a committed load");
   assert.equal(refusalWords("Auto assign", "dispatch: automatic load assignment is part of the Pro module, build the loads here in the meantime", 501), "automatic load assignment is part of the Pro module, build the loads here in the meantime");
-  assert.match(refusalWords("The reopen", "", 403), /dispatch manager can/);
+  assert.match(refusalWords("The reopen", "", 403), /Logistics Manager or a Branch Manager can/);
+  assert.match(refusalWords("The reopen", "Forbidden", 403), /Logistics Manager or a Branch Manager can/, "the gate's bare word is no sentence");
+  assert.match(refusalWords("The reopen", "forbidden", 403), /Logistics Manager or a Branch Manager can/);
+  assert.equal(refusalWords("The reopen", "Forbidden", 409), "Forbidden", "only a 403 gets the fallback");
   assert.match(refusalWords("The reopen", "", 500), /nothing changed/);
   assert.match(refusalWords("The reopen", "internal error", 500), /nothing changed/, "a server fault is not shown as the server's raw word");
+});
+
+test("weights show in pounds and short tons for the San Diego yard, converted at display only", () => {
+  assert.equal(toWeight(1000, "lb").toFixed(1), "2204.6");
+  assert.equal(toWeight(9000, "tons").toFixed(2), "9.92");
+  assert.equal(fmtWeight(3400), "3.7 tons");
+  assert.equal(fmtWeight(1500), "3,307 lb");
+  assert.equal(fmtWeight(1100), "2,425 lb");
+  assert.equal(fmtWeight(9000), "9.9 tons");
+  assert.equal(fmtWeight(null), "n/a");
+  assert.equal(weightUnit(1100, 900), "lb");
+  assert.equal(weightUnit(1100, 5000), "tons", "one unit for both figures of a gauge, chosen by the larger");
+  assert.equal(weightUnit(null, undefined), "lb");
+  assert.equal(toCuYd(1).toFixed(3), "1.308");
+});
+
+test("a short day reads as month and day, one form for pills and strips", () => {
+  assert.equal(shortDay("2026-10-13"), "Oct 13");
+  assert.equal(dayOfLabel(stop({ scheduled_date: "2026-01-16" }), "2026-01-15"), "Jan 16");
+  assert.equal(shortDay("garbage"), "garbage");
 });

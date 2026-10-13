@@ -378,7 +378,7 @@ export class FrontDoorApp extends HHElement {
         color: var(--hh-danger);
       }
 
-      /* ── the coming list: one collapsed disclosure. The five coming
+      /* ── the coming list: one collapsed disclosure. The four coming
          roles are honesty about scope, not a page of their own: closed they
          take one row, open they show today's list unchanged, chips muted
          as they ever were. ────────────────────────────────────────────── */
