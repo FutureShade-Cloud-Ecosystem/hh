@@ -4,6 +4,14 @@
 // caller does not have, so the adapter's answer is adopted straight into custody
 // and an expired token reads as signed out.
 //
+// It also guards overlapping calls. Every signIn takes a generation at entry
+// and signOut bumps it, so a sign in that is superseded while it waits (on the
+// adapter or on tenant me) adopts nothing, never clears the newer custody, and
+// answers in plain words: a sign out always wins over a sign in in flight, and
+// the newest sign in wins over an older one whichever answers first. A new
+// sign in also drops the earlier profile at once, so no role is ever readable
+// over a bearer it did not come from.
+//
 // What it keeps, and what it never does:
 // - The bearer token and its expiry live in the custody's private memory.
 //   Nothing is written to web storage: the custody's display mirror is given
@@ -90,6 +98,7 @@ export function memoryStorage(): StorageLike {
 
 const NOT_SIGNED_IN_WORDS = "You are signed out. Sign in again.";
 const CANNOT_OPEN_WORDS = "This account cannot open Pro. Ask the dealer to check your access.";
+const REPLACED_WORDS = "That sign in was replaced by a newer one or by a sign out. Sign in again.";
 const UNAVAILABLE_WORDS = "Pro is not reachable right now. Try again in a moment.";
 
 export interface InMemoryTenantSessionOptions {
@@ -106,6 +115,8 @@ export class InMemoryTenantSession implements TenantSession {
   readonly #client: ApiClient;
   readonly #listeners = new Set<() => void>();
   #profile: TenantProfile | null = null;
+  // Bumped by every sign in at entry and by sign out; a call that finds it moved has been superseded.
+  #generation = 0;
   readonly headers: HeaderProvider;
 
   constructor(options: InMemoryTenantSessionOptions) {
@@ -119,18 +130,26 @@ export class InMemoryTenantSession implements TenantSession {
   async signIn(email: string, password: string): Promise<Result<TenantProfile>> {
     // A tenant sign in has no organisation and no platform exchange to ask: the adapter's answer is the
     // session, adopted straight into custody (the auth controller's exchange path is for staff).
+    const generation = ++this.#generation;
+    if (this.#profile !== null) {
+      this.#profile = null;
+      this.#notify();
+    }
     const signedIn = await this.#adapter.signIn(email, password);
+    if (generation !== this.#generation) return err(REPLACED_WORDS);
     if (!signedIn.ok) return signedIn.status === undefined ? err(signedIn.error) : err(signedIn.error, signedIn.status);
     const held = signedIn.value;
     if (!this.#sessions.adopt({ token: held.token, tokenExpiresAtMs: held.expiresAtMs, user: { ...held.user } })) {
       await this.#clearCustody();
-      return err("sign-in failed: the sign in returned an unusable session");
+      return err(UNAVAILABLE_WORDS);
     }
     const answer = await tenantAuth.tenantGetMe(this.#client);
+    if (generation !== this.#generation) return err(REPLACED_WORDS);
     if (!answer.ok) {
-      await this.#clearCustody();
+      const ended = this.#clearCustody();
       this.#profile = null;
       this.#notify();
+      await ended;
       const words = answer.status === 401 ? NOT_SIGNED_IN_WORDS : answer.status === 403 ? CANNOT_OPEN_WORDS : UNAVAILABLE_WORDS;
       return answer.status === undefined ? err(words) : err(words, answer.status);
     }
@@ -147,18 +166,21 @@ export class InMemoryTenantSession implements TenantSession {
   }
 
   async signOut(): Promise<void> {
+    // Any sign in still in flight is now superseded: it adopts nothing when it lands.
+    this.#generation += 1;
     await this.#clearCustody();
     this.#profile = null;
     this.#notify();
   }
 
   async #clearCustody(): Promise<void> {
+    // Custody goes first and at once, so nothing that lands during the adapter's own sign out can keep it alive.
+    this.#sessions.clear();
     try {
       await this.#adapter.signOut();
     } catch {
       // the far side was already gone; custody is cleared regardless
     }
-    this.#sessions.clear();
   }
 
   current(): { token: string; expiresAtMs: number } | null {
