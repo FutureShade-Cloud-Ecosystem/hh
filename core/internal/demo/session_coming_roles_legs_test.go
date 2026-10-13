@@ -280,4 +280,45 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 			t.Errorf("the role decided %v of the three seeded kinds", decided)
 		}
 	})
+	t.Run("hr", func(t *testing.T) {
+		hr := mint(t, "hr")
+		// L-card: the flow table's account, a leadership credential with no branch
+		// fence, and a bearer that reaches the two surfaces the role holds above
+		// None (Dealer Admin at admin, House Messages at work).
+		if hr.user.UserID != "de5b2000-0000-4000-9000-000000000002" || hr.user.RoleCode != "hr" ||
+			hr.user.RoleName != "HR" || hr.user.Tier != 1 || hr.user.Scope != "GLOBAL" {
+			t.Errorf("the credential is %+v, want HR at tier 1 GLOBAL", hr.user)
+		}
+		wantOK(t, "Dealer Admin (admin): the pricing rules read", "/api/v1/pricing/rules", hr)
+		wantOK(t, "House Messages (work): the channel list", "/api/v1/messaging/channels", hr)
+		// L-branch: a global role reaches every branch.
+		if codes := branchCodes(t, hr); !sameSet(codes, []string{"TRT", "KGN"}) {
+			t.Errorf("HR reaches %v, want both branches", codes)
+		}
+		// L-wall: every other surface sits at None for the role, Manager Home
+		// included (HR holds no Manager Home), and the approvals queue is not HR's:
+		// no kind is decided by the role.
+		wantWall(t, "Manager Home (manager-home, None)", "/api/v1/dashboard", hr)
+		wantWall(t, "the needs queue (manager-home, None)", "/api/v1/dashboard/needs", hr)
+		wantWall(t, "the till's policy (counter-till, None)", "/api/v1/pos/policy", hr)
+		wantWall(t, "the Money Desk (money-desk, None)", "/api/v1/ar/credit-holds", hr)
+		wantWall(t, "the dispatch board (dispatch-board, None)", "/api/v1/dispatch/trucks?branch_id="+trentonID, hr)
+		wantWall(t, "the yard pick queue (yard-pick, None)", "/api/v1/yard/pick-queue?branch_id="+trentonID, hr)
+		for _, kind := range []string{"MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE"} {
+			if status, raw := get(t, "/api/v1/staff/approvals?status=PENDING&kind="+kind, hr); status != http.StatusForbidden {
+				t.Errorf("HR listing %s approvals: status %d body %s, want 403 (HR decides no kind)", kind, status, raw)
+			}
+		}
+		// L-cost: Dealer Admin is at admin for the role, yet the pricing audit
+		// carries cost and margin figures and HR is off the cost and margin list,
+		// so it is refused beside the level.
+		wantWall(t, "the pricing audit (cost and margin list)", "/api/v1/pricing/audit", hr)
+		cfg, err := roleconfig.Default()
+		if err != nil {
+			t.Fatalf("roleconfig.Default: %v", err)
+		}
+		if contains(cfg.CostVisibility(), "hr") {
+			t.Errorf("the decided matrix lists HR on the cost and margin list: %v", cfg.CostVisibility())
+		}
+	})
 }
