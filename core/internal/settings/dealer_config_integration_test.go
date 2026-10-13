@@ -119,3 +119,23 @@ func TestIntegration_DealerConfig_MalformedTaxRegionRefuses(t *testing.T) {
 		t.Fatal("a malformed tax region was read as a configuration")
 	}
 }
+
+func TestIntegration_DealerConfig_BusinessZoneIsServedAndALiveWrite(t *testing.T) {
+	r := NewDealerConfigReader(intPool(t))
+	restoreDealerConfig(t, r)
+	ctx := context.Background()
+	if _, err := r.pool.Exec(ctx, `DELETE FROM system_settings WHERE key = 'business_zone'`); err != nil {
+		t.Fatal(err)
+	}
+	if z, err := r.BusinessZone(ctx); err != nil || z != "America/Toronto" {
+		t.Fatalf("an absent zone is the Ontario dealer's: %q %v", z, err)
+	}
+	pacific := DefaultDealerConfig()
+	pacific.BusinessZone = "America/Los_Angeles"
+	if err := r.WriteDealerConfig(ctx, pacific); err != nil {
+		t.Fatal(err)
+	}
+	if z, err := r.BusinessZone(ctx); err != nil || z != "America/Los_Angeles" {
+		t.Fatalf("a written zone is live at the next read: %q %v", z, err)
+	}
+}

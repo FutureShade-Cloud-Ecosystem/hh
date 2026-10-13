@@ -182,6 +182,16 @@ func (r *DealerConfigReader) DealerConfigTx(ctx context.Context, tx DealerConfig
 	return r.read(ctx, tx)
 }
 
+// BusinessZone is the dealer's business day zone alone, uncached, for a surface that serves it
+// (the settings kit's config read). An absent or malformed stored zone answers the Ontario default.
+func (r *DealerConfigReader) BusinessZone(ctx context.Context) (string, error) {
+	c, err := r.DealerConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+	return c.BusinessZone, nil
+}
+
 func (r *DealerConfigReader) read(ctx context.Context, q DealerConfigQuerier) (DealerConfig, error) {
 	rows, err := q.Query(ctx,
 		`SELECT key::text, value FROM system_settings WHERE key IN ('currency','tax_region','business_zone','hst_rate_bps')`)

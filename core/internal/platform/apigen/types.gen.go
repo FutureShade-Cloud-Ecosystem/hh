@@ -1838,6 +1838,7 @@ type SettingsSurfaceConfig struct {
 	UserItems    []SettingsItem        `json:"user_items"`
 	Workspace    SettingsWorkspaceView `json:"workspace"`
 	Policy       *map[string]any       `json:"policy,omitempty"`
+	BusinessZone *string               `json:"business_zone,omitempty"`
 }
 
 type SettingsRoleItemsBody struct {
