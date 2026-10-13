@@ -25,6 +25,16 @@ writer's `FOR NO KEY UPDATE`. The POS account credit writes no payment row and d
 skips step 2 and keeps the order of the steps it does take; its `FOR UPDATE` on the invoice conflicts with a
 share, but returns of one sale are serialised by the per-sale lock before either.
 
+Every return that puts goods back on the shelf also takes those goods' `stock_balances` rows FIRST, through
+inventory's own seam (`LockStockTx`, sorted product then location, the same pass the swap takes for its two
+halves), before its first counter draw and before any processor refund call: the POS ring takes a stock row
+before it draws the invoices counter, and the order cancel's settlement now takes its stock rows before the same
+counter (round 2), so a return whose rail drew the counter before its restock could meet either writer head on
+(the round 2 Opus read's P2-1, both meetings legged in round 3). The rows are the requested restocking lines'
+products at the sale's branch, resolved before the transaction opens (a rung sale's lines are immutable), so the
+guard's own restock set inside the transaction is a subset of rows already held; a return that restocks nothing
+(a damaged or credit only return) locks no stock row at all.
+
 ## Why the payments counter comes first
 
 A settle holds an invoice row while it waits for the payments counter row. Any other writer that holds the counter on
@@ -89,13 +99,19 @@ conflict; the share was never something these writers needed to hold back.
 | `PayWithStamps`, `PayWithIntent`, `Pay` (portal and card settle) | the same, in `lockAndTotal` | yes |
 | `ReversePayment` | payment row, payments counter (the reversing insert and the stamp, feed +1 each), every allocated invoice row `FOR NO KEY UPDATE` ascending, contra allocations, invoice re-opens (invoices counter +1 each) | yes: among the writers that take a counter or an invoice, the payment row is first only for NSF and this one (the terminal writers `MarkDeposited` and bankrec's claim and release update payment rows but take no counter and no invoice) |
 | POS ring | stock rows, order rows, payments counter (the tender's payment insert), new invoice (invoices counter) | yes: no existing invoice |
-| POS return, cash or card refund (the till refund rail) | per-sale advisory lock, payments counter (not advancing, drawn inside `lockReturnInvoicesTx` only when invoice rows will be taken), the owed order's invoice rows (`FOR NO KEY UPDATE`, sorted, PR 277's split), returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), refund payment insert (payments feed +1) | yes: the counter is drawn before the invoice rows the return takes, the order's own steps 2 then 3, and a paid sale's return (no invoice row) draws no counter at all (the delta reviews' P2) |
-| POS credit note across orders, cash or card refund (`returnAcrossInTx`) | per-sale advisory locks in ascending order id, payments counter (not advancing, drawn inside `lockReturnInvoicesTx` only when invoice rows will be taken), every child's owed invoice rows (`FOR NO KEY UPDATE`, sorted), the note header, per child: returned order lines, invoice `FOR KEY SHARE`, refund payment insert (payments feed +1) | yes: the note draws the counter before its invoice rows exactly as the single return does (the delta reviews' P1: the note path was the one writer left on the old order), and a note of fully paid sales with no deposit documents draws no counter either |
-| POS return to account credit | per-sale advisory lock, the order's invoice rows (`FOR NO KEY UPDATE`, sorted, every document the account rail offsets), returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), invoice `FOR UPDATE` (ApplyCreditToInvoice), invoices counter | yes: no payments row and no payments counter, so step 2 is skipped and the rest keep their order |
+| POS return, cash or card refund (the till refund rail) | per-sale advisory lock, the restock's stock rows (the restocking lines' `stock_balances` rows, `FOR UPDATE`, sorted product then location, through inventory's own seam, taken only when the return restocks), payments counter (not advancing, drawn inside `lockReturnInvoicesTx` only when invoice rows will be taken), the owed order's invoice rows (`FOR NO KEY UPDATE`, sorted, PR 277's split), returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), refund payment insert (payments feed +1) | yes: the counter is drawn before the invoice rows the return takes, the order's own steps 2 then 3, and a paid sale's return (no invoice row) draws no counter at all (the delta reviews' P2); the stock rows sit ahead of every counter because the ring and the cancel's settlement both take stock rows before the invoices counter, so a return that drew a counter first could meet either head on (round 3's ring and cancel legs pin both meetings) |
+| POS credit note across orders, cash or card refund (`returnAcrossInTx`) | per-sale advisory locks in ascending order id, the children's restock stock rows (the union of every child's restocking lines' `stock_balances` rows, `FOR UPDATE`, sorted product then location, through inventory's own seam; the swap is the one caller that pre-locks itself, taking the sorted union of both its halves' products ahead of the body, so the body adds no pass there), payments counter (not advancing, drawn inside `lockReturnInvoicesTx` only when invoice rows will be taken), every child's owed invoice rows (`FOR NO KEY UPDATE`, sorted), the note header, per child: returned order lines, invoice `FOR KEY SHARE`, refund payment insert (payments feed +1) | yes: the note draws the counter before its invoice rows exactly as the single return does (the delta reviews' P1: the note path was the one writer left on the old order), and a note of fully paid sales with no deposit documents draws no counter either; the stock rows sit ahead of every counter for the same reason the single return's do |
+| POS return to account credit | per-sale advisory lock, the restock's stock rows (the restocking lines' `stock_balances` rows, `FOR UPDATE`, sorted product then location, through inventory's own seam, taken only when the return restocks), the order's invoice rows (`FOR NO KEY UPDATE`, sorted, every document the account rail offsets), returned order lines, invoice `FOR KEY SHARE` (the `pos_returns` foreign key), invoice `FOR UPDATE` (ApplyCreditToInvoice), invoices counter | yes: no payments row and no payments counter, so step 2 is skipped and the rest keep their order; the stock rows sit ahead of the invoices counter the rail draws because the ring and the cancel's settlement take stock rows before that same counter (round 3's legs: this was the one rail that drew it before its restock) |
 | Group and whole-order invoice writers | the order row its caller locked, invoices counter (a new invoice) | yes: no payments row, no existing invoice |
+| The order cancel's deposit settlement (billing `CancelOrderDeposits`) | order row (the caller's cancel transaction), the stock rows the cancel's release will write (the ACTIVE HARD holds' `stock_balances` rows, `FOR UPDATE`, sorted product then location, the order every balance locking caller in inventory uses, taken through inventory's own seam ahead of the settlement), the order's live deposit rows (`FOR NO KEY UPDATE`, ascending id, every one before the first balance move), invoices counter (+1 per cleared document, drawn inside the clearing) | yes: no payments row and no payments counter, so step 2 is skipped and the rest keep their order; the walk is id ordered like the apply's, so the two writers can only queue, never meet head on; the stock rows sit between the order row and the deposit rows because the POS ring takes a stock row first and this counter later, so a cancel that drew the counter before its stock rows could meet the ring head on (round 2's leg pins it: the settlement drew the counter inside the precheck and the release wrote stock after, a 40P01 either way) |
 | Quote counter door (QD-5, PR 120) | order row, `LockPaymentsSequenceTx`, existing invoice row (`FOR NO KEY UPDATE`), invoices counter | yes |
 | Till `MarkNSF` | payment row, payments counter (not advancing: the serialising lock, it writes no payments feed row), every allocated invoice row `FOR NO KEY UPDATE` ascending, invoice re-opens (invoices counter +1 each) | yes |
 | Outbox observer | pool read after commit | takes none of these rows |
+
+One writer keeps the reservation rows' own opposite order: the expiry sweep (`ExpireDueReservations`) updates
+reservation rows before balance rows, while the cancel's lock pass takes balance rows first; a cycle between the
+two needs a branch whose allocation policy sets an order TTL (the default `OrderTTLHours` is 0, never expires),
+and such a branch accepts the retry.
 
 ## Why the invoice rows come before the invoices counter
 
@@ -149,6 +165,9 @@ REAL POS return over HTTP), each at pool 4 and pool 16, each parked in a widened
   money desk review's P3-4)
 - the multi-invoice `ReversePayment` against a real POS cash return on the sale's invoice (cmd/core, red before
   the reversal's `FOR NO KEY UPDATE`)
+- the REAL POS return to account credit against the ring's stock row and counter draw, and against the real order
+  cancel's stock-first settlement through the real cancel handler (internal/order, round 3's legs: both red
+  before the return took its restock's stock rows ahead of its first counter draw)
 
 A reversal cannot cycle with a settle, in any id order: both take the payments counter row before any invoice row,
 so they serialize there and never interleave their invoice rows. The settle-against-reversal leg

@@ -29,6 +29,9 @@ import { arStyles } from "./ar/ar-styles.js";
 import { GlApi } from "./gl/gl-api.js";
 import { GlDesk } from "./gl/gl-desk.js";
 import { glStyles } from "./gl/gl-styles.js";
+import { BankrecApi } from "./bankrec/bankrec-api.js";
+import { BankrecDesk } from "./bankrec/bankrec-desk.js";
+import { bankrecStyles } from "./bankrec/bankrec-styles.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -41,7 +44,7 @@ const READER_ROLE = "payables_receivables";
 
 // The desk's areas, in switch order. A new area is one more entry here, one case in #onHostClick for its
 // presses and one in renderArea for its screens.
-const AREAS = ["ledger", "receivables"] as const;
+const AREAS = ["ledger", "receivables", "bank"] as const;
 type Area = (typeof AREAS)[number];
 
 // The demo flows whose modules include the Money Desk. The core lists its whole closed table (the till's pair
@@ -49,7 +52,7 @@ type Area = (typeof AREAS)[number];
 const MONEY_DESK_FLOWS: readonly string[] = ["payables-receivables", "financial-controller"];
 
 export class MoneyDeskApp extends HHElement {
-  static styles = [baseStyles, entryStyles, arStyles, glStyles, css`
+  static styles = [baseStyles, entryStyles, arStyles, glStyles, bankrecStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
     main.gl-desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
@@ -92,6 +95,26 @@ export class MoneyDeskApp extends HHElement {
   #area: Area = "ledger";
   // A reader's ledger is read the first time its area opens, not at sign in.
   #glLoaded = false;
+
+  // The bank reconciliation slice (src/bankrec): the controller's third area, loaded when it is first chosen.
+  #bank = this.#newBankDesk();
+
+  #newBankDesk(): BankrecDesk {
+    return new BankrecDesk(new BankrecApi(this.#staffClient), {
+      repaint: () => this.requestUpdate(),
+      setField: (name, value) => {
+        const el = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[data-field="${name}"]`);
+        if (el === null) return;
+        if (el instanceof HTMLSelectElement) {
+          const at = [...el.options].findIndex((o) => o.getAttribute("data-id") === value);
+          if (at >= 0 && el.selectedIndex !== at) el.selectedIndex = at;
+        } else if (el instanceof HTMLInputElement && el.type === "file") {
+          if (value === "") el.value = "";
+        } else if (el.value !== value) el.value = value;
+      },
+      reveal: (selector) => this.renderRoot.querySelector(selector)?.scrollIntoView({ block: "start", behavior: "smooth" }),
+    });
+  }
 
   #newGlDesk(): GlDesk {
     const scoped = (name: string, key?: string): string => (key === undefined ? `[data-field="${name}"]` : `[data-field="${name}"][data-key="${key}"]`);
@@ -227,14 +250,16 @@ export class MoneyDeskApp extends HHElement {
     }
     if (action === "area") {
       const area = control?.getAttribute("data-area");
-      if (AREAS.some((id) => id === area) && (area !== "ledger" || this.#holdsLedger())) {
+      if (AREAS.some((id) => id === area) && (area !== "ledger" || this.#holdsLedger()) && (area !== "bank" || this.#isController())) {
         this.#area = area as Area;
         this.#openLedger();
+        if (area === "bank") this.#bank.ensureLoaded();
         this.requestUpdate();
       }
       return;
     }
     if (control !== undefined && this.#holdsLedger() && this.#area === "ledger" && this.#gl.press(control)) return;
+    if (control !== undefined && this.#isController() && this.#area === "bank" && this.#bank.press(control)) return;
     if (control !== undefined && this.#ar.press(control)) return;
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
@@ -244,12 +269,18 @@ export class MoneyDeskApp extends HHElement {
 
   readonly #onInput = (event: Event): void => {
     const target = event.target;
-    if (target instanceof Element && target.hasAttribute("data-field")) this.#ar.input(target);
+    if (target instanceof Element && target.hasAttribute("data-field")) {
+      this.#ar.input(target);
+      this.#bank.input(target);
+    }
   };
 
   readonly #onChange = (event: Event): void => {
     const target = event.target;
-    if (target instanceof Element && target.hasAttribute("data-field")) this.#ar.change(target);
+    if (target instanceof Element && target.hasAttribute("data-field")) {
+      this.#ar.change(target);
+      this.#bank.change(target);
+    }
   };
 
   connectedCallback(): void {
@@ -298,6 +329,7 @@ export class MoneyDeskApp extends HHElement {
     super.updated(changed);
     this.#ar.afterRender();
     this.#gl.afterRender();
+    if (this.#area === "bank") this.#bank.afterRender();
     const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
     if (header !== null) {
       header.roleLabel = this.#roleLabel;
@@ -346,6 +378,7 @@ export class MoneyDeskApp extends HHElement {
   // lands on receivables and its reader desk loads the first time the ledger area opens.
   #startGl(): void {
     this.#gl = this.#newGlDesk();
+    this.#bank = this.#newBankDesk();
     this.#glLoaded = false;
     this.#area = this.#isController() ? "ledger" : "receivables";
     this.#openLedger();
@@ -361,6 +394,7 @@ export class MoneyDeskApp extends HHElement {
     this.#sessions.clear();
     this.#ar = this.#newDesk();
     this.#gl = this.#newGlDesk();
+    this.#bank = this.#newBankDesk();
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -374,14 +408,16 @@ export class MoneyDeskApp extends HHElement {
 
   // The desks the role holds, as the area switch: the controller's ledger and receivables, and the reader's.
   private renderAreas(): TemplateResult {
-    const label = (id: Area): string => (id === "ledger" ? (this.#isController() ? "Approvals and ledger" : "Ledger") : "Receivables");
+    const label = (id: Area): string => (id === "ledger" ? (this.#isController() ? "Approvals and ledger" : "Ledger") : id === "bank" ? "Bank reconciliation" : "Receivables");
+    const shown = AREAS.filter((id) => id !== "bank" || this.#isController());
     const area = (id: Area): TemplateResult => html`
       <button type="button" class="gl-tab" data-action="area" data-area=${id} aria-current="${this.#area === id ? "true" : "false"}">${label(id)}</button>
     `;
-    return html`<nav class="areas" aria-label="Money Desk areas">${AREAS.map((id) => area(id))}</nav>`;
+    return html`<nav class="areas" aria-label="Money Desk areas">${shown.map((id) => area(id))}</nav>`;
   }
 
   private renderArea(): TemplateResult {
+    if (this.#area === "bank") return html`<main class="br-desk">${this.#bank.render()}</main>`;
     return this.#area === "ledger" ? html`<main class="gl-desk">${this.#gl.render()}</main>` : html`<main class="desk">${this.#ar.render()}</main>`;
   }
 

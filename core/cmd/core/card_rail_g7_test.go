@@ -170,6 +170,7 @@ func TestDemoServeServesOnTheSimulatorCardRail(t *testing.T) {
 		return map[string]string{
 			"CORE_DATABASE_URL":         caseURL,
 			"CORE_STAFF_AUDIENCE":       "hh-staff",
+			"CORE_SIGNIN_MODE":          "demo",
 			"CORE_TENANT_AUDIENCE":      "hh-tenant",
 			"CORE_STREAM_TICKET_KEY":    "fx-ticket-key",
 			"CORE_LISTEN_ADDR":          fmt.Sprintf("127.0.0.1:%d", port),
