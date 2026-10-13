@@ -27607,6 +27607,12 @@ components:
           additionalProperties: true
         flow:
           type: string
+        class:
+          type: string
+          enum:
+            - staff
+            - tenant
+          description: "The bearer class of the token: a tenant flow (a contractor persona of the demo account) carries a tenant token and a user block with no tier and no scope, and the front door routes it to the Pro apps"
         chapter_key:
           type: string
     DemoFlow:
@@ -27618,6 +27624,12 @@ components:
           type: string
         label:
           type: string
+        class:
+          type: string
+          enum:
+            - staff
+            - tenant
+          description: The bearer class the flow mints, so the front door can route a contractor to the Pro apps
     DemoFlowList:
       type: object
       required:

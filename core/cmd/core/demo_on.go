@@ -247,7 +247,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// process; the verifier is the unchanged production verifier over the
 	// static key source, so no JWK Set URL is configured and no key set
 	// route exists.
-	iss, err := issuer.New(demoCfg.staffAudience, demoCfg.tokenTTL)
+	iss, err := issuer.New(demoCfg.staffAudience, demoCfg.tokenTTL, issuer.WithTenantAudience(demoCfg.tenantAudience))
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +381,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// recorder the money spine already writes its trail with, and the
 	// closed flow table; the per-address limit arrives by constructor too
 	// and the wiring names none, so the default allowance stands.
-	mint, err := demo.NewMint(demo.MintDeps{Minter: iss, Orgs: orgs, Staff: staff, Audit: money.auditSvc})
+	mint, err := demo.NewMint(demo.MintDeps{Minter: iss, TenantMinter: iss, Portal: portal, Orgs: orgs, Staff: staff, Audit: money.auditSvc})
 	if err != nil {
 		pool.Close()
 		return nil, err
