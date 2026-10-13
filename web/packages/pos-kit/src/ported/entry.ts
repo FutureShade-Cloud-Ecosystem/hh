@@ -31,7 +31,6 @@ export const COMING_ROLES: readonly string[] = [
   "Outside Sales",
   "Logistics Manager",
   "Branch Manager",
-  "HR",
 ];
 
 export type FlowsState =
@@ -62,6 +61,7 @@ const FLOW_ICONS: Record<string, string> = {
   "procurement-manager": "lucide:package",
   "financial-controller": "lucide:landmark",
   "general-manager": "lucide:shield-check",
+  hr: "lucide:users",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
@@ -71,6 +71,7 @@ const FLOW_BLURBS: Record<string, string> = {
   "procurement-manager": "Buy the branch's stock.",
   "financial-controller": "Decide approvals and keep the ledger.",
   "general-manager": "Decide what only leadership may decide.",
+  hr: "People, messages and the dealer's staff settings.",
 };
 
 export const entryStyles = css`

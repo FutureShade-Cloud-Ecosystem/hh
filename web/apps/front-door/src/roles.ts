@@ -25,7 +25,9 @@
 //     Controller's flow is "financial-controller" and its one live module is
 //     the same Money Desk tile, on the same path; the General Manager's flow
 //     is "general-manager" and its live modules are the Money Desk and
-//     Manager Home, with House Messages and Dealer Admin still href null.
+//     Manager Home, with House Messages and Dealer Admin still href null;
+//     HR's flow is "hr" and both its tiles (House Messages, Dealer Admin) are
+//     still href null, so its home reads "coming" until those apps exist.
 //   - The others are COMING. Each shows the modules the matrix gives
 //     that role at work, manage or admin level, by the surfaces table's own
 //     names; read cells (and none) show nothing. A coming role is never
@@ -93,7 +95,8 @@ export interface LiveRole {
     | "procurement_manager"
     | "driver"
     | "financial_controller"
-    | "general_manager";
+    | "general_manager"
+    | "hr";
   /** The demo flow id the mint takes, the flows table's own mapping. */
   readonly flow:
     | "sales"
@@ -104,7 +107,8 @@ export interface LiveRole {
     | "procurement-manager"
     | "driver"
     | "financial-controller"
-    | "general-manager";
+    | "general-manager"
+    | "hr";
   /**
    * The card's label and its accessible name, alone: the demo adapter's
    * contract words, never decorated.
@@ -204,6 +208,14 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     icon: "lucide:shield-check",
     tiles: [MONEY_DESK_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE, DEALER_ADMIN_TILE],
   },
+  {
+    id: "hr",
+    flow: "hr",
+    label: "HR",
+    line: "People, messages and the dealer's staff settings.",
+    icon: "lucide:users",
+    tiles: [HOUSE_MESSAGES_TILE, DEALER_ADMIN_TILE],
+  },
 ];
 
 /**
@@ -231,7 +243,6 @@ export const COMING_ROLES: readonly ComingRole[] = [
       "House Messages",
     ],
   },
-  { id: "hr", label: "HR", modules: ["House Messages", "Dealer Admin"] },
 ];
 
 const COUNT_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];

@@ -21,14 +21,13 @@ const COMING_ROLES = [
   "Outside Sales",
   "Logistics Manager",
   "Branch Manager",
-  "HR",
 ];
 
 function flowsCall(page: Page): Promise<Response> {
   return page.waitForResponse((response) => response.url().endsWith("/api/v1/demo/flows"));
 }
 
-test("the entry page shows the two till role cards and the four coming roles, with no yard manager, yard team, driver, financial controller or general manager card", async ({
+test("the entry page shows the two till role cards and the three coming roles, with no yard manager, yard team, driver, financial controller, general manager or HR card", async ({
   page,
 }) => {
   const flows = flowsCall(page);
@@ -48,10 +47,10 @@ test("the entry page shows the two till role cards and the four coming roles, wi
   const yardManager = page.getByRole("button", { name: "Yard manager", exact: true });
   await expect(yardManager).toHaveCount(0);
 
-  // The stub's table, like the core's, mints the full closed set of nine
+  // The stub's table, like the core's, mints the full closed set of ten
   // logins (sales, sales manager, the yard manager, the Yard Team, the
   // Driver, Payables and Receivables, the Procurement Manager, the Financial
-  // Controller, the General Manager); the till offers a card for its own pair alone (any other
+  // Controller, the General Manager, HR); the till offers a card for its own pair alone (any other
   // card would lead into a surface the server refuses). The yard manager
   // (Manager Home is its app), the Yard Team, the Driver, Payables and
   // Receivables, the Procurement Manager and the Financial Controller (the
@@ -69,6 +68,7 @@ test("the entry page shows the two till role cards and the four coming roles, wi
     "procurement-manager",
     "financial-controller",
     "general-manager",
+    "hr",
   ]);
   await expect(page.getByRole("button", { name: "Yard Team", exact: true })).toHaveCount(0);
   // The till's coming list no longer carries the Driver row: the driver
@@ -79,10 +79,11 @@ test("the entry page shows the two till role cards and the four coming roles, wi
   await expect(page.getByRole("button", { name: /Procurement manager/i })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Financial Controller", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "General Manager", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "HR", exact: true })).toHaveCount(0);
 
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(4);
+  await expect(coming.getByRole("listitem")).toHaveCount(3);
   for (const role of COMING_ROLES) {
     const control = coming.getByRole("button", { name: role, exact: true });
     await expect(control).toBeVisible();

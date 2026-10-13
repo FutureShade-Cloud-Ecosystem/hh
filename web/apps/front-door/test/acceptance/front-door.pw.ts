@@ -15,7 +15,6 @@ const COMING_LABELS = [
   "Outside Sales",
   "Logistics Manager",
   "Branch Manager",
-  "HR",
 ];
 
 const SESSION_KEY = "hh-demo.front-door.session.v1";
@@ -145,15 +144,24 @@ test("the picker renders the live cards and the coming rows", async ({ page }) =
   await expect(general).toContainText("Manager Home");
   await expect(general).toContainText("Dealer Admin");
 
+  // HR's card is live with both its modules still to come: House Messages
+  // and Dealer Admin read as chips, never as links.
+  const hr = page.getByRole("button", { name: "HR", exact: true });
+  await expect(hr).toBeVisible();
+  await expect(hr).toBeEnabled();
+  await expect(hr).toContainText("Sign in as HR");
+  await expect(hr).toContainText("House Messages");
+  await expect(hr).toContainText("Dealer Admin");
+
   // Coming recedes: the disclosure starts collapsed and opens to today's
   // list, unchanged, its rows disabled with their muted chips.
   const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Four more roles are coming");
+  await expect(disclosure).toContainText("Three more roles are coming");
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).not.toBeVisible();
-  await disclosure.getByText("Four more roles are coming").click();
+  await disclosure.getByText("Three more roles are coming").click();
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(4);
+  await expect(coming.getByRole("listitem")).toHaveCount(3);
   for (const label of COMING_LABELS) {
     const row = coming.getByRole("listitem").filter({ hasText: label });
     await expect(row).toBeVisible();
@@ -232,6 +240,19 @@ test("a General Manager sign in shows the matrix tiles, two live and two coming"
     await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
   }
   expect(await storedFlow(page)).toBe("general-manager");
+  expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
+});
+
+test("an HR sign in shows its two coming tiles and no live module", async ({ page }) => {
+  await signIn(page, "HR");
+  await expect(page.getByTestId("header-word")).toHaveText("HR");
+  await expect(page.getByRole("heading", { name: "Coming next" })).toBeVisible();
+  for (const name of ["House Messages", "Dealer Admin"]) {
+    const tile = page.getByRole("button", { name, exact: true });
+    await expect(tile).toBeVisible();
+    await expect(tile).not.toHaveAttribute("data-href", /.+/);
+  }
+  expect(await storedFlow(page)).toBe("hr");
   expect(await storedKeys(page)).toEqual([SESSION_KEY, MIRROR_KEY]);
 });
 

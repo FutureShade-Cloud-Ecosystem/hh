@@ -48,6 +48,7 @@ const FLOWS = [
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
   { flow: "general-manager", role_code: "general_manager", label: "General Manager" },
+  { flow: "hr", role_code: "hr", label: "HR" },
 ];
 
 const USERS = {
@@ -120,6 +121,15 @@ const USERS = {
     display_name: "General manager (demo)",
     role_code: "general_manager",
     role_name: "General Manager",
+    tier: 1,
+    scope: "GLOBAL",
+  },
+  hr: {
+    user_id: "demo-account-hr",
+    email: "hr@demo.invalid",
+    display_name: "HR (demo)",
+    role_code: "hr",
+    role_name: "HR",
     tier: 1,
     scope: "GLOBAL",
   },
