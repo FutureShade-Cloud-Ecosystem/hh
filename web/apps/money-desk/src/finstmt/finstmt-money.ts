@@ -19,3 +19,9 @@ export function centsDecimal(cents: number): string {
   const digits = String(Math.abs(cents)).padStart(3, "0");
   return `${cents < 0 ? "-" : ""}${digits.slice(0, -2)}.${digits.slice(-2)}`;
 }
+
+/** A change between two years: "+$5.00", "-$5.00", "$0.00". The server's delta, signed for the eye. */
+export function formatChange(cents: number | null | undefined): string {
+  if (typeof cents !== "number" || !Number.isInteger(cents)) return MONEY_PLACEHOLDER;
+  return cents > 0 ? `+${formatDollars(cents)}` : formatDollars(cents);
+}
