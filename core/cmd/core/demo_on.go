@@ -461,6 +461,12 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 			return nil, err
 		}
 		r.Handle("POST /api/v1/auth/exchange", g.Public(exch))
+		methodsRoute, err := buildMethods(exchangeDeps{getenv: getenv, pool: pool, orgs: orgs})
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		r.Handle("GET /api/v1/auth/methods", g.Public(methodsRoute))
 	}
 
 	// The demo module's mint routes (W2): the tap-a-role sign-in, the
