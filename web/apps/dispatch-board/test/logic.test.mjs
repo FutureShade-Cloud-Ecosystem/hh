@@ -52,7 +52,12 @@ import {
   validateReason,
   truckBody,
   truckLine,
+  willCallLine,
+  willCallNotice,
+  willCallRefusal,
+  willCallWord,
   validateDriver,
+  validateOrderRef,
   validateReschedule,
   validateSchedule,
   validateTruck,
@@ -511,4 +516,32 @@ test("a driver wants a name, and a login link that is a user id or nothing", () 
   assert.equal(kept.is_active, true);
   assert.equal(driverLine({ id: "d1", branch_id: "b", name: "x", is_active: true, licence_class: "A", phone: "619-555-0141", user_id: "u" }).join(" | "), "Licence A | 619-555-0141 | Has a staff login");
   assert.equal(driverLine({ id: "d1", branch_id: "b", name: "x", is_active: true }).join(" | "), "No licence on file | No phone | No staff login");
+});
+
+// ---- will call (part B, sub item 3) ---------------------------------------------------------------------
+
+test("a pickup code's state reads in the counter's words, and an unmapped state degrades to itself", () => {
+  assert.equal(willCallWord("ACTIVE"), "Live");
+  assert.equal(willCallWord("CONFIRMED"), "Collected");
+  assert.equal(willCallWord("REVOKED"), "Cancelled");
+  assert.equal(willCallWord("ON_HOLD"), "on hold");
+});
+
+test("a code's line says how long it is good, who collected, or that it was cancelled", () => {
+  assert.equal(willCallLine({ status: "ACTIVE", expires_at: "2026-10-26T18:00:00Z" }), "Good until Oct 26, 2026");
+  assert.equal(willCallLine({ status: "CONFIRMED", expires_at: "2026-10-26T18:00:00Z", collected_by: "Pickup contact (demo)" }), "Collected by Pickup contact (demo)");
+  assert.equal(willCallLine({ status: "CONFIRMED", expires_at: "2026-10-26T18:00:00Z" }), "Collected");
+  assert.equal(willCallLine({ status: "REVOKED", expires_at: "2026-10-26T18:00:00Z" }), "Cancelled before it was used");
+});
+
+test("the order box wants something typed, and a missing order says what to check", () => {
+  assert.equal(validateOrderRef("ORD-0044"), "");
+  assert.match(validateOrderRef("  "), /Enter an order number/);
+  assert.match(willCallRefusal("dispatch: not found", 404), /No order matches that number at this yard/);
+  assert.equal(willCallRefusal("dispatch: this order already has a live pickup code, revoke it before printing another", 409), "this order already has a live pickup code, revoke it before printing another");
+  assert.match(willCallRefusal("Forbidden", 403), /not yours to do/);
+});
+
+test("a minted code is announced once, in words that say it will not be shown again", () => {
+  assert.equal(willCallNotice({ order_no: "ORD-0044", expires_at: "2026-10-26T18:00:00Z" }), "Pickup code printed for ORD-0044, good until Oct 26, 2026. It is shown once: print the tag now.");
 });

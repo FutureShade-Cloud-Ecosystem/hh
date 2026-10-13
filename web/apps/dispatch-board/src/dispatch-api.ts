@@ -22,6 +22,7 @@ import {
   type DispatchGapPage,
   type DispatchLoadBoardView,
   type DispatchLoadOutcomeList,
+  type DispatchMintedPickup,
   type DispatchPaymentHoldPage,
   type DispatchRescheduleResult,
   type DispatchRun,
@@ -30,6 +31,8 @@ import {
   type DispatchStop,
   type DispatchTruck,
   type DispatchTruckPage,
+  type DispatchWillCallPage,
+  type DispatchWillCallRevokeResult,
   type Result,
 } from "@hardscapehouse/api-client";
 
@@ -60,6 +63,21 @@ export class DispatchApi {
 
   drivers(branchId: string, includeInactive = false): Promise<Result<DispatchDriverPage>> {
     return staffDispatch.dispatchListDrivers(this.#client, includeInactive ? { branch_id: branchId, include_inactive: true } : { branch_id: branchId });
+  }
+
+  // ---- will call: pickup codes for an order on the rack (the order is named by the number on the paperwork)
+
+  willCalls(orderRef: string): Promise<Result<DispatchWillCallPage>> {
+    return staffDispatch.dispatchListWillCall(this.#client, { order_id: orderRef });
+  }
+
+  /** Mints a code. The raw token rides this answer and nowhere else; the core stores only its hash. */
+  mintWillCall(orderRef: string): Promise<Result<DispatchMintedPickup>> {
+    return staffDispatch.dispatchMintWillCall(this.#client, { order_id: orderRef, ttl_hours: 0 });
+  }
+
+  revokeWillCall(id: string): Promise<Result<DispatchWillCallRevokeResult>> {
+    return staffDispatch.dispatchRevokeWillCall(this.#client, id);
   }
 
   // ---- the registry (the manage level; the core refuses below it)

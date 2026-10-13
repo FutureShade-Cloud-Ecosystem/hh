@@ -946,3 +946,45 @@ export function driverLine(d: Pick<DispatchDriver, "licence_class" | "phone" | "
     d.user_id ? "Has a staff login" : "No staff login",
   ];
 }
+
+// ---- will call (part B) -------------------------------------------------------------------------------
+
+/** What a rack tag's three states are called at the counter, as against what the column stores. */
+export const WILL_CALL_LABEL: Record<string, string> = {
+  ACTIVE: "Live",
+  CONFIRMED: "Collected",
+  REVOKED: "Cancelled",
+};
+
+/** A state in the counter's words. An unmapped state comes back as itself, lowercased, never as an invented phrase. */
+export function willCallWord(status: string): string {
+  return WILL_CALL_LABEL[status] ?? status.toLowerCase().replace(/_/g, " ");
+}
+
+function shortDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** One code in a sentence: how long it is good, who collected, or that it was cancelled. */
+export function willCallLine(w: { status: string; expires_at: string; collected_by?: string }): string {
+  if (w.status === "ACTIVE") return `Good until ${shortDate(w.expires_at)}`;
+  if (w.status === "CONFIRMED") return w.collected_by ? `Collected by ${w.collected_by}` : "Collected";
+  if (w.status === "REVOKED") return "Cancelled before it was used";
+  return willCallWord(w.status);
+}
+
+export function validateOrderRef(order: string): string {
+  return order.trim() === "" ? "Enter an order number, like the one on the paperwork, or paste the order id." : "";
+}
+
+/** A refused pickup code in words. The same answer comes for a number that never existed and one at another yard. */
+export function willCallRefusal(error: string, status: number | null): string {
+  if (status === 404) return "No order matches that number at this yard. Check the number on the paperwork.";
+  return refusalWords("The pickup code", error, status);
+}
+
+export function willCallNotice(minted: { order_no?: string; expires_at: string }): string {
+  return `Pickup code printed for ${minted.order_no ?? "the order"}, good until ${shortDate(minted.expires_at)}. It is shown once: print the tag now.`;
+}

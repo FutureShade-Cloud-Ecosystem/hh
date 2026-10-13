@@ -18,10 +18,12 @@ import type {
   DispatchLoadBoardView,
   DispatchLoadRow,
   DispatchLoadStop,
+  DispatchMintedPickup,
   DispatchRun,
   DispatchStop,
   DispatchStopPaymentHold,
   DispatchTruck,
+  DispatchWillCall,
 } from "@hardscapehouse/api-client";
 import {
   BOARD_COLUMNS,
@@ -32,6 +34,8 @@ import {
   fleetStateWord,
   truckLine,
   volumeText,
+  willCallLine,
+  willCallWord,
   CARD_LABEL,
   CARD_ORDER,
   RUN_LABEL,
@@ -75,14 +79,14 @@ import {
   type CardId,
 } from "./dispatch-logic.js";
 
-export type Tab = "load" | "day" | "schedule" | "fleet";
+export type Tab = "load" | "day" | "schedule" | "fleet" | "willcall";
 export type Axis = "TRUCK" | "STATUS";
 
 /** An inline form open on one card: a date and a reason, a reason alone, or a new truck. */
 export interface Sheet {
   readonly kind:
     | "reschedule-stop" | "reschedule-run" | "reopen-stop" | "reopen-run" | "fail-stop" | "new-run" | "cancel-run"
-    | "add-truck" | "edit-truck" | "add-driver" | "edit-driver";
+    | "add-truck" | "edit-truck" | "add-driver" | "edit-driver" | "revoke-willcall";
   readonly id: string;
   /** What was typed when a refusal sent the sheet back, so the person keeps their work. */
   readonly values?: Readonly<Record<string, string>>;
@@ -120,6 +124,14 @@ export interface BoardModel {
   readonly span: Span;
   /** The schedule form's own refusal, shown beside its button. */
   readonly scheduleError: string;
+  /** The will call tab: the order named, its codes, and the code just minted (in memory, shown once). */
+  readonly willCall: {
+    readonly order: string;
+    readonly items: readonly DispatchWillCall[];
+    readonly looked: boolean;
+    readonly error: string;
+    readonly minted: { readonly code: DispatchMintedPickup; readonly order: string } | null;
+  };
   /** A refusal that belongs to one truck's lane, shown in that lane. */
   readonly runError: { readonly id: string; readonly words: string } | null;
 }
@@ -243,6 +255,19 @@ function fleetSheet(sheet: Sheet, model: BoardModel): TemplateResult {
 
 function sheetPanel(sheet: Sheet, model: BoardModel): TemplateResult {
   if (sheet.kind === "add-truck" || sheet.kind === "edit-truck" || sheet.kind === "add-driver" || sheet.kind === "edit-driver") return fleetSheet(sheet, model);
+  if (sheet.kind === "revoke-willcall") {
+    return html`
+      <form class="sheet" data-sheet=${sheet.kind} data-sheet-id=${sheet.id} novalidate>
+        <h4>Cancel this pickup code?</h4>
+        <p class="small">The tag already printed stops working. The customer needs a new code.</p>
+        ${sheet.error !== "" ? html`<p class="alert alert-error" role="alert" data-sheet-error>${sheet.error}</p>` : nothing}
+        <div class="actions">
+          <button type="button" class="btn btn-primary" data-action="sheet-submit" ?disabled=${model.busy}>Cancel the code</button>
+          <button type="button" class="btn btn-secondary" data-action="sheet-cancel">Keep it</button>
+        </div>
+      </form>
+    `;
+  }
   const dated = sheet.kind === "reschedule-stop" || sheet.kind === "reschedule-run";
   const title =
     sheet.kind === "reschedule-stop"
@@ -332,7 +357,7 @@ function toolbar(model: BoardModel): TemplateResult {
             </label>`
           : html`<span class="yard" data-branch-name>${model.branchName}</span>`}
       </div>
-      ${model.tab === "fleet" ? nothing : html`<div class="when" role="group" aria-label="Delivery day">
+      ${model.tab === "fleet" || model.tab === "willcall" ? nothing : html`<div class="when" role="group" aria-label="Delivery day">
         <button type="button" class="btn btn-secondary day-btn" data-action="day-prev" aria-label="Previous day">&lsaquo;</button>
         <input class="control" type="date" data-field="date" aria-label="Delivery day" data-current=${model.date} />
         <button type="button" class="btn btn-secondary day-btn" data-action="day-next" aria-label="Next day">&rsaquo;</button>
@@ -349,7 +374,7 @@ function toolbar(model: BoardModel): TemplateResult {
         : nothing}
       <div class="tools">
         <button type="button" class="btn btn-secondary small-btn" data-action="refresh" ?disabled=${model.busy}>Refresh</button>
-        ${model.tab === "fleet" ? nothing : html`<button type="button" class="btn btn-primary small-btn" data-action="new-run" ?disabled=${model.busy}>New truck</button>`}
+        ${model.tab === "fleet" || model.tab === "willcall" ? nothing : html`<button type="button" class="btn btn-primary small-btn" data-action="new-run" ?disabled=${model.busy}>New truck</button>`}
       </div>
     </div>
     ${sheetFor(model, ["new-run"], "new")}
@@ -364,7 +389,7 @@ function tabs(model: BoardModel): TemplateResult {
   return html`
     <nav class="tabs" aria-label="Dispatch screens">
       ${tab("load", "Load board")}${tab("day", "Day board")}${tab("schedule", "Schedule")}
-      ${tab("fleet", "Trucks and drivers")}${later("Will call")}${later("Settings")}
+      ${tab("fleet", "Trucks and drivers")}${tab("willcall", "Will call")}${later("Settings")}
     </nav>
   `;
 }
@@ -984,6 +1009,69 @@ export function renderFleet(model: BoardModel): TemplateResult {
   `;
 }
 
+// ---- will call -----------------------------------------------------------------------------------
+
+function willCallTag(model: BoardModel): TemplateResult | typeof nothing {
+  const minted = model.willCall.minted;
+  if (minted === null) return nothing;
+  return html`
+    <section class="panel tag" data-tag aria-label="The pickup tag">
+      <p class="once" data-once><strong>Shown once.</strong> Print this tag now. The code is not kept and cannot be shown again.</p>
+      <p class="tag-order">${minted.order}</p>
+      <p class="tag-code" data-tag-code>${minted.code.token}</p>
+      <p class="small dim">${willCallLine(minted.code)}</p>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-action="wc-print">Print tag</button>
+        <button type="button" class="btn btn-secondary" data-action="wc-dismiss">Done, it is printed</button>
+      </div>
+    </section>
+  `;
+}
+
+function willCallRows(model: BoardModel): TemplateResult | typeof nothing {
+  const w = model.willCall;
+  if (!w.looked) return nothing;
+  if (w.items.length === 0) return html`<p class="dim" data-wc-empty>No pickup codes for ${w.order} yet.</p>`;
+  return html`
+    <ul class="loads wide" data-wc-list>
+      ${w.items.map((c) => html`
+        <li class="load" data-code-id=${c.id} data-code-status=${c.status}>
+          <div class="load-head">
+            <span class="status ${c.status === "ACTIVE" ? "status-good" : c.status === "CONFIRMED" ? "status-watch" : "status-plain"}" data-code-state>${willCallWord(c.status)}</span>
+          </div>
+          <p class="small">${willCallLine(c)}</p>
+          ${c.status === "ACTIVE"
+            ? html`<div class="actions"><button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="revoke-willcall" data-code-id=${c.id} ?disabled=${model.busy}>Cancel code</button></div>`
+            : nothing}
+          ${sheetFor(model, ["revoke-willcall"], c.id)}
+        </li>`)}
+    </ul>
+  `;
+}
+
+/** The will call tab: name an order, see its pickup codes, print a new one. The customer's own page is a separate screen. */
+export function renderWillCall(model: BoardModel): TemplateResult {
+  const w = model.willCall;
+  return html`
+    <section class="panel" data-willcall>
+      <div class="panel-head"><h2>Will call pickup codes</h2></div>
+      <div class="wc-form">
+        <label class="wc-order">Order number
+          <input class="control" type="text" data-field="wc-order" autocomplete="off" maxlength="64" aria-describedby="wc-hint" />
+          <span class="small dim" id="wc-hint">The number on the paperwork, like #SO-TRT-1041, or paste the order id.</span>
+        </label>
+        <div class="actions">
+          <button type="button" class="btn btn-secondary" data-action="wc-lookup" ?disabled=${model.busy}>Look up</button>
+          <button type="button" class="btn btn-primary" data-action="wc-mint" ?disabled=${model.busy}>Print a pickup code</button>
+        </div>
+      </div>
+      ${w.error !== "" ? html`<p class="alert alert-error" role="alert" data-wc-error>${w.error}</p>` : nothing}
+    </section>
+    ${willCallTag(model)}
+    <section class="panel" data-wc-codes>${willCallRows(model)}${w.looked ? nothing : html`<p class="dim" data-wc-idle>Name an order to see its pickup codes. A code is printed only for a will call order that has been picked.</p>`}</section>
+  `;
+}
+
 // ---- the screen ----------------------------------------------------------------------------------
 
 export function renderDesk(model: BoardModel): TemplateResult {
@@ -1011,6 +1099,8 @@ export function renderDesk(model: BoardModel): TemplateResult {
           ? renderSchedule(model)
           : model.tab === "fleet"
             ? renderFleet(model)
-            : renderDayBoard(model)}
+            : model.tab === "willcall"
+              ? renderWillCall(model)
+              : renderDayBoard(model)}
   `;
 }

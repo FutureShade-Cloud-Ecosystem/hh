@@ -144,6 +144,12 @@ export class DispatchBoardApp extends HHElement {
     }
   };
 
+  // Enter in a field the desk owns (the will call order box).
+  readonly #onHostKey = (event: KeyboardEvent): void => {
+    const target = event.composedPath()[0];
+    if (target instanceof Element) this.#desk.key(target, event.key);
+  };
+
   // A select or the date field changed: the desk acts on it.
   readonly #onHostChange = (event: Event): void => {
     const target = event.target;
@@ -153,6 +159,7 @@ export class DispatchBoardApp extends HHElement {
   connectedCallback(): void {
     super.connectedCallback();
     this.addEventListener("click", this.#onHostClick);
+    this.addEventListener("keydown", this.#onHostKey);
     this.#phone.addEventListener("change", this.#onPhone);
     this.#narrow = this.#phone.matches;
     // A change event is not composed, so it stops at the shadow root and never reaches the host.
@@ -181,6 +188,7 @@ export class DispatchBoardApp extends HHElement {
 
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
+    this.removeEventListener("keydown", this.#onHostKey);
     this.#phone.removeEventListener("change", this.#onPhone);
     this.renderRoot.removeEventListener("change", this.#onHostChange);
     super.disconnectedCallback();

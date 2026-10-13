@@ -186,6 +186,18 @@ export const boardStyles = css`
   .sched-form .wide { grid-column: 1 / -1; }
   .sched-form .alert, .sched-form p { margin: 0; }
 
+  /* Will call: the order box beside its two buttons, and the one time tag. */
+  .wc-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--hh-s-12) var(--hh-s-16); align-items: end; }
+  .wc-form .actions { margin-top: 0; }
+  .tag { border: 2px solid var(--hh-text); }
+  .tag .once { margin: 0 0 var(--hh-s-12); }
+  .tag-order { margin: 0; font-family: var(--hh-font-mono); font-weight: 700; font-size: 20px; }
+  .tag-code { margin: var(--hh-s-8) 0; font-family: var(--hh-font-mono); font-size: 22px; font-weight: 700; letter-spacing: 0.04em; word-break: break-all; }
+  @media print {
+    .tabs, .toolbar, .head, .alert, [data-willcall], [data-wc-codes], .tag .actions { display: none; }
+    .tag { border: 0; }
+  }
+
   .matrix p { max-width: 70ch; }
   .strip { display: none; flex-wrap: wrap; gap: var(--hh-s-4) var(--hh-s-16); margin: var(--hh-s-8) 0; color: var(--hh-text-dim); font-size: 14px; }
   .strip-cell strong { color: var(--hh-text); font-variant-numeric: tabular-nums; }
@@ -203,7 +215,7 @@ export const boardStyles = css`
     .week { display: flex; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: var(--hh-s-4); }
     .day { flex: 0 0 132px; scroll-snap-align: start; }
     .qcards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .columns, .status-lanes, .sheet-grid, .sched-form { grid-template-columns: minmax(0, 1fr); }
+    .columns, .status-lanes, .sheet-grid, .sched-form, .wc-form { grid-template-columns: minmax(0, 1fr); }
     .strip { display: flex; }
     .col.none { display: none; }
     .did-not .count { margin-inline-start: var(--hh-s-8); }

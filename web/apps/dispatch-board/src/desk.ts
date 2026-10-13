@@ -16,7 +16,9 @@ import type {
   DispatchLoadStop,
   DispatchStop,
   DispatchStopPaymentHold,
+  DispatchMintedPickup,
   DispatchTruck,
+  DispatchWillCall,
   Result,
 } from "@hardscapehouse/api-client";
 import { DispatchApi } from "./dispatch-api.js";
@@ -41,7 +43,10 @@ import {
   validateSchedule,
   truckBody,
   validateDriver,
+  validateOrderRef,
   validateTruck,
+  willCallNotice,
+  willCallRefusal,
   type DriverFields,
   type ScheduleFields,
   type TruckFields,
@@ -95,6 +100,12 @@ export class DispatchDesk {
   #span: Span = "DAY";
   #runError: { id: string; words: string } | null = null;
   #scheduleError = "";
+  // Will call: the order as typed, its codes, whether a lookup has run, and the code just minted (held in memory, shown once).
+  #wcOrder = "";
+  #wcItems: readonly DispatchWillCall[] = [];
+  #wcLooked = false;
+  #wcError = "";
+  #wcMinted: { code: DispatchMintedPickup; order: string } | null = null;
   // The day the schedule form's date field was last given its starting value for.
   #formSeeded: string | null = null;
   // The sheet whose starting field values the screen has already been given.
@@ -160,6 +171,9 @@ export class DispatchDesk {
       this.#calendar = calendar.ok ? (calendar.value.items ?? []) : [];
       this.#holds = await this.#readHolds(view.value.loads.map((r) => r.run.id));
       this.#selected = new Set(pruneSelection([...this.#selected], [...view.value.staging, ...view.value.loads.flatMap((r) => r.stops)]));
+    } else if (this.#tab === "willcall") {
+      // Nothing on this tab is a board: a code list is read for the order that was named.
+      if (this.#wcOrder !== "") await this.#readWillCalls();
     } else if (this.#tab === "fleet") {
       // The registry lists what is out of use too, so a retired truck can be brought back.
       const [trucks, drivers] = await Promise.all([this.#api.trucks(branch, true), this.#api.drivers(branch, true)]);
@@ -245,6 +259,7 @@ export class DispatchDesk {
       loading: this.#loading,
       span: this.#span,
       scheduleError: this.#scheduleError,
+      willCall: { order: this.#wcOrder, items: this.#wcItems, looked: this.#wcLooked, error: this.#wcError, minted: this.#wcMinted },
       runError: this.#runError,
     };
   }
@@ -313,10 +328,16 @@ export class DispatchDesk {
         return true;
       case "tab": {
         const id = attr("data-tab-id");
-        const next: Tab = id === "day" ? "day" : id === "schedule" ? "schedule" : id === "fleet" ? "fleet" : "load";
+        const next: Tab = id === "day" ? "day" : id === "schedule" ? "schedule" : id === "fleet" ? "fleet" : id === "willcall" ? "willcall" : "load";
         if (next === this.#tab) return true;
         this.#tab = next;
         this.#sheet = null;
+        // Leaving the tab forgets the order and the code: the box is empty when it comes back.
+        this.#wcMinted = null;
+        this.#wcOrder = "";
+        this.#wcItems = [];
+        this.#wcLooked = false;
+        this.#wcError = "";
         this.#clearMessages();
         void this.#run(NOOP, "", "That", true);
         return true;
@@ -373,6 +394,19 @@ export class DispatchDesk {
       case "schedule-submit":
         void this.#schedule();
         return true;
+      case "wc-lookup":
+        void this.#wcLookup();
+        return true;
+      case "wc-mint":
+        void this.#wcMint();
+        return true;
+      case "wc-print":
+        window.print();
+        return true;
+      case "wc-dismiss":
+        this.#wcMinted = null;
+        this.#host.repaint();
+        return true;
       case "fleet-toggle":
         void this.#fleetToggle(attr("data-fleet-kind"), attr("data-fleet-id"), attr("data-active-to") === "true");
         return true;
@@ -381,7 +415,7 @@ export class DispatchDesk {
         return true;
       case "open-sheet": {
         const kind = attr("data-sheet-kind") as Sheet["kind"];
-        this.#openSheet(kind, attr("data-stop-id") || attr("data-run-id") || attr("data-fleet-id"));
+        this.#openSheet(kind, attr("data-stop-id") || attr("data-run-id") || attr("data-fleet-id") || attr("data-code-id"));
         return true;
       }
       case "sheet-cancel":
@@ -416,6 +450,15 @@ export class DispatchDesk {
       default:
         return false;
     }
+  }
+
+  /** Enter in the will call order box looks the order up. (A change event would race the button the person is reaching for.) */
+  key(target: Element, key: string): boolean {
+    if (key === "Enter" && target.getAttribute("data-field") === "wc-order") {
+      void this.#wcLookup();
+      return true;
+    }
+    return false;
   }
 
   /** A select changed. Returns true when it was this desk's. */
@@ -638,6 +681,76 @@ export class DispatchDesk {
     this.#host.repaint();
   }
 
+  // ---- will call ---------------------------------------------------------------------------------
+
+  #wcTyped(): string {
+    const el = this.#host.find("[data-willcall] [data-field=\"wc-order\"]");
+    return el instanceof HTMLInputElement ? el.value.trim() : this.#wcOrder;
+  }
+
+  /** The codes for the order named. A refusal leaves the list as it was and says why beside the box. */
+  async #readWillCalls(): Promise<boolean> {
+    const result = await this.#api.willCalls(this.#wcOrder);
+    if (result.ok) {
+      this.#wcItems = result.value.items ?? [];
+      this.#wcLooked = true;
+      this.#wcError = "";
+      return true;
+    }
+    this.#wcItems = [];
+    this.#wcLooked = false;
+    this.#wcError = willCallRefusal(result.error, result.status ?? null);
+    return false;
+  }
+
+  async #wcLookup(): Promise<void> {
+    if (this.#busy) return;
+    const order = this.#wcTyped();
+    this.#clearMessages();
+    this.#wcError = "";
+    const words = validateOrderRef(order);
+    if (words !== "") {
+      this.#wcError = words;
+      this.#host.repaint();
+      return;
+    }
+    // A different order is a different tag: the code on screen is not its.
+    if (this.#wcMinted !== null && this.#wcMinted.order !== order) this.#wcMinted = null;
+    this.#wcOrder = order;
+    this.#busy = true;
+    this.#host.repaint();
+    await this.#readWillCalls();
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
+  async #wcMint(): Promise<void> {
+    if (this.#busy) return;
+    const order = this.#wcTyped();
+    this.#clearMessages();
+    this.#wcError = "";
+    const words = validateOrderRef(order);
+    if (words !== "") {
+      this.#wcError = words;
+      this.#host.repaint();
+      return;
+    }
+    this.#wcOrder = order;
+    this.#busy = true;
+    this.#wcMinted = null;
+    this.#host.repaint();
+    const result = await this.#api.mintWillCall(order);
+    if (result.ok) {
+      this.#wcMinted = { code: result.value, order };
+      this.#notice = willCallNotice({ order_no: order, expires_at: result.value.expires_at });
+      await this.#readWillCalls();
+    } else {
+      this.#wcError = willCallRefusal(result.error, result.status ?? null);
+    }
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
   /** Takes a truck or a driver out of use, or puts them back: a rewrite of the row with the one flag changed. */
   async #fleetToggle(kind: string, id: string, active: boolean): Promise<void> {
     const truck = kind === "truck" ? this.#trucks.find((t) => t.id === id) : undefined;
@@ -777,6 +890,20 @@ export class DispatchDesk {
       }
       case "cancel-run": {
         await this.#runAction(sheet.id, "cancel");
+        return;
+      }
+      case "revoke-willcall": {
+        const ok = await this.#run(
+          async () => {
+            const r = await this.#api.revokeWillCall(sheet.id);
+            return r.ok ? null : r;
+          },
+          "The pickup code is cancelled. The tag already printed no longer works.",
+          "Cancelling the code",
+        );
+        // The code just minted is gone with it; a refusal keeps the sheet beside its button.
+        if (ok) this.#wcMinted = null;
+        else this.#restoreSheet(sheet);
         return;
       }
       case "add-truck":

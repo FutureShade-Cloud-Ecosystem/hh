@@ -184,12 +184,21 @@ function seedWorld() {
   // Orders the counter can hand to dispatch, by the number on the paperwork. ORD-0040 and ORD-0043 are
   // confirmed and not yet scheduled; the rest of the stops above hold their own orders.
   const orders = [
-    { id: "0a000001-0000-4000-9000-000000000040", order_no: "ORD-0040", customer_name: "Cedar Court Homeowner", status: "CONFIRMED" },
-    { id: "0a000001-0000-4000-9000-000000000041", order_no: "ORD-0041", customer_name: "Harbor View Landscaping", status: "DRAFT" },
-    { id: "0a000001-0000-4000-9000-000000000042", order_no: "ORD-0042", customer_name: "Mesa Stoneworks", status: "CANCELLED" },
-    { id: "0a000001-0000-4000-9000-000000000043", order_no: "ORD-0043", customer_name: "Coastline Patios", status: "CONFIRMED" },
+    { id: "0a000001-0000-4000-9000-000000000040", order_no: "ORD-0040", customer_name: "Cedar Court Homeowner", status: "CONFIRMED", fulfilment: "DELIVERY" },
+    { id: "0a000001-0000-4000-9000-000000000041", order_no: "ORD-0041", customer_name: "Harbor View Landscaping", status: "DRAFT", fulfilment: "WILL_CALL" },
+    { id: "0a000001-0000-4000-9000-000000000042", order_no: "ORD-0042", customer_name: "Mesa Stoneworks", status: "CANCELLED", fulfilment: "WILL_CALL" },
+    { id: "0a000001-0000-4000-9000-000000000043", order_no: "ORD-0043", customer_name: "Coastline Patios", status: "CONFIRMED", fulfilment: "DELIVERY" },
+    // Will call: staged and ready for a tag, never picked, held for the balance, and one with its history.
+    { id: "0a000001-0000-4000-9000-000000000044", order_no: "ORD-0044", customer_name: "Bayside Pavers", status: "CONFIRMED", fulfilment: "WILL_CALL", pick: "STAGED" },
+    { id: "0a000001-0000-4000-9000-000000000045", order_no: "ORD-0045", customer_name: "Pine Hill Supply", status: "CONFIRMED", fulfilment: "WILL_CALL", pick: "NONE" },
+    { id: "0a000001-0000-4000-9000-000000000046", order_no: "ORD-0046", customer_name: "Eastlake Masonry", status: "CONFIRMED", fulfilment: "WILL_CALL", pick: "STAGED", held: true },
+    { id: "0a000001-0000-4000-9000-000000000047", order_no: "ORD-0047", customer_name: "Terrace Landscape Co", status: "CONFIRMED", fulfilment: "WILL_CALL", pick: "STAGED" },
   ];
-  return { trucks, drivers, runs, stops, orders, seq: { run: 5, resched: 1, stop: 50, truck: 5, driver: 4 } };
+  const pickups = [
+    { id: "9c000001-0000-4000-9000-000000000001", order_id: orders[7].id, branch_id: BRANCH, status: "CONFIRMED", expires_at: `${addDays(TODAY, 9)}T18:00:00Z`, collected_by: "Pickup contact (demo)", confirmed_at: `${TODAY}T10:00:00Z`, created_at: `${addDays(TODAY, -2)}T09:00:00Z` },
+    { id: "9c000001-0000-4000-9000-000000000002", order_id: orders[7].id, branch_id: BRANCH, status: "REVOKED", expires_at: `${addDays(TODAY, 8)}T18:00:00Z`, created_at: `${addDays(TODAY, -3)}T09:00:00Z` },
+  ];
+  return { trucks, drivers, runs, stops, orders, pickups, seq: { run: 5, resched: 1, stop: 50, truck: 5, driver: 4, pickup: 10 } };
 }
 
 let world = seedWorld();
@@ -419,6 +428,26 @@ function assertChangeable(res, stop) {
   return true;
 }
 
+// The order reference the way the core's resolver grades and resolves it. Returns the order, or sends the refusal.
+function resolveOrder(res, raw) {
+  const ref = typeof raw === "string" ? raw.trim() : "";
+  if (ref === "") {
+    fail(res, 400, "enter an order number (like #SO-TRT-1041) or an order id");
+    return null;
+  }
+  const bare = ref.replace(/^#/, "");
+  if (!/^[A-Za-z0-9_-]+$/.test(bare) || !/[0-9]/.test(bare)) {
+    fail(res, 400, `"${ref}" is not an order number, enter a number like #SO-TRT-1041, or paste the order id`);
+    return null;
+  }
+  const order = world.orders.find((o) => o.order_no === bare || o.id === ref) ?? world.stops.map((s) => ({ id: s.order_id, order_no: s.order_no, customer_name: s.customer_name, status: "CONFIRMED", fulfilment: "DELIVERY" })).find((o) => o.order_no === bare || o.id === ref);
+  if (!order) {
+    fail(res, 404, "dispatch: not found");
+    return null;
+  }
+  return order;
+}
+
 function refuseIfArmed(res, method, path) {
   if (armed === null) return false;
   if (armed.path !== undefined && !path.includes(armed.path)) return false;
@@ -525,6 +554,12 @@ async function route(req, res, url) {
       }
       return json(res, { items, limit: 60 });
     }
+    if (rest === "will-call") {
+      const order = resolveOrder(res, q("order_id"));
+      if (order === null) return;
+      const items = world.pickups.filter((w) => w.order_id === order.id).map((w) => ({ ...w }));
+      return json(res, { items, limit: 50 });
+    }
     let m = /^runs\/([^/]+)\/payment-holds$/.exec(rest);
     if (m) {
       const run = runOf(m[1]);
@@ -595,21 +630,52 @@ async function route(req, res, url) {
 
   if (method !== "POST") return fail(res, 404, "not found");
 
+  let m0;
   // ---- the auto assign seam: the core build answers 501 and says what would answer it
   if (rest === "auto-assign") {
     return fail(res, 501, "dispatch: automatic load assignment is part of the Pro module, build the loads here in the meantime");
   }
 
-  if (rest === "stops") {
-    // The order resolves the way the core's resolver does: the number with or without its '#', or the id.
-    const ref = typeof body.order_id === "string" ? body.order_id.trim() : "";
-    if (ref === "") return fail(res, 400, "enter an order number (like #SO-TRT-1041) or an order id");
-    const bare = ref.replace(/^#/, "");
-    if (!/^[A-Za-z0-9_-]+$/.test(bare) || !/[0-9]/.test(bare)) {
-      return fail(res, 400, `"${ref}" is not an order number, enter a number like #SO-TRT-1041, or paste the order id`);
+  if (rest === "will-call") {
+    const order = resolveOrder(res, body.order_id);
+    if (order === null) return;
+    if (order.fulfilment !== "WILL_CALL") return fail(res, 409, `dispatch: this is ${order.fulfilment === "DELIVERY" ? "a delivery" : "a counter pickup"}, not will-call, a rack tag prints only for a will-call order`);
+    if (order.status === "DRAFT") return fail(res, 409, "dispatch: confirm the order before printing a pickup code");
+    if (order.status === "CANCELLED" || order.status === "CLOSED") return fail(res, 409, order.status === "CANCELLED" ? "dispatch: this order was cancelled" : "dispatch: this order is already closed");
+    if (order.pick === "NONE") return fail(res, 409, "dispatch: nothing has been picked for this order yet, it is in the yard's queue, and the tag prints once the pick is staged");
+    if (order.held) return fail(res, 409, "dispatch: This order cannot reach picking until the balance is paid.");
+    if (world.pickups.some((w) => w.order_id === order.id && w.status === "ACTIVE")) {
+      return fail(res, 409, "dispatch: this order already has a live pickup code, revoke it before printing another");
     }
-    const order = world.orders.find((o) => o.order_no === bare || o.id === ref) ?? world.stops.map((s) => ({ id: s.order_id, order_no: s.order_no, customer_name: s.customer_name, status: "CONFIRMED" })).find((o) => o.order_no === bare || o.id === ref);
-    if (!order) return fail(res, 404, "dispatch: not found");
+    const n = world.seq.pickup++;
+    const row = {
+      id: `9c000001-0000-4000-9000-0000000000${String(n).padStart(2, "0")}`,
+      order_id: order.id,
+      branch_id: BRANCH,
+      status: "ACTIVE",
+      expires_at: `${addDays(TODAY, Number(body.ttl_hours) > 0 ? Math.ceil(Number(body.ttl_hours) / 24) : 14)}T18:00:00Z`,
+      created_at: `${TODAY}T08:00:00Z`,
+    };
+    world.pickups.push(row);
+    const token = Buffer.from(`${row.id}-${n}-stub-pickup-token-0000`).toString("base64url");
+    res.setHeader("Cache-Control", "no-store");
+    return json(res, { ...row, token }, 201);
+  }
+
+  m0 = /^will-call\/([^/]+)\/revoke$/.exec(rest);
+  if (m0) {
+    if (!caller.can_manage) return fail(res, 403, "Forbidden");
+    if (!/^[0-9a-f]{8}-/.test(m0[1])) return fail(res, 404, "dispatch: not found");
+    const row = world.pickups.find((w) => w.id === m0[1]);
+    if (!row) return fail(res, 404, "dispatch: not found");
+    if (row.status !== "ACTIVE") return fail(res, 409, `dispatch: this pickup code is already ${row.status.toLowerCase()}`);
+    row.status = "REVOKED";
+    return json(res, { status: "REVOKED" });
+  }
+
+  if (rest === "stops") {
+    const order = resolveOrder(res, body.order_id);
+    if (order === null) return;
     const date = typeof body.scheduled_date === "string" ? body.scheduled_date.trim() : "";
     if (date === "") return fail(res, 400, "dispatch: scheduled_date is required (YYYY-MM-DD)");
     if (!validDate(date)) return fail(res, 400, "dispatch: scheduled_date must be YYYY-MM-DD");
