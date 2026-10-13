@@ -197,3 +197,138 @@ test("cancel closes the editor and drops any open warning", () => {
   assert.equal(c.model.margin.editing, null);
   assert.equal(c.model.margin.floor, null);
 });
+
+// -- the rules tab --------------------------------------------------------------------------------
+
+const RULES = [
+  {
+    id: "9a11e111-0000-4000-9000-000000000001",
+    scope: "TIER_CATEGORY",
+    category_id: "ca7-1",
+    customer_id: "",
+    customer_type: "",
+    product_id: "",
+    branch_id: "",
+    calc_type: "PCT_OFF_LIST",
+    price_cents: null,
+    discount_bps: 1000,
+    markup_bps: null,
+    price_uom: "SF",
+    priority: 10,
+    valid_from: null,
+    valid_to: null,
+    detail_text: "Trade discount",
+    is_active: true,
+    version: 3,
+  },
+];
+
+function fakeRulesDoor(over = {}) {
+  const door = fakeDoor({
+    rules: async () => {
+      door.calls.push("rules");
+      return { ok: true, value: RULES };
+    },
+    rule: async (id) => {
+      door.calls.push(["rule", id]);
+      return { ok: true, value: RULES[0] };
+    },
+    createRule: async (body) => {
+      door.calls.push(["createRule", body]);
+      return { ok: true, value: { id: "9a11e111-0000-4000-9000-000000000009", version: 1 } };
+    },
+    updateRule: async (id, body) => {
+      door.calls.push(["updateRule", id, body]);
+      return { ok: true, value: { ...RULES[0], ...body, version: body.version + 1 } };
+    },
+    deleteRule: async (id, opts) => {
+      door.calls.push(["deleteRule", id, opts]);
+      return { ok: true, value: { status: "retired" } };
+    },
+    previewFloor: async (body) => {
+      door.calls.push(["previewFloor", body]);
+      if (door.floorAnswer) return { ok: true, value: door.floorAnswer };
+      return { ok: true, value: { items: [], evaluated: 40, not_graded: 0, no_cost: 0, truncated: false } };
+    },
+    ...over,
+  });
+  return door;
+}
+
+test("opening the rules tab loads the rules", async () => {
+  const door = fakeRulesDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "rules" });
+  assert.equal(c.model.rules.phase, "ready");
+  assert.equal(c.model.rules.rows.length, 1);
+});
+
+test("a rule edit re-reads the rule for its current version, and the save rides the floor", async () => {
+  const door = fakeRulesDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "rules" });
+  await c.click("pr-rule-edit", { id: RULES[0].id });
+  assert.deepEqual(door.calls.find((x) => Array.isArray(x) && x[0] === "rule"), ["rule", RULES[0].id]);
+  c.input("rule-discount", "12");
+  await c.click("pr-rule-save", {});
+  const preview = door.calls.filter((x) => Array.isArray(x) && x[0] === "previewFloor").pop();
+  assert.equal(preview[1].kind, "rule");
+  assert.equal(preview[1].id, RULES[0].id);
+  assert.equal(preview[1].rule.discount_bps, 1200);
+  const update = door.calls.find((x) => Array.isArray(x) && x[0] === "updateRule");
+  assert.ok(update, "a clean grading saves");
+  assert.equal(update[2].version, 3, "the patch carries the version the read brought");
+  assert.equal(c.model.rules.notice, "Saved.");
+});
+
+test("a create sends the whole write with version zero", async () => {
+  const door = fakeRulesDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "rules" });
+  c.click("pr-rule-edit", {});
+  c.change("rule-scope", "TIER_DEFAULT");
+  c.change("rule-calc", "PCT_OFF_LIST");
+  c.input("rule-discount", "15");
+  c.input("rule-priority", "10");
+  await c.click("pr-rule-save", {});
+  const create = door.calls.find((x) => Array.isArray(x) && x[0] === "createRule");
+  assert.ok(create);
+  assert.equal(create[1].version, 0);
+  assert.equal(create[1].scope, "TIER_DEFAULT");
+  assert.equal(create[1].discount_bps, 1500);
+  assert.equal(create[1].customer_id, "");
+});
+
+test("a refused rule save shows the server's words and keeps the editor", async () => {
+  const door = fakeRulesDoor({
+    updateRule: async (id, body) => {
+      door.calls.push(["updateRule", id, body]);
+      return { ok: false, error: "scope and dims disagree", status: 422 };
+    },
+  });
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "rules" });
+  await c.click("pr-rule-edit", { id: RULES[0].id });
+  await c.click("pr-rule-save", {});
+  assert.match(c.model.rules.formError, /scope and dims disagree/);
+  assert.ok(c.model.rules.editing);
+  assert.equal(door.calls.filter((x) => Array.isArray(x) && x[0] === "updateRule").length, 1, "one write, no queue");
+});
+
+test("retire is two taps, and the second carries the version the row showed", async () => {
+  const door = fakeRulesDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "rules" });
+  c.click("pr-rule-retire", { id: RULES[0].id });
+  assert.equal(c.model.rules.confirmingId, RULES[0].id, "the first tap asks");
+  assert.equal(door.calls.some((x) => Array.isArray(x) && x[0] === "deleteRule"), false, "nothing deletes on the first tap");
+  await c.click("pr-rule-retire", { id: RULES[0].id });
+  const del = door.calls.find((x) => Array.isArray(x) && x[0] === "deleteRule");
+  assert.deepEqual(del[2], { version: 3 });
+  assert.match(c.model.rules.notice, /Retired/);
+});

@@ -204,3 +204,49 @@ test("the confirmation's verdict is the server's own word, shown whole", () => {
   assert.match(floorConfirmVerdict({ status: "logged" }), /logged/);
   assert.match(floorConfirmVerdict(null), /not recorded/);
 });
+
+// -- the rules tab: a rule read as a person reads it ---------------------------------
+
+import {
+  ruleCalcWords,
+  ruleEmptyWords,
+  ruleValueWords,
+  validityWords,
+} from "../src/pricing-logic.ts";
+
+const RULE = {
+  id: "9a11e111-0000-4000-9000-000000000001",
+  scope: "TIER_CATEGORY",
+  category_id: "ca7-1",
+  calc_type: "PCT_OFF_LIST",
+  discount_bps: 1000,
+  price_uom: "SF",
+  priority: 10,
+  detail_text: "Trade discount",
+  is_active: true,
+  version: 3,
+};
+
+test("a rule's value says what the calc does, in the calc's own unit", () => {
+  assert.equal(ruleValueWords({ ...RULE, calc_type: "ABSOLUTE", price_cents: 480 }), "CA$4.80 a SF");
+  assert.equal(ruleValueWords({ ...RULE, calc_type: "PCT_OFF_LIST", discount_bps: 1000 }), "10.00% off list");
+  assert.equal(ruleValueWords({ ...RULE, calc_type: "MARKUP_ON_COST", markup_bps: 2500 }), "25.00% on cost");
+  assert.equal(ruleValueWords({ ...RULE, calc_type: "ODD" }), "");
+});
+
+test("a rule's validity reads as the window it holds, or nothing when it is open", () => {
+  assert.equal(validityWords("", ""), "");
+  assert.equal(validityWords("2026-03-01T00:00:00Z", ""), "from 2026-03-01");
+  assert.equal(validityWords("", "2026-11-30T00:00:00Z"), "to 2026-11-30");
+  assert.equal(validityWords("2026-03-01T00:00:00Z", "2026-11-30T00:00:00Z"), "2026-03-01 to 2026-11-30");
+  assert.equal(validityWords("not a date", ""), "");
+});
+
+test("the rules tab's empty words are its own", () => {
+  assert.match(ruleEmptyWords(), /No pricing rules yet/);
+});
+
+test("a rule's calc cell keeps the unit beside the figure", () => {
+  assert.equal(ruleCalcWords("SF"), "a SF");
+  assert.equal(ruleCalcWords(""), "");
+});

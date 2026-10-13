@@ -435,3 +435,61 @@ export function floorConfirmVerdict(status: { readonly status: string } | null):
   if (status === null) return "The confirmation was not recorded.";
   return `The confirmation is in the pricing log (${status.status}).`;
 }
+
+// -- the rules tab: a rule read as a person reads it ---------------------------------------------------
+
+/** The rules tab's empty words. */
+export function ruleEmptyWords(): string {
+  return "No pricing rules yet. Every price resolves through the tier defaults until a rule is written.";
+}
+
+/**
+ * A rule's value in its calc's own unit. The figure is the server's; the
+ * words only name what the calc does with it.
+ */
+export function ruleValueWords(
+  rule: {
+    readonly calc_type: string;
+    readonly price_cents?: number | null;
+    readonly discount_bps?: number | null;
+    readonly markup_bps?: number | null;
+    readonly price_uom: string;
+  },
+): string {
+  switch (rule.calc_type) {
+    case "ABSOLUTE":
+      return `${moneyWords(rule.price_cents ?? null)} ${ruleCalcWords(rule.price_uom)}`.trim();
+    case "PCT_OFF_LIST":
+      return `${pctWords(rule.discount_bps ?? null)} off list`;
+    case "MARKUP_ON_COST":
+      return `${pctWords(rule.markup_bps ?? null)} on cost`;
+    default:
+      return "";
+  }
+}
+
+/** The unit a fixed price is carried in, as a sentence tail. */
+export function ruleCalcWords(priceUom: string): string {
+  return priceUom === "" ? "" : `a ${priceUom}`;
+}
+
+/**
+ * A rule's validity window, as the row shows it: the date each bound names,
+ * and nothing when the rule is open ended. An unparsable bound is left out
+ * rather than guessed at.
+ */
+export function validityWords(validFrom: string, validTo: string): string {
+  const from = dayWords(validFrom);
+  const to = dayWords(validTo);
+  if (from !== "" && to !== "") return `${from} to ${to}`;
+  if (from !== "") return `from ${from}`;
+  if (to !== "") return `to ${to}`;
+  return "";
+}
+
+function dayWords(iso: string): string {
+  if (iso.trim() === "") return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return iso.slice(0, 10);
+}

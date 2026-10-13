@@ -185,11 +185,38 @@ function buildPolicies() {
   return [{ category_id: PAV, margin_target_bps: 3500, margin_floor_bps: 2000, margin_enforcement_disabled: false }];
 }
 
+// The pricing rules: one tier and category rule for Pavers.
+const RULES_WORLD = [
+  {
+    id: "9a110000-0000-4000-9000-0000000000a1",
+    scope: "TIER_CATEGORY",
+    customer_id: "",
+    customer_type: "",
+    category_id: PAV,
+    product_id: "",
+    branch_id: "",
+    calc_type: "PCT_OFF_LIST",
+    price_cents: null,
+    discount_bps: 1000,
+    markup_bps: null,
+    price_uom: "SF",
+    priority: 10,
+    valid_from: null,
+    valid_to: null,
+    detail_text: "Trade discount",
+    is_active: true,
+    version: 3,
+  },
+];
+
+let rules;
+
 function reset() {
   staff = buildStaff();
   hotkeys = buildHotkeys();
   audit = buildAudit();
   policies = buildPolicies();
+  rules = structuredClone(RULES_WORLD);
   scenario = "";
   log = [];
 }
@@ -486,6 +513,90 @@ async function handle(req, res) {
     const ids = Array.isArray(body?.product_ids) ? body.product_ids : [];
     if (ids.length === 0) return refuse(res, 400, "product_ids may not be empty");
     return json(res, { status: "logged" });
+  }
+
+  // ---- the pricing rules ----
+
+  if (req.method === "GET" && path === "/api/v1/pricing/rules") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const scope = url.searchParams.get("scope") ?? "";
+    const customerType = url.searchParams.get("customer_type") ?? "";
+    const items = rules.filter((r) => {
+      if (scope !== "" && r.scope !== scope) return false;
+      if (customerType !== "" && r.customer_type !== customerType) return false;
+      return true;
+    });
+    return json(res, { items: scenario === "empty-pricing" ? [] : items, next_cursor: null, limit: 200 });
+  }
+
+  const ruleMatch = path.match(/^\/api\/v1\/pricing\/rules\/([^/]+)$/);
+  if (req.method === "GET" && ruleMatch) {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const rule = rules.find((r) => r.id === decodeURIComponent(ruleMatch[1]));
+    if (rule === undefined) return refuse(res, 404, "rule not found");
+    return json(res, rule);
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/rules") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const id = `9a110000-0000-4000-9000-${Math.random().toString(16).slice(2, 14).padStart(12, "0")}`;
+    rules.push({
+      id,
+      scope: String(body?.scope ?? ""),
+      customer_id: String(body?.customer_id ?? ""),
+      customer_type: String(body?.customer_type ?? ""),
+      category_id: String(body?.category_id ?? ""),
+      product_id: String(body?.product_id ?? ""),
+      branch_id: String(body?.branch_id ?? ""),
+      calc_type: String(body?.calc_type ?? ""),
+      price_cents: body?.price_cents ?? null,
+      discount_bps: body?.discount_bps ?? null,
+      markup_bps: body?.markup_bps ?? null,
+      price_uom: String(body?.price_uom ?? ""),
+      priority: typeof body?.priority === "number" ? body.priority : 0,
+      valid_from: body?.valid_from ?? null,
+      valid_to: body?.valid_to ?? null,
+      detail_text: String(body?.detail_text ?? ""),
+      is_active: body?.is_active !== false,
+      version: 1,
+    });
+    return json(res, { id, version: 1 });
+  }
+
+  if (req.method === "PUT" && ruleMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const rule = rules.find((r) => r.id === decodeURIComponent(ruleMatch[1]));
+    if (rule === undefined) return refuse(res, 404, "rule not found");
+    if (typeof body?.version === "number" && body.version !== rule.version) return refuse(res, 409, "version conflict: the rule changed since you opened it");
+    rule.scope = String(body?.scope ?? rule.scope);
+    rule.customer_id = body?.customer_id !== undefined ? String(body.customer_id) : rule.customer_id;
+    rule.customer_type = body?.customer_type !== undefined ? String(body.customer_type) : rule.customer_type;
+    rule.category_id = body?.category_id !== undefined ? String(body.category_id) : rule.category_id;
+    rule.product_id = body?.product_id !== undefined ? String(body.product_id) : rule.product_id;
+    rule.branch_id = body?.branch_id !== undefined ? String(body.branch_id) : rule.branch_id;
+    rule.calc_type = String(body?.calc_type ?? rule.calc_type);
+    if (body?.price_cents !== undefined) rule.price_cents = body.price_cents;
+    if (body?.discount_bps !== undefined) rule.discount_bps = body.discount_bps;
+    if (body?.markup_bps !== undefined) rule.markup_bps = body.markup_bps;
+    rule.price_uom = String(body?.price_uom ?? rule.price_uom);
+    if (typeof body?.priority === "number") rule.priority = body.priority;
+    if (body?.valid_from !== undefined) rule.valid_from = body.valid_from;
+    if (body?.valid_to !== undefined) rule.valid_to = body.valid_to;
+    if (body?.detail_text !== undefined) rule.detail_text = String(body.detail_text);
+    if (typeof body?.is_active === "boolean") rule.is_active = body.is_active;
+    rule.version += 1;
+    return json(res, rule);
+  }
+
+  if (req.method === "DELETE" && ruleMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const rule = rules.find((r) => r.id === decodeURIComponent(ruleMatch[1]));
+    if (rule === undefined) return refuse(res, 404, "rule not found");
+    const version = Number(url.searchParams.get("version") ?? "0");
+    if (version !== rule.version) return refuse(res, 409, "version conflict: the rule changed since you opened it");
+    rule.is_active = false;
+    rule.version += 1;
+    return json(res, { status: "retired" });
   }
 
   // ---- the audit trail ----

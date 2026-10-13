@@ -235,3 +235,36 @@ test("a pricing write is refused for a frontline caller, in the server's own wor
   await expect(page.locator("[data-test=pr-policy-error]")).toContainText("manager");
   await expect(page.locator("[data-test=pr-margin-count]")).toHaveText("1 policy");
 });
+
+test("the rules tab: the list, an edit saved clean, and a retire asked twice", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+  await page.locator('.pr-tab[data-tab="rules"]').click();
+  await expect(page.locator("[data-test=pr-rules-count]")).toHaveText("1 rule");
+
+  // The rule reads as a person reads it: the scope word, the value in its
+  // own unit, the category by name.
+  const row = page.locator('tr[data-rule="9a110000-0000-4000-9000-0000000000a1"]');
+  await expect(row).toContainText("Tier + category");
+  await expect(row).toContainText("Pavers");
+  await expect(row.locator("[data-test=pr-rule-value]")).toHaveText("10.00% off list");
+
+  // An edit re-reads the rule and saves through a clean grading.
+  await row.getByRole("button", { name: "Edit the rule Trade discount" }).click();
+  await expect(page.locator("[data-test=pr-rule-editor]")).toContainText("version 3");
+  await page.locator('[data-field="pr-rule-discount"]').fill("12");
+  await page.locator('[data-action="pr-rule-save"]').click();
+  await expect(page.locator("[data-test=pr-rules-notice]")).toContainText("Saved.");
+  await expect(page.locator('tr[data-rule="9a110000-0000-4000-9000-0000000000a1"] [data-test=pr-rule-value]')).toHaveText("12.00% off list");
+
+  // Retire asks twice; the second tap carries the row's version.
+  const retire = page.locator('[data-action="pr-rule-retire"][data-id="9a110000-0000-4000-9000-0000000000a1"]');
+  await retire.click();
+  await expect(retire).toHaveText("Retire: tap again");
+  await retire.click();
+  await expect(page.locator("[data-test=pr-rules-notice]")).toContainText("Retired.");
+  await expect(page.locator('tr[data-rule="9a110000-0000-4000-9000-0000000000a1"]')).toContainText("retired");
+});

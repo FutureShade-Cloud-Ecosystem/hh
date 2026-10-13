@@ -13,7 +13,23 @@
 // server answered, the editors encode what the person typed, and nothing in
 // between computes.
 import { html, nothing, type TemplateResult } from "lit";
-import { categoryName, marginEmptyWords, moneyWords, pctWords, pricingEmptyWords, PRICING_TABS } from "./pricing-logic.js";
+import {
+  calcTypeWord,
+  categoryName,
+  CUSTOMER_TYPES,
+  customerTypeWord,
+  marginEmptyWords,
+  moneyWords,
+  pctWords,
+  pricingEmptyWords,
+  RULE_SCOPES,
+  ruleEmptyWords,
+  ruleValueWords,
+  scopeWord,
+  validityWords,
+  PRICING_TABS,
+} from "./pricing-logic.js";
+import type { RuleRow } from "./pricing-api.js";
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
 
 export function renderPricing(model: PricingModel): TemplateResult {
@@ -45,6 +61,7 @@ function renderTab(model: PricingModel): TemplateResult {
   // The router line: one case per landed tab. The next group's commit adds
   // its case beside this one; until then the tab says plainly it is not wired.
   if (model.tab === "margin") return renderMargin(model);
+  if (model.tab === "rules") return renderRules(model);
   const tab = PRICING_TABS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
@@ -175,7 +192,7 @@ function renderPolicyEditor(model: PricingModel): TemplateResult | typeof nothin
         </label>
       </div>
       ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-policy-error">${m.formError}</p>`}
-      ${m.floor === null ? nothing : renderFloorPanel(m.floor)}
+      ${m.floor === null ? nothing : renderFloorPanel(m.floor, "pr-policy-confirm", "pr-policy-review")}
       <div class="pr-actions">
         <button type="button" class="btn btn-primary" data-action="pr-policy-save" ?disabled=${m.busy || m.floor !== null}>
           ${m.busy ? "Checking the floor…" : "Check the floor, then save"}
@@ -192,7 +209,7 @@ function floorItemWords(item: FloorPanel["items"][number]): string {
   return `${item.sku} ${item.name}`;
 }
 
-function renderFloorPanel(floor: FloorPanel): TemplateResult {
+function renderFloorPanel(floor: FloorPanel, confirmAction: string, reviewAction: string): TemplateResult {
   return html`
     <div class="pr-warn" role="group" aria-label="The floor check's warning" data-test="pr-floor-panel">
       <span class="pr-warn-title">
@@ -234,11 +251,255 @@ function renderFloorPanel(floor: FloorPanel): TemplateResult {
           `}
       ${floor.notes.map((line) => html`<p>${line}</p>`)}
       <div class="pr-actions">
-        <button type="button" class="btn btn-primary" data-action="pr-policy-confirm" ?disabled=${floor.busy}>
+        <button type="button" class="btn btn-primary" data-action=${confirmAction} ?disabled=${floor.busy}>
           ${floor.busy ? "Saving…" : "Save anyway, and log that I saw this"}
         </button>
-        <button type="button" class="btn btn-secondary" data-action="pr-policy-review" ?disabled=${floor.busy}>Go back</button>
+        <button type="button" class="btn btn-secondary" data-action=${reviewAction} ?disabled=${floor.busy}>Go back</button>
       </div>
-    </div>
+    </section>
+  `;
+}
+
+// -- the rules tab -------------------------------------------------------------------------------------
+
+function ruleDimsWords(rule: { readonly scope: string; readonly customer_id: string; readonly customer_type: string; readonly category_id: string; readonly product_id: string; readonly branch_id: string }, model: PricingModel): string {
+  const parts: string[] = [];
+  if (rule.customer_id !== "") parts.push(`customer ${rule.customer_id.slice(0, 8)}`);
+  if (rule.customer_type !== "") parts.push(customerTypeWord(rule.customer_type));
+  if (rule.category_id !== "") parts.push(categoryName(rule.category_id, model.categories));
+  if (rule.product_id !== "") parts.push(`product ${rule.product_id.slice(0, 8)}`);
+  if (rule.branch_id !== "") parts.push(`branch ${rule.branch_id.slice(0, 8)}`);
+  return parts.join(" · ");
+}
+
+export function renderRules(model: PricingModel): TemplateResult {
+  const m = model.rules;
+  return html`
+    ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-rules-loading">Loading the pricing rules…</p>` : nothing}
+    ${m.phase === "error" || m.phase === "refused"
+      ? html`
+          <p class="error-line" data-test="pr-rules-error">${m.error}</p>
+          <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-rules-reload">Try again</button></div>
+        `
+      : nothing}
+    ${m.phase === "ready" ? renderRulesList(model) : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderRuleEditor(model) : nothing}
+  `;
+}
+
+function renderRulesList(model: PricingModel): TemplateResult {
+  const m = model.rules;
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Pricing rules</h2>
+        <span class="count" data-test="pr-rules-count">${m.rows.length} ${m.rows.length === 1 ? "rule" : "rules"}</span>
+        <button type="button" class="btn btn-primary btn-small" data-action="pr-rule-edit">New rule</button>
+      </div>
+      ${m.notice === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-rules-notice">${m.notice}</p>`}
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-rules-form-error">${m.formError}</p>`}
+      <div class="filters" role="group" aria-label="Rule filters">
+        <select class="select" aria-label="Scope" data-field="pr-rules-scope">
+          <option value="">Scope: all</option>
+          <option value="CUSTOMER_PRODUCT">${scopeWord("CUSTOMER_PRODUCT")}</option>
+          <option value="CUSTOMER_CATEGORY">${scopeWord("CUSTOMER_CATEGORY")}</option>
+          <option value="TIER_CATEGORY">${scopeWord("TIER_CATEGORY")}</option>
+          <option value="TIER_DEFAULT">${scopeWord("TIER_DEFAULT")}</option>
+        </select>
+        <select class="select" aria-label="Customer type" data-field="pr-rules-type">
+          <option value="">Customer type: all</option>
+          <option value="CONTRACTOR">${customerTypeWord("CONTRACTOR")}</option>
+          <option value="RETAIL">${customerTypeWord("RETAIL")}</option>
+          <option value="BUILDER">${customerTypeWord("BUILDER")}</option>
+          <option value="GOVERNMENT">${customerTypeWord("GOVERNMENT")}</option>
+          <option value="INTERNAL">${customerTypeWord("INTERNAL")}</option>
+        </select>
+        <button type="button" class="btn btn-secondary" data-action="pr-rules-apply">Apply</button>
+        <button type="button" class="btn btn-secondary" data-action="pr-rules-clear">Clear</button>
+      </div>
+      ${m.rows.length === 0
+        ? html`<p class="notice-line" data-test="pr-rules-empty">${ruleEmptyWords()}</p>`
+        : html`
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Scope</th>
+                    <th scope="col">Reaches</th>
+                    <th scope="col">Value</th>
+                    <th scope="col" class="num">Priority</th>
+                    <th scope="col">Valid</th>
+                    <th scope="col">State</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.rows.map((rule) => renderRuleRow(rule, model))}
+                </tbody>
+              </table>
+            </div>
+          `}
+    </section>
+  `;
+}
+
+function renderRuleRow(rule: RuleRow, model: PricingModel): TemplateResult {
+  const m = model.rules;
+  const confirming = m.confirmingId === rule.id;
+  return html`
+    <tr data-rule=${rule.id}>
+      <td><span class="chip">${scopeWord(rule.scope)}</span></td>
+      <td>
+        <div>${ruleDimsWords(rule, model)}</div>
+        <div class="mono dim">${rule.detail_text}</div>
+      </td>
+      <td class="num" data-test="pr-rule-value">${ruleValueWords(rule)}</td>
+      <td class="num">${rule.priority}</td>
+      <td class="mono dim">${validityWords(rule.valid_from, rule.valid_to)}</td>
+      <td>
+        ${rule.is_active
+          ? html`<span class="chip chip-good">active</span>`
+          : html`<span class="chip chip-dim">retired</span>`}
+      </td>
+      <td>
+        <div class="pr-actions">
+          <button
+            type="button"
+            class="btn btn-secondary btn-small"
+            data-action="pr-rule-edit"
+            data-id=${rule.id}
+            aria-label="Edit the rule ${rule.detail_text}"
+          >
+            Edit
+          </button>
+          ${rule.is_active
+            ? html`
+                <button
+                  type="button"
+                  class="btn btn-secondary btn-small"
+                  data-action="pr-rule-retire"
+                  data-id=${rule.id}
+                  ?disabled=${m.busy}
+                >
+                  ${confirming ? "Retire: tap again" : "Retire"}
+                </button>
+              `
+            : nothing}
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderRuleEditor(model: PricingModel): TemplateResult | typeof nothing {
+  const m = model.rules;
+  const e = m.editing;
+  if (e === null) return nothing;
+  const heading = e.id === "" ? "New rule" : `Rule: ${e.detail === "" ? e.id.slice(0, 8) : e.detail}`;
+  return html`
+    <section class="card" data-test="pr-rule-editor">
+      <div class="card-head">
+        <h2 class="card-title">${heading}</h2>
+        ${e.id === "" ? html`<span class="chip chip-wait">create</span>` : html`<span class="chip">version ${e.version}</span>`}
+      </div>
+      <div class="form-grid">
+        <label class="field">
+          <span class="field-label">Scope</span>
+          <select class="select" data-field="pr-rule-scope" ?disabled=${m.busy}>
+            <option value="">Choose a scope</option>
+            <option value="CUSTOMER_PRODUCT">${scopeWord("CUSTOMER_PRODUCT")}</option>
+            <option value="CUSTOMER_CATEGORY">${scopeWord("CUSTOMER_CATEGORY")}</option>
+            <option value="TIER_CATEGORY">${scopeWord("TIER_CATEGORY")}</option>
+            <option value="TIER_DEFAULT">${scopeWord("TIER_DEFAULT")}</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Customer id (empty unless the rule names one)</span>
+          <input class="text-field" type="text" data-field="pr-rule-customer" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Customer type</span>
+          <select class="select" data-field="pr-rule-type" ?disabled=${m.busy}>
+            <option value="">Any</option>
+            <option value="CONTRACTOR">${customerTypeWord("CONTRACTOR")}</option>
+            <option value="RETAIL">${customerTypeWord("RETAIL")}</option>
+            <option value="BUILDER">${customerTypeWord("BUILDER")}</option>
+            <option value="GOVERNMENT">${customerTypeWord("GOVERNMENT")}</option>
+            <option value="INTERNAL">${customerTypeWord("INTERNAL")}</option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Category</span>
+          <select class="select" data-field="pr-rule-category" ?disabled=${m.busy}>
+            <option value="">Any category</option>
+            ${model.categories.map((c) => html`<option>${c.name}</option>`)}
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Product id (empty unless the rule names one)</span>
+          <input class="text-field" type="text" data-field="pr-rule-product" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Branch id (empty prices every yard)</span>
+          <input class="text-field" type="text" data-field="pr-rule-branch" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">What the rule does</span>
+          <select class="select" data-field="pr-rule-calc" ?disabled=${m.busy}>
+            <option value="">Choose a calc</option>
+            <option value="ABSOLUTE">${calcTypeWord("ABSOLUTE")}</option>
+            <option value="PCT_OFF_LIST">${calcTypeWord("PCT_OFF_LIST")}</option>
+            <option value="MARKUP_ON_COST">${calcTypeWord("MARKUP_ON_COST")}</option>
+          </select>
+        </label>
+        ${e.calc === "ABSOLUTE"
+          ? html`<label class="field"><span class="field-label">Fixed price, dollars</span>
+              <input class="text-field" type="text" inputmode="decimal" data-field="pr-rule-price" ?disabled=${m.busy} /></label>`
+          : nothing}
+        ${e.calc === "PCT_OFF_LIST"
+          ? html`<label class="field"><span class="field-label">Discount, percent off list</span>
+              <input class="text-field" type="text" inputmode="decimal" data-field="pr-rule-discount" ?disabled=${m.busy} /></label>`
+          : nothing}
+        ${e.calc === "MARKUP_ON_COST"
+          ? html`<label class="field"><span class="field-label">Markup, percent on cost</span>
+              <input class="text-field" type="text" inputmode="decimal" data-field="pr-rule-markup" ?disabled=${m.busy} /></label>`
+          : nothing}
+        <label class="field">
+          <span class="field-label">Price unit</span>
+          <input class="text-field" type="text" placeholder="SF" data-field="pr-rule-uom" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Priority (lower runs first)</span>
+          <input class="text-field" type="text" inputmode="numeric" data-field="pr-rule-priority" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Valid from (empty is open)</span>
+          <input class="text-field" type="date" data-field="pr-rule-from" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Valid to (empty is open)</span>
+          <input class="text-field" type="date" data-field="pr-rule-to" ?disabled=${m.busy} />
+        </label>
+        <label class="field field-full">
+          <span class="field-label">What it says, as the list shows it</span>
+          <input class="text-field" type="text" data-field="pr-rule-detail" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Active</span>
+          <span class="branch-choice">
+            <input type="checkbox" data-field="pr-rule-active" ?disabled=${m.busy} />
+            <span>An inactive rule never resolves</span>
+          </span>
+        </label>
+      </div>
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-rule-error">${m.formError}</p>`}
+      ${m.floor === null ? nothing : renderFloorPanel(m.floor, "pr-rule-confirm", "pr-rule-review")}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-rule-save" ?disabled=${m.busy || m.floor !== null}>
+          ${m.busy ? "Checking the floor…" : e.id === "" ? "Check the floor, then create" : "Check the floor, then save"}
+        </button>
+        <button type="button" class="btn btn-secondary" data-action="pr-rule-cancel" ?disabled=${m.busy}>Cancel</button>
+      </div>
+    </section>
   `;
 }

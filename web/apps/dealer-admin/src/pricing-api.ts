@@ -23,6 +23,8 @@ import {
   staffPricing,
   type PricingFloorConfirmation,
   type PricingFloorPreviewRequest,
+  type PricingRulePatch,
+  type PricingRuleWrite,
   type Result,
 } from "@hardscapehouse/api-client";
 import type { CategoryRow } from "./pricing-logic.js";
@@ -135,13 +137,77 @@ export function toFloorPreview(raw: unknown): FloorPreview {
   };
 }
 
-/** The one status word the writes and the confirmation answer carry. */
+/** The single status word the writes and the confirmation answer carry. */
 export interface StatusResult {
   readonly status: string;
 }
 
 function toStatus(raw: unknown): StatusResult {
   return { status: text(bag(raw).status) };
+}
+
+/** The id and starting version a create answers with. */
+export interface CreatedRef {
+  readonly id: string;
+  readonly version: number;
+}
+
+function toCreatedRef(raw: unknown): CreatedRef {
+  const r = bag(raw);
+  return { id: text(r.id), version: num(r.version) };
+}
+
+// -- the rules -----------------------------------------------------------------------------------------
+
+/** One pricing rule as the screens use it. */
+export interface RuleRow {
+  readonly id: string;
+  readonly scope: string;
+  readonly customer_id: string;
+  readonly customer_type: string;
+  readonly category_id: string;
+  readonly product_id: string;
+  readonly branch_id: string;
+  readonly calc_type: string;
+  readonly price_cents: number | null;
+  readonly discount_bps: number | null;
+  readonly markup_bps: number | null;
+  readonly price_uom: string;
+  readonly priority: number;
+  readonly valid_from: string;
+  readonly valid_to: string;
+  readonly detail_text: string;
+  readonly is_active: boolean;
+  readonly version: number;
+}
+
+export function toRuleRow(raw: unknown): RuleRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    scope: text(r.scope),
+    customer_id: text(r.customer_id),
+    customer_type: text(r.customer_type),
+    category_id: text(r.category_id),
+    product_id: text(r.product_id),
+    branch_id: text(r.branch_id),
+    calc_type: text(r.calc_type),
+    price_cents: maybeNum(r.price_cents),
+    discount_bps: maybeNum(r.discount_bps),
+    markup_bps: maybeNum(r.markup_bps),
+    price_uom: text(r.price_uom),
+    priority: num(r.priority),
+    valid_from: text(r.valid_from),
+    valid_to: text(r.valid_to),
+    detail_text: text(r.detail_text),
+    is_active: bool(r.is_active),
+    version: num(r.version),
+  };
+}
+
+export interface RuleQuery {
+  readonly scope?: string;
+  readonly customer_type?: string;
 }
 
 /**
@@ -179,6 +245,47 @@ export class PricingApi {
     const answer = await staffPricing.pricingUpsertCategoryPolicy(this.#client, categoryId, { ...body });
     if (!answer.ok) return answer;
     return { ok: true, value: toPolicyRow(answer.value) };
+  }
+
+  // -- the rules -------------------------------------------------------------------------------------
+
+  /** The pricing rules, filtered by scope and customer type. */
+  async rules(query: RuleQuery = {}): Promise<Result<readonly RuleRow[]>> {
+    const answer = await staffPricing.pricingListRules(this.#client, {
+      limit: 200,
+      scope: query.scope === "" ? undefined : (query.scope as "CUSTOMER_PRODUCT" | "CUSTOMER_CATEGORY" | "TIER_CATEGORY" | "TIER_DEFAULT"),
+      customer_type: query.customer_type === "" ? undefined : query.customer_type,
+    });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toRuleRow) };
+  }
+
+  /** One rule, read whole: the editor opens on the version the server holds now. */
+  async rule(id: string): Promise<Result<RuleRow>> {
+    const answer = await staffPricing.pricingGetRule(this.#client, id);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toRuleRow(answer.value) };
+  }
+
+  /** Create a rule; the write carries version zero. */
+  async createRule(body: PricingRuleWrite): Promise<Result<CreatedRef>> {
+    const answer = await staffPricing.pricingCreateRule(this.#client, body);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toCreatedRef(answer.value) };
+  }
+
+  /** Save a rule as a sparse patch over the version the editor read. */
+  async updateRule(id: string, body: PricingRulePatch): Promise<Result<RuleRow>> {
+    const answer = await staffPricing.pricingUpdateRule(this.#client, id, body);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toRuleRow(answer.value) };
+  }
+
+  /** Retire a rule; the version the row showed rides the delete. */
+  async deleteRule(id: string, opts: { version: number }): Promise<Result<StatusResult>> {
+    const answer = await staffPricing.pricingDeleteRule(this.#client, id, opts);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toStatus(answer.value) };
   }
 
   // -- the floor warning ------------------------------------------------------------------------------
