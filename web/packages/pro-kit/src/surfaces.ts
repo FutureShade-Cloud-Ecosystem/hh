@@ -1,7 +1,9 @@
 // The three Pro apps and their surfaces: the catalogue the frame's selector
 // lists and the apps' landing choice reads. The names are the board's
-// (HH: Pro, shell-selector-phone-light): Pro Procurement holds Board, Catalog,
-// Quote studio and Projects; Pro Pay holds Invoices, Payment methods and
+// (HH: Pro, shell-selector-phone-light), matched to what each app serves: Pro
+// Procurement holds Today, Board, Projects, Catalog and Quotes (Order scope and
+// Product are drill-downs of the Board and the Catalog, reached from a card, so
+// the selector does not list them); Pro Pay holds Invoices, Payment methods and
 // Statements; Pro Field holds Tracking, Deliveries and Pickups.
 //
 // Each surface names the one capability that opens it, taken from the route it
@@ -34,10 +36,12 @@ export const PRO_APPS: readonly ProApp[] = [
     label: "Pro Procurement",
     path: "/pro-procurement/",
     surfaces: [
+      // Today reads the dashboard route (view_billing); every buying surface answers to submit_rfq.
+      { id: "today", label: "Today", capability: "view_billing" },
       { id: "board", label: "Board", capability: "submit_rfq" },
+      { id: "projects", label: "Projects", capability: "submit_rfq" },
       { id: "catalog", label: "Catalog", capability: "submit_rfq" },
-      { id: "quote-studio", label: "Quote studio", capability: "submit_rfq" },
-      { id: "projects", label: "Projects", capability: "view_billing" },
+      { id: "quotes", label: "Quotes", capability: "submit_rfq" },
     ],
   },
   {

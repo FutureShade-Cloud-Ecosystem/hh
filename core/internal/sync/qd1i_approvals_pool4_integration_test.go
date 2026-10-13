@@ -16,6 +16,9 @@
 // releases them together. Red: the first push to run asks for another connection and the shared bound
 // fires. Green: every push answers inside the bound.
 //
+// The engine carries the key ledger, as the composition root wires it, so the legs run the production
+// shape: each holder keeps one pool connection for its slot lock and the store gets the rest.
+//
 // Run (own throwaway container, removed afterwards):
 //
 //	DATABASE_URL='postgres://postgres:postgres@127.0.0.1:<port>/<db>?sslmode=disable&pool_max_conns=4' \
@@ -108,6 +111,16 @@ func qd1iRun(t *testing.T, f *theGapFixture, side *pgxpool.Pool, hold pgx.Tx, qu
 	t.Cleanup(release)
 	info, _ := sync.Lookup("approvals")
 
+	// The production shape: the composition root wires the key ledger, whose
+	// slot lock keeps one pool connection per holder for the whole push, at
+	// most half the pool. Only the holders reach the store's transaction and
+	// the barrier; the other pushes wait for a holder to finish.
+	f.engine.WithKeyLedger(sync.NewPgKeyLedger(f.pool))
+	t.Cleanup(func() {
+		_, _ = f.pool.Exec(context.Background(), `DELETE FROM sync_op_hashes WHERE scope = 'approvals'`)
+	})
+	holders := max(1, n/2)
+
 	const bound = 10 * time.Second
 	scenario, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
@@ -128,8 +141,8 @@ func qd1iRun(t *testing.T, f *theGapFixture, side *pgxpool.Pool, hold pgx.Tx, qu
 			outs[i].status = resp.Results[0].Status
 		}(i)
 	}
-	qd1iWaitQueued(t, side, queued, n, 5*time.Second)
-	t.Logf("barrier: %d pushes each hold a transaction and queue on the lock", n)
+	qd1iWaitQueued(t, side, queued, holders, 5*time.Second)
+	t.Logf("barrier: %d of %d pushes each hold a lock connection and a transaction and queue on the lock", holders, n)
 	release()
 	wg.Wait()
 	elapsed := time.Since(start)

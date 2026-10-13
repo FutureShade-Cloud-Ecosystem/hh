@@ -74,7 +74,7 @@ for (const size of SIZES) {
       await page.locator("[data-tab-id='trial']").click();
       await expect(page.locator("[data-trial]")).toContainText("In balance");
       await take("08", "trial-balance");
-      await page.getByRole("button", { name: /^Kingston/ }).click();
+      await page.getByRole("button", { name: /^Julian/ }).click();
       await expect(page.locator("[data-trial]")).toContainText("No posted journals yet.");
       await take("08b", "trial-balance-one-branch");
 

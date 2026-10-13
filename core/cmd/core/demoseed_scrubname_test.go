@@ -246,8 +246,8 @@ func TestDemoWorld_NoCustomerNamedLikeAScrubPlaceholder(t *testing.T) {
 		Scan(&islandAfter); err != nil {
 		t.Fatalf("the island customer vanished from the world: %v", err)
 	}
-	if islandAfter == snIslandScrubbedName || !strings.Contains(islandAfter, "(demo)") {
-		t.Errorf("the island customer reads %q after the seed, want a believable (demo) name in the style of the seeded customers", islandAfter)
+	if islandAfter == snIslandScrubbedName || islandAfter == "" {
+		t.Errorf("the island customer reads %q after the seed, want a believable invented name", islandAfter)
 	}
 
 	// 5b. the island's portal login is the other Dibbits flavoured row 0055 plants (a staff

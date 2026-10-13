@@ -1,3 +1,5 @@
+mod auth;
+
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 #[cfg(feature = "probe")]
@@ -7,8 +9,8 @@ use hh_shell_core::store::{self, SqlRow, SqlStatement, SqlValue, Store};
 
 // The contract's service name: `ai.futurebuild.hh.<profile>`, which is the
 // profile's own identifier. One source: the profile model is the definition
-// (the test below pins the two together). Rust side only: item 7's auth
-// commands are the writers; the webview holds no keychain command.
+// (the test below pins the two together). Rust side only: the auth commands
+// are the writers; the webview holds no keychain command.
 #[cfg_attr(not(feature = "probe"), allow(dead_code))]
 fn keychain_service() -> &'static str {
     profiles::field().identifier
@@ -88,6 +90,26 @@ fn probe_report(app: tauri::AppHandle, json: String) {
     }
 }
 
+// The Android Keystore debug leg (feature `custody-proof`, off by default):
+// one line, `HH_CUSTODY_PROOF ok Stored` on the first launch and
+// `HH_CUSTODY_PROOF ok PersistedAndCleared` on the next, or `failed <step>`.
+// The value is a fixed non secret string under a proof address no real
+// session uses.
+#[cfg(feature = "custody-proof")]
+fn run_custody_proof() {
+    use hh_shell_core::custody;
+    let address = custody::Address::console_session(profiles::field().identifier, "custody-proof")
+        .expect("the proof address is valid");
+    let backend = custody::platform_custody();
+    tauri::async_runtime::spawn_blocking(move || {
+        let line = match custody::self_check(backend.as_ref(), &address) {
+            Ok(done) => format!("ok {done:?}"),
+            Err(step) => format!("failed {step}"),
+        };
+        println!("HH_CUSTODY_PROOF {line}");
+    });
+}
+
 // One startup line naming the profile the shell is running (the gates and
 // device legs read it; nothing here is secret: profile facts only, never
 // tokens or keys). The update values are the Field channel's configuration
@@ -139,15 +161,31 @@ pub fn run() {
             keychain_delete,
             probe_report,
             run_statement,
-            run_atomic
+            run_atomic,
+            auth::auth_sign_in,
+            auth::auth_resume,
+            auth::auth_exchange,
+            auth::auth_sign_out
         ]);
     #[cfg(not(feature = "probe"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![run_statement, run_atomic]);
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        run_statement,
+        run_atomic,
+        auth::auth_sign_in,
+        auth::auth_resume,
+        auth::auth_exchange,
+        auth::auth_sign_out
+    ]);
     builder
         .setup(|app| {
             let profile = profiles::field();
             println!("HH_PROFILE {}", profile_line(&app.config().plugins));
             app.manage(open_store(app.handle()).expect("the profile's store opens"));
+            // The sign in commands' state: custody and the Console client, built
+            // from the profile's fixed configuration (never the webview's).
+            app.manage(auth::AuthState::for_profile());
+            #[cfg(feature = "custody-proof")]
+            run_custody_proof();
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title(profile.window.title)
                 .inner_size(profile.window.width, profile.window.height);
@@ -255,24 +293,16 @@ mod tests {
 
     #[test]
     fn the_keychain_service_is_the_profiles_identifier() {
-        // AUTH-SHELL-CONTRACT r5: the service is ai.futurebuild.hh.<profile>,
-        // one entry per profile and project; the account dimension and the
-        // writers are the sign in item (item 7), not this crate.
+        // AUTH-SHELL-CONTRACT r6: the service is ai.futurebuild.hh.<profile>
+        // and the account console-session:<project id>, one entry per profile
+        // and project. The address is built by the core's custody module from
+        // the profile's identifier; the webview names neither part.
         assert_eq!(keychain_service(), profiles::field().identifier);
         assert_eq!(keychain_service(), "ai.futurebuild.hh.field");
-        assert!(keychain_service().starts_with("ai.futurebuild.hh."));
-        // The real slot set is the session token only (the probe build adds
-        // its own scaffolding slot); the webview's own token stays in memory
-        // per the contract.
-        let slots: Vec<&str> = hh_shell_core::keychain::Slot::ALL
-            .iter()
-            .map(|s| s.name())
-            .collect();
-        #[cfg(feature = "probe")]
-        let expected = ["session_token", "probe"];
-        #[cfg(not(feature = "probe"))]
-        let expected = ["session_token"];
-        assert_eq!(slots, expected);
+        let address = hh_shell_core::custody::Address::console_session(keychain_service(), "proj-1")
+            .expect("the Field identifier forms a custody address");
+        assert_eq!(address.service(), "ai.futurebuild.hh.field");
+        assert_eq!(address.account(), "console-session:proj-1");
     }
 
     #[test]
@@ -304,5 +334,77 @@ mod tests {
             MANIFEST.contains("Field only"),
             "the manifest still carries the permission rationale"
         );
+    }
+
+    // ---- item 7: the four auth commands -----------------------------------
+
+    const AUTH_COMMANDS: [&str; 4] = ["auth_sign_in", "auth_resume", "auth_exchange", "auth_sign_out"];
+    const AUTH_PERMISSIONS: [&str; 4] =
+        ["allow-auth-sign-in", "allow-auth-resume", "allow-auth-exchange", "allow-auth-sign-out"];
+    const AUTH_SOURCE: &str = include_str!("auth.rs");
+
+    #[test]
+    fn the_auth_commands_are_allowed_by_name_to_the_bundled_local_origin_only() {
+        let cap: serde_json::Value = serde_json::from_str(CAPABILITY).expect("the capability parses");
+        let perms: Vec<&str> = cap["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+        for name in AUTH_PERMISSIONS {
+            assert!(perms.contains(&name), "{name} is allowed by name");
+        }
+        // No wildcard or whole-set grant of the app's commands.
+        assert!(perms.iter().all(|p| !p.contains('*')), "no wildcard permission");
+        // Local only: a capability with a `remote` block reaches remote URLs;
+        // `local: false` would drop the bundled origin. Neither is present.
+        assert!(cap.get("remote").is_none(), "the default capability names no remote URL");
+        assert!(cap.get("local").is_none_or(|l| l == &serde_json::json!(true)));
+        assert_eq!(cap["windows"], serde_json::json!(["main"]), "the main window only");
+        assert!(cap.get("webviews").is_none(), "no extra webview is granted");
+        // The shell never opens remote domain IPC.
+        assert!(!TAURI_CONF.contains("dangerousRemoteDomainIpcAccess"));
+        // The probe capability, which is not in a normal build, grants none of them.
+        const PROBE_CAPABILITY: &str = include_str!("../capabilities-probe/probe.json");
+        assert!(!PROBE_CAPABILITY.contains("auth"), "the probe capability grants no auth command");
+    }
+
+    #[cfg(not(feature = "probe"))]
+    #[test]
+    fn the_auth_commands_are_declared_in_the_built_acl_manifest() {
+        for name in AUTH_COMMANDS {
+            assert!(BUILT_ACL_MANIFEST.contains(name), "{name} is declared in the ACL manifest");
+        }
+        for name in AUTH_PERMISSIONS {
+            assert!(BUILT_CAPABILITIES.contains(name), "{name} is granted in the merged capabilities");
+        }
+    }
+
+    #[test]
+    fn no_auth_command_takes_an_endpoint_a_project_or_a_core_url() {
+        // AUTH-SHELL-CONTRACT r6, "Commands are fenced": those three values
+        // are fixed in the Rust profile, never an argument. Read every
+        // command signature in the auth module.
+        let production = AUTH_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let mut commands = 0;
+        for chunk in production.split("#[tauri::command]").skip(1) {
+            commands += 1;
+            let signature = chunk.split("{").next().unwrap().to_ascii_lowercase();
+            for banned in ["endpoint", "project", "core_url", "url", "jwt", "secret", "token"] {
+                assert!(!signature.contains(banned), "a command signature mentions {banned}: {signature}");
+            }
+        }
+        assert_eq!(commands, 4, "exactly the four contract commands");
+    }
+
+    #[test]
+    fn the_auth_module_prints_and_logs_nothing() {
+        let production = AUTH_SOURCE.split("#[cfg(test)]").next().unwrap();
+        for banned in ["println!", "eprintln!", "print!(", "dbg!", "log::", "tracing::", "info!(", "warn!(", "error!("] {
+            assert!(!production.contains(banned), "auth.rs contains {banned}");
+        }
+    }
+
+    #[test]
+    fn the_custody_proof_is_not_a_default_feature() {
+        let manifest = include_str!("../Cargo.toml");
+        assert!(manifest.contains("default = []"), "no default feature");
+        assert!(manifest.contains("custody-proof = []"));
     }
 }

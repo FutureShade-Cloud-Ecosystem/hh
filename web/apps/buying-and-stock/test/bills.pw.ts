@@ -69,7 +69,7 @@ test("a bill inside the tolerance is posted behind a confirm step that names it,
   await open(page, "INV-7795");
   await page.getByRole("button", { name: "Post the bill" }).click();
   const confirm = page.locator("[data-confirm]");
-  await expect(confirm).toContainText("Post bill INV-7795 from Unilock (demo) for $960.00 against PO-TRT-67.");
+  await expect(confirm).toContainText("Post bill INV-7795 from Unilock (demo) for $960.00 against PO-PLM-67.");
   await expect(confirm).toContainText("books the amount owed to the vendor");
   await page.getByRole("button", { name: "Go back" }).click();
   await expect(page.locator("[data-bill-detail] [data-status]").first()).toHaveText("Draft");
@@ -133,7 +133,7 @@ test("a bill is entered against an order, starting from what arrived and the ord
   await page.locator("[data-bill-no-field]").fill("INV-9001");
   await page.getByRole("button", { name: "Enter the bill" }).click();
   await expect(page.locator("[data-error]")).toHaveText("Pick the purchase order the bill is against.");
-  await page.locator("[data-bill-po]").selectOption({ label: "PO-TRT-67 · Unilock (demo)" });
+  await page.locator("[data-bill-po]").selectOption({ label: "PO-PLM-67 · Unilock (demo)" });
   await expect(page.locator("[data-entry-line]")).toHaveCount(1);
   await expect(page.locator("[data-bq]")).toHaveValue("6");
   await expect(page.locator("[data-bc]")).toHaveValue("240.00");
@@ -159,7 +159,7 @@ test("a bill billed ahead of the goods shows as a variance as soon as it is ente
   await openAreaAs(page, request, AP, "Vendor bills");
   await page.getByRole("button", { name: "Enter a bill" }).click();
   await page.locator("[data-bill-no-field]").fill("INV-9002");
-  await page.locator("[data-bill-po]").selectOption({ label: "PO-TRT-67 · Unilock (demo)" });
+  await page.locator("[data-bill-po]").selectOption({ label: "PO-PLM-67 · Unilock (demo)" });
   await expect(page.locator("[data-bq]")).toHaveValue("6");
   await page.locator("[data-bq]").fill("10");
   await page.getByRole("button", { name: "Enter the bill" }).click();
@@ -226,7 +226,7 @@ test("every text is 4.5 to 1 or better in both themes: the list, a bill, the ent
     await page.getByRole("button", { name: "Go back" }).click();
     await page.getByRole("button", { name: "Back to the list" }).click();
     await page.getByRole("button", { name: "Enter a bill" }).click();
-    await page.locator("[data-bill-po]").selectOption({ label: "PO-TRT-67 · Unilock (demo)" });
+    await page.locator("[data-bill-po]").selectOption({ label: "PO-PLM-67 · Unilock (demo)" });
     await expect(page.locator("[data-entry-line]")).toHaveCount(1);
     expect(await lowContrast(page), `${theme}, entry`).toEqual([]);
     await page.getByRole("button", { name: "Back to the list" }).first().click();
@@ -241,7 +241,7 @@ test("at 390 px the page never scrolls sideways: the list and the match are card
   await noSidewaysScroll(page);
   await page.getByRole("button", { name: "Back to the list" }).click();
   await page.getByRole("button", { name: "Enter a bill" }).click();
-  await page.locator("[data-bill-po]").selectOption({ label: "PO-TRT-67 · Unilock (demo)" });
+  await page.locator("[data-bill-po]").selectOption({ label: "PO-PLM-67 · Unilock (demo)" });
   await expect(page.locator("[data-entry-line]")).toHaveCount(1);
   await noSidewaysScroll(page);
 });

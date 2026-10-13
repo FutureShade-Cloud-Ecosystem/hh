@@ -6256,7 +6256,7 @@ ${/* DIB-488: the quieter order facts fold away (native details: no state to des
                       data-testid="job-address"
                       maxlength="200"
                       autocomplete="off"
-                      placeholder="e.g. 128 Front St, Trenton"
+                      placeholder="e.g. 128 Front Street, San Diego"
                       .value=${this.jobAddress}
                       title="Where the material is going: printed with the order."
                       @change=${(e: Event) => (this.jobAddress = (e.target as HTMLInputElement).value)}
@@ -6500,7 +6500,7 @@ ${this.renderFulfilTiles()}
                   data-testid="delivery-address"
                   maxlength="200"
                   autocomplete="off"
-                  placeholder="e.g. 128 Front St, Trenton"
+                  placeholder="e.g. 128 Front Street, San Diego"
                   .value=${this.jobAddress}
                   title="Where the material is going: printed with the order."
                   @change=${(e: Event) => (this.jobAddress = (e.target as HTMLInputElement).value)}

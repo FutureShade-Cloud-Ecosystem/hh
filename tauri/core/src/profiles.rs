@@ -99,6 +99,94 @@ pub struct WindowDefaults {
     pub height: f64,
 }
 
+/// Where a profile signs in: the FB Console API, its HH project and the core
+/// (AUTH-SHELL-CONTRACT r6, "Commands are fenced"). These three values are
+/// fixed in the Rust profile and read at build time; they never come from the
+/// webview or from a command argument. `HH_CONSOLE_ENDPOINT` defaults to the
+/// Console API host; `HH_CONSOLE_PROJECT_ID` and `HH_CORE_URL` have no default
+/// (an unconfigured build refuses to sign in, `unavailable`, rather than
+/// guess). All three must be https; nothing here is a secret.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthConfig {
+    pub console_endpoint: String,
+    pub project_id: String,
+    pub core_url: String,
+    /// Only `for_test` sets it: a loopback http URL for the in process mock server.
+    allow_loopback_http: bool,
+}
+
+/// A configuration that is unusable. It names no value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BadConfig;
+
+fn clean_base_url(value: &str, allow_loopback_http: bool) -> bool {
+    let rest = if let Some(rest) = value.strip_prefix("https://") {
+        rest
+    } else if allow_loopback_http && value.starts_with("http://127.0.0.1:") {
+        &value["http://".len()..]
+    } else {
+        return false;
+    };
+    let host_and_path = rest.trim_end_matches('/');
+    let host = host_and_path.split('/').next().unwrap_or("");
+    !host.is_empty()
+        && !host.contains('@')
+        && !host_and_path.contains(['?', '#', ' ', '\\'])
+        && host_and_path.bytes().all(|b| b.is_ascii_graphic())
+}
+
+impl AuthConfig {
+    /// The build's configuration, unvalidated (`validate` is the gate).
+    pub fn from_build() -> Self {
+        Self {
+            console_endpoint: option_env!("HH_CONSOLE_ENDPOINT").unwrap_or("https://api.futurebuild.ai/v1").to_string(),
+            project_id: option_env!("HH_CONSOLE_PROJECT_ID").unwrap_or("").to_string(),
+            core_url: option_env!("HH_CORE_URL").unwrap_or("").to_string(),
+            allow_loopback_http: false,
+        }
+    }
+
+    /// A validated configuration from three values.
+    pub fn new(console_endpoint: &str, project_id: &str, core_url: &str) -> Result<Self, BadConfig> {
+        let cfg = Self {
+            console_endpoint: console_endpoint.to_string(),
+            project_id: project_id.to_string(),
+            core_url: core_url.to_string(),
+            allow_loopback_http: false,
+        };
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// Tests only: allows `http://127.0.0.1:<port>` so the in process mock
+    /// server can stand in for Console and the core.
+    #[cfg(test)]
+    pub fn for_test(console_endpoint: &str, project_id: &str, core_url: &str) -> Self {
+        Self {
+            console_endpoint: console_endpoint.to_string(),
+            project_id: project_id.to_string(),
+            core_url: core_url.to_string(),
+            allow_loopback_http: true,
+        }
+    }
+
+    /// https URLs without credentials, query or fragment, and a project id of
+    /// the shape Console accepts (1 to 36 of letters, digits, underscore and
+    /// hyphen).
+    pub fn validate(&self) -> Result<(), BadConfig> {
+        let project_ok = (1..=36).contains(&self.project_id.len())
+            && self.project_id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+        if project_ok
+            && clean_base_url(&self.console_endpoint, self.allow_loopback_http)
+            && clean_base_url(&self.core_url, self.allow_loopback_http)
+        {
+            Ok(())
+        } else {
+            Err(BadConfig)
+        }
+    }
+}
+
 /// A complete profile.
 #[derive(Debug)]
 pub struct Profile {
@@ -109,6 +197,8 @@ pub struct Profile {
     pub apps: Vec<MicroApp>,
     pub permissions: Permissions,
     pub window: WindowDefaults,
+    /// Where this profile signs in (fixed here, never from the webview).
+    pub auth: AuthConfig,
 }
 
 impl Profile {
@@ -175,6 +265,7 @@ pub fn field() -> &'static Profile {
             apps: file.apps,
             permissions: Permissions { camera: true, fine_location: true },
             window: WindowDefaults { title: "HH Field", width: 412.0, height: 915.0 },
+            auth: AuthConfig::from_build(),
         }
     })
 }

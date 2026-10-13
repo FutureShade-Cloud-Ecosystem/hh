@@ -32,12 +32,12 @@ test("the list answers in the contract's shape and a scoped caller must name a b
 
 test("a capture is a draft, and the core's validations come in the core's order", async () => {
   await stub.reset();
-  const po = await orderId("PO-TRT-66");
+  const po = await orderId("PO-PLM-66");
   refused(await stub.call("POST", LC, {}), 400, "branch_id required");
   refused(await stub.call("POST", LC, { branch_id: BRANCH, currency: "EUR" }), 400, "currency must be CAD or USD");
   refused(await stub.call("POST", LC, { branch_id: BRANCH, allocation_basis: "MASS" }), 400, "allocation_basis must be WEIGHT, VALUE or QUANTITY");
   refused(await stub.call("POST", LC, { branch_id: BRANCH, freight_cents: -1 }), 400, "freight/duty/handling must be non-negative");
-  const made = await stub.call("POST", LC, { po_id: po, po_ref: "PO-TRT-66", branch_id: BRANCH, currency: "USD", fx_rate: 1.352, freight_cents: 10_000, duty_cents: 0, handling_cents: 505, allocation_basis: "WEIGHT" });
+  const made = await stub.call("POST", LC, { po_id: po, po_ref: "PO-PLM-66", branch_id: BRANCH, currency: "USD", fx_rate: 1.352, freight_cents: 10_000, duty_cents: 0, handling_cents: 505, allocation_basis: "WEIGHT" });
   assert.equal(made.status, 201);
   holds("LandedCostCreateResult", made.json);
   assert.equal(made.json.status, "DRAFT");
@@ -55,8 +55,8 @@ test("a capture is a draft, and the core's validations come in the core's order"
 
 test("the preview splits the total by the compared basis, largest remainder exact, special buys flagged and left out", async () => {
   await stub.reset();
-  const po = await orderId("PO-TRT-66");
-  const made = await stub.call("POST", LC, { po_id: po, po_ref: "PO-TRT-66", branch_id: BRANCH, freight_cents: 10_001, allocation_basis: "VALUE" });
+  const po = await orderId("PO-PLM-66");
+  const made = await stub.call("POST", LC, { po_id: po, po_ref: "PO-PLM-66", branch_id: BRANCH, freight_cents: 10_001, allocation_basis: "VALUE" });
   const value = await stub.call("GET", `${LC}/${made.json.id}/preview`);
   assert.equal(value.status, 200);
   holds("LandedCostAllocationPreview", value.json);
@@ -77,8 +77,8 @@ test("the preview splits the total by the compared basis, largest remainder exac
 
 test("apply posts a draft, and an apply of anything else answers the same body and changes nothing", async () => {
   await stub.reset();
-  const po = await orderId("PO-TRT-66");
-  const made = await stub.call("POST", LC, { po_id: po, po_ref: "PO-TRT-66", branch_id: BRANCH, freight_cents: 20_000, allocation_basis: "QUANTITY" });
+  const po = await orderId("PO-PLM-66");
+  const made = await stub.call("POST", LC, { po_id: po, po_ref: "PO-PLM-66", branch_id: BRANCH, freight_cents: 20_000, allocation_basis: "QUANTITY" });
   const id = made.json.id;
   const applied = await stub.call("POST", `${LC}/${id}/apply`);
   assert.equal(applied.status, 200);
@@ -98,13 +98,13 @@ test("apply posts a draft, and an apply of anything else answers the same body a
 
 test("a late freight splits each share by what is still on hand", async () => {
   await stub.reset();
-  const po = await orderId("PO-TRT-66");
+  const po = await orderId("PO-PLM-66");
   const prior = (await stub.call("GET", `${LC}?branch_id=${BRANCH}`)).json.items[0];
   const lines = (await stub.call("GET", `/api/v1/purchasing/pos/${po}`)).json.lines;
   const keep = lines.find((l) => l.sku === "ALC-STEP-48");
   const made = await stub.call("POST", LC, {
     po_id: po,
-    po_ref: "PO-TRT-66",
+    po_ref: "PO-PLM-66",
     branch_id: BRANCH,
     freight_cents: 10_000,
     retro_of_id: prior.id,
@@ -122,8 +122,8 @@ test("a late freight splits each share by what is still on hand", async () => {
 
 test("void reverses an applied document; a draft cannot be voided; a void of a voided one is a no-op", async () => {
   await stub.reset();
-  const po = await orderId("PO-TRT-66");
-  const made = await stub.call("POST", LC, { po_id: po, po_ref: "PO-TRT-66", branch_id: BRANCH, freight_cents: 500 });
+  const po = await orderId("PO-PLM-66");
+  const made = await stub.call("POST", LC, { po_id: po, po_ref: "PO-PLM-66", branch_id: BRANCH, freight_cents: 500 });
   refused(await stub.call("POST", `${LC}/${made.json.id}/void`), 409, "cannot void a DRAFT landed cost", "cannot void a %s landed cost");
   const prior = (await stub.call("GET", `${LC}?branch_id=${BRANCH}&status=POSTED`)).json.items[0];
   const voided = await stub.call("POST", `${LC}/${prior.id}/void`);
