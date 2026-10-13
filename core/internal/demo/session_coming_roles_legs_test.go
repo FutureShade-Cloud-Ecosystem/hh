@@ -492,5 +492,46 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		if strings.Join(sources, ",") != strings.Join(want, ",") {
 			t.Errorf("the profile's needs sources are %v, want the dock's %v", sources, want)
 		}
+
+		// L-card: the card's bearer reaches the surfaces the role holds: the
+		// dispatch board (manage) and House Messages (work).
+		wantOK(t, "the dispatch board at Trenton (dispatch-board, manage)", "/api/v1/dispatch/trucks?branch_id="+trentonID, lm)
+		wantOK(t, "House Messages (work): the channel list", "/api/v1/messaging/channels", lm)
+		// L-branch: the role's own branch only.
+		if codes := branchCodes(t, lm); !sameSet(codes, []string{"TRT"}) {
+			t.Errorf("the Logistics Manager reaches %v, want Trenton alone", codes)
+		}
+		if status, raw := get(t, "/api/v1/dispatch/trucks?branch_id="+kingstonID, lm); status != http.StatusForbidden {
+			t.Errorf("the dispatch board at Kingston: status %d body %s, want the branch fence's 403", status, raw)
+		}
+		// L-wall: the till, the Quote Desk, Yard Pick, Buying and Stock, the Money
+		// Desk and Dealer Admin all sit at None for the role.
+		wantWall(t, "the till's policy (counter-till, None)", "/api/v1/pos/policy", lm)
+		wantWall(t, "the Quote Desk's quotes (quote-desk, None)", "/api/v1/quotes", lm)
+		wantWall(t, "the yard pick queue (yard-pick, None)", "/api/v1/yard/pick-queue?branch_id="+trentonID, lm)
+		wantWall(t, "the vendors (buying-and-stock, None)", "/api/v1/purchasing/vendors", lm)
+		wantWall(t, "the Money Desk (money-desk, None)", "/api/v1/ar/credit-holds", lm)
+		wantWall(t, "the pricing rules (dealer-admin, None)", "/api/v1/pricing/rules", lm)
+		// L-cost: the cost and margin list names the role, but every route that
+		// carries a cost or margin figure sits on a surface the role holds at None,
+		// so none answers: the glance (counter-till) and the pricing audit
+		// (dealer-admin) are both refused.
+		cfg, err := roleconfig.Default()
+		if err != nil {
+			t.Fatalf("roleconfig.Default: %v", err)
+		}
+		if !contains(cfg.CostVisibility(), "logistics_manager") {
+			t.Errorf("the decided matrix does not list the Logistics Manager on the cost and margin list: %v", cfg.CostVisibility())
+		}
+		if status, raw := marginGlance(t, lm); status != http.StatusForbidden {
+			t.Errorf("the margin glance for the Logistics Manager: status %d body %s, want 403 (counter-till at None)", status, raw)
+		}
+		wantWall(t, "the pricing audit (dealer-admin, None)", "/api/v1/pricing/audit", lm)
+		// Approvals: the role decides no kind.
+		for _, kind := range []string{"MARGIN_BELOW_MINIMUM", "CREDIT_LIMIT_EXCEEDED", "COD_CONSTRAINT", "JE_OVER_THRESHOLD", "FREIGHT_ABOVE_QUOTE"} {
+			if status, raw := get(t, "/api/v1/staff/approvals?status=PENDING&kind="+kind, lm); status != http.StatusForbidden {
+				t.Errorf("the Logistics Manager listing %s approvals: status %d body %s, want 403", kind, status, raw)
+			}
+		}
 	})
 }
