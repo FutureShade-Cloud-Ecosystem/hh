@@ -31,6 +31,18 @@ import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DealerApi, type BranchRow, type ResetLink } from "./dealer-api.js";
 import { errorWords, staffRefusalWords } from "./dealer-logic.js";
 import { ConfigApi, type CellConfig } from "./config-api.js";
+import { SettingsApi } from "./settings-api.js";
+import {
+  chipSetError,
+  chipsOf,
+  counterPolicyRefusalWords,
+  paymentsFormError,
+  paymentsRefusalWords,
+  policyHistoryRefusalWords,
+  restockingFeeError,
+  tourLineError,
+  tourPlatformWords,
+} from "./settings-logic.js";
 import {
   CONFIG_SURFACES,
   JOB_SHAPES,
@@ -68,6 +80,14 @@ import {
   type RoleConfigModel,
   type WorkspaceDraft,
 } from "./views-config.js";
+import {
+  renderSettings,
+  type BrandSection,
+  type PaymentsSection,
+  type PolicySection,
+  type SettingsModel,
+  type TourSection,
+} from "./views-settings.js";
 import { EMPTY_FILTERS, auditRefusalWords, sinceWire, type AuditFilters } from "./audit-logic.js";
 import type { AuditRow } from "./dealer-api.js";
 
@@ -140,6 +160,62 @@ const emptyConfigEditor = (surface: string, profile: string, config: CellConfig)
   busy: false,
 });
 
+const emptySettingsModel = (): SettingsModel => ({
+  brand: {
+    phase: "loading",
+    displayName: "",
+    footerText: "",
+    primaryColor: "",
+    busy: false,
+    notice: "",
+    error: "",
+  },
+  payments: {
+    phase: "loading",
+    status: null,
+    processor: "",
+    merchantId: "",
+    currency: "",
+    busy: false,
+    notice: "",
+    error: "",
+  },
+  policy: {
+    phase: "loading",
+    words: "",
+    fee: 0,
+    notes: "",
+    chips: "",
+    split: 58,
+    cod: false,
+    quickChips: false,
+    linePresentation: "LINES",
+    lookupPresentation: "CARDS",
+    arrangement: "LOOKUP_LEFT",
+    marginVisibility: "MANAGER_UP",
+    balanceVisibility: "ALL_STAFF",
+    history: [],
+    historyPhase: "loading",
+    historyWords: "",
+    busy: false,
+    notice: "",
+    error: "",
+  },
+  tour: {
+    phase: "loading",
+    words: "",
+    view: null,
+    editChapter: "",
+    editStep: "",
+    editLine: "",
+    editRoute: "",
+    editAnchor: "",
+    busy: false,
+    notice: "",
+    error: "",
+  },
+});
+
 export class DealerAdminApp extends HHElement {
   static styles = [baseStyles, dealerStyles];
 
@@ -171,6 +247,9 @@ export class DealerAdminApp extends HHElement {
   // The role configuration's calls, over the staff client.
   readonly #configApi = new ConfigApi(this.#staffClient);
 
+  // The deployment settings' calls, over the staff client.
+  readonly #settingsApi = new SettingsApi(this.#staffClient);
+
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
@@ -195,6 +274,9 @@ export class DealerAdminApp extends HHElement {
 
   // The role configuration surface's state.
   #roleConfig: RoleConfigModel = emptyRoleConfigModel();
+
+  // The deployment settings surface's state.
+  #settings: SettingsModel = emptySettingsModel();
 
   // The way in: this app's own door, one card per demo role.
   #entryView: { flows: { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; flows: DemoFlow[] }; busy: boolean; message: string | null } = {
@@ -236,6 +318,7 @@ export class DealerAdminApp extends HHElement {
         if (surface === "hotkeys" && this.#hotkeys.phase === "loading") void this.#loadHotkeys();
         if (surface === "audit" && this.#audit.phase === "loading") void this.#loadAudit();
         if (surface === "role-config" && this.#roleConfig.phase === "loading") void this.#loadRoleConfig();
+        if (surface === "deployment" && this.#settings.brand.phase === "loading") void this.#loadSettings();
         this.requestUpdate();
       }
       return;
@@ -367,6 +450,40 @@ export class DealerAdminApp extends HHElement {
       void this.#resetMyWorkspace();
       return;
     }
+    if (action === "reload-settings") {
+      void this.#loadSettings();
+      return;
+    }
+    if (action === "settings-save-brand") {
+      void this.#saveBrand();
+      return;
+    }
+    if (action === "settings-save-payments") {
+      void this.#savePayments();
+      return;
+    }
+    if (action === "policy-flag") {
+      const field = control?.getAttribute("data-field") ?? "";
+      const on = control instanceof HTMLInputElement ? control.checked : false;
+      this.#policyFlag(field, on);
+      return;
+    }
+    if (action === "settings-save-policy") {
+      void this.#saveCounterPolicy();
+      return;
+    }
+    if (action === "settings-tour-demo-on") {
+      void this.#saveTourPolicy(true);
+      return;
+    }
+    if (action === "settings-tour-demo-off") {
+      void this.#saveTourPolicy(false);
+      return;
+    }
+    if (action === "settings-save-tour-step") {
+      void this.#saveTourStep();
+      return;
+    }
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
@@ -391,11 +508,45 @@ export class DealerAdminApp extends HHElement {
       return;
     }
     const editor = this.#roleConfig.editor;
-    if (editor === null) return;
-    const value = target instanceof HTMLSelectElement ? target.value : "";
-    if (action === "config-add-kind") this.#patchEditor({ addKind: value });
-    if (action === "config-my-add-kind") this.#patchEditor({ myAddKind: value });
-    if (action === "configws-arrangement") this.#patchEditor({ wsDraft: { ...editor.wsDraft, arrangement: value } });
+    if (editor !== null) {
+      const value = target instanceof HTMLSelectElement ? target.value : "";
+      if (action === "config-add-kind") this.#patchEditor({ addKind: value });
+      if (action === "config-my-add-kind") this.#patchEditor({ myAddKind: value });
+      if (action === "configws-arrangement") this.#patchEditor({ wsDraft: { ...editor.wsDraft, arrangement: value } });
+    }
+    // The counter policy's selects answer with their static wire values; the
+    // walkthrough's chapter and step selects answer with the keys, and the
+    // step's stored copy follows the pick.
+    if (!(target instanceof HTMLSelectElement)) return;
+    const value = target.value;
+    const policySelects: Record<string, keyof PolicySection> = {
+      "policy-line": "linePresentation",
+      "policy-lookup": "lookupPresentation",
+      "policy-arrangement": "arrangement",
+      "policy-margin": "marginVisibility",
+      "policy-balance": "balanceVisibility",
+    };
+    const policyKey = policySelects[action];
+    if (policyKey !== undefined) {
+      this.#patchSettingsPolicy({ [policyKey]: value } as Partial<PolicySection>);
+      return;
+    }
+    if (action === "tour-chapter") {
+      const chapter = this.#settings.tour.view?.chapters.find((c) => c.chapter_key === value);
+      this.#patchSettingsTour({
+        editChapter: value,
+        editStep: chapter?.steps[0]?.step_key ?? "",
+        editLine: chapter?.steps[0]?.line ?? "",
+        editRoute: "",
+        editAnchor: "",
+      });
+      return;
+    }
+    if (action === "tour-step") {
+      const chapter = this.#settings.tour.view?.chapters.find((c) => c.chapter_key === this.#settings.tour.editChapter);
+      const step = chapter?.steps.find((st: { step_key: string }) => st.step_key === value);
+      this.#patchSettingsTour({ editStep: value, editLine: step?.line ?? "", editRoute: "", editAnchor: "" });
+    }
   };
 
   // The audit filters' fields and the role configuration's text and number
@@ -414,14 +565,36 @@ export class DealerAdminApp extends HHElement {
       return;
     }
     const editor = this.#roleConfig.editor;
-    if (editor === null) return;
-    const value = target instanceof HTMLInputElement ? target.value : "";
-    if (field === "config-add-id") this.#patchEditor({ addId: value });
-    if (field === "config-my-add-id") this.#patchEditor({ myAddId: value });
-    if (field === "configws-split") {
-      const split = Number(value);
-      if (Number.isFinite(split)) this.#patchEditor({ wsDraft: { ...editor.wsDraft, split_pct: Math.trunc(split) } });
+    if (editor !== null) {
+      const value = target instanceof HTMLInputElement ? target.value : "";
+      if (field === "config-add-id") this.#patchEditor({ addId: value });
+      if (field === "config-my-add-id") this.#patchEditor({ myAddId: value });
+      if (field === "configws-split") {
+        const split = Number(value);
+        if (Number.isFinite(split)) this.#patchEditor({ wsDraft: { ...editor.wsDraft, split_pct: Math.trunc(split) } });
+      }
     }
+    // The deployment settings' text and number fields mirror the same way.
+    const value = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? target.value : "";
+    if (field === "brand-name") this.#patchSettingsBrand({ displayName: value });
+    if (field === "brand-color") this.#patchSettingsBrand({ primaryColor: value });
+    if (field === "brand-footer") this.#patchSettingsBrand({ footerText: value });
+    if (field === "pay-processor") this.#patchSettingsPayments({ processor: value });
+    if (field === "pay-merchant") this.#patchSettingsPayments({ merchantId: value });
+    if (field === "pay-currency") this.#patchSettingsPayments({ currency: value });
+    if (field === "policy-notes") this.#patchSettingsPolicy({ notes: value });
+    if (field === "policy-chips") this.#patchSettingsPolicy({ chips: value });
+    if (field === "policy-fee") {
+      const fee = Number(value);
+      if (Number.isFinite(fee)) this.#patchSettingsPolicy({ fee: Math.trunc(fee) });
+    }
+    if (field === "policy-split") {
+      const split = Number(value);
+      if (Number.isFinite(split)) this.#patchSettingsPolicy({ split: Math.trunc(split) });
+    }
+    if (field === "tour-line") this.#patchSettingsTour({ editLine: value });
+    if (field === "tour-route") this.#patchSettingsTour({ editRoute: value });
+    if (field === "tour-anchor") this.#patchSettingsTour({ editAnchor: value });
   };
 
   // Enter opens the focused trail row; Escape closes the drawer.
@@ -535,6 +708,44 @@ export class DealerAdminApp extends HHElement {
         const el = this.renderRoot.querySelector<HTMLInputElement>(`input[data-field="${field}"]`);
         if (el !== null && el.checked !== on) el.checked = on;
       }
+    }
+    // The deployment settings' fields mirror the model the same way: a
+    // reload answers the read, never the person's stale draft, and the
+    // counters stay whole words on the glass.
+    const s = this.#settings;
+    const settingsWords: Record<string, string> = {
+      "brand-name": s.brand.displayName,
+      "brand-color": s.brand.primaryColor,
+      "brand-footer": s.brand.footerText,
+      "pay-processor": s.payments.processor,
+      "pay-merchant": s.payments.merchantId,
+      "pay-currency": s.payments.currency,
+      "policy-fee": String(s.policy.fee),
+      "policy-split": String(s.policy.split),
+      "policy-notes": s.policy.notes,
+      "policy-chips": s.policy.chips,
+      "policy-line": s.policy.linePresentation,
+      "policy-lookup": s.policy.lookupPresentation,
+      "policy-arrangement": s.policy.arrangement,
+      "policy-margin": s.policy.marginVisibility,
+      "policy-balance": s.policy.balanceVisibility,
+      "tour-chapter": s.tour.editChapter,
+      "tour-step": s.tour.editStep,
+      "tour-line": s.tour.editLine,
+      "tour-route": s.tour.editRoute,
+      "tour-anchor": s.tour.editAnchor,
+    };
+    for (const [field, value] of Object.entries(settingsWords)) {
+      const el = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[data-field="${field}"]`);
+      if (el !== null && el.value !== value) el.value = value;
+    }
+    const policyFlags: Record<string, boolean> = {
+      cod: s.policy.cod,
+      quickChips: s.policy.quickChips,
+    };
+    for (const [field, on] of Object.entries(policyFlags)) {
+      const el = this.renderRoot.querySelector<HTMLInputElement>(`input[data-field="${field}"]`);
+      if (el !== null && el.checked !== on) el.checked = on;
     }
   }
 
@@ -936,6 +1147,298 @@ export class DealerAdminApp extends HHElement {
 
 
 
+  // -- the deployment settings surface ------------------------------------------------------------------
+
+  #patchSettings(patch: Partial<SettingsModel>): void {
+    this.#settings = { ...this.#settings, ...patch };
+    this.requestUpdate();
+  }
+
+  #patchSettingsBrand(patch: Partial<BrandSection>): void {
+    this.#patchSettings({ brand: { ...this.#settings.brand, ...patch } });
+  }
+
+  #patchSettingsPayments(patch: Partial<PaymentsSection>): void {
+    this.#patchSettings({ payments: { ...this.#settings.payments, ...patch } });
+  }
+
+  #patchSettingsPolicy(patch: Partial<PolicySection>): void {
+    this.#patchSettings({ policy: { ...this.#settings.policy, ...patch } });
+  }
+
+  #patchSettingsTour(patch: Partial<TourSection>): void {
+    this.#patchSettings({ tour: { ...this.#settings.tour, ...patch } });
+  }
+
+  /**
+   * The four sections' reads, in parallel. The brand pair is the parity
+   * ledger's own hold: the core answers the mux's bare 404, and that is the
+   * waits state, not a failed read. A refused history read costs only the
+   * history card its rows; the policy form stands.
+   */
+  async #loadSettings(): Promise<void> {
+    this.#settings = emptySettingsModel();
+    this.requestUpdate();
+    const brandRead = this.#settingsApi.brand(DEMO_ORG);
+    const paymentsRead = this.#settingsApi.paymentsConfig();
+    const policyRead = this.#settingsApi.counterPolicy();
+    const historyRead = this.#settingsApi.counterPolicyHistory();
+    const tourRead = this.#settingsApi.tour();
+
+    const brand = await brandRead;
+    if (!brand.ok) {
+      if (brand.status === 404) {
+        this.#patchSettingsBrand({ phase: "waits" });
+      } else {
+        this.#patchSettingsBrand({ phase: "error", error: `The dealer's brand did not load. ${errorWords(brand.error)}` });
+      }
+    } else {
+      this.#patchSettingsBrand({
+        phase: "ready",
+        displayName: brand.value.display_name,
+        footerText: brand.value.footer_text,
+        primaryColor: brand.value.primary_color ?? "",
+      });
+    }
+
+    const payments = await paymentsRead;
+    if (!payments.ok) {
+      this.#patchSettingsPayments({ phase: "error", error: `The card rail's configuration did not load. ${errorWords(payments.error)}` });
+    } else {
+      this.#patchSettingsPayments({
+        phase: "ready",
+        status: payments.value,
+        processor: payments.value.processor,
+        merchantId: payments.value.merchant_id,
+        currency: payments.value.currency,
+      });
+    }
+
+    const policy = await policyRead;
+    if (!policy.ok) {
+      this.#patchSettingsPolicy({
+        phase: policy.status === 403 ? "refused" : "error",
+        words: counterPolicyRefusalWords(policy.error, policy.status),
+      });
+    } else {
+      const p = policy.value;
+      this.#patchSettingsPolicy({
+        phase: "ready",
+        fee: p.restocking_fee_bps,
+        notes: p.notes,
+        chips: p.quick_chip_set.join("\n"),
+        split: p.workspace_split_pct,
+        cod: p.cod_enabled,
+        quickChips: p.quick_chips_enabled,
+        linePresentation: p.line_presentation,
+        lookupPresentation: p.lookup_presentation,
+        arrangement: p.workspace_arrangement,
+        marginVisibility: p.margin_visibility,
+        balanceVisibility: p.balance_visibility,
+      });
+    }
+
+    const history = await historyRead;
+    if (!history.ok) {
+      this.#patchSettingsPolicy({
+        historyPhase: history.status === 403 ? "refused" : "error",
+        historyWords: policyHistoryRefusalWords(history.error, history.status),
+      });
+    } else {
+      this.#patchSettingsPolicy({ historyPhase: "ready", history: history.value });
+    }
+
+    const tour = await tourRead;
+    if (!tour.ok) {
+      this.#patchSettingsTour({ phase: "error", words: `The walkthrough did not load. ${errorWords(tour.error)}` });
+    } else {
+      this.#patchSettingsTour({
+        phase: "ready",
+        view: tour.value,
+        editChapter: tour.value.chapters[0]?.chapter_key ?? "",
+        editStep: tour.value.chapters[0]?.steps[0]?.step_key ?? "",
+        editLine: tour.value.chapters[0]?.steps[0]?.line ?? "",
+      });
+    }
+  }
+
+  async #saveBrand(): Promise<void> {
+    const s = this.#settings.brand;
+    if (s.phase !== "ready" || s.busy) return;
+    this.#patchSettingsBrand({ busy: true, notice: "", error: "" });
+    const result = await this.#settingsApi.putBrand(DEMO_ORG, {
+      tenant_id: DEMO_ORG,
+      display_name: s.displayName,
+      logo_attachment_id: null,
+      primary_color: s.primaryColor === "" ? null : s.primaryColor,
+      footer_text: s.footerText,
+    });
+    if (!result.ok) {
+      this.#patchSettingsBrand({ busy: false, error: `The brand did not save. ${errorWords(result.error)}` });
+      return;
+    }
+    this.#patchSettingsBrand({ busy: false, notice: "Saved. The dealer's brand follows your words." });
+  }
+
+  async #savePayments(): Promise<void> {
+    const s = this.#settings.payments;
+    if (s.phase !== "ready" || s.busy) return;
+    const formError = paymentsFormError({ processor: s.processor, merchant_id: s.merchantId, currency: s.currency });
+    if (formError !== "") {
+      this.#patchSettingsPayments({ error: formError });
+      return;
+    }
+    this.#patchSettingsPayments({ busy: true, notice: "", error: "" });
+    // The card rail's configuration is a money write: it goes to the server
+    // now and never queues.
+    const result = await this.#settingsApi.putPaymentsConfig({
+      processor: s.processor,
+      merchant_id: s.merchantId,
+      currency: s.currency,
+    });
+    if (!result.ok) {
+      this.#patchSettingsPayments({ busy: false, error: paymentsRefusalWords(errorWords(result.error), result.status) });
+      return;
+    }
+    const fresh = await this.#settingsApi.paymentsConfig();
+    this.#patchSettingsPayments({
+      busy: false,
+      notice: "Saved. The rail answers for the merchant you named.",
+      status: fresh.ok ? fresh.value : s.status,
+      processor: fresh.ok ? fresh.value.processor : s.processor,
+      merchantId: fresh.ok ? fresh.value.merchant_id : s.merchantId,
+      currency: fresh.ok ? fresh.value.currency : s.currency,
+    });
+  }
+
+  #policyFlag(field: string, on: boolean): void {
+    if (field === "cod") this.#patchSettingsPolicy({ cod: on });
+    if (field === "quickChips") this.#patchSettingsPolicy({ quickChips: on });
+  }
+
+  /** One counter policy fault to refuse on, the server's own bounds in words. */
+  #policyFault(): string {
+    const s = this.#settings.policy;
+    return restockingFeeError(s.fee) || workspaceSplitError(s.split) || chipSetError(chipsOf(s.chips));
+  }
+
+  async #saveCounterPolicy(): Promise<void> {
+    const s = this.#settings.policy;
+    if (s.phase !== "ready" || s.busy) return;
+    const fault = this.#policyFault();
+    if (fault !== "") {
+      this.#patchSettingsPolicy({ error: fault });
+      return;
+    }
+    this.#patchSettingsPolicy({ busy: true, notice: "", error: "" });
+    // A policy write is a policy write: it goes to the server now and never
+    // queues.
+    const result = await this.#settingsApi.putCounterPolicy({
+      branch_id: "",
+      cod_enabled: s.cod,
+      restocking_fee_bps: s.fee,
+      notes: s.notes,
+      line_presentation: s.linePresentation,
+      quick_chips_enabled: s.quickChips,
+      workspace_split_pct: s.split,
+      workspace_arrangement: s.arrangement,
+      lookup_presentation: s.lookupPresentation,
+      margin_visibility: s.marginVisibility,
+      balance_visibility: s.balanceVisibility,
+      quick_chip_set: chipsOf(s.chips),
+    });
+    if (!result.ok) {
+      this.#patchSettingsPolicy({ busy: false, error: counterPolicyRefusalWords(errorWords(result.error), result.status) });
+      return;
+    }
+    await this.#refreshSettingsPolicy("Saved. The counter follows the dealer's policy.");
+  }
+
+  /** The policy and its history re-read after a write: the read answers. */
+  async #refreshSettingsPolicy(notice: string): Promise<void> {
+    const [policy, history] = await Promise.all([this.#settingsApi.counterPolicy(), this.#settingsApi.counterPolicyHistory()]);
+    const s = this.#settings.policy;
+    let next: PolicySection = { ...s, busy: false, notice };
+    if (policy.ok) {
+      const p = policy.value;
+      next = {
+        ...next,
+        fee: p.restocking_fee_bps,
+        notes: p.notes,
+        chips: p.quick_chip_set.join("\n"),
+        split: p.workspace_split_pct,
+        cod: p.cod_enabled,
+        quickChips: p.quick_chips_enabled,
+        linePresentation: p.line_presentation,
+        lookupPresentation: p.lookup_presentation,
+        arrangement: p.workspace_arrangement,
+        marginVisibility: p.margin_visibility,
+        balanceVisibility: p.balance_visibility,
+      };
+    } else {
+      next = { ...next, error: counterPolicyRefusalWords(errorWords(policy.error), policy.status) };
+    }
+    if (history.ok) {
+      next = { ...next, historyPhase: "ready", history: history.value };
+    } else {
+      next = {
+        ...next,
+        historyPhase: history.status === 403 ? "refused" : "error",
+        historyWords: policyHistoryRefusalWords(history.error, history.status),
+      };
+    }
+    this.#patchSettingsPolicy(next);
+  }
+
+  async #saveTourPolicy(demoMode: boolean): Promise<void> {
+    const s = this.#settings.tour;
+    if (s.phase !== "ready" || s.busy) return;
+    this.#patchSettingsTour({ busy: true, notice: "", error: "" });
+    const result = await this.#settingsApi.putTourPolicy("", demoMode);
+    if (!result.ok) {
+      // The platform gate's own sentence, whole.
+      this.#patchSettingsTour({ busy: false, error: tourPlatformWords(result.error) });
+      return;
+    }
+    const fresh = await this.#settingsApi.tour();
+    this.#patchSettingsTour({
+      busy: false,
+      notice: demoMode
+        ? "Saved. The demo switch is on: the walkthrough shows where the dealer's switch allows it."
+        : "Saved. The demo switch is off: the walkthrough waits.",
+      view: fresh.ok ? fresh.value : s.view,
+    });
+  }
+
+  async #saveTourStep(): Promise<void> {
+    const s = this.#settings.tour;
+    if (s.phase !== "ready" || s.busy) return;
+    if (s.editChapter === "" || s.editStep === "") {
+      this.#patchSettingsTour({ error: "Pick a chapter and a step first." });
+      return;
+    }
+    const lineError = tourLineError(s.editLine);
+    if (lineError !== "") {
+      this.#patchSettingsTour({ error: lineError });
+      return;
+    }
+    this.#patchSettingsTour({ busy: true, notice: "", error: "" });
+    const result = await this.#settingsApi.putTourStepCopy({
+      chapter_key: s.editChapter,
+      step_key: s.editStep,
+      line: s.editLine,
+      route: s.editRoute,
+      anchor: s.editAnchor,
+    });
+    if (!result.ok) {
+      // The platform gate's own sentence, whole.
+      this.#patchSettingsTour({ busy: false, error: tourPlatformWords(result.error) });
+      return;
+    }
+    const fresh = await this.#settingsApi.tour();
+    this.#patchSettingsTour({ busy: false, notice: "Saved. The step says your line.", view: fresh.ok ? fresh.value : s.view });
+  }
+
   // -- the hotkeys surface ---------------------------------------------------------------------------
 
   async #loadHotkeys(): Promise<void> {
@@ -1193,6 +1696,7 @@ export class DealerAdminApp extends HHElement {
     this.#hotkeys = emptyHotkeysModel();
     this.#audit = emptyAuditModel();
     this.#roleConfig = emptyRoleConfigModel();
+    this.#settings = emptySettingsModel();
     this.#auditDetailGen += 1;
     clearFrontDoorHandoff();
     void this.loadFlows();
@@ -1233,6 +1737,7 @@ export class DealerAdminApp extends HHElement {
     if (this.#surface === "hotkeys") return renderHotkeys(this.#hotkeys);
     if (this.#surface === "audit") return renderAudit(this.#audit);
     if (this.#surface === "role-config") return renderRoleConfig(this.#roleConfig);
+    if (this.#surface === "deployment") return renderSettings(this.#settings);
     return renderStaff(this.#staff);
   }
 
@@ -1283,7 +1788,7 @@ export class DealerAdminApp extends HHElement {
               <span class="mark">${drawIcon(iconForId(DealerAdminApp.FLOW_ICONS[flow.flow ?? ""] ?? "lucide:circle-user"), 29)}</span>
               <span class="words">
                 <span class="role">${flow.label ?? flow.flow}</span>
-                <span class="what">Staff, hotkeys, the audit trail, and the role configuration.</span>
+                <span class="what">Staff, the role configuration, the deployment's settings, and the audit trail.</span>
               </span>
             </button>
           `)}

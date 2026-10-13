@@ -36,6 +36,8 @@ dealer-admin in any file ("No built app, no boards in any file").
 | The actor cell | `app/src/audit-log.ts` with `app/src/_audit-actor.ts` (`renderActorCell`) | `actorWords` in `src/audit-logic.ts` | The honest change: the HH core's audit projection carries no resolved name and production reads the role word empty (the core attributes by the linked users id), so the cell shows the role's words when a row carries one, else the id's own block, never a blank |
 | The drilldown to one entity's whole trail | `app/src/audit-log.ts` with `app/src/_audit-drilldown.ts` | the trail card in `src/views-audit.ts`, `#openAuditTrail` in `src/app-root.ts` | The original's kind aware viewer became the one generic question the transaction route answers: this entity's rows |
 | The curation editor's shape: the kind and id of a row, the whole set saved in one PUT, the reset per kind as a DELETE | `app/src/quote-surface-settings.ts` (the items half, DIB-507's screen settings page) | `src/views-config.ts` (the dealer's curation draft), `src/config-api.ts`, `src/config-logic.ts` | Rebuilt on HH's generated client (`settingsPutRoleItems`, `settingsDeleteRoleItems`); the original edited one surface's registry from inside that surface, this editor edits the stored rows of every surface from the dealer's administration, because apps do not import apps and item ids stay each surface's own registry's |
+| The counter policy's knobs and their words (cash on demand, the restocking fee in basis points, lines and lookup presentation, the till's split and which side leads, cost and past due visibility, the curated chips) | `app/src/pos-counter-settings.ts` (the policy half, the same knobs) | the counter policy section in `src/views-settings.ts`, `src/settings-api.ts`, `src/settings-logic.ts` | Rebuilt on HH's generated client (`posGetPolicy`, `posPutPolicy`, `posPolicyHistory`); the knobs keep the core's bounds and its 422 words; no card data and no secret rides the screen, and a policy write goes to the server and never queues |
+| The card rail's three honest fields (processor, merchant id, currency) and the test mode badge | the payment handler's own status and configure halves (core/internal/payment/handler.go: the status never echoes a credential, the write refuses the surcharge enable) | the payments configuration section in `src/views-settings.ts`, `putPaymentsConfig` in `src/settings-api.ts` | The screen carries only what the contract returns; the write body carries the three fields and nothing secret; a money write goes to the server and never queues |
 | The five job shapes and their words | `app/src/quote-surface-settings.ts` (`PROFILES`), the settings kit's own `validProfiles` and its 422 words (core/internal/settings/settings.go) | `JOB_SHAPES` in `src/config-logic.ts` | The kit's five, the order and the refusal words kept |
 | The item set's shape checks and their words (kind enum, id alphabet, positions, duplicates, the 128 bound, empty means DELETE) | the settings kit's own validators (core/internal/settings/settings.go `ValidateItems`) mirrored client side | `itemRowError`, `itemSetError`, `canSaveItems` in `src/config-logic.ts` | The server's checks restated in the server's words so a row that cannot pass spares the round trip; the server's 422 stays the last word |
 | The role to shape catalog (which staff roles hold which job shape) | the seed of record (core/db/migrations/0140_dashboard_layouts.sql, the `dashboard_role_profiles` rows) and the kit's ProfileFallback | `SHAPE_ROLE_CODES`, `profileForRoleCode`, `rolesForShape` in `src/config-logic.ts`, the catalog card in `src/views-config.ts` | Presented as words beside the grid, from the core's own seed; the server resolves each person's real shape and a role with no row answers to the counter shape, the kit's own fallback |
@@ -73,3 +75,16 @@ reference:
   `my-workspace` halves): the kit's own two levels, whole or absent,
   reset IS a DELETE, the workspace save carrying the settings write
   idempotency key (core/internal/settings/service.go). No original screen.
+- The role by surface grid's catalog card, the deployment settings as one
+  surface of four sections, the walkthrough's chapter list and step copy
+  editor, and the policy history table: each from its named reference above
+  (the manager-home matrix words, the original's counter settings screen)
+  or new here with the app's own card style for its reference, because no
+  original screen gathered them.
+- The brand section's waits state (`BRAND_WAITS_WORDS`): the parity
+  ledger's own fact (the tenant brand pair is registered in the contract
+  and held, unregistered in the core), stated on the glass with the form
+  whole and disabled, the staff family's waits posture carried over.
+- The walkthrough's platform gate words: the tour package's own refusal
+  sentence, kept whole on the glass, and the calm read only line for a
+  caller the server's `can_edit` refuses.
