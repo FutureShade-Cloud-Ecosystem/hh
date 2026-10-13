@@ -11,15 +11,23 @@ import type { TemplateResult } from "lit";
 import { MessagesApi } from "./messages-api.js";
 import { LiveFeed, type LiveState, type NudgeKind, type StreamSource, type Timers } from "./live.js";
 import {
+  ackProgressLabel,
+  bubbleFor,
+  channelTitle,
   composerState,
+  isAckable,
+  isSuperseded,
   mergeOlder,
   refusalWords,
   streamOrder,
+  timeWords,
   totalUnread,
+  youAcked,
+  type AckProgress,
   type Channel,
   type Message,
 } from "./messages-logic.js";
-import { renderDesk, type ConvoModel, type Model } from "./views.js";
+import { renderDesk, type AckView, type BubbleModel, type ConvoModel, type Model } from "./views.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -35,6 +43,9 @@ export interface DeskHost {
 
 const PAGE = 30;
 const EXCERPT = 80;
+// Progress is read for the newest forced acknowledgements in the open room; a long history of old
+// notices would otherwise be a read per row on every refresh.
+const PROGRESS_LIMIT = 20;
 
 export class MessagesDesk {
   readonly #api: MessagesApi;
@@ -65,6 +76,13 @@ export class MessagesDesk {
   // Each channel keeps its own words, so a draft never travels to another room.
   readonly #drafts = new Map<string, string>();
   #seededFor = "";
+
+  // Acknowledgement: what the core lists as waiting on the caller, its arithmetic per message, and
+  // the one write in flight with its refusal. Nothing is shown as acknowledged before the core says.
+  #unacked: readonly Message[] = [];
+  readonly #progress = new Map<string, AckProgress>();
+  #ackBusy = "";
+  #ackError: { id: string; text: string } | null = null;
 
   #refreshing = false;
   #refreshAgain = false;
@@ -101,6 +119,8 @@ export class MessagesDesk {
     this.#phase = "ready";
     this.#host.repaint();
     this.#live.start();
+    await this.#readAcks();
+    this.#host.repaint();
   }
 
   /** Ends the live feed; the root calls it when the desk is dropped. */
@@ -154,10 +174,52 @@ export class MessagesDesk {
         if (!this.#olderLoaded) this.#nextCursor = page.value.nextCursor;
         await this.#refreshOpenThreads(active);
       }
+      await this.#readAcks();
       // The channel is open on screen: what arrived is read, so the core is told.
       const current = this.#channels.find((c) => c.id === active);
       if (current !== undefined && current.unread_count > 0) await this.#markRead(active);
     }
+    else await this.#readAcks();
+    this.#host.repaint();
+  }
+
+  // The acknowledgements the caller owes, and the arithmetic for the one on the bubble and for the
+  // forced acknowledgements in the open room.
+  async #readAcks(): Promise<void> {
+    const waiting = await this.#api.unacked();
+    if (this.#stopped) return;
+    if (waiting.ok) this.#unacked = waiting.value;
+    const ask = new Map<string, string>();
+    const bubble = bubbleFor(this.#unacked);
+    if (bubble !== null) ask.set(bubble.id, bubble.channel_id);
+    const channel = this.#channels.find((c) => c.id === this.#activeId);
+    if (channel !== undefined) {
+      const rows = this.#held.filter((m) => isAckable(m, channel.tier) || this.#unacked.some((u) => u.id === m.id));
+      for (const m of rows.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, PROGRESS_LIMIT)) ask.set(m.id, m.channel_id);
+    }
+    await Promise.all(
+      [...ask.entries()].map(async ([id, channelId]) => {
+        const progress = await this.#api.ackProgress(channelId, id);
+        if (progress.ok) this.#progress.set(id, progress.value);
+      }),
+    );
+  }
+
+  async #ack(channelId: string, messageId: string): Promise<void> {
+    if (this.#ackBusy !== "") return;
+    this.#ackBusy = messageId;
+    this.#ackError = null;
+    this.#host.repaint();
+    const done = await this.#api.ack(channelId, messageId);
+    this.#ackBusy = "";
+    if (this.#stopped) return;
+    if (!done.ok) {
+      // The bubble stays: a write that did not go through is not an acknowledgement.
+      this.#ackError = { id: messageId, text: refusalWords("The acknowledgement", done.error, done.status ?? null) };
+      this.#host.repaint();
+      return;
+    }
+    await this.#readAcks();
     this.#host.repaint();
   }
 
@@ -207,6 +269,7 @@ export class MessagesDesk {
     this.#nextCursor = page.value.nextCursor;
     this.#host.repaint();
     await this.#markRead(channelId);
+    await this.#readAcks();
     this.#host.repaint();
   }
 
@@ -341,6 +404,9 @@ export class MessagesDesk {
       case "send":
         void this.#send();
         return true;
+      case "ack":
+        void this.#ack(control.getAttribute("data-channel") ?? "", id);
+        return true;
       case "retry-live":
         this.#live.retryNow();
         return true;
@@ -354,14 +420,51 @@ export class MessagesDesk {
 
   // ---- the template -----------------------------------------------------------------------------
 
+  #bubble(): BubbleModel | null {
+    const message = bubbleFor(this.#unacked);
+    if (message === null) return null;
+    const channel = this.#channels.find((c) => c.id === message.channel_id);
+    const progress = this.#progress.get(message.id);
+    return {
+      id: message.id,
+      channelId: message.channel_id,
+      channelName: channel === undefined ? "A channel" : channelTitle(channel),
+      body: message.body,
+      when: timeWords(message.created_at, this.#host.now()),
+      progress: progress === undefined ? "" : ackProgressLabel(progress),
+      busy: this.#ackBusy === message.id,
+      error: this.#ackError?.id === message.id ? this.#ackError.text : "",
+    };
+  }
+
+  #ackViews(channel: Channel, messages: readonly Message[]): Map<string, AckView> {
+    const out = new Map<string, AckView>();
+    for (const m of messages) {
+      const waiting = this.#unacked.some((u) => u.id === m.id);
+      if (!waiting && !isAckable(m, channel.tier)) continue;
+      const progress = this.#progress.get(m.id);
+      out.set(m.id, {
+        superseded: isSuperseded(m),
+        progress: progress === undefined ? "" : ackProgressLabel(progress),
+        youAcked: youAcked(progress, this.#meId),
+        needsYou: waiting && !isSuperseded(m),
+        busy: this.#ackBusy === m.id,
+        error: this.#ackError?.id === m.id ? this.#ackError.text : "",
+      });
+    }
+    return out;
+  }
+
   #convo(): ConvoModel | null {
     const channel = this.#channels.find((c) => c.id === this.#activeId);
     if (channel === undefined) return null;
     const state = composerState(this.#draft);
+    const messages = streamOrder(this.#held);
     return {
       channel,
       loading: this.#loadingChannel,
-      messages: streamOrder(this.#held),
+      messages,
+      acks: this.#ackViews(channel, messages),
       hasOlder: this.#nextCursor !== null,
       olderBusy: this.#olderBusy,
       threads: this.#threads,
@@ -386,6 +489,7 @@ export class MessagesDesk {
       now: this.#host.now(),
       error: this.#error,
       notice: this.#notice,
+      bubble: this.#bubble(),
       convo: this.#convo(),
     });
   }

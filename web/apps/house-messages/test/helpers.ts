@@ -62,12 +62,14 @@ export async function says(request: APIRequestContext, who: Persona, channel: st
 }
 
 /** Signs in through the front door's handoff and lands on the channel list. */
-export async function openAs(page: Page, request: APIRequestContext, who: Persona = "sales"): Promise<void> {
-  await resetStub(request);
+export async function openAs(page: Page, request: APIRequestContext, who: Persona = "sales", reset = true): Promise<void> {
+  if (reset) await resetStub(request);
   await page.addInitScript(handoff, PERSONA[who]);
   await page.goto("/");
   await expect(page.locator("[data-channel-list]")).toBeVisible();
 }
+
+export const FORCED = "b9000000-0000-4000-9000-000000000001";
 
 export const channel = (page: Page, id: string) => page.locator(`[data-action='open-channel'][data-id='${id}']`);
 

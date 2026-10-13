@@ -214,6 +214,27 @@ export function bubblePersistsAfter(messages: readonly Message[], ackedId: strin
 }
 
 /**
+ * Whether a message asks the room to acknowledge it. The core flags a forced acknowledgement on the
+ * messages it hands the unacked read, but its message pages do not carry the flag, and it mirrors
+ * every high priority event into the escalation room, so a system notice there is one. A person's
+ * own words are never asked to be acknowledged.
+ */
+export function isAckable(message: Pick<Message, "requires_ack" | "kind">, tier: ChannelTier | undefined): boolean {
+  if (message.requires_ack === true) return true;
+  return message.kind === "EVENT" && tier === "ESCALATION";
+}
+
+/** A newer fact about the same record replaced this notice; it stops asking and is never acknowledged. */
+export function isSuperseded(message: Pick<Message, "superseded_by" | "superseded_at">): boolean {
+  return Boolean(message.superseded_by) || Boolean(message.superseded_at);
+}
+
+/** Whether the caller's own acknowledgement is among the acks the core counted. */
+export function youAcked(progress: AckProgress | null | undefined, userId: string): boolean {
+  return (progress?.acks ?? []).some((a) => a.user_id === userId);
+}
+
+/**
  * The ack arithmetic for a person. Zero required is called out rather than printed as "0 of 0",
  * which reads like completion when it means nobody can acknowledge this at all.
  */

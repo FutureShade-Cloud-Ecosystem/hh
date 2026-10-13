@@ -301,6 +301,13 @@ async function route(req, res, url) {
       pageShape = body?.shape === "items" ? "items" : "messages";
       return json(res, { shape: pageShape });
     }
+    if (path === "/_stub/supersede") {
+      const target = world.messages.find((x) => x.id === body?.id);
+      if (!target) return fail(res, 404, "not found");
+      target.superseded_by = id("b");
+      target.superseded_at = new Date().toISOString();
+      return json(res, { ok: true });
+    }
     if (path === "/_stub/state") return json(res, { streams: streams.length, acks: world.acks.length, messages: world.messages.length });
     const as = /^\/_stub\/as\/([a-z-]+)$/.exec(path);
     if (as && method === "POST") {

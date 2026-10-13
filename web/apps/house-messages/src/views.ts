@@ -31,7 +31,33 @@ export interface Model {
   readonly now: number;
   readonly error: string;
   readonly notice: string;
+  readonly bubble: BubbleModel | null;
   readonly convo: ConvoModel | null;
+}
+
+/** The persistent forced acknowledgement, above both panes. */
+export interface BubbleModel {
+  readonly id: string;
+  readonly channelId: string;
+  readonly channelName: string;
+  readonly body: string;
+  readonly when: string;
+  readonly progress: string;
+  readonly busy: boolean;
+  readonly error: string;
+}
+
+/** What one message says about acknowledgement, when it asks for one. */
+export interface AckView {
+  readonly superseded: boolean;
+  /** The core's arithmetic in words; empty until it has been read. */
+  readonly progress: string;
+  /** The caller's own acknowledgement is among the core's count. */
+  readonly youAcked: boolean;
+  /** The core still lists this message as waiting on the caller. */
+  readonly needsYou: boolean;
+  readonly busy: boolean;
+  readonly error: string;
 }
 
 export interface ConvoModel {
@@ -43,6 +69,7 @@ export interface ConvoModel {
   readonly olderBusy: boolean;
   /** Thread roots that are open, with their replies read so far. */
   readonly threads: ReadonlyMap<string, readonly Message[]>;
+  readonly acks: ReadonlyMap<string, AckView>;
   readonly replyTo: { readonly rootId: string; readonly excerpt: string } | null;
   readonly composerWords: string;
   readonly composerBad: boolean;
@@ -146,6 +173,7 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
       </div>
       ${renderMessageBody(msg)}
       ${why === "" ? nothing : html`<p class="why" data-why>${why}</p>`}
+      ${renderAck(c.acks.get(msg.id), msg)}
       ${isReply
         ? nothing
         : html`
@@ -158,6 +186,42 @@ function renderMessage(msg: Message, c: ConvoModel, m: Model, isReply: boolean):
         ? nothing
         : html`<ul class="thread" data-thread>${replies.map((r) => renderMessage(r, c, m, true))}</ul>`}
     </li>
+  `;
+}
+
+function renderAck(a: AckView | undefined, msg: Message): TemplateResult | typeof nothing {
+  if (a === undefined) return nothing;
+  if (a.superseded) {
+    return html`<p class="msg-foot" data-ack><span class="tag tag-plain">Replaced by a newer notice</span><span class="dim small">It no longer needs acknowledging.</span></p>`;
+  }
+  return html`
+    <div class="msg-foot" data-ack>
+      ${a.needsYou
+        ? html`<span class="tag tag-stop">Needs your acknowledgement</span>`
+        : a.youAcked
+          ? html`<span class="tag tag-good">You acknowledged</span>`
+          : nothing}
+      ${a.progress === "" ? nothing : html`<span class="small" data-ack-progress>${a.progress}</span>`}
+      ${a.needsYou
+        ? html`<button type="button" class="btn btn-primary small-btn" data-action="ack" data-id=${msg.id} data-channel=${msg.channel_id} ?disabled=${a.busy}>I got it</button>`
+        : nothing}
+      ${a.error === "" ? nothing : html`<span class="small words-bad" role="alert" data-ack-error>${a.error}</span>`}
+    </div>
+  `;
+}
+
+function renderBubble(b: BubbleModel): TemplateResult {
+  return html`
+    <section class="bubble" role="alert" aria-live="assertive" data-bubble>
+      <div class="body">
+        <p class="eyebrow">Needs your acknowledgement</p>
+        <p class="text">${b.body}</p>
+        <p class="dim small">${b.channelName} \u00b7 ${b.when}</p>
+        ${b.progress === "" ? nothing : html`<p class="small" data-ack-progress>${b.progress}</p>`}
+        ${b.error === "" ? nothing : html`<p class="small words-bad" role="alert" data-bubble-error>${b.error}</p>`}
+      </div>
+      <button type="button" class="btn btn-primary" data-action="ack" data-id=${b.id} data-channel=${b.channelId} ?disabled=${b.busy}>I got it</button>
+    </section>
   `;
 }
 
@@ -242,6 +306,7 @@ export function renderDesk(m: Model): TemplateResult {
       ${renderStrip(m)}
       ${m.error === "" ? nothing : html`<div class="alert alert-error" role="alert" data-error>${m.error}</div>`}
       ${m.notice === "" ? nothing : html`<div class="alert alert-ok" role="status" data-notice>${m.notice}</div>`}
+      ${m.bubble === null ? nothing : renderBubble(m.bubble)}
       <div class="panes">
         ${renderRail(m)}
         ${m.convo === null ? renderEmptyConvo() : renderConvo(m, m.convo)}

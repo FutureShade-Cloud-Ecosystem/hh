@@ -16,7 +16,9 @@ import {
   channelTitle,
   composerState,
   eventWhy,
+  isAckable,
   isHouseChannel,
+  isSuperseded,
   messageKindWord,
   mergeOlder,
   modeWords,
@@ -30,6 +32,7 @@ import {
   totalUnread,
   unreadWord,
   waitedWords,
+  youAcked,
 } from "../src/messages-logic.ts";
 
 const ch = (over = {}) => ({
@@ -242,4 +245,24 @@ test("time words: a clock time today, a short date and time before, a year only 
   assert.equal(timeWords(iso(2025, 8, 3, 6, 5), now), "Sep 3, 6:05 AM");
   assert.equal(timeWords(iso(2024, 11, 24, 13, 15), now), "Dec 24, 2024, 1:15 PM");
   assert.equal(timeWords("not a time", now), "");
+});
+
+test("a message asks for an acknowledgement when the core flagged it or it is a system notice in the escalation room", () => {
+  assert.equal(isAckable(msg({ requires_ack: true }), "STANDARD"), true);
+  assert.equal(isAckable(msg({ kind: "EVENT" }), "ESCALATION"), true, "every high priority event is mirrored into the escalation room");
+  assert.equal(isAckable(msg({ kind: "TEXT" }), "ESCALATION"), false, "a person's words are not asked to be acknowledged");
+  assert.equal(isAckable(msg({ kind: "EVENT" }), "STANDARD"), false);
+});
+
+test("a superseded notice is one a newer fact replaced, by either of the core's two markers", () => {
+  assert.equal(isSuperseded(msg()), false);
+  assert.equal(isSuperseded(msg({ superseded_by: "m9" })), true);
+  assert.equal(isSuperseded(msg({ superseded_at: "2025-01-01T00:00:00Z" })), true);
+});
+
+test("you acknowledged when your user id is among the acks", () => {
+  const progress = { message_id: "m", required: 3, acked: 1, remaining: 2, complete: false, acks: [{ message_id: "m", user_id: "u1", method: "TAP", acked_at: "2025-01-01T00:00:00Z" }] };
+  assert.equal(youAcked(progress, "u1"), true);
+  assert.equal(youAcked(progress, "u2"), false);
+  assert.equal(youAcked(null, "u1"), false);
 });
