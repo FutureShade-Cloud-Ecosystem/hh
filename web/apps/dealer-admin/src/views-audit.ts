@@ -61,6 +61,7 @@ export function renderAudit(model: AuditModel): TemplateResult {
           <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="reload-audit">Try again</button></div>
         `
       : nothing}
+    ${model.phase === "error" ? html`<section class="card">${renderFilters(model.filters)}</section>` : nothing}
     ${model.phase === "ready" ? renderTrail(model) : nothing}
   `;
 }

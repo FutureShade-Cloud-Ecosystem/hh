@@ -205,3 +205,20 @@ test("an entity trail with no entries says so in its own words", async ({ page }
   await expect(page.locator("[data-test=audit-trail-empty]")).toContainText("holds no entries");
   await page.request.post("/_stub/reset");
 });
+
+test("a refused filter leaves the filters on the glass, and Clear brings the trail back", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("[data-flow]").first().click();
+  await page.locator('.surface-link[data-surface="audit"]').click();
+  await expect(page.locator("[data-test=audit-count]")).toHaveText("3 entries");
+
+  // An actor id that is not a UUID is refused in the server's words; the
+  // surface must not become a dead end.
+  await page.locator('[data-field="audit-actor-id"]').fill("not-a-uuid");
+  await page.locator('[data-action="apply-audit-filters"]').click();
+  await expect(page.locator("[data-test=audit-error]")).toContainText("actor_id must be a UUID");
+  await expect(page.locator('[data-field="audit-actor-id"]')).toHaveValue("not-a-uuid");
+
+  await page.locator('[data-action="clear-audit-filters"]').click();
+  await expect(page.locator("[data-test=audit-count]")).toHaveText("3 entries");
+});

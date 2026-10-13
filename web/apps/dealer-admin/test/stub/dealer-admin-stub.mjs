@@ -411,6 +411,10 @@ async function handle(req, res) {
     const action = url.searchParams.get("action") ?? "";
     const actorId = url.searchParams.get("actor_id") ?? "";
     const since = url.searchParams.get("since") ?? "";
+    // The core refuses an actor id that is not a UUID with a 400 in words.
+    if (actorId !== "" && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actorId)) {
+      return refuse(res, 400, "audit: actor_id must be a UUID");
+    }
     const items = audit.filter((e) => {
       if (entityType !== "" && e.entity_type !== entityType) return false;
       if (action !== "" && e.action !== action) return false;
