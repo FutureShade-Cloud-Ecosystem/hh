@@ -48,6 +48,9 @@ type approvalStore interface {
 	// HasApprovedOverride reports whether an APPROVED override exists for this
 	// requester + branch + policy (+ optional subject), closing the loop (H-2).
 	HasApprovedOverride(ctx context.Context, requestedBy, branchID, subjectRef string, policy PolicyType) (bool, error)
+	// HasUnusedApprovedOverride is the policy check's narrower question: an APPROVED margin override of the
+	// requester at the branch that no line write has used up yet (data->>'used' unset).
+	HasUnusedApprovedOverride(ctx context.Context, requestedBy, branchID string, policy PolicyType) (bool, error)
 	// ListApproverCandidates returns the ACTIVE staff whose role could grant approval authority: the
 	// fan-out candidate pool ResolveApprovers filters via CanApprove (0075).
 	ListApproverCandidates(ctx context.Context) ([]StaffContext, error)
@@ -321,6 +324,17 @@ func (s *Approvals) HasApprovedOverride(ctx context.Context, requestedBy, branch
 		return false, nil
 	}
 	return s.store.HasApprovedOverride(ctx, requestedBy, branchID, subjectRef, policy)
+}
+
+// HasUnusedApprovedOverride reports whether the requester holds an APPROVED override for the branch and
+// policy that is still unused. A floor approval clears one line of one quote once (D3, ConsumeApprovedFloorTx),
+// so the advisory policy check counts only an unused one; HasApprovedOverride keeps its wider meaning for its
+// existing callers.
+func (s *Approvals) HasUnusedApprovedOverride(ctx context.Context, requestedBy, branchID string, policy PolicyType) (bool, error) {
+	if requestedBy == "" || branchID == "" {
+		return false, nil
+	}
+	return s.store.HasUnusedApprovedOverride(ctx, requestedBy, branchID, policy)
 }
 
 // ListApprovals returns the requests the caller is allowed to see:
@@ -778,6 +792,26 @@ func (r *ApprovalRepository) HasApprovedOverride(ctx context.Context, requestedB
 		)`, requestedBy, branchID, string(policy), subjectRef).Scan(&ok)
 	if err != nil {
 		return false, fmt.Errorf("check approved override: %w", err)
+	}
+	return ok, nil
+}
+
+// HasUnusedApprovedOverride is the repository half: the same match as HasApprovedOverride without a subject,
+// narrowed to a request no line write has used up.
+func (r *ApprovalRepository) HasUnusedApprovedOverride(ctx context.Context, requestedBy, branchID string, policy PolicyType) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var ok bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM permission_approval_requests
+			WHERE requested_by = $1 AND branch_id = $2 AND policy_type = $3 AND status = 'APPROVED'
+			  AND deleted_at IS NULL
+			  AND (data->>'used') IS NULL
+		)`, requestedBy, branchID, string(policy)).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("check unused approved override: %w", err)
 	}
 	return ok, nil
 }

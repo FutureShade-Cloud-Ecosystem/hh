@@ -12,6 +12,7 @@ import { createServer } from "node:http";
 import { createGlWorld } from "./gl-world.mjs";
 import { createBankrecWorld } from "./bankrec-world.mjs";
 import { createTaxWorld } from "./tax-world.mjs";
+import { createLienWorld } from "./lien-world.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
@@ -19,6 +20,8 @@ const glWorld = createGlWorld();
 const bankrecWorld = createBankrecWorld();
 // The tax administration slice's world (rates, profiles, config, evidence, recompute, recon), answered by its own module.
 const taxWorld = createTaxWorld();
+// The liens and compliance slice's world (jobs, the holdback ledger, documents, the calendar, the roster), answered by its own module.
+const lienWorld = createLienWorld();
 
 const port = Number(process.env.ROLE_STUB_PORT ?? 4959);
 
@@ -560,6 +563,7 @@ async function handle(req, res) {
     glWorld.reset();
     bankrecWorld.reset();
     taxWorld.reset();
+    lienWorld.reset();
     return send(res, 200, { ok: true });
   }
   if (method === "POST" && path === "/_stub/scenario") {
@@ -596,6 +600,13 @@ async function handle(req, res) {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const body = method === "POST" ? await readBody(req) : null;
     const answer = bankrecWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
+  }
+  if (path.startsWith("/api/v1/lien/") || path.startsWith("/api/v1/compliance/") || path === "/api/v1/staff") {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const body = method === "POST" || method === "PUT" ? await readBody(req) : null;
+    if (body === null && (method === "POST" || method === "PUT")) return refuse(res, 400, "invalid_json");
+    const answer = lienWorld.handle(req, url, JSON.stringify(body ?? {}));
     return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
   }
   if (!path.startsWith("/api/v1/ar/")) return refuse(res, 404, "not found");
@@ -992,3 +1003,10 @@ const server = createServer((req, res) => {
 server.listen(port, () => {
   console.log(`money-desk-stub listening on ${port}`);
 });
+
+// A contract test that starts this stub ends it by closing the stub's standard input, never by a signal: with
+// ROLE_STUB_STDIN_EXIT set, the stub exits when that stream ends.
+if (process.env.ROLE_STUB_STDIN_EXIT === "1") {
+  process.stdin.resume();
+  process.stdin.on("end", () => process.exit(0));
+}

@@ -40,7 +40,7 @@
 <p class="lede">One page about what the Money Desk does and what it does not do yet. If the box and this page disagree, the box is wrong and that is a bug worth reporting.</p>
 
 <h2>What this is</h2>
-<p>The Money Desk has two sides. The receivables side is for the Payables and Receivables role: it reads the book's aging, works the bounced payment the queue shows, takes a payment in against open invoices, records a promise to pay and runs a statement. The ledger side is for the Financial Controller: it decides the approvals queue, approves a parked journal, reads the journal register and the trial balance. The controller holds both sides.</p>
+<p>The Money Desk has five areas. The receivables side is for the Payables and Receivables role: it reads the book's aging, works the bounced payment the queue shows, takes a payment in against open invoices, records a promise to pay and runs a statement. The ledger side is for the Financial Controller: it decides the approvals queue, approves a parked journal, reads the journal register and the trial balance. The controller holds both sides. Liens and Compliance are the holdback and deadline areas: jobs that hold back retention, the release of that retention, the lien forms, and the calendar of deadlines they register.</p>
 
 <h2>How to sign in</h2>
 <p data-claim="sign-in-cards">On the front door, tap <strong>Payables and Receivables</strong> ("Chase overdue accounts and work the bounced payments.") or <strong>Financial Controller</strong> ("Decide approvals and keep the ledger."). Each card shows a <strong>Money Desk</strong> tile, and the tile opens the same Money Desk with no second sign in.</p>
@@ -102,6 +102,34 @@
 <p data-claim="checks">The Checks tab shows the receivables ledger against account 1100, with a word beside its colour: In tie or Out of tie. The BisTrack check compares one month against a fixed synthetic snapshot and says so.</p>
 <p data-claim="policy">The Policy tab reads the approval threshold, the month the fiscal year starts and the cost basis. Changing the policy is not on this screen.</p>
 <p data-claim="reader">Payables and Receivables opens the Ledger area beside Receivables and reads the journals, chart, trial balance, periods, tie out and policy. Every write is held, with words naming who may do it.</p>
+
+<h2>Liens: the areas and the banner</h2>
+<p data-claim="liens-areas">Liens and Compliance sit beside the other areas on the area switch. The Financial Controller's switch holds five: Approvals and ledger, Receivables, Bank reconciliation, Liens and Compliance. Payables and Receivables holds Receivables, Liens and Compliance, and reads the last two. The General Manager's switch holds Liens and Compliance, but no General Manager sign in exists on this box, so those screens are reached here by the other two roles.</p>
+<p data-claim="liens-payrec-reads">Payables and Receivables reads the jobs, the triage, the holdbacks, the documents and the calendar, and is offered no write: no New job, no Sync holdbacks, no Render draft and no way to set the review status. The server gives that role work, not manage, on the Money Desk and Manager Home, so those controls would only be refused. The Financial Controller and the General Manager write.</p>
+<p data-claim="liens-banner">Every Liens screen carries a draft banner. Its words and its state come from the core's review status, so they are the core's and not the app's.</p>
+<p data-claim="liens-core-words">The triage notes and the form titles are the core's own words, and they name a fixed release window and the Construction Act, which are not California terms. The core has not been given California's yet, and this screen shows what the core says.</p>
+
+<h2>Liens: triage, jobs and the sync</h2>
+<p data-claim="liens-triage">Triage lists the jobs that hold retention, oldest first. Each row has a status word (Release due, Overdue, Aging, or Payable, released by hand), what is held, how long it has been held and the core's note. Open job goes to that job's facts and what is held now.</p>
+<p data-claim="liens-jobs">Jobs lists every job, newest first. A new job is refused in words before anything is sent when it has no number, no branch, a contract amount that is not dollars and cents, a holdback percent outside 0.01 to 100, or a date that is not written year, month, day. A job given a substantial performance date registers its release deadline on the Compliance calendar. The form never asks the core to add tax to a holdback.</p>
+<p data-claim="liens-sync">Sync holdbacks books a job's held invoices as retention: the job's customer's invoices, or the whole branch's when the job has no customer. Pressing it again books nothing new, and the screen says how many were already booked.</p>
+
+<h2>Liens: holdbacks and the release</h2>
+<p data-claim="liens-aging">Holdbacks ages what is held by job, with how long it has been held and its age band, and says whether it is ready to release. A payable holdback is released by hand and has no Release control.</p>
+<p data-claim="liens-release">Releasing a holdback is the General Manager's. Release opens a panel that names the job and the amount; the General Manager picks a co-signer from the staff roster, a Financial Controller or Payables and Receivables and never the person releasing, and confirms. The core checks who the co-signer is, posts one journal, and the job leaves the aging. When the core refuses, the screen shows the core's own sentence, for example that the co-signer must be an active staff member, or that nothing is outstanding to release.</p>
+<p data-claim="liens-release-read">Every other role can open the release panel and read what would be released. It says who releases and offers no confirm.</p>
+
+<h2>Liens: documents</h2>
+<p data-claim="liens-documents">Documents renders a lien form from that form's own fields, and a blank field prints as a blank line. Each is a draft, headed by the core's draft banner. A second render of the same form is its next version, the list shows the latest of each form, and History reads every version, newest first.</p>
+
+<h2>Compliance</h2>
+<p data-claim="compliance-upcoming">Compliance opens on what is due soon: the open deadlines inside the look ahead, soonest first, with those already past marked Overdue. The look ahead is a whole number of days from 1 to 365, or blank for the core's own. Anything else is refused in words before it is asked.</p>
+<p data-claim="compliance-calendar">Calendar lists every deadline by due date and filters by status. The core keeps a past due deadline as open and marks it overdue only in the upcoming list, so the calendar reads that mark and the two tabs never disagree.</p>
+<p data-claim="compliance-review">Review status sets the banner the Liens screens carry, for the whole lien cockpit or for one job. A blank banner is the core's default words, and the core records who set it.</p>
+
+<h2>Liens and Compliance: states and the phone</h2>
+<p data-claim="liens-states">While either area loads the screen says so, a failed load names the refusal and offers Try again, and an empty list says it is empty.</p>
+<p data-claim="liens-phone">On a phone each table becomes cards, a chosen job or release brings its panel into view, nothing scrolls sideways, and every control works from the keyboard.</p>
 
 <h2>Bank reconciliation</h2>
 <p data-claim="bankrec-area">The Financial Controller has a third area, Bank reconciliation, beside Approvals and ledger and Receivables. Payables and Receivables does not have it. It lists the operating account and the two cards with the number of lines waiting on each, and the cards are marked tracking only.</p>

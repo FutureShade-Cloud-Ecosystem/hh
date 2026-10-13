@@ -235,6 +235,235 @@ test("a core that has no staff register yet lands on the waits-for-sign-in state
   await page.request.post("/_stub/reset");
 });
 
+// -- the role configuration surface ------------------------------------------------------------------
+
+async function openRoleConfig(page: import("@playwright/test").Page): Promise<void> {
+  await page.goto("/");
+  await page.locator("[data-flow]").first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="role-config"]').click();
+}
+
+test("the role grid reads every job shape on every surface, and the catalog names who holds each shape", async ({ page }) => {
+  await openRoleConfig(page);
+
+  // A hundred and thirty cells (thirteen profiles on ten surfaces), each answering the registry default until a curation is
+  // saved; the caption carries the core's own sentence about what curation
+  // is and is not.
+  await expect(page.locator("[data-test^=config-cell-]")).toHaveCount(130);
+  await expect(page.locator("[data-test=config-cell-counter-till-counter]")).toHaveText("Registry default");
+  await expect(page.locator("[data-test=config-caption]")).toContainText("never grants power");
+
+  // The catalog groups the dealer's roles under their seeded shapes.
+  await expect(page.locator("[data-test=config-roles-count]")).toHaveText("14 roles");
+  const adminRow = page.locator('[data-test=config-catalog] li[data-profile="manager.general"]');
+  await expect(adminRow).toContainText("General Manager");
+  const counterRow = page.locator('[data-test=config-catalog] li[data-profile="counter"]');
+  await expect(counterRow).toContainText("Inside Sales");
+});
+
+test("curate one cell, save, and the grid cell counts the row", async ({ page }) => {
+  await openRoleConfig(page);
+  await page.locator('[data-test="config-cell-counter-till-yard"]').click();
+  await expect(page.locator("[data-test=config-editor]")).toContainText("What the Yard sees on Counter Till");
+  await expect(page.locator("[data-test=config-draft-empty]")).toContainText("Nothing curated here yet");
+
+  // The dealer's curation: hide the cost column for the yard shape. The id
+  // is the counter's own registry's id; the editor's words say so.
+  await page.locator('[data-action="config-add-kind"]').selectOption("column");
+  await page.locator('[data-field="config-add-id"]').fill("cost");
+  await page.locator('[data-action="config-add-row"]').click();
+  await expect(page.locator("[data-test=config-draft-rows]")).toContainText("cost");
+
+  await page.locator('[data-action="config-save"]').click();
+  await expect(page.locator("[data-test=config-notice]")).toContainText("Saved");
+  await expect(page.locator('[data-test="config-cell-counter-till-yard"]')).toHaveText("1 column");
+
+  // Reset the kind: the level beneath answers again, and the cell says so.
+  await page.locator('[data-action="config-reset-kind"][data-kind="column"]').click();
+  await expect(page.locator("[data-test=config-notice]")).toContainText("Reset");
+  await expect(page.locator('[data-test="config-cell-counter-till-yard"]')).toHaveText("Registry default");
+});
+
+test("your own view saves to the my-items route and reset brings the dealer's back", async ({ page }) => {
+  await openRoleConfig(page);
+  await page.locator('[data-test="config-cell-counter-till-counter"]').click();
+
+  await page.locator('[data-action="config-my-add-kind"]').selectOption("chip");
+  await page.locator('[data-field="config-my-add-id"]').fill("pavers");
+  await page.locator('[data-action="config-my-add-row"]').click();
+  await page.locator('[data-action="config-save-my"]').click();
+  await expect(page.locator("[data-test=config-notice]")).toContainText("your own set");
+  await expect(page.locator("[data-test=config-my-rows]")).toContainText("pavers");
+
+  await page.locator('[data-action="config-reset-my"]').click();
+  await expect(page.locator("[data-test=config-notice]")).toContainText("You follow the dealer's curation again");
+});
+
+test("the workspace save lands on the my-workspace route and the reset returns the dealer's defaults", async ({ page }) => {
+  await openRoleConfig(page);
+  await page.locator('[data-test="config-cell-quote-desk-counter"]').click();
+
+  // The split rides the model; a value the core would refuse is refused in
+  // the core's own words before the write.
+  await page.locator('[data-field="configws-split"]').fill("90");
+  await page.locator('[data-action="configws-save"]').click();
+  await expect(page.locator("[data-test=config-save-error]")).toContainText("Workspace split must be between 20 and 80");
+
+  await page.locator('[data-field="configws-split"]').fill("40");
+  await page.locator('[data-action="configws-save"]').click();
+  await expect(page.locator("[data-test=config-notice]")).toContainText("Your workspace");
+  await expect(page.locator("[data-test=config-editor]")).toContainText("your own row");
+
+  await page.locator('[data-action="configws-reset"]').click();
+  await expect(page.locator("[data-test=config-notice]")).toContainText("the dealer's defaults again");
+});
+
+test("a frontline caller is refused the role grid, in the core's own words", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("[data-flow]").nth(1).click();
+  await expect(page.locator("[data-test=staff-error]")).toContainText("managers and above");
+  await page.locator('.surface-link[data-surface="role-config"]').click();
+
+  // The kit's service refusal, whole: who cannot, and who can.
+  await expect(page.locator("[data-test=config-error]")).toContainText("changing dealer screen settings is limited to administrators");
+  await expect(page.locator("[data-test=config-error]")).toContainText("ask a tech admin");
+});
+
+test("a refused curation write keeps the editor and says the server's words", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "refused-role-config" } });
+  await openRoleConfig(page);
+  await page.locator('[data-test="config-cell-counter-till-yard"]').click();
+  await page.locator('[data-action="config-add-kind"]').selectOption("column");
+  await page.locator('[data-field="config-add-id"]').fill("cost");
+  await page.locator('[data-action="config-add-row"]').click();
+  await page.locator('[data-action="config-save"]').click();
+
+  await expect(page.locator("[data-test=config-save-error]")).toContainText("limited to administrators");
+  await expect(page.locator("[data-test=config-editor]")).toBeVisible();
+  await page.request.post("/_stub/reset");
+});
+
+// -- the deployment settings surface -----------------------------------------------------------------
+
+async function openDeployment(page: import("@playwright/test").Page): Promise<void> {
+  await page.goto("/");
+  await page.locator("[data-flow]").first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="deployment"]').click();
+}
+
+test("the deployment settings render their four sections, and the brand waits for the platform", async ({ page }) => {
+  await openDeployment(page);
+
+  // The brand pair is registered and not yet served: the waits state, in
+  // plain words, with the form disabled.
+  await expect(page.locator("[data-test=brand-waits]")).toContainText("Waits for the platform");
+  await expect(page.locator("[data-test=brand-waits-words]")).toContainText("brand record");
+  await expect(page.locator('[data-field="brand-name"]')).toBeDisabled();
+
+  // The card rail answers: configured, in test mode, the sandbox named.
+  await expect(page.locator("[data-test=payments-status]")).toContainText("gls-demo-rail");
+  await expect(page.locator("[data-test=payments-simulated]")).toContainText("Test mode");
+
+  // The counter's policy answers with its knobs, and the history carries
+  // the seeded change.
+  await expect(page.locator('[data-field="policy-fee"]')).toHaveValue("250");
+  await expect(page.locator("[data-test=policy-history]")).toBeVisible();
+  await expect(page.locator("[data-test=policy-history]")).toContainText("restocking_fee_bps");
+
+  // The walkthrough answers nothing on a fresh dealer: the off words, and
+  // the platform gate's calm line in place of the switches.
+  await expect(page.locator("[data-test=tour-off]")).toContainText("has it off");
+  await expect(page.locator("[data-test=tour-readonly]")).toContainText("platform administrator's own");
+});
+
+test("the card rail section is read only: no form, no save, and the credentials are never shown", async ({ page }) => {
+  await openDeployment(page);
+  await expect(page.locator("[data-test=payments-simulated]")).toContainText("Test mode");
+  await expect(page.locator("[data-test=payments-readonly]")).toContainText("set at the dealer's implementation");
+  await expect(page.locator("[data-test=payments-readonly]")).toContainText("write only and never shown");
+  await expect(page.locator('[data-field^="pay-"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="settings-save-payments"]')).toHaveCount(0);
+});
+
+test("the counter's policy saves whole, and its history grows by one row per changed knob", async ({ page }) => {
+  await openDeployment(page);
+  await expect(page.locator("[data-test=policy-history-count]")).toHaveText("1 changes");
+
+  // A fee the core would refuse is refused in words before the write, and
+  // the save stays dark while the fault stands.
+  await page.locator('[data-field="policy-fee"]').fill("-5");
+  await expect(page.locator("[data-test=policy-fault]")).toContainText("cannot be negative");
+  await expect(page.locator('[data-action="settings-save-policy"]')).toBeDisabled();
+
+  await page.locator('[data-field="policy-fee"]').fill("300");
+  await page.locator('[data-field="policy-notes"]').fill("Yard skids only");
+  await page.locator('[data-action="settings-save-policy"]').click();
+  await expect(page.locator("[data-test=policy-notice]")).toContainText("Saved");
+  await expect(page.locator('[data-field="policy-fee"]')).toHaveValue("300");
+
+  // The trail answers the read: one row per changed knob, before to after.
+  await expect(page.locator("[data-test=policy-history-count]")).toHaveText("3 changes");
+  const notesRow = page.locator("[data-test=policy-history-row]").filter({ hasText: "notes" });
+  await expect(notesRow).toContainText("Yard skids only");
+  await page.request.post("/_stub/reset");
+});
+
+test("a frontline caller reads the counter's policy but is refused the write and the trail", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("[data-flow]").nth(1).click();
+  await expect(page.locator("[data-test=staff-error]")).toContainText("managers and above");
+  await page.locator('.surface-link[data-surface="deployment"]').click();
+
+  // The policy read is staff wide: the form stands. The write and the
+  // history are the administrators', and both say so.
+  await expect(page.locator('[data-field="policy-fee"]')).toBeVisible();
+  await expect(page.locator("[data-test=policy-history-error]")).toContainText("the administrators' own");
+  await page.locator('[data-action="settings-save-policy"]').click();
+  await expect(page.locator("[data-test=policy-save-error]")).toContainText("You may not set the counter's policy");
+});
+
+test("the walkthrough live: the chapters list, the platform switches, and a step's copy saved", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "tour-platform" } });
+  await openDeployment(page);
+
+  // The chapters render, the platform gate opens the switches, and the
+  // step editor carries the picked step's stored copy.
+  await expect(page.locator("[data-test=tour-chapters]")).toContainText("Your first sale at the counter");
+  await expect(page.locator('[data-action="settings-tour-demo-off"]')).toBeVisible();
+  await expect(page.locator('[data-field="tour-line"]')).toHaveValue("Find the pavers the customer wants.");
+
+  await page.locator('[data-field="tour-line"]').fill("Find the wall block the customer wants.");
+  await page.locator('[data-action="settings-save-tour-step"]').click();
+  await expect(page.locator("[data-test=tour-notice]")).toContainText("The step says your line");
+  await page.request.post("/_stub/reset");
+});
+
+test("the walkthrough's copy refuses a line over the headline budget, in the core's words", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "tour-platform" } });
+  await openDeployment(page);
+
+  await page.locator('[data-field="tour-line"]').fill("x".repeat(73));
+  await page.locator('[data-action="settings-save-tour-step"]').click();
+  await expect(page.locator("[data-test=tour-save-error]")).toContainText("a walkthrough speaks in headlines");
+  await page.request.post("/_stub/reset");
+});
+
+test("the platform gate's refusal arrives in the core's own sentence, whole", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "tour-refused" } });
+  await openDeployment(page);
+
+  // The read says the caller may edit (a stale answer), so the switches
+  // stand; the write answers the platform gate's own words and the glass
+  // carries them whole.
+  await expect(page.locator('[data-action="settings-tour-demo-off"]')).toBeVisible();
+  await page.locator('[data-action="settings-tour-demo-off"]').click();
+  await expect(page.locator("[data-test=tour-save-error]")).toContainText("the walkthrough is the platform administrator's to set up");
+  await expect(page.locator("[data-test=tour-save-error]")).toContainText("cannot change its copy or its demo switch");
+  await page.request.post("/_stub/reset");
+});
+
 test("the pricing surface: the margin policies, and an edit saved clean", async ({ page }) => {
   await page.goto("/");
   const cards = page.locator("[data-flow]");
