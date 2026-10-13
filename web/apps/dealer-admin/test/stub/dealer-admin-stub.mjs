@@ -164,6 +164,68 @@ function readBody(req) {
   });
 }
 
+// The configurable surfaces kit's world: the dealer's curation keyed
+// surface|profile (empty everywhere, every cell answers registry default
+// until a save), and each caller's own override and workspace row keyed by
+// user id. Both start empty, which is the demo's real state.
+const PROFILE_KINDS = ["panel", "column", "chip", "action"];
+const PROFILE_FIVE = ["counter", "yard", "driver", "manager", "admin"];
+const SETTINGS_ADMIN_WORDS =
+  "settings: changing dealer screen settings is limited to administrators";
+
+let surfaces;
+let mine;
+
+function buildSurfaces() {
+  return new Map();
+}
+
+function buildMine() {
+  return new Map();
+}
+
+function itemsOf(map, surface, profile) {
+  return (map.get(surface + "|" + profile) ?? []).slice();
+}
+
+function myWorld(userId) {
+  let world = mine.get(userId);
+  if (world === undefined) {
+    world = { items: new Map(), workspace: new Map() };
+    mine.set(userId, world);
+  }
+  return world;
+}
+
+// The kit's validators, in the core's own words, so a refused shape reads
+// the same on the stub as it does on the real core.
+function validateItems(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return "settings: the item set is empty, to reset, use DELETE";
+  }
+  if (items.length > 128) {
+    return "settings: at most 128 items per write";
+  }
+  const seen = new Set();
+  for (const it of items) {
+    if (!PROFILE_KINDS.includes(it?.kind)) {
+      return "settings: item kind must be panel, column, chip or action";
+    }
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(String(it?.id ?? ""))) {
+      return `settings: item id ${JSON.stringify(String(it?.id ?? ""))} must be 1-64 lowercase letters, digits, dots, dashes or underscores`;
+    }
+    if (!Number.isInteger(it?.position) || it.position < 0) {
+      return "settings: item positions cannot be negative";
+    }
+    const key = it.kind + "\u0000" + it.id;
+    if (seen.has(key)) {
+      return `settings: item ${it.kind}/${it.id} appears twice`;
+    }
+    seen.add(key);
+  }
+  return "";
+}
+
 let staff;
 let hotkeys;
 let audit;
@@ -174,6 +236,8 @@ function reset() {
   staff = buildStaff();
   hotkeys = buildHotkeys();
   audit = buildAudit();
+  surfaces = buildSurfaces();
+  mine = buildMine();
   scenario = "";
   log = [];
 }
@@ -449,6 +513,118 @@ async function handle(req, res) {
     if (scenario === "bare-trail") return json(res, items);
     if (scenario === "empty-trail") return json(res, []);
     return json(res, { items, next_cursor: null, limit: 200 });
+  }
+
+  // ---- the configurable surfaces (the settings kit) ----
+  // The curation writes are admin gated in the kit's service, so the refusal
+  // is the service's own sentence, not the shared Forbidden body.
+
+  const configMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/config$/);
+  if (req.method === "GET" && configMatch) {
+    if (!isManager(flow)) return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+    const profile = url.searchParams.get("profile") ?? "";
+    if (!PROFILE_FIVE.includes(profile)) {
+      return refuse(res, 422, "settings: profile must be counter, yard, driver, manager or admin");
+    }
+    const surface = decodeURIComponent(configMatch[1]);
+    const userId = USERS[flow].user_id;
+    const world = myWorld(userId);
+    const wsRow = world.workspace.get(surface);
+    return json(res, {
+      surface_id: surface,
+      profile,
+      items_profile: profile,
+      role_items: itemsOf(surfaces, surface, profile),
+      user_items: world.items.get(surface) ?? [],
+      workspace: wsRow ?? {
+        split_pct: 58,
+        arrangement: "PRIMARY_LEFT",
+        primary_collapsed: false,
+        secondary_collapsed: false,
+        cost_hidden: false,
+        source: "dealer",
+      },
+    });
+  }
+
+  const itemsMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/items$/);
+  if (req.method === "PUT" && itemsMatch) {
+    if (!isManager(flow) || scenario === "refused-role-config") {
+      return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+    }
+    const profile = String(body?.profile ?? "");
+    if (!PROFILE_FIVE.includes(profile)) {
+      return refuse(res, 422, "settings: profile must be counter, yard, driver, manager or admin");
+    }
+    const fault = validateItems(body?.items);
+    if (fault !== "") return refuse(res, 422, fault);
+    surfaces.set(decodeURIComponent(itemsMatch[1]) + "|" + profile, body.items);
+    return json(res, { saved: true });
+  }
+  if (req.method === "DELETE" && itemsMatch) {
+    if (!isManager(flow) || scenario === "refused-role-config") {
+      return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+    }
+    const profile = url.searchParams.get("profile") ?? "";
+    if (!PROFILE_FIVE.includes(profile)) {
+      return refuse(res, 422, "settings: profile must be counter, yard, driver, manager or admin");
+    }
+    const kind = url.searchParams.get("kind") ?? "";
+    if (!PROFILE_KINDS.includes(kind)) {
+      return refuse(res, 422, "settings: item kind must be panel, column, chip or action");
+    }
+    const key = decodeURIComponent(itemsMatch[1]) + "|" + profile;
+    surfaces.set(key, itemsOf(surfaces, decodeURIComponent(itemsMatch[1]), profile).filter((it) => it.kind !== kind));
+    return json(res, { reset: true });
+  }
+
+  const myItemsMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/my-items$/);
+  if (req.method === "PUT" && myItemsMatch) {
+    const fault = validateItems(body?.items);
+    if (fault !== "") return refuse(res, 422, fault);
+    myWorld(USERS[flow].user_id).items.set(decodeURIComponent(myItemsMatch[1]), body.items);
+    return json(res, { saved: true });
+  }
+  if (req.method === "DELETE" && myItemsMatch) {
+    myWorld(USERS[flow].user_id).items.delete(decodeURIComponent(myItemsMatch[1]));
+    return json(res, { reset: true });
+  }
+
+  const myWorkspaceMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/my-workspace$/);
+  if (req.method === "PUT" && myWorkspaceMatch) {
+    const surface = decodeURIComponent(myWorkspaceMatch[1]);
+    const world = myWorld(USERS[flow].user_id);
+    const key = String(body?.idempotency_key ?? "");
+    if (key === "") {
+      return refuse(res, 422, "settings: idempotency_key is required on a workspace write");
+    }
+    const prev = world.workspace.get(surface);
+    if (prev !== undefined && prev.write_key === key) {
+      const { write_key: _drop, ...row } = prev;
+      return json(res, { ...row, replayed: true });
+    }
+    let split = Number(body?.split_pct ?? 0);
+    if (split === 0) split = 58;
+    if (split < 20 || split > 80) {
+      return refuse(res, 422, "settings: workspace split_pct must be between 20 and 80");
+    }
+    const arrangement = body?.arrangement === "PRIMARY_RIGHT" ? "PRIMARY_RIGHT" : "PRIMARY_LEFT";
+    const row = {
+      split_pct: split,
+      arrangement,
+      primary_collapsed: body?.primary_collapsed === true,
+      secondary_collapsed: body?.secondary_collapsed === true,
+      cost_hidden: body?.cost_hidden === true,
+      source: "user",
+      write_key: key,
+    };
+    world.workspace.set(surface, row);
+    const { write_key: _drop, ...answer } = row;
+    return json(res, answer);
+  }
+  if (req.method === "DELETE" && myWorkspaceMatch) {
+    myWorld(USERS[flow].user_id).workspace.delete(decodeURIComponent(myWorkspaceMatch[1]));
+    return json(res, { reset: true });
   }
 
   return notFound(res);

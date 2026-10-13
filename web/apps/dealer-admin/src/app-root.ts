@@ -30,6 +30,17 @@ import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-co
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DealerApi, type BranchRow, type ResetLink } from "./dealer-api.js";
 import { errorWords, staffRefusalWords } from "./dealer-logic.js";
+import { ConfigApi, type CellConfig } from "./config-api.js";
+import {
+  CONFIG_SURFACES,
+  JOB_SHAPES,
+  configRefusalWords,
+  itemRowError,
+  itemSetError,
+  newWorkspaceKey,
+  workspaceSplitError,
+  type ConfigItem,
+} from "./config-logic.js";
 import {
   PLATFORM_SURFACES,
   dealerFor,
@@ -50,6 +61,13 @@ import { dealerStyles } from "./styles.js";
 import { renderStaff, type StaffModel } from "./views-staff.js";
 import { renderHotkeys, type HotkeysModel } from "./views-hotkeys.js";
 import { renderAudit, type AuditDetail, type AuditModel, type AuditTrail } from "./views-audit.js";
+import {
+  renderRoleConfig,
+  cellKey,
+  type ConfigEditor,
+  type RoleConfigModel,
+  type WorkspaceDraft,
+} from "./views-config.js";
 import { EMPTY_FILTERS, auditRefusalWords, sinceWire, type AuditFilters } from "./audit-logic.js";
 import type { AuditRow } from "./dealer-api.js";
 
@@ -90,6 +108,38 @@ const emptyAuditModel = (): AuditModel => ({
   trail: null,
 });
 
+const emptyRoleConfigModel = (): RoleConfigModel => ({
+  phase: "loading",
+  cells: new Map(),
+  loaded: 0,
+  total: JOB_SHAPES.length * CONFIG_SURFACES.length,
+  words: "",
+  roles: [],
+  editor: null,
+});
+
+const emptyConfigEditor = (surface: string, profile: string, config: CellConfig): ConfigEditor => ({
+  surface,
+  profile,
+  draft: config.role_items.map((it) => ({ ...it })),
+  myDraft: config.user_items.map((it) => ({ ...it })),
+  wsDraft: {
+    split_pct: config.workspace.split_pct,
+    arrangement: config.workspace.arrangement,
+    primary_collapsed: config.workspace.primary_collapsed,
+    secondary_collapsed: config.workspace.secondary_collapsed,
+    cost_hidden: config.workspace.cost_hidden,
+    source: config.workspace.source,
+  },
+  addKind: "panel",
+  addId: "",
+  myAddKind: "panel",
+  myAddId: "",
+  error: "",
+  notice: "",
+  busy: false,
+});
+
 export class DealerAdminApp extends HHElement {
   static styles = [baseStyles, dealerStyles];
 
@@ -118,6 +168,9 @@ export class DealerAdminApp extends HHElement {
   // The dealer's calls, over the staff client.
   readonly #api = new DealerApi(this.#staffClient);
 
+  // The role configuration's calls, over the staff client.
+  readonly #configApi = new ConfigApi(this.#staffClient);
+
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
@@ -139,6 +192,9 @@ export class DealerAdminApp extends HHElement {
   // second row, filtering or closing voids the answer still in flight.
   #audit: AuditModel = emptyAuditModel();
   #auditDetailGen = 0;
+
+  // The role configuration surface's state.
+  #roleConfig: RoleConfigModel = emptyRoleConfigModel();
 
   // The way in: this app's own door, one card per demo role.
   #entryView: { flows: { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; flows: DemoFlow[] }; busy: boolean; message: string | null } = {
@@ -179,6 +235,7 @@ export class DealerAdminApp extends HHElement {
         // A surface loads its own reads the first time it is opened.
         if (surface === "hotkeys" && this.#hotkeys.phase === "loading") void this.#loadHotkeys();
         if (surface === "audit" && this.#audit.phase === "loading") void this.#loadAudit();
+        if (surface === "role-config" && this.#roleConfig.phase === "loading") void this.#loadRoleConfig();
         this.requestUpdate();
       }
       return;
@@ -244,6 +301,72 @@ export class DealerAdminApp extends HHElement {
       void this.#copyReset(control?.getAttribute("data-user-id") ?? "");
       return;
     }
+    if (action === "reload-role-config") {
+      void this.#loadRoleConfig();
+      return;
+    }
+    if (action === "open-config-editor") {
+      this.#openConfigEditor(control?.getAttribute("data-surface") ?? "", control?.getAttribute("data-profile") ?? "");
+      return;
+    }
+    if (action === "close-config-editor") {
+      this.#patchRoleConfig({ editor: null });
+      return;
+    }
+    if (action === "config-add-row") {
+      this.#configAddRow(false);
+      return;
+    }
+    if (action === "config-my-add-row") {
+      this.#configAddRow(true);
+      return;
+    }
+    if (action === "config-toggle-visible" || action === "config-my-toggle-visible") {
+      this.#configToggleVisible(action.startsWith("config-my"), Number(control?.getAttribute("data-index")));
+      return;
+    }
+    if (action === "config-row-up" || action === "config-my-row-up") {
+      this.#configMoveRow(action.startsWith("config-my"), Number(control?.getAttribute("data-index")), -1);
+      return;
+    }
+    if (action === "config-row-down" || action === "config-my-row-down") {
+      this.#configMoveRow(action.startsWith("config-my"), Number(control?.getAttribute("data-index")), 1);
+      return;
+    }
+    if (action === "config-remove-row" || action === "config-my-remove-row") {
+      this.#configRemoveRow(action.startsWith("config-my"), Number(control?.getAttribute("data-index")));
+      return;
+    }
+    if (action === "config-save") {
+      void this.#saveRoleItems();
+      return;
+    }
+    if (action === "config-reset-kind") {
+      void this.#resetRoleItems(control?.getAttribute("data-kind") ?? "");
+      return;
+    }
+    if (action === "config-save-my") {
+      void this.#saveMyItems();
+      return;
+    }
+    if (action === "config-reset-my") {
+      void this.#resetMyItems();
+      return;
+    }
+    if (action === "configws-flag") {
+      const field = control?.getAttribute("data-field") ?? "";
+      const on = control instanceof HTMLInputElement ? control.checked : false;
+      this.#configWsFlag(field, on);
+      return;
+    }
+    if (action === "configws-save") {
+      void this.#saveMyWorkspace();
+      return;
+    }
+    if (action === "configws-reset") {
+      void this.#resetMyWorkspace();
+      return;
+    }
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
       void this.#chooseFlow(flow);
@@ -254,28 +377,51 @@ export class DealerAdminApp extends HHElement {
   // data-action="assign-role" and the staff member's id. The option list
   // carries the catalog's names, so the answer is mapped back to the code
   // here; an empty answer (Unassigned) is skipped, as the original's own
-  // assign was.
+  // assign was. The role configuration's kind and arrangement selects take
+  // the same road, their answers mirrored into the editor's draft.
   readonly #onHostChange = (event: Event): void => {
     const target = event.target;
-    if (!(target instanceof Element) || target.getAttribute("data-action") !== "assign-role") return;
-    const id = target.getAttribute("data-user-id") ?? "";
-    const roleName = target instanceof HTMLSelectElement ? target.value : "";
-    const role = this.#staff.roles.find((r) => r.name === roleName);
-    void this.#assignRole(id, role?.code ?? "");
+    if (!(target instanceof Element)) return;
+    const action = target.getAttribute("data-action") ?? "";
+    if (action === "assign-role") {
+      const id = target.getAttribute("data-user-id") ?? "";
+      const roleName = target instanceof HTMLSelectElement ? target.value : "";
+      const role = this.#staff.roles.find((r) => r.name === roleName);
+      void this.#assignRole(id, role?.code ?? "");
+      return;
+    }
+    const editor = this.#roleConfig.editor;
+    if (editor === null) return;
+    const value = target instanceof HTMLSelectElement ? target.value : "";
+    if (action === "config-add-kind") this.#patchEditor({ addKind: value });
+    if (action === "config-my-add-kind") this.#patchEditor({ myAddKind: value });
+    if (action === "configws-arrangement") this.#patchEditor({ wsDraft: { ...editor.wsDraft, arrangement: value } });
   };
 
-  // The audit filters' fields mirror from input events, never bound.
+  // The audit filters' fields and the role configuration's text and number
+  // fields mirror from input events, never bound.
   readonly #onHostInput = (event: Event): void => {
     const target = event.target;
     if (!(target instanceof Element)) return;
     const field = target.getAttribute("data-field") ?? "";
-    if (!field.startsWith("audit-")) return;
-    const value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
-    const filters = this.#audit.filters;
-    if (field === "audit-entity-type") this.#audit = { ...this.#audit, filters: { ...filters, entity_type: value } };
-    if (field === "audit-action") this.#audit = { ...this.#audit, filters: { ...filters, action: value } };
-    if (field === "audit-actor-id") this.#audit = { ...this.#audit, filters: { ...filters, actor_id: value } };
-    if (field === "audit-since") this.#audit = { ...this.#audit, filters: { ...filters, since: value } };
+    if (field.startsWith("audit-")) {
+      const value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
+      const filters = this.#audit.filters;
+      if (field === "audit-entity-type") this.#audit = { ...this.#audit, filters: { ...filters, entity_type: value } };
+      if (field === "audit-action") this.#audit = { ...this.#audit, filters: { ...filters, action: value } };
+      if (field === "audit-actor-id") this.#audit = { ...this.#audit, filters: { ...filters, actor_id: value } };
+      if (field === "audit-since") this.#audit = { ...this.#audit, filters: { ...filters, since: value } };
+      return;
+    }
+    const editor = this.#roleConfig.editor;
+    if (editor === null) return;
+    const value = target instanceof HTMLInputElement ? target.value : "";
+    if (field === "config-add-id") this.#patchEditor({ addId: value });
+    if (field === "config-my-add-id") this.#patchEditor({ myAddId: value });
+    if (field === "configws-split") {
+      const split = Number(value);
+      if (Number.isFinite(split)) this.#patchEditor({ wsDraft: { ...editor.wsDraft, split_pct: Math.trunc(split) } });
+    }
   };
 
   // Enter opens the focused trail row; Escape closes the drawer.
@@ -362,6 +508,33 @@ export class DealerAdminApp extends HHElement {
     for (const [field, value] of Object.entries(fields)) {
       const el = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${field}"]`);
       if (el !== null && el.value !== value) el.value = value;
+    }
+    // The role configuration editor's fields mirror the model the same way:
+    // a fresh editor, a reload after a save, or a cleared add row empties
+    // what is on the glass.
+    const editor = this.#roleConfig.editor;
+    if (editor !== null) {
+      const words: Record<string, string> = {
+        "config-add-kind": editor.addKind,
+        "config-add-id": editor.addId,
+        "config-my-add-kind": editor.myAddKind,
+        "config-my-add-id": editor.myAddId,
+        "configws-split": String(editor.wsDraft.split_pct),
+        "configws-arrangement": editor.wsDraft.arrangement,
+      };
+      for (const [field, value] of Object.entries(words)) {
+        const el = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${field}"]`);
+        if (el !== null && el.value !== value) el.value = value;
+      }
+      const flags: Record<string, boolean> = {
+        primary_collapsed: editor.wsDraft.primary_collapsed,
+        secondary_collapsed: editor.wsDraft.secondary_collapsed,
+        cost_hidden: editor.wsDraft.cost_hidden,
+      };
+      for (const [field, on] of Object.entries(flags)) {
+        const el = this.renderRoot.querySelector<HTMLInputElement>(`input[data-field="${field}"]`);
+        if (el !== null && el.checked !== on) el.checked = on;
+      }
     }
   }
 
@@ -486,6 +659,282 @@ export class DealerAdminApp extends HHElement {
       // Clipboard unavailable: the link renders as selectable text beside the button.
     }
   }
+
+  // -- the role configuration surface -----------------------------------------------------------------
+
+  #patchRoleConfig(patch: Partial<RoleConfigModel>): void {
+    this.#roleConfig = { ...this.#roleConfig, ...patch };
+    this.requestUpdate();
+  }
+
+  #patchEditor(patch: Partial<ConfigEditor>): void {
+    if (this.#roleConfig.editor === null) return;
+    this.#patchRoleConfig({ editor: { ...this.#roleConfig.editor, ...patch } });
+  }
+
+  /**
+   * The whole grid: one config read per surface and job shape, the read half
+   * of the same admin act the writes are. The first refusal of a read is the
+   * core's own sentence, kept whole; the roles catalog failing only empties
+   * the catalog card, the way the branches read failing only costs the
+   * register its chips.
+   */
+  async #loadRoleConfig(): Promise<void> {
+    this.#roleConfig = { ...emptyRoleConfigModel(), phase: "loading" };
+    this.requestUpdate();
+    const cells = new Map<string, { config: CellConfig }>();
+    let loaded = 0;
+    let refusal = "";
+    let fault = "";
+    const rolesRead = this.#api.roles();
+    await Promise.all(
+      CONFIG_SURFACES.flatMap((s) =>
+        JOB_SHAPES.map(async (shape) => {
+          const result = await this.#configApi.surfaceConfig(s.id, shape.profile);
+          loaded += 1;
+          if (!result.ok) {
+            if (result.status === 403) {
+              if (refusal === "") refusal = configRefusalWords(result.error, result.status);
+            } else if (fault === "") {
+              fault = `The role grid did not load. ${errorWords(result.error)}`;
+            }
+            return;
+          }
+          cells.set(cellKey(s.id, shape.profile), { config: result.value });
+          if (this.#roleConfig.phase === "loading") {
+            this.#roleConfig = { ...this.#roleConfig, loaded, cells: new Map(cells) };
+            this.requestUpdate();
+          }
+        }),
+      ),
+    );
+    const roles = await rolesRead;
+    if (refusal !== "") {
+      this.#patchRoleConfig({ phase: "refused", words: refusal, loaded, roles: roles.ok ? roles.value : [] });
+      return;
+    }
+    if (fault !== "") {
+      this.#patchRoleConfig({ phase: "error", words: fault, loaded, roles: roles.ok ? roles.value : [] });
+      return;
+    }
+    this.#patchRoleConfig({ phase: "ready", loaded, cells, roles: roles.ok ? roles.value : [] });
+  }
+
+  /** Open one cell's editor from the grid's own read; no second fetch. */
+  #openConfigEditor(surface: string, profile: string): void {
+    if (surface === "" || profile === "") return;
+    const cell = this.#roleConfig.cells.get(cellKey(surface, profile));
+    if (cell === undefined) return;
+    this.#patchRoleConfig({ editor: emptyConfigEditor(surface, profile, cell.config) });
+  }
+
+  #configAddRow(mine: boolean): void {
+    const editor = this.#roleConfig.editor;
+    if (editor === null) return;
+    const id = mine ? editor.myAddId : editor.addId;
+    const kind = mine ? editor.myAddKind : editor.addKind;
+    const draft = mine ? editor.myDraft : editor.draft;
+    const row: ConfigItem = { kind, id: id.trim(), position: draft.length, visible: true };
+    const rowFault = itemRowError(row);
+    const setFault = itemSetError([...draft, row]);
+    if (rowFault !== "" || setFault !== "") {
+      this.#patchEditor({ error: rowFault !== "" ? rowFault : setFault });
+      return;
+    }
+    this.#patchEditor({
+      error: "",
+      notice: "",
+      draft: mine ? editor.draft : [...editor.draft, row],
+      myDraft: mine ? [...editor.myDraft, row] : editor.myDraft,
+      addId: mine ? editor.addId : "",
+      myAddId: mine ? "" : editor.myAddId,
+    });
+  }
+
+  #configToggleVisible(mine: boolean, index: number): void {
+    this.#configMapDraft(mine, (rows) =>
+      rows.map((it, i) => (i === index ? { ...it, visible: !it.visible } : it)),
+    );
+  }
+
+  #configMoveRow(mine: boolean, index: number, delta: number): void {
+    this.#configMapDraft(mine, (rows) => {
+      const to = index + delta;
+      if (to < 0 || to >= rows.length) return rows;
+      const next = [...rows];
+      const moved = { ...next[index], position: next[to].position };
+      next[index] = { ...next[to], position: next[index].position };
+      next[to] = moved;
+      return next;
+    });
+  }
+
+  #configRemoveRow(mine: boolean, index: number): void {
+    this.#configMapDraft(mine, (rows) => rows.filter((_, i) => i !== index).map((it, i) => ({ ...it, position: i })));
+  }
+
+  #configMapDraft(mine: boolean, map: (rows: readonly ConfigItem[]) => readonly ConfigItem[]): void {
+    const editor = this.#roleConfig.editor;
+    if (editor === null) return;
+    this.#patchEditor({
+      draft: mine ? editor.draft : map(editor.draft),
+      myDraft: mine ? map(editor.myDraft) : editor.myDraft,
+      error: "",
+      notice: "",
+    });
+  }
+
+  /** Save the dealer's curation whole; the server's words are the refusal. */
+  async #saveRoleItems(): Promise<void> {
+    const editor = this.#roleConfig.editor;
+    if (editor === null || editor.busy) return;
+    const setFault = itemSetError(editor.draft);
+    const rowFault = editor.draft.map((it) => itemRowError(it)).find((f) => f !== "") ?? "";
+    if (setFault !== "" || rowFault !== "") {
+      this.#patchEditor({ error: rowFault !== "" ? rowFault : setFault });
+      return;
+    }
+    this.#patchEditor({ busy: true, error: "", notice: "" });
+    const result = await this.#configApi.putRoleItems(editor.surface, editor.profile, editor.draft);
+    if (!result.ok) {
+      this.#patchEditor({ busy: false, error: configRefusalWords(result.error, result.status) });
+      return;
+    }
+    await this.#refreshConfigCell("Saved. The shape's view on this surface follows your curation.");
+  }
+
+  /** Reset one kind: the reset IS a DELETE, the level beneath answers again. */
+  async #resetRoleItems(kind: string): Promise<void> {
+    const editor = this.#roleConfig.editor;
+    if (editor === null || editor.busy || kind === "") return;
+    this.#patchEditor({ busy: true, error: "", notice: "" });
+    const result = await this.#configApi.resetRoleItems(editor.surface, editor.profile, kind);
+    if (!result.ok) {
+      this.#patchEditor({ busy: false, error: configRefusalWords(result.error, result.status) });
+      return;
+    }
+    await this.#refreshConfigCell(`Reset. The ${kind}s on this surface answer to the level beneath the dealer again.`);
+  }
+
+  async #saveMyItems(): Promise<void> {
+    const editor = this.#roleConfig.editor;
+    if (editor === null || editor.busy) return;
+    this.#patchEditor({ busy: true, error: "", notice: "" });
+    const result = await this.#configApi.putMyItems(editor.surface, editor.myDraft);
+    if (!result.ok) {
+      this.#patchEditor({ busy: false, error: configRefusalWords(result.error, result.status) });
+      return;
+    }
+    await this.#refreshConfigCell("Saved. This surface follows your own set.");
+  }
+
+  async #resetMyItems(): Promise<void> {
+    const editor = this.#roleConfig.editor;
+    if (editor === null || editor.busy) return;
+    this.#patchEditor({ busy: true, error: "", notice: "" });
+    const result = await this.#configApi.resetMyItems(editor.surface);
+    if (!result.ok) {
+      this.#patchEditor({ busy: false, error: configRefusalWords(result.error, result.status) });
+      return;
+    }
+    await this.#refreshConfigCell("Reset. You follow the dealer's curation again.");
+  }
+
+  #configWsFlag(field: string, on: boolean): void {
+    const editor = this.#roleConfig.editor;
+    if (editor === null) return;
+    if (field === "primary_collapsed") this.#patchEditor({ wsDraft: { ...editor.wsDraft, primary_collapsed: on } });
+    if (field === "secondary_collapsed") this.#patchEditor({ wsDraft: { ...editor.wsDraft, secondary_collapsed: on } });
+    if (field === "cost_hidden") this.#patchEditor({ wsDraft: { ...editor.wsDraft, cost_hidden: on } });
+  }
+
+  async #saveMyWorkspace(): Promise<void> {
+    const editor = this.#roleConfig.editor;
+    if (editor === null || editor.busy) return;
+    const splitFault = workspaceSplitError(editor.wsDraft.split_pct);
+    if (splitFault !== "") {
+      this.#patchEditor({ error: splitFault });
+      return;
+    }
+    this.#patchEditor({ busy: true, error: "", notice: "" });
+    const result = await this.#configApi.putMyWorkspace(editor.surface, {
+      split_pct: editor.wsDraft.split_pct,
+      arrangement: editor.wsDraft.arrangement,
+      primary_collapsed: editor.wsDraft.primary_collapsed,
+      secondary_collapsed: editor.wsDraft.secondary_collapsed,
+      cost_hidden: editor.wsDraft.cost_hidden,
+      open_ref: "",
+      idempotency_key: newWorkspaceKey(),
+    });
+    if (!result.ok) {
+      this.#patchEditor({ busy: false, error: configRefusalWords(result.error, result.status) });
+      return;
+    }
+    const ws = result.value;
+    this.#patchEditor({
+      busy: false,
+      notice: "Saved. Your workspace on this surface follows your row.",
+      wsDraft: {
+        split_pct: ws.split_pct,
+        arrangement: ws.arrangement,
+        primary_collapsed: ws.primary_collapsed,
+        secondary_collapsed: ws.secondary_collapsed,
+        cost_hidden: ws.cost_hidden,
+        source: ws.source,
+      },
+    });
+  }
+
+  async #resetMyWorkspace(): Promise<void> {
+    const editor = this.#roleConfig.editor;
+    if (editor === null || editor.busy) return;
+    this.#patchEditor({ busy: true, error: "", notice: "" });
+    const result = await this.#configApi.resetMyWorkspace(editor.surface);
+    if (!result.ok) {
+      this.#patchEditor({ busy: false, error: configRefusalWords(result.error, result.status) });
+      return;
+    }
+    await this.#refreshConfigCell("Reset. Your workspace follows the dealer's defaults again.");
+  }
+
+  /**
+   * One cell re-read after a write: the grid's cell and the open editor's
+   * drafts both answer the read, never the write.
+   */
+  async #refreshConfigCell(notice: string): Promise<void> {
+    const editor = this.#roleConfig.editor;
+    if (editor === null) return;
+    const result = await this.#configApi.surfaceConfig(editor.surface, editor.profile);
+    if (!result.ok) {
+      this.#patchEditor({ busy: false, error: configRefusalWords(result.error, result.status) });
+      return;
+    }
+    const config = result.value;
+    const cells = new Map(this.#roleConfig.cells);
+    cells.set(cellKey(editor.surface, editor.profile), { config });
+    this.#roleConfig = {
+      ...this.#roleConfig,
+      cells,
+      editor: {
+        ...editor,
+        busy: false,
+        notice,
+        draft: config.role_items.map((it) => ({ ...it })),
+        myDraft: config.user_items.map((it) => ({ ...it })),
+        wsDraft: {
+          split_pct: config.workspace.split_pct,
+          arrangement: config.workspace.arrangement,
+          primary_collapsed: config.workspace.primary_collapsed,
+          secondary_collapsed: config.workspace.secondary_collapsed,
+          cost_hidden: config.workspace.cost_hidden,
+          source: config.workspace.source,
+        },
+      },
+    };
+    this.requestUpdate();
+  }
+
+
 
   // -- the hotkeys surface ---------------------------------------------------------------------------
 
@@ -743,6 +1192,7 @@ export class DealerAdminApp extends HHElement {
     this.#staff = emptyStaffModel();
     this.#hotkeys = emptyHotkeysModel();
     this.#audit = emptyAuditModel();
+    this.#roleConfig = emptyRoleConfigModel();
     this.#auditDetailGen += 1;
     clearFrontDoorHandoff();
     void this.loadFlows();
@@ -782,6 +1232,7 @@ export class DealerAdminApp extends HHElement {
     // theirs beside this one; nothing else in this file changes.
     if (this.#surface === "hotkeys") return renderHotkeys(this.#hotkeys);
     if (this.#surface === "audit") return renderAudit(this.#audit);
+    if (this.#surface === "role-config") return renderRoleConfig(this.#roleConfig);
     return renderStaff(this.#staff);
   }
 
@@ -832,7 +1283,7 @@ export class DealerAdminApp extends HHElement {
               <span class="mark">${drawIcon(iconForId(DealerAdminApp.FLOW_ICONS[flow.flow ?? ""] ?? "lucide:circle-user"), 29)}</span>
               <span class="words">
                 <span class="role">${flow.label ?? flow.flow}</span>
-                <span class="what">Staff, hotkeys and the audit trail.</span>
+                <span class="what">Staff, hotkeys, the audit trail, and the role configuration.</span>
               </span>
             </button>
           `)}

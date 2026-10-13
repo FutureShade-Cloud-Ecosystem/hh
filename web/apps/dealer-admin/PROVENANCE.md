@@ -35,6 +35,10 @@ dealer-admin in any file ("No built app, no boards in any file").
 | The drawer's generation guard: opening a second row, filtering or closing voids the answer still in flight | `app/src/audit-log.ts` (`detailGen`, `openDetail`, `cancelDetail`) | `#auditDetailGen`, `#openAuditEntry`, `#closeAuditDetail` in `src/app-root.ts` | The counter carried over; the abort half is not, because the calls go through the generated client (a Result, no res.json() window); the drawer's three self describing attributes kept |
 | The actor cell | `app/src/audit-log.ts` with `app/src/_audit-actor.ts` (`renderActorCell`) | `actorWords` in `src/audit-logic.ts` | The honest change: the HH core's audit projection carries no resolved name and production reads the role word empty (the core attributes by the linked users id), so the cell shows the role's words when a row carries one, else the id's own block, never a blank |
 | The drilldown to one entity's whole trail | `app/src/audit-log.ts` with `app/src/_audit-drilldown.ts` | the trail card in `src/views-audit.ts`, `#openAuditTrail` in `src/app-root.ts` | The original's kind aware viewer became the one generic question the transaction route answers: this entity's rows |
+| The curation editor's shape: the kind and id of a row, the whole set saved in one PUT, the reset per kind as a DELETE | `app/src/quote-surface-settings.ts` (the items half, DIB-507's screen settings page) | `src/views-config.ts` (the dealer's curation draft), `src/config-api.ts`, `src/config-logic.ts` | Rebuilt on HH's generated client (`settingsPutRoleItems`, `settingsDeleteRoleItems`); the original edited one surface's registry from inside that surface, this editor edits the stored rows of every surface from the dealer's administration, because apps do not import apps and item ids stay each surface's own registry's |
+| The five job shapes and their words | `app/src/quote-surface-settings.ts` (`PROFILES`), the settings kit's own `validProfiles` and its 422 words (core/internal/settings/settings.go) | `JOB_SHAPES` in `src/config-logic.ts` | The kit's five, the order and the refusal words kept |
+| The item set's shape checks and their words (kind enum, id alphabet, positions, duplicates, the 128 bound, empty means DELETE) | the settings kit's own validators (core/internal/settings/settings.go `ValidateItems`) mirrored client side | `itemRowError`, `itemSetError`, `canSaveItems` in `src/config-logic.ts` | The server's checks restated in the server's words so a row that cannot pass spares the round trip; the server's 422 stays the last word |
+| The role to shape catalog (which staff roles hold which job shape) | the seed of record (core/db/migrations/0140_dashboard_layouts.sql, the `dashboard_role_profiles` rows) and the kit's ProfileFallback | `SHAPE_ROLE_CODES`, `profileForRoleCode`, `rolesForShape` in `src/config-logic.ts`, the catalog card in `src/views-config.ts` | Presented as words beside the grid, from the core's own seed; the server resolves each person's real shape and a role with no row answers to the counter shape, the kit's own fallback |
 
 What the original's audit surface carried that this port does not, said
 plainly: the roving tabindex cursor with its arrow key model and the
@@ -56,3 +60,16 @@ reference:
 - The demo door's own cards and marks: the template's entry, drawn with this
   app's flows (the stub's two; the demo image's closed flow table is the
   lead's wiring).
+- The role by surface grid, the editor for one cell, the caller's own view
+  and workspace cards, and the job shape catalog (`src/views-config.ts`):
+  there is no original screen for a per dealer role configuration. The
+  visual references are this app's own staff surface (the card and table
+  style, the refusal and empty states) and Manager Home's matrix words;
+  the editor's row shape follows the original's DIB-507 items half above.
+  The grid's caption is the settings kit's own sentence about what
+  curation is and is not (core/internal/settings/settings.go, the package
+  header), spoken on the glass.
+- The caller's own override and workspace cards (the `my-items` and
+  `my-workspace` halves): the kit's own two levels, whole or absent,
+  reset IS a DELETE, the workspace save carrying the settings write
+  idempotency key (core/internal/settings/service.go). No original screen.
