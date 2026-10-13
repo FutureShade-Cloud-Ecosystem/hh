@@ -525,3 +525,46 @@ export function overrideValueWords(
       return "";
   }
 }
+
+// -- the quantity breaks tab: a band and a value in its own unit ----------------------------------------
+
+/** The breaks tab's empty words. */
+export function breaksEmptyWords(): string {
+  return "No quantity breaks yet. A break stacks on the tier resolved base, so a schedule here discounts what the rules already answered.";
+}
+
+/**
+ * A tier's band, as the quantities it covers: a null top is the open ended
+ * top tier, and a band starting at zero is any quantity. A from that is not
+ * a number says nothing rather than a number it does not hold.
+ */
+export function bandWords(fromQty: number, toQty: number | null): string {
+  if (!Number.isFinite(fromQty)) return "";
+  if (fromQty === 0 && toQty === null) return "any quantity";
+  if (toQty === null) return `${trimNumber(fromQty)} and up`;
+  return `${trimNumber(fromQty)} to ${trimNumber(toQty)}`;
+}
+
+/** A tier's adjustment in its own unit: a percent or an amount, off or on. */
+export function breakItemWords(
+  item: {
+    readonly value_type: string;
+    readonly discount_bps?: number | null;
+    readonly discount_cents?: number | null;
+    readonly surcharge_bps?: number | null;
+    readonly surcharge_cents?: number | null;
+  },
+): string {
+  switch (item.value_type) {
+    case "PCT_OFF":
+      return `${pctWords(item.discount_bps ?? null)} off`;
+    case "ABS_OFF":
+      return `${moneyWords(item.discount_cents ?? null)} off`;
+    case "SURCHARGE_PCT":
+      return `${pctWords(item.surcharge_bps ?? null)} surcharge`;
+    case "SURCHARGE_ABS":
+      return `${moneyWords(item.surcharge_cents ?? null)} surcharge`;
+    default:
+      return "";
+  }
+}

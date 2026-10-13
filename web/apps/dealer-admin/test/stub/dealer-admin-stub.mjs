@@ -211,6 +211,7 @@ const RULES_WORLD = [
 
 let rules;
 let overrides;
+let breaks;
 
 // The customer overrides: one yard account's price on Retaining Walls.
 const CUST_YARD = "cu110000-0000-4000-9000-0000000000a1";
@@ -229,6 +230,33 @@ const OVERRIDES_WORLD = [
   },
 ];
 
+// The quantity breaks: one category schedule for Pavers, one open top tier.
+const BREAKS_WORLD = [
+  {
+    id: "7a110000-0000-4000-9000-0000000000a1",
+    code: "PB-3",
+    name: "Paver pallet breaks",
+    category_id: PAV,
+    product_id: "",
+    threshold_uom: "SF",
+    is_active: true,
+    version: 2,
+    items: [
+      {
+        id: "7a110000-0000-4000-9000-0000000000b1",
+        from_qty: 10,
+        to_qty: null,
+        value_type: "PCT_OFF",
+        discount_bps: 500,
+        discount_cents: null,
+        surcharge_bps: null,
+        surcharge_cents: null,
+        price_uom: "SF",
+      },
+    ],
+  },
+];
+
 function reset() {
   staff = buildStaff();
   hotkeys = buildHotkeys();
@@ -236,6 +264,7 @@ function reset() {
   policies = buildPolicies();
   rules = structuredClone(RULES_WORLD);
   overrides = structuredClone(OVERRIDES_WORLD);
+  breaks = structuredClone(BREAKS_WORLD);
   scenario = "";
   log = [];
 }
@@ -672,6 +701,65 @@ async function handle(req, res) {
     if (version !== overrides[idx].version) return refuse(res, 409, "version conflict: the override changed since you opened it");
     overrides.splice(idx, 1);
     return json(res, { status: "deleted" });
+  }
+
+  // ---- the quantity breaks ----
+
+  if (req.method === "GET" && path === "/api/v1/pricing/quantity-breaks") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    return json(res, { items: scenario === "empty-pricing" ? [] : breaks, next_cursor: null, limit: 200 });
+  }
+
+  const breakMatch = path.match(/^\/api\/v1\/pricing\/quantity-breaks\/([^/]+)$/);
+  if (req.method === "GET" && breakMatch) {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const schedule = breaks.find((b) => b.id === decodeURIComponent(breakMatch[1]));
+    if (schedule === undefined) return refuse(res, 404, "schedule not found");
+    return json(res, schedule);
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/quantity-breaks") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const id = `7a110000-0000-4000-9000-${Math.random().toString(16).slice(2, 14).padStart(12, "0")}`;
+    breaks.push({
+      id,
+      code: String(body?.code ?? ""),
+      name: String(body?.name ?? ""),
+      category_id: String(body?.category_id ?? ""),
+      product_id: String(body?.product_id ?? ""),
+      threshold_uom: String(body?.threshold_uom ?? ""),
+      is_active: body?.is_active !== false,
+      version: 1,
+      items: Array.isArray(body?.items) ? body.items.map((it, i) => ({ id: `${id}-i${i}`, ...it })) : [],
+    });
+    return json(res, { id, version: 1 });
+  }
+
+  if (req.method === "PUT" && breakMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const schedule = breaks.find((b) => b.id === decodeURIComponent(breakMatch[1]));
+    if (schedule === undefined) return refuse(res, 404, "schedule not found");
+    if (typeof body?.version === "number" && body.version !== schedule.version) return refuse(res, 409, "version conflict: the schedule changed since you opened it");
+    schedule.code = String(body?.code ?? schedule.code);
+    schedule.name = String(body?.name ?? schedule.name);
+    schedule.category_id = String(body?.category_id ?? schedule.category_id);
+    schedule.product_id = String(body?.product_id ?? schedule.product_id);
+    schedule.threshold_uom = String(body?.threshold_uom ?? schedule.threshold_uom);
+    if (typeof body?.is_active === "boolean") schedule.is_active = body.is_active;
+    if (Array.isArray(body?.items)) schedule.items = body.items.map((it, i) => ({ id: `${schedule.id}-i${i}`, ...it }));
+    schedule.version += 1;
+    return json(res, schedule);
+  }
+
+  if (req.method === "DELETE" && breakMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const idx = breaks.findIndex((b) => b.id === decodeURIComponent(breakMatch[1]));
+    if (idx < 0) return refuse(res, 404, "schedule not found");
+    const version = Number(url.searchParams.get("version") ?? "0");
+    if (version !== breaks[idx].version) return refuse(res, 409, "version conflict: the schedule changed since you opened it");
+    breaks[idx].is_active = false;
+    breaks[idx].version += 1;
+    return json(res, { status: "retired" });
   }
 
   // ---- the audit trail ----

@@ -243,6 +243,64 @@ export function toOverrideRow(raw: unknown): OverrideRow {
   };
 }
 
+// -- the quantity breaks --------------------------------------------------------------------------------
+
+/** One tier of a schedule: a band with an adjustment of a named unit. */
+export interface BreakItem {
+  readonly id: string;
+  readonly from_qty: number;
+  readonly to_qty: number | null;
+  readonly value_type: string;
+  readonly discount_bps: number | null;
+  readonly discount_cents: number | null;
+  readonly surcharge_bps: number | null;
+  readonly surcharge_cents: number | null;
+  readonly price_uom: string;
+}
+
+export function toBreakItem(raw: unknown): BreakItem {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    from_qty: num(r.from_qty),
+    to_qty: r.to_qty === null || r.to_qty === undefined ? null : num(r.to_qty),
+    value_type: text(r.value_type),
+    discount_bps: maybeNum(r.discount_bps),
+    discount_cents: maybeNum(r.discount_cents),
+    surcharge_bps: maybeNum(r.surcharge_bps),
+    surcharge_cents: maybeNum(r.surcharge_cents),
+    price_uom: text(r.price_uom),
+  };
+}
+
+/** One quantity break schedule plus its tiers, under an optimistic version. */
+export interface BreakRow {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly product_id: string;
+  readonly category_id: string;
+  readonly threshold_uom: string;
+  readonly is_active: boolean;
+  readonly version: number;
+  readonly items: readonly BreakItem[];
+}
+
+export function toBreakRow(raw: unknown): BreakRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    code: text(r.code),
+    name: text(r.name),
+    product_id: text(r.product_id),
+    category_id: text(r.category_id),
+    threshold_uom: text(r.threshold_uom),
+    is_active: bool(r.is_active),
+    version: num(r.version),
+    items: list(r.items).map(toBreakItem),
+  };
+}
+
 /**
  * Every call the pricing tabs make. The generated client's own functions do
  * the wire; this class narrows the answers and gives each tab one named
@@ -347,6 +405,43 @@ export class PricingApi {
   /** Delete one override; the version the row showed rides the delete. */
   async deleteOverride(id: string, opts: { version: number }): Promise<Result<StatusResult>> {
     const answer = await staffPricing.pricingDeleteOverride(this.#client, id, opts);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toStatus(answer.value) };
+  }
+
+  // -- the quantity breaks ---------------------------------------------------------------------------
+
+  /** The quantity break schedules, each with its tiers. */
+  async breaks(): Promise<Result<readonly BreakRow[]>> {
+    const answer = await staffPricing.pricingListQuantityBreaks(this.#client, { limit: 200 });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toBreakRow) };
+  }
+
+  /** One schedule, read whole: the editor opens on the version the server holds now. */
+  async break(id: string): Promise<Result<BreakRow>> {
+    const answer = await staffPricing.pricingGetQuantityBreak(this.#client, id);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toBreakRow(answer.value) };
+  }
+
+  /** Create a schedule; the write carries version zero. */
+  async createBreak(body: unknown): Promise<Result<CreatedRef>> {
+    const answer = await staffPricing.pricingCreateQuantityBreak(this.#client, body as Parameters<typeof staffPricing.pricingCreateQuantityBreak>[1]);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toCreatedRef(answer.value) };
+  }
+
+  /** Save a schedule whole over the version the editor read. */
+  async updateBreak(id: string, body: unknown): Promise<Result<BreakRow>> {
+    const answer = await staffPricing.pricingUpdateQuantityBreak(this.#client, id, body as Parameters<typeof staffPricing.pricingUpdateQuantityBreak>[2]);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toBreakRow(answer.value) };
+  }
+
+  /** Retire a schedule; the version the row showed rides the delete. */
+  async deleteBreak(id: string, opts: { version: number }): Promise<Result<StatusResult>> {
+    const answer = await staffPricing.pricingDeleteQuantityBreak(this.#client, id, opts);
     if (!answer.ok) return answer;
     return { ok: true, value: toStatus(answer.value) };
   }

@@ -269,3 +269,30 @@ test("an override's value says what the calc does; a fixed price is not an overr
   assert.equal(overrideValueWords({ calc_type: "ABSOLUTE", price_cents: 100 }), "");
   assert.equal(overrideValueWords({ calc_type: "ODD" }), "");
 });
+
+// -- the quantity breaks tab: a band and a value in its own unit ----------------------
+
+import {
+  bandWords,
+  breakItemWords,
+  breaksEmptyWords,
+} from "../src/pricing-logic.ts";
+
+test("a break's band reads as the quantities it covers; an open top says so", () => {
+  assert.equal(bandWords(10, 20), "10 to 20");
+  assert.equal(bandWords(10, null), "10 and up");
+  assert.equal(bandWords(0, null), "any quantity");
+  assert.equal(bandWords(Number.NaN, 20), "");
+});
+
+test("a break's value says what the tier does, in the tier's own unit", () => {
+  assert.equal(breakItemWords({ value_type: "PCT_OFF", discount_bps: 500 }), "5.00% off");
+  assert.equal(breakItemWords({ value_type: "ABS_OFF", discount_cents: 250 }), "CA$2.50 off");
+  assert.equal(breakItemWords({ value_type: "SURCHARGE_PCT", surcharge_bps: 300 }), "3.00% surcharge");
+  assert.equal(breakItemWords({ value_type: "SURCHARGE_ABS", surcharge_cents: 100 }), "CA$1.00 surcharge");
+  assert.equal(breakItemWords({ value_type: "ODD" }), "");
+});
+
+test("the breaks tab's empty words are its own", () => {
+  assert.match(breaksEmptyWords(), /No quantity breaks yet/);
+});

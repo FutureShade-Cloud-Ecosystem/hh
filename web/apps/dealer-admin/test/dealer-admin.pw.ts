@@ -306,3 +306,34 @@ test("the customer prices tab: one account's overrides, an add, and a delete ask
   await expect(page.locator("[data-test=pr-cust-notice]")).toContainText("Deleted.");
   await expect(page.locator("[data-test=pr-cust-count]")).toHaveText("1 price");
 });
+
+test("the quantity breaks tab: the schedule, a tier saved through the floor, a retire asked twice", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+  await page.locator('.pr-tab[data-tab="breaks"]').click();
+  await expect(page.locator("[data-test=pr-breaks-count]")).toHaveText("1 schedule");
+
+  const row = page.locator('tr[data-break="7a110000-0000-4000-9000-0000000000a1"]');
+  await expect(row).toContainText("Paver pallet breaks");
+  await expect(row).toContainText("Pavers");
+  await expect(row).toContainText("10 and up: 5.00% off");
+
+  // The tier's percent edits as a percent; the save rides a clean grading.
+  await row.getByRole("button", { name: "Edit the schedule Paver pallet breaks" }).click();
+  await expect(page.locator("[data-test=pr-break-editor]")).toContainText("version 2");
+  await page.locator('[data-field="pr-brk-item-0-value"]').fill("6");
+  await page.locator('[data-action="pr-break-save"]').click();
+  await expect(page.locator("[data-test=pr-breaks-notice]")).toContainText("Saved.");
+  await expect(page.locator('tr[data-break="7a110000-0000-4000-9000-0000000000a1"]')).toContainText("10 and up: 6.00% off");
+
+  // Retire asks twice.
+  const retire = page.locator('[data-action="pr-break-del"][data-id="7a110000-0000-4000-9000-0000000000a1"]');
+  await retire.click();
+  await expect(retire).toHaveText("Retire: tap again");
+  await retire.click();
+  await expect(page.locator("[data-test=pr-breaks-notice]")).toContainText("Retired.");
+  await expect(page.locator('tr[data-break="7a110000-0000-4000-9000-0000000000a1"]')).toContainText("retired");
+});

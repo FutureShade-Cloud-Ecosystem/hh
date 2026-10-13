@@ -31,6 +31,7 @@ import {
   shownProductIds,
 } from "./pricing-logic.js";
 import type {
+  BreakRow,
   CreatedRef,
   FloorPreview,
   OverrideRow,
@@ -63,6 +64,11 @@ export interface PricingDoor {
   ): Promise<{ ok: true; value: CreatedRef } | { ok: false; error: string; status?: number }>;
   updateOverride(id: string, body: PricingOverrideWrite): Promise<{ ok: true; value: OverrideRow } | { ok: false; error: string; status?: number }>;
   deleteOverride(id: string, opts: { version: number }): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
+  breaks(): Promise<{ ok: true; value: readonly BreakRow[] } | { ok: false; error: string; status?: number }>;
+  break(id: string): Promise<{ ok: true; value: BreakRow } | { ok: false; error: string; status?: number }>;
+  createBreak(body: Record<string, unknown>): Promise<{ ok: true; value: CreatedRef } | { ok: false; error: string; status?: number }>;
+  updateBreak(id: string, body: Record<string, unknown>): Promise<{ ok: true; value: BreakRow } | { ok: false; error: string; status?: number }>;
+  deleteBreak(id: string, opts: { version: number }): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
   previewFloor(body: PricingFloorPreviewRequest): Promise<
     { ok: true; value: FloorPreview } | { ok: false; error: string; status?: number }
   >;
@@ -183,6 +189,40 @@ export interface CustomersModel {
   readonly confirmingId: string;
 }
 
+/** One tier row in the breaks editor, as the person last left it. */
+export interface BreakItemDraft {
+  readonly fromQty: string;
+  readonly toQty: string;
+  readonly type: string;
+  readonly valueInput: string;
+  readonly uom: string;
+}
+
+/** The breaks editor's own words, as the person last left them. */
+export interface BreakEdit {
+  readonly id: string;
+  readonly version: number;
+  readonly code: string;
+  readonly nameInput: string;
+  readonly productId: string;
+  readonly categoryId: string;
+  readonly thresholdUom: string;
+  readonly active: boolean;
+  readonly items: readonly BreakItemDraft[];
+}
+
+export interface BreaksModel {
+  readonly phase: LoadPhase;
+  readonly rows: readonly BreakRow[];
+  readonly error: string;
+  readonly editing: BreakEdit | null;
+  readonly busy: boolean;
+  readonly formError: string;
+  readonly notice: string;
+  readonly floor: FloorPanel | null;
+  readonly confirmingId: string;
+}
+
 export interface PricingModel {
   readonly tab: PricingTab["id"];
   /** The categories catalog: every tab's picker names. */
@@ -191,6 +231,7 @@ export interface PricingModel {
   readonly margin: MarginModel;
   readonly rules: RulesModel;
   readonly customers: CustomersModel;
+  readonly breaks: BreaksModel;
 }
 
 function emptyMargin(): MarginModel {
@@ -230,6 +271,20 @@ function emptyCustomers(): CustomersModel {
   };
 }
 
+function emptyBreaks(): BreaksModel {
+  return {
+    phase: "idle",
+    rows: [],
+    error: "",
+    editing: null,
+    busy: false,
+    formError: "",
+    notice: "",
+    floor: null,
+    confirmingId: "",
+  };
+}
+
 function emptyModel(): PricingModel {
   return {
     tab: "margin",
@@ -238,6 +293,7 @@ function emptyModel(): PricingModel {
     margin: emptyMargin(),
     rules: emptyRules(),
     customers: emptyCustomers(),
+    breaks: emptyBreaks(),
   };
 }
 
@@ -286,6 +342,10 @@ export class PricingController {
 
   #setCustomers(patch: Partial<CustomersModel>): void {
     this.#set({ customers: { ...this.model.customers, ...patch } });
+  }
+
+  #setBreaks(patch: Partial<BreaksModel>): void {
+    this.#set({ breaks: { ...this.model.breaks, ...patch } });
   }
 
   /** The app opens the surface: the categories once, then the open tab's group. */
@@ -366,6 +426,34 @@ export class PricingController {
     if (field === "cust-id" && this.model.customers.editing === null) {
       this.#setCustomers({ customerIdInput: value });
     }
+    // The breaks editor: the header fields by name, a tier row by its index
+    // (brk-item-<n>-<part>).
+    const brk = this.model.breaks.editing;
+    if (brk !== null) {
+      if (field === "brk-code") this.#setBreaks({ editing: { ...brk, code: value } });
+      if (field === "brk-name") this.#setBreaks({ editing: { ...brk, nameInput: value } });
+      if (field === "brk-product") this.#setBreaks({ editing: { ...brk, productId: value } });
+      if (field === "brk-uom") this.#setBreaks({ editing: { ...brk, thresholdUom: value } });
+      const itemField = field.match(/^brk-item-(\d+)-(from|to|value|uom)$/);
+      if (itemField !== null) {
+        const index = Number(itemField[1]);
+        const part = itemField[2] as "from" | "to" | "value" | "uom";
+        if (index < brk.items.length) {
+          const items = brk.items.map((item, i) =>
+            i === index
+              ? {
+                  ...item,
+                  fromQty: part === "from" ? value : item.fromQty,
+                  toQty: part === "to" ? value : item.toQty,
+                  valueInput: part === "value" ? value : item.valueInput,
+                  uom: part === "uom" ? value : item.uom,
+                }
+              : item,
+          );
+          this.#setBreaks({ editing: { ...brk, items } });
+        }
+      }
+    }
   }
 
   /** A select or checkbox answered: the category (by its picker name), or the enforcement flag. */
@@ -398,6 +486,22 @@ export class PricingController {
         this.#setCustomers({ editing: { ...override, categoryId: value === "" || hit !== undefined ? (hit?.id ?? "") : override.categoryId } });
       }
       if (field === "cust-calc") this.#setCustomers({ editing: { ...override, calc: value } });
+    }
+    const brk = this.model.breaks.editing;
+    if (brk !== null) {
+      if (field === "brk-category") {
+        const hit = this.model.categories.find((c) => c.name === value);
+        this.#setBreaks({ editing: { ...brk, categoryId: value === "" || hit !== undefined ? (hit?.id ?? "") : brk.categoryId } });
+      }
+      if (field === "brk-active") this.#setBreaks({ editing: { ...brk, active: value === "yes" } });
+      const itemField = field.match(/^brk-item-(\d+)-type$/);
+      if (itemField !== null) {
+        const index = Number(itemField[1]);
+        if (index < brk.items.length) {
+          const items = brk.items.map((item, i) => (i === index ? { ...item, type: value } : item));
+          this.#setBreaks({ editing: { ...brk, items } });
+        }
+      }
     }
   }
 
@@ -482,8 +586,34 @@ export class PricingController {
         return this.#overrideField("priceUom");
       case "cust-notes":
         return this.#overrideField("notes");
-      default:
+      case "brk-code":
+        return this.model.breaks.editing?.code ?? "";
+      case "brk-name":
+        return this.model.breaks.editing?.nameInput ?? "";
+      case "brk-product":
+        return this.model.breaks.editing?.productId ?? "";
+      case "brk-category": {
+        const cat = this.model.breaks.editing?.categoryId ?? "";
+        return cat === "" ? "" : categoryName(cat, this.model.categories);
+      }
+      case "brk-uom":
+        return this.model.breaks.editing?.thresholdUom ?? "";
+      case "brk-active":
+        return (this.model.breaks.editing?.active ?? false) ? "yes" : "no";
+      default: {
+        const brkItem = field.match(/^brk-item-(\d+)-(from|to|value|uom|type)$/);
+        if (brkItem !== null) {
+          const item = this.model.breaks.editing?.items[Number(brkItem[1])];
+          if (item !== undefined) {
+            if (brkItem[2] === "from") return item.fromQty;
+            if (brkItem[2] === "to") return item.toQty;
+            if (brkItem[2] === "value") return item.valueInput;
+            if (brkItem[2] === "uom") return item.uom;
+            if (brkItem[2] === "type") return item.type;
+          }
+        }
         return "";
+      }
     }
   }
 
@@ -499,6 +629,7 @@ export class PricingController {
         this.setTab(tab);
         // A tab loads its own reads the first time it is opened.
         if (tab === "rules" && this.model.rules.phase === "idle") await this.loadRules();
+        if (tab === "breaks" && this.model.breaks.phase === "idle") await this.loadBreaks();
         return;
       }
       case "pr-reload-margin":
@@ -571,6 +702,49 @@ export class PricingController {
       case "pr-cust-del":
         await this.#deleteOverride(attrs.id ?? "");
         return;
+      // -- the quantity breaks tab --
+      case "pr-breaks-reload":
+        await this.loadBreaks();
+        return;
+      case "pr-break-edit":
+        await this.#openBreakEditor(attrs.id ?? "");
+        return;
+      case "pr-break-cancel":
+        this.#setBreaks({ editing: null, floor: null, formError: "" });
+        return;
+      case "pr-break-review":
+        this.#setBreaks({ floor: null });
+        return;
+      case "pr-break-save":
+        await this.#saveBreak();
+        return;
+      case "pr-break-confirm":
+        await this.#confirmBreak();
+        return;
+      case "pr-break-del":
+        await this.#deleteBreak(attrs.id ?? "");
+        return;
+      case "pr-break-add-item": {
+        const editing = this.model.breaks.editing;
+        if (editing !== null && editing.items.length < 20) {
+          this.#setBreaks({
+            editing: {
+              ...editing,
+              items: [...editing.items, { fromQty: "", toQty: "", type: "PCT_OFF", valueInput: "", uom: editing.thresholdUom }],
+            },
+          });
+        }
+        return;
+      }
+      case "pr-break-drop-item": {
+        const editing = this.model.breaks.editing;
+        const index = Number(attrs.index ?? "-1");
+        if (editing !== null && Number.isInteger(index) && index >= 0 && index < editing.items.length) {
+          const items = editing.items.filter((_, i) => i !== index);
+          this.#setBreaks({ editing: { ...editing, items } });
+        }
+        return;
+      }
       default:
     }
   }
@@ -1107,6 +1281,249 @@ export class PricingController {
     this.#setCustomers({ busy: false, notice: "Deleted. The account prices by its tier rules again." });
     await this.loadOverrides();
   }
+
+  // -- the quantity breaks tab ---------------------------------------------------------------------------
+
+  async loadBreaks(): Promise<void> {
+    this.#setBreaks({ ...emptyBreaks(), notice: this.model.breaks.notice });
+    const result = await this.#door.breaks();
+    if (!result.ok) {
+      this.#setBreaks({
+        phase: result.status === 403 ? "refused" : "error",
+        error: pricingRefusalWords(result.error, result.status, "read"),
+      });
+      return;
+    }
+    this.#setBreaks({ phase: "ready", rows: result.value });
+  }
+
+  async #openBreakEditor(id: string): Promise<void> {
+    if (id === "") {
+      this.#setBreaks({
+        editing: {
+          id: "",
+          version: 0,
+          code: "",
+          nameInput: "",
+          productId: "",
+          categoryId: "",
+          thresholdUom: "",
+          active: true,
+          items: [{ fromQty: "", toQty: "", type: "PCT_OFF", valueInput: "", uom: "" }],
+        },
+        floor: null,
+        formError: "",
+        notice: "",
+      });
+      return;
+    }
+    this.#setBreaks({ editing: null });
+    const read = await this.#door.break(id);
+    if (!read.ok) {
+      this.#setBreaks({ formError: pricingWriteError(read.error, read.status), editing: null });
+      return;
+    }
+    const row = read.value;
+    this.#setBreaks({
+      editing: {
+        id: row.id,
+        version: row.version,
+        code: row.code,
+        nameInput: row.name,
+        productId: row.product_id,
+        categoryId: row.category_id,
+        thresholdUom: row.threshold_uom,
+        active: row.is_active,
+        items: row.items.map((item) => ({
+          fromQty: item.from_qty.toString(),
+          toQty: item.to_qty === null ? "" : item.to_qty.toString(),
+          type: item.value_type,
+          valueInput: breakDraftValue(item),
+          uom: item.price_uom,
+        })),
+      },
+      floor: null,
+      formError: "",
+      notice: "",
+    });
+  }
+
+  /** The wire body the editor holds, or the words for the input it cannot encode. */
+  #breakWrite(): { write: Record<string, unknown> | null; error: string } {
+    const editing = this.model.breaks.editing;
+    if (editing === null) return { write: null, error: "" };
+    const items: Record<string, unknown>[] = [];
+    for (const [index, draft] of editing.items.entries()) {
+      const from = Number(draft.fromQty.trim());
+      if (draft.fromQty.trim() === "" || !Number.isFinite(from) || from < 0) {
+        return { write: null, error: `Tier ${index + 1}: enter the quantity the band starts at.` };
+      }
+      let to: number | null = null;
+      if (draft.toQty.trim() !== "") {
+        to = Number(draft.toQty.trim());
+        if (!Number.isFinite(to) || to <= from) {
+          return { write: null, error: `Tier ${index + 1}: the band's top must be a number above its start, or empty for the open top tier.` };
+        }
+      }
+      const item: Record<string, unknown> = {
+        from_qty: from,
+        to_qty: to,
+        value_type: draft.type,
+        price_uom: draft.uom.trim() === "" ? editing.thresholdUom.trim() : draft.uom.trim(),
+        discount_bps: null,
+        discount_cents: null,
+        surcharge_bps: null,
+        surcharge_cents: null,
+      };
+      if (draft.type === "PCT_OFF" || draft.type === "SURCHARGE_PCT") {
+        const bps = bpsFromPctInput(draft.valueInput);
+        if (bps === null) return { write: null, error: `Tier ${index + 1}: enter the percent, like 5.` };
+        if (draft.type === "PCT_OFF") item.discount_bps = bps;
+        else item.surcharge_bps = bps;
+      } else if (draft.type === "ABS_OFF" || draft.type === "SURCHARGE_ABS") {
+        const cents = centsFromMoneyInput(draft.valueInput);
+        if (cents === null) return { write: null, error: `Tier ${index + 1}: enter the amount in dollars, like 2.50.` };
+        if (draft.type === "ABS_OFF") item.discount_cents = cents;
+        else item.surcharge_cents = cents;
+      } else {
+        return { write: null, error: `Tier ${index + 1}: choose what the tier does.` };
+      }
+      items.push(item);
+    }
+    return {
+      write: {
+        code: editing.code.trim(),
+        name: editing.nameInput.trim(),
+        product_id: editing.productId.trim(),
+        category_id: editing.categoryId,
+        threshold_uom: editing.thresholdUom.trim(),
+        items,
+        version: editing.version,
+        is_active: editing.active,
+      },
+      error: "",
+    };
+  }
+
+  async #saveBreak(): Promise<void> {
+    const editing = this.model.breaks.editing;
+    if (editing === null || this.model.breaks.busy) return;
+    const { write, error } = this.#breakWrite();
+    if (error !== "" || write === null) {
+      this.#setBreaks({ formError: error });
+      return;
+    }
+    this.#setBreaks({ busy: true, formError: "" });
+    const preview = await this.#door.previewFloor({
+      kind: "quantity_break",
+      ...(editing.id !== "" ? { id: editing.id } : {}),
+      quantity_break: write as never,
+    });
+    if (!preview.ok) {
+      this.#setBreaks({ busy: false, formError: pricingWriteError(preview.error, preview.status) });
+      return;
+    }
+    if (needsFloorConfirm(preview.value)) {
+      this.#setBreaks({
+        busy: false,
+        floor: {
+          items: affectedFloorItems(preview.value),
+          notes: floorNoteLines(preview.value),
+          productIds: shownProductIds(preview.value),
+          busy: false,
+        },
+      });
+      return;
+    }
+    await this.#writeBreak(write);
+  }
+
+  async #confirmBreak(): Promise<void> {
+    const editing = this.model.breaks.editing;
+    const floor = this.model.breaks.floor;
+    if (editing === null || floor === null || floor.busy || this.model.breaks.busy) return;
+    const { write, error } = this.#breakWrite();
+    if (error !== "" || write === null) {
+      this.#setBreaks({ formError: error });
+      return;
+    }
+    this.#setBreaks({ floor: { ...floor, busy: true } });
+    await this.#writeBreak(write, floor.productIds);
+  }
+
+  async #writeBreak(write: Record<string, unknown>, productIds: readonly string[] = []): Promise<void> {
+    const editing = this.model.breaks.editing;
+    if (editing === null) return;
+    let entityId = editing.id;
+    if (editing.id === "") {
+      const created = await this.#door.createBreak(write);
+      if (!created.ok) {
+        this.#setBreaks({ busy: false, floor: null, formError: pricingWriteError(created.error, created.status) });
+        return;
+      }
+      entityId = created.value.id;
+    } else {
+      const updated = await this.#door.updateBreak(editing.id, write);
+      if (!updated.ok) {
+        this.#setBreaks({ busy: false, floor: this.model.breaks.floor === null ? null : { ...this.model.breaks.floor, busy: false }, formError: pricingWriteError(updated.error, updated.status) });
+        return;
+      }
+    }
+    if (productIds.length > 0) {
+      const logged = await this.#door.confirmFloor({
+        entity_type: "quantity_break",
+        entity_id: entityId,
+        product_ids: productIds,
+      });
+      this.#setBreaks({
+        busy: false,
+        editing: null,
+        floor: null,
+        notice: logged.ok ? floorConfirmVerdict(logged.value) : floorConfirmVerdict(null),
+      });
+    } else {
+      this.#setBreaks({ busy: false, editing: null, floor: null, notice: "Saved." });
+    }
+    await this.loadBreaks();
+  }
+
+  /** Retire is two taps: the first asks, the second carries the row's version. */
+  async #deleteBreak(id: string): Promise<void> {
+    if (id === "" || this.model.breaks.busy) return;
+    if (this.model.breaks.confirmingId !== id) {
+      this.#setBreaks({ confirmingId: id });
+      return;
+    }
+    const row = this.model.breaks.rows.find((r) => r.id === id);
+    if (row === undefined) {
+      this.#setBreaks({ confirmingId: "" });
+      return;
+    }
+    this.#setBreaks({ busy: true, confirmingId: "" });
+    const result = await this.#door.deleteBreak(id, { version: row.version });
+    if (!result.ok) {
+      this.#setBreaks({ busy: false, formError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setBreaks({ busy: false, notice: "Retired. Resolves stop stacking the schedule's tiers." });
+    await this.loadBreaks();
+  }
+}
+
+/** One tier's value as the editor's text, from the server's own figure. */
+function breakDraftValue(item: {
+  readonly value_type: string;
+  readonly discount_bps: number | null;
+  readonly discount_cents: number | null;
+  readonly surcharge_bps: number | null;
+  readonly surcharge_cents: number | null;
+}): string {
+  if (item.value_type === "PCT_OFF" || item.value_type === "SURCHARGE_PCT") {
+    const bps = item.value_type === "PCT_OFF" ? item.discount_bps : item.surcharge_bps;
+    return bps === null ? "" : (bps / 100).toString();
+  }
+  const cents = item.value_type === "ABS_OFF" ? item.discount_cents : item.surcharge_cents;
+  return cents === null ? "" : (cents / 100).toString();
 }
 
 /** The api-client door, typed once for the app-root's construction. */

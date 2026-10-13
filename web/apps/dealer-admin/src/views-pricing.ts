@@ -14,6 +14,9 @@
 // between computes.
 import { html, nothing, type TemplateResult } from "lit";
 import {
+  bandWords,
+  breakItemWords,
+  breaksEmptyWords,
   calcTypeWord,
   categoryName,
   CUSTOMER_TYPES,
@@ -31,7 +34,7 @@ import {
   validityWords,
   PRICING_TABS,
 } from "./pricing-logic.js";
-import type { OverrideRow, RuleRow } from "./pricing-api.js";
+import type { BreakRow, OverrideRow, RuleRow } from "./pricing-api.js";
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
 
 export function renderPricing(model: PricingModel): TemplateResult {
@@ -65,6 +68,7 @@ function renderTab(model: PricingModel): TemplateResult {
   if (model.tab === "margin") return renderMargin(model);
   if (model.tab === "rules") return renderRules(model);
   if (model.tab === "customers") return renderCustomers(model);
+  if (model.tab === "breaks") return renderBreaks(model);
   const tab = PRICING_TABS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
@@ -648,6 +652,217 @@ function renderOverrideEditor(model: PricingModel): TemplateResult | typeof noth
           ${m.busy ? "Checking the floor…" : e.id === "" ? "Check the floor, then add" : "Check the floor, then save"}
         </button>
         <button type="button" class="btn btn-secondary" data-action="pr-cust-cancel" ?disabled=${m.busy}>Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+// -- the quantity breaks tab ---------------------------------------------------------------------------
+
+function breakScopeWords(row: BreakRow, model: PricingModel): string {
+  if (row.product_id !== "") return `product ${row.product_id.slice(0, 8)}`;
+  if (row.category_id !== "") return categoryName(row.category_id, model.categories);
+  return "unscoped";
+}
+
+export function renderBreaks(model: PricingModel): TemplateResult {
+  const m = model.breaks;
+  return html`
+    ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-breaks-loading">Loading the quantity breaks…</p>` : nothing}
+    ${m.phase === "error" || m.phase === "refused"
+      ? html`
+          <p class="error-line" data-test="pr-breaks-error">${m.error}</p>
+          <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-breaks-reload">Try again</button></div>
+        `
+      : nothing}
+    ${m.phase === "ready" ? renderBreaksList(model) : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderBreakEditor(model) : nothing}
+  `;
+}
+
+function renderBreaksList(model: PricingModel): TemplateResult {
+  const m = model.breaks;
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Quantity break schedules</h2>
+        <span class="count" data-test="pr-breaks-count">${m.rows.length} ${m.rows.length === 1 ? "schedule" : "schedules"}</span>
+        <button type="button" class="btn btn-primary btn-small" data-action="pr-break-edit">New schedule</button>
+      </div>
+      ${m.notice === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-breaks-notice">${m.notice}</p>`}
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-breaks-form-error">${m.formError}</p>`}
+      ${m.rows.length === 0
+        ? html`<p class="notice-line" data-test="pr-breaks-empty">${breaksEmptyWords()}</p>`
+        : html`
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Schedule</th>
+                    <th scope="col">Covers</th>
+                    <th scope="col">Tiers</th>
+                    <th scope="col">State</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.rows.map((row) => renderBreakRowView(row, model))}
+                </tbody>
+              </table>
+            </div>
+          `}
+    </section>
+  `;
+}
+
+function renderBreakRowView(row: BreakRow, model: PricingModel): TemplateResult {
+  const m = model.breaks;
+  const confirming = m.confirmingId === row.id;
+  return html`
+    <tr data-break=${row.id}>
+      <td>
+        <div class="person">${row.name}</div>
+        <div class="mono dim">${row.code} · by ${row.threshold_uom}</div>
+      </td>
+      <td>${breakScopeWords(row, model)}</td>
+      <td>
+        ${row.items.length === 0
+          ? html`<span class="dim">no tiers</span>`
+          : row.items.map(
+              (item) => html`
+                <div class="mono">${bandWords(item.from_qty, item.to_qty)}: ${breakItemWords(item)}</div>
+              `,
+            )}
+      </td>
+      <td>
+        ${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}
+      </td>
+      <td>
+        <div class="pr-actions">
+          <button
+            type="button"
+            class="btn btn-secondary btn-small"
+            data-action="pr-break-edit"
+            data-id=${row.id}
+            aria-label=${`Edit the schedule ${row.name}`}
+          >
+            Edit
+          </button>
+          ${row.is_active
+            ? html`
+                <button type="button" class="btn btn-secondary btn-small" data-action="pr-break-del" data-id=${row.id} ?disabled=${m.busy}>
+                  ${confirming ? "Retire: tap again" : "Retire"}
+                </button>
+              `
+            : nothing}
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing {
+  const m = model.breaks;
+  const e = m.editing;
+  if (e === null) return nothing;
+  const heading = e.id === "" ? "New schedule" : `Schedule: ${e.nameInput === "" ? e.code : e.nameInput}`;
+  const tierWord = (n: number): string => `Tier ${n + 1}`;
+  return html`
+    <section class="card" data-test="pr-break-editor">
+      <div class="card-head">
+        <h2 class="card-title">${heading}</h2>
+        ${e.id === "" ? html`<span class="chip chip-wait">create</span>` : html`<span class="chip">version ${e.version}</span>`}
+      </div>
+      <div class="form-grid">
+        <label class="field">
+          <span class="field-label">Code</span>
+          <input class="text-field" type="text" data-field="pr-brk-code" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input class="text-field" type="text" data-field="pr-brk-name" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Category (or name a product below; exactly one wins)</span>
+          <select class="select" data-field="pr-brk-category" ?disabled=${m.busy}>
+            <option value="">Any category</option>
+            ${model.categories.map((c) => html`<option>${c.name}</option>`)}
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Product id (empty prices by the category)</span>
+          <input class="text-field" type="text" data-field="pr-brk-product" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Threshold unit (the bands count in this)</span>
+          <input class="text-field" type="text" placeholder="SF" data-field="pr-brk-uom" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Active</span>
+          <span class="branch-choice">
+            <input type="checkbox" data-field="pr-brk-active" ?disabled=${m.busy} />
+            <span>An inactive schedule never stacks</span>
+          </span>
+        </label>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">From</th>
+              <th scope="col">To (empty is the open top)</th>
+              <th scope="col">What the tier does</th>
+              <th scope="col">Value</th>
+              <th scope="col">Unit</th>
+              <th scope="col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${e.items.map(
+              (item, index) => html`
+                <tr data-tier=${index}>
+                  <td><input class="text-field" type="text" inputmode="decimal" aria-label=${tierWord(index)} data-field="pr-brk-item-${index}-from" ?disabled=${m.busy} /></td>
+                  <td><input class="text-field" type="text" inputmode="decimal" aria-label="Tier top" data-field="pr-brk-item-${index}-to" ?disabled=${m.busy} /></td>
+                  <td>
+                    <select class="select" aria-label="What the tier does" data-field="pr-brk-item-${index}-type" ?disabled=${m.busy}>
+                      <option value="PCT_OFF">Percent off</option>
+                      <option value="ABS_OFF">Amount off</option>
+                      <option value="SURCHARGE_PCT">Percent surcharge</option>
+                      <option value="SURCHARGE_ABS">Amount surcharge</option>
+                    </select>
+                  </td>
+                  <td><input class="text-field" type="text" inputmode="decimal" aria-label="Tier value" data-field="pr-brk-item-${index}-value" ?disabled=${m.busy} /></td>
+                  <td><input class="text-field" type="text" aria-label="Tier unit" data-field="pr-brk-item-${index}-uom" ?disabled=${m.busy} /></td>
+                  <td>
+                    <button
+                      type="button"
+                      class="btn btn-secondary btn-small"
+                      data-action="pr-break-drop-item"
+                      data-index=${index}
+                      ?disabled=${m.busy}
+                      aria-label="Drop this tier"
+                    >
+                      Drop
+                    </button>
+                  </td>
+                </tr>
+              `,
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div class="row-actions">
+        <button type="button" class="btn btn-secondary btn-small" data-action="pr-break-add-item" ?disabled=${m.busy || e.items.length >= 20}>
+          Add a tier (20 at most)
+        </button>
+      </div>
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-break-form-error">${m.formError}</p>`}
+      ${m.floor === null ? nothing : renderFloorPanel(m.floor, "pr-break-confirm", "pr-break-review")}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-break-save" ?disabled=${m.busy || m.floor !== null}>
+          ${m.busy ? "Checking the floor…" : e.id === "" ? "Check the floor, then create" : "Check the floor, then save"}
+        </button>
+        <button type="button" class="btn btn-secondary" data-action="pr-break-cancel" ?disabled=${m.busy}>Cancel</button>
       </div>
     </section>
   `;

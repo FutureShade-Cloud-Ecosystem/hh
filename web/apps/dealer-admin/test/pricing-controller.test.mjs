@@ -447,3 +447,107 @@ test("a refused overrides read lands refused, naming the gate", async () => {
   assert.equal(c.model.customers.phase, "refused");
   assert.match(c.model.customers.error, /staff/);
 });
+
+// -- the quantity breaks tab ---------------------------------------------------------------------------
+
+const BREAKS = [
+  {
+    id: "7a110000-0000-4000-9000-0000000000a1",
+    code: "PB-3",
+    name: "Paver pallet breaks",
+    category_id: "ca7-1",
+    product_id: "",
+    threshold_uom: "SF",
+    is_active: true,
+    version: 2,
+    items: [{ id: "7a110000-0000-4000-9000-0000000000b1", from_qty: 10, to_qty: null, value_type: "PCT_OFF", discount_bps: 500, discount_cents: null, surcharge_bps: null, surcharge_cents: null, price_uom: "SF" }],
+  },
+];
+
+function fakeBreaksDoor(over = {}) {
+  const door = fakeOverridesDoor({
+    breaks: async () => {
+      door.calls.push("breaks");
+      return { ok: true, value: BREAKS };
+    },
+    break: async (id) => {
+      door.calls.push(["break", id]);
+      return { ok: true, value: BREAKS[0] };
+    },
+    createBreak: async (body) => {
+      door.calls.push(["createBreak", body]);
+      return { ok: true, value: { id: "7a110000-0000-4000-9000-0000000000a9", version: 1 } };
+    },
+    updateBreak: async (id, body) => {
+      door.calls.push(["updateBreak", id, body]);
+      return { ok: true, value: { ...BREAKS[0], ...body, version: body.version + 1 } };
+    },
+    deleteBreak: async (id, opts) => {
+      door.calls.push(["deleteBreak", id, opts]);
+      return { ok: true, value: { status: "retired" } };
+    },
+    ...over,
+  });
+  return door;
+}
+
+test("the breaks tab loads the schedules and edits one through the floor", async () => {
+  const door = fakeBreaksDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "breaks" });
+  assert.equal(c.model.breaks.phase, "ready");
+  assert.equal(c.model.breaks.rows.length, 1);
+
+  await c.click("pr-break-edit", { id: BREAKS[0].id });
+  assert.deepEqual(door.calls.find((x) => Array.isArray(x) && x[0] === "break"), ["break", BREAKS[0].id]);
+
+  // The tier's percent edits as a percent and lands as basis points.
+  c.input("brk-item-0-value", "6");
+  await c.click("pr-break-save", {});
+  const preview = door.calls.filter((x) => Array.isArray(x) && x[0] === "previewFloor").pop();
+  assert.equal(preview[1].kind, "quantity_break");
+  assert.equal(preview[1].id, BREAKS[0].id);
+  assert.equal(preview[1].quantity_break.items[0].discount_bps, 600);
+  const update = door.calls.find((x) => Array.isArray(x) && x[0] === "updateBreak");
+  assert.ok(update);
+  assert.equal(update[2].version, 2);
+  assert.equal(c.model.breaks.notice, "Saved.");
+});
+
+test("a break tier that is not a number is refused at the form, before any call", async () => {
+  const door = fakeBreaksDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "breaks" });
+  await c.click("pr-break-edit", { id: BREAKS[0].id });
+  c.input("brk-item-0-value", "abc");
+  await c.click("pr-break-save", {});
+  assert.match(c.model.breaks.formError, /percent/);
+  assert.equal(door.calls.some((x) => Array.isArray(x) && x[0] === "previewFloor"), false);
+});
+
+test("a break delete is two taps with the version; an add row joins the schedule", async () => {
+  const door = fakeBreaksDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "breaks" });
+  await c.click("pr-break-edit", { id: BREAKS[0].id });
+  c.click("pr-break-add-item", {});
+  assert.equal(c.model.breaks.editing.items.length, 2);
+  c.input("brk-item-1-from", "50");
+  c.change("brk-item-1-type", "PCT_OFF");
+  c.input("brk-item-1-value", "8");
+  await c.click("pr-break-save", {});
+  const update = door.calls.find((x) => Array.isArray(x) && x[0] === "updateBreak");
+  assert.equal(update[2].items.length, 2);
+  assert.equal(update[2].items[1].from_qty, 50);
+  assert.equal(update[2].items[1].discount_bps, 800);
+
+  c.click("pr-break-del", { id: BREAKS[0].id });
+  assert.equal(c.model.breaks.confirmingId, BREAKS[0].id);
+  await c.click("pr-break-del", { id: BREAKS[0].id });
+  const del = door.calls.find((x) => Array.isArray(x) && x[0] === "deleteBreak");
+  assert.deepEqual(del[2], { version: 2 });
+  assert.match(c.model.breaks.notice, /Retired/);
+});
