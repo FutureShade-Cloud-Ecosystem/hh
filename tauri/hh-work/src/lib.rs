@@ -45,6 +45,34 @@ async fn run_atomic(statements: Vec<SqlStatement>, store: tauri::State<'_, Store
     blocking(move || store.atomic(statements)).await
 }
 
+// The built shell's role leg proof (feature `shell-proof`, off by default,
+// compiled out of every shipped build): proof.js is injected into every frame
+// of the main window, drives the host page through its role leg and reports
+// one JSON string here. The command prints the single HH_SHELL_PROOF line
+// and ends the run. The webview cannot turn the mode on (the gate is a
+// compile time feature, there is no command that enables it) and the command
+// grants nothing else: it reads and writes nothing.
+#[cfg(feature = "shell-proof")]
+#[tauri::command]
+fn proof_report(app: tauri::AppHandle, json: String) {
+    println!("HH_SHELL_PROOF {json}");
+    app.exit(0);
+}
+
+// The proof run ends by itself even if the page never reports: after this
+// long it prints a timeout line and exits non zero.
+#[cfg(feature = "shell-proof")]
+const PROOF_WATCHDOG_SECS: u64 = 120;
+
+#[cfg(feature = "shell-proof")]
+fn start_proof_watchdog(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(PROOF_WATCHDOG_SECS));
+        println!("HH_SHELL_PROOF {{\"ok\":false,\"error\":\"the page did not report in time\"}}");
+        app.exit(1);
+    });
+}
+
 // One startup line naming the profile the shell is running (the gates and
 // device legs read it; nothing here is secret: profile facts only, never
 // tokens or keys). The update values are the Work channel's configuration
@@ -90,19 +118,31 @@ fn print_profile_only(args: impl Iterator<Item = String>) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // The Work channel's updater (see tauri.conf.json plugins.updater and
         // the README): registered, but nothing polls until the shell chrome's
         // update prompt asks, so the placeholder endpoint stays idle.
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![
-            run_statement,
-            run_atomic,
-            auth::auth_sign_in,
-            auth::auth_resume,
-            auth::auth_exchange,
-            auth::auth_sign_out
-        ])
+        .plugin(tauri_plugin_updater::Builder::new().build());
+    #[cfg(feature = "shell-proof")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        proof_report,
+        run_statement,
+        run_atomic,
+        auth::auth_sign_in,
+        auth::auth_resume,
+        auth::auth_exchange,
+        auth::auth_sign_out
+    ]);
+    #[cfg(not(feature = "shell-proof"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        run_statement,
+        run_atomic,
+        auth::auth_sign_in,
+        auth::auth_resume,
+        auth::auth_exchange,
+        auth::auth_sign_out
+    ]);
+    builder
         .setup(|app| {
             let profile = profiles::work();
             println!("HH_PROFILE {}", profile_line(&app.config().plugins));
@@ -110,10 +150,16 @@ pub fn run() {
             // The sign in commands' state: custody and the Console client, built
             // from the profile's fixed configuration (never the webview's).
             app.manage(auth::AuthState::for_profile());
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+            #[cfg(feature = "shell-proof")]
+            start_proof_watchdog(app.handle().clone());
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title(profile.window.title)
-                .inner_size(profile.window.width, profile.window.height)
-                .build()?;
+                .inner_size(profile.window.width, profile.window.height);
+            // The proof driver reaches the front door's frame as well, which
+            // answers the demo mint locally (there is no core in this run).
+            #[cfg(feature = "shell-proof")]
+            let window = window.initialization_script_for_all_frames(include_str!("../proof.js"));
+            window.build()?;
             if print_profile_only(std::env::args()) {
                 app.handle().exit(0);
             }

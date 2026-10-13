@@ -208,8 +208,10 @@ describe.each(["field", "work"] as const)("%s launcher paths", (shell) => {
     const script = readFileSync(scriptPath, "utf8");
     // Staff apps build in demo mode, with their own base, into the dist.
     expect(script).toContain("--mode demo --base=");
-    // The front door (default mode) is the entry at the root.
-    expect(script).toContain("web/apps/front-door");
+    // Field: the front door is the entry at the root. Work: the host
+    // (web/apps/work-shell) is the entry and the front door a page under it,
+    // built like every other app (see "work shell host assembly" below).
+    expect(script).toContain(shell === "field" ? "web/apps/front-door" : "build_app front-door /door/");
     expect(script).toContain(`tauri/core/profiles/${shell}.json`);
     expect(script).toContain('"$DIST/profile.json"');
     expect(script).toContain(`tauri/hh-${shell}/dist`);

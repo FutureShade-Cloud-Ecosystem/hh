@@ -182,6 +182,8 @@ export class WorkShellHost extends HHElement {
   #menuOpen = false;
   #notice = "";
   #consoleSession: ConsoleSession | null = null;
+  /** What the shell's own sign in answered at boot: no invoke (a browser), unavailable (no Console configured), or a resumed session. */
+  #consoleState: "pending" | "no-invoke" | "unavailable" | "resumed" = "pending";
   #doorPoll: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -244,9 +246,13 @@ export class WorkShellHost extends HHElement {
       this.#consoleSession = createConsoleSession({ invoke, org: DEMO_ORG_SLUG });
       const resumed = await this.#consoleSession.resume();
       if (resumed !== null) {
+        this.#consoleState = "resumed";
         this.#signIn(resumed);
         return;
       }
+      this.#consoleState = "unavailable";
+    } else {
+      this.#consoleState = "no-invoke";
     }
     // A reload that finds the front door's key still in place restores that role.
     const waiting = readDoorSession();
@@ -401,7 +407,7 @@ export class WorkShellHost extends HHElement {
     const roleCode = state.phase === "desk" ? state.session.roleCode : "";
     const appId = state.phase === "desk" ? (state.currentAppId ?? "") : "";
     return html`
-      <div class="shell" data-testid="ws-shell" data-phase=${state.phase} data-role=${roleCode} data-current-app=${appId}>
+      <div class="shell" data-testid="ws-shell" data-phase=${state.phase} data-role=${roleCode} data-current-app=${appId} data-console=${this.#consoleState}>
         ${this.#fault !== "" ? this.#faultView() : state.phase === "door" ? this.#door() : this.#desk(state)}
       </div>
     `;
