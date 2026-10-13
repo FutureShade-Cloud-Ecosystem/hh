@@ -329,7 +329,7 @@ H.tenantCreatePayment = async (ctx) => {
     idempotency_key: key,
   };
   for (const inv of targets) {
-    inv.payment_history.push({ payment_id: payment.id, amount_cents: inv.balance_cents, method: payment.method, received_at: nowIso });
+    inv.payment_history.push({ id: payment.id, amount_cents: inv.balance_cents, method: payment.method, status: payment.status, received_at: nowIso });
     inv.balance_cents = 0;
     inv.status = "PAID";
   }

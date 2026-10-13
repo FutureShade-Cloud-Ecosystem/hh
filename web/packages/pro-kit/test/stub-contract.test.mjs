@@ -53,7 +53,7 @@ const coreSource = [
 
 function generatedOperations() {
   const ops = [];
-  for (const file of readdirSync(gen).filter((f) => /^tenant-.*\.ts$/.test(f))) {
+  for (const file of readdirSync(gen).sort().filter((f) => /^tenant-.*\.ts$/.test(f))) {
     const text = readFileSync(join(gen, file), "utf8");
     const re = /export async function (\w+)\([\s\S]*?\): Promise<Result<(.+?)>> \{\s*return client\.request<[^>]*>\(\{\s*method: "(\w+)",\s*path: "([^"]+)"/g;
     for (const m of text.matchAll(re)) ops.push({ operationId: m[1], response: m[2], method: m[3], path: m[4] });
@@ -287,6 +287,28 @@ test("every served operation answers with its contract shape and nothing the con
     checked += 1;
   }
   assert.ok(checked >= 40, `only ${checked} shapes were checked`);
+});
+
+// The shape test above visits operations in the generated files' order, and a payment made before the invoice is read
+// puts a history row on it. The CI runner's directory order differed from a workstation's and so reached this row;
+// hold it here in a fixed order, on a paid invoice and on one the test pays itself.
+test("an invoice's payment history carries only what the contract declares, whatever order operations ran in", async () => {
+  const i = await ids();
+  const descriptor = descriptorFor("TenantInvoiceDetail");
+  const shape = async (id, label) => {
+    const answer = await call("owner", "GET", `${T}/invoices/${id}`);
+    assert.equal(answer.status, 200, label);
+    assert.ok(answer.json.payment_history.length > 0, `${label} has no history to check`);
+    assert.deepEqual(validateValue(answer.json, descriptor), [], label);
+    const extra = [];
+    undeclared(answer.json, descriptor, label, extra);
+    assert.deepEqual(extra, [], `${label} carries fields the contract does not declare`);
+  };
+  const invoices = (await call("owner", "GET", `${T}/invoices`)).json.items;
+  await shape(invoices.find((v) => v.status === "PAID").id, "paid invoice");
+  const paid = await call("owner", "POST", `${T}/payments`, { invoice_ids: [i.invoicePayable], payment_method_id: i.method });
+  assert.equal(paid.status, 201);
+  await shape(i.invoicePayable, "invoice paid in this test");
 });
 
 test("the two delete operations answer 204 with no body", async () => {

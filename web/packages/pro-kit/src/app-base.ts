@@ -9,9 +9,8 @@
 // signs in (the adapter proves who they are, tenant me answers the role and the
 // capabilities), and the frame appears around the landing surface. The landing
 // surface loads through the tenant client. A role that does not hold the
-// surface's capability sees the refusal state without a call; a 401 or 403 from
-// the server is the same refusal; any other failure is the error state with a
-// retry; an empty answer is the empty state in the app's own words.
+// surface's capability sees the refusal state without a call; a 403 from the
+// server is the same refusal, a 401 signs the person out; any other failure is the error state with a retry; an empty answer is the empty state in the app's own words.
 //
 // Position gate: no bound property or event in any template; the root listens
 // on itself and acts on data- action names, and tells the child elements what
@@ -182,7 +181,12 @@ export abstract class ProAppBase<T> extends HHElement {
     if (sequence !== this.#loads || this.#session.profile() === null) return;
     if (answer.ok) {
       this.#view = answer.value.length === 0 ? { kind: "empty" } : { kind: "ready", items: answer.value };
-    } else if (answer.status === 401 || answer.status === 403) {
+    } else if (answer.status === 401) {
+      // The session is gone (expired, or the person was deactivated): sign out and say so, never blame the role.
+      this.#message = "You are signed out. Sign in again.";
+      await this.#session.signOut();
+      return;
+    } else if (answer.status === 403) {
       this.#view = { kind: "refusal" };
     } else {
       this.#view = { kind: "error" };

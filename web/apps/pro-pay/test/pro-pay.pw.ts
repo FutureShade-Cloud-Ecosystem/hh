@@ -265,6 +265,35 @@ test.describe("phone", () => {
     await expect(panel.getByRole("button", { name: "Payment methods" })).toHaveCount(0);
   });
 
+  test("a lapsed session on the landing signs the person out with a plain message, not a role refusal", async ({ page, request }) => {
+    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/invoices", status: 401 } } });
+    await signIn(page, "ap");
+    await expect(page.getByTestId("signin-message")).toHaveText("You are signed out. Sign in again.");
+    await expect(page.locator("hh-pro-frame")).toHaveCount(0);
+    await expect(page.getByTestId("landing-state")).toHaveCount(0);
+  });
+
+  test("a session that lapses while paying signs the person out and no payment is recorded", async ({ page, request }) => {
+    await signIn(page, "ap");
+    await pickAllAndOpenSheet(page);
+    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/payments", status: 401 } } });
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("signin-message")).toHaveText("You are signed out. Sign in again.");
+    await expect(page.locator("hh-pro-frame")).toHaveCount(0);
+    await request.post("/_stub/reset");
+    expect((await paymentsHeld(page, "ap")).length).toBe(2);
+  });
+
+  test("a surface in another app says it opens that app and asks to sign in again, one in this app says nothing", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("frame-selector").click();
+    const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
+    const elsewhere = panel.locator("button[data-app]:not([data-app='pay'])");
+    expect(await elsewhere.count()).toBeGreaterThan(0);
+    await expect(panel.locator("button[data-app='pay'] [data-testid='opens-note']")).toHaveCount(0);
+    await expect(elsewhere.first().getByTestId("opens-note")).toContainText("sign in again");
+  });
+
   test("a role without billing sees the refusal state and no call is made for it", async ({ page }) => {
     const calls: string[] = [];
     page.on("request", (r) => calls.push(new URL(r.url()).pathname));

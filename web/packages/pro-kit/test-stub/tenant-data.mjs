@@ -308,7 +308,7 @@ export function createWorld(now = Date.now()) {
       allocations: [{ invoice_id: w.invoices[2].id, amount_cents: 150_000, created_at: at(-6) }],
     },
   ];
-  w.invoices[0].payment_history = [{ payment_id: w.payments[0].id, amount_cents: w.payments[0].amount_cents, method: "CARD", received_at: at(-25) }];
+  w.invoices[0].payment_history = [{ id: w.payments[0].id, amount_cents: w.payments[0].amount_cents, method: "CARD", status: "DEPOSITED", received_at: at(-25) }];
 
   w.returnRequests = [];
   w.recompute = () => {
