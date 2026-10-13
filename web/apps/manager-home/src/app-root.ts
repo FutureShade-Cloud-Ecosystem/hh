@@ -630,7 +630,7 @@ export class ManagerHomeApp extends HHElement {
       return;
     }
     this.#patchReporting({ busy: true, formError: "", sheetError: "", sheetNotice: "" });
-    const result = await this.#reportingApi.exportTemplateCsv(this.#reporting.selectedCode);
+    const result = await this.#reportingApi.exportTemplateCsv(this.#reporting.selectedCode, this.#paramsForSend());
     if (result.ok) {
       const name = csvName(this.#reporting.selectedCode, this.#paramsForSend());
       saveCsv(result.value, name);
@@ -670,10 +670,10 @@ export class ManagerHomeApp extends HHElement {
     }
     const outcome = openReportDocument(doc.value);
     const words = outcome.ok
-      ? `Print job queued and the document opened at the paper.`
-      : `Print job queued: allow pop-ups to open the document at the paper.`;
+      ? "Print job queued and the document opened at the paper."
+      : "Print job queued: allow pop-ups to open the document at the paper.";
     if (target === "sheet") this.#patchReporting({ sheetNotice: words });
-    else this.#patchReporting({ runsPhase: "ready" });
+    else this.#patchReporting({ docNotice: words });
   }
 
   // -- Reporting · saved views ---------------------------------------------------------------------
@@ -733,10 +733,10 @@ export class ManagerHomeApp extends HHElement {
 
   async #expandReportingRun(id: string): Promise<void> {
     if (this.#reporting.expandedDocId === id) {
-      this.#patchReporting({ expandedDocId: "", expandedDoc: null, expandedDocPhase: "ready", expandedDocError: "" });
+      this.#patchReporting({ expandedDocId: "", expandedDoc: null, expandedDocPhase: "ready", expandedDocError: "", docNotice: "" });
       return;
     }
-    this.#patchReporting({ expandedDocId: id, expandedDocPhase: "loading", expandedDocError: "" });
+    this.#patchReporting({ expandedDocId: id, expandedDocPhase: "loading", expandedDocError: "", docNotice: "" });
     const result = await this.#reportingApi.run(id);
     if (!result.ok) {
       this.#patchReporting({ expandedDocPhase: "error", expandedDocError: reportingRefusalWords(result.error, result.status) });

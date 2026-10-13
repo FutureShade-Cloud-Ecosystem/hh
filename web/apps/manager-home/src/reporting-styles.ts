@@ -173,8 +173,7 @@ export const reportingStyles = css`
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
-  .grid-wrap td.num,
-  .grid-wrap th.num {
+  .grid-wrap .num {
     text-align: right;
     font-family: var(--hh-font-mono);
   }

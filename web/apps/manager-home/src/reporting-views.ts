@@ -111,6 +111,7 @@ export function emptyReporting(today: Date = new Date()): ReportingModel {
     expandedDocPhase: "ready",
     expandedDoc: null,
     expandedDocError: "",
+    docNotice: "",
     rulesPhase: "loading",
     rulesError: "",
     rulesRefusal: "",
@@ -209,6 +210,7 @@ export interface ReportingModel {
   readonly expandedDocPhase: "loading" | "ready" | "error";
   readonly expandedDoc: RunView | null;
   readonly expandedDocError: string;
+  readonly docNotice: string;
   // Rules pane.
   readonly rulesPhase: "loading" | "ready" | "error";
   readonly rulesError: string;
@@ -360,10 +362,20 @@ function renderParam(p: { name: string; kind: string; required: boolean; label: 
       </label>
     `;
   }
+  // The placeholder is static in both branches: every interpolation in an
+  // attribute outside the gate's allow list is refused, whatever it carries.
+  if (p.kind === "int") {
+    return html`
+      <label class="field">
+        <span class="field-label">${p.label}${p.required ? "" : " (optional)"}</span>
+        <input type="text" class="text-field" data-param=${p.name} aria-label=${p.label} placeholder="0" autocomplete="off" />
+      </label>
+    `;
+  }
   return html`
     <label class="field">
       <span class="field-label">${p.label}${p.required ? "" : " (optional)"}</span>
-      <input type="text" class="text-field" data-param=${p.name} aria-label=${p.label} placeholder=${p.kind === "int" ? "0" : "id"} autocomplete="off" />
+      <input type="text" class="text-field" data-param=${p.name} aria-label=${p.label} placeholder="id" autocomplete="off" />
     </label>
   `;
 }
@@ -433,14 +445,14 @@ function renderResultGrid(res: ReportResultView): TemplateResult {
         <table>
           <thead>
             <tr>
-              ${res.columns.map((c) => html`<th class=${cellClass(c.kind)}>${c.label}</th>`)}
+              ${res.columns.map((c) => html`<th class="cell${numericCellClass(c.kind)}">${c.label}</th>`)}
             </tr>
           </thead>
           <tbody>
             ${res.rows.map(
               (row) => html`
                 <tr>
-                  ${res.columns.map((c, i) => html`<td class=${cellClass(c.kind)}>${formatCell(c.kind, row[i])}</td>`)}
+                  ${res.columns.map((c, i) => html`<td class="cell${numericCellClass(c.kind)}">${formatCell(c.kind, row[i])}</td>`)}
                 </tr>
               `,
             )}
@@ -450,7 +462,7 @@ function renderResultGrid(res: ReportResultView): TemplateResult {
                 <tfoot>
                   <tr>
                     ${res.columns.map(
-                      (c, i) => html`<td class=${cellClass(c.kind)}>${i === 0 ? "Total" : totalCell(c, res.totals)}</td>`,
+                      (c, i) => html`<td class="cell${numericCellClass(c.kind)}">${i === 0 ? "Total" : totalCell(c, res.totals)}</td>`,
                     )}
                   </tr>
                 </tfoot>
@@ -464,8 +476,8 @@ function renderResultGrid(res: ReportResultView): TemplateResult {
   `;
 }
 
-function cellClass(kind: string): string {
-  return isNumericKind(kind) ? "num" : "";
+function numericCellClass(kind: string): string {
+  return isNumericKind(kind) ? " num" : "";
 }
 
 // -- Runs pane --------------------------------------------------------------------------------------
@@ -527,6 +539,7 @@ function renderRunDetail(model: ReportingModel, run: RunView | null): TemplateRe
       <div class="row-actions">
         <button type="button" class="btn btn-secondary" data-action="reporting-open-doc" data-run-id=${run.id} ?disabled=${model.expandedDocId !== "" && model.expandedDocPhase === "loading"}>Open the document</button>
       </div>
+      ${model.docNotice !== "" ? html`<p class="notice-line" data-test="reporting-doc-notice">${model.docNotice}</p>` : nothing}
       <p class="notice-line">The document opens at the paper: the frozen copy the server stored, not a rerun.</p>
     </div>
   `;
@@ -780,7 +793,7 @@ function renderLines(period: PeriodView | null): TemplateResult {
           ${lines.map((l) => {
             const unpaid = lineIsUnpaid(l);
             return html`
-              <tr class=${unpaid ? "unpaid" : ""} data-line=${l.invoiceNo}>
+              <tr class="line${unpaid ? " unpaid" : ""}" data-line=${l.invoiceNo}>
                 <td>${l.invoiceNo}</td>
                 <td>${dateWords(l.invoiceDate)}</td>
                 <td>${l.customerName}</td>

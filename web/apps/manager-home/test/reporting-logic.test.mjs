@@ -141,13 +141,12 @@ test("the result summary names the row count and the leading money total", () =>
     category: "SALES",
     columns: [COL("day", "date"), { name: "total_cents", label: "Total", kind: "cents", total: true }],
     rows: [],
-    row_count: 83,
+    rowCount: 83,
     totals: { total_cents: 123456 },
     params: {},
-    run_at: "2026-10-14T09:00:00Z",
   };
   assert.equal(resultSummary(res), "83 rows · Total $1,234.56");
-  assert.equal(resultSummary({ ...res, row_count: 1 }), "1 row · Total $1,234.56");
+  assert.equal(resultSummary({ ...res, rowCount: 1 }), "1 row · Total $1,234.56");
   assert.equal(resultSummary({ ...res, columns: [COL("day", "date")] }), "83 rows");
   assert.equal(resultSummary(null), "");
 });
@@ -188,10 +187,10 @@ test("a reporting refusal keeps the server's own sentence, the one word wall bec
 });
 
 test("a commission line that earned nothing is marked, a zero with a rate is a real zero", () => {
-  assert.equal(lineIsUnpaid({ no_rule_reason: "no rule covers this category" }), true);
-  assert.equal(lineIsUnpaid({ rate_bps: 0, commission_cents: 0 }), true);
-  assert.equal(lineIsUnpaid({ rate_bps: 500, commission_cents: 0 }), false);
-  assert.equal(lineIsUnpaid({ rate_bps: 500, commission_cents: 1234 }), false);
+  assert.equal(lineIsUnpaid({ noRuleReason: "no rule covers this category" }), true);
+  assert.equal(lineIsUnpaid({ rateBps: 0, commissionCents: 0 }), true);
+  assert.equal(lineIsUnpaid({ rateBps: 500, commissionCents: 0 }), false);
+  assert.equal(lineIsUnpaid({ rateBps: 500, commissionCents: 1234 }), false);
 });
 
 test("basis and period labels read as words", () => {
@@ -209,12 +208,12 @@ test("basis and period labels read as words", () => {
 });
 
 test("the unattributed caveat is the server's own numbers, stated, or nothing", () => {
-  const periods = [{ unattributed_count: 2, unattributed_cents: 12345 }];
+  const periods = [{ unattributedCount: 2, unattributedCents: 12345 }];
   assert.equal(
     unattributedWords(periods),
     "$123.45 of revenue over 2 lines is not attributed to any rep (the house queue). It earns no commission and is not in the figures above.",
   );
-  assert.equal(unattributedWords([{ unattributed_count: 1, unattributed_cents: 500 }]), "$5.00 of revenue over 1 line is not attributed to any rep (the house queue). It earns no commission and is not in the figures above.");
-  assert.equal(unattributedWords([{ unattributed_count: 0, unattributed_cents: 0 }]), "");
+  assert.equal(unattributedWords([{ unattributedCount: 1, unattributedCents: 500 }]), "$5.00 of revenue over 1 line is not attributed to any rep (the house queue). It earns no commission and is not in the figures above.");
+  assert.equal(unattributedWords([{ unattributedCount: 0, unattributedCents: 0 }]), "");
   assert.equal(unattributedWords([]), "");
 });

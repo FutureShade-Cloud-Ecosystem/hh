@@ -362,9 +362,23 @@ export class ReportingApi {
     return answer.ok ? { ok: true, value: toTemplate(answer.value) } : answer;
   }
 
-  /** Run a template: the server computes the rows, this door carries them. */
+  /**
+   * Run a template: the server computes the rows, this door carries them.
+   *
+   * The run's query keys are the template's declared parameters, which differ
+   * per template, so the contract documents them in the operation's
+   * description and the generated function carries no query slot. The call
+   * rides the generated client's own transport here, on the same path and
+   * operationId, with the parameters as the query.
+   */
   async runTemplate(code: string, params: Record<string, string>): Promise<Result<ReportResultView>> {
-    const answer = await staffReporting.reportingRunTemplate(this.#client, code, params);
+    const answer = await this.#client.request<unknown>({
+      method: "GET",
+      path: "/api/v1/reporting/templates/{code}/run",
+      pathParams: { code },
+      query: params,
+      operationId: "reportingRunTemplate",
+    });
     if (!answer.ok) return answer;
     const r = bag(answer.value);
     return {
@@ -382,9 +396,19 @@ export class ReportingApi {
     };
   }
 
-  /** The template's CSV, fetched with the caller's bearer. The server's body is text. */
-  async exportTemplateCsv(code: string): Promise<Result<string>> {
-    return staffReporting.reportingExportTemplateCsv(this.#client, code);
+  /**
+   * The template's CSV, fetched with the caller's bearer. The query rides the
+   * run's own dynamic keys, for the same reason runTemplate's does.
+   */
+  async exportTemplateCsv(code: string, params: Record<string, string>): Promise<Result<string>> {
+    return this.#client.request<string>({
+      method: "GET",
+      path: "/api/v1/reporting/templates/{code}/export.csv",
+      pathParams: { code },
+      query: params,
+      textResponse: true,
+      operationId: "reportingExportTemplateCsv",
+    });
   }
 
   /** Print freezes an artefact server-side and queues the paper. */
@@ -575,10 +599,10 @@ export interface ReportWindow {
  * becomes the operator words, never a silent no-op.
  */
 export function openReportDocument(
-  html: string,
+  documentHtml: string,
   openWindow: () => ReportWindow | null = openBlankWindow,
 ): PrintOutcome {
-  return printReceiptInto(openWindow(), html);
+  return printReceiptInto(openWindow(), documentHtml);
 }
 
 /**
