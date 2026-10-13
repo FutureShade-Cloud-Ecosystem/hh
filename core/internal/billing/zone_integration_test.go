@@ -15,7 +15,6 @@ import (
 func TestIntegrationInvoiceWriter_DatesFollowTheDealersZone(t *testing.T) {
 	pool := intPool(t)
 	ctx := context.Background()
-	cust := seedCustomer(t, pool, ns(t))
 	at := zoneInstant
 	for _, tc := range []struct {
 		name       string
@@ -25,6 +24,7 @@ func TestIntegrationInvoiceWriter_DatesFollowTheDealersZone(t *testing.T) {
 		{"Los Angeles", zoneOf(t, "America/Los_Angeles"), "2026-08-26", "2026-09-25"},
 		{"Toronto", zoneOf(t, "America/Toronto"), "2026-08-27", "2026-09-26"},
 	} {
+		cust := seedCustomer(t, pool, ns(t)+tc.name) // a customer per case: one order key must not replay the other
 		w := NewInvoiceWriter(pool).
 			WithOrderSource(houseDaySource{customer: cust, branch: trentonBranch}).
 			WithClock(func() time.Time { return at }).
