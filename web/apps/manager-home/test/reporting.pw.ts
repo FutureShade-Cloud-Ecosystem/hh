@@ -153,3 +153,21 @@ test("compute freezes a rep's period and the stored run takes the CSV and the pr
   await expect(page.locator("[data-test='reporting-cruns'] tbody tr").first()).toContainText("Lines");
   await expect(page.locator("[data-test='reporting-periods'] [data-action='reporting-crun-csv']").first()).toBeVisible();
 });
+
+test("a stored commission run prints at the commission pane's own branch, never the Templates print-at pick", async ({ page }) => {
+  await openReporting(page);
+  // The Templates pane has a print-at branch picked.
+  await page.getByRole("button", { name: "Print" }).click();
+  await page.locator("[data-field='print-at']").selectOption({ label: "Dibbits Landscape Supply · Trenton" });
+  await page.locator(".kind-tab", { hasText: "Accruals" }).click();
+  await page.getByRole("button", { name: "Preview period" }).click();
+  await expect(page.locator("[data-test='reporting-periods']")).toBeVisible();
+  await page.locator("[data-action='reporting-compute']").click();
+  await expect(page.locator("[data-test='reporting-notice']")).toContainText("Computed");
+  // The period covers every branch and this pane names none, so the server's
+  // own refusal answers; the other pane's pick sends the paper nowhere.
+  await page.locator("[data-test='reporting-periods'] [data-action='reporting-crun-print']").first().click();
+  await expect(page.locator("[data-test='reporting-error']")).toHaveText(
+    "this commission period covers every branch, name the branch to print it at",
+  );
+});

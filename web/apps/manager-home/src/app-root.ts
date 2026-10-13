@@ -983,7 +983,7 @@ export class ManagerHomeApp extends HHElement {
     const reg = this.#reporting.register;
     if (reg.runBusyId !== "") return;
     this.#patchReporting({ register: { ...reg, runBusyId: runId, error: "", notice: "" } });
-    const printed = await this.#reportingApi.printCommissionRun(runId, this.#printBranchId());
+    const printed = await this.#reportingApi.printCommissionRun(runId, this.#commissionBranchId());
     if (!printed.ok) {
       this.#patchReporting({ register: { ...this.#reporting.register, runBusyId: "", error: reportingRefusalWords(printed.error, printed.status) } });
       return;
