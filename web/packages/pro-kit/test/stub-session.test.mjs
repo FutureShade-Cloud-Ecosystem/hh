@@ -4,10 +4,6 @@
 // Nothing about the person comes from a local table.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { tenantAuth, tenantDashboard } from "@hardscapehouse/api-client";
 import { InMemoryTenantSession } from "../src/session.ts";
 import { stubAdapter } from "../src/stub-adapter.ts";
@@ -16,42 +12,19 @@ import { ROLE_LABELS } from "../src/capabilities.ts";
 import { tenantClient } from "../src/client.ts";
 import { can } from "../src/capabilities.ts";
 import { PERSONAS, STUB_PASSWORD } from "../test-stub/tenant-data.mjs";
+import { spawnStub } from "../test-stub/spawn-stub.mjs";
 
-const pkgDir = join(fileURLToPath(new URL(".", import.meta.url)), "..");
-let child;
+let stub;
 let base;
 
-// A free port inside the Pro cycle's own range (the kit's block is 56800 to 56809), never an ephemeral one.
-async function freePort(start, count) {
-  for (let port = start; port < start + count; port += 1) {
-    const free = await new Promise((resolve) => {
-      const probe = createServer();
-      probe.once("error", () => resolve(false));
-      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
-    });
-    if (free) return port;
-  }
-  throw new Error(`no free port in ${start} to ${start + count - 1}`);
-}
-
 before(async () => {
-  const port = await freePort(56802, 2);
-  base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [join(pkgDir, "test-stub", "tenant-stub.mjs")], { env: { ROLE_STUB_PORT: String(port), ROLE_STUB_IDLE_EXIT_MS: "120000" }, stdio: "ignore" });
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      if ((await fetch(`${base}/healthz`)).ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error("the stub did not start");
+  stub = await spawnStub();
+  base = stub.base;
 });
 
-// End the stub by its own door: no signal is ever sent to a process.
+// End the stub by its own door and await its exit: no signal is ever sent to a process.
 after(async () => {
-  await fetch(`${base}/_stub/exit`, { method: "POST" }).catch(() => {});
+  await stub.stop();
 });
 
 const sessionFor = () => new InMemoryTenantSession({ adapter: stubAdapter({ baseUrl: base }), baseUrl: base });

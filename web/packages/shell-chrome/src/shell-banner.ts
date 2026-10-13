@@ -51,6 +51,12 @@ const WORDS: Record<Exclude<ShellBannerMode, ''>, BannerWords> = {
   },
 };
 
+/** The words of an app that only reads from the copy on the device (no outbox, no keeper): nothing is said to wait or to send later. */
+const CACHE_ONLY_WORDS: Record<'offline' | 'unreachable', string> = {
+  offline: "You're offline · showing the copy on this device",
+  unreachable: "The server can't be reached · showing the copy on this device",
+};
+
 const styles = css`
   :host {
     display: block;
@@ -96,6 +102,7 @@ export class ShellBanner extends HHElement {
     ...HHElement.properties,
     mode: { attribute: 'mode' },
     waiting: { type: Number, attribute: 'waiting' },
+    cacheOnly: { type: Boolean, attribute: 'cache-only' },
   };
 
   /** The connection's truth: offline, unreachable, read-only (a second
@@ -103,11 +110,15 @@ export class ShellBanner extends HHElement {
   declare mode: string;
   /** The durable outbox's depth, health().waiting. */
   declare waiting: number;
+  /** An app with a read cache and no outbox: the offline and unreachable
+   * words say what the screen shows, never that writes wait or send later. */
+  declare cacheOnly: boolean;
 
   constructor() {
     super();
     this.mode = '';
     this.waiting = 0;
+    this.cacheOnly = false;
     this.state = 'ready';
   }
 
@@ -124,14 +135,16 @@ export class ShellBanner extends HHElement {
     const known = this.mode as Exclude<ShellBannerMode, ''>;
     const meta = WORDS[known];
     const words =
-      known === 'offline' && this.waiting > 0
-        ? `You're offline · ${this.waiting} changes in the outbox · they send when you're back`
-        : meta.words;
+      this.cacheOnly && (known === 'offline' || known === 'unreachable')
+        ? CACHE_ONLY_WORDS[known]
+        : known === 'offline' && this.waiting > 0
+          ? `You're offline · ${this.waiting} changes in the outbox · they send when you're back`
+          : meta.words;
     return html`
       <div class="banner banner-shell" role="status" data-mode=${this.mode}>
         ${icon(meta.iconName)}
         <span class="banner-text">${words}</span>
-        ${known === 'offline' && this.waiting > 0
+        ${known === 'offline' && this.waiting > 0 && !this.cacheOnly
           ? html`<span class="count" aria-hidden="true">${this.waiting}</span>`
           : nothing}
         ${known === 'auth-expired'

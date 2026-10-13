@@ -1,14 +1,18 @@
 // The live legs' own harness: the front door and the three Pro apps on one origin (test/live/serve-all.mjs), the
-// shared tenant stub behind them. The pair is in the Pro cycle's range (stub 56860, app 56861); the other
-// harnesses' pairs stay free.
+// shared tenant stub behind them. The stub and app ports are free ones taken at config load, overridable
+// inline with PRO_LIVE_STUB and PRO_LIVE_PORT.
 import { defineConfig } from "@playwright/test";
 import { fileURLToPath } from "node:url";
+import { freePorts } from "@hardscapehouse/pro-kit/test-stub/free-port.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const appDir = fileURLToPath(new URL("..", import.meta.url));
-const appPort = process.env.PRO_LIVE_PORT ?? "56861";
-const stubPort = process.env.PRO_LIVE_STUB ?? "56860";
+const [freeApp, freeStub] = await freePorts(2);
+process.env.PRO_LIVE_PORT ??= freeApp;
+process.env.PRO_LIVE_STUB ??= freeStub;
+const appPort = process.env.PRO_LIVE_PORT;
+const stubPort = process.env.PRO_LIVE_STUB;
 
 export default defineConfig({
   testDir: "./live",
