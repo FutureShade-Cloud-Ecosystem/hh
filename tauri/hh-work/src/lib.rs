@@ -234,6 +234,15 @@ mod tests {
     }
 
     #[test]
+    fn print_profile_is_the_only_argument_that_ends_the_run_after_setup() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>().into_iter();
+        assert!(super::print_profile_only(args(&["hh-work", "--print-profile"])));
+        assert!(!super::print_profile_only(args(&["hh-work"])));
+        assert!(!super::print_profile_only(args(&["hh-work", "--print-profile-and-more"])));
+        assert!(!super::print_profile_only(args(&["hh-work", "print-profile"])));
+    }
+
+    #[test]
     fn the_startup_line_names_the_work_profile_and_its_offline_blocks() {
         let mut plugins = std::collections::HashMap::new();
         let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
