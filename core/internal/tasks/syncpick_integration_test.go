@@ -46,6 +46,8 @@ type pickDoor struct {
 	f       hhsync.ScopeFilter
 	// authority is what the staff seam answers; tests replace it.
 	authority func() (identity.StaffContext, bool, error)
+	// user is the linked ERP user the default authority answers.
+	user string
 	// actors records who the record body was asked to attribute to.
 	actors []string
 }
@@ -91,9 +93,21 @@ func newPickDoor(t *testing.T) *pickDoor {
 		}
 	})
 	d.svc = NewService(NewRepository(pool)).WithYardOrderChanges(d.yard)
-	link := func(_ context.Context, sub string) (string, bool) { return "", false }
+	// The caller is a linked ERP user, as the direct door requires (taskBranchFence answers 401 without one).
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO users (email, display_name, status) VALUES ($1, 'pick door leg', 'ACTIVE') RETURNING id::text`,
+		"pickdoor-"+d.org+"@example.invalid").Scan(&d.user); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = pool.Exec(bg, `DELETE FROM task_pick_lines WHERE picked_by = $1::uuid`, d.user)
+		_, _ = pool.Exec(bg, `DELETE FROM task_events WHERE actor_id = $1::uuid`, d.user)
+		_, _ = pool.Exec(bg, `DELETE FROM users WHERE id = $1::uuid`, d.user)
+	})
+	link := func(_ context.Context, sub string) (string, bool) { return d.user, true }
 	d.authority = func() (identity.StaffContext, bool, error) {
-		return identity.StaffContext{Scope: identity.ScopeGlobal, Status: identity.StatusActive}, true, nil
+		return identity.StaffContext{Scope: identity.ScopeGlobal, Status: identity.StatusActive, UserID: d.user}, true, nil
 	}
 	d.store = NewSyncStore(pool, pickDoorOrders{branch: d.branchA}, link).
 		WithPickRecorder(actorSpy{inner: d.svc, spy: &d.actors}).
@@ -305,7 +319,7 @@ func TestPickDoor_BranchFenceIsTheDirectDoors(t *testing.T) {
 	foreign := d.task(d.branchB)
 
 	d.authority = func() (identity.StaffContext, bool, error) {
-		return identity.StaffContext{Scope: identity.ScopeBranch, Status: identity.StatusActive, Branches: map[string]bool{d.branchA: true}}, true, nil
+		return identity.StaffContext{Scope: identity.ScopeBranch, Status: identity.StatusActive, UserID: d.user, Branches: map[string]bool{d.branchA: true}}, true, nil
 	}
 	if res := d.push(recordOp(uuid.NewString(), foreign, pickLine(1))); res[0].Status != "rejected" {
 		t.Fatalf("a branch scoped caller must not record another branch's pick: %+v", res[0])
@@ -317,7 +331,7 @@ func TestPickDoor_BranchFenceIsTheDirectDoors(t *testing.T) {
 		t.Fatalf("a branch scoped caller records their own branch: %+v %v", res[0], res[0].Error)
 	}
 	d.authority = func() (identity.StaffContext, bool, error) {
-		return identity.StaffContext{Scope: identity.ScopeGlobal, Status: identity.StatusActive}, true, nil
+		return identity.StaffContext{Scope: identity.ScopeGlobal, Status: identity.StatusActive, UserID: d.user}, true, nil
 	}
 	if res := d.push(recordOp(uuid.NewString(), foreign, pickLine(1))); res[0].Status != "applied" {
 		t.Fatalf("a global caller reaches every branch: %+v %v", res[0], res[0].Error)
@@ -327,7 +341,7 @@ func TestPickDoor_BranchFenceIsTheDirectDoors(t *testing.T) {
 		t.Fatalf("no staff authority in the org is a refusal: %+v", res[0])
 	}
 	d.authority = func() (identity.StaffContext, bool, error) {
-		return identity.StaffContext{Scope: identity.ScopeGlobal, Status: "SUSPENDED"}, true, nil
+		return identity.StaffContext{Scope: identity.ScopeGlobal, Status: "SUSPENDED", UserID: d.user}, true, nil
 	}
 	if res := d.push(recordOp(uuid.NewString(), own, pickLine(2))); res[0].Status != "rejected" {
 		t.Fatalf("an inactive staff member is a refusal: %+v", res[0])
@@ -396,16 +410,32 @@ func TestPickDoor_PartialRefusalOrdering(t *testing.T) {
 func TestPickDoor_ActorIsTheLinkedUser(t *testing.T) {
 	d := newPickDoor(t)
 	id := d.task(d.branchA)
-	linked := uuid.NewString()
-	d.store.link = func(_ context.Context, sub string) (string, bool) {
-		if sub == "pick-door-actor" {
-			return linked, true
-		}
-		return "", false
+	if res := d.push(recordOp(uuid.NewString(), id, pickLine(1))); res[0].Status != "applied" {
+		t.Fatalf("a linked caller records: %+v %v", res[0], res[0].Error)
 	}
-	// picked_by references users; the leg only needs the attribution handed to the body.
-	_ = d.push(recordOp(uuid.NewString(), id, pickLine(1)))
-	if len(d.actors) != 1 || d.actors[0] != linked {
+	if len(d.actors) != 1 || d.actors[0] != d.user {
 		t.Fatalf("the record body is attributed to the linked ERP user, got %v", d.actors)
+	}
+	var by string
+	if err := d.pool.QueryRow(context.Background(),
+		`SELECT picked_by::text FROM task_pick_lines WHERE task_id = $1::uuid AND order_line_no = 1`, id).Scan(&by); err != nil || by != d.user {
+		t.Fatalf("picked_by names the linked user: %q %v", by, err)
+	}
+}
+
+// The direct door answers 401 "yard: unauthenticated" to a staff login with no linked ERP user
+// (taskBranchFence); the sync door must not record, with no actor, for the same caller.
+func TestPickDoor_UnlinkedLoginIsRefusedLikeTheDirectDoor(t *testing.T) {
+	d := newPickDoor(t)
+	id := d.task(d.branchA)
+	d.authority = func() (identity.StaffContext, bool, error) {
+		return identity.StaffContext{Scope: identity.ScopeGlobal, Status: identity.StatusActive, UserID: ""}, true, nil
+	}
+	res := d.push(recordOp(uuid.NewString(), id, pickLine(1)))
+	if res[0].Status != "rejected" || res[0].Error == nil || !strings.Contains(*res[0].Error, "unauthenticated") {
+		t.Fatalf("want rejected with the direct door's words, got %+v", res[0])
+	}
+	if len(d.actors) != 0 || len(d.yard.picks) != 0 || len(d.lines(id)) != 0 {
+		t.Fatalf("an unattributed caller moves nothing: actors %q, order told %d times, %d lines", d.actors, len(d.yard.picks), len(d.lines(id)))
 	}
 }
