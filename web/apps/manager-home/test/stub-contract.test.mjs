@@ -159,7 +159,7 @@ test("the demo way in answers the contract's shapes for the flows this app's doo
   holds("DemoFlowList", flows);
   assert.deepEqual(
     flows.flows.map((f) => f.flow),
-    ["sales", "sales-manager", "yard-manager", "financial-controller"],
+    ["sales", "sales-manager", "yard-manager", "financial-controller", "payables-receivables", "procurement-manager", "branch-manager", "logistics-manager", "general-manager"],
   );
 });
 
@@ -1035,4 +1035,63 @@ test("the warranty walls answer the shared Forbidden body, and the intake photos
   });
   assert.equal(res.status, 200);
   assert.match(res.headers.get("content-type") ?? "", /image\/png/);
+});
+
+// Gap 15 of the per role homes: the stub carries one world per manager
+// profile, with the real widget counts and the needs sources the core files
+// (0201 and 0381 copies, the 0392 landings for procurement, sales and branch).
+const ROLE_WORLDS = [
+  { flow: "yard-manager", profile: "manager.yard", widgets: 7, needs: ["tasks.open_shortages", "tasks.stale_picks", "purchasing.receiving_differences"] },
+  { flow: "logistics-manager", profile: "manager.logistics", widgets: 7, needs: ["dispatch.unassigned", "dispatch.due_to_commit", "tasks.stale_picks"] },
+  { flow: "branch-manager", profile: "manager.branch", widgets: 8, needs: ["dispatch.due_to_commit", "dispatch.unassigned", "ar.escalation", "pos.parked"] },
+  { flow: "sales-manager", profile: "manager.sales", widgets: 8, needs: ["approvals.waiting", "ar.escalation", "pos.parked"] },
+  { flow: "procurement-manager", profile: "manager.procurement", widgets: 8, needs: ["tasks.open_shortages", "purchasing.receiving_differences"] },
+  { flow: "payables-receivables", profile: "manager.payables", widgets: 8, needs: ["ar.escalation", "pos.parked"] },
+  { flow: "financial-controller", profile: "manager.controller", widgets: 8, needs: ["approvals.waiting", "ar.escalation", "pos.parked"] },
+  { flow: "general-manager", profile: "manager.general", widgets: 9, needs: ["approvals.waiting", "ar.escalation", "dispatch.unassigned", "pos.parked"] },
+];
+
+test("all eight manager profiles answer their own landing with the real widget counts", async () => {
+  await reset();
+  for (const role of ROLE_WORLDS) {
+    const token = await mint(role.flow);
+    const widgets = await call("GET", "/api/v1/dashboard/widgets", { token });
+    assert.equal(widgets.status, 200, role.flow);
+    holds("DashboardWidgetLayout", widgets.json);
+    assert.equal(widgets.json.profile, role.profile, role.flow);
+    assert.equal(widgets.json.widgets.length, role.widgets, `${role.profile} widget count`);
+    const keys = widgets.json.widgets.map((w) => w.widget_key);
+    const data = await call("GET", `/api/v1/dashboard/widgets/data?${keys.map((k) => `key=${k}`).join("&")}`, { token });
+    assert.equal(data.status, 200, role.flow);
+    assert.equal(data.json.data.length, keys.length, `${role.profile} measures every widget`);
+    const needs = await call("GET", "/api/v1/dashboard/needs", { token });
+    assert.equal(needs.status, 200, role.flow);
+    holds("DashboardNeedsQueue", needs.json);
+    assert.equal(needs.json.profile, role.profile, role.flow);
+    assert.deepEqual(needs.json.rows.map((r) => r.source_key), role.needs, `${role.profile} needs rows`);
+  }
+});
+
+test("the 0392 landings: procurement leads with the yard's gaps, sales with selling, branch with the dock", async () => {
+  await reset();
+  const procurement = await call("GET", "/api/v1/dashboard/widgets", { token: await mint("procurement-manager") });
+  assert.equal(procurement.json.widgets[0].widget_key, "hero.inventory");
+  const sales = await call("GET", "/api/v1/dashboard/widgets", { token: await mint("sales-manager") });
+  assert.equal(sales.json.widgets[0].widget_key, "hero.sales");
+  assert.ok(!sales.json.widgets.some((w) => w.measure === "ar.aging"), "the receivables book is not the sales manager's");
+  const branch = await call("GET", "/api/v1/dashboard/needs", { token: await mint("branch-manager") });
+  assert.equal(branch.json.rows[0].source_key, "dispatch.due_to_commit");
+});
+
+test("approvals follow the deciders: leadership sees every kind waiting, no one else sees a freight row", async () => {
+  await reset();
+  const controller = await call("GET", "/api/v1/dashboard/needs", { token: await mint("financial-controller") });
+  const waiting = controller.json.rows.find((r) => r.source_key === "approvals.waiting");
+  assert.equal(waiting.count, 3, "one margin and the two freight raises");
+  const logistics = await call("GET", "/api/v1/dashboard/needs", { token: await mint("logistics-manager") });
+  assert.ok(!logistics.json.rows.some((r) => r.source_key === "approvals.waiting"));
+  const freight = await call("GET", "/api/v1/staff/approvals?kind=FREIGHT_ABOVE_QUOTE", { token: await mint("financial-controller") });
+  assert.equal(freight.json.items.length, 2);
+  const refused = await call("GET", "/api/v1/staff/approvals?kind=FREIGHT_ABOVE_QUOTE", { token: await mint("sales-manager") });
+  assert.equal(refused.status, 403);
 });

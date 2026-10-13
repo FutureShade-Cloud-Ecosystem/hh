@@ -157,8 +157,8 @@ test("an unmeasured card says which module is not connected, never a number", as
 test("the sales manager's landing comes from the sales profile: the same code, different rows", async ({ page }) => {
   await page.goto("/");
   await page.locator("[data-flow='sales-manager']").click();
-  await expect(page.locator("[data-widget]")).toHaveCount(3);
-  await expect(page.locator("[data-widget='sales.today'] .figure")).toHaveText("$1,234.56");
+  await expect(page.locator("[data-widget]")).toHaveCount(9);
+  await expect(page.locator("[data-widget='hero.sales'] .figure")).toHaveText("$1,234.56");
   await expect(page.locator("[data-widget='needs.you'] [data-needs='approvals.waiting'] .needs-count")).toHaveText("1");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Welcome back, sales manager.");
 });

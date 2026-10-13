@@ -39,10 +39,10 @@ test("a margin approval decides through the core's route and the queue empties",
   const row = page.locator("[data-approval]").first();
   await row.getByRole("button", { name: "Approve" }).click();
   await expect(row.locator(".meta")).toContainText("Approved");
-  // Back on the landing the queue is empty: the row is absent, not zero.
+  // Back on the landing the approvals row is absent, not zero; the sales manager's other rows stay.
   await page.getByRole("button", { name: "Back to Home" }).click();
   await expect(page.locator("[data-needs='approvals.waiting']")).toHaveCount(0);
-  await expect(page.locator("[data-widget='needs.you'] .needs-empty")).toContainText("Nothing is waiting on you right now.");
+  await expect(page.locator("[data-needs='ar.escalation']")).toHaveCount(1);
 });
 
 test("a kind the caller does not decide is said in plain words naming who decides it, no enum on screen", async ({ page }) => {
