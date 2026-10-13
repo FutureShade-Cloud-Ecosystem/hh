@@ -101,6 +101,29 @@ func (s *Service) FlagShortage(ctx context.Context, in ShortageInput) (Shortage,
 	return sh, nil
 }
 
+// NoticeShortage posts the counter's chat event for a shortage that is already stored: the sync create's
+// twin of the post FlagShortage makes after its insert. Best effort like every yard notice: a shortage
+// or task that cannot be read posts nothing.
+func (s *Service) NoticeShortage(ctx context.Context, taskID, shortageID string) {
+	if s.notifier == nil {
+		return
+	}
+	t, err := s.store.GetTask(ctx, taskID)
+	if err != nil {
+		return
+	}
+	rows, err := s.store.ListShortages(ctx, taskID, false)
+	if err != nil {
+		return
+	}
+	for _, sh := range rows {
+		if sh.ID == shortageID {
+			s.postShortageEvent(ctx, t, sh)
+			return
+		}
+	}
+}
+
 // RecordPick writes what the yard actually pulled, line by line (0187).
 //
 // EVERY LINE THE PICKER TOUCHED, IN ONE CALL, and the whole set is what a "record pick" gesture

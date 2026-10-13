@@ -309,7 +309,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// carry the ERP's own per-PO values), which is the D26 schema-shaped
 	// stop condition reported to the supervisor rather than routed
 	// around; both routes answer the honest 501 for it.
-	if err := syncEngine.RegisterScope("shortages", tasks.NewShortageSyncStore(pool, link)); err != nil {
+	shortageSync := tasks.NewShortageSyncStore(pool, link)
+	if err := syncEngine.RegisterScope("shortages", shortageSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("weights", tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
@@ -635,6 +636,9 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
 	// The sync record door's body is the yard service, the one the REST record door runs.
 	pickSync.WithPickRecorder(yardTasksSvc)
+	// A shortage created through sync tells the counter as the REST report does, through the yard
+	// service's notifier.
+	shortageSync.WithNoticer(yardTasksSvc)
 	if pool != nil && !pickSync.PickDoorWired() {
 		panic("tasks: pick record sync door not wired - a yard device's recorded pick would refuse every replay")
 	}
