@@ -226,6 +226,7 @@ describe("work launcher entries", () => {
     expect(ids).toEqual([
       "counter-till",
       "quote-desk",
+      "dispatch-board",
       "buying-and-stock",
       "money-desk",
       "manager-home",
