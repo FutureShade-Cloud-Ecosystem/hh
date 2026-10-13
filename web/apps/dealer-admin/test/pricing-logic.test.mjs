@@ -106,6 +106,27 @@ test("money renders from the server's cents, never recomputed", () => {
   assert.equal(centsFromMoneyInput("-1"), null);
 });
 
+test("money is parsed through the decimal string: a third decimal, an exponent, hex or a sign is refused", () => {
+  for (const bad of ["1.005", "20.005", "12.345", "1e3", "0x1F", "+1", "1.", ".5", "1,000", "1 0"]) {
+    assert.equal(centsFromMoneyInput(bad), null, bad);
+  }
+  assert.equal(centsFromMoneyInput("1.5"), 150);
+  assert.equal(centsFromMoneyInput("0.01"), 1);
+  assert.equal(centsFromMoneyInput("100"), 10000);
+  assert.equal(centsFromMoneyInput("20.5"), 2050);
+  assert.equal(centsFromMoneyInput(" 12.34 "), 1234);
+});
+
+test("a percent is parsed through the decimal string, with the same refusals", () => {
+  for (const bad of ["1.005", "20.005", "12.345", "1e3", "0x1F", "+1", "1."]) {
+    assert.equal(bpsFromPctInput(bad), null, bad);
+  }
+  assert.equal(bpsFromPctInput("1.5"), 150);
+  assert.equal(bpsFromPctInput("0.01"), 1);
+  assert.equal(bpsFromPctInput("100"), 10000);
+  assert.equal(bpsFromPctInput("20.5"), 2050);
+});
+
 test("a percent the person typed becomes integer basis points, or nothing", () => {
   assert.equal(bpsFromPctInput("30"), 3000);
   assert.equal(bpsFromPctInput("12.5"), 1250);
@@ -228,7 +249,7 @@ const RULE = {
 };
 
 test("a rule's value says what the calc does, in the calc's own unit", () => {
-  assert.equal(ruleValueWords({ ...RULE, calc_type: "ABSOLUTE", price_cents: 480 }), "CA$4.80 a SF");
+  assert.equal(ruleValueWords({ ...RULE, calc_type: "ABSOLUTE", price_cents: 480 }), "$4.80 a SF");
   assert.equal(ruleValueWords({ ...RULE, calc_type: "PCT_OFF_LIST", discount_bps: 1000 }), "10.00% off list");
   assert.equal(ruleValueWords({ ...RULE, calc_type: "MARKUP_ON_COST", markup_bps: 2500 }), "25.00% on cost");
   assert.equal(ruleValueWords({ ...RULE, calc_type: "ODD" }), "");
@@ -287,9 +308,9 @@ test("a break's band reads as the quantities it covers; an open top says so", ()
 
 test("a break's value says what the tier does, in the tier's own unit", () => {
   assert.equal(breakItemWords({ value_type: "PCT_OFF", discount_bps: 500 }), "5.00% off");
-  assert.equal(breakItemWords({ value_type: "ABS_OFF", discount_cents: 250 }), "CA$2.50 off");
+  assert.equal(breakItemWords({ value_type: "ABS_OFF", discount_cents: 250 }), "$2.50 off");
   assert.equal(breakItemWords({ value_type: "SURCHARGE_PCT", surcharge_bps: 300 }), "3.00% surcharge");
-  assert.equal(breakItemWords({ value_type: "SURCHARGE_ABS", surcharge_cents: 100 }), "CA$1.00 surcharge");
+  assert.equal(breakItemWords({ value_type: "SURCHARGE_ABS", surcharge_cents: 100 }), "$1.00 surcharge");
   assert.equal(breakItemWords({ value_type: "ODD" }), "");
 });
 
@@ -307,14 +328,14 @@ import {
 
 test("a promotion's value says what the calc does; the fixed price names its unit", () => {
   assert.equal(promoValueWords({ calc_type: "PCT_OFF", discount_bps: 1000 }), "10.00% off");
-  assert.equal(promoValueWords({ calc_type: "AMT_OFF", discount_cents: 150 }), "CA$1.50 off");
-  assert.equal(promoValueWords({ calc_type: "FIXED_PRICE", price_cents: 425, price_uom: "SF" }), "CA$4.25 a SF, fixed");
+  assert.equal(promoValueWords({ calc_type: "AMT_OFF", discount_cents: 150 }), "$1.50 off");
+  assert.equal(promoValueWords({ calc_type: "FIXED_PRICE", price_cents: 425, price_uom: "SF" }), "$4.25 a SF, fixed");
   assert.equal(promoValueWords({ calc_type: "ODD" }), "");
 });
 
 test("a clearance item without a price is the badge only case, said plainly", () => {
   assert.equal(clearanceValueWords({ clearance_price_cents: null, price_uom: "" }), "badge only, prices through the waterfall");
-  assert.equal(clearanceValueWords({ clearance_price_cents: 350, price_uom: "EA" }), "CA$3.50 an EA");
+  assert.equal(clearanceValueWords({ clearance_price_cents: 350, price_uom: "EA" }), "$3.50 an EA");
 });
 
 test("the promotions tab's empty words are its own", () => {
@@ -333,7 +354,7 @@ import {
 test("a rebate's rate renders in the shape its basis means, the original's own rule", () => {
   assert.equal(rebateRateWords({ basis: "PCT_OF_SALE", rate_bps: 200, rate_cents_per_unit: null }), "2.00% of sale");
   assert.equal(rebateRateWords({ basis: "PCT_OF_COST", rate_bps: 150, rate_cents_per_unit: null }), "1.50% of cost");
-  assert.equal(rebateRateWords({ basis: "AMT_PER_UNIT", rate_bps: null, rate_cents_per_unit: 40 }), "CA$0.40 a base unit");
+  assert.equal(rebateRateWords({ basis: "AMT_PER_UNIT", rate_bps: null, rate_cents_per_unit: 40 }), "$0.40 a base unit");
   assert.equal(rebateRateWords({ basis: "ODD", rate_bps: null, rate_cents_per_unit: null }), "");
 });
 
@@ -347,7 +368,7 @@ test("the accrual verdict is the server's own counts, told as what happened", ()
   const words = accrualResultWords({ accrued: [{ id: "1" }], skipped_count: 2, total_cents: 140 });
   assert.match(words, /1 accrual/);
   assert.match(words, /2 lines were already accrued/);
-  assert.match(words, /CA\$1\.40/);
+  assert.match(words, /\$1\.40/);
 });
 
 test("the rebates tab's empty words are its own", () => {
@@ -423,8 +444,8 @@ test("a batch status keeps its own word, voice lowered; a derivation says its an
 test("a batch line reads as before to after, with the outlier and the unmatched named", () => {
   const words = batchLineWords({ sku: "PAV-60-CH", before_retail_cents: 480, after_retail_cents: 520, is_outlier: true, unmatched: false });
   assert.match(words, /PAV-60-CH/);
-  assert.match(words, /CA\$4\.80/);
-  assert.match(words, /CA\$5\.20/);
+  assert.match(words, /\$4\.80/);
+  assert.match(words, /\$5\.20/);
   assert.match(words, /outlier/);
   assert.match(batchLineWords({ sku: "XX", before_retail_cents: null, after_retail_cents: null, is_outlier: false, unmatched: true }), /no catalog product/);
 });
