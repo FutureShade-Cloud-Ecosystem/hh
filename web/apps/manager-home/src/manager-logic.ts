@@ -8,6 +8,7 @@
 // home bento (repository hardscapeos_dibbits, read only; see PROVENANCE.md),
 // narrowed to the read-only landing this first slice builds.
 import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+import { needsLink } from "./landing-links.js";
 import type { NeedsRow, ReceivingRow, WidgetDatum, WidgetView } from "./manager-api.js";
 
 // -- the words a state carries ----------------------------------------------------------------------
@@ -110,16 +111,23 @@ export const VIEW_TITLE: Readonly<Record<ViewKind, string>> = Object.freeze({
 });
 
 /**
- * Where one needs row goes. The two yard manager rows name views nothing else serves
- * (MANAGER-HOME-UI-NOTES): Shortages · open and Receiving · short are THIS app's views, and
- * receiving differences open Receiving, not Yard Pick. Approvals waiting opens this app's
- * approvals view. Any other row names a surface this box does not serve yet: the row shows its
- * count and its words, and goes nowhere, said plainly rather than linked to nothing.
+ * Where one needs row goes. The three yard manager rows and Approvals waiting name views THIS
+ * app serves (MANAGER-HOME-UI-NOTES): receiving differences open Receiving, not Yard Pick. A row
+ * whose source a live app owns (landing-links.ts) names that app. Any other row names a surface
+ * this box does not serve yet: the row shows its count and its words, and goes nowhere, said
+ * plainly rather than linked to nothing.
  */
-export function needsRowTarget(row: NeedsRow): { view: ViewKind } | { view: null; screen: string } {
+export type NeedsTarget =
+  | { view: ViewKind }
+  | { view: null; app: string; href: string }
+  | { view: null; screen: string };
+
+export function needsRowTarget(row: NeedsRow): NeedsTarget {
   if (row.source_key === "tasks.open_shortages") return { view: "shortages" };
   if (row.source_key === "purchasing.receiving_differences") return { view: "receiving" };
   if (row.source_key === "approvals.waiting") return { view: "approvals" };
+  const link = needsLink(row.source_key);
+  if (link !== null) return { view: null, app: link.app, href: link.href };
   return { view: null, screen: row.view !== "" ? row.view : row.screen };
 }
 

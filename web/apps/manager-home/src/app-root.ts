@@ -55,6 +55,7 @@ import { warrantyStyles } from "./warranty-styles.js";
 import { quickStyles } from "./quick-styles.js";
 import { QuickApi, type QuickActionConfig } from "./quick-api.js";
 import { publishIntent } from "./quick-intent.js";
+import { isLiveHref } from "./landing-links.js";
 import { actionHref, findAction } from "./quick-logic.js";
 import { renderQuickAdmin, renderQuickBar, type QuickAdminModel, type QuickBarModel } from "./quick-views.js";
 import { configRefusalWords } from "./quick-logic.js";
@@ -249,6 +250,12 @@ export class ManagerHomeApp extends HHElement {
         this.#keepFocus(control);
         this.#desk.act(control);
       }
+      return;
+    }
+    if (action === "open-app") {
+      // A click carries only an address the closed table names (landing-links.ts).
+      const href = control?.getAttribute("data-href") ?? "";
+      if (isLiveHref(href)) window.location.assign(href);
       return;
     }
     if (action === "quick-run") {

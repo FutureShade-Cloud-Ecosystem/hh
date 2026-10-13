@@ -112,3 +112,4 @@ reference:
   screen. The owner rides through unchanged; only the vendor moves.
 - The public intake form itself (`warrantySubmitPublicIntake`) is the public
   desk's item, not this app's.
+| Per role homes, gap 1: every needs row and widget card links to the live app that owns it (Money Desk, Buying and Stock, Counter Till, Yard Pick) or to this app's own view, and says "not on this box yet" only where no app exists (dispatch, the order list) | `app/src/home-bento.ts` (widget deep link by `unit/module`), `app/src/home-needs.ts` | `src/landing-links.ts` (the closed table), `needsRowTarget` in `src/manager-logic.ts`, `renderFoot` and `renderNeedsRow` in `src/views.ts`, the `open-app` action in `src/app-root.ts` | The one shell's `#unit/module` hash becomes the closed table of app prefixes the front door serves; a click may carry only an address the table names (`isLiveHref`); the row's chip names the app for a screen reader |

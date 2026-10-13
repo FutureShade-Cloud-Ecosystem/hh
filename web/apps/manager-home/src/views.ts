@@ -10,6 +10,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
+import { widgetLink } from "./landing-links.js";
 import type {
   ApprovalRow,
   NeedsQueue,
@@ -134,7 +135,7 @@ function renderWidget(
   const figure = figureFor(datum, w.kind);
   const caption = rangeWord(datum?.range !== "" && datum !== undefined ? datum.range : w.range);
   const hero = first && w.shape === "stat" && w.span_cols >= 6;
-  const foot = html`<p class="tile-foot">${NOT_HERE}</p>`;
+  const foot = renderFoot(w);
   if (w.shape === "board" || w.shape === "bars") {
     return placed(w, html`
       <article class="card" data-widget=${w.widget_key}>
@@ -156,6 +157,21 @@ function renderWidget(
       ${foot}
     </article>
   `);
+}
+
+/**
+ * The foot of a card: a link to the live app (or this app's view) that owns the measure, and the
+ * honest coming words only where no app exists. A link never carries a figure of its own.
+ */
+function renderFoot(w: WidgetView): TemplateResult {
+  const link = widgetLink(w);
+  if (link.kind === "app") {
+    return html`<p class="tile-foot"><button type="button" class="foot-link" data-action="open-app" data-href=${link.href}>Open ${link.app}<span class="chev" aria-hidden="true">›</span></button></p>`;
+  }
+  if (link.kind === "view") {
+    return html`<p class="tile-foot"><button type="button" class="foot-link" data-action="open-view" data-view=${link.view}>Open ${VIEW_TITLE[link.view]}<span class="chev" aria-hidden="true">›</span></button></p>`;
+  }
+  return html`<p class="tile-foot">${NOT_HERE}</p>`;
 }
 
 function placed(w: WidgetView, body: TemplateResult): TemplateResult {
@@ -239,7 +255,9 @@ function renderNeedsRow(row: NeedsRow): TemplateResult {
       </div>
       ${target.view !== null
         ? html`<button type="button" class="row-chip" data-action="open-view" data-view=${target.view}>${row.action}<span class="chev" aria-hidden="true">›</span></button>`
-        : html`<span class="not-here">${NOT_HERE}</span>`}
+        : "href" in target
+          ? html`<button type="button" class="row-chip" data-action="open-app" data-href=${target.href} aria-label=${`${row.action}, opens ${target.app}`}>${row.action}<span class="chev" aria-hidden="true">›</span></button>`
+          : html`<span class="not-here">${NOT_HERE}</span>`}
     </div>
   `;
 }

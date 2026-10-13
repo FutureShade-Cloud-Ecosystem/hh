@@ -349,6 +349,20 @@ export const homeStyles = css`
   .view-link:hover {
     border-color: var(--hh-accent-text);
   }
+  .foot-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--hh-accent-text);
+    font: inherit;
+    cursor: pointer;
+  }
+  .foot-link:hover {
+    text-decoration: underline;
+  }
   .not-here {
     flex: none;
     max-width: 7.5em;

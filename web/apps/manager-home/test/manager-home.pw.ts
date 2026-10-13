@@ -59,15 +59,29 @@ test("the pick queue board draws a labelled bar per status, the count at the rig
   await expect(first.locator(".value")).toHaveText("8");
 });
 
-test("the tiles this box does not serve say so at their foot, never a dead link", async ({ page }) => {
+test("a card links to the live app that owns it, and only a source with no app says it is not here", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const hero = page.locator("[data-widget='hero.deliveries']");
   await expect(hero.locator(".tile-foot")).toHaveText("not on this box yet");
   await expect(hero.locator(".tile-foot")).toBeVisible();
   await expect(page.locator("[data-widget='orders.open'] .tile-foot")).toHaveText("not on this box yet");
-  const footLinks = page.locator(".tile-foot a, .tile-foot button");
-  await expect(footLinks).toHaveCount(0);
+  // Pick queue and Queue depth are the yard's (Yard Pick); Open claims is this app's Warranty view.
+  const footLinks = page.locator(".tile-foot button");
+  await expect(footLinks).toHaveCount(3);
+  await expect(page.locator("[data-widget='picks.board'] .tile-foot button")).toHaveText("Open Yard Pick›");
+  await expect(page.locator("[data-widget='warranty.open'] .tile-foot button")).toHaveText("Open Warranty›");
+});
+
+test("a foot link opens the live app, and a needs row for a yard source opens Yard Pick", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.route("**/yard/", (route) => route.fulfill({ contentType: "text/html", body: "<title>yard</title>" }));
+  await page.goto("/");
+  await page.locator("[data-widget='picks.board'] .tile-foot button").click();
+  await page.waitForURL("**/yard/");
+  await page.goBack();
+  await page.locator("[data-needs='tasks.stale_picks'] button", { hasText: "Chase" }).click();
+  await page.waitForURL("**/yard/");
 });
 
 test("the needs-you footer opens the queue, and the view links sit as small chips with chevrons", async ({ page }) => {
@@ -177,12 +191,12 @@ test("the needs link for receiving differences opens Receiving, not Yard Pick", 
   await expect(page.getByRole("heading", { name: "Receiving · short" })).toBeVisible();
 });
 
-test("a needs row whose surface is not on this box carries no link and says so", async ({ page }) => {
+test("a needs row whose source a live app owns carries a link to it, named for the screen reader", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const stale = page.locator("[data-needs='tasks.stale_picks']");
-  await expect(stale.locator("button")).toHaveCount(0);
-  await expect(stale.locator(".not-here")).toHaveText("not on this box yet");
+  await expect(stale.locator("button")).toHaveAttribute("aria-label", "Chase, opens Yard Pick");
+  await expect(stale.locator(".not-here")).toHaveCount(0);
 });
 
 test("the way in speaks for this app, never for the till", async ({ page }) => {

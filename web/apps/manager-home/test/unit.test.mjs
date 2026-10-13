@@ -94,9 +94,9 @@ test("the two new needs links open this app's views, and receiving opens Receivi
   assert.deepEqual(needsRowTarget(row("tasks.open_shortages", "Shortages · open")), { view: "shortages" });
   assert.deepEqual(needsRowTarget(row("purchasing.receiving_differences", "Receiving · short")), { view: "receiving" });
   assert.deepEqual(needsRowTarget(row("approvals.waiting", "Waiting on you")), { view: "approvals" });
-  const stale = needsRowTarget(row("tasks.stale_picks", "Picks · past deadline", "yard"));
-  assert.equal(stale.view, null);
-  assert.equal(stale.screen, "Picks · past deadline");
+  const dispatch = needsRowTarget(row("dispatch.unassigned", "Staging · unassigned", "dispatch"));
+  assert.equal(dispatch.view, null);
+  assert.equal(dispatch.screen, "Staging · unassigned");
 });
 
 test("the board rows nothing measures are said plainly, never counted", () => {
