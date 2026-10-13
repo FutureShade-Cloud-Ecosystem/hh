@@ -1,6 +1,7 @@
 // HH Drive, sub item 3: proof of delivery. A typed name, the recipient's own
 // confirmation and, if the driver wants it, a photo. Sent as the core's shape:
-// {received_by, affirmed}, and the photo as the raw picture on its own call.
+// a pod create {id, stop_id, received_by, affirmed} through the outbox, and the
+// photo as the raw picture on its own call.
 import { test, expect, TINY_PNG, driverHandoff, resetStub, stubLog, takeFirstStopEnRoute, useScenario, type LoggedCall } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
@@ -38,15 +39,21 @@ test("signing sends the core's POD shape and the stop reads delivered", async ({
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
   await expect(page.locator(".signed")).toContainText("Signed by Receiving clerk");
   await expect(page.getByRole("status")).toContainText("Delivery to Northline Hardscapes Ltd (demo) is signed for.");
-  // The attestation has no sync door in the core (its pod scope is the photo
-  // record), so the proof is one call on its direct door, the recipient
-  // trimmed and the affirmation set; nothing rides the pod scope.
+  // The attestation is a pod create on the sync door: the stop, the name
+  // (trimmed) and the affirmation, and the outbox's local row id. The direct
+  // route is not used.
   const calls = await stubLog(request);
-  const pod = calls.filter((c) => c.path.endsWith("/pod") && !c.path.includes("/sync/"));
-  expect(pod).toHaveLength(1);
-  expect(pod[0]?.method).toBe("POST");
-  expect(pod[0]?.body).toEqual({ received_by: "Receiving clerk", affirmed: true });
-  expect(calls.filter((c) => c.path === "/api/v1/sync/pod" && c.method === "POST")).toHaveLength(0);
+  expect(calls.filter((c) => c.path.endsWith("/pod") && !c.path.includes("/sync/"))).toHaveLength(0);
+  const creates = calls
+    .filter((c) => c.path === "/api/v1/sync/pod" && c.method === "POST")
+    .flatMap((c) => ((c.body as { ops?: Array<{ op: string; payload: Record<string, unknown> }> } | null)?.ops ?? []));
+  expect(creates).toHaveLength(1);
+  expect(creates[0]?.op).toBe("create");
+  const payload = creates[0]!.payload;
+  expect(Object.keys(payload).sort()).toEqual(["affirmed", "id", "received_by", "stop_id"]);
+  expect(payload.received_by).toBe("Receiving clerk");
+  expect(payload.affirmed).toBe(true);
+  expect(payload.stop_id).toBe("5a000000-0000-4000-9000-000000000001");
   await page.getByRole("button", { name: "Back to my run" }).click();
   await expect(page.locator("[data-progress]")).toHaveText("2 stops left · 1 delivered");
 });
