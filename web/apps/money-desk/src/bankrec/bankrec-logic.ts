@@ -1,6 +1,6 @@
 // The bank reconciliation slice's plain logic: the words for every state the core stores, which row action a
-// statement line admits, how a statement's dates and periods read, how its refusals read out loud, and how the rule form becomes the spec the core stores. Nothing here computes money
-// and nothing here is rendered.
+// statement line admits, how a statement's dates and periods read, how its refusals read out loud, and how the
+// rule form becomes the spec the core stores. Nothing here computes money and nothing here is rendered.
 //
 // Port provenance: the state words and the row action rule are the original app's (app/src/bankrec-shared.ts and
 // app/src/_bankrec-line-actions.ts), with the words made plainer: a bookkeeper reconciling a statement does not
