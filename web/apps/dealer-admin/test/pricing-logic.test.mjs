@@ -353,3 +353,51 @@ test("the accrual verdict is the server's own counts, told as what happened", ()
 test("the rebates tab's empty words are its own", () => {
   assert.match(rebateEmptyWords(), /No rebate programs yet/);
 });
+
+// -- the units of measure tab: the sentences the counter reads out ---------------------
+
+import {
+  chainLabel,
+  pickSentence,
+  uomEmptyWords,
+  uomUnconfirmedWords,
+  weightSentence,
+} from "../src/pricing-logic.ts";
+
+const PLAN = {
+  product_id: "fa110000-0000-4000-9000-0000000000a1",
+  qty_entered: 77,
+  uom_entered: "SF",
+  pick_uom: "PLT",
+  pick_qty_exact: 6.16,
+  pick_qty: 7,
+  rounded_up: true,
+  overage_qty: 0.84,
+  weight_uom: "T",
+  weight_qty: 7.7,
+  weight_steps: [{ from_uom: "SF", to_uom: "PLT", factor: 0.08, source: "SEEDED_DEFAULT" }],
+  unconfirmed: true,
+};
+
+test("the pick sentence always names the overage when there is one, the original's own rule", () => {
+  assert.equal(pickSentence(PLAN), "77 SF = 6.16 PLT, picks 7 PLT (rounded up; 0.84 PLT over).");
+  assert.equal(pickSentence({ ...PLAN, rounded_up: false, pick_qty: 6.16, overage_qty: 0 }), "77 SF = 6.16 PLT, picks exactly.");
+  assert.equal(pickSentence({ ...PLAN, pick_uom: undefined }), "");
+  assert.equal(pickSentence(null), "");
+});
+
+test("the weight sentence names the chain it rode in on", () => {
+  assert.equal(weightSentence(PLAN), "Load weight 7.7 T (via SF → PLT).");
+  assert.equal(weightSentence({ ...PLAN, weight_uom: undefined }), "");
+});
+
+test("a chain reads as its hops, never one composed factor", () => {
+  assert.equal(chainLabel(PLAN.weight_steps), "SF → PLT");
+  assert.equal(chainLabel([{ from_uom: "SF", to_uom: "PLT", factor: 1 }, { from_uom: "PLT", to_uom: "T", factor: 1 }]), "SF → PLT → T");
+  assert.equal(chainLabel(undefined), "");
+});
+
+test("the uom tab's warn line and empty words are its own", () => {
+  assert.match(uomUnconfirmedWords(1, 2), /1 of 2 factors are seeded defaults/);
+  assert.match(uomEmptyWords(), /No conversions configured/);
+});

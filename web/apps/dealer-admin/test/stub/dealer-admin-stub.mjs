@@ -216,6 +216,7 @@ let promotions;
 let clearance;
 let rebates;
 let ledgerRows;
+let conversions;
 
 // The customer overrides: one yard account's price on Retaining Walls.
 const CUST_YARD = "cu110000-0000-4000-9000-0000000000a1";
@@ -316,6 +317,24 @@ const LEDGER_WORLD = {
   ],
 };
 
+// The conversions: one seeded edge, the placeholder the warn line names.
+const UOM_WORLD = [
+  {
+    id: "4a110000-0000-4000-9000-0000000000a1",
+    product_id: "fa110000-0000-4000-9000-0000000000a1",
+    product_sku: "PAV-60-CH",
+    category_id: "",
+    from_uom: "SF",
+    to_uom: "PLT",
+    factor: 0.08,
+    round_up_at_pick: true,
+    source: "SEEDED_DEFAULT",
+    source_note: "Seeded by migration",
+    is_active: true,
+    version: 1,
+  },
+];
+
 // The quantity breaks: one category schedule for Pavers, one open top tier.
 const BREAKS_WORLD = [
   {
@@ -355,6 +374,7 @@ function reset() {
   clearance = structuredClone(CLEARANCE_WORLD);
   rebates = structuredClone(REBATES_WORLD);
   ledgerRows = structuredClone(LEDGER_WORLD.rows);
+  conversions = structuredClone(UOM_WORLD);
   scenario = "";
   log = [];
 }
@@ -983,6 +1003,55 @@ async function handle(req, res) {
     }));
     ledgerRows.push(...accrued);
     return json(res, { accrued, skipped_count: 0, total_cents: accrued.reduce((sum, r) => sum + r.accrual_cents, 0) });
+  }
+
+  // ---- the units of measure ----
+
+  if (req.method === "GET" && path === "/api/v1/pricing/uom/conversions") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    return json(res, { items: scenario === "empty-pricing" ? [] : conversions, next_cursor: null, limit: 500 });
+  }
+
+  if (req.method === "PUT" && path === "/api/v1/pricing/uom/conversions") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const id = String(body?.id ?? "");
+    let edge = id === "" ? undefined : conversions.find((c) => c.id === id);
+    if (edge === undefined) {
+      edge = { id: id === "" ? `4a110000-0000-4000-9000-${Math.random().toString(16).slice(2, 14).padStart(12, "0")}` : id, version: 0 };
+      conversions.push(edge);
+    }
+    Object.assign(edge, body, { version: edge.version + 1 });
+    return json(res, edge);
+  }
+
+  const conversionMatch = path.match(/^\/api\/v1\/pricing\/uom\/conversions\/([^/]+)$/);
+  if (req.method === "DELETE" && conversionMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const idx = conversions.findIndex((c) => c.id === decodeURIComponent(conversionMatch[1]));
+    if (idx < 0) return refuse(res, 404, "conversion not found");
+    conversions.splice(idx, 1);
+    return json(res, { status: "deleted" });
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/uom/plan") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const qty = Number(body?.qty_entered ?? 0);
+    const factor = 0.08;
+    const exact = qty * factor;
+    const pick = Math.ceil(exact);
+    return json(res, {
+      product_id: String(body?.product_id ?? ""),
+      qty_entered: qty,
+      uom_entered: String(body?.uom_entered ?? ""),
+      pick_uom: "PLT",
+      pick_qty_exact: exact,
+      pick_qty: pick,
+      rounded_up: pick > exact,
+      overage_qty: pick - exact,
+      pick_steps: [{ from_uom: String(body?.uom_entered ?? "SF"), to_uom: "PLT", factor, source: "SEEDED_DEFAULT" }],
+      weight_qty: 0,
+      unconfirmed: true,
+    });
   }
 
   // ---- the audit trail ----

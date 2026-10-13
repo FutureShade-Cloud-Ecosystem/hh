@@ -405,6 +405,82 @@ function toAccrualResult(raw: unknown): AccrualResult {
   };
 }
 
+// -- the units of measure --------------------------------------------------------------------------------
+
+/** One conversion edge as the screens use it. */
+export interface UomConversionRow {
+  readonly id: string;
+  readonly product_id: string;
+  readonly product_sku: string;
+  readonly category_id: string;
+  readonly from_uom: string;
+  readonly to_uom: string;
+  readonly factor: number;
+  readonly round_up_at_pick: boolean;
+  readonly source: string;
+  readonly source_note: string;
+  readonly is_active: boolean;
+  readonly version: number;
+}
+
+export function toUomConversionRow(raw: unknown): UomConversionRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    product_id: text(r.product_id),
+    product_sku: text(r.product_sku),
+    category_id: text(r.category_id),
+    from_uom: text(r.from_uom),
+    to_uom: text(r.to_uom),
+    factor: num(r.factor),
+    round_up_at_pick: bool(r.round_up_at_pick),
+    source: text(r.source),
+    source_note: text(r.source_note),
+    is_active: bool(r.is_active),
+    version: num(r.version),
+  };
+}
+
+/** The plan the engine answers, narrowed. */
+export interface UomPlanRow {
+  readonly product_id: string;
+  readonly qty_entered: number;
+  readonly uom_entered: string;
+  readonly pick_uom: string;
+  readonly pick_qty_exact: number;
+  readonly pick_qty: number;
+  readonly rounded_up: boolean;
+  readonly overage_qty: number;
+  readonly pick_steps: readonly { readonly from_uom: string; readonly to_uom: string; readonly factor: number; readonly source: string }[];
+  readonly weight_uom: string;
+  readonly weight_qty: number;
+  readonly weight_steps: readonly { readonly from_uom: string; readonly to_uom: string; readonly factor: number; readonly source: string }[];
+  readonly unconfirmed: boolean;
+}
+
+function toUomPlanRow(raw: unknown): UomPlanRow {
+  const r = bag(raw);
+  const step = (x: unknown): { readonly from_uom: string; readonly to_uom: string; readonly factor: number; readonly source: string } => {
+    const b = bag(x);
+    return { from_uom: text(b.from_uom), to_uom: text(b.to_uom), factor: num(b.factor), source: text(b.source) };
+  };
+  return {
+    product_id: text(r.product_id),
+    qty_entered: num(r.qty_entered),
+    uom_entered: text(r.uom_entered),
+    pick_uom: text(r.pick_uom),
+    pick_qty_exact: num(r.pick_qty_exact),
+    pick_qty: num(r.pick_qty),
+    rounded_up: bool(r.rounded_up),
+    overage_qty: num(r.overage_qty),
+    pick_steps: list(r.pick_steps).map(step),
+    weight_uom: text(r.weight_uom),
+    weight_qty: num(r.weight_qty),
+    weight_steps: list(r.weight_steps).map(step),
+    unconfirmed: bool(r.unconfirmed),
+  };
+}
+
 // -- the customer overrides --------------------------------------------------------------------------
 
 /** One customer category override as the screens use it. */
@@ -727,6 +803,36 @@ export class PricingApi {
     const answer = await staffPricing.pricingAccrueRebates(this.#client, body as Parameters<typeof staffPricing.pricingAccrueRebates>[1]);
     if (!answer.ok) return answer;
     return { ok: true, value: toAccrualResult(answer.value) };
+  }
+
+  // -- the units of measure ------------------------------------------------------------------------------
+
+  /** The conversion edges, active ones. */
+  async uomConversions(): Promise<Result<readonly UomConversionRow[]>> {
+    const answer = await staffPricing.pricingListUOMConversions(this.#client, { limit: 500 });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toUomConversionRow) };
+  }
+
+  /** Set one edge whole (the route is an upsert by id; an empty id creates). */
+  async upsertUom(body: unknown): Promise<Result<UomConversionRow>> {
+    const answer = await staffPricing.pricingUpsertUOMConversion(this.#client, body as Parameters<typeof staffPricing.pricingUpsertUOMConversion>[1]);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toUomConversionRow(answer.value) };
+  }
+
+  /** Take one edge off. */
+  async deleteUom(id: string): Promise<Result<StatusResult>> {
+    const answer = await staffPricing.pricingDeleteUOMConversion(this.#client, id);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toStatus(answer.value) };
+  }
+
+  /** Ask the engine what a quantity becomes at the pick face. */
+  async planUom(body: unknown): Promise<Result<UomPlanRow>> {
+    const answer = await staffPricing.pricingPlanUOM(this.#client, body as Parameters<typeof staffPricing.pricingPlanUOM>[1]);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toUomPlanRow(answer.value) };
   }
 
   // -- the floor warning ------------------------------------------------------------------------------

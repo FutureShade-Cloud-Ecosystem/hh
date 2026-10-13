@@ -662,3 +662,70 @@ export function accrualResultWords(result: { readonly accrued: readonly unknown[
   if (result.skipped_count > 0) parts.push(`${result.skipped_count} ${result.skipped_count === 1 ? "line was" : "lines were"} already accrued (a retry, not an error).`);
   return parts.join(" ");
 }
+
+// -- the units of measure tab: the sentences the counter reads out --------------------------------------------------
+
+/** The uom tab's empty words. */
+export function uomEmptyWords(): string {
+  return "No conversions configured. A line entered in a unit with no edge out of it cannot be priced or picked.";
+}
+
+/** The warn line over the table: a placeholder must never look like a fact. */
+export function uomUnconfirmedWords(confirmation_needed: number, total: number): string {
+  return `${confirmation_needed} of ${total} factors are seeded defaults: do not let a load plan or a freight quote rest on a row marked unconfirmed.`;
+}
+
+/** One hop of a resolved chain, with its provenance. */
+export interface UomStepLike {
+  readonly from_uom: string;
+  readonly to_uom: string;
+  readonly factor: number;
+  readonly source: string;
+}
+
+/** The plan the engine answers, as the sentence builders read it. */
+export interface UomPlanLike {
+  readonly product_id: string;
+  readonly qty_entered: number;
+  readonly uom_entered: string;
+  readonly pick_uom?: string;
+  readonly pick_qty_exact: number;
+  readonly pick_qty: number;
+  readonly rounded_up: boolean;
+  readonly overage_qty: number;
+  readonly pick_steps?: readonly UomStepLike[];
+  readonly weight_uom?: string;
+  readonly weight_qty: number;
+  readonly weight_steps?: readonly UomStepLike[];
+  readonly unconfirmed: boolean;
+}
+
+/**
+ * A resolved chain as its hops: "SF → PLT → T" is the only compact way to
+ * show that a number came from TWO hops. A single composed factor would
+ * hide that, and hiding it is how a wrong pallet weight goes unnoticed.
+ */
+export function chainLabel(steps: readonly UomStepLike[] | undefined): string {
+  if (!steps || steps.length === 0) return "";
+  return [steps[0].from_uom, ...steps.map((s) => s.to_uom)].join(" → ");
+}
+
+/**
+ * The line-entry sentence. IT ALWAYS NAMES THE OVERAGE WHEN THERE IS ONE:
+ * the gap between what was ordered and what the yard picks is real product
+ * leaving the yard, and somebody has to decide who it is charged to. An
+ * empty pick unit (bulk aggregate by the tonne) says nothing.
+ */
+export function pickSentence(plan: UomPlanLike | null): string {
+  if (!plan || !plan.pick_uom) return "";
+  const head = `${trimNumber(plan.qty_entered)} ${plan.uom_entered} = ${trimNumber(plan.pick_qty_exact)} ${plan.pick_uom}`;
+  if (!plan.rounded_up) return `${head}, picks exactly.`;
+  return `${head}, picks ${trimNumber(plan.pick_qty)} ${plan.pick_uom} (rounded up; ${trimNumber(plan.overage_qty)} ${plan.pick_uom} over).`;
+}
+
+/** The load planning half; nothing when no weight was requested or resolvable. */
+export function weightSentence(plan: UomPlanLike | null): string {
+  if (!plan || !plan.weight_uom || !plan.weight_qty) return "";
+  const chain = chainLabel(plan.weight_steps);
+  return `Load weight ${trimNumber(plan.weight_qty, 2)} ${plan.weight_uom}${chain ? ` (via ${chain})` : ""}.`;
+}

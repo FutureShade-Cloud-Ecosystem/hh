@@ -768,3 +768,99 @@ test("a rebate program edit saves without a floor walk; retire is two taps", asy
   assert.deepEqual(del[2], { version: 2 });
   assert.match(c.model.rebates.notice, /Retired/);
 });
+
+// -- the units of measure tab ---------------------------------------------------------------------------
+
+const CONVERSIONS = [
+  {
+    id: "4a110000-0000-4000-9000-0000000000a1",
+    product_id: "fa110000-0000-4000-9000-0000000000a1",
+    product_sku: "PAV-60-CH",
+    category_id: "",
+    from_uom: "SF",
+    to_uom: "PLT",
+    factor: 0.08,
+    round_up_at_pick: true,
+    source: "SEEDED_DEFAULT",
+    source_note: "Seeded by migration",
+    is_active: true,
+    version: 1,
+  },
+];
+const UOM_PLAN = {
+  product_id: "fa110000-0000-4000-9000-0000000000a1",
+  qty_entered: 77,
+  uom_entered: "SF",
+  pick_uom: "PLT",
+  pick_qty_exact: 6.16,
+  pick_qty: 7,
+  rounded_up: true,
+  overage_qty: 0.84,
+  weight_qty: 0,
+  unconfirmed: true,
+};
+
+function fakeUomDoor(over = {}) {
+  const door = fakeRebatesDoor({
+    uomConversions: async () => {
+      door.calls.push("uomConversions");
+      return { ok: true, value: CONVERSIONS };
+    },
+    planUom: async (body) => {
+      door.calls.push(["planUom", body]);
+      return { ok: true, value: UOM_PLAN };
+    },
+    upsertUom: async (body) => {
+      door.calls.push(["upsertUom", body]);
+      return { ok: true, value: CONVERSIONS[0] };
+    },
+    deleteUom: async (id) => {
+      door.calls.push(["deleteUom", id]);
+      return { ok: true, value: { status: "deleted" } };
+    },
+    ...over,
+  });
+  return door;
+}
+
+test("the uom tab loads the edges and runs the probe, the sentences rendered from the server's plan", async () => {
+  const door = fakeUomDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "uom" });
+  assert.equal(c.model.uom.phase, "ready");
+  assert.equal(c.model.uom.rows.length, 1);
+
+  c.input("uom-probe-product", CONVERSIONS[0].product_id);
+  c.input("uom-probe-qty", "77");
+  c.input("uom-probe-uom", "SF");
+  await c.click("pr-uom-plan", {});
+  const plan = door.calls.find((x) => Array.isArray(x) && x[0] === "planUom");
+  assert.equal(plan[1].qty_entered, 77);
+  assert.equal(plan[1].uom_entered, "SF");
+  assert.equal(c.model.uom.probe.result.pick_qty, 7);
+  assert.equal(c.model.uom.probe.error, "");
+});
+
+test("a conversion upsert saves whole; a delete is two taps", async () => {
+  const door = fakeUomDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "uom" });
+  c.click("pr-uom-edit", {});
+  c.input("uom-from", "SF");
+  c.input("uom-to", "PLT");
+  c.input("uom-factor", "0.08");
+  await c.click("pr-uom-save", {});
+  const upsert = door.calls.find((x) => Array.isArray(x) && x[0] === "upsertUom");
+  assert.ok(upsert);
+  assert.equal(upsert[1].factor, 0.08);
+  assert.equal(upsert[1].version, 0);
+  assert.equal(c.model.uom.notice, "Saved.");
+
+  c.click("pr-uom-del", { id: CONVERSIONS[0].id });
+  assert.equal(c.model.uom.confirmingId, CONVERSIONS[0].id);
+  await c.click("pr-uom-del", { id: CONVERSIONS[0].id });
+  assert.ok(door.calls.find((x) => Array.isArray(x) && x[0] === "deleteUom"));
+  assert.match(c.model.uom.notice, /Deleted/);
+});

@@ -22,9 +22,17 @@ import {
   promoValueWords,
   promosEmptyWords,
   accrualResultWords,
+  chainLabel,
+  isUomConfirmed,
+  pickSentence,
   rebateEmptyWords,
   rebateRateWords,
+  trimNumber,
+  uomEmptyWords,
+  uomSourceWord,
+  uomUnconfirmedWords,
   vendorWords,
+  weightSentence,
   categoryName,
   CUSTOMER_TYPES,
   customerTypeWord,
@@ -41,7 +49,7 @@ import {
   validityWords,
   PRICING_TABS,
 } from "./pricing-logic.js";
-import type { BreakRow, ClearanceRow, OverrideRow, PromotionRow, RebateRow, RuleRow } from "./pricing-api.js";
+import type { BreakRow, ClearanceRow, OverrideRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
 
 export function renderPricing(model: PricingModel): TemplateResult {
@@ -78,6 +86,7 @@ function renderTab(model: PricingModel): TemplateResult {
   if (model.tab === "breaks") return renderBreaks(model);
   if (model.tab === "promos") return renderPromos(model);
   if (model.tab === "rebates") return renderRebates(model);
+  if (model.tab === "uom") return renderUom(model);
   const tab = PRICING_TABS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
@@ -1489,6 +1498,202 @@ function renderAccrual(model: PricingModel): TemplateResult {
         <button type="button" class="btn btn-primary" data-action="pr-accrue" ?disabled=${m.busy}>
           ${m.busy ? "Accruing…" : "Offer to the accrual engine"}
         </button>
+      </div>
+    </section>
+  `;
+}
+
+// -- the units of measure tab -----------------------------------------------------------------------------
+
+function uomProductWords(row: UomConversionRow): string {
+  if (row.product_sku !== "") return row.product_sku;
+  if (row.product_id !== "") return row.product_id.slice(0, 8);
+  if (row.category_id !== "") return `category ${row.category_id.slice(0, 8)}`;
+  return "all products";
+}
+
+export function renderUom(model: PricingModel): TemplateResult {
+  const m = model.uom;
+  const unconfirmed = m.rows.filter((r) => !isUomConfirmed(r.source)).length;
+  return html`
+    ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-uom-loading">Loading the conversion edges…</p>` : nothing}
+    ${m.phase === "error" || m.phase === "refused"
+      ? html`<p class="error-line" data-test="pr-uom-error">${m.error}</p>
+          <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-uom-reload">Try again</button></div>`
+      : nothing}
+    ${m.phase === "ready"
+      ? html`
+          ${unconfirmed > 0
+            ? html`<p class="error-line" data-test="pr-uom-warn">${uomUnconfirmedWords(unconfirmed, m.rows.length)}</p>`
+            : nothing}
+          ${renderUomProbe(model)}
+          ${renderUomTable(model)}
+        `
+      : nothing}
+    ${m.phase === "ready" && m.editing !== null ? renderUomEditor(model) : nothing}
+  `;
+}
+
+function renderUomProbe(model: PricingModel): TemplateResult {
+  const m = model.uom.probe;
+  const plan = m.result;
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Line-entry preview</h2>
+        <span class="count">what the yard actually picks</span>
+      </div>
+      <p class="pr-hint">
+        A grid of factors is not reviewable. Typing a quantity and reading what it becomes, in the units the person
+        knows, is the review.
+      </p>
+      <div class="form-grid">
+        <label class="field"><span class="field-label">Product id</span>
+          <input class="text-field" type="text" data-field="pr-uom-probe-product" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Category id (empty is fine)</span>
+          <input class="text-field" type="text" data-field="pr-uom-probe-category" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Quantity</span>
+          <input class="text-field" type="text" inputmode="decimal" data-field="pr-uom-probe-qty" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Unit entered</span>
+          <input class="text-field" type="text" placeholder="SF" data-field="pr-uom-probe-uom" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Pick unit (empty follows the edge)</span>
+          <input class="text-field" type="text" data-field="pr-uom-probe-pick" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Weight in (empty skips the weight leg)</span>
+          <input class="text-field" type="text" placeholder="T" data-field="pr-uom-probe-weight" ?disabled=${m.busy} /></label>
+      </div>
+      ${m.error === "" ? nothing : html`<p class="error-line" data-test="pr-uom-plan-error">${m.error}</p>`}
+      ${plan === null
+        ? nothing
+        : html`
+            <div class="pr-readout" data-test="pr-uom-plan">
+              <div class="${plan.rounded_up ? "warn" : ""}">${pickSentence(plan)}</div>
+              ${weightSentence(plan) === "" ? nothing : html`<div>${weightSentence(plan)}</div>`}
+              ${plan.pick_steps.length === 0 ? nothing : html`<div>Via ${chainLabel(plan.pick_steps)}</div>`}
+              ${plan.unconfirmed ? html`<div><span class="chip chip-danger">rests on unconfirmed factors</span></div>` : nothing}
+            </div>
+          `}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-uom-plan" ?disabled=${m.busy}>
+          ${m.busy ? "Planning…" : "Plan"}
+        </button>
+      </div>
+    </section>
+  `;
+}
+
+function renderUomTable(model: PricingModel): TemplateResult {
+  const m = model.uom;
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Conversion data</h2>
+        <span class="count" data-test="pr-uom-count">${m.rows.length} ${m.rows.length === 1 ? "edge" : "edges"}</span>
+        <button type="button" class="btn btn-primary btn-small" data-action="pr-uom-edit">New edge</button>
+      </div>
+      ${m.notice === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-uom-notice">${m.notice}</p>`}
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-uom-form-error">${m.formError}</p>`}
+      ${m.rows.length === 0
+        ? html`<p class="notice-line" data-test="pr-uom-empty">${uomEmptyWords()}</p>`
+        : html`
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Product</th>
+                    <th scope="col">Edge</th>
+                    <th scope="col" class="num">Factor</th>
+                    <th scope="col">Pick</th>
+                    <th scope="col">Source</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.rows.map((row) => renderUomRow(row, model))}
+                </tbody>
+              </table>
+            </div>
+          `}
+    </section>
+  `;
+}
+
+function renderUomRow(row: UomConversionRow, model: PricingModel): TemplateResult {
+  const m = model.uom;
+  const confirming = m.confirmingId === row.id;
+  const confirmed = isUomConfirmed(row.source);
+  return html`
+    <tr data-conversion=${row.id}>
+      <td>${uomProductWords(row)}</td>
+      <td class="mono">${row.from_uom} → ${row.to_uom}</td>
+      <td class="num">${trimNumber(row.factor, 6)}</td>
+      <td>${row.round_up_at_pick ? html`<span class="chip">rounds up at pick</span>` : nothing}</td>
+      <td>
+        <span class="chip ${confirmed ? "chip-good" : "chip-danger"}">${confirmed ? uomSourceWord(row.source) : "unconfirmed"}</span>
+        ${row.source_note === "" ? nothing : html`<div class="dim">${row.source_note}</div>`}
+      </td>
+      <td>
+        <div class="pr-actions">
+          <button
+            type="button"
+            class="btn btn-secondary btn-small"
+            data-action="pr-uom-edit"
+            data-id=${row.id}
+            aria-label=${`Edit the edge ${row.from_uom} to ${row.to_uom}`}
+          >
+            Edit
+          </button>
+          <button type="button" class="btn btn-secondary btn-small" data-action="pr-uom-del" data-id=${row.id} ?disabled=${m.busy}>
+            ${confirming ? "Delete: tap again" : "Delete"}
+          </button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderUomEditor(model: PricingModel): TemplateResult | typeof nothing {
+  const m = model.uom;
+  const e = m.editing;
+  if (e === null) return nothing;
+  return html`
+    <section class="card" data-test="pr-uom-editor">
+      <div class="card-head">
+        <h2 class="card-title">Conversion edge</h2>
+      </div>
+      <div class="form-grid">
+        <label class="field"><span class="field-label">Product id (empty is every product)</span>
+          <input class="text-field" type="text" data-field="pr-uom-product" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Category id (when the edge is category wide)</span>
+          <input class="text-field" type="text" data-field="pr-uom-category-id" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">From unit</span>
+          <input class="text-field" type="text" placeholder="SF" data-field="pr-uom-from" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">To unit</span>
+          <input class="text-field" type="text" placeholder="PLT" data-field="pr-uom-to" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Factor (target units per entered unit)</span>
+          <input class="text-field" type="text" inputmode="decimal" data-field="pr-uom-factor" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Provenance</span>
+          <select class="select" data-field="pr-uom-source" ?disabled=${m.busy}>
+            <option value="CLIENT_CONFIRMED">Client confirmed</option>
+            <option value="VENDOR_SHEET">Vendor sheet</option>
+            <option value="MEASURED">Measured</option>
+            <option value="SEEDED_DEFAULT">Seeded default</option>
+          </select>
+        </label>
+        <label class="field field-full"><span class="field-label">Where the factor came from, as the row's hint</span>
+          <input class="text-field" type="text" data-field="pr-uom-note" ?disabled=${m.busy} /></label>
+        <label class="field"><span class="field-label">Pick</span>
+          <span class="branch-choice">
+            <input type="checkbox" data-field="pr-uom-round" ?disabled=${m.busy} />
+            <span>The target unit is indivisible: round up at pick</span>
+          </span>
+        </label>
+      </div>
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-uom-error-line">${m.formError}</p>`}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-uom-save" ?disabled=${m.busy}>
+          ${m.busy ? "Saving…" : "Save the edge"}
+        </button>
+        <button type="button" class="btn btn-secondary" data-action="pr-uom-cancel" ?disabled=${m.busy}>Cancel</button>
       </div>
     </section>
   `;

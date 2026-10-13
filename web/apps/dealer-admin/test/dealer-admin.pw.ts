@@ -397,3 +397,29 @@ test("the rebates tab: the programs, the vendor's ledger, and an accrual with it
   await expect(page.locator("[data-test=pr-accrue-result]")).toContainText("1 accrual written");
   await expect(page.locator("[data-test=pr-ledger-total]")).toContainText("CA$210.00");
 });
+
+test("the units of measure tab: the seeded edge, the warn line, and the probe's sentences", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+  await page.locator('.pr-tab[data-tab="uom"]').click();
+
+  // The seeded placeholder is named on the row and in the warn line.
+  await expect(page.locator("[data-test=pr-uom-warn]")).toContainText("1 of 1 factors are seeded defaults");
+  await expect(page.locator("[data-test=pr-uom-count]")).toHaveText("1 edge");
+  const row = page.locator('tr[data-conversion="4a110000-0000-4000-9000-0000000000a1"]');
+  await expect(row).toContainText("SF");
+  await expect(row).toContainText("unconfirmed");
+
+  // The probe: type the question, read the sentences the counter reads out.
+  await page.locator('[data-field="pr-uom-probe-product"]').fill("fa110000-0000-4000-9000-0000000000a1");
+  await page.locator('[data-field="pr-uom-probe-qty"]').fill("77");
+  await page.locator('[data-field="pr-uom-probe-uom"]').fill("SF");
+  await page.locator('[data-action="pr-uom-plan"]').click();
+  const plan = page.locator("[data-test=pr-uom-plan]");
+  await expect(plan).toContainText("77 SF = 6.16 PLT");
+  await expect(plan).toContainText("picks 7 PLT (rounded up; 0.84 PLT over)");
+  await expect(plan).toContainText("rests on unconfirmed factors");
+});

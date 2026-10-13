@@ -48,6 +48,8 @@ import type {
   RuleQuery,
   RuleRow,
   StatusResult,
+  UomConversionRow,
+  UomPlanRow,
 } from "./pricing-api.js";
 import type { PricingOverrideWrite, PricingRulePatch, PricingRuleWrite } from "@hardscapehouse/api-client";
 
@@ -89,6 +91,10 @@ export interface PricingDoor {
   deleteRebate(id: string, opts: { version: number }): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
   vendorLedger(vendorId: string): Promise<{ ok: true; value: LedgerRow } | { ok: false; error: string; status?: number }>;
   accrueRebates(body: Record<string, unknown>): Promise<{ ok: true; value: AccrualResult } | { ok: false; error: string; status?: number }>;
+  uomConversions(): Promise<{ ok: true; value: readonly UomConversionRow[] } | { ok: false; error: string; status?: number }>;
+  upsertUom(body: Record<string, unknown>): Promise<{ ok: true; value: UomConversionRow } | { ok: false; error: string; status?: number }>;
+  deleteUom(id: string): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
+  planUom(body: Record<string, unknown>): Promise<{ ok: true; value: UomPlanRow } | { ok: false; error: string; status?: number }>;
   previewFloor(body: PricingFloorPreviewRequest): Promise<
     { ok: true; value: FloorPreview } | { ok: false; error: string; status?: number }
   >;
@@ -325,6 +331,43 @@ export interface AccrualPanel {
   readonly result: string;
 }
 
+/** The conversion editor's own words, as the person last left them. */
+export interface UomEdit {
+  readonly productId: string;
+  readonly categoryId: string;
+  readonly fromUom: string;
+  readonly toUom: string;
+  readonly factorInput: string;
+  readonly roundUp: boolean;
+  readonly source: string;
+  readonly sourceNote: string;
+}
+
+/** The probe: the typed question, and the engine's answer. */
+export interface UomProbe {
+  readonly productId: string;
+  readonly categoryId: string;
+  readonly qtyInput: string;
+  readonly uomInput: string;
+  readonly pickUom: string;
+  readonly weightUom: string;
+  readonly busy: boolean;
+  readonly error: string;
+  readonly result: UomPlanRow | null;
+}
+
+export interface UomModel {
+  readonly phase: LoadPhase;
+  readonly rows: readonly UomConversionRow[];
+  readonly error: string;
+  readonly busy: boolean;
+  readonly formError: string;
+  readonly notice: string;
+  readonly editing: UomEdit | null;
+  readonly confirmingId: string;
+  readonly probe: UomProbe;
+}
+
 export interface RebatesModel {
   readonly phase: LoadPhase;
   readonly rows: readonly RebateRow[];
@@ -366,6 +409,7 @@ export interface PricingModel {
   readonly breaks: BreaksModel;
   readonly promos: PromosModel;
   readonly rebates: RebatesModel;
+  readonly uom: UomModel;
 }
 
 function emptyMargin(): MarginModel {
@@ -440,6 +484,30 @@ function emptyRebates(): RebatesModel {
   };
 }
 
+function emptyUom(): UomModel {
+  return {
+    phase: "idle",
+    rows: [],
+    error: "",
+    busy: false,
+    formError: "",
+    notice: "",
+    editing: null,
+    confirmingId: "",
+    probe: {
+      productId: "",
+      categoryId: "",
+      qtyInput: "",
+      uomInput: "",
+      pickUom: "",
+      weightUom: "",
+      busy: false,
+      error: "",
+      result: null,
+    },
+  };
+}
+
 function emptyPromos(): PromosModel {
   return { promotions: emptyPromotions(), clearance: emptyClearance() };
 }
@@ -469,6 +537,7 @@ function emptyModel(): PricingModel {
     breaks: emptyBreaks(),
     promos: emptyPromos(),
     rebates: emptyRebates(),
+    uom: emptyUom(),
   };
 }
 
@@ -541,6 +610,14 @@ export class PricingController {
 
   #setAccrual(patch: Partial<AccrualPanel>): void {
     this.#set({ rebates: { ...this.model.rebates, accrual: { ...this.model.rebates.accrual, ...patch } } });
+  }
+
+  #setUom(patch: Partial<UomModel>): void {
+    this.#set({ uom: { ...this.model.uom, ...patch } });
+  }
+
+  #setProbe(patch: Partial<UomProbe>): void {
+    this.#set({ uom: { ...this.model.uom, probe: { ...this.model.uom.probe, ...patch } } });
   }
 
   /** The app opens the surface: the categories once, then the open tab's group. */
@@ -682,6 +759,31 @@ export class PricingController {
       const accKey = accText[field];
       if (accKey !== undefined) this.#setAccrual({ [accKey]: value } as Partial<AccrualPanel>);
     }
+    const uomEdit = this.model.uom.editing;
+    if (uomEdit !== null) {
+      const uomText: Partial<Record<string, keyof UomEdit>> = {
+        "uom-product": "productId",
+        "uom-category-id": "categoryId",
+        "uom-from": "fromUom",
+        "uom-to": "toUom",
+        "uom-factor": "factorInput",
+        "uom-note": "sourceNote",
+      };
+      const uomKey = uomText[field];
+      if (uomKey !== undefined) this.#setUom({ editing: { ...uomEdit, [uomKey]: value } });
+    } else {
+      const probe = this.model.uom.probe;
+      const probeText: Partial<Record<string, keyof UomProbe>> = {
+        "uom-probe-product": "productId",
+        "uom-probe-category": "categoryId",
+        "uom-probe-qty": "qtyInput",
+        "uom-probe-uom": "uomInput",
+        "uom-probe-pick": "pickUom",
+        "uom-probe-weight": "weightUom",
+      };
+      const probeKey = probeText[field];
+      if (probeKey !== undefined) this.#setProbe({ [probeKey]: value } as Partial<UomProbe>);
+    }
     const brk = this.model.breaks.editing;
     if (brk !== null) {
       if (field === "brk-code") this.#setBreaks({ editing: { ...brk, code: value } });
@@ -760,6 +862,11 @@ export class PricingController {
       if (field === "reb-active") this.#setRebates({ editing: { ...rebate, active: value === "yes" } });
     }
     if (field === "acc-source-type") this.#setAccrual({ sourceType: value });
+    const uomEdit = this.model.uom.editing;
+    if (uomEdit !== null) {
+      if (field === "uom-source") this.#setUom({ editing: { ...uomEdit, source: value } });
+      if (field === "uom-round") this.#setUom({ editing: { ...uomEdit, roundUp: value === "yes" } });
+    }
     if (field === "ledger-name") {
       // The picker's options carry the vendors' display words; the answer is
       // mapped back to the id it stands for, as the register's role select does.
@@ -965,6 +1072,34 @@ export class PricingController {
         const row = this.model.rebates.rows.find((r) => r.vendor_id === ledger.vendorId);
         return row === undefined ? "" : vendorWords(row.vendor_name, row.vendor_id);
       }
+      case "uom-product":
+        return this.model.uom.editing?.productId ?? "";
+      case "uom-category-id":
+        return this.model.uom.editing?.categoryId ?? "";
+      case "uom-from":
+        return this.model.uom.editing?.fromUom ?? "";
+      case "uom-to":
+        return this.model.uom.editing?.toUom ?? "";
+      case "uom-factor":
+        return this.model.uom.editing?.factorInput ?? "";
+      case "uom-note":
+        return this.model.uom.editing?.sourceNote ?? "";
+      case "uom-source":
+        return this.model.uom.editing?.source ?? "";
+      case "uom-round":
+        return (this.model.uom.editing?.roundUp ?? false) ? "yes" : "no";
+      case "uom-probe-product":
+        return this.model.uom.probe.productId;
+      case "uom-probe-category":
+        return this.model.uom.probe.categoryId;
+      case "uom-probe-qty":
+        return this.model.uom.probe.qtyInput;
+      case "uom-probe-uom":
+        return this.model.uom.probe.uomInput;
+      case "uom-probe-pick":
+        return this.model.uom.probe.pickUom;
+      case "uom-probe-weight":
+        return this.model.uom.probe.weightUom;
       case "clr-product":
       case "clr-reason":
       case "clr-price":
@@ -1015,6 +1150,7 @@ export class PricingController {
         if (tab === "breaks" && this.model.breaks.phase === "idle") await this.loadBreaks();
         if (tab === "promos" && this.model.promos.promotions.phase === "idle") await this.loadPromosTab();
         if (tab === "rebates" && this.model.rebates.phase === "idle") await this.loadRebates();
+        if (tab === "uom" && this.model.uom.phase === "idle") await this.loadUom();
         return;
       }
       case "pr-reload-margin":
@@ -1170,6 +1306,25 @@ export class PricingController {
         return;
       case "pr-accrue":
         await this.#accrue();
+        return;
+      // -- the units of measure tab --
+      case "pr-uom-reload":
+        await this.loadUom();
+        return;
+      case "pr-uom-edit":
+        this.#openUomEditor(attrs.id ?? "");
+        return;
+      case "pr-uom-cancel":
+        this.#setUom({ editing: null, formError: "" });
+        return;
+      case "pr-uom-save":
+        await this.#saveUom();
+        return;
+      case "pr-uom-del":
+        await this.#deleteUom(attrs.id ?? "");
+        return;
+      case "pr-uom-plan":
+        await this.#runPlan();
         return;
       case "pr-break-drop-item": {
         const editing = this.model.breaks.editing;
@@ -2375,6 +2530,122 @@ export class PricingController {
     }
     this.#setAccrual({ busy: false, result: accrualResultWords(result.value) });
     if (this.model.rebates.ledger.vendorId !== "") await this.loadLedger(this.model.rebates.ledger.vendorId);
+  }
+  // -- the units of measure tab -----------------------------------------------------------------------------
+
+  async loadUom(): Promise<void> {
+    this.#setUom({ ...emptyUom(), probe: this.model.uom.probe, notice: this.model.uom.notice });
+    const result = await this.#door.uomConversions();
+    if (!result.ok) {
+      this.#setUom({
+        phase: result.status === 403 ? "refused" : "error",
+        error: pricingRefusalWords(result.error, result.status, "read"),
+      });
+      return;
+    }
+    this.#setUom({ phase: "ready", rows: result.value });
+  }
+
+  #openUomEditor(id: string): void {
+    const row = id === "" ? undefined : this.model.uom.rows.find((r) => r.id === id);
+    this.#setUom({
+      editing: {
+        productId: row?.product_id ?? "",
+        categoryId: row?.category_id ?? "",
+        fromUom: row?.from_uom ?? "",
+        toUom: row?.to_uom ?? "",
+        factorInput: row !== undefined ? row.factor.toString() : "",
+        roundUp: row?.round_up_at_pick ?? false,
+        source: row?.source ?? "CLIENT_CONFIRMED",
+        sourceNote: row?.source_note ?? "",
+      },
+      formError: "",
+      notice: "",
+    });
+  }
+
+  async #saveUom(): Promise<void> {
+    const editing = this.model.uom.editing;
+    if (editing === null || this.model.uom.busy) return;
+    const factor = Number(editing.factorInput.trim());
+    if (editing.fromUom.trim() === "" || editing.toUom.trim() === "") {
+      this.#setUom({ formError: "An edge names both its ends: the unit the line is entered in, and the unit it becomes." });
+      return;
+    }
+    if (editing.factorInput.trim() === "" || !Number.isFinite(factor) || factor <= 0) {
+      this.#setUom({ formError: "Enter the factor: how many of the target unit one entered unit is." });
+      return;
+    }
+    const row = editing.productId.trim() === "" ? undefined : this.model.uom.rows.find((r) => r.product_id === editing.productId && r.from_uom === editing.fromUom && r.to_uom === editing.toUom);
+    this.#setUom({ busy: true, formError: "" });
+    const result = await this.#door.upsertUom({
+      id: row?.id ?? "",
+      product_id: editing.productId.trim(),
+      category_id: editing.categoryId.trim(),
+      from_uom: editing.fromUom.trim(),
+      to_uom: editing.toUom.trim(),
+      factor,
+      round_up_at_pick: editing.roundUp,
+      source: editing.source,
+      source_note: editing.sourceNote,
+      is_active: true,
+      version: row?.version ?? 0,
+    });
+    if (!result.ok) {
+      this.#setUom({ busy: false, formError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setUom({ busy: false, editing: null, notice: "Saved." });
+    await this.loadUom();
+  }
+
+  /** Take an edge off is two taps: the first asks, the second deletes. */
+  async #deleteUom(id: string): Promise<void> {
+    if (id === "" || this.model.uom.busy) return;
+    if (this.model.uom.confirmingId !== id) {
+      this.#setUom({ confirmingId: id });
+      return;
+    }
+    this.#setUom({ busy: true, confirmingId: "" });
+    const result = await this.#door.deleteUom(id);
+    if (!result.ok) {
+      this.#setUom({ busy: false, formError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setUom({ busy: false, notice: "Deleted. Lines in that unit can no longer be converted." });
+    await this.loadUom();
+  }
+
+  /** The probe: the typed question posted whole, the engine's answer shown. */
+  async #runPlan(): Promise<void> {
+    const probe = this.model.uom.probe;
+    if (probe.busy) return;
+    const qty = Number(probe.qtyInput.trim());
+    if (probe.productId.trim() === "" || probe.uomInput.trim() === "") {
+      this.#setProbe({ error: "The probe names the product and the unit the line is entered in." });
+      return;
+    }
+    if (probe.qtyInput.trim() === "" || !Number.isFinite(qty) || qty <= 0) {
+      this.#setProbe({ error: "Enter the quantity as a number above zero." });
+      return;
+    }
+    this.#setProbe({ busy: true, error: "", result: null });
+    const result = await this.#door.planUom({
+      product_id: probe.productId.trim(),
+      ...(probe.categoryId.trim() === "" ? {} : { category_id: probe.categoryId.trim() }),
+      qty_entered: qty,
+      uom_entered: probe.uomInput.trim(),
+      ...(probe.pickUom.trim() === "" ? {} : { pick_uom: probe.pickUom.trim() }),
+      ...(probe.weightUom.trim() === "" ? {} : { weight_uom: probe.weightUom.trim() }),
+    });
+    if (!result.ok) {
+      // A missing chain is a real answer here, not a crash: the refusal
+      // names the unit that could not be reached, which is what the admin
+      // needs in order to author the row.
+      this.#setProbe({ busy: false, error: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setProbe({ busy: false, result: result.value });
   }
 }
 
