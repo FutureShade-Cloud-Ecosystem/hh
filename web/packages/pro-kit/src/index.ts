@@ -3,7 +3,10 @@
 export { CAPABILITIES, TENANT_ROLES, ROLE_LABELS, can, capabilitiesFor, roleLabel } from "./capabilities.js";
 export type { Capability } from "./capabilities.js";
 export { InMemoryTenantSession, memoryStorage } from "./session.js";
-export type { TenantSession, TenantProfile, TenantAnswer, TenantSignInAdapter } from "./session.js";
+export type { TenantSession, TenantProfile, TenantAnswer, TenantSignInAdapter, SignInRequest, SignInOptions } from "./session.js";
+export { signInPlan, signInFromCard, METHOD_LABELS, DEMO_METHODS } from "./signin-methods.js";
+export type { SignInMethod, SignInPlan, SignInMethodChoice, SignInSubmit } from "./signin-methods.js";
+export { DemoTenantSignInAdapter, demoTenantAdapter } from "./demo-adapter.js";
 export { tenantClient } from "./client.js";
 export { realExchangeAdapter } from "./real-exchange.js";
 export { NO_FIGURE, money, totalsLine, qtyWithUnit, houseDay, calendarDay, monoStyles } from "./format.js";

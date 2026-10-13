@@ -12,7 +12,7 @@
 // The sign in adapter is the stub only where Vite serves a development build
 // (import.meta.env.DEV is replaced at build time, so a production bundle
 // carries only the named seam, realExchangeAdapter, which refuses in plain
-// words until the auth lead's go fills it).
+// words until the auth lead's go fills it; the demo build, Vite mode "demo", carries the demo adapter).
 import { html, css, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
@@ -23,6 +23,8 @@ import {
   appOf,
   can,
   realExchangeAdapter,
+  demoTenantAdapter,
+  signInFromCard,
   roleLabel,
   stubAdapter,
   tenantClient,
@@ -33,7 +35,7 @@ import {
 import "@hardscapehouse/pro-kit/src/frame.js";
 import "@hardscapehouse/pro-kit/src/signin.js";
 import "@hardscapehouse/pro-kit/src/state-view.js";
-import type { HHProSignIn, SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
+import type { HHProSignIn, SignInMethodChoice, SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
 import { SURFACES, LANDING, frameSurfaceOf, surfaceRouteFromCatalogue, type SurfaceId } from "./registry.js";
 import { sheetStyles, stateBlock, noticeLine, SIGNED_OUT_WORDS, type LoadState, type Page, type Route, type SurfaceAnswer } from "./views.js";
 import { todayLoad, todayView, TODAY_EMPTY } from "./today.js";
@@ -115,7 +117,7 @@ export class ProProcurementApp extends HHElement {
 
   constructor() {
     super();
-    const adapter = import.meta.env.DEV ? stubAdapter() : realExchangeAdapter();
+    const adapter = import.meta.env.DEV ? stubAdapter() : import.meta.env.MODE === "demo" ? demoTenantAdapter() : realExchangeAdapter();
     this.#session = new InMemoryTenantSession({ adapter });
     this.#client = tenantClient(this.#session);
     this.#page = this.#buildPage();
@@ -294,7 +296,7 @@ export class ProProcurementApp extends HHElement {
   };
 
   readonly #onSignIn = (event: Event): void => {
-    void this.#signIn((event as CustomEvent<SignInSubmit>).detail);
+    void this.#signIn((event as CustomEvent<SignInSubmit | SignInMethodChoice>).detail);
   };
 
   readonly #onSelect = (event: Event): void => {
@@ -313,11 +315,11 @@ export class ProProcurementApp extends HHElement {
     void this.#session.signOut();
   };
 
-  async #signIn(input: SignInSubmit): Promise<void> {
+  async #signIn(input: SignInSubmit | SignInMethodChoice): Promise<void> {
     this.#busy = true;
     this.#signinMessage = "";
     this.requestUpdate();
-    const result = await this.#session.signIn(input.email, input.password);
+    const result = await signInFromCard(this.#session, input);
     this.#busy = false;
     if (result.ok) {
       this.#route = { surface: LANDING };
@@ -336,6 +338,7 @@ export class ProProcurementApp extends HHElement {
     this.addEventListener("keydown", this.#onKey);
     this.addEventListener("input", this.#onInput);
     this.addEventListener("pro-signin-submit", this.#onSignIn);
+    this.addEventListener("pro-signin-method", this.#onSignIn);
     this.addEventListener("pro-surface-select", this.#onSelect);
     this.addEventListener("pro-sign-out", this.#onSignOut);
     this.#unsubscribe = this.#session.subscribe(() => {
@@ -357,6 +360,7 @@ export class ProProcurementApp extends HHElement {
     this.removeEventListener("keydown", this.#onKey);
     this.removeEventListener("input", this.#onInput);
     this.removeEventListener("pro-signin-submit", this.#onSignIn);
+    this.removeEventListener("pro-signin-method", this.#onSignIn);
     this.removeEventListener("pro-surface-select", this.#onSelect);
     this.removeEventListener("pro-sign-out", this.#onSignOut);
     this.#unsubscribe?.();
@@ -385,6 +389,10 @@ export class ProProcurementApp extends HHElement {
       signin.dealerName = this.#dealerName;
       signin.message = this.#signinMessage;
       signin.busy = this.#busy;
+      const options = this.#session.options();
+      signin.methods = options.methods;
+      signin.refused = options.refused;
+      signin.personas = options.personas;
     }
     if (this.#pendingAssign !== null && this.#view.kind === "ready") {
       // Inputs start where the state says, once, and only once the view they

@@ -880,8 +880,10 @@ async function stubControl(req, res) {
 async function stubSession(req, res) {
   const body = await readJson(req, res);
   if (body === undefined) return;
-  const persona = Object.entries(PERSONAS).find(([, p]) => p.email === body?.email);
-  if (!persona || body?.password !== STUB_PASSWORD) return refuse(res, 401, "That email and password do not match.");
+  // The stub's persona door (the demo build's role picker, stub only): a role code alone names the persona, no password.
+  const byRole = typeof body?.role === "string" && body.email === undefined;
+  const persona = byRole ? Object.entries(PERSONAS).find(([, p]) => p.role === body.role) : Object.entries(PERSONAS).find(([, p]) => p.email === body?.email);
+  if (!persona || (!byRole && body?.password !== STUB_PASSWORD)) return refuse(res, 401, "That email and password do not match.");
   const expiresAtMs = Date.now() + 3_600_000;
   const user = world.users.find((u) => u.email === persona[1].email);
   ok(res, { token: `pro-stub.${persona[0]}.${expiresAtMs}`, expires_at_ms: expiresAtMs, user: { id: user.id, email: user.email, name: user.name } });
