@@ -303,8 +303,8 @@ test("a refused mint speaks in its own card, verbatim, and both cards keep worki
 
 test("the manager's not-yet modules open the coming-soon page and back again", async ({ page }) => {
   await signIn(page, "Sales manager");
-  await page.getByRole("button", { name: "Dealer Admin", exact: true }).click();
-  await expect(page.getByRole("heading", { name: /Dealer Admin/ })).toBeVisible();
+  await page.getByRole("button", { name: "House Messages", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /House Messages/ })).toBeVisible();
   await expect(page.getByText("not on this demo box yet")).toBeVisible();
   // The header stays: the demo badge, the role's name, the two controls.
   await expect(page.getByTestId("header-word")).toHaveText("Sales manager");

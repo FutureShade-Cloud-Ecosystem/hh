@@ -69,7 +69,7 @@ const QUOTE_TILE: ModuleTile = { name: "Quote Desk", icon: "lucide:file-pen-line
 const MONEY_DESK_TILE: ModuleTile = { name: "Money Desk", icon: "lucide:landmark", href: "/money-desk/" };
 const DRIVE_TILE: ModuleTile = { name: "HH Drive", icon: "lucide:truck", href: "/drive/" };
 const MANAGER_HOME_TILE: ModuleTile = { name: "Manager Home", icon: "lucide:house", href: "/home/" };
-const DEALER_ADMIN_TILE: ModuleTile = { name: "Dealer Admin", icon: "lucide:settings", href: null };
+const DEALER_ADMIN_TILE: ModuleTile = { name: "Dealer Admin", icon: "lucide:settings", href: "/dealer-admin/" };
 const HOUSE_MESSAGES_TILE: ModuleTile = {
   name: "House Messages",
   icon: "lucide:message-square",
@@ -195,7 +195,7 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     label: "Financial Controller",
     line: "Decide approvals and keep the ledger.",
     icon: "lucide:landmark",
-    tiles: [MONEY_DESK_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
+    tiles: [MONEY_DESK_TILE, MANAGER_HOME_TILE, DEALER_ADMIN_TILE, HOUSE_MESSAGES_TILE],
   },
   {
     id: "logistics_manager",

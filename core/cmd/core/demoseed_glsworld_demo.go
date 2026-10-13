@@ -151,24 +151,24 @@ var glsExact = map[string]string{
 	"V-BANAS":                          "V-BLUFF",
 	"DEMO-VND-01":                      "DEMO-VND-01",
 	// -- products, in the order of the plan's catalogue --
-	"Holland Paver, Charcoal (demo)":         "Interlocking Paver 60 mm, Charcoal",
-	"Brussels Dimensional, Sandstone (demo)": "Dimensional Paver, Sandstone",
-	"Courtstone, Basalt (demo)":              "Large Format Paver, Basalt",
-	"Retaining Wall Block 8x18 (demo)":       "Retaining Wall Block 8x18",
-	"Step Slab 24x48, Natural (demo)":        "Step Slab 24x48, Natural",
-	"HPB Bedding Stone (demo)":               "Paver Bedding Stone",
-	"Granular A (demo)":                      "Class 2 Base Rock",
-	"Concrete Sand (demo)":                   "Concrete Sand",
-	"Black Cedar Mulch (demo)":               "Black Cedar Mulch",
-	"Aluminum Edging 8ft (demo)":             "Aluminum Edging 8 ft",
-	"Holland Paver volume breaks (demo)":     "Interlocking Paver volume breaks",
-	"Granular A volume breaks (demo)":        "Class 2 Base Rock volume breaks",
+	"Holland Paver, Charcoal (demo)":         "Interlocking paver 60 mm, charcoal",
+	"Brussels Dimensional, Sandstone (demo)": "Dimensional paver, sandstone",
+	"Courtstone, Basalt (demo)":              "Large format paver, basalt",
+	"Retaining Wall Block 8x18 (demo)":       "Retaining wall block 8x18",
+	"Step Slab 24x48, Natural (demo)":        "Step slab 24x48, natural",
+	"HPB Bedding Stone (demo)":               "Paver bedding stone",
+	"Granular A (demo)":                      "Class 2 base rock",
+	"Concrete Sand (demo)":                   "Concrete sand",
+	"Black Cedar Mulch (demo)":               "Black cedar mulch",
+	"Aluminum Edging 8ft (demo)":             "Aluminum edging 8 ft",
+	"Holland Paver volume breaks (demo)":     "Interlocking paver volume breaks",
+	"Granular A volume breaks (demo)":        "Class 2 base rock volume breaks",
 	"DEMO-PAV-HOLLAND":                       "DEMO-PAV-CHARCOAL",
 	"DEMO-PAV-BRUSSELS":                      "DEMO-PAV-SANDSTONE",
 	"DEMO-PAV-COURTSTONE":                    "DEMO-PAV-BASALT",
 	"DEMO-AGG-HPB":                           "DEMO-AGG-BEDDING",
 	"DEMO-AGG-GA":                            "DEMO-AGG-BASE",
-	"Unilock Brussels Block":                 "Interlocking Block Paver, Gray",
+	"Unilock Brussels Block":                 "Interlocking block paver, gray",
 	"DBS-UL-BRUSSELS":                        "GLS-PAV-BLOCKGRAY",
 	"Brown's Concrete":                       "Prairie Bend Soils",
 	"Dibbits Yard":                           "Gable Landscape Supply",
@@ -223,11 +223,15 @@ var glsTokens = [][2]string{
 	{"Techo", "Stonecrest"},
 	{"Unilock", "Alder Creek Paver Works"},
 	{"Permacon", "Cascade Masonry Products"},
-	{"Brussels Dimensional", "Dimensional Paver"},
-	{"Holland Paver", "Interlocking Paver"},
-	{"Brussels Block", "Block Paver"},
-	{"Granular A", "Class 2 Base Rock"},
-	{"HPB Bedding Stone", "Paver Bedding Stone"},
+	{"Best Way Stone", "Mesa Natural Stone"},
+	{"Best Way", "Mesa Natural Stone"},
+	{"BESTWAY", "MESA"},
+	{"the Brussels", "the sandstone paver"},
+	{"Brussels Dimensional", "Dimensional paver"},
+	{"Holland Paver", "Interlocking paver"},
+	{"Brussels Block", "Block paver"},
+	{"Granular A", "Class 2 base rock"},
+	{"HPB Bedding Stone", "Paver bedding stone"},
 	{"#yard-trenton", "#yard-point-loma"},
 	{"#sales-trenton", "#sales-point-loma"},
 	{"#sales-kingston", "#sales-julian"},
@@ -249,6 +253,10 @@ var glsTokens = [][2]string{
 	{"BisTrack", "the old system"},
 	{"1150mm", "45 in."},
 	{" (demo)", ""},
+	{" (Demo)", ""},
+	// A dash in a seeded value reads as a comma (the house rule: no dashes on a screen).
+	{" \u2014 ", ", "},
+	{" \u2013 ", ", "},
 }
 
 // glsPhone moves the plan's Ontario test numbers to San Diego County numbers in the reserved
@@ -324,50 +332,92 @@ type glsPlanted struct {
 	table, column string
 	stamped       bool
 	cast          string
+	// slug marks a channel slug: the messaging module derives every branch room from the branch
+	// CODE (yard-plm), so the slug follows the code and the city stays in the channel's name.
+	slug bool
+}
+
+// glsSlug moves a branch room's slug onto the demo branch codes. Idempotent.
+func glsSlug(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "-trenton", "-plm"), "-kingston", "-jul")
 }
 
 // glsPlantedColumns is the fixed list of migration-planted columns the dictionary reaches. A
 // column is listed only because the scan found a first-dealer word, an Ontario address or a
 // person's name in it.
 var glsPlantedColumns = []glsPlanted{
-	{"customers", "name", true, ""},
-	{"customers", "account_no", true, ""},
-	{"customers", "billing_address", true, "jsonb"},
-	{"vendors", "name", true, ""},
-	{"vendors", "vendor_no", true, ""},
-	{"products", "name", true, ""},
-	{"products", "sku", true, ""},
-	{"products", "manufacturer", true, ""},
-	{"products", "collection", true, ""},
-	{"dispatch_trucks", "name", true, ""},
-	{"dispatch_drivers", "name", true, ""},
-	{"dispatch_drivers", "phone", true, ""},
-	{"delivery_runs", "notes", true, ""},
-	{"delivery_freight_raises", "customer_name", false, ""},
-	{"permission_approval_requests", "detail", false, ""},
-	{"msg_channels", "slug", true, ""},
-	{"msg_channels", "name", true, ""},
-	{"msg_channels", "topic", true, ""},
-	{"msg_messages", "body", false, ""},
-	{"order_lines", "description", false, ""},
-	{"warranty_claims", "description", true, ""},
-	{"warranty_claims", "job_address", true, "jsonb"},
-	{"warranty_claim_events", "note", false, ""},
-	{"warranty_claim_lines", "product_text", false, ""},
-	{"warranty_vendor_profiles", "channel_ref", true, ""},
-	{"warranty_vendor_profiles", "notes", true, ""},
-	{"tax_status_card_profiles", "name", true, ""},
-	{"tax_status_card_profiles", "notes", true, ""},
-	{"task_shortages", "note", false, ""},
-	{"task_shortages", "resolution", false, ""},
-	{"task_shortages", "description", false, ""},
-	{"portal_users", "email", true, ""},
-	{"portal_users", "name", true, ""},
+	{"customers", "name", true, "", false},
+	{"customers", "account_no", true, "", false},
+	{"customers", "billing_address", true, "jsonb", false},
+	{"vendors", "name", true, "", false},
+	{"vendors", "vendor_no", true, "", false},
+	{"products", "name", true, "", false},
+	{"products", "sku", true, "", false},
+	{"products", "manufacturer", true, "", false},
+	{"products", "collection", true, "", false},
+	{"dispatch_trucks", "name", true, "", false},
+	{"dispatch_drivers", "name", true, "", false},
+	{"dispatch_drivers", "phone", true, "", false},
+	{"delivery_runs", "notes", true, "", false},
+	{"delivery_freight_raises", "customer_name", false, "", false},
+	{"permission_approval_requests", "detail", false, "", false},
+	{"msg_channels", "slug", true, "", true},
+	{"msg_channels", "name", true, "", false},
+	{"msg_channels", "topic", true, "", false},
+	{"msg_messages", "body", false, "", false},
+	{"order_lines", "description", false, "", false},
+	{"warranty_claims", "description", true, "", false},
+	{"warranty_claims", "job_address", true, "jsonb", false},
+	{"warranty_claim_events", "note", false, "", false},
+	{"warranty_claim_lines", "product_text", false, "", false},
+	{"warranty_vendor_profiles", "channel_ref", true, "", false},
+	{"warranty_vendor_profiles", "notes", true, "", false},
+	{"tax_status_card_profiles", "name", true, "", false},
+	{"tax_status_card_profiles", "notes", true, "", false},
+	{"task_shortages", "note", false, "", false},
+	{"task_shortages", "resolution", false, "", false},
+	{"task_shortages", "description", false, "", false},
+	{"portal_users", "email", true, "", false},
+	{"portal_users", "name", true, "", false},
+	{"rebate_programs", "code", true, "", false},
+	{"rebate_programs", "name", true, "", false},
+	{"rebate_programs", "notes", true, "", false},
+	{"projects", "name", true, "", false},
+	{"projects", "job_address", true, "", false},
+	{"permission_approval_requests", "data", false, "jsonb", false},
 }
 
-// glsRenamePlanted carries every listed migration-planted column through the dictionary, one
-// guarded update per changed value, and returns how many values it changed.
+// glsDepots are the demo dealer's two depots, where the delivery distance estimates start.
+// Migration 0093 plants a depot per branch under the first dealer's town centres, keyed by branch
+// id, and the plan's own depot insert yields to those rows, so the planted rows move here.
+var glsDepots = map[string][2]float64{
+	"PLM": {32.7370, -117.2370},
+	"JUL": {33.0786, -116.6020},
+}
+
+// glsRenamePlanted carries the migration-planted columns, the depots and the dealer's phone
+// through the demo dictionary, and returns how many values it moved.
+//
+// IT RUNS WHILE THE WORLD IS BEING BUILT AND NEVER ON A BUILT BOX. The entrypoint runs the apply on
+// every boot, built state included, so a pass over every row of these columns would rewrite what
+// testers typed since (a customer's city word, a message's phone number) and could collide with a
+// key a tester created. The populate's demo_box row is written when the build ends; once it is
+// there the migration-planted rows have long since moved and the pass writes nothing. Each update
+// also names the old value, so a row moved by hand between the read and the write is left alone.
 func glsRenamePlanted(ctx context.Context, tx glsTx, now time.Time) (int, error) {
+	var hasBox bool
+	if err := tx.QueryRow(ctx, `SELECT to_regclass('demo_box') IS NOT NULL`).Scan(&hasBox); err != nil {
+		return 0, fmt.Errorf("demoseed: reading the build state: %w", err)
+	}
+	if hasBox {
+		var built bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM demo_box)`).Scan(&built); err != nil {
+			return 0, fmt.Errorf("demoseed: reading the build state: %w", err)
+		}
+		if built {
+			return 0, nil
+		}
+	}
 	changed := 0
 	for _, p := range glsPlantedColumns {
 		n, err := glsRenameColumn(ctx, tx, p, now)
@@ -376,7 +426,23 @@ func glsRenamePlanted(ctx context.Context, tx glsTx, now time.Time) (int, error)
 		}
 		changed += n
 	}
-	return changed, nil
+	for _, b := range demo.DealerBranches {
+		c := glsDepots[b.Code]
+		tag, err := tx.Exec(ctx,
+			`UPDATE dispatch_branch_depots SET latitude = $2, longitude = $3, updated_at = $4
+			  WHERE branch_id = $1::uuid AND latitude > 40`, b.ID, c[0], c[1], now)
+		if err != nil {
+			return changed, fmt.Errorf("demoseed: moving the %s depot: %w", b.Code, err)
+		}
+		changed += int(tag.RowsAffected())
+	}
+	tag, err := tx.Exec(ctx,
+		`UPDATE system_settings SET value = to_jsonb($1::text), updated_at = $2
+		  WHERE key = 'org_phone' AND value::text LIKE '%613%'`, "619-555-0100", now)
+	if err != nil {
+		return changed, fmt.Errorf("demoseed: moving the dealer's phone: %w", err)
+	}
+	return changed + int(tag.RowsAffected()), nil
 }
 
 func glsRenameColumn(ctx context.Context, tx glsTx, p glsPlanted, now time.Time) (int, error) {
@@ -385,7 +451,7 @@ func glsRenameColumn(ctx context.Context, tx glsTx, p glsPlanted, now time.Time)
 	if err != nil {
 		return 0, fmt.Errorf("demoseed: reading %s.%s: %w", p.table, p.column, err)
 	}
-	type edit struct{ id, to string }
+	type edit struct{ id, from, to string }
 	var edits []edit
 	for rows.Next() {
 		var id, v string
@@ -393,8 +459,12 @@ func glsRenameColumn(ctx context.Context, tx glsTx, p glsPlanted, now time.Time)
 			rows.Close()
 			return 0, fmt.Errorf("demoseed: scanning %s.%s: %w", p.table, p.column, err)
 		}
-		if to := glsApply(v); to != v {
-			edits = append(edits, edit{id, to})
+		to := glsApply(v)
+		if p.slug {
+			to = glsSlug(v)
+		}
+		if to != v {
+			edits = append(edits, edit{id, v, to})
 		}
 	}
 	rows.Close()
@@ -402,18 +472,26 @@ func glsRenameColumn(ctx context.Context, tx glsTx, p glsPlanted, now time.Time)
 		return 0, err
 	}
 	sort.Slice(edits, func(i, j int) bool { return edits[i].id < edits[j].id })
+	moved := 0
 	for _, e := range edits {
 		val := `$1`
 		if p.cast != "" {
 			val = `$1::` + p.cast
 		}
-		set, args := p.column+` = `+val, []any{e.to, e.id}
+		set, args := p.column+` = `+val, []any{e.to, e.id, e.from}
 		if p.stamped {
-			set, args = set+`, updated_at = $3`, append(args, now)
+			set, args = set+`, updated_at = $4`, append(args, now)
 		}
-		if _, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET %s WHERE id = $2::uuid`, p.table, set), args...); err != nil {
+		tag, err := tx.Exec(ctx, fmt.Sprintf(`UPDATE %s SET %s WHERE id = $2::uuid AND %s::text = $3`, p.table, set, p.column), args...)
+		if err != nil {
 			return 0, fmt.Errorf("demoseed: renaming %s.%s (%s): %w", p.table, p.column, e.id, err)
 		}
+		moved += int(tag.RowsAffected())
 	}
-	return len(edits), nil
+	return moved, nil
 }
+
+// init also points the task event fallback room at the demo branch's yard room: a task event with
+// no branch lands in the room the first dealer's seed called yard-trenton, which the demo world's
+// rooms no longer carry (they follow the branch codes).
+func init() { tasksDefaultChannelSlug = "yard-plm" }

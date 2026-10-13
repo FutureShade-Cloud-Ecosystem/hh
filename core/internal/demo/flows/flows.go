@@ -14,6 +14,9 @@
 //     and no others, and the demo database guard holds every ACTIVE user
 //     to the reserved domain.
 //
+// The table also holds Summit Ridge Builders' five contractor personas (the
+// Pro apps' sign in), told apart by Account.Class.
+//
 // The table is closed: the Counter Till's pair (D49, DECISIONS.md), the
 // Manager Home app's yard manager, and the live role logins the roles
 // roadmap adds one reviewed row at a time (the yard personas, Payables and
@@ -51,6 +54,29 @@ const DemoMerchantID = "DEMO-MERCHANT-0001"
 // copy until the stitch makes it import this table.
 const PopulateMarker = "hh-demo-populate-v1"
 
+// The two bearer classes a flow can mint. A staff flow's account holds a
+// staff grant in the demo org; a tenant flow's account is a portal user of
+// one contractor account (Summit Ridge Builders) and mints a tenant class
+// token whose tenant claim is that account's id (ADR-0016 C33).
+const (
+	ClassStaff  = "staff"
+	ClassTenant = "tenant"
+)
+
+// TenantAccountID is the one contractor account the demo holds, Summit
+// Ridge Builders (GLS-TENANT-r3): the customers row the populate creates,
+// the tenant claim of every contractor token and the tenant_id of every
+// contractor portal user. A pinned literal, like the staff ids, so the
+// table, the populate and the tests cannot drift apart silently.
+const TenantAccountID = "de2c0000-0000-4000-9000-000000000001"
+
+// TenantAccountNo and TenantAccountName are the customers row's account
+// number and trading name, invented.
+const (
+	TenantAccountNo   = "CUST-SUMMIT-RIDGE"
+	TenantAccountName = "Summit Ridge Builders"
+)
+
 // Account is one demo role login: the flow name the entry page taps, the
 // account it stands for, and the role that account must hold in the demo
 // org. PlatformUserID is the token subject; the identity layer resolves
@@ -67,8 +93,44 @@ type Account struct {
 	DisplayName string
 	// Label is the role label the mint response carries.
 	Label string
-	// Role is the staff role the account's grant must hold.
+	// Role is the role the account's live grant must hold: a staff role
+	// code for a staff flow, a portal role (account_admin, buyer,
+	// buyer_no_pay, ap_finance, field_crew) for a contractor flow.
 	Role string
+	// Tenant is the contractor account id (the customers row) a contractor
+	// flow's portal user belongs to, and the tenant claim of its tokens.
+	// Empty for a staff flow. A contractor row has no branch reach: the
+	// tenant leg scopes by org and by contractor account only.
+	Tenant string
+}
+
+// Class is the bearer class the flow mints: tenant when the row names a
+// contractor account, staff otherwise. The entry page and the front door
+// route a contractor to the Pro apps by this answer.
+func (a Account) Class() string {
+	if a.Tenant != "" {
+		return ClassTenant
+	}
+	return ClassStaff
+}
+
+// TenantJob is one job site of the contractor account (a projects row),
+// invented, in the three areas the tenant sheet names.
+type TenantJob struct {
+	ID      string
+	Name    string
+	Address string
+	Area    string
+}
+
+// TenantJobs returns the contractor account's jobs in a stable order:
+// La Jolla, Santa Fe and Point Loma (GLS-TENANT-r3).
+func TenantJobs() []TenantJob {
+	return []TenantJob{
+		{ID: "de2c0000-0000-4000-9000-0000000000b1", Name: "Coastal terrace", Address: "4100 Example Bluff Road, La Jolla, CA", Area: "La Jolla"},
+		{ID: "de2c0000-0000-4000-9000-0000000000b2", Name: "Hillside retaining walls", Address: "2250 Example Ridge Lane, Santa Fe, CA", Area: "Santa Fe"},
+		{ID: "de2c0000-0000-4000-9000-0000000000b3", Name: "Courtyard and driveway", Address: "980 Example Cove Street, Point Loma, CA", Area: "Point Loma"},
+	}
 }
 
 // accounts is the closed table. The Counter Till pair's platform user
@@ -166,6 +228,56 @@ var accounts = map[string]Account{
 		Label:          "Financial Controller",
 		Role:           "financial_controller",
 	},
+	// Summit Ridge Builders' five contractor personas, one per portal role
+	// the core stores (identity/portal.go), role labels only on screens.
+	// The id block is this lane's own. The platform user id is the portal
+	// user's platform_user_id and the token subject; the account id is
+	// TenantAccountID. Authority is the live portal row, never this table.
+	"contractor-account-admin": {
+		Flow:           "contractor-account-admin",
+		PlatformUserID: "de2c0000-0000-4000-9000-0000000000a1",
+		Email:          "account_admin@" + ReservedDomain,
+		DisplayName:    "Contractor owner (demo)",
+		Label:          "Contractor owner",
+		Role:           "account_admin",
+		Tenant:         TenantAccountID,
+	},
+	"contractor-buyer": {
+		Flow:           "contractor-buyer",
+		PlatformUserID: "de2c0000-0000-4000-9000-0000000000a2",
+		Email:          "buyer@" + ReservedDomain,
+		DisplayName:    "Contractor buyer (demo)",
+		Label:          "Contractor buyer",
+		Role:           "buyer",
+		Tenant:         TenantAccountID,
+	},
+	"contractor-buyer-no-pay": {
+		Flow:           "contractor-buyer-no-pay",
+		PlatformUserID: "de2c0000-0000-4000-9000-0000000000a3",
+		Email:          "buyer_no_pay@" + ReservedDomain,
+		DisplayName:    "Contractor buyer (no pay) (demo)",
+		Label:          "Contractor buyer (no pay)",
+		Role:           "buyer_no_pay",
+		Tenant:         TenantAccountID,
+	},
+	"contractor-ap-finance": {
+		Flow:           "contractor-ap-finance",
+		PlatformUserID: "de2c0000-0000-4000-9000-0000000000a4",
+		Email:          "ap_finance@" + ReservedDomain,
+		DisplayName:    "Contractor AP (demo)",
+		Label:          "Contractor AP",
+		Role:           "ap_finance",
+		Tenant:         TenantAccountID,
+	},
+	"contractor-field-crew": {
+		Flow:           "contractor-field-crew",
+		PlatformUserID: "de2c0000-0000-4000-9000-0000000000a5",
+		Email:          "field_crew@" + ReservedDomain,
+		DisplayName:    "Contractor field (demo)",
+		Label:          "Contractor field",
+		Role:           "field_crew",
+		Tenant:         TenantAccountID,
+	},
 }
 
 // Get returns the account one flow name stands for. The second return is
@@ -189,6 +301,11 @@ func All() []Account {
 		accounts["procurement-manager"],
 		accounts["financial-controller"],
 		accounts["logistics-manager"],
+		accounts["contractor-account-admin"],
+		accounts["contractor-buyer"],
+		accounts["contractor-buyer-no-pay"],
+		accounts["contractor-ap-finance"],
+		accounts["contractor-field-crew"],
 	}
 }
 

@@ -1,0 +1,184 @@
+// Package ratelimit is the in memory admission limit shared by the routes
+// whose one expensive, audited, credential shaped effect needs its own
+// bound: the demo session mint (the plan's P3-3 answer) and the real sign
+// in exchange. Without one, a scripted burst from any address writes an
+// audit row per call and spends a credential per call. The limit is in
+// memory, keyed by a caller chosen string (the address a connection
+// arrived from, or a user id): at most the allowance of admissions per
+// key inside one window, whatever the outcomes.
+//
+// The address lives here and nowhere else: it is never written to the
+// database and never rendered in a response, so the limit keeps no
+// record a tester's address could be read back from. The visitor id the
+// flows GET issues beside it (visitor.go) holds the same posture: a
+// random value with no meaning, keyed on and forgotten with the window,
+// never written to the database, never logged, never rendered.
+package ratelimit
+
+import (
+	"sync"
+	"time"
+)
+
+// The allowance a serve wiring gets when it names none: enough that no
+// tester tapping role cards ever meets it, small enough that a scripted
+// burst stops inside the first window.
+const (
+	DefaultBurstAllowance = 5
+	DefaultBurstWindow    = 30 * time.Second
+	// DefaultAddressCeiling is the allowance of the second bucket every
+	// mint also spends, keyed by the address alone: it meters the first
+	// taps of a team behind one edge, whose testers share the address
+	// however their visitor ids differ, and it bounds cookie farming
+	// scripts at this allowance of mints per address per window, against
+	// the per key allowance of DefaultBurstAllowance that bounds one
+	// tester's own flow.
+	DefaultAddressCeiling = 40
+	// maxTrackedAddresses bounds the map: past it, addresses whose newest
+	// attempt sits outside the window give way first, then arbitrary ones,
+	// exactly the discipline the membership cache's store holds. Dropping
+	// an address's history can let one extra mint through; unbounded memory
+	// on a pre-auth route can let a burst take the box.
+	maxTrackedAddresses = 4096
+	// MaxTrackedAddresses is the bound, exported for the tests that prove
+	// a flood leaves the map held at it.
+	MaxTrackedAddresses = maxTrackedAddresses
+)
+
+// AddressLimit refuses a burst of mints from one address: at most
+// allowance admissions per address inside one sliding window. A refusal
+// spends nothing and records nothing, so hammering does not extend a
+// block: the window is the mints', not the refusals'.
+type AddressLimit struct {
+	mu      sync.Mutex
+	allow   int
+	window  time.Duration
+	now     func() time.Time
+	entries map[string][]time.Time
+}
+
+// NewAddressLimit returns the limit. A non positive allowance or window
+// selects the defaults; a nil clock selects the wall clock. Tests drive
+// both with their own values.
+func NewAddressLimit(allowance int, window time.Duration, now func() time.Time) *AddressLimit {
+	if allowance <= 0 {
+		allowance = DefaultBurstAllowance
+	}
+	if window <= 0 {
+		window = DefaultBurstWindow
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &AddressLimit{allow: allowance, window: window, now: now, entries: map[string][]time.Time{}}
+}
+
+// Allow reports whether one more mint from the address is inside the
+// allowance, recording the admission when it is.
+func (l *AddressLimit) Allow(address string) bool {
+	now := l.now()
+	cutoff := now.Add(-l.window)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	stamps := l.live(l.entries[address], cutoff)
+	if len(stamps) >= l.allow {
+		l.entries[address] = stamps
+		return false
+	}
+	l.entries[address] = append(stamps, now)
+	if len(l.entries) > maxTrackedAddresses {
+		l.sweep(cutoff)
+	}
+	return true
+}
+
+// Peek reports whether one more admission from the address would fit
+// inside the allowance, and records nothing: not a stamp, and not even
+// the window slide's compaction. It walks the stamps and counts those
+// the window still holds, because the live helper rewrites the slice's
+// backing array in place, and a read that compacted without storing the
+// shortened slice back would leave the stored length over mutated
+// positions, phantom stamps behind every expired one. It is the
+// question half of the mint's two bucket check: a mint that must fit
+// its own key and the address ceiling at once peeks both before
+// anything spends, so a refusal spends nothing anywhere.
+func (l *AddressLimit) Peek(address string) bool {
+	now := l.now()
+	cutoff := now.Add(-l.window)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	live := 0
+	for _, s := range l.entries[address] {
+		if s.After(cutoff) {
+			live++
+		}
+	}
+	return live < l.allow
+}
+
+// Record spends one admission for the address, the answer half of the
+// peek and record pair: the mint records a bucket only after both peeks
+// fit. The pruning and the sweep are Allow's own, unchanged.
+func (l *AddressLimit) Record(address string) {
+	now := l.now()
+	cutoff := now.Add(-l.window)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries[address] = append(l.live(l.entries[address], cutoff), now)
+	if len(l.entries) > maxTrackedAddresses {
+		l.sweep(cutoff)
+	}
+}
+
+// live returns the address's admissions still inside the window, oldest
+// first.
+func (l *AddressLimit) live(stamps []time.Time, cutoff time.Time) []time.Time {
+	keep := stamps[:0]
+	for _, s := range stamps {
+		if s.After(cutoff) {
+			keep = append(keep, s)
+		}
+	}
+	return keep
+}
+
+// sweep drops addresses the window has already forgotten, then a batch of
+// live ones if the bound still stands, down to a low-water mark. Batching
+// keeps the eviction amortised: a flood of distinct addresses pays one
+// short walk per batch, not a full walk per request. Losing an entry only
+// ever loses a count: the worst case is an extra mint, never a wrong
+// answer and never a held credential.
+func (l *AddressLimit) sweep(cutoff time.Time) {
+	for address, stamps := range l.entries {
+		if len(stamps) == 0 || !stamps[len(stamps)-1].After(cutoff) {
+			delete(l.entries, address)
+		}
+	}
+	lowWater := maxTrackedAddresses - maxTrackedAddresses/8
+	for address := range l.entries {
+		if len(l.entries) <= lowWater {
+			break
+		}
+		delete(l.entries, address)
+	}
+}
+
+// Tracked reports how many keys the limit currently holds, the bound the
+// flood tests read.
+func (l *AddressLimit) Tracked() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.entries)
+}
+
+// Allowance reports the admissions a key may spend inside one window.
+func (l *AddressLimit) Allowance() int { return l.allow }
+
+// Stamps returns a copy of the admissions the key currently holds, oldest
+// first, so a test can prove a refusal recorded nothing.
+func (l *AddressLimit) Stamps(key string) []time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]time.Time(nil), l.entries[key]...)
+}

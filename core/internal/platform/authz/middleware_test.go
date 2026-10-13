@@ -171,6 +171,34 @@ func TestStaffRequiresXOrg(t *testing.T) {
 	}
 }
 
+// The 32 character bound on the staff header leg: 33 characters answer
+// 400 before any platform or database call, 32 pass the shape leg and
+// reach the membership check.
+func TestStaffOrgHeaderLengthBound(t *testing.T) {
+	f := newFixture(t)
+	rec := &recorder{}
+	h := f.gate.Staff(rec.handler())
+	auth := "Bearer " + f.staffToken(t, fixtureSubject)
+
+	long := "a" + strings.Repeat("b", 32)
+	resp := capture(h, map[string]string{"Authorization": auth, HeaderXOrg: long})
+	if resp.status != http.StatusBadRequest {
+		t.Fatalf("33 characters: status %d", resp.status)
+	}
+	if m, _ := f.members.counts(); m != 0 || f.orgs.count() != 0 {
+		t.Fatalf("33 characters touched membership or the resolver")
+	}
+
+	fits := "a" + strings.Repeat("b", 31)
+	resp = capture(h, map[string]string{"Authorization": auth, HeaderXOrg: fits})
+	if resp.status == http.StatusBadRequest {
+		t.Fatalf("32 characters refused at the shape leg: %d", resp.status)
+	}
+	if m, _ := f.members.counts(); m != 1 {
+		t.Fatalf("32 characters did not reach the membership check (calls %d)", m)
+	}
+}
+
 // Shape refusals on the header itself: a malformed or empty slug answers
 // 400 before any platform or database call, distinct from the org-refusal
 // 403 family.
@@ -630,7 +658,7 @@ func TestSyncBothBearers(t *testing.T) {
 // middleware executes no core-database statement. The OrgResolver is the
 // only database seam the middleware holds, so its call count is the
 // statement count. A slug no org carries is refused at the membership
-// check (the platform has no team org:<slug> for it), so the anchor read
+// check (the platform has no team org-<slug> for it), so the anchor read
 // never runs; the membership-passed, anchor-missing provisioning gap is
 // the one refusal that reaches the anchor, and it is covered with its own
 // assertions in TestStaffOrgRefusalBodiesIdentical.

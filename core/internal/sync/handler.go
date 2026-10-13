@@ -2,10 +2,12 @@ package sync
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
@@ -24,20 +26,31 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 // platform httpx.Registrar as the first parameter.
 type Handler struct {
 	engine *Engine
+	staff  StaffRoles
+	portal PortalRoles
 	log    *slog.Logger
 }
 
-// NewHandler wires the engine. A nil engine is a construction defect and
-// refuses loudly: a route surface with nothing behind it is exactly the
-// silent fabrication this package refuses elsewhere.
-func NewHandler(engine *Engine, log *slog.Logger) (*Handler, error) {
+// NewHandler wires the engine and the two role seams the write fence reads
+// (staff roles for a staff caller, the portal role for a tenant caller). A
+// nil engine or a nil seam is a construction defect and refuses loudly: a
+// route surface with nothing behind it is exactly the silent fabrication
+// this package refuses elsewhere, and a push surface without its fence
+// would admit every caller.
+func NewHandler(engine *Engine, staff StaffRoles, portal PortalRoles, log *slog.Logger) (*Handler, error) {
 	if engine == nil {
 		return nil, errNilEngine
+	}
+	if staff == nil {
+		return nil, errNilStaffRoles
+	}
+	if portal == nil {
+		return nil, errNilPortalRoles
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Handler{engine: engine, log: log}, nil
+	return &Handler{engine: engine, staff: staff, portal: portal, log: log}, nil
 }
 
 // RegisterRoutes self-registers the sync surface: GET syncPull and POST
@@ -124,8 +137,17 @@ func (h *Handler) push(w http.ResponseWriter, r *http.Request, caller guards.Syn
 	if !ok {
 		return
 	}
+	// Money never queues: a push to a money scope is refused for every
+	// role, ahead of the pull-only shape so no role can tell the two apart.
+	if info.Money {
+		authz.RefuseForbidden(w)
+		return
+	}
 	if info.Policy == PolicyPullOnly {
 		httpx.Error(w, http.StatusBadRequest, "sync: scope "+info.Name+" is pull-only")
+		return
+	}
+	if !h.admitWriter(w, r, caller, info) {
 		return
 	}
 	if _, wired := h.engine.Store(info.Name); !wired {
@@ -137,6 +159,14 @@ func (h *Handler) push(w http.ResponseWriter, r *http.Request, caller guards.Syn
 		httpx.Error(w, http.StatusBadRequest, "invalid_json")
 		return
 	}
+	// One operation outside the scope's allowed kinds refuses the whole
+	// request, before any store call.
+	for _, o := range req.Ops {
+		if !info.AllowsOp(o.Op) {
+			authz.RefuseForbidden(w)
+			return
+		}
+	}
 	resp, err := h.engine.Push(r.Context(), info, f, req.Ops)
 	if err != nil {
 		h.log.Error("sync: push failed", "scope", info.Name, "err", err)
@@ -144,6 +174,50 @@ func (h *Handler) push(w http.ResponseWriter, r *http.Request, caller guards.Syn
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
+}
+
+// admitWriter is the write fence: the caller must hold a role on the scope's
+// writer list. A staff caller is admitted when ANY role held in the org is
+// listed (the whole row, D48 X10), read per request through the staff seam
+// because the guard's StaffCaller carries only the winning role; a tenant
+// caller is admitted on its portal role. A role not listed, no grant, or no
+// portal row is the shared RBAC-403; a resolver fault is the 503 family and
+// never an admission. ok false means the refusal was written.
+func (h *Handler) admitWriter(w http.ResponseWriter, r *http.Request, caller guards.SyncCaller, info ScopeInfo) bool {
+	switch {
+	case caller.Staff != nil:
+		roles, err := h.staff.ResolveRoles(r.Context(), caller.Staff.PlatformUserID, caller.Staff.OrgID)
+		if err != nil {
+			if errors.Is(err, identity.ErrStaffUserInactive) {
+				authz.RefuseUnauthorized(w)
+				return false
+			}
+			h.log.Error("sync: staff role read failed", "scope", info.Name, "err", err)
+			authz.RefuseUnavailable(w)
+			return false
+		}
+		for _, role := range roles {
+			if info.AllowsRole(role) {
+				return true
+			}
+		}
+	case caller.Tenant != nil:
+		role, has, err := h.portal.PortalRole(r.Context(), caller.Tenant.PlatformUserID, caller.Tenant.TenantID)
+		if err != nil {
+			if errors.Is(err, identity.ErrPortalUserInactive) {
+				authz.RefuseUnauthorized(w)
+				return false
+			}
+			h.log.Error("sync: portal role read failed", "scope", info.Name, "err", err)
+			authz.RefuseUnavailable(w)
+			return false
+		}
+		if has && info.AllowsRole(role) {
+			return true
+		}
+	}
+	authz.RefuseForbidden(w)
+	return false
 }
 
 // parseSince reads the since parameter strictly: absent is 0 (the whole

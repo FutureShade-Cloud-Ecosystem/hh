@@ -166,7 +166,7 @@ function refused(res, status, fragment) {
 const POINT_LOMA = "5d1b3f6e-0000-4000-9000-000000000001";
 
 const FULL_LINES = (id) => [
-  { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Class 2 Base Rock gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE" },
+  { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Class 2 base rock gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE" },
 ];
 
 test("the demo way in answers the contract's shapes", async () => {

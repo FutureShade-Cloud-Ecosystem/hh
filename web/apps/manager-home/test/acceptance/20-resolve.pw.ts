@@ -1,7 +1,7 @@
 // The resolve leg: a shortage the yard team flagged, resolved end to end
 // through the core's own resolve route, with the queue's count dropping
 // after it. The seed's two open shortages live on one Point Loma pick: the
-// Class 2 Base Rock shortfall ("Only 8 yards left in the bin") and the HPB dust
+// Class 2 base rock shortfall ("Only 8 yards left in the bin") and the HPB dust
 // one ("Pile is down to fines").
 import { test, expect } from "@playwright/test";
 

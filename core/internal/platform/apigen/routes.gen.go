@@ -22,6 +22,7 @@ type Route struct {
 // test asserts the core's registered surface against this table in both
 // directions.
 var Routes = []Route{
+	{Method: "GET", Path: "/.well-known/jwks.json", OperationID: "identitySessionJwks", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/public/v1/ar/invoice-opened/{deliveryID}", OperationID: "billingTrackInvoiceOpened", Tag: "public", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/public/v1/ar/track/{token}/click", OperationID: "billingTrackReminderClick", Tag: "public", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/public/v1/ar/track/{token}/open", OperationID: "billingTrackReminderOpen", Tag: "public", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
@@ -53,7 +54,7 @@ var Routes = []Route{
 	{Method: "PUT", Path: "/api/v1/ar/landing/policy", OperationID: "billingPutARLandingPolicy", Tag: "staff-billing", XRole: "requireAdmin", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "admin", List: ""},
 	{Method: "GET", Path: "/api/v1/ar/landing/policy/history", OperationID: "billingGetARLandingPolicyHistory", Tag: "staff-billing", XRole: "requireAdmin", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
 	{Method: "GET", Path: "/api/v1/ar/nsf-policy", OperationID: "tillGetNSFPolicy", Tag: "staff-till", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
-	{Method: "PUT", Path: "/api/v1/ar/nsf-policy", OperationID: "tillUpdateNSFPolicy", Tag: "staff-till", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
+	{Method: "PUT", Path: "/api/v1/ar/nsf-policy", OperationID: "tillUpdateNSFPolicy", Tag: "staff-till", XRole: "requireAdmin", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
 	{Method: "GET", Path: "/api/v1/ar/paper-path", OperationID: "billingListPaperPath", Tag: "staff-billing", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/ar/paper-path/sweep", OperationID: "billingSweepPaperPath", Tag: "staff-billing", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
 	{Method: "POST", Path: "/api/v1/ar/paper-path/{id}/resolve", OperationID: "billingResolvePaperPath", Tag: "staff-billing", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
@@ -98,9 +99,11 @@ var Routes = []Route{
 	{Method: "GET", Path: "/api/v1/audit/transaction/{entityType}/{entityId}", OperationID: "auditReopenTransaction", Tag: "staff-audit", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till"}, Level: "read", List: ""},
 	{Method: "GET", Path: "/api/v1/audit/{id}", OperationID: "auditGetEntry", Tag: "staff-audit", XRole: "requireAdmin", Bearer: "staff", Addition: false, Surfaces: []string{"dealer-admin"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/auth/change-password", OperationID: "identityChangePassword", Tag: "staff-identity", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"counter-till", "quote-desk", "yard-pick", "drive-run", "dispatch-board", "buying-and-stock", "money-desk", "manager-home", "house-messages", "dealer-admin"}, Level: "work", List: ""},
+	{Method: "POST", Path: "/api/v1/auth/exchange", OperationID: "identityExchange", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/auth/google/callback", OperationID: "identityGoogleCallback", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/auth/google/start", OperationID: "identityGoogleStart", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "POST", Path: "/api/v1/auth/login", OperationID: "identityLogin", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
+	{Method: "GET", Path: "/api/v1/auth/methods", OperationID: "identityAuthMethods", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "POST", Path: "/api/v1/auth/password-reset/confirm", OperationID: "identityConfirmPasswordReset", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/bankrec/accounts", OperationID: "bankrecListAccounts", Tag: "staff-bankrec", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/bankrec/imports", OperationID: "bankrecCreateImport", Tag: "staff-bankrec", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
@@ -355,7 +358,7 @@ var Routes = []Route{
 	{Method: "GET", Path: "/api/v1/orders/{id}", OperationID: "orderRead", Tag: "staff-order", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"quote-desk"}, Level: "read", List: ""},
 	{Method: "PATCH", Path: "/api/v1/orders/{id}", OperationID: "orderEditHeader", Tag: "staff-order", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"quote-desk"}, Level: "work", List: ""},
 	{Method: "GET", Path: "/api/v1/orders/{id}/activity", OperationID: "orderGetActivity", Tag: "staff-order", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"quote-desk"}, Level: "read", List: ""},
-	{Method: "POST", Path: "/api/v1/orders/{id}/cancel", OperationID: "orderCancel", Tag: "staff-order", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"quote-desk"}, Level: "manage", List: ""},
+	{Method: "POST", Path: "/api/v1/orders/{id}/cancel", OperationID: "orderCancel", Tag: "staff-order", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"quote-desk"}, Level: "read", List: "order_cancellers"},
 	{Method: "GET", Path: "/api/v1/orders/{id}/changes", OperationID: "orderListChanges", Tag: "staff-order", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"quote-desk"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/orders/{id}/changes", OperationID: "orderRaiseChange", Tag: "staff-order", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"quote-desk"}, Level: "work", List: ""},
 	{Method: "POST", Path: "/api/v1/orders/{id}/confirm", OperationID: "orderConfirm", Tag: "staff-order", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"quote-desk"}, Level: "work", List: ""},

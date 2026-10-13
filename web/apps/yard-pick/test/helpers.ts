@@ -42,6 +42,22 @@ export async function useScenario(request: APIRequestContext, name: string): Pro
   if (!response.ok()) throw new Error(`stub scenario failed: ${response.status()}`);
 }
 
+/**
+ * The server reassigns a ticket out from under the device: the status moves
+ * to CANCELLED and the row's seq moves with it, so a queued write named at the
+ * older seq lands stale, and the server wins story plays for real.
+ */
+export async function reassignTicket(request: APIRequestContext, taskId: string): Promise<void> {
+  const response = await request.post("/_stub/reassign", { data: { task_id: taskId } });
+  if (!response.ok()) throw new Error(`stub reassign failed: ${response.status()}`);
+}
+
+/** The desk settles a shortage while the device cannot hear it. */
+export async function deskResolve(request: APIRequestContext, shortageId: string): Promise<void> {
+  const response = await request.post("/_stub/desk-resolve", { data: { shortage_id: shortageId } });
+  if (!response.ok()) throw new Error(`stub desk resolve failed: ${response.status()}`);
+}
+
 export interface LoggedCall {
   method: string;
   path: string;

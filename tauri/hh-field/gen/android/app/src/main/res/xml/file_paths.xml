@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+  <cache-path name="shared_cache" path="shared/" />
+  <!-- wry's file chooser (RustWebChromeClient.createImageFile) creates the
+       camera capture file in getExternalFilesDir(DIRECTORY_PICTURES), which is
+       the Pictures/ folder under the external files root, and then asks this
+       provider for its URI. Without this root, capture throws and silently
+       falls back to the plain file picker. -->
+  <external-files-path name="captures" path="Pictures/" />
+</paths>
