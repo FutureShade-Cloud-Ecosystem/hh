@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -266,6 +267,60 @@ func (s *Service) CreateTruck(ctx context.Context, t Truck) (string, error) {
 	return id, nil
 }
 
+// UpdateTruck rewrites a truck's registry facts: the fields the create takes, plus active or not (a
+// truck the yard has sold or parked stays on the books, invisible to the picker). Manager-gated at
+// the route; the branch fence is re-checked here on the ROW's branch so the authority does not live
+// only in the mux, exactly like every id-addressed endpoint this module serves (guardStop's rule:
+// 403, not 404, the id is opaque so refusing loudly leaks nothing).
+//
+// THE BRANCH DOES NOT MOVE. The body carries branch_id because it is the row the caller read, and a
+// branch_id that names another yard is refused in words: a truck's runs, its crew assignments and
+// its capacity story all hang off the yard it lives at, and a registry that silently re-homes a
+// truck strands them. Retire it here and register it there.
+//
+// IDEMPOTENT BY CONSTRUCTION. The write is an absolute SET the create's validations gate, so the
+// same body twice leaves the same row and answers 200 both times; the only conflict is a DIFFERENT
+// code colliding with another truck at the branch, the create's own 409.
+func (s *Service) UpdateTruck(ctx context.Context, truckID string, in Truck) (Truck, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return Truck{}, err
+	}
+	row, err := s.repo.GetTruck(ctx, truckID)
+	if err != nil {
+		return Truck{}, err
+	}
+	if !caller.CanAccessBranch(row.BranchID) {
+		return Truck{}, ErrForbidden
+	}
+	if in.BranchID == "" {
+		return Truck{}, httpx.BadRequestf("dispatch: branch_id is required")
+	}
+	if in.BranchID != row.BranchID {
+		return Truck{}, httpx.BadRequestf("dispatch: a truck's branch does not move; retire it here and register it at the other yard")
+	}
+	in.Code = strings.TrimSpace(in.Code)
+	if in.Code == "" {
+		return Truck{}, httpx.BadRequestf("dispatch: a truck needs a code")
+	}
+	in.TruckType = strings.ToUpper(strings.TrimSpace(in.TruckType))
+	if in.TruckType == "" {
+		in.TruckType = "FLATBED"
+	}
+	if !truckTypes[in.TruckType] {
+		return Truck{}, httpx.BadRequestf("dispatch: unknown truck_type %q", in.TruckType)
+	}
+	if in.CapacityKg != nil && *in.CapacityKg < 0 {
+		return Truck{}, httpx.BadRequestf("dispatch: capacity_kg must not be negative")
+	}
+	updated, err := s.repo.UpdateTruck(ctx, truckID, in)
+	if err != nil {
+		return Truck{}, asConflict(err, "dispatch: a truck with that code already exists at this branch")
+	}
+	s.record(ctx, audit.SensitiveAccess{Action: "DISPATCH_TRUCK_UPDATED", EntityType: "dispatch_truck", EntityID: truckID})
+	return updated, nil
+}
+
 // Drivers lists a branch's drivers.
 func (s *Service) Drivers(ctx context.Context, branchID string, includeInactive bool) ([]Driver, error) {
 	caller, err := s.caller(ctx)
@@ -303,12 +358,65 @@ func (s *Service) CreateDriver(ctx context.Context, d Driver) (string, error) {
 	if d.Name == "" {
 		return "", httpx.BadRequestf("dispatch: a driver needs a name")
 	}
+	if err := checkDriverUserID(d.UserID); err != nil {
+		return "", err
+	}
 	id, err := s.repo.InsertDriver(ctx, d)
 	if err != nil {
 		return "", err
 	}
 	s.record(ctx, audit.SensitiveAccess{Action: "DISPATCH_DRIVER_CREATED", EntityType: "dispatch_driver", EntityID: id})
 	return id, nil
+}
+
+// driverUserIDShape is a canonical uuid: the repository casts the linked login to one, and a cast that
+// fails is a 500, so the shape is refused in words first.
+var driverUserIDShape = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// checkDriverUserID answers a 400 in words for a linked login that is not a user id. Empty is a
+// driver with no login. Whether the id names a real staff login is not checked here (a backlog item).
+func checkDriverUserID(userID string) error {
+	if userID == "" || driverUserIDShape.MatchString(userID) {
+		return nil
+	}
+	return httpx.BadRequestf("dispatch: user_id must be a user id, or left out for a driver with no login")
+}
+
+// UpdateDriver rewrites a driver's registry facts: the fields the create takes (including the login
+// link, a casual driver who later gets a staff account), plus active or not. The same fence, the
+// same branch-does-not-move rule and the same idempotent-by-construction write as UpdateTruck
+// directly above; one vocabulary per surface.
+func (s *Service) UpdateDriver(ctx context.Context, driverID string, in Driver) (Driver, error) {
+	caller, err := s.caller(ctx)
+	if err != nil {
+		return Driver{}, err
+	}
+	row, err := s.repo.GetDriver(ctx, driverID)
+	if err != nil {
+		return Driver{}, err
+	}
+	if !caller.CanAccessBranch(row.BranchID) {
+		return Driver{}, ErrForbidden
+	}
+	if in.BranchID == "" {
+		return Driver{}, httpx.BadRequestf("dispatch: branch_id is required")
+	}
+	if in.BranchID != row.BranchID {
+		return Driver{}, httpx.BadRequestf("dispatch: a driver's branch does not move; retire them here and register them at the other yard")
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		return Driver{}, httpx.BadRequestf("dispatch: a driver needs a name")
+	}
+	if err := checkDriverUserID(in.UserID); err != nil {
+		return Driver{}, err
+	}
+	updated, err := s.repo.UpdateDriver(ctx, driverID, in)
+	if err != nil {
+		return Driver{}, err
+	}
+	s.record(ctx, audit.SensitiveAccess{Action: "DISPATCH_DRIVER_UPDATED", EntityType: "dispatch_driver", EntityID: driverID})
+	return updated, nil
 }
 
 // - the board -
