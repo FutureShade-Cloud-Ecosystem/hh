@@ -232,7 +232,7 @@ async function pause(ms) {
 function consoleUserBlock() {
   const role = consoleArms.role ?? { role_code: "sales_manager", role_name: "Sales Manager" };
   return {
-    user_id: CONSOLE_USER.$id,
+    user_id: role.user_id ?? CONSOLE_USER.$id,
     email: CONSOLE_USER.email,
     display_name: CONSOLE_USER.name,
     role_code: role.role_code,

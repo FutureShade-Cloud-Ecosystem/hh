@@ -48,6 +48,11 @@ export default defineConfig(({ mode }) => ({
       "/_stub": {
         target: `http://127.0.0.1:${stubPort}`,
       },
+      // The console legs (test/console.config.ts) serve the runtime configuration from the front door's auth
+      // stub; any other run has none here and the app stays in demo mode.
+      "/config.json": {
+        target: `http://127.0.0.1:${process.env.CW_AUTH_STUB ?? stubPort}`,
+      },
     },
   },
   build: {

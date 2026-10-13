@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/console-boot.test.mjs test/sinks.test.mjs test/theme.test.mjs test/no-default-adopt.test.mjs test/demo-light-default.test.mjs test/product-tiles-build.test.mjs test/stub.test.mjs test/tile-contrast.test.mjs test/exit-shot-list.test.mjs src/ported/*.test.mjs src/pay-balance/*.test.mjs src/returns/*.test.mjs && playwright test && playwright test --config test/popout-base-aware.config.ts && playwright test --config test/default-build.config.ts",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/console-boot.test.mjs test/sinks.test.mjs test/theme.test.mjs test/no-default-adopt.test.mjs test/demo-light-default.test.mjs test/product-tiles-build.test.mjs test/stub.test.mjs test/tile-contrast.test.mjs test/exit-shot-list.test.mjs src/ported/*.test.mjs src/pay-balance/*.test.mjs src/returns/*.test.mjs && playwright test && playwright test --config test/popout-base-aware.config.ts && playwright test --config test/default-build.config.ts && playwright test --config test/console.config.ts",
     "acceptance": "playwright test --config test/acceptance.config.ts",
     "walk-front-door": "playwright test --config test/walk-front-door.config.ts"
   },
