@@ -155,16 +155,20 @@ describe("declared skeleton profiles", () => {
   });
 });
 
-describe("field launcher paths", () => {
-  // The assembly script (tauri/hh-field/assemble-dist.sh) ships each Field
-  // app's web bundle inside the profile at the serve path the demo box uses
-  // (deploy/demo/Caddyfile.template) and the front door's role tiles open.
-  // This section pins the three together: a launch map entry must name a
-  // manifest app of the field shell, an existing web app, and a path the
-  // front door's own tile table carries, so a rename on any side turns this
-  // test red instead of shipping a dead tile inside the shell.
+describe.each(["field", "work"] as const)("%s launcher paths", (shell) => {
+  // The assembly script (tauri/hh-<shell>/assemble-dist.sh) ships each app's
+  // web bundle inside the profile at the serve path the demo box uses
+  // (deploy/demo/Caddyfile.template) and the front door's role tiles open,
+  // built with the flags of the demo image (deploy/demo/Dockerfile). This
+  // section pins the three together: a launch map entry must name a manifest
+  // app of the shell, an existing web app, a path the front door's own tile
+  // table carries, and the Dockerfile's own build line for that app, so a
+  // rename on any side turns this test red instead of shipping a dead tile
+  // inside the shell.
+  const scriptPath = resolve(REPO_ROOT, `tauri/hh-${shell}/assemble-dist.sh`);
+
   function launchEntries(): { app: string; dir: string; path: string }[] {
-    const script = readFileSync(resolve(REPO_ROOT, "tauri/hh-field/assemble-dist.sh"), "utf8");
+    const script = readFileSync(scriptPath, "utf8");
     const block = script.match(/LAUNCH_MAP=\(\n([\s\S]*?)\n\)/);
     if (!block) return [];
     return [...block[1].matchAll(/"([a-z-]+) ([a-z0-9-]+) (\/[a-z0-9-]+\/)"/g)].map((m) => ({
@@ -174,9 +178,9 @@ describe("field launcher paths", () => {
     }));
   }
 
-  test("the launch map names every field app that has a web bundle", () => {
-    const fieldApps = readProfile("field").apps.map((a) => a.id);
-    const withBundle = fieldApps.filter((id) => existsSync(resolve(REPO_ROOT, "web/apps", id)));
+  test("the launch map names every app of the shell that has a web bundle", () => {
+    const apps = readProfile(shell).apps.map((a) => a.id);
+    const withBundle = apps.filter((id) => existsSync(resolve(REPO_ROOT, "web/apps", id)));
     expect(launchEntries().map((e) => e.app)).toEqual(withBundle);
   });
 
@@ -185,5 +189,45 @@ describe("field launcher paths", () => {
     for (const entry of launchEntries()) {
       expect(roles).toContain(`href: "${entry.path}"`);
     }
+  });
+
+  test("each launch path and web dir is the demo image's own build line", () => {
+    const docker = readFileSync(resolve(REPO_ROOT, "deploy/demo/Dockerfile"), "utf8");
+    for (const entry of launchEntries()) {
+      const dir = entry.dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const line = new RegExp(
+        `WORKDIR /src/web/apps/${dir}\\nRUN npx vite build --mode demo --base=${entry.path} `,
+      );
+      expect(docker).toMatch(line);
+    }
+  });
+
+  test("the script builds each app the way the image does and ships the profile data", () => {
+    const script = readFileSync(scriptPath, "utf8");
+    // Staff apps build in demo mode, with their own base, into the dist.
+    expect(script).toContain("--mode demo --base=");
+    // The front door (default mode) is the entry at the root.
+    expect(script).toContain("web/apps/front-door");
+    expect(script).toContain(`tauri/core/profiles/${shell}.json`);
+    expect(script).toContain('"$DIST/profile.json"');
+    expect(script).toContain(`tauri/hh-${shell}/dist`);
+    // Never builds a bundle of another shell's apps into this profile.
+    const other = shell === "field" ? "work" : "field";
+    expect(script).not.toContain(`hh-${other}`);
+  });
+});
+
+describe("work launcher entries", () => {
+  test("the desk apps the Work profile ships are exactly the built ones", () => {
+    const script = readFileSync(resolve(REPO_ROOT, "tauri/hh-work/assemble-dist.sh"), "utf8");
+    const ids = [...script.matchAll(/^  "([a-z-]+) [a-z0-9-]+ \/[a-z0-9-]+\/"$/gm)].map((m) => m[1]);
+    expect(ids).toEqual([
+      "counter-till",
+      "quote-desk",
+      "buying-and-stock",
+      "money-desk",
+      "manager-home",
+      "dealer-admin",
+    ]);
   });
 });
