@@ -169,11 +169,33 @@ let hotkeys;
 let audit;
 let scenario;
 let log;
+let assist;
+
+// The assist admin world, the core's own shapes: the spend report zero filled
+// from the staff list (every active person appears, the ones who never opened
+// the assistant included), the budgets with one role default and one person's
+// override, and the four settings keys with the key's NAME and a no.
+function buildAssist() {
+  return {
+    role_budgets: { GENERAL_MANAGER: 500000 },
+    user_overrides: { [USERS["inside-sales"].user_id]: 0 },
+    default_budget: 60000,
+    exchanges: {
+      [USERS["dealer-admin"].user_id]: { exchanges: 4, tokens_in: 300, tokens_out: 200 },
+    },
+    settings: {
+      settings: { provider: "stub", model: "hos-stub-1", chat_enabled: true, spend_visible_to_non_admin: false },
+      key_env_var: "HH_ASSIST_API_KEY",
+      key_present: false,
+    },
+  };
+}
 
 function reset() {
   staff = buildStaff();
   hotkeys = buildHotkeys();
   audit = buildAudit();
+  assist = buildAssist();
   scenario = "";
   log = [];
 }
@@ -449,6 +471,99 @@ async function handle(req, res) {
     if (scenario === "bare-trail") return json(res, items);
     if (scenario === "empty-trail") return json(res, []);
     return json(res, { items, next_cursor: null, limit: 200 });
+  }
+
+  // ---- the assist admin (the core's RequireAdmin: tier 1 global) ----
+
+  const assistSpendReport = () => {
+    // The core zero fills the report from the staff list, biggest spender
+    // first: the exchange count is the answer, the tokens the next question.
+    const rows = staff.map((m) => {
+      const used = assist.exchanges[m.user_id] ?? { exchanges: 0, tokens_in: 0, tokens_out: 0 };
+      const override = assist.user_overrides[m.user_id];
+      const roleBudget = assist.role_budgets[m.role_code];
+      const budget =
+        override !== undefined
+          ? { tokens: override, source: "user" }
+          : roleBudget !== undefined
+            ? { tokens: roleBudget, source: "role" }
+            : { tokens: assist.default_budget, source: "default" };
+      return {
+        user_id: m.user_id,
+        display_name: m.display_name,
+        email: m.email,
+        role_code: m.role_code,
+        exchanges: used.exchanges,
+        tokens_in: used.tokens_in,
+        tokens_out: used.tokens_out,
+        budget,
+      };
+    });
+    rows.sort((a, b) => b.tokens_in + b.tokens_out - (a.tokens_in + a.tokens_out) || b.exchanges - a.exchanges);
+    return { month: "2026-10", users: rows };
+  };
+
+  if (req.method === "GET" && path === "/api/v1/assist/admin/spend") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    return json(res, assistSpendReport());
+  }
+
+  if (req.method === "GET" && path === "/api/v1/assist/admin/limits") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    return json(res, {
+      role_budgets: assist.role_budgets,
+      user_overrides: assist.user_overrides,
+      default_budget: assist.default_budget,
+    });
+  }
+
+  const roleLimitMatch = path.match(/^\/api\/v1\/assist\/admin\/limits\/role\/([^/]+)$/);
+  if (req.method === "PUT" && roleLimitMatch) {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const role = decodeURIComponent(roleLimitMatch[1]);
+    const tokens = Number(body?.tokens);
+    if (!Number.isInteger(tokens) || tokens < 0) {
+      return refuse(res, 400, "A budget can't be negative. Use 0 to switch the assistant off for this role.");
+    }
+    assist.role_budgets[role] = tokens;
+    return json(res, { role_code: role, tokens });
+  }
+
+  const userLimitMatch = path.match(/^\/api\/v1\/assist\/admin\/limits\/user\/([^/]+)$/);
+  if (req.method === "PUT" && userLimitMatch) {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const user = decodeURIComponent(userLimitMatch[1]);
+    const tokens = Number(body?.tokens);
+    if (!Number.isInteger(tokens) || tokens < 0) {
+      return refuse(res, 400, "A budget can't be negative. Use 0 to switch the assistant off for this person.");
+    }
+    assist.user_overrides[user] = tokens;
+    return json(res, { user_id: user, tokens, source: "user" });
+  }
+
+  if (req.method === "DELETE" && userLimitMatch) {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    // Reset to role is idempotent: resetting a person with no override succeeds.
+    delete assist.user_overrides[decodeURIComponent(userLimitMatch[1])];
+    return json(res, { user_id: decodeURIComponent(userLimitMatch[1]), source: "role" });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/assist/admin/settings") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    return json(res, assist.settings);
+  }
+
+  if (req.method === "PUT" && path === "/api/v1/assist/admin/settings") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const key = String(body?.key ?? "");
+    const value = String(body?.value ?? "");
+    const yesNo = key === "chat_enabled" || key === "spend_visible_to_non_admin";
+    if (!yesNo) return refuse(res, 400, `"${key}" isn't an assistant setting.`);
+    if (value !== "true" && value !== "false") {
+      return refuse(res, 400, `${key} is a yes/no setting, use true or false.`);
+    }
+    assist.settings.settings[key] = value === "true";
+    return json(res, { key, value });
   }
 
   return notFound(res);

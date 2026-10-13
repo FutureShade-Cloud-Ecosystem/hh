@@ -51,6 +51,8 @@ import { renderStaff, type StaffModel } from "./views-staff.js";
 import { renderHotkeys, type HotkeysModel } from "./views-hotkeys.js";
 import { renderAudit, type AuditDetail, type AuditModel, type AuditTrail } from "./views-audit.js";
 import { EMPTY_FILTERS, auditRefusalWords, sinceWire, type AuditFilters } from "./audit-logic.js";
+import { AdminApi } from "./admin-api.js";
+import { AdminWork, isAdminWorkSurface } from "./admin-work.js";
 import type { AuditRow } from "./dealer-api.js";
 
 const DEMO_ORG = "hh-demo";
@@ -118,6 +120,35 @@ export class DealerAdminApp extends HHElement {
   // The dealer's calls, over the staff client.
   readonly #api = new DealerApi(this.#staffClient);
 
+  // The admin-rest surfaces' door and controller: the assistant's month, and
+  // the rest of the registry as it lands. The controller owns their state and
+  // writes; app-root hands it the ways to the page and asks it for templates.
+  readonly #adminApi = new AdminApi(this.#staffClient);
+  readonly #admin = new AdminWork(this.#adminApi, {
+    repaint: () => this.requestUpdate(),
+    field: (name) => this.renderRoot.querySelector<HTMLInputElement>(`[data-field="${name}"]`)?.value ?? "",
+    setField: (name, value) => {
+      const el = this.renderRoot.querySelector<HTMLInputElement>(`[data-field="${name}"]`);
+      if (el !== null && el.value !== value) el.value = value;
+    },
+    setChecked: (name, value) => {
+      const el = this.renderRoot.querySelector<HTMLInputElement>(`[data-key][id="${name}"]`);
+      if (el !== null) el.checked = value;
+    },
+    meter: (name, fraction) => {
+      const el = this.renderRoot.querySelector<HTMLElement>(`[data-meter="${name}"]`);
+      if (el !== null) el.style.width = `${Math.round(fraction * 100)}%`;
+    },
+    download: (bytes, filename, type) => {
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    },
+  });
+
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
@@ -163,6 +194,7 @@ export class DealerAdminApp extends HHElement {
       .composedPath()
       .find((node): node is Element => node instanceof Element && node.hasAttribute("data-action"));
     const action = control?.getAttribute("data-action");
+    if (action !== null && action !== undefined && action !== "" && this.#admin.click(action, control)) return;
     if (action === "switch-role" || action === "sign-out") {
       this.#onSignOut();
       return;
@@ -179,6 +211,7 @@ export class DealerAdminApp extends HHElement {
         // A surface loads its own reads the first time it is opened.
         if (surface === "hotkeys" && this.#hotkeys.phase === "loading") void this.#loadHotkeys();
         if (surface === "audit" && this.#audit.phase === "loading") void this.#loadAudit();
+        if (isAdminWorkSurface(surface)) this.#admin.open(surface);
         this.requestUpdate();
       }
       return;
@@ -257,19 +290,30 @@ export class DealerAdminApp extends HHElement {
   // assign was.
   readonly #onHostChange = (event: Event): void => {
     const target = event.target;
-    if (!(target instanceof Element) || target.getAttribute("data-action") !== "assign-role") return;
+    if (!(target instanceof Element)) return;
+    if (this.#admin.change(target)) {
+      this.requestUpdate();
+      return;
+    }
+    if (target.getAttribute("data-action") !== "assign-role") return;
     const id = target.getAttribute("data-user-id") ?? "";
     const roleName = target instanceof HTMLSelectElement ? target.value : "";
     const role = this.#staff.roles.find((r) => r.name === roleName);
     void this.#assignRole(id, role?.code ?? "");
   };
 
-  // The audit filters' fields mirror from input events, never bound.
+  // The audit filters' fields mirror from input events, never bound. The
+  // admin-rest surfaces' fields answer the same way, through the controller.
   readonly #onHostInput = (event: Event): void => {
     const target = event.target;
     if (!(target instanceof Element)) return;
     const field = target.getAttribute("data-field") ?? "";
-    if (!field.startsWith("audit-")) return;
+    if (!field.startsWith("audit-")) {
+      if (field !== "" && this.#admin.input(field, target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "")) {
+        this.requestUpdate();
+      }
+      return;
+    }
     const value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
     const filters = this.#audit.filters;
     if (field === "audit-entity-type") this.#audit = { ...this.#audit, filters: { ...filters, entity_type: value } };
@@ -363,6 +407,9 @@ export class DealerAdminApp extends HHElement {
       const el = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${field}"]`);
       if (el !== null && el.value !== value) el.value = value;
     }
+    // The admin-rest surfaces' fields, toggles and meters mirror the same way:
+    // a refused write snaps back and a fresh read lands as the server says.
+    this.#admin.mirror();
   }
 
   private async loadFlows(): Promise<void> {
@@ -744,6 +791,7 @@ export class DealerAdminApp extends HHElement {
     this.#hotkeys = emptyHotkeysModel();
     this.#audit = emptyAuditModel();
     this.#auditDetailGen += 1;
+    this.#admin.signOut();
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -780,6 +828,10 @@ export class DealerAdminApp extends HHElement {
   private renderWork(): TemplateResult {
     // The router line: one case per registry surface. The next coder adds
     // theirs beside this one; nothing else in this file changes.
+    if (isAdminWorkSurface(this.#surface)) {
+      const view = this.#admin.view(this.#surface);
+      if (view !== null) return view;
+    }
     if (this.#surface === "hotkeys") return renderHotkeys(this.#hotkeys);
     if (this.#surface === "audit") return renderAudit(this.#audit);
     return renderStaff(this.#staff);
@@ -832,7 +884,7 @@ export class DealerAdminApp extends HHElement {
               <span class="mark">${drawIcon(iconForId(DealerAdminApp.FLOW_ICONS[flow.flow ?? ""] ?? "lucide:circle-user"), 29)}</span>
               <span class="words">
                 <span class="role">${flow.label ?? flow.flow}</span>
-                <span class="what">Staff, hotkeys and the audit trail.</span>
+                <span class="what">The dealer's administration.</span>
               </span>
             </button>
           `)}
