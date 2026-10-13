@@ -111,6 +111,14 @@ test.describe("phone", () => {
     await expect(state.getByRole("button", { name: "Try again" })).toHaveCount(0);
   });
 
+  test("a lapsed session on the landing signs the person out with a plain message, not a role refusal", async ({ page, request }) => {
+    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/orders", status: 401 } } });
+    await signIn(page, "field");
+    await expect(page.getByTestId("signin-message")).toHaveText("You are signed out. Sign in again.");
+    await expect(page.locator("hh-pro-frame")).toHaveCount(0);
+    await expect(page.getByTestId("landing-state")).toHaveCount(0);
+  });
+
   test("an unbuilt surface says it is not open yet and the selector moves between them", async ({ page }) => {
     await signIn(page, "field");
     await page.getByTestId("frame-selector").click();
