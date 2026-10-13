@@ -33,6 +33,51 @@ function token(sub) {
   return `${part({ alg: "HS256", typ: "JWT" })}.${part({ sub, exp })}.stub-signature`;
 }
 
+/**
+ * The stub FB Console the host's Tauri commands reach in the sign out legs
+ * (the page's injected invoke forwards each command here). It models the one
+ * server side session the Work shell can revoke: live after /__console/open,
+ * gone after auth_sign_out, and counted. The core's token has no server side
+ * row to model: it is a stateless signed token (core/internal/identity/sessionsigner.go),
+ * so there is nothing for a stub core to record beyond this.
+ */
+function consoleStub() {
+  const state = { live: false, signOuts: 0, opened: 0 };
+  const user = USERS["sales-manager"];
+  const [userId, roleCode, roleName, tier, scope] = user;
+  return {
+    state,
+    handle(command) {
+      if (command === "open") {
+        state.live = true;
+        state.opened += 1;
+        return [200, { live: true }];
+      }
+      if (command === "state") return [200, { ...state }];
+      if (command === "auth_resume") {
+        return state.live ? [200, { user: { user_id: userId, email: "sales-manager@demo.invalid", name: `${roleName} (demo)` } }] : [401, { code: "no_session" }];
+      }
+      if (command === "auth_exchange") {
+        if (!state.live) return [401, { code: "no_session" }];
+        return [
+          200,
+          {
+            token: token(userId),
+            expiresAtMs: Date.now() + 3600_000,
+            user: { user_id: userId, email: "sales-manager@demo.invalid", display_name: `${roleName} (demo)`, role_code: roleCode, role_name: roleName, tier, scope },
+          },
+        ];
+      }
+      if (command === "auth_sign_out") {
+        state.live = false;
+        state.signOuts += 1;
+        return [200, null];
+      }
+      return [400, { code: "unavailable" }];
+    },
+  };
+}
+
 function readBody(request) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -57,8 +102,14 @@ function json(response, status, body) {
  * instead of failing it.
  */
 export async function startServer(dist, { holdApi = false } = {}) {
+  const consoleSide = consoleStub();
   const server = createServer(async (request, response) => {
     const path = (request.url ?? "/").split("?")[0];
+    if (path.startsWith("/__console/")) {
+      const [status, body] = consoleSide.handle(path.slice("/__console/".length));
+      json(response, status, body);
+      return;
+    }
     if (path === "/api/v1/demo/flows" && request.method === "GET") {
       json(response, 200, { flows: Object.keys(USERS).map((flow) => ({ flow, role_code: USERS[flow][1], label: flow, class: "staff" })) });
       return;
