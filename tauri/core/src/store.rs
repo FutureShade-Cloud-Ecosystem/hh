@@ -10,9 +10,9 @@
 //! The seam's promise is kept exactly: every write is a single statement or
 //! an `atomic` list, and an `atomic` list applies fully or not at all with no
 //! other statement of this store running between them (one connection behind
-//! a mutex, one transaction per batch). `ATTACH` and `DETACH` are refused:
-//! the fixed file is the whole world of this store, and an attach would be a
-//! way back out of it.
+//! a mutex, one transaction per batch). The connection cannot reach any other
+//! file: the attached database limit is zero, which SQLite enforces for every
+//! spelling of `ATTACH` and for `VACUUM INTO` (see `lock_down`).
 
 use std::{
     collections::BTreeMap,
@@ -65,9 +65,13 @@ pub struct SqlStatement {
     pub params: Vec<SqlValue>,
 }
 
-/// Refuse the statements that reach outside the fixed database file. The
-/// store's own statements never use them (its pragma use is the
-/// `pragma_table_info` table valued function, which stays allowed).
+/// A clearer message for the plain forms of the statements that reach outside
+/// the fixed database file. It is a courtesy and NOT the security boundary: a
+/// leading comment hides the word, and `VACUUM INTO` is never matched. The
+/// boundary is `lock_down`, which sets the attached database limit to zero on
+/// the connection itself. The store's own statements never use these (its
+/// pragma use is the `pragma_table_info` table valued function, which stays
+/// allowed).
 fn check_statement(sql: &str) -> Result<(), String> {
     let first = sql
         .trim_start()
@@ -84,6 +88,15 @@ fn check_statement(sql: &str) -> Result<(), String> {
     }
 }
 
+/// Close the connection's ways out of its file. SQLITE_LIMIT_ATTACHED at zero
+/// makes SQLite itself refuse `ATTACH` however it is spelled (comments,
+/// newlines) and `VACUUM INTO`, which writes a database file at a named path
+/// and which no authorizer action covers. A limit also holds for every
+/// statement the connection ever prepares, with no parsing of ours in the way.
+fn lock_down(conn: &rusqlite::Connection) {
+    conn.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_ATTACHED, 0);
+}
+
 /// The store: one SQLite connection behind a mutex, so a batch holds the
 /// connection for its whole transaction and nothing interleaves.
 #[derive(Clone)]
@@ -96,12 +109,14 @@ impl Store {
     /// it per profile in the app config dir); the webview never does.
     pub fn open_path(path: &Path) -> Result<Self, String> {
         let conn = rusqlite::Connection::open(path).map_err(|e| e.to_string())?;
+        lock_down(&conn);
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
     /// An in memory store: the tests use it, nothing else does.
     pub fn open_in_memory() -> Result<Self, String> {
         let conn = rusqlite::Connection::open_in_memory().map_err(|e| e.to_string())?;
+        lock_down(&conn);
         Ok(Self { conn: Arc::new(Mutex::new(conn)) })
     }
 
