@@ -189,6 +189,12 @@ export interface Custody {
   identity(): ExchangeUser | null;
   /** Console mode: recover the session and report each outcome until it is final. Demo mode: nothing. */
   begin(appId: AppId, onOutcome: (outcome: AppStart) => void): void;
+  /**
+   * An app's own start failed for a reason that is not the person's (the branch read met a 5xx, a throttle,
+   * no network): recover again after the backoff (15 s, doubling to 120 s), reporting through onOutcome. The
+   * session is not touched, so nothing is deleted at the console. Demo mode: nothing.
+   */
+  retry(appId: AppId, onOutcome: (outcome: AppStart) => void): void;
   /** Sign out for good: end the session, forget the persona id, stop the loops, then go to the front door. True when it navigated. */
   leave(baseUrl?: string): Promise<boolean>;
   /**
@@ -236,6 +242,7 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
       coreBaseUrl: "",
       identity: () => null,
       begin: () => {},
+      retry: () => {},
       leave: async (baseUrl = buildBase()) => {
         await controller.signOut();
         return toFrontDoor(baseUrl);
@@ -274,6 +281,7 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
   let persona: ExchangeUser | null = null;
   /** True once a persona session ended at its window and custody was cleared locally: leave() then has no console session to delete. */
   let endedLocally = false;
+  let startRetryWait = RETRY_FIRST_MS;
   let generation = 0;
   let pending: unknown = null;
 
@@ -401,8 +409,19 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
       };
       void run();
     },
+    retry(appId, onOutcome) {
+      const mine = generation;
+      const wait = startRetryWait;
+      startRetryWait = Math.min(startRetryWait * 2, RETRY_CAP_MS);
+      stopTimer();
+      pending = timers.setTimeout(() => {
+        pending = null;
+        if (mine === generation) this.begin(appId, onOutcome);
+      }, wait);
+    },
     async leave(baseUrl = buildBase()) {
-      generation += 1; // every loop and any attempt in flight stops reporting
+      generation += 1;
+      startRetryWait = RETRY_FIRST_MS; // every loop and any attempt in flight stops reporting
       stopTimer();
       memo.clear();
       persona = null;

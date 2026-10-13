@@ -124,3 +124,13 @@ test("The Counter Till: the app's source builds its custody from the served conf
   // Nothing may import the app's root before the config is read (a static import would build the custody first).
   assert.doesNotMatch(main, /^import\s+(?:[^"']*from\s+)?["']\.\/(app-root|index)\.js["'];?$/m);
 });
+
+test("The Counter Till: in console mode a branch that does not resolve never signs the person out of the console", () => {
+  const root = readFileSync(join(appDir, "src", "app-root.ts"), "utf8");
+  const failure = root.slice(root.indexOf("if (!branch.ok) {"));
+  const guard = failure.indexOf('this.#custody.mode === "console"');
+  const demoSignOut = failure.indexOf("this.#controller.signOut()");
+  assert.ok(guard !== -1 && demoSignOut !== -1 && guard < demoSignOut, "the console branch must come before the demo sign out");
+  assert.match(root, /#consoleStartFailed\(status: number \| undefined\)/);
+  assert.match(root, /this\.#custody\.retry\("counter-till"/);
+});

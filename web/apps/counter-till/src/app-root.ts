@@ -700,6 +700,23 @@ export class CounterTillApp extends HHElement {
   }
 
   /**
+   * Console mode, the branch did not resolve. The person's console session is theirs across every app, so a
+   * core blip must not end it: an ending refusal (401, 403) leaves cleanly; anything else shows the
+   * unavailable entry and the custody tries the start again on its backoff.
+   */
+  async #consoleStartFailed(status: number | undefined): Promise<void> {
+    if (status === 401 || status === 403) {
+      await this.#custody.leave();
+      this.#flowsState = { kind: "unavailable", status: null };
+      this.requestUpdate();
+      return;
+    }
+    this.#flowsState = { kind: "unavailable", status: null };
+    this.requestUpdate();
+    this.#custody.retry("counter-till", (outcome) => this.#onRecovered(outcome));
+  }
+
+  /**
    * A demo build that finds no session sends the person to the front door to pick a role (decision
    * log row 1040). Only where the till is served under its own prefix (the box: BASE_URL is /till/):
    * at the origin root the till's own entry cards are the way in, and the front door is not there.
@@ -1014,6 +1031,10 @@ export class CounterTillApp extends HHElement {
       this.#clerkUserId = null;
       this.#clerkRoleCode = null;
       this.#clerkIdentity = null;
+      if (this.#custody.mode === "console") {
+        await this.#consoleStartFailed(branch.status);
+        return;
+      }
       await this.#controller.signOut();
       this.requestUpdate();
       // A session the server refuses (ended or revoked) must not be re-adopted by every load: the

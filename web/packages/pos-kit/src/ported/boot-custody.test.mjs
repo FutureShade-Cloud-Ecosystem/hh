@@ -460,3 +460,33 @@ test("custody cleared elsewhere (no profile) is still reported as ended", async 
   await clock.advance(2_000);
   assert.deepEqual(seen.at(-1), { kind: "front-door", why: "ended" });
 });
+
+// ── P2-2: the retry hook an app uses when its own start fails transiently ───
+
+test("retry runs the recovery again on the backoff, and never before it, and not after leave", async () => {
+  const surface = fakeSurface({ exchange: () => answerFor("driver") });
+  const { custody, clock } = boot(CONSOLE, { surface });
+  const seen = [];
+  custody.retry("drive-run", (outcome) => seen.push(outcome));
+  await clock.advance(14_000);
+  assert.equal(seen.length, 0);
+  await clock.advance(1_000);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(seen[0].kind, "ready");
+  // a second retry waits twice as long
+  custody.retry("drive-run", (outcome) => seen.push(outcome));
+  await clock.advance(29_000);
+  assert.equal(seen.length, 1);
+  await custody.leave("/");
+  await clock.advance(10_000);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(seen.length, 1, "nothing is reported after leave");
+});
+
+test("demo mode: retry does nothing", async () => {
+  const { custody, clock } = boot(null, {});
+  let called = false;
+  custody.retry("drive-run", () => (called = true));
+  await clock.advance(300_000);
+  assert.equal(called, false);
+});

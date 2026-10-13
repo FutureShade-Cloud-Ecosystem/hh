@@ -5,6 +5,7 @@ import { defineConsoleLegs } from "../../../packages/pos-kit/test/console-legs.j
 defineConsoleLegs({
   app: "Counter Till",
   role: { role_code: "inside_sales", role_name: "Sales", user_id: "demo-account-sales" },
+  branchPath: "/api/v1/branches",
   persona: "sales",
   personaCard: "Sales",
   signedIn: async (page, roleName) => {

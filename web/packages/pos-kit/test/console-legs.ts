@@ -19,6 +19,8 @@ export interface ConsoleLegs {
   personaCard: string;
   /** What the app shows once it is signed in as the role: its existing screen and the role's label. */
   signedIn: (page: Page, roleName: string) => Promise<void>;
+  /** An app that resolves its branch at start names the route here; a leg then makes it answer 503 and holds that the console session survives. */
+  branchPath?: string;
   /** What the app shows with no session and no front door at the origin root: its unavailable entry. */
   unavailable: (page: Page) => Promise<void>;
 }
@@ -145,6 +147,13 @@ export function defineConsoleLegs(legs: ConsoleLegs): void {
     expect(JSON.parse(onFrontDoor.session[PERSONA_KEY] ?? "null")).toBe(legs.persona);
     expect(bearerCapable(onFrontDoor.session)).toEqual([]);
     const asked = (await peek(request)).personas.length;
+    if (legs.branchPath !== undefined) {
+      // The app stubs know the demo accounts, not persona subjects: let the branch read through so the leg
+      // looks at the storage, not at an ending refusal the stub would answer a persona.
+      await page.route(`${world()}${legs.branchPath}**`, (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: '[{"id":"11111111-1111-4111-8111-111111111111","code":"MAIN","name":"Main branch"}]' }),
+      );
+    }
     // The app page, in the same tab's session storage: copy the front door's session storage over, as the
     // browser does for a link in the same tab (the two local ports are two origins in a test only).
     await page.goto(`${appUrl()}/`, { waitUntil: "domcontentloaded" });
@@ -163,4 +172,22 @@ export function defineConsoleLegs(legs: ConsoleLegs): void {
     expect(JSON.parse(onApp.session[PERSONA_KEY] ?? "null")).toBe(legs.persona);
     expect(Object.keys(onApp.session).filter((key) => key !== MIRROR_KEY && key !== PERSONA_KEY)).toEqual([]);
   });
+
+  if (legs.branchPath !== undefined) {
+    const branchPath = legs.branchPath;
+    test(`${legs.app}: a branch that does not resolve at boot (core 503) does not delete the person's console session`, async ({ page, request }) => {
+      await serve(request, legs);
+      await signInAtTheFrontDoor(page);
+      const deletes: string[] = [];
+      page.on("request", (made) => {
+        if (made.method() === "DELETE" && made.url().includes("/console/v1/account/sessions")) deletes.push(made.url());
+      });
+      await page.route(`${world()}${branchPath}**`, (route) => route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"Service Unavailable"}' }));
+      await page.goto(`${appUrl()}/`);
+      await legs.unavailable(page);
+      await page.waitForTimeout(2500); // the custody's watch runs every two seconds: it must not read this as an end
+      expect(deletes).toEqual([]);
+      expect((await peek(request)).cookie).toBe(true); // the console session is still there
+    });
+  }
 }

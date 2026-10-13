@@ -426,6 +426,22 @@ export class QuoteDeskApp extends HHElement {
   }
 
   /**
+   * Console mode, the branch did not resolve. The person's console session is theirs across every app, so a
+   * core blip must not end it: an ending refusal (401, 403) leaves cleanly; anything else shows the
+   * unavailable entry and the custody tries the start again on its backoff.
+   */
+  async #consoleStartFailed(status: number | undefined): Promise<void> {
+    this.#flowsState = { kind: "unavailable", status: null };
+    if (status === 401 || status === 403) {
+      await this.#custody.leave();
+      this.requestUpdate();
+      return;
+    }
+    this.requestUpdate();
+    this.#custody.retry("quote-desk", (outcome) => this.#onRecovered(outcome));
+  }
+
+  /**
    * A demo build that finds no session sends the person to the front door to pick a role (decision log row
    * 1040), never to the shared entry page. Only where the desk is served under its own prefix (the box:
    * BASE_URL is /quote/): at the origin root the desk's own entry cards are the way in, and the front door
@@ -485,6 +501,10 @@ export class QuoteDeskApp extends HHElement {
       this.#roleLabel = null;
       this.#deskUserId = null;
       this.#deskIdentity = null;
+      if (this.#custody.mode === "console") {
+        await this.#consoleStartFailed(branch.status);
+        return;
+      }
       await this.#controller.signOut();
       this.requestUpdate();
       // A session the server refuses (ended or revoked) must not be re-adopted by every load: the key goes
