@@ -374,6 +374,9 @@ function capturePod(res, stop, input) {
   if (stop.status !== "EN_ROUTE") return refuse(res, 409, "illegal status transition");
   const name = String(input.received_by ?? "").trim();
   if (name === "") return refuse(res, 400, "type the full name of the person receiving this delivery");
+  // The core's rule (CapturePOD checkTypedName): at most 200 bytes, no C0 or DEL, no bidi controls.
+  if (Buffer.byteLength(name, "utf8") > 200) return refuse(res, 400, "that name is too long, type the full name in at most 200 bytes");
+  if (/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(name)) return refuse(res, 400, "the name cannot hold control characters, type the full name as plain text");
   if (input.affirmed !== true) return refuse(res, 400, "the recipient must confirm the delivery before it can be signed");
   const now = new Date(nowMs()).toISOString();
   stop.status = "DELIVERED";
@@ -528,8 +531,9 @@ function syncApplyStopUpdate(stop, op) {
 
 // The core's pod scope is the photo record (core/internal/dispatch/syncscope_pod.go
 // podCreateFields): the stop it proves, the content type, the bytes base64 and
-// a caption. The typed name attestation has no sync door, it rides the REST
-// proof, so a pod create here never delivers a stop.
+// a caption. The core now also has the typed name attestation form on this
+// scope (the 6c client item builds its stub side); it rides the REST proof
+// here until then, so a pod create here never delivers a stop.
 const POD_CREATE_FIELDS = new Set(["id", "stop_id", "content_type", "image_bytes_b64", "caption"]);
 
 function syncApplyPodCreate(op) {
