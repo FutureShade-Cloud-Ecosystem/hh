@@ -177,6 +177,7 @@ type StockGlance struct {
 // -- tax reason codes (W4 records the decision; the deterministic engine is M5) --
 const (
 	TaxStdON13      = "STD_ON_HST_13"           // 13% provisional default
+	TaxStdSales     = "STD_SALES_TAX"           // the neutral standard rate of a jurisdiction other than Ontario (0389)
 	TaxONFNPos8     = "ON_FN_POS_8"             // Ontario First Nations point-of-sale 8% credit → collect 5%
 	TaxFedVendorDel = "FED_S87_VENDOR_DELIVERY" // federal 0% provisional, Dibbits delivery to a reserve
 	TaxManualReview = "MANUAL_TAX_REVIEW"       // routed to a person
@@ -370,6 +371,8 @@ type taxSnapshotRow struct {
 	Automated         bool
 	EvidenceDocID     string
 	SignatureID       string
+	// StandardRateBps is the standard rate FullHSTCents was computed at (0389); zero is the Ontario 13 percent.
+	StandardRateBps int
 }
 
 type signatureRow struct {
@@ -523,7 +526,34 @@ var (
 )
 
 // flatHST13 is the W4 PROVISIONAL 13% HST fallback (D-A19-9). M5 owns the real tax_cents. Round half-up.
-func flatHST13(subtotalCents int64) int64 { return (subtotalCents*flatHSTRateBps + 5000) / 10000 }
+func flatHST13(subtotalCents int64) int64 { return taxAt(subtotalCents, flatHSTRateBps) }
+
+// taxAt is the half-up, round-once tax of a subtotal at a rate in basis points: the engine's own hstOn.
+func taxAt(subtotalCents int64, rateBps int) int64 {
+	return (subtotalCents*int64(rateBps) + 5000) / 10000
+}
+
+// standardRateOrFlat answers the standard rate a quote names, the flat Ontario rate when it names none
+// (an assessor written before the field existed).
+func standardRateOrFlat(q QuoteResult) int {
+	if q.StandardRateBps > 0 {
+		return q.StandardRateBps
+	}
+	return flatHSTRateBps
+}
+
+// standardOutcomeWord is the plain word for a standard outcome at a rate: "13%" at 1300 bps, "7.75%" at 775.
+func standardOutcomeWord(rateBps int) string {
+	whole, frac := rateBps/100, rateBps%100
+	switch {
+	case frac == 0:
+		return fmt.Sprintf("%d%%", whole)
+	case frac%10 == 0:
+		return fmt.Sprintf("%d.%d%%", whole, frac/10)
+	default:
+		return fmt.Sprintf("%d.%02d%%", whole, frac)
+	}
+}
 
 // -- W7 counter-v2 domain types (0043: pos_policy / pos_returns / pos_parked_tickets / pricing_orders) --
 

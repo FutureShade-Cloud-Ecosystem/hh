@@ -450,12 +450,12 @@ func (r *Repository) InsertTaxSnapshot(ctx context.Context, tx pgx.Tx, snap taxS
 	const q = `
 INSERT INTO tax_decision_snapshot (order_id, order_line_id, tax_reason_code, rule_version, rate_bps,
                                    full_hst_cents, on_credit_cents, net_collected_cents, automated,
-                                   evidence_doc_id, signature_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id::text`
+                                   evidence_doc_id, signature_id, standard_rate_bps)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id::text`
 	var id string
 	err := tx.QueryRow(ctx, q, snap.OrderID, nullStr(snap.OrderLineID), snap.TaxReasonCode, snap.RuleVersion,
 		snap.RateBps, snap.FullHSTCents, snap.OnCreditCents, snap.NetCollectedCents, snap.Automated,
-		nullStr(snap.EvidenceDocID), nullStr(snap.SignatureID)).Scan(&id)
+		nullStr(snap.EvidenceDocID), nullStr(snap.SignatureID), standardOrFlat(snap.StandardRateBps)).Scan(&id)
 	return id, err
 }
 
@@ -653,3 +653,12 @@ func nullStr(s string) any {
 
 // compile-time assertion: *Repository satisfies the service's store seam.
 var _ posStore = (*Repository)(nil)
+
+// standardOrFlat is the standard rate a snapshot row is written with: zero, a row built by a caller
+// that names none, is the Ontario 13 percent the column defaults to.
+func standardOrFlat(bps int) int {
+	if bps <= 0 {
+		return flatHSTRateBps
+	}
+	return bps
+}

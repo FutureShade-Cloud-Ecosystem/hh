@@ -97,6 +97,15 @@ func (s *Service) SyncHoldbacks(ctx context.Context, jobID string) (SyncResult, 
 	if err != nil {
 		return SyncResult{}, err
 	}
+	// The dealer's standard rate, read once per sync and only for a job that opted into HST on holdback.
+	hstBps := int64(ontarioHSTBps)
+	if job.HSTOnHoldback && s.standard != nil {
+		bps, err := s.standard.StandardRateBps(ctx, "")
+		if err != nil {
+			return SyncResult{}, fmt.Errorf("lien: the dealer's standard rate for the HST on holdback: %w", err)
+		}
+		hstBps = int64(bps)
+	}
 	for _, inv := range invoices {
 		// Scope a job to its customer when one is set (a job with no customer sweeps its whole branch).
 		if job.CustomerID != "" && inv.CustomerID != "" && inv.CustomerID != job.CustomerID {
@@ -106,7 +115,7 @@ func (s *Service) SyncHoldbacks(ctx context.Context, jobID string) (SyncResult, 
 			res.SkippedCount++
 			continue
 		}
-		amount := holdbackAmount(inv.HoldbackCents, job.HSTOnHoldback)
+		amount := holdbackAt(inv.HoldbackCents, job.HSTOnHoldback, hstBps)
 		if amount <= 0 {
 			res.SkippedCount++
 			continue
@@ -128,15 +137,22 @@ func (s *Service) SyncHoldbacks(ctx context.Context, jobID string) (SyncResult, 
 	return res, nil
 }
 
-// holdbackAmount applies the HST-on-holdback config flag. billing already computes holdback_cents on the
-// pre-tax base; when a job opts into HST-on-holdback, the retention is grossed up by the Ontario HST rate so
-// the held amount matches a tax-inclusive contract. hstBps is a DOCUMENTED PLACEHOLDER (the M5 tax engine owns
-// the authoritative rate; M6 must not hardcode a live rate, so this only fires when the per-job flag is set).
+// ontarioHSTBps is the 13% Ontario HST rate an unwired service grosses a holdback up by: the rate every
+// dealer had before the standard rate came through StandardRateReader.
+const ontarioHSTBps = 1300
+
+// holdbackAmount is holdbackAt at the Ontario rate, the shape of the sync before the seam.
 func holdbackAmount(base int64, hstOnHoldback bool) int64 {
+	return holdbackAt(base, hstOnHoldback, ontarioHSTBps)
+}
+
+// holdbackAt applies the HST-on-holdback config flag. billing already computes holdback_cents on the
+// pre-tax base; when a job opts into HST-on-holdback, the retention is grossed up by the dealer's standard
+// rate so the held amount matches a tax-inclusive contract.
+func holdbackAt(base int64, hstOnHoldback bool, hstBps int64) int64 {
 	if !hstOnHoldback {
 		return base
 	}
-	const hstBps = 1300 // 13% ON HST (placeholder; parity with the W4 flat stub)
 	return base + (base*hstBps)/10000
 }
 

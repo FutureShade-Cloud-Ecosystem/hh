@@ -10,8 +10,9 @@ import (
 	"context"
 )
 
-// taxRateJurisdiction is the jurisdiction word the read answers: the
-// standard-rated Ontario facts the binding engine serves.
+// taxRateJurisdiction is the jurisdiction word the read answers when the
+// assessor names none: the standard-rated Ontario facts, the dealer every
+// assessor written before the quote carried its jurisdiction served.
 const taxRateJurisdiction = "ON"
 
 // roundModeInvoiceTotal is the round rule an unwired service answers: the
@@ -81,8 +82,8 @@ func (s *Service) TaxRate(ctx context.Context) (TaxRate, error) {
 		return TaxRate{}, err
 	}
 	return TaxRate{
-		Jurisdiction: taxRateJurisdiction,
-		ReasonCode:   TaxStdON13,
+		Jurisdiction: firstNonEmpty(quote.Jurisdiction, taxRateJurisdiction),
+		ReasonCode:   firstNonEmpty(quote.ReasonCode, TaxStdON13),
 		RateBps:      quote.RateBps,
 		RoundMode:    mode,
 	}, nil

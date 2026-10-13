@@ -178,15 +178,19 @@ func (s *Service) jurisdiction(ctx context.Context) (string, error) {
 	return r, nil
 }
 
-// standardToday resolves the dealer's own standard rate for today, for the rules that compare a rate
-// against it (the status-card profile rule). An Ontario dealer with no row keeps the Ontario 13
+// StandardRateBps answers the dealer's own standard rate on a date ("" is today): the rate the engine
+// binds a standard sale at, for the rules and the postings that need the standard without a sale (the
+// status-card profile rule, the NSF fee backout). An Ontario dealer with no row keeps the Ontario 13
 // percent; any other jurisdiction refuses with the typed no standard rate error.
-func (s *Service) standardToday(ctx context.Context) (int, error) {
+func (s *Service) StandardRateBps(ctx context.Context, asOf string) (int, error) {
+	day, err := normDate(asOf, s.clock)
+	if err != nil {
+		return 0, err
+	}
 	jur, err := s.jurisdiction(ctx)
 	if err != nil {
 		return 0, err
 	}
-	day := today(s.clock)
 	bps, ok, err := s.rate(ctx, jur, StandardReasonFor(jur), day)
 	if err != nil {
 		return 0, err
@@ -285,7 +289,7 @@ func (s *Service) UpsertProfile(ctx context.Context, p StatusCardProfile) (Statu
 	if p.RateBps < 0 || p.RateBps > 10000 {
 		return StatusCardProfile{}, httpx.BadRequestf("rate_bps must be 0..10000")
 	}
-	std, err := s.standardToday(ctx)
+	std, err := s.StandardRateBps(ctx, "")
 	if err != nil {
 		return StatusCardProfile{}, err
 	}
