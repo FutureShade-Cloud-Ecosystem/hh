@@ -23,7 +23,7 @@ function nextKey() {
   return `00000000-0000-4000-8000-${String(keyCounter).padStart(12, "0")}`;
 }
 
-async function rig() {
+async function rig(extra = {}) {
   const server = new FakeSyncServer();
   server.seed("runs", RUN, {
     id: RUN,
@@ -85,6 +85,7 @@ async function rig() {
     sql: backend.sql,
     transport: server.transport(),
     newKey: nextKey,
+    ...extra,
   });
   await layer.cycle();
   return { layer, server, store };
@@ -284,4 +285,30 @@ test("a later write on a stop names its base once the earlier request has settle
   assert.equal(typeof last.base_seq, "number", "the second write names the pulled seq as its base");
   const cards = await layer.openCards();
   assert.equal(cards.length, 1, "the dispatcher's move shows as a card, never overwritten silently");
+});
+
+test("the run close drains the outbox first, and refuses with words while a move is still waiting", async () => {
+  const closes = [];
+  const direct = {
+    completeRun: async (id) => {
+      closes.push({ id, applied: server.appliedOrder.length });
+      return { ok: true, value: true };
+    },
+    pod: async () => ({ ok: false, error: "unused", status: 400 }),
+  };
+  const { layer, server } = await rig({ direct });
+  // A move queued with no signal: the close must not jump it.
+  server.setOffline(true);
+  await layer.advance(STOP_1, "LOADED");
+  const refused = await layer.completeRun(RUN);
+  assert.equal(refused.ok, false);
+  if (refused.ok) return;
+  assert.match(refused.error, /still waiting/);
+  assert.equal(closes.length, 0, "the direct close was never sent");
+  // Back on signal: the queued move goes first, then the close is sent.
+  server.setOffline(false);
+  const closed = await layer.completeRun(RUN);
+  assert.equal(closed.ok, true);
+  assert.equal(closes.length, 1);
+  assert.equal(closes[0].applied, 1, "the queued move had applied before the close went");
 });
