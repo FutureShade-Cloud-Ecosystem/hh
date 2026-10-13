@@ -53,7 +53,7 @@ after(() => {
   child?.kill();
 });
 
-const TRENTON = "6f1c2b3a-0000-4000-8000-000000000001";
+const POINT_LOMA = "6f1c2b3a-0000-4000-8000-000000000001";
 const MAPLE = "c0000000-0000-4000-9000-000000000001";
 const NOT_WRITABLE = /is not writable through sync/;
 
@@ -90,7 +90,7 @@ const universe = () => {
 test("quotes create: the stub admits exactly the core's writable fields", async () => {
   const set = createSet();
   for (const field of universe()) {
-    const { result } = await one("quotes", "create", { id: uuid(), customer_id: MAPLE, branch_id: TRENTON, [field]: "x" });
+    const { result } = await one("quotes", "create", { id: uuid(), customer_id: MAPLE, branch_id: POINT_LOMA, [field]: "x" });
     const refused = result.status === "rejected" && NOT_WRITABLE.test(String(result.error ?? ""));
     assert.equal(refused, !set.has(field), `create: field ${field} should be ${set.has(field) ? "admitted" : "refused"} (answer: ${JSON.stringify(result)})`);
   }
@@ -98,7 +98,7 @@ test("quotes create: the stub admits exactly the core's writable fields", async 
 
 test("quotes update: the stub admits exactly the core's writable fields", async () => {
   const id = uuid();
-  const made = await one("quotes", "create", { id, customer_id: MAPLE, branch_id: TRENTON });
+  const made = await one("quotes", "create", { id, customer_id: MAPLE, branch_id: POINT_LOMA });
   assert.equal(made.result.status, "applied");
   const set = updateSet();
   for (const field of universe()) {
@@ -110,7 +110,7 @@ test("quotes update: the stub admits exactly the core's writable fields", async 
 
 test("a created draft lands as a DRAFT with a server minted number, the caller's own, and shows in a pull with no money legs of the client's", async () => {
   const id = uuid();
-  const { result } = await one("quotes", "create", { id, customer_id: MAPLE, branch_id: TRENTON, valid_until: "2999-12-31" });
+  const { result } = await one("quotes", "create", { id, customer_id: MAPLE, branch_id: POINT_LOMA, valid_until: "2999-12-31" });
   assert.equal(result.status, "applied");
   assert.equal(typeof result.seq, "number");
   const row = (await pull("quotes")).json.items.find((item) => item.id === id);
@@ -124,8 +124,8 @@ test("a created draft lands as a DRAFT with a server minted number, the caller's
 test("the same idempotency key twice makes one quote and answers the same seq", async () => {
   const client_id = uuid();
   const id = uuid();
-  const first = (await push("quotes", [{ client_id, op: "create", payload: { id, customer_id: MAPLE, branch_id: TRENTON } }])).json.results[0];
-  const second = (await push("quotes", [{ client_id, op: "create", payload: { id, customer_id: MAPLE, branch_id: TRENTON } }])).json.results[0];
+  const first = (await push("quotes", [{ client_id, op: "create", payload: { id, customer_id: MAPLE, branch_id: POINT_LOMA } }])).json.results[0];
+  const second = (await push("quotes", [{ client_id, op: "create", payload: { id, customer_id: MAPLE, branch_id: POINT_LOMA } }])).json.results[0];
   assert.equal(first.status, "applied");
   assert.equal(second.status, "applied");
   assert.equal(second.seq, first.seq);
@@ -133,16 +133,16 @@ test("the same idempotency key twice makes one quote and answers the same seq", 
 });
 
 test("a create names a customer and a branch the org holds, or is refused", async () => {
-  assert.equal((await one("quotes", "create", { id: uuid(), customer_id: "not-a-uuid", branch_id: TRENTON })).result.status, "rejected");
+  assert.equal((await one("quotes", "create", { id: uuid(), customer_id: "not-a-uuid", branch_id: POINT_LOMA })).result.status, "rejected");
   assert.equal((await one("quotes", "create", { id: uuid(), customer_id: MAPLE, branch_id: "not-a-uuid" })).result.status, "rejected");
-  assert.equal((await one("quotes", "create", { id: uuid(), customer_id: "c0000000-0000-4000-9000-0000000000ff", branch_id: TRENTON })).result.status, "rejected");
+  assert.equal((await one("quotes", "create", { id: uuid(), customer_id: "c0000000-0000-4000-9000-0000000000ff", branch_id: POINT_LOMA })).result.status, "rejected");
   assert.equal((await one("quotes", "create", { id: uuid(), customer_id: MAPLE, branch_id: "6f1c2b3a-0000-4000-8000-0000000000ff" })).result.status, "rejected");
-  assert.equal((await one("quotes", "create", { id: uuid(), customer_id: MAPLE, branch_id: TRENTON, valid_until: "31/12/2999" })).result.status, "rejected");
+  assert.equal((await one("quotes", "create", { id: uuid(), customer_id: MAPLE, branch_id: POINT_LOMA, valid_until: "31/12/2999" })).result.status, "rejected");
 });
 
 test("an update that declares only the id moves nothing and is refused", async () => {
   const id = uuid();
-  await one("quotes", "create", { id, customer_id: MAPLE, branch_id: TRENTON });
+  await one("quotes", "create", { id, customer_id: MAPLE, branch_id: POINT_LOMA });
   const { result } = await one("quotes", "update", { id });
   assert.equal(result.status, "rejected");
   assert.match(result.error, /moves nothing/);
@@ -150,7 +150,7 @@ test("an update that declares only the id moves nothing and is refused", async (
 
 test("a stale update merges by field: applied, with the envelope the engine writes", async () => {
   const id = uuid();
-  const created = await one("quotes", "create", { id, customer_id: MAPLE, branch_id: TRENTON });
+  const created = await one("quotes", "create", { id, customer_id: MAPLE, branch_id: POINT_LOMA });
   const baseSeq = created.result.seq;
   const desk = await one("quotes", "update", { id, valid_until: "2999-09-09" });
   assert.equal(desk.result.status, "applied");
@@ -164,7 +164,7 @@ test("a stale update merges by field: applied, with the envelope the engine writ
 
 test("only a draft is withdrawn through sync, and the withdrawal reaches the feed as a tombstone", async () => {
   const draft = uuid();
-  await one("quotes", "create", { id: draft, customer_id: MAPLE, branch_id: TRENTON });
+  await one("quotes", "create", { id: draft, customer_id: MAPLE, branch_id: POINT_LOMA });
   const gone = await one("quotes", "delete", { id: draft });
   assert.equal(gone.result.status, "applied");
   const feed = (await pull("quotes")).json;

@@ -24,7 +24,7 @@ async function world() {
   const server = new FakeSyncServer();
   server.seed("customers", MAPLE, { id: MAPLE, account_no: "C01", name: "Maple Ridge Contracting", home_branch_id: BRANCH, customer_type: "CONTRACTOR", is_active: true });
   server.seed("customers", FENWICK, { id: FENWICK, account_no: "C02", name: "Fenwick Builders Ltd", home_branch_id: BRANCH, customer_type: "BUILDER", is_active: true });
-  server.seed("products", P1, { id: P1, sku: "HPV-60", name: "Holland Stone 60 mm", description: "The Holland paver", manufacturer: "", collection: "", sold_by: "sf", base_uom: "sf", is_special_order: false, is_active: true, lead_time_days: null });
+  server.seed("products", P1, { id: P1, sku: "HPV-60", name: "Charcoal Stone 60 mm", description: "The Charcoal paver", manufacturer: "", collection: "", sold_by: "sf", base_uom: "sf", is_special_order: false, is_active: true, lead_time_days: null });
   server.seed("products", P2, { id: P2, sku: "PS-1", name: "Polymeric sand", description: "", manufacturer: "", collection: "", sold_by: "bag", base_uom: "bag", is_special_order: false, is_active: true, lead_time_days: null });
   server.seed("price_matrix", P1, { id: P1, list_price_cents: 400, price_uom: "sf", updated_at: "2000-01-01T00:00:00Z" });
   server.seed("quotes", "0d000000-0000-4000-9000-000000000001", { id: "0d000000-0000-4000-9000-000000000001", quote_no: "Q-1001", customer_id: MAPLE, status: "DRAFT", valid_until: "2999-01-01T00:00:00Z", subtotal_cents: 48000, tax_cents: 6240, total_cents: 54240, created_at: "2000-01-02T00:00:00Z" });
@@ -87,9 +87,9 @@ test("the list carries the words for how old the copy is", async () => {
 
 test("the catalogue search is answered in the server's shape: the four facts a pick needs", async () => {
   const w = await world();
-  const out = await answer(w.routes, "/api/v1/products/search?q=holland&limit=10");
+  const out = await answer(w.routes, "/api/v1/products/search?q=charcoal&limit=10");
   const hits = readCatalogHits(out.body);
-  assert.deepEqual(hits, [{ product_id: P1, sku: "HPV-60", name: "Holland Stone 60 mm", base_uom: "sf" }]);
+  assert.deepEqual(hits, [{ product_id: P1, sku: "HPV-60", name: "Charcoal Stone 60 mm", base_uom: "sf" }]);
   assert.equal(readCatalogHits((await answer(w.routes, "/api/v1/products/search?q=zzz&limit=10")).body).length, 0);
 });
 

@@ -1833,7 +1833,7 @@ const syncStub = createSyncStub({
   products: () => PRODUCTS,
   customers: () => CUSTOMERS,
   parked: () => parked,
-  homeBranchId: TRENTON_ID,
+  homeBranchId: POINT_LOMA_ID,
 });
 
 const server = createServer(async (request, response) => {

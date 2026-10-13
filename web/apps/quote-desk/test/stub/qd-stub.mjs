@@ -1192,7 +1192,7 @@ const syncStub = createSyncStub({
   customers: () => CUSTOMERS,
   quotes,
   customerById,
-  branchIds: new Set([TRENTON_ID, BELLEVILLE_ID]),
+  branchIds: new Set([POINT_LOMA_ID, JULIAN_ID]),
   // A Work caller sees its own quotes, a Manage caller every quote in its branch (the list rule).
   viewable: (caller, quote) => caller.account.role_code === "sales_manager" || quote.owner_id === caller.account.user_id,
   makeQuote: ({ id, customerId, caller, validUntil }) => {

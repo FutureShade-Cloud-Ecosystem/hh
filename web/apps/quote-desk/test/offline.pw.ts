@@ -83,8 +83,8 @@ test("with no signal: the cached catalogue and customers answer, a draft is kept
   await expect(page.getByTestId("qb-compose-customer")).toContainText("Maple Ridge Contracting");
   await expect(page.getByTestId("qd-cache-note")).toContainText("Showing the copy on this device");
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
-  await scan.fill("Holland");
-  const hit = page.getByRole("option", { name: /Holland Stone 60 mm/ });
+  await scan.fill("Charcoal");
+  const hit = page.getByRole("option", { name: /Charcoal Stone 60 mm/ });
   await expect(hit.first()).toBeVisible();
 
   // Adding the first line makes the quote; with no signal the draft is kept on the device instead.
@@ -125,8 +125,8 @@ test("a withdrawn draft never reaches the server as a quote", async ({ page, con
   await picker.getByPlaceholder("Search name or account #…").fill("Fenwick");
   await picker.getByRole("option", { name: /Fenwick Builders/ }).click();
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
-  await scan.fill("Holland");
-  await page.getByRole("option", { name: /Holland Stone 60 mm/ }).first().click();
+  await scan.fill("Charcoal");
+  await page.getByRole("option", { name: /Charcoal Stone 60 mm/ }).first().click();
   const waiting = page.getByTestId("qd-waiting");
   await expect(waiting.getByTestId("qd-waiting-item")).toHaveCount(1);
   await waiting.getByRole("button", { name: "Withdraw" }).click();
@@ -147,9 +147,9 @@ test("pressing add again with no signal keeps one draft, not one per press, and 
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
   const waiting = page.getByTestId("qd-waiting");
-  for (const query of ["Holland", "Holland", "Holland"]) {
+  for (const query of ["Charcoal", "Charcoal", "Charcoal"]) {
     await scan.fill(query);
-    await page.getByRole("option", { name: /Holland Stone 60 mm/ }).first().click();
+    await page.getByRole("option", { name: /Charcoal Stone 60 mm/ }).first().click();
     await expect(page.getByTestId("qb-error")).toContainText("saved on this device");
     await expect(waiting.getByTestId("qd-waiting-item").first()).toBeVisible();
   }

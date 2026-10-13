@@ -18,7 +18,7 @@ const MAPLE = "c0000000-0000-4000-9000-000000000001";
 async function rig() {
   const server = new FakeSyncServer();
   server.seed("customers", MAPLE, { id: MAPLE, account_no: "C01", name: "Maple Ridge Contracting", home_branch_id: BRANCH, customer_type: "CONTRACTOR", is_active: true });
-  server.seed("products", "a0000000-0000-4000-9000-000000000001", { id: "a0000000-0000-4000-9000-000000000001", sku: "HPV-60", name: "Holland Stone 60 mm", description: "", manufacturer: "", collection: "", sold_by: "sf", base_uom: "sf", is_special_order: false, is_active: true, lead_time_days: null });
+  server.seed("products", "a0000000-0000-4000-9000-000000000001", { id: "a0000000-0000-4000-9000-000000000001", sku: "HPV-60", name: "Charcoal Stone 60 mm", description: "", manufacturer: "", collection: "", sold_by: "sf", base_uom: "sf", is_special_order: false, is_active: true, lead_time_days: null });
   server.seed("price_matrix", "a0000000-0000-4000-9000-000000000001", { id: "a0000000-0000-4000-9000-000000000001", list_price_cents: 400, price_uom: "sf", updated_at: "2000-01-01T00:00:00Z" });
   const strict = strictQuotesTransport(server);
   const signal = fixedSignal(true);
@@ -50,7 +50,7 @@ test("boot pulls the world; the desk then reads the catalogue and customers from
   const r = await rig();
   await r.desk.boot(BRANCH);
   assert.equal(r.desk.available, true);
-  const found = await r.desk.reader().catalogue("holland");
+  const found = await r.desk.reader().catalogue("charcoal");
   assert.equal(found.hits.length, 1);
   assert.equal(found.hits[0].listPriceCents, 400);
   assert.equal((await r.desk.reader().customers("maple")).hits.length, 1);

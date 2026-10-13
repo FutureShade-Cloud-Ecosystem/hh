@@ -85,7 +85,7 @@ test("a signed in till says nothing about the connection while all is well, and 
 test("with no signal: the catalogue reads from the copy, a tender is refused with no signal and nothing is queued, and back online the same sale rings once", async ({ page, context }) => {
   await signIn(page);
   await ensureSession(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await waitForFirstPull(page);
   const dialed = dialedWrites(page);
 
@@ -144,7 +144,7 @@ test("the parked tickets read from the copy, and a resume is refused with no sig
   const branches = (await (await page.request.get("/api/v1/branches", { headers })).json()) as Array<{ id: string }>;
   const parkedMade = await page.request.post("/api/v1/pos/parked", {
     headers,
-    data: { branch_id: branches[0]!.id, customer_id: "c-maple-ridge", sale_type: "COLLECT_NOW", notes: "", lines: [{ product_id: "p-holland-60", qty_entered: 10, uom_entered: "sf" }] },
+    data: { branch_id: branches[0]!.id, customer_id: "c-maple-ridge", sale_type: "COLLECT_NOW", notes: "", lines: [{ product_id: "p-charcoal-60", qty_entered: 10, uom_entered: "sf" }] },
   });
   expect(parkedMade.ok()).toBe(true);
   const made = (await parkedMade.json()) as { id: string; ticket_no: string };
