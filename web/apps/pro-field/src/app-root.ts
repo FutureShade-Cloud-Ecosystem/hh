@@ -591,6 +591,14 @@ export class ProFieldApp extends HHElement {
   #selectSection(to: string): void {
     if (to !== "orders" && to !== "projects" && to !== "team" && to !== "account") return;
     if (to === this.#section) return;
+    // Leaving the account leaves its typed passwords behind: the controls are
+    // never bound, so anything the state kept would ride the next submit of a
+    // form the person no longer sees.
+    if (this.#section === "account") {
+      this.#account.pwCurrent = "";
+      this.#account.pwNew = "";
+      this.#account.pwConfirm = "";
+    }
     this.#section = to;
     this.#order = null;
     this.#project = null;
@@ -610,6 +618,12 @@ export class ProFieldApp extends HHElement {
 
   async #loadAccount(): Promise<void> {
     const sequence = (this.#accountSeq += 1);
+    // The account form's controls are never bound, so the state must hold
+    // nothing the visible form does not: the password fields start empty at
+    // every load, exactly as the fresh inputs the person sees.
+    this.#account.pwCurrent = "";
+    this.#account.pwNew = "";
+    this.#account.pwConfirm = "";
     this.#account.phase = "loading";
     this.requestUpdate();
     const [me, addresses] = await Promise.all([this.#port.getMe(), this.#port.listAddresses()]);

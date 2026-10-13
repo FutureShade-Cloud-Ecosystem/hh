@@ -316,6 +316,25 @@ test.describe("phone", () => {
     await expect(page.getByTestId("password-error")).toHaveText("The new passwords do not match.");
   });
 
+  test("typed passwords do not survive leaving the account section, and none is sent unseen", async ({ page }) => {
+    const passwordCalls: string[] = [];
+    page.on("request", (request) => {
+      if (request.url().includes("/me/password")) passwordCalls.push(`${request.method()} ${request.url()}`);
+    });
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await page.getByTestId("pw-current").fill("stub-password");
+    await page.getByTestId("pw-new").fill("another-password");
+    await page.getByTestId("pw-confirm").fill("another-password");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Orders" }).click();
+    await expect(page.getByTestId("landing-rows")).toBeVisible();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-password")).toBeVisible();
+    await page.getByRole("button", { name: "Change password" }).click();
+    await expect(page.getByTestId("password-error")).toHaveText("Type your current password and a new one.");
+    expect(passwordCalls).toHaveLength(0);
+  });
+
   test("the addresses list the jobs, and one opens in detail and back returns", async ({ page }) => {
     await signIn(page, "field");
     await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
