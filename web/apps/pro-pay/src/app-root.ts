@@ -44,9 +44,15 @@ function houseToday(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
 }
 
-function failure<T>(answer: Result<T>): Load {
-  return !answer.ok && (answer.status === 401 || answer.status === 403) ? "refusal" : "error";
+/** A 401 is a lapsed session (sign out and say so, never blame the role); a 403 is the role's refusal; anything else is an error. */
+type Failed = "refusal" | "error" | "lapsed";
+
+function failure<T>(answer: Result<T>): Failed {
+  if (answer.ok) return "error";
+  return answer.status === 401 ? "lapsed" : answer.status === 403 ? "refusal" : "error";
 }
+
+const LAPSED_WORDS = "You are signed out. Sign in again.";
 
 export class ProPayApp extends HHElement {
   static styles = [baseStyles, chipStyles, monoStyles, screenStyles];
@@ -218,11 +224,15 @@ export class ProPayApp extends HHElement {
     this.requestUpdate();
     const state = surface === "invoices" ? await this.#fetchInvoices() : surface === "payment-methods" ? await this.#fetchMethods() : await this.#fetchStatements();
     if (sequence !== this.#loads || this.#session.profile() === null) return;
+    if (state === "lapsed") {
+      await this.#lapse();
+      return;
+    }
     this.#load = state;
     this.requestUpdate();
   }
 
-  async #fetchInvoices(): Promise<Load> {
+  async #fetchInvoices(): Promise<Load | "lapsed"> {
     const [summary, rows] = await Promise.all([tenantDashboard.tenantGetBillingSummary(this.#client), this.#allInvoices()]);
     if (!rows.ok) return failure(rows);
     this.#invoices = rows.value;
@@ -245,14 +255,14 @@ export class ProPayApp extends HHElement {
     return { ok: true, value: rows };
   }
 
-  async #fetchMethods(): Promise<Load> {
+  async #fetchMethods(): Promise<Load | "lapsed"> {
     const answer = await tenantPayments.tenantListPaymentMethods(this.#client);
     if (!answer.ok) return failure(answer);
     this.#methods = answer.value;
     return "ready";
   }
 
-  async #fetchStatements(): Promise<Load> {
+  async #fetchStatements(): Promise<Load | "lapsed"> {
     const [payments, summary, rows] = await Promise.all([tenantPayments.tenantListPayments(this.#client), tenantDashboard.tenantGetBillingSummary(this.#client), this.#allInvoices()]);
     if (!payments.ok) return failure(payments);
     this.#payments = payments.value;
@@ -266,8 +276,18 @@ export class ProPayApp extends HHElement {
     this.requestUpdate();
     const answer = await tenantBilling.tenantGetInvoice(this.#client, id);
     if (this.#open === null || this.#open.id !== id) return;
-    this.#open = answer.ok ? { id, load: "ready", detail: answer.value } : { id, load: failure(answer), detail: null };
+    if (!answer.ok && failure(answer) === "lapsed") {
+      await this.#lapse();
+      return;
+    }
+    this.#open = answer.ok ? { id, load: "ready", detail: answer.value } : { id, load: failure(answer) as Load, detail: null };
     this.requestUpdate();
+  }
+
+  /** The session is gone (expired, or the person was deactivated): sign out and say so. */
+  async #lapse(): Promise<void> {
+    this.#message = LAPSED_WORDS;
+    await this.#session.signOut();
   }
 
   // ---- actions ---------------------------------------------------------------------------------------------------
@@ -378,6 +398,10 @@ export class ProPayApp extends HHElement {
     this.#sheet = { phase: "choose", ids, expectedCents: this.#sumOf(ids), choice: "", nonce: null, methods: [], methodsNote: "", words: "", receipt: null, differs: false, frameAvailable: hostedFieldAddress() !== null };
     this.requestUpdate();
     const answer = await tenantPayments.tenantListPaymentMethods(this.#client);
+    if (!answer.ok && failure(answer) === "lapsed") {
+      await this.#lapse();
+      return;
+    }
     if (this.#sheet === null || this.#sheet.phase !== "choose") return;
     if (answer.ok) {
       const preferred = answer.value.find((m) => m.is_default) ?? answer.value[0];
@@ -447,6 +471,10 @@ export class ProPayApp extends HHElement {
   #settle(body: PayBody, outcome: PayOutcome): void {
     const sheet = this.#sheet;
     if (this.#session.profile() === null) return;
+    if (outcome.kind === "refused" && outcome.status === 401) {
+      void this.#lapse();
+      return;
+    }
     this.#heldBody = outcome.kind === "unknown" ? body : null;
     if (sheet === null) {
       // The sheet was closed while the send was out: the screen still learns what happened.
@@ -499,6 +527,9 @@ export class ProPayApp extends HHElement {
     if (answer.ok) {
       this.#methodAdd = { ...this.#methodAdd, open: false, busy: false, nonce: null, words: "" };
       await this.#fetchMethods();
+    } else if (failure(answer) === "lapsed") {
+      await this.#lapse();
+      return;
     } else {
       this.#methodAdd = { ...this.#methodAdd, busy: false, nonce: null, words: "The card was not added. Add it again." };
     }
@@ -508,6 +539,10 @@ export class ProPayApp extends HHElement {
   async #methodStep(step: () => Promise<Result<unknown>>, failed: string): Promise<void> {
     this.#methodWords = "";
     const answer = await step();
+    if (!answer.ok && failure(answer) === "lapsed") {
+      await this.#lapse();
+      return;
+    }
     if (!answer.ok) this.#methodWords = failed;
     await this.#fetchMethods();
     this.requestUpdate();

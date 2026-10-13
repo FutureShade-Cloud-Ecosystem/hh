@@ -110,7 +110,8 @@ export function classifyPayment(result: Result<TenantPayment>, expectedCents = N
   if (result.ok) return { kind: "paid", payment: result.value, differs: Number.isFinite(expectedCents) && result.value.amount_cents !== expectedCents };
   const status = result.status;
   if (status === 402) return { kind: "declined", words: "The payment was declined. No money moved." };
-  if (status === 401 || status === 403) return { kind: "refused", status, words: "Your role does not allow paying invoices. No money moved." };
+  if (status === 401) return { kind: "refused", status, words: "You are signed out. Sign in again. No money moved." };
+  if (status === 403) return { kind: "refused", status, words: "Your role does not allow paying invoices. No money moved." };
   if (status === 404) return { kind: "refused", status, words: "An invoice or the payment method was not found. Refresh and try again. No money moved." };
   if (status !== undefined && status >= 400 && status < 500 && status !== 409) {
     return { kind: "refused", status, words: "This payment could not be made. Refresh and try again. No money moved." };

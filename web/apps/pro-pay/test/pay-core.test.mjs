@@ -104,6 +104,11 @@ test("a pay answer is read as paid, declined, refused or unknown, and a timeout 
   assert.equal(classifyPayment({ ok: false, error: "the request timed out" }).kind, "unknown");
 });
 
+test("a lapsed session on a pay says so in plain words and moved no money; a role refusal says the role", () => {
+  assert.match(classifyPayment({ ok: false, error: "x", status: 401 }).words, /signed out/);
+  assert.match(classifyPayment({ ok: false, error: "x", status: 403 }).words, /role/);
+});
+
 test("a retry of an unknown outcome carries the same key and the same body, and never a second key", async () => {
   const t = transport([() => { throw new Error("socket closed"); }, reply(201, PAYMENT)]);
   const sender = new PaySender(t.client, { canPay: () => true });
