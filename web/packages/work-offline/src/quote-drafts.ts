@@ -89,6 +89,10 @@ export class QuoteDrafts {
     if (!UUID.test(this.#branchId)) return err("This desk has no branch to open a draft in.");
     const problem = validityProblem(input.validUntil);
     if (problem !== null) return err(problem);
+    // One waiting draft per customer: another press while one is still waiting names that draft and queues nothing
+    // new, so a run of line adds with no signal does not replay as a run of duplicate creates.
+    const held = await this.#waitingCreateFor(input.customerId);
+    if (held !== null) return ok(held);
     const id = this.#newId();
     const payload: Bag = {
       id,
@@ -117,6 +121,15 @@ export class QuoteDrafts {
     ]);
     this.#written.add(id);
     return ok({ id, key: queued.key, seq: queued.seq });
+  }
+
+  /** The create still waiting for this customer, unless its draft has been withdrawn on the device. */
+  async #waitingCreateFor(customerId: string): Promise<DraftRef | null> {
+    const pending = (await this.#store.outbox.pending()).filter((row) => row.scope === "quotes" && row.entityId !== null);
+    const held = pending.find(
+      (row) => row.op === "create" && row.payload["customer_id"] === customerId && !pending.some((other) => other.op === "delete" && other.entityId === row.entityId),
+    );
+    return held === undefined ? null : { id: held.entityId!, key: held.key, seq: held.seq };
   }
 
   /** Change a quote's valid until date, or clear it with the empty word. */
