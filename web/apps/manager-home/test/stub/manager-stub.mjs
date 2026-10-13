@@ -1,10 +1,11 @@
 // Manager Home's local stub: the demo way in, and the manager's world
 // answered in the core's shapes (the dashboard profile rows 0381 seeds, the
-// needs queue, the yard board with its shortages, the receiving worklist,
-// the approvals list by kind). It is a development and test double only; the
-// real routes are the core's (core/internal/dashboard, tasks, purchasing,
-// identity/staffcontext). The stub contract test holds every payload below
-// to the core's field list, field by field.
+// needs queue, the yard board with its shortages, the receiving worklist, the
+// approvals list by kind, and the warranty module's board, claims, registry,
+// recovery, service levels and reports). It is a development and test double
+// only; the real routes are the core's (core/internal/dashboard, tasks,
+// purchasing, identity/staffcontext, warranty). The stub contract test holds
+// every payload below to the core's field list, field by field.
 //
 // TWO BEARERS, TWO PROFILES. The stub answers the dashboard routes per
 // bearer, the way the core does: the yard manager's mint reads the
@@ -103,6 +104,17 @@ const SHORTAGE_OPEN_1 = "0a000000-0000-4000-9000-0000000000e1";
 const SHORTAGE_OPEN_2 = "0a000000-0000-4000-9000-0000000000e2";
 const SHORTAGE_DONE = "0a000000-0000-4000-9000-0000000000e3";
 const PO_PARTIAL = "0b000000-0000-4000-9000-0000000000p1";
+
+// The warranty world: two vendors, five claims across the lifecycle, one
+// settled with its recovery still outstanding, one from the public intake
+// carrying photos. All invented, Gable Landscape Supply demo data.
+const VENDOR_1 = "0c000000-0000-4000-9000-0000000000v1";
+const VENDOR_2 = "0c000000-0000-4000-9000-0000000000v2";
+const CLAIM_INTAKE = "10000000-0000-4000-9000-0000000000c1";
+const CLAIM_TRIAGE = "10000000-0000-4000-9000-0000000000c2";
+const CLAIM_DECISION = "10000000-0000-4000-9000-0000000000c3";
+const CLAIM_CLOSED = "10000000-0000-4000-9000-0000000000c4";
+const CLAIM_WEB = "10000000-0000-4000-9000-0000000000c5";
 
 const ago = (hours) => new Date(Date.now() - hours * 3600 * 1000).toISOString();
 
@@ -208,7 +220,7 @@ function buildWorld() {
       shortages: [],
     },
   ];
-  return {
+  const world = {
     shortages,
     tasks,
     needsByProfile: {
@@ -384,6 +396,380 @@ function buildWorld() {
         status: "PENDING",
       },
     ],
+  };
+  world.warranty = buildWarrantyWorld();
+  return world;
+}
+
+/** The warranty module's world, built fresh with the rest. */
+function buildWarrantyWorld() {
+  const vendors = [
+    {
+      id: "11000000-0000-4000-9000-0000000000p1",
+      vendor_id: VENDOR_1,
+      vendor_name: "Northland Stone Supply (demo)",
+      vendor_no: "V-1041",
+      status: "DOCUMENTED",
+      coverage: "Structural failure of unit pavers replaced at no cost; labour credited at half after the first season.",
+      term_months: 60,
+      channel: "EMAIL",
+      channel_ref: "warranty@northlandstone.example",
+      docs: [{ title: "Signed warranty terms", ref: "docs://warranty/northland-terms" }],
+      notes: "",
+      overrides: [
+        {
+          id: "12000000-0000-4000-9000-0000000000o1",
+          profile_id: "11000000-0000-4000-9000-0000000000p1",
+          product_id: "00000000-0000-4000-9000-0000000000pr1",
+          product_name: "Boundary course paver, 60 mm",
+          coverage: "Full replacement including labour, five seasons.",
+          term_months: 60,
+          notes: "",
+        },
+      ],
+    },
+    {
+      id: "11000000-0000-4000-9000-0000000000p2",
+      vendor_id: VENDOR_2,
+      vendor_name: "Bay Aggregate (demo)",
+      vendor_no: "V-1052",
+      status: "UNDOCUMENTED",
+      coverage: "",
+      term_months: null,
+      channel: "PORTAL",
+      channel_ref: "portal.bayaggregate.example",
+      docs: [],
+      notes: "Terms to capture at the first claim.",
+      overrides: [],
+    },
+  ];
+  const claim = (over) => ({
+    customer_id: "13000000-0000-4000-9000-0000000000cu1",
+    customer_name: "Harbour Row Landscaping (demo)",
+    job_address: { line1: "14 Harbour Row", city: "Trenton", province: "ON", postal: "K8V 0A0" },
+    owner_id: "de110000-0000-4000-9000-000000000003",
+    owner_name: "Yard manager (demo)",
+    branch_id: BRANCH_ID,
+    invoice_id: "",
+    order_id: "",
+    po_id: "",
+    supplier_purchase_date: "",
+    gl_journal_id: "",
+    created_at: ago(24),
+    lines: [],
+    ...over,
+  });
+  const claims = [
+    claim({
+      id: CLAIM_INTAKE,
+      claim_no: "WTY-1041",
+      vendor_id: VENDOR_1,
+      vendor_name: "Northland Stone Supply (demo)",
+      phase: "INTAKE",
+      source: "INTAKE",
+      description: "Efflorescence and spalling across the keyed boundary course, three weeks after lay.",
+      expected_cents: 48000,
+      realized_cents: 0,
+      opened_at: ago(144),
+      lines: [{ id: "14000000-0000-4000-9000-0000000000l1", claim_id: CLAIM_INTAKE, product_text: "Boundary course paver, 60 mm", qty: "120.0000", uom_code: "SF", purchase_date_supplier: ago(4320).slice(0, 10), notes: "" }],
+    }),
+    claim({
+      id: CLAIM_TRIAGE,
+      claim_no: "WTY-1042",
+      vendor_id: VENDOR_2,
+      vendor_name: "Bay Aggregate (demo)",
+      phase: "TRIAGE",
+      source: "COUNTER",
+      description: "Recycled base tracked fines into the bedding course; customer refuses the finish.",
+      expected_cents: 12000,
+      realized_cents: 0,
+      opened_at: ago(480),
+      lines: [{ id: "14000000-0000-4000-9000-0000000000l2", claim_id: CLAIM_TRIAGE, product_text: "Recycled base aggregate", qty: "8.0000", uom_code: "CYD", purchase_date_supplier: ago(576).slice(0, 10), notes: "" }],
+    }),
+    claim({
+      id: CLAIM_DECISION,
+      claim_no: "WTY-1039",
+      vendor_id: VENDOR_1,
+      vendor_name: "Northland Stone Supply (demo)",
+      phase: "DECISION",
+      source: "INTAKE",
+      description: "Three pallets showed edge chipping out of the bundle; the vendor's rep has inspected.",
+      expected_cents: 24000,
+      realized_cents: 0,
+      opened_at: ago(960),
+      submitted_at: ago(720),
+      sla_due: ago(-96),
+      lines: [{ id: "14000000-0000-4000-9000-0000000000l3", claim_id: CLAIM_DECISION, product_text: "Standard paver, 60 mm", qty: "240.0000", uom_code: "SF", purchase_date_supplier: ago(1200).slice(0, 10), notes: "" }],
+    }),
+    claim({
+      id: CLAIM_CLOSED,
+      claim_no: "WTY-1036",
+      vendor_id: VENDOR_1,
+      vendor_name: "Northland Stone Supply (demo)",
+      phase: "CLOSED",
+      source: "INTAKE",
+      description: "Colour run across the north walk; vendor credited replacement material.",
+      expected_cents: 30000,
+      realized_cents: 30000,
+      outcome: "VENDOR_CREDIT",
+      opened_at: ago(2160),
+      submitted_at: ago(1920),
+      closed_at: ago(1800),
+      lines: [{ id: "14000000-0000-4000-9000-0000000000l4", claim_id: CLAIM_CLOSED, product_text: "Boardwalk paver, 60 mm", qty: "300.0000", uom_code: "SF", purchase_date_supplier: ago(2400).slice(0, 10), notes: "" }],
+    }),
+    claim({
+      id: CLAIM_WEB,
+      claim_no: "WTY-1044",
+      customer_name: "Maple Street Homes (demo)",
+      vendor_id: "",
+      vendor_name: "",
+      phase: "INTAKE",
+      source: "WEB",
+      description: "Two steps at the patio edge sound hollow; photos attached from the homeowner form.",
+      expected_cents: 0,
+      realized_cents: 0,
+      opened_at: ago(48),
+      lines: [],
+    }),
+  ];
+  const events = [
+    { id: "15000000-0000-4000-9000-0000000000e1", claim_id: CLAIM_INTAKE, event_type: "CREATED", to_phase: "INTAKE", actor_id: "de110000-0000-4000-9000-000000000003", note: "Claim captured (INTAKE).", occurred_at: ago(144) },
+    { id: "15000000-0000-4000-9000-0000000000e2", claim_id: CLAIM_TRIAGE, event_type: "CREATED", to_phase: "INTAKE", actor_id: "de110000-0000-4000-9000-000000000003", note: "Claim captured (COUNTER).", occurred_at: ago(480) },
+    { id: "15000000-0000-4000-9000-0000000000e3", claim_id: CLAIM_TRIAGE, event_type: "PHASE_CHANGE", from_phase: "INTAKE", to_phase: "TRIAGE", actor_id: "de110000-0000-4000-9000-000000000003", note: "", occurred_at: ago(456) },
+    { id: "15000000-0000-4000-9000-0000000000e4", claim_id: CLAIM_DECISION, event_type: "CREATED", to_phase: "INTAKE", actor_id: "de110000-0000-4000-9000-000000000003", note: "Claim captured (INTAKE).", occurred_at: ago(960) },
+    { id: "15000000-0000-4000-9000-0000000000e5", claim_id: CLAIM_DECISION, event_type: "PHASE_CHANGE", from_phase: "INTAKE", to_phase: "TRIAGE", actor_id: "de110000-0000-4000-9000-000000000003", note: "", occurred_at: ago(936) },
+    { id: "15000000-0000-4000-9000-0000000000e6", claim_id: CLAIM_DECISION, event_type: "PHASE_CHANGE", from_phase: "TRIAGE", to_phase: "SUBMITTED", actor_id: "de110000-0000-4000-9000-000000000003", note: "", occurred_at: ago(744) },
+    { id: "15000000-0000-4000-9000-0000000000e7", claim_id: CLAIM_DECISION, event_type: "PHASE_CHANGE", from_phase: "SUBMITTED", to_phase: "WAITING_ON_DECISION", actor_id: "de110000-0000-4000-9000-000000000003", note: "The rep took the bundle photos on the 12th.", occurred_at: ago(720) },
+    { id: "15000000-0000-4000-9000-0000000000e8", claim_id: CLAIM_DECISION, event_type: "PHASE_CHANGE", from_phase: "WAITING_ON_DECISION", to_phase: "DECISION", actor_id: "de110000-0000-4000-9000-000000000003", note: "", occurred_at: ago(120) },
+    { id: "15000000-0000-4000-9000-0000000000e9", claim_id: CLAIM_CLOSED, event_type: "CREATED", to_phase: "INTAKE", actor_id: "de110000-0000-4000-9000-000000000003", note: "Claim captured (INTAKE).", occurred_at: ago(2160) },
+    { id: "15000000-0000-4000-9000-0000000000ea", claim_id: CLAIM_CLOSED, event_type: "SETTLEMENT", from_phase: "SETTLEMENT", to_phase: "SETTLEMENT", actor_id: "de110000-0000-4000-9000-000000000002", note: "Vendor credited replacement material in full.", occurred_at: ago(1800), detail: { outcome: "VENDOR_CREDIT", expected_cents: 30000, realized_cents: 30000 } },
+    { id: "15000000-0000-4000-9000-0000000000eb", claim_id: CLAIM_CLOSED, event_type: "PHASE_CHANGE", from_phase: "SETTLEMENT", to_phase: "CLOSED", actor_id: "de110000-0000-4000-9000-000000000002", note: "", occurred_at: ago(1800) },
+    { id: "15000000-0000-4000-9000-0000000000ec", claim_id: CLAIM_WEB, event_type: "CREATED", to_phase: "INTAKE", actor_id: "", note: "Claim captured (WEB).", occurred_at: ago(48) },
+  ];
+  // The checklist templates, the core's shape: per phase, vendor-agnostic here.
+  const checklistItems = {
+    INTAKE: [{ id: "16000000-0000-4000-9000-0000000000i1", phase: "INTAKE", item_key: "customer_statement", label: "Customer statement recorded", required: true, sort_order: 0 }],
+    TRIAGE: [
+      { id: "16000000-0000-4000-9000-0000000000i2", phase: "TRIAGE", item_key: "photos", label: "Photos on file", required: true, sort_order: 0 },
+      { id: "16000000-0000-4000-9000-0000000000i3", phase: "TRIAGE", item_key: "invoice_copy", label: "Invoice copy attached", required: true, sort_order: 1 },
+    ],
+    DECISION: [{ id: "16000000-0000-4000-9000-0000000000i4", phase: "DECISION", item_key: "vendor_decision", label: "Vendor decision recorded", required: true, sort_order: 0 }],
+  };
+  const ticked = {
+    [CLAIM_INTAKE]: [],
+    [CLAIM_TRIAGE]: ["photos"],
+    [CLAIM_DECISION]: ["vendor_decision"],
+    [CLAIM_CLOSED]: [],
+    [CLAIM_WEB]: [],
+  };
+  const postings = [
+    {
+      id: "17000000-0000-4000-9000-0000000000po1",
+      claim_id: CLAIM_CLOSED,
+      outcome: "VENDOR_CREDIT",
+      money_path: "VENDOR_RECOVERY",
+      seam: "GL",
+      status: "POSTED",
+      amount_cents: 30000,
+      accrues_recovery: true,
+      gl_journal_id: "18000000-0000-4000-9000-0000000000j1",
+      external_ref: "",
+      error_text: "",
+      note: "",
+      posted_at: ago(1800),
+    },
+  ];
+  const photos = [
+    {
+      id: "19000000-0000-4000-9000-0000000000ph1",
+      claim_id: CLAIM_WEB,
+      content_type: "image/png",
+      byte_size: 1337,
+      caption: "Patio steps, hollow edge",
+    },
+  ];
+  // A tiny valid PNG, the photo bytes route's answer.
+  const photoBytes = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  const chase = {
+    [CLAIM_CLOSED]: [
+      { id: "1a000000-0000-4000-9000-0000000000r1", claim_id: CLAIM_CLOSED, vendor_id: VENDOR_1, action: "CONTACT_MADE", amount_cents: 0, promised_date: "", reference: "", note: "Credit note chased with the rep.", actor_id: "de110000-0000-4000-9000-000000000003", actor_name: "Yard manager (demo)", occurred_at: ago(1500) },
+      { id: "1a000000-0000-4000-9000-0000000000r2", claim_id: CLAIM_CLOSED, vendor_id: VENDOR_1, action: "PROMISED", amount_cents: 30000, promised_date: ago(-720).slice(0, 10), reference: "CN-7719", note: "Vendor promised the credit note in full.", actor_id: "de110000-0000-4000-9000-000000000003", actor_name: "Yard manager (demo)", occurred_at: ago(1440) },
+    ],
+  };
+  // The breach alert lives here, so an acknowledgement persists across reads.
+  const alerts = [
+    {
+      id: "1b000000-0000-4000-9000-0000000000al1",
+      claim_id: CLAIM_TRIAGE,
+      claim_no: "WTY-1042",
+      branch_id: BRANCH_ID,
+      vendor_name: "Bay Aggregate (demo)",
+      owner_id: "de110000-0000-4000-9000-000000000003",
+      phase: "TRIAGE",
+      due_at: ago(12),
+      breached_at: ago(12),
+      overdue_hours: 12,
+      acknowledged_at: "",
+      acknowledged_by: "",
+      notify_status: "SENT",
+      notify_ref: "msg-1042",
+      notify_error: "",
+      exposure_cents: 12000,
+    },
+  ];
+  return { vendors, claims, events, checklistItems, ticked, postings, photos, photoBytes, chase, alerts, claimSeq: 1045 };
+}
+
+/** The recovery answer, recomputed per read from the chase log, the way the core does. */
+function recoveryBoardOf(warranty) {
+  const settled = warranty.claims.find((c) => c.id === CLAIM_CLOSED);
+  const actions = (settled && warranty.chase[CLAIM_CLOSED]) ?? [];
+  const received = actions.filter((a) => a.action === "RECEIVED").reduce((sum, a) => sum + a.amount_cents, 0);
+  const promised = actions.filter((a) => a.action === "PROMISED").reduce((sum, a) => sum + a.amount_cents, 0);
+  const accrued = settled !== undefined && (settled.outcome ?? "") !== "" ? settled.expected_cents : 0;
+  const outstanding = Math.max(0, accrued - received);
+  const ageDays = 75;
+  const row = {
+    claim_id: CLAIM_CLOSED,
+    claim_no: settled !== undefined ? settled.claim_no : "",
+    branch_id: BRANCH_ID,
+    vendor_id: VENDOR_1,
+    vendor_name: "Northland Stone Supply (demo)",
+    accrued_cents: accrued,
+    received_cents: received,
+    outstanding_cents: outstanding,
+    promised_cents: promised,
+    accrued_at: ago(1800),
+    last_action_at: actions.length > 0 ? actions[actions.length - 1].occurred_at : "",
+    action_count: actions.length,
+    age_days: ageDays,
+    bucket: "61-90",
+    reconciled: outstanding === 0,
+  };
+  const vendor = {
+    vendor_id: VENDOR_1,
+    vendor_name: "Northland Stone Supply (demo)",
+    claim_count: 1,
+    accrued_cents: accrued,
+    received_cents: received,
+    outstanding_cents: outstanding,
+    promised_cents: promised,
+    buckets: outstanding > 0 ? { "61-90": outstanding } : {},
+    oldest_days: outstanding > 0 ? ageDays : 0,
+    claims: [row],
+  };
+  return {
+    vendors: outstanding > 0 || received > 0 ? [vendor] : [],
+    buckets: outstanding > 0 ? { "61-90": outstanding } : {},
+    total_accrued_cents: accrued,
+    total_received_cents: received,
+    total_outstanding_cents: outstanding,
+    total_promised_cents: promised,
+    open_claim_count: outstanding > 0 ? 1 : 0,
+    reconciled_claim_count: outstanding === 0 ? 1 : 0,
+    as_of: new Date().toISOString(),
+  };
+}
+
+/** The service level answer: timers for the open claims, the breach alert, the configured targets. */
+function slaBoardOf(warranty, includeAcknowledged) {
+  const timer = (claim, phase, target, elapsed, elapsedHours, state) => ({
+    claim_id: claim.id,
+    claim_no: claim.claim_no,
+    branch_id: BRANCH_ID,
+    vendor_id: claim.vendor_id,
+    vendor_name: claim.vendor_name,
+    owner_id: claim.owner_id,
+    phase,
+    target_hours: target,
+    phase_since: ago(elapsedHours * 3600 * 1000 / 1000),
+    due_at: ago(-1),
+    state,
+    elapsed_hours: elapsed,
+    remaining_hours: Math.max(0, target - elapsed),
+    overdue_hours: state === "BREACHED" ? elapsed - target : 0,
+    exposure_cents: claim.expected_cents,
+  });
+  const byId = (id) => warranty.claims.find((c) => c.id === id);
+  const rows = [
+    [CLAIM_INTAKE, "INTAKE", 24, 6, "OK"],
+    [CLAIM_TRIAGE, "TRIAGE", 48, 60, "BREACHED"],
+    [CLAIM_DECISION, "DECISION", 96, 90, "DUE_SOON"],
+  ]
+    .map(([id, phase, target, elapsed, state]) => {
+      const claim = byId(id);
+      return claim === undefined ? null : timer(claim, phase, target, elapsed, elapsed, state);
+    })
+    .filter((t) => t !== null);
+  // The alerts live in the world, so an acknowledgement persists across reads.
+  const alerts = warranty.alerts.filter((a) => includeAcknowledged || (a.acknowledged_at ?? "") === "");
+  const breached = warranty.alerts.filter((a) => (a.acknowledged_at ?? "") === "" && a.overdue_hours > 0).length;
+  const dueSoon = rows.filter((t) => t.state === "DUE_SOON").length;
+  return {
+    timers: rows,
+    alerts,
+    targets: slaTargetsOf(),
+    breached_count: breached,
+    due_soon_count: dueSoon,
+    as_of: new Date().toISOString(),
+  };
+}
+
+function slaTargetsOf() {
+  return [
+    { id: "1c000000-0000-4000-9000-0000000000t1", phase: "INTAKE", vendor_id: "", vendor_name: "", target_hours: 24, is_active: true, notes: "The default clock every phase carries." },
+    { id: "1c000000-0000-4000-9000-0000000000t2", phase: "TRIAGE", vendor_id: "", vendor_name: "", target_hours: 48, is_active: true, notes: "" },
+    { id: "1c000000-0000-4000-9000-0000000000t3", phase: "TRIAGE", vendor_id: VENDOR_2, vendor_name: "Bay Aggregate (demo)", target_hours: 72, is_active: true, notes: "The portal answers slower than the inbox." },
+    { id: "1c000000-0000-4000-9000-0000000000t4", phase: "SUBMITTED", vendor_id: "", vendor_name: "", target_hours: 48, is_active: true, notes: "" },
+    { id: "1c000000-0000-4000-9000-0000000000t5", phase: "DECISION", vendor_id: "", vendor_name: "", target_hours: 96, is_active: true, notes: "" },
+  ];
+}
+
+function reportsOf(warranty) {
+  const count = (phase) => warranty.claims.filter((c) => c.phase === phase).length;
+  const funnel = [
+    { phase: "INTAKE", count: count("INTAKE") },
+    { phase: "TRIAGE", count: count("TRIAGE") },
+    { phase: "SUBMITTED", count: count("SUBMITTED") },
+    { phase: "WAITING_ON_DECISION", count: count("WAITING_ON_DECISION") },
+    { phase: "DECISION", count: count("DECISION") },
+    { phase: "SETTLEMENT", count: count("SETTLEMENT") },
+    { phase: "CLOSED", count: count("CLOSED") },
+  ];
+  const byManufacturer = [
+    { vendor_id: VENDOR_1, vendor_name: "Northland Stone Supply (demo)", total_claims: 3, open_claims: 2, won_claims: 1, lost_claims: 0, win_rate: 1, expected_cents: 102000, realized_cents: 30000 },
+    { vendor_id: VENDOR_2, vendor_name: "Bay Aggregate (demo)", total_claims: 1, open_claims: 1, won_claims: 0, lost_claims: 0, win_rate: 0, expected_cents: 12000, realized_cents: 0 },
+  ];
+  const byId = (id) => warranty.claims.find((c) => c.id === id);
+  return {
+    funnel,
+    by_manufacturer: byManufacturer,
+    time_to_settlement: { settled_count: 1, avg_days: 30, median_days: 30, min_days: 30, max_days: 30 },
+    exposure_by_vendor: [
+      { vendor_id: VENDOR_1, vendor_name: "Northland Stone Supply (demo)", open_claims: 2, exposure_cents: 72000 },
+      { vendor_id: VENDOR_2, vendor_name: "Bay Aggregate (demo)", open_claims: 1, exposure_cents: 12000 },
+    ],
+    open_claims_by_age: [
+      { claim_id: CLAIM_TRIAGE, claim_no: "WTY-1042", phase: "TRIAGE", vendor_id: VENDOR_2, vendor_name: "Bay Aggregate (demo)", age_days: 20, bucket: "0-30", expected_cents: 12000 },
+      { claim_id: CLAIM_DECISION, claim_no: "WTY-1039", phase: "DECISION", vendor_id: VENDOR_1, vendor_name: "Northland Stone Supply (demo)", age_days: 40, bucket: "31-60", expected_cents: 24000 },
+      { claim_id: CLAIM_INTAKE, claim_no: "WTY-1041", phase: "INTAKE", vendor_id: VENDOR_1, vendor_name: "Northland Stone Supply (demo)", age_days: 6, bucket: "0-30", expected_cents: 48000 },
+    ].filter((row) => byId(row.claim_id) !== undefined),
+    total_open: 4,
+    total_exposure_cents: 84000,
+  };
+}
+
+/** The board's columns, in the confirmed order, the exits last. */
+function boardOf(warranty) {
+  const phases = ["INTAKE", "TRIAGE", "SUBMITTED", "WAITING_ON_DECISION", "DECISION", "SETTLEMENT", "CLOSED", "REJECTED", "ABANDONED"];
+  return {
+    columns: phases.map((phase) => ({
+      phase,
+      claims: warranty.claims.filter((c) => c.phase === phase),
+    })),
   };
 }
 
@@ -882,6 +1268,437 @@ async function handle(req, res) {
     return json(res, {
       profiles: knownProfiles().map((p) => ({ profile: p, home: { profile: p, takeover: false, mobile_only: false } })),
     });
+  }
+
+  // ---- the warranty module's routes (core/internal/warranty) ----
+  // The tier gates, as the guards run them: reads and lifecycle are staff
+  // (any mint here passes), settle and sweep are manager (tier 1 or 2, and
+  // both demo managers pass), the registry writes are admin (tier 1, which
+  // no demo manager holds, so the shared Forbidden body answers).
+  // The no-warranty scenario is the empty world: no claims anywhere.
+  const warranty = scenario === "no-warranty" ? { ...world.warranty, claims: [] } : world.warranty;
+  const warrantyIsAdmin = () => false; // no demo manager holds a tier 1 role
+  const isManager = () => USERS[flow].tier <= 2;
+  const forbiddenWall = (res) => refuse(res, 403, "Forbidden");
+  const claimById = (id) => warranty.claims.find((c) => c.id === id);
+  const checklistFor = (claim) => {
+    const items = warranty.checklistItems[claim.phase] ?? [];
+    const tickedKeys = warranty.ticked[claim.id] ?? [];
+    return items.map((item) => ({ item, checked: tickedKeys.includes(item.item_key) }));
+  };
+  const isKnownPhase = (value) => ["INTAKE", "TRIAGE", "SUBMITTED", "WAITING_ON_DECISION", "DECISION", "SETTLEMENT", "CLOSED", "REJECTED", "ABANDONED"].includes(value);
+  const canTransition = (from, to) => ({
+    INTAKE: ["TRIAGE", "ABANDONED"],
+    TRIAGE: ["SUBMITTED", "REJECTED", "ABANDONED"],
+    SUBMITTED: ["WAITING_ON_DECISION", "TRIAGE", "REJECTED", "ABANDONED"],
+    WAITING_ON_DECISION: ["DECISION", "TRIAGE", "REJECTED", "ABANDONED"],
+    DECISION: ["SETTLEMENT", "REJECTED", "ABANDONED"],
+    SETTLEMENT: ["CLOSED", "ABANDONED"],
+  }[from] ?? []).includes(to);
+
+  if (path.startsWith("/api/v1/warranty/")) {
+    if (path === "/api/v1/warranty/board" && req.method === "GET") {
+      return json(res, boardOf(warranty));
+    }
+
+    if (path === "/api/v1/warranty/claims" && req.method === "GET") {
+      const phase = url.searchParams.get("phase") ?? "";
+      if (phase !== "" && !isKnownPhase(phase)) return refuse(res, 400, "warranty: unknown phase");
+      const items = warranty.claims.filter((c) => phase === "" || c.phase === phase);
+      return json(res, { items, next_cursor: null, limit: 200 });
+    }
+
+    if (path === "/api/v1/warranty/claims" && req.method === "POST") {
+      const description = String(body?.description ?? "").trim();
+      const branchId = String(body?.branch_id ?? "");
+      if (branchId === "") return refuse(res, 422, "warranty: branch_id is required");
+      if (branchId !== BRANCH_ID) return refuse(res, 403, `warranty: caller cannot access branch ${branchId}`);
+      const source = String(body?.source ?? "INTAKE");
+      if (!["INTAKE", "COUNTER", "WEB"].includes(source)) return refuse(res, 422, "warranty: source must be INTAKE, COUNTER, or WEB");
+      if (description === "") return refuse(res, 422, "warranty: the description is required");
+      const vendorId = String(body?.vendor_id ?? "");
+      if (vendorId !== "" && !warranty.vendors.some((v) => v.vendor_id === vendorId)) {
+        return refuse(res, 422, `warranty: capture references an unknown customer/vendor/owner/invoice/order/po/branch, create it first`);
+      }
+      const openedTyped = String(body?.opened_at ?? "");
+      let openedAt = new Date().toISOString();
+      if (openedTyped !== "") {
+        const parsed = new Date(openedTyped);
+        if (Number.isNaN(parsed.getTime())) return refuse(res, 422, "warranty: opened_at must be an ISO-8601 date/time");
+        openedAt = parsed.toISOString();
+      }
+      const id = `10000000-0000-4000-9000-000000000${String(warranty.claimSeq).padStart(3, "0")}`;
+      const newClaim = {
+        id,
+        claim_no: `WTY-${warranty.claimSeq}`,
+        customer_id: "",
+        customer_name: "",
+        job_address: body?.job_address ?? {},
+        vendor_id: vendorId,
+        vendor_name: warranty.vendors.find((v) => v.vendor_id === vendorId)?.vendor_name ?? "",
+        owner_id: USERS[flow].user_id,
+        owner_name: USERS[flow].display_name,
+        branch_id: branchId,
+        phase: "INTAKE",
+        source,
+        description,
+        expected_cents: Number(body?.expected_cents ?? 0),
+        realized_cents: 0,
+        opened_at: openedAt,
+        closed_at: "",
+        created_at: new Date().toISOString(),
+        lines: (Array.isArray(body?.lines) ? body.lines : []).map((line, i) => ({
+          id: `14000000-0000-4000-9000-0000000000n${i}`,
+          claim_id: id,
+          product_text: String(line?.product_text ?? ""),
+          qty: String(line?.qty ?? "0"),
+          uom_code: String(line?.uom_code ?? ""),
+          purchase_date_supplier: String(line?.purchase_date_supplier ?? ""),
+          notes: "",
+        })),
+      };
+      warranty.claimSeq += 1;
+      warranty.claims.push(newClaim);
+      warranty.ticked[id] = [];
+      warranty.events.push({
+        id: `15000000-0000-4000-9000-0000000000n${warranty.claimSeq}`,
+        claim_id: id,
+        event_type: "CREATED",
+        to_phase: "INTAKE",
+        actor_id: USERS[flow].user_id,
+        note: `Claim captured (${source}).`,
+        occurred_at: openedAt,
+      });
+      return json(res, newClaim);
+    }
+
+    const detailMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)$/);
+    if (detailMatch && req.method === "GET") {
+      const target = claimById(detailMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      return json(res, target);
+    }
+
+    const advanceMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)\/advance$/);
+    if (req.method === "POST" && advanceMatch) {
+      const target = claimById(advanceMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      if (scenario === "refused-advance") return forbiddenWall(res);
+      const to = String(body?.to_phase ?? "");
+      if (!isKnownPhase(to)) return refuse(res, 422, `warranty: unknown phase ${JSON.stringify(to)}`);
+      if (["CLOSED", "REJECTED", "ABANDONED"].includes(target.phase)) {
+        return refuse(res, 422, `warranty: claim ${target.claim_no} is already closed (${target.phase})`);
+      }
+      if (!canTransition(target.phase, to)) return refuse(res, 422, `warranty: cannot move ${target.phase} → ${to}`);
+      if (target.outcome !== "" && (to === "REJECTED" || to === "ABANDONED")) {
+        return refuse(res, 422, `warranty: claim ${target.claim_no} is settled (${target.outcome}), a settled claim can only be CLOSED, not ${to}`);
+      }
+      // The checklist gate: every required item on the current phase must be ticked.
+      const open = checklistFor(target).filter((state) => state.item.required && !state.checked);
+      if (open.length > 0 && to !== "REJECTED" && to !== "ABANDONED") {
+        return refuse(res, 422, `warranty: cannot advance, required checklist items incomplete: ${open.map((s) => s.item.label).join(", ")}`);
+      }
+      const fromPhase = target.phase;
+      target.phase = to;
+      warranty.events.push({
+        id: `15000000-0000-4000-9000-0000000000ad${warranty.events.length}`,
+        claim_id: target.id,
+        event_type: "PHASE_CHANGE",
+        from_phase: fromPhase,
+        to_phase: to,
+        actor_id: USERS[flow].user_id,
+        note: "",
+        occurred_at: new Date().toISOString(),
+      });
+      return json(res, target);
+    }
+
+    const assignMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)\/assign$/);
+    if (req.method === "POST" && assignMatch) {
+      const target = claimById(assignMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      const vendorId = String(body?.vendor_id ?? "");
+      const ownerId = String(body?.owner_id ?? "");
+      if (vendorId !== "" && !warranty.vendors.some((v) => v.vendor_id === vendorId)) {
+        return refuse(res, 422, "warranty: assign references an unknown vendor or owner, create it first");
+      }
+      target.vendor_id = vendorId;
+      target.vendor_name = warranty.vendors.find((v) => v.vendor_id === vendorId)?.vendor_name ?? "";
+      if (ownerId !== "") target.owner_id = ownerId;
+      return json(res, target);
+    }
+
+    const checklistMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)\/checklist$/);
+    if (checklistMatch && req.method === "GET") {
+      const target = claimById(checklistMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      return json(res, { items: checklistFor(target), next_cursor: null, limit: 100 });
+    }
+    if (checklistMatch && req.method === "POST") {
+      const target = claimById(checklistMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      const itemKey = String(body?.item_key ?? "");
+      const item = (warranty.checklistItems[target.phase] ?? []).find((i) => i.item_key === itemKey);
+      if (!item) return refuse(res, 422, `warranty: no checklist item ${JSON.stringify(itemKey)} on phase ${target.phase}`);
+      const tickedKeys = warranty.ticked[target.id];
+      const checked = body?.checked === true;
+      const at = tickedKeys.indexOf(itemKey);
+      if (checked && at === -1) tickedKeys.push(itemKey);
+      if (!checked && at !== -1) tickedKeys.splice(at, 1);
+      warranty.events.push({
+        id: `15000000-0000-4000-9000-0000000000tk${warranty.events.length}`,
+        claim_id: target.id,
+        event_type: "CHECKLIST_TICK",
+        checklist_key: itemKey,
+        checked,
+        actor_id: USERS[flow].user_id,
+        note: "",
+        occurred_at: new Date().toISOString(),
+      });
+      return json(res, { item, checked });
+    }
+
+    const eventsMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)\/events$/);
+    if (eventsMatch && req.method === "GET") {
+      const target = claimById(eventsMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      const items = warranty.events.filter((e) => e.claim_id === target.id);
+      return json(res, { items, next_cursor: null, limit: 200 });
+    }
+
+    const evidenceMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)\/evidence$/);
+    if (evidenceMatch && req.method === "POST") {
+      const target = claimById(evidenceMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      const evidenceRef = String(body?.evidence_ref ?? "").trim();
+      if (evidenceRef === "") return refuse(res, 422, "warranty: evidence_ref is required");
+      const event = {
+        id: `15000000-0000-4000-9000-0000000000ev${warranty.events.length}`,
+        claim_id: target.id,
+        event_type: "EVIDENCE",
+        evidence_ref: evidenceRef,
+        actor_id: USERS[flow].user_id,
+        note: String(body?.note ?? ""),
+        occurred_at: new Date().toISOString(),
+      };
+      warranty.events.push(event);
+      return json(res, event);
+    }
+
+    const settleMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)\/settle$/);
+    if (settleMatch && req.method === "POST") {
+      const target = claimById(settleMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      if (scenario === "refused-settle") return forbiddenWall(res);
+      const outcome = String(body?.outcome ?? "");
+      if (!["VENDOR_CREDIT", "REPLACEMENT_STOCK", "CUSTOMER_ACCOMMODATION", "WRITE_OFF"].includes(outcome)) {
+        return refuse(res, 422, "warranty: outcome must be one of VENDOR_CREDIT, REPLACEMENT_STOCK, CUSTOMER_ACCOMMODATION, WRITE_OFF");
+      }
+      const realized = Number(body?.realized_cents ?? 0);
+      const expected = body?.expected_cents === null || body?.expected_cents === undefined ? target.expected_cents : Number(body.expected_cents);
+      if (realized < 0 || expected < 0) return refuse(res, 422, "warranty: amounts must be >= 0");
+      if (["CLOSED", "REJECTED", "ABANDONED"].includes(target.phase)) {
+        return refuse(res, 422, `warranty: claim ${target.claim_no} is already closed`);
+      }
+      if (target.phase !== "DECISION" && target.phase !== "SETTLEMENT") {
+        return refuse(res, 422, `warranty: claim ${target.claim_no} cannot be settled from ${target.phase}, advance to DECISION or SETTLEMENT first`);
+      }
+      if ((target.outcome ?? "") !== "") {
+        return refuse(res, 409, `warranty: claim ${target.claim_no} is already settled (${target.outcome}), re-settlement is not permitted in P1`);
+      }
+      target.outcome = outcome;
+      target.expected_cents = expected;
+      target.realized_cents = realized;
+      warranty.events.push({
+        id: `15000000-0000-4000-9000-0000000000st${warranty.events.length}`,
+        claim_id: target.id,
+        event_type: "SETTLEMENT",
+        from_phase: target.phase,
+        to_phase: target.phase,
+        actor_id: USERS[flow].user_id,
+        note: String(body?.note ?? ""),
+        occurred_at: new Date().toISOString(),
+        detail: { outcome, expected_cents: expected, realized_cents: realized },
+      });
+      warranty.postings.push({
+        id: `17000000-0000-4000-9000-0000000000np${warranty.postings.length}`,
+        claim_id: target.id,
+        outcome,
+        money_path: outcome === "VENDOR_CREDIT" ? "VENDOR_RECOVERY" : outcome === "CUSTOMER_ACCOMMODATION" ? "CUSTOMER_CREDIT" : outcome === "REPLACEMENT_STOCK" ? "INVENTORY_REPLACEMENT" : "EXPENSE_WRITE_OFF",
+        seam: "GL",
+        status: "POSTED",
+        amount_cents: realized,
+        accrues_recovery: outcome === "VENDOR_CREDIT",
+        gl_journal_id: "18000000-0000-4000-9000-0000000000nj",
+        external_ref: "",
+        error_text: "",
+        note: "",
+        posted_at: new Date().toISOString(),
+      });
+      return json(res, {
+        claim_id: target.id,
+        outcome,
+        expected_cents: expected,
+        realized_cents: realized,
+        accrued_cents: outcome === "VENDOR_CREDIT" ? realized : 0,
+        gl_journal_id: "18000000-0000-4000-9000-0000000000nj",
+        gl_posted: true,
+        gl_note: "posted to the demo ledger",
+        money_path: outcome === "VENDOR_CREDIT" ? "VENDOR_RECOVERY" : "EXPENSE_WRITE_OFF",
+        path_status: "POSTED",
+      });
+    }
+
+    const postingsMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)\/postings$/);
+    if (postingsMatch && req.method === "GET") {
+      const target = claimById(postingsMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      return json(res, { items: warranty.postings.filter((p) => p.claim_id === target.id), next_cursor: null, limit: 50 });
+    }
+
+    const photosMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)\/photos$/);
+    if (photosMatch && req.method === "GET") {
+      const target = claimById(photosMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      return json(res, { items: warranty.photos.filter((p) => p.claim_id === target.id), next_cursor: null, limit: 50 });
+    }
+    const photoBytesMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)\/photos\/([^/]+)$/);
+    if (photoBytesMatch && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "image/png" });
+      return res.end(warranty.photoBytes);
+    }
+
+    const recoveryActionsMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)\/recovery$/);
+    if (recoveryActionsMatch && req.method === "GET") {
+      const target = claimById(recoveryActionsMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      return json(res, { items: warranty.chase[target.id] ?? [], next_cursor: null, limit: 100 });
+    }
+    if (recoveryActionsMatch && req.method === "POST") {
+      const target = claimById(recoveryActionsMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      if (scenario === "refused-recovery") return forbiddenWall(res);
+      const action = String(body?.action ?? "");
+      if (!["CONTACT_MADE", "PROMISED", "RECEIVED", "DISPUTED", "NOTE"].includes(action)) {
+        return refuse(res, 422, "warranty: action must be one of CONTACT_MADE, PROMISED, RECEIVED, DISPUTED, NOTE");
+      }
+      const amount = Number(body?.amount_cents ?? 0);
+      if (amount < 0) return refuse(res, 422, "warranty: amount_cents must be >= 0");
+      if ((action === "RECEIVED" || action === "PROMISED") && amount <= 0) {
+        return refuse(res, 422, `warranty: a ${action} action must carry a positive amount_cents`);
+      }
+      if (action !== "RECEIVED" && action !== "PROMISED" && amount > 0) {
+        return refuse(res, 422, `warranty: a ${action} action cannot carry an amount, use RECEIVED or PROMISED`);
+      }
+      const promisedDate = String(body?.promised_date ?? "");
+      if (action === "PROMISED" && promisedDate !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(promisedDate)) {
+        return refuse(res, 422, "warranty: promised_date must be a YYYY-MM-DD date");
+      }
+      // The over-receipt guard: a receipt above the accrual is refused, the
+      // way the core refuses it, because it would net against another claim.
+      const board = recoveryBoardOf(warranty);
+      const row = board.vendors.flatMap((v) => v.claims).find((r) => r.claim_id === target.id);
+      if (action === "RECEIVED" && row !== undefined && amount > row.outstanding_cents) {
+        return refuse(res, 422, "warranty: the recovery action references an unknown claim/vendor, or violates the amount rule");
+      }
+      const logged = {
+        id: `1a000000-0000-4000-9000-0000000000nw${(warranty.chase[target.id] ?? []).length}`,
+        claim_id: target.id,
+        vendor_id: target.vendor_id,
+        action,
+        amount_cents: amount,
+        promised_date: promisedDate,
+        reference: String(body?.reference ?? ""),
+        note: String(body?.note ?? ""),
+        actor_id: USERS[flow].user_id,
+        actor_name: USERS[flow].display_name,
+        occurred_at: new Date().toISOString(),
+      };
+      warranty.chase[target.id] = [...(warranty.chase[target.id] ?? []), logged];
+      return json(res, logged);
+    }
+
+    if (path === "/api/v1/warranty/recovery" && req.method === "GET") {
+      return json(res, recoveryBoardOf(warranty));
+    }
+
+    if (path === "/api/v1/warranty/sla" && req.method === "GET") {
+      const includeAck = url.searchParams.get("include_acknowledged") === "true";
+      return json(res, slaBoardOf(warranty, includeAck));
+    }
+
+    if (path === "/api/v1/warranty/sla/targets" && req.method === "GET") {
+      return json(res, { items: slaTargetsOf(), next_cursor: null, limit: 100 });
+    }
+
+    if (path === "/api/v1/warranty/sla/sweep" && req.method === "POST") {
+      if (scenario === "refused-sweep") return forbiddenWall(res);
+      return json(res, { raised: [], count: 0 });
+    }
+
+    const ackMatch = path.match(/^\/api\/v1\/warranty\/claims\/([^/]+)\/sla\/([^/]+)\/ack$/);
+    if (ackMatch && req.method === "POST") {
+      const target = claimById(ackMatch[1]);
+      if (!target) return refuse(res, 404, "warranty: claim not found");
+      const alert = warranty.alerts.find((a) => a.id === ackMatch[2] && a.claim_id === target.id);
+      if (!alert) return refuse(res, 404, "warranty: alert not found");
+      alert.acknowledged_at = new Date().toISOString();
+      alert.acknowledged_by = USERS[flow].user_id;
+      return json(res, { ok: true });
+    }
+
+    if (path === "/api/v1/warranty/vendors" && req.method === "GET") {
+      return json(res, { items: warranty.vendors, next_cursor: null, limit: 200 });
+    }
+    const vendorMatch = path.match(/^\/api\/v1\/warranty\/vendors\/([^/]+)$/);
+    if (vendorMatch && req.method === "GET") {
+      const profile = warranty.vendors.find((v) => v.vendor_id === vendorMatch[1]);
+      if (!profile) return refuse(res, 404, "warranty: vendor profile not found");
+      return json(res, profile);
+    }
+    if (vendorMatch && req.method === "PUT") {
+      if (scenario === "refused-vendor-save") return forbiddenWall(res);
+      if (!warrantyIsAdmin()) return forbiddenWall(res);
+      const profile = warranty.vendors.find((v) => v.vendor_id === vendorMatch[1]);
+      if (!profile) {
+        return refuse(res, 422, `warranty: unknown vendor ${JSON.stringify(vendorMatch[1])}, create the vendor before configuring its warranty profile`);
+      }
+      const status = String(body?.status ?? "");
+      if (!["DOCUMENTED", "UNDOCUMENTED"].includes(status)) return refuse(res, 422, "warranty: status must be DOCUMENTED or UNDOCUMENTED");
+      const channel = String(body?.channel ?? "");
+      if (!["EMAIL", "PORTAL", "REP", "PHONE", "OTHER"].includes(channel)) return refuse(res, 422, "warranty: channel must be one of EMAIL, PORTAL, REP, PHONE, OTHER");
+      profile.status = status;
+      profile.coverage = String(body?.coverage ?? "");
+      profile.term_months = body?.term_months === null || body?.term_months === undefined ? null : Number(body.term_months);
+      profile.channel = channel;
+      profile.channel_ref = String(body?.channel_ref ?? "");
+      profile.notes = String(body?.notes ?? "");
+      return json(res, profile);
+    }
+
+    const overrideMatch = path.match(/^\/api\/v1\/warranty\/vendors\/([^/]+)\/overrides$/);
+    if (overrideMatch && req.method === "POST") {
+      if (!warrantyIsAdmin()) return forbiddenWall(res);
+      const profile = warranty.vendors.find((v) => v.vendor_id === overrideMatch[1]);
+      if (!profile) return refuse(res, 404, "warranty: vendor profile not found");
+      const productId = String(body?.product_id ?? "");
+      if (productId === "") return refuse(res, 422, "warranty: profile_id and product_id are required");
+      const override = {
+        id: `12000000-0000-4000-9000-0000000000no${profile.overrides.length}`,
+        profile_id: profile.id,
+        product_id: productId,
+        product_name: "",
+        coverage: String(body?.coverage ?? ""),
+        term_months: body?.term_months === null || body?.term_months === undefined ? null : Number(body.term_months),
+        notes: String(body?.notes ?? ""),
+      };
+      profile.overrides.push(override);
+      return json(res, override);
+    }
+
+    if (path === "/api/v1/warranty/reports" && req.method === "GET") {
+      return json(res, reportsOf(warranty));
+    }
   }
 
   return notFound(res);

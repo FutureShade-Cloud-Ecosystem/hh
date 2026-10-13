@@ -47,6 +47,10 @@ import {
 import { homeStyles } from "./styles.js";
 import { builderStyles } from "./builder-styles.js";
 import { renderBuilder } from "./builder-views.js";
+import { warrantyStyles } from "./warranty-styles.js";
+import { WarrantyApi } from "./warranty-api.js";
+import { WarrantyDesk } from "./warranty-desk.js";
+import { renderWarranty } from "./warranty-views.js";
 import {
   renderApprovals,
   renderEntry,
@@ -63,7 +67,7 @@ import {
 const DEMO_ORG = "hh-demo";
 
 export class ManagerHomeApp extends HHElement {
-  static styles = [baseStyles, homeStyles, builderStyles];
+  static styles = [baseStyles, homeStyles, builderStyles, warrantyStyles];
 
   // The demo account surface: listFlows() and chooseFlow() over the core's
   // demo routes. It is the injected AccountSurface for the auth package.
@@ -97,6 +101,13 @@ export class ManagerHomeApp extends HHElement {
     { builder: new BuilderApi(this.#staffClient), mine: { branches: () => this.#api.branches() } },
     () => this.requestUpdate(),
   );
+  // The warranty desk (src/warranty-*): its own door over the same staff
+  // client, its fields read from this element's shadow root by name.
+  readonly #warranty = new WarrantyDesk(new WarrantyApi(this.#staffClient), {
+    repaint: () => this.requestUpdate(),
+    field: (name) => this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[data-field="${name}"]`)?.value ?? "",
+    index: (name) => this.renderRoot.querySelector<HTMLSelectElement>(`select[data-field="${name}"]`)?.selectedIndex ?? -1,
+  });
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
@@ -156,7 +167,7 @@ export class ManagerHomeApp extends HHElement {
     }
     if (action === "open-view") {
       const view = control?.getAttribute("data-view");
-      if (view === "shortages" || view === "receiving" || view === "approvals") {
+      if (view === "shortages" || view === "receiving" || view === "approvals" || view === "warranty") {
         this.#openView(view);
       }
       if (view === "builder") {
@@ -181,6 +192,10 @@ export class ManagerHomeApp extends HHElement {
       if (this.#view === "approvals") void this.#loadApprovals();
       return;
     }
+    // The warranty desk's own controls (every data-action beginning w-). Its
+    // press answers false for anything that is not its own, so the landing's
+    // actions below keep working.
+    if (control !== undefined && this.#warranty.press(control)) return;
     if (action === "open-resolve") {
       this.#openResolve(control?.getAttribute("data-task-id") ?? "", control?.getAttribute("data-shortage-id") ?? "");
       return;
@@ -226,7 +241,9 @@ export class ManagerHomeApp extends HHElement {
   };
 
   // The resolve note field and the builder's fields: mirrored from input
-  // events, never bound.
+  // events, never bound. The warranty desk hears only the one field whose shape
+  // it changes (the chase form's action pick); every other field is read at
+  // press time.
   readonly #onField = (event: Event): void => {
     const target = event.target;
     if (target instanceof HTMLTextAreaElement && target.getAttribute("data-field") === "resolution-note") {
@@ -241,6 +258,10 @@ export class ManagerHomeApp extends HHElement {
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
       const field = target.getAttribute("data-field");
       if (field !== null && field.startsWith("builder-")) this.#desk.field(field, target.value);
+    }
+    if (target instanceof Element) {
+      const field = target.getAttribute("data-field") ?? "";
+      if (field.startsWith("w-")) this.#warranty.onField(field);
     }
   };
 
@@ -282,7 +303,10 @@ export class ManagerHomeApp extends HHElement {
   // template (only data- and aria- attributes take a bound value), so it is
   // set on the element here, after each render. The builder's two text fields
   // prefill the same way: their values live in the desk, mirrored back into
-  // the inputs after each render, never while a person is typing in them.
+  // the inputs after each render, never while a person is typing in them. The
+  // warranty desk's seeds ride the same rule: a form's starting values and a
+  // photo's object address are set on their elements after the render that
+  // drew them, never bound.
   protected override updated(changed: Map<PropertyKey, unknown>): void {
     super.updated(changed);
     const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
@@ -294,6 +318,17 @@ export class ManagerHomeApp extends HHElement {
     this.#prefill("builder-title", this.#desk.state.draft?.title ?? "");
     this.#prefill("builder-landing-unit", this.#desk.state.role?.home.landing_unit ?? "");
     this.#prefill("builder-landing-module", this.#desk.state.role?.home.landing_module ?? "");
+    this.#warranty.seedFields((name, value) => {
+      const field = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`[data-field="${name}"]`);
+      if (field !== null) field.value = value;
+    });
+    for (const img of Array.from(this.renderRoot.querySelectorAll<HTMLImageElement>("img[data-w-photo]"))) {
+      const id = img.getAttribute("data-w-photo") ?? "";
+      const url = this.#warranty.photoUrl(id);
+      if (url !== undefined && img.getAttribute("src") !== url) img.setAttribute("src", url);
+      const alt = this.#warranty.photoAlt(id);
+      if (img.getAttribute("alt") !== alt) img.setAttribute("alt", alt);
+    }
   }
 
   // A list control keeps its keyboard focus through a move: the lists reuse
@@ -348,7 +383,8 @@ export class ManagerHomeApp extends HHElement {
     this.requestUpdate();
   }
 
-  // The signed-in start: the branch once, then the landing.
+  // The signed-in start: the branch once, then the landing. The warranty desk
+  // hears the branch too, for the scope chip that names it.
   async #start(): Promise<void> {
     const branches = await this.#api.branches();
     if (branches.ok && branches.value.length > 0) {
@@ -356,6 +392,7 @@ export class ManagerHomeApp extends HHElement {
     } else {
       this.#branch = null;
     }
+    this.#warranty.setBranch(this.#branch?.id ?? "", this.#branch?.name ?? "");
     await this.#loadLanding();
   }
 
@@ -383,6 +420,7 @@ export class ManagerHomeApp extends HHElement {
     this.#view = "home";
     this.#desk.close();
     this.#branch = null;
+    this.#warranty.reset();
     this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "" };
     this.#shortages = {
       phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
@@ -466,6 +504,7 @@ export class ManagerHomeApp extends HHElement {
     if (view === "shortages" && this.#shortages.phase === "loading") void this.#loadShortages();
     if (view === "receiving" && this.#receiving.phase === "loading") void this.#loadReceiving();
     if (view === "approvals" && this.#approvals.phase === "loading") void this.#loadApprovals();
+    if (view === "warranty") this.#warranty.open();
   }
 
   // The arrange view: opened once, loaded once; the desk keeps its state while
@@ -625,6 +664,7 @@ export class ManagerHomeApp extends HHElement {
     if (this.#view === "shortages") return renderShortages(this.#shortages);
     if (this.#view === "receiving") return renderReceiving(this.#receiving);
     if (this.#view === "approvals") return renderApprovals(this.#approvals);
+    if (this.#view === "warranty") return renderWarranty(this.#warranty.model());
     return renderLanding(this.#landing);
   }
 

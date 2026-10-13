@@ -91,3 +91,30 @@ func TestRefuseProviderVarsAcceptsTheDemoBox(t *testing.T) {
 		t.Fatalf("valueless entry refused: %v", err)
 	}
 }
+
+// A name under the explicit prefix that is on no list refuses the boot: a
+// new CORE_ name is never classed allowed by default, so a new wire out of
+// the box (the console mode's Appwrite names are the one declared shape)
+// has to be stated by name before a demo box boots with it.
+func TestRefuseProviderVarsRefusesAnUnknownNameUnderTheExplicitPrefix(t *testing.T) {
+	d := deny
+	d.ExplicitPrefix = "CORE_"
+	d.ExplicitAllowed = []string{"CORE_SIGNIN_MODE", "CORE_APPWRITE_ENDPOINT"}
+	if err := RefuseProviderVars([]string{"CORE_SIGNIN_MODE=console", "CORE_APPWRITE_ENDPOINT=https://x", "PATH=/bin"}, d); err != nil {
+		t.Fatalf("listed names refused: %v", err)
+	}
+	err := RefuseProviderVars([]string{"CORE_SIGNIN_MODE=console", "CORE_BRAND_NEW_WIRE=secret-value"}, d)
+	if err == nil {
+		t.Fatal("an unknown CORE_ name was accepted")
+	}
+	if !strings.Contains(err.Error(), "CORE_BRAND_NEW_WIRE") {
+		t.Fatalf("refusal does not name the variable: %v", err)
+	}
+	if strings.Contains(err.Error(), "secret-value") {
+		t.Fatal("refusal carries the value")
+	}
+	// The default zero value keeps the old behaviour (no explicit prefix).
+	if err := RefuseProviderVars([]string{"CORE_BRAND_NEW_WIRE=1"}, deny); err != nil {
+		t.Fatalf("zero explicit prefix refused: %v", err)
+	}
+}
