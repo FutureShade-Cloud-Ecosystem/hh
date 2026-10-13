@@ -8366,7 +8366,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecAccountPage"
+                $ref: "#/components/schemas/BankRecAccountList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -8559,7 +8559,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecMatchPage"
+                $ref: "#/components/schemas/BankRecMatchList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -8591,7 +8591,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecMatchRulePage"
+                $ref: "#/components/schemas/BankRecMatchRuleList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -8663,7 +8663,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/BankRecReconciliationPage"
+                $ref: "#/components/schemas/BankRecReconciliationList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -35338,22 +35338,11 @@ components:
         unmatched_lines:
           type: integer
           format: int32
-    BankRecAccountPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecAccount"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecAccountList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecAccount"
     BankRecStatementLine:
       type: object
       description: One parsed bank line; amount_cents is signed (positive credit, negative debit)
@@ -35526,22 +35515,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/BankRecMatch"
-    BankRecMatchPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecMatch"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecMatchList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecMatch"
     BankRecMatchInput:
       type: object
       description: mode auto (or empty) runs the matcher over a window and uses bank_account_id, from and to; mode manual pairs one line with one target and uses statement_line_id, target_type, target_ref_id and optionally amount_cents.
@@ -35597,7 +35575,7 @@ components:
             - unmatched
     BankRecRuleSpec:
       type: object
-      description: "The rule spec payload. kind picks the matcher: gateway_ref_exact (card settlement, payment gateway ref equals line reference), lodgement_ref_exact (cash or cheque lodgement, reference exact with zero tolerance), descriptor_fuzzy (settlement descriptor match with a fee split allowance)."
+      description: "The rule spec payload. kind picks the matcher: gateway_ref_exact (card settlement, payment gateway ref equals line reference), lodgement_ref_exact (cash or cheque lodgement, reference exact with zero tolerance), descriptor_fuzzy (settlement descriptor match with a fee split allowance). The core stores the whole object as written and returns it unchanged; the matcher reads the six fields below besides kind and ignores any other key."
       additionalProperties: true
       properties:
         kind:
@@ -35606,6 +35584,26 @@ components:
             - gateway_ref_exact
             - lodgement_ref_exact
             - descriptor_fuzzy
+        target:
+          type: string
+          description: What the matcher pairs a line with (PAYMENT or LODGEMENT in the seeded rules)
+        tolerance_cents:
+          type: integer
+          format: int64
+          description: Amount tolerance in cents; zero or absent means exact
+        descriptor_ilike:
+          type: string
+          description: The ILIKE pattern the line descriptor must satisfy (descriptor_fuzzy)
+        date_window_days:
+          type: integer
+          format: int32
+          description: Days either side of the line date a target may fall
+        allow_fee_split:
+          type: boolean
+          description: Whether the matcher may book a processor fee split
+        fee_account_code:
+          type: string
+          description: The GL account code a fee split books to
     BankRecMatchRule:
       type: object
       description: A match rule row plus its decoded spec
@@ -35660,22 +35658,11 @@ components:
         priority:
           type: integer
           format: int32
-    BankRecMatchRulePage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecMatchRule"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecMatchRuleList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecMatchRule"
     BankRecReconciliation:
       type: object
       description: One per-account period reconciliation
@@ -35743,22 +35730,11 @@ components:
         statement_balance_cents:
           type: integer
           format: int64
-    BankRecReconciliationPage:
-      type: object
-      required:
-        - items
-      properties:
-        items:
-          type: array
-          items:
-            $ref: "#/components/schemas/BankRecReconciliation"
-        next_cursor:
-          type:
-            - string
-            - "null"
-        limit:
-          type: integer
-          format: int32
+    BankRecReconciliationList:
+      type: array
+      description: "The core writes the bare array as the whole answer body: no envelope, no cursor, no limit echo. An empty answer is [], never null."
+      items:
+        $ref: "#/components/schemas/BankRecReconciliation"
     IdentityPing:
       type: object
       description: The identity module liveness record

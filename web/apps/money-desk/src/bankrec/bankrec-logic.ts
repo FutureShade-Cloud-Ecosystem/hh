@@ -1,11 +1,11 @@
 // The bank reconciliation slice's plain logic: the words for every state the core stores, which row action a
-// statement line admits, how a statement's dates and periods read, how the core's two list shapes are read, how
-// its refusals read out loud, and how the rule form becomes the spec the core stores. Nothing here computes money
+// statement line admits, how a statement's dates and periods read, how its refusals read out loud, and how the rule form becomes the spec the core stores. Nothing here computes money
 // and nothing here is rendered.
 //
 // Port provenance: the state words and the row action rule are the original app's (app/src/bankrec-shared.ts and
 // app/src/_bankrec-line-actions.ts), with the words made plainer: a bookkeeper reconciling a statement does not
 // say UNMATCHED or CREDIT_CARD. An unknown value is opened out (lowercased, underscores gone), never hidden.
+import type { BankRecRuleSpec } from "@hardscapehouse/api-client";
 import { formatMoney, centsToField } from "./bankrec-money.js";
 
 export type Tone = "stop" | "watch" | "good" | "plain";
@@ -61,7 +61,14 @@ const RULE_KIND: Record<string, string> = {
 };
 export const ruleKindWord = (kind: string): string => wordsFrom(RULE_KIND, kind);
 
-export const RULE_KINDS: readonly string[] = ["gateway_ref_exact", "lodgement_ref_exact", "descriptor_fuzzy"];
+export type RuleKind = NonNullable<BankRecRuleSpec["kind"]>;
+
+export const RULE_KINDS: readonly RuleKind[] = ["gateway_ref_exact", "lodgement_ref_exact", "descriptor_fuzzy"];
+
+/** A kind the form or a stored spec names, or the first kind when it names none the core knows. */
+function ruleKindOf(text: string): RuleKind {
+  return RULE_KINDS.find((k) => k === text) ?? "gateway_ref_exact";
+}
 
 export type LineAction = "match" | "unmatch" | null;
 
@@ -111,18 +118,6 @@ export function varianceWords(varianceCents: number): VarianceView {
     tone: "stop",
     detail: varianceCents > 0 ? "The statement is higher than the ledger." : "The statement is lower than the ledger.",
   };
-}
-
-/**
- * The core answers four of its lists (accounts, matches, rules, reconciliations) with a bare array, while the
- * contract says a page of items. Both are read; anything else is not a list and the caller says so.
- */
-export function listOf<T>(value: unknown): T[] | null {
-  if (Array.isArray(value)) return value as T[];
-  if (value !== null && typeof value === "object" && Array.isArray((value as { items?: unknown }).items)) {
-    return (value as { items: T[] }).items;
-  }
-  return null;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -238,11 +233,12 @@ export interface RuleFields {
  * a target and a tolerance; the batch kind carries a description pattern, a date window and the optional fee split.
  * A description with no percent sign is wrapped, so "RUN" means the description contains RUN.
  */
-export function ruleSpec(f: RuleFields): Record<string, unknown> {
-  if (f.kind === "descriptor_fuzzy") {
+export function ruleSpec(f: RuleFields): BankRecRuleSpec {
+  const kind = ruleKindOf(f.kind);
+  if (kind === "descriptor_fuzzy") {
     const pattern = f.descriptor.includes("%") ? f.descriptor : `%${f.descriptor}%`;
-    const spec: Record<string, unknown> = {
-      kind: f.kind,
+    const spec: BankRecRuleSpec = {
+      kind,
       target: "PAYMENT",
       descriptor_ilike: pattern,
       date_window_days: f.windowDays,
@@ -251,29 +247,18 @@ export function ruleSpec(f: RuleFields): Record<string, unknown> {
     if (f.feeSplit && f.feeAccount !== "") spec.fee_account_code = f.feeAccount;
     return spec;
   }
-  return { kind: f.kind, target: f.kind === "lodgement_ref_exact" ? "LODGEMENT" : "PAYMENT", tolerance_cents: f.toleranceCents };
-}
-
-function str(spec: Record<string, unknown>, key: string): string {
-  const v = spec[key];
-  return typeof v === "string" ? v : "";
-}
-
-function int(spec: Record<string, unknown>, key: string): number {
-  const v = spec[key];
-  return typeof v === "number" && Number.isInteger(v) ? v : 0;
+  return { kind, target: kind === "lodgement_ref_exact" ? "LODGEMENT" : "PAYMENT", tolerance_cents: f.toleranceCents };
 }
 
 /** A stored spec read back into the form, to approve a changed copy as the next version. */
-export function ruleSpecFields(spec: Record<string, unknown>): RuleFields {
-  const kind = RULE_KINDS.includes(str(spec, "kind")) ? str(spec, "kind") : "gateway_ref_exact";
+export function ruleSpecFields(spec: BankRecRuleSpec): RuleFields {
   return {
-    kind,
-    toleranceCents: int(spec, "tolerance_cents"),
-    descriptor: str(spec, "descriptor_ilike").replace(/^%+|%+$/g, ""),
-    windowDays: int(spec, "date_window_days"),
+    kind: ruleKindOf(spec.kind ?? ""),
+    toleranceCents: spec.tolerance_cents ?? 0,
+    descriptor: (spec.descriptor_ilike ?? "").replace(/^%+|%+$/g, ""),
+    windowDays: spec.date_window_days ?? 0,
     feeSplit: spec.allow_fee_split === true,
-    feeAccount: str(spec, "fee_account_code"),
+    feeAccount: spec.fee_account_code ?? "",
   };
 }
 

@@ -2340,11 +2340,7 @@ export type BankRecAccount = {
   tracking_only: boolean;
   unmatched_lines: number;
 };
-export type BankRecAccountPage = {
-  items: BankRecAccount[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecAccountList = BankRecAccount[];
 export type BankRecStatementLine = {
   id: string;
   bank_account_id: string;
@@ -2393,11 +2389,7 @@ export type BankRecMatchSummary = {
   unmatched: number;
   matches: BankRecMatch[];
 };
-export type BankRecMatchPage = {
-  items: BankRecMatch[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecMatchList = BankRecMatch[];
 export type BankRecMatchInput = {
   mode: "auto" | "manual";
   bank_account_id?: string;
@@ -2416,6 +2408,12 @@ export type BankRecUnmatchResult = {
 };
 export type BankRecRuleSpec = {
   kind?: "gateway_ref_exact" | "lodgement_ref_exact" | "descriptor_fuzzy";
+  target?: string;
+  tolerance_cents?: number;
+  descriptor_ilike?: string;
+  date_window_days?: number;
+  allow_fee_split?: boolean;
+  fee_account_code?: string;
 };
 export type BankRecMatchRule = {
   id: string;
@@ -2433,11 +2431,7 @@ export type BankRecRuleInput = {
   spec: BankRecRuleSpec;
   priority: number;
 };
-export type BankRecMatchRulePage = {
-  items: BankRecMatchRule[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecMatchRuleList = BankRecMatchRule[];
 export type BankRecReconciliation = {
   id: string;
   bank_account_id: string;
@@ -2455,11 +2449,7 @@ export type BankRecReconInput = {
   month: number;
   statement_balance_cents: number;
 };
-export type BankRecReconciliationPage = {
-  items: BankRecReconciliation[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecReconciliationList = BankRecReconciliation[];
 export type IdentityPing = {
   module: string;
   status: string;

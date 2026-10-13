@@ -74,7 +74,9 @@ import (
 // to 109 when ten inventory reads stopped being page shapes: the contract
 // now declares the key the core writes (on_hand, moves, pending, branches,
 // reservations, transfers, lines, pairs, reorder_points; rows for browse).
-// The pin is
+// It moved to 105 when four bank reconciliation lists (accounts, matches,
+// rules, reconciliations) stopped being page shapes: the contract now declares
+// the bare array the core writes. The pin is
 // the census's knowing (the same discipline as the 611 staff operation pin
 // in census_test.go): a page shape added or removed must move this number
 // consciously, with the live half's report (the new operation is driven,
@@ -103,9 +105,6 @@ var shapeCensusAllowlist = map[string]string{
 	// (1) bare array (23 of the 118, the first entry the brief names).
 	"auditListEntries":            "answers a bare JSON array (internal/audit/handler.go, (*Handler).list writes the h.svc.List rows directly) against the contract's AuditEntryPage; the fix is the owning lane's",
 	"auditReopenTransaction":      "answers a bare JSON array (internal/audit/handler.go, (*Handler).reopen writes its projected []Entry directly) against the contract's AuditEntryPage; the fix is the owning lane's",
-	"bankrecListAccounts":         "answers a bare JSON array (internal/bankrec/handler.go, (*Handler).accounts writes the h.svc.Accounts slice, nil guarded to []) against the contract's BankRecAccountPage; the fix is the owning lane's",
-	"bankrecListReconciliations":  "answers a bare JSON array (internal/bankrec/handler.go, (*Handler).reconciliations writes the h.svc.Reconciliations slice directly) against the contract's BankRecReconciliationPage; the fix is the owning lane's",
-	"bankrecListRules":            "answers a bare JSON array (internal/bankrec/handler.go, (*Handler).rules writes the h.svc.Rules slice directly) against the contract's BankRecMatchRulePage; the fix is the owning lane's",
 	"posListReturnRequests":       "answers a bare JSON array (internal/pos/return_requests.go, (*Handler).listReturnRequests writes the h.svc.ListReturnRequests slice directly, no nil guard) against the contract's PosReturnRequestPage; the fix is the owning lane's",
 	"pricingListAudit":            "answers a bare JSON array (internal/pricing/handler.go, (*Handler).listAudit writes the h.svc.ListAudit slice directly) against the contract's PricingAuditLogPage; the fix is the owning lane's",
 	"pricingListBatchLines":       "answers a bare JSON array (internal/pricing/batch_handler.go, (*Handler).listBatchLines writes the h.svc.ListBatchLines slice directly) against the contract's PricingBatchLinePage; the fix is the owning lane's",
@@ -195,7 +194,6 @@ var shapeCensusUncovered = map[string]string{
 	// reason names the parameter (and its source), so widening the census
 	// (a query fill (the planted ids again)) is a conscious one line edit.
 	"bankrecListLines":               "the service requires the bank_account_id query (internal/bankrec/service.go, Service.Lines answers badRequest (bank_account_id is required) when it is absent); the census sends no query string, so no caller reaches a 2xx (tier legs 400, yard_team 403, the money desk's role gate (the route's cells), which is a correct gate answer, not a handler defect)",
-	"bankrecListMatches":             "the service requires the statement_line_id query (internal/bankrec/service.go, Service.MatchHistory, statement_line_id is required); tier legs 400, yard_team 403 (the money desk's gate)",
 	"dispatchGetLoadBoardCalendar":   "the service requires the branch_id query (plus from and to as dates) (internal/dispatch/service_loadboard.go, Service.Calendar, dispatch: branch_id is required); only the general manager leg passes the role gate (its 400 is the guard), the scoped roles' 403 is the dispatch-board gate (the route's cells)",
 	"dispatchGetLoadBoardGaps":       "the service requires the branch_id query (internal/dispatch/service_loadboard.go, Service.BoardGaps, the same named missing field guard); GM 400 (the guard), the rest 403 (the dispatch-board gate)",
 	"dispatchGetOrderGaps":           "the service checks the branch_id query before the (planted) order id (internal/dispatch/service_loadboard.go, Service.GapsForOrder, branch_id is required); GM 400 (the guard), the rest 403 (the dispatch-board gate); the fill (testkit.OrderAlphaConfID) sits behind the branch guard",

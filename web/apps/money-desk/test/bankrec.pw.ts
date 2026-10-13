@@ -448,23 +448,26 @@ test("while the accounts load the screen says so, a failed load offers Try again
   await page.getByRole("button", { name: "Bank reconciliation", exact: true }).click();
 });
 
-test("the core's bare arrays and the contract's pages are both read, and anything else is refused, never half read", async ({ page, request }) => {
+test("the core's bare array is read, and a page of items or anything else is refused, never half read", async ({ page, request }) => {
   await resetStub(request);
   await page.addInitScript(controllerHandoff);
   const account = { id: OPERATING_ID, name: OPERATING, account_type: "BANK", gl_account_code: "1000", institution: "Harbor Bank (demo)", last4: "4410", is_active: true, tracking_only: false, unmatched_lines: 0 };
-  let shape = "page";
+  let shape = "array";
+  const answers: Record<string, unknown> = { array: [account], page: { items: [account], next_cursor: null }, garbage: { items: "x" } };
   await page.route("**/api/v1/bankrec/accounts", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: shape === "page" ? JSON.stringify({ items: [account], next_cursor: null }) : JSON.stringify({ items: "x" }) }),
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(answers[shape]) }),
   );
   await page.goto("/");
   await page.getByRole("button", { name: "Bank reconciliation", exact: true }).click();
   await expect(page.locator("[data-account-id]")).toHaveCount(1);
-  shape = "garbage";
-  await page.getByRole("button", { name: "Receivables", exact: true }).click();
-  await page.reload();
-  await page.getByRole("button", { name: "Bank reconciliation", exact: true }).click();
-  await expect(page.locator("[data-error]")).toContainText("The accounts were not readable.");
-  await expect(page.locator("[data-account-id]")).toHaveCount(0);
+  for (const refused of ["page", "garbage"]) {
+    shape = refused;
+    await page.getByRole("button", { name: "Receivables", exact: true }).click();
+    await page.reload();
+    await page.getByRole("button", { name: "Bank reconciliation", exact: true }).click();
+    await expect(page.locator("[data-error]")).toContainText("The accounts were not readable.");
+    await expect(page.locator("[data-account-id]")).toHaveCount(0);
+  }
 });
 
 test("a second press while a write is in flight sends nothing more", async ({ page, request }) => {

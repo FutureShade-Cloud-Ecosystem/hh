@@ -203,7 +203,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   ],
   "bankrec-states": [
     { file: BANKREC, test: "while the accounts load the screen says so, a failed load offers Try again, and an empty list says so" },
-    { file: BANKREC, test: "the core's bare arrays and the contract's pages are both read, and anything else is refused, never half read" },
+    { file: BANKREC, test: "the core's bare array is read, and a page of items or anything else is refused, never half read" },
     { file: BANKREC, test: "more than a page of lines shows more on request and follows the core's cursor to the end" },
   ],
   "bankrec-phone": [

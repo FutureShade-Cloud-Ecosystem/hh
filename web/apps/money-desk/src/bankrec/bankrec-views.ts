@@ -485,13 +485,13 @@ function matchView(model: BankrecModel): TemplateResult {
 // ---- rules --------------------------------------------------------------------------------------------
 
 function specLine(rule: BankRecMatchRule): string {
-  const s = rule.spec as Record<string, unknown>;
-  if (rule.spec.kind === "descriptor_fuzzy") {
-    const days = typeof s.date_window_days === "number" ? s.date_window_days : 0;
+  const s = rule.spec;
+  if (s.kind === "descriptor_fuzzy") {
+    const days = s.date_window_days ?? 0;
     const split = s.allow_fee_split === true ? ", fee split allowed" : "";
-    return `Description ${String(s.descriptor_ilike ?? "")}, within ${days} days${split}`;
+    return `Description ${s.descriptor_ilike ?? ""}, within ${days} days${split}`;
   }
-  const tolerance = typeof s.tolerance_cents === "number" ? s.tolerance_cents : 0;
+  const tolerance = s.tolerance_cents ?? 0;
   return tolerance === 0 ? "Exact amount" : `Within ${formatMoney(tolerance)}`;
 }
 

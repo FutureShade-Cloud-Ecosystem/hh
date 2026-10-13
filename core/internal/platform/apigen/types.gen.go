@@ -2790,11 +2790,7 @@ type BankRecAccount struct {
 	UnmatchedLines int32  `json:"unmatched_lines"`
 }
 
-type BankRecAccountPage struct {
-	Items      []BankRecAccount `json:"items"`
-	NextCursor *string          `json:"next_cursor,omitempty"`
-	Limit      *int32           `json:"limit,omitempty"`
-}
+type BankRecAccountList []BankRecAccount
 
 type BankRecStatementLine struct {
 	Id            string    `json:"id"`
@@ -2850,11 +2846,7 @@ type BankRecMatchSummary struct {
 	Matches   []BankRecMatch `json:"matches"`
 }
 
-type BankRecMatchPage struct {
-	Items      []BankRecMatch `json:"items"`
-	NextCursor *string        `json:"next_cursor,omitempty"`
-	Limit      *int32         `json:"limit,omitempty"`
-}
+type BankRecMatchList []BankRecMatch
 
 type BankRecMatchInput struct {
 	Mode            string  `json:"mode"`
@@ -2876,7 +2868,13 @@ type BankRecUnmatchResult struct {
 }
 
 type BankRecRuleSpec struct {
-	Kind *string `json:"kind,omitempty"`
+	Kind            *string `json:"kind,omitempty"`
+	Target          *string `json:"target,omitempty"`
+	ToleranceCents  *int64  `json:"tolerance_cents,omitempty"`
+	DescriptorIlike *string `json:"descriptor_ilike,omitempty"`
+	DateWindowDays  *int32  `json:"date_window_days,omitempty"`
+	AllowFeeSplit   *bool   `json:"allow_fee_split,omitempty"`
+	FeeAccountCode  *string `json:"fee_account_code,omitempty"`
 	// The document permits additional properties beyond the fields above.
 }
 
@@ -2898,11 +2896,7 @@ type BankRecRuleInput struct {
 	Priority int32           `json:"priority"`
 }
 
-type BankRecMatchRulePage struct {
-	Items      []BankRecMatchRule `json:"items"`
-	NextCursor *string            `json:"next_cursor,omitempty"`
-	Limit      *int32             `json:"limit,omitempty"`
-}
+type BankRecMatchRuleList []BankRecMatchRule
 
 type BankRecReconciliation struct {
 	Id                    string     `json:"id"`
@@ -2923,11 +2917,7 @@ type BankRecReconInput struct {
 	StatementBalanceCents int64  `json:"statement_balance_cents"`
 }
 
-type BankRecReconciliationPage struct {
-	Items      []BankRecReconciliation `json:"items"`
-	NextCursor *string                 `json:"next_cursor,omitempty"`
-	Limit      *int32                  `json:"limit,omitempty"`
-}
+type BankRecReconciliationList []BankRecReconciliation
 
 type IdentityPing struct {
 	Module string `json:"module"`
