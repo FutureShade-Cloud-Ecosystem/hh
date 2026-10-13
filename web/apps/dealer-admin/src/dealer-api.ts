@@ -23,8 +23,10 @@ import {
   ApiClient,
   staffBranches,
   staffIdentity,
+  staffSettings,
   type Result,
 } from "@hardscapehouse/api-client";
+import { asPlatformView, type PlatformHotkeyView } from "./hotkey-logic.js";
 
 // -- the staff register ---------------------------------------------------------------------------
 
@@ -103,7 +105,7 @@ export function toBranchRow(raw: unknown): BranchRow {
   return { id: text(r.id), code: text(r.code), name: text(r.name) };
 }
 
-/** Every call the staff surface makes. */
+/** Every call the staff and hotkeys surfaces make. */
 export class DealerApi {
   readonly #client: ApiClient;
 
@@ -151,5 +153,29 @@ export class DealerApi {
     const answer = await staffBranches.branchesList(this.#client);
     if (!answer.ok) return answer;
     return { ok: true, value: list(answer.value).map(toBranchRow) };
+  }
+
+  // -- the platform key rosters ------------------------------------------------------------------
+
+  /**
+   * The platform hotkey rosters, normalised at this door. A body this build
+   * cannot read yields empty rosters and canEdit false (the safe answer to
+   * "may I" when nobody said is no).
+   */
+  async platformHotkeys(): Promise<Result<PlatformHotkeyView>> {
+    const answer = await staffSettings.settingsGetPlatformHotkeys(this.#client);
+    if (!answer.ok) return answer;
+    return { ok: true, value: asPlatformView(answer.value) };
+  }
+
+  /**
+   * Save one surface's roster whole. Two panels means two writes,
+   * deliberately: editing the counter's keys must not be able to touch the
+   * app-wide map, and a single combined write is the shape in which that
+   * could happen by accident.
+   */
+  async putPlatformHotkeys(surface: string, keys: readonly { action: string; binding: string; position: number }[]): Promise<Result<true>> {
+    const answer = await staffSettings.settingsPutPlatformHotkeys(this.#client, surface, { keys: keys.map((k) => ({ ...k })) });
+    return answer.ok ? { ok: true, value: true } : answer;
   }
 }

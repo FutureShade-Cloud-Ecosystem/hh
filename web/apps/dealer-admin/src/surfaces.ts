@@ -7,8 +7,9 @@
 // other file in this app changes. A surface is an id, the words the list
 // shows, and the view function the app-root line calls for it.
 //
-// Today: Staff, the original app's staff-roles.ts and staff-reset.ts ported
-// (see PROVENANCE.md). Hotkeys and Audit join with their own commits.
+// Today: Staff (the original's staff-roles.ts and staff-reset.ts) and
+// Hotkeys (the original's platform-hotkeys.ts), each with its PROVENANCE
+// rows. Audit joins with its own commit.
 export interface SurfaceSpec {
   /** The id the list button, the router line and the tests name. */
   readonly id: string;
@@ -20,6 +21,7 @@ export interface SurfaceSpec {
 
 export const SURFACES: readonly SurfaceSpec[] = [
   { id: "staff", title: "Staff", blurb: "The register, the roles, the branch grants, the reset links." },
+  { id: "hotkeys", title: "Hotkeys", blurb: "The keyboard rosters every dealer inherits, until they set their own." },
 ];
 
 export function isSurfaceId(value: string): value is SurfaceSpec["id"] {

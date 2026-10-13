@@ -30,9 +30,25 @@ import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-co
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DealerApi, type BranchRow, type ResetLink } from "./dealer-api.js";
 import { errorWords, staffRefusalWords } from "./dealer-logic.js";
+import {
+  PLATFORM_SURFACES,
+  dealerFor,
+  draftFrom,
+  draftToKeys,
+  otherSurface,
+  platformBadChordSentence,
+  platformChordFrom,
+  platformValidBinding,
+  reservedOf,
+  rosterFor,
+  serverSentence,
+  effectiveVerdict,
+  type PlatformHotkeyView,
+} from "./hotkey-logic.js";
 import { SURFACES, isSurfaceId } from "./surfaces.js";
 import { dealerStyles } from "./styles.js";
 import { renderStaff, type StaffModel } from "./views-staff.js";
+import { renderHotkeys, type HotkeysModel } from "./views-hotkeys.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -47,6 +63,19 @@ const emptyStaffModel = (): StaffModel => ({
   links: new Map(),
   resetErrors: new Map(),
   copiedId: "",
+});
+
+const emptyHotkeysModel = (): HotkeysModel => ({
+  phase: "loading",
+  view: null,
+  drafts: {},
+  capturing: null,
+  refusals: {},
+  notes: {},
+  loadError: "",
+  saveError: "",
+  notice: "",
+  busy: false,
 });
 
 export class DealerAdminApp extends HHElement {
@@ -90,6 +119,9 @@ export class DealerAdminApp extends HHElement {
   // The staff surface's state.
   #staff: StaffModel = emptyStaffModel();
 
+  // The hotkeys surface's state.
+  #hotkeys: HotkeysModel = emptyHotkeysModel();
+
   // The way in: this app's own door, one card per demo role.
   #entryView: { flows: { kind: "loading" } | { kind: "unavailable" } | { kind: "ready"; flows: DemoFlow[] }; busy: boolean; message: string | null } = {
     flows: { kind: "loading" },
@@ -126,12 +158,34 @@ export class DealerAdminApp extends HHElement {
       const surface = control?.getAttribute("data-surface") ?? "";
       if (isSurfaceId(surface)) {
         this.#surface = surface;
+        // A surface loads its own reads the first time it is opened.
+        if (surface === "hotkeys" && this.#hotkeys.phase === "loading") void this.#loadHotkeys();
         this.requestUpdate();
       }
       return;
     }
     if (action === "reload-staff") {
       void this.#loadStaff();
+      return;
+    }
+    if (action === "reload-hotkeys") {
+      void this.#loadHotkeys();
+      return;
+    }
+    if (action === "ph-set") {
+      const surface = control?.getAttribute("data-surface") ?? "";
+      const keyAction = control?.getAttribute("data-key-action") ?? "";
+      if (surface !== "" && keyAction !== "") this.#armCapture(surface, keyAction);
+      return;
+    }
+    if (action === "ph-clear") {
+      const surface = control?.getAttribute("data-surface") ?? "";
+      const keyAction = control?.getAttribute("data-key-action") ?? "";
+      if (surface !== "" && keyAction !== "") this.#clearKey(surface, keyAction);
+      return;
+    }
+    if (action === "ph-save") {
+      void this.#saveRoster(control?.getAttribute("data-surface") ?? "");
       return;
     }
     if (action === "request-reset") {
@@ -193,6 +247,7 @@ export class DealerAdminApp extends HHElement {
   disconnectedCallback(): void {
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("change", this.#onHostChange);
+    if (this.#hotkeys.capturing !== null) window.removeEventListener("keydown", this.#onCapture, true);
     window.clearTimeout(this.#copiedTimer);
     super.disconnectedCallback();
   }
@@ -334,6 +389,151 @@ export class DealerAdminApp extends HHElement {
     }
   }
 
+  // -- the hotkeys surface ---------------------------------------------------------------------------
+
+  async #loadHotkeys(): Promise<void> {
+    // The save's notice outlives the re-read that follows it: the reload
+    // answers the read, not the write, and the person is mid work.
+    this.#hotkeys = { ...emptyHotkeysModel(), notice: this.#hotkeys.notice };
+    this.requestUpdate();
+    const result = await this.#api.platformHotkeys();
+    if (!result.ok) {
+      this.#hotkeys = {
+        ...this.#hotkeys,
+        phase: "error",
+        loadError: `The shortcut keys did not load. ${errorWords(serverSentence(result.error))}`,
+      };
+      this.requestUpdate();
+      return;
+    }
+    const drafts: Record<string, Record<string, string>> = {};
+    for (const surface of PLATFORM_SURFACES) {
+      drafts[surface] = draftFrom(rosterFor(result.value, surface));
+    }
+    this.#hotkeys = { ...this.#hotkeys, phase: "ready", view: result.value, drafts };
+    this.requestUpdate();
+  }
+
+  /**
+   * Arm one row for a keystroke. The listener goes on the window in the
+   * CAPTURE phase, for the same reason the counter's own capture does: an
+   * F-key pressed with focus anywhere must reach it, and nothing downstream,
+   * the shell's own hotkey map very much included, may act on a keystroke
+   * that is being recorded rather than obeyed.
+   */
+  #armCapture(surface: string, action: string): void {
+    if (this.#hotkeys.view?.canEdit !== true) return;
+    const armed =
+      this.#hotkeys.capturing !== null && this.#hotkeys.capturing.surface === surface && this.#hotkeys.capturing.action === action;
+    this.#stopCapture();
+    if (armed) return;
+    this.#hotkeys = {
+      ...this.#hotkeys,
+      capturing: { surface, action },
+      refusals: { ...this.#hotkeys.refusals, [surface]: "" },
+    };
+    this.requestUpdate();
+    window.addEventListener("keydown", this.#onCapture, true);
+  }
+
+  #stopCapture(): void {
+    if (this.#hotkeys.capturing !== null) window.removeEventListener("keydown", this.#onCapture, true);
+    if (this.#hotkeys.capturing !== null) {
+      this.#hotkeys = { ...this.#hotkeys, capturing: null };
+      this.requestUpdate();
+    }
+  }
+
+  readonly #onCapture = (e: KeyboardEvent): void => {
+    const armed = this.#hotkeys.capturing;
+    if (armed === null) return;
+    const { surface, action } = armed;
+    if (e.key === "Escape" || e.key === "Tab") {
+      // Escape abandons and Tab walks on: a capture nobody can leave is a trap.
+      e.preventDefault();
+      this.#stopCapture();
+      return;
+    }
+    const chord = platformChordFrom(surface, e);
+    if (chord === "") {
+      if (e.key === "Enter" || e.key === " ") return; // the press that armed it, arriving late
+      e.preventDefault();
+      e.stopPropagation();
+      this.#hotkeys = { ...this.#hotkeys, refusals: { ...this.#hotkeys.refusals, [surface]: platformBadChordSentence(surface) } };
+      this.requestUpdate();
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    if (!platformValidBinding(surface, chord)) {
+      this.#hotkeys = { ...this.#hotkeys, refusals: { ...this.#hotkeys.refusals, [surface]: platformBadChordSentence(surface) } };
+      this.requestUpdate();
+      return;
+    }
+    const draft = this.#hotkeys.drafts[surface] ?? {};
+    const verdict = effectiveVerdict(surface, action, chord, {
+      draft,
+      dealer: dealerFor(this.#hotkeys.view, surface),
+      reserved: reservedOf(this.#hotkeys.view),
+      other: rosterFor(this.#hotkeys.view, otherSurface(surface)),
+    });
+    if (verdict.kind === "taken") {
+      // REFUSED BEFORE THE SAVE, named by what holds the key.
+      this.#hotkeys = { ...this.#hotkeys, refusals: { ...this.#hotkeys.refusals, [surface]: verdict.sentence } };
+      this.requestUpdate();
+      return;
+    }
+    this.#hotkeys = {
+      ...this.#hotkeys,
+      drafts: { ...this.#hotkeys.drafts, [surface]: { ...draft, [action]: chord } },
+      refusals: { ...this.#hotkeys.refusals, [surface]: "" },
+      // The bind stands; the sentence, if there is one, says which other
+      // surface holds the key and why sharing it is safe.
+      notes: { ...this.#hotkeys.notes, [surface]: verdict.kind === "shared" ? verdict.sentence : "" },
+    };
+    this.#stopCapture();
+  };
+
+  /** One action, unbound. An action with no key simply draws no keycap anywhere. */
+  #clearKey(surface: string, action: string): void {
+    const next = { ...(this.#hotkeys.drafts[surface] ?? {}) };
+    delete next[action];
+    this.#hotkeys = {
+      ...this.#hotkeys,
+      drafts: { ...this.#hotkeys.drafts, [surface]: next },
+      refusals: { ...this.#hotkeys.refusals, [surface]: "" },
+      notes: { ...this.#hotkeys.notes, [surface]: "" },
+    };
+    this.requestUpdate();
+  }
+
+  /** One surface's roster, saved whole. */
+  async #saveRoster(surface: string): Promise<void> {
+    if (surface === "" || this.#hotkeys.busy) return;
+    const keys = draftToKeys(surface, this.#hotkeys.drafts[surface] ?? {});
+    if (keys.length === 0) {
+      this.#hotkeys = { ...this.#hotkeys, saveError: "Bind at least one key, or every terminal inherits a keyboard that does nothing." };
+      this.requestUpdate();
+      return;
+    }
+    this.#hotkeys = { ...this.#hotkeys, busy: true, saveError: "", notice: "" };
+    this.requestUpdate();
+    const result = await this.#api.putPlatformHotkeys(surface, keys);
+    if (!result.ok) {
+      // The server's own sentence is the message: a 4xx arrives in words.
+      this.#hotkeys = { ...this.#hotkeys, busy: false, saveError: serverSentence(result.error) || "The keys were not saved." };
+      this.requestUpdate();
+      return;
+    }
+    this.#hotkeys = {
+      ...this.#hotkeys,
+      busy: false,
+      notice: "Saved. Every dealer who has not set their own now uses these.",
+    };
+    this.requestUpdate();
+    await this.#loadHotkeys();
+  }
+
   async #chooseFlow(flow: string): Promise<void> {
     this.#entryView = { ...this.#entryView, busy: true };
     this.requestUpdate();
@@ -355,8 +555,10 @@ export class DealerAdminApp extends HHElement {
 
   #onSignOut(): void {
     this.#sessions.clear();
+    if (this.#hotkeys.capturing !== null) window.removeEventListener("keydown", this.#onCapture, true);
     this.#surface = SURFACES[0].id;
     this.#staff = emptyStaffModel();
+    this.#hotkeys = emptyHotkeysModel();
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -393,7 +595,7 @@ export class DealerAdminApp extends HHElement {
   private renderWork(): TemplateResult {
     // The router line: one case per registry surface. The next coder adds
     // theirs beside this one; nothing else in this file changes.
-    if (this.#surface === "staff") return renderStaff(this.#staff);
+    if (this.#surface === "hotkeys") return renderHotkeys(this.#hotkeys);
     return renderStaff(this.#staff);
   }
 

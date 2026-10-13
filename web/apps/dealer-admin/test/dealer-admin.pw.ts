@@ -61,3 +61,47 @@ test("a frontline caller is refused the staff read, and the refusal names who ma
   // in the words naming who may act, and no count is asserted.
   await expect(page.locator("[data-test=staff-error]")).toContainText("managers and above");
 });
+
+test("the two hotkey rosters, a captured key, and the save", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+
+  // The app's left list opens the Hotkeys surface; both rosters render.
+  await page.locator('.surface-link[data-surface="hotkeys"]').click();
+  await expect(page.locator("[data-test=hotkeys-roster-app\\.shell]")).toBeVisible();
+  await expect(page.locator("[data-test=hotkeys-roster-pos\\.counter]")).toBeVisible();
+  await expect(page.locator("[data-test=hotkeys-cap-pos\\.counter-pay]")).toHaveText("F12");
+
+  // Arm the counter's pay row. A press that would double claim the shipped
+  // roster is refused at the press, named by the action that holds the key,
+  // and the capture stays armed for the next press.
+  await page.locator('[data-action="ph-set"][data-surface="pos.counter"][data-key-action="pay"]').click();
+  await expect(page.locator('[data-action="ph-set"][data-surface="pos.counter"][data-key-action="pay"]')).toHaveText("Press a key");
+  await page.keyboard.press("F4");
+  await expect(page.locator("[data-test=hotkeys-refusal-pos\\.counter]")).toContainText("Move the sale on to the next step");
+
+  // A free key lands: the chord takes the row and the capture is done.
+  await page.keyboard.press("F5");
+  await expect(page.locator("[data-test=hotkeys-cap-pos\\.counter-pay]")).toHaveText("F5");
+
+  // Save the roster; the stub answers saved and the read re-renders it.
+  await page.locator('[data-action="ph-save"][data-surface="pos.counter"]').click();
+  await expect(page.locator("[data-test=hotkeys-notice]")).toContainText("Saved");
+  await expect(page.locator("[data-test=hotkeys-cap-pos\\.counter-pay]")).toHaveText("F5");
+});
+
+test("a caller who may not edit the rosters reads them read-only", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "readonly-hotkeys" } });
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await page.locator('.surface-link[data-surface="hotkeys"]').click();
+
+  // The server's can_edit gates the write: the calm line and no Set buttons.
+  await expect(page.locator("[data-test=hotkeys-readonly]")).toBeVisible();
+  await expect(page.locator('[data-action="ph-set"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="ph-save"]')).toHaveCount(0);
+  await page.request.post("/_stub/reset");
+});

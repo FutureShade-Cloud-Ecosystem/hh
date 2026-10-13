@@ -354,6 +354,54 @@ export const dealerStyles = css`
     margin-inline-end: var(--hh-s-8);
   }
 
+  /* -- the hotkeys' two rosters -------------------------------------------------------- */
+
+  /* The two rosters sit side by side: the reason to read them is to compare
+     "Everywhere in the app" against "At the counter" key by key, and the F4
+     that means two different things in the two scopes is visible as the one
+     collision it is. */
+  .rosters {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: var(--hh-s-16);
+    align-items: start;
+    margin: 0 0 var(--hh-s-16);
+  }
+  .rosters .card {
+    margin: 0;
+  }
+  .krow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) 0;
+    border-top: 1px solid var(--hh-hairline);
+  }
+  .klabel {
+    font-size: 14px;
+  }
+  .cap {
+    font-family: var(--hh-font-mono);
+    font-size: var(--hh-s-12);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-control);
+    padding: 2px var(--hh-s-8);
+    white-space: nowrap;
+  }
+  /* A key the browser also claims. Dashed, not red: it is a fact, not a
+     refusal; the escape rule is what keeps the browser's gesture reachable. */
+  .cap-host {
+    border-style: dashed;
+  }
+  .cap-none {
+    color: var(--hh-text-dim);
+  }
+  .kcontrols {
+    display: inline-flex;
+    gap: var(--hh-s-8);
+  }
+
   /* -- the way in (the demo door) ------------------------------------------------------------------ */
 
   .stage {

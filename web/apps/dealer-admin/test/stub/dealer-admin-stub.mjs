@@ -1,9 +1,9 @@
 // Dealer Admin's local stub: the demo way in, and the dealer's staff world
 // answered in the core's shapes (the staff register, the roles catalog, the
-// branches). It is a development and test double only; the real routes are
-// the core's, and the staff identity admin family is contract-only there
-// until the auth lane lands it. The hotkeys and audit routes join with
-// their own commits.
+// branches, the platform hotkey rosters). It is a development and test double
+// only; the real routes are the core's, and the staff identity admin family
+// is contract-only there until the auth lane lands it. The audit routes join
+// with their own commit.
 import { createServer } from "node:http";
 
 const port = Number(process.env.DA_STUB_PORT ?? 56610);
@@ -165,15 +165,47 @@ function readBody(req) {
 }
 
 let staff;
+let hotkeys;
 let scenario;
 let log;
 
 function reset() {
   staff = buildStaff();
+  hotkeys = buildHotkeys();
   scenario = "";
   log = [];
 }
 reset();
+
+// The platform rosters as the read serves them: the shell's map with one
+// seeded binding (F2, deliberately also the counter's search key: the cross
+// substrate claim is the shipped design, and the read-only walk sees the
+// shared note when it is rebound), the counter's with the shipped BisTrack
+// defaults, and the shell's own reserved keys, served rather than mirrored.
+function buildHotkeys() {
+  return {
+    rosters: [
+      {
+        surface: "app.shell",
+        keys: [{ action: "sale.cash.new", binding: "F2", position: 0 }],
+        dealer: [],
+      },
+      {
+        surface: "pos.counter",
+        keys: [
+          { action: "step-next", binding: "f4", position: 0 },
+          { action: "step-back", binding: "shift-f4", position: 1 },
+          { action: "pay", binding: "f12", position: 2 },
+          { action: "park", binding: "f9", position: 3 },
+          { action: "search", binding: "f2", position: 4 },
+        ],
+        dealer: [],
+      },
+    ],
+    can_edit: true,
+    reserved: [{ binding: "F1", holds: "opens the shortcut list" }],
+  };
+}
 
 function flowOf(token) {
   for (const [flow, account] of Object.entries(USERS)) {
@@ -292,6 +324,30 @@ async function handle(req, res) {
       reset_url: `https://reset.hh-demo.invalid/${token}`,
       expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
     });
+  }
+
+  // ---- the platform hotkeys ----
+
+  if (req.method === "GET" && path === "/api/v1/platform/hotkeys") {
+    if (scenario === "refused-hotkeys") return refuse(res, 403, "Forbidden");
+    const view = { ...hotkeys, can_edit: scenario === "readonly-hotkeys" ? false : hotkeys.can_edit };
+    return json(res, view);
+  }
+
+  const surfaceMatch = path.match(/^\/api\/v1\/platform\/hotkeys\/([^/]+)$/);
+  if (req.method === "PUT" && surfaceMatch) {
+    if (!isManager(flow) || scenario === "refused-hotkeys") return refuse(res, 403, "Forbidden");
+    const surface = decodeURIComponent(surfaceMatch[1]);
+    const roster = hotkeys.rosters.find((r) => r.surface === surface);
+    if (roster === undefined) return refuse(res, 404, "unknown surface");
+    const keys = Array.isArray(body?.keys) ? body.keys : null;
+    if (keys === null || keys.length === 0) return refuse(res, 400, "settings: the roster may not be empty");
+    roster.keys = keys.map((k, i) => ({
+      action: String(k.action ?? ""),
+      binding: String(k.binding ?? ""),
+      position: typeof k.position === "number" ? k.position : i,
+    }));
+    return json(res, { saved: true });
   }
 
   return notFound(res);

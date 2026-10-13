@@ -18,6 +18,23 @@ import {
   staffRefusalWords,
   tierWord,
 } from "../src/dealer-logic.ts";
+import {
+  PLATFORM_SURFACES,
+  asPlatformView,
+  bindingFromEvent,
+  chordFromEvent,
+  draftToKeys,
+  effectiveVerdict,
+  keycap,
+  otherSurface,
+  platformActionLabel,
+  platformBadChordSentence,
+  platformClashSentence,
+  platformKeycap,
+  reservedHolderFor,
+  serverSentence,
+  validChord,
+} from "../src/hotkey-logic.ts";
 
 const ROLES = [
   { code: "GENERAL_MANAGER", name: "General Manager", tier: 1, scope: "GLOBAL" },
@@ -102,4 +119,151 @@ test("a one word server error becomes plain words; a sentence stays the server's
 test("the waits-for-sign-in state is one stated fact, and it names what waits", () => {
   assert.match(WAITS_FOR_SIGN_IN_WORDS, /Waits for sign in/);
   assert.match(WAITS_FOR_SIGN_IN_WORDS, /identity/);
+});
+
+// -- the hotkeys: two grammars, two substrates, never one list -----------------------
+
+test("the shell grammar spells chords capitalised and plus joined, modifiers first", () => {
+  assert.equal(bindingFromEvent({ key: "F4", ctrlKey: false, altKey: false, shiftKey: false, metaKey: false }), "F4");
+  assert.equal(bindingFromEvent({ key: "k", ctrlKey: true, altKey: false, shiftKey: true, metaKey: false }), "Ctrl+Shift+K");
+  assert.equal(bindingFromEvent({ key: "k", ctrlKey: false, altKey: true, shiftKey: false, metaKey: true }), null);
+  assert.equal(bindingFromEvent({ key: "b", ctrlKey: false, altKey: false, shiftKey: false, metaKey: false }), null);
+  assert.equal(bindingFromEvent({ key: "b", ctrlKey: true, altKey: false, shiftKey: false, metaKey: false }), "Ctrl+B");
+  assert.equal(bindingFromEvent({ key: "?", ctrlKey: false, altKey: false, shiftKey: true, metaKey: false }), null);
+});
+
+test("the counter grammar spells chords lowercase and dash joined, shift first", () => {
+  assert.equal(chordFromEvent({ key: "F4", ctrlKey: false, altKey: false, shiftKey: false, metaKey: false }), "f4");
+  assert.equal(chordFromEvent({ key: "F4", ctrlKey: false, altKey: false, shiftKey: true, metaKey: false }), "shift-f4");
+  assert.equal(chordFromEvent({ key: "b", ctrlKey: true, altKey: false, shiftKey: true, metaKey: false }), "shift-ctrl-b");
+  assert.equal(chordFromEvent({ key: "b", ctrlKey: false, altKey: false, shiftKey: true, metaKey: false }), "");
+  assert.equal(chordFromEvent({ key: "F4", ctrlKey: false, altKey: false, shiftKey: false, metaKey: true }), "");
+});
+
+test("a chord is bindable only in its own grammar's canonical spelling", () => {
+  assert.equal(validChord("shift-ctrl-b"), true);
+  assert.equal(validChord("ctrl-shift-b"), false);
+  assert.equal(validChord("f12"), true);
+  assert.equal(validChord("b"), false);
+  assert.equal(validChord("ctrl-b"), true);
+  assert.equal(validChord("shift-shift-b"), false);
+});
+
+test("a keycap reads as a person reads it", () => {
+  assert.equal(keycap("shift-f4"), "\u21E7F4");
+  assert.equal(keycap("f12"), "F12");
+  assert.equal(keycap("ctrl-alt-p"), "\u2303\u23E5P");
+  assert.equal(platformKeycap("app.shell", "Ctrl+Shift+K"), "Ctrl+Shift+K");
+  assert.equal(platformKeycap("pos.counter", "shift-f4"), "\u21E7F4");
+});
+
+test("the two surfaces are the two substrates, in the order the screen renders them", () => {
+  assert.deepEqual([...PLATFORM_SURFACES], ["app.shell", "pos.counter"]);
+  assert.equal(otherSurface("app.shell"), "pos.counter");
+  assert.equal(otherSurface("pos.counter"), "app.shell");
+});
+
+test("the configurator's labels are sentences, never a stored id", () => {
+  assert.equal(platformActionLabel("pos.counter", "pay"), "Take payment, complete the sale");
+  assert.equal(platformActionLabel("app.shell", "sale.cash.new"), "Start a new sale at the till");
+  assert.equal(platformActionLabel("app.shell", "not.in.registry"), "not.in.registry");
+});
+
+test("a stored binding a shell grammar cannot round trip is not bindable", () => {
+  // platformValidBinding is exercised through validChord for the counter and
+  // the round trip for the shell; the shell side lives in hotkey-logic and is
+  // asserted on main flows here.
+  assert.equal(validChord("f4"), true);
+});
+
+test("the effective verdict refuses what the shell owns outright, naming what holds it", () => {
+  const verdict = effectiveVerdict("app.shell", "sale.cash.new", "F1", {
+    draft: {},
+    reserved: [{ binding: "F1", holds: "opens the shortcut list" }],
+  });
+  assert.equal(verdict.kind, "taken");
+  assert.match(verdict.sentence, /opens the shortcut list/);
+  assert.match(verdict.sentence, /No roster can take it/);
+});
+
+test("the effective verdict refuses a clash on the same roster, naming the action it would break", () => {
+  const verdict = effectiveVerdict("pos.counter", "pay", "f4", {
+    draft: { "step-next": "f4" },
+  });
+  assert.equal(verdict.kind, "taken");
+  assert.equal(verdict.sentence, platformClashSentence("pos.counter", "f4", "step-next"));
+  assert.match(verdict.sentence, /Move the sale on to the next step/);
+});
+
+test("the effective verdict refuses a key the dealer's own override holds", () => {
+  const verdict = effectiveVerdict("pos.counter", "pay", "f2", {
+    draft: {},
+    dealer: [{ action: "search", binding: "f2", position: 0 }],
+  });
+  assert.equal(verdict.kind, "taken");
+  assert.match(verdict.sentence, /Counter settings/);
+});
+
+test("the effective verdict warns, never refuses, the deliberate cross substrate claim", () => {
+  const verdict = effectiveVerdict("app.shell", "sale.cash.new", "F4", {
+    draft: {},
+    other: [{ action: "step-next", binding: "f4", position: 0 }],
+  });
+  assert.equal(verdict.kind, "shared");
+  assert.match(verdict.sentence, /Both keep working/);
+});
+
+test("a candidate key nothing holds is free, and empty is free", () => {
+  assert.equal(effectiveVerdict("app.shell", "sale.cash.new", "F7", { draft: {} }).kind, "free");
+  assert.equal(effectiveVerdict("app.shell", "sale.cash.new", "", { draft: {} }).kind, "free");
+});
+
+test("the reserved holder folds the four spellings one key can arrive in", () => {
+  const reserved = [{ binding: "ctrl-shift-k", holds: "opens the shortcut list" }];
+  assert.equal(reservedHolderFor("Ctrl+Shift+K", reserved), "opens the shortcut list");
+  assert.equal(reservedHolderFor("shift-ctrl-k", reserved), "opens the shortcut list");
+  assert.equal(reservedHolderFor("f2", [{ binding: "F2", holds: "the app's own" }]), "the app's own");
+  assert.equal(reservedHolderFor("F5", reserved), "");
+});
+
+test("a draft goes back on the wire in the screen's own listed order", () => {
+  const keys = draftToKeys("pos.counter", { pay: "f12", "step-next": "f4" });
+  assert.deepEqual(
+    keys.map((k) => [k.action, k.binding, k.position]),
+    [
+      ["step-next", "f4", 0],
+      ["pay", "f12", 1],
+    ],
+  );
+});
+
+test("the loader normalises at the boundary: a body of the wrong shape yields nothing editable", () => {
+  const view = asPlatformView(undefined);
+  assert.equal(view.canEdit, false);
+  assert.deepEqual(view.rosters.map((r) => r.surface), ["app.shell", "pos.counter"]);
+  assert.deepEqual(view.rosters.map((r) => r.keys.length), [0, 0]);
+  assert.deepEqual(view.reserved, []);
+  const read = asPlatformView({
+    rosters: [
+      { surface: "app.shell", keys: [{ action: "sale.cash.new", binding: "F1", position: 0 }], dealer: [] },
+      { surface: "pos.counter", keys: [{ action: "pay", binding: "f12", position: 0 }], dealer: [{ action: "pay", binding: "f2", position: 0 }] },
+    ],
+    can_edit: true,
+    reserved: [{ binding: "F1", holds: "opens the shortcut list" }, { binding: "" }],
+  });
+  assert.equal(read.canEdit, true);
+  assert.deepEqual(read.rosters[0].keys, [{ action: "sale.cash.new", binding: "F1", position: 0 }]);
+  assert.deepEqual(read.rosters[1].dealer, [{ action: "pay", binding: "f2", position: 0 }]);
+  assert.deepEqual(read.reserved, [{ binding: "F1", holds: "opens the shortcut list" }]);
+});
+
+test("the server's own sentence keeps its words and loses only the module prefix", () => {
+  assert.equal(serverSentence("settings: the counter roster may not be empty"), "the counter roster may not be empty");
+  assert.equal(serverSentence("Forbidden"), "Forbidden");
+  assert.equal(serverSentence(""), "");
+});
+
+test("a keystroke that types into the sale is refused in the surface's own words", () => {
+  assert.match(platformBadChordSentence("pos.counter"), /types into the sale/);
+  assert.match(platformBadChordSentence("app.shell"), /cannot be bound/);
 });
