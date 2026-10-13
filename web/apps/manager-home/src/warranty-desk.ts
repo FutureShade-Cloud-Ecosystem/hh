@@ -729,10 +729,21 @@ export class WarrantyDesk {
     const expectedTyped = this.#host.field("w-settle-expected");
     const realizedTyped = this.#host.field("w-settle-realized");
     const note = this.#host.field("w-settle-note").trim();
-    const expectedCents = centsFromDollars(expectedTyped);
+    // A blank expected field sends null (the server keeps the captured
+    // exposure); a typed one must be plain dollars. Realized is never blank.
+    const expectedBlank = expectedTyped.trim() === "";
+    const expectedCents = expectedBlank ? null : centsFromDollars(expectedTyped);
     const realizedCents = centsFromDollars(realizedTyped);
-    if (outcome === "" || expectedCents === null || realizedCents === null) {
-      this.#patchDetail({ error: "Pick an outcome and type both amounts as plain dollars, 0 or more." });
+    if (outcome === "") {
+      this.#patchDetail({ error: "Pick an outcome before recording the settlement." });
+      return;
+    }
+    if (realizedCents === null) {
+      this.#patchDetail({ error: "Type the realized amount as plain dollars with at most two decimal places, 0 or more. It cannot be left blank." });
+      return;
+    }
+    if (!expectedBlank && expectedCents === null) {
+      this.#patchDetail({ error: "The expected amount must be plain dollars with at most two decimal places, 0 or more, or left blank to keep the captured figure." });
       return;
     }
     this.#patchDetail({ busy: true, error: "", refusal: "", notice: "" });
@@ -778,9 +789,10 @@ export class WarrantyDesk {
       this.#host.repaint();
       return;
     }
-    const expectedCents = centsFromDollars(field("w-capture-expected"));
+    const expectedTyped = field("w-capture-expected");
+    const expectedCents = expectedTyped === "" ? 0 : centsFromDollars(expectedTyped);
     if (expectedCents === null) {
-      this.#model = { ...this.#model, captureError: "The expected recovery must be plain dollars, 0 or more." };
+      this.#model = { ...this.#model, captureError: "The expected recovery must be plain dollars with at most two decimal places, 0 or more, or left blank." };
       this.#host.repaint();
       return;
     }
@@ -941,7 +953,7 @@ export class WarrantyDesk {
     if (actionRow.money === true) {
       const cents = centsFromDollars(this.#host.field("w-recovery-amount"));
       if (cents === null) {
-        this.#model = { ...this.#model, recovery: { ...this.#model.recovery, data: { ...recovery, logError: "Type the amount as plain dollars, 0 or more." } } };
+        this.#model = { ...this.#model, recovery: { ...this.#model.recovery, data: { ...recovery, logError: "Type the amount as plain dollars with at most two decimal places, 0 or more. It cannot be left blank." } } };
         this.#host.repaint();
         return;
       }

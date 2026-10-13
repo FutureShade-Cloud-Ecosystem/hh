@@ -21,6 +21,7 @@ import {
   VENDOR_STATUSES,
   advanceRefusalWords,
   bucketWord,
+  canSettle,
   captureWords,
   centsFromDollars,
   centsWords,
@@ -76,12 +77,29 @@ test("vendor and channel and source vocabularies are the stored enums the profil
 test("money is integer cents in, words out, computed from a dollars string once", () => {
   assert.equal(centsFromDollars("12.5"), 1250);
   assert.equal(centsFromDollars("0"), 0);
-  assert.equal(centsFromDollars(""), 0);
+  assert.equal(centsFromDollars(""), null);
+  assert.equal(centsFromDollars("   "), null);
+  assert.equal(centsFromDollars("1.005"), null);
+  assert.equal(centsFromDollars("1e"), null);
+  assert.equal(centsFromDollars("e5"), null);
+  assert.equal(centsFromDollars("1.1"), 110);
+  assert.equal(centsFromDollars("0.07"), 7);
+  assert.equal(centsFromDollars("19.99"), 1999);
+  assert.equal(centsFromDollars("8."), 800);
   assert.equal(centsFromDollars("nonsense"), null);
   assert.equal(centsFromDollars("-4"), null);
   assert.equal(centsWords(24000), "$240.00");
   assert.equal(centsWords(0), "$0.00");
   assert.equal(centsWords(1968), "$19.68");
+});
+
+test("the settlement sheet refuses a blank or malformed realized figure and lets expected stay blank", () => {
+  assert.equal(canSettle("VENDOR_CREDIT", "", ""), false);
+  assert.equal(canSettle("VENDOR_CREDIT", "10.00", "1e"), false);
+  assert.equal(canSettle("VENDOR_CREDIT", "10.00", "1.005"), false);
+  assert.equal(canSettle("VENDOR_CREDIT", "1.005", "5.00"), false);
+  assert.equal(canSettle("VENDOR_CREDIT", "", "5.00"), true);
+  assert.equal(canSettle("VENDOR_CREDIT", "10.00", "0"), true);
 });
 
 test("hours render as a person reads them", () => {

@@ -236,23 +236,28 @@ export function centsWords(cents: number): string {
 }
 
 /**
- * Dollars a person typed to cents, parsed ONCE and rounded. A blank field is
- * zero (the form treats empty as nothing captured); anything that is not a
- * plain non-negative number answers null and the sheet refuses to send.
+ * Dollars a person typed to cents, through the decimal string and never a
+ * float multiply (the repo's money rule; mirrors pos-kit's parseAmountCents).
+ * Blank, more than two places, a sign, an exponent or anything else that is
+ * not plain dollars answers null; a blank is a different mistake from a
+ * deliberate zero, so callers word it themselves.
  */
 export function centsFromDollars(typed: string): number | null {
   const trimmed = typed.trim();
-  if (trimmed === "") return 0;
-  if (!/^\d+(\.\d{1,})?$/.test(trimmed)) return null;
-  const parsed = Number.parseFloat(trimmed);
-  if (!Number.isFinite(parsed)) return null;
-  return Math.round(parsed * 100);
+  if (!/^\d+(\.\d{0,2})?$/.test(trimmed)) return null;
+  const point = trimmed.indexOf(".");
+  if (point === -1) return Number(`${trimmed}00`);
+  return Number(`${trimmed.slice(0, point)}${trimmed.slice(point + 1).padEnd(2, "0")}`);
 }
 
-/** The settlement sheet needs both amounts to be honest non-negative money. */
+/**
+ * The settlement sheet needs a good realized figure; a blank expected figure
+ * is allowed (the server keeps the captured exposure), a typed one must parse.
+ */
 export function canSettle(outcome: string, expectedTyped: string, realizedTyped: string): boolean {
   if (!OUTCOMES.some((o) => o === outcome)) return false;
-  return centsFromDollars(expectedTyped) !== null && centsFromDollars(realizedTyped) !== null;
+  if (centsFromDollars(realizedTyped) === null) return false;
+  return expectedTyped.trim() === "" || centsFromDollars(expectedTyped) !== null;
 }
 
 /** Hours as a person reads them: one decimal at most, the unit carried. */
