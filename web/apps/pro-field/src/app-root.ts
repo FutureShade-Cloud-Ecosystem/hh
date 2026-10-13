@@ -594,13 +594,16 @@ export class ProFieldApp extends HHElement {
   #selectSection(to: string): void {
     if (to !== "orders" && to !== "projects" && to !== "team" && to !== "account") return;
     if (to === this.#section) return;
-    // Leaving the account leaves its typed passwords behind: the controls are
-    // never bound, so anything the state kept would ride the next submit of a
-    // form the person no longer sees.
+    // Leaving the account leaves its drafts behind: the controls are never
+    // bound, so anything the state kept would ride the next submit of a form
+    // the person no longer sees (a password set, a name saved from a blank
+    // field).
     if (this.#section === "account") {
       this.#account.pwCurrent = "";
       this.#account.pwNew = "";
       this.#account.pwConfirm = "";
+      this.#account.name = "";
+      this.#account.nameDirty = false;
     }
     this.#section = to;
     this.#order = null;
@@ -640,13 +643,15 @@ export class ProFieldApp extends HHElement {
       }
       this.#account.phase = refused.status === 403 ? "refusal" : "error";
     } else if (me.ok && addresses.ok) {
-      const nameUnchanged = this.#account.me === null || this.#account.me.name !== me.value.name;
+      // The fresh inputs render empty, so the name is prefilled at every
+      // account load the person has not typed into; a draft typed on screen
+      // keeps the field alone.
       this.#account = {
         ...this.#account,
         phase: "ready",
         me: me.value,
         addresses: addresses.value,
-        namePrefill: this.#account.namePrefill ?? (nameUnchanged ? me.value.name : this.#account.namePrefill),
+        namePrefill: this.#account.nameDirty ? this.#account.namePrefill : me.value.name,
       };
     }
     this.requestUpdate();

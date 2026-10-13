@@ -307,6 +307,18 @@ test.describe("phone", () => {
     await page.screenshot({ path: test.info().outputPath("account-phone.png") });
   });
 
+  test("the profile name is prefilled again on a second visit, and a typed draft is not kept blind", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toHaveValue("Contractor owner");
+    await page.getByTestId("account-name").fill("a draft never saved");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Orders" }).click();
+    await expect(page.getByTestId("landing-rows")).toBeVisible();
+    await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
+    await expect(page.getByTestId("account-name")).toHaveValue("Contractor owner");
+    await expect(page.getByRole("button", { name: "Save profile" })).toBeDisabled();
+  });
+
   test("the password form carries the server's answer in its own words", async ({ page }) => {
     await signIn(page, "owner");
     await page.getByTestId("section-nav").getByRole("button", { name: "Account" }).click();
