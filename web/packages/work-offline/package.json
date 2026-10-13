@@ -8,10 +8,11 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./gosets": "./src/gosets.mjs"
   },
   "scripts": {
-    "test": "node --import ./test/_ts-js-loader.mjs --test test/signal.test.mjs test/contract.test.mjs test/cache.node-test.mjs test/quote-drafts.node-test.mjs test/sync.node-test.mjs",
+    "test": "node --import ./test/_ts-js-loader.mjs --test test/signal.test.mjs test/read-through.test.mjs test/contract.test.mjs test/cache.node-test.mjs test/quote-drafts.node-test.mjs test/sync.node-test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

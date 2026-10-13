@@ -83,3 +83,23 @@ export function noSignalFetch(base: FetchLike | undefined, signal: SignalSource)
     return inner(url, init);
   };
 }
+
+type WebFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+const platformWebFetch: WebFetch = (input, init) => globalThis.fetch(input, init);
+
+/**
+ * The same guard for the platform's fetch, the form the ported surface's
+ * request door takes (its api() seam). A Response cannot carry status 0, so the
+ * refusal rides 503, with the same envelope and the same words.
+ */
+export function noSignalWebFetch(base: WebFetch | undefined, signal: SignalSource): WebFetch {
+  const inner = base ?? platformWebFetch;
+  return async (input: string, init?: RequestInit): Promise<Response> => {
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (!READ_VERBS.has(method) && !signal.online()) {
+      return new Response(JSON.stringify({ error: NO_SIGNAL_ERROR }), { status: 503, headers: { "Content-Type": "application/json" } });
+    }
+    return inner(input, init);
+  };
+}

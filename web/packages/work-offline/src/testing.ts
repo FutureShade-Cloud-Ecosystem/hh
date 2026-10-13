@@ -4,40 +4,12 @@
 // refuses what the core's quotes store refuses, reading the writable sets from
 // core/internal itself, so a payload that drifts from the server fails a test
 // instead of passing every leg against a flattering double.
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { ok, type SyncPushOperation, type SyncPushResult } from "@hardscapehouse/api-client";
 import type { SyncTransport } from "@hardscapehouse/offline-store";
 import type { FakeSyncServer } from "@hardscapehouse/offline-store/testing";
+import { goFieldSet } from "./gosets.mjs";
 
-const coreDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "core", "internal");
-
-/**
- * The writable field set of one Go function under core/internal. Two shapes
- * carry a set in the core: a package level `map[string]bool` and a function
- * that switches on the declared key and lists the admitted names in its cases
- * before `default:`.
- */
-export function goFieldSet(file: string, name: string): Set<string> {
-  const src = readFileSync(join(coreDir, file), "utf8");
-  const mapAt = src.indexOf(`var ${name} = map[string]bool{`);
-  if (mapAt >= 0) {
-    const body = src.slice(mapAt, src.indexOf("\n}", mapAt));
-    const keys = [...body.matchAll(/"([a-z_0-9]+)"\s*:/g)].map((m) => m[1]!);
-    if (keys.length === 0) throw new Error(`no keys read from ${name}`);
-    return new Set(keys);
-  }
-  const fnAt = src.indexOf(`func ${name}(`);
-  if (fnAt < 0) throw new Error(`${name} not found in ${file}`);
-  const fn = src.slice(fnAt, src.indexOf("\n}\n", fnAt));
-  const sw = fn.indexOf("switch k {");
-  const dflt = fn.indexOf("default:");
-  if (sw < 0 || dflt < 0) throw new Error(`${name} has no switch to read`);
-  const keys = [...fn.slice(sw, dflt).matchAll(/"([a-z_0-9]+)"/g)].map((m) => m[1]!);
-  if (keys.length === 0) throw new Error(`no keys read from ${name}`);
-  return new Set(keys);
-}
+export { goFieldSet };
 
 export interface StrictQuotes {
   transport: SyncTransport;

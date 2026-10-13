@@ -188,3 +188,37 @@ test('the panel store keeps only what the session wrote: one key goes, the rest 
   assert.equal(readPanelLayoutRaw('key-two'), 'two');
   clearSessionState();
 });
+
+// ── the host's own fetch (the Work shell's no signal guard rides it) ─────────
+
+test('the request door sends through the fetch the host supplies, and a host without one uses the platform fetch', async () => {
+  const seen = [];
+  wirePorts({
+    headers: async () => ({ 'X-Org': 'hh-demo', Authorization: 'Bearer stub-token' }),
+    houseDay: () => HOUSE_DAY,
+    user: () => null,
+    token: () => 'stub-token',
+    fetch: async (url, init) => {
+      seen.push(`${(init && init.method) || 'GET'} ${url}`);
+      return new Response('{"error":"No signal."}', { status: 503 });
+    },
+  });
+  const refused = await api('/api/v1/pos/sales', { method: 'POST', body: '{}' });
+  assert.equal(refused.status, 503);
+  assert.deepEqual(seen, ['POST /api/v1/pos/sales']);
+
+  wire();
+  const realFetch = globalThis.fetch;
+  let platform = 0;
+  globalThis.fetch = async () => {
+    platform += 1;
+    return new Response('{}', { status: 200 });
+  };
+  try {
+    await api('/api/v1/pos/parked');
+    assert.equal(platform, 1);
+    assert.deepEqual(seen, ['POST /api/v1/pos/sales'], 'the earlier host fetch is not used after a re-wire');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

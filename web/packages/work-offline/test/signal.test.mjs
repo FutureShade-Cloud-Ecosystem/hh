@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ApiClient } from "@hardscapehouse/api-client";
-import { NO_SIGNAL_ERROR, fixedSignal, isNoSignal, noSignal, noSignalFetch, onlineOnly } from "../src/signal.ts";
+import { NO_SIGNAL_ERROR, fixedSignal, isNoSignal, noSignal, noSignalFetch, noSignalWebFetch, onlineOnly } from "../src/signal.ts";
 
 function spyFetch(answer = { status: 200, ok: true, body: "{}" }) {
   const calls = [];
@@ -99,4 +99,25 @@ test("a lost answer in flight is not dressed up as no signal", async () => {
   const result = await onlineOnly(signal, async () => lost);
   assert.deepEqual(result, lost, "the app's own words stand: nothing says the write did not land");
   assert.equal(isNoSignal(result), false);
+});
+
+test("the platform fetch form refuses a write offline with a real Response carrying the same words", async () => {
+  const signal = fixedSignal(false);
+  const calls = [];
+  const web = noSignalWebFetch(async (input, init) => {
+    calls.push(`${init?.method ?? "GET"} ${input}`);
+    return new Response("{}", { status: 200 });
+  }, signal);
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+    const res = await web("/api/v1/pos/sales", { method, body: "{}" });
+    assert.equal(res.ok, false, method);
+    assert.equal(res.status, 503, "a Response cannot carry status 0; 503 is the transient one");
+    assert.deepEqual(await res.json(), { error: NO_SIGNAL_ERROR });
+  }
+  assert.deepEqual(calls, [], "nothing dialed");
+  const read = await web("/api/v1/pos/parked");
+  assert.equal(read.ok, true);
+  assert.deepEqual(calls, ["GET /api/v1/pos/parked"]);
+  signal.set(true);
+  assert.equal((await web("/api/v1/pos/sales", { method: "POST", body: "{}" })).ok, true);
 });
