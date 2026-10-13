@@ -342,3 +342,34 @@ test("a direct door refuses in words while a write is still waiting, and says no
   assert.equal(nosignal.status, undefined, "no answer from a server: the app's own check your signal words show");
   assert.deepEqual(calls, [], "no direct door was reached");
 });
+
+test("a write made while an earlier request settles keeps its mark, so a third write still goes blind", async () => {
+  const { layer: _unused, server } = await rig();
+  const backend = createSqliteBackend(nodeSqliteExecutor());
+  const store = await OfflineStore.open({ backend, scopes: scopeBookFor(["yard-pick"]) });
+  const inner = server.transport();
+  const delayedTransport = {
+    push: (scope, ops) => inner.push(scope, ops),
+    pull: (scope, since, limit) =>
+      scope === "pick_tasks" && since > 0
+        ? new Promise((resolve) => setTimeout(() => resolve(inner.pull(scope, since, limit)), 150))
+        : inner.pull(scope, since, limit),
+  };
+  const layer = new YardOffline({ store, sql: backend.sql, transport: delayedTransport, direct: {}, actorId: ACTOR, newKey: nextKey });
+  await layer.cycle();
+  const until = async (done) => {
+    for (let waited = 0; !done() && waited < 5_000; waited += 10) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(done(), true, "the server reached the awaited state");
+  };
+  const before = server.appliedOrder.length;
+  await layer.claim(TASK);
+  await until(() => server.appliedOrder.length === before + 1);
+  await layer.start(TASK);
+  await until(() => server.appliedOrder.length === before + 2);
+  await layer.stage(TASK, "Bay 4", "");
+  await layer.runner.settled();
+  await layer.runner.settled();
+  const staged = server.requests.filter((r) => r.kind === "push").flatMap((r) => r.ops).find((op) => op.payload.status === "STAGED");
+  assert.equal(staged.base_seq, undefined, "the third write went blind");
+  assert.equal((await layer.openCards()).length, 0, "no false conflict against the device's own move");
+});

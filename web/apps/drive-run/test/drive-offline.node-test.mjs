@@ -340,3 +340,45 @@ test("the proof of delivery never queues: it goes to its direct door after the o
   assert.equal(await layer.waiting(), 0, "the proof queued nothing");
   assert.equal(server.requests.some((r) => r.kind === "push" && r.scope === "pod"), false);
 });
+
+test("a write made while an earlier request settles keeps its mark, so a third write still goes blind", async () => {
+  // The window: write one's request is in its delayed pull when write two is
+  // made; write one's settle must not forget write two. Write two drains in
+  // the next cycle, and write three, made while that cycle's pull is delayed,
+  // would otherwise name the stale pulled seq and meet its own device's move.
+  const server = new FakeSyncServer();
+  server.seed("runs", RUN, { id: RUN, run_no: "RUN-R5", truck_code: "FLAT-1", status: "DISPATCHED", scheduled_date: "2026-10-08" });
+  server.seed("stops", STOP_1, {
+    id: STOP_1, run_id: RUN, stop_no: 1, order_no: "SO-1001", customer_name: "Northline Hardscapes Ltd (demo)",
+    status: "READY", time_window: "AM", contact_name: "", contact_phone: "", address_line: "95 Bagot St", city: "Kingston",
+    postal_code: "K7K 6X4", instructions: "", pod_received_by: "", pod_at: "", failure_reason: "", photo_count: 0,
+    weight_kg: 400,
+    lines: [{ line_no: 1, sku: "", description: "Natural stone pavers, grey", qty: "120.000", uom: "sqft" }],
+  });
+  const backend = createSqliteBackend(nodeSqliteExecutor());
+  const store = await OfflineStore.open({ backend, scopes: scopeBookFor(["drive-run"]) });
+  const inner = server.transport();
+  const delayedTransport = {
+    push: (scope, ops) => inner.push(scope, ops),
+    pull: (scope, since, limit) =>
+      scope === "stops" && since > 0
+        ? new Promise((resolve) => setTimeout(() => resolve(inner.pull(scope, since, limit)), 150))
+        : inner.pull(scope, since, limit),
+  };
+  const layer = new DriveOffline({ store, sql: backend.sql, transport: delayedTransport, direct: {} });
+  await layer.cycle();
+  const until = async (done) => {
+    for (let waited = 0; !done() && waited < 5_000; waited += 10) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(done(), true, "the server reached the awaited state");
+  };
+  await layer.advance(STOP_1, "LOADED");
+  await until(() => server.appliedOrder.length === 1);
+  await layer.advance(STOP_1, "EN_ROUTE");
+  await until(() => server.appliedOrder.length === 2);
+  await layer.advance(STOP_1, "FAILED", "Gate locked");
+  await layer.runner.settled();
+  await layer.runner.settled();
+  const failed = server.requests.filter((r) => r.kind === "push").flatMap((r) => r.ops).find((op) => op.payload.status === "FAILED");
+  assert.equal(failed.base_seq, undefined, "the third write went blind");
+  assert.equal((await layer.openCards()).length, 0, "no false conflict against the device's own move");
+});
