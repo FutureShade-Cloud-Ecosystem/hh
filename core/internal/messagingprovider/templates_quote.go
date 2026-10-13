@@ -91,7 +91,7 @@ func RenderQuoteShare(n QuoteShareNotice, r Recipient) notify.Message {
 	if ref == "" {
 		ref = shortID(n.QuoteID)
 	}
-	body := fmt.Sprintf("%s: your %s quote %s", greet(r), senderName, ref)
+	body := fmt.Sprintf("%s: your %s quote %s", greet(r), senderName(), ref)
 	if n.TotalCents > 0 {
 		body += " for " + formatCAD(n.TotalCents)
 	}
@@ -118,13 +118,13 @@ func RenderQuoteFollowupSMS(n QuoteFollowupNotice, r Recipient) notify.Message {
 	switch {
 	case n.StepDay <= 3:
 		body = fmt.Sprintf("%s: just checking you got quote %s from %s. Any questions, reply or call us.",
-			greet(r), ref, senderName)
+			greet(r), ref, senderName())
 	case n.StepDay <= 7:
 		body = fmt.Sprintf("%s: quote %s is still open, happy to walk through the pricing or adjust quantities., %s",
-			greet(r), ref, senderName)
+			greet(r), ref, senderName())
 	default:
 		body = fmt.Sprintf("%s: quote %s expires %s. Let us know if you'd like it held or re-priced., %s",
-			greet(r), ref, orText(n.ValidUntil, "soon"), senderName)
+			greet(r), ref, orText(n.ValidUntil, "soon"), senderName())
 	}
 	if n.ShareURL != "" {
 		body += " " + n.ShareURL
@@ -162,12 +162,12 @@ func RenderQuoteFollowupEmail(n QuoteFollowupNotice, name string) notify.Message
 	if n.ShareURL != "" {
 		fmt.Fprintf(&b, "\nYou can review and accept it here:\n%s\n", n.ShareURL)
 	}
-	fmt.Fprintf(&b, "\nIf you'd rather not receive follow-ups on this quote, reply to this message and we'll stop them.\n\n- %s\n", senderName)
+	fmt.Fprintf(&b, "\nIf you'd rather not receive follow-ups on this quote, reply to this message and we'll stop them.\n\n- %s\n", senderName())
 
 	return notify.Message{
 		Channel: notify.EmailChannel,
 		To:      n.Email,
-		Subject: fmt.Sprintf("%s, quote %s", senderName, ref),
+		Subject: fmt.Sprintf("%s, quote %s", senderName(), ref),
 		Body:    b.String(),
 	}
 }
