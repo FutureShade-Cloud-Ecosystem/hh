@@ -44,7 +44,7 @@ async function storedFlow(page: Page): Promise<string | null> {
 
 async function stubArmsRefusal(page: Page, flow: string): Promise<void> {
   const armed = await page.request.post("/_stub/refuse", {
-    data: { status: 429, error: "the demo mint limit is spent for now, wait a moment and tap again", flows: [flow] },
+    data: { status: 429, error: "too many sign-ins just now, wait a moment and tap again", flows: [flow] },
   });
   expect(armed.ok()).toBe(true);
 }
@@ -284,7 +284,7 @@ test("a refused mint speaks in its own card, verbatim, and both cards keep worki
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   const manager = page.getByRole("button", { name: "Sales manager", exact: true });
   await expect(manager).toContainText(
-    "Demo sign-in refused: the demo mint limit is spent for now, wait a moment and tap again",
+    "Sign-in did not go through. too many sign-ins just now, wait a moment and tap again",
   );
   expect(await storedKeys(page)).toEqual([]);
   await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
