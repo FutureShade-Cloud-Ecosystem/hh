@@ -12,12 +12,19 @@
 //! other statement of this store running between them (one connection behind
 //! a mutex, one transaction per batch). The connection cannot reach any other
 //! file: the attached database limit is zero, which SQLite enforces for every
-//! spelling of `ATTACH` and for `VACUUM INTO` (see `lock_down`).
+//! spelling of `ATTACH` and for `VACUUM INTO` (see `lock_down`). A caller's
+//! statement cannot control transactions either: an authorizer on the
+//! connection denies BEGIN, COMMIT, ROLLBACK, SAVEPOINT and RELEASE unless
+//! this module is the one asking, so only `atomic` opens and closes the
+//! transaction and a batch is all or nothing by construction.
 
 use std::{
     collections::BTreeMap,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 /// The seam's SqlValue: a string, a number or null (`sql.ts`).
@@ -66,10 +73,10 @@ pub struct SqlStatement {
 }
 
 /// A clearer message for the plain forms of the statements that reach outside
-/// the fixed database file. It is a courtesy and NOT the security boundary: a
-/// leading comment hides the word, and `VACUUM INTO` is never matched. The
-/// boundary is `lock_down`, which sets the attached database limit to zero on
-/// the connection itself. The store's own statements never use these (its
+/// the fixed database file or control its transactions. It is a courtesy and
+/// NOT the security boundary: a leading comment hides the word, and `VACUUM
+/// INTO` is never matched. The boundary is `lock_down` (the attached database
+/// limit and the authorizer), on the connection itself. The store's own statements never use these (its
 /// pragma use is the `pragma_table_info` table valued function, which stays
 /// allowed).
 fn check_statement(sql: &str) -> Result<(), String> {
@@ -79,22 +86,47 @@ fn check_statement(sql: &str) -> Result<(), String> {
         .next()
         .unwrap_or("")
         .to_ascii_lowercase();
-    if first == "attach" || first == "detach" {
+    if matches!(
+        first.as_str(),
+        "attach" | "detach" | "begin" | "commit" | "end" | "rollback" | "savepoint" | "release"
+    ) {
         Err(format!(
-            "statement refused: {first} escapes the profile's fixed database file"
+            "statement refused: {first} reaches outside the profile's fixed database file or controls its transactions"
         ))
     } else {
         Ok(())
     }
 }
 
-/// Close the connection's ways out of its file. SQLITE_LIMIT_ATTACHED at zero
-/// makes SQLite itself refuse `ATTACH` however it is spelled (comments,
-/// newlines) and `VACUUM INTO`, which writes a database file at a named path
-/// and which no authorizer action covers. A limit also holds for every
-/// statement the connection ever prepares, with no parsing of ours in the way.
-fn lock_down(conn: &rusqlite::Connection) {
+/// Close the connection's ways out of its file and out of the store's own
+/// transaction discipline.
+///
+/// SQLITE_LIMIT_ATTACHED at zero makes SQLite itself refuse `ATTACH` however
+/// it is spelled (comments, newlines) and `VACUUM INTO`, which writes a
+/// database file at a named path and which no authorizer action covers. A
+/// limit holds for every statement the connection ever prepares, with no
+/// parsing of ours in the way.
+///
+/// The authorizer is the second tool, for what a limit cannot say: it denies
+/// transaction and savepoint control, and ATTACH and DETACH again, at prepare
+/// time whatever the text looks like. `own_control` is true only while this
+/// module runs its own BEGIN, COMMIT or ROLLBACK (under the connection's
+/// mutex), so a caller's statement never gets through and the module's own
+/// transaction does.
+fn lock_down(conn: &rusqlite::Connection, own_control: Arc<AtomicBool>) {
+    use rusqlite::hooks::{AuthAction, Authorization};
     conn.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_ATTACHED, 0);
+    conn.authorizer(Some(move |ctx: rusqlite::hooks::AuthContext<'_>| match ctx.action {
+        AuthAction::Attach { .. } | AuthAction::Detach { .. } => Authorization::Deny,
+        AuthAction::Transaction { .. } | AuthAction::Savepoint { .. } => {
+            if own_control.load(Ordering::SeqCst) {
+                Authorization::Allow
+            } else {
+                Authorization::Deny
+            }
+        }
+        _ => Authorization::Allow,
+    }));
 }
 
 /// The store: one SQLite connection behind a mutex, so a batch holds the
@@ -102,22 +134,43 @@ fn lock_down(conn: &rusqlite::Connection) {
 #[derive(Clone)]
 pub struct Store {
     conn: Arc<Mutex<rusqlite::Connection>>,
+    own_control: Arc<AtomicBool>,
 }
 
 impl Store {
+    fn wrap(conn: rusqlite::Connection) -> Self {
+        let own_control = Arc::new(AtomicBool::new(false));
+        lock_down(&conn, own_control.clone());
+        Self { conn: Arc::new(Mutex::new(conn)), own_control }
+    }
+
+    /// The module's own BEGIN, COMMIT or ROLLBACK: the only way transaction
+    /// control passes the authorizer. Called with the connection locked.
+    fn control(&self, conn: &rusqlite::Connection, sql: &str) -> Result<(), String> {
+        self.own_control.store(true, Ordering::SeqCst);
+        let outcome = conn.execute_batch(sql).map_err(|e| e.to_string());
+        self.own_control.store(false, Ordering::SeqCst);
+        outcome
+    }
+
+    /// Undo whatever transaction is open (none should be: the authorizer
+    /// keeps callers from opening one) and report it as an error.
+    fn reject_open_transaction(&self, conn: &rusqlite::Connection, what: &str) -> String {
+        let _ = self.control(conn, "ROLLBACK");
+        format!("{what}: a transaction was left open and has been rolled back")
+    }
+
     /// The profile's fixed file. The caller owns the naming (hh-field names
     /// it per profile in the app config dir); the webview never does.
     pub fn open_path(path: &Path) -> Result<Self, String> {
         let conn = rusqlite::Connection::open(path).map_err(|e| e.to_string())?;
-        lock_down(&conn);
-        Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+        Ok(Self::wrap(conn))
     }
 
     /// An in memory store: the tests use it, nothing else does.
     pub fn open_in_memory() -> Result<Self, String> {
         let conn = rusqlite::Connection::open_in_memory().map_err(|e| e.to_string())?;
-        lock_down(&conn);
-        Ok(Self { conn: Arc::new(Mutex::new(conn)) })
+        Ok(Self::wrap(conn))
     }
 
     /// The seam's `run` and `all` in one command: runs one statement and
@@ -140,6 +193,11 @@ impl Store {
             }
             out.push(record);
         }
+        drop(rows);
+        drop(stmt);
+        if !conn.is_autocommit() {
+            return Err(self.reject_open_transaction(&conn, "statement refused"));
+        }
         Ok(out)
     }
 
@@ -150,27 +208,37 @@ impl Store {
         for s in &statements {
             check_statement(&s.sql)?;
         }
-        let mut conn = self.conn.lock().map_err(|_| "the store's connection is poisoned".to_string())?;
-        let tx = conn.transaction().map_err(|e| e.to_string())?;
-        let outcome = Self::run_batch(&tx, statements);
-        match outcome {
-            Ok(()) => tx.commit().map_err(|e| e.to_string()),
-            Err(e) => {
-                let _ = tx.rollback();
-                Err(e)
-            }
+        let conn = self.conn.lock().map_err(|_| "the store's connection is poisoned".to_string())?;
+        if !conn.is_autocommit() {
+            return Err(self.reject_open_transaction(&conn, "batch refused"));
         }
-    }
-
-    fn run_batch(tx: &rusqlite::Transaction, statements: Vec<SqlStatement>) -> Result<(), String> {
+        self.control(&conn, "BEGIN")?;
         for s in statements {
             // A statement that returns rows is a caller mistake: the seam's
             // atomic carries writes, and execute refuses the rest.
-            tx.execute(
-                &s.sql,
-                rusqlite::params_from_iter(s.params.into_iter().map(rusqlite::types::Value::from)),
-            )
-            .map_err(|e| e.to_string())?;
+            let result = conn
+                .execute(
+                    &s.sql,
+                    rusqlite::params_from_iter(s.params.into_iter().map(rusqlite::types::Value::from)),
+                )
+                .map_err(|e| e.to_string());
+            if let Err(e) = result {
+                // SQLite may already have ended the transaction itself (an
+                // `OR ROLLBACK` conflict clause); roll back only if open.
+                if !conn.is_autocommit() {
+                    let _ = self.control(&conn, "ROLLBACK");
+                }
+                return Err(e);
+            }
+            if conn.is_autocommit() {
+                // The transaction ended under the statement: what ran before
+                // it is gone, so the batch cannot report success.
+                return Err("batch failed: the transaction ended inside a statement".to_string());
+            }
+        }
+        if let Err(e) = self.control(&conn, "COMMIT") {
+            let _ = self.control(&conn, "ROLLBACK");
+            return Err(e);
         }
         Ok(())
     }
