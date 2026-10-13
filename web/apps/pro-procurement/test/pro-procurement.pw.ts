@@ -4,6 +4,9 @@
 // (390 wide), then desktop (1440). The legs here cover the shell: the sign in, the frame, the selector, and the
 // landing surface's loading, ready, empty, error and refusal states. Each surface's own legs live beside it.
 import { test, expect, type Page } from "@playwright/test";
+import { join } from "node:path";
+
+const SHOTS = process.env.PRO_SHOT_DIR ?? join("test", "shots");
 
 const PASSWORD = "stub-password";
 const EMAIL = (who: string): string => `contractor.${who}@hh-demo.invalid`;
@@ -31,7 +34,7 @@ test.describe("phone", () => {
     const text = (await page.locator("hh-pro-signin").innerText()).toLowerCase();
     for (const word of ["console", "core", "token", "session", "exchange", "stub", "demo"]) expect(text).not.toContain(word);
     await expect(page.locator("hh-pro-frame")).toHaveCount(0);
-    await page.screenshot({ path: test.info().outputPath("signin-phone.png") });
+    await page.screenshot({ path: join(SHOTS, "signin-phone.png") });
   });
 
   test("a wrong password is refused in plain words and the person stays on the sign in screen", async ({ page }) => {
@@ -50,7 +53,7 @@ test.describe("phone", () => {
     await expect(page.getByTestId("today-account")).toContainText("Summit Ridge Builders");
     await expect(page.getByTestId("today-rows")).toContainText("SO-30506");
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-    await page.screenshot({ path: test.info().outputPath("today-phone.png") });
+    await page.screenshot({ path: join(SHOTS, "today-phone.png") });
   });
 
   test("the selector lists only the surfaces this role opens, and signing out returns to the sign in screen", async ({ page }) => {
@@ -59,7 +62,7 @@ test.describe("phone", () => {
     const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
     await expect(panel).toBeVisible();
     await expect(panel.getByRole("button", { name: "Board" })).toBeVisible();
-    await page.screenshot({ path: test.info().outputPath("selector-phone.png") });
+    await page.screenshot({ path: join(SHOTS, "selector-phone.png") });
     await page.keyboard.press("Escape");
     await expect(panel).toHaveCount(0);
     await page.getByTestId("frame-sign-out").click();
@@ -148,6 +151,6 @@ test.describe("desktop", () => {
     await signIn(page, "owner");
     await expect(page.getByTestId("frame-role")).toBeVisible();
     await expect(page.getByTestId("today-rows")).toBeVisible();
-    await page.screenshot({ path: test.info().outputPath("today-desktop.png") });
+    await page.screenshot({ path: join(SHOTS, "today-desktop.png") });
   });
 });
