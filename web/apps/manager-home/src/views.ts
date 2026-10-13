@@ -57,6 +57,8 @@ export interface LandingModel {
   readonly error: string;
   /** Whether the landing draws the reporting link: the core's manager roles only, mirrored from the mint's tier. */
   readonly canOpenReporting: boolean;
+  /** The needs rows the core could not measure on this profile, said in words (weights-logic.ts). */
+  readonly unsourcedNeeds: typeof UNSOURCED_NEEDS;
 }
 
 const NOT_HERE = "not on this box yet";
@@ -90,10 +92,10 @@ export function renderLanding(model: LandingModel): TemplateResult {
     </header>
     <p class="eyebrow">Today</p>
     <div class="bento">
-      ${large.map((w, index) => renderWidget(w, model.data.get(w.widget_key), model.needs, index === 0))}
+      ${large.map((w, index) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, index === 0))}
     </div>
     <div class="strip">
-      ${strip.map((w) => renderWidget(w, model.data.get(w.widget_key), model.needs, false))}
+      ${strip.map((w) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, false))}
       ${UNSOURCED_TILES.map((t) => renderUnsourcedTile(t))}
     </div>
     <nav class="view-links" aria-label="Views">
@@ -125,13 +127,14 @@ function renderWidget(
   w: WidgetView,
   datum: WidgetDatum | undefined,
   needs: NeedsQueue | null,
+  unsourced: typeof UNSOURCED_NEEDS,
   first: boolean,
 ): TemplateResult {
   if (w.measure === "needs.you") {
     return placed(w, html`
       <article class="card" data-widget=${w.widget_key}>
         <h2 class="card-title">${w.title}</h2>
-        ${needs === null ? html`<p class="needs-empty">The queue did not load.</p>` : renderNeedsList(needs)}
+        ${needs === null ? html`<p class="needs-empty">The queue did not load.</p>` : renderNeedsList(needs, unsourced)}
       </article>
     `);
   }
@@ -264,13 +267,13 @@ function barWidthClass(part: number, max: number): string {
 
 // -- the needs-you card --------------------------------------------------------------------------------
 
-export function renderNeedsList(needs: NeedsQueue): TemplateResult {
+export function renderNeedsList(needs: NeedsQueue, unsourced: typeof UNSOURCED_NEEDS): TemplateResult {
   const rows = needs.rows;
   // The queue link opens the first view a row names; with none on this box it is not drawn.
   const first = rows.map((r) => needsRowTarget(r)).find((t) => t.view !== null);
   return html`
     ${rows.length === 0 ? html`<p class="needs-empty">Nothing is waiting on you right now.</p>` : rows.map((row) => renderNeedsRow(row))}
-    ${UNSOURCED_NEEDS.map((u) => html`
+    ${unsourced.map((u) => html`
       <div class="needs-row unsourced" data-unsourced=${u.key}>
         <span class="sev" aria-hidden="true"></span>
         <div class="needs-body">

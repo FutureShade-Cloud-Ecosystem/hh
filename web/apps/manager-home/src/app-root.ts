@@ -33,7 +33,7 @@ import { groupDriverRows, idleDriverWords } from "./drivers-logic.js";
 import { rowsForBoard } from "./drivers-api.js";
 import { BuilderApi } from "./builder-api.js";
 import { BuilderDesk } from "./builder-desk.js";
-import { ManagerApi, type BranchRef, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
+import { ManagerApi, type BranchRef, type NeedsQueue, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
 import { DriversApi } from "./drivers-api.js";
 import {
   APPROVAL_KINDS,
@@ -54,6 +54,8 @@ import { reportingStyles } from "./reporting-styles.js";
 import { warrantyStyles } from "./warranty-styles.js";
 import { quickStyles } from "./quick-styles.js";
 import { QuickApi, type QuickActionConfig } from "./quick-api.js";
+import { WeightsApi } from "./weights-api.js";
+import { hasWeightsWork, mergeWeights, unsourcedFor } from "./weights-logic.js";
 import { publishIntent } from "./quick-intent.js";
 import { openingKind } from "./approvals-logic.js";
 import { isLiveHref } from "./landing-links.js";
@@ -136,6 +138,7 @@ export class ManagerHomeApp extends HHElement {
   // The quick actions' calls (src/quick-*): the caller's resolved registry
   // rows, over the same staff client.
   readonly #quickApi = new QuickApi(this.#staffClient);
+  readonly #weightsApi = new WeightsApi(this.#staffClient);
 
   // The Drivers view's calls, the dispatch reads, over the same staff client.
   readonly #driversApi = new DriversApi(this.#staffClient);
@@ -184,7 +187,7 @@ export class ManagerHomeApp extends HHElement {
   #branchList: readonly BranchRef[] = [];
 
   // The landing's state.
-  #landing: LandingModel = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false };
+  #landing: LandingModel = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false, unsourcedNeeds: [] };
 
   // The landing's quick-action bar: the caller's resolved registry rows.
   #quickBar: QuickBarModel = { phase: "loading", actions: [] };
@@ -592,7 +595,7 @@ export class ManagerHomeApp extends HHElement {
     this.#desk.close();
     this.#branch = null;
     this.#warranty.reset();
-    this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false };
+    this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false, unsourcedNeeds: [] };
     this.#shortages = {
       phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
       resolverWords: SHORTAGE_RESOLVER_WORDS,
@@ -639,6 +642,7 @@ export class ManagerHomeApp extends HHElement {
         for (const datum of measured.value) data.set(datum.key, datum);
       }
     }
+    const weighed = await this.#withWeights(needs.value, widgets.value.profile);
     this.#landing = {
       phase: "ready",
       profile: widgets.value.profile,
@@ -646,9 +650,10 @@ export class ManagerHomeApp extends HHElement {
       roleLabel: this.#roleLabel,
       widgets: widgets.value.widgets,
       data,
-      needs: needs.value,
+      needs: weighed.needs,
       error: "",
       canOpenReporting: canOpenReporting(this.#tier),
+      unsourcedNeeds: weighed.unsourced,
     };
     this.requestUpdate();
   }
@@ -752,11 +757,25 @@ export class ManagerHomeApp extends HHElement {
     this.requestUpdate();
   }
 
+  // The yard shaped homes count their pending weights from the caller's own home tile
+  // (weights-logic.ts); every other profile's queue is the core's alone. A home that did not
+  // load is said as words, never a zero.
+  async #withWeights(needs: NeedsQueue, profile: string): Promise<{ needs: NeedsQueue; unsourced: LandingModel["unsourcedNeeds"] }> {
+    if (!hasWeightsWork(profile)) return { needs, unsourced: [] };
+    const result = await this.#weightsApi.pending();
+    const weights = result.ok ? result.value : null;
+    return { needs: mergeWeights(needs, weights, profile), unsourced: unsourcedFor(profile, weights) };
+  }
+
   // A landing refresh that keeps the screen standing: the server's answers
   // win, a failed re-read keeps what is on the glass.
   async #refreshLanding(): Promise<void> {
     const [needs, widgets] = await Promise.all([this.#api.needs(), this.#api.widgets()]);
-    if (needs.ok) this.#landing = { ...this.#landing, needs: needs.value };
+    const profile = widgets.ok ? widgets.value.profile : this.#landing.profile;
+    if (needs.ok) {
+      const weighed = await this.#withWeights(needs.value, profile);
+      this.#landing = { ...this.#landing, needs: weighed.needs, unsourcedNeeds: weighed.unsourced };
+    }
     if (widgets.ok) {
       const keys = widgets.value.widgets.filter((w) => w.visible).map((w) => w.widget_key);
       const data = new Map(this.#landing.data);

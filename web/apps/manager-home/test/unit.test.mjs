@@ -99,10 +99,10 @@ test("the two new needs links open this app's views, and receiving opens Receivi
   assert.equal(dispatch.screen, "Staging · unassigned");
 });
 
-test("the board rows nothing measures are said plainly, never counted", () => {
+test("the board row the core could not measure is said plainly, never counted", () => {
   assert.equal(UNSOURCED_NEEDS.length, 1);
   assert.equal(UNSOURCED_NEEDS[0].what, "Weights pending");
-  assert.match(UNSOURCED_NEEDS[0].words, /no source is wired/i);
+  assert.match(UNSOURCED_NEEDS[0].words, /not counted/i);
   assert.equal(UNSOURCED_TILES.length, 1);
   assert.equal(UNSOURCED_TILES[0].title, "Unread messages");
   assert.match(UNSOURCED_TILES[0].words, /no measure is wired/i);

@@ -134,12 +134,13 @@ export function needsRowTarget(row: NeedsRow): NeedsTarget {
 // -- the rows the board drew that nothing measures ---------------------------------------------------
 
 /**
- * The board's needs rows with no wired source. Said plainly, never faked: each renders its words
- * and an explicit no-source sentence, never a number (the 0201 catalog has no measure behind
- * them; MANAGER-HOME-UI-NOTES names Weights pending).
+ * The board's needs rows the core could not measure. Said plainly, never faked: each renders its
+ * words and an explicit not-counted sentence, never a number. Weights pending is measured by the
+ * weight.pending tile now (weights-logic.ts joins the count); this row is what a tile that cannot
+ * answer, or a home that did not load, leaves in its place on the yard shaped homes.
  */
 export const UNSOURCED_NEEDS: readonly { readonly key: string; readonly what: string; readonly words: string }[] = Object.freeze([
-  { key: "weights.pending", what: "Weights pending", words: "No source is wired for this row yet, so it is not counted here." },
+  { key: "weights.pending", what: "Weights pending", words: "The weights count is not measured right now, so it is not counted here." },
 ]);
 
 /** The board's widget tiles with no measure in the widget catalog. Same rule, said plainly. */

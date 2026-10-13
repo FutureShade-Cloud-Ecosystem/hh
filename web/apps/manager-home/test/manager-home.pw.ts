@@ -5,7 +5,7 @@
 // manager's profile and renders a different landing: one app, configured per
 // role (decision 5), never code per role.
 import { test, expect } from "@playwright/test";
-import { managerHandoff, resetStub, useScenario } from "./helpers.js";
+import { managerHandoff, resetStub, signInByCard, useScenario } from "./helpers.js";
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
@@ -108,17 +108,36 @@ test("the hero carries the day's count and its window word", async ({ page }) =>
   await expect(hero.locator(".card-title")).toHaveText("Deliveries today");
 });
 
-test("the needs-you queue counts its rows, and the board row nothing measures is said plainly", async ({ page }) => {
+test("the needs-you queue counts its rows, and Weights pending is the core's own count with a link to Yard Pick", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const needs = page.locator("[data-widget='needs.you']");
   await expect(needs.locator("[data-needs='tasks.open_shortages'] .needs-count")).toHaveText("2");
   await expect(needs.locator("[data-needs='tasks.stale_picks'] .needs-count")).toHaveText("1");
   await expect(needs.locator("[data-needs='purchasing.receiving_differences'] .needs-count")).toHaveText("1");
-  await expect(needs.locator(".needs-total")).toHaveText("4 waiting · Urgent");
+  await expect(needs.locator("[data-needs='weights.pending'] .what")).toHaveText("Weights pending");
+  await expect(needs.locator("[data-needs='weights.pending'] .needs-count")).toHaveText("2");
+  await expect(needs.locator("[data-needs='weights.pending'] button")).toHaveAttribute("aria-label", "Weigh, opens Yard Pick");
+  await expect(needs.locator("[data-unsourced]")).toHaveCount(0);
+  await expect(needs.locator(".needs-total")).toHaveText("6 waiting · Urgent");
+});
+
+test("a weights count the core cannot measure is said in words on the row, never a number", async ({ request, page }) => {
+  await useScenario(request, "weights-unwired");
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  const needs = page.locator("[data-widget='needs.you']");
+  await expect(needs.locator("[data-needs='weights.pending']")).toHaveCount(0);
   await expect(needs.locator("[data-unsourced='weights.pending'] .what")).toHaveText("Weights pending");
-  await expect(needs.locator("[data-unsourced='weights.pending'] .words")).toContainText("No source is wired");
+  await expect(needs.locator("[data-unsourced='weights.pending'] .words")).toContainText("not counted");
   await expect(needs.locator("[data-unsourced='weights.pending'] .needs-count")).toHaveCount(0);
+  await expect(needs.locator(".needs-total")).toHaveText("4 waiting · Urgent");
+});
+
+test("a home with no weights work shows no Weights pending row at all", async ({ request, page }) => {
+  await resetStub(request);
+  await signInByCard(page, "sales-manager");
+  await expect(page.locator("[data-needs='weights.pending'], [data-unsourced]")).toHaveCount(0);
 });
 
 test("the needs rows sit as the board draws them: a severity bar, a bold title, the count lighter than it", async ({ page }) => {

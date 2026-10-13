@@ -1362,6 +1362,26 @@ function classicTile(profile) {
   };
 }
 
+// The yard shaped homes carry the weight.pending tile the Weights pending row reads (gap 11).
+// The scenario "weights-unwired" is the tile the core cannot measure.
+function weightTile() {
+  const unwired = scenario === "weights-unwired";
+  return {
+    tile_id: "weight.pending",
+    label: "Weights pending",
+    module: "tasks",
+    kind: "count",
+    glyph: "lucide:scale",
+    accent: "#64748b",
+    default_visible: true,
+    lead: "NEED_WEIGHT tasks the yard has not returned a weight for.",
+    position: 1,
+    visible: true,
+    state: unwired ? "unwired" : "ok",
+    ...(unwired ? { note: "Not connected (tasks)" } : { number: 2 }),
+  };
+}
+
 function myHomeBody(profile) {
   const pins = profile === "manager.sales"
     ? [{ tab_key: "sales", position: 0, visible: true }]
@@ -1369,7 +1389,7 @@ function myHomeBody(profile) {
   return {
     profile,
     source: "user",
-    tiles: [classicTile(profile)],
+    tiles: profile === "manager.yard" || profile === "manager.logistics" ? [classicTile(profile), weightTile()] : [classicTile(profile)],
     home: { profile, takeover: false, mobile_only: false },
     tabs: { source: "user", pins },
     hotkeys: [],

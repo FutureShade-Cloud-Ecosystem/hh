@@ -6,8 +6,8 @@ import { expect, test } from "@playwright/test";
 import { resetStub, signInByCard } from "./helpers";
 
 const ROLES = [
-  { flow: "yard-manager", label: "yard manager", widgets: 7, sub: "The pick queue, the shortages and what is going out.", strip: ["Shortages · open", "Receiving · short", "Drivers", "Warranty"], needs: ["tasks.open_shortages", "tasks.stale_picks", "purchasing.receiving_differences"] },
-  { flow: "logistics-manager", label: "logistics manager", widgets: 7, sub: "The loads, the delivery dates and the trucks and drivers.", strip: ["Drivers", "Warranty"], needs: ["dispatch.unassigned", "dispatch.due_to_commit", "tasks.stale_picks"] },
+  { flow: "yard-manager", label: "yard manager", widgets: 7, sub: "The pick queue, the shortages and what is going out.", strip: ["Shortages · open", "Receiving · short", "Drivers", "Warranty"], needs: ["tasks.open_shortages", "tasks.stale_picks", "purchasing.receiving_differences", "weights.pending"] },
+  { flow: "logistics-manager", label: "logistics manager", widgets: 7, sub: "The loads, the delivery dates and the trucks and drivers.", strip: ["Drivers", "Warranty"], needs: ["dispatch.unassigned", "dispatch.due_to_commit", "tasks.stale_picks", "weights.pending"] },
   { flow: "branch-manager", label: "branch manager", widgets: 8, sub: "What needs a person first, then the branch numbers.", strip: ["Shortages · open", "Receiving · short", "Drivers", "Warranty"], needs: ["dispatch.due_to_commit", "dispatch.unassigned", "ar.escalation", "pos.parked"] },
   { flow: "sales-manager", label: "sales manager", widgets: 8, sub: "How selling is going, and the quotes the counter cannot commit.", strip: ["Approvals", "Warranty"], needs: ["approvals.waiting", "ar.escalation", "pos.parked"] },
   { flow: "procurement-manager", label: "procurement manager", widgets: 8, sub: "The gaps the yard reports and where each purchase order got to.", strip: ["Shortages · open", "Receiving · short", "Warranty"], needs: ["tasks.open_shortages", "purchasing.receiving_differences"] },
