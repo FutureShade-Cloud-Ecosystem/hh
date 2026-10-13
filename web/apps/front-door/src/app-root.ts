@@ -820,7 +820,7 @@ export class FrontDoorApp extends HHElement {
       // The gate's or the mint's own words, verbatim, in the card that
       // earned them; the other card keeps working. The polite region
       // carries the pointer, not the sentence.
-      this.#refusals = new Map(this.#refusals).set(flow, `Demo sign-in refused: ${answered.error}`);
+      this.#refusals = new Map(this.#refusals).set(flow, `Sign-in did not go through. ${answered.error}`);
       this.#notice = "The demo refused that sign in; the card says why.";
       this.requestUpdate();
       return;
@@ -829,7 +829,7 @@ export class FrontDoorApp extends HHElement {
     if (minted === null) {
       this.#refusals = new Map(this.#refusals).set(
         flow,
-        "Demo sign-in refused: the mint's answer is not a usable session.",
+        "Sign-in did not go through. Pick the role again.",
       );
       this.#notice = "The demo refused that sign in; the card says why.";
       this.requestUpdate();

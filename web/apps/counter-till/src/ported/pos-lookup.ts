@@ -273,7 +273,7 @@ export class HosPosLookup extends LitElement {
     const noSession = this.tillSessionId === '';
     return html`
       <div class="bar">
-        <div class="seg" role="group" aria-label="Search scope">
+        <div class="seg" role="group" aria-label="Search this shift or branch">
           <button
             class="${this.scope === 'session' ? 'active' : ''}"
             ?disabled=${noSession}
