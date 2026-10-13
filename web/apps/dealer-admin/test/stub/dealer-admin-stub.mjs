@@ -203,7 +203,11 @@ function readBody(req) {
 // until a save), and each caller's own override and workspace row keyed by
 // user id. Both start empty, which is the demo's real state.
 const PROFILE_KINDS = ["panel", "column", "chip", "action"];
-const PROFILE_FIVE = ["counter", "yard", "driver", "manager", "admin"];
+const PROFILES = [
+  "counter", "yard", "driver", "manager", "admin",
+  "manager.branch", "manager.sales", "manager.yard", "manager.logistics",
+  "manager.procurement", "manager.payables", "manager.controller", "manager.general",
+];
 const SETTINGS_ADMIN_WORDS =
   "settings: changing dealer screen settings is limited to administrators";
 
@@ -1762,7 +1766,7 @@ async function handle(req, res) {
   if (req.method === "GET" && configMatch) {
     if (!isManager(flow)) return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
     const profile = url.searchParams.get("profile") ?? "";
-    if (!PROFILE_FIVE.includes(profile)) {
+    if (!PROFILES.includes(profile)) {
       return refuse(res, 422, "settings: profile must be counter, yard, driver, manager or admin");
     }
     const surface = decodeURIComponent(configMatch[1]);
@@ -1792,7 +1796,7 @@ async function handle(req, res) {
       return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
     }
     const profile = String(body?.profile ?? "");
-    if (!PROFILE_FIVE.includes(profile)) {
+    if (!PROFILES.includes(profile)) {
       return refuse(res, 422, "settings: profile must be counter, yard, driver, manager or admin");
     }
     const fault = validateItems(body?.items);
@@ -1805,7 +1809,7 @@ async function handle(req, res) {
       return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
     }
     const profile = url.searchParams.get("profile") ?? "";
-    if (!PROFILE_FIVE.includes(profile)) {
+    if (!PROFILES.includes(profile)) {
       return refuse(res, 422, "settings: profile must be counter, yard, driver, manager or admin");
     }
     const kind = url.searchParams.get("kind") ?? "";

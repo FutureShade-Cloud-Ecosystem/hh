@@ -19,11 +19,16 @@ import {
   newWorkspaceKey,
 } from "../src/config-logic.js";
 
-test("the grid's rows are the kit's five job shapes, the words its own refusal names", () => {
+test("the grid's rows are the thirteen profiles the core's validProfiles holds: five base shapes and eight manager refinements", () => {
   assert.deepEqual(
     JOB_SHAPES.map((s) => s.profile),
-    ["counter", "yard", "driver", "manager", "admin"],
+    [
+      "counter", "yard", "driver", "manager", "admin",
+      "manager.branch", "manager.sales", "manager.yard", "manager.logistics",
+      "manager.procurement", "manager.payables", "manager.controller", "manager.general",
+    ],
   );
+  assert.match(JOB_SHAPES.find((s) => s.profile === "manager").what, /manager role with no refinement row/);
 });
 
 test("the grid's columns are the core's ten curated surfaces, each with its own words", () => {
@@ -47,28 +52,38 @@ test("the grid's columns are the core's ten curated surfaces, each with its own 
   }
 });
 
-test("a role code resolves to its seeded job shape; an unknown role falls back to the counter shape", () => {
+test("a role code resolves to the profile the core resolves today (0140 as amended by 0381); an unknown role falls back to the counter shape", () => {
   assert.equal(profileForRoleCode("INSIDE_SALES"), "counter");
   assert.equal(profileForRoleCode("OUTSIDE_SALES"), "counter");
   assert.equal(profileForRoleCode("YARD_TEAM"), "yard");
   assert.equal(profileForRoleCode("DRIVERS"), "driver");
-  assert.equal(profileForRoleCode("BRANCH_MANAGER"), "manager");
-  assert.equal(profileForRoleCode("FINANCIAL_CONTROLLER"), "manager");
-  assert.equal(profileForRoleCode("GENERAL_MANAGER"), "admin");
+  assert.equal(profileForRoleCode("BRANCH_MANAGER"), "manager.branch");
+  assert.equal(profileForRoleCode("SALES_MANAGER"), "manager.sales");
+  assert.equal(profileForRoleCode("YARD_MANAGER"), "manager.yard");
+  assert.equal(profileForRoleCode("LOGISTICS_MANAGER"), "manager.logistics");
+  assert.equal(profileForRoleCode("PROCUREMENT_MANAGER"), "manager.procurement");
+  assert.equal(profileForRoleCode("PAYABLES_RECEIVABLES"), "manager.payables");
+  assert.equal(profileForRoleCode("FINANCIAL_CONTROLLER"), "manager.controller");
+  assert.equal(profileForRoleCode("GENERAL_MANAGER"), "manager.general");
   assert.equal(profileForRoleCode("HR"), "admin");
   assert.equal(profileForRoleCode("SUPER_ADMIN"), "admin");
   assert.equal(profileForRoleCode("SOMETHING_ELSE"), "counter");
 });
 
-test("the job shape catalog groups the dealer's role names under their shapes", () => {
+test("the job shape catalog groups the dealer's role names under their profiles", () => {
   const roles = [
     { code: "GENERAL_MANAGER", name: "General Manager", tier: 1, scope: "GLOBAL" },
+    { code: "SUPER_ADMIN", name: "Super Admin", tier: 1, scope: "GLOBAL" },
     { code: "YARD_TEAM", name: "Yard Team", tier: 3, scope: "BRANCH" },
+    { code: "YARD_MANAGER", name: "Yard Manager", tier: 2, scope: "BRANCH" },
     { code: "DRIVERS", name: "Drivers", tier: 3, scope: "BRANCH" },
   ];
-  assert.deepEqual(rolesForShape("admin", roles), ["General Manager"]);
+  assert.deepEqual(rolesForShape("manager.general", roles), ["General Manager"]);
+  assert.deepEqual(rolesForShape("admin", roles), ["Super Admin"]);
   assert.deepEqual(rolesForShape("yard", roles), ["Yard Team"]);
+  assert.deepEqual(rolesForShape("manager.yard", roles), ["Yard Manager"]);
   assert.deepEqual(rolesForShape("driver", roles), ["Drivers"]);
+  assert.deepEqual(rolesForShape("manager", roles), []);
   assert.deepEqual(rolesForShape("counter", roles), []);
 });
 

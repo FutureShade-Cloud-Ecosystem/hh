@@ -247,16 +247,16 @@ async function openRoleConfig(page: import("@playwright/test").Page): Promise<vo
 test("the role grid reads every job shape on every surface, and the catalog names who holds each shape", async ({ page }) => {
   await openRoleConfig(page);
 
-  // Fifty cells, each answering the registry default until a curation is
+  // A hundred and thirty cells (thirteen profiles on ten surfaces), each answering the registry default until a curation is
   // saved; the caption carries the core's own sentence about what curation
   // is and is not.
-  await expect(page.locator("[data-test^=config-cell-]")).toHaveCount(50);
+  await expect(page.locator("[data-test^=config-cell-]")).toHaveCount(130);
   await expect(page.locator("[data-test=config-cell-counter-till-counter]")).toHaveText("Registry default");
   await expect(page.locator("[data-test=config-caption]")).toContainText("never grants power");
 
   // The catalog groups the dealer's roles under their seeded shapes.
   await expect(page.locator("[data-test=config-roles-count]")).toHaveText("14 roles");
-  const adminRow = page.locator('[data-test=config-catalog] li[data-profile="admin"]');
+  const adminRow = page.locator('[data-test=config-catalog] li[data-profile="manager.general"]');
   await expect(adminRow).toContainText("General Manager");
   const counterRow = page.locator('[data-test=config-catalog] li[data-profile="counter"]');
   await expect(counterRow).toContainText("Inside Sales");

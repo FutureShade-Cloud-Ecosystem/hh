@@ -2,13 +2,16 @@
 // grid's axes, the seeded role to shape catalog, the cell summary words, the
 // item set's shape checks, and the refusal words. No browser, no network.
 //
-// THE CORE'S OWN VOCABULARY, SPOKEN BACK. The five job shapes are the
-// settings kit's validProfiles whose 422 names the five (core/internal/
-// settings/settings.go ValidateProfile). The ten surfaces are the kit's
+// THE CORE'S OWN VOCABULARY, SPOKEN BACK. The thirteen profiles are the
+// settings kit's validProfiles: 0140's five job shapes plus the eight
+// manager refinements 0381 added (core/internal/settings/settings.go; the
+// 422 sentence still names the five, a stale message, not the vocabulary).
+// The ten surfaces are the kit's
 // substrate's own route table marks (roleconfig's surface vocabulary, the
 // same ten the config route's x-access names). The role to shape mapping is
 // the seed of record (core/db/migrations/0140_dashboard_layouts.sql, the
-// dashboard_role_profiles rows; a role with no row resolves to the kit's
+// dashboard_role_profiles rows, as amended by 0381_manager_home_role_
+// profiles.sql, which re-filed eight manager roles; a role with no row resolves to the kit's
 // ProfileFallback, counter). The shape checks mirror the server's own
 // validators in the server's own words: the client's copy only spares a
 // round trip, the server's 422 stays the last word.
@@ -27,8 +30,16 @@ export const JOB_SHAPES: readonly JobShape[] = Object.freeze([
   { profile: "counter", word: "Counter", what: "The desk's own view, the least privileged shape by default." },
   { profile: "yard", word: "Yard", what: "The yard's view: the queue, the picks, the stock." },
   { profile: "driver", word: "Driver", what: "The road's view: the runs, the stops, the proof." },
-  { profile: "manager", word: "Manager", what: "The branch managers' view, and every manager role without a refinement." },
-  { profile: "admin", word: "Admin", what: "Leadership's view: the whole dealer, the money, the register." },
+  { profile: "manager", word: "Manager", what: "A manager role with no refinement row below; every seeded manager role has one." },
+  { profile: "admin", word: "Admin", what: "Leadership's view: the register, the settings, the people." },
+  { profile: "manager.branch", word: "Branch manager", what: "The branch manager's own Home and curation." },
+  { profile: "manager.sales", word: "Sales manager", what: "The sales manager's own Home and curation." },
+  { profile: "manager.yard", word: "Yard manager", what: "The yard manager's own Home, on the yard's tiles." },
+  { profile: "manager.logistics", word: "Logistics manager", what: "The logistics manager's own Home, branched from the dock." },
+  { profile: "manager.procurement", word: "Procurement manager", what: "The procurement manager's own Home and curation." },
+  { profile: "manager.payables", word: "Payables and receivables", what: "The payables and receivables role's own Home." },
+  { profile: "manager.controller", word: "Financial controller", what: "The financial controller's own Home and curation." },
+  { profile: "manager.general", word: "General manager", what: "The general manager's own Home, branched from admin." },
 ]);
 
 /** One surface column of the grid: the surface id and the words the column shows. */
@@ -60,20 +71,20 @@ export function surfaceWord(id: string): string {
 
 // -- the seeded role to shape catalog ----------------------------------------------------------------
 
-/** The seed of record's mapping (migrations 0140, the dashboard_role_profiles rows). */
+/** The seed of record's mapping (migrations 0140, the dashboard_role_profiles rows, as amended by 0381). */
 const SHAPE_ROLE_CODES: Readonly<Record<string, string>> = Object.freeze({
   INSIDE_SALES: "counter",
   OUTSIDE_SALES: "counter",
   YARD_TEAM: "yard",
-  YARD_MANAGER: "yard",
+  YARD_MANAGER: "manager.yard",
   DRIVERS: "driver",
-  BRANCH_MANAGER: "manager",
-  SALES_MANAGER: "manager",
-  LOGISTICS_MANAGER: "manager",
-  PROCUREMENT_MANAGER: "manager",
-  PAYABLES_RECEIVABLES: "manager",
-  FINANCIAL_CONTROLLER: "manager",
-  GENERAL_MANAGER: "admin",
+  BRANCH_MANAGER: "manager.branch",
+  SALES_MANAGER: "manager.sales",
+  LOGISTICS_MANAGER: "manager.logistics",
+  PROCUREMENT_MANAGER: "manager.procurement",
+  PAYABLES_RECEIVABLES: "manager.payables",
+  FINANCIAL_CONTROLLER: "manager.controller",
+  GENERAL_MANAGER: "manager.general",
   SUPER_ADMIN: "admin",
   HR: "admin",
 });
