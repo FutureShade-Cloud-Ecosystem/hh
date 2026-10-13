@@ -176,7 +176,6 @@ export interface JobFormValues {
   readonly direction: string;
   readonly perf: string;
   readonly supply: string;
-  readonly tax: boolean;
 }
 
 export type JobFormResult = { readonly ok: true; readonly body: LienJobInput } | { readonly ok: false; readonly field: string; readonly words: string };
@@ -216,7 +215,9 @@ export function jobForm(values: JobFormValues): JobFormResult {
       substantial_perf_date: values.perf.trim(),
       last_supply_date: values.supply.trim(),
       holdback_direction: values.direction === "PAYABLE" ? "PAYABLE" : "RECEIVABLE",
-      hst_on_holdback: values.tax,
+      // The core's tax on holdback flag grosses the held amount up by a placeholder rate that is not California's,
+      // so the form does not offer it: a job never asks the core to add tax to its retention.
+      hst_on_holdback: false,
     },
   };
 }
@@ -227,7 +228,7 @@ const RELEASER = "general_manager";
 
 /** The core's gate: the gatekeeper is the General Manager. The app shows it before a press; the core enforces it again. */
 export function canRelease(roleCode: string): boolean {
-  return roleCode === RELEASER;
+  return roleCode.toLowerCase() === RELEASER;
 }
 
 export function releaseConfirmWords(jobNo: string, amount: string): string {

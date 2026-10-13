@@ -94,7 +94,7 @@ test("the core's list shapes: a page or a bare array is a list, an empty page sa
 });
 
 test("the new job form becomes the body the core takes, or says what is wrong", () => {
-  const ok = jobForm({ job_no: " GLS-2101 ", branch_id: "b1", description: "Pool deck pavers", contract: "125,000.00", percent: "10", direction: "RECEIVABLE", perf: "2026-03-01", supply: "", tax: false });
+  const ok = jobForm({ job_no: " GLS-2101 ", branch_id: "b1", description: "Pool deck pavers", contract: "125,000.00", percent: "10", direction: "RECEIVABLE", perf: "2026-03-01", supply: "" });
   assert.deepEqual(ok, {
     ok: true,
     body: {
@@ -110,24 +110,24 @@ test("the new job form becomes the body the core takes, or says what is wrong", 
       hst_on_holdback: false,
     },
   });
-  const blankPercent = jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "", percent: "", direction: "PAYABLE", perf: "", supply: "", tax: true });
+  const blankPercent = jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "", percent: "", direction: "PAYABLE", perf: "", supply: "" });
   assert.equal(blankPercent.ok, true);
   assert.equal(blankPercent.body.holdback_pct_bps, 0);
   assert.equal(blankPercent.body.contract_cents, 0);
-  assert.equal(blankPercent.body.hst_on_holdback, true);
-  assert.deepEqual(jobForm({ job_no: " ", branch_id: "b1", description: "", contract: "", percent: "", direction: "RECEIVABLE", perf: "", supply: "", tax: false }), { ok: false, field: "job_no", words: "Give the job a number." });
-  assert.deepEqual(jobForm({ job_no: "J", branch_id: "", description: "", contract: "", percent: "", direction: "RECEIVABLE", perf: "", supply: "", tax: false }), { ok: false, field: "branch_id", words: "Pick the branch the job belongs to." });
-  assert.deepEqual(jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "12.345", percent: "", direction: "RECEIVABLE", perf: "", supply: "", tax: false }), {
+  assert.equal(blankPercent.body.hst_on_holdback, false, "the form never asks for the core's placeholder tax on holdback");
+  assert.deepEqual(jobForm({ job_no: " ", branch_id: "b1", description: "", contract: "", percent: "", direction: "RECEIVABLE", perf: "", supply: "" }), { ok: false, field: "job_no", words: "Give the job a number." });
+  assert.deepEqual(jobForm({ job_no: "J", branch_id: "", description: "", contract: "", percent: "", direction: "RECEIVABLE", perf: "", supply: "" }), { ok: false, field: "branch_id", words: "Pick the branch the job belongs to." });
+  assert.deepEqual(jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "12.345", percent: "", direction: "RECEIVABLE", perf: "", supply: "" }), {
     ok: false,
     field: "contract",
     words: "The contract amount is dollars and cents, like 125,000.00.",
   });
-  assert.deepEqual(jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "", percent: "150", direction: "RECEIVABLE", perf: "", supply: "", tax: false }), {
+  assert.deepEqual(jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "", percent: "150", direction: "RECEIVABLE", perf: "", supply: "" }), {
     ok: false,
     field: "percent",
     words: "The holdback percent is a number from 0.01 to 100, like 10 or 7.5. Leave it blank for the core's default.",
   });
-  assert.deepEqual(jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "", percent: "", direction: "RECEIVABLE", perf: "03/01/2026", supply: "", tax: false }), {
+  assert.deepEqual(jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "", percent: "", direction: "RECEIVABLE", perf: "03/01/2026", supply: "" }), {
     ok: false,
     field: "perf",
     words: "Dates are year, month and day, like 2026-03-01.",
