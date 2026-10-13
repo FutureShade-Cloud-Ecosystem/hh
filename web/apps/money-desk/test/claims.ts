@@ -26,6 +26,7 @@ const PICKER = { file: FRONT_DOOR, test: "the picker renders the eight live card
 const DESK_OPENS = { file: RECEIVABLES, test: "the desk opens on the register: four tiles, the rows overdue first, Needs you, and later marked in words" };
 const APPLY_SPLIT = { file: RECEIVABLES, test: "one payment across two invoices: the server splits it oldest first and posts it as one payment" };
 const BOUNCED_WORLD = { file: RECEIVABLES, test: "the bounced payment the demo world starts with: what happened, and a reminder sent from the queue" };
+const BOOKS = "test/books.pw.ts";
 const QUEUE = { file: LEDGER, test: "the card lands on the approvals queue: the floor request, both parked journals and the freight raises" };
 
 export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
@@ -136,8 +137,39 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "refused-decision": [{ file: LEDGER, test: "a refused decision names who may decide it, never the bare gate word" }],
   "bare-array": [{ file: LEDGER, test: "a bare array where the contract says a page is refused, never half read" }],
   "phone-decision": [{ file: LEDGER, test: "on a phone a chosen request brings its decision into view" }],
-  "journal-register": [{ file: LEDGER, test: "the journal register keeps a journal number on one line and says what is later" }],
-  "trial-balance": [{ file: LEDGER, test: "it reads the trial balance in balance, with the server's totals" }],
+  "journal-register": [{ file: LEDGER, test: "the journal register keeps a journal number on one line and offers void and reverse where they apply" }],
+  "trial-balance": [
+    { file: LEDGER, test: "it reads the trial balance in balance, with the server's totals" },
+    { file: BOOKS, test: "the trial balance takes a month, shows that month alone, and the export downloads the rows on screen" },
+  ],
+  chart: [
+    { file: BOOKS, test: "the chart lists every account with its status in words, and adds an account the journals can use" },
+    { file: BOOKS, test: "deactivating an account is a review that names what it keeps and what it ends, and cancel changes nothing" },
+  ],
+  "journal-post": [
+    { file: BOOKS, test: "a journal below the threshold posts after a review, the register shows it posted and the trial balance carries it" },
+    { file: BOOKS, test: "a journal at the threshold parks, files its request in the approvals queue, and says so" },
+    { file: BOOKS, test: "the form checks each line before anything is sent: a memo, one side, a real amount" },
+    { file: BOOKS, test: "an unbalanced journal is refused by the server in words, nothing is saved, and the form keeps what was typed" },
+  ],
+  "post-unknown": [{ file: BOOKS, test: "a lost answer to a post says it may or may not have landed, and the desk never sends it a second time" }],
+  "reverse-void": [
+    { file: BOOKS, test: "reversing a posted journal is a review that lists its lines, cancel changes nothing, and the reversal links back" },
+    { file: BOOKS, test: "voiding a draft is a review, and the register then reads it Void" },
+  ],
+  recurring: [{ file: BOOKS, test: "the recurring templates list what they post and run into a draft that never posts by itself" }],
+  periods: [
+    { file: BOOKS, test: "closing a period names the period and what changes, then the period reads Closed and reopens only with a reason" },
+    { file: BOOKS, test: "a journal dated into a closed month is refused in words that say who can reopen it" },
+  ],
+  "year-close": [{ file: BOOKS, test: "the year end close is a review naming the year, retained earnings and the periods it seals, and reports the server's net income" }],
+  "trial-export": [{ file: BOOKS, test: "the trial balance takes a month, shows that month alone, and the export downloads the rows on screen" }],
+  checks: [
+    { file: BOOKS, test: "the checks read the receivables tie out in words beside its colour, and run the BisTrack check" },
+    { file: BOOKS, test: "a journal that moves receivables puts the tie out out of tie, said in words with the difference" },
+  ],
+  policy: [{ file: BOOKS, test: "the policy reads the approval threshold and says changing it is not on this screen" }],
+  reader: [{ file: BOOKS, test: "Payables and Receivables reads the ledger and holds every write, naming who may" }],
   "bankrec-area": [
     { file: BANKREC, test: "the controller's third area lists the accounts, what waits on each, and the cards as tracking only" },
     { file: BANKREC, test: "Payables and Receivables has no bank reconciliation area" },
