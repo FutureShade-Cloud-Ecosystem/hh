@@ -75,7 +75,7 @@ export class ProPayApp extends HHElement {
   #selected = new Set<string>();
   #open: ViewState["openInvoice"] = null;
   #sheet: Sheet | null = null;
-  #heldBody: PayBody | null = null;
+  #heldBy: string | null = null;
   #methods: readonly TenantPaymentMethod[] = [];
   #methodAdd: ViewState["methodAdd"] = { open: false, makeDefault: false, busy: false, words: "", nonce: null, frameAvailable: hostedFieldAddress() !== null };
   #confirmRemove: string | null = null;
@@ -143,7 +143,13 @@ export class ProPayApp extends HHElement {
     this.addEventListener("pro-sign-out", this.#onSignOut);
     window.addEventListener("message", this.#onMessage);
     this.#unsubscribe = this.#session.subscribe(() => {
-      if (this.#session.profile() === null) this.#reset();
+      const profile = this.#session.profile();
+      if (profile === null) this.#reset();
+      else if (this.#heldBy !== null && this.#heldBy !== profile.userId) {
+        // A different person signed in: the held payment and the receipt were not theirs.
+        this.#sender.forget();
+        this.#heldBy = null;
+      }
       this.requestUpdate();
     });
     void this.#loadDealer();
@@ -161,7 +167,7 @@ export class ProPayApp extends HHElement {
     super.disconnectedCallback();
   }
 
-  /** Signed out: forget everything shown, selected, held or in a sheet. Nothing of it was ever stored. */
+  /** Signed out: forget everything shown, selected or in a sheet. A held payment stays with the sender for the same person. */
   #reset(): void {
     this.#surface = "invoices";
     this.#load = "loading";
@@ -171,7 +177,6 @@ export class ProPayApp extends HHElement {
     this.#selected = new Set();
     this.#open = null;
     this.#sheet = null;
-    this.#heldBody = null;
     this.#sender.clearSettled();
     this.#methods = [];
     this.#payments = [];
@@ -416,16 +421,15 @@ export class ProPayApp extends HHElement {
 
   /** A held attempt comes back as a sheet in its unknown phase, carrying the same body so Check payment is the same request. */
   async #reopenWaiting(): Promise<void> {
-    const held = this.#heldBody;
     const waiting = this.#sender.waiting;
-    if (held === null || waiting === null) return;
+    if (waiting === null) return;
     const methods = this.#sheet?.methods ?? this.#methods;
     this.#sheet = {
       phase: "unknown",
-      ids: [...held.invoiceIds],
+      ids: [...waiting.invoiceIds],
       expectedCents: waiting.expectedCents,
-      choice: held.methodId ?? "new",
-      nonce: held.nonce ?? null,
+      choice: waiting.methodId ?? "new",
+      nonce: waiting.nonce ?? null,
       methods,
       methodsNote: "",
       words: "We could not confirm this payment. It may have gone through. Check it before paying again.",
@@ -453,7 +457,6 @@ export class ProPayApp extends HHElement {
   #done(): void {
     this.#sheet = null;
     this.#sender.clearSettled();
-    this.#heldBody = null;
     this.#selected = new Set();
     this.#open = null;
     void this.#loadSurface();
@@ -466,7 +469,9 @@ export class ProPayApp extends HHElement {
     if (sheet.choice === "" || (sheet.choice === "new" && sheet.nonce === null)) return;
     this.#sheet = { ...sheet, phase: "sending", words: "" };
     this.requestUpdate();
+    const by = this.#session.profile()?.userId ?? null;
     const outcome = await this.#sender.pay(body, sheet.expectedCents);
+    this.#heldBy = this.#sender.waiting === null ? null : (this.#heldBy ?? by);
     this.#settle(body, outcome);
   }
 
@@ -477,7 +482,6 @@ export class ProPayApp extends HHElement {
       void this.#lapse();
       return;
     }
-    this.#heldBody = outcome.kind === "unknown" ? body : null;
     if (sheet === null) {
       // The sheet was closed while the send was out: the screen still learns what happened.
       if (outcome.kind === "paid" || outcome.kind === "unknown") this.#sheet = this.#sheetFor(body, outcome);

@@ -146,6 +146,37 @@ test("a held attempt survives a 400 or a 404 on Check payment, and the next chec
   }
 });
 
+test("a held attempt survives a 401 on Check payment, and a first attempt refused at the guards is not held", async () => {
+  const t = transport([reply(409, { error: "pending" }), reply(401, { error: "no" }), reply(201, PAYMENT)]);
+  const sender = new PaySender(t.client, { canPay: () => true });
+  assert.equal((await sender.pay(body(), 5000)).kind, "unknown");
+  assert.equal((await sender.pay(body(), 5000)).kind, "refused");
+  assert.ok(sender.waiting, "still held after a 401");
+  assert.equal((await sender.pay(body(), 5000)).kind, "paid");
+  assert.deepEqual(t.calls[2].body, t.calls[0].body);
+  const guard = transport([reply(401, { error: "no" })]);
+  const fresh = new PaySender(guard.client, { canPay: () => true });
+  assert.equal((await fresh.pay(body(), 5000)).kind, "refused");
+  assert.equal(fresh.waiting, null);
+});
+
+test("the held attempt shows its own wire read only, and forget drops it and the receipt", async () => {
+  const t = transport([reply(409, { error: "pending" }), reply(201, PAYMENT)]);
+  const sender = new PaySender(t.client, { canPay: () => true });
+  await sender.pay(body(), 5000);
+  const waiting = sender.waiting;
+  assert.deepEqual(waiting.invoiceIds, [A]);
+  assert.equal(waiting.methodId, METHOD);
+  assert.equal(waiting.nonce, undefined);
+  assert.equal(waiting.expectedCents, 5000);
+  sender.forget();
+  assert.equal(sender.waiting, null);
+  assert.equal((await sender.pay(body(), 5000)).kind, "paid");
+  sender.forget();
+  await sender.pay(body(), 5000);
+  assert.equal(t.calls.length, 3, "a forgotten receipt is a new request");
+});
+
 test("a lapsed session on a pay says so in plain words and moved no money; a role refusal says the role", () => {
   assert.match(classifyPayment({ ok: false, error: "x", status: 401 }).words, /signed out/);
   assert.match(classifyPayment({ ok: false, error: "x", status: 403 }).words, /role/);

@@ -173,9 +173,24 @@ export class PaySender {
     this.#newKey = options.newKey ?? (() => crypto.randomUUID());
   }
 
-  /** The attempt held for an unknown outcome, if any: its screen offers Check payment and nothing else. */
-  get waiting(): { expectedCents: number; invoiceIds: readonly string[] } | null {
-    return this.#held === null ? null : { expectedCents: this.#held.expectedCents, invoiceIds: this.#held.wire.invoice_ids };
+  /**
+   * The attempt held for an unknown outcome, if any: its screen offers Check payment and nothing else. It is the
+   * sender's own wire, read only, so a reopened screen is built from what Check payment will send.
+   */
+  get waiting(): { expectedCents: number; invoiceIds: readonly string[]; methodId?: string; nonce?: string } | null {
+    const held = this.#held;
+    if (held === null) return null;
+    const { invoice_ids, payment_method_id, nonce } = held.wire;
+    const view: { expectedCents: number; invoiceIds: readonly string[]; methodId?: string; nonce?: string } = { expectedCents: held.expectedCents, invoiceIds: [...invoice_ids] };
+    if (payment_method_id !== undefined) view.methodId = payment_method_id;
+    if (nonce !== undefined) view.nonce = nonce;
+    return view;
+  }
+
+  /** A different person signed in: the held attempt and the last receipt are not theirs. */
+  forget(): void {
+    this.#held = null;
+    this.#settled = null;
   }
 
   /** Forget the last receipt (the sheet closed): a later press of the same selection is a new request to the core. */
@@ -221,8 +236,8 @@ export class PaySender {
     this.#inflight = null;
     if (outcome.kind === "unknown") {
       this.#held = attempt;
-    } else if (this.#held === attempt && outcome.kind === "refused" && (outcome.status === 400 || outcome.status === 404)) {
-      // A check of a held attempt answered 400 or 404: that does not say the charge failed, so the attempt stays held.
+    } else if (this.#held === attempt && outcome.kind === "refused" && (outcome.status === 400 || outcome.status === 401 || outcome.status === 404)) {
+      // A check of a held attempt answered 400, 404 or 401 (a lapsed session): none of them says the charge failed, so it stays held.
     } else {
       this.#held = null;
       if (outcome.kind === "paid") this.#settled = { canon: attempt.canon, outcome };

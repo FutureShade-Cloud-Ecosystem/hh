@@ -27,6 +27,13 @@ async function signIn(page: Page, who: string, password = PASSWORD): Promise<voi
   await page.getByRole("button", { name: "Sign in" }).click();
 }
 
+/** Sign in again on the same page, with no reload: what a person does after a lapse, with the app's memory intact. */
+async function signInAgain(page: Page, who: string): Promise<void> {
+  await page.getByTestId("signin-email").fill(EMAIL(who));
+  await page.getByTestId("signin-password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+}
+
 /** The dealer's day (the house zone) a number of days from now, as YYYY-MM-DD: the day the app ages against. */
 function houseDayOffset(days: number): string {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
@@ -254,6 +261,57 @@ test.describe("phone", () => {
     await expect(page.getByTestId("receipt")).toBeVisible();
     expect(posts[1]).toBe(posts[0]);
     expect((await paymentsHeld(page, "ap")).length).toBe(3);
+  });
+
+  test("a held attempt survives a sign out: the same person signs back in and Check payment is the same request", async ({ page }) => {
+    const posts: string[] = [];
+    await page.route("**/api/v1/tenant/payments", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      posts.push(route.request().postData() ?? "");
+      if (posts.length === 1) {
+        await route.fetch();
+        return route.abort("connectionreset");
+      }
+      if (posts.length === 2) return route.fulfill({ status: 401, json: { error: "unauthorized" } });
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await pickAllAndOpenSheet(page);
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("check-payment")).toBeVisible();
+    await page.getByTestId("check-payment").click();
+    await expect(page.getByTestId("signin-message")).toHaveText("You are signed out. Sign in again.");
+    await signInAgain(page, "ap");
+    await expect(page.getByTestId("waiting-notice")).toBeVisible();
+    await page.getByRole("button", { name: "Check payment" }).click();
+    await expect(page.getByTestId("check-payment")).toBeVisible();
+    await page.getByTestId("check-payment").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    expect(posts.length).toBe(3);
+    expect(posts[2]).toBe(posts[0]);
+    expect((await paymentsHeld(page, "ap")).length).toBe(3);
+  });
+
+  test("a different person signing in does not see the first person's waiting payment", async ({ page }) => {
+    const posts: string[] = [];
+    await page.route("**/api/v1/tenant/payments", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      posts.push(route.request().postData() ?? "");
+      if (posts.length === 1) {
+        await route.fetch();
+        return route.abort("connectionreset");
+      }
+      if (posts.length === 2) return route.fulfill({ status: 401, json: { error: "unauthorized" } });
+      return route.continue();
+    });
+    await signIn(page, "ap");
+    await pickAllAndOpenSheet(page);
+    await page.getByTestId("pay-confirm").click();
+    await page.getByTestId("check-payment").click();
+    await expect(page.getByTestId("signin-message")).toHaveText("You are signed out. Sign in again.");
+    await signInAgain(page, "owner");
+    await expect(page.getByTestId("invoice-row").first()).toBeVisible();
+    await expect(page.getByTestId("waiting-notice")).toHaveCount(0);
   });
 
   test("a card added in the frame that is declined moves no money and says so", async ({ page }) => {
