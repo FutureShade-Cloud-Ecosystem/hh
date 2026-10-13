@@ -5,6 +5,14 @@
 // its app key, its sign in adapter and its landing surface, and registers the
 // element.
 //
+// Its single landing: the base runs ONE landing list and keeps its state
+// private. That is its whole job and it stays so. Pro Procurement, Pro Pay and
+// Pro Field each have several surfaces with drill-downs and sheets, so each
+// wires the kit's elements (session, tenant client, hh-pro-signin, hh-pro-frame,
+// hh-pro-state) in its own root and lets the catalogue in surfaces.ts name the
+// selector entries. Nothing here is generalised for them; the base serves a new
+// app that needs one list and the kit's tests.
+//
 // The flow: signed out shows hh-pro-signin; the person submits, the session
 // signs in (the adapter proves who they are, tenant me answers the role and the
 // capabilities), and the frame appears around the landing surface. The landing
