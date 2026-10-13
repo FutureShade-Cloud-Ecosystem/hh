@@ -1,0 +1,155 @@
+#[cfg(test)]
+mod tests {
+    use hh_shell_core::profiles;
+
+    const TAURI_CONF: &str = include_str!("../tauri.conf.json");
+    const CAPABILITY: &str = include_str!("../capabilities/default.json");
+    const CARGO_TOML: &str = include_str!("../Cargo.toml");
+
+    // The ACL manifest and the merged capabilities that tauri-build wrote for
+    // THIS build (the same data the binary embeds).
+    const BUILT_ACL_MANIFEST: &str = include_str!(concat!(env!("OUT_DIR"), "/acl-manifests.json"));
+    const BUILT_CAPABILITIES: &str = include_str!(concat!(env!("OUT_DIR"), "/capabilities.json"));
+
+    fn capability_permissions() -> Vec<String> {
+        let cap: serde_json::Value = serde_json::from_str(CAPABILITY).expect("the capability parses");
+        cap["permissions"]
+            .as_array()
+            .expect("a permissions list")
+            .iter()
+            .map(|p| p.as_str().expect("permission names are strings").to_string())
+            .collect()
+    }
+
+    #[test]
+    fn the_stores_commands_are_allowed_by_name_and_no_sql_grant_is_open() {
+        let perms = capability_permissions();
+        assert!(perms.iter().any(|p| p == "allow-run-statement"), "run_statement is allowed by name");
+        assert!(perms.iter().any(|p| p == "allow-run-atomic"), "run_atomic is allowed by name");
+        assert!(!CAPABILITY.contains("sql:"), "no open SQL grant reaches a real build");
+        assert!(!CARGO_TOML.contains("tauri-plugin-sql"), "the webview SQL plugin is not a dependency");
+    }
+
+    #[test]
+    fn the_default_capability_is_exactly_the_work_windows_grants() {
+        // The shape is pinned: a new grant is a reviewed change to this list.
+        let mut perms = capability_permissions();
+        perms.sort();
+        assert_eq!(perms, ["allow-run-atomic", "allow-run-statement", "core:default", "updater:default"]);
+        let cap: serde_json::Value = serde_json::from_str(CAPABILITY).unwrap();
+        assert_eq!(cap["windows"], serde_json::json!(["main"]));
+    }
+
+    #[test]
+    fn the_default_capability_grants_the_webview_no_keychain_command() {
+        // The Console session secret is used only on the Rust side
+        // (AUTH-SHELL-CONTRACT r7); a keychain grant would let any script in
+        // the window read it back with one invoke.
+        assert!(!CAPABILITY.contains("keychain"), "default.json must hold no keychain grant");
+    }
+
+    #[test]
+    fn a_work_build_declares_no_keychain_probe_camera_or_location_in_its_acl() {
+        for built in [BUILT_ACL_MANIFEST, BUILT_CAPABILITIES] {
+            assert!(!built.contains("keychain"), "a keychain command or grant is in the Work build's ACL");
+            assert!(!built.contains("probe"), "probe scaffolding is in the Work build's ACL");
+            let lower = built.to_lowercase();
+            for banned in ["camera", "geolocation", "location"] {
+                assert!(!lower.contains(banned), "{banned} is Field only and is in the Work build's ACL");
+            }
+        }
+        assert!(BUILT_ACL_MANIFEST.contains("run_statement"), "the store's commands are declared");
+        assert!(BUILT_ACL_MANIFEST.contains("run_atomic"), "the store's commands are declared");
+    }
+
+    #[test]
+    fn the_work_crate_has_no_probe_feature() {
+        // Field keeps a probe feature for the probe 4 proof runs, off by
+        // default; Work never had a probe, so there is nothing to turn on.
+        assert!(!CARGO_TOML.contains("probe"), "Work carries no probe scaffolding");
+        assert!(!CARGO_TOML.contains("[features]"), "Work declares no cargo features");
+    }
+
+    #[test]
+    fn no_work_file_names_a_field_only_device_permission() {
+        for (name, text) in [("tauri.conf.json", TAURI_CONF), ("capabilities/default.json", CAPABILITY)] {
+            let lower = text.to_lowercase();
+            for banned in ["camera", "geolocation", "location", "microphone"] {
+                assert!(!lower.contains(banned), "{name} names {banned}, a Field only grant");
+            }
+        }
+        let p = profiles::work();
+        assert!(!p.permissions.camera && !p.permissions.fine_location);
+    }
+
+    #[test]
+    fn the_store_file_is_the_work_profiles_own_fixed_file() {
+        assert_eq!(super::STORE_FILE, "work.sqlite3");
+        assert!(!super::STORE_FILE.contains('/') && !super::STORE_FILE.contains(".."));
+    }
+
+    #[test]
+    fn the_work_update_channel_is_configured_with_placeholders() {
+        let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).expect("tauri.conf.json parses");
+        let updater = &conf["plugins"]["updater"];
+        let endpoint = updater["endpoints"]
+            .as_array()
+            .and_then(|e| e.first())
+            .and_then(|e| e.as_str())
+            .expect("the updater has one configured endpoint");
+        assert!(endpoint.contains("/hh/work/"), "the endpoint names the Work channel: {endpoint}");
+        assert!(!endpoint.contains("/hh/field/"));
+        for part in ["{{target}}", "{{arch}}", "{{current_version}}"] {
+            assert!(endpoint.contains(part), "the endpoint carries {part}");
+        }
+        let pubkey = updater["pubkey"].as_str().expect("the updater has a pubkey");
+        assert_eq!(pubkey, "PLACEHOLDER: the release verify public key comes from FB Vault at the first signed release");
+        assert_eq!(conf["bundle"]["createUpdaterArtifacts"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn desktop_targets_are_configured_for_all_three_systems() {
+        // Linux is built here; Windows and macOS are configured but not built
+        // on this workstation. A bundle target list of "all" lets each system
+        // build its own formats.
+        let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
+        assert_eq!(conf["bundle"]["targets"], serde_json::json!("all"));
+        assert!(conf["bundle"]["windows"]["webviewInstallMode"].is_object());
+        assert!(conf["bundle"]["macOS"]["minimumSystemVersion"].is_string());
+    }
+
+    #[test]
+    fn the_csp_is_strict_and_the_window_is_built_by_the_shell() {
+        let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
+        let csp = conf["app"]["security"]["csp"].as_str().expect("a CSP is set");
+        for directive in ["default-src 'self'", "script-src 'self'", "object-src 'none'", "frame-ancestors 'none'"] {
+            assert!(csp.contains(directive), "the CSP holds {directive}");
+        }
+        assert!(!csp.contains("unsafe-eval"), "no eval");
+        assert!(!csp.contains("script-src 'self' 'unsafe-inline'"), "no inline script");
+        assert_eq!(conf["app"]["withGlobalTauri"], serde_json::json!(false));
+        assert_eq!(conf["app"]["windows"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn the_startup_line_names_the_work_profile_and_its_offline_blocks() {
+        let mut plugins = std::collections::HashMap::new();
+        let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
+        plugins.insert("updater".to_string(), conf["plugins"]["updater"].clone());
+        let line = super::profile_line(&tauri::utils::config::PluginConfig(plugins));
+        let v: serde_json::Value = serde_json::from_str(&line).expect("the line is JSON");
+        assert_eq!(v["identifier"], "ai.futurebuild.hh.work");
+        assert_eq!(v["product"], "HH Work");
+        assert_eq!(v["channel"], "work");
+        assert_eq!(v["permissions"], serde_json::json!({ "camera": false, "fine_location": false }));
+        assert_eq!(v["store"]["file"], "work.sqlite3");
+        assert!(v["updates"]["endpoint"].as_str().unwrap().contains("/hh/work/"));
+        let apps = v["apps"].as_array().unwrap();
+        assert_eq!(apps.len(), 8);
+        let money = apps.iter().find(|a| a["id"] == "money-desk").unwrap();
+        assert_eq!(money["offline"]["mode"], "none");
+        let till = apps.iter().find(|a| a["id"] == "counter-till").unwrap();
+        assert_eq!(till["offline"]["mode"], "read_cache_only");
+        assert!(!line.to_lowercase().contains("token"), "no secret-shaped field in the line");
+    }
+}
