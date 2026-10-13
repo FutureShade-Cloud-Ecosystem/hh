@@ -571,11 +571,11 @@ mod tests {
     }
 
     #[test]
-    fn account_maps_a_refused_session_to_no_session_and_an_outage_to_unavailable() {
+    fn account_maps_only_a_401_to_no_session_and_every_other_refusal_to_unavailable() {
         for (status, want) in [
             (401, AuthCode::NoSession),
-            (403, AuthCode::NoSession),
-            (404, AuthCode::NoSession),
+            (403, AuthCode::Unavailable),
+            (404, AuthCode::Unavailable),
             (429, AuthCode::RateLimited),
             (500, AuthCode::Unavailable),
             (502, AuthCode::Unavailable),
@@ -616,11 +616,11 @@ mod tests {
     }
 
     #[test]
-    fn mint_jwt_maps_a_console_refusal_to_no_session() {
+    fn mint_jwt_maps_only_a_401_to_no_session() {
         for (status, want) in [
             (401, AuthCode::NoSession),
-            (403, AuthCode::NoSession),
-            (404, AuthCode::NoSession),
+            (403, AuthCode::Unavailable),
+            (404, AuthCode::Unavailable),
             (429, AuthCode::RateLimited),
             (500, AuthCode::Unavailable),
             (503, AuthCode::Unavailable),

@@ -287,7 +287,8 @@ mod tests {
 
         for (status, want) in [
             (401, AuthCode::NoSession),
-            (403, AuthCode::NoSession),
+            (403, AuthCode::Unavailable),
+            (404, AuthCode::Unavailable),
             (500, AuthCode::Unavailable),
             (503, AuthCode::Unavailable),
             (429, AuthCode::RateLimited),
