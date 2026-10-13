@@ -633,7 +633,7 @@ function parseQty(raw) {
 
 function recordPick(res, task, input) {
   const record = recordPickedLines(task, input.lines);
-  if (record.error) return refuse(res, 400, record.error);
+  if (record.error) return refuse(res, record.status ?? 400, record.error);
   task.updated_at = new Date().toISOString();
   syncTouch("pick_tasks", task.id);
   return json(res, { items: record.picked.map(pickedOut) });
@@ -880,6 +880,15 @@ function syncApplyTaskUpdate(task, op, moneyAllowed) {
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("pick_tasks", task.id) };
 }
 
+// A CANCELLED or DONE pick takes no record (core/internal/tasks/yard_short.go ErrPickClosed): both are
+// terminal and the module has no correction path for a done pick. The REST door answers 409, a sync op
+// is rejected with the same words.
+function closedPickWords(task) {
+  if (task.status === "CANCELLED") return "tasks: this pick was cancelled, its record cannot change";
+  if (task.status === "DONE") return "tasks: this pick is done, its record cannot change";
+  return "";
+}
+
 // The core's pickedLineLegs (core/internal/tasks/syncpick.go): the direct door's
 // body keys, one for one. The client's local row id, task id and picked_at do
 // not go on the wire.
@@ -894,6 +903,8 @@ function syncApplyPicked(task, op) {
   for (const key of Object.keys(fields)) {
     if (key !== "id" && key !== "picked") return syncRejected(op, `tasks: field "${key}" cannot travel with picked, a pick record is its own operation`);
   }
+  const closed = closedPickWords(task);
+  if (closed !== "") return syncRejected(op, closed);
   const raw = fields.picked;
   if (!Array.isArray(raw)) return syncRejected(op, "tasks: picked must be an array of lines");
   if (raw.length === 0) return syncRejected(op, "tasks: say what was picked, an empty record is not the same as a pick of nothing");
@@ -972,6 +983,8 @@ function recordPickedLines(task, lines) {
       if (reason === "OTHER" && note === "") return { error: `line ${lineNo}: say what happened in the note when the reason is OTHER` };
     }
   }
+  const closed = closedPickWords(task);
+  if (closed !== "") return { error: closed, status: 409 };
   const picked = list.map((l) => {
     const lineNo = Number(l.order_line_no);
     const ticketLine = ticket.lines.find((t) => t.line_no === lineNo) ?? {};
