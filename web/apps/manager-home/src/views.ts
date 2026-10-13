@@ -92,10 +92,10 @@ export function renderLanding(model: LandingModel): TemplateResult {
     </header>
     <p class="eyebrow">Today</p>
     <div class="bento">
-      ${large.map((w, index) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, index === 0))}
+      ${large.map((w, index) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, index === 0, model.profile))}
     </div>
     <div class="strip">
-      ${strip.map((w) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, false))}
+      ${strip.map((w) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, false, model.profile))}
       ${UNSOURCED_TILES.map((t) => renderUnsourcedTile(t))}
     </div>
     <nav class="view-links" aria-label="Views">
@@ -129,19 +129,20 @@ function renderWidget(
   needs: NeedsQueue | null,
   unsourced: typeof UNSOURCED_NEEDS,
   first: boolean,
+  profile: string,
 ): TemplateResult {
   if (w.measure === "needs.you") {
     return placed(w, html`
       <article class="card" data-widget=${w.widget_key}>
         <h2 class="card-title">${w.title}</h2>
-        ${needs === null ? html`<p class="needs-empty">The queue did not load.</p>` : renderNeedsList(needs, unsourced)}
+        ${needs === null ? html`<p class="needs-empty">The queue did not load.</p>` : renderNeedsList(needs, unsourced, profile)}
       </article>
     `);
   }
   const figure = figureFor(datum, w.kind);
   const caption = rangeWord(datum?.range !== "" && datum !== undefined ? datum.range : w.range);
   const hero = first && w.shape === "stat" && w.span_cols >= 6;
-  const foot = renderFoot(w);
+  const foot = renderFoot(w, profile);
   if (w.shape === "board" || w.shape === "bars") {
     return placed(w, html`
       <article class="card" data-widget=${w.widget_key}>
@@ -180,8 +181,8 @@ function renderWidget(
  * The foot of a card: a link to the live app (or this app's view) that owns the measure, and the
  * honest coming words only where no app exists. A link never carries a figure of its own.
  */
-function renderFoot(w: WidgetView): TemplateResult {
-  const link = widgetLink(w);
+function renderFoot(w: WidgetView, profile: string): TemplateResult {
+  const link = widgetLink(w, profile);
   if (link.kind === "app") {
     return html`<p class="tile-foot"><button type="button" class="foot-link" data-action="open-app" data-href=${link.href}>Open ${link.app}<span class="chev" aria-hidden="true">›</span></button></p>`;
   }
@@ -267,12 +268,12 @@ function barWidthClass(part: number, max: number): string {
 
 // -- the needs-you card --------------------------------------------------------------------------------
 
-export function renderNeedsList(needs: NeedsQueue, unsourced: typeof UNSOURCED_NEEDS): TemplateResult {
+export function renderNeedsList(needs: NeedsQueue, unsourced: typeof UNSOURCED_NEEDS, profile?: string): TemplateResult {
   const rows = needs.rows;
   // The queue link opens the first view a row names; with none on this box it is not drawn.
-  const first = rows.map((r) => needsRowTarget(r)).find((t) => t.view !== null);
+  const first = rows.map((r) => needsRowTarget(r, profile)).find((t) => t.view !== null);
   return html`
-    ${rows.length === 0 ? html`<p class="needs-empty">Nothing is waiting on you right now.</p>` : rows.map((row) => renderNeedsRow(row))}
+    ${rows.length === 0 ? html`<p class="needs-empty">Nothing is waiting on you right now.</p>` : rows.map((row) => renderNeedsRow(row, profile))}
     ${unsourced.map((u) => html`
       <div class="needs-row unsourced" data-unsourced=${u.key}>
         <span class="sev" aria-hidden="true"></span>
@@ -295,8 +296,8 @@ export function renderNeedsList(needs: NeedsQueue, unsourced: typeof UNSOURCED_N
   `;
 }
 
-function renderNeedsRow(row: NeedsRow): TemplateResult {
-  const target = needsRowTarget(row);
+function renderNeedsRow(row: NeedsRow, profile?: string): TemplateResult {
+  const target = needsRowTarget(row, profile);
   return html`
     <div class="needs-row" data-needs=${row.source_key}>
       <span class="sev ${row.severity}" aria-hidden="true"></span>

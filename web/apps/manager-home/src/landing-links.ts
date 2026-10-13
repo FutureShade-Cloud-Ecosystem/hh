@@ -8,10 +8,15 @@
 // hrefs), and a click may only ever carry one of them (isLiveHref), so no
 // attribute value can send the page elsewhere.
 //
+// The closed table is narrowed by the viewer's profile (role-apps.ts): a role the
+// access matrix gives none on an app keeps the coming words, not a dead link.
+//
 // Port provenance: the original's home bento linked each widget to its
 // #unit/module screen (repository hardscapeos_dibbits, read only; see
 // PROVENANCE.md). HH's shell is one micro app per unit, so the same keys become
 // this closed table of app prefixes.
+
+import { mayOpen } from "./role-apps.js";
 
 /** The live apps a card can open, by the name the front door's tile carries. */
 export const LIVE_APP_HREFS: Readonly<Record<string, string>> = Object.freeze({
@@ -47,8 +52,9 @@ const NEEDS_APP: Readonly<Record<string, string>> = Object.freeze({
   "weights.pending": "Yard Pick",
 });
 
-export function needsLink(sourceKey: string): AppLink | null {
-  return Object.hasOwn(NEEDS_APP, sourceKey) ? appLink(NEEDS_APP[sourceKey]) : null;
+export function needsLink(sourceKey: string, profile?: string): AppLink | null {
+  if (!Object.hasOwn(NEEDS_APP, sourceKey) || !mayOpen(profile, NEEDS_APP[sourceKey])) return null;
+  return appLink(NEEDS_APP[sourceKey]);
 }
 
 /** The module that measures a card, to the app that owns that module's screens. */
@@ -65,8 +71,8 @@ export type WidgetLink =
   | { readonly kind: "view"; readonly view: "warranty" }
   | { readonly kind: "coming" };
 
-export function widgetLink(w: { readonly module: string }): WidgetLink {
+export function widgetLink(w: { readonly module: string }, profile?: string): WidgetLink {
   if (w.module === "warranty") return { kind: "view", view: "warranty" };
-  if (Object.hasOwn(MODULE_APP, w.module)) return { kind: "app", ...appLink(MODULE_APP[w.module]) };
+  if (Object.hasOwn(MODULE_APP, w.module) && mayOpen(profile, MODULE_APP[w.module])) return { kind: "app", ...appLink(MODULE_APP[w.module]) };
   return { kind: "coming" };
 }

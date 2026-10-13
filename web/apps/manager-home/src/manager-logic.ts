@@ -122,11 +122,11 @@ export type NeedsTarget =
   | { view: null; app: string; href: string }
   | { view: null; screen: string };
 
-export function needsRowTarget(row: NeedsRow): NeedsTarget {
+export function needsRowTarget(row: NeedsRow, profile?: string): NeedsTarget {
   if (row.source_key === "tasks.open_shortages") return { view: "shortages" };
   if (row.source_key === "purchasing.receiving_differences") return { view: "receiving" };
   if (row.source_key === "approvals.waiting") return { view: "approvals" };
-  const link = needsLink(row.source_key);
+  const link = needsLink(row.source_key, profile);
   if (link !== null) return { view: null, app: link.app, href: link.href };
   return { view: null, screen: row.view !== "" ? row.view : row.screen };
 }
