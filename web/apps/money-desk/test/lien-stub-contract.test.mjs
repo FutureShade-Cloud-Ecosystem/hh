@@ -45,8 +45,8 @@ before(async () => {
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(appDir, "test", "stub", "money-desk-stub.mjs")], {
-    env: { ROLE_STUB_PORT: String(port) },
-    stdio: "ignore",
+    env: { ROLE_STUB_PORT: String(port), ROLE_STUB_STDIN_EXIT: "1" },
+    stdio: ["pipe", "ignore", "ignore"],
   });
   for (let i = 0; i < 100; i += 1) {
     try {
@@ -59,8 +59,9 @@ before(async () => {
   throw new Error("the stub did not start");
 });
 
+// The stub ends when its standard input closes: no signal is sent to it.
 after(() => {
-  child?.kill();
+  child?.stdin.end();
 });
 
 // A stub token for one account: the shape the stub reads a subject from.

@@ -983,3 +983,10 @@ const server = createServer((req, res) => {
 server.listen(port, () => {
   console.log(`money-desk-stub listening on ${port}`);
 });
+
+// A contract test that starts this stub ends it by closing the stub's standard input, never by a signal: with
+// ROLE_STUB_STDIN_EXIT set, the stub exits when that stream ends.
+if (process.env.ROLE_STUB_STDIN_EXIT === "1") {
+  process.stdin.resume();
+  process.stdin.on("end", () => process.exit(0));
+}
