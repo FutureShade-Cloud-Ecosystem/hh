@@ -104,7 +104,19 @@ test("the first cycle pulls the run, and the run sheet reads answer from the sto
   assert.equal(answer.staleness.neverPulled, false);
 });
 
+test("the sheet answers only the dealer's own day, never another day's run", async () => {
+  const { layer } = await rig();
+  const today = await layer.runs("2026-10-08");
+  assert.equal(today.ok, true);
+  if (!today.ok) return;
+  assert.equal(today.value.runs.length, 1);
+  const other = await layer.runs("2026-10-09");
+  if (!other.ok) return assert.fail("the answer should read");
+  assert.equal(other.value.runs.length, 0);
+});
+
 test("offline, loading and going en route stay local, then drain in order", async () => {
+
   const { layer, server, store } = await rig();
   server.setOffline(true);
   const loaded = await layer.advance(STOP_1, "LOADED");
@@ -178,7 +190,21 @@ test("the run close cannot queue: the manifest gives the runs scope no writable 
   assert.match(refused.message, /read only in this profile/);
 });
 
+test("a drive the run's own status refuses stays local, in the server's words", async () => {
+  const { layer, server } = await rig();
+  // The run was never dispatched: the pulled row carries it.
+  server.touch("runs", RUN, { status: "PLANNED" });
+  await layer.cycle();
+  const refused = await layer.advance(STOP_1, "EN_ROUTE");
+  assert.equal(refused.ok, false);
+  if (refused.ok) return;
+  assert.equal(refused.status, 409);
+  assert.match(refused.error, /the run has not been dispatched/);
+  assert.equal(await layer.waiting(), 0);
+});
+
 test("a money scope is refused at the door, before anything is stored", async () => {
+
   const { layer, store } = await rig();
   const refused = await layer.enqueueRaw({ scope: "price_matrix", op: "update", payload: { id: RUN } });
   assert.equal(refused.ok, false);

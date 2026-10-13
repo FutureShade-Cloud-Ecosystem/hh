@@ -81,9 +81,12 @@ export class DriveOffline {
     this.runner = new SyncRunner({ store: options.store, transport: options.transport, machine: syncMachine });
   }
 
-  /** One full cycle, to rest: push the outbox, then pull the scopes. */
+  /** One full cycle, to rest: push the outbox, then pull the scopes. Works
+   * from any resting state: an ONLINE the machine is past is a no-op, and the
+   * request that follows runs the cycle the state can take. */
   async cycle(): Promise<void> {
     await this.runner.dispatch({ type: "ONLINE" });
+    await this.runner.request();
     await this.runner.settled();
     this.#onChange?.();
   }
@@ -94,9 +97,22 @@ export class DriveOffline {
     void this.runner.request().then(() => this.#onChange?.());
   }
 
+  /** The last connectivity word the machine was fed, so a watcher that polls
+   * the platform dispatches only on a change. */
+  #lastOnline: boolean | null = null;
+
   /** Feed the platform's connectivity to the machine. */
   setOnline(online: boolean): Promise<void> {
+    if (this.#lastOnline === online) return Promise.resolve();
+    this.#lastOnline = online;
     return this.runner.dispatch(online ? { type: "ONLINE" } : { type: "OFFLINE" });
+  }
+
+  /** One cycle the caller waits on (a direct door just moved server state the
+   * next pull should carry: a photo uploaded beside the proof). */
+  async syncNow(): Promise<void> {
+    await this.runner.request();
+    this.#onChange?.();
   }
 
   async waiting(): Promise<number> {
@@ -141,6 +157,7 @@ export class DriveOffline {
       lines[row.id] = raw.map(toLine);
     }
     const runs = rows
+      .filter((runRow) => runRow.data["scheduled_date"] === day)
       .map((runRow) => {
         const own = runStops.filter((stop) => stops.rows.find((r) => r.id === stop.id)?.data["run_id"] === runRow.id);
         return toRun({ ...runRow.data, stops: own, stop_lines: lines });
@@ -160,13 +177,26 @@ export class DriveOffline {
   async advance(stopId: string, status: "LOADED" | "EN_ROUTE" | "FAILED", reason = ""): Promise<Result<DriverStop>> {
     const found = await this.store.read("stops", stopId);
     if (found.row === null) return { ok: false, error: "stop not found", status: 404 };
+    // The wall the store already knows is checked at the door, in the server's
+    // own words: an undelivered run the dispatcher never sent refuses the
+    // drive here, before anything is queued.
+    if (status === "EN_ROUTE") {
+      const runRow = await this.store.read("runs", String(found.row.data["run_id"] ?? ""));
+      if (runRow.row !== null && runRow.row.data["status"] !== "DISPATCHED") {
+        return { ok: false, error: "the run has not been dispatched", status: 409 };
+      }
+    }
+    // The payload declares the wire shape (status, and the reason a failed
+    // stop carries); the local projection keeps the stamped fields too.
     const fields: Bag = { status };
     if (status === "FAILED") fields["failure_reason"] = reason;
+    const payload: Bag = { id: stopId, status };
+    if (status === "FAILED" && reason !== "") payload["reason"] = reason;
     const enqueued = await this.#enqueueWithBase({
       scope: "stops",
       op: "update",
       entity: "stops",
-      payload: { ...fields, ...(status === "FAILED" && reason !== "" ? { reason } : {}), id: stopId },
+      payload,
       row: found.row,
     });
     if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };

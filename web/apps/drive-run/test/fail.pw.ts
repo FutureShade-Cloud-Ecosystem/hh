@@ -1,6 +1,6 @@
 // HH Drive, sub item 4a: could not deliver. A reason in the driver's own
 // words, the handback sentence, and a stop that is closed for good.
-import { test, expect, driverHandoff, resetStub, stubLog, takeFirstStopEnRoute } from "./helpers.js";
+import { test, expect, driverHandoff, resetStub, stubLog, takeFirstStopEnRoute, type LoggedCall } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -32,9 +32,24 @@ test("recording it sends the status and the reason, and closes the stop with the
   await expect(page.getByRole("status")).toContainText("Recorded. This stop is closed.");
   await expect(page.locator("[data-handback]")).toContainText("Nobody on site");
   await expect(page.locator("[data-handback]")).toContainText("Bring the load back to the yard");
-  const moves = (await stubLog(request)).filter((c) => c.path.endsWith("/status") && c.body?.status === "FAILED");
-  expect(moves).toHaveLength(1);
-  expect(moves[0].body).toEqual({ status: "FAILED", reason: "Nobody on site" });
+  // The move rides the outbox, and the replay declares the wire shape: the
+  // status and the reason, on the stops scope's push.
+  interface PushCall extends LoggedCall {
+    body: { ops: Array<Record<string, unknown>> } | null;
+  }
+  await expect
+    .poll(async () => {
+      const pushes = (await stubLog(request)).filter(
+        (c): c is PushCall => c.path === "/api/v1/sync/stops" && c.method === "POST",
+      );
+      return pushes.flatMap((p) => p.body?.ops ?? []).filter((op) => (op?.payload as Record<string, unknown>)?.status === "FAILED").length;
+    })
+    .toBe(1);
+  const pushes = (await stubLog(request)).filter(
+    (c): c is PushCall => c.path === "/api/v1/sync/stops" && c.method === "POST",
+  );
+  const failedOp = pushes.flatMap((p) => p.body?.ops ?? []).find((op) => (op?.payload as Record<string, unknown>)?.status === "FAILED");
+  expect((failedOp?.payload as Record<string, unknown>).reason).toBe("Nobody on site");
   await expect(page.getByRole("button", { name: "Delivered", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Could not deliver" })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to my run" }).click();
