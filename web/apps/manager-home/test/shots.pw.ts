@@ -70,6 +70,36 @@ for (const size of SIZES) {
       await page.locator(".view-link", { hasText: "Approvals" }).click();
       await expect(page.locator("[data-test='approvals-refusal']")).toBeVisible();
       await take("06", "approvals");
+
+      // Warranty: the board, the settled claim's detail with the settle sheet,
+      // the recovery worklist with its chase log, the service levels, the
+      // registry, the reports.
+      await page.getByRole("button", { name: "Back to Home" }).click();
+      await page.locator(".view-link", { hasText: "Warranty" }).click();
+      await expect(page.locator("[data-test='warranty-board']")).toBeVisible();
+      await take("07", "warranty-board");
+      await page.locator(".claim-card", { hasText: "WTY-1039" }).click();
+      await expect(page.locator("[data-test='warranty-claim-no']")).toHaveText("WTY-1039");
+      await page.getByRole("button", { name: "Record settlement" }).click();
+      await take("08", "warranty-settle-sheet");
+      await page.getByRole("button", { name: "Cancel" }).click();
+      await page.getByRole("button", { name: "Back to the board" }).click();
+      await page.getByRole("tab", { name: "Recovery" }).click();
+      await expect(page.locator("[data-test='warranty-recovery']")).toBeVisible();
+      await page.getByRole("button", { name: "Chase" }).first().click();
+      await expect(page.locator(".chase")).toBeVisible();
+      await take("09", "warranty-recovery");
+      await page.getByRole("tab", { name: "Service levels" }).click();
+      await expect(page.locator("[data-test='warranty-sla']")).toBeVisible();
+      await take("10", "warranty-sla");
+      await page.getByRole("tab", { name: "Vendor registry" }).click();
+      await expect(page.locator("[data-test='warranty-vendors']")).toBeVisible();
+      await page.getByRole("button", { name: "Northland Stone Supply (demo)" }).click();
+      await expect(page.locator(".vendor-panel")).toBeVisible();
+      await take("11", "warranty-vendors");
+      await page.getByRole("tab", { name: "Reports" }).click();
+      await expect(page.locator("[data-test='warranty-reports']")).toBeVisible();
+      await take("12", "warranty-reports");
     });
   }
 }

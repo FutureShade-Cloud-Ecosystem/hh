@@ -131,6 +131,7 @@ type store interface {
 	AdjustReserved(ctx context.Context, tx pgx.Tx, productID, locationID, branchID string, delta float64) error
 	BalanceFactsTx(ctx context.Context, tx pgx.Tx, productID, branchID string) (onHand, reserved float64, err error)
 	CloseReservationsBySource(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID, status string) (int, error)
+	LockHardHoldBalancesTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID string) error
 	CloseReservationByID(ctx context.Context, tx pgx.Tx, reservationID, status string) (int, error)
 	ExpireDueReservations(ctx context.Context, tx pgx.Tx) (int, error)
 

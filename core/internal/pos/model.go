@@ -583,6 +583,18 @@ const (
 	BalanceVisibilityHidden    = "HIDDEN"
 )
 
+// The two dispositions of a cancelled special order's supplier deposit (row
+// 1193): what the dealer's default (and a manager's per-order override to
+// keep) does with the deposit document's liability in 2300.
+const (
+	// SupplierDepositCancelCreditBack is the ruling's default: the deposit is
+	// credited back to the customer's account, DR 2300 / CR the receivable.
+	SupplierDepositCancelCreditBack = "CREDIT_BACK"
+	// SupplierDepositCancelKept is the manager's override (or the dealer's own
+	// default): the dealer keeps the deposit, DR 2300 / CR other income.
+	SupplierDepositCancelKept = "KEPT"
+)
+
 // PosPolicy is the branch-overridable POS behavior policy (pos_policy; branch NULL = org default).
 type PosPolicy struct {
 	BranchID         string `json:"branch_id"` // "" = the org-wide default row
@@ -613,6 +625,11 @@ type PosPolicy struct {
 	// comma-separated TEXT column; served as a list. Empty on the wire = the service DERIVED
 	// nothing (no curated set and no sales history), the client falls back to the full chip row.
 	QuickChipSet []string `json:"quick_chip_set,omitempty"`
+	// The dealer default a cancelled special order's supplier deposit takes (row
+	// 1193): CREDIT_BACK (the default, credited back to the customer's account)
+	// or KEPT (the dealer keeps it). A manager may keep it on a given order at
+	// the cancel itself, with a reason; this column is only the default.
+	SupplierDepositCancel string `json:"supplier_deposit_cancel"`
 }
 
 // WorkspacePrefs is the RESOLVED POS workspace for the calling user: their pos_user_workspace row
