@@ -117,6 +117,13 @@ const (
 	hrEmail       = "hr@hh-demo.invalid"
 	hrDisplayName = "HR (demo)"
 
+	// The Branch Manager (branch, tier two): the coming roles cycle's third
+	// login, working the one demo branch.
+	bmUserID      = "de5b2000-0000-4000-9000-000000000003"
+	bmPlatformID  = "de5b2000-0000-4000-9000-000000000003"
+	bmEmail       = "branch.manager@hh-demo.invalid"
+	bmDisplayName = "Branch manager (demo)"
+
 	// The roles behind the accounts, resolved by code against the
 	// roles catalog 0015 plants. staff_role_grant rows derive from these
 	// through identity.Populate, branch-scoped to the one branch below.
@@ -128,6 +135,7 @@ const (
 	controllerRoleCode = "FINANCIAL_CONTROLLER"
 	gmRoleCode         = "GENERAL_MANAGER"
 	hrRoleCode         = "HR"
+	bmRoleCode         = "BRANCH_MANAGER"
 
 	// The two personas migration 0200 plants, named by the same literals the
 	// flow table carries: the yard team's login and the driver's. The rows
@@ -457,6 +465,7 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 			controllerEmail: controllerPlatformID,
 			gmEmail:         gmPlatformID,
 			hrEmail:         hrPlatformID,
+			bmEmail:         bmPlatformID,
 		},
 	})
 	if err != nil {
@@ -528,6 +537,7 @@ func insertRoleAccounts(ctx context.Context, tx pgx.Tx) (int, error) {
 		{controllerUserID, controllerEmail, controllerDisplayName},
 		{gmUserID, gmEmail, gmDisplayName},
 		{hrUserID, hrEmail, hrDisplayName},
+		{bmUserID, bmEmail, bmDisplayName},
 	} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO users (id, email, display_name, status)
@@ -560,6 +570,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		{controllerUserID, controllerRoleCode},
 		{gmUserID, gmRoleCode},
 		{hrUserID, hrRoleCode},
+		{bmUserID, bmRoleCode},
 	} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_roles (user_id, role_id)
@@ -578,7 +589,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 	// follows the role's scope, never user_branch_grants) and are written
 	// only so the accounts have the same shape as the others. The buyer is
 	// branch scoped, so its Trenton row is its real grant.
-	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID, gmUserID, hrUserID} {
+	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID, gmUserID, hrUserID, bmUserID} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_branch_grants (user_id, branch_id)
 			SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
@@ -601,6 +612,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		{controllerUserID, controllerRoleCode},
 		{gmUserID, gmRoleCode},
 		{hrUserID, hrRoleCode},
+		{bmUserID, bmRoleCode},
 	} {
 		var n int
 		if err := tx.QueryRow(ctx, `
@@ -614,7 +626,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 			return 0, 0, fmt.Errorf("demo-populate: refusing: the roles catalog holds no %s row, the %s account would reach nothing", a.roleCode, a.userID)
 		}
 	}
-	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID, gmUserID, hrUserID} {
+	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID, gmUserID, hrUserID, bmUserID} {
 		var n int
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM user_branch_grants

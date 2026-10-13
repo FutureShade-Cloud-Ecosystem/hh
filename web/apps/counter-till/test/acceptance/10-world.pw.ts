@@ -42,7 +42,7 @@ test("the way in's data: the closed table's flows with role codes and labels", a
   const body = (await flows.json()) as {
     flows: Array<{ flow: string; role_code: string; label: string }>;
   };
-  expect(body.flows).toHaveLength(10);
+  expect(body.flows).toHaveLength(11);
   expect(body.flows.map((row) => row.flow)).toEqual([
     "sales",
     "sales-manager",
@@ -54,6 +54,7 @@ test("the way in's data: the closed table's flows with role codes and labels", a
     "financial-controller",
     "general-manager",
     "hr",
+    "branch-manager",
   ]);
   expect(body.flows.map((row) => row.role_code)).toEqual([
     "inside_sales",
@@ -66,6 +67,7 @@ test("the way in's data: the closed table's flows with role codes and labels", a
     "financial_controller",
     "general_manager",
     "hr",
+    "branch_manager",
   ]);
   expect(body.flows.map((row) => row.label)).toEqual([
     "Sales",
@@ -78,6 +80,7 @@ test("the way in's data: the closed table's flows with role codes and labels", a
     "Financial Controller",
     "General Manager",
     "HR",
+    "Branch Manager",
   ]);
   // The picture is the table itself, as the browser shows the core's answer:
   // the page loads the flows route and waits for its rows to be on the

@@ -175,6 +175,17 @@ var accounts = map[string]Account{
 		Label:          "HR",
 		Role:           "hr",
 	},
+	// The Branch Manager, the third of the coming roles cycle's logins
+	// (branch scoped, tier two): the branch's own floor, quotes, dispatch
+	// and Manager Home.
+	"branch-manager": {
+		Flow:           "branch-manager",
+		PlatformUserID: "de5b2000-0000-4000-9000-000000000003",
+		Email:          "branch.manager@" + ReservedDomain,
+		DisplayName:    "Branch manager (demo)",
+		Label:          "Branch Manager",
+		Role:           "branch_manager",
+	},
 }
 
 // Get returns the account one flow name stands for. The second return is
@@ -199,6 +210,7 @@ func All() []Account {
 		accounts["financial-controller"],
 		accounts["general-manager"],
 		accounts["hr"],
+		accounts["branch-manager"],
 	}
 }
 

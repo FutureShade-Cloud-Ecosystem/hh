@@ -21,6 +21,7 @@ func TestSessionMintsTheComingRoleFlows(t *testing.T) {
 	}{
 		{"general-manager", "de5b2000-0000-4000-9000-000000000001", "general_manager", "General Manager", "GLOBAL", identity.TierLeadership},
 		{"hr", "de5b2000-0000-4000-9000-000000000002", "hr", "HR", "GLOBAL", identity.TierLeadership},
+		{"branch-manager", "de5b2000-0000-4000-9000-000000000003", "branch_manager", "Branch Manager", "BRANCH", identity.TierManager},
 	} {
 		t.Run(tc.flow, func(t *testing.T) {
 			scope := identity.ScopeBranch
