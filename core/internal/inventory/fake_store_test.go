@@ -178,6 +178,12 @@ func (f *fakeStore) CloseReservationsBySource(_ context.Context, _ pgx.Tx, sourc
 	})
 }
 
+// LockHardHoldBalancesTx is a lock pass: nothing to lock in memory, the rows are already the
+// fake's own.
+func (f *fakeStore) LockHardHoldBalancesTx(_ context.Context, _ pgx.Tx, _, _ string) error {
+	return nil
+}
+
 func (f *fakeStore) CloseReservationByID(_ context.Context, _ pgx.Tx, reservationID, status string) (int, error) {
 	return f.closeMatching(status, func(r Reservation) bool { return r.ID == reservationID })
 }

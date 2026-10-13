@@ -58,7 +58,7 @@ func cwNewGuardWorld(t *testing.T) *cwGuardWorld {
 
 	appwrite := newAppwriteFake(t)
 	for _, sub := range []string{cwControllerUserID, qwSalesUserID, qwManagerUserID} {
-		appwrite.setTeam(sub, "org:"+demoOrgSlug)
+		appwrite.setTeam(sub, "org-"+demoOrgSlug)
 	}
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)

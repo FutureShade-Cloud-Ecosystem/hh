@@ -605,6 +605,10 @@ func (a w5aStockReserver) ReleaseBySourceTx(ctx context.Context, tx pgx.Tx, sour
 	return a.svc.ReleaseBySourceTx(ctx, tx, sourceType, sourceRefID, status)
 }
 
+func (a w5aStockReserver) LockHardHoldBalancesTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID string) error {
+	return a.svc.LockHardHoldBalancesTx(ctx, tx, sourceType, sourceRefID)
+}
+
 // w5aPickState satisfies order.PickStateReader over the W2/W3 tasks substrate.
 //
 // IT READS THE TABLE, NOT tasks.Service, and that is a considered choice with a stated reason: the

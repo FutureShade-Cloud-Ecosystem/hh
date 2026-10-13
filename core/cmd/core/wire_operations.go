@@ -505,7 +505,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("approvals", identity.NewApprovalsSyncStore(pool, link)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	syncRoutes, err := sync.NewHandler(syncEngine, log)
+	syncStaffRoles, syncPortalRoles := syncFenceSeams(pool)
+	syncRoutes, err := sync.NewHandler(syncEngine, syncStaffRoles, syncPortalRoles, log)
 	if err != nil {
 		panic("sync: handler construction refused to boot: " + err.Error())
 	}

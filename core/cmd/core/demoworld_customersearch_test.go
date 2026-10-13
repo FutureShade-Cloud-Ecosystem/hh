@@ -79,7 +79,7 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 	// The served surface and the demo Sales login, the one branch-scoped caller a tester actually
 	// holds (every demo login's single grant is at Trenton).
 	appwrite := newAppwriteFake(t)
-	appwrite.setTeam(qwSalesUserID, "org:"+demoOrgSlug)
+	appwrite.setTeam(qwSalesUserID, "org-"+demoOrgSlug)
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)
 	if _, err := rand.Read(acceptKey); err != nil {

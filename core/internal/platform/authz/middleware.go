@@ -28,10 +28,12 @@ const HeaderXOrg = "X-Org"
 // orgSlugPattern is the server-side slug shape pinned by the ADR-0020
 // addendum (docs/adr/0020-org-resolution.md, the enforcement vocabulary
 // section): the contract's XOrg parameter is a bare string, and this
-// pattern pins the vocabulary the platform's org:<slug> team names carry.
+// pattern pins the vocabulary the platform's org-<slug> team names carry,
+// and at most 32 characters so that org- plus the slug fits the Console's
+// 36 character Team id cap (OrgTeamID).
 // A slug that fails it is a shape failure and answers 400 before any
 // platform or database call.
-var orgSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+var orgSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,31}$`)
 
 // Refusal bodies. One body per family and byte-identical across every leg
 // of that family, which is what kills the oracle: no response may reveal

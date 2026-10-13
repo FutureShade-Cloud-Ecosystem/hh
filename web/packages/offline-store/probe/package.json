@@ -1,0 +1,18 @@
+{
+  "name": "@hardscapehouse/offline-store-probe8",
+  "version": "0.0.0",
+  "description": "Probe 8, standalone and outside the web workspace. Pins are the latest releases at probe time (Playwright 1.64.0, vite 8.3.4) and differ from the workspace lockfile (1.63.0, 8.3.1); the real store adopts the workspace pins.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "wa-sqlite": "1.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "vite": "8.3.4"
+  }
+}

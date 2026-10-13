@@ -3509,6 +3509,7 @@ export type OrderTransitionResult = {
 };
 export type OrderCancelRequest = {
   reason: string;
+  keep_deposit?: boolean;
 };
 export type OrderHeaderEditRequest = {
   requested_date: string;
@@ -4426,6 +4427,7 @@ export type PosPolicy = {
   lookup_presentation: "CARDS" | "ROWS";
   margin_visibility: "MANAGER_UP" | "ALL_STAFF" | "HIDDEN";
   balance_visibility: "ALL_STAFF" | "MANAGER_UP" | "HIDDEN";
+  supplier_deposit_cancel: "CREDIT_BACK" | "KEPT";
   quick_chip_set?: string[];
 };
 export type PosPolicyChange = {
