@@ -42,7 +42,8 @@ func newRouteFixture(t *testing.T) *routeFixture {
 	if err := engine.RegisterScope("orders", fake); err != nil {
 		t.Fatalf("register orders: %v", err)
 	}
-	h, err := NewHandler(engine, nil)
+	staffDouble, portalStub := allWriters()
+	h, err := NewHandler(engine, staffDouble, portalStub, nil)
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
@@ -274,12 +275,19 @@ func TestPushRouteBodyLegs(t *testing.T) {
 func TestHandlerRegistrationShape(t *testing.T) {
 	sg := testkit.NewStaffGuards(t)
 	engine := NewEngine()
-	h, err := NewHandler(engine, nil)
+	staffDouble, portalStub := allWriters()
+	h, err := NewHandler(engine, staffDouble, portalStub, nil)
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}
-	if _, err := NewHandler(nil, nil); err == nil {
+	if _, err := NewHandler(nil, staffDouble, portalStub, nil); err == nil {
 		t.Fatalf("a nil engine constructed a handler")
+	}
+	if _, err := NewHandler(engine, nil, portalStub, nil); err == nil {
+		t.Fatalf("a nil staff roles seam constructed a handler")
+	}
+	if _, err := NewHandler(engine, staffDouble, nil, nil); err == nil {
+		t.Fatalf("a nil portal roles seam constructed a handler")
 	}
 	rec := &patternRecorder{}
 	h.RegisterRoutes(rec, sg.Guards)

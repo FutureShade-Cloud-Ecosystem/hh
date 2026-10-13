@@ -94,8 +94,8 @@ func TestAppwriteConstructionFailsClosed(t *testing.T) {
 func TestAppwriteOrgMemberBothDirections(t *testing.T) {
 	src, stub := newAppwrite(t, func(s *appwriteStub) {
 		s.page = appwriteMembershipPage{Total: 2, Memberships: []appwriteMembership{
-			{TeamID: "org:otheryard", UserID: "platform-user-9"},
-			{TeamID: "org:yardone", UserID: "platform-user-1"},
+			{TeamID: "org-otheryard", UserID: "platform-user-9"},
+			{TeamID: "org-yardone", UserID: "platform-user-1"},
 		}}
 	})
 	member, err := src.OrgMember(context.Background(), "platform-user-1", "yardone")
@@ -119,7 +119,7 @@ func TestAppwriteOrgMemberBothDirections(t *testing.T) {
 func TestAppwriteTenantOrgs(t *testing.T) {
 	src, _ := newAppwrite(t, func(s *appwriteStub) {
 		s.page = appwriteMembershipPage{Total: 5, Memberships: []appwriteMembership{
-			{TeamID: "org:yardone", UserID: "platform-user-1"},
+			{TeamID: "org-yardone", UserID: "platform-user-1"},
 			{TeamID: "tenant:yardone:acme", UserID: "platform-user-1"},
 			{TeamID: "tenant:yardone:beta", UserID: "platform-user-1"},
 			{TeamID: "tenant:otheryard:gamma", UserID: "platform-user-1"},
@@ -185,7 +185,7 @@ func TestAppwriteFailClosedSingleAttempt(t *testing.T) {
 // carry the key: booleans, slug lists and errors only.
 func TestAppwriteAnswersCarryNoCredential(t *testing.T) {
 	src, stub := newAppwrite(t, func(s *appwriteStub) {
-		s.page = appwriteMembershipPage{Total: 1, Memberships: []appwriteMembership{{TeamID: "org:yardone", UserID: "platform-user-1"}}}
+		s.page = appwriteMembershipPage{Total: 1, Memberships: []appwriteMembership{{TeamID: "org-yardone", UserID: "platform-user-1"}}}
 	})
 	member, err := src.OrgMember(context.Background(), "platform-user-1", "yardone")
 	if err != nil || !member {

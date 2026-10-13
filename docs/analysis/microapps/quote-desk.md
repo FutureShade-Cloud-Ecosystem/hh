@@ -4,7 +4,7 @@
 
 # quote-desk: Quote Desk
 
-Audience: internal   Roles: inside_sales, outside_sales, sales_manager   Devices: tablet, desktop, phone   Environment: counter, site
+Audience: internal   Roles: inside_sales, outside_sales, sales_manager, branch_manager, general_manager   Devices: tablet, desktop, phone   Environment: counter, site
 Kit: guided-flow   Brand: fb-tokens   Shell: hh-work
 Offline: read_cache_plus_outbox. Scopes: products, price_matrix, customers, quotes. Conflict policy: quotes last_write_wins_by_field, price_matrix server_wins. Why this mode: outside sales works at a customer's site where signal is not a given, and a quote moves no money until conversion, which is stated as the reason quote editing is open to any active in-branch staff member while conversion is narrowly gated (`hardscapeos_dibbits/app/src/nav-access.ts`, `backend/internal/identity/rbac.go`). So a quote may be drafted offline and replayed; the price matrix is never authored here, only read.
 
