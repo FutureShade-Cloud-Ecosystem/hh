@@ -26,18 +26,20 @@ export function procurementHandoff(): void {
   }
 }
 
-/** Runs in the page before any script: the front door's record for another seat, given the role code (passed to addInitScript). */
-export function roleHandoff(roleCode: string): void {
+/** Runs in the page before any script: the front door's record for another seat, given the role code or a seat with its own account id (passed to addInitScript). */
+export function roleHandoff(seat: string | { roleCode: string; userId: string }): void {
+  const roleCode = typeof seat === "string" ? seat : seat.roleCode;
+  const userId = typeof seat === "string" ? "de110000-0000-4000-9000-000000000009" : seat.userId;
   const part = (value: unknown): string =>
     btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const exp = Math.floor(Date.now() / 1000) + 7 * 86_400;
-  const token = `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub: "de110000-0000-4000-9000-000000000009", exp })}.c2ln`;
+  const token = `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub: userId, exp })}.c2ln`;
   const record = {
     token,
     tokenExpiresAtMs: Date.now() + 7 * 86_400_000,
     flow: roleCode,
     roleLabel: roleCode,
-    user: { userId: "de110000-0000-4000-9000-000000000009", email: `${roleCode}@hh-demo.invalid`, name: `${roleCode} (demo)` },
+    user: { userId, email: `${roleCode}@hh-demo.invalid`, name: `${roleCode} (demo)` },
     roleCode,
     roleName: roleCode,
     tier: 2,
@@ -159,3 +161,47 @@ export async function openAreaAs(page: Page, request: APIRequestContext, seat: {
 
 export const AP = { code: "payables_receivables", stub: "payables-receivables" };
 export const SUPER = { code: "super_admin", stub: "super-admin" };
+
+// The two other seats this surface names: the yard manager (work: receive, count) and Payables and
+// Receivables (read), each with its own demo account id (the counts gate reads the token's sub, and
+// the stub's seat follows it). Passed to roleHandoff as the init script's argument.
+export const YARD_SEAT = { roleCode: "yard_manager", userId: "de110000-0000-4000-9000-000000000003" };
+export const PAYABLES_SEAT = { roleCode: "payables_receivables", userId: "de110000-0000-4000-9000-0000000000a1" };
+
+/** Switches to one of the app's areas once signed in, by its id (the tabs' data-area-id). */
+export async function showArea(page: Page, id: string): Promise<void> {
+  await page.locator(`nav.areas [data-area-id="${id}"]`).click();
+  await expect(page.locator(`nav.areas [data-area-id="${id}"][aria-current="true"]`)).toBeVisible();
+}
+
+/** Signs in as the procurement manager and lands on the inventory area's lookup. */
+export async function openInventory(page: Page, request: APIRequestContext, tab: string): Promise<void> {
+  await resetStub(request);
+  await page.addInitScript(procurementHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
+  await showArea(page, "inventory");
+  await page.locator(`[data-inv-tab="${tab}"]`).click();
+  await expect(page.locator(`[data-inv-tab="${tab}"][aria-current="true"]`)).toBeVisible();
+}
+
+/** Signs in as the procurement manager and lands on the counts area's sheets. */
+export async function openCounts(page: Page, request: APIRequestContext, tab: string): Promise<void> {
+  await resetStub(request);
+  await page.addInitScript(procurementHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
+  await showArea(page, "counts");
+  await page.locator(`[data-counts-tab="${tab}"]`).click();
+  await expect(page.locator(`[data-counts-tab="${tab}"][aria-current="true"]`)).toBeVisible();
+}
+
+/** Clears the handoff and re-signs in as another role on the same page. The
+ * new record is written directly: an init script would race the role's own
+ * still-registered script, which writes first and keeps the old seat. */
+export async function switchRole(page: Page, handoff: (...args: never[]) => void, arg?: unknown): Promise<void> {
+  await page.evaluate(() => window.sessionStorage.removeItem("hh-demo.front-door.session.v1"));
+  await page.evaluate(handoff as (arg: unknown) => void, arg);
+  await page.goto("/");
+  await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
+}

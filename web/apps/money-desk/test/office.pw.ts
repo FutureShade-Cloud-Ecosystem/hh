@@ -305,6 +305,8 @@ test("a dispute is checked, opened, shown on the invoice and the register, and c
 test("a payment is reversed with a reason, and the invoice is owing what it was", async ({ page, request }) => {
   await openDesk(page, request);
   await openAccount(page, "Riverstone Paving (demo)");
+  // The form fills the amount with what is owing once the account has loaded; typing before that is overwritten.
+  await expect(page.locator("[data-field='receive-amount']")).not.toHaveValue("");
   await page.locator("[data-field='receive-amount']").fill("250.00");
   await page.locator("[data-field='receive-reference']").fill("Cheque 7782");
   await page.getByRole("button", { name: "Record payment" }).click();

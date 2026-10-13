@@ -125,6 +125,12 @@ const BRANCHES = [
   },
 ];
 
+// The core's MarginFloorBps (staffcontext rbac.go): the floor the policy check holds a quote to.
+const MARGIN_FLOOR_BPS = 1200;
+// The core bounds the check's amounts (staffcontext maxPolicyCheckCents) and parses the branch as a uuid.
+const MAX_CHECK_CENTS = 1_000_000_000_000;
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const ACCOUNT_BRANCH = {
   "demo-account-sales": TRENTON_ID,
   "demo-account-sales-manager": TRENTON_ID,
@@ -642,7 +648,7 @@ function netUnitCents(ruleCents, discPct) {
 
 function marginBps(unitCents, costCents) {
   if (unitCents <= 0) return 0;
-  return Math.floor(((unitCents - costCents) * 10000) / unitCents);
+  return Math.trunc(((unitCents - costCents) * 10000) / unitCents);
 }
 
 // The floor decision on a discount write. Returns null when the write goes
@@ -1295,7 +1301,7 @@ const server = createServer(async (request, response) => {
         return;
       }
       const key = `${quote.id}:${lineNo}`;
-      const request = { id: `fr-${key}`, status: "PENDING", line_no: lineNo, disc_pct: Number(body.disc_pct) || 10 };
+      const request = { id: `fr-${key}`, status: body.status === "APPROVED" ? "APPROVED" : "PENDING", line_no: lineNo, disc_pct: Number(body.disc_pct) || 10, ...(body.used === true ? { used: true } : {}) };
       floorRequests.set(key, request);
       approvalCards.set(request.id, {
         quote_id: quote.id,
@@ -1805,7 +1811,17 @@ const server = createServer(async (request, response) => {
             respondJson(response, 400, { error: "quote: the discount must be a whole percent from 0 to 100" });
             return;
           }
-          const decision = floorDecision(caller, product, customer, disc);
+          let decision = floorDecision(caller, product, customer, disc);
+          if (decision !== null && !decision.cleared) {
+            // The requester's own APPROVED, unused request for this line clears the write once and is used up
+            // (the core's ConsumeApprovedFloorTx).
+            const standing = floorRequests.get(`${quote.id}:${lineNo}`);
+            const card = standing === undefined ? undefined : approvalCards.get(standing.id);
+            if (standing !== undefined && standing.status === "APPROVED" && standing.used !== true && card !== undefined && card.requested_by === caller.account.user_id) {
+              standing.used = true;
+              decision = { cleared: true, by: card.decided_by ?? caller.account.user_id };
+            }
+          }
           if (decision !== null && decision.cleared) {
             // The manager's own clearing: accepted once, stamped on the line.
             const before = snapshotOf(quote, line);
@@ -3009,14 +3025,45 @@ const server = createServer(async (request, response) => {
   }
 
   if (path === "/api/v1/staff/policy/check" && request.method === "POST") {
+    // The core's order (identity staffcontext, policyCheck): the body, then the caller's branch grants, then
+    // the margin against the 12% floor with the caller's own approved override; below the floor with no
+    // override is a 403 whose error is the block's sentence and whose block key carries the action block.
     readBody(request, response, (body) => {
-      if (!Number.isInteger(body.price_cents) || !Number.isInteger(body.cost_cents) || typeof body.branch_id !== "string") {
-        respondJson(response, 400, { error: "identity: price_cents, cost_cents and branch_id are required" });
+      if (!Number.isInteger(body.price_cents) || !Number.isInteger(body.cost_cents) || typeof body.branch_id !== "string" || body.branch_id === "") {
+        respondJson(response, 400, { error: "price_cents, cost_cents and branch_id are required" });
+        return;
+      }
+      if (!UUID_SHAPE.test(body.branch_id)) {
+        respondJson(response, 400, { error: "branch_id must be a branch id" });
+        return;
+      }
+      if (body.price_cents < 0 || body.cost_cents < 0 || body.price_cents > MAX_CHECK_CENTS || body.cost_cents > MAX_CHECK_CENTS) {
+        respondJson(response, 400, { error: "price_cents and cost_cents must be between 0 and 1000000000000" });
+        return;
+      }
+      // A global caller reaches any branch; every stub account is branch scoped today, so this is its own branch.
+      if (caller.account.scope !== "GLOBAL" && body.branch_id !== caller.branchId) {
+        respondJson(response, 403, { error: "that branch is outside your grants" });
         return;
       }
       const margin = marginBps(body.price_cents, body.cost_cents);
-      const override = caller.account.role_code === "sales_manager";
-      respondJson(response, 200, { allowed: margin >= 2000 || override, margin_bps: margin, override });
+      // The caller's own APPROVED request at the branch that no line write has used up yet (the core's
+      // HasUnusedApprovedOverride).
+      let override = false;
+      for (const row of floorRequests.values()) {
+        const card = approvalCards.get(row.id);
+        const quote = card === undefined ? undefined : quotes.get(card.quote_id);
+        if (row.status === "APPROVED" && row.used !== true && card !== undefined && card.requested_by === caller.account.user_id && (quote === undefined ? TRENTON_ID : quote.branch_id) === body.branch_id) override = true;
+      }
+      if (margin < MARGIN_FLOOR_BPS && !override) {
+        const detail = `margin ${margin} bps is below the ${MARGIN_FLOOR_BPS} bps floor`;
+        respondJson(response, 403, {
+          error: detail,
+          block: { policy_type: "MARGIN_BELOW_MINIMUM", branch_id: body.branch_id, detail, data: { margin_bps: String(margin), floor_bps: String(MARGIN_FLOOR_BPS) } },
+        });
+        return;
+      }
+      respondJson(response, 200, { allowed: true, margin_bps: margin, override });
     });
     return;
   }
