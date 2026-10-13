@@ -179,7 +179,7 @@ const decodeEntities = (s) =>
 const cellsOf = (page) =>
   [...page.matchAll(/<figure class="cell"><figcaption>([\s\S]*?)<\/figcaption>([\s\S]*?)<\/figure>/g)].map((m) => ({
     caption: decodeEntities(m[1]),
-    markup: decodeEntities(m[2]),
+    markup: decodeEntities(m[2].replace(/<!--[\s\S]*?-->/g, '')),
   }));
 
 const FIDELITY_CELLS = [
