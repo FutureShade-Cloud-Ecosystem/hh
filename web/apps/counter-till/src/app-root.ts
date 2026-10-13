@@ -36,6 +36,7 @@ import {
 } from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import {
   TillClient,
@@ -366,6 +367,8 @@ export class CounterTillApp extends HHElement {
   readonly #sessions = new SessionStore();
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
+  /** The custody the served config chose: the demo controller as always, or this page recovering its own session (boot-custody.ts). */
+  readonly #custody: Custody;
   readonly #tillClient: TillClient;
   /** The theme choice: Auto follows the system, Light and Brand pin it; tab memory only (see theme.ts). */
   readonly #theme = new ThemeController(() => this.requestUpdate());
@@ -445,14 +448,30 @@ export class CounterTillApp extends HHElement {
     // (the amount and the approver roles beside the envelope) reaches the
     // returns flow: the generated client carries the error string alone.
     const capture = new RefundApprovalCapture();
+    // The demo adapter's own client carries no staff bearer: the demo routes
+    // are pre-auth by design (the tap-a-role sign-in), and the served gate
+    // holds the pages and the demo mint behind basic authentication, where a
+    // request already carrying an Authorization header of the wrong kind is
+    // refused. The adapter's asks go out bare of a credential, the browser
+    // answers the gate's challenge the way it answered the page, and the org
+    // header still rides every call the app makes.
+    const demoClient = new ApiClient({
+      baseUrl: "",
+      fetch: capture.fetch,
+      headers: async () => ({ "X-Org": DEMO_ORG }),
+    });
+    this.#account = new DemoAccount({ client: demoClient });
+    this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
+    this.#custody = bootCustody(servedConsoleConfig(), { sessions: this.#sessions, demoAccount: this.#account, demoOrg: DEMO_ORG });
+    this.#controller = this.#custody.controller;
     const staffHeaders = authHeaderProvider({
       callerClass: "staff",
       sessions: this.#sessions,
-      activeOrg: () => DEMO_ORG,
+      activeOrg: () => this.#custody.org,
     });
     // The pay balance refusal's money fields ride the same transport: one more wrapper, same rule.
     const payBalanceCapture = new PayBalanceCapture(capture.fetch);
-    const client = new ApiClient({ baseUrl: "", fetch: payBalanceCapture.fetch, headers: staffHeaders });
+    const client = new ApiClient({ baseUrl: this.#custody.coreBaseUrl, fetch: payBalanceCapture.fetch, headers: staffHeaders });
     // The feedback widget's sender rides the staff client: the feedback
     // route is staff guarded and the till's own custody holds the bearer.
     this.#feedbackSender = async (request) => {
@@ -469,27 +488,13 @@ export class CounterTillApp extends HHElement {
       }
       return { ok: false, error: answer.error };
     };
-    // The demo adapter's own client carries no staff bearer: the demo routes
-    // are pre-auth by design (the tap-a-role sign-in), and the served gate
-    // holds the pages and the demo mint behind basic authentication, where a
-    // request already carrying an Authorization header of the wrong kind is
-    // refused. The adapter's asks go out bare of a credential, the browser
-    // answers the gate's challenge the way it answered the page, and the org
-    // header still rides every call the app makes.
-    const demoClient = new ApiClient({
-      baseUrl: "",
-      fetch: capture.fetch,
-      headers: async () => ({ "X-Org": DEMO_ORG }),
-    });
-    this.#account = new DemoAccount({ client: demoClient });
-    this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
     // The approver's client exists for the one credit note call that may carry the approver's credential:
     // its provider takes the token out of the one time slot during that send, and taking is dropping, so
     // the token rests nowhere before and survives nothing after. The clerk's client is a different
     // instance and never carries it. Nothing here touches storage or logs.
     const approverCredential = new OneTimeCredential();
     const approverClient = new ApiClient({
-      baseUrl: "",
+      baseUrl: this.#custody.coreBaseUrl,
       headers: async () => {
         const headers = await staffHeaders();
         const token = approverCredential.take();
@@ -544,6 +549,7 @@ export class CounterTillApp extends HHElement {
       // picture shows its category's tile for every dealer, and keeps the stone-stack glyph only
       // where the tiles do not know the category (test/product-tiles-build.test.mjs).
       productTile: productTileUrl,
+      baseUrl: this.#custody.coreBaseUrl,
     });
   }
 
@@ -570,6 +576,12 @@ export class CounterTillApp extends HHElement {
     // The system's light setting is honoured from the first paint; the Theme
     // control in the account area cycles Auto, Light and Brand.
     this.#theme.start();
+    // Console mode: this page recovers its own session (the pop-out included: it opens from this
+    // tab, so it carries the same recovery) and the demo cards never apply.
+    if (this.#custody.mode === "console") {
+      this.#custody.begin("counter-till", (outcome) => this.#onRecovered(outcome));
+      return;
+    }
     // The flows read happens once; the pop-out, when this window is one,
     // chains on the same answer rather than asking the route twice.
     this.#flowsLoaded = this.#loadFlows();
@@ -650,6 +662,41 @@ export class CounterTillApp extends HHElement {
     this.#activeFlow = handed.flow;
     this.requestUpdate();
     await this.#initTill(true);
+  }
+
+  /**
+   * Console mode: this page recovered its own session, or could not. The person's role comes from
+   * the exchange (not a flow table): the chrome, the receipt's clerk and the ported surface read it.
+   * An unavailable page shows the entry's unavailable state while the custody retries; a session the
+   * front door must settle goes back there.
+   */
+  #onRecovered(outcome: AppStart): void {
+    if (outcome.kind === "ready") {
+      const entry = outcome.entry;
+      this.#clerkUserId = entry.userId;
+      this.#clerkRoleCode = entry.roleCode;
+      this.#clerkIdentity = {
+        user_id: entry.userId,
+        email: entry.email,
+        display_name: entry.name,
+        role_code: entry.roleCode,
+        role_name: entry.roleLabel,
+        tier: entry.tier,
+        scope: entry.scope,
+      };
+      this.#till = { label: entry.roleLabel };
+      this.#activeFlow = entry.flow;
+      this.requestUpdate();
+      void this.#initTill(true);
+      return;
+    }
+    if (outcome.kind === "front-door" && outcome.why === "ended") {
+      void this.#signOut();
+      return;
+    }
+    this.#flowsState = { kind: "unavailable", status: null };
+    if (outcome.kind === "front-door") this.#custody.toFrontDoor();
+    this.requestUpdate();
   }
 
   /**
@@ -926,7 +973,8 @@ export class CounterTillApp extends HHElement {
     if (this.#busy) return;
     this.#busy = true;
     this.requestUpdate();
-    await this.#controller.signOut();
+    // Console mode also forgets the persona id and stops the recovery loops, then goes to the front door.
+    await (this.#custody.mode === "console" ? this.#custody.leave() : this.#controller.signOut());
     // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
     clearFrontDoorHandoff();
     this.#busy = false;
