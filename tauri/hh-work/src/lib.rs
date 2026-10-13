@@ -200,11 +200,77 @@ mod tests {
     }
 
     #[test]
-    fn the_work_crate_has_no_probe_feature() {
-        // Field keeps a probe feature for the probe 4 proof runs, off by
-        // default; Work never had a probe, so there is nothing to turn on.
+    fn the_work_crate_has_no_probe_feature_and_one_gated_proof_feature() {
+        // Field keeps a probe feature for the probe 4 proof runs; Work never had
+        // a probe. Work has exactly one cargo feature, `shell-proof` (the built
+        // shell's role leg proof, item 8c), off by default.
         assert!(!CARGO_TOML.contains("probe"), "Work carries no probe scaffolding");
-        assert!(!CARGO_TOML.contains("[features]"), "Work declares no cargo features");
+        let features = CARGO_TOML.split("[features]").nth(1).expect("a [features] table");
+        let features = features.split("\n[").next().unwrap();
+        let declared: Vec<&str> = features.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+        assert_eq!(declared, ["default = []", "shell-proof = []"], "the feature table is exactly default and shell-proof");
+    }
+
+    // The proof mode's source files, read from disk so a missing file is an
+    // assertion failure here and not a build break in the default build.
+    fn crate_file(rel: &str) -> String {
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/").to_string() + rel).unwrap_or_default()
+    }
+
+    #[test]
+    fn the_proof_mode_is_compiled_in_only_with_its_feature() {
+        let lib = include_str!("lib.rs");
+        let production = lib.split("#[cfg(test)]").next().unwrap();
+        // every use of the script and the report command sits under the gate
+        for needle in ["include_str!(\"../proof.js\")", "fn proof_report", "proof_report,"] {
+            let at = production.find(needle).unwrap_or_else(|| panic!("{needle} is missing from lib.rs"));
+            let before = &production[..at];
+            let gate = before.rfind("#[cfg(feature = \"shell-proof\")]").unwrap_or_else(|| panic!("no gate before {needle}"));
+            assert!(at - gate < 400, "{needle} is not directly under the shell-proof gate");
+        }
+        let build = crate_file("build.rs");
+        assert!(build.contains("#[cfg(feature = \"shell-proof\")]"), "build.rs gates the proof command");
+        assert!(build.contains("\"proof_report\""), "build.rs declares the proof command by name");
+        assert!(build.contains("./capabilities*/*.json") && build.contains("./capabilities/*.json"), "build.rs reads the proof capability folder only with the feature");
+    }
+
+    #[test]
+    fn a_default_build_carries_no_proof_command_grant_or_capability() {
+        #[cfg(not(feature = "shell-proof"))]
+        for built in [BUILT_ACL_MANIFEST, BUILT_CAPABILITIES] {
+            assert!(!built.contains("proof"), "proof scaffolding is in the default build's ACL");
+        }
+        assert!(!CAPABILITY.contains("proof"), "default.json grants no proof command");
+        assert!(!TAURI_CONF.contains("proof"), "tauri.conf.json names no proof mode");
+        let cap: serde_json::Value = serde_json::from_str(&crate_file("capabilities-proof/proof.json")).expect("the proof capability parses");
+        assert_eq!(cap["permissions"], serde_json::json!(["allow-proof-report"]), "the proof capability grants the report command and nothing else");
+        assert_eq!(cap["windows"], serde_json::json!(["main"]));
+        assert!(cap.get("remote").is_none());
+    }
+
+    #[test]
+    fn the_proof_script_drives_the_host_through_its_own_page_and_opens_no_remote_origin() {
+        let script = crate_file("proof.js");
+        assert!(!script.is_empty(), "proof.js exists");
+        assert!(script.contains("proof_report"), "the script reports through the one proof command");
+        assert!(script.contains("HH_SHELL_PROOF") || !script.contains("println"), "the Rust side prints the line, not the script");
+        for banned in ["eval(", "new Function", "http://", "https://", "keychain", "auth_sign_in", "run_statement", "innerHTML", "WebSocket"] {
+            assert!(!script.contains(banned), "proof.js contains {banned}");
+        }
+        // it answers the demo mint locally, only for the two demo paths
+        assert!(script.contains("/api/v1/demo/session") && script.contains("/api/v1/demo/flows"));
+    }
+
+    #[test]
+    fn the_proof_mode_ends_the_run_by_itself_with_one_line() {
+        let lib = include_str!("lib.rs");
+        let production = lib.split("#[cfg(test)]").next().unwrap();
+        assert!(production.contains("HH_SHELL_PROOF"), "one HH_SHELL_PROOF line is printed");
+        assert!(production.contains("app.exit("), "the run ends itself");
+        assert!(production.contains("initialization_script_for_all_frames"), "the script reaches the door frame");
+        // the webview cannot enable the mode: there is no command that sets it,
+        // and the report command only prints and exits
+        assert!(!production.contains("fn enable_proof"), "no command turns the proof mode on");
     }
 
     #[test]
@@ -259,9 +325,17 @@ mod tests {
     fn the_csp_is_strict_and_the_window_is_built_by_the_shell() {
         let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
         let csp = conf["app"]["security"]["csp"].as_str().expect("a CSP is set");
-        for directive in ["default-src 'self'", "script-src 'self'", "object-src 'none'", "frame-ancestors 'none'"] {
+        for directive in [
+            "default-src 'self'",
+            "script-src 'self'",
+            "object-src 'none'",
+            "frame-src 'self'",
+            "frame-ancestors 'self'",
+        ] {
             assert!(csp.contains(directive), "the CSP holds {directive}");
         }
+        assert!(!csp.contains("frame-ancestors 'none'"), "the host frames its own desk apps, so 'none' is gone");
+        assert!(!csp.contains("child-src"), "frame-src alone carries the frames");
         assert!(!csp.contains("unsafe-eval"), "no eval");
         assert!(!csp.contains("script-src 'self' 'unsafe-inline'"), "no inline script");
         assert_eq!(conf["app"]["withGlobalTauri"], serde_json::json!(false));

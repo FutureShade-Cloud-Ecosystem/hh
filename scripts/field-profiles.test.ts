@@ -234,3 +234,53 @@ describe("work launcher entries", () => {
     ]);
   });
 });
+
+describe("work shell host assembly", () => {
+  // The Work profile opens a host page (web/apps/work-shell) at the dist root;
+  // the front door is a page under it at /door/ (the host mounts it as its
+  // sign in and role picker). Field keeps the front door at its root.
+  const work = () => readFileSync(resolve(REPO_ROOT, "tauri/hh-work/assemble-dist.sh"), "utf8");
+
+  test("the host is built into the dist root and is the launcher entry", () => {
+    const script = work();
+    expect(script).toContain('npm --prefix "$ROOT/web/apps/work-shell" run build');
+    expect(script).toContain('cp -r "$ROOT/web/apps/work-shell/dist/." "$DIST/"');
+  });
+
+  test("the front door is built at /door/ and is not copied to the dist root", () => {
+    const script = work();
+    expect(script).toContain('build_app front-door /door/ "$DIST/door/"');
+    expect(script).not.toContain('cp -r "$ROOT/web/apps/front-door/dist/." "$DIST/"');
+  });
+
+  test("the front door page keeps its own launch paths: its tiles are the same hrefs the launch map ships", () => {
+    const roles = readFileSync(resolve(REPO_ROOT, "web/apps/front-door/src/roles.ts"), "utf8");
+    for (const href of ["/till/", "/quote/", "/dispatch/", "/buying-and-stock/", "/home/", "/dealer-admin/", "/money-desk/"]) {
+      expect(roles).toContain(`href: "${href}"`);
+    }
+  });
+
+  test("a launch.json is written from the LAUNCH_MAP, beside profile.json", () => {
+    const script = work();
+    expect(script).toContain('"$DIST/launch.json"');
+    expect(script).toContain('"$DIST/profile.json"');
+  });
+
+  test("the host's web app is a workspace app named in the Work scope", () => {
+    const pkg = JSON.parse(readFileSync(resolve(REPO_ROOT, "web/apps/work-shell/package.json"), "utf8"));
+    expect(pkg.name).toBe("@hardscapehouse/work-shell");
+  });
+
+  test("Field keeps the front door at its dist root", () => {
+    const script = readFileSync(resolve(REPO_ROOT, "tauri/hh-field/assemble-dist.sh"), "utf8");
+    expect(script).toContain('cp -r "$ROOT/web/apps/front-door/dist/." "$DIST/"');
+    expect(script).not.toContain("work-shell");
+  });
+
+  test("the Work README names the host as the entry and the front door as a page under it", () => {
+    const readme = readFileSync(resolve(REPO_ROOT, "tauri/hh-work/README.md"), "utf8");
+    expect(readme).toContain("web/apps/work-shell");
+    expect(readme).toContain("/door/");
+    expect(readme).toContain("shell-proof");
+  });
+});
