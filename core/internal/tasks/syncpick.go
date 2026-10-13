@@ -112,11 +112,26 @@ func parsePickedLines(raw any) ([]PickedLineInput, error) {
 			if !ok {
 				return nil, refusedf("picked line %d: %s must be a string", i+1, k)
 			}
+			if hasControlChar(v) {
+				return nil, refusedf("picked line %d: %s cannot hold control characters, enter it as plain text", i+1, k)
+			}
 			*dst = v
 		}
 		out = append(out, l)
 	}
 	return out, nil
+}
+
+// hasControlChar reports a control character (C0, DEL) or a bidi control (U+202A to U+202E, U+2066 to
+// U+2069) in client text: a NUL fails the write, and the rest would reorder or break what a screen shows.
+// A device cannot retype what is queued, so the door refuses it as that op's rejection.
+func hasControlChar(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkPickedOnly refuses a record op that carries anything beside the row address and the lines:

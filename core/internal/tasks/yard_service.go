@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
@@ -179,7 +180,12 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 		}
 		l.Description = strings.TrimSpace(l.Description)
 		if len(l.Description) > 400 {
-			l.Description = l.Description[:400]
+			// On a character boundary: a cut inside a multibyte character is invalid UTF-8 and fails the write.
+			cut := 400
+			for cut > 0 && !utf8.RuneStart(l.Description[cut]) {
+				cut--
+			}
+			l.Description = l.Description[:cut]
 		}
 		if l.ProductID != "" && !looksLikeUUID(l.ProductID) {
 			return nil, httpx.BadRequestf("product_id must be a uuid")

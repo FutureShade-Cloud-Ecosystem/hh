@@ -1246,6 +1246,9 @@ func (s *Service) CapturePOD(ctx context.Context, stopID string, in PODInput) (S
 	if name == "" {
 		return StopDetail{}, httpx.BadRequestf("dispatch: type the full name of the person receiving this delivery")
 	}
+	if err := checkTypedName(name); err != nil {
+		return StopDetail{}, err
+	}
 	if !in.Affirmed {
 		return StopDetail{}, httpx.BadRequestf("dispatch: the recipient must confirm the delivery before it can be signed")
 	}
@@ -1277,6 +1280,27 @@ func (s *Service) CapturePOD(ctx context.Context, stopID string, in PODInput) (S
 	s.afterPOD(ctx, stop, ref, at)
 	s.handoff(ctx, stop, at)
 	return s.StopDetail(ctx, stop.ID)
+}
+
+// maxTypedNameBytes is the signature provider's own bound on a typed name, checked here first so a
+// name it would refuse is this door's client fault and never an unmapped provider error.
+const maxTypedNameBytes = 200
+
+// checkTypedName refuses a typed name the record could not hold or print safely: over the provider's
+// bound, or carrying a control character (C0, DEL) or a bidi control (U+202A to U+202E, U+2066 to
+// U+2069), which would fail the write (NUL) or reorder the name on a screen or a printout. Both doors
+// reach it through CapturePOD, so a name a device queued while offline is refused as that op's
+// rejection and never fails the whole push on every replay.
+func checkTypedName(name string) error {
+	if len(name) > maxTypedNameBytes {
+		return httpx.BadRequestf("dispatch: that name is too long, type the full name in at most %d bytes", maxTypedNameBytes)
+	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+			return httpx.BadRequestf("dispatch: the name cannot hold control characters, type the full name as plain text")
+		}
+	}
+	return nil
 }
 
 // handoff advances the order toward invoicing once every live stop for it is delivered.
