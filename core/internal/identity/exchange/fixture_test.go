@@ -80,7 +80,7 @@ func (f *fakeClaims) ClaimJWT(_ context.Context, h [32]byte, exp time.Time) (boo
 	if f.err != nil {
 		return false, f.err
 	}
-	if exp.IsZero() || exp.After(f.now.Add(f.bound)) {
+	if exp.IsZero() || !exp.After(f.now) || exp.After(f.now.Add(f.bound)) {
 		return false, identity.ErrJWTExpOutOfBound
 	}
 	if f.seen[h] {

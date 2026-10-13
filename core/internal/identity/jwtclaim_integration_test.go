@@ -4,6 +4,7 @@ package identity
 
 import (
 	"context"
+	"errors"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -89,8 +90,10 @@ func TestClaimJWTRefusesAnExpOutsideTheBound(t *testing.T) {
 	c := newClaims(t, pool, nil)
 	h := HashJWTSignature([]byte("bound-signature"))
 	for name, exp := range map[string]time.Time{
-		"zero":         {},
-		"beyond bound": time.Now().Add(MinJWTClaimBound + time.Minute),
+		"zero":            {},
+		"beyond bound":    time.Now().Add(MinJWTClaimBound + time.Minute),
+		"one second past": time.Now().Add(-time.Second),
+		"exactly now":     time.Now(),
 	} {
 		if ok, err := c.ClaimJWT(context.Background(), h, exp); err == nil || ok {
 			t.Errorf("%s: claimed=%v err=%v", name, ok, err)
@@ -136,5 +139,57 @@ func TestClaimJWTPurgesExpiredRowsABoundedNumberPerClaim(t *testing.T) {
 func TestNewJWTClaimsRefusesABoundBelowTheConsoleJWTLife(t *testing.T) {
 	if _, err := NewJWTClaims(nil, MinJWTClaimBound); err == nil {
 		t.Fatal("nil pool accepted")
+	}
+}
+
+// A past exp is refused before anything is written, so the purge can never
+// forget a row the same call just inserted: claiming a hash with an exp one
+// second in the past twice refuses both times and leaves no row.
+func TestClaimJWTWithAPastExpRefusesTwiceAndKeepsNothing(t *testing.T) {
+	pool := claimTestPool(t)
+	c := newClaims(t, pool, nil)
+	h := HashJWTSignature([]byte("past-exp-signature"))
+	for i := 0; i < 2; i++ {
+		ok, err := c.ClaimJWT(context.Background(), h, time.Now().Add(-time.Second))
+		if !errors.Is(err, ErrJWTExpOutOfBound) || ok {
+			t.Fatalf("attempt %d: claimed=%v err=%v, want ErrJWTExpOutOfBound", i, ok, err)
+		}
+	}
+	var n int
+	_ = pool.QueryRow(context.Background(), `SELECT count(*) FROM console_jwt_claim WHERE sig_hash = $1`, h[:]).Scan(&n)
+	if n != 0 {
+		t.Fatalf("%d row(s) left", n)
+	}
+}
+
+// The purge keeps a row whose exp has only just passed (inside the bound
+// margin) and removes one older than the margin.
+func TestClaimJWTPurgeKeepsRowsInsideTheMargin(t *testing.T) {
+	pool := claimTestPool(t)
+	ctx := context.Background()
+	recent := HashJWTSignature([]byte("margin-recent"))
+	old := HashJWTSignature([]byte("margin-old"))
+	t.Cleanup(func() {
+		_, _ = pool.Exec(ctx, `DELETE FROM console_jwt_claim WHERE sig_hash = ANY($1)`, [][]byte{recent[:], old[:]})
+	})
+	now := time.Now()
+	if _, err := pool.Exec(ctx, `INSERT INTO console_jwt_claim (sig_hash, exp) VALUES ($1, $2), ($3, $4)`,
+		recent[:], now.Add(-time.Minute), old[:], now.Add(-MinJWTClaimBound-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	c := newClaims(t, pool, func() time.Time { return now })
+	h := HashJWTSignature([]byte("margin-driver"))
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM console_jwt_claim WHERE sig_hash = $1`, h[:]) })
+	if ok, err := c.ClaimJWT(ctx, h, now.Add(5*time.Minute)); err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	var keptRecent, keptOld int
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM console_jwt_claim WHERE sig_hash = $1`, recent[:]).Scan(&keptRecent)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM console_jwt_claim WHERE sig_hash = $1`, old[:]).Scan(&keptOld)
+	if keptRecent != 1 {
+		t.Fatal("a row that expired inside the margin was purged")
+	}
+	if keptOld != 0 {
+		t.Fatal("a row older than the margin survived the purge")
 	}
 }
