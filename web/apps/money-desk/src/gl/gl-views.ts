@@ -10,10 +10,11 @@
 // and trial balance screens.
 import { html, nothing, type TemplateResult } from "lit";
 import type { Branch, GlJournal, GlTrialBalanceResult, IdentityApproval } from "@hardscapehouse/api-client";
-import { approvalKind, approvalTitle, canDecide, detailWords, floorFigures, floorWords, journalTone, journalWord } from "./gl-logic.js";
+import { approvalKind, approvalTitle, canDecide, detailWords, floorFigures, floorWords, journalTone, journalWord, monthWord } from "./gl-logic.js";
 import { formatMoney } from "./gl-money.js";
+import { chartView, checksView, composerView, confirmFor, linesTable, periodsView, policyView, recurringView, type BooksModel } from "./gl-books.js";
 
-export type GlTab = "approvals" | "journals" | "trial";
+export type GlTab = "approvals" | "journals" | "chart" | "trial" | "periods" | "checks" | "policy";
 export type JournalFilter = "all" | "pending" | "posted" | "draft" | "void";
 
 export interface GlModel {
@@ -33,6 +34,7 @@ export interface GlModel {
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
+  readonly books: BooksModel;
 }
 
 const FILTERS: ReadonlyArray<{ id: JournalFilter; word: string }> = [
@@ -82,7 +84,7 @@ function later(word: string): TemplateResult {
 
 function messages(model: GlModel): TemplateResult {
   return html`
-    ${model.error !== "" ? html`<p class="gl-alert gl-alert-error" role="alert" data-error>${model.error}</p>` : nothing}
+    ${model.error !== "" && model.books.confirm === null ? html`<p class="gl-alert gl-alert-error" role="alert" data-error>${model.error}</p>` : nothing}
     ${model.notice !== "" ? html`<p class="gl-alert gl-alert-ok" role="status" data-notice>${model.notice}</p>` : nothing}
   `;
 }
@@ -104,15 +106,29 @@ function loadFailed(model: GlModel): TemplateResult {
   `;
 }
 
+/** The tabs a mode holds, in bar order. A reader (Payables and Receivables) has no approvals to decide. */
+export function tabsFor(mode: "controller" | "reader"): ReadonlyArray<{ id: GlTab; label: string }> {
+  const all: ReadonlyArray<{ id: GlTab; label: string }> = [
+    { id: "approvals", label: "Approvals" },
+    { id: "journals", label: "Journals" },
+    { id: "chart", label: "Chart" },
+    { id: "trial", label: "Trial balance" },
+    { id: "periods", label: "Periods" },
+    { id: "checks", label: "Checks" },
+    { id: "policy", label: "Policy" },
+  ];
+  return mode === "controller" ? all : all.filter((t) => t.id !== "approvals");
+}
+
 function tabs(model: GlModel): TemplateResult {
   const pending = model.journals.filter((j) => j.derived_status === "PENDING_APPROVAL").length;
-  const tab = (id: GlTab, label: string, count: number | null): TemplateResult => html`
-    <button type="button" class="gl-tab" data-action="gl-tab" data-tab=${id} data-tab-id=${id} aria-current="${model.tab === id ? "true" : "false"}">${label}${count === null ? nothing : html`<span class="gl-count">${count}</span>`}</button>
-  `;
+  const count = (id: GlTab): number | null => (id === "approvals" ? model.approvals.length : id === "journals" && pending > 0 ? pending : null);
   return html`
     <nav class="gl-tabs" aria-label="Ledger views">
-      ${tab("approvals", "Approvals", model.approvals.length)} ${tab("journals", "Journals", pending === 0 ? null : pending)}
-      ${tab("trial", "Trial balance", null)}
+      ${tabsFor(model.books.mode).map((t) => {
+        const n = count(t.id);
+        return html`<button type="button" class="gl-tab" data-action="gl-tab" data-tab=${t.id} data-tab-id=${t.id} aria-current="${model.tab === t.id ? "true" : "false"}">${t.label}${n === null ? nothing : html`<span class="gl-count">${n}</span>`}</button>`;
+      })}
     </nav>
   `;
 }
@@ -139,25 +155,7 @@ function queueRow(model: GlModel, row: IdentityApproval): TemplateResult {
 }
 
 function journalLines(journal: GlJournal | null): TemplateResult {
-  if (journal === null) return html`<p class="gl-dim" role="status">Reading the journal.</p>`;
-  const memos = journal.lines.some((l) => (l.memo ?? "") !== "");
-  return html`
-    <div class="gl-scroll">
-      <table aria-label="Journal lines">
-        <thead><tr><th>Account</th>${memos ? html`<th>Memo</th>` : nothing}<th class="num">Debit</th><th class="num">Credit</th></tr></thead>
-        <tbody>
-          ${journal.lines.map(
-            (l) => html`<tr>
-              <td><strong>${l.account_code}</strong> ${l.account_name ?? ""}</td>
-              ${memos ? html`<td>${l.memo ?? ""}</td>` : nothing}
-              <td class="num">${l.debit_cents > 0 ? formatMoney(l.debit_cents) : ""}</td>
-              <td class="num">${l.credit_cents > 0 ? formatMoney(l.credit_cents) : ""}</td>
-            </tr>`,
-          )}
-        </tbody>
-      </table>
-    </div>
-  `;
+  return linesTable(journal);
 }
 
 function choiceCard(model: GlModel, id: "approve" | "decline", title: string, line: string, held: boolean): TemplateResult {
@@ -276,16 +274,44 @@ function approvalsView(model: GlModel): TemplateResult {
 
 // ---- the journal register -------------------------------------------------------------------------
 
+function journalActions(model: GlModel, journal: GlJournal): TemplateResult {
+  if (model.books.mode !== "controller") {
+    return html`<p class="gl-note" data-held>Posting, approving, voiding and reversing a journal are for the Financial Controller or the General Manager.</p>`;
+  }
+  const request = model.approvals.find((a) => a.subject_ref === journal.id);
+  const draft = journal.status === "DRAFT";
+  const own = request !== undefined && !canDecide(request, model.userId);
+  return html`
+    <div class="gl-actions gl-actions-spaced">
+      ${draft && request !== undefined
+        ? html`<button type="button" class="btn btn-primary" data-action="gl-approve-journal" data-id=${journal.id} ?disabled=${own || model.busy}>Approve</button>`
+        : nothing}
+      ${draft && request === undefined
+        ? html`<button type="button" class="btn btn-primary" data-action="gl-approve-route" data-id=${journal.id} ?disabled=${model.busy}>Approve here</button>`
+        : nothing}
+      ${draft ? html`<button type="button" class="btn btn-secondary" data-action="gl-void" data-id=${journal.id} ?disabled=${model.busy}>Void</button>` : nothing}
+      ${journal.status === "POSTED" ? html`<button type="button" class="btn btn-secondary" data-action="gl-reverse" data-id=${journal.id} ?disabled=${model.busy}>Reverse</button>` : nothing}
+    </div>
+    ${draft && request !== undefined
+      ? html`<p class="gl-note">${own ? "You made this journal, so you cannot approve it. Another approver posts it." : "Approving posts it as filed. The maker cannot approve their own."}</p>`
+      : nothing}
+    ${draft && request === undefined
+      ? html`<p class="gl-note">This draft has no approval request in the queue. The server says whether it can post from here.</p>`
+      : nothing}
+    ${journal.status === "POSTED" ? html`<p class="gl-note">A posted journal is corrected with a reversing journal. Reverse asks you to confirm first.</p>` : nothing}
+  `;
+}
+
 function journalDetail(model: GlModel): TemplateResult {
   const journal = model.journals.find((j) => j.id === model.selectedJournal);
   if (journal === undefined) {
     return html`<section class="gl-panel" aria-label="Journal"><p class="gl-dim">Pick a journal to read it.</p></section>`;
   }
   const pending = journal.derived_status === "PENDING_APPROVAL";
-  const request = model.approvals.find((a) => a.subject_ref === journal.id);
-  const own = request !== undefined && !canDecide(request, model.userId);
   const where = branchName(model.branches, journal.branch_id);
+  const reverses = journal.reverses_journal_id === undefined ? undefined : model.journals.find((j) => j.id === journal.reverses_journal_id);
   return html`
+    ${confirmFor(model, ["reverse", "void"])}
     <section class="gl-panel" aria-label="Journal" data-journal-panel>
       <div class="gl-panel-head">
         <h2>${entryLabel(journal)} · ${journal.memo}</h2>
@@ -295,17 +321,10 @@ function journalDetail(model: GlModel): TemplateResult {
         <dt>Source</dt><dd>${journal.source === "MANUAL" ? "Manual" : journal.source}</dd>
         ${where !== "" ? html`<dt>Branch</dt><dd>${where}</dd>` : nothing}
         ${pending ? html`<dt>Why it waits</dt><dd>At or over the approval threshold (GL policy).</dd>` : nothing}
+        ${reverses !== undefined ? html`<dt>Reverses</dt><dd data-reverses>${entryLabel(reverses)}</dd>` : nothing}
       </dl>
       ${journalLines(journal)}
-      <p class="gl-dim gl-later-line" data-later-journal>Void and reverse arrive later: ${later("later")}</p>
-      ${pending && request !== undefined
-        ? html`
-            <div class="gl-actions gl-actions-spaced">
-              <button type="button" class="btn btn-primary" data-action="gl-approve-journal" data-id=${journal.id} ?disabled=${own || model.busy}>Approve</button>
-            </div>
-            <p class="gl-note">${own ? "You made this journal, so you cannot approve it. Another approver posts it." : "Approving posts it as filed. The maker cannot approve their own."}</p>
-          `
-        : nothing}
+      ${journalActions(model, journal)}
     </section>
   `;
 }
@@ -313,6 +332,7 @@ function journalDetail(model: GlModel): TemplateResult {
 function journalsView(model: GlModel): TemplateResult {
   const rows = model.journals.filter((j) => filterMatches(model.journalFilter, j));
   return html`
+    ${composerView(model)}
     <div class="gl-split">
       <section class="gl-panel" aria-label="Journals">
         <div class="gl-panel-head">
@@ -341,12 +361,23 @@ function journalsView(model: GlModel): TemplateResult {
             `}
         <p class="gl-note">Pending approval is a derived label: a manual draft at or over the threshold. Nothing writes it to the row.</p>
       </section>
-      ${journalDetail(model)}
+      <div class="gl-stack">${journalDetail(model)}</div>
     </div>
+    ${recurringView(model)}
   `;
 }
 
 // ---- the trial balance ----------------------------------------------------------------------------
+
+function exportRow(model: GlModel, year: number): TemplateResult {
+  if (model.books.mode !== "controller") return html`<p class="gl-note" data-held>The ledger export is for the Financial Controller.</p>`;
+  return html`
+    <div class="gl-actions gl-actions-spaced">
+      <button type="button" class="btn btn-secondary" data-action="gl-export" data-year=${String(year)} ?disabled=${model.busy || model.books.exporting}>Download the ${model.books.trialMonth === 0 ? "year" : monthWord(model.books.trialMonth)} export</button>
+    </div>
+    <p class="gl-dim">A draft in the parity format, one row per posted line, for the branch chosen above. It is not a filing.</p>
+  `;
+}
 
 function trialView(model: GlModel): TemplateResult {
   const trial = model.trial;
@@ -357,12 +388,18 @@ function trialView(model: GlModel): TemplateResult {
   return html`
     <section class="gl-panel" aria-label="Trial balance" data-trial>
       <div class="gl-panel-head">
-        <h3>Trial balance · fiscal year ${trial.fiscal_year}</h3>
+        <h3>Trial balance · ${trial.month === undefined ? `fiscal year ${trial.fiscal_year}` : `${monthWord(trial.month)} ${trial.fiscal_year}`}</h3>
         ${inBalance ? pill("good", "In balance") : pill("stop", `Out of balance by ${formatMoney(Math.abs(trial.balance_cents))}`)}
       </div>
       <div class="gl-filters" role="group" aria-label="Branch">
         <button type="button" class="gl-filter" data-action="gl-trial-branch" data-branch="" aria-pressed="${model.trialBranch === "" ? "true" : "false"}">All branches</button>
         ${model.branches.map((b) => html`<button type="button" class="gl-filter" data-action="gl-trial-branch" data-branch=${b.id} aria-pressed="${model.trialBranch === b.id ? "true" : "false"}">${b.name}</button>`)}
+      </div>
+      <div class="gl-filters" role="group" aria-label="Period">
+        <button type="button" class="gl-filter" data-action="gl-trial-month" data-month="0" aria-pressed="${model.books.trialMonth === 0 ? "true" : "false"}">Whole year</button>
+        ${model.books.periods.value
+          .filter((p) => p.year === trial.fiscal_year)
+          .map((p) => html`<button type="button" class="gl-filter" data-action="gl-trial-month" data-month=${String(p.month)} aria-pressed="${model.books.trialMonth === p.month ? "true" : "false"}">${monthWord(p.month).slice(0, 3)}</button>`)}
       </div>
       ${trial.rows.length === 0
         ? html`<div class="gl-empty"><strong>No posted journals yet.</strong><span class="gl-dim">The trial balance fills as journals post.</span></div>`
@@ -385,22 +422,46 @@ function trialView(model: GlModel): TemplateResult {
               </table>
             </div>
           `}
-      <p class="gl-dim gl-later-line" data-later-trial>Period choice, the tie-out against the receivables and payables ledgers, and the Excel download arrive later: ${later("later")}</p>
+      ${exportRow(model, trial.fiscal_year)}
+      <p class="gl-dim gl-later-line" data-later-trial>The receivables tie out is on the Checks tab. A typed Excel workbook of the trial balance is ${later("later")}: the export is a CSV that opens in Excel.</p>
     </section>
   `;
 }
 
 // ---- the whole slice ------------------------------------------------------------------------------
 
+const HEADINGS: Record<GlTab, { title: string; line: string }> = {
+  approvals: { title: "Approvals", line: "What needs your decision: floor requests, parked journals and the exceptions." },
+  journals: { title: "Ledger", line: "Post a journal, decide the parked ones, void a draft or reverse a posted entry." },
+  chart: { title: "Ledger", line: "The chart of accounts: what a journal can post to." },
+  trial: { title: "Ledger", line: "The trial balance for the year or one month, and the export." },
+  periods: { title: "Ledger", line: "Which months are open to posting, and the year end close." },
+  checks: { title: "Ledger", line: "Does the ledger agree with the receivables ledger and with BisTrack." },
+  policy: { title: "Ledger", line: "The approval threshold and the year the books keep." },
+};
+
 export function renderGl(model: GlModel): TemplateResult {
   if (model.phase === "loading") return loading();
   if (model.phase === "error") return loadFailed(model);
+  const head = HEADINGS[model.tab];
   return html`
     <div class="gl-head">
-      <h1>${model.tab === "approvals" ? "Approvals" : "Ledger"}</h1>
-      <p class="gl-dim">${model.tab === "approvals" ? "What needs your decision: floor requests, parked journals and the exceptions." : "Journals to approve and the trial balance."}</p>
+      <h1>${head.title}</h1>
+      <p class="gl-dim">${head.line}</p>
     </div>
     ${tabs(model)} ${messages(model)}
-    ${model.tab === "approvals" ? approvalsView(model) : model.tab === "journals" ? journalsView(model) : trialView(model)}
+    ${model.tab === "approvals"
+      ? approvalsView(model)
+      : model.tab === "journals"
+        ? journalsView(model)
+        : model.tab === "chart"
+          ? chartView(model)
+          : model.tab === "trial"
+            ? trialView(model)
+            : model.tab === "periods"
+              ? periodsView(model)
+              : model.tab === "checks"
+                ? checksView(model)
+                : policyView(model)}
   `;
 }

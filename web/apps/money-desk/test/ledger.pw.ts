@@ -120,7 +120,7 @@ test("it reads the trial balance in balance, with the server's totals", async ({
   await expect(page.locator("[data-later-trial] .gl-later")).toHaveText("later");
 });
 
-test("the journal register keeps a journal number on one line and says what is later", async ({ page, request }) => {
+test("the journal register keeps a journal number on one line and offers void and reverse where they apply", async ({ page, request }) => {
   await openApprovals(page, request);
   await page.locator("[data-tab-id='journals']").click();
   await expect(page.getByRole("button", { name: /^Pending 2$/ })).toBeVisible();
@@ -128,8 +128,12 @@ test("the journal register keeps a journal number on one line and says what is l
   const box = await link.boundingBox();
   expect(box === null ? 99 : box.height).toBeLessThan(40);
   await link.click();
-  await expect(page.locator("[data-later-journal]")).toContainText("Void and reverse");
-  await expect(page.locator("[data-later-journal] .gl-later")).toHaveText("later");
+  // A parked draft can be voided; a posted journal can only be reversed.
+  await expect(page.getByRole("button", { name: "Void", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reverse", exact: true })).toHaveCount(0);
+  await page.getByRole("table", { name: "Journal register" }).getByRole("button", { name: "JE-0004" }).click();
+  await expect(page.getByRole("button", { name: "Reverse", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Void", exact: true })).toHaveCount(0);
 });
 
 test("on a phone a chosen request brings its decision into view", async ({ page, request }) => {
@@ -168,7 +172,7 @@ test("a bare array where the contract says a page is refused, never half read", 
   await expect(page.locator("[data-approval-id]")).toHaveCount(0);
 });
 
-test("on a phone the two area buttons share a row and the three ledger tabs share a row", async ({ page, request }) => {
+test("on a phone the two area buttons share a row and the ledger tabs share a row", async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openApprovals(page, request);
   const tops = async (selector: string): Promise<number[]> =>

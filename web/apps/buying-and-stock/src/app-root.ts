@@ -26,6 +26,11 @@ import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { PoApi } from "./po/po-api.js";
 import { PoDesk } from "./po/po-desk.js";
 import { poStyles } from "./po/po-styles.js";
+import { areaStyles } from "./area-styles.js";
+import { InventoryApi } from "./inventory/inventory-api.js";
+import { InventoryDesk } from "./inventory/inventory-desk.js";
+import { CountsApi } from "./counts/counts-api.js";
+import { CountsDesk } from "./counts/counts-desk.js";
 import type { AreaDesk, AreaEntry } from "./purch/area.js";
 import { purchStyles } from "./purch/purch-styles.js";
 import { LandedApi } from "./landed/landed-api.js";
@@ -39,8 +44,22 @@ import { VendorsDesk } from "./vendors/vendors-desk.js";
 
 const DEMO_ORG = "hh-demo";
 
+/**
+ * A field's value as the desks read it. An option's value cannot be bound (the
+ * design system's rule), so a select whose options carry the id in data-value
+ * answers that id; every other field answers its own value.
+ */
+function fieldValue(el: HTMLInputElement | HTMLSelectElement | null): string {
+  if (el === null) return "";
+  if (el instanceof HTMLSelectElement) {
+    const chosen = el.selectedOptions[0]?.getAttribute("data-value");
+    if (chosen !== null && chosen !== undefined) return chosen;
+  }
+  return el.value;
+}
+
 export class BuyingAndStockApp extends HHElement {
-  static styles = [baseStyles, entryStyles, poStyles, purchStyles, css`
+  static styles = [baseStyles, entryStyles, poStyles, areaStyles, purchStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
   `];
@@ -77,7 +96,7 @@ export class BuyingAndStockApp extends HHElement {
   #newAreas(): AreaEntry[] {
     const host = {
       repaint: () => this.requestUpdate(),
-      field: (name: string) => this.#fieldElement(name)?.value ?? "",
+      field: (name: string, key?: string) => fieldValue(this.#fieldElement(name, key)),
       role: () => this.#roleCode,
     };
     return [
@@ -86,6 +105,8 @@ export class BuyingAndStockApp extends HHElement {
       { id: "vendors", label: "Vendors", desk: new VendorsDesk(new VendorsApi(this.#staffClient), host) },
       { id: "bills", label: "Vendor bills", desk: new BillsDesk(new BillsApi(this.#staffClient), host) },
       { id: "landed", label: "Landed cost", desk: new LandedDesk(new LandedApi(this.#staffClient), host) },
+      { id: "inventory", label: "Inventory", desk: new InventoryDesk(new InventoryApi(this.#staffClient), host) },
+      { id: "counts", label: "Cycle counts", desk: new CountsDesk(new CountsApi(this.#staffClient), host) },
     ];
   }
 
@@ -104,8 +125,10 @@ export class BuyingAndStockApp extends HHElement {
     this.requestUpdate();
   }
 
-  #fieldElement(name: string): HTMLInputElement | HTMLSelectElement | null {
-    return this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]`);
+  // A repeated row's field (one count line's quantity) is found by the row's key as well.
+  #fieldElement(name: string, key?: string): HTMLInputElement | HTMLSelectElement | null {
+    const scope = key === undefined ? "" : `[data-key="${key}"]`;
+    return this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]${scope}`);
   }
 
   // The theme: light by default, brand (the dark half) one tap away. Held in
@@ -179,7 +202,7 @@ export class BuyingAndStockApp extends HHElement {
     const target = event.composedPath()[0];
     if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement) {
       const name = target.getAttribute("data-field");
-      if (name !== null) this.#desk.typed?.(name, target.value);
+      if (name !== null) this.#desk.typed?.(name, target.value, target.getAttribute("data-key") ?? undefined);
     }
   };
 
@@ -229,9 +252,9 @@ export class BuyingAndStockApp extends HHElement {
     const widget = this.renderRoot.querySelector("hh-feedback");
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) widget.send = this.#feedbackSender;
     // A draft's starting field values: set once per draft, after the render that drew them.
-    this.#desk.seed?.((name, value) => {
-      const field = this.#fieldElement(name);
-      if (field !== null) field.value = value;
+    this.#desk.seed?.((name, value, key) => {
+      const field = this.#fieldElement(name, key);
+      if (field !== null && field.value !== value) field.value = value;
     });
   }
 
