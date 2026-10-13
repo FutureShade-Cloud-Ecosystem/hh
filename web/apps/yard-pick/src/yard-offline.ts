@@ -257,16 +257,23 @@ export class YardOffline {
   }
 
   /** Send the queue now (the picker is standing at a connected device and
-   * wants the server's answer) and give back the core's words if it refused
-   * the pick's record during the send; empty when it took it or could not be
-   * reached. The refusal is also a card, which waits to be dismissed. */
+   * wants the server's answer) and give back words if the server did not take
+   * the pick's record during the send: the core's own words for a refusal, or
+   * a plain sentence when the server moved the ticket first and the record
+   * was superseded. Empty when it took it or could not be reached. Either
+   * answer is also a card, which waits to be dismissed. */
   async sendRecordNow(taskId: string): Promise<string> {
     const before = new Set((await this.openCards()).map((card) => card.id));
     await this.#drain();
-    const fresh = (await this.openCards()).find(
-      (card) => !before.has(card.id) && card.kind === "rejected" && card.scope === "pick_tasks" && card.clientPayload["id"] === taskId && "picked" in card.clientPayload,
+    const fresh = (await this.openCards()).filter(
+      (card) => !before.has(card.id) && card.scope === "pick_tasks" && card.clientPayload["id"] === taskId && "picked" in card.clientPayload,
     );
-    return fresh?.error ?? "";
+    const refused = fresh.find((card) => card.kind === "rejected");
+    if (refused !== undefined) return refused.error ?? "";
+    if (fresh.some((card) => card.kind === "superseded")) {
+      return "The ticket changed on the server first, so your record was not saved. Check the ticket and record it again.";
+    }
+    return "";
   }
 
   /** True while a record of this pick waits in the outbox. */

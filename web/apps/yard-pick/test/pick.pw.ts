@@ -2,7 +2,7 @@
 // by line, with the reason a short line needs, and change the skid count on
 // the skid stepper with a reason.
 import { test, expect } from "@playwright/test";
-import { resetStub, stubLog, yardHandoff } from "./helpers.js";
+import { reassignTicket, resetStub, stubLog, yardHandoff } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -162,4 +162,17 @@ test("the record goes to the server as one pick_tasks op, in the ticket's own or
     { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Granular A gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE", short_reason: "", short_note: "" },
     { order_line_no: 3, product_id: "1a000000-0000-4000-9000-0000000000c3", sku: "FAB-GEO", description: "Geotextile fabric, 4 by 300 ft", qty_ordered: "2.0000", qty_picked: "2", uom: "ROLL", short_reason: "", short_note: "" },
   ]);
+});
+
+test("a connected record the server superseded is an error in words, never a saved notice", async ({ page, request }) => {
+  await openInProgress(page);
+  await page.waitForLoadState("networkidle");
+  // The desk moves the ticket after the device's last pull.
+  await reassignTicket(request, "0a000000-0000-4000-9000-000000000040");
+  await page.locator("[data-line]", { hasText: "Granular A gravel" }).locator(".line-row").click();
+  await page.getByRole("button", { name: /^All \d+/ }).click();
+  await page.getByRole("button", { name: "Save pick" }).click();
+  await expect(page.locator("[data-error]")).toContainText("changed on the server first");
+  await expect(page.locator("[data-error]")).toContainText("not saved");
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
 });
