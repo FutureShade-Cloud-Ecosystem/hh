@@ -208,8 +208,19 @@ var procurementManagerNeeds = []NeedsPolicy{
 	{SourceKey: NeedsApprovals, Position: 2, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
 }
 
+// branchManagerNeeds is the branch manager's own policy, the Go copy of 0389 §3: the branch manager
+// commits a delivery date and stands behind it when dispatch escalates, so the two dispatch sources
+// lead (with the dock shape's edges), and the manager shape's three rows follow.
+var branchManagerNeeds = []NeedsPolicy{
+	{SourceKey: NeedsDueToCommit, Position: 0, Visible: true, WarnAt: 1, StopAt: 3},
+	{SourceKey: NeedsUnassigned, Position: 1, Visible: true, WarnAt: 1, StopAt: 5},
+	{SourceKey: NeedsApprovals, Position: 2, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
+	{SourceKey: NeedsAREscalation, Position: 3, Visible: true, WarnAt: 1, StopAt: 3},
+	{SourceKey: NeedsParkedTickets, Position: 4, Visible: true, WarnAt: 3, StopAt: 10, StaleMins: 120},
+}
+
 // defaultNeedsFor is the fallback policy for one profile: a job shape serves its own row set from
-// DefaultNeedsSources, the yard and procurement managers their own, and every other manager
+// DefaultNeedsSources, the yard, procurement and branch managers their own, and every other manager
 // refinement the rows of the shape it was born from (0381 copies them, so the fallback and the
 // table agree).
 func defaultNeedsFor(profile string) []NeedsPolicy {
@@ -218,6 +229,8 @@ func defaultNeedsFor(profile string) []NeedsPolicy {
 		return yardManagerNeeds
 	case ProfileManagerProcurement:
 		return procurementManagerNeeds
+	case ProfileManagerBranch:
+		return branchManagerNeeds
 	}
 	if base, ok := ManagerBaseShape[profile]; ok {
 		return DefaultNeedsSources[base]

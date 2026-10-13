@@ -116,8 +116,8 @@ func TestManagerProfilesFallBackToTheirBaseShapesDefaults(t *testing.T) {
 			t.Errorf("yard manager source %d is %q, want %q", i, got[i].SourceKey, k)
 		}
 	}
-	if a, b := defaultNeedsFor(ProfileManagerBranch), DefaultNeedsSources[ProfileManager]; len(a) != len(b) {
-		t.Errorf("the branch manager's fallback is %d sources, its base shape ships %d", len(a), len(b))
+	if a, b := defaultNeedsFor(ProfileManagerSales), DefaultNeedsSources[ProfileManager]; len(a) != len(b) {
+		t.Errorf("the sales manager's fallback is %d sources, its base shape ships %d", len(a), len(b))
 	}
 	if a, b := defaultNeedsFor(ProfileManagerGeneral), DefaultNeedsSources[ProfileAdmin]; len(a) != len(b) {
 		t.Errorf("the general manager's fallback is %d sources, its base shape ships %d", len(a), len(b))
@@ -181,11 +181,27 @@ func TestTheProcurementManagersNeedsAreTheBuyersOwn(t *testing.T) {
 	}
 }
 
-// TestTheOtherManagersStillShipTheirBaseShapesNeeds is the control: the 2D re-seed moves one
-// profile's needs and no other (sales, payables and controller keep the manager shape's rows; the
+// TestTheBranchManagerCommitsDeliveries pins 2D gap 6: the branch manager commits a delivery date
+// and stands behind it when dispatch escalates, so the two dispatch sources join the queue ahead
+// of the book, and the approvals, the AR edge and the parked tickets stay.
+func TestTheBranchManagerCommitsDeliveries(t *testing.T) {
+	want := []string{NeedsDueToCommit, NeedsUnassigned, NeedsApprovals, NeedsAREscalation, NeedsParkedTickets}
+	got := needsKeys(defaultNeedsFor(ProfileManagerBranch))
+	if len(got) != len(want) {
+		t.Fatalf("the branch manager's fallback is %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("branch source %d is %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestTheOtherManagersStillShipTheirBaseShapesNeeds is the control: the 2D re-seed moves two
+// profiles' needs and no other (sales, payables and controller keep the manager shape's rows; the
 // general manager and HR are the other cycle's).
 func TestTheOtherManagersStillShipTheirBaseShapesNeeds(t *testing.T) {
-	for _, p := range []string{ProfileManagerBranch, ProfileManagerSales, ProfileManagerPayables, ProfileManagerController} {
+	for _, p := range []string{ProfileManagerSales, ProfileManagerPayables, ProfileManagerController} {
 		a, b := needsKeys(defaultNeedsFor(p)), needsKeys(DefaultNeedsSources[ProfileManager])
 		if len(a) != len(b) {
 			t.Fatalf("%s ships %v, want the manager shape's %v", p, a, b)

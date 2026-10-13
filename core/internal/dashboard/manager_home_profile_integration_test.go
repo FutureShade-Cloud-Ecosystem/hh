@@ -363,3 +363,10 @@ func TestIntegration_0389_TheProcurementManagersNeedsAreTheBuyersOwn(t *testing.
 	wantKeys(t, "manager.procurement", needsOf(t, "manager.procurement"),
 		[]string{NeedsOpenShortages, NeedsReceivingDifferences, NeedsApprovals})
 }
+
+// TestIntegration_0389_TheBranchManagerCommitsDeliveries pins the seeded rows of 2D gap 6: the two
+// dispatch sources lead, the manager shape's three follow.
+func TestIntegration_0389_TheBranchManagerCommitsDeliveries(t *testing.T) {
+	wantKeys(t, "manager.branch", needsOf(t, "manager.branch"),
+		[]string{NeedsDueToCommit, NeedsUnassigned, NeedsApprovals, NeedsAREscalation, NeedsParkedTickets})
+}

@@ -21,3 +21,17 @@ INSERT INTO dashboard_needs_sources
     ('manager.procurement', 'tasks.open_shortages',             0, true, 1, 5, 0),
     ('manager.procurement', 'purchasing.receiving_differences', 1, true, 1, 3, 0),
     ('manager.procurement', 'approvals.waiting',                2, true, 1, 5, 240);
+
+-- ── §2 · the branch manager's Needs-you ─────────────────────────────────────────────────────────
+--
+-- The branch manager commits a delivery date and stands behind it when dispatch escalates, so the
+-- two dispatch sources lead with the dock shape's edges (0201), and the manager shape's three rows
+-- follow unchanged.
+DELETE FROM dashboard_needs_sources WHERE profile = 'manager.branch';
+INSERT INTO dashboard_needs_sources
+    (profile, source_key, position, visible, warn_at, stop_at, stale_after_minutes) VALUES
+    ('manager.branch', 'dispatch.due_to_commit', 0, true, 1,  3, 0),
+    ('manager.branch', 'dispatch.unassigned',    1, true, 1,  5, 0),
+    ('manager.branch', 'approvals.waiting',      2, true, 1,  5, 240),
+    ('manager.branch', 'ar.escalation',          3, true, 1,  3, 0),
+    ('manager.branch', 'pos.parked',             4, true, 3, 10, 120);
