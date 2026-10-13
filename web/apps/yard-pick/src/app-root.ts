@@ -98,6 +98,7 @@ export class YardPickApp extends HHElement {
   // today, over the direct api above, and the strip keeps quiet.
   #yardOffline: YardOffline | null = null;
   #offlineBooted = false;
+  #readOnlyTab = false;
   #syncState = "offline";
   #waiting = 0;
   #stalls: OutboxStall[] = [];
@@ -399,6 +400,13 @@ export class YardPickApp extends HHElement {
     if (this.#yardOffline !== null) void this.#yardOffline.setOnline(navigator.onLine);
   };
 
+  // The strip's mode: a second tab says read only whether or not a layer
+  // opened; otherwise the runner's state through the layer's ownership.
+  #bannerModeNow(): string {
+    if (this.#yardOffline === null) return this.#readOnlyTab ? "read-only" : "";
+    return bannerMode(this.#syncState, this.#yardOffline.store.ownership());
+  }
+
   // The offline layer's chrome: the outbox depth, the stalls, the open cards.
   async #refreshOfflineChrome(): Promise<void> {
     const layer = this.#yardOffline;
@@ -426,7 +434,7 @@ export class YardPickApp extends HHElement {
     // same pass the header's label rides.
     const banner = this.renderRoot.querySelector("hh-shell-offline-banner") as (HTMLElement & { mode: string; waiting: number }) | null;
     if (banner !== null) {
-      banner.mode = this.#yardOffline === null ? "" : bannerMode(this.#syncState, this.#yardOffline.store.ownership());
+      banner.mode = this.#bannerModeNow();
       banner.waiting = this.#waiting;
     }
     const cards = this.renderRoot.querySelector("hh-shell-conflict-list") as (HTMLElement & { cards: Card[] }) | null;
@@ -466,13 +474,21 @@ export class YardPickApp extends HHElement {
   async #bootOffline(): Promise<void> {
     if (this.#offlineBooted || this.#me === "") return;
     this.#offlineBooted = true;
-    const layer = await openYardOfflineOpfs({
+    const opened = await openYardOfflineOpfs({
       dbName: "hh-yard-pick",
       transport: apiClientTransport(this.#staffClient),
+      direct: this.#yard,
       actorId: this.#me,
       onChange: () => void this.#refreshOfflineChrome(),
     });
-    if (layer === null) return;
+    // A second tab reads an empty cache: it keeps the online board and only
+    // says it is read only.
+    this.#readOnlyTab = opened.readOnly;
+    const layer = opened.layer;
+    if (layer === null) {
+      this.requestUpdate();
+      return;
+    }
     this.#yardOffline = layer;
     layer.runner.onState((state) => {
       // The state is on the glass in this update, not behind the health read.
@@ -970,7 +986,7 @@ export class YardPickApp extends HHElement {
   }
 
   private renderSignedIn(): TemplateResult {
-    const mode = this.#yardOffline === null ? "" : bannerMode(this.#syncState, this.#yardOffline.store.ownership());
+    const mode = this.#bannerModeNow();
     return html`
       <hos-app-header signed-in demo compact product-name="Yard Pick" product-sub="Yard Pick · HH Field shell">${this.renderThemeControl()}</hos-app-header>
       ${mode !== "" ? html`<hh-shell-offline-banner data-offline-banner></hh-shell-offline-banner>` : nothing}

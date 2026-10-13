@@ -81,6 +81,7 @@ export class DriveRunApp extends HHElement {
   // today, over the direct api above, and the strip keeps quiet.
   #driveOffline: DriveOffline | null = null;
   #offlineBooted = false;
+  #readOnlyTab = false;
   #syncState = "offline";
   #waiting = 0;
   #stalls: OutboxStall[] = [];
@@ -302,6 +303,13 @@ export class DriveRunApp extends HHElement {
     if (this.#driveOffline !== null) void this.#driveOffline.setOnline(navigator.onLine);
   };
 
+  // The strip's mode: a second tab says read only whether or not a layer
+  // opened; otherwise the runner's state through the layer's ownership.
+  #bannerModeNow(): string {
+    if (this.#driveOffline === null) return this.#readOnlyTab ? "read-only" : "";
+    return bannerMode(this.#syncState, this.#driveOffline.store.ownership());
+  }
+
   // The offline layer's chrome: the outbox depth, the stalls, the open cards.
   async #refreshOfflineChrome(): Promise<void> {
     const layer = this.#driveOffline;
@@ -318,13 +326,20 @@ export class DriveRunApp extends HHElement {
   async #bootOffline(): Promise<void> {
     if (this.#offlineBooted) return;
     this.#offlineBooted = true;
-    const layer = await openDriveOfflineOpfs({
+    const opened = await openDriveOfflineOpfs({
       dbName: "hh-drive-run",
       transport: apiClientTransport(this.#staffClient),
       direct: this.#drive,
       onChange: () => void this.#refreshOfflineChrome(),
     });
-    if (layer === null) return;
+    // A second tab reads an empty cache: it keeps the online sheet and only
+    // says it is read only.
+    this.#readOnlyTab = opened.readOnly;
+    const layer = opened.layer;
+    if (layer === null) {
+      this.requestUpdate();
+      return;
+    }
     this.#driveOffline = layer;
     layer.runner.onState((state) => {
       // The state is on the glass in this update, not behind the health read.
@@ -364,7 +379,7 @@ export class DriveRunApp extends HHElement {
     // same pass the header's label rides.
     const banner = this.renderRoot.querySelector("hh-shell-offline-banner") as (HTMLElement & { mode: string; waiting: number }) | null;
     if (banner !== null) {
-      banner.mode = this.#driveOffline === null ? "" : bannerMode(this.#syncState, this.#driveOffline.store.ownership());
+      banner.mode = this.#bannerModeNow();
       banner.waiting = this.#waiting;
     }
     const cards = this.renderRoot.querySelector("hh-shell-conflict-list") as (HTMLElement & { cards: Card[] }) | null;
@@ -709,7 +724,7 @@ export class DriveRunApp extends HHElement {
   }
 
   private renderSignedIn(): TemplateResult {
-    const mode = this.#driveOffline === null ? "" : bannerMode(this.#syncState, this.#driveOffline.store.ownership());
+    const mode = this.#bannerModeNow();
     return html`
       <hos-app-header signed-in demo compact product-name="Drive" product-sub="HH Drive · HH Field shell">${this.renderThemeControl()}</hos-app-header>
       ${mode !== "" ? html`<hh-shell-offline-banner data-offline-banner></hh-shell-offline-banner>` : nothing}

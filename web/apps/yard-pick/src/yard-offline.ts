@@ -39,6 +39,7 @@ import {
 } from "@hardscapehouse/offline-store";
 import * as syncMachine from "../../../../statecharts/sync/machine.js";
 import type {
+  YardApi,
   YardPick,
   YardPickedLine,
   YardRecordLine,
@@ -61,8 +62,13 @@ export function bannerMode(state: string, ownership: Ownership): string {
   return "";
 }
 
+/** The writes the core does not admit through sync: they stay on their direct
+ * doors, wait on the outbox and need signal. Nothing about them queues. */
+export type YardDirectDoors = Pick<YardApi, "recordLines" | "recordSkids" | "resolveShortage">;
+
 export interface YardOfflineOptions {
   store: OfflineStore;
+  direct: YardDirectDoors;
   /** The same executor seam the store was opened over: the layer's local
    * optimistic patches ride it, the replay overwrites them with server truth. */
   sql: SqlExecutor;
@@ -110,6 +116,7 @@ export class YardOffline {
   readonly store: OfflineStore;
   readonly runner: SyncRunner;
   readonly #sql: SqlExecutor;
+  readonly #direct: YardDirectDoors;
   readonly #actorId: string;
   readonly #onChange: (() => void) | undefined;
   readonly #now: () => string;
@@ -123,6 +130,7 @@ export class YardOffline {
   constructor(options: YardOfflineOptions) {
     this.store = options.store;
     this.#sql = options.sql;
+    this.#direct = options.direct;
     this.#actorId = options.actorId;
     this.#onChange = options.onChange;
     this.#now = options.now ?? (() => new Date().toISOString());
@@ -467,19 +475,56 @@ export class YardOffline {
   }
 }
 
+/** What opening answers: the layer, or none (the app then goes online through
+ * the api as today), and whether this tab is a second one, which only reads
+ * the cache. A second tab's cache answers every read empty, so it must never
+ * stand in for the board: no layer, and the strip says read only. */
+export interface YardOfflineOpened {
+  layer: YardOffline | null;
+  readOnly: boolean;
+}
+
+/** Opens the layer over a backend the host handed over. */
+export async function openYardOfflineOver(
+  backend: StorageBackend,
+  options: {
+    transport: SyncTransport;
+    direct: YardDirectDoors;
+    actorId: string;
+    onChange?: () => void;
+  },
+): Promise<YardOfflineOpened> {
+  const store = await OfflineStore.open({ backend, scopes: scopeBookFor(["yard-pick"]) });
+  if (store.ownership() !== "owner") return { layer: null, readOnly: true };
+  return {
+    readOnly: false,
+    layer: new YardOffline({
+      store,
+      sql: backend.sql,
+      transport: options.transport,
+      direct: options.direct,
+      actorId: options.actorId,
+      ...(options.onChange !== undefined ? { onChange: options.onChange } : {}),
+    }),
+  };
+}
+
 /** Opens the layer over the store's wa-sqlite OPFS backend (the browser demo
- * and the PWA). Answers null when the host cannot carry a store at all (no
+ * and the PWA). Answers no layer when the host cannot carry a store at all (no
  * Web Locks, no worker, no secure context): the app then behaves online as
  * today, and the strip keeps quiet, rather than the glass pretending to hold
  * a durable outbox it has. */
 export async function openYardOfflineOpfs(options: {
   dbName: string;
   transport: SyncTransport;
+  direct: YardDirectDoors;
   actorId: string;
   onChange?: () => void;
-}): Promise<YardOffline | null> {
+}): Promise<YardOfflineOpened> {
   const locks = (globalThis as { navigator?: { locks?: unknown } }).navigator?.locks;
-  if (typeof Worker === "undefined" || !locks || typeof globalThis.crypto?.subtle !== "object") return null;
+  if (typeof Worker === "undefined" || !locks || typeof globalThis.crypto?.subtle !== "object") {
+    return { layer: null, readOnly: false };
+  }
   try {
     const backend: StorageBackend = await createOpfsBackend({
       dbName: options.dbName,
@@ -489,15 +534,8 @@ export async function openYardOfflineOpfs(options: {
           type: "module",
         }) as unknown as WorkerLike,
     });
-    const store = await OfflineStore.open({ backend, scopes: scopeBookFor(["yard-pick"]) });
-    return new YardOffline({
-      store,
-      sql: backend.sql,
-      transport: options.transport,
-      actorId: options.actorId,
-      ...(options.onChange !== undefined ? { onChange: options.onChange } : {}),
-    });
+    return await openYardOfflineOver(backend, options);
   } catch {
-    return null;
+    return { layer: null, readOnly: false };
   }
 }
