@@ -341,3 +341,27 @@ export function productRefusalWords(error: string, status: number | undefined): 
   }
   return error !== "" ? error : "Try again in a moment.";
 }
+
+// -- the platform keys: the read only roster ------------------------------------------------------
+//
+// The contract marks this read for this surface (x-access dealer-admin,
+// level read) and makes it staff wide; the write is the operator's alone and
+// this screen renders no write at all. The floor and the override are opaque
+// objects by contract: the screen says what the server said, as it came,
+// never a guess at their shape.
+
+/** A key's floor or override, as the server sent it, or the words for absent. */
+export function keysValueWords(value: unknown): string {
+  if (value === null || value === undefined) return "not set";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+/**
+ * The waits words: the read is contract-marked for this surface, and the
+ * system does not serve it yet. The words name what is missing and nothing
+ * of how the product is built.
+ */
+export function keysWaitWords(): string {
+  return "The platform's key roster is not served here yet. It opens when the platform's operator tools are connected for this system, and until then there is nothing to read.";
+}

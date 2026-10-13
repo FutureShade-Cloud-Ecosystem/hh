@@ -295,3 +295,34 @@ test.describe("the catalog surface", () => {
     await expect(page.locator("[data-test=catalog-error]").first()).toContainText("managers and above");
   });
 });
+
+test.describe("the platform keys surface", () => {
+  test("the roster renders the keys, the floors and the dealer's overrides, read only", async ({ page }) => {
+    await page.goto("/");
+    await page.locator("[data-flow]").first().click();
+    await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+    await page.locator('.surface-link[data-surface="keys"]').click();
+
+    // The roster: two keys, each with the platform's floor and this dealer's
+    // override as the server sent them, and no write control anywhere.
+    await expect(page.locator("[data-test=keys-count]")).toHaveText("2 keys");
+    await expect(page.locator("[data-test=keys-row-0]")).toContainText("launcher.tiles");
+    await expect(page.locator("[data-test=keys-row-0]")).toContainText('{"launcher":true');
+    await expect(page.locator("[data-test=keys-row-1]")).toContainText("not set");
+    await expect(page.locator("[data-test=keys-row-1]")).toContainText("configured");
+    await expect(page.locator('[data-action^="keys-"]')).toHaveCount(0);
+    await expect(page.locator('[data-action="reload-keys"]')).toHaveCount(0);
+  });
+
+  test("a system that does not serve the roster lands on the waits state, not a raw 404", async ({ page }) => {
+    await page.request.post("/_stub/scenario", { data: { name: "unregistered-keys" } });
+    await page.goto("/");
+    await page.locator("[data-flow]").first().click();
+    await page.locator('.surface-link[data-surface="keys"]').click();
+
+    await expect(page.locator("[data-test=keys-waits]")).toContainText("not served here yet");
+    await expect(page.locator("[data-test=keys-waits]")).toContainText("operator tools");
+    await expect(page.locator("body")).not.toContainText("404");
+    await page.request.post("/_stub/reset");
+  });
+});

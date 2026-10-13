@@ -33,10 +33,11 @@ import { renderAssist, type AssistEditTarget, type AssistModel } from "./admin-a
 import { renderPrint, type PrintModel } from "./admin-print.js";
 import { renderExports, type MessagesModel, type WorkbookModel } from "./admin-exports.js";
 import { renderCatalog, type CatalogModel } from "./admin-catalog.js";
+import { renderKeys, type KeysModel } from "./admin-keys.js";
 import { sinceWire } from "./audit-logic.js";
 
 /** The surfaces this controller owns, as the registry names them. */
-export const ADMIN_WORK_SURFACES: readonly string[] = ["assist", "printing", "exports", "catalog"];
+export const ADMIN_WORK_SURFACES: readonly string[] = ["assist", "printing", "exports", "catalog", "keys"];
 
 /** Is this surface id this controller's? The root's router line asks once. */
 export function isAdminWorkSurface(surface: string): boolean {
@@ -119,6 +120,12 @@ const emptyCatalog = (): CatalogModel => ({
   altText: "",
 });
 
+const emptyKeys = (): KeysModel => ({
+  phase: "loading",
+  error: "",
+  rows: [],
+});
+
 export class AdminWork {
   readonly #api: AdminApi;
   readonly #host: AdminHost;
@@ -141,6 +148,9 @@ export class AdminWork {
   // saved) row is seeded on the next mirror pass, once the fields exist.
   #seedPending = false;
 
+  // The platform keys surface's state.
+  #keys: KeysModel = emptyKeys();
+
   constructor(api: AdminApi, host: AdminHost) {
     this.#api = api;
     this.#host = host;
@@ -152,6 +162,7 @@ export class AdminWork {
   open(surface: string): void {
     if (surface === "assist" && this.#assist.phase === "loading") void this.#loadAssist();
     if (surface === "catalog" && this.#catalog.phase === "idle") void this.#loadCatalogFacts();
+    if (surface === "keys" && this.#keys.phase === "loading") void this.#loadKeys();
   }
 
   /**
@@ -162,6 +173,10 @@ export class AdminWork {
   click(action: string, control: Element | undefined): boolean {
     if (action === "reload-assist") {
       void this.#loadAssist();
+      return true;
+    }
+    if (action === "reload-keys") {
+      void this.#loadKeys();
       return true;
     }
     if (action === "assist-edit") {
@@ -329,6 +344,7 @@ export class AdminWork {
     if (surface === "printing") return renderPrint(this.#print);
     if (surface === "exports") return renderExports(this.#workbook, this.#messages);
     if (surface === "catalog") return renderCatalog(this.#catalog);
+    if (surface === "keys") return renderKeys(this.#keys);
     return null;
   }
 
@@ -340,6 +356,8 @@ export class AdminWork {
     this.#messages = emptyMessages();
     this.#catalog = emptyCatalog();
     this.#pickedImage = null;
+    this.#seedPending = false;
+    this.#keys = emptyKeys();
   }
 
   // -- the assist surface ------------------------------------------------------------------------
@@ -701,6 +719,34 @@ export class AdminWork {
       return;
     }
     this.#catalog = { ...this.#catalog, busy: false, notice: "The picture was removed." };
+    this.#host.repaint();
+  }
+
+  // -- the platform keys surface ----------------------------------------------------------------------
+
+  /**
+   * The roster read, once per visit. A 404 is the waits state, not an error:
+   * the read is contract-marked for this surface and the system does not
+   * serve it yet, which is a fact about the system, not a failed read.
+   */
+  async #loadKeys(): Promise<void> {
+    this.#keys = emptyKeys();
+    this.#host.repaint();
+    const result = await this.#api.platformKeys();
+    if (!result.ok) {
+      if (result.status === 404) {
+        this.#keys = { phase: "waits", error: "", rows: [] };
+      } else {
+        this.#keys = {
+          phase: "error",
+          error: `The platform's key roster did not load. ${serverWords(result.error)}`,
+          rows: [],
+        };
+      }
+      this.#host.repaint();
+      return;
+    }
+    this.#keys = { phase: "ready", error: "", rows: result.value };
     this.#host.repaint();
   }
 }

@@ -19,7 +19,7 @@
 // product-edit.ts reads (repository hardscapeos_dibbits, read only; see
 // PROVENANCE.md), rebuilt on HH's generated client and narrowed to what this
 // app's screens use.
-import { ApiClient, staffAssist, staffExport, staffMessaging, staffPrinting, staffProduct, type Result } from "@hardscapehouse/api-client";
+import { ApiClient, operator, staffAssist, staffExport, staffMessaging, staffPrinting, staffProduct, type Result } from "@hardscapehouse/api-client";
 import type { AssistSpendRow } from "./admin-logic.js";
 
 // -- the assistant's spend, budgets and settings --------------------------------------------------
@@ -216,6 +216,16 @@ export interface CategoryRow {
 export interface ProductImagePut {
   readonly product_id: string;
   readonly byte_size: number;
+}
+
+/** One roster row of the platform keys: the values opaque, as the contract draws them. */
+export interface PlatformKeyRow {
+  readonly key: string;
+  readonly platform_floor: unknown;
+  readonly dealer_override: unknown;
+  readonly credential_configured: boolean;
+  readonly updated_at: string;
+  readonly updated_by: string;
 }
 
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -434,6 +444,33 @@ export class AdminApi {
       value: list(page.items).map((raw) => {
         const r = bag(raw);
         return { id: text(r.id), code: text(r.code), name: text(r.name), is_active: bool(r.is_active) };
+      }),
+    };
+  }
+
+  // -- the platform keys ------------------------------------------------------------------------
+
+  /**
+   * The platform keys roster, read only: the write is the operator's route
+   * and no dealer screen carries it. The floor and the override pass through
+   * untouched, the opaque objects the contract draws.
+   */
+  async platformKeys(): Promise<Result<readonly PlatformKeyRow[]>> {
+    const answer = await operator.listPlatformKeys(this.#client, { limit: 200 });
+    if (!answer.ok) return answer;
+    const page = bag(answer.value);
+    return {
+      ok: true,
+      value: list(page.items).map((raw) => {
+        const r = bag(raw);
+        return {
+          key: text(r.key),
+          platform_floor: r.platform_floor ?? null,
+          dealer_override: r.dealer_override ?? null,
+          credential_configured: bool(r.credential_configured),
+          updated_at: text(r.updated_at),
+          updated_by: text(r.updated_by),
+        };
       }),
     };
   }

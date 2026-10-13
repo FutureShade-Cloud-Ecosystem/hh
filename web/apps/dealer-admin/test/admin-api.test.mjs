@@ -281,3 +281,34 @@ test("the units and the categories read as their pages", async () => {
   assert.equal(categories.ok, true);
   assert.equal(categories.value[0].name, "Pavers");
 });
+
+// -- the platform keys: the read only roster ---------------------------------------------------
+
+test("the platform keys read projects the roster, the opaque values as they came", async () => {
+  const result = await apiAnswering({
+    items: [
+      {
+        key: "launcher.tiles",
+        platform_floor: { launcher: true },
+        dealer_override: { launcher: false },
+        credential_configured: false,
+        updated_at: "2000-01-01T10:00:00Z",
+        updated_by: "operator",
+      },
+      { key: "providers.card", platform_floor: null, credential_configured: true },
+    ],
+    next_cursor: null,
+  }).platformKeys();
+  assert.equal(result.ok, true);
+  assert.equal(result.value.length, 2);
+  assert.equal(result.value[0].key, "launcher.tiles");
+  assert.deepEqual(result.value[0].dealer_override, { launcher: false });
+  assert.equal(result.value[0].credential_configured, false);
+  assert.equal(result.value[1].platform_floor, null);
+});
+
+test("a 404 on the platform keys read arrives as the transport's error, the waits state's input", async () => {
+  const result = await apiAnswering({ error: "not found" }, 404).platformKeys();
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 404);
+});

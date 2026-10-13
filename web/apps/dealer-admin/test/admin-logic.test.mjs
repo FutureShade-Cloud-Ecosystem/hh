@@ -10,6 +10,8 @@ import {
   assistRefusalWords,
   budgetSentence,
   formatTokens,
+  keysWaitWords,
+  keysValueWords,
   listPriceWords,
   messagesEmptyWords,
   messagesRefusalWords,
@@ -199,4 +201,19 @@ test("the product write's refusal names the managers; the column refusal passes 
     productRefusalWords('update product: column "bogus" is not editable', 400),
     'update product: column "bogus" is not editable',
   );
+});
+
+// -- the platform keys: the read only roster --------------------------------------------------
+
+test("a key's floor and override are the server's own data, said as it came", () => {
+  assert.equal(keysValueWords({ launcher: true }), '{"launcher":true}');
+  assert.equal(keysValueWords(null), "not set");
+  assert.equal(keysValueWords(undefined), "not set");
+});
+
+test("the waits words name what is missing and never a word of the build", () => {
+  const words = keysWaitWords();
+  assert.match(words, /not served here yet/);
+  assert.match(words, /operator tools/);
+  assert.doesNotMatch(words, /lane|ledger|parity|auth/i);
 });

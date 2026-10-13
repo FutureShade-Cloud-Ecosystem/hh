@@ -810,6 +810,37 @@ async function handle(req, res) {
     return json(res, { items: CATEGORIES, next_cursor: null, limit: 100 });
   }
 
+  // ---- the platform keys (staff wide read; the core does not serve it yet, the parity fact the waits state names) ----
+
+  if (req.method === "GET" && path === "/api/v1/operator/platform-keys") {
+    if (scenario === "unregistered-keys") {
+      // The real mux answers the unregistered route with a bare 404.
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      return res.end("404 page not found\n");
+    }
+    return json(res, {
+      items: [
+        {
+          key: "launcher.tiles",
+          platform_floor: { launcher: true, order: ["sales", "stock", "money"] },
+          dealer_override: { launcher: true, order: ["money", "sales", "stock"] },
+          credential_configured: false,
+          updated_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+          updated_by: "platform operator",
+        },
+        {
+          key: "providers.card",
+          platform_floor: { mode: "hosted" },
+          dealer_override: null,
+          credential_configured: true,
+          updated_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+          updated_by: "platform operator",
+        },
+      ],
+      next_cursor: null,
+    });
+  }
+
   return notFound(res);
 }
 
