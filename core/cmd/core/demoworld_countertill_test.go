@@ -648,8 +648,8 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	// 3. the demo membership and tokens (all test support, never shipped), then the FULL served
 	// surface through the real registerRoutes.
 	appwrite := newAppwriteFake(t)
-	appwrite.setTeam(salesSubject, "org:"+demoOrgSlug)
-	appwrite.setTeam(salesMgrSubject, "org:"+demoOrgSlug)
+	appwrite.setTeam(salesSubject, "org-"+demoOrgSlug)
+	appwrite.setTeam(salesMgrSubject, "org-"+demoOrgSlug)
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)
 	if _, err := rand.Read(acceptKey); err != nil {
@@ -674,6 +674,7 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		customerquote.EnvKeyID:   "fx-accept-sign-key",
 		customerquote.EnvKey:     hex.EncodeToString(acceptKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.getenv = func(k string) string { return values[k] }
 	rec, _ := registeredSurface(t, env)
 

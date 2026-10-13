@@ -79,7 +79,7 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 	// The served surface and the demo Sales login, the one branch-scoped caller a tester actually
 	// holds (every demo login's single grant is at Trenton).
 	appwrite := newAppwriteFake(t)
-	appwrite.setTeam(qwSalesUserID, "org:"+demoOrgSlug)
+	appwrite.setTeam(qwSalesUserID, "org-"+demoOrgSlug)
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)
 	if _, err := rand.Read(acceptKey); err != nil {
@@ -96,6 +96,7 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 		"CORE_APPWRITE_PROJECT": "fx-appwrite-project", "CORE_APPWRITE_API_KEY": "fx-appwrite-key-placeholder",
 		customerquote.EnvKeyID: "fx-accept-sign-key", customerquote.EnvKey: hex.EncodeToString(acceptKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.getenv = func(k string) string { return values[k] }
 	rec, _ := registeredSurface(t, env)
 	sales := &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, qwSalesUserID), who: "Sales"}

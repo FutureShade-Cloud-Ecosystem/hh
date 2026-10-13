@@ -1,4 +1,4 @@
--- 0387_sync_op_hashes.sql
+-- 0388_sync_op_hashes.sql
 -- Owner module: internal/sync (the offline sync engine's idempotency body ledger).
 --
 -- The engine's fourth guarantee (plan B.3): the same idempotency key with a different body is

@@ -81,21 +81,26 @@ HH-2.3 of Session HH-2 owns this directory.
    fails on duplicate schema names, duplicate operationIds, missing `x-role`,
    unknown tags, undeclared path parameters, templated-path collisions, and
    unresolved `$ref`s.
-2. `parity.mjs`: lists every literal route registered in
-   `hardscapeos_dibbits/backend/internal` (the same grep
-   `analysis/hardscapeos-inventory.md` section 2.6 used), applies the portal
-   rename, and diffs against the document. The diff must be empty apart from
-   `drop-list.yaml` entries. The ERP checkout is found at
-   `../hardscapeos_dibbits` relative to this repository root, or via
-   `HH_ERP_ROOT` / the first argument.
-3. `fixtures.mjs`: validates every recorded live fixture against the tenant
+2. `gen-types.mjs`: generates the Go server types and route table from
+   `openapi.yaml` into `core/internal/platform/apigen/` (`types.gen.go` and
+   `routes.gen.go`), checking against the committed copies; document drift
+   without regeneration fails the suite.
+3. `parity.mjs`: the vendored route list holds the grep of every literal
+   route registered in `hardscapeos_dibbits/backend/internal` (the same grep
+   `analysis/hardscapeos-inventory.md` section 2.6 used), produced by
+   `refresh-erp-routes.mjs`; parity applies the portal rename and diffs
+   against the document. The diff must be empty apart from
+   `drop-list.yaml` entries. The route list is read from the vendored
+   `core/api/erp-routes.txt`, so no sibling checkout is needed; `HH_ERP_ROOT`
+   or the first argument points the step at a live ERP checkout instead.
+4. `fixtures.mjs`: validates every recorded live fixture against the tenant
    schema of the route it was captured from. A fixture that does not validate
    is a finding to record, never a schema to loosen.
-4. `statemap.mjs`: the D7 coverage check (both vocabularies quoted from
+5. `statemap.mjs`: the D7 coverage check (both vocabularies quoted from
    their sources).
-5. D8 isolation: `DealerQuote` and `CustomerQuote` share only `QuoteLine` by
+6. D8 isolation: `DealerQuote` and `CustomerQuote` share only `QuoteLine` by
    schema reference, and neither carries `kind`.
-6. House rules: no em or en dashes anywhere in `core/api`.
+7. House rules: no em or en dashes anywhere in `core/api`.
 
 `gen-readme.mjs` regenerates the source map below from the ERP tree.
 Structural lint is clean under `@redocly/cli lint` with zero errors.

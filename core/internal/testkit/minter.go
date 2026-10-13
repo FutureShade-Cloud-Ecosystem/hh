@@ -69,6 +69,18 @@ func (c BearerClass) String() string {
 type Minter struct {
 	Keys  *Keys
 	Clock *Clock
+	// Session, when set, is the core's persistent session signing key
+	// (CORE_SESSION_SIGNING_KEY_FILE): a token with no key or kid named in
+	// its shape is then signed ES256 under that key with the thumbprint
+	// kid, which is what a console mode composition verifies. Shapes that
+	// name their own kid, key or algorithm keep them, so the negative legs
+	// stay one field away. A shape that names its own kid, key or algorithm
+	// carries a kid the console key set does not hold, so the composition
+	// refuses it as an UNKNOWN KID, not for the signature or algorithm it
+	// meant to exercise. To exercise those checks under the real kid, set
+	// TokenShape.SessionKID (the session thumbprint kid with whatever key
+	// and algorithm the shape names; with none named, a different EC key).
+	Session *ecdsa.PrivateKey
 }
 
 // NewMinter generates fresh keys and a fresh clock. Nothing crosses runs.
@@ -110,6 +122,13 @@ type TokenShape struct {
 	Tenant *string
 	// NoTenant drops the tenant claim from the tenant shape.
 	NoTenant bool
+	// SessionKID, with Minter.Session set, names the session key's real
+	// thumbprint kid instead of the kit's own, so a bad signature (Key or
+	// ECKey of another key) or a wrong algorithm is judged by the signature
+	// and algorithm checks and not refused earlier as an unknown kid. With
+	// no Key, ECKey or Alg named, the token is signed ES256 under the kit's
+	// own EC key: a forged signature under the real kid.
+	SessionKID bool
 	// Extra carries claims that look like authority. Nothing may read
 	// them; a sweep proves it behaviorally.
 	Extra map[string]any
@@ -168,6 +187,23 @@ func (m *Minter) Mint(t *testing.T, class BearerClass, sub string, shape TokenSh
 		claims[k] = v
 	}
 
+	if m.Session != nil && shape.SessionKID {
+		sessionKID, err := identity.SessionKeyThumbprint(&m.Session.PublicKey)
+		if err != nil {
+			t.Fatalf("testkit: session key thumbprint: %v", err)
+		}
+		shape.KID = sessionKID
+		if shape.ECKey == nil && shape.Key == nil && shape.Alg == "" {
+			shape.ECKey = m.Keys.ECActive
+		}
+	}
+	if m.Session != nil && shape.KID == "" && shape.ECKey == nil && shape.Key == nil && shape.Alg == "" {
+		sessionKID, err := identity.SessionKeyThumbprint(&m.Session.PublicKey)
+		if err != nil {
+			t.Fatalf("testkit: session key thumbprint: %v", err)
+		}
+		shape.KID, shape.ECKey = sessionKID, m.Session
+	}
 	kid := shape.KID
 	if kid == "" {
 		kid = KidActiveRSA

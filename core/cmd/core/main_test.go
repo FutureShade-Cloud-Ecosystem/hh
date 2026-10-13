@@ -20,7 +20,7 @@ func fullEnv() map[string]string {
 		"CORE_TOKEN_ISSUER":      "https://platform.example.test",
 		"CORE_STAFF_AUDIENCE":    "hh-staff",
 		"CORE_TENANT_AUDIENCE":   "hh-tenant",
-		"CORE_JWKS_URL":          "https://platform.example.test/jwks",
+		"CORE_SIGNIN_MODE":       "console",
 		"CORE_DATABASE_URL":      "postgres://b3:b3@127.0.0.1:5432/b3?sslmode=disable",
 		"CORE_APPWRITE_ENDPOINT": "https://platform.example.test/v1",
 		"CORE_APPWRITE_PROJECT":  "b3-project",
@@ -36,7 +36,7 @@ func TestLoadServeConfigFailsClosed(t *testing.T) {
 	} else {
 		for _, name := range []string{
 			"CORE_TOKEN_ISSUER", "CORE_STAFF_AUDIENCE", "CORE_TENANT_AUDIENCE",
-			"CORE_JWKS_URL", "CORE_DATABASE_URL", "CORE_APPWRITE_ENDPOINT",
+			"CORE_SIGNIN_MODE", "CORE_DATABASE_URL", "CORE_APPWRITE_ENDPOINT",
 			"CORE_APPWRITE_PROJECT", "CORE_APPWRITE_API_KEY",
 		} {
 			if !strings.Contains(err.Error(), name) {

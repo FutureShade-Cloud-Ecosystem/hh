@@ -446,6 +446,7 @@ var ownedObjects = map[string]string{
 	"load_scan_checkpoints":           "dispatch",          // 0108_scan_trail_weight_advance
 	"locations":                       "branches",          // 0003_locations_and_branches
 	"machine_principal":               "identity",          // 0321_fb_moves_machine_principal
+	"console_jwt_claim":               "identity",          // 0387_console_jwt_claim
 	"manifest_lines":                  "dispatch",          // 0012_manifests
 	"manifest_versions":               "dispatch",          // 0012_manifests
 	"manifests":                       "dispatch",          // 0012_manifests
@@ -590,7 +591,7 @@ var ownedObjects = map[string]string{
 	"surface_user_workspace":          "settings",          // 0172_surface_settings_substrate
 	"sync_discrepancies":              "bistrack",          // 0079_bistrack_sync
 	"sync_jobs":                       "bistrack",          // 0079_bistrack_sync
-	"sync_op_hashes":                  "sync",              // 0387_sync_op_hashes (the engine's idempotency body ledger)
+	"sync_op_hashes":                  "sync",              // 0388_sync_op_hashes (the engine's idempotency body ledger)
 	"system_settings":                 "settings",          // 0014_dibbits_branch_config
 	"task_events":                     "tasks",             // 0073_tasks_and_task_events
 	"task_pick_lines":                 "tasks",             // 0187_task_pick_lines

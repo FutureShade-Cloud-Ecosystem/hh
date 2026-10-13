@@ -435,7 +435,7 @@ func TestLoadProductReachesTheStaffSyncPullByRequest(t *testing.T) {
 	// The two-org subject's memberships: the fake's default wires one
 	// team per subject, and this leg needs both orgs the fixture's grant
 	// rows carry (the kit's SubTwoOrg holds a grant in each).
-	env.appwrite.setTeam(testkit.SubTwoOrg, "org:"+testkit.OrgNorthSlug, "org:"+testkit.OrgSouthSlug)
+	env.appwrite.setTeam(testkit.SubTwoOrg, "org-"+testkit.OrgNorthSlug, "org-"+testkit.OrgSouthSlug)
 	pool := env.fixturePool()
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO machine_principal (id, org_id, name, enabled, doors)

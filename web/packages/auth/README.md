@@ -3,11 +3,14 @@
 The web auth package: session custody with the JWT in memory only, a device
 lock that is a screen courtesy, and the header wiring into the api-client
 for staff and tenant callers (HH-4.2). Sign-in methods for the first
-release, confirmed: Google plus the house sign-in through the Console
-bridge; device unlock is in scope.
+release: Google plus the house sign-in (email and password), both directly
+against FB Console's HH project; device unlock is in scope. The bearer is
+always the core's own session token, got by trading the signed-in FB Console
+account at `POST /api/v1/auth/exchange`; an FB Console JWT is never the
+bearer and is never stored.
 
-The package takes no dependency from any registry: every collaborator
-arrives as a narrow injected interface. Its one dependency is the workspace
+The package root takes no dependency from any registry: every collaborator
+arrives as a narrow injected interface. Its one dependency there is the workspace
 sibling `@hardscapehouse/api-client` (declared in package.json, linked by the web
 workspace, never installed from a registry): the `Result` convention
 (`err`, `ok`, `Result`) and the `HeaderProvider` type are imported from
@@ -22,8 +25,9 @@ prove that wiring.
 
 `SessionStore` (src/session.ts) holds the token in private memory. `adopt()`
 takes a full session handed over from out of band (the ERP's `adoptSession`
-posture): a sign-in answer, a Google callback through the Console bridge, or
-a reload's resume through the issuer. `adopt` returns false and adopts
+posture): a sign-in answer, a Google callback through FB Console's OAuth
+redirect, or a reload's resume through the issuer. The controller's own
+paths adopt the core's exchange answer (token and expiry) and nothing else. `adopt` returns false and adopts
 nothing when the input is unusable.
 
 **No credential of any kind goes into any browser storage, sessionStorage
@@ -40,7 +44,7 @@ and the shell signs in again through the issuer: the platform's own session
 is an httpOnly cookie script cannot read, so `AccountSurface.getSession()`
 answers from the issuer while this package holds nothing to trade.
 `AuthController.resume()` is that path and doubles as the token refresh:
-getSession, then a fresh minted JWT into memory. In degraded mode the
+getSession, then the core's exchange for a fresh token into memory. In degraded mode the
 mirror holds nothing that survives a reload. `clear()` (sign-out) leaves
 nothing. A payload the constructor cannot validate is dropped from storage,
 not merely hidden from view, so nothing credential-shaped survives under
@@ -308,15 +312,54 @@ R-4 exists to prevent. A gate in `test/gates.test.mjs` fails if an exported
 name ever carries role state, and a scan fails if the package ever mints a
 foreign X- header (the only X- header it owns is X-Org).
 
-## The adapter seams (the one integration point a consuming shell wires)
+## The exchange, the refresh and the adapter seams (the one integration point a consuming host wires)
 
-- `AccountSurface` (src/client.ts) is the Appwrite account surface this
+- `AccountSurface` (src/client.ts) is the FB Console account surface this
   package needs: `createEmailPasswordSession`, `createOAuth2Session`,
-  `getSession`, `createJWT`, `deleteSession`. The Appwrite Web SDK is the
-  one dependency real login cannot avoid, so it lives behind this seam in
-  the consuming shell's adapter. This package takes no npm dependency on
-  the SDK and vendors no fake of it. `getSession` is the reload's
-  re-sign-in seam.
+  `getSession`, `exchange(org)` and `deleteSession`. `exchange` returns the
+  core's answer (`{token, expiresAtMs, user}`, the user block in the core's
+  snake case) or a typed refusal code: `bad_request`, `unauthorized`,
+  `forbidden`, `rate_limited`, `unavailable`, `offline`, `no_session`. It
+  never throws, and the FB Console JWT it mints inside one attempt never
+  crosses the seam: each attempt mints a fresh JWT, an adapter never holds
+  or reuses one, and a core 401 on the first attempt is retried once with a
+  new JWT inside the adapter before the caller ends the session.
+- The sign-in and the resume ask `exchange(org)` for the active
+  organisation (`AuthController` takes `activeOrg`) and adopt its token and
+  expiry, with the display profile from the user block. The display profile
+  is all that is kept of the user block: this package holds no role state.
+- **The refresh.** While a session is live the controller re-exchanges
+  before `expiresAtMs`: `refreshLeadMs` before it (a minute by default,
+  never more than half the window), on the injected `now` and `timers` so
+  tests do not wait. A new token is adopted. `unauthorized`, `forbidden` or
+  `no_session` ends the session through the same path as `signOut()` (the
+  platform session is deleted, custody and the lock are cleared); so does an
+  exchange that answers for a different person. `rate_limited`,
+  `unavailable`, `bad_request`, `offline` and an adapter that throws keep the
+  session and the current token, and try again after a doubling backoff
+  (`refreshBackoffMs`, capped). Offline never ends a session. A sign-out
+  that lands while a refresh is in flight wins: the late answer adopts
+  nothing and arms nothing. A controller built without `activeOrg` neither
+  signs in nor refreshes (the demo apps adopt a mint and hold nothing to
+  refresh).
+- **The browser adapter** is `createAppwriteAccountSurface({endpoint,
+  projectId, coreBaseUrl, fetch?})` from the separate entry
+  `@hardscapehouse/auth/appwrite-adapter` (`src/appwrite-adapter.ts`). It is
+  plain REST over `fetch`, no SDK and no npm dependency: `POST
+  /account/sessions/email`, `POST /account/jwts`, `GET /account`, `DELETE
+  /account/sessions/current` under the configured endpoint, each with the
+  `X-Appwrite-Project` header, `credentials: "include"` (the session cookie
+  is FB Console's own, httpOnly and first party on the futurebuild.ai host)
+  and `redirect: "error"`; Google navigates (through an injectable
+  `navigate`) to the console's OAuth route with absolute success and failure
+  URLs that must be on the page's own origin. The package root never imports
+  the adapter. The Tauri shells forward `exchange` to their Rust
+  `auth_exchange` command instead (`shared/AUTH-SHELL-CONTRACT.md`).
+  The adapter was first built on the Appwrite web SDK and moved off it
+  because that SDK copies a session fallback into local storage
+  (`cookieFallback`) whenever FB Console sends `X-Fallback-Cookies`, which
+  breaks the custody rule above. Now the adapter never reads that response
+  header, never sets it on a request, and touches no storage of any kind.
 - `CredentialProvider` (src/lock.ts) is the WebAuthn surface: `isAvailable`,
   `create`, `verify`. `webAuthnCredentialProvider()` is the platform adapter
   a shell wires.
@@ -325,8 +368,9 @@ foreign X- header (the only X- header it owns is X-Org).
 
 ## Public surface
 
-The package declares an exports map: `.` is `src/index.ts` and `./testing`
-is `src/testing.ts`. Nothing else is importable, so no caller deep-imports
+The package declares an exports map: `.` is `src/index.ts`, `./testing`
+is `src/testing.ts` and `./appwrite-adapter` is `src/appwrite-adapter.ts`.
+Nothing else is importable, so no caller deep-imports
 an internal; the test doubles ride the `./testing` subpath and never the
 public entry.
 
@@ -353,14 +397,28 @@ correction: the merged auth work landed on real CI, green.
 
 `src/testing.ts` is the test entry point (behind the `./testing` subpath,
 never exported from src/index.ts, so it never rides a browser bundle):
-`FakeCredentialProvider`, `FakeAccountSurface`, `RecordedStorage`,
-`ThrowingStorage`, and the fake values. Every value these doubles mint is
+`FakeCredentialProvider`, `FakeAccountSurface` (its `script()` queues
+exchange refusals), `DeferredAccountSurface`, `FakeScheduler` (the fake
+clock and timers the refresh tests run on), `fakeExchangeAnswer`,
+`fakeExchangeRefusal`, `RecordedStorage`, `ThrowingStorage`, and the fake
+values. Every value these doubles mint is
 obviously fake and documented as fake where it is defined: `FAKE_JWT`
 (`FAKE.JWT.NOT-A-REAL-TOKEN`), the fake PIN, the fake password,
 `fake.user@example.invalid`. No real credential, token, or secret exists in
 any fixture.
 
 The gates, as tests:
+
+- `test/exchange.test.mjs`: the controller adopts the exchange answer as the
+  bearer and writes no token to storage; the refresh timing, the backoff,
+  the refusals that end a session and those that never do, and a sign-out
+  that wins a refresh in flight, all on the fake clock.
+- `test/appwrite-adapter.test.mjs`: a fake fetch asserts the exact requests
+  (method, path, headers, credentials, no secret in a URL), storage doubles
+  throw on any write, a response carrying `X-Fallback-Cookies` is ignored,
+  a fresh JWT per attempt, the one retry on a core 401, every refusal code,
+  the JWT never leaving the adapter, same-origin OAuth redirects, and the
+  package root and the adapter free of any SDK.
 
 - `test/custody.test.mjs`: the token lives in memory and the mirror carries
   the display profile and nothing else; nothing in storage is
