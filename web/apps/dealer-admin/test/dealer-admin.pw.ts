@@ -165,3 +165,73 @@ test("a frontline caller is refused the audit read", async ({ page }) => {
   // The trail is an admin read; the refusal names who may act.
   await expect(page.locator("[data-test=audit-error]")).toContainText("managers and above");
 });
+
+test("the pricing surface: the margin policies, and an edit saved clean", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+
+  // The strip names the twelve tabs; the margin tab is the open one.
+  await expect(page.locator(".pr-tab")).toHaveCount(12);
+  await expect(page.locator("[data-test=pr-margin-count]")).toHaveText("1 policy");
+  const row = page.locator('tr[data-category="ca7a0000-0000-4000-9000-0000000000a1"]');
+  await expect(row).toContainText("Pavers");
+  await expect(row.locator("[data-test=pr-margin-target]")).toHaveText("35.00%");
+  await expect(row.locator("[data-test=pr-margin-floor]")).toHaveText("20.00%");
+
+  // An edit saves straight through a clean grading: the write lands, the
+  // read re-renders the server's figure, and nothing was queued.
+  await row.getByRole("button", { name: "Edit the margin policy for Pavers" }).click();
+  await page.locator('[data-field="pr-policy-target"]').fill("36");
+  await page.locator('[data-action="pr-policy-save"]').click();
+  await expect(page.locator("[data-test=pr-margin-notice]")).toContainText("Saved.");
+  await expect(page.locator('tr[data-category="ca7a0000-0000-4000-9000-0000000000a1"] [data-test=pr-margin-target]')).toHaveText("36.00%");
+});
+
+test("the pricing floor warning: the server's grading opens the panel, the confirm writes and logs", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "floor-warning" } });
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+  await expect(page.locator("[data-test=pr-margin-count]")).toHaveText("1 policy");
+
+  // The save asks the floor first; the warning opens with the server's own
+  // items, and nothing has been written yet.
+  const row = page.locator('tr[data-category="ca7a0000-0000-4000-9000-0000000000a1"]');
+  await row.getByRole("button", { name: "Edit the margin policy for Pavers" }).click();
+  await page.locator('[data-field="pr-policy-floor"]').fill("10");
+  await page.locator('[data-action="pr-policy-save"]').click();
+  const panel = page.locator("[data-test=pr-floor-panel]");
+  await expect(panel).toContainText("The floor check names 1 product");
+  await expect(panel).toContainText("PAV-60-CH");
+  await expect(panel).toContainText("15.00%");
+
+  // Confirming runs the write, then logs the confirmation; the verdict is
+  // the server's own word.
+  await panel.getByRole("button", { name: "Save anyway, and log that I saw this" }).click();
+  await expect(page.locator("[data-test=pr-margin-notice]")).toContainText("logged");
+  await expect(page.locator('tr[data-category="ca7a0000-0000-4000-9000-0000000000a1"] [data-test=pr-margin-floor]')).toHaveText("10.00%");
+  await page.request.post("/_stub/reset");
+});
+
+test("a pricing write is refused for a frontline caller, in the server's own words", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.nth(1).click();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+
+  // The pricing reads are staff's, so the policies load; the write is the
+  // manager tier's, and the refusal keeps the server's word in it.
+  await expect(page.locator("[data-test=pr-margin-count]")).toHaveText("1 policy");
+  const row = page.locator('tr[data-category="ca7a0000-0000-4000-9000-0000000000a1"]');
+  await row.getByRole("button", { name: "Edit the margin policy for Pavers" }).click();
+  await page.locator('[data-field="pr-policy-target"]').fill("40");
+  await page.locator('[data-action="pr-policy-save"]').click();
+  await expect(page.locator("[data-test=pr-policy-error]")).toContainText("Forbidden");
+  await expect(page.locator("[data-test=pr-policy-error]")).toContainText("manager");
+  await expect(page.locator("[data-test=pr-margin-count]")).toHaveText("1 policy");
+});

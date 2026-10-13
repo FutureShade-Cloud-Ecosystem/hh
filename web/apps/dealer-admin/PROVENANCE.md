@@ -35,12 +35,39 @@ dealer-admin in any file ("No built app, no boards in any file").
 | The drawer's generation guard: opening a second row, filtering or closing voids the answer still in flight | `app/src/audit-log.ts` (`detailGen`, `openDetail`, `cancelDetail`) | `#auditDetailGen`, `#openAuditEntry`, `#closeAuditDetail` in `src/app-root.ts` | The counter carried over; the abort half is not, because the calls go through the generated client (a Result, no res.json() window); the drawer's three self describing attributes kept |
 | The actor cell | `app/src/audit-log.ts` with `app/src/_audit-actor.ts` (`renderActorCell`) | `actorWords` in `src/audit-logic.ts` | The honest change: the HH core's audit projection carries no resolved name and production reads the role word empty (the core attributes by the linked users id), so the cell shows the role's words when a row carries one, else the id's own block, never a blank |
 | The drilldown to one entity's whole trail | `app/src/audit-log.ts` with `app/src/_audit-drilldown.ts` | the trail card in `src/views-audit.ts`, `#openAuditTrail` in `src/app-root.ts` | The original's kind aware viewer became the one generic question the transaction route answers: this entity's rows |
+| The Pricing surface: one console of sub screens, twelve tabs | `app/src/pricing-admin.ts` (the sub nav and its tab order) | the registry row in `src/surfaces.ts`, `src/views-pricing.ts` (the strip and the router), `src/pricing-controller.ts`, `src/pricing-api.ts` | The original's fourteen sub tabs regrouped into the item's twelve (promotions and clearance share a tab; imports and the price file each kept their own; the cost compare screen is not carried, see the note below) |
+| The enum to word maps (scope, calc, audit action, price source, batch status, derivation, customer type, UoM source) | `app/src/pricing-words-logic.ts` and `app/src/pricing-shared.ts` (`SCOPE_LABELS`, `ENTITY_LABELS`) | `src/pricing-logic.ts` | Kept verbatim where the original had ratified a word; the honest degrade arm (lowercased, separators opened out) kept; the category id table (`CATEGORY_NAMES`) is NOT carried: HH asks the catalog read the contract serves the pricing screens, so one tenant's seed ids never wear another tenant's screen |
+| The money and percent formats (cents to text, a typed percent to bps) | `app/src/pricing-shared.ts` (`formatMoney`, `formatPct`, `pctToBps`) | `src/pricing-logic.ts` (`moneyWords`, `pctWords`, `bpsFromPctInput`, `centsFromMoneyInput`) | The encoders refuse negatives and non numbers at the form; no figure is ever summed or derived client side (the money rule) |
+| The floor warning's reading of the server's grading | the quote desk's own `app/src/_pricing-floor.ts` (same original lineage) and the core's floor preview contract | `src/pricing-logic.ts` (`affectedFloorItems`, `needsFloorConfirm`, `floorNoteLines`), the floor walk in `src/pricing-controller.ts` | The server grades, the screen shows the grade; the confirmation is logged by the server against the record the save wrote, its verdict shown whole; the no-cost branch list rides as notes, never a stop (the contract's own reading) |
+| The margin policy tab: the category policies grid and the upsert editor | `app/src/margin-grid.ts` (the original's keystone grid, read only) | `renderMargin` in `src/views-pricing.ts`, the margin group in `src/pricing-controller.ts` and `src/pricing-api.ts` | Rebuilt on HH's sheet; the editor saves through the floor preview first; enforcement off renders as a state chip naming that bypasses are logged |
 
 What the original's audit surface carried that this port does not, said
 plainly: the roving tabindex cursor with its arrow key model and the
 aria-selected discipline around it (the original's own accessibility round
 machinery). The rows here are tab stops whose Enter opens, and Escape
 closes, the drawer; the full two hundred row keyboard model is not carried.
+
+What the original's pricing console carried that this port does not, said
+plainly, with the reason each waited on:
+
+- The cost compare sub tab (`app/src/price-cost-compare.ts`): the HH contract
+  has no pricing cost compare route. The original called
+  `/api/v1/pricing/costcompare`, which the HH core did not carry. When a
+  route lands, the tab is one registry entry in `PRICING_TABS` and one
+  controller group away.
+- The printable pricing order document and its CSV projection
+  (`app/src/pricing-doc.ts`, `app/src/pricing-doc-logic.ts`): the document's
+  server is the pricing order family, and the HH contract scopes those
+  routes to the counter till alone (`x-access: surfaces: [counter-till]`).
+  A dealer-admin screen has no entitled source of a priced document to
+  render or export. The projection's own logic (named columns, totals as
+  total rows, the sanitised file name) ports mechanically the day a route
+  admits this app.
+- The audit drill-through focus event (the original's record-focus seam that
+  flipped the console to the customer or category a pricing audit row
+  named): the HH audit surface's drawer answers the entity's whole trail
+  instead, and the pricing log's rows are readable in the Pricing audit tab
+  with the same filters.
 
 What has no source in the original app and is new here, each from its named
 reference:

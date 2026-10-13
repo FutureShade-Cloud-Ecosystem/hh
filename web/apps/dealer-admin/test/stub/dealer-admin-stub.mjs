@@ -1,6 +1,7 @@
 // Dealer Admin's local stub: the demo way in, and the dealer's staff world
 // answered in the core's shapes (the staff register, the roles catalog, the
-// branches, the platform hotkey rosters, the audit trail). It is a
+// branches, the platform hotkey rosters, the audit trail, and the pricing
+// governance routes the Pricing surface reads and writes). It is a
 // development and test double only; the real routes are the core's, and the
 // staff identity admin family is contract-only there until the auth lane
 // lands it.
@@ -169,11 +170,26 @@ let hotkeys;
 let audit;
 let scenario;
 let log;
+let policies;
+
+// The pricing world: the categories the pricing screens name (the catalog
+// read serves them at this app), and the category margin policies.
+const CATEGORIES = [
+  { id: "ca7a0000-0000-4000-9000-0000000000a1", code: "PAV", name: "Pavers", is_active: true },
+  { id: "ca7a0000-0000-4000-9000-0000000000a2", code: "WAL", name: "Retaining Walls", is_active: true },
+  { id: "ca7a0000-0000-4000-9000-0000000000a3", code: "SLB", name: "Slabs and Steps", is_active: true },
+];
+const PAV = CATEGORIES[0].id;
+
+function buildPolicies() {
+  return [{ category_id: PAV, margin_target_bps: 3500, margin_floor_bps: 2000, margin_enforcement_disabled: false }];
+}
 
 function reset() {
   staff = buildStaff();
   hotkeys = buildHotkeys();
   audit = buildAudit();
+  policies = buildPolicies();
   scenario = "";
   log = [];
 }
@@ -399,6 +415,77 @@ async function handle(req, res) {
       position: typeof k.position === "number" ? k.position : i,
     }));
     return json(res, { saved: true });
+  }
+
+  // ---- the pricing routes: the categories read, the margin policies, the floor pair ----
+  // The core's gates: the pricing reads are staff's, the writes are the
+  // manager tier's. A refused read or write answers the shared Forbidden
+  // body, exactly {"error":"Forbidden"}.
+
+  if (req.method === "GET" && path === "/api/v1/product-categories") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    return json(res, { items: CATEGORIES, next_cursor: null, limit: 500 });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/pricing/category-policies") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    return json(res, { items: scenario === "empty-pricing" ? [] : policies, next_cursor: null, limit: 500 });
+  }
+
+  const policyMatch = path.match(/^\/api\/v1\/pricing\/category-policies\/([^/]+)$/);
+  if (req.method === "PUT" && policyMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const categoryId = decodeURIComponent(policyMatch[1]);
+    if (!CATEGORIES.some((c) => c.id === categoryId)) return refuse(res, 404, "category not found");
+    const row = {
+      category_id: categoryId,
+      margin_target_bps: typeof body?.margin_target_bps === "number" ? body.margin_target_bps : 0,
+      margin_floor_bps: typeof body?.margin_floor_bps === "number" ? body.margin_floor_bps : 0,
+      margin_enforcement_disabled: body?.margin_enforcement_disabled === true,
+    };
+    const existing = policies.findIndex((p) => p.category_id === categoryId);
+    if (existing >= 0) policies[existing] = row;
+    else policies.push(row);
+    return json(res, row);
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/floor-preview") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    if (scenario === "floor-warning") {
+      return json(res, {
+        items: [
+          {
+            product_id: "fa110000-0000-4000-9000-0000000000a1",
+            sku: "PAV-60-CH",
+            name: "Paver 60 Charcoal",
+            category_id: PAV,
+            customer_type: "RETAIL",
+            branch_code: "PLM",
+            branch_name: "Gable Landscape Supply - Point Loma",
+            final_cents: 420,
+            margin_bps: 1500,
+            floor_bps: 2000,
+            price_uom: "SF",
+            source: "TIER_DEFAULT",
+            previous_final_cents: 480,
+            previous_margin_bps: 2600,
+            already_under_floor: false,
+          },
+        ],
+        evaluated: 42,
+        not_graded: 0,
+        no_cost: 0,
+        truncated: false,
+      });
+    }
+    return json(res, { items: [], evaluated: 42, not_graded: 0, no_cost: 0, truncated: false });
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/floor-confirmations") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const ids = Array.isArray(body?.product_ids) ? body.product_ids : [];
+    if (ids.length === 0) return refuse(res, 400, "product_ids may not be empty");
+    return json(res, { status: "logged" });
   }
 
   // ---- the audit trail ----

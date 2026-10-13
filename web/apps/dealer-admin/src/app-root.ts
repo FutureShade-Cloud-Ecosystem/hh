@@ -47,10 +47,14 @@ import {
 } from "./hotkey-logic.js";
 import { SURFACES, isSurfaceId } from "./surfaces.js";
 import { dealerStyles } from "./styles.js";
+import { pricingStyles } from "./pricing-styles.js";
 import { renderStaff, type StaffModel } from "./views-staff.js";
 import { renderHotkeys, type HotkeysModel } from "./views-hotkeys.js";
 import { renderAudit, type AuditDetail, type AuditModel, type AuditTrail } from "./views-audit.js";
 import { EMPTY_FILTERS, sinceWire, type AuditFilters } from "./audit-logic.js";
+import { PricingApi } from "./pricing-api.js";
+import { pricingAttrs, PricingController } from "./pricing-controller.js";
+import { renderPricing } from "./views-pricing.js";
 import type { AuditRow } from "./dealer-api.js";
 
 const DEMO_ORG = "hh-demo";
@@ -91,7 +95,7 @@ const emptyAuditModel = (): AuditModel => ({
 });
 
 export class DealerAdminApp extends HHElement {
-  static styles = [baseStyles, dealerStyles];
+  static styles = [baseStyles, dealerStyles, pricingStyles];
 
   // The demo account surface: listFlows() and chooseFlow() over the core's
   // demo routes. It is the injected AccountSurface for the auth package.
@@ -117,6 +121,10 @@ export class DealerAdminApp extends HHElement {
 
   // The dealer's calls, over the staff client.
   readonly #api = new DealerApi(this.#staffClient);
+
+  // The pricing surface: its own controller, door and model, so this file
+  // carries only the wiring (the listener branches and the router line).
+  readonly #pricing = new PricingController(new PricingApi(this.#staffClient), () => this.requestUpdate());
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
@@ -179,8 +187,15 @@ export class DealerAdminApp extends HHElement {
         // A surface loads its own reads the first time it is opened.
         if (surface === "hotkeys" && this.#hotkeys.phase === "loading") void this.#loadHotkeys();
         if (surface === "audit" && this.#audit.phase === "loading") void this.#loadAudit();
+        if (surface === "pricing") void this.#pricing.open();
         this.requestUpdate();
       }
+      return;
+    }
+    // The pricing surface's controls: every action rides a pr- prefixed name
+    // and the controller owns the whole state machine behind them.
+    if (typeof action === "string" && action.startsWith("pr-")) {
+      if (control !== undefined) void this.#pricing.click(action, pricingAttrs(control));
       return;
     }
     if (action === "reload-staff") {
@@ -250,25 +265,39 @@ export class DealerAdminApp extends HHElement {
     }
   };
 
-  // The register's role selects answer on change: the element carries
-  // data-action="assign-role" and the staff member's id. The option list
-  // carries the catalog's names, so the answer is mapped back to the code
-  // here; an empty answer (Unassigned) is skipped, as the original's own
-  // assign was.
+  // The register's role selects and the pricing editors' selects and
+  // checkboxes answer on change: the element carries a data-field (pricing)
+  // or data-action (the register), and the answer is mapped back here. A
+  // checkbox rides as yes or no; a select's answer is the option's own word,
+  // which the controller maps back to the id it stands for.
   readonly #onHostChange = (event: Event): void => {
     const target = event.target;
-    if (!(target instanceof Element) || target.getAttribute("data-action") !== "assign-role") return;
+    if (!(target instanceof Element)) return;
+    const field = target.getAttribute("data-field") ?? "";
+    if (field.startsWith("pr-")) {
+      let value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
+      if (target instanceof HTMLInputElement && target.type === "checkbox") value = target.checked ? "yes" : "no";
+      this.#pricing.change(field.slice(3), value);
+      return;
+    }
+    if (target.getAttribute("data-action") !== "assign-role") return;
     const id = target.getAttribute("data-user-id") ?? "";
     const roleName = target instanceof HTMLSelectElement ? target.value : "";
     const role = this.#staff.roles.find((r) => r.name === roleName);
     void this.#assignRole(id, role?.code ?? "");
   };
 
-  // The audit filters' fields mirror from input events, never bound.
+  // The audit filters' and the pricing editors' fields mirror from input
+  // events, never bound.
   readonly #onHostInput = (event: Event): void => {
     const target = event.target;
     if (!(target instanceof Element)) return;
     const field = target.getAttribute("data-field") ?? "";
+    if (field.startsWith("pr-")) {
+      const value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
+      this.#pricing.input(field.slice(3), value);
+      return;
+    }
     if (!field.startsWith("audit-")) return;
     const value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
     const filters = this.#audit.filters;
@@ -362,6 +391,18 @@ export class DealerAdminApp extends HHElement {
     for (const [field, value] of Object.entries(fields)) {
       const el = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${field}"]`);
       if (el !== null && el.value !== value) el.value = value;
+    }
+    // The pricing editors' fields mirror the controller's model the same
+    // way, checkbox included.
+    for (const el of Array.from(this.renderRoot.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-field^="pr-"]'))) {
+      const field = el.getAttribute("data-field") ?? "";
+      const value = this.#pricing.fieldValue(field.slice(3));
+      if (el instanceof HTMLInputElement && el.type === "checkbox") {
+        const checked = value === "yes";
+        if (el.checked !== checked) el.checked = checked;
+      } else if (el.value !== value) {
+        el.value = value;
+      }
     }
   }
 
@@ -740,6 +781,7 @@ export class DealerAdminApp extends HHElement {
     this.#hotkeys = emptyHotkeysModel();
     this.#audit = emptyAuditModel();
     this.#auditDetailGen += 1;
+    this.#pricing.reset();
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -778,6 +820,7 @@ export class DealerAdminApp extends HHElement {
     // theirs beside this one; nothing else in this file changes.
     if (this.#surface === "hotkeys") return renderHotkeys(this.#hotkeys);
     if (this.#surface === "audit") return renderAudit(this.#audit);
+    if (this.#surface === "pricing") return renderPricing(this.#pricing.model);
     return renderStaff(this.#staff);
   }
 
