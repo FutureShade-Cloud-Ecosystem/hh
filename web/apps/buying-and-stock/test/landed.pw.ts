@@ -203,8 +203,8 @@ test("a caller with no branch reach reads the core's refusal and can try again",
   await resetStub(request);
   await request.post("/_stub/fence");
   await page.goto("/");
-  await expect(page.locator("[data-flow]")).toHaveCount(1);
-  await page.locator("[data-flow]").click();
+  await expect(page.locator('[data-flow="procurement-manager"]')).toHaveCount(1);
+  await page.locator('[data-flow="procurement-manager"]').click();
   await page.locator("nav.areas").getByRole("button", { name: "Landed cost" }).click();
   await expect(page.locator("[data-error]")).toContainText("Caller cannot access this branch.");
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
