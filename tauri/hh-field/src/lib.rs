@@ -92,3 +92,46 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running HH Field");
 }
+
+#[cfg(test)]
+mod tests {
+    // Pins from the probe 4 reviews, plus this item's device permissions. The
+    // generated Android tree is source and tracked, so these strings are
+    // stable; if Tauri regenerates the project, these tests say what must
+    // survive.
+    const MANIFEST: &str = include_str!("../gen/android/app/src/main/AndroidManifest.xml");
+    const FILE_PATHS: &str = include_str!("../gen/android/app/src/main/res/xml/file_paths.xml");
+
+    #[test]
+    fn field_only_device_permissions_are_declared() {
+        assert!(
+            MANIFEST.contains("<uses-permission android:name=\"android.permission.CAMERA\" />"),
+            "the camera permission is missing from the Android manifest"
+        );
+        assert!(
+            MANIFEST.contains(
+                "<uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" />"
+            ),
+            "the fine location permission is missing from the Android manifest"
+        );
+    }
+
+    #[test]
+    fn the_manifest_stays_backup_free_and_rationaled() {
+        // Probe 4 review round 1, P3 5: the Keystore custody design depends on
+        // the ciphertext never travelling in an auto backup.
+        assert!(MANIFEST.contains("android:allowBackup=\"false\""));
+        assert!(
+            MANIFEST.contains("Field only"),
+            "the permission block must carry its rationale as a comment"
+        );
+    }
+
+    #[test]
+    fn the_file_provider_keeps_wrys_capture_root() {
+        // Probe 4 review round 2, P2 1: narrowing the FileProvider silently
+        // broke the webview's camera capture. Both roots must stay.
+        assert!(FILE_PATHS.contains("cache-path"));
+        assert!(FILE_PATHS.contains("<external-files-path name=\"captures\" path=\"Pictures/\" />"));
+    }
+}
