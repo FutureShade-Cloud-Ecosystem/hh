@@ -17,6 +17,8 @@ const CARD = "test/acceptance/card-lands.pw.ts";
 const RECEIVABLES = "test/receivables.pw.ts";
 const LEDGER = "test/ledger.pw.ts";
 const FINSTMT = "test/finstmt.pw.ts";
+const LIENS = "test/liens.pw.ts";
+const COMPLIANCE = "test/compliance.pw.ts";
 const BANKREC = "test/bankrec.pw.ts";
 const FRONT_DOOR = "../front-door/test/acceptance/front-door.pw.ts";
 const CORE = "../../../core/cmd/core/";
@@ -138,6 +140,63 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "refused-decision": [{ file: LEDGER, test: "a refused decision names who may decide it, never the bare gate word" }],
   "bare-array": [{ file: LEDGER, test: "a bare array where the contract says a page is refused, never half read" }],
   "phone-decision": [{ file: LEDGER, test: "on a phone a chosen request brings its decision into view" }],
+  "liens-areas": [
+    { file: LIENS, test: "the General Manager's area switch holds Liens and Compliance, and the controller's holds all six" },
+    { file: LIENS, test: "Payables and Receivables reads the jobs and the calendar and is offered no write" },
+    { file: "../../../core/internal/demo/flows/flows_test.go", source: "want the closed set of eight" },
+  ],
+  "liens-payrec-reads": [
+    { file: LIENS, test: "Payables and Receivables reads the jobs and the calendar and is offered no write" },
+    { file: "test/lien-stub-contract.test.mjs", test: "the role gate: Payables and Receivables reads the liens and the calendar and is refused every write, as the default configuration and the census say" },
+    { file: "../../../core/internal/roleconfig/default.json", source: '"role": "payables_receivables",\n      "surface": "money-desk",\n      "level": "work"' },
+  ],
+  "liens-banner": [
+    { file: LIENS, test: "the controller opens Liens on the Monday triage: the core's banner and four jobs, oldest first, each with the core's badge and note" },
+    { file: COMPLIANCE, test: "the review status is the core's own draft banner until it is set; setting it changes the banner every lien screen carries" },
+  ],
+  "liens-core-words": [
+    { file: "../../../core/internal/lien/aging.go", source: "at/over the 45-day window, eligible to release" },
+    { file: "../../../core/internal/lien/template.go", source: 'Title: "Statutory Declaration (Construction Act)"' },
+  ],
+  "liens-triage": [
+    { file: LIENS, test: "the controller opens Liens on the Monday triage: the core's banner and four jobs, oldest first, each with the core's badge and note" },
+    { file: LIENS, test: "a triage row opens its job on the jobs tab, with the facts the core holds and what is held now" },
+  ],
+  "liens-jobs": [
+    { file: LIENS, test: "the jobs tab lists every job newest first and a press on a row opens it" },
+    { file: LIENS, test: "a new job is refused in words before anything is sent, then it lands first in the list with its deadline registered" },
+    { file: "src/lien/lien-logic.ts", source: "hst_on_holdback: false," },
+  ],
+  "liens-sync": [{ file: LIENS, test: "syncing a job's holdbacks books the held invoice once and a second press books nothing" }],
+  "liens-aging": [{ file: LIENS, test: "the holdbacks tab ages the retention; a payable holdback is released by hand and has no release control" }],
+  "liens-release": [
+    { file: LIENS, test: "the General Manager releases a holdback: the co-signer is picked from the roster, the confirm names the job and the amount, and the job leaves the aging" },
+    { file: LIENS, test: "a co-signer the core will not take is refused in the core's words and nothing is released" },
+    { file: LIENS, test: "a holdback released by another hand meanwhile is refused as nothing outstanding, and the list is read again" },
+  ],
+  "liens-release-read": [{ file: LIENS, test: "the controller can read a release but not make one: the screen says who releases, and offers no confirm" }],
+  "liens-documents": [{ file: LIENS, test: "the documents tab renders a form from its own merge fields, a second render is version 2, and the history reads both" }],
+  "compliance-upcoming": [
+    { file: COMPLIANCE, test: "Compliance opens on what is due soon: five open deadlines, soonest first, the two past due marked Overdue in words" },
+    { file: COMPLIANCE, test: "the horizon box narrows the list, a bad horizon is refused in words before anything is asked, and blank reads the core's own" },
+  ],
+  "compliance-calendar": [{ file: COMPLIANCE, test: "the calendar lists every deadline by due date, a status filter reads what the core holds, and an empty status says so" }],
+  "compliance-review": [
+    { file: COMPLIANCE, test: "the review status is the core's own draft banner until it is set; setting it changes the banner every lien screen carries" },
+    { file: COMPLIANCE, test: "a job's review is its own: the cockpit stays as it was, and a blank banner is the core's default words" },
+  ],
+  "liens-states": [
+    { file: LIENS, test: "a load that fails says so in words and Try again reads the area again" },
+    { file: LIENS, test: "an empty worklist, an empty aging and an empty job list say they are empty" },
+    { file: COMPLIANCE, test: "a load that fails says so in words and Try again reads the area again" },
+    { file: COMPLIANCE, test: "an empty calendar and nothing due soon say so" },
+  ],
+  "liens-phone": [
+    { file: LIENS, test: "every tab fits the screen with cards in place of tables" },
+    { file: LIENS, test: "the keys reach every tab and the release confirm, and focus lands where the screen changed" },
+    { file: COMPLIANCE, test: "the keys reach the tabs, the filter and the save, and focus stays where the person was" },
+    { file: COMPLIANCE, test: "every tab fits the screen with cards in place of tables" },
+  ],
   "journal-register": [{ file: LEDGER, test: "the journal register keeps a journal number on one line and offers void and reverse where they apply" }],
   "trial-balance": [
     { file: LEDGER, test: "it reads the trial balance in balance, with the server's totals" },

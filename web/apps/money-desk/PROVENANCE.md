@@ -75,6 +75,37 @@ the core's shape census); the slice reads both and refuses anything else. Saving
 contract's route takes none), so the screen holds a second press while one is in flight and, when no answer comes back, says
 the pack may or may not be saved.
 
+## Liens slice (`src/lien/`) and compliance slice (`src/compliance/`)
+
+Ported from the original app's Lien Cockpit (`app/src/lien-cockpit.ts` and its five tabs: `lien-triage.ts`, `lien-jobs.ts`,
+`lien-holdbacks.ts`, `lien-documents.ts`, `lien-calendar.ts`, with `lien-shared.ts` and `lien-api.ts`), read only, at the
+commit the cycle names. The logic ports as plain code onto HH's generated api-client; the screens are rebuilt on HH's
+design system against the Money Desk references (`hh-sup/design-refs/money-desk/`, trial-balance and controller-home for
+the frame: pill tabs, bordered cards with no shadow, status as a word before a colour, a table that gives way to cards on
+a phone). The original's cockpit hosted the calendar as a fifth tab; here Compliance is its own area, as the cycle's
+brief names it.
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Job, direction, badge, bucket and deadline words | `app/src/lien-shared.ts` | `src/lien/lien-logic.ts`, `src/compliance/compliance-logic.ts` | Stored tokens opened out into plain words; the statutory phrase "Substantially performed" kept; a word always sits beside the colour |
+| Monday triage | `app/src/lien-triage.ts` | `triage` in `src/lien/lien-views.ts` | The core's note is shown as a sentence beside the row; the row opens its job; cards on a phone |
+| Jobs and new job | `app/src/lien-jobs.ts` | `jobs`, `jobForm` | The contract was read as `Number(...) * 100`; it is parsed through the decimal string and refused in words when it is not dollars and cents. A blank holdback percent is the core's default. The tax on holdback box is not offered: the core's flag adds a fixed placeholder rate that is not California's |
+| Sync holdbacks | `app/src/lien-jobs.ts` | `#sync` in `src/lien/lien-desk.ts` | The result says how many invoices were booked and how many already were |
+| Holdback aging and release | `app/src/lien-holdbacks.ts` | `holdbacks`, `releasePanel`, `#confirmRelease` | The release asked for the co-signer's user id and role in two browser prompts; it is a pick from the staff roster (Financial Controller or Payables and Receivables, never the caller), a confirm naming the job and the amount, and the core's refusal sentences shown in words. The General Manager's gate is shown before a press and enforced again by the core |
+| Documents and versions | `app/src/lien-documents.ts` | `documents`, `renderForm` | The merge data was a line of JSON; each form shows its own fields, the core's labels. The latest of each form lists, History reads every version, newest first |
+| Release calendar | `app/src/lien-calendar.ts` | `upcoming`, `calendar` in `src/compliance/compliance-views.ts` | The upcoming list takes a look ahead typed as a whole number; the calendar reads the upcoming list's overdue mark, because the core stores a past due deadline as open |
+| Shared review status banner | `app/src/lien-shared.ts` (`bannerFor`) | `bannerStrip`, `banner` | The banner words and state are the core's; Compliance can set them, for the whole cockpit or for one job |
+| `parseAmountToCents` | the receivables slice's `src/ar/ar-money.ts` | `src/lien/lien-money.ts` | Same parse; a holdback percent parses to basis points the same way, through the string |
+
+Choices the cycle's brief left open: the lien screens carry no idempotency key because the contract has none (the sync is
+idempotent on the invoice, the release's journal on the job, a render appends a version by design). The core answers an
+empty list as `{"items": null}`; the slice reads that as an empty list and the stub copies it. The review status for the
+whole cockpit keeps the original's one subject id, so rows the core already holds still match.
+
+Not ported on purpose: a customer pick on the new job form (the customer search is the Counter Till's and Quote Desk's
+surface, not the Money Desk's, so a job is made with no customer and its sync sweeps the whole branch), the tax on holdback
+box (above), and any hard coded legal wording or date: what a lien form says, and what a deadline is, is the core's answer.
+
 ## Bank reconciliation slice (`src/bankrec/`)
 
 Ported from the original app's bank reconciliation console (the main bankrec screen under `app/src`, `bankrec-import.ts`,
