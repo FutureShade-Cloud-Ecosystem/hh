@@ -89,7 +89,7 @@ func TestDemoWorld_TenantFlow(t *testing.T) {
 	}
 	values := map[string]string{
 		customerquote.EnvKeyID: "fx-accept-sign-key", customerquote.EnvKey: hex.EncodeToString(acceptKey),
-		"DEMO_MODE": "true", "APP_ENV": "demo",
+		"DEMO_MODE": "true", "APP_ENV": "demo", "CORE_SIGNIN_MODE": "demo",
 		"CORE_DATABASE_URL": testDSN, "CORE_STAFF_AUDIENCE": "hh-staff", "CORE_TENANT_AUDIENCE": "hh-tenant",
 		"PAYMENT_VAULT_KEY": hex.EncodeToString(rawKey),
 	}
