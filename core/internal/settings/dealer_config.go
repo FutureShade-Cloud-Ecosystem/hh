@@ -155,13 +155,35 @@ func NewDealerConfigReader(pool *pgxpool.Pool) *DealerConfigReader {
 	return &DealerConfigReader{pool: pool, log: slog.Default()}
 }
 
+// DealerConfigQuerier is the one read capability the dealer configuration needs: pgxpool.Pool and
+// pgx.Tx both satisfy it, so the same read runs on the pool or on a caller's open transaction.
+type DealerConfigQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
 // DealerConfig reads the four keys in one query, uncached. A malformed stored value falls back to
 // its key's default and is logged by key, never by value.
 func (r *DealerConfigReader) DealerConfig(ctx context.Context) (DealerConfig, error) {
 	if r == nil || r.pool == nil {
 		return DefaultDealerConfig(), nil
 	}
-	rows, err := r.pool.Query(ctx,
+	return r.read(ctx, r.pool)
+}
+
+// DealerConfigTx is DealerConfig on the caller's open transaction. A caller that holds a connection
+// for the length of its work (the card rail's sale transaction) reads through this and never the
+// pool: a pool read there makes the holder wait for a second connection, which a full pool of such
+// holders never frees (the payment store's activeConfigTx discipline). A nil reader or pool still
+// answers the Ontario default.
+func (r *DealerConfigReader) DealerConfigTx(ctx context.Context, tx DealerConfigQuerier) (DealerConfig, error) {
+	if r == nil || r.pool == nil || tx == nil {
+		return DefaultDealerConfig(), nil
+	}
+	return r.read(ctx, tx)
+}
+
+func (r *DealerConfigReader) read(ctx context.Context, q DealerConfigQuerier) (DealerConfig, error) {
+	rows, err := q.Query(ctx,
 		`SELECT key::text, value FROM system_settings WHERE key IN ('currency','tax_region','business_zone','hst_rate_bps')`)
 	if err != nil {
 		return DealerConfig{}, err

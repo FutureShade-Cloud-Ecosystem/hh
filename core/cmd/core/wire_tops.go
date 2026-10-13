@@ -221,7 +221,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// first construction, DIB-416; the second service the W3-B block built
 	// stays in wireOperations, the duplication the A1 ruling carries
 	// verbatim).
-	portalPaySvc := payments.NewService(payments.NewRepository(pool), ops.unionGateway)
+	portalPaySvc := payments.NewService(payments.NewRepository(pool), ops.unionGateway).WithCurrency(newDealerCurrency(pool))
 
 	// Procurement Planning board: pricing + customers + the catalog seam.
 	procurementSvc := procurement.NewService(procurement.NewRepository(pool)).
@@ -739,7 +739,7 @@ func buildCardRail(r httpx.Registrar, g *guards.Guards, pool *pgxpool.Pool, cfg 
 	if err != nil {
 		panic("payment vault init failed: " + err.Error())
 	}
-	payStore := payment.NewStore(pool, payVault)
+	payStore := payment.NewStore(pool, payVault).WithDealerCurrency(newDealerCurrency(pool))
 	// DIB-416: the POS card rail selection is FATAL, the same fail-closed
 	// posture the payments gateway selector carries.
 	cardProc, cardErr := payment.SelectCardProcessor(payment.LoadCardRailConfig())
