@@ -137,6 +137,9 @@ export class YardOffline {
    * it ran may reach the server in the next cycle, after this one's pull. */
   readonly #writtenSincePull = new Map<string, number>();
   #writes = 0;
+  /** Cycles asked for and not yet rested: while one runs, its pull may land
+   * at any moment, so no row's seq can be trusted as a base. */
+  #inFlight = 0;
 
   constructor(options: YardOfflineOptions) {
     this.store = options.store;
@@ -154,9 +157,11 @@ export class YardOffline {
    * request that follows runs the cycle the state can take. */
   async cycle(): Promise<void> {
     const mark = this.#writes;
-    await this.runner.dispatch({ type: "ONLINE" });
-    await this.runner.request();
-    await this.runner.settled();
+    await this.#sync(async () => {
+      await this.runner.dispatch({ type: "ONLINE" });
+      await this.runner.request();
+      await this.runner.settled();
+    });
     this.#pulled(mark);
     this.#onChange?.();
   }
@@ -166,7 +171,7 @@ export class YardOffline {
     // The count moved now, and it moves again when the replay lands or fails.
     this.#onChange?.();
     const mark = this.#writes;
-    void this.runner.request().then(() => {
+    void this.#sync(() => this.runner.request()).then(() => {
       this.#pulled(mark);
       this.#onChange?.();
     });
@@ -180,7 +185,16 @@ export class YardOffline {
   setOnline(online: boolean): Promise<void> {
     if (this.#lastOnline === online) return Promise.resolve();
     this.#lastOnline = online;
-    return this.runner.dispatch(online ? { type: "ONLINE" } : { type: "OFFLINE" });
+    return this.#sync(() => this.runner.dispatch(online ? { type: "ONLINE" } : { type: "OFFLINE" }));
+  }
+
+  async #sync<T>(run: () => Promise<T>): Promise<T> {
+    this.#inFlight += 1;
+    try {
+      return await run();
+    } finally {
+      this.#inFlight -= 1;
+    }
   }
 
   #markWritten(key: string): void {
@@ -374,8 +388,10 @@ export class YardOffline {
    * outbox is empty after it: the direct door may then go. */
   async #drain(): Promise<boolean> {
     const mark = this.#writes;
-    await this.runner.request();
-    await this.runner.settled();
+    await this.#sync(async () => {
+      await this.runner.request();
+      await this.runner.settled();
+    });
     const empty = (await this.waiting()) === 0;
     if (empty) this.#pulled(mark);
     this.#onChange?.();
@@ -433,7 +449,12 @@ export class YardOffline {
       const key = `${input.scope}:${input.row.id}`;
       const pending = await this.store.outbox.pending();
       const queued = pending.some((row) => row.scope === input.scope && row.entityId === input.row!.id);
-      baseSeq = queued || this.#writtenSincePull.has(key) ? undefined : input.row.seq;
+      // The row is read again here, after the checks: a pull that landed since
+      // the caller read it moved its seq, and a base named from the older read
+      // would meet the device's own earlier write as a conflict.
+      const fresh = await this.store.read(input.scope, input.row.id);
+      const syncing = this.#inFlight > 0 || this.runner.state === "pushing" || this.runner.state === "pulling";
+      baseSeq = queued || syncing || fresh.row === null || this.#writtenSincePull.has(key) ? undefined : fresh.row.seq;
     }
     const answer = await this.store.enqueue({
       scope: input.scope,
