@@ -118,6 +118,22 @@ test("each photo taken shows as a thumbnail beside the add tile", async ({ page 
   await expect(page.locator("img[data-thumb]")).toHaveCount(2);
 });
 
+test("a second photo picked while the first is still going up is kept, never dropped", async ({ page }) => {
+  await takeFirstStopEnRoute(page);
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
+  // Both pictures arrive in the same breath, as two quick taps from a driver would.
+  await page.locator("input[type=file]").evaluate(async (input: HTMLInputElement, bytes: number[]) => {
+    for (const name of ["a.png", "b.png"]) {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array(bytes)], name, { type: "image/png" }));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true, composed: false }));
+    }
+  }, Array.from(TINY_PNG));
+  await expect(page.locator("img[data-thumb]")).toHaveCount(2);
+  await expect(page.locator("[data-photo-sent]")).toHaveCount(2);
+});
+
 test("in brand the unticked box and the grey sign control can be found at 3:1", async ({ page }) => {
   await takeFirstStopEnRoute(page);
   await page.getByRole("button", { name: "Brand theme" }).click();
