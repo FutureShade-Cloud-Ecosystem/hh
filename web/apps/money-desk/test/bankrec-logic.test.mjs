@@ -170,6 +170,11 @@ test("a failed import says what the file lacked in words a bookkeeper can act on
     importFailedWords('statement parse failed: bankrec: csv row 5: bad amount "12..5": not a number: "12..5"'),
     'Not imported: row 5 has an amount that is not money ("12..5"). Amounts are dollars and cents; a debit has a minus sign or brackets.',
   );
+  // The envelope the core writes carries the parser's sentence with its module prefix and no wrapper.
+  assert.equal(
+    importFailedWords('bankrec: csv is missing the mapped column "Date"'),
+    'Not imported: the file has no "Date" column. The first row must name Date, Description, Amount and Reference.',
+  );
   assert.equal(importFailedWords("statement parse failed: bankrec: read csv header: EOF"), "Not imported: the file is empty or has no header row.");
   assert.equal(importFailedWords("statement parse failed: something else"), "Not imported: something else.");
   assert.equal(importFailedWords(""), "Not imported: the file could not be read.");
