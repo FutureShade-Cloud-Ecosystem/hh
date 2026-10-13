@@ -1,12 +1,15 @@
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+#[cfg(feature = "probe")]
 use hh_shell_core::keychain::{self, Slot};
 use hh_shell_core::profiles;
 use hh_shell_core::store::{self, SqlRow, SqlStatement, SqlValue, Store};
 
 // The contract's service name: `ai.futurebuild.hh.<profile>`, which is the
 // profile's own identifier. One source: the profile model is the definition
-// (the test below pins the two together).
+// (the test below pins the two together). Rust side only: item 7's auth
+// commands are the writers; the webview holds no keychain command.
+#[cfg_attr(not(feature = "probe"), allow(dead_code))]
 fn keychain_service() -> &'static str {
     profiles::field().identifier
 }
@@ -21,17 +24,23 @@ fn open_store(app: &tauri::AppHandle) -> Result<Store, String> {
     store::Store::open_path(&dir.join(STORE_FILE))
 }
 
-// The keyring call blocks (a Secret Service unlock prompt can take a while), so
-// it runs on a blocking thread and never on the main thread or an async worker.
+// The blocking helper keeps long calls (a keyring unlock prompt, the store's
+// SQLite work) on a blocking thread, never on the main thread or an async worker.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
+// PROBE SCAFFOLDING: the webview may not read or write the custody slot in a
+// real build (the Console session secret is used only on the Rust side,
+// AUTH-SHELL-CONTRACT r6; item 7's auth_* commands are its writers), so these
+// two exist only for the probe harness, which drives them from probe.js.
+#[cfg(feature = "probe")]
 #[tauri::command]
 async fn keychain_set(slot: Slot, value: String) -> Result<(), String> {
     blocking(move || keychain::set(keychain_service(), slot.name(), &value)).await
 }
 
+#[cfg(feature = "probe")]
 #[tauri::command]
 async fn keychain_get(slot: Slot) -> Result<String, String> {
     blocking(move || keychain::get(keychain_service(), slot.name())).await
@@ -133,12 +142,7 @@ pub fn run() {
             run_atomic
         ]);
     #[cfg(not(feature = "probe"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![
-        keychain_set,
-        keychain_get,
-        run_statement,
-        run_atomic
-    ]);
+    let builder = builder.invoke_handler(tauri::generate_handler![run_statement, run_atomic]);
     builder
         .setup(|app| {
             let profile = profiles::field();
