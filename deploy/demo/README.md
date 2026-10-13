@@ -4,7 +4,7 @@ One image in the Railway shape (plan r7 section 5): the core built with
 `-tags demo`, the built files of every web app (front door at `/`, till at
 `/till/`, buying-and-stock at `/buying-and-stock/`, public desk at `/q/`, HH
 Drive at `/drive/`, Manager Home at `/home/`, Yard Pick at `/yard/`, Money
-Desk at `/money-desk/`, Quote Desk at `/quote/` when present), Caddy in
+Desk at `/money-desk/`, Dealer Admin at `/dealer-admin/`, Quote Desk at `/quote/` when present), Caddy in
 front, and the frozen migration set. Build from the repository root:
 
     docker build -f deploy/demo/Dockerfile -t hh-demo-till .
@@ -103,6 +103,54 @@ forged chain is never the answer.
 | `CORE_INTERNAL_PORT` | the core's loopback port (the default is 9090) |
 | `CORE_STAFF_AUDIENCE`, `CORE_TENANT_AUDIENCE` | the token audiences (defaults `hh-staff` and `hh-tenant`) |
 | `CORE_DEMO_TOKEN_TTL` | the demo session length the mint issues, optional |
+| `CORE_SIGNIN_MODE` | `demo` or `console`, required, no default (the image refuses to start without it) |
+| `CORE_SESSION_SIGNING_KEY_FILE` | console mode: path of the PEM EC P-256 private key. The secret mount must be mode 0400 or 0600 and owned by the user the core runs as (a file readable by group or other is refused at boot, and so is one the core's user cannot read); mount it read only |
+| `CORE_SESSION_KEY_NEXT_FILE`, `CORE_SESSION_KEY_PREVIOUS_FILE` | console mode, optional: PEM public halves only, any mode, one PEM block each |
+| `CORE_TOKEN_ISSUER`, `CORE_APPWRITE_ENDPOINT`, `CORE_APPWRITE_PROJECT`, `CORE_APPWRITE_API_KEY` | console mode: the deployment's issuer (never `hh-demo`) and the FB Console values |
+| `CORE_EXCHANGE_TOKEN_TTL` | console mode, optional: the exchange token window, one second to one hour |
+
+## The console sign in mode (the testers' copy and the public copy)
+
+A copy that signs real people in through FB Console runs this image with
+`CORE_SIGNIN_MODE=console`. Staging keeps `CORE_SIGNIN_MODE=demo` until it is
+retired; the mode has no default, so every copy names it, and a console copy
+does not serve the old demo mint routes (they answer 404). The console mode
+is a declared shape of the demo environment guard: it carries a live
+connection to FB Console (the one outbound a console copy makes) and the
+guard allows exactly the names listed here under `CORE_`, refusing any other
+`CORE_` name at boot, naming the variable and never its value.
+
+Every value below is set in FB Deploy for the copy. Nothing is baked into the
+image and nothing is committed.
+
+| Name | Kind | What it is |
+|---|---|---|
+| `CORE_SIGNIN_MODE` | public value | `console` |
+| `CORE_TOKEN_ISSUER` | public value | one value per deployment, never `hh-demo`; a token minted on one copy never verifies on another |
+| `CORE_SESSION_SIGNING_KEY_FILE` | **secret file** (a path) | the PEM private key (ES256, P-256); mount it read only with mode 0400 or 0600, readable by the core's user, never an environment value; boot refuses a group or other readable file |
+| `CORE_SESSION_KEY_NEXT_FILE` | public half (a path) | optional; the PEM public key staged for a rotation |
+| `CORE_SESSION_KEY_PREVIOUS_FILE` | public half (a path) | optional; the retired key's PEM public key while its tokens live |
+| `CORE_APPWRITE_ENDPOINT` | public value | the FB Console API endpoint, ending in `/v1` |
+| `CORE_APPWRITE_PROJECT` | public value | the HH project id in FB Console |
+| `CORE_APPWRITE_API_KEY` | **secret** | the core's server key: users read, teams read, files read and files write only (it cannot mint a JWT for anyone) |
+| `CORE_EXCHANGE_TOKEN_TTL` | public value | optional Go duration, at most 1 hour (the default is 1 hour) |
+| `CORE_EXCHANGE_JWT_BOUND` | public value | optional Go duration, at least 900 seconds, default 20 minutes; the furthest a FB Console JWT's `exp` may lie ahead |
+| `CORE_SIGNIN_EMAIL_DOMAINS` | public value | comma list; with `CORE_SIGNIN_EMAIL_ADDRESSES` the allow list of sign in emails; both empty or unset refuses every sign in |
+| `CORE_SIGNIN_EMAIL_ADDRESSES` | public value | comma list of whole addresses |
+| `CORE_TRUSTED_PROXIES` | public value | comma list of peer addresses allowed to name the client: set it to the address Caddy connects from (`127.0.0.1` in this image), or every visitor shares the proxy's one rate limit bucket |
+| `CORE_JWKS_URL` | unset | the console copy verifies its own tokens; if it is still set the boot logs one warning and ignores it |
+
+The rest of the table above (database, vault key, gate hash, acceptance
+signing pair) is unchanged. The JWK Set at `/.well-known/jwks.json` is served
+through Caddy with no phrase, ahead of the front door's catch all; proven by
+`deploy/demo/caddy-jwks-test.sh`. The environment guard's list is
+`demoEnvAllowCoreNames` in `core/cmd/core/demoenv_inventory.go`: a new
+`CORE_` name is added there, by name, in the same change that reads it.
+
+A console copy needs the core to be the only replica per deployment (a
+replica knows only its own key configuration), the signing key rotated by the
+staged order in the sign in state note, and FB Deploy's secret file mode
+confirmed before the copy ships.
 
 ## One replica
 

@@ -189,7 +189,6 @@ var shapeCensusUncovered = map[string]string{
 	// 404 before any caller class is consulted.
 	"getOperatorUsage":  "the operator launcher surface (D4) is not registered (parity_ledger_test.go: no implementation lane assigned); the mux answers 404 before any caller class is consulted (all legs 404)",
 	"identityListRoles": "the staff identity admin surface is not registered (parity_ledger_test.go: no implementation lane assigned); the mux answers 404 before any caller class is consulted (all legs 404)",
-	"identityListStaff": "the staff identity admin surface is not registered (parity_ledger_test.go: no implementation lane assigned); the mux answers 404 before any caller class is consulted (all legs 404)",
 	"listPlatformKeys":  "the operator launcher surface (D4) is not registered (parity_ledger_test.go: no implementation lane assigned); the mux answers 404 before any caller class is consulted (all legs 404)",
 
 	// The required query parameter family (the brief's fill discipline is

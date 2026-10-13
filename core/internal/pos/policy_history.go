@@ -149,6 +149,7 @@ func posPolicyChanges(before, after PosPolicy) []PolicyChange {
 	add("lookup_presentation", before.LookupPresentation, after.LookupPresentation)
 	add("margin_visibility", before.MarginVisibility, after.MarginVisibility)
 	add("balance_visibility", before.BalanceVisibility, after.BalanceVisibility)
+	add("supplier_deposit_cancel", before.SupplierDepositCancel, after.SupplierDepositCancel)
 	add("quick_chip_set", strings.Join(before.QuickChipSet, ", "), strings.Join(after.QuickChipSet, ", "))
 	return out
 }

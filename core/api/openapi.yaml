@@ -2357,7 +2357,7 @@ paths:
       tags:
         - staff-billing
       summary: List the card charge attempts that need a person
-      description: "The list a person reconciling a Run settlement report reads: every trans_id with no sale behind it, and why. With state=open it answers every attempt that needs a person (UNKNOWN, VOID_UNKNOWN, VOID_DECLINED), whatever its date; from and to (RFC3339) bound the second arm, every attempt in the range that carries a charge ref and is not BOUND. A missing from and to default from to the seven day window, so the range arm is bounded whatever the caller sends. Newest first, bounded at 500 rows."
+      description: "The list a person reconciling a Run settlement report reads: every trans_id with no sale behind it, and why. With state=open it answers every attempt that needs a person (UNKNOWN, VOID_UNKNOWN, VOID_DECLINED), whatever its date; from and to (RFC3339) bound the second arm, every attempt in the range that carries a charge ref and is not BOUND. A missing from and to default from to the seven day window, so the range arm is bounded whatever the caller sends. Newest first, bounded at 500 rows. The list is fenced by the caller's branch reach: a global role reads every branch, a branch scoped caller reads only the attempts of its granted branches, and an attempt of a branch the caller does not reach is simply absent (the bound counts reachable rows only)."
       x-role: requireManager
       x-access:
         surfaces:
@@ -8759,6 +8759,84 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IdentityPing"
+  /.well-known/jwks.json:
+    get:
+      operationId: identitySessionJwks
+      tags:
+        - staff-identity
+      summary: Read the JWK Set of the deployment's session signing keys
+      description: Public and cacheable. Serves the public halves only of the current key and of the NEXT and PREVIOUS keys during a rotation (ES256, the kid is the RFC 7638 thumbprint). The core verifies its own session tokens through an in process source over the same keys; this route is for a remote verifier and for the rotation procedure. It carries no private member and no account data.
+      x-addition: the deployment's own session JWK Set (state note HH-S4-AUTH, section 2); the ERP signed with shared HS256 secrets and had no key set
+      x-role: public
+      security: []
+      responses:
+        "200":
+          description: The JWK Set, with Cache-Control public and a max-age equal to the verifier's key cache default
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionJwkSet"
+  /api/v1/auth/exchange:
+    post:
+      operationId: identityExchange
+      tags:
+        - staff-identity
+      summary: Exchange a FB Console JWT and an org slug for a core session token
+      description: "Public leg, no bearer, mounted only where the sign in mode is console. The person signs in to FB Console, asks it for a short JWT, and presents that JWT with the org slug. The core runs its gates in order (body shape, rate limit, the FB Console account under the JWT, the single use claim on the JWT, a verified and active account whose email is on the dealer's allow lists, an uncached Team membership read, the org anchor, a linked ACTIVE staff row with a grant, the role's session ceiling, the sign in age of the FB Console session) and, only then, writes an audit row and signs a session token. The token window is the shortest of the role's ceiling, the configured exchange window and the sign in age that remains, never under one minute. No refusal says which gate failed: a refusal carries one of the shared bodies of its status."
+      x-addition: the real sign in through FB Console (state note HH-S4-AUTH, section 3); the ERP signed in with its own password table
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityExchangeRequest"
+      responses:
+        "200":
+          description: The core session token, its expiry and the caller's staff identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityExchangeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: A dependency of the exchange could not answer; nothing was minted
+  /api/v1/auth/methods:
+    get:
+      operationId: identityAuthMethods
+      tags:
+        - staff-identity
+      summary: Read the sign in methods a dealer allows
+      description: "Public leg, no bearer, mounted only where the sign in mode is console. The sign in screen asks which methods to offer for the org slug it was opened for and gets the method codes only. It is no directory oracle: a malformed slug, an unknown org and an org that holds the default set (email_password and google) all answer the same bytes with a 200, and the slug shape is checked before any lookup, so no shape is answered 400. Rate limited per client address. The core enforces the same set at the exchange."
+      x-addition: the dealer's own allowed sign in methods (state note HH-S4-AUTH, section 5b); the ERP offered one password sign in to every dealer
+      x-role: public
+      security: []
+      parameters:
+        - name: org
+          in: query
+          required: false
+          description: The org slug the sign in screen was opened for
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The allowed method codes, in the closed vocabulary's order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityAuthMethodsResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: A dependency could not answer; no methods are named
   /api/v1/auth/login:
     post:
       operationId: identityLogin
@@ -13079,13 +13157,15 @@ paths:
       operationId: orderCancel
       tags:
         - staff-order
-      summary: Cancel an open order (manager only, reason required)
-      description: Applies the CANCELLED transition from DRAFT, CONFIRMED, PICKING or READY. The service proves no finalized invoice or committed counter sale is attached, under the order row lock; a money-attached order answers 409 and belongs to the POS returns flow.
+      summary: Cancel an open order (Sales, Branch or General Manager, reason required)
+      description: "Applies the CANCELLED transition from DRAFT, CONFIRMED, PICKING or READY. The service proves no money the cancel has no exit for is attached, under the order row lock: a finalized invoice other than a supplier deposit document, or a committed counter sale, answers 409 and belongs to the POS returns flow. An order whose only money is its supplier deposit document cancels: the deposit settles on the same transaction, credited back to the customer's account by the dealer's default or kept when keep_deposit is true (a manager's override, the mandatory reason is its audited reason). Kept means the dealer keeps only what the customer paid of the deposit; the unpaid rest is closed so nothing more is owed on the cancelled order. Walled to the order_cancellers list: the Sales Manager, the Branch Manager and the General Manager, each giving a reason (and the super admin); every other role is refused with the shared forbidden body. A branch scoped manager reaches only the orders of their own branches."
       x-role: requireManager
       x-access:
         surfaces:
           - quote-desk
-        level: manage
+        level: read
+        list: order_cancellers
+        reason: "The order_cancellers list is the wall, not the level: the General Manager reads the quote desk and the Branch Manager works it, and both may still cancel an order, which a manage level cannot say without leaving them out."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -16899,7 +16979,8 @@ paths:
       tags:
         - staff-till
       summary: Upsert the org-default NSF policy
-      x-role: requireManager
+      description: "Dealer wide money policy: tier 1 global only, and the role gate's money-desk manage cell leaves the general manager, the financial controller and the platform roles under the default configuration. Any other role gets the shared 403. The read is unchanged."
+      x-role: requireAdmin
       x-access:
         surfaces:
           - money-desk
@@ -16931,7 +17012,7 @@ paths:
       tags:
         - staff-till
       summary: Record one declined or errored gateway attempt
-      description: A successful capture is a payments row, never an attempt here.
+      description: "A successful capture is a payments row, never an attempt here. The attempt is written under a branch the caller reaches: a named branch the caller cannot reach is the shared 403, a branch that is not a branch id is 422, none named resolves to the caller's single granted branch (422 when the caller has several), and a global caller naming none records an attempt with no branch."
       x-role: requireStaff
       x-access:
         surfaces:
@@ -16958,6 +17039,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "422":
+          description: The attempt failed validation (amount, result, a branch that is not a branch id, or no single branch to derive); the message says which rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/pricing/resolve:
     post:
       operationId: pricingResolve
@@ -35683,6 +35770,51 @@ components:
           type: string
         status:
           type: string
+    SessionJwkSet:
+      type: object
+      description: The session signing keys' public halves (RFC 7517), current first
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionJwk"
+    SessionJwk:
+      type: object
+      description: One session signing key's public half; no private member exists in this shape
+      required:
+        - kty
+        - crv
+        - x
+        - y
+        - kid
+        - use
+        - alg
+      properties:
+        kty:
+          type: string
+          enum:
+            - EC
+        crv:
+          type: string
+          enum:
+            - P-256
+        x:
+          type: string
+        y:
+          type: string
+        kid:
+          type: string
+          description: RFC 7638 thumbprint of the public key
+        use:
+          type: string
+          enum:
+            - sig
+        alg:
+          type: string
+          enum:
+            - ES256
     IdentityLoginRequest:
       type: object
       required:
@@ -35736,6 +35868,49 @@ components:
           description: The staff session bearer token
         user:
           $ref: "#/components/schemas/IdentityUser"
+    IdentityExchangeRequest:
+      type: object
+      required:
+        - jwt
+        - org
+      additionalProperties: false
+      properties:
+        jwt:
+          type: string
+          description: A fresh FB Console JWT; single use
+        org:
+          type: string
+          description: The org slug whose Team the person belongs to
+    IdentityExchangeResponse:
+      type: object
+      required:
+        - token
+        - expiresAtMs
+        - user
+      properties:
+        token:
+          type: string
+          description: The core session token (ES256), valid until expiresAtMs
+        expiresAtMs:
+          type: integer
+          format: int64
+        user:
+          $ref: "#/components/schemas/IdentityUser"
+    IdentityAuthMethodsResponse:
+      type: object
+      required:
+        - methods
+      properties:
+        methods:
+          type: array
+          description: The method codes the dealer allows
+          items:
+            type: string
+            enum:
+              - email_password
+              - google
+              - microsoft
+              - magic_link
     IdentityChangePasswordRequest:
       type: object
       required:
@@ -39221,7 +39396,10 @@ components:
       properties:
         reason:
           type: string
-          description: The cancellation reason; blank is refused
+          description: The cancellation reason; blank is refused. With keep_deposit it is the override's audited reason.
+        keep_deposit:
+          type: boolean
+          description: A manager's override to keep what the customer paid of the order's supplier deposit rather than credit it back (the unpaid rest is closed); false applies the dealer's default
     OrderHeaderEditRequest:
       type: object
       description: requested_date is the only editable order field; an explicit empty string clears it
@@ -42499,6 +42677,7 @@ components:
         - lookup_presentation
         - margin_visibility
         - balance_visibility
+        - supplier_deposit_cancel
       properties:
         branch_id:
           type: string
@@ -42548,6 +42727,12 @@ components:
             - MANAGER_UP
             - HIDDEN
           description: Who may receive a customer's past-due balance on the customer step
+        supplier_deposit_cancel:
+          type: string
+          enum:
+            - CREDIT_BACK
+            - KEPT
+          description: The dealer default a cancelled special order's supplier deposit takes; a manager may keep it on a given order at the cancel itself
         quick_chip_set:
           type: array
           items:

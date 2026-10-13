@@ -93,7 +93,7 @@ func bootDriveWorld(t *testing.T) *driveWorld {
 
 	// The real served surface, and the Driver persona's credential on it.
 	appwrite := newAppwriteFake(t)
-	appwrite.setTeam(driverPersonaUserID, "org:"+demoOrgSlug)
+	appwrite.setTeam(driverPersonaUserID, "org-"+demoOrgSlug)
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)
 	if _, err := rand.Read(acceptKey); err != nil {
@@ -116,6 +116,7 @@ func bootDriveWorld(t *testing.T) *driveWorld {
 		customerquote.EnvKeyID:   "fx-accept-sign-key",
 		customerquote.EnvKey:     hex.EncodeToString(acceptKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.getenv = func(k string) string { return values[k] }
 	rec, _ := registeredSurface(t, env)
 	return &driveWorld{

@@ -52,6 +52,8 @@ export interface LandingModel {
   readonly data: ReadonlyMap<string, WidgetDatum>;
   readonly needs: NeedsQueue | null;
   readonly error: string;
+  /** Whether the landing draws the reporting link: the core's manager roles only, mirrored from the mint's tier. */
+  readonly canOpenReporting: boolean;
 }
 
 const NOT_HERE = "not on this box yet";
@@ -78,6 +80,9 @@ export function renderLanding(model: LandingModel): TemplateResult {
     <header class="page-head">
       <h1>${welcomeLine(model.roleLabel)}</h1>
       <p class="page-sub">Your day at a glance.</p>
+      <div class="head-actions">
+        <button type="button" class="btn btn-secondary edit-open" data-action="open-view" data-view="builder">Arrange home</button>
+      </div>
     </header>
     <p class="eyebrow">Today</p>
     <div class="bento">
@@ -89,9 +94,12 @@ export function renderLanding(model: LandingModel): TemplateResult {
     </div>
     <nav class="view-links" aria-label="Views">
       <span class="nav-label">Open a view</span>
-      ${(["shortages", "receiving", "approvals"] as const).map((v) => html`
+      ${(["shortages", "receiving", "approvals", "warranty"] as const).map((v) => html`
         <button type="button" class="view-link" data-action="open-view" data-view=${v}>${VIEW_TITLE[v]}<span class="chev" aria-hidden="true">›</span></button>
       `)}
+      ${model.canOpenReporting ? html`
+        <button type="button" class="view-link" data-action="open-view" data-view="reporting">${VIEW_TITLE.reporting}<span class="chev" aria-hidden="true">›</span></button>
+      ` : nothing}
     </nav>
   `;
 }

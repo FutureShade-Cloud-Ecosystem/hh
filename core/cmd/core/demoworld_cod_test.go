@@ -95,8 +95,8 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 
 	// The served surface, the demo Sales login (the till and the quote desk's own caller).
 	appwrite := newAppwriteFake(t)
-	appwrite.setTeam(qwSalesUserID, "org:"+demoOrgSlug)
-	appwrite.setTeam(qwManagerUserID, "org:"+demoOrgSlug)
+	appwrite.setTeam(qwSalesUserID, "org-"+demoOrgSlug)
+	appwrite.setTeam(qwManagerUserID, "org-"+demoOrgSlug)
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)
 	if _, err := rand.Read(acceptKey); err != nil {
@@ -113,6 +113,7 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 		"CORE_APPWRITE_PROJECT": "fx-appwrite-project", "CORE_APPWRITE_API_KEY": "fx-appwrite-key-placeholder",
 		customerquote.EnvKeyID: "fx-accept-sign-key", customerquote.EnvKey: hex.EncodeToString(acceptKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.getenv = func(k string) string { return values[k] }
 	rec, _ := registeredSurface(t, env)
 	sales := &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, qwSalesUserID), who: "Sales"}
@@ -141,7 +142,7 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 		codFinSubject, orgID); err != nil {
 		t.Fatalf("plant the Financial controller grant: %v", err)
 	}
-	appwrite.setTeam(codFinSubject, "org:"+demoOrgSlug)
+	appwrite.setTeam(codFinSubject, "org-"+demoOrgSlug)
 
 	// 1. THE ACCOUNT, as the seeded row reads. The zero-day terms are the fact the product's own
 	// dispatch rule reads ("the defining rule of a COD account"); the credit line is what lets the

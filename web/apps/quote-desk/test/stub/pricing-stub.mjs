@@ -442,7 +442,8 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
 
   if (path === "/api/v1/staff" && request.method === "GET") {
     if (!reader) return forbidden(respondJson, response), true;
-    respondJson(response, 200, [{ user_id: "demo-account-sales-manager", display_name: "Sales manager (demo)", email: "x@demo.invalid", role_code: "sales_manager", role_name: "Sales Manager", tier: 2, scope: "BRANCH", branch_ids: [] }]);
+    // The core's IdentityStaffMemberPage (identity staffcontext, StaffRosterHandler): a manager tier read, role codes in the ERP's words.
+    respondJson(response, 200, { items: [{ user_id: "demo-account-sales-manager", display_name: "Sales manager (demo)", email: "x@demo.invalid", role_code: "SALES_MANAGER", role_name: "Sales Manager", tier: 2, scope: "BRANCH", branch_ids: [] }], next_cursor: null, limit: 50 });
     return true;
   }
   if (product !== null) {

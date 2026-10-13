@@ -82,7 +82,7 @@ func newSyncFixture(t *testing.T) *syncFixture {
 			testkit.BranchNorthAID, testkit.BranchSouthAID)
 		_, _ = pool.Exec(c, `DELETE FROM scope_sequences WHERE scope IN ('runs','stops','pod')`)
 		_, _ = pool.Exec(c, `DELETE FROM audit_log WHERE entity_type IN ('sync.runs','sync.stops','sync.pod')`)
-		_ = testkit.Cleanup(c, testkit.PgxPool(pool))
+		cleanFixtureWorld(t, c, pool)
 	})
 
 	var driver string
@@ -1159,5 +1159,23 @@ func TestValueEqualWriteKeepsStandingSeq(t *testing.T) {
 		map[string]any{"id": run.ID, "notes": "value equal pin second"}, same.Seq)
 	if *next.Seq <= *same.Seq {
 		t.Fatalf("the second fresh fact drew seq %d after %d; only equal values stand still", *next.Seq, *same.Seq)
+	}
+}
+
+// cleanFixtureWorld removes the kit's fixture world after a leg, and fails the leg when it cannot.
+// The kit's own cleanup does not know the rows a dispatch leg adds beside it (the run number
+// counters, the reschedule history and the drivers of the fixture branches), and their foreign keys to
+// locations then refuse the branch delete. The old swallowed error left the world standing, and
+// every later package on the shared gate found three extra branches and a fixture invoice.
+func cleanFixtureWorld(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	branches := []string{testkit.BranchNorthAID, testkit.BranchNorthBID, testkit.BranchSouthAID}
+	for _, table := range []string{"run_no_sequences", "dispatch_reschedules", "dispatch_drivers"} {
+		if _, err := pool.Exec(ctx, `DELETE FROM `+table+` WHERE branch_id = ANY($1::uuid[])`, branches); err != nil {
+			t.Errorf("fixture cleanup %s: %v", table, err)
+		}
+	}
+	if err := testkit.Cleanup(ctx, testkit.PgxPool(pool)); err != nil {
+		t.Errorf("fixture cleanup: %v", err)
 	}
 }

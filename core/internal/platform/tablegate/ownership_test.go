@@ -446,6 +446,8 @@ var ownedObjects = map[string]string{
 	"load_scan_checkpoints":           "dispatch",          // 0108_scan_trail_weight_advance
 	"locations":                       "branches",          // 0003_locations_and_branches
 	"machine_principal":               "identity",          // 0321_fb_moves_machine_principal
+	"console_jwt_claim":               "identity",          // 0387_console_jwt_claim
+	"org_signin_method":               "identity",          // 0388_org_signin_method
 	"manifest_lines":                  "dispatch",          // 0012_manifests
 	"manifest_versions":               "dispatch",          // 0012_manifests
 	"manifests":                       "dispatch",          // 0012_manifests
