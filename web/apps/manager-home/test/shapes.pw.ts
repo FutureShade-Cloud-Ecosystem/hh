@@ -1,23 +1,17 @@
-// Gap 10 of the per role homes: the trend and gauge shapes draw a sparkline
-// and a segmented meter from the server's points, beside the figure and with
-// every exact number as text. Tokens only, nothing animates.
+// Gap 10 of the per role homes: the gauge shape draws a segmented meter from
+// the server's points, beside the figure and with every exact number as text.
+// Tokens only, nothing animates. A trend stays its figure (review P2-3): the
+// core measures it over the metric's first dimension, which is the branch.
 import { expect, test } from "@playwright/test";
 import { managerHandoff, resetStub, signInByCard } from "./helpers";
 
-test("the sales manager's trend is a column per point, with a spoken label and its ends as text", async ({ request, page }) => {
+test("the sales manager's trend stays its figure: the core's points are one per branch, not a time series", async ({ request, page }) => {
   await resetStub(request);
   await signInByCard(page, "sales-manager");
   const card = page.locator("[data-widget='sales.trend']");
-  await expect(card.locator(".figure")).toHaveText("$1,410.00");
-  const spark = card.locator(".spark");
-  await expect(spark).toHaveAttribute("role", "img");
-  await expect(spark).toHaveAttribute("aria-label", "Trend from Day 1, $1,020.00, to Day 7, $1,410.00");
-  await expect(spark.locator(".spark-col")).toHaveCount(7);
-  await expect(card.locator(".spark-ends")).toHaveText("Day 1Day 7");
-  // The tallest column is the last (141 against the rest) and the bars are the sheet's data ink, not a raw colour.
-  const heights = await spark.locator(".spark-col").evaluateAll((nodes) => nodes.map((n) => n.getBoundingClientRect().height));
-  expect(heights[6]).toBe(Math.max(...heights));
-  expect(heights[6]).toBeGreaterThan(heights[2]);
+  await expect(card.locator(".figure")).toHaveText("$1,000.00");
+  await expect(card.locator(".spark")).toHaveCount(0);
+  await expect(card.getByText("Trend from")).toHaveCount(0);
 });
 
 test("the yard manager's gauge is one meter of segments with a legend carrying every figure", async ({ request, page }) => {
@@ -38,11 +32,13 @@ test("the yard manager's gauge is one meter of segments with a legend carrying e
   expect(widths.reduce((a, b) => a + b, 0)).toBeGreaterThan(track * 0.85);
 });
 
-test("nothing on a trend or a gauge animates, so reduced motion has nothing to reduce", async ({ request, page }) => {
+test("nothing on a gauge animates, so reduced motion has nothing to reduce", async ({ request, page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await resetStub(request);
-  await signInByCard(page, "sales-manager");
-  const moving = await page.locator("[data-widget='sales.trend'] .spark-col, [data-widget='sales.trend'] .spark").evaluateAll((nodes) =>
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  await expect(page.locator("[data-widget='picks.gauge'] .meter")).toBeVisible();
+  const moving = await page.locator("[data-widget='picks.gauge'] .seg, [data-widget='picks.gauge'] .meter").evaluateAll((nodes) =>
     nodes.filter((n) => {
       const s = getComputedStyle(n);
       return s.animationName !== "none" || Number.parseFloat(s.transitionDuration) > 0;

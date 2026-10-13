@@ -134,9 +134,10 @@ function datumFor(w) {
     return { ...base, total: w.kind === "basis_points" ? 2990 : sum(points), points };
   }
   if (w.shape === "trend") {
-    // The core measures a trend over its series dimension; the stub sends the daily points the card draws.
-    const days = [34, 38, 31, 42, 45, 40, 47].map((n, i) => ({ label: `Day ${i + 1}`, number: w.kind === "money_cents" ? n * 3000 : n }));
-    return { ...base, total: days[days.length - 1].number, points: days };
+    // The core measures a trend over the metric's first dimension (seriesDimension), and for the
+    // sales and order measures that is the branch: one point per branch, not a time series.
+    const points = pointsBySplit.branch;
+    return { ...base, total: sum(points), points };
   }
   if (w.shape === "gauge") return { ...base, total: sum(STATUS), points: STATUS };
   const totals = { money_cents: 123456, basis_points: 2990, count: 12, days: 4 };
