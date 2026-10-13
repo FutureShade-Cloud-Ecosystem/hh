@@ -192,13 +192,14 @@ var contractorProjects = []cProject{
 }
 
 // contractorMethods are the two saved payment methods. A sandbox token and a last four of the form
-// 000n: no card number is held anywhere, and nothing here is a real account.
+// 000n: no card number is held anywhere, and nothing here is a real account. The card expires
+// ExpYearsOut years after the plan clock's year, so no calendar year is written here.
 var contractorMethods = []struct {
 	Key, Type, Brand, Last4, Token string
-	ExpMonth, ExpYear              int
+	ExpMonth, ExpYearsOut          int
 	Default                        bool
 }{
-	{"card", "CARD", "Sandbox card", "0001", "tok_sandbox_demo_card", 12, 2031, true},
+	{"card", "CARD", "Sandbox card", "0001", "tok_sandbox_demo_card", 12, 4, true},
 	{"bank", "BANK", "Sandbox bank", "0002", "tok_sandbox_demo_bank", 0, 0, false},
 }
 
@@ -487,7 +488,7 @@ func (b *builder) contractorWorld() {
 			by = admin
 		}
 		if m.ExpMonth != 0 {
-			expMonth, expYear = m.ExpMonth, m.ExpYear
+			expMonth, expYear = m.ExpMonth, b.in.Now.Year()+m.ExpYearsOut
 		}
 		add(insert("portal_payment_methods", "(id)",
 			"id", demoID("contractor-method:"+m.Key),

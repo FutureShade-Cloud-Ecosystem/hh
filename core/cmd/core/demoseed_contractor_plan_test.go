@@ -220,6 +220,9 @@ func TestContractorPlan_CarriesNoCardDataNoDashesNoCosts(t *testing.T) {
 		if !strings.HasPrefix(token, "tok_sandbox_") || !regexp.MustCompile(`^000\d$`).MatchString(f["last4"].(string)) {
 			t.Errorf("method %v is not a sandbox token view", f["id"])
 		}
+		if f["method_type"] == "CARD" && f["exp_year"] != fixedClock.Year()+4 {
+			t.Errorf("the sandbox card expires in %v, want the plan clock's year plus four (%d)", f["exp_year"], fixedClock.Year()+4)
+		}
 		if f["method_type"] == "BANK" && f["exp_month"] != nil {
 			t.Errorf("a bank method carries an expiry")
 		}
