@@ -38,6 +38,10 @@ test("a budget is read off the decimal string, never through float arithmetic", 
   assert.equal(wholeAmount("1200000"), 1200000);
   // Anything that is not a whole count of tokens is refused before a call.
   assert.equal(wholeAmount("60 000"), null);
+  // The contract carries an int32: the top is allowed, one past it is not.
+  assert.equal(wholeAmount("2147483647"), 2147483647);
+  assert.equal(wholeAmount("2147483648"), null);
+  assert.equal(wholeAmount("99999999999999999999"), null);
   assert.equal(wholeAmount("1e6"), null);
   assert.equal(wholeAmount("12.5"), null);
   assert.equal(wholeAmount("-1"), null);

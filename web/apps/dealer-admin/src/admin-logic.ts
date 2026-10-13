@@ -124,7 +124,9 @@ export function spendSummary(s: AssistSpendRow | null | undefined): string {
 export function wholeAmount(raw: string): number | null {
   const trimmed = (raw ?? "").trim();
   if (trimmed === "" || !/^\d+$/.test(trimmed)) return null;
-  return Number(trimmed);
+  const amount = Number(trimmed);
+  // The contract's tokens are an int32; past it the box refuses in its own words.
+  return amount > 2147483647 ? null : amount;
 }
 
 /** The budget box's own refusal, before any call. */
