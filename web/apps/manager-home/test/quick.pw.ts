@@ -52,7 +52,7 @@ test("the landing's view links carry the config view", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const links = page.locator(".view-link");
-  await expect(links).toHaveCount(6);
+  await expect(links).toHaveCount(7);
   await expect(links.filter({ hasText: "Quick actions" })).toBeVisible();
 });
 
