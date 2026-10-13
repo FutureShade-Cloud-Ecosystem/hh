@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 )
 
@@ -102,5 +103,27 @@ func TestDealerConfig_ReaderWithNoPoolAnswersTheDefault(t *testing.T) {
 	got, err := r.DealerConfig(context.Background())
 	if err != nil || got != DefaultDealerConfig() {
 		t.Fatalf("nil pool: %+v %v", got, err)
+	}
+}
+
+// A present but malformed tax region refuses: a damaged row on a California dealer must never ring
+// as Ontario's 13 percent. The other keys keep their per-key defaults (a wrong currency or zone is
+// not a wrong tax). An absent region is still the Ontario dealer.
+func TestDealerConfig_MalformedTaxRegionRefuses(t *testing.T) {
+	for _, v := range []string{`"ca"`, `7`, `"not a region"`, `""`} {
+		_, err := dealerConfigFromRows(raw(map[string]string{"tax_region": v}), nil)
+		if !errors.Is(err, ErrMalformedTaxRegion) {
+			t.Fatalf("tax_region %s: want ErrMalformedTaxRegion, got %v", v, err)
+		}
+	}
+	got, err := dealerConfigFromRows(raw(map[string]string{"currency": `"dollars"`}), nil)
+	if err != nil || got != DefaultDealerConfig() {
+		t.Fatalf("a malformed currency alone must fall back: %+v %v", got, err)
+	}
+	if got, err := dealerConfigFromRows(nil, nil); err != nil || got != DefaultDealerConfig() {
+		t.Fatalf("an absent region is the Ontario dealer: %+v %v", got, err)
+	}
+	if got, err := dealerConfigFromRows(raw(map[string]string{"tax_region": `"CA"`}), nil); err != nil || got.TaxRegion != "CA" {
+		t.Fatalf("a well formed region stands: %+v %v", got, err)
 	}
 }

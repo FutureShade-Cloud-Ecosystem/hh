@@ -239,6 +239,9 @@ func (s *Service) CreateRate(ctx context.Context, r Rate) (Rate, error) {
 	if r.RateBps < 0 || r.RateBps > 10000 {
 		return Rate{}, httpx.BadRequestf("rate_bps must be 0..10000")
 	}
+	// The jurisdiction's case is normalised as the engine normalises the dealer's region, so a row posted
+	// as "ca" lands where the engine looks for "CA" instead of sitting inert.
+	r.Jurisdiction = strings.ToUpper(strings.TrimSpace(r.Jurisdiction))
 	if r.Jurisdiction == "" {
 		// A blank area is the dealer's own jurisdiction (Ontario for an Ontario dealer).
 		jur, err := s.jurisdiction(ctx)
@@ -508,7 +511,7 @@ func (s *Service) deriveRecomputed(ctx context.Context, src Snapshot) (Snapshot,
 // rate (see snapshot build: FullHSTCents = hstOn(base, the standard rate)), NOT at the relief rate. Dividing
 // by the relief rate (e.g. 5%, or 0% → fallback) inflated the base by up to 2.6× and broke the HST → GL
 // tie-out (S3 W6 H1). Always divide by the standard rate, and by the one the row itself was written under
-// (standard_rate_bps, 0389), never the dealer's current one: a rate change must not re-price history. A row
+// (standard_rate_bps, 0391), never the dealer's current one: a rate change must not re-price history. A row
 // written before the column carries zero, which is an Ontario row at 13 percent.
 func reconstructBase(src Snapshot) int64 {
 	if src.FullHSTCents == 0 {

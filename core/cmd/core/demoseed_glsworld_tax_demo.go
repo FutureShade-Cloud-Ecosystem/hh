@@ -65,7 +65,8 @@ var glsAccounts = []glsAccount{
 }
 
 // glsPlantedOrder is a demo order the migrations plant with 13 percent tax typed into the header.
-// No payment, journal or invoice references them, so the header alone moves; the order number,
+// No payment, journal or invoice references them (SO-DPA3-CRIT does carry a pos_sale row with no money
+// columns, and SO-DPA3-WARN is INVOICED with no invoice), so the header alone moves; the order number,
 // the subtotal and the planted tax guard the update.
 type glsPlantedOrder struct {
 	orderNo       string
