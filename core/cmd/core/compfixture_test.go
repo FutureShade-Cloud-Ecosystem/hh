@@ -53,7 +53,7 @@ const xrNoPortalRowSub = "fxportal-norow-alpha"
 
 // appwriteFake serves the Appwrite membership listing shape over invented
 // fixture principals: staff subjects hold the one org-<slug> team
-// membership, portal subjects hold exactly one tenant:<org>:<slug> team,
+// membership, portal subjects hold exactly one ten-<slug> team,
 // and an unknown subject holds nothing. It answers the one endpoint the
 // membership source reads; no real directory is ever contacted.
 type appwriteFake struct {
@@ -107,15 +107,15 @@ func (f *appwriteFake) wireFixtureTeams() {
 	} {
 		f.setTeam(sub, orgNorth)
 	}
-	f.setTeam(testkit.SubPortalAdminAlpha, "tenant:"+testkit.OrgNorthSlug+":alpha")
-	f.setTeam(testkit.SubPortalCrewAlpha, "tenant:"+testkit.OrgNorthSlug+":alpha")
-	f.setTeam(testkit.SubPortalBuyerNoPayAlpha, "tenant:"+testkit.OrgNorthSlug+":alpha")
-	f.setTeam(testkit.SubPortalAdminBeta, "tenant:"+testkit.OrgNorthSlug+":beta")
-	f.setTeam(testkit.SubPortalCrewBeta, "tenant:"+testkit.OrgNorthSlug+":beta")
-	f.setTeam(testkit.SubPortalBuyerBeta, "tenant:"+testkit.OrgNorthSlug+":beta")
-	f.setTeam(testkit.SubPortalAdminGamma, "tenant:"+testkit.OrgSouthSlug+":gamma")
-	f.setTeam(testkit.SubPortalApGamma, "tenant:"+testkit.OrgSouthSlug+":gamma")
-	f.setTeam(xrNoPortalRowSub, "tenant:"+testkit.OrgNorthSlug+":alpha")
+	f.setTeam(testkit.SubPortalAdminAlpha, "ten-"+testkit.OrgNorthSlug)
+	f.setTeam(testkit.SubPortalCrewAlpha, "ten-"+testkit.OrgNorthSlug)
+	f.setTeam(testkit.SubPortalBuyerNoPayAlpha, "ten-"+testkit.OrgNorthSlug)
+	f.setTeam(testkit.SubPortalAdminBeta, "ten-"+testkit.OrgNorthSlug)
+	f.setTeam(testkit.SubPortalCrewBeta, "ten-"+testkit.OrgNorthSlug)
+	f.setTeam(testkit.SubPortalBuyerBeta, "ten-"+testkit.OrgNorthSlug)
+	f.setTeam(testkit.SubPortalAdminGamma, "ten-"+testkit.OrgSouthSlug)
+	f.setTeam(testkit.SubPortalApGamma, "ten-"+testkit.OrgSouthSlug)
+	f.setTeam(xrNoPortalRowSub, "ten-"+testkit.OrgNorthSlug)
 }
 
 // compEnv is the identity environment map the composition suites hand
