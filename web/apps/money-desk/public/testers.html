@@ -89,8 +89,19 @@
 <p data-claim="phone-decision">On a phone, choosing a request brings its decision into view.</p>
 
 <h2>The ledger: journals and the trial balance</h2>
-<p data-claim="journal-register">The Journals tab lists the journals with filters that carry counts, such as Pending. A journal number never wraps onto two lines. Void and Reverse are marked later.</p>
-<p data-claim="trial-balance">The Trial balance tab reads in balance with the server's totals, and takes All branches or one branch. The tie out, choosing a period and the Excel download are marked later.</p>
+<p data-claim="journal-register">The Journals tab lists the journals with filters that carry counts, such as Pending. A journal number never wraps onto two lines. A parked draft offers Void and a posted journal offers Reverse, and each opens a review before anything is sent.</p>
+<p data-claim="trial-balance">The Trial balance tab reads in balance with the server's totals, and takes All branches or one branch, and the whole year or one month. A typed Excel workbook is marked later.</p>
+<p data-claim="chart">The Chart tab lists every account with Active or Inactive in words. The Financial Controller adds an account, and deactivating one opens a review saying the account keeps its history, takes no new journal and cannot be turned back on from here.</p>
+<p data-claim="journal-post">New journal takes a memo, a branch and two or more lines, each with exactly one of debit or credit. Review shows the lines and the approval threshold before Post journal. Below the threshold it posts at once; at or over it, it parks and files its request in the approvals queue. An unbalanced journal is refused by the server in words and nothing is saved.</p>
+<p data-claim="post-unknown">If the answer to a post is lost, the screen says the journal may or may not have been saved and tells you to look at the register before pressing again. The desk never sends the post a second time by itself.</p>
+<p data-claim="reverse-void">Reverse opens a review listing the journal's lines and saying every side is swapped and the original stays posted. Void opens a review saying the draft never touched the ledger. Cancelling either changes nothing.</p>
+<p data-claim="recurring">Recurring templates list under the register. Run adds a draft journal for review: it never posts by itself.</p>
+<p data-claim="periods">The Periods tab lists each month as Open or Closed. Closing a month opens a review naming the month, saying no journal can post into it, and counting the parked journals waiting in it. Reopening needs a reason. A journal dated into a closed month is refused in words that say the Financial Controller can reopen it.</p>
+<p data-claim="year-close">Close fiscal year opens a review naming the year, the move of net income to account 3900 Retained Earnings and the periods it closes. After it, the screen reports the server's net income.</p>
+<p data-claim="trial-export">The trial balance takes one month, and the export downloads a draft file in the parity format for the branch and month chosen. It is not a filing.</p>
+<p data-claim="checks">The Checks tab shows the receivables ledger against account 1100, with a word beside its colour: In tie or Out of tie. The BisTrack check compares one month against a fixed synthetic snapshot and says so.</p>
+<p data-claim="policy">The Policy tab reads the approval threshold, the month the fiscal year starts and the cost basis. Changing the policy is not on this screen.</p>
+<p data-claim="reader">Payables and Receivables opens the Ledger area beside Receivables and reads the journals, chart, trial balance, periods, tie out and policy. Every write is held, with words naming who may do it.</p>
 
 <h2>Liens: the areas and the banner</h2>
 <p data-claim="liens-areas">Liens and Compliance sit beside the other areas on the area switch. The Financial Controller's switch holds five: Approvals and ledger, Receivables, Bank reconciliation, Liens and Compliance. Payables and Receivables holds Receivables, Liens and Compliance, and reads the last two. The General Manager's switch holds Liens and Compliance, but no General Manager sign in exists on this box, so those screens are reached here by the other two roles.</p>

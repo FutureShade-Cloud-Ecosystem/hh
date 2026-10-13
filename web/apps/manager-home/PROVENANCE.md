@@ -17,6 +17,14 @@ the header of each file below.
 | Needs-you queue shape (rows, total, worst) | `app/src/home-bento-logic.ts` (`NeedsQueue`) | `src/manager-api.ts` | Whitelist projection over the generated client |
 | The approvals surface's shape | `app/src/pending-approvals.ts` | `renderApprovals` in `src/views.ts` | By-kind tabs over the core's `kind` filter; decide actions; refusal words naming who decides |
 | API call set | `app/src/home-bento-logic.ts` (the widget reads) | `src/manager-api.ts` | Over the generated client; every read goes through a whitelist projection |
+| The result grid: columns by the server's declared kind, one cell formatter, totals foot, the summary line naming rows and the leading money total | `app/src/reporting-logic.ts` (`formatCell`, `totalCell`, `resultSummary`), `app/src/reporting-console.ts` (`renderGrid`) | `formatCell`, `totalCell`, `resultSummary` in `src/reporting-logic.ts`, `renderResultGrid` in `src/reporting-views.ts` | Kept, on HH tokens; the summary names the first total cents column as the server sent it |
+| The parameter form is GENERATED from the server's param specs, never written per report; dates default to month to date; the one guard is a required field left empty; empty values are dropped, not sent | `app/src/reporting-console.ts` (`renderParam`, and the header comment), `app/src/reporting-logic.ts` (`defaultParams`, `missingRequired`, `runQuery`) | `defaultParams`, `missingRequired`, `runParams`, `printAtNeeded` in `src/reporting-logic.ts`, `renderParam` in `src/reporting-views.ts` | Kept; the branch parameter renders the caller's own branches by name, resolved to ids at the door |
+| The print flow: freeze the artefact server side, open the STORED document (never a rerun); the "print at" pick when the effective parameters name no branch | `app/src/reporting-console.ts` (`print`, `printBranch`), `app/src/reporting-api.ts` (`printReport`, `fetchDocument`, `openPrintWindow`) | `printTemplate`, `runDocument` in `src/reporting-api.ts`, `#printReportingTemplate` in `src/app-root.ts` | The document writer is refused by this app's raw-markup fence, so the fetched document rides the shared blob carriage the till's receipt uses (pos-kit's `printReceiptInto`); the pop-up-blocked case keeps its operator words |
+| The commission register: preview on the fly, freeze per rep (a per-rep button, never freeze all), drill-through lines, a line that earned nothing is MARKED, the accrual caveat rendered from the server's own `note` | `app/src/reporting-commission.ts`, `app/src/reporting-logic.ts` (`unattributedWarning`, `lineIsUnpaid`, `basisLabel`, `periodLabel`), `app/src/reporting-commission.ts` (`renderAccrual`) | `src/reporting-views.ts` (the Accruals pane), `unattributedWords`, `lineIsUnpaid`, `basisLabel`, `periodLabel` in `src/reporting-logic.ts` | Kept; the client side period totals strip and the derived margin percent are NOT ported (commission figures are server figures only); the unattributed caveat words restated in this app's voice over the same server fields |
+| The commission rules list, create and retire | `app/src/reporting-api.ts` (`listRules`, `createRule`, `retireRule`) | `commissionRules`, `createCommissionRule`, `retireCommissionRule` in `src/reporting-api.ts`, the Commission rules pane in `src/reporting-views.ts` | The original's surface never rendered them; this pane does, behind the core's own guard windows (read for managers, write for tier one global, the shared Forbidden body worded in plain words) |
+| The saved views (store, apply, delete a parameter set) | No source in the original app's surface (the HH contract's `reportingListSavedViews`, `reportingSaveView`, `reportingDeleteSavedView`) | the saved-views strip in `src/reporting-views.ts`, `#saveReportingView` in `src/app-root.ts` | New here: save the form's current parameters under a name, apply them back, delete; the server validates the params at save time |
+| The frozen runs pane (list, expand, open the stored document) | `app/src/reporting-api.ts` (`listRuns`, `getRun`, `documentUrl`) | the Runs pane in `src/reporting-views.ts`, `#loadRuns`, `#expandReportingRun`, `#openRunDocument` in `src/app-root.ts` | The original's api carried runs; no screen did. This pane is that screen |
+| The attribution check | `app/src/reporting-api.ts` (`attributionCheck`) | `reportingAttributionCheck` wired in `src/reporting-api.ts`, rendered in the Accruals pane | The original's api carried it; no screen drew it. This pane states the server's explanation and lists the disagreeing invoices |
 | The warranty desk's call set and wire vocabulary (phases, outcomes, registry enums, recovery buckets, money paths, SLA states) | `app/src/warranty-api.ts` | `src/warranty-api.ts` | Rebuilt on the generated client's `staffWarranty` operations; every answer goes through a whitelist projection; money stays integer cents end to end |
 | The Kanban board (columns in the confirmed phase order, the exits last; cards open the claim) and the capture sheet with the back-date field (FR-2, FR-9) | `app/src/warranty-board.ts` | `renderBoardTab` and `renderCaptureForm` in `src/warranty-views.ts`, `#capture` in `src/warranty-desk.ts` | The branch is the caller's own resolved branch, never a hardcoded list; the vendor pick list carries words and maps back by row; capture goes to the server in one call and opens the answer's detail |
 | The claims list with the phase filter | `app/src/warranty-api.ts` (`listClaims`) | `renderClaimsTab` in `src/warranty-views.ts` | A tab of its own (the original exported the call without a screen); filter chips carry the phase words |
@@ -27,22 +35,6 @@ the header of each file below.
 | The service levels: timers, the durable breach alerts with their notification status, the configured targets, the sweep | `app/src/warranty-sla.ts` | `renderSlaTab` in `src/warranty-views.ts`, `#sweep`, `#ack` in `src/warranty-desk.ts` | The targets section reads the targets route (the board's own target rows are dropped at the projection door); acknowledging closes the alert |
 | The FR-7 reports: funnel, by manufacturer with win/loss, time to settlement, exposure by vendor, open claims by age | `app/src/warranty-reports.ts` | `renderReportsTab` in `src/warranty-views.ts` | The funnel bars reuse the landing's quantized width classes and the landing's data ink, never the action gold |
 | The board tabs (Board, Claims, Vendor registry, Recovery, Service levels, Reports) and the claim overlay | `app/src/warranty-surface.ts` | `renderWarranty` in `src/warranty-views.ts`, `WarrantyDesk` in `src/warranty-desk.ts` | One Warranty view kind on the landing, reachable for every staff role (the core's reads are RequireStaff); per-call refusals carry the core's words |
-
-What has no source in the original app and is new here, each from its named
-reference:
-
-- The walled refusal words for the tier gates (who settles, who sweeps, who
-  configures the registry, who chases): the guards' tier lists
-  (identity/guards.go, the role catalog 0215) as the approvals view words its
-  walls.
-- The public intake's photos on the claim detail: the original's public form
-  predates the photos seam. The list and the bytes come from the intake photo
-  routes; an object address cannot ride a template binding, so the picture is
-  hydrated after render, as the drive-run app's drop thumbs are.
-- The assign-to-vendor sheet: the original exported the assign call without a
-  screen. The owner rides through unchanged; only the vendor moves.
-- The public intake form itself (`warrantySubmitPublicIntake`) is the public
-  desk's item, not this app's.
 
 What has no source in the original app and is new here, each from its named
 reference:
@@ -60,3 +52,23 @@ reference:
   1245), stated in words where it helps (MANAGER-HOME-UI-NOTES).
 - The rows the board drew that nothing measures (`Weights pending`,
   `Unread messages`): said plainly, never faked (MANAGER-HOME-UI-NOTES).
+- The reporting view's registration: one `Reporting` view kind, reachable from
+  the landing's view links for the core's manager roles only, mirrored from
+  the mint's own tier facts (`canOpenReporting`, `canAdminCommissionRules` in
+  `src/reporting-logic.ts`). The core answers every request itself; the link
+  and the rules pane's write controls are only where the doors are drawn.
+- The catalogue order, kept from the original (`orderCategories`), and the
+  runs pane's naming of the two run kinds (a report and a commission
+  statement).
+- The walled refusal words for the tier gates (who settles, who sweeps, who
+  configures the registry, who chases): the guards' tier lists
+  (identity/guards.go, the role catalog 0215) as the approvals view words its
+  walls.
+- The public intake's photos on the claim detail: the original's public form
+  predates the photos seam. The list and the bytes come from the intake photo
+  routes; an object address cannot ride a template binding, so the picture is
+  hydrated after render, as the drive-run app's drop thumbs are.
+- The assign-to-vendor sheet: the original exported the assign call without a
+  screen. The owner rides through unchanged; only the vendor moves.
+- The public intake form itself (`warrantySubmitPublicIntake`) is the public
+  desk's item, not this app's.
