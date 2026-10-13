@@ -36,7 +36,8 @@ test("the controller's Tax area lists the rate table in California words, and Pa
   await other.goto("/");
   await expect(other.locator("[data-card]")).toHaveCount(4);
   await expect(other.getByRole("button", { name: "Tax", exact: true })).toHaveCount(0);
-  await expect(other.locator("nav.areas")).toHaveCount(0);
+  // The reader now has an area switch of its own (Receivables, Ledger); Tax is not on it.
+  await expect(other.locator("nav.areas").getByRole("button", { name: /Tax/ })).toHaveCount(0);
 });
 
 test("a rate is added through a confirm step that names what changes, and a wrong one sends nothing", async ({ page, request }) => {
