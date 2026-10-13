@@ -21,8 +21,8 @@ import {
   type SignInFailureReason,
   type StorageLike,
 } from "@hardscapehouse/auth";
-import type { ConsoleRuntimeConfig } from "@hardscapehouse/auth/runtime-config";
-import { LIVE_ROLES } from "./roles.js";
+import { personaVisible, type ConsoleRuntimeConfig } from "@hardscapehouse/auth/runtime-config";
+import { LIVE_ROLES, type LiveRole } from "./roles.js";
 import {
   PERSONA_REFUSAL_WORDS,
   SIGN_IN_WORDS,
@@ -161,6 +161,11 @@ export class ConsoleSession {
     return focus;
   }
 
+  /** The persona cards this copy shows: the public copy leaves out the admin personas (principal ruling A6). */
+  get personaRoles(): readonly LiveRole[] {
+    return LIVE_ROLES.filter((role) => personaVisible(this.config, role.flow));
+  }
+
   get personaBusy(): string | null {
     return this.#personaBusy;
   }
@@ -269,7 +274,7 @@ export class ConsoleSession {
   /** One persona card. The id is the core's persona id, which is the role's flow id ("sales-manager"), not its role code. The refusal, if any, stands in that card; the others keep working. */
   async persona(id: string): Promise<void> {
     if (!this.config.personas || this.#personaBusy !== null) return;
-    if (!LIVE_ROLES.some((role) => role.flow === id)) return;
+    if (!this.personaRoles.some((role) => role.flow === id)) return;
     this.#personaBusy = id;
     this.#refusals.delete(id);
     this.#changed();

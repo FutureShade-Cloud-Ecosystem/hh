@@ -3,7 +3,7 @@
 // page words itself, never a quiet fall back to the demo cards.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { loadRuntimeConfig, parseRuntimeConfig } from "../src/runtime-config.ts";
+import { ADMIN_PERSONA_IDS, loadRuntimeConfig, parseRuntimeConfig, personaVisible } from "../src/runtime-config.ts";
 
 const CONSOLE = {
   mode: "console",
@@ -29,8 +29,36 @@ test("console mode carries the org, the console, the dealer and the persona flag
     coreBaseUrl: "https://core.example.test",
     personas: true,
     personasOpen: true,
+    personaCaller: "public",
     dealer: { name: "Gable Landscape Supply", mark: "gable" },
   });
+});
+
+test("the persona caller names who calls the persona route and mirrors the core's setting; it defaults from personasOpen", () => {
+  assert.equal(parseRuntimeConfig({ ...CONSOLE, personas: true, personasOpen: true }).config.personaCaller, "public");
+  assert.equal(parseRuntimeConfig({ ...CONSOLE, personas: true }).config.personaCaller, "partner");
+  assert.equal(parseRuntimeConfig(CONSOLE).config.personaCaller, "partner");
+  assert.equal(parseRuntimeConfig({ ...CONSOLE, personas: true, personasOpen: true, personaCaller: "public" }).config.personaCaller, "public");
+  assert.equal(parseRuntimeConfig({ ...CONSOLE, personas: true, personaCaller: "partner" }).config.personaCaller, "partner");
+  for (const patch of [{ personaCaller: "admin" }, { personaCaller: 1 }, { personaCaller: "partner", personasOpen: true }, { personaCaller: "public", personasOpen: false }]) {
+    assert.deepEqual(parseRuntimeConfig({ ...CONSOLE, personas: true, ...patch }), { ok: false, reason: "incomplete" }, JSON.stringify(patch));
+  }
+});
+
+test("the public copy hides the admin personas; the testers' copy shows every persona", () => {
+  assert.deepEqual([...ADMIN_PERSONA_IDS].sort(), ["dealer-admin", "financial-controller", "general-manager", "hr"]);
+  const publicCopy = parseRuntimeConfig({ ...CONSOLE, personas: true, personasOpen: true }).config;
+  const testers = parseRuntimeConfig({ ...CONSOLE, personas: true }).config;
+  for (const id of ADMIN_PERSONA_IDS) {
+    assert.equal(personaVisible(publicCopy, id), false, id);
+    assert.equal(personaVisible(testers, id), true, id);
+  }
+  for (const id of ["sales", "sales-manager", "yard-manager", "yard-team", "payables-receivables", "procurement-manager", "driver"]) {
+    assert.equal(personaVisible(publicCopy, id), true, id);
+  }
+  // a config object built without the field is judged by personasOpen
+  assert.equal(personaVisible({ personasOpen: true }, "financial-controller"), false);
+  assert.equal(personaVisible({ personasOpen: false }, "financial-controller"), true);
 });
 
 test("the persona flags default to false and the core base url to the page's own origin (empty)", () => {
