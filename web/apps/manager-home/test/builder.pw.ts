@@ -127,6 +127,54 @@ test("the pinned tabs strip pins, unpins and saves whole", async ({ page }) => {
   if (pins.length !== 2) throw new Error(`the tab save did not write the whole set: ${JSON.stringify(pins)}`);
 });
 
+/** The label of the element holding focus, read through every shadow root. */
+async function focusedLabel(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    let node: Element | null = document.activeElement;
+    while (node?.shadowRoot?.activeElement) node = node.shadowRoot.activeElement;
+    return node === null ? "" : (node.getAttribute("aria-label") ?? node.tagName);
+  });
+}
+
+test("Enter twice on Earlier moves the same card two places and focus follows it", async ({ page }) => {
+  await arrange(page);
+  const grid = page.locator("[data-test=\'builder-grid\']");
+  const keys = () => grid.locator("[data-widget]").evaluateAll((nodes) => nodes.map((n) => n.getAttribute("data-widget")));
+  const before = (await keys()) as string[];
+  const card = before[2] as string;
+  await grid.locator(`[data-widget='${card}'] button[data-op='move'][data-delta='-1']`).focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter");
+  const after = (await keys()) as string[];
+  expect(after[0]).toBe(card);
+  // At the top the Earlier control disables; focus goes to the card's Later control, not the page body.
+  expect(await focusedLabel(page)).toMatch(/later$/);
+});
+
+test("focus survives a control disabling at a limit, and follows the card for size and pins", async ({ page }) => {
+  await arrange(page);
+  const grid = page.locator("[data-test=\'builder-grid\']");
+  const first = await grid.locator("[data-widget]").first().getAttribute("data-widget");
+  const bigger = grid.locator(`[data-widget='${first}'] button[data-op='size-step'][data-step='1']`);
+  await bigger.focus();
+  for (let i = 0; i < 4; i += 1) await page.keyboard.press("Enter");
+  expect(await focusedLabel(page)).toMatch(/smaller$/);
+  const tabs = page.locator("[data-test=\'builder-tabs\']");
+  await tabs.locator("[data-tab='purchasing'] button[data-op='pin-move'][data-delta='-1']").focus();
+  await page.keyboard.press("Enter");
+  expect(await focusedLabel(page)).toMatch(/tab (earlier|later)$/);
+});
+
+test("a typed space survives in the role landing field", async ({ page }) => {
+  await signInByCard(page, "financial-controller");
+  await page.getByRole("button", { name: "Arrange home" }).click();
+  await page.getByRole("tab", { name: "Role defaults" }).click();
+  const unit = page.getByRole("textbox", { name: "The landing unit" });
+  await unit.focus();
+  await page.keyboard.type("ab cd");
+  await expect(unit).toHaveValue("ab cd");
+});
+
 // The stub's log rides the app's own origin through the vite proxy.
 function request0(page: Page) {
   return page.request.get("/_stub/log");

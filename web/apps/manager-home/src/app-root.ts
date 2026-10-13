@@ -165,7 +165,10 @@ export class ManagerHomeApp extends HHElement {
       return;
     }
     if (action === "builder") {
-      if (control !== undefined) this.#desk.act(control);
+      if (control !== undefined) {
+        this.#keepFocus(control);
+        this.#desk.act(control);
+      }
       return;
     }
     if (action === "back") {
@@ -287,9 +290,43 @@ export class ManagerHomeApp extends HHElement {
       header.roleLabel = this.#roleLabel;
       header.theme = this.#theme;
     }
+    this.#restoreFocus();
     this.#prefill("builder-title", this.#desk.state.draft?.title ?? "");
     this.#prefill("builder-landing-unit", this.#desk.state.role?.home.landing_unit ?? "");
     this.#prefill("builder-landing-module", this.#desk.state.role?.home.landing_module ?? "");
+  }
+
+  // A list control keeps its keyboard focus through a move: the lists reuse
+  // their rows by index, so after a reorder the focused slot holds another
+  // card, and a control that disabled at a limit drops focus to the page.
+  // The clicked control is noted by its op and key, and refocused after the
+  // next render; when it disabled, the card's other enabled control of the
+  // same pair takes focus.
+  #focusTarget: { op: string; key: string; entry: string } | null = null;
+
+  #keepFocus(control: Element): void {
+    const key = control.getAttribute("data-key");
+    const entry = control.getAttribute("data-entry");
+    const op = control.getAttribute("data-op");
+    this.#focusTarget = op !== null && (key !== null || entry !== null) ? { op, key: key ?? "", entry: entry ?? "" } : null;
+  }
+
+  #restoreFocus(): void {
+    const target = this.#focusTarget;
+    if (target === null) return;
+    this.#focusTarget = null;
+    const owner = target.key !== "" ? `[data-key='${CSS.escape(target.key)}']` : `[data-entry='${CSS.escape(target.entry)}']`;
+    const same = this.renderRoot.querySelector<HTMLButtonElement>(`button[data-op='${CSS.escape(target.op)}']${owner}`);
+    if (same === null) return;
+    if (!same.disabled) {
+      same.focus();
+      return;
+    }
+    const row = same.closest("[data-widget], [data-tab], [data-tile], [data-entry], .edit-row") ?? same.parentElement;
+    const other = Array.from(row?.querySelectorAll<HTMLButtonElement>("button:not([disabled])") ?? []).find(
+      (b) => b.getAttribute("data-op") === target.op,
+    );
+    other?.focus();
   }
 
   #prefill(field: string, want: string): void {
