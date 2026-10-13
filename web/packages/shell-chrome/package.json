@@ -2,5 +2,32 @@
   "name": "@hardscapehouse/shell-chrome",
   "version": "0.0.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "description": "The shell chrome every audience shell shares: the header band with the app and surface selector, the pin control, org and user, the sync state chip and notifications; the collapsed rail of the person's own pinned surfaces; the offline banner and the update prompt. The shell is never the security boundary; the core gates every endpoint by role.",
+  "sideEffects": [
+    "./src/shell-header.ts",
+    "./src/shell-rail.ts",
+    "./src/shell-banner.ts",
+    "./src/shell-update.ts"
+  ],
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*.js": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "node --import ./test/_ts-js-loader.mjs --test 'test/*.test.mjs'",
+    "typecheck": "tsc --noEmit",
+    "build:demo": "node --import ./test/_ts-js-loader.mjs demo/build.mjs",
+    "demo": "node --import ./test/_ts-js-loader.mjs demo/serve.mjs"
+  },
+  "dependencies": {
+    "@hardscapehouse/design-system": "0.0.0",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@lit-labs/ssr": "4.1.0",
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3"
+  }
 }

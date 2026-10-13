@@ -363,7 +363,7 @@ func TestParseAllowList(t *testing.T) {
 
 // ---- gate 4b: the sign in method seam ----
 
-func TestGate4bSeamRunsAfterGate4AndNotBefore(t *testing.T) {
+func TestGate4bRunsAfterGate4AndNotBefore(t *testing.T) {
 	f := newFx(t)
 	j := f.jwt(fxUserID, "sess_1", f.now.Add(10*time.Minute), accountJSON(fxUserID, fxEmail, false, true))
 	f.assertRefusal(f.post(j, fxOrgSlug), 403, bodyF)
@@ -374,18 +374,102 @@ func TestGate4bSeamRunsAfterGate4AndNotBefore(t *testing.T) {
 	if rec := g.post(g.goodJWT(), fxOrgSlug); rec.Code != 200 {
 		t.Fatalf("= %d %s", rec.Code, rec.Body)
 	}
-	if len(g.methods.calls) != 1 || g.methods.calls[0] != "email" {
-		t.Fatalf("seam calls = %v, want one with the session's provider", g.methods.calls)
+	if len(g.methods.calls) != 1 || g.methods.calls[0] != fxOrgID {
+		t.Fatalf("reader calls = %v, want one for the org", g.methods.calls)
 	}
 }
 
-func TestGate4bSeamRefusalsAndErrors(t *testing.T) {
+func TestGate4bRefusalsAndErrors(t *testing.T) {
 	f := newFx(t)
-	f.methods.allowed = false
+	f.methods.set = []string{"google"}
 	f.assertRefusal(f.post(f.goodJWT(), fxOrgSlug), 403, bodyF)
 	g := newFx(t)
 	g.methods.err = errBoom
 	g.assertRefusal(g.post(g.goodJWT(), fxOrgSlug), 503, bodyV)
+	if g.minter.calls != 0 || len(g.audit.rows) != 0 {
+		t.Fatal("a reader error minted or audited")
+	}
+}
+
+func TestGate4bMapsEveryProviderThroughTheClosedTable(t *testing.T) {
+	cases := []struct {
+		provider string
+		set      []string
+		status   int
+	}{
+		{"email", []string{"email_password"}, 200},
+		{"email", []string{"google"}, 403},
+		{"email", []string{"microsoft", "magic_link"}, 403},
+		{"google", []string{"google"}, 200},
+		{"google", []string{"email_password"}, 403},
+		{"microsoft", []string{"microsoft"}, 200},
+		{"microsoft", []string{"email_password", "google"}, 403},
+		// Not in the table: refused whatever the set holds, never assumed.
+		{"", []string{"email_password", "google", "microsoft", "magic_link"}, 403},
+		{"magic_link", []string{"magic_link", "email_password"}, 403},
+		{"magicUrl", []string{"magic_link", "email_password", "google"}, 403},
+		{"anonymous", []string{"email_password", "google", "microsoft", "magic_link"}, 403},
+		{"github", []string{"email_password", "google", "microsoft", "magic_link"}, 403},
+		{"Email", []string{"email_password", "google"}, 403},
+		{"email ", []string{"email_password", "google"}, 403},
+		{"GOOGLE", []string{"google"}, 403},
+		{"email_password", []string{"email_password"}, 403},
+	}
+	for _, c := range cases {
+		f := newFx(t)
+		f.console.sessions = sessionsJSON(sessionJSON("sess_1", f.now.Add(-10*time.Minute), c.provider))
+		f.methods.set = c.set
+		rec := f.post(f.goodJWT(), fxOrgSlug)
+		if rec.Code != c.status {
+			t.Errorf("provider %q set %v = %d, want %d", c.provider, c.set, rec.Code, c.status)
+		}
+		if c.status == 403 {
+			f.assertRefusal(rec, 403, bodyF)
+			if f.minter.calls != 0 || len(f.audit.rows) != 0 {
+				t.Errorf("provider %q: a refusal minted or audited", c.provider)
+			}
+		}
+	}
+}
+
+func TestGate4bAnUnmappedProviderIsRefusedWithoutTheReader(t *testing.T) {
+	f := newFx(t)
+	f.console.sessions = sessionsJSON(sessionJSON("sess_1", f.now.Add(-10*time.Minute), "sms"))
+	f.assertRefusal(f.post(f.goodJWT(), fxOrgSlug), 403, bodyF)
+	if len(f.methods.calls) != 0 {
+		t.Fatal("the reader ran for a provider outside the table")
+	}
+}
+
+func TestGate4bAndGate7bShareOneSessionRead(t *testing.T) {
+	f := newFx(t)
+	if rec := f.post(f.goodJWT(), fxOrgSlug); rec.Code != 200 {
+		t.Fatalf("= %d %s", rec.Code, rec.Body)
+	}
+	if got := atomic.LoadInt32(&f.console.sessionHit); got != 1 {
+		t.Fatalf("sessions read %d times, want exactly once for 4b and 7b together", got)
+	}
+	g := newFx(t)
+	g.methods.set = []string{"google"}
+	g.assertRefusal(g.post(g.goodJWT(), fxOrgSlug), 403, bodyF)
+	if got := atomic.LoadInt32(&g.console.sessionHit); got != 1 {
+		t.Fatalf("a 4b refusal read the sessions %d times, want once", got)
+	}
+}
+
+func TestProviderTableIsClosedAndNamed(t *testing.T) {
+	want := map[string]string{"email": "email_password", "google": "google", "microsoft": "microsoft"}
+	if len(providerMethod) != len(want) {
+		t.Fatalf("table = %v", providerMethod)
+	}
+	for k, v := range want {
+		if providerMethod[k] != v {
+			t.Errorf("%q = %q, want %q", k, providerMethod[k], v)
+		}
+	}
+	if ProviderGoogle != "google" || ProviderEmail != "email" || ProviderMicrosoft != "microsoft" {
+		t.Fatal("provider constants moved")
+	}
 }
 
 // ---- gate 5 and 5b: the Team and the anchor ----
