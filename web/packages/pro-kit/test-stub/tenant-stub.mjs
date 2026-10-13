@@ -823,6 +823,12 @@ async function handle(req, res) {
     return ok(res, { status: "ok" });
   }
   if (url.pathname === "/_stub/control" && req.method === "POST") return stubControl(req, res);
+  // A test that starts the stub ends it by this door, so nothing ever signals the process; ROLE_STUB_IDLE_EXIT_MS is
+  // the backstop for a test that dies before it can ask.
+  if (url.pathname === "/_stub/exit" && req.method === "POST") {
+    ok(res, { status: "ok" });
+    return setImmediate(() => process.exit(0));
+  }
   if (url.pathname === "/_stub/session" && req.method === "POST") return stubSession(req, res);
 
   const found = match(req.method, url.pathname);
@@ -882,9 +888,18 @@ async function stubSession(req, res) {
 }
 
 export function startStub(port) {
+  let idle;
+  const idleMs = Number(process.env.ROLE_STUB_IDLE_EXIT_MS ?? 0);
+  const arm = () => {
+    if (idleMs <= 0) return;
+    clearTimeout(idle);
+    idle = setTimeout(() => process.exit(0), idleMs);
+  };
   const server = createServer((req, res) => {
+    arm();
     handle(req, res).catch(() => refuse(res, 500, "internal error"));
   });
+  arm();
   return new Promise((resolve) => server.listen(port, "127.0.0.1", () => resolve(server)));
 }
 

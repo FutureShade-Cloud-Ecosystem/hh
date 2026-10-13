@@ -15,16 +15,23 @@ const stubFile = fileURLToPath(new URL("../../../packages/pro-kit/test-stub/tena
 let child;
 let base;
 
-before(async () => {
-  const port = await new Promise((resolve) => {
-    const probe = createServer();
-    probe.listen(0, "127.0.0.1", () => {
-      const { port: p } = probe.address();
-      probe.close(() => resolve(p));
+// A free port inside the Pro cycle's own range (the kit's block is 56800 to 56809), never an ephemeral one.
+async function freePort(start, count) {
+  for (let port = start; port < start + count; port += 1) {
+    const free = await new Promise((resolve) => {
+      const probe = createServer();
+      probe.once("error", () => resolve(false));
+      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
     });
-  });
+    if (free) return port;
+  }
+  throw new Error(`no free port in ${start} to ${start + count - 1}`);
+}
+
+before(async () => {
+  const port = await freePort(56822, 4);
   base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [stubFile], { env: { ROLE_STUB_PORT: String(port) }, stdio: "ignore" });
+  child = spawn(process.execPath, [stubFile], { env: { ROLE_STUB_PORT: String(port), ROLE_STUB_IDLE_EXIT_MS: "120000" }, stdio: "ignore" });
   for (let i = 0; i < 100; i += 1) {
     try {
       if ((await fetch(`${base}/healthz`)).ok) return;
@@ -36,7 +43,10 @@ before(async () => {
   throw new Error("the stub did not start");
 });
 
-after(() => child?.kill());
+// End the stub by its own door: no signal is ever sent to a process.
+after(async () => {
+  await fetch(`${base}/_stub/exit`, { method: "POST" }).catch(() => {});
+});
 
 // Every string and value of a template, joined: what a person would read, close enough to assert words on.
 function words(template) {
