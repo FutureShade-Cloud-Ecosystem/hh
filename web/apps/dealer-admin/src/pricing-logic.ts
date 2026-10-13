@@ -26,6 +26,9 @@
  * data, the two import roads, the report, and the two records of what
  * happened. One row per tab; the list, the strip and the router name them.
  */
+
+import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
+
 export interface PricingTab {
   /** The id the strip button, the router line and the tests name. */
   readonly id: string;
@@ -267,11 +270,7 @@ export function bpsFromPctInput(input: string): number | null {
 /** Integer cents to the display text, the dollar sign included. */
 export function moneyWords(cents: number | null | undefined): string {
   if (cents === null || cents === undefined || !Number.isFinite(cents)) return "";
-  const sign = cents < 0 ? "-" : "";
-  const abs = Math.abs(Math.round(cents));
-  const dollars = Math.floor(abs / 100).toString();
-  const rem = (abs % 100).toString().padStart(2, "0");
-  return `CA$${sign}${dollars}.${rem}`;
+  return formatDollars(Math.round(cents));
 }
 
 /** Integer basis points to a two decimal percent, the sign included. */

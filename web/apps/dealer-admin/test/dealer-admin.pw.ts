@@ -452,7 +452,7 @@ test("the rebates tab: the programs, the vendor's ledger, and an accrual with it
   await expect(row.locator("[data-test=pr-rebate-rate]")).toHaveText("2.00% of sale");
 
   // The ledger follows the first vendor: the claim side, with its total.
-  await expect(page.locator("[data-test=pr-ledger-total]")).toContainText("CA$140.00");
+  await expect(page.locator("[data-test=pr-ledger-total]")).toContainText("$140.00");
   await expect(page.locator("[data-accrual]")).toHaveCount(1);
 
   // An accrual: the facts in, the server's counts out, and the ledger re-read.
@@ -464,7 +464,7 @@ test("the rebates tab: the programs, the vendor's ledger, and an accrual with it
   await page.locator('[data-field="pr-acc-cost"]').fill("2500.00");
   await page.locator('[data-action="pr-accrue"]').click();
   await expect(page.locator("[data-test=pr-accrue-result]")).toContainText("1 accrual written");
-  await expect(page.locator("[data-test=pr-ledger-total]")).toContainText("CA$210.00");
+  await expect(page.locator("[data-test=pr-ledger-total]")).toContainText("$210.00");
 });
 
 test("the units of measure tab: the seeded edge, the warn line, and the probe's sentences", async ({ page }) => {
@@ -608,6 +608,6 @@ test("the pricing audit and change log tabs: the log, the bypass named, the chan
   await expect(page.locator("[data-test=pr-log-count]")).toHaveText("1 change");
   const logRow = page.locator('tr[data-log="0d110000-0000-4000-9000-0000000000a1"]');
   await expect(logRow).toContainText("retail");
-  await expect(logRow).toContainText("CA$4.80");
-  await expect(logRow).toContainText("CA$5.20");
+  await expect(logRow).toContainText("$4.80");
+  await expect(logRow).toContainText("$5.20");
 });
