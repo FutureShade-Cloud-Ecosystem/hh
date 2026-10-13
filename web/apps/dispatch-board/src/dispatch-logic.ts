@@ -16,6 +16,7 @@ import type {
   DispatchLoadOutcome,
   DispatchLoadRow,
   DispatchLoadStop,
+  DispatchScheduleInput,
   DispatchStopPaymentHold,
 } from "@hardscapehouse/api-client";
 
@@ -745,3 +746,79 @@ export function refusalWords(what: string, error: string, status: number | null)
   return `${what} was refused.`;
 }
 
+
+// ---- the schedule form (part B) --------------------------------------------------------------------
+
+/** What the schedule form holds, every field as the text the person typed. */
+export interface ScheduleFields {
+  readonly order: string;
+  readonly date: string;
+  readonly window: string;
+  readonly contact: string;
+  readonly phone: string;
+  readonly address: string;
+  readonly city: string;
+  readonly postal: string;
+  readonly lat: string;
+  readonly lon: string;
+  readonly instructions: string;
+}
+
+/**
+ * The form's own check, before the core is asked: an order, a day that has not gone, and the
+ * coordinates in a pair. Whether the order exists, is confirmed, is in this yard or is already
+ * scheduled is the core's to say, and its sentence is shown as it comes.
+ */
+export function validateSchedule(f: Pick<ScheduleFields, "order" | "date" | "lat" | "lon">, today: string): string {
+  if (f.order.trim() === "") return "Enter an order number, like the one on the paperwork, or paste the order id.";
+  const date = f.date.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return "Pick a delivery date.";
+  if (date < today) return "That date has passed. A delivery cannot be promised for a day that has gone.";
+  const lat = f.lat.trim();
+  const lon = f.lon.trim();
+  if ((lat === "") !== (lon === "")) return "Give both coordinates, or neither.";
+  if (lat === "") return "";
+  const la = Number(lat);
+  const lo = Number(lon);
+  if (!Number.isFinite(la) || !Number.isFinite(lo)) return "Coordinates are numbers, like 32.7157 and -117.1611.";
+  if (la < -90 || la > 90) return "Latitude is between -90 and 90.";
+  if (lo < -180 || lo > 180) return "Longitude is between -180 and 180.";
+  return "";
+}
+
+/**
+ * The wire body. The date is asked for, never promised: a load is committed by putting it on a
+ * truck, so this form never asks for COMMITTED. The measurements stay unmeasured (null); the core
+ * stamps the load's value from the order, so no figure rides this body.
+ */
+export function scheduleBody(f: ScheduleFields): DispatchScheduleInput {
+  const num = (text: string): number | null => (text.trim() === "" ? null : Number(text));
+  return {
+    order_id: f.order.trim(),
+    scheduled_date: f.date.trim(),
+    time_window: f.window.trim(),
+    contact_name: f.contact.trim(),
+    contact_phone: f.phone.trim(),
+    address_line: f.address.trim(),
+    city: f.city.trim(),
+    postal_code: f.postal.trim(),
+    latitude: num(f.lat),
+    longitude: num(f.lon),
+    instructions: f.instructions.trim(),
+    commit_state: "REQUESTED",
+    requested_date: "",
+    weight_kg: null,
+    volume_m3: null,
+    pallet_positions: null,
+  };
+}
+
+export function scheduleNotice(stop: { order_no?: string; scheduled_date: string }): string {
+  return `${stop.order_no ?? "The order"} scheduled for ${formatDayHeading(stop.scheduled_date)}. It is a request until it is on a truck.`;
+}
+
+/** A refused schedule in words. A missing order is the same answer for a number that never existed and one at another yard. */
+export function scheduleRefusal(error: string, status: number | null): string {
+  if (status === 404) return "No order matches that number at this yard. Check the number on the paperwork.";
+  return refusalWords("Scheduling it", error, status);
+}

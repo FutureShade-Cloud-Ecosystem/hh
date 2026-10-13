@@ -68,7 +68,7 @@ import {
   type CardId,
 } from "./dispatch-logic.js";
 
-export type Tab = "load" | "day";
+export type Tab = "load" | "day" | "schedule";
 export type Axis = "TRUCK" | "STATUS";
 
 /** An inline form open on one card: a date and a reason, a reason alone, or a new truck. */
@@ -107,6 +107,8 @@ export interface BoardModel {
   /** True while the board for a new day, yard or span is being read: no stale figure is drawn meanwhile. */
   readonly loading: boolean;
   readonly span: Span;
+  /** The schedule form's own refusal, shown beside its button. */
+  readonly scheduleError: string;
   /** A refusal that belongs to one truck's lane, shown in that lane. */
   readonly runError: { readonly id: string; readonly words: string } | null;
 }
@@ -304,8 +306,8 @@ function tabs(model: BoardModel): TemplateResult {
     html`<span class="tag-later">${label}<em>Later</em></span>`;
   return html`
     <nav class="tabs" aria-label="Dispatch screens">
-      ${tab("load", "Load board")}${tab("day", "Day board")}
-      ${later("Schedule")}${later("Trucks and drivers")}${later("Will call")}${later("Settings")}
+      ${tab("load", "Load board")}${tab("day", "Day board")}${tab("schedule", "Schedule")}
+      ${later("Trucks and drivers")}${later("Will call")}${later("Settings")}
     </nav>
   `;
 }
@@ -762,6 +764,98 @@ export function renderDayBoard(model: BoardModel): TemplateResult {
   `;
 }
 
+// ---- the schedule --------------------------------------------------------------------------------
+
+function scheduleForm(model: BoardModel): TemplateResult {
+  const text = (name: string, label: string): TemplateResult =>
+    html`<label>${label}<input class="control" type="text" data-field=${name} autocomplete="off" /></label>`;
+  return html`
+    <section class="panel" aria-label="Schedule a delivery">
+      <div class="panel-head"><h2>Schedule a delivery</h2></div>
+      <form class="sched-form" data-schedule novalidate>
+        <label class="wide">Order number
+          <input class="control" type="text" data-field="order" autocomplete="off" maxlength="64" aria-describedby="order-hint" />
+          <span class="small dim" id="order-hint">The number on the paperwork, like #SO-TRT-1041, or paste the order id.</span>
+        </label>
+        <label>Delivery day<input class="control" type="date" data-field="day" /></label>
+        ${text("window", "Time window")}
+        ${text("contact", "Site contact")}
+        <label>Site phone<input class="control" type="tel" data-field="phone" autocomplete="off" /></label>
+        <label class="wide">Delivery address<input class="control" type="text" data-field="address" autocomplete="off" /></label>
+        ${text("city", "City")}
+        ${text("postal", "Postal code")}
+        <label>Latitude, optional<input class="control" type="text" inputmode="decimal" data-field="lat" autocomplete="off" /></label>
+        <label>Longitude, optional<input class="control" type="text" inputmode="decimal" data-field="lon" autocomplete="off" /></label>
+        <label class="wide">Instructions for the driver<input class="control" type="text" data-field="instructions" maxlength="400" autocomplete="off" /></label>
+        <p class="small dim wide">A date scheduled here is a request. Putting the load on a truck commits it.</p>
+        ${model.scheduleError !== "" ? html`<p class="alert alert-error wide" role="alert" data-schedule-error>${model.scheduleError}</p>` : nothing}
+        <div class="actions wide">
+          <button type="button" class="btn btn-primary" data-action="schedule-submit" ?disabled=${model.busy}>Schedule delivery</button>
+        </div>
+      </form>
+    </section>
+  `;
+}
+
+function booksStop(model: BoardModel, stop: DispatchStop): TemplateResult {
+  const block = rescheduleBlockedReason(stop);
+  return html`
+    <li class="load" data-stop-id=${stop.id} data-order=${stop.order_no ?? ""} data-status=${stop.status}>
+      <div class="load-head">
+        <span class="order">${stop.order_no ?? "Order"}</span>
+        ${statusPill(stop.status, STOP_LABEL[stop.status] ?? stop.status)}
+      </div>
+      <div class="who">${stop.customer_name || "Customer"}</div>
+      <div class="small dim">${addressLine(stop) || "No address on file"}${stop.time_window ? ` · ${stop.time_window}` : ""}</div>
+      <div class="facts">
+        <span class="status ${stop.commit_state === "COMMITTED" ? "status-good" : "status-plain"}" data-date-state>${dateStateLabel(stop.commit_state)}</span>
+        ${askDiffers(stop) ? html`<span class="small dim">asked ${stop.requested_date}</span>` : nothing}
+        <span class="fact">${stop.run_id ? (stop.run_no ?? "On a truck") : "Not on a truck"}</span>
+      </div>
+      ${block === ""
+        ? html`<div class="actions"><button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="reschedule-stop" data-stop-id=${stop.id} ?disabled=${model.busy}>Move date</button></div>`
+        : html`<p class="small dim" data-move-why>${block}</p>`}
+      ${sheetFor(model, ["reschedule-stop"], stop.id)}
+    </li>
+  `;
+}
+
+function booksRun(model: BoardModel, run: DispatchRun): TemplateResult {
+  const movable = run.status === "PLANNED";
+  return html`
+    <li class="load" data-books-run=${run.run_no} data-run-id=${run.id}>
+      <div class="load-head">
+        <span class="order">${run.run_no}</span>
+        ${statusPill(run.status, RUN_LABEL[run.status] ?? run.status)}
+      </div>
+      <div class="small dim">${run.truck_code ?? "No truck yet"} · ${run.stop_count} ${run.stop_count === 1 ? "stop" : "stops"}</div>
+      ${movable
+        ? html`<div class="actions"><button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="reschedule-run" data-run-id=${run.id} ?disabled=${model.busy}>Move truck</button></div>`
+        : html`<p class="small dim">A truck that has left is a record, not a plan.</p>`}
+      ${sheetFor(model, ["reschedule-run"], run.id)}
+    </li>
+  `;
+}
+
+/** The schedule tab: the form, the week ahead, and the day's books (every stop and every truck), each date movable. */
+export function renderSchedule(model: BoardModel): TemplateResult {
+  const day = model.day;
+  const stops = day === null ? [] : [...day.unassigned, ...day.stops];
+  return html`
+    ${scheduleForm(model)}
+    ${weekStrip(model)}
+    <section class="panel" data-books>
+      <div class="panel-head"><h3>On the books for ${formatDayHeading(model.date)}<span class="count">${stops.length}</span></h3></div>
+      ${stops.length > 0
+        ? html`<ul class="loads wide">${stops.map((s) => booksStop(model, s))}</ul>`
+        : html`<p class="dim" data-books-empty>Nothing scheduled for ${formatDayHeading(model.date)}.</p>`}
+      ${day !== null && day.runs.length > 0
+        ? html`<h4>Trucks that day</h4><ul class="loads wide">${day.runs.map((r) => booksRun(model, r))}</ul>`
+        : nothing}
+    </section>
+  `;
+}
+
 // ---- the screen ----------------------------------------------------------------------------------
 
 export function renderDesk(model: BoardModel): TemplateResult {
@@ -785,6 +879,8 @@ export function renderDesk(model: BoardModel): TemplateResult {
       ? html`<p class="alert" role="status" data-loading>Reading the board for ${formatDayHeading(model.date)}...</p>`
       : model.tab === "load"
         ? renderLoadBoard(model)
-        : renderDayBoard(model)}
+        : model.tab === "schedule"
+          ? renderSchedule(model)
+          : renderDayBoard(model)}
   `;
 }

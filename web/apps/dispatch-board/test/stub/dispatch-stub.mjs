@@ -181,7 +181,15 @@ function seedWorld() {
     stop(9, { order_no: "ORD-0009", customer_name: "Summit Ridge Builders", run_id: runs[3].id, stop_no: 1, address_line: "4410 Torrey Pines Road", city: "La Jolla", postal_code: "92037", weight_kg: 2900, status: "EN_ROUTE", commit_state: "COMMITTED", committed_at: `${TODAY}T05:50:00Z`, requested_date: TODAY }),
     stop(10, { order_no: "ORD-0010", customer_name: "Ridgeview Outdoor Living", run_id: runs[3].id, stop_no: 2, address_line: "8 Santa Fe Court", city: "San Diego", postal_code: "92106", weight_kg: null, status: "LOADED", commit_state: "COMMITTED", committed_at: `${TODAY}T05:51:00Z`, requested_date: TODAY }),
   ];
-  return { trucks, drivers, runs, stops, seq: { run: 5, resched: 1 } };
+  // Orders the counter can hand to dispatch, by the number on the paperwork. ORD-0040 and ORD-0043 are
+  // confirmed and not yet scheduled; the rest of the stops above hold their own orders.
+  const orders = [
+    { id: "0a000001-0000-4000-9000-000000000040", order_no: "ORD-0040", customer_name: "Cedar Court Homeowner", status: "CONFIRMED" },
+    { id: "0a000001-0000-4000-9000-000000000041", order_no: "ORD-0041", customer_name: "Harbor View Landscaping", status: "DRAFT" },
+    { id: "0a000001-0000-4000-9000-000000000042", order_no: "ORD-0042", customer_name: "Mesa Stoneworks", status: "CANCELLED" },
+    { id: "0a000001-0000-4000-9000-000000000043", order_no: "ORD-0043", customer_name: "Coastline Patios", status: "CONFIRMED" },
+  ];
+  return { trucks, drivers, runs, stops, orders, seq: { run: 5, resched: 1, stop: 50 } };
 }
 
 let world = seedWorld();
@@ -532,6 +540,62 @@ async function route(req, res, url) {
   // ---- the auto assign seam: the core build answers 501 and says what would answer it
   if (rest === "auto-assign") {
     return fail(res, 501, "dispatch: automatic load assignment is part of the Pro module, build the loads here in the meantime");
+  }
+
+  if (rest === "stops") {
+    // The order resolves the way the core's resolver does: the number with or without its '#', or the id.
+    const ref = typeof body.order_id === "string" ? body.order_id.trim() : "";
+    if (ref === "") return fail(res, 400, "enter an order number (like #SO-TRT-1041) or an order id");
+    const bare = ref.replace(/^#/, "");
+    if (!/^[A-Za-z0-9_-]+$/.test(bare) || !/[0-9]/.test(bare)) {
+      return fail(res, 400, `"${ref}" is not an order number, enter a number like #SO-TRT-1041, or paste the order id`);
+    }
+    const order = world.orders.find((o) => o.order_no === bare || o.id === ref) ?? world.stops.map((s) => ({ id: s.order_id, order_no: s.order_no, customer_name: s.customer_name, status: "CONFIRMED" })).find((o) => o.order_no === bare || o.id === ref);
+    if (!order) return fail(res, 404, "dispatch: not found");
+    const date = typeof body.scheduled_date === "string" ? body.scheduled_date.trim() : "";
+    if (date === "") return fail(res, 400, "dispatch: scheduled_date is required (YYYY-MM-DD)");
+    if (!validDate(date)) return fail(res, 400, "dispatch: scheduled_date must be YYYY-MM-DD");
+    if ((body.latitude === null || body.latitude === undefined) !== (body.longitude === null || body.longitude === undefined)) {
+      return fail(res, 400, "dispatch: latitude and longitude must be given together");
+    }
+    if (order.status === "DRAFT") return fail(res, 409, "dispatch: confirm the order before scheduling a delivery for it");
+    if (order.status === "CANCELLED" || order.status === "CLOSED") return fail(res, 409, `dispatch: order is ${order.status} and cannot be scheduled`);
+    const live = world.stops.find((s) => s.order_id === order.id && s.status !== "CANCELLED");
+    if (live) return fail(res, 409, `dispatch: this order already has a delivery scheduled for ${live.scheduled_date}`);
+    if (date > addDays(TODAY, POLICY.commit_horizon_weeks * 7) || date < addDays(TODAY, -1)) {
+      return fail(res, 422, `dispatch: ${date} is outside the ${POLICY.commit_horizon_weeks}-week planning horizon`);
+    }
+    const n = world.seq.stop++;
+    const stop = {
+      id: `5a000001-0000-4000-9000-0000000000${n}`,
+      branch_id: BRANCH,
+      order_id: order.id,
+      order_no: order.order_no,
+      customer_name: order.customer_name,
+      run_id: "",
+      stop_no: 0,
+      scheduled_date: date,
+      status: "READY",
+      time_window: body.time_window ?? "",
+      contact_name: body.contact_name ?? "",
+      contact_phone: body.contact_phone ?? "",
+      address_line: body.address_line ?? "",
+      city: body.city ?? "",
+      postal_code: body.postal_code ?? "",
+      latitude: body.latitude ?? null,
+      longitude: body.longitude ?? null,
+      instructions: body.instructions ?? "",
+      photo_count: 0,
+      created_at: `${TODAY}T08:00:00Z`,
+      weight_kg: null,
+      volume_m3: null,
+      pallet_positions: null,
+      requested_date: typeof body.requested_date === "string" && body.requested_date !== "" ? body.requested_date : date,
+      commit_state: "REQUESTED",
+      committed_at: null,
+    };
+    world.stops.push(stop);
+    return json(res, stopView(stop), 201);
   }
 
   if (rest === "runs") {

@@ -1,4 +1,4 @@
-# Dispatch and Load Building: provenance of the ports (part A)
+# Dispatch and Load Building: provenance of the ports (parts A and B)
 
 The load board and the day board carry logic and words from the original HardscapeOS app
 (repository `hardscapeos_dibbits`, read only), master 87d7941, under the roadmap's row 563 rule
@@ -34,6 +34,18 @@ Writes: `POST /api/v1/dispatch/auto-assign` (the core answers 501 and the board 
 answer it), `/runs`, `/runs/{id}/cancel`, `/crew`, `/dispatch`, `/complete`, `/reopen`,
 `/reopen/clear`, `/reschedule`, `/stops/{id}/assign`, `/commit`, `/reopen`, `/reschedule`,
 `/status`, `/loads/mark-loaded`.
+
+## Part B
+
+Visual reference for every part B screen: the original's screen named in its row (the newest dispatch
+screens in `hardscapeos_dibbits`, read only) rebuilt at the same HH Drive and Buying and Stock set as
+part A, and the FB Design file `HH: Work`, page "PROPOSED: Dispatch and Load Building", which the
+lead's Sonnet visual read uses. Screens are looked at in `hh-s4/modules/reports/dispatch-b-shots/`.
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Schedule a delivery: the order number box, its help line, the form's fields, the day's table | `app/src/dispatch-schedule.ts`, `order-ref.ts` | `scheduleForm`, `renderSchedule`, `validateSchedule`, `scheduleBody`, `scheduleRefusal` | The form asks for a request, never a commitment; the day is cards, not a table; a move of date rides the part A reschedule sheet; the board follows the order to its day |
+| The date move and its reason | `app/src/dispatch-reschedule.ts` | the part A `validateReschedule` and sheet, now also reached from the schedule tab | One sheet, two doors |
 
 ## Not ported on purpose (part B or never)
 

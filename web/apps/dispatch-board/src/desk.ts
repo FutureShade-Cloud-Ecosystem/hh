@@ -31,9 +31,14 @@ import {
   refusalWords,
   reopenNotice,
   reopenRunNotice,
+  scheduleBody,
+  scheduleNotice,
+  scheduleRefusal,
   shiftISODate,
   validateReason,
   validateReschedule,
+  validateSchedule,
+  type ScheduleFields,
   type CardId,
 } from "./dispatch-logic.js";
 import { renderDesk, type Axis, type BoardModel, type Sheet, type Span, type Tab } from "./views.js";
@@ -83,6 +88,9 @@ export class DispatchDesk {
   #loading = false;
   #span: Span = "DAY";
   #runError: { id: string; words: string } | null = null;
+  #scheduleError = "";
+  // The day the schedule form's date field was last given its starting value for.
+  #formSeeded: string | null = null;
   // The sheet whose starting field values the screen has already been given.
   #sheetSeeded: string | null = null;
 
@@ -146,6 +154,15 @@ export class DispatchDesk {
       this.#calendar = calendar.ok ? (calendar.value.items ?? []) : [];
       this.#holds = await this.#readHolds(view.value.loads.map((r) => r.run.id));
       this.#selected = new Set(pruneSelection([...this.#selected], [...view.value.staging, ...view.value.loads.flatMap((r) => r.stops)]));
+    } else if (this.#tab === "schedule") {
+      // The schedule reads the day's books and the week ahead; it crews nothing, so it reads no crew lists.
+      const [board, calendar] = await Promise.all([this.#api.dayBoard(branch, day), this.#api.calendar(branch, day, shiftISODate(day, 6))]);
+      if (!board.ok) {
+        this.#loadFailed("The day's books", board);
+        return false;
+      }
+      this.#day = board.value;
+      this.#calendar = calendar.ok ? (calendar.value.items ?? []) : [];
     } else {
       const [board, trucks, drivers] = await Promise.all([this.#api.dayBoard(branch, day), this.#api.trucks(branch), this.#api.drivers(branch)]);
       if (!board.ok) {
@@ -208,6 +225,7 @@ export class DispatchDesk {
       sheet: this.#sheet,
       loading: this.#loading,
       span: this.#span,
+      scheduleError: this.#scheduleError,
       runError: this.#runError,
     };
   }
@@ -229,6 +247,16 @@ export class DispatchDesk {
         const index = [...el.options].findIndex((o) => (o.getAttribute("data-id") ?? "") === current);
         el.selectedIndex = index < 0 ? 0 : index;
       }
+    }
+    if (this.#tab === "schedule") {
+      const dateField = this.#host.find("[data-schedule] [data-field=\"day\"]");
+      const seedKey = `${this.#branchId}:${this.#date}`;
+      if (dateField instanceof HTMLInputElement && this.#formSeeded !== seedKey) {
+        this.#formSeeded = seedKey;
+        dateField.value = this.#date < this.#today ? this.#today : this.#date;
+      }
+    } else {
+      this.#formSeeded = null;
     }
     const sheet = this.#sheet;
     if (sheet === null) return;
@@ -253,7 +281,8 @@ export class DispatchDesk {
         void this.#run(NOOP, "", "That", true);
         return true;
       case "tab": {
-        const next: Tab = attr("data-tab-id") === "day" ? "day" : "load";
+        const id = attr("data-tab-id");
+        const next: Tab = id === "day" ? "day" : id === "schedule" ? "schedule" : "load";
         if (next === this.#tab) return true;
         this.#tab = next;
         this.#sheet = null;
@@ -309,6 +338,9 @@ export class DispatchDesk {
         return true;
       case "auto-assign":
         void this.#autoAssign();
+        return true;
+      case "schedule-submit":
+        void this.#schedule();
         return true;
       case "new-run":
         this.#openSheet("new-run", "new");
@@ -391,6 +423,7 @@ export class DispatchDesk {
     this.#notice = "";
     this.#refusals = [];
     this.#runError = null;
+    this.#scheduleError = "";
   }
 
   #goto(day: string): void {
@@ -566,6 +599,43 @@ export class DispatchDesk {
     if (result.ok) this.#notice = "Loads assigned.";
     else if (result.status === 501) this.#info = `Auto assign: ${plainSentence(result.error)}.`;
     else this.#error = refusalWords("Auto assign", result.error, result.status ?? null);
+    await this.#reload();
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
+  /** Schedules the order in the form. A refusal stays beside the button and the form keeps what was typed. */
+  async #schedule(): Promise<void> {
+    if (this.#busy) return;
+    const read = (name: string): string => {
+      const el = this.#host.find(`[data-schedule] [data-field="${name}"]`);
+      return el instanceof HTMLInputElement ? el.value : "";
+    };
+    const fields: ScheduleFields = {
+      order: read("order"), date: read("day"), window: read("window"), contact: read("contact"), phone: read("phone"),
+      address: read("address"), city: read("city"), postal: read("postal"), lat: read("lat"), lon: read("lon"), instructions: read("instructions"),
+    };
+    this.#clearMessages();
+    const words = validateSchedule(fields, this.#today);
+    if (words !== "") {
+      this.#scheduleError = words;
+      this.#host.repaint();
+      return;
+    }
+    this.#busy = true;
+    this.#host.repaint();
+    const result = await this.#api.scheduleStop(scheduleBody(fields));
+    if (result.ok) {
+      this.#notice = scheduleNotice(result.value);
+      // The board follows the order to its day, and the form is ready for the next one.
+      this.#date = result.value.scheduled_date;
+      this.#sheet = null;
+      for (const el of this.#host.findAll("[data-schedule] [data-field]")) {
+        if (el instanceof HTMLInputElement && el.getAttribute("data-field") !== "day") el.value = "";
+      }
+    } else {
+      this.#scheduleError = scheduleRefusal(result.error, result.status ?? null);
+    }
     await this.#reload();
     this.#busy = false;
     this.#host.repaint();

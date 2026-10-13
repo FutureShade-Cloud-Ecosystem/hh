@@ -181,6 +181,11 @@ export const boardStyles = css`
   .theme-btn { font: inherit; font-size: 13px; padding: 7px 12px; min-height: 0; border-radius: var(--hh-radius-pill); background: transparent; color: var(--hh-text); border: 1px solid var(--hh-control-line); cursor: pointer; }
   .theme-btn:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
 
+  /* The schedule form: two columns of fields, the long ones across; one column at 700 and under. */
+  .sched-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-12) var(--hh-s-16); }
+  .sched-form .wide { grid-column: 1 / -1; }
+  .sched-form .alert, .sched-form p { margin: 0; }
+
   .matrix p { max-width: 70ch; }
   .strip { display: none; flex-wrap: wrap; gap: var(--hh-s-4) var(--hh-s-16); margin: var(--hh-s-8) 0; color: var(--hh-text-dim); font-size: 14px; }
   .strip-cell strong { color: var(--hh-text); font-variant-numeric: tabular-nums; }
@@ -198,7 +203,7 @@ export const boardStyles = css`
     .week { display: flex; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: var(--hh-s-4); }
     .day { flex: 0 0 132px; scroll-snap-align: start; }
     .qcards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .columns, .status-lanes, .sheet-grid { grid-template-columns: minmax(0, 1fr); }
+    .columns, .status-lanes, .sheet-grid, .sched-form { grid-template-columns: minmax(0, 1fr); }
     .strip { display: flex; }
     .col.none { display: none; }
     .did-not .count { margin-inline-start: var(--hh-s-8); }

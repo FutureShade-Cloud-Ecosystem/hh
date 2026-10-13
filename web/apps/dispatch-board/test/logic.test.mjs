@@ -43,8 +43,12 @@ import {
   stopWord,
   targetLine,
   unloadableSummary,
+  scheduleBody,
+  scheduleNotice,
+  scheduleRefusal,
   validateReason,
   validateReschedule,
+  validateSchedule,
   worstBand,
 } from "../src/dispatch-logic.ts";
 
@@ -383,4 +387,54 @@ test("a short day reads as month and day, one form for pills and strips", () => 
   assert.equal(shortDay("2026-10-13"), "Oct 13");
   assert.equal(dayOfLabel(stop({ scheduled_date: "2026-01-16" }), "2026-01-15"), "Jan 16");
   assert.equal(shortDay("garbage"), "garbage");
+});
+
+// ---- the schedule form (part B, sub item 1) -------------------------------------------------------
+
+const form = (over = {}) => ({
+  order: "ORD-0040", date: "2026-01-16", window: "", contact: "", phone: "", address: "", city: "", postal: "", lat: "", lon: "", instructions: "", ...over,
+});
+
+test("the schedule form wants an order, a day that has not gone, and coordinates in pairs", () => {
+  assert.equal(validateSchedule(form(), "2026-01-15"), "");
+  assert.match(validateSchedule(form({ order: "  " }), "2026-01-15"), /Enter an order number/);
+  assert.match(validateSchedule(form({ date: "" }), "2026-01-15"), /Pick a delivery date/);
+  assert.match(validateSchedule(form({ date: "2026-01-14" }), "2026-01-15"), /That date has passed/);
+  assert.equal(validateSchedule(form({ date: "2026-01-15" }), "2026-01-15"), "", "today is a day that has not gone");
+  assert.match(validateSchedule(form({ lat: "32.7" }), "2026-01-15"), /Give both coordinates, or neither/);
+  assert.match(validateSchedule(form({ lon: "-117.2" }), "2026-01-15"), /Give both coordinates, or neither/);
+  assert.match(validateSchedule(form({ lat: "abc", lon: "-117.2" }), "2026-01-15"), /Coordinates are numbers/);
+  assert.match(validateSchedule(form({ lat: "91", lon: "-117.2" }), "2026-01-15"), /Latitude is between -90 and 90/);
+  assert.match(validateSchedule(form({ lat: "32.7", lon: "181" }), "2026-01-15"), /Longitude is between -180 and 180/);
+  assert.equal(validateSchedule(form({ lat: "32.7", lon: "-117.2" }), "2026-01-15"), "");
+});
+
+test("the schedule body is the whole wire shape: trimmed text, null for the coordinates left out, and no commitment asked", () => {
+  const body = scheduleBody(form({ order: "  #ORD-0040 ", window: " AM ", contact: "Site contact", address: " 7420 Prospect Lane ", lat: "32.8", lon: "-117.25" }));
+  assert.equal(body.order_id, "#ORD-0040");
+  assert.equal(body.scheduled_date, "2026-01-16");
+  assert.equal(body.time_window, "AM");
+  assert.equal(body.address_line, "7420 Prospect Lane");
+  assert.equal(body.latitude, 32.8);
+  assert.equal(body.longitude, -117.25);
+  const bare = scheduleBody(form());
+  assert.equal(bare.latitude, null);
+  assert.equal(bare.longitude, null);
+  assert.equal(bare.weight_kg, null);
+  assert.equal(bare.volume_m3, null);
+  assert.equal(bare.pallet_positions, null);
+  assert.equal(bare.commit_state, "REQUESTED", "a date asked for here is a request; putting a load on a truck is the commitment");
+  assert.equal(bare.requested_date, "");
+});
+
+test("the schedule notice names the order and the day and says the date is still a request", () => {
+  assert.equal(scheduleNotice({ order_no: "ORD-0040", scheduled_date: "2026-01-16" }), "ORD-0040 scheduled for Fri, Jan 16, 2026. It is a request until it is on a truck.");
+  assert.equal(scheduleNotice({ scheduled_date: "2026-01-16" }), "The order scheduled for Fri, Jan 16, 2026. It is a request until it is on a truck.");
+});
+
+test("a schedule refusal keeps the core's sentence, and a missing order says what to check", () => {
+  assert.match(scheduleRefusal("dispatch: not found", 404), /No order matches that number at this yard/);
+  assert.equal(scheduleRefusal("dispatch: confirm the order before scheduling a delivery for it", 409), "confirm the order before scheduling a delivery for it");
+  assert.match(scheduleRefusal("", 500), /nothing changed/);
+  assert.match(scheduleRefusal("Forbidden", 403), /not yours to do/);
 });

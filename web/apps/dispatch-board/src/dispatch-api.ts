@@ -5,7 +5,7 @@
 //
 // Reads: the branches the caller reaches, the load board, the day board, the trucks and drivers,
 // the procurement gaps, the calendar and a run's payment holds.
-// Writes: open a run, crew it, dispatch it, cancel it, complete it, reopen it, clear the reopen
+// Writes: schedule an order's delivery, open a run, crew it, dispatch it, cancel it, complete it, reopen it, clear the reopen
 // marker, move its date; put a stop on a run or take it off, commit its date, reopen it, move its
 // date, advance it along the lifecycle; load many stops in one call; and ask the auto assign seam.
 import {
@@ -23,6 +23,7 @@ import {
   type DispatchRescheduleResult,
   type DispatchRun,
   type DispatchRunDetail,
+  type DispatchScheduleInput,
   type DispatchStop,
   type DispatchTruckPage,
   type Result,
@@ -109,6 +110,11 @@ export class DispatchApi {
   }
 
   // ---- stops
+
+  /** Turns a confirmed order into a delivery on a day. The date is a request until the load is on a truck. */
+  scheduleStop(body: DispatchScheduleInput): Promise<Result<DispatchStop>> {
+    return staffDispatch.dispatchScheduleStop(this.#client, body);
+  }
 
   /** Puts a stop on a run (the end of its order), or takes it off with an empty run id. */
   assignStop(stopId: string, runId: string): Promise<Result<DispatchStop>> {

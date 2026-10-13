@@ -313,3 +313,34 @@ test("the refusals carry the core's statuses, envelope and sentences", async () 
   assert.equal(anon.status, 401);
   holds("Error", await anon.json());
 });
+
+test("scheduling a delivery: the order resolves by its number, the stop fits the contract, and every refusal is the core's sentence", async () => {
+  await reset();
+  const today = (await world()).today;
+  const tomorrow = new Date(`${today}T12:00:00`);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const day = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
+  const input = (over) => ({
+    order_id: "ORD-0040", scheduled_date: day, time_window: "AM", contact_name: "", contact_phone: "", address_line: "12 Cedar Court", city: "Julian", postal_code: "92036",
+    latitude: null, longitude: null, instructions: "", commit_state: "REQUESTED", requested_date: "", weight_kg: null, volume_m3: null, pallet_positions: null, ...over,
+  });
+  const made = await call("POST", "/api/v1/dispatch/stops", input());
+  assert.equal(made.status, 201);
+  holds("DispatchStop", made.json);
+  assert.equal(made.json.order_no, "ORD-0040");
+  assert.equal(made.json.commit_state, "REQUESTED");
+  assert.equal(made.json.requested_date, day);
+  assert.equal(made.json.status, "READY");
+  const board = await call("GET", `/api/v1/dispatch/board?date=${day}`);
+  assert.ok(board.json.unassigned.some((s) => s.order_no === "ORD-0040"), "the new stop is on that day's board, not on a truck");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0040" })), 409, "this order already has a delivery scheduled for");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: " " })), 400, "enter an order number (like #SO-TRT-1041) or an order id");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "banana" })), 400, "is not an order number, enter a number like #SO-TRT-1041, or paste the order id");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-9999" })), 404, "not found");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0041" })), 409, "confirm the order before scheduling a delivery for it");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0042" })), 409, "cannot be scheduled");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0043", scheduled_date: "" })), 400, "scheduled_date is required (YYYY-MM-DD)");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0043", scheduled_date: "soon" })), 400, "scheduled_date must be YYYY-MM-DD");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0043", scheduled_date: "2099-01-01" })), 422, "planning horizon");
+  refused(await call("POST", "/api/v1/dispatch/stops", input({ order_id: "ORD-0043", latitude: 32.7 })), 400, "latitude and longitude must be given together");
+});
