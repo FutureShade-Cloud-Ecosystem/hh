@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/flows"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/printing"
@@ -300,11 +301,19 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
 		t.Errorf("the org scope did not stamp clean: %+v", counts)
 	}
-	if counts.UsersLinked != 8 || counts.UsersUnlinked != 8 {
-		t.Errorf("linked %d / unlinked %d users, want the 8 demo role accounts (sales, manager, yard-manager, payables-receivables, buyer, controller, yard, driver) linked and the 8 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	// 22 linked: the 8 demo role accounts (sales, manager, yard-manager,
+	// payables-receivables, buyer, controller, yard, driver) and the 14
+	// enterable sign in personas, linked to their namespaced subjects.
+	if counts.UsersLinked != 22 || counts.UsersUnlinked != 8 {
+		t.Errorf("linked %d / unlinked %d users, want the 8 demo role accounts and the 14 sign in personas linked and the 8 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	if counts.StaffGrants != 8 || counts.StaffGrantsBranch != 6 || counts.StaffGrantsGlobal != 2 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the six branch-scoped linked accounts' one-branch grants (sales, manager, yard manager, buyer, yard, driver) and the two global grants (Payables and Receivables, Financial Controller)", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	// 23 grants: the 8 of the role accounts (six branch scoped, two global)
+	// and 15 of the personas (ten branch scoped: eight roles of the branch
+	// kind plus the yard manager's driver grant and the driver; five global:
+	// General Manager, HR, Payables and Receivables, Financial Controller and
+	// the Dealer Admin).
+	if counts.StaffGrants != 23 || counts.StaffGrantsBranch != 16 || counts.StaffGrantsGlobal != 7 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the role accounts' 8 and the personas' 15", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -416,6 +425,11 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		"Driver persona (demo)":         true,
 		"Procurement manager (demo)":    true,
 	}
+	for _, p := range flows.Personas() {
+		if !p.Contractor {
+			allowedNames[p.DisplayName()] = true
+		}
+	}
 	nameRows, err := pool.Query(ctx, `SELECT display_name FROM users`)
 	if err != nil {
 		t.Fatal(err)
@@ -439,8 +453,9 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	// planted demo teammates, and the roadmap personas (Payables and
 	// Receivables and the Procurement Manager and the Financial Controller),
 	// each one invented name.
-	if len(saw) != len(allowedNames) || len(saw) != 16 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 16 invented ones (saw: %v)", len(saw), saw)
+	// Plus the 14 sign in personas' role label names.
+	if len(saw) != len(allowedNames) || len(saw) != 30 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 30 invented ones (saw: %v)", len(saw), saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the

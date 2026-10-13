@@ -34,10 +34,6 @@ type Persona struct {
 	// Contractor marks the four contractor personas: listed, and answered
 	// with the shared 403 until the Pro cycle.
 	Contractor bool
-	// LegacyCode is the roles catalog code (roles.code) the populate gives
-	// the persona's users row, so the identity program derives the staff
-	// grant. Empty for the roles the catalog has no code for.
-	LegacyCode string
 	// UserID is the id of the persona's users row.
 	UserID string
 	// Email is the persona's address at the reserved demo domain.
@@ -46,6 +42,10 @@ type Persona struct {
 
 // Subject is the token subject: persona: plus the id.
 func (p Persona) Subject() string { return SubjectPrefix + p.ID }
+
+// DisplayName is the users display name the populate gives the persona's
+// row: a role label, never a person's name.
+func (p Persona) DisplayName() string { return p.Label + " (demo persona)" }
 
 // IsPersonaSubject reports whether a subject has the persona shape. It says
 // nothing about whether the subject is on the list.
@@ -57,40 +57,40 @@ func personaUserID(n int) string {
 	return "de5e0000-0000-4000-9000-0000000000" + string(hex[n>>4&0xf]) + string(hex[n&0xf])
 }
 
-func build(n int, id, label, role, legacy string, also ...string) Persona {
+func build(n int, id, label, role string, also ...string) Persona {
 	return Persona{
-		ID: id, Label: label, Role: role, AlsoRoles: also, LegacyCode: legacy,
+		ID: id, Label: label, Role: role, AlsoRoles: also,
 		UserID: personaUserID(n), Email: "persona." + id + "@" + ReservedDomain,
 	}
 }
 
 func contractor(n int, id, label, role string) Persona {
-	p := build(n, id, label, role, "")
+	p := build(n, id, label, role)
 	p.Contractor = true
 	return p
 }
 
 // fromFlow builds a persona from the flow table's own role and label.
-func fromFlow(n int, flow, legacy string, also ...string) Persona {
+func fromFlow(n int, flow string, also ...string) Persona {
 	a := accounts[flow]
-	return build(n, flow, a.Label, a.Role, legacy, also...)
+	return build(n, flow, a.Label, a.Role, also...)
 }
 
 var personas = []Persona{
-	fromFlow(1, "sales", "INSIDE_SALES"),
-	build(2, "outside-sales", "Outside Sales", "outside_sales", "OUTSIDE_SALES"),
-	fromFlow(3, "sales-manager", "SALES_MANAGER"),
-	fromFlow(4, "yard-team", "YARD_TEAM"),
-	fromFlow(5, "yard-manager", "YARD_MANAGER", "driver"),
-	fromFlow(6, "driver", "DRIVERS"),
-	build(7, "logistics-manager", "Logistics Manager", "logistics_manager", "LOGISTICS_MANAGER"),
-	fromFlow(8, "procurement-manager", "PROCUREMENT_MANAGER"),
-	fromFlow(9, "payables-receivables", "PAYABLES_RECEIVABLES"),
-	fromFlow(10, "financial-controller", "FINANCIAL_CONTROLLER"),
-	build(11, "branch-manager", "Branch Manager", "branch_manager", "BRANCH_MANAGER"),
-	build(12, "general-manager", "General Manager", "general_manager", "GENERAL_MANAGER"),
-	build(13, "hr", "HR", "hr", "HR"),
-	build(14, "dealer-admin", "Dealer Admin", "dealer_admin", ""),
+	fromFlow(1, "sales"),
+	build(2, "outside-sales", "Outside Sales", "outside_sales"),
+	fromFlow(3, "sales-manager"),
+	fromFlow(4, "yard-team"),
+	fromFlow(5, "yard-manager", "driver"),
+	fromFlow(6, "driver"),
+	build(7, "logistics-manager", "Logistics Manager", "logistics_manager"),
+	fromFlow(8, "procurement-manager"),
+	fromFlow(9, "payables-receivables"),
+	fromFlow(10, "financial-controller"),
+	build(11, "branch-manager", "Branch Manager", "branch_manager"),
+	build(12, "general-manager", "General Manager", "general_manager"),
+	build(13, "hr", "HR", "hr"),
+	build(14, "dealer-admin", "Dealer Admin", "dealer_admin"),
 	contractor(15, "contractor-owner", "Contractor Owner", "account_admin"),
 	contractor(16, "contractor-buyer", "Contractor Buyer", "buyer"),
 	contractor(17, "contractor-ap", "Contractor AP", "ap_finance"),
@@ -124,4 +124,26 @@ func PersonaBySubject(subject string) (Persona, bool) {
 		return Persona{}, false
 	}
 	return PersonaByID(subject[len(SubjectPrefix):])
+}
+
+// StaffRoles are the staff roles the persona holds: its role and any further
+// ones. A contractor persona holds none.
+func (p Persona) StaffRoles() []string {
+	if p.Contractor {
+		return nil
+	}
+	return append([]string{p.Role}, p.AlsoRoles...)
+}
+
+// LegacyCode is the roles catalog code (roles.code, the carried catalog the
+// identity program derives staff grants from) for a staff role id, and
+// empty for a role the catalog has no code for (the dealer administrator).
+func LegacyCode(role string) string {
+	switch role {
+	case "dealer_admin", "super_admin", "fb_operator":
+		return ""
+	case "driver":
+		return "DRIVERS"
+	}
+	return strings.ToUpper(role)
 }

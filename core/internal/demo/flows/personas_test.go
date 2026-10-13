@@ -124,3 +124,21 @@ func TestPersonasReturnsACopy(t *testing.T) {
 		t.Fatal("the list was edited through its accessor")
 	}
 }
+
+func TestStaffRolesAndLegacyCodes(t *testing.T) {
+	p, _ := PersonaByID("yard-manager")
+	if r := p.StaffRoles(); len(r) != 2 || r[0] != "yard_manager" || r[1] != "driver" {
+		t.Fatalf("yard manager roles %v", r)
+	}
+	if c, _ := PersonaByID("contractor-ap"); c.StaffRoles() != nil {
+		t.Fatal("a contractor persona holds staff roles")
+	}
+	for role, want := range map[string]string{
+		"inside_sales": "INSIDE_SALES", "driver": "DRIVERS", "payables_receivables": "PAYABLES_RECEIVABLES",
+		"hr": "HR", "dealer_admin": "",
+	} {
+		if got := LegacyCode(role); got != want {
+			t.Errorf("LegacyCode(%s) = %q, want %q", role, got, want)
+		}
+	}
+}
