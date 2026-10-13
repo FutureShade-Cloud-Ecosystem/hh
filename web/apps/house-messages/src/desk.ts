@@ -109,7 +109,7 @@ export class MessagesDesk {
   #prefsError = "";
   #rulesOpen = false;
   #rulesLoading = false;
-  #rules: Readonly<Record<string, boolean>> = {};
+  #rules: Readonly<Record<string, boolean>> | null = null;
   #rulesBusy = "";
   #rulesError = "";
 
@@ -315,6 +315,7 @@ export class MessagesDesk {
     const channelId = this.#activeId;
     this.#prefsOpen = true;
     this.#prefsLoading = true;
+    this.#prefs = null;
     this.#prefsError = "";
     this.#host.repaint();
     const prefs = await this.#api.notifyPrefs(channelId);
@@ -344,6 +345,7 @@ export class MessagesDesk {
     this.#rulesOpen = true;
     this.#view = "conversation";
     this.#rulesLoading = true;
+    this.#rules = null;
     this.#rulesError = "";
     this.#host.repaint();
     const rules = await this.#api.paymentRules();
@@ -355,11 +357,12 @@ export class MessagesDesk {
   }
 
   async #toggleRule(rule: string): Promise<void> {
-    if (this.#rulesBusy !== "") return;
+    const current = this.#rules;
+    if (this.#rulesBusy !== "" || current === null) return;
     this.#rulesBusy = rule;
     this.#rulesError = "";
     this.#host.repaint();
-    const done = await this.#api.setPaymentRule(rule as PaymentRuleId, this.#rules[rule] !== true);
+    const done = await this.#api.setPaymentRule(rule as PaymentRuleId, current[rule] !== true);
     this.#rulesBusy = "";
     if (this.#stopped) return;
     if (done.ok) this.#rules = done.value.rules;
@@ -595,6 +598,12 @@ export class MessagesDesk {
         if (which === "escalation_override") void this.#writePrefs({ escalation_override: this.#prefs?.escalation_override !== true });
         return true;
       }
+      case "retry-prefs":
+        void this.#openPrefs();
+        return true;
+      case "retry-rules":
+        void this.#openRules();
+        return true;
       case "open-rules":
         void this.#openRules();
         return true;
@@ -663,6 +672,7 @@ export class MessagesDesk {
     const prefs: PrefsModel | null = this.#prefsOpen
       ? {
           loading: this.#prefsLoading,
+          read: this.#prefs !== null,
           mode: (this.#prefs?.mode ?? "ALL") as NotifyMode,
           inherited: this.#prefs?.inherited === true,
           desktop: this.#prefs?.desktop_enabled !== false,

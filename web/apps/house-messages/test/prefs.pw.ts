@@ -103,3 +103,42 @@ test("the sheet closes and the room is as it was", async ({ page, request }) => 
   await expect(sheet(page)).toHaveCount(0);
   await expect(page.locator("[data-conversation] li[data-msg]")).toHaveCount(2);
 });
+
+test("a notification sheet whose read failed draws no controls, only the core's refusal and Try again; Try again draws the real values", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  await channel(page, CH.yard).click();
+  const refuse = (route: import("@playwright/test").Route) =>
+    route.request().method() === "GET" ? route.fulfill({ status: 503, json: { error: "database unavailable" } }) : route.continue();
+  await page.route("**/api/v1/messaging/channels/*/notify-prefs", refuse);
+  await page.getByRole("button", { name: "Notifications" }).click();
+  await expect(sheet(page).locator("[data-prefs-error]")).toContainText("Your notification choices");
+  await expect(sheet(page).locator("[data-action='set-mode']")).toHaveCount(0);
+  await expect(sheet(page).locator("[data-action='toggle-pref']")).toHaveCount(0);
+  await expect(sheet(page).getByRole("button", { name: "Try again" })).toBeVisible();
+  await page.unroute("**/api/v1/messaging/channels/*/notify-prefs", refuse);
+  await sheet(page).getByRole("button", { name: "Try again" }).click();
+  await expect(sheet(page).locator("[data-prefs-error]")).toHaveCount(0);
+  await expect(mode(page, "All messages")).toHaveAttribute("aria-pressed", "true");
+  await expect(sheet(page).locator("[data-action='toggle-pref']")).toHaveCount(2);
+});
+
+test("a payment rules sheet whose read failed draws no rule, writes nothing, and never shows the last read's values; Try again reads them", async ({ page, request }) => {
+  await openAs(page, request, "sales");
+  const rules = page.locator("[data-rules]");
+  await page.getByRole("button", { name: "Payment notice rules" }).click();
+  await rules.locator("[data-rule='OWN_ORDER']").click();
+  await expect(rules.locator("[data-rule='OWN_ORDER']")).toHaveAttribute("aria-pressed", "true");
+  await rules.getByRole("button", { name: "Close" }).click();
+  const refuse = (route: import("@playwright/test").Route) =>
+    route.request().method() === "GET" ? route.fulfill({ status: 503, json: { error: "database unavailable" } }) : route.continue();
+  await page.route("**/api/v1/messaging/payment-rules", refuse);
+  await page.getByRole("button", { name: "Payment notice rules" }).click();
+  await expect(rules.locator("[data-rules-error]")).toContainText("Your payment notice rules");
+  await expect(rules.locator("[data-action='toggle-rule']")).toHaveCount(0);
+  await expect(rules.getByRole("button", { name: "Try again" })).toBeVisible();
+  await page.unroute("**/api/v1/messaging/payment-rules", refuse);
+  await rules.getByRole("button", { name: "Try again" }).click();
+  await expect(rules.locator("[data-rules-error]")).toHaveCount(0);
+  await expect(rules.locator("[data-action='toggle-rule']")).toHaveCount(3);
+  await expect(rules.locator("[data-rule='OWN_ORDER']")).toHaveAttribute("aria-pressed", "true");
+});

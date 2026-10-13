@@ -49,8 +49,8 @@ export interface Model {
 /** The caller's own payment notice rules, drawn in place of the conversation while open. */
 export interface RulesModel {
   readonly loading: boolean;
-  /** Keyed by rule id; the full closed set once read. */
-  readonly values: Readonly<Record<string, boolean>>;
+  /** Keyed by rule id; the full closed set once read, null while no read has answered. */
+  readonly values: Readonly<Record<string, boolean>> | null;
   readonly busy: string;
   readonly error: string;
 }
@@ -58,6 +58,8 @@ export interface RulesModel {
 /** The caller's notification choices for the open room. */
 export interface PrefsModel {
   readonly loading: boolean;
+  /** Whether the core's answer has been read; the controls are drawn only then. */
+  readonly read: boolean;
   readonly mode: NotifyMode;
   readonly inherited: boolean;
   readonly desktop: boolean;
@@ -285,7 +287,9 @@ function renderPrefs(ch: Channel, p: PrefsModel): TemplateResult {
       </div>
       ${p.loading
         ? html`<p class="dim" data-loading>Loading your choices</p>`
-        : html`
+        : !p.read
+          ? html`<button type="button" class="btn btn-secondary" data-action="retry-prefs">Try again</button>`
+          : html`
             <div class="segs" role="group" aria-label="Notification mode">
               ${offered.map(
                 (mo) => html`<button type="button" class="seg" data-action="set-mode" data-mode=${mo} aria-pressed=${p.mode === mo ? "true" : "false"} ?disabled=${p.busy}>${modeWords(mo)}</button>`,
@@ -308,6 +312,7 @@ function renderPrefs(ch: Channel, p: PrefsModel): TemplateResult {
 }
 
 function renderRules(r: RulesModel): TemplateResult {
+  const values = r.values;
   return html`
     <section class="convo" data-rules>
       <div class="convo-head">
@@ -321,11 +326,13 @@ function renderRules(r: RulesModel): TemplateResult {
       <div class="convo-body">
         ${r.loading
           ? html`<p class="dim" data-loading>Loading your rules</p>`
-          : RULES.map(
+          : values === null
+            ? html`<button type="button" class="btn btn-secondary" data-action="retry-rules">Try again</button>`
+            : RULES.map(
               (rule) => html`
                 <div class="toggle-row">
                   <span class="grow"><strong>${rule.label}</strong><br /><span class="dim small">${rule.line}</span></span>
-                  <button type="button" class="switch" data-action="toggle-rule" data-rule=${rule.id} aria-pressed=${r.values[rule.id] === true ? "true" : "false"} ?disabled=${r.busy !== ""}>${r.values[rule.id] === true ? "On" : "Off"}</button>
+                  <button type="button" class="switch" data-action="toggle-rule" data-rule=${rule.id} aria-pressed=${values[rule.id] === true ? "true" : "false"} ?disabled=${r.busy !== ""}>${values[rule.id] === true ? "On" : "Off"}</button>
                 </div>
               `,
             )}
