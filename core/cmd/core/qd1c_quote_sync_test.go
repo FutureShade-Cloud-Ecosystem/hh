@@ -44,6 +44,9 @@ func qd1cQuotePush(t *testing.T, q *qd1bFixture, sub, clientID, op string, paylo
 	t.Helper()
 	code, body := qd1bCall(t, q, http.MethodPost, "/api/v1/sync/quotes", sub,
 		map[string]any{"ops": []qd1bPushOp{{ClientID: clientID, Op: op, Payload: payload}}})
+	if qd1bFenced(code, body) {
+		return qd1bFencedResult()
+	}
 	if code != http.StatusOK {
 		t.Fatalf("push %s %s: %d %s", op, sub, code, body)
 	}

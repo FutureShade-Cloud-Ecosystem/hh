@@ -357,6 +357,40 @@ func TestMachineAdmitsTheRightCaller(t *testing.T) {
 	}
 }
 
+// TestMachineOrgSlugBound pins the 32 character slug bound at the machine
+// gate: a 33 character X-Org answers the shared 403 with zero resolver
+// calls, and a 32 character slug that names the principal's own org
+// proceeds.
+func TestMachineOrgSlugBound(t *testing.T) {
+	mf := newMachineFixture(t)
+	h := newMachineHarness(t, mf)
+	serve := h.inner.handlers["PUT /api/v1/load/units"]
+	auth := mf.machineToken(t, fixtureMachinePrincipal)
+	long := "a" + strings.Repeat("b", 32)
+	fits := "a" + strings.Repeat("b", 31)
+	mf.slugOK[long] = fixtureOrgID
+	mf.slugOK[fits] = fixtureOrgID
+
+	before := mf.orgs.count()
+	rec := httptest.NewRecorder()
+	serve.ServeHTTP(rec, machineRequest(auth, long))
+	if rec.Code != http.StatusForbidden || rec.Body.String() != string(BodyForbidden) {
+		t.Fatalf("33 character slug: status %d body %s, want the shared 403", rec.Code, rec.Body.String())
+	}
+	if got := mf.orgs.count(); got != before {
+		t.Fatalf("33 character slug reached the resolver %d times", got-before)
+	}
+
+	rec = httptest.NewRecorder()
+	serve.ServeHTTP(rec, machineRequest(auth, fits))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("32 character slug: status %d body %s, want 200", rec.Code, rec.Body.String())
+	}
+	if got := mf.orgs.count(); got != before+1 {
+		t.Fatalf("32 character slug resolver calls = %d, want 1", got-before)
+	}
+}
+
 // TestMachineDoorNotGranted: the principal's door list is its own wall; a
 // door the principal does not hold answers the same 403 body as every
 // other machine refusal.

@@ -94,6 +94,14 @@ type StockReserveResult struct {
 type StockReserver interface {
 	ReserveTx(ctx context.Context, tx pgx.Tx, in StockReserveInput) (StockReserveResult, error)
 	ReleaseBySourceTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID, status string) (int, error)
+	// LockHardHoldBalancesTx takes the balance rows of one source document's ACTIVE HARD holds
+	// FOR UPDATE, on the caller's transaction, ahead of a later write in that transaction that
+	// draws a money counter: the cancel's release unwinds these rows after the deposit settlement
+	// draws the invoices feed counter, and the POS ring takes a stock row before that same
+	// counter, so the cancel must take its stock rows first or the two writers can meet head on
+	// (round 2, the Opus read's P2-1). REQUIRED, not optional, exactly as the other two are: a
+	// composition whose reserver cannot lock would silently bring the head on meeting back.
+	LockHardHoldBalancesTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID string) error
 }
 
 // WithStockReserver injects the reservation port (main.go wires the *inventory.Service adapter).
