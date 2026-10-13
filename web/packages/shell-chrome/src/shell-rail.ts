@@ -406,37 +406,19 @@ export class ShellRail extends HHElement {
       <nav class="rail" data-collapsed=${this.collapsed ? 'true' : 'false'} aria-label="Pinned surfaces">
         <div class="rhead">
           <span class="heading">${this.heading}</span>
-          ${this.collapsed
-            ? html`
-                <button
-                  class="toggle"
-                  type="button"
-                  data-action="rail-toggle"
-                  tabindex="0"
-                  aria-expanded="false"
-                  title="Keep your pins open"
-                  aria-label="Keep your pins open"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M9 6l6 6-6 6"></path>
-                  </svg>
-                </button>
-              `
-            : html`
-                <button
-                  class="toggle"
-                  type="button"
-                  data-action="rail-toggle"
-                  tabindex="0"
-                  aria-expanded="true"
-                  title="Let your pins hide again"
-                  aria-label="Let your pins hide again"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M15 6l-6 6 6 6"></path>
-                  </svg>
-                </button>
-              `}
+          <button
+            class="toggle"
+            type="button"
+            data-action="rail-toggle"
+            tabindex="0"
+            aria-expanded=${this.collapsed ? 'false' : 'true'}
+            title=${this.collapsed ? 'Keep your pins open' : 'Let your pins hide again'}
+            aria-label=${this.collapsed ? 'Keep your pins open' : 'Let your pins hide again'}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d=${this.collapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6'}></path>
+            </svg>
+          </button>
         </div>
         ${this.pins.length === 0 ? this.#renderEmpty() : this.pins.map((pin, i) => this.#renderRow(pin, i))}
       </nav>

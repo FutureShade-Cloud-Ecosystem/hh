@@ -192,10 +192,14 @@ test('FLOOR: the toggle still writes the stored mark through the one writer', ()
 });
 
 test('FLOOR: every title in the rail is matched, character for character, by an aria-label', () => {
-  const titles = [...railSrc.matchAll(/\btitle="([^"]*)"/g)].map((m) => m[1]);
-  assert.ok(titles.length > 0, 'the icon-only controls still need their tooltips');
-  for (const t of titles) {
-    assert.ok(railSrc.includes(`aria-label="${t}"`), `the title "${t}" has no matching aria-label`);
+  // The toggle's words are bound per posture, so the floor reads the render of both.
+  for (const collapsed of [true, false]) {
+    const markup = renderKit(ShellRail, { pins: PINS, collapsed });
+    const titles = [...markup.matchAll(/\btitle="([^"]*)"/g)].map((m) => m[1]);
+    assert.ok(titles.length > 0, 'the icon-only controls still need their tooltips');
+    for (const t of titles) {
+      assert.ok(markup.includes(`aria-label="${t}"`), `the title "${t}" has no matching aria-label`);
+    }
   }
 });
 
