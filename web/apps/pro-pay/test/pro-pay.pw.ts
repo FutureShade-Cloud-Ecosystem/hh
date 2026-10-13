@@ -150,6 +150,18 @@ test.describe("phone", () => {
     expect((await paymentsHeld(page, "ap")).length).toBe(3);
   });
 
+  test("closing a paid sheet by the scrim is Done: the invoices reload and show the paid ones as paid", async ({ page }) => {
+    await signIn(page, "ap");
+    await page.getByTestId("invoice-row").filter({ hasText: "INV-20402" }).getByRole("checkbox").click();
+    await page.getByTestId("pay-open").click();
+    await expect(page.getByTestId("method-option").first()).toBeVisible();
+    await page.getByTestId("pay-confirm").click();
+    await expect(page.getByTestId("receipt")).toBeVisible();
+    await page.mouse.click(5, 5);
+    await expect(page.getByTestId("pay-sheet")).toHaveCount(0);
+    await expect(page.getByTestId("invoice-row").filter({ hasText: "INV-20402" })).toContainText("Paid");
+  });
+
   test("a double press is one request and one payment", async ({ page, request }) => {
     const posts: string[] = [];
     page.on("request", (r) => {

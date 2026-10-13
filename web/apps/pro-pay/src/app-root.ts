@@ -449,6 +449,7 @@ export class ProPayApp extends HHElement {
 
   #closeSheet(): void {
     if (this.#sheet === null || this.#sheet.phase === "sending") return;
+    if (this.#sheet.phase === "paid") return this.#done();
     // A held attempt stays held: the invoices screen offers Check payment, and the same key and body ride the check.
     this.#sheet = null;
     this.requestUpdate();
