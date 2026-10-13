@@ -34,10 +34,10 @@ test('the order read answers pay_hold; anything not whole is not a hold', () => 
 
 test('the hold slip carries the order number, customer, balance due and the hold sentence, escaped', () => {
   const slip = holdSlipHtml(
-    { orderNo: 'SO-TRT-18', customerName: 'Fenwick <b>&</b> Sons', balanceDueCents: 4102, holdWords: 'This order cannot reach picking until the balance is paid.' },
+    { orderNo: 'SO-PLM-18', customerName: 'Fenwick <b>&</b> Sons', balanceDueCents: 4102, holdWords: 'This order cannot reach picking until the balance is paid.' },
     money,
   );
-  assert.match(slip, /SO-TRT-18/);
+  assert.match(slip, /SO-PLM-18/);
   assert.match(slip, /\$41\.02/);
   assert.match(slip, /This order cannot reach picking until the balance is paid\./);
   assert.match(slip, /Fenwick &lt;b&gt;&amp;&lt;\/b&gt; Sons/);

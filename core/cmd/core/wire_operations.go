@@ -85,9 +85,9 @@ func (k dispatchDriverSessionKnob) DriverSessionHours(ctx context.Context, orgID
 	return p.DriverSessionHours, nil
 }
 
-// tasksDefaultChannelSlug is the fallback chat channel for a task EVENT
+// tasksDefaultChannelSlug is a variable, not a constant, so the demo build can point it at its own room. It is the fallback chat channel for a task EVENT
 // when the task carries no branch (the pin's constant, carried).
-const tasksDefaultChannelSlug = "yard-trenton"
+var tasksDefaultChannelSlug = "yard-trenton"
 
 // yardCounterFallbackSlug is where a counter-audience EVENT lands when the
 // branch has no counter channel (or no branch at all), the pin's constant.

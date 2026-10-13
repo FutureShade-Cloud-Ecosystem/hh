@@ -21,7 +21,7 @@ import { refusalWords } from "../src/po/po-logic.ts";
 
 const PO = {
   id: "c1",
-  po_no: "PO-TRT-136",
+  po_no: "PO-PLM-136",
   vendor_name: "Alcli (demo)",
   status: "ORDERED",
   lines: [
@@ -67,10 +67,10 @@ test("a receipt that cannot be right is refused in words before anything is sent
 test("the confirm step names every line, the order and what it does to stock", () => {
   const picked = receiveBody({ L1: "6", L2: "4" }, "", PO).picked;
   const words = receiveConfirmWords(PO, picked);
-  assert.match(words, /Receive 6 Alcli Step 48in and 4 T 3\/4 Clear Stone against PO-TRT-136/);
+  assert.match(words, /Receive 6 Alcli Step 48in and 4 T 3\/4 Clear Stone against PO-PLM-136/);
   assert.match(words, /moves the goods into stock/i);
   assert.match(words, /cannot be undone here/i);
-  assert.match(receiveConfirmWords(PO, picked.slice(0, 1)), /^Receive 6 Alcli Step 48in against PO-TRT-136/);
+  assert.match(receiveConfirmWords(PO, picked.slice(0, 1)), /^Receive 6 Alcli Step 48in against PO-PLM-136/);
 });
 
 test("a landed cost attached to a receipt needs an amount and carries the rate only when it is USD", () => {
@@ -84,8 +84,8 @@ test("a landed cost attached to a receipt needs an amount and carries the rate o
 
 test("the attach confirm step names the receipt and each amount, and does not add them up", () => {
   const body = attachBody({ freight: "480.00", duty: "12", handling: "", currency: "CAD", fx: "", basis: "VALUE" }).body;
-  const words = attachConfirmWords("PO-TRT-136/R1", body);
-  assert.match(words, /PO-TRT-136\/R1/);
+  const words = attachConfirmWords("PO-PLM-136/R1", body);
+  assert.match(words, /PO-PLM-136\/R1/);
   assert.match(words, /freight \$480\.00/);
   assert.match(words, /duty \$12\.00/);
   assert.doesNotMatch(words, /handling/);
@@ -101,9 +101,9 @@ test("the fallback is asked for only when the core says the untagged address nee
 
 test("the send confirm step names the desk it goes to, or says nobody is tagged", () => {
   const tagged = { tagged: true, contact: { contact_name: "Orders desk", email: "po@alcli.test", phone: "" } };
-  assert.match(sendConfirmWords(PO, tagged), /Send PO-TRT-136 to Orders desk, po@alcli\.test/);
+  assert.match(sendConfirmWords(PO, tagged), /Send PO-PLM-136 to Orders desk, po@alcli\.test/);
   assert.match(sendConfirmWords(PO, { tagged: false, contact: { contact_name: "", email: "", phone: "" } }), /Nobody is tagged for ordering at Alcli \(demo\)/);
-  assert.match(sendConfirmWords(PO, null), /Send PO-TRT-136 to Alcli \(demo\)/);
+  assert.match(sendConfirmWords(PO, null), /Send PO-PLM-136 to Alcli \(demo\)/);
 });
 
 test("a send is a successful request whose delivery is read from its status", () => {
@@ -122,8 +122,8 @@ test("the cost payload the core withholds is read as hidden, not as zero", () =>
 });
 
 test("a document downloads under the order's own name", () => {
-  assert.equal(documentFileName("PO-TRT-136", "csv"), "PO-TRT-136.csv");
-  assert.equal(documentFileName("PO/TRT 136", "html"), "PO-TRT-136.html");
+  assert.equal(documentFileName("PO-PLM-136", "csv"), "PO-PLM-136.csv");
+  assert.equal(documentFileName("PO/PLM 136", "html"), "PO-PLM-136.html");
 });
 
 test("a wall refusal names who may receive goods", () => {

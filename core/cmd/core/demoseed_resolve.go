@@ -91,8 +91,16 @@ func resolveCategories(ctx context.Context, pool *pgxpool.Pool) (map[string]stri
 // persona it cannot resolve, a driver row with no login is the ordinary case the schema was built
 // for (0090:47 "a driver MAY be a staff user … and may not be"), not a degraded one.
 func resolvePersonas(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
+	// A persona may sit under the address the demo populate moved it to (the glsworld pair's
+	// aliases, empty in the default build); the map is keyed by the address the plan names.
+	emails := resolvablePersonaEmails()
+	byAlias := map[string]string{}
+	for from, to := range personaEmailAliases() {
+		emails = append(emails, to)
+		byAlias[to] = from
+	}
 	rows, err := pool.Query(ctx,
-		`SELECT email::text, id::text FROM users WHERE email = ANY($1)`, resolvablePersonaEmails())
+		`SELECT email::text, id::text FROM users WHERE email = ANY($1)`, emails)
 	if err != nil {
 		return nil, fmt.Errorf("demoseed: reading demo personas: %w", err)
 	}
@@ -102,6 +110,9 @@ func resolvePersonas(ctx context.Context, pool *pgxpool.Pool) (map[string]string
 		var email, id string
 		if err := rows.Scan(&email, &id); err != nil {
 			return nil, fmt.Errorf("demoseed: scanning persona: %w", err)
+		}
+		if from, moved := byAlias[email]; moved {
+			email = from
 		}
 		out[email] = id
 	}

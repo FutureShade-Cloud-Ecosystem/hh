@@ -1,10 +1,10 @@
-// Round 14 item 24 (decision log row 1116): the seeded Cash On Demand quote DEMO-TRT-Q4 walked through the guided
+// Round 14 item 24 (decision log row 1116): the seeded Cash On Demand quote DEMO-PLM-Q4 walked through the guided
 // Convert surface to payment before release, with Will-call, on the real demo core. It asserts the order, the invoice
 // and the payment, and that nothing is released unpaid. The seeded quote is consumed by the walk, so run it on a fresh
 // world (test/acceptance/README.md). The same story on the stub runs in test/convert-cod-terms.pw.ts.
 import { expect, test } from "@playwright/test";
 
-test("DEMO-TRT-Q4 converts through the guided surface with Will-call and the whole payment: order, invoice, payment, nothing released unpaid", async ({ page }) => {
+test("DEMO-PLM-Q4 converts through the guided surface with Will-call and the whole payment: order, invoice, payment, nothing released unpaid", async ({ page }) => {
   // Every write the desk makes, in order, and the answers that matter.
   const writes: string[] = [];
   let convert: { order_id: string; order_no: string } | null = null;
@@ -21,7 +21,7 @@ test("DEMO-TRT-Q4 converts through the guided surface with Will-call and the who
   await page.goto("/");
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible({ timeout: 30_000 });
-  const row = page.getByTestId("qb-list-row").filter({ hasText: "DEMO-TRT-Q4" });
+  const row = page.getByTestId("qb-list-row").filter({ hasText: "DEMO-PLM-Q4" });
   await expect(row).toHaveCount(1, { timeout: 30_000 });
   await row.click();
   await expect(page.getByTestId("qb-status")).toContainText(/accepted/i);

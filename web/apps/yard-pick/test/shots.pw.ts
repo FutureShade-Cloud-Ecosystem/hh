@@ -50,7 +50,7 @@ for (const size of SIZES) {
       await brandOn();
       await take("01", "way-in");
 
-      // The landing: the Trenton queue in its two halves.
+      // The landing: the Point Loma queue in its two halves.
       await page.addInitScript(yardHandoff);
       await page.goto("/");
       await expect(page.locator("[data-pick-card]")).toHaveCount(5);
@@ -69,7 +69,7 @@ for (const size of SIZES) {
       await take("04", "pick-started");
 
       // The quantity editor on a line, with the reason rows a short line needs.
-      await page.locator("[data-line]", { hasText: "Granular A gravel" }).locator(".line-row").click();
+      await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
       await page.getByRole("button", { name: "Add one on" }).click();
       await page.getByRole("button", { name: "Add one on" }).click();
       await page.getByRole("button", { name: "Add one on" }).click();

@@ -123,7 +123,7 @@ test("the bars render the server's points, and the tile nothing measures is a ti
   await page.goto("/");
   const bars = page.locator("[data-widget='deliveries.branch']");
   await expect(bars.locator(".bar-row")).toHaveCount(2);
-  await expect(bars.locator(".bar-row .label").first()).toHaveText("Trenton");
+  await expect(bars.locator(".bar-row .label").first()).toHaveText("Point Loma");
   await expect(bars.locator(".bar-row .value").first()).toHaveText("10");
   const unread = page.locator("[data-widget='messages.unread']");
   await expect(unread.locator(".card-title")).toHaveText("Unread messages");
