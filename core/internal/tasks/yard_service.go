@@ -198,6 +198,16 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 		}
 		clean = append(clean, l)
 	}
+	// A closed pick takes no record, and the order is not told: read the status here, before ApplyPicks
+	// moves the order's quantities, totals and backorder (UpsertPickedLines checks it again under the
+	// task's row lock, the last line of defence for a task that closed in between).
+	task, err := s.store.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := pickClosed(task.Status); err != nil {
+		return nil, err
+	}
 	// The order first: it refuses a pick above what the order line holds, and a refused pick must
 	// not be recorded. The order's effect sets absolute quantities, so a retry after a failed
 	// record converges rather than doubling.

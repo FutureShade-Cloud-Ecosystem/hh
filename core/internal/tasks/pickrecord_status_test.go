@@ -6,6 +6,8 @@ package tasks
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -38,5 +40,20 @@ func TestRecordPick_RefusesATerminalPickBeforeTheOrderMoves(t *testing.T) {
 				t.Fatalf("nothing is recorded: %+v", fs.picked[task.ID])
 			}
 		})
+	}
+}
+
+// The direct door's class for a closed pick is the module's conflict class (409), the same as an
+// order that cannot take the pick, with the module's words.
+func TestWriteYardErr_AClosedPickIsAConflict(t *testing.T) {
+	for status, words := range map[string]string{
+		StatusCancelled: "this pick was cancelled, its record cannot change",
+		StatusDone:      "this pick is done, its record cannot change",
+	} {
+		rec := httptest.NewRecorder()
+		(&Handler{}).writeYardErr(rec, httptest.NewRequest(http.MethodPut, "/api/v1/yard/picks/x/lines", nil), pickClosed(status))
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), words) {
+			t.Fatalf("%s: want 409 with %q, got %d %s", status, words, rec.Code, rec.Body.String())
+		}
 	}
 }

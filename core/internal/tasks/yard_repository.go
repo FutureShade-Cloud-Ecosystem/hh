@@ -501,6 +501,9 @@ func (r *Repository) UpsertPickedLines(ctx context.Context, taskID, actorID stri
 		}
 		return nil, fmt.Errorf("tasks: lock %q for pick lines: %w", taskID, err)
 	}
+	if err := pickClosed(status); err != nil {
+		return nil, err
+	}
 	// The task row draws a fresh seq in the same transaction, as InsertShortage does: the row re-appears
 	// in a device's pull with the recorded lines, and a queued sync record based on the older seq meets
 	// server wins instead of applying blind over this one.
