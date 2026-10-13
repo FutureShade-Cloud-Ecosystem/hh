@@ -18,8 +18,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -117,4 +119,41 @@ func resolvePersonas(ctx context.Context, pool *pgxpool.Pool) (map[string]string
 		out[email] = id
 	}
 	return out, rows.Err()
+}
+
+// resolveContractor reads what the contractor world needs from the database: that the populate has made
+// the account (the world waits for it, like the quote world waits for its two logins), the branch it is
+// homed at, and the portal user of each role. An absent account is not an error: the section builds
+// nothing and the summary says so.
+func resolveContractor(ctx context.Context, pool *pgxpool.Pool) (contractorFacts, error) {
+	var f contractorFacts
+	var branch *string
+	err := pool.QueryRow(ctx,
+		`SELECT home_branch_id::text FROM customers WHERE id = $1::uuid`, contractorCustomerID).Scan(&branch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return f, nil
+	}
+	if err != nil {
+		return f, fmt.Errorf("demoseed: reading the contractor account: %w", err)
+	}
+	if branch == nil {
+		return f, nil
+	}
+	f.BranchID = *branch
+	f.Users = map[string]string{}
+	rows, err := pool.Query(ctx,
+		`SELECT role, id::text FROM portal_users WHERE customer_id = $1::uuid`, contractorCustomerID)
+	if err != nil {
+		return f, fmt.Errorf("demoseed: reading the contractor portal users: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var role, id string
+		if err := rows.Scan(&role, &id); err != nil {
+			return f, fmt.Errorf("demoseed: scanning a contractor portal user: %w", err)
+		}
+		f.Users[role] = id
+	}
+	f.Ready = true
+	return f, rows.Err()
 }
