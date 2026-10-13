@@ -17,9 +17,14 @@ import {
   assistBudgetInputWords,
   assistRefusalWords,
   auditWorkbookName,
+  imageTypeWords,
   messagesExportName,
   messagesRefusalWords,
   printDocTypeFromLabel,
+  productChangedPatch,
+  productDraftFrom,
+  productRefusalWords,
+  PRODUCT_TEXT_FIELDS,
   spendTotal,
   usedFraction,
   wholeAmount,
@@ -27,10 +32,11 @@ import {
 import { renderAssist, type AssistEditTarget, type AssistModel } from "./admin-assist.js";
 import { renderPrint, type PrintModel } from "./admin-print.js";
 import { renderExports, type MessagesModel, type WorkbookModel } from "./admin-exports.js";
+import { renderCatalog, type CatalogModel } from "./admin-catalog.js";
 import { sinceWire } from "./audit-logic.js";
 
 /** The surfaces this controller owns, as the registry names them. */
-export const ADMIN_WORK_SURFACES: readonly string[] = ["assist", "printing", "exports"];
+export const ADMIN_WORK_SURFACES: readonly string[] = ["assist", "printing", "exports", "catalog"];
 
 /** Is this surface id this controller's? The root's router line asks once. */
 export function isAdminWorkSurface(surface: string): boolean {
@@ -99,6 +105,20 @@ const emptyMessages = (): MessagesModel => ({
   rows: [],
 });
 
+const emptyCatalog = (): CatalogModel => ({
+  phase: "idle",
+  busy: false,
+  error: "",
+  notice: "",
+  q: "",
+  hits: [],
+  opened: null,
+  units: [],
+  categories: [],
+  pickedName: "",
+  altText: "",
+});
+
 export class AdminWork {
   readonly #api: AdminApi;
   readonly #host: AdminHost;
@@ -113,6 +133,14 @@ export class AdminWork {
   #workbook: WorkbookModel = emptyWorkbook();
   #messages: MessagesModel = emptyMessages();
 
+  // The catalog surface's state, and the picked picture (a File is not state
+  // the screens draw; the model holds only its words).
+  #catalog: CatalogModel = emptyCatalog();
+  #pickedImage: File | null = null;
+  // The editor's fields carry no bound value, so a freshly opened (or newly
+  // saved) row is seeded on the next mirror pass, once the fields exist.
+  #seedPending = false;
+
   constructor(api: AdminApi, host: AdminHost) {
     this.#api = api;
     this.#host = host;
@@ -123,6 +151,7 @@ export class AdminWork {
   /** A surface was opened: the first open loads the reads. */
   open(surface: string): void {
     if (surface === "assist" && this.#assist.phase === "loading") void this.#loadAssist();
+    if (surface === "catalog" && this.#catalog.phase === "idle") void this.#loadCatalogFacts();
   }
 
   /**
@@ -170,6 +199,26 @@ export class AdminWork {
       void this.#downloadMessages();
       return true;
     }
+    if (action === "catalog-find") {
+      void this.#findProducts();
+      return true;
+    }
+    if (action === "catalog-open") {
+      void this.#openProduct(control?.getAttribute("data-product-id") ?? "");
+      return true;
+    }
+    if (action === "catalog-save") {
+      void this.#saveProduct();
+      return true;
+    }
+    if (action === "catalog-image-set") {
+      void this.#setImage();
+      return true;
+    }
+    if (action === "catalog-image-remove") {
+      void this.#removeImage();
+      return true;
+    }
     return false;
   }
 
@@ -183,6 +232,13 @@ export class AdminWork {
       const key = target.getAttribute("data-key") ?? "";
       const checked = target instanceof HTMLInputElement ? target.checked : false;
       void this.#putAssistSetting(key, checked);
+      return true;
+    }
+    if (action === "catalog-image-file") {
+      const file = target instanceof HTMLInputElement && target.type === "file" ? (target.files?.[0] ?? null) : null;
+      this.#pickedImage = file;
+      this.#catalog = { ...this.#catalog, pickedName: file?.name ?? "" };
+      this.#host.repaint();
       return true;
     }
     return false;
@@ -214,6 +270,14 @@ export class AdminWork {
     if (field === "msg-user") return msg("userId");
     if (field === "msg-since") return msg("since");
     if (field === "msg-until") return msg("until");
+    if (field === "catalog-q") {
+      this.#catalog = { ...this.#catalog, q: value };
+      return true;
+    }
+    if (field === "catalog-alt") {
+      this.#catalog = { ...this.#catalog, altText: value };
+      return true;
+    }
     return false;
   }
 
@@ -248,6 +312,15 @@ export class AdminWork {
     this.#host.setField("msg-user", this.#messages.userId);
     this.#host.setField("msg-since", this.#messages.since);
     this.#host.setField("msg-until", this.#messages.until);
+    // The catalog's fields: the finder's words and the alt words mirror the
+    // model; the editor's twelve fields seed here when a row just opened or
+    // a save landed, the one pass where the fields are on the glass.
+    this.#host.setField("catalog-q", this.#catalog.q);
+    this.#host.setField("catalog-alt", this.#catalog.altText);
+    if (this.#seedPending && this.#catalog.opened !== null) {
+      this.#seedPending = false;
+      this.#seedEditor(this.#catalog.opened);
+    }
   }
 
   /** The active surface's template, for the root's router line. */
@@ -255,6 +328,7 @@ export class AdminWork {
     if (surface === "assist") return renderAssist(this.#assist);
     if (surface === "printing") return renderPrint(this.#print);
     if (surface === "exports") return renderExports(this.#workbook, this.#messages);
+    if (surface === "catalog") return renderCatalog(this.#catalog);
     return null;
   }
 
@@ -264,6 +338,8 @@ export class AdminWork {
     this.#print = emptyPrint();
     this.#workbook = emptyWorkbook();
     this.#messages = emptyMessages();
+    this.#catalog = emptyCatalog();
+    this.#pickedImage = null;
   }
 
   // -- the assist surface ------------------------------------------------------------------------
@@ -479,6 +555,152 @@ export class AdminWork {
       rows: result.value,
       notice: `The export downloaded: ${messagesExportName()}, ${result.value.length} messages.`,
     };
+    this.#host.repaint();
+  }
+
+  // -- the catalog surface ---------------------------------------------------------------------------
+
+  /** The editor's twelve fields, read off the glass at save time. */
+  #editorDraft(): Record<string, string> {
+    const draft: Record<string, string> = {};
+    for (const f of PRODUCT_TEXT_FIELDS) {
+      draft[f.key] = this.#host.field(`pf-${f.key.replace(/_/g, "-")}`);
+    }
+    return draft;
+  }
+
+  /** The editor's fields seeded from a row, when it opens and when a save lands. */
+  #seedEditor(row: object): void {
+    const draft = productDraftFrom(row);
+    for (const key of Object.keys(draft)) {
+      this.#host.setField(`pf-${key.replace(/_/g, "-")}`, draft[key]);
+    }
+  }
+
+  /** The unit catalogue and the categories: the surface's two staff reads, once. */
+  async #loadCatalogFacts(): Promise<void> {
+    this.#catalog = { ...this.#catalog, phase: "loading" };
+    this.#host.repaint();
+    const [units, categories] = await Promise.all([this.#api.productUnits(), this.#api.productCategories()]);
+    this.#catalog = {
+      ...this.#catalog,
+      phase: "idle",
+      units: units.ok ? units.value : [],
+      categories: categories.ok ? categories.value : [],
+    };
+    this.#host.repaint();
+  }
+
+  async #findProducts(): Promise<void> {
+    if (this.#catalog.busy) return;
+    const q = this.#catalog.q.trim();
+    if (q === "") {
+      this.#catalog = { ...this.#catalog, phase: "idle", error: "" };
+      this.#host.repaint();
+      return;
+    }
+    this.#catalog = { ...this.#catalog, busy: true, error: "", notice: "" };
+    this.#host.repaint();
+    const result = await this.#api.productSearch(q);
+    if (!result.ok) {
+      this.#catalog = { ...this.#catalog, busy: false, phase: "ready", error: serverWords(result.error) };
+      this.#host.repaint();
+      return;
+    }
+    this.#catalog = { ...this.#catalog, busy: false, phase: "ready", hits: result.value, error: "" };
+    this.#host.repaint();
+  }
+
+  async #openProduct(id: string): Promise<void> {
+    if (id === "" || this.#catalog.busy) return;
+    this.#catalog = { ...this.#catalog, busy: true, error: "", notice: "" };
+    this.#host.repaint();
+    const result = await this.#api.productGet(id);
+    if (!result.ok) {
+      this.#catalog = { ...this.#catalog, busy: false, error: productRefusalWords(result.error, result.status) };
+      this.#host.repaint();
+      return;
+    }
+    this.#catalog = { ...this.#catalog, busy: false, opened: result.value, pickedName: "" };
+    this.#pickedImage = null;
+    this.#seedPending = true;
+    this.#host.repaint();
+  }
+
+  async #saveProduct(): Promise<void> {
+    const opened = this.#catalog.opened;
+    if (opened === null || this.#catalog.busy) return;
+    const patch = productChangedPatch(this.#editorDraft(), opened);
+    if (Object.keys(patch).length === 0) {
+      this.#catalog = { ...this.#catalog, error: "", notice: "Nothing changed yet." };
+      this.#host.repaint();
+      return;
+    }
+    this.#catalog = { ...this.#catalog, busy: true, error: "", notice: "" };
+    this.#host.repaint();
+    const result = await this.#api.productUpdate(opened.id, patch);
+    if (!result.ok) {
+      // The server's own words: an uneditable column is named by the column.
+      this.#catalog = { ...this.#catalog, busy: false, error: productRefusalWords(result.error, result.status) };
+      this.#host.repaint();
+      return;
+    }
+    this.#catalog = { ...this.#catalog, busy: false, opened: result.value, notice: "Saved." };
+    this.#seedPending = true;
+    this.#host.repaint();
+    await this.#findProductsQuietly();
+  }
+
+  /** The list re-reads after a save, keeping the person on the same question. */
+  async #findProductsQuietly(): Promise<void> {
+    const q = this.#catalog.q.trim();
+    if (q === "") return;
+    const result = await this.#api.productSearch(q);
+    if (result.ok) this.#catalog = { ...this.#catalog, hits: result.value };
+    this.#host.repaint();
+  }
+
+  async #setImage(): Promise<void> {
+    const opened = this.#catalog.opened;
+    const file = this.#pickedImage;
+    if (opened === null || file === null || this.#catalog.busy) return;
+    const type = file.type === "" ? "" : file.type;
+    if (type !== "image/jpeg" && type !== "image/png" && type !== "image/webp") {
+      this.#catalog = { ...this.#catalog, error: imageTypeWords() };
+      this.#host.repaint();
+      return;
+    }
+    this.#catalog = { ...this.#catalog, busy: true, error: "", notice: "" };
+    this.#host.repaint();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const result = await this.#api.productPutImage(opened.id, bytes, type, this.#catalog.altText.trim());
+    if (!result.ok) {
+      this.#catalog = { ...this.#catalog, busy: false, error: productRefusalWords(result.error, result.status) };
+      this.#host.repaint();
+      return;
+    }
+    this.#catalog = {
+      ...this.#catalog,
+      busy: false,
+      notice: `The picture landed: ${result.value.byte_size} bytes.`,
+      pickedName: "",
+    };
+    this.#pickedImage = null;
+    this.#host.repaint();
+  }
+
+  async #removeImage(): Promise<void> {
+    const opened = this.#catalog.opened;
+    if (opened === null || this.#catalog.busy) return;
+    this.#catalog = { ...this.#catalog, busy: true, error: "", notice: "" };
+    this.#host.repaint();
+    const result = await this.#api.productDeleteImage(opened.id);
+    if (!result.ok) {
+      this.#catalog = { ...this.#catalog, busy: false, error: productRefusalWords(result.error, result.status) };
+      this.#host.repaint();
+      return;
+    }
+    this.#catalog = { ...this.#catalog, busy: false, notice: "The picture was removed." };
     this.#host.repaint();
   }
 }

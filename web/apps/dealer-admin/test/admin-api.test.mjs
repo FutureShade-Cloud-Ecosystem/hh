@@ -200,3 +200,84 @@ test("the messages export carries a refusal through in the server's own words", 
   assert.equal(result.ok, false);
   assert.equal(result.error, "until must be an RFC3339 timestamp");
 });
+
+// -- the catalog: the product's words and its picture ----------------------------------------------
+
+const PRODUCT_ROW = {
+  id: "3a000000-0000-4000-9000-000000000001",
+  sku: "PAV-60-CH",
+  name: "Charcoal 60 paver",
+  description: "A 60 mm paver in charcoal.",
+  manufacturer: "Techo-Bloc",
+  collection: "Blu",
+  color: "Charcoal",
+  color_family: "Grey",
+  finish: "smooth",
+  application: "patios and walkways",
+  texture: "",
+  product_size: "60 mm",
+  sold_by: "SF",
+  base_uom: "SF",
+  dimensions_lwh: "",
+  is_active: true,
+  minimum_order_qty: "120",
+  list_price_cents: 488,
+  list_price_uom: "SF",
+};
+
+test("the product find reads the catalogue page into rows", async () => {
+  const result = await apiAnswering({ items: [PRODUCT_ROW], next_cursor: null, limit: 20 }).productSearch("paver");
+  assert.equal(result.ok, true);
+  assert.equal(result.value.length, 1);
+  assert.equal(result.value[0].sku, "PAV-60-CH");
+  assert.equal(result.value[0].list_price_cents, 488);
+  assert.equal(result.value[0].minimum_order_qty, "120");
+});
+
+test("one product's read answers the editor's row", async () => {
+  const result = await apiAnswering(PRODUCT_ROW).productGet("3a000000-0000-4000-9000-000000000001");
+  assert.equal(result.ok, true);
+  assert.equal(result.value.sold_by, "SF");
+  assert.equal(result.value.is_active, true);
+});
+
+test("a product save answers the row as the server now holds it", async () => {
+  const result = await apiAnswering({ ...PRODUCT_ROW, description: "new words" }).productUpdate("3a000000-0000-4000-9000-000000000001", {
+    description: "new words",
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.value.description, "new words");
+});
+
+test("a picture put answers the byte size, a remove answers DELETED", async () => {
+  const bytes = new Uint8Array([137, 80, 78, 71]);
+  const put = await apiAnswering({ product_id: "3a000000-0000-4000-9000-000000000001", byte_size: 4 }).productPutImage(
+    "3a000000-0000-4000-9000-000000000001",
+    bytes,
+    "image/png",
+    "The paver",
+  );
+  assert.equal(put.ok, true);
+  assert.equal(put.value.byte_size, 4);
+  const remove = await apiAnswering({ status: "DELETED" }).productDeleteImage("3a000000-0000-4000-9000-000000000001");
+  assert.equal(remove.ok, true);
+  assert.equal(remove.value.status, "DELETED");
+});
+
+test("the units and the categories read as their pages", async () => {
+  const units = await apiAnswering({
+    items: [{ code: "SF", name: "square feet", dimension: "area", is_active: true }],
+    next_cursor: null,
+    limit: 100,
+  }).productUnits();
+  assert.equal(units.ok, true);
+  assert.equal(units.value[0].code, "SF");
+  assert.equal(units.value[0].dimension, "area");
+  const categories = await apiAnswering({
+    items: [{ id: "cc000000-0000-4000-9000-000000000001", code: "PAVERS", name: "Pavers", is_active: true }],
+    next_cursor: null,
+    limit: 100,
+  }).productCategories();
+  assert.equal(categories.ok, true);
+  assert.equal(categories.value[0].name, "Pavers");
+});

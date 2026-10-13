@@ -10,6 +10,7 @@ import {
   assistRefusalWords,
   budgetSentence,
   formatTokens,
+  listPriceWords,
   messagesEmptyWords,
   messagesRefusalWords,
   messageKindWords,
@@ -18,6 +19,9 @@ import {
   printEmptyWords,
   printStatusWords,
   printTargetWords,
+  productChangedPatch,
+  productDraftFrom,
+  productRefusalWords,
   spendSummary,
   spendTotal,
   usedFraction,
@@ -134,4 +138,65 @@ test("the messages export refusal names leadership; other statuses pass through"
   assert.match(words, /leadership/);
   assert.match(words, /messages/);
   assert.equal(messagesRefusalWords("until must be an RFC3339 timestamp", 400), "until must be an RFC3339 timestamp");
+});
+
+// -- the catalog: the product's words and its picture ---------------------------------------------
+
+const PRODUCT = {
+  id: "3a000000-0000-4000-9000-000000000001",
+  sku: "PAV-60-CH",
+  name: "Charcoal 60 paver",
+  description: "A 60 mm paver in charcoal.",
+  manufacturer: "Techo-Bloc",
+  collection: "Blu",
+  color: "Charcoal",
+  color_family: "Grey",
+  finish: "smooth",
+  application: "patios and walkways",
+  texture: "",
+  product_size: "60 mm",
+  sold_by: "SF",
+  base_uom: "SF",
+  dimensions_lwh: "",
+  is_active: true,
+  minimum_order_qty: "120",
+  list_price_cents: 488,
+  list_price_uom: "SF",
+};
+
+test("the editor's draft carries the words the row holds, empties for absent ones", () => {
+  const draft = productDraftFrom(PRODUCT);
+  assert.equal(draft.name, "Charcoal 60 paver");
+  assert.equal(draft.manufacturer, "Techo-Bloc");
+  assert.equal(draft.texture, "");
+});
+
+test("the save sends only what changed, as the contract's partial map", () => {
+  const draft = { ...productDraftFrom(PRODUCT), description: "A 60 mm paver, charcoal, for patios.", color: "" };
+  const patch = productChangedPatch(draft, PRODUCT);
+  assert.deepEqual(Object.keys(patch).sort(), ["color", "description"]);
+  assert.equal(patch.description, "A 60 mm paver, charcoal, for patios.");
+  assert.equal(patch.color, "");
+});
+
+test("an untouched draft sends nothing at all", () => {
+  const patch = productChangedPatch(productDraftFrom(PRODUCT), PRODUCT);
+  assert.deepEqual(patch, {});
+});
+
+test("the list price reads through the shared formatter, and absence is not zero", () => {
+  assert.equal(listPriceWords(488, "SF"), "$4.88 per SF");
+  assert.equal(listPriceWords(123400, ""), "$1,234.00");
+  assert.equal(listPriceWords(null, "SF"), "No list price set");
+  assert.equal(listPriceWords(undefined, ""), "No list price set");
+  // A zero that the server actually sent is a zero, not a missing price.
+  assert.equal(listPriceWords(0, "EA"), "$0.00 per EA");
+});
+
+test("the product write's refusal names the managers; the column refusal passes through", () => {
+  assert.match(productRefusalWords("Forbidden", 403), /managers and above/);
+  assert.equal(
+    productRefusalWords('update product: column "bogus" is not editable', 400),
+    'update product: column "bogus" is not editable',
+  );
 });

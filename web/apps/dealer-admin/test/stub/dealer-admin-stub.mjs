@@ -171,6 +171,109 @@ let scenario;
 let log;
 let assist;
 let printJobs;
+let products;
+
+// The catalog world: two invented Gable products, the unit catalogue and the
+// categories. The writes carry the core's own gates and refusals: the
+// attribute PUT and the picture routes are the manager gate (tier 1 to 2), an
+// unknown attribute key is named by the column, and the picture's content
+// type must be one the contract declares.
+const PRODUCT_TEXT_KEYS = new Set([
+  "name",
+  "description",
+  "manufacturer",
+  "collection",
+  "color",
+  "finish",
+  "application",
+  "color_family",
+  "texture",
+  "product_size",
+  "sold_by",
+  "dimensions_lwh",
+  "is_featured",
+  "is_special_order",
+  "contractor_pricing_event_discount",
+  "full_skid_quantity",
+  "layer_quantity",
+  "pallet_count",
+  "minimum_order_qty",
+  "metadata",
+]);
+
+function buildProducts() {
+  return [
+    {
+      id: "3a000000-0000-4000-9000-000000000001",
+      sku: "PAV-60-CH",
+      name: "Charcoal 60 paver",
+      description: "A 60 mm paver in charcoal.",
+      manufacturer: "Techo-Bloc",
+      collection: "Blu",
+      color: "Charcoal",
+      color_family: "Grey",
+      finish: "smooth",
+      application: "patios and walkways",
+      texture: "",
+      product_size: "60 mm",
+      sold_by: "SF",
+      base_uom: "SF",
+      dimensions_lwh: "",
+      is_featured: false,
+      is_special_order: false,
+      contractor_pricing_event_discount: false,
+      full_skid_quantity: null,
+      layer_quantity: null,
+      pallet_count: null,
+      minimum_order_qty: "120",
+      is_active: true,
+      metadata: {},
+      list_price_cents: 488,
+      list_price_uom: "SF",
+    },
+    {
+      id: "3a000000-0000-4000-9000-000000000002",
+      sku: "WALL-SEM-BR",
+      name: "Seminole wall block",
+      description: "A split face wall block for garden walls.",
+      manufacturer: "Risi",
+      collection: "Seminole",
+      color: "Brown",
+      color_family: "Brown",
+      finish: "split",
+      application: "garden walls",
+      texture: "",
+      product_size: "8 inch",
+      sold_by: "EA",
+      base_uom: "EA",
+      dimensions_lwh: "",
+      is_featured: false,
+      is_special_order: false,
+      contractor_pricing_event_discount: false,
+      full_skid_quantity: 144,
+      layer_quantity: 36,
+      pallet_count: 4,
+      minimum_order_qty: null,
+      is_active: true,
+      metadata: {},
+      list_price_cents: null,
+      list_price_uom: "",
+    },
+  ];
+}
+
+const UOMS = [
+  { code: "SF", name: "square feet", dimension: "area", is_active: true },
+  { code: "CYD", name: "cubic yards", dimension: "volume", is_active: true },
+  { code: "EA", name: "each", dimension: "count", is_active: true },
+  { code: "TON", name: "tons", dimension: "weight", is_active: true },
+];
+
+const CATEGORIES = [
+  { id: "cc000000-0000-4000-9000-000000000001", code: "PAVERS", name: "Pavers", is_active: true },
+  { id: "cc000000-0000-4000-9000-000000000002", code: "WALLS", name: "Walls", is_active: true },
+  { id: "cc000000-0000-4000-9000-000000000003", code: "DECOR", name: "Decorative", is_active: false },
+];
 
 // The print queue: one sale's receipt history, a first print and a reprint,
 // and one label nobody has printed. The reference is the stub sale's own id,
@@ -241,6 +344,7 @@ function reset() {
   audit = buildAudit();
   assist = buildAssist();
   printJobs = buildPrintJobs();
+  products = buildProducts();
   scenario = "";
   log = [];
 }
@@ -654,6 +758,56 @@ async function handle(req, res) {
     const channelId = url.searchParams.get("channel_id") ?? "";
     const rows = buildMessageExport().filter((m) => channelId === "" || m.channel_id === channelId);
     return json(res, { messages: rows });
+  }
+
+  // ---- the catalog (the reads are the public catalogue; the writes are the manager gate) ----
+
+  if (req.method === "GET" && path === "/api/v1/products") {
+    const q = (url.searchParams.get("q") ?? "").toLowerCase();
+    const items = q === "" ? products : products.filter((p) => `${p.name} ${p.sku} ${p.collection}`.toLowerCase().includes(q));
+    return json(res, { items, next_cursor: null, limit: 20 });
+  }
+
+  const productMatch = path.match(/^\/api\/v1\/products\/([^/]+)$/);
+  if (req.method === "GET" && productMatch) {
+    const p = products.find((x) => x.id === productMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    return json(res, p);
+  }
+
+  if (req.method === "PUT" && productMatch) {
+    // The core's RequireManager: a frontline caller is refused the write.
+    if (!isManager(flow) || scenario === "refused-product") return refuse(res, 403, "Forbidden");
+    const p = products.find((x) => x.id === productMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    for (const [key, value] of Object.entries(body ?? {})) {
+      if (!PRODUCT_TEXT_KEYS.has(key)) return refuse(res, 400, `update product: column "${key}" is not editable`);
+      p[key] = value;
+    }
+    return json(res, p);
+  }
+
+  const imageMatch = path.match(/^\/api\/v1\/products\/([^/]+)\/image$/);
+  if (req.method === "PUT" && imageMatch) {
+    if (!isManager(flow) || scenario === "refused-product") return refuse(res, 403, "Forbidden");
+    const p = products.find((x) => x.id === imageMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    return json(res, { product_id: p.id, byte_size: raw.byteLength });
+  }
+
+  if (req.method === "DELETE" && imageMatch) {
+    if (!isManager(flow) || scenario === "refused-product") return refuse(res, 403, "Forbidden");
+    const p = products.find((x) => x.id === imageMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    return json(res, { status: "DELETED" });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/uoms") {
+    return json(res, { items: UOMS, next_cursor: null, limit: 100 });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/product-categories") {
+    return json(res, { items: CATEGORIES, next_cursor: null, limit: 100 });
   }
 
   return notFound(res);

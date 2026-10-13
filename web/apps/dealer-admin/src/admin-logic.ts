@@ -4,10 +4,12 @@
 // admin-*.ts files the element side.
 //
 // Port provenance: the budget and spend words are the original app's
-// assist-model.ts (repository hardscapeos_dibbits, read only; see
-// PROVENANCE.md), kept in meaning with one house change: the em dashes in the
-// budget sentence became commas (the house dash rule, the same change the
-// hotkeys port made).
+// assist-model.ts, the product editor's field list and changed-only save are
+// the original app's product-edit.ts (repository hardscapeos_dibbits, read
+// only; see PROVENANCE.md), kept in meaning with one house change: the em
+// dashes in the budget sentence became commas (the house dash rule, the same
+// change the hotkeys port made).
+import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
 
 // -- the assistant's budget and spend ------------------------------------------------
 //
@@ -247,4 +249,95 @@ export function messagesRefusalWords(error: string, status: number | undefined):
  */
 export function messagesMaskWords(): string {
   return "The export is the masked projection: deleted messages are tombstoned and cleartext-looking identifiers are redacted before the rows leave the system.";
+}
+
+// -- the catalog: the product's words and its picture ----------------------------------------------
+//
+// The editor edits the product's DESCRIPTION fields, the text allowlist the
+// contract's ProductAttributeUpdate names. The save is a PARTIAL map: only
+// the fields the person changed go on the wire, the contract refuses any key
+// outside the allowlist, and an untouched draft sends nothing at all.
+
+/** One editable description field: the key on the wire and the label on the glass. */
+export interface ProductTextField {
+  readonly key: string;
+  readonly label: string;
+  readonly wide: boolean;
+}
+
+/** The description fields this editor edits, in the order the form draws them. */
+export const PRODUCT_TEXT_FIELDS: readonly ProductTextField[] = [
+  { key: "name", label: "Name", wide: true },
+  { key: "description", label: "Description", wide: true },
+  { key: "manufacturer", label: "Manufacturer", wide: false },
+  { key: "collection", label: "Collection", wide: false },
+  { key: "color", label: "Color", wide: false },
+  { key: "color_family", label: "Color family", wide: false },
+  { key: "finish", label: "Finish", wide: false },
+  { key: "application", label: "Application", wide: false },
+  { key: "texture", label: "Texture", wide: false },
+  { key: "product_size", label: "Product size", wide: false },
+  { key: "dimensions_lwh", label: "Dimensions (L W H)", wide: false },
+  { key: "sold_by", label: "Sold by", wide: false },
+];
+
+/** The words a product row holds for the editor's fields, empties for absent ones. */
+export function productDraftFrom(p: object): Record<string, string> {
+  const src = p as Record<string, unknown>;
+  const draft: Record<string, string> = {};
+  for (const f of PRODUCT_TEXT_FIELDS) {
+    const v = src[f.key];
+    draft[f.key] = typeof v === "string" ? v : "";
+  }
+  return draft;
+}
+
+/**
+ * The save's body: only the fields whose words differ from the row the server
+ * holds. The wire value is the words as they were typed; a decimal the row
+ * carries (the minimum order) is never touched here, so it can never be
+ * routed through a float.
+ */
+export function productChangedPatch(draft: Readonly<Record<string, string>>, original: object): Record<string, string> {
+  const src = original as Record<string, unknown>;
+  const patch: Record<string, string> = {};
+  for (const f of PRODUCT_TEXT_FIELDS) {
+    const next = draft[f.key] ?? "";
+    const had = typeof src[f.key] === "string" ? (src[f.key] as string) : "";
+    if (next !== had) patch[f.key] = next;
+  }
+  return patch;
+}
+
+/**
+ * The retail anchor as a person reads it, through the shared formatter and
+ * never a currency literal. Absence is NOT zero: the contract is explicit
+ * that an absent anchor is not the same as a zero one, so it reads as words.
+ */
+export function listPriceWords(cents: number | null | undefined, uom: string): string {
+  if (typeof cents !== "number" || !Number.isFinite(cents)) return "No list price set";
+  const words = formatDollars(cents);
+  return uom !== "" ? `${words} per ${uom}` : words;
+}
+
+/** The editor's refusal for a picture the contract does not declare. */
+export function imageTypeWords(): string {
+  return "The picture must be a JPEG, a PNG or a WebP image.";
+}
+
+/** The catalog search's empty answer: about the words, never about the catalogue. */
+export function catalogEmptyWords(q: string): string {
+  return `No product matches "${q}". The catalogue's names, SKUs and collections are what the search reads; try fewer words, or the SKU alone.`;
+}
+
+/**
+ * The product writes' refusal (the core's RequireManager, tiers 1 and 2): the
+ * 403 names who may write, and the rest pass the server's own words through,
+ * an uneditable column named by the column.
+ */
+export function productRefusalWords(error: string, status: number | undefined): string {
+  if (status === 403) {
+    return "You may not save this. A product's words and its picture are written by managers and above.";
+  }
+  return error !== "" ? error : "Try again in a moment.";
 }

@@ -198,3 +198,100 @@ test.describe("the exports surface", () => {
     expect((await downloadPromise).suggestedFilename()).toBe("audit.xlsx");
   });
 });
+
+test.describe("the catalog surface", () => {
+  const openCatalog = async (page: import("@playwright/test").Page): Promise<void> => {
+    await page.goto("/");
+    await page.locator("[data-flow]").first().click();
+    await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+    await page.locator('.surface-link[data-surface="catalog"]').click();
+    // The surface's own staff reads land with the open: the unit catalogue
+    // and the categories.
+    await expect(page.locator("[data-test=units-count]")).toHaveText("4 units");
+    await expect(page.locator("[data-test=categories-count]")).toHaveText("3 categories");
+    await expect(page.locator('[data-field="catalog-q"]')).toBeVisible();
+  };
+
+  test("find a product and open it: the editor carries its words", async ({ page }) => {
+    await openCatalog(page);
+    await page.locator('[data-field="catalog-q"]').fill("paver");
+    await page.locator('[data-action="catalog-find"]').click();
+    await expect(page.locator("[data-test=catalog-count]")).toHaveText("1 found");
+    await expect(page.locator("[data-test=catalog-row-0]")).toContainText("PAV-60-CH");
+    // The list price reads through the shared formatter, per its unit.
+    await expect(page.locator("[data-test=catalog-row-0]")).toContainText("$4.88 per SF");
+
+    await page.locator('[data-action="catalog-open"]').click();
+    await expect(page.locator('[data-field="pf-name"]')).toHaveValue("Charcoal 60 paver");
+    await expect(page.locator('[data-field="pf-description"]')).toHaveValue("A 60 mm paver in charcoal.");
+  });
+
+  test("a save sends only the changed field, and the list re-reads", async ({ page }) => {
+    await openCatalog(page);
+    await page.locator('[data-field="catalog-q"]').fill("paver");
+    await page.locator('[data-action="catalog-find"]').click();
+    await page.locator('[data-action="catalog-open"]').click();
+    await expect(page.locator('[data-field="pf-name"]')).toHaveValue("Charcoal 60 paver");
+
+    // Nothing changed: the save says so and no call leaves.
+    await page.locator('[data-action="catalog-save"]').click();
+    await expect(page.locator("[data-test=catalog-notice]").first()).toContainText("Nothing changed yet");
+
+    await page.locator('[data-field="pf-description"]').fill("A 60 mm paver in charcoal, for patios and walkways.");
+    await page.locator('[data-action="catalog-save"]').click();
+    await expect(page.locator("[data-test=catalog-notice]").first()).toContainText("Saved");
+
+    // The wire carried the one field, the contract's partial map, and the
+    // row's decimal minimum order never left its string.
+    const log = await page.request.get("/_stub/log").then((r) => r.json());
+    const put = log.find((e: { method: string; path: string }) => e.method === "PUT" && e.path === "/api/v1/products/3a000000-0000-4000-9000-000000000001");
+    expect(put).toBeTruthy();
+    expect(put.body).toEqual({ description: "A 60 mm paver in charcoal, for patios and walkways." });
+  });
+
+  test("a picture is chosen, set and removed, and the notice names the bytes", async ({ page }) => {
+    await openCatalog(page);
+    await page.locator('[data-field="catalog-q"]').fill("wall");
+    await page.locator('[data-action="catalog-find"]').click();
+    await page.locator('[data-action="catalog-open"]').click();
+    await expect(page.locator('[data-field="pf-name"]')).toHaveValue("Seminole wall block");
+
+    // A one pixel PNG, the smallest picture the contract declares.
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    await page.locator('input[data-action="catalog-image-file"]').setInputFiles({
+      name: "wall-block.png",
+      mimeType: "image/png",
+      buffer: png,
+    });
+    await expect(page.locator("[data-test=catalog-picked]")).toContainText("wall-block.png");
+    await page.locator('[data-field="catalog-alt"]').fill("The Seminole wall block, split face");
+    await page.locator('[data-action="catalog-image-set"]').click();
+    await expect(page.locator("[data-test=catalog-notice]").first()).toContainText(`${png.byteLength} bytes`);
+
+    await page.locator('[data-action="catalog-image-remove"]').click();
+    await expect(page.locator("[data-test=catalog-notice]").first()).toContainText("removed");
+  });
+
+  test("a frontline caller may search, and is refused the save in the shared words", async ({ page }) => {
+    await page.goto("/");
+    await page.locator("[data-flow]").nth(1).click();
+    await page.locator('.surface-link[data-surface="catalog"]').click();
+    await expect(page.locator("[data-test=units-count]")).toHaveText("4 units");
+
+    // The reads are staff wide: the search answers, the editor opens.
+    await page.locator('[data-field="catalog-q"]').fill("paver");
+    await page.locator('[data-action="catalog-find"]').click();
+    await expect(page.locator("[data-test=catalog-count]")).toHaveText("1 found");
+    await page.locator('[data-action="catalog-open"]').click();
+    await expect(page.locator('[data-field="pf-name"]')).toHaveValue("Charcoal 60 paver");
+
+    // The write is the manager gate's; the refusal names who may write, and
+    // never a raw status word.
+    await page.locator('[data-field="pf-description"]').fill("new words");
+    await page.locator('[data-action="catalog-save"]').click();
+    await expect(page.locator("[data-test=catalog-error]").first()).toContainText("managers and above");
+  });
+});

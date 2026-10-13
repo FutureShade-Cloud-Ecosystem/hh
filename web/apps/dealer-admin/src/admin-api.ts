@@ -19,7 +19,7 @@
 // product-edit.ts reads (repository hardscapeos_dibbits, read only; see
 // PROVENANCE.md), rebuilt on HH's generated client and narrowed to what this
 // app's screens use.
-import { ApiClient, staffAssist, staffExport, staffMessaging, staffPrinting, type Result } from "@hardscapehouse/api-client";
+import { ApiClient, staffAssist, staffExport, staffMessaging, staffPrinting, staffProduct, type Result } from "@hardscapehouse/api-client";
 import type { AssistSpendRow } from "./admin-logic.js";
 
 // -- the assistant's spend, budgets and settings --------------------------------------------------
@@ -52,6 +52,7 @@ type Bag = Record<string, unknown>;
 const bag = (value: unknown): Bag => (typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Bag) : {});
 const text = (value: unknown): string => (typeof value === "string" ? value : "");
 const num = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+const maybeNum = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
 const bool = (value: unknown): boolean => value === true;
 const list = (value: unknown): readonly unknown[] => (Array.isArray(value) ? value : []);
 
@@ -143,6 +144,81 @@ export interface MessagesExportQuery {
   readonly since?: string;
   readonly until?: string;
 }
+
+// -- the catalog: the product's words and its picture ---------------------------------------------
+
+/** One product, as the screens use it: the description fields and the facts around them. */
+export interface ProductRow {
+  readonly id: string;
+  readonly sku: string;
+  readonly name: string;
+  readonly description: string;
+  readonly manufacturer: string;
+  readonly collection: string;
+  readonly color: string;
+  readonly color_family: string;
+  readonly finish: string;
+  readonly application: string;
+  readonly texture: string;
+  readonly product_size: string;
+  readonly sold_by: string;
+  readonly base_uom: string;
+  readonly dimensions_lwh: string;
+  readonly is_active: boolean;
+  /** A decimal carried as a string, exactly as the server set it. */
+  readonly minimum_order_qty: string;
+  readonly list_price_cents: number | null;
+  readonly list_price_uom: string;
+}
+
+function toProductRow(raw: unknown): ProductRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    sku: text(r.sku),
+    name: text(r.name),
+    description: text(r.description),
+    manufacturer: text(r.manufacturer),
+    collection: text(r.collection),
+    color: text(r.color),
+    color_family: text(r.color_family),
+    finish: text(r.finish),
+    application: text(r.application),
+    texture: text(r.texture),
+    product_size: text(r.product_size),
+    sold_by: text(r.sold_by),
+    base_uom: text(r.base_uom),
+    dimensions_lwh: text(r.dimensions_lwh),
+    is_active: bool(r.is_active),
+    minimum_order_qty: text(r.minimum_order_qty),
+    list_price_cents: maybeNum(r.list_price_cents),
+    list_price_uom: text(r.list_price_uom),
+  };
+}
+
+/** One row of the unit catalogue. */
+export interface UomRow {
+  readonly code: string;
+  readonly name: string;
+  readonly dimension: string;
+  readonly is_active: boolean;
+}
+
+/** One row of the product categories. */
+export interface CategoryRow {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly is_active: boolean;
+}
+
+/** The picture put's answer: the byte size it landed. */
+export interface ProductImagePut {
+  readonly product_id: string;
+  readonly byte_size: number;
+}
+
+const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 /** Every call the admin-rest surfaces make. */
 export class AdminApi {
@@ -268,5 +344,97 @@ export class AdminApi {
     if (!answer.ok) return answer;
     const page = bag(answer.value);
     return { ok: true, value: list(page.messages).map(toMessagesExportRow) };
+  }
+
+  // -- the catalog: the product's words and its picture ------------------------------------------
+
+  /**
+   * Find a product: the catalogue's own faceted list read, narrowed to the
+   * words the maintenance screen uses. The read is public catalogue data; the
+   * WRITES below are the manager gate's, and this door invents no authority
+   * of its own.
+   */
+  async productSearch(q: string): Promise<Result<readonly ProductRow[]>> {
+    const answer = await staffProduct.productList(this.#client, { q, limit: 20 });
+    if (!answer.ok) return answer;
+    const page = bag(answer.value);
+    return { ok: true, value: list(page.items).map(toProductRow) };
+  }
+
+  /** One product's whole read, for the editor. */
+  async productGet(id: string): Promise<Result<ProductRow>> {
+    const answer = await staffProduct.productGet(this.#client, id);
+    return answer.ok ? { ok: true, value: toProductRow(answer.value) } : answer;
+  }
+
+  /**
+   * Save the changed description fields. The body is the partial map the
+   * contract draws: any key outside the allowlist is refused with a 400 that
+   * names the column, and this door sends only what the caller changed.
+   */
+  async productUpdate(id: string, patch: Readonly<Record<string, string>>): Promise<Result<ProductRow>> {
+    const answer = await staffProduct.productUpdate(this.#client, id, { ...patch });
+    return answer.ok ? { ok: true, value: toProductRow(answer.value) } : answer;
+  }
+
+  /**
+   * Set the product's picture: the bytes ride this route itself, so the
+   * attachments routes have nothing to add. The content type must be one the
+   * contract declares, or the upload is refused rather than mislabeled.
+   */
+  async productPutImage(
+    id: string,
+    bytes: Uint8Array,
+    contentType: string,
+    alt: string,
+  ): Promise<Result<ProductImagePut>> {
+    if (!IMAGE_TYPES.has(contentType)) {
+      return { ok: false, error: "image type", status: 400 };
+    }
+    const answer = await staffProduct.productPutImage(
+      this.#client,
+      id,
+      bytes,
+      contentType as "image/jpeg" | "image/png" | "image/webp",
+      { alt },
+    );
+    if (!answer.ok) return answer;
+    const r = bag(answer.value);
+    return { ok: true, value: { product_id: text(r.product_id), byte_size: num(r.byte_size) } };
+  }
+
+  /** Remove the product's picture. */
+  async productDeleteImage(id: string): Promise<Result<{ status: string }>> {
+    const answer = await staffProduct.productDeleteImage(this.#client, id);
+    if (!answer.ok) return answer;
+    return { ok: true, value: { status: text(bag(answer.value).status) } };
+  }
+
+  /** The unit catalogue, for the facts the product's units are read against. */
+  async productUnits(): Promise<Result<readonly UomRow[]>> {
+    const answer = await staffProduct.productListUnits(this.#client, { limit: 100 });
+    if (!answer.ok) return answer;
+    const page = bag(answer.value);
+    return {
+      ok: true,
+      value: list(page.items).map((raw) => {
+        const r = bag(raw);
+        return { code: text(r.code), name: text(r.name), dimension: text(r.dimension), is_active: bool(r.is_active) };
+      }),
+    };
+  }
+
+  /** The product categories, the codes the catalogue is filed under. */
+  async productCategories(): Promise<Result<readonly CategoryRow[]>> {
+    const answer = await staffProduct.productListCategories(this.#client, { limit: 100 });
+    if (!answer.ok) return answer;
+    const page = bag(answer.value);
+    return {
+      ok: true,
+      value: list(page.items).map((raw) => {
+        const r = bag(raw);
+        return { id: text(r.id), code: text(r.code), name: text(r.name), is_active: bool(r.is_active) };
+      }),
+    };
   }
 }
