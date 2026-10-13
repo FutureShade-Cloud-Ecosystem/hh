@@ -21,7 +21,15 @@ const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
 const METHOD = "33333333-3333-4333-8333-333333333333";
 
-const PAYMENT = { id: "p1", payment_no: "PMT-1", customer_id: "c", method: "CARD", amount_cents: 5000, status: "RECEIVED", gateway_ref: "r", received_at: "2026-05-01T00:00:00Z", allocations: [] };
+// Days are built from today, never written as calendar dates: `day(-9)` is the dealer day nine days ago.
+const TODAY = new Date().toISOString().slice(0, 10);
+function day(offset) {
+  const when = new Date(`${TODAY}T00:00:00Z`);
+  when.setUTCDate(when.getUTCDate() + offset);
+  return when.toISOString().slice(0, 10);
+}
+
+const PAYMENT = { id: "p1", payment_no: "PMT-1", customer_id: "c", method: "CARD", amount_cents: 5000, status: "RECEIVED", gateway_ref: "r", received_at: new Date().toISOString(), allocations: [] };
 
 function reply(status, body) {
   return { status, ok: status >= 200 && status < 300, text: async () => JSON.stringify(body), arrayBuffer: async () => new ArrayBuffer(0) };
@@ -56,9 +64,10 @@ test("only an open invoice with something payable can be picked", () => {
 });
 
 test("aging counts whole calendar days past the due day and files them in the board's four buckets", () => {
-  assert.equal(daysPastDue("2026-05-10T00:00:00Z", "2026-05-10"), 0);
-  assert.equal(daysPastDue("2026-05-20", "2026-05-10"), 0);
-  assert.equal(daysPastDue("2026-05-01T00:00:00Z", "2026-05-10"), 9);
+  assert.equal(daysPastDue(`${day(0)}T00:00:00Z`, day(0)), 0);
+  assert.equal(daysPastDue(day(10), day(0)), 0);
+  assert.equal(daysPastDue(`${day(-9)}T00:00:00Z`, day(0)), 9);
+  assert.equal(daysPastDue(day(-31), day(0)), 31);
   assert.equal(agingBucket(0), "current");
   assert.equal(agingBucket(1), "1-30");
   assert.equal(agingBucket(30), "1-30");
@@ -69,12 +78,12 @@ test("aging counts whole calendar days past the due day and files them in the bo
 
 test("the aging tiles sum what is open, by bucket", () => {
   const rows = [
-    { status: "FINALIZED", balance_cents: 100, due_date: "2026-05-20" },
-    { status: "FINALIZED", balance_cents: 200, due_date: "2026-05-01" },
-    { status: "PARTIALLY_PAID", balance_cents: 400, due_date: "2026-03-01" },
-    { status: "PAID", balance_cents: 0, due_date: "2026-01-01" },
+    { status: "FINALIZED", balance_cents: 100, due_date: day(10) },
+    { status: "FINALIZED", balance_cents: 200, due_date: day(-9) },
+    { status: "PARTIALLY_PAID", balance_cents: 400, due_date: day(-70) },
+    { status: "PAID", balance_cents: 0, due_date: day(-200) },
   ];
-  const totals = agingTotals(rows, "2026-05-10");
+  const totals = agingTotals(rows, day(0));
   assert.deepEqual(totals.buckets, { current: 100, "1-30": 200, "31-60": 0, "60+": 400 });
   assert.equal(totals.overdueCents, 600);
   assert.equal(totals.overdueCount, 2);
