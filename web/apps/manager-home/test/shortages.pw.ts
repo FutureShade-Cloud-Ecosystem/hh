@@ -53,7 +53,7 @@ test("a shortage resolves end to end and the count drops", async ({ page }) => {
   await expect(panel.locator(".panel-line")).toHaveText("SO-TRT-1042 · Granular A gravel");
   await expect(panel.locator(".panel-qty")).toHaveText("Ordered 12 CYD · Picked 8 CYD · Short 4 CYD");
   await expect(panel.locator(".reported-note")).toHaveText("Only 8 yards left in the bin");
-  await expect(panel.locator(".reported-who")).toContainText("Reported by the yard team");
+  await expect(panel.locator(".reported-who")).toContainText("Reported by staff");
   await expect(panel.getByText("The line is backordered and the order's rep is notified.")).toBeVisible();
   await expect(panel.locator(".hm-note")).toContainText("The order's rep sees the short pick in House Messages");
   // The sheet: three stated resolutions, the confirm dead until one is picked.
@@ -113,7 +113,7 @@ test("each open shortage is a review card: what, how much, who by role, when, an
   await expect(first.locator(".status")).toHaveText("Needs review");
   await expect(first.locator(".line")).toHaveText("Granular A gravel");
   await expect(first.locator(".detail").first()).toHaveText("line 1, short 4 CYD");
-  await expect(first.locator(".who-when")).toHaveText(/^Reported by the yard team · \d+[mh] ago$/);
+  await expect(first.locator(".who-when")).toHaveText(/^Reported by staff · \d+[mh] ago$/);
   await expect(first.getByRole("button", { name: "Resolve" })).toBeVisible();
   // The reporter id the core sends is a user: it never reaches the card.
   await expect(first).not.toContainText("de110000");

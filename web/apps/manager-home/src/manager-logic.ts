@@ -229,7 +229,7 @@ export function shortageCard(s: Shortage, nowMs: number): ShortageCard {
   return {
     what: s.description,
     howMuch: `${line}short ${qtyWords(s.qty_short)} ${s.uom}`,
-    reporter: "Reported by the yard team",
+    reporter: "Reported by staff",
     when: sinceWords(s.reported_at, nowMs),
     status: resolved ? "Resolved" : "Needs review",
     resolved,

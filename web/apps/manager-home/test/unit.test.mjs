@@ -237,7 +237,7 @@ test("a shortage review card says what was short, how much, who reported it by r
   const card = shortageCard(open, now);
   assert.equal(card.what, "Granular A gravel");
   assert.equal(card.howMuch, "line 2, short 4 CYD");
-  assert.equal(card.reporter, "Reported by the yard team");
+  assert.equal(card.reporter, "Reported by staff");
   assert.equal(card.when, "1h ago");
   assert.equal(card.status, "Needs review");
   assert.equal(card.resolved, false);
