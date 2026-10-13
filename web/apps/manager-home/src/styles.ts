@@ -52,6 +52,17 @@ export const homeStyles = css`
     font-weight: 650;
     line-height: 1.15;
   }
+  /* The one edit affordance on the landing: it opens the arrange view. */
+  .head-actions {
+    display: flex;
+    margin-top: var(--hh-s-12);
+  }
+  .edit-open {
+    min-height: 36px;
+    padding: 0 var(--hh-s-16);
+    font-size: 14px;
+    border-radius: var(--hh-radius-pill);
+  }
   .page-sub {
     font-size: var(--hh-s-16);
     color: var(--hh-text-dim);

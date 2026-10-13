@@ -80,6 +80,9 @@ export function renderLanding(model: LandingModel): TemplateResult {
     <header class="page-head">
       <h1>${welcomeLine(model.roleLabel)}</h1>
       <p class="page-sub">Your day at a glance.</p>
+      <div class="head-actions">
+        <button type="button" class="btn btn-secondary edit-open" data-action="open-view" data-view="builder">Arrange home</button>
+      </div>
     </header>
     <p class="eyebrow">Today</p>
     <div class="bento">
