@@ -48,7 +48,8 @@ test("clicking the action navigates to the till the core names, and acts nowhere
   expect(page.url().endsWith("/till/")).toBe(true);
 });
 
-test("the landing's view links carry the config view", async ({ page }) => {
+test("the landing's view links carry the config view", async ({ request, page }) => {
+  await useScenario(request, "plain-profile");
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const links = page.locator(".view-link");
@@ -56,7 +57,8 @@ test("the landing's view links carry the config view", async ({ page }) => {
   await expect(links.filter({ hasText: "Quick actions" })).toBeVisible();
 });
 
-test("the config view names who may configure when the core's one word wall answers", async ({ page }) => {
+test("the config view names who may configure when the core's one word wall answers", async ({ request, page }) => {
+  await useScenario(request, "plain-profile");
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   await page.locator(".view-link", { hasText: "Quick actions" }).click();

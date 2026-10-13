@@ -58,7 +58,9 @@ test("a kind the caller does not decide is said in plain words naming who decide
   await expect(page.locator("[data-approval]")).toHaveCount(0);
 });
 
-test("the yard manager decides no kind, and every tab says who does", async ({ page }) => {
+test("a caller who decides no kind, and every tab says who does", async ({ request, page }) => {
+  // The yard manager's own strip carries no Approvals link; the plain profile's does, and the wall is the core's.
+  await useScenario(request, "plain-profile");
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   await page.locator(".view-link", { hasText: "Approvals" }).click();

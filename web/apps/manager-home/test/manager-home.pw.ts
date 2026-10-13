@@ -44,7 +44,7 @@ test("the landing opens as the board draws it: the welcome line, the TODAY label
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Welcome back, yard manager.");
-  await expect(page.locator(".page-sub")).toHaveText("Your day at a glance.");
+  await expect(page.locator(".page-sub")).toHaveText("The pick queue, the shortages and what is going out.");
   await expect(page.locator(".eyebrow")).toHaveText("Today");
 });
 
@@ -84,7 +84,9 @@ test("a foot link opens the live app, and a needs row for a yard source opens Ya
   await page.waitForURL("**/yard/");
 });
 
-test("the needs-you footer opens the queue, and the view links sit as small chips with chevrons", async ({ page }) => {
+test("the needs-you footer opens the queue, and the view links sit as small chips with chevrons", async ({ request, page }) => {
+  // The whole strip is the plain profile's; each role's own strip is walked in roles.pw.ts.
+  await useScenario(request, "plain-profile");
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const foot = page.locator("[data-widget='needs.you'] .needs-foot");

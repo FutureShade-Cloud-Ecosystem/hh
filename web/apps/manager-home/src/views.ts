@@ -11,6 +11,7 @@ import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import { widgetLink } from "./landing-links.js";
+import { roleWords } from "./role-words.js";
 import type {
   ApprovalRow,
   NeedsQueue,
@@ -77,10 +78,11 @@ export function renderLanding(model: LandingModel): TemplateResult {
   const shown = model.widgets.filter((w) => w.visible);
   const large = shown.filter((w) => w.size === "L");
   const strip = shown.filter((w) => w.size !== "L");
+  const words = roleWords(model.profile);
   return html`
     <header class="page-head">
       <h1>${welcomeLine(model.roleLabel)}</h1>
-      <p class="page-sub">Your day at a glance.</p>
+      <p class="page-sub">${words.sub}</p>
       <div class="head-actions">
         <button type="button" class="btn btn-secondary edit-open" data-action="open-view" data-view="builder">Arrange home</button>
       </div>
@@ -95,7 +97,7 @@ export function renderLanding(model: LandingModel): TemplateResult {
     </div>
     <nav class="view-links" aria-label="Views">
       <span class="nav-label">Open a view</span>
-      ${(["shortages", "receiving", "approvals", "drivers", "warranty", "quick-actions"] as const).map((v) => html`
+      ${words.views.map((v) => html`
         <button type="button" class="view-link" data-action="open-view" data-view=${v}>${VIEW_TITLE[v]}<span class="chev" aria-hidden="true">›</span></button>
       `)}
       ${model.canOpenReporting ? html`

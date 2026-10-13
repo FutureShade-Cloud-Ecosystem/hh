@@ -1523,6 +1523,9 @@ async function handle(req, res) {
     if (scenario === "no-widgets") {
       return json(res, { profile, source: "catalog", widgets: [] });
     }
+    // The legacy job shape: a profile the per role table does not know, so the
+    // landing keeps its plain sentence and the whole strip of views.
+    if (scenario === "plain-profile" || scenario === "quick-admin") return json(res, { ...world.widgetsByProfile[profile], profile: "manager" });
     return json(res, world.widgetsByProfile[profile]);
   }
 
