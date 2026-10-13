@@ -173,8 +173,15 @@ pub fn field() -> &'static Profile {
             brand: "fb-tokens",
             channel: UpdateChannel::Field,
             apps: file.apps,
-            permissions: Permissions { camera: true, fine_location: true },
-            window: WindowDefaults { title: "HH Field", width: 412.0, height: 915.0 },
+            permissions: Permissions {
+                camera: true,
+                fine_location: true,
+            },
+            window: WindowDefaults {
+                title: "HH Field",
+                width: 412.0,
+                height: 915.0,
+            },
         }
     })
 }
@@ -221,7 +228,13 @@ mod tests {
         assert_eq!(p.brand, "fb-tokens");
         assert_eq!(p.channel, UpdateChannel::Field);
         assert_eq!(p.window.title, "HH Field");
-        assert_eq!(p.permissions, Permissions { camera: true, fine_location: true });
+        assert_eq!(
+            p.permissions,
+            Permissions {
+                camera: true,
+                fine_location: true
+            }
+        );
     }
 
     #[test]
@@ -231,7 +244,8 @@ mod tests {
         // the Rust side reasons with. include_str keeps the pin working on a
         // fresh clone (gen/schemas stays ignored).
         let config = include_str!("../../hh-field/tauri.conf.json");
-        let value: serde_json::Value = serde_json::from_str(config).expect("tauri.conf.json parses");
+        let value: serde_json::Value =
+            serde_json::from_str(config).expect("tauri.conf.json parses");
         assert_eq!(
             value["identifier"].as_str(),
             Some(field().identifier),
@@ -245,7 +259,10 @@ mod tests {
         let ids: Vec<&str> = apps.iter().map(|a| a.id.as_str()).collect();
         assert_eq!(ids, ["yard-pick", "drive-run", "house-messages"]);
         for app in apps {
-            let offline = app.offline.as_ref().expect("a field app carries its offline block");
+            let offline = app
+                .offline
+                .as_ref()
+                .expect("a field app carries its offline block");
             assert!(!offline.scopes.is_empty(), "{} has scopes", app.id);
         }
     }
@@ -256,12 +273,24 @@ mod tests {
         let yard = apps.iter().find(|a| a.id == "yard-pick").unwrap();
         let yard = yard.offline.as_ref().unwrap();
         assert_eq!(yard.mode, OfflineMode::Full);
-        assert_eq!(yard.conflict_policy.get("pick_tasks"), Some(&ConflictPolicy::ServerWins));
-        assert_eq!(yard.conflict_policy.get("shortages"), Some(&ConflictPolicy::Manual));
+        assert_eq!(
+            yard.conflict_policy.get("pick_tasks"),
+            Some(&ConflictPolicy::ServerWins)
+        );
+        assert_eq!(
+            yard.conflict_policy.get("shortages"),
+            Some(&ConflictPolicy::Manual)
+        );
         let drive = apps.iter().find(|a| a.id == "drive-run").unwrap();
         let drive = drive.offline.as_ref().unwrap();
-        assert_eq!(drive.conflict_policy.get("stops"), Some(&ConflictPolicy::ServerWins));
-        assert_eq!(drive.conflict_policy.get("pod"), Some(&ConflictPolicy::Manual));
+        assert_eq!(
+            drive.conflict_policy.get("stops"),
+            Some(&ConflictPolicy::ServerWins)
+        );
+        assert_eq!(
+            drive.conflict_policy.get("pod"),
+            Some(&ConflictPolicy::Manual)
+        );
         let messages = apps.iter().find(|a| a.id == "house-messages").unwrap();
         let messages = messages.offline.as_ref().unwrap();
         assert_eq!(messages.mode, OfflineMode::ReadCachePlusOutbox);
@@ -270,7 +299,14 @@ mod tests {
     #[test]
     fn field_scope_union_spans_its_apps() {
         let scopes = field().offline_scopes();
-        for scope in ["pick_tasks", "weights", "runs", "pod", "channels", "attachments"] {
+        for scope in [
+            "pick_tasks",
+            "weights",
+            "runs",
+            "pod",
+            "channels",
+            "attachments",
+        ] {
             assert!(scopes.contains(&scope), "the union holds {scope}");
         }
         let unique_and_sorted = {

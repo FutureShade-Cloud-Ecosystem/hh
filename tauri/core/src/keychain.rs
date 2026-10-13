@@ -59,17 +59,23 @@ fn entry(service: &str, name: &str) -> Result<keyring::Entry, String> {
 
 #[cfg(target_os = "linux")]
 pub fn set(service: &str, name: &str, value: &str) -> Result<(), String> {
-    entry(service, name)?.set_password(value).map_err(|e| e.to_string())
+    entry(service, name)?
+        .set_password(value)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(target_os = "linux")]
 pub fn get(service: &str, name: &str) -> Result<String, String> {
-    entry(service, name)?.get_password().map_err(|e| e.to_string())
+    entry(service, name)?
+        .get_password()
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(target_os = "linux")]
 pub fn delete(service: &str, name: &str) -> Result<(), String> {
-    entry(service, name)?.delete_credential().map_err(|e| e.to_string())
+    entry(service, name)?
+        .delete_credential()
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -105,7 +111,10 @@ mod tests {
     fn the_webview_names_a_slot_and_nothing_else() {
         // The contract's slot word, and a closed set: an unknown name is a
         // deserialize error at the command boundary, never a free string.
-        assert_eq!(serde_json::from_str::<Slot>("\"session_token\"").unwrap(), Slot::SessionToken);
+        assert_eq!(
+            serde_json::from_str::<Slot>("\"session_token\"").unwrap(),
+            Slot::SessionToken
+        );
         assert!(serde_json::from_str::<Slot>("\"anything_else\"").is_err());
     }
 }
