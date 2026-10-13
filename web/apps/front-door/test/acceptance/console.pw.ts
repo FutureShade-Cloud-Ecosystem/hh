@@ -313,6 +313,34 @@ test.describe("after sign in", () => {
   });
 });
 
+test.describe("a configured core base", () => {
+  test("the page's own core calls (the approvals count) go to coreBaseUrl, not the static host", async ({ page, baseURL }) => {
+    const port = new URL(baseURL!).port;
+    const other = `http://localhost:${port}`;
+    const seen: string[] = [];
+    // The configured core is a different origin; answer it from the stub with the CORS headers a real core sends.
+    await page.route(`${other}/**`, async (route) => {
+      const request = route.request();
+      seen.push(request.url());
+      const cors = {
+        "access-control-allow-origin": baseURL!,
+        "access-control-allow-headers": "authorization, x-org, content-type, accept",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+      };
+      if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+      const response = await route.fetch({ url: request.url().replace("localhost", "127.0.0.1") });
+      return route.fulfill({ response, headers: { ...response.headers(), ...cors } });
+    });
+    await serve(page, baseURL!, { coreBaseUrl: other });
+    await page.goto("/");
+    await signInAsPartner(page);
+    await page.getByTestId("continue-own").click();
+    await expect(page.getByText("3 approvals waiting")).toBeVisible();
+    expect(seen.some((url) => url.startsWith(`${other}/api/v1/staff/approvals`))).toBe(true);
+    expect(seen.some((url) => url.startsWith(`${other}/api/v1/auth/exchange`))).toBe(true);
+  });
+});
+
 test.describe("the persona cards", () => {
   test("the testers' copy: cards after sign in, each calling the persona route with the partner's bearer; a refusal stays in its card", async ({ page, baseURL }) => {
     await serve(page, baseURL!, { personas: true }, { personaStatus: { driver: 429 } });

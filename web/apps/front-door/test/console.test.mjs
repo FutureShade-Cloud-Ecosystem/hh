@@ -14,7 +14,7 @@ import {
   fakeExchangeAnswer,
   fakeExchangeRefusal,
 } from "@hardscapehouse/auth/testing";
-import { ConsoleSession } from "../src/console.js";
+import { ConsoleSession, coreBaseFor } from "../src/console.js";
 import { SIGN_IN_WORDS, PERSONA_REFUSAL_WORDS } from "../src/signin.js";
 import { LIVE_ROLES } from "../src/roles.js";
 
@@ -425,4 +425,9 @@ test("a console outage on start says unavailable, not session ended", async () =
   await w.session.start();
   assert.equal(w.session.phase, "signed-out");
   assert.equal(w.session.notice.text, SIGN_IN_WORDS.unavailable);
+});
+
+test("the page's own core calls take the configured core base, or the page's origin when it is empty", () => {
+  assert.equal(coreBaseFor({ ...CONFIG, coreBaseUrl: "" }, "https://hh.example.test"), "https://hh.example.test");
+  assert.equal(coreBaseFor({ ...CONFIG, coreBaseUrl: "https://core.example.test/" }, "https://hh.example.test"), "https://core.example.test");
 });

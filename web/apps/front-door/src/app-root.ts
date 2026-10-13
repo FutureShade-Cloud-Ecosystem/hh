@@ -65,7 +65,7 @@ import {
 import { countMarginApprovals } from "./approvals-count.js";
 import { createAppwriteAccountSurface } from "@hardscapehouse/auth/appwrite-adapter";
 import { loadRuntimeConfig, type RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
-import { ConsoleSession } from "./console.js";
+import { ConsoleSession, coreBaseFor } from "./console.js";
 import { consoleStyles } from "./console-styles.js";
 import { bootScreen, configErrorScreen, dealerLockup, personaCards, signInScreen } from "./console-views.js";
 import { landingFor } from "./signin.js";
@@ -648,7 +648,7 @@ export class FrontDoorApp extends HHElement {
   /** The polite region's sentence. Empty is the resting value. */
   #notice = "";
   /** The staff client carries the session's bearer token. */
-  readonly #staffClient: ApiClient;
+  #staffClient: ApiClient;
   #mode: Mode = "boot";
   #configFailure: RuntimeConfigFailure = "missing";
   #console: ConsoleSession | null = null;
@@ -690,7 +690,7 @@ export class FrontDoorApp extends HHElement {
   }
 
   /** The feedback bridge's client (the widget's sender rides it). */
-  readonly #feedbackClient: ApiClient;
+  #feedbackClient: ApiClient;
 
   /** The sender the widget calls on Send; the wire and its errors stay here. */
   #feedbackSender: FeedbackSender = async (request) => {
@@ -788,6 +788,25 @@ export class FrontDoorApp extends HHElement {
       pageUrl: () => window.location.href,
       replaceUrl: (url) => window.history.replaceState(null, "", url),
       onChange: () => this.requestUpdate(),
+    });
+    // The page's own core calls (the feedback send, the approvals count) were built before the
+    // config was read, with the page's origin; a console copy may name its core elsewhere.
+    const coreBase = coreBaseFor(config, window.location.origin);
+    this.#feedbackClient = new ApiClient({
+      baseUrl: coreBase,
+      headers: async () => {
+        const headers: Record<string, string> = { "X-Org": this.#org() };
+        const bearer = this.#bearer();
+        if (bearer !== null) headers["Authorization"] = `Bearer ${bearer}`;
+        return headers;
+      },
+    });
+    this.#staffClient = new ApiClient({
+      baseUrl: coreBase,
+      headers: async () => ({
+        Authorization: `Bearer ${this.#bearer() ?? ""}`,
+        "X-Org": config.org,
+      }),
     });
     this.#console = session;
     this.#mode = "console";

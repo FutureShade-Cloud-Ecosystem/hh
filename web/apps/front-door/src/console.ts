@@ -74,6 +74,11 @@ export interface ConsoleDeps {
   onChange?: () => void;
 }
 
+/** The core's base URL for every call this page makes: the configured one, or the page's own origin when it is empty. */
+export function coreBaseFor(config: ConsoleRuntimeConfig, pageOrigin: string): string {
+  return (config.coreBaseUrl === "" ? pageOrigin : config.coreBaseUrl).replace(/\/+$/, "");
+}
+
 const NO_NOTICE: Notice = { text: "", tone: "info" };
 
 export class ConsoleSession {
