@@ -36,11 +36,10 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const pad = (n, w = 2) => String(n).padStart(w, "0");
 const uuid = (kind, n) => `${kind.padEnd(8, "0")}-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
-/** The month before today, from the host's own clock: the month the statement covers. */
+/** The month before today, from the host's own clock: the month the statement covers (the desk opens the same one). */
 export function statementMonth() {
-  const now = new Date();
-  const index = now.getUTCFullYear() * 12 + now.getUTCMonth() - 1;
-  return { year: Math.floor(index / 12), month: (index % 12) + 1 };
+  const before = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1);
+  return { year: before.getFullYear(), month: before.getMonth() + 1 };
 }
 
 // The ledger side of the operating account before any match: its opening balance, plus the cheque deposit and the
