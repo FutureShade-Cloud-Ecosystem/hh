@@ -8,7 +8,7 @@
 // hold's words and the count.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { toLine, toPick, toSkidAnswer, toTask, toTicket } from "../src/yard-api.ts";
+import { toChange, toChangeAnswer, toLine, toPick, toSkidAnswer, toTask, toTicket } from "../src/yard-api.ts";
 import { MONEY_WORDS } from "./_lib/fence.mjs";
 
 const POISON = 987654;
@@ -148,4 +148,97 @@ test("garbage in is empty out, never a guess", () => {
   assert.deepEqual(toPick({ task: "no" }).shortages, []);
   assert.deepEqual(toPick(undefined).picked, []);
   assert.deepEqual(toSkidAnswer("x").skid_count, 0);
+});
+
+// The change queue (stage 2): a row of "changes waiting on the yard" carries
+// the priced delta for other callers; the yard's projection keeps the facts
+// the row answers on and drops every figure, the same wall the ticket and the
+// skid answer sit behind.
+
+const rawQueueItem = {
+  id: "5c000000-0000-4000-9000-000000000001",
+  change_no: "CO-2042",
+  order_id: "0b000000-0000-4000-9000-000000000042",
+  order_no: "SO-1042",
+  branch_id: "5d1b3f6e-0000-4000-9000-000000000001",
+  status: "PENDING_YARD",
+  reason: "Customer added two more pallets",
+  delta_cents: POISON,
+  finance_threshold_cents: POISON,
+  finance_required: true,
+  requested_by_role: "Inside Sales",
+  requested_at: "2026-01-01T00:00:00Z",
+  yard_ack_note: "",
+  next_actions: ["yard_ack", "reject", "cancel"],
+};
+
+test("a change queue row keeps the facts the yard answers on and drops the priced delta", () => {
+  const change = toChange(rawQueueItem);
+  assert.ok(!everyKeyAndValue(change).join("|").includes(String(POISON)), "a poisoned figure survived the projection");
+  const keys = everyKey(change).join("|").toLowerCase();
+  for (const word of MONEY_WORDS) assert.ok(!keys.includes(word), `the projection kept a field named ${word}`);
+  assert.deepEqual(Object.keys(change).sort(), [
+    "change_no",
+    "id",
+    "next_actions",
+    "order_no",
+    "reason",
+    "requested_at",
+    "requested_by_role",
+    "status",
+  ]);
+  assert.equal(change.status, "PENDING_YARD");
+  assert.equal(change.reason, "Customer added two more pallets");
+  assert.deepEqual(change.next_actions, ["yard_ack", "reject", "cancel"]);
+});
+
+const rawAckAnswer = {
+  id: "5c000000-0000-4000-9000-000000000001",
+  order_id: "0b000000-0000-4000-9000-000000000042",
+  branch_id: "5d1b3f6e-0000-4000-9000-000000000001",
+  change_no: "CO-2042",
+  status: "PENDING_FINANCE",
+  reason: "Customer added two more pallets",
+  delta_cents: POISON,
+  finance_threshold_cents: POISON,
+  finance_required: true,
+  order_status_at_request: "READY",
+  pick_started_at_request: true,
+  requested_by: "d0100000-0000-4000-9000-000000000001",
+  requested_at: "2026-01-01T00:00:00Z",
+  yard_acked_by: "d0200000-0000-4000-9000-000000000002",
+  yard_acked_at: "2026-01-01T01:00:00Z",
+  lines: [
+    {
+      seq: 1,
+      op: "QTY",
+      line_no: 1,
+      product_id: "1a000000-0000-4000-9000-0000000000a1",
+      product_name: "Charcoal pavers",
+      description: "Charcoal pavers, 12 by 12 in",
+      qty_base_before: 24,
+      qty_base_after: 72,
+      qty_delta_base: 48,
+      unit_price_cents: POISON,
+      price_uom: "EA",
+      line_delta_cents: POISON,
+    },
+  ],
+  next_actions: ["reject", "cancel"],
+};
+
+test("the acknowledgement's answer carries the new stage and no priced field", () => {
+  const answer = toChangeAnswer(rawAckAnswer);
+  assert.ok(!everyKeyAndValue(answer).join("|").includes(String(POISON)), "a poisoned figure survived the projection");
+  const keys = everyKey(answer).join("|").toLowerCase();
+  for (const word of MONEY_WORDS) assert.ok(!keys.includes(word), `the projection kept ${word}`);
+  assert.deepEqual(Object.keys(answer).sort(), ["change_no", "id", "order_id", "status"]);
+  assert.equal(answer.status, "PENDING_FINANCE");
+});
+
+test("garbage in is empty out on the change reads too", () => {
+  assert.equal(toChange(null).id, "");
+  assert.equal(toChange("x").status, "");
+  assert.deepEqual(toChange(undefined).next_actions, []);
+  assert.deepEqual(toChangeAnswer(null), { id: "", change_no: "", order_id: "", status: "" });
 });

@@ -436,6 +436,61 @@ export function skidWords(answer: { skid_count: number; previous_skid_count: num
   if (answer.previous_skid_count === null) return `${answer.order_no} now holds ${skids}.`;
   return `${answer.order_no} changed from ${answer.previous_skid_count} to ${n} skids.`;
 }
+// ---- the changes waiting on the yard ----
+
+/**
+ * The one action the yard's own screen offers on a change: acknowledge.
+ * Reject and cancel are the counter's actions (the action routes serve the
+ * quote desk), so the yard renders only what its list may do: the server's
+ * next_actions name it, and an absent list offers nothing, never everything
+ * (the till's own fail closed rule).
+ */
+export function canAcknowledge(change: { next_actions?: readonly string[] } | null | undefined): boolean {
+  return Array.isArray(change?.next_actions) && (change?.next_actions ?? []).includes("yard_ack");
+}
+
+/**
+ * What a change's state is CALLED, the till's own words for the same states
+ * (counter-till order-logic CHANGE_STATUS_LABEL): one vocabulary for one
+ * word, so a change the counter raised and the yard acknowledged reads the
+ * same on both screens. An unknown code degrades to itself, words for an
+ * underscore.
+ */
+const CHANGE_STATUS_WORD: Record<string, string> = {
+  PENDING_YARD: "With yard",
+  PENDING_FINANCE: "With finance",
+  APPROVED: "Approved",
+  APPLIED: "Applied",
+  REJECTED: "Rejected",
+  CANCELLED: "Withdrawn",
+};
+
+export function changeStatusWord(status: string): string {
+  return CHANGE_STATUS_WORD[status] ?? status.toLowerCase().replace(/_/g, " ");
+}
+
+/**
+ * What the yard reads once its acknowledgement has landed: the next stage,
+ * taken from the server's own answer and from nothing else. The ladder's
+ * remaining shape is the server's to know; no figure and no threshold is
+ * computed here.
+ */
+export function ackDoneWords(answer: { status: string }): string {
+  if (answer.status === "PENDING_FINANCE") return "Acknowledged. The change now waits on finance.";
+  if (answer.status === "APPROVED") return "Acknowledged. The change is approved and waits to be applied.";
+  return `Acknowledged. ${changeStatusWord(answer.status)}.`;
+}
+
+/**
+ * Who may acknowledge a change for the yard, named in plain words, the
+ * till's own shared sentence for the same wall (counter-till _order-change
+ * WALL_WORDS, yard_ack): a person refused by the gate must know whom to
+ * fetch. The roles are the default matrix's yard-pick work cells; a dealer's
+ * own configuration can move them, and the server's refusal always has the
+ * last word.
+ */
+export const CHANGE_ACK_WALL = "Only the yard team or the yard manager may acknowledge a change for the yard.";
+
 // ---- refusals ----
 
 /**
@@ -473,16 +528,18 @@ export function yardError(
   error: string,
   status: number | undefined,
   fallback: string,
-  words: { notFound?: string; wall?: readonly string[] } = {},
+  words: { notFound?: string; wall?: readonly string[]; wallSentence?: string } = {},
 ): string {
   if (status === undefined || status >= 500) return fallback;
   if (status === 401) return "Your sign in has ended. Sign out and sign in again.";
   if (status === 403) {
     // The gate's bare body is the one 403 with no sentence: a list wall. It
     // is answered with the wall's own words naming who may, never shown as
-    // the bare "Forbidden" the gate writes.
+    // the bare "Forbidden" the gate writes. A caller may name its own wall
+    // sentence (the acknowledge shares the till's), otherwise the shortage
+    // wall's words stand.
     const plain = plainSentence(error);
-    if (plain === FORBIDDEN_BODY) return wallWords(words.wall ?? RESOLVE_WALL_NAMES);
+    if (plain === FORBIDDEN_BODY) return words.wallSentence ?? wallWords(words.wall ?? RESOLVE_WALL_NAMES);
     // A 403 that carries the server's own sentence shows it: it names who may
     // act. Only a refusal with no words gets the generic ones, and those name
     // the two roles the matrix admits to the yard surface.
