@@ -551,3 +551,96 @@ test("a break delete is two taps with the version; an add row joins the schedule
   assert.deepEqual(del[2], { version: 2 });
   assert.match(c.model.breaks.notice, /Retired/);
 });
+
+// -- the promotions and clearance tab -------------------------------------------------------------------
+
+const PROMOS = [
+  {
+    id: "6a110000-0000-4000-9000-0000000000a1",
+    code: "SUMMER-PAVERS",
+    name: "Summer pavers",
+    category_id: "ca7-1",
+    product_id: "",
+    branch_id: "",
+    starts_at: "2026-06-01T00:00:00Z",
+    ends_at: "2026-08-31T23:59:59Z",
+    calc_type: "PCT_OFF",
+    discount_bps: 1000,
+    discount_cents: null,
+    price_cents: null,
+    price_uom: "",
+    priority: 5,
+    detail_text: "Summer sale",
+    is_active: true,
+    version: 4,
+  },
+];
+const CLEARANCE = [
+  {
+    product_id: "fa110000-0000-4000-9000-0000000000a1",
+    sku: "PAV-60-CH",
+    name: "Paver 60 Charcoal",
+    reason: "Display batch",
+    clearance_price_cents: null,
+    price_uom: "",
+    started_at: "2026-09-01T00:00:00Z",
+    ends_at: null,
+    is_active: true,
+    version: 1,
+  },
+];
+
+function fakePromosDoor(over = {}) {
+  const door = fakeBreaksDoor({
+    promotions: async () => {
+      door.calls.push("promotions");
+      return { ok: true, value: PROMOS };
+    },
+    updatePromotion: async (id, body) => {
+      door.calls.push(["updatePromotion", id, body]);
+      return { ok: true, value: { ...PROMOS[0], ...body, version: body.version + 1 } };
+    },
+    clearance: async () => {
+      door.calls.push("clearance");
+      return { ok: true, value: CLEARANCE };
+    },
+    ...over,
+  });
+  return door;
+}
+
+test("the promos tab loads both panels; a promotion edit saves without a floor walk", async () => {
+  const door = fakePromosDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "promos" });
+  assert.equal(c.model.promos.promotions.phase, "ready");
+  assert.equal(c.model.promos.promotions.rows.length, 1);
+  assert.equal(c.model.promos.clearance.rows.length, 1);
+
+  c.click("pr-promo-edit", { id: PROMOS[0].id });
+  c.input("prm-value", "12");
+  await c.click("pr-promo-save", {});
+  // The contract's floor preview grades rule, override, policy and quantity
+  // break only: a promotion saves straight through.
+  assert.equal(door.calls.some((x) => Array.isArray(x) && x[0] === "previewFloor" && x[1].kind === "promotion"), false);
+  const update = door.calls.find((x) => Array.isArray(x) && x[0] === "updatePromotion");
+  assert.ok(update);
+  assert.equal(update[2].discount_bps, 1200);
+  assert.equal(update[2].version, 4);
+  assert.equal(c.model.promos.promotions.notice, "Saved.");
+});
+
+test("a clearance price without its unit is refused at the form", async () => {
+  const door = fakePromosDoor();
+  const c = run(door);
+  await c.open();
+  await c.click("pr-set-tab", { tab: "promos" });
+  c.click("pr-clear-edit", {});
+  c.input("clr-product", "fa110000-0000-4000-9000-0000000000a2");
+  c.input("clr-reason", "Damaged pallet");
+  c.input("clr-starts", "2026-10-01");
+  c.input("clr-price", "3.50");
+  await c.click("pr-clear-save", {});
+  assert.match(c.model.promos.clearance.formError, /unit/);
+});

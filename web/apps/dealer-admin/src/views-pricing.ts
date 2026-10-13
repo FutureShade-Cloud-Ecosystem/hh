@@ -18,6 +18,9 @@ import {
   breakItemWords,
   breaksEmptyWords,
   calcTypeWord,
+  clearanceValueWords,
+  promoValueWords,
+  promosEmptyWords,
   categoryName,
   CUSTOMER_TYPES,
   customerTypeWord,
@@ -34,7 +37,7 @@ import {
   validityWords,
   PRICING_TABS,
 } from "./pricing-logic.js";
-import type { BreakRow, OverrideRow, RuleRow } from "./pricing-api.js";
+import type { BreakRow, ClearanceRow, OverrideRow, PromotionRow, RuleRow } from "./pricing-api.js";
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
 
 export function renderPricing(model: PricingModel): TemplateResult {
@@ -69,6 +72,7 @@ function renderTab(model: PricingModel): TemplateResult {
   if (model.tab === "rules") return renderRules(model);
   if (model.tab === "customers") return renderCustomers(model);
   if (model.tab === "breaks") return renderBreaks(model);
+  if (model.tab === "promos") return renderPromos(model);
   const tab = PRICING_TABS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
@@ -863,6 +867,316 @@ function renderBreakEditor(model: PricingModel): TemplateResult | typeof nothing
           ${m.busy ? "Checking the floor…" : e.id === "" ? "Check the floor, then create" : "Check the floor, then save"}
         </button>
         <button type="button" class="btn btn-secondary" data-action="pr-break-cancel" ?disabled=${m.busy}>Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+// -- the promotions and clearance tab -------------------------------------------------------------------
+
+function promoScopeWords(row: PromotionRow, model: PricingModel): string {
+  if (row.product_id !== "") return `product ${row.product_id.slice(0, 8)}`;
+  if (row.category_id !== "") return categoryName(row.category_id, model.categories);
+  if (row.branch_id !== "") return `branch ${row.branch_id.slice(0, 8)}`;
+  return "everywhere";
+}
+
+export function renderPromos(model: PricingModel): TemplateResult {
+  const promos = model.promos.promotions;
+  const clearance = model.promos.clearance;
+  return html`
+    ${promos.phase === "loading" || clearance.phase === "loading"
+      ? html`<p class="notice-line" data-test="pr-promos-loading">Loading the promotions and the clearance marks…</p>`
+      : nothing}
+    ${promos.phase === "error" || promos.phase === "refused"
+      ? html`<p class="error-line" data-test="pr-promos-error">${promos.error}</p>
+          <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-promos-reload">Try again</button></div>`
+      : nothing}
+    ${promos.phase === "ready" ? renderPromotionsPanel(model) : nothing}
+    ${promos.phase === "ready" && promos.editing !== null ? renderPromoEditor(model) : nothing}
+    ${promos.phase === "ready" && clearance.phase === "ready" ? renderClearancePanel(model) : nothing}
+    ${promos.phase === "ready" && clearance.phase === "ready" && clearance.editing !== null ? renderClearanceEditor(model) : nothing}
+  `;
+}
+
+function renderPromotionsPanel(model: PricingModel): TemplateResult {
+  const m = model.promos.promotions;
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Promotions</h2>
+        <span class="count" data-test="pr-promo-count">${m.rows.length} ${m.rows.length === 1 ? "promotion" : "promotions"}</span>
+        <button type="button" class="btn btn-primary btn-small" data-action="pr-promo-edit">New promotion</button>
+      </div>
+      ${m.notice === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-promo-notice">${m.notice}</p>`}
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-promo-form-error">${m.formError}</p>`}
+      ${m.rows.length === 0
+        ? html`<p class="notice-line" data-test="pr-promos-empty">${promosEmptyWords()}</p>`
+        : html`
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Promotion</th>
+                    <th scope="col">Covers</th>
+                    <th scope="col">Window</th>
+                    <th scope="col">Value</th>
+                    <th scope="col" class="num">Priority</th>
+                    <th scope="col">State</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.rows.map((row) => renderPromoRow(row, model))}
+                </tbody>
+              </table>
+            </div>
+          `}
+    </section>
+  `;
+}
+
+function renderPromoRow(row: PromotionRow, model: PricingModel): TemplateResult {
+  const m = model.promos.promotions;
+  const confirming = m.confirmingId === row.id;
+  return html`
+    <tr data-promo=${row.id}>
+      <td>
+        <div class="person">${row.name}</div>
+        <div class="mono dim">${row.code} · ${row.detail_text}</div>
+      </td>
+      <td>${promoScopeWords(row, model)}</td>
+      <td class="mono dim">${validityWords(row.starts_at, row.ends_at)}</td>
+      <td class="num" data-test="pr-promo-value">${promoValueWords(row)}</td>
+      <td class="num">${row.priority}</td>
+      <td>${row.is_active ? html`<span class="chip chip-good">active</span>` : html`<span class="chip chip-dim">retired</span>`}</td>
+      <td>
+        <div class="pr-actions">
+          <button
+            type="button"
+            class="btn btn-secondary btn-small"
+            data-action="pr-promo-edit"
+            data-id=${row.id}
+            aria-label=${`Edit the promotion ${row.name}`}
+          >
+            Edit
+          </button>
+          ${row.is_active
+            ? html`
+                <button type="button" class="btn btn-secondary btn-small" data-action="pr-promo-del" data-id=${row.id} ?disabled=${m.busy}>
+                  ${confirming ? "Retire: tap again" : "Retire"}
+                </button>
+              `
+            : nothing}
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderPromoEditor(model: PricingModel): TemplateResult | typeof nothing {
+  const m = model.promos.promotions;
+  const e = m.editing;
+  if (e === null) return nothing;
+  const heading = e.id === "" ? "New promotion" : `Promotion: ${e.nameInput === "" ? e.code : e.nameInput}`;
+  return html`
+    <section class="card" data-test="pr-promo-editor">
+      <div class="card-head">
+        <h2 class="card-title">${heading}</h2>
+        ${e.id === "" ? html`<span class="chip chip-wait">create</span>` : html`<span class="chip">version ${e.version}</span>`}
+      </div>
+      <div class="form-grid">
+        <label class="field">
+          <span class="field-label">Code</span>
+          <input class="text-field" type="text" data-field="pr-prm-code" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Name</span>
+          <input class="text-field" type="text" data-field="pr-prm-name" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Category</span>
+          <select class="select" data-field="pr-prm-category" ?disabled=${m.busy}>
+            <option value="">Any category</option>
+            ${model.categories.map((c) => html`<option>${c.name}</option>`)}
+          </select>
+        </label>
+        <label class="field">
+          <span class="field-label">Product id (empty unless the promo names one)</span>
+          <input class="text-field" type="text" data-field="pr-prm-product" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Branch id (empty runs everywhere)</span>
+          <input class="text-field" type="text" data-field="pr-prm-branch" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Starts</span>
+          <input class="text-field" type="date" data-field="pr-prm-starts" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Ends (the promo's last day)</span>
+          <input class="text-field" type="date" data-field="pr-prm-ends" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">What the promo does</span>
+          <select class="select" data-field="pr-prm-calc" ?disabled=${m.busy}>
+            <option value="">Choose a calc</option>
+            <option value="PCT_OFF">Percent off</option>
+            <option value="AMT_OFF">Amount off</option>
+            <option value="FIXED_PRICE">Fixed price</option>
+          </select>
+        </label>
+        ${e.calc !== ""
+          ? html`<label class="field"><span class="field-label">Value (percent, or dollars)</span>
+              <input class="text-field" type="text" inputmode="decimal" data-field="pr-prm-value" ?disabled=${m.busy} /></label>`
+          : nothing}
+        ${e.calc === "FIXED_PRICE"
+          ? html`<label class="field"><span class="field-label">Price unit</span>
+              <input class="text-field" type="text" placeholder="SF" data-field="pr-prm-uom" ?disabled=${m.busy} /></label>`
+          : nothing}
+        <label class="field">
+          <span class="field-label">Priority (lower runs first)</span>
+          <input class="text-field" type="text" inputmode="numeric" data-field="pr-prm-priority" ?disabled=${m.busy} />
+        </label>
+        <label class="field field-full">
+          <span class="field-label">What it says, as the list shows it</span>
+          <input class="text-field" type="text" data-field="pr-prm-detail" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Active</span>
+          <span class="branch-choice">
+            <input type="checkbox" data-field="pr-prm-active" ?disabled=${m.busy} />
+            <span>An inactive promo never resolves</span>
+          </span>
+        </label>
+      </div>
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-promo-error">${m.formError}</p>`}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-promo-save" ?disabled=${m.busy}>
+          ${m.busy ? "Saving…" : e.id === "" ? "Create" : "Save"}
+        </button>
+        <button type="button" class="btn btn-secondary" data-action="pr-promo-cancel" ?disabled=${m.busy}>Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderClearancePanel(model: PricingModel): TemplateResult {
+  const m = model.promos.clearance;
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Clearance</h2>
+        <span class="count" data-test="pr-clear-count">${m.rows.length} ${m.rows.length === 1 ? "item" : "items"}</span>
+        <button type="button" class="btn btn-primary btn-small" data-action="pr-clear-edit">Mark an item</button>
+      </div>
+      ${m.notice === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-clear-notice">${m.notice}</p>`}
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-clear-form-error">${m.formError}</p>`}
+      ${m.rows.length === 0
+        ? html`<p class="notice-line" data-test="pr-clear-empty">No clearance marks. An item prices through the ordinary waterfall until it is marked.</p>`
+        : html`
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Product</th>
+                    <th scope="col">Why</th>
+                    <th scope="col">Price</th>
+                    <th scope="col">Marked</th>
+                    <th scope="col">State</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.rows.map((row) => renderClearanceRowView(row, model))}
+                </tbody>
+              </table>
+            </div>
+          `}
+    </section>
+  `;
+}
+
+function renderClearanceRowView(row: ClearanceRow, model: PricingModel): TemplateResult {
+  void model;
+  const m = model.promos.clearance;
+  const confirming = m.confirmingId === row.product_id;
+  return html`
+    <tr data-clearance=${row.product_id}>
+      <td>
+        <div class="person">${row.name === "" ? "Unknown product" : row.name}</div>
+        <div class="mono dim">${row.sku === "" ? row.product_id.slice(0, 8) : row.sku}</div>
+      </td>
+      <td>${row.reason}</td>
+      <td class="num" data-test="pr-clear-value">${clearanceValueWords(row)}</td>
+      <td class="mono dim">${validityWords(row.started_at, row.ends_at)}</td>
+      <td>${row.is_active ? html`<span class="chip chip-good">marked</span>` : html`<span class="chip chip-dim">ended</span>`}</td>
+      <td>
+        <div class="pr-actions">
+          <button
+            type="button"
+            class="btn btn-secondary btn-small"
+            data-action="pr-clear-edit"
+            data-product=${row.product_id}
+            aria-label=${`Edit the mark on ${row.sku === "" ? row.product_id.slice(0, 8) : row.sku}`}
+          >
+            Edit
+          </button>
+          ${row.is_active
+            ? html`
+                <button type="button" class="btn btn-secondary btn-small" data-action="pr-clear-del" data-product=${row.product_id} ?disabled=${m.busy}>
+                  ${confirming ? "Take off: tap again" : "Take off"}
+                </button>
+              `
+            : nothing}
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderClearanceEditor(model: PricingModel): TemplateResult | typeof nothing {
+  const m = model.promos.clearance;
+  const e = m.editing;
+  if (e === null) return nothing;
+  const heading = e.productId === "" ? "Mark an item" : "Rewrite the mark";
+  return html`
+    <section class="card" data-test="pr-clear-editor">
+      <div class="card-head">
+        <h2 class="card-title">${heading}</h2>
+      </div>
+      <div class="form-grid">
+        <label class="field">
+          <span class="field-label">Product id</span>
+          <input class="text-field" type="text" data-field="pr-clr-product" ?disabled=${m.busy} />
+        </label>
+        <label class="field field-full">
+          <span class="field-label">Why it is marked (the reason is what the row shows)</span>
+          <input class="text-field" type="text" data-field="pr-clr-reason" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Clearance price, dollars (empty is the badge only mark)</span>
+          <input class="text-field" type="text" inputmode="decimal" data-field="pr-clr-price" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Price unit (a price needs one)</span>
+          <input class="text-field" type="text" placeholder="EA" data-field="pr-clr-uom" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Marked from</span>
+          <input class="text-field" type="date" data-field="pr-clr-starts" ?disabled=${m.busy} />
+        </label>
+        <label class="field">
+          <span class="field-label">Ends (empty is open)</span>
+          <input class="text-field" type="date" data-field="pr-clr-ends" ?disabled=${m.busy} />
+        </label>
+      </div>
+      ${m.formError === "" ? nothing : html`<p class="error-line" data-test="pr-clear-error">${m.formError}</p>`}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-clear-save" ?disabled=${m.busy}>
+          ${m.busy ? "Saving…" : "Save the mark"}
+        </button>
+        <button type="button" class="btn btn-secondary" data-action="pr-clear-cancel" ?disabled=${m.busy}>Cancel</button>
       </div>
     </section>
   `;

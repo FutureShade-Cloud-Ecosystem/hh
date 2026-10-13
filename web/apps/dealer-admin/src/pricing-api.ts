@@ -21,9 +21,11 @@
 import {
   staffProduct,
   staffPricing,
+  type PricingClearanceWrite,
   type PricingFloorConfirmation,
   type PricingFloorPreviewRequest,
   type PricingOverrideWrite,
+  type PricingPromotionWrite,
   type PricingRulePatch,
   type PricingRuleWrite,
   type Result,
@@ -209,6 +211,84 @@ export function toRuleRow(raw: unknown): RuleRow {
 export interface RuleQuery {
   readonly scope?: string;
   readonly customer_type?: string;
+}
+
+// -- the promotions --------------------------------------------------------------------------------------
+
+/** One promotion as the screens use it. */
+export interface PromotionRow {
+  readonly id: string;
+  readonly code: string;
+  readonly name: string;
+  readonly product_id: string;
+  readonly category_id: string;
+  readonly branch_id: string;
+  readonly starts_at: string;
+  readonly ends_at: string;
+  readonly calc_type: string;
+  readonly discount_bps: number | null;
+  readonly discount_cents: number | null;
+  readonly price_cents: number | null;
+  readonly price_uom: string;
+  readonly priority: number;
+  readonly detail_text: string;
+  readonly is_active: boolean;
+  readonly version: number;
+}
+
+export function toPromotionRow(raw: unknown): PromotionRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    code: text(r.code),
+    name: text(r.name),
+    product_id: text(r.product_id),
+    category_id: text(r.category_id),
+    branch_id: text(r.branch_id),
+    starts_at: text(r.starts_at),
+    ends_at: text(r.ends_at),
+    calc_type: text(r.calc_type),
+    discount_bps: maybeNum(r.discount_bps),
+    discount_cents: maybeNum(r.discount_cents),
+    price_cents: maybeNum(r.price_cents),
+    price_uom: text(r.price_uom),
+    priority: num(r.priority),
+    detail_text: text(r.detail_text),
+    is_active: bool(r.is_active),
+    version: num(r.version),
+  };
+}
+
+// -- the clearance ---------------------------------------------------------------------------------------
+
+/** One clearance item as the screens use it. */
+export interface ClearanceRow {
+  readonly product_id: string;
+  readonly sku: string;
+  readonly name: string;
+  readonly reason: string;
+  readonly clearance_price_cents: number | null;
+  readonly price_uom: string;
+  readonly started_at: string;
+  readonly ends_at: string;
+  readonly is_active: boolean;
+  readonly version: number;
+}
+
+export function toClearanceRow(raw: unknown): ClearanceRow {
+  const r = bag(raw);
+  return {
+    product_id: text(r.product_id),
+    sku: text(r.sku),
+    name: text(r.name),
+    reason: text(r.reason),
+    clearance_price_cents: maybeNum(r.clearance_price_cents),
+    price_uom: text(r.price_uom),
+    started_at: text(r.started_at),
+    ends_at: text(r.ends_at),
+    is_active: bool(r.is_active),
+    version: num(r.version),
+  };
 }
 
 // -- the customer overrides --------------------------------------------------------------------------
@@ -442,6 +522,54 @@ export class PricingApi {
   /** Retire a schedule; the version the row showed rides the delete. */
   async deleteBreak(id: string, opts: { version: number }): Promise<Result<StatusResult>> {
     const answer = await staffPricing.pricingDeleteQuantityBreak(this.#client, id, opts);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toStatus(answer.value) };
+  }
+
+  // -- the promotions and clearance --------------------------------------------------------------------
+
+  /** The promotions, active and retired. */
+  async promotions(): Promise<Result<readonly PromotionRow[]>> {
+    const answer = await staffPricing.pricingListPromotions(this.#client, { limit: 200, include_inactive: true });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toPromotionRow) };
+  }
+
+  async createPromotion(body: PricingPromotionWrite): Promise<Result<PromotionRow>> {
+    const answer = await staffPricing.pricingCreatePromotion(this.#client, body);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toPromotionRow(answer.value) };
+  }
+
+  async updatePromotion(id: string, body: PricingPromotionWrite): Promise<Result<PromotionRow>> {
+    const answer = await staffPricing.pricingUpdatePromotion(this.#client, id, body);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toPromotionRow(answer.value) };
+  }
+
+  async deletePromotion(id: string, opts: { version: number }): Promise<Result<StatusResult>> {
+    const answer = await staffPricing.pricingDeletePromotion(this.#client, id, opts);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toStatus(answer.value) };
+  }
+
+  /** The clearance items, active and ended. */
+  async clearance(): Promise<Result<readonly ClearanceRow[]>> {
+    const answer = await staffPricing.pricingListClearance(this.#client, { limit: 200, include_inactive: true });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toClearanceRow) };
+  }
+
+  /** Mark one product clearance, or rewrite its mark (the route is an upsert). */
+  async upsertClearance(productId: string, body: PricingClearanceWrite): Promise<Result<ClearanceRow>> {
+    const answer = await staffPricing.pricingUpsertClearance(this.#client, productId, body);
+    if (!answer.ok) return answer;
+    return { ok: true, value: toClearanceRow(answer.value) };
+  }
+
+  /** Take one product's clearance mark off. */
+  async deleteClearance(productId: string): Promise<Result<StatusResult>> {
+    const answer = await staffPricing.pricingDeleteClearance(this.#client, productId);
     if (!answer.ok) return answer;
     return { ok: true, value: toStatus(answer.value) };
   }

@@ -32,12 +32,14 @@ import {
 } from "./pricing-logic.js";
 import type {
   BreakRow,
+  ClearanceRow,
   CreatedRef,
   FloorPreview,
   OverrideRow,
   PolicyRow,
   PolicyWrite,
   PricingApi,
+  PromotionRow,
   RuleQuery,
   RuleRow,
   StatusResult,
@@ -69,6 +71,13 @@ export interface PricingDoor {
   createBreak(body: Record<string, unknown>): Promise<{ ok: true; value: CreatedRef } | { ok: false; error: string; status?: number }>;
   updateBreak(id: string, body: Record<string, unknown>): Promise<{ ok: true; value: BreakRow } | { ok: false; error: string; status?: number }>;
   deleteBreak(id: string, opts: { version: number }): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
+  promotions(): Promise<{ ok: true; value: readonly PromotionRow[] } | { ok: false; error: string; status?: number }>;
+  createPromotion(body: Record<string, unknown>): Promise<{ ok: true; value: PromotionRow } | { ok: false; error: string; status?: number }>;
+  updatePromotion(id: string, body: Record<string, unknown>): Promise<{ ok: true; value: PromotionRow } | { ok: false; error: string; status?: number }>;
+  deletePromotion(id: string, opts: { version: number }): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
+  clearance(): Promise<{ ok: true; value: readonly ClearanceRow[] } | { ok: false; error: string; status?: number }>;
+  upsertClearance(productId: string, body: Record<string, unknown>): Promise<{ ok: true; value: ClearanceRow } | { ok: false; error: string; status?: number }>;
+  deleteClearance(productId: string): Promise<{ ok: true; value: StatusResult } | { ok: false; error: string; status?: number }>;
   previewFloor(body: PricingFloorPreviewRequest): Promise<
     { ok: true; value: FloorPreview } | { ok: false; error: string; status?: number }
   >;
@@ -211,6 +220,62 @@ export interface BreakEdit {
   readonly items: readonly BreakItemDraft[];
 }
 
+/** The promotion editor's own words, as the person last left them. */
+export interface PromoEdit {
+  readonly id: string;
+  readonly version: number;
+  readonly code: string;
+  readonly nameInput: string;
+  readonly categoryId: string;
+  readonly productId: string;
+  readonly branchId: string;
+  readonly starts: string;
+  readonly ends: string;
+  readonly calc: string;
+  readonly valueInput: string;
+  readonly priceUom: string;
+  readonly priorityInput: string;
+  readonly detail: string;
+  readonly active: boolean;
+}
+
+export interface PromotionsPanel {
+  readonly phase: LoadPhase;
+  readonly rows: readonly PromotionRow[];
+  readonly error: string;
+  readonly editing: PromoEdit | null;
+  readonly busy: boolean;
+  readonly formError: string;
+  readonly notice: string;
+  readonly confirmingId: string;
+}
+
+/** The clearance editor's own words: one product's mark, or a new one. */
+export interface ClearanceEdit {
+  readonly productId: string;
+  readonly reason: string;
+  readonly priceInput: string;
+  readonly priceUom: string;
+  readonly starts: string;
+  readonly ends: string;
+}
+
+export interface ClearancePanel {
+  readonly phase: LoadPhase;
+  readonly rows: readonly ClearanceRow[];
+  readonly error: string;
+  readonly editing: ClearanceEdit | null;
+  readonly busy: boolean;
+  readonly formError: string;
+  readonly notice: string;
+  readonly confirmingId: string;
+}
+
+export interface PromosModel {
+  readonly promotions: PromotionsPanel;
+  readonly clearance: ClearancePanel;
+}
+
 export interface BreaksModel {
   readonly phase: LoadPhase;
   readonly rows: readonly BreakRow[];
@@ -232,6 +297,7 @@ export interface PricingModel {
   readonly rules: RulesModel;
   readonly customers: CustomersModel;
   readonly breaks: BreaksModel;
+  readonly promos: PromosModel;
 }
 
 function emptyMargin(): MarginModel {
@@ -271,6 +337,18 @@ function emptyCustomers(): CustomersModel {
   };
 }
 
+function emptyPromotions(): PromotionsPanel {
+  return { phase: "idle", rows: [], error: "", editing: null, busy: false, formError: "", notice: "", confirmingId: "" };
+}
+
+function emptyClearance(): ClearancePanel {
+  return { phase: "idle", rows: [], error: "", editing: null, busy: false, formError: "", notice: "", confirmingId: "" };
+}
+
+function emptyPromos(): PromosModel {
+  return { promotions: emptyPromotions(), clearance: emptyClearance() };
+}
+
 function emptyBreaks(): BreaksModel {
   return {
     phase: "idle",
@@ -294,6 +372,7 @@ function emptyModel(): PricingModel {
     rules: emptyRules(),
     customers: emptyCustomers(),
     breaks: emptyBreaks(),
+    promos: emptyPromos(),
   };
 }
 
@@ -346,6 +425,14 @@ export class PricingController {
 
   #setBreaks(patch: Partial<BreaksModel>): void {
     this.#set({ breaks: { ...this.model.breaks, ...patch } });
+  }
+
+  #setPromotions(patch: Partial<PromotionsPanel>): void {
+    this.#set({ promos: { ...this.model.promos, promotions: { ...this.model.promos.promotions, ...patch } } });
+  }
+
+  #setClearance(patch: Partial<ClearancePanel>): void {
+    this.#set({ promos: { ...this.model.promos, clearance: { ...this.model.promos.clearance, ...patch } } });
   }
 
   /** The app opens the surface: the categories once, then the open tab's group. */
@@ -428,6 +515,36 @@ export class PricingController {
     }
     // The breaks editor: the header fields by name, a tier row by its index
     // (brk-item-<n>-<part>).
+    const promo = this.model.promos.promotions.editing;
+    if (promo !== null) {
+      const promoText: Partial<Record<string, keyof PromoEdit>> = {
+        "prm-code": "code",
+        "prm-name": "nameInput",
+        "prm-product": "productId",
+        "prm-branch": "branchId",
+        "prm-starts": "starts",
+        "prm-ends": "ends",
+        "prm-value": "valueInput",
+        "prm-uom": "priceUom",
+        "prm-priority": "priorityInput",
+        "prm-detail": "detail",
+      };
+      const promoKey = promoText[field];
+      if (promoKey !== undefined) this.#setPromotions({ editing: { ...promo, [promoKey]: value } });
+    }
+    const clear = this.model.promos.clearance.editing;
+    if (clear !== null) {
+      const clearText: Partial<Record<string, keyof ClearanceEdit>> = {
+        "clr-product": "productId",
+        "clr-reason": "reason",
+        "clr-price": "priceInput",
+        "clr-uom": "priceUom",
+        "clr-starts": "starts",
+        "clr-ends": "ends",
+      };
+      const clearKey = clearText[field];
+      if (clearKey !== undefined) this.#setClearance({ editing: { ...clear, [clearKey]: value } });
+    }
     const brk = this.model.breaks.editing;
     if (brk !== null) {
       if (field === "brk-code") this.#setBreaks({ editing: { ...brk, code: value } });
@@ -486,6 +603,15 @@ export class PricingController {
         this.#setCustomers({ editing: { ...override, categoryId: value === "" || hit !== undefined ? (hit?.id ?? "") : override.categoryId } });
       }
       if (field === "cust-calc") this.#setCustomers({ editing: { ...override, calc: value } });
+    }
+    const promo = this.model.promos.promotions.editing;
+    if (promo !== null) {
+      if (field === "prm-category") {
+        const hit = this.model.categories.find((c) => c.name === value);
+        this.#setPromotions({ editing: { ...promo, categoryId: value === "" || hit !== undefined ? (hit?.id ?? "") : promo.categoryId } });
+      }
+      if (field === "prm-calc") this.#setPromotions({ editing: { ...promo, calc: value } });
+      if (field === "prm-active") this.#setPromotions({ editing: { ...promo, active: value === "yes" } });
     }
     const brk = this.model.breaks.editing;
     if (brk !== null) {
@@ -600,6 +726,58 @@ export class PricingController {
         return this.model.breaks.editing?.thresholdUom ?? "";
       case "brk-active":
         return (this.model.breaks.editing?.active ?? false) ? "yes" : "no";
+      case "prm-code":
+      case "prm-name":
+      case "prm-product":
+      case "prm-branch":
+      case "prm-starts":
+      case "prm-ends":
+      case "prm-value":
+      case "prm-uom":
+      case "prm-priority":
+      case "prm-detail": {
+        const promo = this.model.promos.promotions.editing;
+        if (promo === null) return "";
+        const promoMap: Record<string, keyof PromoEdit> = {
+          "prm-code": "code",
+          "prm-name": "nameInput",
+          "prm-product": "productId",
+          "prm-branch": "branchId",
+          "prm-starts": "starts",
+          "prm-ends": "ends",
+          "prm-value": "valueInput",
+          "prm-uom": "priceUom",
+          "prm-priority": "priorityInput",
+          "prm-detail": "detail",
+        };
+        return String(promo[promoMap[field]]);
+      }
+      case "prm-category": {
+        const cat = this.model.promos.promotions.editing?.categoryId ?? "";
+        return cat === "" ? "" : categoryName(cat, this.model.categories);
+      }
+      case "prm-calc":
+        return this.model.promos.promotions.editing?.calc ?? "";
+      case "prm-active":
+        return (this.model.promos.promotions.editing?.active ?? false) ? "yes" : "no";
+      case "clr-product":
+      case "clr-reason":
+      case "clr-price":
+      case "clr-uom":
+      case "clr-starts":
+      case "clr-ends": {
+        const clear = this.model.promos.clearance.editing;
+        if (clear === null) return "";
+        const clearMap: Record<string, keyof ClearanceEdit> = {
+          "clr-product": "productId",
+          "clr-reason": "reason",
+          "clr-price": "priceInput",
+          "clr-uom": "priceUom",
+          "clr-starts": "starts",
+          "clr-ends": "ends",
+        };
+        return String(clear[clearMap[field]]);
+      }
       default: {
         const brkItem = field.match(/^brk-item-(\d+)-(from|to|value|uom|type)$/);
         if (brkItem !== null) {
@@ -630,6 +808,7 @@ export class PricingController {
         // A tab loads its own reads the first time it is opened.
         if (tab === "rules" && this.model.rules.phase === "idle") await this.loadRules();
         if (tab === "breaks" && this.model.breaks.phase === "idle") await this.loadBreaks();
+        if (tab === "promos" && this.model.promos.promotions.phase === "idle") await this.loadPromosTab();
         return;
       }
       case "pr-reload-margin":
@@ -736,6 +915,34 @@ export class PricingController {
         }
         return;
       }
+      // -- the promotions and clearance tab --
+      case "pr-promos-reload":
+        await this.loadPromosTab();
+        return;
+      case "pr-promo-edit":
+        this.#openPromoEditor(attrs.id ?? "");
+        return;
+      case "pr-promo-cancel":
+        this.#setPromotions({ editing: null, formError: "" });
+        return;
+      case "pr-promo-save":
+        await this.#savePromotion();
+        return;
+      case "pr-promo-del":
+        await this.#deletePromotion(attrs.id ?? "");
+        return;
+      case "pr-clear-edit":
+        this.#openClearanceEditor(attrs.product ?? "");
+        return;
+      case "pr-clear-cancel":
+        this.#setClearance({ editing: null, formError: "" });
+        return;
+      case "pr-clear-save":
+        await this.#saveClearance();
+        return;
+      case "pr-clear-del":
+        await this.#deleteClearance(attrs.product ?? "");
+        return;
       case "pr-break-drop-item": {
         const editing = this.model.breaks.editing;
         const index = Number(attrs.index ?? "-1");
@@ -1508,6 +1715,266 @@ export class PricingController {
     this.#setBreaks({ busy: false, notice: "Retired. Resolves stop stacking the schedule's tiers." });
     await this.loadBreaks();
   }
+
+  // -- the promotions and clearance tab -----------------------------------------------------------------
+
+  /** The tab's first open: each panel's read runs once. */
+  async loadPromosTab(): Promise<void> {
+    await this.reloadPromotions();
+    await this.reloadClearance();
+  }
+
+  async reloadPromotions(): Promise<void> {
+    this.#setPromotions({ ...emptyPromotions(), notice: this.model.promos.promotions.notice });
+    const result = await this.#door.promotions();
+    if (!result.ok) {
+      this.#setPromotions({
+        phase: result.status === 403 ? "refused" : "error",
+        error: pricingRefusalWords(result.error, result.status, "read"),
+      });
+      return;
+    }
+    this.#setPromotions({ phase: "ready", rows: result.value });
+  }
+
+  async reloadClearance(): Promise<void> {
+    this.#setClearance({ ...emptyClearance(), notice: this.model.promos.clearance.notice });
+    const result = await this.#door.clearance();
+    if (!result.ok) {
+      this.#setClearance({
+        phase: result.status === 403 ? "refused" : "error",
+        error: pricingRefusalWords(result.error, result.status, "read"),
+      });
+      return;
+    }
+    this.#setClearance({ phase: "ready", rows: result.value });
+  }
+
+  #openPromoEditor(id: string): void {
+    const row = id === "" ? undefined : this.model.promos.promotions.rows.find((r) => r.id === id);
+    this.#setPromotions({
+      editing: {
+        id: row?.id ?? "",
+        version: row?.version ?? 0,
+        code: row?.code ?? "",
+        nameInput: row?.name ?? "",
+        categoryId: row?.category_id ?? "",
+        productId: row?.product_id ?? "",
+        branchId: row?.branch_id ?? "",
+        starts: (row?.starts_at ?? "").slice(0, 10),
+        ends: (row?.ends_at ?? "").slice(0, 10),
+        calc: row?.calc_type ?? "",
+        valueInput: promoDraftValue(row),
+        priceUom: row?.price_uom ?? "",
+        priorityInput: row !== undefined ? row.priority.toString() : "",
+        detail: row?.detail_text ?? "",
+        active: row?.is_active ?? true,
+      },
+      formError: "",
+      notice: "",
+    });
+  }
+
+  /**
+   * The wire body the editor holds, or the words for the input it cannot
+   * encode. The window is required both ends: starts and ends go as
+   * midnight instants on the named days.
+   */
+  #promoWrite(): { write: Record<string, unknown> | null; error: string } {
+    const editing = this.model.promos.promotions.editing;
+    if (editing === null) return { write: null, error: "" };
+    if (editing.starts.trim() === "" || editing.ends.trim() === "") {
+      return { write: null, error: "A promotion needs its window: a start day and an end day." };
+    }
+    const priority = Number(editing.priorityInput.trim());
+    if (editing.priorityInput.trim() === "" || !Number.isFinite(priority) || !Number.isInteger(priority)) {
+      return { write: null, error: "Enter the priority as a whole number, like 5." };
+    }
+    const body: Record<string, unknown> = {
+      code: editing.code.trim(),
+      name: editing.nameInput.trim(),
+      product_id: editing.productId.trim(),
+      category_id: editing.categoryId,
+      branch_id: editing.branchId.trim(),
+      starts_at: `${editing.starts.trim()}T00:00:00Z`,
+      ends_at: `${editing.ends.trim()}T23:59:59Z`,
+      calc_type: editing.calc,
+      discount_bps: null,
+      discount_cents: null,
+      price_cents: null,
+      price_uom: editing.priceUom.trim(),
+      priority,
+      detail_text: editing.detail,
+      version: editing.version,
+      is_active: editing.active,
+    };
+    if (editing.calc === "PCT_OFF") {
+      const bps = bpsFromPctInput(editing.valueInput);
+      if (bps === null) return { write: null, error: "Enter the discount as a percent, like 10." };
+      body.discount_bps = bps;
+    } else if (editing.calc === "AMT_OFF") {
+      const cents = centsFromMoneyInput(editing.valueInput);
+      if (cents === null) return { write: null, error: "Enter the amount in dollars, like 1.50." };
+      body.discount_cents = cents;
+    } else if (editing.calc === "FIXED_PRICE") {
+      const cents = centsFromMoneyInput(editing.valueInput);
+      if (cents === null) return { write: null, error: "Enter the fixed price in dollars, like 4.25." };
+      if (editing.priceUom.trim() === "") return { write: null, error: "A fixed price needs its unit." };
+      body.price_cents = cents;
+    } else {
+      return { write: null, error: "Choose what the promotion does to the price." };
+    }
+    return { write: body, error: "" };
+  }
+
+  async #savePromotion(): Promise<void> {
+    const editing = this.model.promos.promotions.editing;
+    if (editing === null || this.model.promos.promotions.busy) return;
+    const { write, error } = this.#promoWrite();
+    if (error !== "" || write === null) {
+      this.#setPromotions({ formError: error });
+      return;
+    }
+    this.#setPromotions({ busy: true, formError: "" });
+    // The floor preview grades rule, override, policy and quantity break
+    // only: a promotion is its own precedence level and saves straight
+    // through, its refusal the server's own words.
+    let entityId = editing.id;
+    if (editing.id === "") {
+      const created = await this.#door.createPromotion(write);
+      if (!created.ok) {
+        this.#setPromotions({ busy: false, formError: pricingWriteError(created.error, created.status) });
+        return;
+      }
+      entityId = created.value.id;
+    } else {
+      const updated = await this.#door.updatePromotion(editing.id, write);
+      if (!updated.ok) {
+        this.#setPromotions({ busy: false, formError: pricingWriteError(updated.error, updated.status) });
+        return;
+      }
+    }
+    void entityId;
+    this.#setPromotions({ busy: false, editing: null, notice: "Saved." });
+    await this.reloadPromotions();
+  }
+
+  /** Retire is two taps: the first asks, the second carries the row's version. */
+  async #deletePromotion(id: string): Promise<void> {
+    if (id === "" || this.model.promos.promotions.busy) return;
+    if (this.model.promos.promotions.confirmingId !== id) {
+      this.#setPromotions({ confirmingId: id });
+      return;
+    }
+    const row = this.model.promos.promotions.rows.find((r) => r.id === id);
+    if (row === undefined) {
+      this.#setPromotions({ confirmingId: "" });
+      return;
+    }
+    this.#setPromotions({ busy: true, confirmingId: "" });
+    const result = await this.#door.deletePromotion(id, { version: row.version });
+    if (!result.ok) {
+      this.#setPromotions({ busy: false, formError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setPromotions({ busy: false, notice: "Retired. The resolve stops offering it." });
+    await this.reloadPromotions();
+  }
+
+  #openClearanceEditor(productId: string): void {
+    const row = productId === "" ? undefined : this.model.promos.clearance.rows.find((r) => r.product_id === productId);
+    this.#setClearance({
+      editing: {
+        productId: row?.product_id ?? "",
+        reason: row?.reason ?? "",
+        priceInput: row?.clearance_price_cents !== null && row?.clearance_price_cents !== undefined ? (row.clearance_price_cents / 100).toString() : "",
+        priceUom: row?.price_uom ?? "",
+        starts: (row?.started_at ?? "").slice(0, 10),
+        ends: (row?.ends_at ?? "").slice(0, 10),
+      },
+      formError: "",
+      notice: "",
+    });
+  }
+
+  #clearanceWrite(): { productId: string; write: Record<string, unknown> | null; error: string } {
+    const editing = this.model.promos.clearance.editing;
+    if (editing === null) return { productId: "", write: null, error: "" };
+    const productId = editing.productId.trim();
+    if (productId === "") return { productId: "", write: null, error: "Type the product id the mark names." };
+    if (editing.reason.trim() === "") return { productId: "", write: null, error: "Say why the item is marked down; the reason is what the row shows." };
+    if (editing.starts.trim() === "") return { productId: "", write: null, error: "A mark needs its start day." };
+    let priceCents: number | null = null;
+    const priceUom = editing.priceUom.trim();
+    if (editing.priceInput.trim() !== "") {
+      priceCents = centsFromMoneyInput(editing.priceInput);
+      if (priceCents === null) return { productId: "", write: null, error: "Enter the clearance price in dollars, like 3.50." };
+      if (priceUom === "") return { productId: "", write: null, error: "A clearance price needs its unit: a price with no unit is not a price." };
+    }
+    return {
+      productId,
+      write: {
+        reason: editing.reason.trim(),
+        clearance_price_cents: priceCents,
+        price_uom: priceUom,
+        started_at: `${editing.starts.trim()}T00:00:00Z`,
+        ends_at: editing.ends.trim() === "" ? "" : `${editing.ends.trim()}T23:59:59Z`,
+      },
+      error: "",
+    };
+  }
+
+  async #saveClearance(): Promise<void> {
+    const editing = this.model.promos.clearance.editing;
+    if (editing === null || this.model.promos.clearance.busy) return;
+    const { productId, write, error } = this.#clearanceWrite();
+    if (error !== "" || write === null) {
+      this.#setClearance({ formError: error });
+      return;
+    }
+    this.#setClearance({ busy: true, formError: "" });
+    const result = await this.#door.upsertClearance(productId, write);
+    if (!result.ok) {
+      this.#setClearance({ busy: false, formError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setClearance({ busy: false, editing: null, notice: "Saved." });
+    await this.reloadClearance();
+  }
+
+  /** Take the mark off is two taps: the first asks, the second deletes. */
+  async #deleteClearance(productId: string): Promise<void> {
+    if (productId === "" || this.model.promos.clearance.busy) return;
+    if (this.model.promos.clearance.confirmingId !== productId) {
+      this.#setClearance({ confirmingId: productId });
+      return;
+    }
+    this.#setClearance({ busy: true, confirmingId: "" });
+    const result = await this.#door.deleteClearance(productId);
+    if (!result.ok) {
+      this.#setClearance({ busy: false, formError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setClearance({ busy: false, notice: "Taken off. The item prices through the waterfall again." });
+    await this.reloadClearance();
+  }
+}
+
+/** A promotion's value as the editor's text, from the server's own figure. */
+function promoDraftValue(row:
+  | {
+      readonly calc_type: string;
+      readonly discount_bps: number | null;
+      readonly discount_cents: number | null;
+      readonly price_cents: number | null;
+    }
+  | undefined
+): string {
+  if (row === undefined) return "";
+  if (row.calc_type === "PCT_OFF") return row.discount_bps === null ? "" : (row.discount_bps / 100).toString();
+  if (row.calc_type === "AMT_OFF") return row.discount_cents === null ? "" : (row.discount_cents / 100).toString();
+  if (row.calc_type === "FIXED_PRICE") return row.price_cents === null ? "" : (row.price_cents / 100).toString();
+  return "";
 }
 
 /** One tier's value as the editor's text, from the server's own figure. */

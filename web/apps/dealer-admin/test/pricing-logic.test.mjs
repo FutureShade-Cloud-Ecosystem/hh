@@ -296,3 +296,27 @@ test("a break's value says what the tier does, in the tier's own unit", () => {
 test("the breaks tab's empty words are its own", () => {
   assert.match(breaksEmptyWords(), /No quantity breaks yet/);
 });
+
+// -- the promotions and clearance tab -------------------------------------------------
+
+import {
+  clearanceValueWords,
+  promoValueWords,
+  promosEmptyWords,
+} from "../src/pricing-logic.ts";
+
+test("a promotion's value says what the calc does; the fixed price names its unit", () => {
+  assert.equal(promoValueWords({ calc_type: "PCT_OFF", discount_bps: 1000 }), "10.00% off");
+  assert.equal(promoValueWords({ calc_type: "AMT_OFF", discount_cents: 150 }), "CA$1.50 off");
+  assert.equal(promoValueWords({ calc_type: "FIXED_PRICE", price_cents: 425, price_uom: "SF" }), "CA$4.25 a SF, fixed");
+  assert.equal(promoValueWords({ calc_type: "ODD" }), "");
+});
+
+test("a clearance item without a price is the badge only case, said plainly", () => {
+  assert.equal(clearanceValueWords({ clearance_price_cents: null, price_uom: "" }), "badge only, prices through the waterfall");
+  assert.equal(clearanceValueWords({ clearance_price_cents: 350, price_uom: "EA" }), "CA$3.50 an EA");
+});
+
+test("the promotions tab's empty words are its own", () => {
+  assert.match(promosEmptyWords(), /No promotions or clearance yet/);
+});

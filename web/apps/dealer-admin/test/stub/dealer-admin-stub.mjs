@@ -212,6 +212,8 @@ const RULES_WORLD = [
 let rules;
 let overrides;
 let breaks;
+let promotions;
+let clearance;
 
 // The customer overrides: one yard account's price on Retaining Walls.
 const CUST_YARD = "cu110000-0000-4000-9000-0000000000a1";
@@ -227,6 +229,44 @@ const OVERRIDES_WORLD = [
     price_uom: "SF",
     notes: "Yard account discount",
     version: 2,
+  },
+];
+
+// The promotions: one category window for Pavers; one clearance mark that
+// is the badge only case.
+const PROMOS_WORLD = [
+  {
+    id: "6a110000-0000-4000-9000-0000000000a1",
+    code: "SUMMER-PAVERS",
+    name: "Summer pavers",
+    category_id: PAV,
+    product_id: "",
+    branch_id: "",
+    starts_at: "2026-06-01T00:00:00Z",
+    ends_at: "2026-08-31T23:59:59Z",
+    calc_type: "PCT_OFF",
+    discount_bps: 1000,
+    discount_cents: null,
+    price_cents: null,
+    price_uom: "",
+    priority: 5,
+    detail_text: "Summer sale",
+    is_active: true,
+    version: 4,
+  },
+];
+const CLEARANCE_WORLD = [
+  {
+    product_id: "fa110000-0000-4000-9000-0000000000a1",
+    sku: "PAV-60-CH",
+    name: "Paver 60 Charcoal",
+    reason: "Display batch",
+    clearance_price_cents: null,
+    price_uom: "",
+    started_at: "2026-09-01T00:00:00Z",
+    ends_at: null,
+    is_active: true,
+    version: 1,
   },
 ];
 
@@ -265,6 +305,8 @@ function reset() {
   rules = structuredClone(RULES_WORLD);
   overrides = structuredClone(OVERRIDES_WORLD);
   breaks = structuredClone(BREAKS_WORLD);
+  promotions = structuredClone(PROMOS_WORLD);
+  clearance = structuredClone(CLEARANCE_WORLD);
   scenario = "";
   log = [];
 }
@@ -760,6 +802,67 @@ async function handle(req, res) {
     breaks[idx].is_active = false;
     breaks[idx].version += 1;
     return json(res, { status: "retired" });
+  }
+
+  // ---- the promotions and clearance ----
+
+  if (req.method === "GET" && path === "/api/v1/pricing/promotions") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    return json(res, { items: scenario === "empty-pricing" ? [] : promotions, next_cursor: null, limit: 200 });
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/promotions") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const id = `6a110000-0000-4000-9000-${Math.random().toString(16).slice(2, 14).padStart(12, "0")}`;
+    promotions.push({ id, ...body, version: 1 });
+    return json(res, { id, ...body, version: 1 });
+  }
+
+  const promoMatch = path.match(/^\/api\/v1\/pricing\/promotions\/([^/]+)$/);
+  if (req.method === "PUT" && promoMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const promo = promotions.find((p) => p.id === decodeURIComponent(promoMatch[1]));
+    if (promo === undefined) return refuse(res, 404, "promotion not found");
+    if (typeof body?.version === "number" && body.version !== promo.version) return refuse(res, 409, "version conflict: the promotion changed since you opened it");
+    Object.assign(promo, body, { version: promo.version + 1 });
+    return json(res, promo);
+  }
+
+  if (req.method === "DELETE" && promoMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const promo = promotions.find((p) => p.id === decodeURIComponent(promoMatch[1]));
+    if (promo === undefined) return refuse(res, 404, "promotion not found");
+    const version = Number(url.searchParams.get("version") ?? "0");
+    if (version !== promo.version) return refuse(res, 409, "version conflict: the promotion changed since you opened it");
+    promo.is_active = false;
+    promo.version += 1;
+    return json(res, { status: "retired" });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/pricing/clearance") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    return json(res, { items: scenario === "empty-pricing" ? [] : clearance, next_cursor: null, limit: 200 });
+  }
+
+  const clearMatch = path.match(/^\/api\/v1\/pricing\/clearance\/([^/]+)$/);
+  if (req.method === "PUT" && clearMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const productId = decodeURIComponent(clearMatch[1]);
+    let item = clearance.find((c) => c.product_id === productId);
+    if (item === undefined) {
+      item = { product_id: productId, sku: "", name: "", version: 0 };
+      clearance.push(item);
+    }
+    Object.assign(item, body, { version: item.version + 1 });
+    return json(res, item);
+  }
+
+  if (req.method === "DELETE" && clearMatch) {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const idx = clearance.findIndex((c) => c.product_id === decodeURIComponent(clearMatch[1]));
+    if (idx < 0) return refuse(res, 404, "clearance item not found");
+    clearance.splice(idx, 1);
+    return json(res, { status: "deleted" });
   }
 
   // ---- the audit trail ----

@@ -468,9 +468,10 @@ export function ruleValueWords(
   }
 }
 
-/** The unit a fixed price is carried in, as a sentence tail. */
+/** The unit a fixed price is carried in, as a sentence tail, with its article. */
 export function ruleCalcWords(priceUom: string): string {
-  return priceUom === "" ? "" : `a ${priceUom}`;
+  if (priceUom === "") return "";
+  return /^[aeiou]/i.test(priceUom) ? `an ${priceUom}` : `a ${priceUom}`;
 }
 
 /**
@@ -567,4 +568,40 @@ export function breakItemWords(
     default:
       return "";
   }
+}
+
+// -- the promotions and clearance tab -------------------------------------------------------------------
+
+/** The promotions tab's empty words (both panels are empty together here). */
+export function promosEmptyWords(): string {
+  return "No promotions or clearance yet. A promotion rides the resolve as its own precedence level; a clearance mark without a price still shows the badge.";
+}
+
+/** A promotion's value in its calc's own unit; the fixed price names its unit. */
+export function promoValueWords(promo: {
+  readonly calc_type: string;
+  readonly discount_bps?: number | null;
+  readonly discount_cents?: number | null;
+  readonly price_cents?: number | null;
+  readonly price_uom?: string;
+}): string {
+  switch (promo.calc_type) {
+    case "PCT_OFF":
+      return `${pctWords(promo.discount_bps ?? null)} off`;
+    case "AMT_OFF":
+      return `${moneyWords(promo.discount_cents ?? null)} off`;
+    case "FIXED_PRICE":
+      return `${moneyWords(promo.price_cents ?? null)} ${ruleCalcWords(promo.price_uom ?? "")}, fixed`.trim();
+    default:
+      return "";
+  }
+}
+
+/**
+ * A clearance item's price, or the badge only case said plainly: a null
+ * price marks the item and still prices through the ordinary waterfall.
+ */
+export function clearanceValueWords(item: { readonly clearance_price_cents: number | null; readonly price_uom: string }): string {
+  if (item.clearance_price_cents === null) return "badge only, prices through the waterfall";
+  return `${moneyWords(item.clearance_price_cents)} ${ruleCalcWords(item.price_uom)}`.trim();
 }

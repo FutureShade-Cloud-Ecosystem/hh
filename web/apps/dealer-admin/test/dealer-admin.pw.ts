@@ -337,3 +337,33 @@ test("the quantity breaks tab: the schedule, a tier saved through the floor, a r
   await expect(page.locator("[data-test=pr-breaks-notice]")).toContainText("Retired.");
   await expect(page.locator('tr[data-break="7a110000-0000-4000-9000-0000000000a1"]')).toContainText("retired");
 });
+
+test("the promotions and clearance tab: both panels, a promo saved, the badge only mark", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+  await page.locator('.pr-tab[data-tab="promos"]').click();
+
+  // The promotions panel: the window reads as days, the value in its unit.
+  await expect(page.locator("[data-test=pr-promo-count]")).toHaveText("1 promotion");
+  const promoRow = page.locator('tr[data-promo="6a110000-0000-4000-9000-0000000000a1"]');
+  await expect(promoRow).toContainText("Summer pavers");
+  await expect(promoRow).toContainText("Pavers");
+  await expect(promoRow.locator("[data-test=pr-promo-value]")).toHaveText("10.00% off");
+
+  // The clearance panel: the badge only case said plainly.
+  await expect(page.locator("[data-test=pr-clear-count]")).toHaveText("1 item");
+  const clearRow = page.locator('tr[data-clearance="fa110000-0000-4000-9000-0000000000a1"]');
+  await expect(clearRow).toContainText("Display batch");
+  await expect(clearRow.locator("[data-test=pr-clear-value]")).toHaveText("badge only, prices through the waterfall");
+
+  // A promotion edit saves straight through: no floor walk for its level.
+  await promoRow.getByRole("button", { name: "Edit the promotion Summer pavers" }).click();
+  await expect(page.locator("[data-test=pr-promo-editor]")).toContainText("version 4");
+  await page.locator('[data-field="pr-prm-value"]').fill("12");
+  await page.locator('[data-action="pr-promo-save"]').click();
+  await expect(page.locator("[data-test=pr-promo-notice]")).toContainText("Saved.");
+  await expect(page.locator('tr[data-promo="6a110000-0000-4000-9000-0000000000a1"] [data-test=pr-promo-value]')).toHaveText("12.00% off");
+});
