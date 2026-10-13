@@ -391,7 +391,11 @@ export class DealerAdminApp extends HHElement {
     // A refusal of the reads is the phase the words name; the branches read
     // failing only costs the chips their names (the ids still show).
     const fail = (error: string, status: number | undefined): void => {
-      if (status === 403) {
+      if (status === 404) {
+        // The staff family is not served yet: that is the waits-for-sign-in
+        // state, not a failed read and never the mux's raw words.
+        this.#staff = { ...this.#staff, phase: "waits", branches: branchRows, error: "" };
+      } else if (status === 403) {
         this.#staff = {
           ...this.#staff,
           phase: "refused",

@@ -222,3 +222,15 @@ test("a refused filter leaves the filters on the glass, and Clear brings the tra
   await page.locator('[data-action="clear-audit-filters"]').click();
   await expect(page.locator("[data-test=audit-count]")).toHaveText("3 entries");
 });
+
+test("a core that has no staff register yet lands on the waits-for-sign-in state, not a raw 404", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "unregistered-staff" } });
+  await page.goto("/");
+  await page.locator("[data-flow]").first().click();
+
+  await expect(page.locator("[data-test=waits-for-sign-in]")).toContainText("Waits for sign in");
+  await expect(page.locator("[data-test=waits-words]")).not.toContainText(/lane/i);
+  await expect(page.locator("body")).not.toContainText("404");
+  await expect(page.locator("[data-test=staff-error]")).toHaveCount(0);
+  await page.request.post("/_stub/reset");
+});

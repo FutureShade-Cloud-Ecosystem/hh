@@ -338,6 +338,12 @@ async function handle(req, res) {
     return json(res, BRANCHES);
   }
 
+  // The real core's mux answers the unregistered staff family with a bare 404.
+  if (scenario === "unregistered-staff" && path.startsWith("/api/v1/staff")) {
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    return res.end("404 page not found\n");
+  }
+
   if (req.method === "GET" && path === "/api/v1/staff") {
     if (!isManager(flow) || scenario === "refused-staff") return refuse(res, 403, "Forbidden");
     const items = scenario === "empty-staff" ? [] : staff;
