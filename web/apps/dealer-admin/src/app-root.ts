@@ -275,6 +275,16 @@ export class DealerAdminApp extends HHElement {
     if (!(target instanceof Element)) return;
     const field = target.getAttribute("data-field") ?? "";
     if (field.startsWith("pr-")) {
+      // A file input's answer is the chosen file read whole: the text hands
+      // off to the controller with its name, so the wire carries both.
+      if (target instanceof HTMLInputElement && target.type === "file") {
+        const file = target.files?.[0];
+        if (file !== undefined) {
+          const name = file.name;
+          void file.text().then((text) => this.#pricing.inputFile(field.slice(3), text, name));
+        }
+        return;
+      }
       let value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
       if (target instanceof HTMLInputElement && target.type === "checkbox") value = target.checked ? "yes" : "no";
       this.#pricing.change(field.slice(3), value);

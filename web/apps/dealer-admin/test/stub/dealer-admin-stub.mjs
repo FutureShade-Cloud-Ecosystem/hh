@@ -157,6 +157,39 @@ function notFound(res) {
   return refuse(res, 404, "not found");
 }
 
+// A minimal multipart/form-data reader for the price file road: text fields
+// and one file part, by boundary.
+function parseMultipart(body, contentType) {
+  const match = contentType.match(/boundary=([^;]+)/);
+  if (!match) return {};
+  const boundary = Buffer.from("--" + match[1]);
+  const parts = [];
+  let start = body.indexOf(boundary);
+  while (start !== -1) {
+    const next = body.indexOf(boundary, start + boundary.length);
+    if (next === -1) break;
+    parts.push(body.slice(start + boundary.length, next));
+    start = next;
+  }
+  const form = {};
+  for (const part of parts) {
+    const headerEnd = part.indexOf("\r\n\r\n");
+    if (headerEnd === -1) continue;
+    const headers = part.slice(0, headerEnd).toString("utf8");
+    const content = part.slice(headerEnd + 4, part.length - 2);
+    const nameMatch = headers.match(/name="([^"]+)"/);
+    const filenameMatch = headers.match(/filename="([^"]*)"/);
+    if (nameMatch === null) continue;
+    if (filenameMatch !== null) {
+      form.file = content;
+      form.fileFilename = filenameMatch[1];
+    } else {
+      form[nameMatch[1]] = content.toString("utf8");
+    }
+  }
+  return form;
+}
+
 function readBody(req) {
   return new Promise((resolve) => {
     const chunks = [];
@@ -219,6 +252,8 @@ let ledgerRows;
 let conversions;
 let batches;
 let importProfiles;
+let lastPreviewDigest;
+let priceFileRuns;
 
 // The customer overrides: one yard account's price on Retaining Walls.
 const CUST_YARD = "cu110000-0000-4000-9000-0000000000a1";
@@ -440,6 +475,23 @@ function reset() {
   conversions = structuredClone(UOM_WORLD);
   batches = structuredClone(BATCHES_WORLD);
   importProfiles = structuredClone(PROFILES_WORLD);
+  lastPreviewDigest = null;
+  priceFileRuns = [
+    {
+      id: "1a110000-0000-4000-9000-0000000000a1",
+      vendor_id: "vd110000-0000-4000-9000-0000000000a1",
+      batch_id: "3a110000-0000-4000-9000-0000000000a1",
+      batch_no: "NL-2026-07",
+      source_name: "nl-pricefile.csv",
+      source_format: "CSV",
+      source_bytes: 412,
+      content_digest: "1a2b",
+      imported_by: "da110000-0000-4000-9000-000000000001",
+      imported_by_name: "Dealer admin (demo)",
+      created_at: "2026-09-01T09:00:00Z",
+      counts: { rows: 12, new: 1, changed: 6, unchanged: 4, unknown: 1, outliers: 1, unpriced: 0 },
+    },
+  ];
   scenario = "";
   log = [];
 }
@@ -1232,6 +1284,100 @@ async function handle(req, res) {
     if (profile === undefined) return refuse(res, 404, "profile not found");
     if (body?.mapping !== undefined && typeof body.mapping === "object") profile.mapping = body.mapping;
     return json(res, profile);
+  }
+
+  // ---- the price file road ----
+
+  if (req.method === "GET" && path === "/api/v1/pricing/price-file/vendors") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const items = [
+      {
+        vendor_id: "vd110000-0000-4000-9000-0000000000a1",
+        vendor_no: "NL-001",
+        name: "Northline Supply",
+        profile_id: "2a110000-0000-4000-9000-0000000000a1",
+        origin: "FIRST_IMPORT",
+        mapping: { sku_col: "Item", cost_col: "Dealer Net", retail_col: "MSRP" },
+        last_import_at: "2026-09-01T09:00:00Z",
+      },
+    ];
+    return json(res, { items: scenario === "empty-pricing" ? [] : items, next_cursor: null, limit: 200 });
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/price-file/preview") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const form = parseMultipart(raw, req.headers["content-type"] ?? "");
+    const csv = form.file ? Buffer.from(form.file).toString("utf8") : "";
+    const lines = csv.trim().split("\n").slice(1).filter((l) => l.trim() !== "");
+    lastPreviewDigest = `digest-${csv.length}-${lines.length}`;
+    return json(res, {
+      vendor_id: form.vendor_id ?? "",
+      format: "CSV",
+      mapping: {},
+      mapping_source: "STORED",
+      counts: { rows: lines.length, new: lines.length - 1, changed: 1, unchanged: 0, unknown: 0, outliers: lines.length > 3 ? 1 : 0, unpriced: 0 },
+      lines: lines.map((l, i) => {
+        const cells = l.split(",");
+        return {
+          row: i + 2,
+          sku: cells[0] ?? "",
+          outcome: i === 0 ? "CHANGED" : "NEW",
+          current_retail_cents: i === 0 ? 480 : null,
+          new_retail_cents: Number(cells[2] ?? 0) * 100,
+          variance_bps: i === 0 ? 833 : null,
+          is_outlier: false,
+          derived_from: "COST_MARKUP",
+          freight_estimated: false,
+        };
+      }),
+      truncated: false,
+      catalog_checked: true,
+      digest: lastPreviewDigest,
+      costs_visible: true,
+    });
+  }
+
+  if (req.method === "POST" && path === "/api/v1/pricing/price-file/apply") {
+    if (!isManager(flow) || scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const form = parseMultipart(raw, req.headers["content-type"] ?? "");
+    if (form.digest !== lastPreviewDigest) return refuse(res, 409, "digest mismatch: the file changed since the preview");
+    const id = `3a110000-0000-4000-9000-${Math.random().toString(16).slice(2, 14).padStart(12, "0")}`;
+    const batch = {
+      id,
+      batch_no: `NL-PF-${priceFileRuns.length + 1}`,
+      vendor_id: form.vendor_id ?? "",
+      vendor_name: "Northline Supply",
+      profile_id: "2a110000-0000-4000-9000-0000000000a1",
+      status: "STAGED",
+      effective_date: form.effective_date ?? null,
+      source_ref: form.fileFilename ?? "price-file.csv",
+      line_count: 4,
+      outlier_count: 1,
+      created_at: new Date().toISOString(),
+      approved_at: null,
+      applied_at: null,
+    };
+    batches.push(batch);
+    priceFileRuns.unshift({
+      id: `1a110000-0000-4000-9000-${Math.random().toString(16).slice(2, 14).padStart(12, "0")}`,
+      vendor_id: form.vendor_id ?? "",
+      batch_id: id,
+      batch_no: batch.batch_no,
+      source_name: "price-file.csv",
+      source_format: "CSV",
+      source_bytes: form.file ? form.file.length : 0,
+      content_digest: form.digest ?? "",
+      imported_by: "da110000-0000-4000-9000-000000000001",
+      imported_by_name: "Dealer admin (demo)",
+      created_at: new Date().toISOString(),
+      counts: { rows: 4, new: 3, changed: 1, unchanged: 0, unknown: 0, outliers: 1, unpriced: 0 },
+    });
+    return json(res, { run_id: priceFileRuns[0].id, batch, counts: { rows: 4, new: 3, changed: 1, unchanged: 0, unknown: 0, outliers: 1, unpriced: 0 }, staged: 4, profile_created: false });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/pricing/price-file/runs") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    return json(res, { items: priceFileRuns, next_cursor: null, limit: 100 });
   }
 
   // ---- the audit trail ----

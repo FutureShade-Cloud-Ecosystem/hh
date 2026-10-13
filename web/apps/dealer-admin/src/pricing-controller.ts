@@ -54,6 +54,9 @@ import type {
   BatchImportResult,
   BatchRow,
   ImportProfileRow,
+  PriceFileApplyResult,
+  PriceFilePreview,
+  PriceFileVendorRow,
 } from "./pricing-api.js";
 import type { PricingOverrideWrite, PricingRulePatch, PricingRuleWrite } from "@hardscapehouse/api-client";
 
@@ -108,6 +111,10 @@ export interface PricingDoor {
   applyDueBatches(): Promise<{ ok: true; value: { status: string; applied: number } } | { ok: false; error: string; status?: number }>;
   importProfiles(): Promise<{ ok: true; value: readonly ImportProfileRow[] } | { ok: false; error: string; status?: number }>;
   updateImportProfile(id: string, mapping: Readonly<Record<string, string>>): Promise<{ ok: true; value: ImportProfileRow } | { ok: false; error: string; status?: number }>;
+  priceFileVendors(): Promise<{ ok: true; value: readonly PriceFileVendorRow[] } | { ok: false; error: string; status?: number }>;
+  previewPriceFile(vendorId: string, filename: string, file: string, effective?: string): Promise<{ ok: true; value: PriceFilePreview } | { ok: false; error: string; status?: number }>;
+  applyPriceFile(vendorId: string, filename: string, file: string, digest: string, effective?: string): Promise<{ ok: true; value: PriceFileApplyResult } | { ok: false; error: string; status?: number }>;
+  priceFileRuns(): Promise<{ ok: true; value: readonly { readonly id: string; readonly batch_no: string; readonly source_name: string; readonly source_format: string; readonly created_at: string; readonly counts: { readonly rows: number; readonly changed: number; readonly unknown: number }; readonly imported_by_name: string }[] } | { ok: false; error: string; status?: number }>;
   previewFloor(body: PricingFloorPreviewRequest): Promise<
     { ok: true; value: FloorPreview } | { ok: false; error: string; status?: number }
   >;
@@ -406,6 +413,26 @@ export interface ProfileEdit {
   readonly error: string;
 }
 
+/** The price file form: the vendor, the file, the date, the digest echo. */
+export interface PriceFileModel {
+  readonly vendorsPhase: LoadPhase;
+  readonly vendors: readonly PriceFileVendorRow[];
+  readonly vendorsError: string;
+  readonly vendorId: string;
+  readonly filename: string;
+  readonly csv: string;
+  readonly effective: string;
+  readonly previewBusy: boolean;
+  readonly previewError: string;
+  readonly preview: PriceFilePreview | null;
+  readonly applyBusy: boolean;
+  readonly applyError: string;
+  readonly applyResult: string;
+  readonly runsPhase: LoadPhase;
+  readonly runs: readonly { readonly id: string; readonly batch_no: string; readonly source_name: string; readonly source_format: string; readonly created_at: string; readonly counts: { readonly rows: number; readonly changed: number; readonly unknown: number }; readonly imported_by_name: string }[];
+  readonly runsError: string;
+}
+
 export interface BatchesModel {
   readonly phase: LoadPhase;
   readonly rows: readonly BatchRow[];
@@ -477,6 +504,7 @@ export interface PricingModel {
   readonly rebates: RebatesModel;
   readonly uom: UomModel;
   readonly batches: BatchesModel;
+  readonly priceFile: PriceFileModel;
 }
 
 function emptyMargin(): MarginModel {
@@ -548,6 +576,27 @@ function emptyRebates(): RebatesModel {
       formError: "",
       result: "",
     },
+  };
+}
+
+function emptyPriceFile(): PriceFileModel {
+  return {
+    vendorsPhase: "idle",
+    vendors: [],
+    vendorsError: "",
+    vendorId: "",
+    filename: "",
+    csv: "",
+    effective: "",
+    previewBusy: false,
+    previewError: "",
+    preview: null,
+    applyBusy: false,
+    applyError: "",
+    applyResult: "",
+    runsPhase: "idle",
+    runs: [],
+    runsError: "",
   };
 }
 
@@ -624,6 +673,7 @@ function emptyModel(): PricingModel {
     rebates: emptyRebates(),
     uom: emptyUom(),
     batches: emptyBatches(),
+    priceFile: emptyPriceFile(),
   };
 }
 
@@ -710,6 +760,10 @@ export class PricingController {
     this.#set({ batches: { ...this.model.batches, ...patch } });
   }
 
+  #setPriceFile(patch: Partial<PriceFileModel>): void {
+    this.#set({ priceFile: { ...this.model.priceFile, ...patch } });
+  }
+
   #setOpen(patch: Partial<OpenBatch>): void {
     const open = this.model.batches.open;
     if (open === null) return;
@@ -757,6 +811,14 @@ export class PricingController {
   setTab(tab: PricingTab["id"]): void {
     if (this.model.tab === tab) return;
     this.#set({ tab });
+  }
+
+  /**
+   * A file input's answer: the file read whole, its name riding beside it.
+   * The bytes go to the wire as they came; nothing parses them here.
+   */
+  inputFile(field: string, text: string, filename: string): void {
+    if (field === "pf-file") this.#setPriceFile({ csv: text, filename });
   }
 
   /** A field mirrored from its input event: the editor's words, never bound. */
@@ -893,6 +955,7 @@ export class PricingController {
       if (createKey !== undefined) this.#setBatches({ creating: { ...creating, [createKey]: value } });
     }
     if (field === "batch-csv") this.#setOpen({ importText: value });
+    if (field === "pf-effective") this.#setPriceFile({ effective: value });
     const profileEdit = this.model.batches.profileEdit;
     if (profileEdit !== null) {
       const profileText: Partial<Record<string, keyof ProfileEdit>> = {
@@ -984,6 +1047,10 @@ export class PricingController {
     }
     if (field === "acc-source-type") this.#setAccrual({ sourceType: value });
     if (field === "batches-status") this.#setBatches({ statusFilter: value });
+    if (field === "pf-vendor") {
+      const hit = this.model.priceFile.vendors.find((v) => v.name === value);
+      if (hit !== undefined) this.#setPriceFile({ vendorId: hit.vendor_id });
+    }
     const uomEdit = this.model.uom.editing;
     if (uomEdit !== null) {
       if (field === "uom-source") this.#setUom({ editing: { ...uomEdit, source: value } });
@@ -1224,6 +1291,12 @@ export class PricingController {
         return this.model.uom.probe.weightUom;
       case "batches-status":
         return this.model.batches.statusFilter;
+      case "pf-vendor": {
+        const vendor = this.model.priceFile.vendors.find((v) => v.vendor_id === this.model.priceFile.vendorId);
+        return vendor?.name ?? "";
+      }
+      case "pf-effective":
+        return this.model.priceFile.effective;
       case "batch-no":
         return this.model.batches.creating?.batchNo ?? "";
       case "batch-vendor":
@@ -1298,6 +1371,7 @@ export class PricingController {
         if (tab === "rebates" && this.model.rebates.phase === "idle") await this.loadRebates();
         if (tab === "uom" && this.model.uom.phase === "idle") await this.loadUom();
         if (tab === "batches" && this.model.batches.phase === "idle") await this.loadBatches();
+        if (tab === "pricefile" && this.model.priceFile.vendorsPhase === "idle") await this.loadPriceFile();
         return;
       }
       case "pr-reload-margin":
@@ -1522,6 +1596,16 @@ export class PricingController {
         return;
       case "pr-profile-save":
         await this.#saveProfile();
+        return;
+      // -- the price file tab --
+      case "pr-pf-reload":
+        await this.loadPriceFile();
+        return;
+      case "pr-pf-preview":
+        await this.#previewPriceFile();
+        return;
+      case "pr-pf-apply":
+        await this.#applyPriceFile();
         return;
       case "pr-break-drop-item": {
         const editing = this.model.breaks.editing;
@@ -3011,6 +3095,66 @@ export class PricingController {
     this.#setBatches({ profileEdit: null, notice: "The mapping is saved; the next import reads the file with it." });
     const profiles = await this.#door.importProfiles();
     if (profiles.ok) this.#setBatches({ profiles: profiles.value, profilesPhase: "ready" });
+  }
+  // -- the price file tab ---------------------------------------------------------------------------------
+
+  async loadPriceFile(): Promise<void> {
+    this.#setPriceFile({ ...emptyPriceFile() });
+    const vendors = await this.#door.priceFileVendors();
+    if (!vendors.ok) {
+      this.#setPriceFile({
+        vendorsPhase: vendors.status === 403 ? "refused" : "error",
+        vendorsError: pricingRefusalWords(vendors.error, vendors.status, "read"),
+      });
+      return;
+    }
+    this.#setPriceFile({ vendorsPhase: "ready", vendors: vendors.value });
+    const runs = await this.#door.priceFileRuns();
+    if (runs.ok) this.#setPriceFile({ runsPhase: "ready", runs: runs.value });
+    else this.#setPriceFile({ runsPhase: "error", runsError: runs.error });
+  }
+
+  /** Preview the diff: writes nothing, answers the digest the apply must echo. */
+  async #previewPriceFile(): Promise<void> {
+    const m = this.model.priceFile;
+    if (m.previewBusy) return;
+    if (m.vendorId === "" || m.csv === "") {
+      this.#setPriceFile({ previewError: "Choose the manufacturer and load their file; the preview reads it whole." });
+      return;
+    }
+    this.#setPriceFile({ previewBusy: true, previewError: "", preview: null, applyResult: "" });
+    const result = await this.#door.previewPriceFile(m.vendorId, m.filename, m.csv, m.effective);
+    if (!result.ok) {
+      this.#setPriceFile({ previewBusy: false, previewError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    this.#setPriceFile({ previewBusy: false, preview: result.value });
+  }
+
+  /** Stage the file: the digest echoes the preview's, or the server refuses. */
+  async #applyPriceFile(): Promise<void> {
+    const m = this.model.priceFile;
+    if (m.applyBusy) return;
+    if (m.preview === null) {
+      this.#setPriceFile({ applyError: "Preview the file first: the apply must echo the preview's digest." });
+      return;
+    }
+    this.#setPriceFile({ applyBusy: true, applyError: "", applyResult: "" });
+    const result = await this.#door.applyPriceFile(m.vendorId, m.filename, m.csv, m.preview.digest, m.effective);
+    if (!result.ok) {
+      this.#setPriceFile({ applyBusy: false, applyError: pricingWriteError(result.error, result.status) });
+      return;
+    }
+    const r = result.value;
+    const profile = r.profile_created ? " This first import turned the mapping into a profile." : "";
+    this.#setPriceFile({
+      applyBusy: false,
+      applyResult: `Staged into batch ${r.batch_no}: ${r.staged} change lines written.${profile}`,
+      preview: null,
+    });
+    await this.loadPriceFile();
+    // The runs re-read answered the load; the staged words stay on the glass.
+    this.#setPriceFile({ applyResult: `Staged into batch ${r.batch_no}: ${r.staged} change lines written.${profile}` });
   }
 }
 

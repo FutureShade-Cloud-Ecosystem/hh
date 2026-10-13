@@ -754,6 +754,46 @@ export function batchLineWords(line: {
   return parts.join(", ");
 }
 
+// -- the price file tab ------------------------------------------------------------------------------------
+
+/** The price file tab's empty words. */
+export function priceFileEmptyWords(): string {
+  return "No manufacturer price files yet. Preview the diff before anything is written: the apply must echo the preview's digest.";
+}
+
+/** A vendor's mapping origin, as its history reads. */
+export function priceFileOriginWords(origin: string): string {
+  switch (origin) {
+    case "SEEDED":
+      return "a guessed mapping, from the first read";
+    case "FIRST_IMPORT":
+      return "authored against a real file";
+    case "":
+      return "no profile yet: the first import mints one";
+    default:
+      return plainly(origin);
+  }
+}
+
+/** The preview's counts, over the whole file, with the diagnostics said. */
+export function priceFileCountsWords(counts: {
+  readonly rows: number;
+  readonly new: number;
+  readonly changed: number;
+  readonly unchanged: number;
+  readonly unknown: number;
+  readonly outliers: number;
+  readonly unpriced: number;
+}, truncated: boolean): string {
+  const parts: string[] = [
+    `${counts.rows} rows: ${counts.new} new, ${counts.changed} changed, ${counts.unchanged} unchanged, ${counts.unknown} with no catalog product.`,
+    `${counts.outliers} ${counts.outliers === 1 ? "outlier" : "outliers"} past the alert threshold.`,
+  ];
+  if (counts.unpriced > 0) parts.push(`${counts.unpriced} matched rows yield no derivable price: a mis-mapped column reads like this, so check the mapping before applying.`);
+  if (truncated) parts.push("The line list stopped at its cap; the counts are the whole file's.");
+  return parts.join(" ");
+}
+
 /** An import's answer, told from the server's own counts. */
 export function importResultWords(result: {
   readonly total_lines: number;

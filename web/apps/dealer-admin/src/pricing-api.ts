@@ -600,6 +600,158 @@ function toImportProfileRow(raw: unknown): ImportProfileRow {
   };
 }
 
+// -- the price file ------------------------------------------------------------------------------------
+
+/** One manufacturer the price file surface can run for. */
+export interface PriceFileVendorRow {
+  readonly vendor_id: string;
+  readonly vendor_no: string;
+  readonly name: string;
+  readonly profile_id: string;
+  readonly origin: string;
+  readonly last_import_at: string;
+}
+
+function toPriceFileVendorRow(raw: unknown): PriceFileVendorRow {
+  const r = bag(raw);
+  return {
+    vendor_id: text(r.vendor_id),
+    vendor_no: text(r.vendor_no),
+    name: text(r.name),
+    profile_id: text(r.profile_id),
+    origin: text(r.origin),
+    last_import_at: text(r.last_import_at),
+  };
+}
+
+/** The counts over the whole file, as the preview and the apply both answer. */
+export interface PriceFileCounts {
+  readonly rows: number;
+  readonly new: number;
+  readonly changed: number;
+  readonly unchanged: number;
+  readonly unknown: number;
+  readonly outliers: number;
+  readonly unpriced: number;
+}
+
+function toPriceFileCounts(raw: unknown): PriceFileCounts {
+  const r = bag(raw);
+  return {
+    rows: num(r.rows),
+    new: num(r.new),
+    changed: num(r.changed),
+    unchanged: num(r.unchanged),
+    unknown: num(r.unknown),
+    outliers: num(r.outliers),
+    unpriced: num(r.unpriced),
+  };
+}
+
+/** One row of the file, diffed against the retail anchor. */
+export interface PriceFileLine {
+  readonly row: number;
+  readonly sku: string;
+  readonly outcome: string;
+  readonly product_name: string;
+  readonly current_retail_cents: number | null;
+  readonly new_retail_cents: number | null;
+  readonly variance_bps: number | null;
+  readonly is_outlier: boolean;
+  readonly derived_from: string;
+  readonly freight_estimated: boolean;
+}
+
+function toPriceFileLine(raw: unknown): PriceFileLine {
+  const r = bag(raw);
+  return {
+    row: num(r.row),
+    sku: text(r.sku),
+    outcome: text(r.outcome),
+    product_name: text(r.product_name),
+    current_retail_cents: maybeNum(r.current_retail_cents),
+    new_retail_cents: maybeNum(r.new_retail_cents),
+    variance_bps: maybeNum(r.variance_bps),
+    is_outlier: bool(r.is_outlier),
+    derived_from: text(r.derived_from),
+    freight_estimated: bool(r.freight_estimated),
+  };
+}
+
+/** The preview: the whole answer to what this file would do; it writes nothing. */
+export interface PriceFilePreview {
+  readonly vendor_id: string;
+  readonly format: string;
+  readonly mapping_source: string;
+  readonly counts: PriceFileCounts;
+  readonly lines: readonly PriceFileLine[];
+  readonly truncated: boolean;
+  readonly catalog_checked: boolean;
+  readonly digest: string;
+  readonly costs_visible: boolean;
+}
+
+function toPriceFilePreview(raw: unknown): PriceFilePreview {
+  const r = bag(raw);
+  return {
+    vendor_id: text(r.vendor_id),
+    format: text(r.format),
+    mapping_source: text(r.mapping_source),
+    counts: toPriceFileCounts(r.counts),
+    lines: list(r.lines).map(toPriceFileLine),
+    truncated: bool(r.truncated),
+    catalog_checked: bool(r.catalog_checked),
+    digest: text(r.digest),
+    costs_visible: bool(r.costs_visible),
+  };
+}
+
+/** What the apply produced: the run, the batch, and whether a profile was minted. */
+export interface PriceFileApplyResult {
+  readonly run_id: string;
+  readonly batch_no: string;
+  readonly counts: PriceFileCounts;
+  readonly staged: number;
+  readonly profile_created: boolean;
+}
+
+function toPriceFileApplyResult(raw: unknown): PriceFileApplyResult {
+  const r = bag(raw);
+  return {
+    run_id: text(r.run_id),
+    batch_no: text(bag(r.batch).batch_no),
+    counts: toPriceFileCounts(r.counts),
+    staged: num(r.staged),
+    profile_created: bool(r.profile_created),
+  };
+}
+
+/** One import run of the price file road. */
+export interface PriceFileRunRow {
+  readonly id: string;
+  readonly batch_no: string;
+  readonly source_name: string;
+  readonly source_format: string;
+  readonly source_bytes: number;
+  readonly imported_by_name: string;
+  readonly created_at: string;
+  readonly counts: PriceFileCounts;
+}
+
+function toPriceFileRunRow(raw: unknown): PriceFileRunRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    batch_no: text(r.batch_no),
+    source_name: text(r.source_name),
+    source_format: text(r.source_format),
+    source_bytes: num(r.source_bytes),
+    imported_by_name: text(r.imported_by_name),
+    created_at: text(r.created_at),
+    counts: toPriceFileCounts(r.counts),
+  };
+}
+
 // -- the customer overrides --------------------------------------------------------------------------
 
 /** One customer category override as the screens use it. */
@@ -1022,6 +1174,50 @@ export class PricingApi {
     const answer = await staffPricing.pricingUpdateImportProfileMapping(this.#client, id, { mapping: { ...mapping } });
     if (!answer.ok) return answer;
     return { ok: true, value: toImportProfileRow(answer.value) };
+  }
+
+  // -- the price file ---------------------------------------------------------------------------------
+
+  /** The manufacturers this surface can run for, with their mapping origin. */
+  async priceFileVendors(): Promise<Result<readonly PriceFileVendorRow[]>> {
+    const answer = await staffPricing.pricingListPriceFileVendors(this.#client, { limit: 200 });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toPriceFileVendorRow) };
+  }
+
+  /** Preview the diff: writes nothing, answers the digest the apply must echo. */
+  async previewPriceFile(vendorId: string, filename: string, file: string, effective?: string): Promise<Result<PriceFilePreview>> {
+    const answer = await staffPricing.pricingPreviewPriceFile(
+      this.#client,
+      { vendor_id: vendorId, file: new Blob([file], { type: "text/csv" }), ...(effective !== undefined && effective !== "" ? { effective_date: effective } : {}) },
+      { limit: 100 },
+      { fileFilename: filename === "" ? "price-file.csv" : filename },
+    );
+    if (!answer.ok) return answer;
+    return { ok: true, value: toPriceFilePreview(answer.value) };
+  }
+
+  /** Stage the file: the digest must echo the preview's, a mismatch is the server's refusal. */
+  async applyPriceFile(vendorId: string, filename: string, file: string, digest: string, effective?: string): Promise<Result<PriceFileApplyResult>> {
+    const answer = await staffPricing.pricingApplyPriceFile(
+      this.#client,
+      {
+        vendor_id: vendorId,
+        file: new Blob([file], { type: "text/csv" }),
+        digest,
+        ...(effective !== undefined && effective !== "" ? { effective_date: effective } : {}),
+      },
+      { fileFilename: filename === "" ? "price-file.csv" : filename },
+    );
+    if (!answer.ok) return answer;
+    return { ok: true, value: toPriceFileApplyResult(answer.value) };
+  }
+
+  /** The import runs of this road, newest first by the server. */
+  async priceFileRuns(): Promise<Result<readonly PriceFileRunRow[]>> {
+    const answer = await staffPricing.pricingListPriceFileRuns(this.#client, { limit: 100 });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toPriceFileRunRow) };
   }
 
   // -- the floor warning ------------------------------------------------------------------------------

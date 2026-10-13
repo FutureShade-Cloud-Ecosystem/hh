@@ -440,3 +440,35 @@ test("an import's result is the server's own counts", () => {
 test("the batches tab's empty words are its own", () => {
   assert.match(batchEmptyWords(), /No price batches yet/);
 });
+
+// -- the price file tab ----------------------------------------------------------------------------------
+
+import {
+  priceFileCountsWords,
+  priceFileEmptyWords,
+  priceFileOriginWords,
+} from "../src/pricing-logic.ts";
+
+test("a vendor's mapping origin reads as its history", () => {
+  assert.equal(priceFileOriginWords("SEEDED"), "a guessed mapping, from the first read");
+  assert.equal(priceFileOriginWords("FIRST_IMPORT"), "authored against a real file");
+  assert.equal(priceFileOriginWords(""), "no profile yet: the first import mints one");
+  assert.equal(priceFileOriginWords("ODD"), "odd");
+});
+
+test("the preview's counts are the whole file's, with the unpriced diagnostic said", () => {
+  const words = priceFileCountsWords({ rows: 40, new: 3, changed: 12, unchanged: 20, unknown: 5, outliers: 2, unpriced: 4 }, false);
+  assert.match(words, /40 rows/);
+  assert.match(words, /3 new/);
+  assert.match(words, /12 changed/);
+  assert.match(words, /20 unchanged/);
+  assert.match(words, /5 with no catalog product/);
+  assert.match(words, /2 outliers/);
+  assert.match(words, /4 matched rows yield no derivable price/);
+  assert.doesNotMatch(words, /stopped at its cap/);
+  assert.match(priceFileCountsWords({ rows: 40, new: 0, changed: 0, unchanged: 0, unknown: 0, outliers: 0, unpriced: 0 }, true), /stopped at its cap/);
+});
+
+test("the price file tab's empty words are its own", () => {
+  assert.match(priceFileEmptyWords(), /No manufacturer price files yet/);
+});

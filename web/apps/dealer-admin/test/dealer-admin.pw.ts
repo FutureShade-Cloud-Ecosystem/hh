@@ -464,3 +464,33 @@ test("the batches and imports tab: the staged batch, its lines, the maker check"
   await page.locator('[data-action="pr-profile-save"]').click();
   await expect(page.locator("[data-test=pr-batches-notice]")).toContainText("mapping is saved");
 });
+
+test("the price file tab: the vendor, the preview with its digest, and the staged apply", async ({ page }) => {
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+  await page.locator('.surface-link[data-surface="pricing"]').click();
+  await page.locator('.pr-tab[data-tab="pricefile"]').click();
+
+  // The vendor reads with its mapping's history.
+  await expect(page.locator("[data-test=pr-pf-vendor-count]")).toHaveText("1 vendor");
+  await expect(page.locator('tr[data-vendor="vd110000-0000-4000-9000-0000000000a1"]')).toContainText("authored against a real file");
+  await expect(page.locator("[data-test=pr-pf-runs-count]")).toHaveText("1 run");
+
+  // Choose the manufacturer, load a CSV, preview the diff.
+  await page.locator('[data-field="pr-pf-vendor"]').selectOption({ label: "Northline Supply" });
+  await page.locator('[data-field="pr-pf-file"]').setInputFiles({
+    name: "nl-pricefile.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from("Item,Dealer Net,MSRP\nPAV-60-CH,315,520\nWAL-8,210,340\nSLB-12,180,290\nXX,999,999"),
+  });
+  await page.locator('[data-action="pr-pf-preview"]').click();
+  await expect(page.locator("[data-test=pr-pf-preview]")).toContainText("4 rows");
+  await expect(page.locator("[data-test=pr-pf-preview]")).toContainText("1 changed");
+
+  // Stage it: the digest echoes the preview's, and the run lands in the log.
+  await page.locator('[data-action="pr-pf-apply"]').click();
+  await expect(page.locator("[data-test=pr-pf-apply-result]")).toContainText("Staged into batch");
+  await expect(page.locator("[data-test=pr-pf-runs-count]")).toHaveText("2 runs");
+});

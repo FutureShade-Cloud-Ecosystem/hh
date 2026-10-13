@@ -33,6 +33,10 @@ import {
   BATCH_STATUSES,
   derivationWord,
   importResultWords,
+  outcomeWord,
+  priceFileCountsWords,
+  priceFileEmptyWords,
+  priceFileOriginWords,
   trimNumber,
   uomEmptyWords,
   uomSourceWord,
@@ -57,6 +61,7 @@ import {
 } from "./pricing-logic.js";
 import type { BreakRow, ClearanceRow, OverrideRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
 type BatchLineRow = Parameters<typeof batchLineWords>[0];
+type PriceFileModel = PricingModel["priceFile"];
 import type { FloorPanel, PricingModel } from "./pricing-controller.js";
 
 export function renderPricing(model: PricingModel): TemplateResult {
@@ -95,6 +100,7 @@ function renderTab(model: PricingModel): TemplateResult {
   if (model.tab === "rebates") return renderRebates(model);
   if (model.tab === "uom") return renderUom(model);
   if (model.tab === "batches") return renderBatches(model);
+  if (model.tab === "pricefile") return renderPriceFile(model);
   const tab = PRICING_TABS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
@@ -1979,5 +1985,188 @@ function renderProfileEdit(model: PricingModel): TemplateResult | typeof nothing
         <button type="button" class="btn btn-secondary" data-action="pr-profile-cancel" ?disabled=${e.busy}>Cancel</button>
       </div>
     </div>
+  `;
+}
+
+// -- the price file tab ----------------------------------------------------------------------------------
+
+export function renderPriceFile(model: PricingModel): TemplateResult {
+  const m = model.priceFile;
+  return html`
+    ${m.vendorsPhase === "loading" ? html`<p class="notice-line" data-test="pr-pf-loading">Loading the manufacturers…</p>` : nothing}
+    ${m.vendorsPhase === "error" || m.vendorsPhase === "refused"
+      ? html`<p class="error-line" data-test="pr-pf-error">${m.vendorsError}</p>
+          <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-pf-reload">Try again</button></div>`
+      : nothing}
+    ${m.vendorsPhase === "ready"
+      ? html`
+          <section class="card">
+            <div class="card-head">
+              <h2 class="card-title">Manufacturers</h2>
+              <span class="count" data-test="pr-pf-vendor-count">${m.vendors.length} ${m.vendors.length === 1 ? "vendor" : "vendors"}</span>
+            </div>
+            ${m.vendors.length === 0
+              ? html`<p class="notice-line" data-test="pr-pf-empty">${priceFileEmptyWords()}</p>`
+              : html`
+                  <div class="tablewrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th scope="col">Vendor</th>
+                          <th scope="col">No.</th>
+                          <th scope="col">Mapping</th>
+                          <th scope="col">Last import</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${m.vendors.map(
+                          (v) => html`
+                            <tr data-vendor=${v.vendor_id}>
+                              <td class="person">${v.name}</td>
+                              <td class="mono dim">${v.vendor_no}</td>
+                              <td>${priceFileOriginWords(v.origin)}</td>
+                              <td class="mono dim">${v.last_import_at === "" ? "never" : v.last_import_at.slice(0, 10)}</td>
+                            </tr>
+                          `,
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                `}
+          </section>
+          ${renderPriceFileForm(model)}
+          ${renderPriceFilePreview(m)}
+          ${m.applyResult === "" ? nothing : html`<p class="notice-line" role="status" data-test="pr-pf-apply-result">${m.applyResult}</p>`}
+          ${m.applyError === "" ? nothing : html`<p class="error-line" data-test="pr-pf-apply-error">${m.applyError}</p>`}
+          ${renderPriceFileRuns(model)}
+        `
+      : nothing}
+  `;
+}
+
+function renderPriceFileForm(model: PricingModel): TemplateResult {
+  const m = model.priceFile;
+  return html`
+    <section class="card">
+      <div class="card-head"><h2 class="card-title">Preview a price file</h2></div>
+      <p class="pr-hint">
+        The preview diffs the file against the retail anchor and writes nothing. The apply must echo the preview's
+        digest; the server refuses a file that changed under you.
+      </p>
+      <div class="form-grid">
+        <label class="field"><span class="field-label">Manufacturer</span>
+          <select class="select" data-field="pr-pf-vendor" ?disabled=${m.previewBusy}>
+            <option value="">Choose a manufacturer</option>
+            ${m.vendors.map((v) => html`<option>${v.name}</option>`)}
+          </select>
+        </label>
+        <label class="field"><span class="field-label">The file (CSV)</span>
+          <input class="text-field" type="file" accept=".csv,text/csv" data-field="pr-pf-file" ?disabled=${m.previewBusy} /></label>
+        <label class="field"><span class="field-label">Effective date (schedules the staged batch)</span>
+          <input class="text-field" type="date" data-field="pr-pf-effective" ?disabled=${m.previewBusy} /></label>
+      </div>
+      ${m.previewError === "" ? nothing : html`<p class="error-line" data-test="pr-pf-preview-error">${m.previewError}</p>`}
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-pf-preview" ?disabled=${m.previewBusy}>
+          ${m.previewBusy ? "Reading the file…" : "Preview the diff"}
+        </button>
+      </div>
+    </section>
+  `;
+}
+
+function renderPriceFilePreview(m: PriceFileModel): TemplateResult | typeof nothing {
+  const p = m.preview;
+  if (p === null) return nothing;
+  return html`
+    <section class="card" data-test="pr-pf-preview">
+      <div class="card-head">
+        <h2 class="card-title">The diff</h2>
+        <span class="chip">${p.format}</span>
+        <span class="chip">mapping: ${p.mapping_source}</span>
+      </div>
+      <p class="notice-line">${priceFileCountsWords(p.counts, p.truncated)}</p>
+      ${p.catalog_checked
+        ? nothing
+        : html`<p class="error-line">The catalog could not answer: every row reads as unknown. Preview again before applying.</p>`}
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col" class="num">Row</th>
+              <th scope="col">SKU</th>
+              <th scope="col">Outcome</th>
+              <th scope="col">Retail now</th>
+              <th scope="col">Retail in the file</th>
+              <th scope="col">Derived</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${p.lines.map(
+              (line) => html`
+                <tr data-pf-row=${line.row}>
+                  <td class="num">${line.row}</td>
+                  <td class="mono">${line.sku}</td>
+                  <td><span class="chip ${line.outcome === "UNKNOWN" ? "chip-danger" : ""}">${outcomeWord(line.outcome)}</span></td>
+                  <td class="num">${moneyWords(line.current_retail_cents)}</td>
+                  <td class="num">${moneyWords(line.new_retail_cents)}${line.freight_estimated ? html` <span class="chip chip-dim">est. freight</span>` : nothing}</td>
+                  <td class="dim">${derivationWord(line.derived_from)}</td>
+                </tr>
+              `,
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div class="pr-actions">
+        <button type="button" class="btn btn-primary" data-action="pr-pf-apply" ?disabled=${m.applyBusy}>
+          ${m.applyBusy ? "Staging…" : "Stage this file (the digest goes with it)"}
+        </button>
+      </div>
+    </section>
+  `;
+}
+
+function renderPriceFileRuns(model: PricingModel): TemplateResult {
+  const m = model.priceFile;
+  return html`
+    <section class="card">
+      <div class="card-head">
+        <h2 class="card-title">Import runs</h2>
+        <span class="count" data-test="pr-pf-runs-count">${m.runs.length} ${m.runs.length === 1 ? "run" : "runs"}</span>
+      </div>
+      ${m.runsPhase === "error" ? html`<p class="error-line" data-test="pr-pf-runs-error">${m.runsError}</p>` : nothing}
+      ${m.runs.length === 0
+        ? html`<p class="notice-line" data-test="pr-pf-runs-empty">No runs yet. The road's own log fills as files are staged.</p>`
+        : html`
+            <div class="tablewrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">When</th>
+                    <th scope="col">File</th>
+                    <th scope="col">Batch</th>
+                    <th scope="col" class="num">Rows</th>
+                    <th scope="col" class="num">Changed</th>
+                    <th scope="col">By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${m.runs.map(
+                    (run) => html`
+                      <tr data-run=${run.id}>
+                        <td class="mono dim">${run.created_at.slice(0, 10)}</td>
+                        <td class="mono">${run.source_name} (${run.source_format})</td>
+                        <td class="mono">${run.batch_no === "" ? "-" : run.batch_no}</td>
+                        <td class="num">${run.counts.rows}</td>
+                        <td class="num">${run.counts.changed}</td>
+                        <td class="dim">${run.imported_by_name === "" ? "-" : run.imported_by_name}</td>
+                      </tr>
+                    `,
+                  )}
+                </tbody>
+              </table>
+            </div>
+          `}
+    </section>
   `;
 }
