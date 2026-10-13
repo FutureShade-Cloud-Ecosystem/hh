@@ -331,8 +331,9 @@ mod tests {
         // the profile's identifier; the webview names neither part.
         assert_eq!(keychain_service(), profiles::field().identifier);
         assert_eq!(keychain_service(), "ai.futurebuild.hh.field");
-        let address = hh_shell_core::custody::Address::console_session(keychain_service(), "proj-1")
-            .expect("the Field identifier forms a custody address");
+        let address =
+            hh_shell_core::custody::Address::console_session(keychain_service(), "proj-1")
+                .expect("the Field identifier forms a custody address");
         assert_eq!(address.service(), "ai.futurebuild.hh.field");
         assert_eq!(address.account(), "console-session:proj-1");
     }
@@ -376,41 +377,77 @@ mod tests {
 
     // ---- item 7: the four auth commands -----------------------------------
 
-    const AUTH_COMMANDS: [&str; 4] = ["auth_sign_in", "auth_resume", "auth_exchange", "auth_sign_out"];
-    const AUTH_PERMISSIONS: [&str; 4] =
-        ["allow-auth-sign-in", "allow-auth-resume", "allow-auth-exchange", "allow-auth-sign-out"];
+    const AUTH_COMMANDS: [&str; 4] = [
+        "auth_sign_in",
+        "auth_resume",
+        "auth_exchange",
+        "auth_sign_out",
+    ];
+    const AUTH_PERMISSIONS: [&str; 4] = [
+        "allow-auth-sign-in",
+        "allow-auth-resume",
+        "allow-auth-exchange",
+        "allow-auth-sign-out",
+    ];
     const AUTH_SOURCE: &str = include_str!("auth.rs");
 
     #[test]
     fn the_auth_commands_are_allowed_by_name_to_the_bundled_local_origin_only() {
-        let cap: serde_json::Value = serde_json::from_str(CAPABILITY).expect("the capability parses");
-        let perms: Vec<&str> = cap["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+        let cap: serde_json::Value =
+            serde_json::from_str(CAPABILITY).expect("the capability parses");
+        let perms: Vec<&str> = cap["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p.as_str().unwrap())
+            .collect();
         for name in AUTH_PERMISSIONS {
             assert!(perms.contains(&name), "{name} is allowed by name");
         }
         // No wildcard or whole-set grant of the app's commands.
-        assert!(perms.iter().all(|p| !p.contains('*')), "no wildcard permission");
+        assert!(
+            perms.iter().all(|p| !p.contains('*')),
+            "no wildcard permission"
+        );
         // Local only: a capability with a `remote` block reaches remote URLs;
         // `local: false` would drop the bundled origin. Neither is present.
-        assert!(cap.get("remote").is_none(), "the default capability names no remote URL");
-        assert!(cap.get("local").is_none_or(|l| l == &serde_json::json!(true)));
-        assert_eq!(cap["windows"], serde_json::json!(["main"]), "the main window only");
+        assert!(
+            cap.get("remote").is_none(),
+            "the default capability names no remote URL"
+        );
+        assert!(cap
+            .get("local")
+            .is_none_or(|l| l == &serde_json::json!(true)));
+        assert_eq!(
+            cap["windows"],
+            serde_json::json!(["main"]),
+            "the main window only"
+        );
         assert!(cap.get("webviews").is_none(), "no extra webview is granted");
         // The shell never opens remote domain IPC.
         assert!(!TAURI_CONF.contains("dangerousRemoteDomainIpcAccess"));
         // The probe capability, which is not in a normal build, grants none of them.
         const PROBE_CAPABILITY: &str = include_str!("../capabilities-probe/probe.json");
-        assert!(!PROBE_CAPABILITY.contains("auth"), "the probe capability grants no auth command");
+        assert!(
+            !PROBE_CAPABILITY.contains("auth"),
+            "the probe capability grants no auth command"
+        );
     }
 
     #[cfg(not(feature = "probe"))]
     #[test]
     fn the_auth_commands_are_declared_in_the_built_acl_manifest() {
         for name in AUTH_COMMANDS {
-            assert!(BUILT_ACL_MANIFEST.contains(name), "{name} is declared in the ACL manifest");
+            assert!(
+                BUILT_ACL_MANIFEST.contains(name),
+                "{name} is declared in the ACL manifest"
+            );
         }
         for name in AUTH_PERMISSIONS {
-            assert!(BUILT_CAPABILITIES.contains(name), "{name} is granted in the merged capabilities");
+            assert!(
+                BUILT_CAPABILITIES.contains(name),
+                "{name} is granted in the merged capabilities"
+            );
         }
     }
 
@@ -424,8 +461,13 @@ mod tests {
         for chunk in production.split("#[tauri::command]").skip(1) {
             commands += 1;
             let signature = chunk.split("{").next().unwrap().to_ascii_lowercase();
-            for banned in ["endpoint", "project", "core_url", "url", "jwt", "secret", "token"] {
-                assert!(!signature.contains(banned), "a command signature mentions {banned}: {signature}");
+            for banned in [
+                "endpoint", "project", "core_url", "url", "jwt", "secret", "token",
+            ] {
+                assert!(
+                    !signature.contains(banned),
+                    "a command signature mentions {banned}: {signature}"
+                );
             }
         }
         assert_eq!(commands, 4, "exactly the four contract commands");
@@ -434,7 +476,17 @@ mod tests {
     #[test]
     fn the_auth_module_prints_and_logs_nothing() {
         let production = AUTH_SOURCE.split("#[cfg(test)]").next().unwrap();
-        for banned in ["println!", "eprintln!", "print!(", "dbg!", "log::", "tracing::", "info!(", "warn!(", "error!("] {
+        for banned in [
+            "println!",
+            "eprintln!",
+            "print!(",
+            "dbg!",
+            "log::",
+            "tracing::",
+            "info!(",
+            "warn!(",
+            "error!(",
+        ] {
             assert!(!production.contains(banned), "auth.rs contains {banned}");
         }
     }
