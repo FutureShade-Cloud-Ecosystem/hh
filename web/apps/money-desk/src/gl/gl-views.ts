@@ -238,7 +238,7 @@ function decidePanel(model: GlModel): TemplateResult {
       <div class="gl-choices" role="radiogroup" aria-label="Your decision">
         ${choiceCard(model, "approve", approveWord, approveLine, own)} ${choiceCard(model, "decline", "Decline", declineLine, own)}
         ${row.policy_type === "MARGIN_BELOW_MINIMUM"
-          ? html`<div class="gl-choice gl-choice-held" data-choice-later><span class="gl-choice-title">Approve at a different price ${later("later")}</span><span class="gl-choice-line">Only approve or decline is here today. Void and reverse arrive later.</span></div>`
+          ? html`<div class="gl-choice gl-choice-held" data-choice-later><span class="gl-choice-title">Approve at a different price ${later("later")}</span><span class="gl-choice-line">Only approve or decline is here today.</span></div>`
           : nothing}
       </div>
       ${own
