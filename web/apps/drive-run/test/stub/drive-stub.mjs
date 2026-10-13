@@ -531,8 +531,9 @@ function syncApplyStopUpdate(stop, op) {
 
 // The core's pod scope is the photo record (core/internal/dispatch/syncscope_pod.go
 // podCreateFields): the stop it proves, the content type, the bytes base64 and
-// a caption. The typed name attestation has no sync door, it rides the REST
-// proof, so a pod create here never delivers a stop.
+// a caption. The core now also has the typed name attestation form on this
+// scope (the 6c client item builds its stub side); it rides the REST proof
+// here until then, so a pod create here never delivers a stop.
 const POD_CREATE_FIELDS = new Set(["id", "stop_id", "content_type", "image_bytes_b64", "caption"]);
 
 function syncApplyPodCreate(op) {
