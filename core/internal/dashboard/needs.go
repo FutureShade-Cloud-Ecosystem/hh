@@ -199,12 +199,25 @@ var yardManagerNeeds = []NeedsPolicy{
 	{SourceKey: NeedsReceivingDifferences, Position: 2, Visible: true, WarnAt: 1, StopAt: 3},
 }
 
+// procurementManagerNeeds is the procurement manager's own policy, the Go copy of 0389 §1: the
+// gaps the yard reports and where each purchase order got to come first, and approvals stay (the
+// AR escalation and the parked tickets are the controller's and the counter's work, not the buyer's).
+var procurementManagerNeeds = []NeedsPolicy{
+	{SourceKey: NeedsOpenShortages, Position: 0, Visible: true, WarnAt: 1, StopAt: 5},
+	{SourceKey: NeedsReceivingDifferences, Position: 1, Visible: true, WarnAt: 1, StopAt: 3},
+	{SourceKey: NeedsApprovals, Position: 2, Visible: true, WarnAt: 1, StopAt: 5, StaleMins: 240},
+}
+
 // defaultNeedsFor is the fallback policy for one profile: a job shape serves its own row set from
-// DefaultNeedsSources, the yard manager its own, and every other manager refinement the rows of the
-// shape it was born from (0381 copies them, so the fallback and the table agree).
+// DefaultNeedsSources, the yard and procurement managers their own, and every other manager
+// refinement the rows of the shape it was born from (0381 copies them, so the fallback and the
+// table agree).
 func defaultNeedsFor(profile string) []NeedsPolicy {
-	if profile == ProfileManagerYard {
+	switch profile {
+	case ProfileManagerYard:
 		return yardManagerNeeds
+	case ProfileManagerProcurement:
+		return procurementManagerNeeds
 	}
 	if base, ok := ManagerBaseShape[profile]; ok {
 		return DefaultNeedsSources[base]

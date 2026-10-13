@@ -329,3 +329,37 @@ func TestIntegration_0381_TheYardManagersWidgetsAreTheBoardsList(t *testing.T) {
 		}
 	}
 }
+
+// needsOf reads one profile's seeded Needs-you source keys in order.
+func needsOf(t *testing.T, profile string) []string {
+	t.Helper()
+	repo := widgetRepo(t)
+	rows, err := repo.NeedsSources(context.Background(), profile)
+	if err != nil {
+		t.Fatalf("NeedsSources(%s): %v", profile, err)
+	}
+	out := make([]string, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, r.SourceKey)
+	}
+	return out
+}
+
+func wantKeys(t *testing.T, profile string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s declares %v, want %v", profile, got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s source %d is %q, want %q", profile, i, got[i], want[i])
+		}
+	}
+}
+
+// TestIntegration_0389_TheProcurementManagersNeedsAreTheBuyersOwn pins the seeded rows of 2D gap 3:
+// shortages and receiving differences, approvals kept, the AR edge and the parked tickets gone.
+func TestIntegration_0389_TheProcurementManagersNeedsAreTheBuyersOwn(t *testing.T) {
+	wantKeys(t, "manager.procurement", needsOf(t, "manager.procurement"),
+		[]string{NeedsOpenShortages, NeedsReceivingDifferences, NeedsApprovals})
+}
