@@ -446,11 +446,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
-		h.refuse400(w, CodeBody, "the body must be one JSON object with the fields jwt and org only")
+		h.refuse400(w, CodeBody, "the body must be one JSON object with the fields jwt, org and class only")
 		return
 	}
 	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		h.refuse400(w, CodeBody, "the body must be one JSON object with the fields jwt and org only")
+		h.refuse400(w, CodeBody, "the body must be one JSON object with the fields jwt, org and class only")
 		return
 	}
 	if !wellFormedJWT(in.JWT) {
