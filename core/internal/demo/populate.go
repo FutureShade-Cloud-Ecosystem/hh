@@ -124,7 +124,11 @@ const (
 	// directory as the till's accounts, and converges their branch grants;
 	// it never creates them. The display names are the renames this file's
 	// plantedDisplayNames list leaves on the rows.
-	dispatchUserID  = "d0200000-0000-4000-9000-000000000001"
+	dispatchUserID      = "d0200000-0000-4000-9000-000000000001"
+	dispatchEmail       = "dispatch.demo@" + demoDomain
+	dispatchDisplayName = "Dispatch persona (demo)"
+	dispatchRoleCode    = "LOGISTICS_MANAGER"
+
 	yardUserID      = "d0200000-0000-4000-9000-000000000002"
 	yardEmail       = "yard.demo@" + demoDomain
 	yardDisplayName = "Yard persona (demo)"
@@ -209,11 +213,14 @@ var deactivatedUserIDs = map[string]bool{
 // both yards; the demo world narrows each persona to the branch its seeded
 // work sits at, so its login reaches its own branch and nothing more: the
 // yard team's queue and claimed picks are the roadmap's Trenton story, and
-// the driver's seeded driver D1 and its runs are Kingston's. The dispatch
-// persona is no lane's yet and keeps 0200's shape.
+// the driver's seeded driver D1 and its runs are Kingston's, and the
+// dispatch persona's is Trenton, the main yard (Point Loma once the demo
+// world renames it) whose Truck 03 and 04, open runs and two unloaded
+// delivery orders are the load board's material.
 var demoPersonas = []struct{ userID, email, roleCode, branchID string }{
 	{yardUserID, yardEmail, yardRoleCode, trentonBranchID},
 	{driverUserID, driverEmail, driverRoleCode, kingstonBranchID},
+	{dispatchUserID, dispatchEmail, dispatchRoleCode, trentonBranchID},
 }
 
 // plantedEmailMoves is where the two real-domain addresses go: the
@@ -227,7 +234,7 @@ var plantedEmailMoves = []struct{ id, email string }{
 	// addresses move to the reserved demo domain too. The demoseed finds
 	// them under either form (its persona aliases), so a world seeded before
 	// the move and one seeded after it resolve the same three logins.
-	{dispatchUserID, "dispatch.demo@" + demoDomain},
+	{dispatchUserID, dispatchEmail},
 	{yardUserID, yardEmail},
 	{driverUserID, driverEmail},
 }
@@ -453,6 +460,7 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 			yardMgrEmail:    yardMgrPlatformID,
 			yardEmail:       yardUserID,
 			driverEmail:     driverUserID,
+			dispatchEmail:   dispatchUserID,
 			payRecEmail:     payRecPlatformID,
 			buyerEmail:      buyerPlatformID,
 			controllerEmail: controllerPlatformID,
@@ -641,9 +649,6 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 // already fails closed.) The converge half tombstones every live grant
 // outside the persona's branch (0200 plants every BRANCH location) and
 // heals a tombstone at its own, each guarded so a re-run writes nothing.
-// The dispatch persona is deliberately absent from demoPersonas: no lane
-// has converged it yet, and 0200's both-branch shape is its world until
-// one does.
 func convergePersonas(ctx context.Context, tx pgx.Tx, now time.Time) (converged, removed int, err error) {
 	for _, p := range demoPersonas {
 		var roles int

@@ -29,7 +29,7 @@
 #   each app serves under its own prefix behind the phrase gate (refused
 #     without, served with): the front door at /, the till at /till/, the
 #     public desk at /q/ and /quote.html, /quote/ per the desk being present;
-#   /api/v1/demo/flows answers the closed table's eight flows, the five contractor
+#   /api/v1/demo/flows answers the closed table's nine staff flows, the five contractor
 #     flows and both classes; the three Pro apps serve under /pro-procurement/,
 #     /pro-pay/ and /pro-field/ (gated, assets under their own prefixes); the five
 #     contractor cards mint a tenant bearer whose role tenant me answers (L-card),
@@ -287,6 +287,7 @@ page_has /drive/ drive-run-app "HH Drive at /drive/"
 page_has /home/ manager-home-app "Manager Home at /home/"
 page_has /yard/ yard-pick-app "Yard Pick at /yard/"
 page_has /money-desk/ money-desk-app "the Money Desk at /money-desk/"
+page_has /dispatch/ dispatch-board-app "the dispatch board at /dispatch/"
 page_has /dealer-admin/ dealer-admin-app "Dealer Admin at /dealer-admin/"
 page_has /pro-procurement/ pro-procurement-app "Pro Procurement at /pro-procurement/"
 page_has /pro-pay/ pro-pay-app "Pro Pay at /pro-pay/"
@@ -299,6 +300,7 @@ page_gated /drive/ "HH Drive at /drive/"
 page_gated /home/ "Manager Home at /home/"
 page_gated /yard/ "Yard Pick at /yard/"
 page_gated /money-desk/ "the Money Desk at /money-desk/"
+page_gated /dispatch/ "the dispatch board at /dispatch/"
 page_gated /dealer-admin/ "Dealer Admin at /dealer-admin/"
 page_gated /pro-procurement/ "Pro Procurement at /pro-procurement/"
 page_gated /pro-pay/ "Pro Pay at /pro-pay/"
@@ -368,11 +370,11 @@ done
 
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*)
-		pass "/api/v1/demo/flows answers the closed table's eight flows"
+*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"logistics-manager"'*)
+		pass "/api/v1/demo/flows answers the closed table's nine flows"
 		;;
 	*)
-		fail "/api/v1/demo/flows did not answer the eight flows: $flows"
+		fail "/api/v1/demo/flows did not answer the nine flows: $flows"
 		;;
 esac
 
@@ -442,20 +444,93 @@ buyer="$(tenant_mint contractor-buyer)"
 [ "$(tenant_code "$crew" /api/v1/tenant/invoices)" = "403" ] && pass "L-wall: the field crew is refused billing by the server" || fail "L-wall: the field crew was not refused billing"
 [ "$(tenant_code "$buyer" /api/v1/tenant/procurement/projects)" = "200" ] && pass "L-wall: the buyer reads the buying routes" || fail "L-wall: the buyer could not read the buying routes"
 [ "$(tenant_code "" /api/v1/tenant/orders)" = "401" ] && pass "L-wall: a tenant route with no bearer answers 401" || fail "L-wall: a tenant route with no bearer did not answer 401"
-# L-cost: nothing a contractor reads carries a dealer cost, margin or markup key.
-cost_scan=""
-for cpath in "/api/v1/tenant/catalog/search?q=paver" "/api/v1/tenant/orders" "/api/v1/tenant/quotes" "/api/v1/tenant/invoices" "/api/v1/tenant/procurement/projects"; do
-	answer="$(curl -s -w ' HTTP%{http_code}' -H "Authorization: Bearer $buyer" "$BASE$cpath")"
-	echo "   L-cost read $cpath: $(printf '%s' "$answer" | cut -c1-160)"
-	cost_scan="$cost_scan$answer"
+# The contractor world (PRO-H): every read below is proved on its own. A leg passes only when the answer carries at
+# least the rows the world holds for that read (counted by the key one row of that answer carries once) AND no dealer
+# cost, margin or markup key, so an empty list can no longer pass the cost scan (the PRR line from the PR 380 review).
+# ROWS: the legs name the rows they count.
+tenant_get() {
+	# bearer, path
+	curl -s -H "Authorization: Bearer $1" "$BASE$2"
+}
+row_count() {
+	# answer, key: how many times the key opens a row
+	printf '%s' "$1" | grep -o "\"$2\"[[:space:]]*:" | wc -l | tr -d ' '
+}
+# tenant_read <label> <bearer> <path> <row key> <least rows>: one read, rows counted, cost keys scanned (L-cost).
+tenant_read() {
+	label="$1"; bearer="$2"; path="$3"; key="$4"; least="$5"
+	answer="$(tenant_get "$bearer" "$path")"
+	n="$(row_count "$answer" "$key")"
+	echo "   ROWS $label $path: $n x $key (least $least)"
+	if [ "$n" -lt "$least" ]; then
+		fail "L-cost: $label read $path answered $n rows of $key, want at least $least, so the cost scan proved nothing: $(printf '%s' "$answer" | cut -c1-160)"
+	elif printf '%s' "$answer" | grep -qiE '"[a-z_]*(cost|margin|markup)[a-z_]*"[[:space:]]*:'; then
+		fail "L-cost: $label read $path carries a cost, margin or markup key"
+	else
+		pass "L-cost: $label read $path answers $n rows and no cost, margin or markup key"
+	fi
+}
+# tenant_refused <label> <bearer> <path>: the server's wall for a role.
+tenant_refused() {
+	[ "$(tenant_code "$2" "$3")" = "403" ] && pass "L-wall: $1 is refused $3 by the server" || fail "L-wall: $1 was not refused $3"
+}
+admin="$(tenant_mint contractor-account-admin)"
+# The buyer reads the buying routes and the catalog; the world holds 8 orders, 3 quotes, 3 procurement projects and 4 invoices.
+tenant_read "buyer" "$buyer" "/api/v1/tenant/catalog/search?q=paver" product_id 1
+tenant_read "buyer" "$buyer" /api/v1/tenant/orders order_no 8
+tenant_read "buyer" "$buyer" /api/v1/tenant/quotes quote_no 3
+tenant_read "buyer" "$buyer" /api/v1/tenant/procurement/projects line_count 3
+tenant_read "buyer" "$buyer" /api/v1/tenant/invoices invoice_no 4
+tenant_read "buyer" "$buyer" /api/v1/tenant/payments payment_no 2
+tenant_read "buyer" "$buyer" /api/v1/tenant/payment-methods last4 2
+tenant_read "buyer" "$buyer" /api/v1/tenant/addresses line1 3
+# Accounts payable reads the money: invoices, the payment history, the saved methods, and the orders an invoice answers.
+tenant_read "accounts payable" "$ap" /api/v1/tenant/invoices invoice_no 4
+tenant_read "accounts payable" "$ap" /api/v1/tenant/payments payment_no 2
+tenant_read "accounts payable" "$ap" /api/v1/tenant/payment-methods last4 2
+tenant_read "accounts payable" "$ap" /api/v1/tenant/orders order_no 8
+tenant_refused "accounts payable" "$ap" /api/v1/tenant/quotes
+# The field crew reads orders and the delivery addresses and nothing financial.
+tenant_read "field crew" "$crew" /api/v1/tenant/orders order_no 8
+tenant_read "field crew" "$crew" /api/v1/tenant/addresses line1 3
+tenant_refused "the field crew" "$crew" /api/v1/tenant/quotes
+tenant_refused "the field crew" "$crew" /api/v1/tenant/payments
+tenant_refused "the field crew" "$crew" /api/v1/tenant/payment-methods
+tenant_refused "the field crew" "$crew" /api/v1/tenant/procurement/projects
+# The owner reads everything, and the team is the five roles.
+tenant_read "owner" "$admin" /api/v1/tenant/users email 5
+tenant_read "owner" "$admin" /api/v1/tenant/procurement/projects line_count 3
+
+# Order states and delivery instructions: the list answers every state of the contract's map, and some orders carry a
+# delivery note (read per order, the detail is where the note lives).
+orders_answer="$(tenant_get "$crew" /api/v1/tenant/orders)"
+for st in CONFIRMED READY PARTIALLY_FULFILLED FULFILLED INVOICED; do
+	case "$orders_answer" in
+		*"\"status\":\"$st\""*) pass "the contractor's order list holds a $st order" ;;
+		*) fail "the contractor's order list holds no $st order: $(printf '%s' "$orders_answer" | cut -c1-160)" ;;
+	esac
 done
-if ! printf '%s' "$cost_scan" | grep -q '"product_id"'; then
-	fail "L-cost: the contractor's catalog read answered no rows, so the scan proved nothing (orders, quotes, invoices and projects are empty on the demo box today)"
-elif printf '%s' "$cost_scan" | grep -qiE '"[a-z_]*(cost|margin|markup)[a-z_]*"[[:space:]]*:'; then
-	fail "L-cost: a contractor read carries a cost, margin or markup key"
-else
-	pass "L-cost: no cost, margin or markup key in the contractor's catalog, order, quote, invoice and project answers"
-fi
+noted=0
+for oid in $(printf '%s' "$orders_answer" | grep -o '"id":"[^"]*"' | sed 's/"id":"\([^"]*\)"/\1/'); do
+	detail="$(tenant_get "$crew" "/api/v1/tenant/orders/$oid")"
+	case "$detail" in *'"delivery_instructions":""'*) ;; *'"delivery_instructions":"'*) noted=$((noted + 1)) ;; esac
+done
+echo "   ROWS field crew orders with a delivery note: $noted"
+[ "$noted" -ge 3 ] && pass "at least three orders carry delivery instructions" || fail "only $noted orders carry delivery instructions, want at least 3"
+
+# Money: the invoices carry California tax (775 basis points, half up once) and a balance that follows what was paid.
+inv_answer="$(tenant_get "$ap" /api/v1/tenant/invoices)"
+bad="$(printf '%s' "$inv_answer" | tr '{' '\n' | sed -n 's/.*"subtotal_cents":\([0-9]*\),"tax_cents":\([0-9]*\).*/\1 \2/p' | while read -r sub tax; do
+	want=$(( (sub * 775 + 5000) / 10000 ))
+	[ "$tax" = "$want" ] || echo "$sub:$tax:$want"
+done)"
+[ -z "$bad" ] && pass "every invoice's tax is 7.75 percent of its subtotal, half up" || fail "an invoice's tax is not 7.75 percent of its subtotal (subtotal:tax:want) $bad"
+for st in PAID PARTIALLY_PAID FINALIZED; do
+	case "$inv_answer" in
+		*"\"status\":\"$st\""*) pass "the contractor's invoices hold a $st invoice" ;;
+		*) fail "the contractor's invoices hold no $st invoice" ;;
+	esac
+done
 
 pay="$(curl -s -H "Authorization: Bearer $TOKEN" -H 'X-Org: hh-demo' \
 	"$BASE/api/v1/payments/config")"
