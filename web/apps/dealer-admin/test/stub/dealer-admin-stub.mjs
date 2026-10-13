@@ -1,35 +1,136 @@
-// Dealer Admin's local stub: the demo way in and one placeholder route for the
-// dev server's /api proxy and the Playwright harness. This is a development
-// and test double only; the real routes are the core's.
+// Dealer Admin's local stub: the demo way in, and the dealer's staff world
+// answered in the core's shapes (the staff register, the roles catalog, the
+// branches). It is a development and test double only; the real routes are
+// the core's, and the staff identity admin family is contract-only there
+// until the auth lane lands it. The hotkeys and audit routes join with
+// their own commits.
 import { createServer } from "node:http";
 
 const port = Number(process.env.DA_STUB_PORT ?? 56610);
 
+// The real flows route lists the closed table's logins; this app's door
+// draws a card per flow it answers here. Two: the dealer admin (the
+// general manager persona the admin surfaces answer), and inside sales for
+// the refusal walk (a frontline caller is refused the staff read).
 const FLOWS = [
-  { flow: "sales", role_code: "inside_sales", label: "Sales" },
-  { flow: "sales-manager", role_code: "sales_manager", label: "Sales manager" },
+  { flow: "dealer-admin", role_code: "general_manager", label: "Dealer admin" },
+  { flow: "inside-sales", role_code: "inside_sales", label: "Inside sales" },
 ];
 
 const USERS = {
-  sales: {
-    user_id: "de110000-0000-4000-9000-000000000001",
-    email: "sales@hh-demo.invalid",
-    display_name: "Sales (demo)",
+  "dealer-admin": {
+    user_id: "da110000-0000-4000-9000-000000000001",
+    email: "dealer.admin@hh-demo.invalid",
+    display_name: "Dealer admin (demo)",
+    role_code: "general_manager",
+    role_name: "General Manager",
+    tier: 1,
+    scope: "GLOBAL",
+  },
+  "inside-sales": {
+    user_id: "da110000-0000-4000-9000-000000000002",
+    email: "inside.sales@hh-demo.invalid",
+    display_name: "Inside sales (demo)",
     role_code: "inside_sales",
     role_name: "Inside Sales",
     tier: 3,
     scope: "BRANCH",
   },
-  "sales-manager": {
-    user_id: "de110000-0000-4000-9000-000000000002",
-    email: "sales.manager@hh-demo.invalid",
-    display_name: "Sales manager (demo)",
-    role_code: "sales_manager",
-    role_name: "Sales Manager",
-    tier: 2,
-    scope: "BRANCH",
-  },
 };
+
+// The branches (GLS-TENANT-r3): Point Loma, the main yard, and Julian.
+const BRANCHES = [
+  {
+    id: "5d1b3f6e-0000-4000-9000-0000000000pl",
+    code: "PLM",
+    name: "Gable Landscape Supply - Point Loma",
+    is_active: true,
+  },
+  {
+    id: "5d1b3f6e-0000-4000-9000-0000000000ju",
+    code: "JUL",
+    name: "Gable Landscape Supply - Julian",
+    is_active: true,
+  },
+];
+const PLM = BRANCHES[0].id;
+const JUL = BRANCHES[1].id;
+
+// The roles catalog, the core's own list (staffcontext/rbac.go AllRoles):
+// the platform role and the thirteen business roles.
+const ROLES = [
+  { code: "SUPER_ADMIN", name: "Platform Administrator", tier: 1, scope: "GLOBAL" },
+  { code: "GENERAL_MANAGER", name: "General Manager", tier: 1, scope: "GLOBAL" },
+  { code: "FINANCIAL_CONTROLLER", name: "Financial Controller", tier: 1, scope: "GLOBAL" },
+  { code: "HR", name: "HR", tier: 1, scope: "GLOBAL" },
+  { code: "BRANCH_MANAGER", name: "Branch Manager", tier: 2, scope: "BRANCH" },
+  { code: "PROCUREMENT_MANAGER", name: "Procurement Manager", tier: 2, scope: "BRANCH" },
+  { code: "SALES_MANAGER", name: "Sales Manager", tier: 2, scope: "BRANCH" },
+  { code: "YARD_MANAGER", name: "Yard Manager", tier: 2, scope: "BRANCH" },
+  { code: "LOGISTICS_MANAGER", name: "Logistics Manager", tier: 2, scope: "BRANCH" },
+  { code: "PAYABLES_RECEIVABLES", name: "Payables/Receivables", tier: 2, scope: "GLOBAL" },
+  { code: "INSIDE_SALES", name: "Inside Sales", tier: 3, scope: "BRANCH" },
+  { code: "OUTSIDE_SALES", name: "Outside Sales", tier: 3, scope: "BRANCH" },
+  { code: "YARD_TEAM", name: "Yard Team", tier: 3, scope: "BRANCH" },
+  { code: "DRIVERS", name: "Drivers", tier: 3, scope: "BRANCH" },
+];
+
+// The staff register: leadership, a frontline pair with branch grants, and
+// the platform role row that renders read-only.
+function buildStaff() {
+  return [
+    {
+      user_id: USERS["dealer-admin"].user_id,
+      email: USERS["dealer-admin"].email,
+      display_name: USERS["dealer-admin"].display_name,
+      role_code: "GENERAL_MANAGER",
+      role_name: "General Manager",
+      tier: 1,
+      scope: "GLOBAL",
+      branch_ids: [],
+    },
+    {
+      user_id: "da110000-0000-4000-9000-0000000000hr",
+      email: "hr@hh-demo.invalid",
+      display_name: "HR (demo)",
+      role_code: "HR",
+      role_name: "HR",
+      tier: 1,
+      scope: "GLOBAL",
+      branch_ids: [],
+    },
+    {
+      user_id: USERS["inside-sales"].user_id,
+      email: USERS["inside-sales"].email,
+      display_name: USERS["inside-sales"].display_name,
+      role_code: "INSIDE_SALES",
+      role_name: "Inside Sales",
+      tier: 3,
+      scope: "BRANCH",
+      branch_ids: [PLM],
+    },
+    {
+      user_id: "da110000-0000-4000-9000-0000000000yt",
+      email: "yard.team@hh-demo.invalid",
+      display_name: "Yard team (demo)",
+      role_code: "YARD_TEAM",
+      role_name: "Yard Team",
+      tier: 3,
+      scope: "BRANCH",
+      branch_ids: [PLM, JUL],
+    },
+    {
+      user_id: "da110000-0000-4000-9000-0000000000sa",
+      email: "platform.admin@hh-demo.invalid",
+      display_name: "Platform admin (demo)",
+      role_code: "super_admin",
+      role_name: "Platform Administrator",
+      tier: 1,
+      scope: "GLOBAL",
+      branch_ids: [],
+    },
+  ];
+}
 
 // A token with the shape the app reads an expiry from: three parts, the
 // middle one base64url JSON carrying sub and exp. The signature is a stub.
@@ -45,34 +146,161 @@ function json(res, data, status = 200) {
   res.end(JSON.stringify(data));
 }
 
+// The core's error envelope: {"error": sentence}. The role gate's shared
+// Forbidden body is exactly {"error":"Forbidden"}.
+function refuse(res, status, message) {
+  return json(res, { error: message }, status);
+}
+
 function notFound(res) {
-  res.writeHead(404, { "Content-Type": "text/plain" });
-  res.end("not found");
+  return refuse(res, 404, "not found");
 }
 
-function handle(req, res) {
+function readBody(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+let staff;
+let scenario;
+let log;
+
+function reset() {
+  staff = buildStaff();
+  scenario = "";
+  log = [];
+}
+reset();
+
+function flowOf(token) {
+  for (const [flow, account] of Object.entries(USERS)) {
+    const payload = token.split(".")[1];
+    if (payload === undefined) return null;
+    try {
+      const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+      if (claims.sub === account.user_id) return flow;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+// The core's gates: the staff read is a manager's (tier 1 or 2); the writes
+// are leadership's (tier 1 GLOBAL). A frontline caller is refused both with
+// the shared Forbidden body.
+function isManager(flow) {
+  return flow === "dealer-admin";
+}
+
+async function handle(req, res) {
   const url = new URL(req.url, `http://127.0.0.1:${port}`);
-  if (url.pathname === "/healthz") return json(res, { ok: true });
-  if (url.pathname === "/api/v1/demo/flows") {
-    return json(res, { flows: FLOWS });
+  const path = url.pathname;
+  if (path === "/healthz") return json(res, { ok: true });
+
+  // ---- the stub's own controls (never the core's) ----
+  if (req.method === "POST" && path === "/_stub/reset") {
+    reset();
+    return json(res, { ok: true });
   }
-  if (req.method === "POST" && url.pathname === "/api/v1/demo/session") {
-    let body = "";
-    req.on("data", (c) => (body += c));
-    req.on("end", () => {
-      try {
-        const { flow } = JSON.parse(body);
-        const account = USERS[flow];
-        if (!account) return notFound(res);
-        json(res, { token: mintToken(account.user_id), user: account, flow });
-      } catch { json(res, { error: "bad request" }, 400); }
+  if (req.method === "POST" && path === "/_stub/scenario") {
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    scenario = String(body.name ?? "");
+    return json(res, { ok: true, scenario });
+  }
+  if (req.method === "GET" && path === "/_stub/log") return json(res, log);
+
+  // ---- the demo way in ----
+  if (path === "/api/v1/demo/flows") return json(res, { flows: FLOWS });
+  if (req.method === "POST" && path === "/api/v1/demo/session") {
+    const body = await readBody(req);
+    try {
+      const { flow } = JSON.parse(body.toString("utf8"));
+      const account = USERS[flow];
+      if (!account) return notFound(res);
+      return json(res, { token: mintToken(account.user_id), user: account, flow });
+    } catch {
+      return refuse(res, 400, "bad request");
+    }
+  }
+
+  // ---- the staff routes ----
+  const authorization = req.headers.authorization ?? "";
+  const raw = await readBody(req);
+  let body = null;
+  const contentType = String(req.headers["content-type"] ?? "").split(";")[0].trim();
+  if (contentType === "application/json" && raw.length > 0) {
+    try {
+      body = JSON.parse(raw.toString("utf8"));
+    } catch {
+      return refuse(res, 400, "bad request");
+    }
+  }
+  log.push({
+    method: req.method,
+    path,
+    query: Object.fromEntries(url.searchParams),
+    bearer: authorization.startsWith("Bearer "),
+    org: req.headers["x-org"] ?? "",
+    body,
+  });
+  if (!authorization.startsWith("Bearer ")) return refuse(res, 401, "unauthenticated");
+  const flow = flowOf(authorization.slice("Bearer ".length));
+  if (flow === null) return refuse(res, 401, "unauthenticated");
+
+  if (req.method === "GET" && path === "/api/v1/branches") {
+    return json(res, BRANCHES);
+  }
+
+  if (req.method === "GET" && path === "/api/v1/staff") {
+    if (!isManager(flow) || scenario === "refused-staff") return refuse(res, 403, "Forbidden");
+    const items = scenario === "empty-staff" ? [] : staff;
+    return json(res, { items, next_cursor: null, limit: 200 });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/staff/roles") {
+    if (!isManager(flow) || scenario === "refused-staff") return refuse(res, 403, "Forbidden");
+    return json(res, { items: ROLES, next_cursor: null, limit: 200 });
+  }
+
+  const roleMatch = path.match(/^\/api\/v1\/staff\/([^/]+)\/role$/);
+  if (req.method === "PUT" && roleMatch) {
+    if (!isManager(flow) || scenario === "refused-assign") return refuse(res, 403, "Forbidden");
+    const member = staff.find((m) => m.user_id === roleMatch[1]);
+    if (!member) return refuse(res, 404, "staff not found");
+    const roleCode = String(body?.role_code ?? "");
+    const role = ROLES.find((r) => r.code === roleCode);
+    if (roleCode !== "" && role === undefined) return refuse(res, 400, "unknown role");
+    member.role_code = roleCode;
+    member.role_name = role === undefined ? "" : role.name;
+    member.tier = role === undefined ? 0 : role.tier;
+    member.scope = role === undefined ? "" : role.scope;
+    return json(res, { status: "ok", user_id: member.user_id, role_code: roleCode });
+  }
+
+  const resetMatch = path.match(/^\/api\/v1\/staff\/([^/]+)\/password-reset$/);
+  if (req.method === "POST" && resetMatch) {
+    if (!isManager(flow) || scenario === "refused-reset") return refuse(res, 403, "Forbidden");
+    const member = staff.find((m) => m.user_id === resetMatch[1]);
+    if (!member) return refuse(res, 404, "staff not found");
+    const token = `st-${member.user_id.slice(0, 8)}-${Date.now().toString(36)}`;
+    return json(res, {
+      reset_token: token,
+      reset_url: `https://reset.hh-demo.invalid/${token}`,
+      expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
     });
-    return;
   }
-  notFound(res);
+
+  return notFound(res);
 }
 
-const server = createServer(handle);
-server.listen(port, () => {
-  console.log(`dealer-admin stub listening on ${port}`);
+const server = createServer((req, res) => {
+  handle(req, res).catch(() => refuse(res, 500, "stub error"));
+});
+
+server.listen(port, "127.0.0.1", () => {
+  process.stdout.write(`dealer-admin stub on 127.0.0.1:${port}\n`);
 });

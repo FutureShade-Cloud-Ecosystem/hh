@@ -1,0 +1,27 @@
+// Dealer Admin's surface registry: the one place the app's own surfaces are
+// named. The app shell's left list reads this, and the router line in
+// app-root picks the view by the id.
+//
+// THE EXTENSION POINT. The next coder adds Pricing, Role configuration and
+// Deployment settings by landing a views file and adding one row here; no
+// other file in this app changes. A surface is an id, the words the list
+// shows, and the view function the app-root line calls for it.
+//
+// Today: Staff, the original app's staff-roles.ts and staff-reset.ts ported
+// (see PROVENANCE.md). Hotkeys and Audit join with their own commits.
+export interface SurfaceSpec {
+  /** The id the list button, the router line and the tests name. */
+  readonly id: string;
+  /** The list's word for the surface. */
+  readonly title: string;
+  /** One line under the title, what the surface decides. */
+  readonly blurb: string;
+}
+
+export const SURFACES: readonly SurfaceSpec[] = [
+  { id: "staff", title: "Staff", blurb: "The register, the roles, the branch grants, the reset links." },
+];
+
+export function isSurfaceId(value: string): value is SurfaceSpec["id"] {
+  return SURFACES.some((s) => s.id === value);
+}
