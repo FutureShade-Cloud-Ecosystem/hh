@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 )
 
 // templates.go, the two message bodies this program sends out of band, and the payload shapes that
@@ -25,7 +26,12 @@ const smsSegment = 160
 
 // senderName is the signature on every outbound message. A text with no sender name is the single
 // biggest reason people report a message as spam.
-const senderName = "Dibbits"
+//
+// It is the dealer's own configured name, or a neutral role word when none is set; never a dealer's
+// name fixed in code.
+func senderName() string { return dealer.Or(neutralSender) }
+
+const neutralSender = "your dealer"
 
 // ARNotice is the accounts-receivable payload (topic sms.ar.notice). AmountCents is the balance the
 // customer owes; DaysPastDue distinguishes a courtesy reminder from a collections nudge, and the
@@ -74,16 +80,16 @@ func RenderAR(n ARNotice, r Recipient) notify.Message {
 	// reference; the WORDING branches on it here rather than minting a second topic.
 	case strings.HasPrefix(ref, "STMT"):
 		body = fmt.Sprintf("%s: your account statement %s is ready (balance %s). Reply or call us with any questions., %s",
-			greet(r), ref, amount, senderName)
+			greet(r), ref, amount, senderName())
 	case n.DaysPastDue > 0:
 		body = fmt.Sprintf("%s: invoice %s is %d days past due (%s). Please call us to settle or arrange terms., %s",
-			greet(r), ref, n.DaysPastDue, amount, senderName)
+			greet(r), ref, n.DaysPastDue, amount, senderName())
 	case n.DueDate != "":
 		body = fmt.Sprintf("%s: invoice %s for %s is due %s., %s",
-			greet(r), ref, amount, n.DueDate, senderName)
+			greet(r), ref, amount, n.DueDate, senderName())
 	default:
 		body = fmt.Sprintf("%s: invoice %s for %s is outstanding., %s",
-			greet(r), ref, amount, senderName)
+			greet(r), ref, amount, senderName())
 	}
 	return notify.Message{Channel: notify.SMSChannel, To: r.Phone, Body: clampSegment(body)}
 }
@@ -104,7 +110,7 @@ func RenderDispatch(n DispatchNotice, r Recipient) notify.Message {
 	if n.StageRef != "" {
 		body += fmt.Sprintf(" Quote ref %s at the counter.", n.StageRef)
 	}
-	body += ", " + senderName
+	body += ", " + senderName()
 	return notify.Message{Channel: notify.SMSChannel, To: r.Phone, Body: clampSegment(body)}
 }
 

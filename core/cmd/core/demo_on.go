@@ -45,6 +45,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
 	portalmod "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
@@ -276,6 +277,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
+	dealer.Set(cfg.DealerName)
 	log := slog.Default()
 
 	demoCfg, err := loadDemoServeConfig(getenv)
