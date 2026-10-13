@@ -36,6 +36,7 @@ import {
   needsRowTarget,
   pickedWords,
   qtyWords,
+  shortageCard,
   rangeWord,
   severityWord,
   shareNote,
@@ -332,6 +333,8 @@ export interface ShortagesModel {
   readonly error: string;
   readonly notice: string;
   readonly resolverWords: string;
+  /** The instant the list was read; the cards' "ago" words count from it. */
+  readonly nowMs: number;
 }
 
 export function renderShortages(model: ShortagesModel): TemplateResult {
@@ -383,6 +386,7 @@ function renderShortageTask(entry: QueueEntry, model: ShortagesModel): TemplateR
       ${done.map((s) => html`
         <div class="shortage" data-shortage=${s.id}>
           <div class="body">
+            <p class="status status-done">${shortageCard(s, model.nowMs).status}</p>
             <p class="line">${s.description}</p>
             <p class="detail">${shortageLine(s)}</p>
             <p class="resolved-word">Resolved: ${s.resolution}</p>
@@ -398,11 +402,14 @@ function renderShortageRow(entry: QueueEntry, s: QueueEntry["shortages"][number]
   if (draft !== null && draft.shortageId === s.id) {
     return renderResolvePanel(draft, entry, s, model.error);
   }
+  const card = shortageCard(s, model.nowMs);
   return html`
-    <div class="shortage" data-shortage=${s.id}>
+    <div class="shortage" data-shortage=${s.id} data-card="shortage-review">
       <div class="body">
-        <p class="line">${s.description}</p>
-        <p class="detail">${shortageLine(s)}</p>
+        <p class="status status-open">${card.status}</p>
+        <p class="line">${card.what}</p>
+        <p class="detail">${card.howMuch}</p>
+        <p class="who-when">${card.when === "" ? card.reporter : `${card.reporter} · ${card.when}`}</p>
         ${s.note !== "" ? html`<p class="detail">${s.note}</p>` : nothing}
       </div>
       <div class="row-actions">

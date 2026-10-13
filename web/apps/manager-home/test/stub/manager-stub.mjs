@@ -280,7 +280,7 @@ function buildWorld() {
       qty_short: "4.0000",
       uom: "CYD",
       note: "Only 8 yards left in the bin",
-      reported_by: "",
+      reported_by: "de110000-0000-4000-9000-0000000000a1",
       reported_at: ago(1),
     },
     {

@@ -104,3 +104,21 @@ test("the list wall's Forbidden body becomes words naming who may resolve, insid
   // The refusal left the shortage open and the sheet standing.
   await expect(page.locator("[data-resolving='true']")).toHaveCount(1);
 });
+
+test("each open shortage is a review card: what, how much, who by role, when, and the status word", async ({ page }) => {
+  await openShortages(page);
+  const cards = page.locator("[data-card='shortage-review']");
+  await expect(cards).toHaveCount(2);
+  const first = cards.first();
+  await expect(first.locator(".status")).toHaveText("Needs review");
+  await expect(first.locator(".line")).toHaveText("Granular A gravel");
+  await expect(first.locator(".detail").first()).toHaveText("line 1, short 4 CYD");
+  await expect(first.locator(".who-when")).toHaveText(/^Reported by the yard team · \d+[mh] ago$/);
+  await expect(first.getByRole("button", { name: "Resolve" })).toBeVisible();
+  // The reporter id the core sends is a user: it never reaches the card.
+  await expect(first).not.toContainText("de110000");
+  // A resolved shortage is history, not a card waiting on the manager.
+  const done = page.locator("[data-shortage]:not([data-card='shortage-review'])").filter({ hasText: "Resolved:" });
+  await expect(done).toHaveCount(1);
+  await expect(done.locator(".status")).toHaveText("Resolved");
+});
