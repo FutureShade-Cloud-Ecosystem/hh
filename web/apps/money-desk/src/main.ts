@@ -4,4 +4,7 @@
 // registrations are the only side effects.
 import "@hardscapehouse/design-system/src/tokens.css";
 import "./index.js";
-import "./app-root.js";
+import { loadAppRuntime } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
+
+// The served config decides the app's custody before the element is built, so the element loads after it.
+void loadAppRuntime().then(() => import("./app-root.js"));
