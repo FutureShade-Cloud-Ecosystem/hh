@@ -25,7 +25,7 @@ func TestDispatchTemplateLeadsWithReadyAndKeepsTheStageRef(t *testing.T) {
 	if m.To != "+16135550142" {
 		t.Fatalf("to = %q", m.To)
 	}
-	for _, want := range []string{"Hi Sam", "SO-2026-0001", "ready", "Trenton", "STG-4KQ7RM", senderName} {
+	for _, want := range []string{"Hi Sam", "SO-2026-0001", "ready", "Trenton", "STG-4KQ7RM", senderName()} {
 		if !strings.Contains(m.Body, want) {
 			t.Fatalf("body missing %q: %q", want, m.Body)
 		}

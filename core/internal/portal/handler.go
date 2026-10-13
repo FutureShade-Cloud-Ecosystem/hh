@@ -233,7 +233,7 @@ func (h *Handler) acceptInvite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) config(w http.ResponseWriter, _ *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, defaultConfig())
+	httpx.WriteJSON(w, http.StatusOK, h.svc.dealerConfig())
 }
 
 // -- admin-gated --------------------------------------------------------------

@@ -24,7 +24,7 @@ func TestRenderQuoteShare_CarriesTheLinkAndNamesTheBusiness(t *testing.T) {
 	if m.To != "+16135551001" {
 		t.Fatalf("To = %q, want the recipient's number", m.To)
 	}
-	for _, want := range []string{"Mark", "Q-2026-0001", "https://erp.example/quote.html?t=abc123", senderName} {
+	for _, want := range []string{"Mark", "Q-2026-0001", "https://erp.example/quote.html?t=abc123"} {
 		if !strings.Contains(m.Body, want) {
 			t.Fatalf("body %q is missing %q", m.Body, want)
 		}

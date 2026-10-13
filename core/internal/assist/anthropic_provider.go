@@ -33,6 +33,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 )
 
 // EnvAPIKey is the environment variable the Anthropic-style provider reads its credential from.
@@ -126,7 +128,14 @@ type antResp struct {
 // run (service.go). A longer prompt would make the fence look stronger and would not make it
 // stronger; the sentences here are about TONE and about not inventing numbers, which are the two
 // things a prompt can actually influence.
-const systemPrompt = `You are TanyaAI, the assistant inside HH Yard, a landscape-supply ERP used by counter staff, yard crews and managers at Dibbits.
+//
+// The dealer it works for is the dealer's own configured name, or "the dealer" when none is set;
+// never a name fixed in code.
+func systemPrompt() string {
+	return strings.Replace(systemPromptTemplate, "{dealer}", dealer.Or("the dealer"), 1)
+}
+
+const systemPromptTemplate = `You are TanyaAI, the assistant inside HH Yard, a landscape-supply ERP used by counter staff, yard crews and managers at {dealer}.
 
 Answer only from the results of the tools you are given. Never guess a number, a status, a price or a date; if a tool did not return it, say you do not have it. If no tool fits the question, say so plainly and mention what you can look up.
 
@@ -137,7 +146,7 @@ func (p *AnthropicProvider) Complete(ctx context.Context, req CompletionRequest)
 	body := antReq{
 		Model:     p.model,
 		MaxTokens: 1024,
-		System:    systemPrompt,
+		System:    systemPrompt(),
 		Messages:  toAnthropicMessages(req.Messages),
 		Tools:     toAnthropicTools(req.Tools),
 	}

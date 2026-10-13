@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 )
 
 // Outbox topics the portal emits for out-of-band delivery (F0.2). Both invite and reset
@@ -54,10 +55,10 @@ func RegisterNotificationHandlers(d *notify.Dispatcher, n notify.Notifier, baseU
 		return n.Send(ctx, notify.Message{
 			Channel: notify.EmailChannel,
 			To:      p.Email,
-			Subject: "You're invited to the Dibbits Contractor Portal",
-			Body: fmt.Sprintf("You've been invited to the Dibbits Contractor Portal as %s.\n\n"+
+			Subject: "You're invited to " + portalPhrase(),
+			Body: fmt.Sprintf("You've been invited to %s as %s.\n\n"+
 				"Set your password and activate your account:\n%s\n\n"+
-				"This link expires %s.", p.Role, link, p.ExpiresAt.Format(time.RFC1123)),
+				"This link expires %s.", portalPhrase(), p.Role, link, p.ExpiresAt.Format(time.RFC1123)),
 		})
 	})
 
@@ -70,7 +71,7 @@ func RegisterNotificationHandlers(d *notify.Dispatcher, n notify.Notifier, baseU
 		return n.Send(ctx, notify.Message{
 			Channel: notify.EmailChannel,
 			To:      p.Email,
-			Subject: "Reset your Dibbits Contractor Portal password",
+			Subject: "Reset your " + portalLabel() + " password",
 			Body: fmt.Sprintf("A password reset was requested for your account.\n\n"+
 				"Choose a new password:\n%s\n\n"+
 				"This link expires %s. If you didn't request this, ignore this email.",
@@ -90,6 +91,23 @@ func RegisterNotificationHandlers(d *notify.Dispatcher, n notify.Notifier, baseU
 		}
 		return nil
 	})
+}
+
+// portalLabel names the portal as a person reads it: the dealer's own configured name, or a neutral
+// word when none is set. It is read at send time, never fixed in code (no dealer's name in code).
+func portalLabel() string {
+	if n := dealer.Name(); n != "" {
+		return n + " Contractor Portal"
+	}
+	return "contractor portal"
+}
+
+// portalPhrase is portalLabel with its article, for "invited to ...".
+func portalPhrase() string {
+	if n := dealer.Name(); n != "" {
+		return "the " + n + " Contractor Portal"
+	}
+	return "your dealer's contractor portal"
 }
 
 // buildLink appends a single query parameter to the portal base URL, encoding correctly even

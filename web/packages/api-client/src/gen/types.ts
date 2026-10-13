@@ -233,12 +233,14 @@ export type DemoSessionResponse = {
   token?: string;
   user?: { [key: string]: unknown };
   flow?: string;
+  class?: "staff" | "tenant";
   chapter_key?: string;
 };
 export type DemoFlow = {
   flow?: string;
   role_code?: string;
   label?: string;
+  class?: "staff" | "tenant";
 };
 export type DemoFlowList = {
   flows: DemoFlow[];
