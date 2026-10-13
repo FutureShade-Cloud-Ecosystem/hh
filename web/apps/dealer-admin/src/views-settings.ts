@@ -64,6 +64,8 @@ export interface PolicySection {
   readonly arrangement: string;
   readonly marginVisibility: string;
   readonly balanceVisibility: string;
+  /** Carried whole through a save so a write never resets the dealer default; the surface has no control for it yet. */
+  readonly supplierDepositCancel: string;
   readonly history: readonly PolicyChange[];
   readonly historyPhase: "loading" | "ready" | "refused" | "error";
   readonly historyWords: string;

@@ -70,6 +70,7 @@ import {
 } from "./hotkey-logic.js";
 import { SURFACES, isSurfaceId } from "./surfaces.js";
 import { dealerStyles } from "./styles.js";
+import { pricingStyles } from "./pricing-styles.js";
 import { renderStaff, type StaffModel } from "./views-staff.js";
 import { renderHotkeys, type HotkeysModel } from "./views-hotkeys.js";
 import { renderAudit, type AuditDetail, type AuditModel, type AuditTrail } from "./views-audit.js";
@@ -89,6 +90,9 @@ import {
   type TourSection,
 } from "./views-settings.js";
 import { EMPTY_FILTERS, auditRefusalWords, sinceWire, type AuditFilters } from "./audit-logic.js";
+import { PricingApi } from "./pricing-api.js";
+import { pricingAttrs, PricingController } from "./pricing-controller.js";
+import { renderPricing } from "./views-pricing.js";
 import type { AuditRow } from "./dealer-api.js";
 
 const DEMO_ORG = "hh-demo";
@@ -194,6 +198,7 @@ const emptySettingsModel = (): SettingsModel => ({
     arrangement: "LOOKUP_LEFT",
     marginVisibility: "MANAGER_UP",
     balanceVisibility: "ALL_STAFF",
+    supplierDepositCancel: "CREDIT_BACK",
     history: [],
     historyPhase: "loading",
     historyWords: "",
@@ -217,7 +222,7 @@ const emptySettingsModel = (): SettingsModel => ({
 });
 
 export class DealerAdminApp extends HHElement {
-  static styles = [baseStyles, dealerStyles];
+  static styles = [baseStyles, dealerStyles, pricingStyles];
 
   // The demo account surface: listFlows() and chooseFlow() over the core's
   // demo routes. It is the injected AccountSurface for the auth package.
@@ -249,6 +254,9 @@ export class DealerAdminApp extends HHElement {
 
   // The deployment settings' calls, over the staff client.
   readonly #settingsApi = new SettingsApi(this.#staffClient);
+  // The pricing surface: its own controller, door and model, so this file
+  // carries only the wiring (the listener branches and the router line).
+  readonly #pricing = new PricingController(new PricingApi(this.#staffClient), () => this.requestUpdate());
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
@@ -319,8 +327,15 @@ export class DealerAdminApp extends HHElement {
         if (surface === "audit" && this.#audit.phase === "loading") void this.#loadAudit();
         if (surface === "role-config" && this.#roleConfig.phase === "loading") void this.#loadRoleConfig();
         if (surface === "deployment" && this.#settings.brand.phase === "loading") void this.#loadSettings();
+        if (surface === "pricing") void this.#pricing.open();
         this.requestUpdate();
       }
+      return;
+    }
+    // The pricing surface's controls: every action rides a pr- prefixed name
+    // and the controller owns the whole state machine behind them.
+    if (typeof action === "string" && action.startsWith("pr-")) {
+      if (control !== undefined) void this.#pricing.click(action, pricingAttrs(control));
       return;
     }
     if (action === "reload-staff") {
@@ -499,6 +514,25 @@ export class DealerAdminApp extends HHElement {
   readonly #onHostChange = (event: Event): void => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    const field = target.getAttribute("data-field") ?? "";
+    if (field.startsWith("pr-")) {
+      // A file input's answer is the chosen file read whole: the text hands
+      // off to the controller with its name, so the wire carries both.
+      if (target instanceof HTMLInputElement && target.type === "file") {
+        const file = target.files?.[0];
+        if (file !== undefined) {
+          const name = file.name;
+          void file.text().then((text) => this.#pricing.inputFile(field.slice(3), text, name));
+        }
+        return;
+      }
+      // A checkbox rides as yes or no; a select's answer is the option's own
+      // word, which the controller maps back to the id it stands for.
+      let value = target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "";
+      if (target instanceof HTMLInputElement && target.type === "checkbox") value = target.checked ? "yes" : "no";
+      this.#pricing.change(field.slice(3), value);
+      return;
+    }
     const action = target.getAttribute("data-action") ?? "";
     if (action === "assign-role") {
       const id = target.getAttribute("data-user-id") ?? "";
@@ -549,8 +583,9 @@ export class DealerAdminApp extends HHElement {
     }
   };
 
-  // The audit filters' fields and the role configuration's text and number
-  // fields mirror from input events, never bound.
+  // The audit filters', the pricing editors' and the role configuration's and
+  // deployment settings' text and number fields mirror from input events,
+  // never bound.
   readonly #onHostInput = (event: Event): void => {
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -562,6 +597,14 @@ export class DealerAdminApp extends HHElement {
       if (field === "audit-action") this.#audit = { ...this.#audit, filters: { ...filters, action: value } };
       if (field === "audit-actor-id") this.#audit = { ...this.#audit, filters: { ...filters, actor_id: value } };
       if (field === "audit-since") this.#audit = { ...this.#audit, filters: { ...filters, since: value } };
+      return;
+    }
+    if (field.startsWith("pr-")) {
+      const value =
+        target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement
+          ? target.value
+          : "";
+      this.#pricing.input(field.slice(3), value);
       return;
     }
     const editor = this.#roleConfig.editor;
@@ -746,6 +789,18 @@ export class DealerAdminApp extends HHElement {
     for (const [field, on] of Object.entries(policyFlags)) {
       const el = this.renderRoot.querySelector<HTMLInputElement>(`input[data-field="${field}"]`);
       if (el !== null && el.checked !== on) el.checked = on;
+    }
+    // The pricing editors' fields mirror the controller's model the same
+    // way, checkbox included.
+    for (const el of Array.from(this.renderRoot.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-field^="pr-"]'))) {
+      const field = el.getAttribute("data-field") ?? "";
+      const value = this.#pricing.fieldValue(field.slice(3));
+      if (el instanceof HTMLInputElement && el.type === "checkbox") {
+        const checked = value === "yes";
+        if (el.checked !== checked) el.checked = checked;
+      } else if (el.value !== value) {
+        el.value = value;
+      }
     }
   }
 
@@ -1235,6 +1290,7 @@ export class DealerAdminApp extends HHElement {
         arrangement: p.workspace_arrangement,
         marginVisibility: p.margin_visibility,
         balanceVisibility: p.balance_visibility,
+        supplierDepositCancel: p.supplier_deposit_cancel,
       });
     }
 
@@ -1345,6 +1401,7 @@ export class DealerAdminApp extends HHElement {
       lookup_presentation: s.lookupPresentation,
       margin_visibility: s.marginVisibility,
       balance_visibility: s.balanceVisibility,
+      supplier_deposit_cancel: s.supplierDepositCancel,
       quick_chip_set: chipsOf(s.chips),
     });
     if (!result.ok) {
@@ -1374,6 +1431,7 @@ export class DealerAdminApp extends HHElement {
         arrangement: p.workspace_arrangement,
         marginVisibility: p.margin_visibility,
         balanceVisibility: p.balance_visibility,
+        supplierDepositCancel: p.supplier_deposit_cancel,
       };
     } else {
       next = { ...next, error: counterPolicyRefusalWords(errorWords(policy.error), policy.status) };
@@ -1698,6 +1756,7 @@ export class DealerAdminApp extends HHElement {
     this.#roleConfig = emptyRoleConfigModel();
     this.#settings = emptySettingsModel();
     this.#auditDetailGen += 1;
+    this.#pricing.reset();
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -1738,6 +1797,7 @@ export class DealerAdminApp extends HHElement {
     if (this.#surface === "audit") return renderAudit(this.#audit);
     if (this.#surface === "role-config") return renderRoleConfig(this.#roleConfig);
     if (this.#surface === "deployment") return renderSettings(this.#settings);
+    if (this.#surface === "pricing") return renderPricing(this.#pricing.model);
     return renderStaff(this.#staff);
   }
 
