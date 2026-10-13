@@ -50,7 +50,8 @@ export const reasonLine = (code: string): string => REASON_LINE[code] ?? "A reas
 export const NEEDS_EVIDENCE: readonly string[] = ["FED_S87_VENDOR_DELIVERY", "ON_FN_POS_8", "FNGST_5"];
 
 const AREA: Record<string, string> = { CA: "California" };
-export const areaWord = (code: string): string => AREA[code] ?? code;
+/** An area the screen does not know reads neutrally: the core's own default is an Ontario code, never shown. */
+export const areaWord = (code: string): string => AREA[code] ?? "Other area";
 
 export type RateState = "in-force" | "scheduled" | "ended";
 
@@ -70,10 +71,10 @@ export function rateStateTone(state: RateState): Tone {
   return "plain";
 }
 
-/** The tax area new rows join: the standard rate in force today, else the first row, else nothing (the core's own default). */
+/** The tax area new rows join: the standard rate in force today, else the first row, else the dealer's own (California). */
 export function areaForNewRows(rows: ReadonlyArray<{ jurisdiction: string; reason_code: string; effective_from: string; effective_to?: string }>, today: string): string {
   const standard = rows.find((r) => r.reason_code === "STD_ON_HST_13" && rateState(r.effective_from, r.effective_to, today) === "in-force");
-  return standard?.jurisdiction ?? rows[0]?.jurisdiction ?? "";
+  return standard?.jurisdiction ?? rows[0]?.jurisdiction ?? "CA";
 }
 
 // ---- profiles -----------------------------------------------------------------------------------------
@@ -269,7 +270,7 @@ export function refusalWords(action: TaxAction, message: string, status: number)
   if (lower === "reason_code required") return "Choose a reason first.";
   if (lower === "code required") return "Give the profile a code first.";
   if (lower.includes("a relief profile must force")) {
-    return "Not saved: a profile that charges less than the standard rate must require the certificate number. Tick Certificate number, or raise the rate.";
+    return "Not saved: this profile must require the certificate number. Tick Certificate number and save again.";
   }
   if (lower.includes("is required for this profile")) {
     const what = /^(band-card photo|band-card number|attestation) is required/i.exec(message)?.[1]?.toLowerCase();

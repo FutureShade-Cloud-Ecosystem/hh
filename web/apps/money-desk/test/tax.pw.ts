@@ -191,7 +191,7 @@ test("a new profile is saved, an existing one edited, and a wrong one is held or
   await save.click();
   await expect(page.locator("[data-confirm='profile']")).toContainText("Save the Licensed contractor profile?");
   await page.locator("[data-confirm='profile']").getByRole("button", { name: "Save the profile" }).click();
-  await expect(page.locator("[data-error]")).toContainText("Not saved: a profile that charges less than the standard rate must require the certificate number.");
+  await expect(page.locator("[data-error]")).toContainText("Not saved: this profile must require the certificate number.");
   await noOldWords(page);
   expect(posts).toHaveLength(1);
   // Tick the number and save it as waiting for review: it lands in the queue.

@@ -75,7 +75,8 @@ test("every reason has a word of ours and none says HST, GST, Ontario or a band"
   assert.equal(reasonWord("STD_ON_HST_13"), "Standard sales tax");
   assert.equal(reasonWord("SOMETHING_NEW"), "Other reason");
   assert.equal(areaWord("CA"), "California");
-  assert.equal(areaWord("XX"), "XX");
+  assert.equal(areaWord("XX"), "Other area");
+  assert.equal(areaWord("ON"), "Other area");
 });
 
 test("a rate row is in force from its first day to its last, both included", () => {
@@ -94,7 +95,8 @@ test("new rows join the tax area of the standard rate in force, else the first r
   ];
   assert.equal(areaForNewRows(rows, "2030-01-01"), "CA");
   assert.equal(areaForNewRows(rows.slice(0, 1), "2030-01-01"), "AA");
-  assert.equal(areaForNewRows([], "2030-01-01"), "");
+  assert.ok(!/ON\b/.test(areaWord(areaForNewRows([], "2030-01-01")) ));
+  assert.equal(areaForNewRows([], "2030-01-01"), "CA");
 });
 
 test("a profile's standing reads in words with the tone behind them", () => {
@@ -189,7 +191,7 @@ test("the core's sentences are rewritten into what to do next, with none of its 
       "Not added: this reason may not charge less than the standard rate (7.75%) unless it needs a certificate or proof of delivery. Its rate was 1%. Raise it, or choose a reason that needs evidence.",
     ],
     ["profile", "code required", "Give the profile a code first."],
-    ["profile", "a relief profile must force the band-card number as evidence", "Not saved: a profile that charges less than the standard rate must require the certificate number. Tick Certificate number, or raise the rate."],
+    ["profile", "a relief profile must force the band-card number as evidence", "Not saved: this profile must require the certificate number. Tick Certificate number and save again."],
     ["capture", "band-card photo is required for this profile", "Not recorded: this profile requires the photo of the certificate."],
     ["capture", "band-card number is required for this profile", "Not recorded: this profile requires the certificate number."],
     ["capture", "attestation is required for this profile", "Not recorded: this profile requires the signed statement."],
