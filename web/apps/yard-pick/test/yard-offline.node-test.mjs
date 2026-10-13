@@ -628,3 +628,36 @@ test("a connected record the server superseded is answered in words, not as save
   const after = await layer.pick(TASK);
   assert.equal(after.value.picked.length, 0);
 });
+
+// ---- the refusal of a record onto a closed pick (FROM-PRINCIPAL 49) ----
+
+const HANDED_OVER = "This pick was already handed over, so your short was not saved. Tell the counter: the order still bills the full quantity.";
+const CANCELLED_WORDS = "This pick was cancelled, so your record was not saved. Tell the counter.";
+
+for (const [sentence, yardWords, label] of [
+  ["tasks: this pick is done, its record cannot change", HANDED_OVER, "handed over"],
+  ["tasks: this pick was cancelled, its record cannot change", CANCELLED_WORDS, "cancelled"],
+]) {
+  test(`an offline record the core refuses on a ${label} pick comes back as a card in the yard's words, and the local lines are taken back`, async () => {
+    const { layer, server } = await rig();
+    server.setOffline(true);
+    await layer.recordLines(TASK, [SHORT]);
+    const [queued] = await layer.store.outbox.pending();
+    server.refuse(queued.key, sentence);
+    server.setOffline(false);
+    await layer.cycle();
+    const card = (await layer.openCards()).find((c) => c.kind === "rejected");
+    assert.equal(card.error, yardWords);
+    const after = await layer.pick(TASK);
+    assert.equal(after.value.picked.length, 0);
+  });
+
+  test(`a connected record the core refuses on a ${label} pick is answered in the yard's words`, async () => {
+    const { layer, server } = await rig();
+    const saved = await layer.recordLines(TASK, [SHORT]);
+    assert.equal(saved.ok, true);
+    const [queued] = await layer.store.outbox.pending();
+    server.refuse(queued.key, sentence);
+    assert.equal(await layer.sendRecordNow(TASK), yardWords);
+  });
+}

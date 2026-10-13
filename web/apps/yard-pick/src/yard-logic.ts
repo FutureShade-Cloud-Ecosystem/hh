@@ -360,6 +360,24 @@ export function recordBlockedReason(lines: ReadonlyArray<{ qty_picked: string; q
   return "";
 }
 
+/** The core's refusal of a record onto a closed pick (tasks.pickClosedError, yard_short.go): the sentences are matched, and a
+ * test reads the Go source so a wording change there turns it red. */
+export const CORE_PICK_DONE = "this pick is done, its record cannot change";
+export const CORE_PICK_CANCELLED = "this pick was cancelled, its record cannot change";
+
+/**
+ * The yard's words for a record the core refused. A pick that was handed over (DONE) or cancelled takes no record, and a short
+ * the picker recorded then never reached the order: the order still bills the full quantity, which the customer sees, so the
+ * picker is told to tell the counter. Any other refusal keeps the core's own words.
+ */
+export function recordRefusalWords(error: string): string {
+  if (error.includes(CORE_PICK_DONE)) {
+    return "This pick was already handed over, so your short was not saved. Tell the counter: the order still bills the full quantity.";
+  }
+  if (error.includes(CORE_PICK_CANCELLED)) return "This pick was cancelled, so your record was not saved. Tell the counter.";
+  return error;
+}
+
 /** The id a recorded line carries while it exists only on this device. A pull
  * replaces the row, and the server's lines carry the server's ids. */
 export const LOCAL_LINE = "local:";

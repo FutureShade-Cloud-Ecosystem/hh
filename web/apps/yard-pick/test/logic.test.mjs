@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { goMaxPickedLines } from "./_lib/gosets.mjs";
+import { CORE_PICK_CANCELLED, CORE_PICK_DONE, recordRefusalWords } from "../src/yard-logic.ts";
 import {
   MAX_PICKED_LINES,
   MAX_SKIDS,
@@ -358,4 +359,21 @@ test("a line is local while only this device holds it, and the queued words do n
   assert.match(words, /saved on this device/i);
   assert.match(words, /when it sends/);
   assert.doesNotMatch(words, /has been told/);
+});
+
+// ---- the refusal of a record onto a closed pick (item 6c, FROM-PRINCIPAL 49) ----
+
+test("the sentences the client matches are the core's (yard_short.go pickClosedError), so a wording change there turns this red", () => {
+  const goSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "core", "internal", "tasks", "yard_short.go"), "utf8");
+  assert.ok(goSource.includes(`"tasks: ${CORE_PICK_DONE}"`), "the done sentence is the core's");
+  assert.ok(goSource.includes(`"tasks: ${CORE_PICK_CANCELLED}"`), "the cancelled sentence is the core's");
+});
+
+test("a record refused on a handed over or cancelled pick says what the picker must tell the counter", () => {
+  assert.equal(
+    recordRefusalWords(`tasks: ${CORE_PICK_DONE}`),
+    "This pick was already handed over, so your short was not saved. Tell the counter: the order still bills the full quantity.",
+  );
+  assert.equal(recordRefusalWords(`tasks: ${CORE_PICK_CANCELLED}`), "This pick was cancelled, so your record was not saved. Tell the counter.");
+  assert.equal(recordRefusalWords("line 1: that is more than was ordered"), "line 1: that is more than was ordered", "other refusals keep the core's words");
 });

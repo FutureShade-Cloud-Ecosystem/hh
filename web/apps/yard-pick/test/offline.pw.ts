@@ -129,23 +129,26 @@ test("back online, the outbox drains in order, and a ticket the test reassigned 
   // The server wins: the claim was superseded, and the start and the record
   // landed on a cancelled pick, so each answer is a card, in the board's words.
   await page.getByRole("button", { name: "Back to the queue" }).click();
-  await expect(page.getByRole("button", { name: "Review 2" })).toBeVisible();
-  await page.getByRole("button", { name: "Review 2" }).click();
+  await expect(page.getByRole("button", { name: "Review 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Review 3" }).click();
   const list = page.locator("[data-conflict-list]");
   await expect(list).toContainText("Superseded on the server");
   await expect(list).toContainText("Server wins · pick tasks");
   await expect(list).toContainText("moved on the server while you were offline");
   await expect(list).toContainText("Not accepted");
+  // The record, blind behind the start, reached a cancelled pick: the core refused it, and the card says what the picker
+  // must tell the counter (FROM-PRINCIPAL 49), in the yard's words, not the core's.
+  await expect(list).toContainText("This pick was cancelled, so your record was not saved. Tell the counter.");
   // The board itself shows the server's row now, not the device's claim.
   await page.getByRole("button", { name: "Back to the queue" }).click();
   await expect(page.locator("[data-pick-card]", { hasText: "SO-1039" }).locator("[data-task-status]")).toHaveText("Cancelled");
   // Dismiss is the exit: one card goes, the others wait.
-  await page.getByRole("button", { name: "Review 2" }).click();
+  await page.getByRole("button", { name: "Review 3" }).click();
   await page.getByRole("button", { name: /Dismiss: Superseded on the server/ }).click();
-  await expect(list).toContainText("1 to review");
+  await expect(list).toContainText("2 to review");
   // The list is reachable from the board, and the board names what is left.
   await page.getByRole("button", { name: "Back to the queue" }).click();
-  await expect(page.getByRole("button", { name: "Review 1" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review 2" })).toBeVisible();
 });
 
 test("offline, a shortage report waits in the outbox and drains clean, and the settle says no signal", async ({ page, request }) => {

@@ -58,7 +58,7 @@ import type {
   YardTask,
 } from "./yard-api.js";
 import { toPickedLine, toShortage, toTask, toTicket } from "./yard-api.js";
-import { LOCAL_LINE, pickRecordProblem } from "./yard-logic.js";
+import { LOCAL_LINE, pickRecordProblem, recordRefusalWords } from "./yard-logic.js";
 
 export { isLocalLine } from "./yard-logic.js";
 import { isLocalLine } from "./yard-logic.js";
@@ -297,8 +297,15 @@ export class YardOffline {
     return (await this.store.outbox.health()).stalls;
   }
 
-  openCards(): Promise<Card[]> {
-    return this.store.cards.listOpen();
+  /** The open cards. A pick record the core refused carries the yard's words
+   * (a pick already handed over or cancelled says what the picker must tell
+   * the counter); every other card keeps the core's own. */
+  async openCards(): Promise<Card[]> {
+    return (await this.store.cards.listOpen()).map((card) =>
+      card.kind === "rejected" && card.scope === "pick_tasks" && "picked" in card.clientPayload && card.error !== null
+        ? { ...card, error: recordRefusalWords(card.error) }
+        : card,
+    );
   }
 
   dismissCard(id: string): Promise<void> {
