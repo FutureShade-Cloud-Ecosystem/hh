@@ -116,7 +116,7 @@ test("it reads the trial balance in balance, with the server's totals", async ({
   await expect(page.locator("[data-trial]")).toContainText("No posted journals yet.");
   await page.getByRole("button", { name: "All branches" }).click();
   await expect(page.locator("[data-total-debit]")).toHaveText("$37,025.00");
-  await expect(page.locator("[data-later-trial]")).toContainText("tie out");
+  await expect(page.locator("[data-later-trial]")).toContainText("tie-out");
   await expect(page.locator("[data-later-trial] .gl-later")).toHaveText("later");
 });
 
@@ -128,7 +128,7 @@ test("the journal register keeps a journal number on one line and says what is l
   const box = await link.boundingBox();
   expect(box === null ? 99 : box.height).toBeLessThan(40);
   await link.click();
-  await expect(page.locator("[data-later-journal]")).toContainText("Void and Reverse");
+  await expect(page.locator("[data-later-journal]")).toContainText("Void and reverse");
   await expect(page.locator("[data-later-journal] .gl-later")).toHaveText("later");
 });
 

@@ -49,7 +49,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   ],
   "no-seeded-hold": [
     { file: `${CORE}demoseed_payables_receivables.go`, source: "No credit hold is seeded" },
-    { file: "src/ar/ar-views.ts", source: "The sweep places the Aged AR, Over limit and Pay before release holds, and a returned payment places its own." },
+    { file: "src/ar/ar-views.ts", source: "The sweep places the Aged AR, Over limit and Pay-before-release holds, and a returned payment places its own." },
   ],
   "four-tiles": [
     DESK_OPENS,

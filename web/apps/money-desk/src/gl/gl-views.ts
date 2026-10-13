@@ -238,7 +238,7 @@ function decidePanel(model: GlModel): TemplateResult {
       <div class="gl-choices" role="radiogroup" aria-label="Your decision">
         ${choiceCard(model, "approve", approveWord, approveLine, own)} ${choiceCard(model, "decline", "Decline", declineLine, own)}
         ${row.policy_type === "MARGIN_BELOW_MINIMUM"
-          ? html`<div class="gl-choice gl-choice-held" data-choice-later><span class="gl-choice-title">Approve at a different price ${later("later")}</span><span class="gl-choice-line">The core takes approve or decline only today.</span></div>`
+          ? html`<div class="gl-choice gl-choice-held" data-choice-later><span class="gl-choice-title">Approve at a different price ${later("later")}</span><span class="gl-choice-line">Only approve or decline is here today. Void and reverse arrive later.</span></div>`
           : nothing}
       </div>
       ${own
@@ -297,7 +297,7 @@ function journalDetail(model: GlModel): TemplateResult {
         ${pending ? html`<dt>Why it waits</dt><dd>At or over the approval threshold (GL policy).</dd>` : nothing}
       </dl>
       ${journalLines(journal)}
-      <p class="gl-dim gl-later-line" data-later-journal>Void and Reverse are served by the core and are not in this increment: ${later("later")}</p>
+      <p class="gl-dim gl-later-line" data-later-journal>Void and reverse arrive later: ${later("later")}</p>
       ${pending && request !== undefined
         ? html`
             <div class="gl-actions gl-actions-spaced">
@@ -385,7 +385,7 @@ function trialView(model: GlModel): TemplateResult {
               </table>
             </div>
           `}
-      <p class="gl-dim gl-later-line" data-later-trial>Period choice, the tie out against the receivables and payables ledgers, and the Excel download are served by the core and are not in this increment: ${later("later")}</p>
+      <p class="gl-dim gl-later-line" data-later-trial>Period choice, the tie-out against the receivables and payables ledgers, and the Excel download arrive later: ${later("later")}</p>
     </section>
   `;
 }
