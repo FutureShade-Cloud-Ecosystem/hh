@@ -616,3 +616,15 @@ test("a refused record is taken back when the refusal arrives after a restart", 
   assert.deepEqual((await fresh.openCards()).map((c) => c.kind), ["rejected"]);
 });
 
+test("a connected record the server superseded is answered in words, not as saved", async () => {
+  const { layer, server } = await rig();
+  server.touch("pick_tasks", TASK, { priority: "NORMAL" });
+  const saved = await layer.recordLines(TASK, [recordLine()]);
+  assert.equal(saved.ok, true);
+  const words = await layer.sendRecordNow(TASK);
+  assert.match(words, /changed on the server first/);
+  assert.match(words, /not saved/);
+  assert.deepEqual((await layer.openCards()).map((c) => c.kind), ["superseded"]);
+  const after = await layer.pick(TASK);
+  assert.equal(after.value.picked.length, 0);
+});
