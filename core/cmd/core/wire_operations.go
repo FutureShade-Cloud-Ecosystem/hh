@@ -272,7 +272,31 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// Later Phase D items register their scopes beside this block, one
 	// RegisterScope per owning module.
 	syncEngine := sync.NewEngine().WithAudit(syncAuditSeam{svc: spine.auditSvc, link: link}, log)
-	if err := syncEngine.RegisterScope("pick_tasks", tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
+	// The pick record door (Field CP-2) runs the yard service's RecordPick under the branch fence the
+	// REST door applies: the sync store takes the staff authority seam (the subject's authority in
+	// the org, with the linked ERP user) here and the yard service, the record body, where that
+	// service is built below. A nil pool (the wiring-shape tests) wires no seam; a real boot fails
+	// fast without both.
+	var syncStaff identity.SyncStaffResolver
+	if pool != nil {
+		authority, authErr := erpidentity.NewStaffAuthorityResolver(pool)
+		if authErr != nil {
+			panic("sync: pick record door authority resolver refused to boot: " + authErr.Error())
+		}
+		syncStaff = func(ctx context.Context, platformUserID, orgID string) (identity.StaffContext, bool, error) {
+			a, has, err := authority.ResolveStaff(ctx, platformUserID, orgID)
+			if err != nil || !has {
+				return identity.StaffContext{}, false, err
+			}
+			sc := identity.FromAuthority(a)
+			if uid, ok := link(ctx, platformUserID); ok {
+				sc.UserID = uid
+			}
+			return sc, true, nil
+		}
+	}
+	pickSync := tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link).WithStaffAuthority(syncStaff)
+	if err := syncEngine.RegisterScope("pick_tasks", pickSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	// The yard-pick item's scopes (HH-3.5 #166): shortages and weights
@@ -603,6 +627,11 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	orderSvc.WithDepositReleaser(billing.NewInvoiceWriter(pool))
 	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
+	// The sync record door's body is the yard service, the one the REST record door runs.
+	pickSync.WithPickRecorder(yardTasksSvc)
+	if pool != nil && !pickSync.PickDoorWired() {
+		panic("tasks: pick record sync door not wired - a yard device's recorded pick would refuse every replay")
+	}
 	// Item 9 Opus P2-1: the yard's doors (Claim, Stage) carry the pick hold
 	// the will call doors carry, over the same billing read, with the boot
 	// fail-fast keeping a deploy from serving with the yard door dark.
