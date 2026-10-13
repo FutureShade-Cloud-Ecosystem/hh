@@ -76,8 +76,8 @@ test("the needs-you footer opens the queue, and the view links sit as small chip
   const foot = page.locator("[data-widget='needs.you'] .needs-foot");
   await expect(foot.locator(".queue-link")).toContainText("Open the queue");
   const links = page.locator(".view-link");
-  await expect(links).toHaveCount(3);
-  for (const label of ["Shortages · open", "Receiving · short", "Approvals"]) {
+  await expect(links).toHaveCount(4);
+  for (const label of ["Shortages · open", "Receiving · short", "Approvals", "Drivers"]) {
     await expect(links.filter({ hasText: label })).toContainText("›");
   }
 });
