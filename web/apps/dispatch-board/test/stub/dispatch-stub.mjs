@@ -529,7 +529,7 @@ function splitView(s) {
 
 function refuseIfArmed(res, method, path) {
   if (armed === null) return false;
-  if (armed.path !== undefined && !path.includes(armed.path)) return false;
+  if (armed.path !== undefined && !(armed.exact === true ? path === armed.path : path.includes(armed.path))) return false;
   if (method === "GET" && armed.reads !== true) return false;
   const a = armed;
   armed = null;
