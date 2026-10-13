@@ -50,9 +50,21 @@ let faults = [];
 let delayMs = 0;
 
 function userFor(token) {
-  // A tenant bearer is `pro-stub.<persona>.<expiresAtMs>`; a staff one is `staff-stub.x`.
+  // A tenant bearer is `pro-stub.<persona>.<expiresAtMs>`, or the demo route's JWT shaped one (a payload carrying
+  // the persona and an exp claim); a staff one is `staff-stub.x`.
   const parts = token.split(".");
   if (parts[0] === "staff-stub") return { classOf: "staff" };
+  if (parts.length === 3 && parts[0] !== "pro-stub") {
+    try {
+      const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+      const persona = PERSONAS[claims.stub_persona];
+      if (!persona || !(claims.exp * 1000 > Date.now())) return null;
+      const user = world.users.find((u) => u.email === persona.email);
+      return user ? { classOf: "tenant", user } : null;
+    } catch {
+      return null;
+    }
+  }
   if (parts.length !== 3 || parts[0] !== "pro-stub") return null;
   const persona = PERSONAS[parts[1]];
   if (!persona || !(Number(parts[2]) > Date.now())) return null;
@@ -830,6 +842,10 @@ async function handle(req, res) {
     return setImmediate(() => process.exit(0));
   }
   if (url.pathname === "/_stub/session" && req.method === "POST") return stubSession(req, res);
+  // The demo build's two routes, in the core's shape (core/internal/demo/session.go): the closed flow table with each
+  // row's class and role code, and one mint per named flow that answers a tenant class bearer for a contractor flow.
+  if (url.pathname === "/api/v1/demo/flows" && req.method === "GET") return demoFlows(res);
+  if (url.pathname === "/api/v1/demo/session" && req.method === "POST") return demoSession(req, res);
 
   const found = match(req.method, url.pathname);
   if (!found.route) {
@@ -887,6 +903,37 @@ async function stubSession(req, res) {
   const expiresAtMs = Date.now() + 3_600_000;
   const user = world.users.find((u) => u.email === persona[1].email);
   ok(res, { token: `pro-stub.${persona[0]}.${expiresAtMs}`, expires_at_ms: expiresAtMs, user: { id: user.id, email: user.email, name: user.name } });
+}
+
+const DEMO_FLOWS = [
+  { flow: "sales", role_code: "inside_sales", label: "Sales", class: "staff" },
+  { flow: "contractor-account-admin", role_code: "account_admin", label: "Contractor owner", class: "tenant", persona: "owner" },
+  { flow: "contractor-buyer", role_code: "buyer", label: "Contractor buyer", class: "tenant", persona: "buyer" },
+  { flow: "contractor-buyer-no-pay", role_code: "buyer_no_pay", label: "Contractor buyer (no pay)", class: "tenant", persona: "pm" },
+  { flow: "contractor-ap-finance", role_code: "ap_finance", label: "Contractor AP", class: "tenant", persona: "ap" },
+  { flow: "contractor-field-crew", role_code: "field_crew", label: "Contractor field crew", class: "tenant", persona: "field" },
+];
+
+function demoFlows(res) {
+  ok(res, { flows: DEMO_FLOWS.map(({ flow, role_code, label, class: kind }) => ({ flow, role_code, label, class: kind })) });
+}
+
+async function demoSession(req, res) {
+  const body = await readJson(req, res);
+  if (body === undefined) return;
+  const row = DEMO_FLOWS.find((f) => f.flow === body?.flow);
+  if (!row) return refuse(res, 400, "demo: unknown flow: the entry page offers only the flows GET /api/v1/demo/flows lists");
+  if (row.class !== "tenant") return refuse(res, 500, "demo: the stub mints contractor flows only");
+  const persona = PERSONAS[row.persona];
+  const user = world.users.find((u) => u.email === persona.email);
+  const part = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const token = `${part({ alg: "none" })}.${part({ sub: user.id, exp: Math.floor((Date.now() + 3_600_000) / 1000), stub_persona: row.persona })}.stub`;
+  ok(res, {
+    token,
+    user: { user_id: user.id, email: user.email, display_name: user.name, role_code: row.role_code, role_name: row.label },
+    flow: row.flow,
+    class: "tenant",
+  });
 }
 
 export function startStub(port) {

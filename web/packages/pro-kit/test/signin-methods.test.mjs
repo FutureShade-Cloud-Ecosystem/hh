@@ -3,7 +3,7 @@
 // every method, one method only, and a method the dealer refuses.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { signInPlan, METHOD_LABELS, DEMO_METHODS } from "../src/signin-methods.ts";
+import { signInPlan, METHOD_LABELS, DEMO_METHODS, demoRoleFromAddress, otherAppAddress } from "../src/signin-methods.ts";
 
 const labels = (plan) => plan.buttons.map((b) => b.label);
 
@@ -69,4 +69,25 @@ test("no word on the card names the machinery", () => {
     words.push(plan.hint, plan.googleNote, plan.refusal ?? "");
   }
   for (const w of words) assert.doesNotMatch(w, /console|core|token|session|oauth|jwt/i, w);
+});
+
+test("the front door's card opens the app with the role code, and the app reads it as a role label", () => {
+  assert.equal(demoRoleFromAddress("?as=account_admin"), "Owner");
+  assert.equal(demoRoleFromAddress("?as=buyer"), "Buyer");
+  assert.equal(demoRoleFromAddress("?x=1&as=buyer_no_pay"), "Project manager");
+  assert.equal(demoRoleFromAddress("?as=ap_finance"), "Accounts payable");
+  assert.equal(demoRoleFromAddress("?as=field_crew"), "Field crew");
+});
+
+test("anything but one of the five contractor role codes asks for nothing", () => {
+  for (const search of ["", "?", "?as=", "?as=inside_sales", "?as=BUYER", "?as=buyer,ap_finance", "?as=__proto__", "?as=constructor", "?role=buyer", undefined, null]) {
+    assert.equal(demoRoleFromAddress(search), null, String(search));
+  }
+});
+
+test("leaving for another Pro app in the demo build carries the role, so the person is not signed out on the way", () => {
+  assert.equal(otherAppAddress("/pro-pay/", "ap_finance", true), "/pro-pay/?as=ap_finance");
+  assert.equal(otherAppAddress("/pro-field/", "field_crew", false), "/pro-field/");
+  assert.equal(otherAppAddress("/pro-field/", undefined, true), "/pro-field/");
+  assert.equal(otherAppAddress("/pro-field/", "inside_sales", true), "/pro-field/");
 });

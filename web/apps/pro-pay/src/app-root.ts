@@ -23,7 +23,7 @@ import {
   type TenantPayment,
   type TenantPaymentMethod,
 } from "@hardscapehouse/api-client";
-import { CAPABILITIES, InMemoryTenantSession, chipStyles, monoStyles, realExchangeAdapter, demoTenantAdapter, signInFromCard, roleLabel, stubAdapter, surfaceOf, tenantClient, appOf, type Capability, type TenantSession } from "@hardscapehouse/pro-kit";
+import { CAPABILITIES, InMemoryTenantSession, chipStyles, monoStyles, realExchangeAdapter, demoTenantAdapter, signInFromCard, demoRoleFromAddress, otherAppAddress, roleLabel, stubAdapter, surfaceOf, tenantClient, appOf, type Capability, type TenantSession } from "@hardscapehouse/pro-kit";
 import "@hardscapehouse/pro-kit/src/frame.js";
 import "@hardscapehouse/pro-kit/src/signin.js";
 import "@hardscapehouse/pro-kit/src/state-view.js";
@@ -127,7 +127,7 @@ export class ProPayApp extends HHElement {
       return;
     }
     const target = appOf(app);
-    if (target !== undefined) window.location.assign(target.path);
+    if (target !== undefined) window.location.assign(otherAppAddress(target.path, this.#session.profile()?.role, import.meta.env.MODE === "demo"));
   };
 
   readonly #onSignOut = (): void => {
@@ -136,6 +136,11 @@ export class ProPayApp extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    // The demo build: a front door contractor card opens this app with its role, and the persona signs in at once.
+    if (import.meta.env.MODE === "demo") {
+      const asked = demoRoleFromAddress(window.location.search);
+      if (asked !== null) void this.#signIn({ method: "persona", roleLabel: asked });
+    }
     this.addEventListener("click", this.#onClick);
     this.addEventListener("keydown", this.#onKey);
     this.addEventListener("pro-signin-submit", this.#onSignIn);

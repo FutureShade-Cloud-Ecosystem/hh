@@ -25,6 +25,8 @@ import {
   realExchangeAdapter,
   demoTenantAdapter,
   signInFromCard,
+  demoRoleFromAddress,
+  otherAppAddress,
   roleLabel,
   stubAdapter,
   tenantClient,
@@ -304,7 +306,7 @@ export class ProProcurementApp extends HHElement {
     if (app !== "procurement") {
       // Another app's surface: that app serves it on its own address.
       const target = appOf(app)?.path;
-      if (target !== undefined) window.location.assign(target);
+      if (target !== undefined) window.location.assign(otherAppAddress(target, this.#session.profile()?.role, import.meta.env.MODE === "demo"));
       return;
     }
     const route = surfaceRouteFromCatalogue(surface);
@@ -334,6 +336,11 @@ export class ProProcurementApp extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    // The demo build: a front door contractor card opens this app with its role, and the persona signs in at once.
+    if (import.meta.env.MODE === "demo") {
+      const asked = demoRoleFromAddress(window.location.search);
+      if (asked !== null) void this.#signIn({ method: "persona", roleLabel: asked });
+    }
     this.addEventListener("click", this.#onClick);
     this.addEventListener("keydown", this.#onKey);
     this.addEventListener("input", this.#onInput);

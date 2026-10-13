@@ -6,6 +6,7 @@
 // The words are the board's, and none names the machinery behind a sign in.
 import type { Result } from "@hardscapehouse/api-client";
 import type { TenantProfile, TenantSession } from "./session.js";
+import { ROLE_LABELS, TENANT_ROLES } from "./capabilities.js";
 
 export type SignInMethod = "email_link" | "google" | "microsoft" | "futurebuild";
 
@@ -49,6 +50,25 @@ const IN_A_SENTENCE: Readonly<Record<SignInMethod, string>> = {
 };
 
 const KNOWN: readonly SignInMethod[] = ["email_link", "futurebuild", "google", "microsoft"];
+
+/**
+ * The role the front door's contractor card asked for: its card opens the app at `?as=<role code>`, and in
+ * the demo build the app signs that persona in itself (a Pro app keeps its bearer in memory, so the front
+ * door cannot hand it one). Only the five contractor role codes ask for anything; the answer is the role's
+ * label, the word the demo adapter picks a persona by.
+ */
+export function demoRoleFromAddress(search: string | null | undefined): string | null {
+  if (typeof search !== "string") return null;
+  const asked = new URLSearchParams(search).get("as");
+  const role = TENANT_ROLES.find((r) => r === asked);
+  return role === undefined ? null : ROLE_LABELS[role];
+}
+
+/** Where another Pro app opens: in the demo build it carries the signed in role, so the hop does not sign the person out. */
+export function otherAppAddress(path: string, role: string | null | undefined, demo: boolean): string {
+  const known = TENANT_ROLES.find((r) => r === role);
+  return demo && known !== undefined ? `${path}?as=${known}` : path;
+}
 
 export interface SignInPlanInput {
   /** The methods the dealer allows; unknown and repeated entries fall away. */

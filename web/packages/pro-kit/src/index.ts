@@ -4,7 +4,7 @@ export { CAPABILITIES, TENANT_ROLES, ROLE_LABELS, can, capabilitiesFor, roleLabe
 export type { Capability } from "./capabilities.js";
 export { InMemoryTenantSession, memoryStorage } from "./session.js";
 export type { TenantSession, TenantProfile, TenantAnswer, TenantSignInAdapter, SignInRequest, SignInOptions } from "./session.js";
-export { signInPlan, signInFromCard, METHOD_LABELS, DEMO_METHODS } from "./signin-methods.js";
+export { signInPlan, signInFromCard, demoRoleFromAddress, otherAppAddress, METHOD_LABELS, DEMO_METHODS } from "./signin-methods.js";
 export type { SignInMethod, SignInPlan, SignInMethodChoice, SignInSubmit } from "./signin-methods.js";
 export { DemoTenantSignInAdapter, demoTenantAdapter } from "./demo-adapter.js";
 export { tenantClient } from "./client.js";

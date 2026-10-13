@@ -29,6 +29,8 @@ import {
   realExchangeAdapter,
   demoTenantAdapter,
   signInFromCard,
+  demoRoleFromAddress,
+  otherAppAddress,
   roleLabel,
   stubAdapter,
   tenantClient,
@@ -333,7 +335,7 @@ export class ProFieldApp extends HHElement {
       return;
     }
     const target = appOf(app);
-    if (target !== undefined) window.location.assign(target.path);
+    if (target !== undefined) window.location.assign(otherAppAddress(target.path, this.#session.profile()?.role, import.meta.env.MODE === "demo"));
   };
 
   readonly #onSignOut = (): void => {
@@ -342,6 +344,11 @@ export class ProFieldApp extends HHElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    // The demo build: a front door contractor card opens this app with its role, and the persona signs in at once.
+    if (import.meta.env.MODE === "demo") {
+      const asked = demoRoleFromAddress(window.location.search);
+      if (asked !== null) void this.#signIn({ method: "persona", roleLabel: asked });
+    }
     this.addEventListener("click", this.#onClick);
     this.addEventListener("pro-signin-submit", this.#onSignIn);
     this.addEventListener("pro-signin-method", this.#onSignIn);
