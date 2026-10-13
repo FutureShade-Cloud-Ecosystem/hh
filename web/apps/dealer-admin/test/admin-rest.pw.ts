@@ -57,6 +57,8 @@ test.describe("the assist admin surface", () => {
     await page.locator('[data-field="assist-budget"]').fill("12.5");
     await page.locator('[data-action="assist-save"][data-budget-kind="user"]').click();
     await expect(page.locator("[data-test=assist-edit-error]")).toContainText("whole number of tokens");
+    // The refusal keeps the person's typed number on the glass.
+    await expect(page.locator('[data-field="assist-budget"]')).toHaveValue("12.5");
 
     // A whole number lands as the person's own, and Reset to role appears.
     await page.locator('[data-field="assist-budget"]').fill("250000");

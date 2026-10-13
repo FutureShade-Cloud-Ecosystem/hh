@@ -147,6 +147,9 @@ export class AdminWork {
   // The editor's fields carry no bound value, so a freshly opened (or newly
   // saved) row is seeded on the next mirror pass, once the fields exist.
   #seedPending = false;
+  // The budget box seeds once, when its edit arms; a refusal or a repaint
+  // after that leaves the person's typed number alone.
+  #budgetSeedPending = false;
 
   // The platform keys surface's state.
   #keys: KeysModel = emptyKeys();
@@ -298,11 +301,11 @@ export class AdminWork {
 
   /** The fields and meters the screens bind no value into are mirrored here. */
   mirror(): void {
-    // The edit box: seeded from the row's own number when the edit armed, and
-    // kept on the glass through the reloads that follow a save.
-    if (this.#assist.editing !== null) {
-      const current = this.#editSeed();
-      this.#host.setField("assist-budget", current);
+    // The edit box: seeded from the row's own number once, when the edit
+    // armed, and then the person's own words until the edit closes.
+    if (this.#budgetSeedPending && this.#assist.editing !== null) {
+      this.#budgetSeedPending = false;
+      this.#host.setField("assist-budget", this.#editSeed());
     }
     // The two setting toggles ride the server's answer, so a refused write
     // snaps back and a fresh read lands as the server now says.
@@ -357,6 +360,7 @@ export class AdminWork {
     this.#catalog = emptyCatalog();
     this.#pickedImage = null;
     this.#seedPending = false;
+    this.#budgetSeedPending = false;
     this.#keys = emptyKeys();
   }
 
@@ -377,6 +381,7 @@ export class AdminWork {
     if (id === "") return;
     const editing: AssistEditTarget = kind === "role" ? { kind: "role", code: id } : { kind: "user", id };
     this.#assist = { ...this.#assist, editing, editError: "", notice: "" };
+    this.#budgetSeedPending = true;
     this.#host.repaint();
   }
 
