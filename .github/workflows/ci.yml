@@ -21,6 +21,13 @@ permissions:
   contents: read
   id-token: write
 
+# A newer push to the same pull request cancels the older run, so superseded
+# runs stop holding the organisation's concurrent job slots. Runs on main and
+# on the qa, till and quote branches are never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ci:
     name: ci
