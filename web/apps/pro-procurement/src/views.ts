@@ -42,6 +42,8 @@ export interface Page {
   /** The inline notice an action answers with. */
   say(kind: "ok" | "alert", words: string): void;
   hold(busy: boolean): void;
+  /** Re-render without changing anything; a modal's own state lives in its open closure. */
+  touch(): void;
   openModal(testid: string, build: (page: Page) => TemplateResult): void;
   closeModal(): void;
 }

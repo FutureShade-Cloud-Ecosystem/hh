@@ -64,6 +64,14 @@ export class ProProcurementApp extends HHElement {
         cursor: pointer;
         white-space: nowrap;
       }
+      .board-columns { display: flex; flex-direction: column; gap: var(--hh-s-20); }
+      .lane { display: flex; flex-direction: column; gap: var(--hh-s-8); }
+      ul.lane-body { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--hh-s-8); }
+      ul.lane-body > li { margin: 0; }
+      .lane-empty { margin: 0; padding: var(--hh-s-12); border: 1px dashed var(--hh-line); border-radius: var(--hh-radius-card); text-align: center; font-size: 0.875rem; }
+      @media (min-width: 64rem) {
+        .board-columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      }
     `,
   ];
 
@@ -114,6 +122,7 @@ export class ProProcurementApp extends HHElement {
       this.#page.busy = busy;
       this.requestUpdate();
     },
+    touch: () => this.requestUpdate(),
     openModal: (testid, build) => {
       this.#modal = { testid, build };
       this.requestUpdate();
