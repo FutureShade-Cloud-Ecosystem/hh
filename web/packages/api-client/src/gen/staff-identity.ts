@@ -3,9 +3,22 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { IdentityApproval, IdentityApprovalCreateRequest, IdentityApprovalDecideRequest, IdentityApprovalPage, IdentityApprovalStatus, IdentityAssignRoleRequest, IdentityAssignRoleResponse, IdentityChangePasswordRequest, IdentityCreateStaffRequest, IdentityLoginRequest, IdentityLoginResponse, IdentityPasswordResetConfirmRequest, IdentityPasswordResetLink, IdentityPing, IdentityPolicyCheckRequest, IdentityPolicyCheckResponse, IdentityPolicyType, IdentityRolePage, IdentityStaffMember, IdentityStaffMemberPage, IdentityStatusResponse } from "./types.js";
+import type { IdentityApproval, IdentityApprovalCreateRequest, IdentityApprovalDecideRequest, IdentityApprovalPage, IdentityApprovalStatus, IdentityAssignRoleRequest, IdentityAssignRoleResponse, IdentityChangePasswordRequest, IdentityCreateStaffRequest, IdentityExchangeRequest, IdentityExchangeResponse, IdentityLoginRequest, IdentityLoginResponse, IdentityPasswordResetConfirmRequest, IdentityPasswordResetLink, IdentityPing, IdentityPolicyCheckRequest, IdentityPolicyCheckResponse, IdentityPolicyType, IdentityRolePage, IdentityStaffMember, IdentityStaffMemberPage, IdentityStatusResponse, SessionJwkSet } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
+
+export async function identitySessionJwks(
+  client: ApiClient,
+  call?: ApiCallOptions
+): Promise<Result<SessionJwkSet>> {
+  return client.request<SessionJwkSet>({
+    method: "GET",
+    path: "/.well-known/jwks.json",
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "identitySessionJwks",
+  });
+}
 
 export async function identityChangePassword(
   client: ApiClient,
@@ -19,6 +32,21 @@ export async function identityChangePassword(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "identityChangePassword",
+  });
+}
+
+export async function identityExchange(
+  client: ApiClient,
+  body: IdentityExchangeRequest,
+  call?: ApiCallOptions
+): Promise<Result<IdentityExchangeResponse>> {
+  return client.request<IdentityExchangeResponse>({
+    method: "POST",
+    path: "/api/v1/auth/exchange",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "identityExchange",
   });
 }
 

@@ -31,6 +31,7 @@ import {
 import {
   FAKE_ACCOUNT,
   FAKE_JWT,
+  fakeExchangeAnswer,
   FAKE_PASSWORD,
   DeferredAccountSurface,
   DeferredCall,
@@ -132,7 +133,7 @@ function wiredRig({ parked = false, deferDeleteSession = false } = {}) {
     openWindowMs: 3_600_000,
   });
   const account = new DeferredAccountSurface({ deferDeleteSession });
-  const controller = new AuthController({ account, sessions, lock, signOuts });
+  const controller = new AuthController({ activeOrg: () => "yard-ten", account, sessions, lock, signOuts });
   const seedSignedIn = (user = FAKE_ACCOUNT) =>
     sessions.adopt({ token: FAKE_JWT, tokenExpiresAtMs: time.now() + 3_600_000, user: { ...user } });
   return { recorded, time, sessions, signOuts, credentials, lock, account, controller, seedSignedIn };
@@ -145,8 +146,8 @@ function wiredRig({ parked = false, deferDeleteSession = false } = {}) {
 async function signInThroughController(rig, user, mintName) {
   const signing = rig.controller.signInWithPassword(user.email, FAKE_PASSWORD);
   (await untilHandoffAt(rig.account, "createEmailPasswordSession", 0)).complete({ ...user });
-  const mint = await untilHandoffAt(rig.account, "createJWT", 0);
-  mint.complete({ jwt: `${FAKE_JWT}-${mintName}`, expiresAtMs: rig.time.now() + 900_000 });
+  const mint = await untilHandoffAt(rig.account, "exchange", 0);
+  mint.complete(fakeExchangeAnswer(`${FAKE_JWT}-${mintName}`, rig.time.now() + 900_000, {}, user));
   const result = await signing;
   assert.equal(result.ok, true, `the sign-in of ${user.userId} resolves a Result: ${result.ok ? "" : result.error}`);
   return result;
@@ -229,7 +230,7 @@ test("a lock, then the same user signs in again: the lock stays theirs, in memor
   const engaged = JSON.parse(rig.recorded.getItem(LOCK_MIRROR_KEY));
   assert.equal(engaged.credentialId, "fake-credential-id-1", "A's lock holds A's credential");
 
-  await signInThroughController(rig, FAKE_ACCOUNT, "MINT-1"); // A, again, no sign-out in between
+  await signInThroughController(rig, FAKE_ACCOUNT, "EX-1"); // A, again, no sign-out in between
 
   // What is in storage afterwards: the SAME lock entry, untouched (one
   // write, the engage's), beside the refreshed profile of the same user.
@@ -241,7 +242,7 @@ test("a lock, then the same user signs in again: the lock stays theirs, in memor
 
   // What the person sees: still signed in as A, on their own still-engaged
   // lock, with the fresh token in custody.
-  assert.equal(rig.sessions.current.token, `${FAKE_JWT}-MINT-1`, "custody holds the fresh mint");
+  assert.equal(rig.sessions.current.token, `${FAKE_JWT}-EX-1`, "custody holds the fresh mint");
   assert.equal(rig.sessions.current.user.userId, FAKE_ACCOUNT.userId);
   assert.equal(rig.lock.state, "locked", "the screen still shows A's lock: their lock survived their own re-sign-in");
 });
@@ -452,8 +453,8 @@ test("a resume that answers for another user disengages the lock as it adopts", 
   const resuming = rig.controller.resume(); // the reload's re-sign-in, in flight
   const getSession = await untilHandoffAt(rig.account, "getSession", 0);
   getSession.complete({ ...OTHER_ACCOUNT }); // the issuer's cookie answers for B
-  const mint = await untilHandoffAt(rig.account, "createJWT", 0);
-  mint.complete({ jwt: `${FAKE_JWT}-B`, expiresAtMs: rig.time.now() + 900_000 });
+  const mint = await untilHandoffAt(rig.account, "exchange", 0);
+  mint.complete(fakeExchangeAnswer(`${FAKE_JWT}-B`, rig.time.now() + 900_000, {}, OTHER_ACCOUNT));
   const result = await resuming;
   assert.equal(result.ok, true, `the resume landed (${result.ok ? "" : result.error})`);
 

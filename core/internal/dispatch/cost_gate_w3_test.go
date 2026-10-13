@@ -371,7 +371,7 @@ func TestDoorMoneyShape_AnUnheldStopCarriesNoCodeForAnyone(t *testing.T) {
 	gate.deny = map[string]DispatchGateDecision{}
 	gate.deny["o-1"] = DispatchGateDecision{Allow: true, Code: "AR"}
 	src := doorStopSource{
-		run: Run{ID: "r-1", BranchID: "b-1"},
+		run:   Run{ID: "r-1", BranchID: "b-1"},
 		stops: []Stop{{ID: "s-clear", OrderID: "o-1", BranchID: "b-1"}},
 	}
 	for _, role := range doorRolesOnTheList {
