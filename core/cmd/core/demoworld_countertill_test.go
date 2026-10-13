@@ -896,8 +896,8 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	// 11b. The rounding proof: one sale whose subtotal lands exactly on a half cent at the
 	// engine's rate, so half up passes and half down and half even both fail. C01's wall block
 	// rule price is exact in every rounding mode (the list 1250 less its 1800 bps, 225, with no
-	// remainder), so two units price 2050, and 2050 at 1300 bps is exactly 266.5: half up
-	// answers 267, half down and half even answer 266.
+	// remainder), so eight units price 8200, and 8200 at the demo dealer's 775 bps is exactly
+	// 635.5: half up answers 636, half down and half even answer 635.
 	halfRingRsp := sales.call("POST", "/api/v1/pos/sales", demoSaleBody{
 		IdempotencyKey: uuid.NewString(),
 		BranchID:       trentonBranchID,
@@ -905,23 +905,23 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		CustomerID:     c01,
 		Tender:         "ACCOUNT",
 		Lines: []demoSaleLine{
-			{ProductID: wallBlock, QtyEntered: 2, UOMEntered: "PC"},
+			{ProductID: wallBlock, QtyEntered: 8, UOMEntered: "PC"},
 		},
 	})
 	halfRingRsp.ok(t, http.StatusCreated)
 	var halfRing saleRing
 	halfRingRsp.decode(t, &halfRing)
-	if halfRing.SubtotalCents != 2050 {
-		t.Fatalf("the half-cent sale's subtotal is %d, want the rule's exact 2050, the figure the rounding assertion hangs off", halfRing.SubtotalCents)
+	if halfRing.SubtotalCents != 8200 {
+		t.Fatalf("the half-cent sale's subtotal is %d, want the rule's exact 8200, the figure the rounding assertion hangs off", halfRing.SubtotalCents)
 	}
 	if remainder := halfRing.SubtotalCents * int64(rateBps) % 10000; remainder != 5000 {
 		t.Fatalf("the half-cent sale's subtotal no longer lands on a half cent at the engine's %d bps (remainder %d), the rounding assertion would not bite", rateBps, remainder)
 	}
-	if formula := demoHST(halfRing.SubtotalCents, rateBps); halfRing.TaxCents != 267 || halfRing.TaxCents != formula {
-		t.Fatalf("the half-cent sale's rounding: the sale answered %d cents of tax, the half-up formula answers %d and the committed answer is 267; 2050 at the engine's %d bps is exactly 266.5, so half down or half even would answer 266",
+	if formula := demoHST(halfRing.SubtotalCents, rateBps); halfRing.TaxCents != 636 || halfRing.TaxCents != formula {
+		t.Fatalf("the half-cent sale's rounding: the sale answered %d cents of tax, the half-up formula answers %d and the committed answer is 636; 8200 at the engine's %d bps is exactly 635.5, so half down or half even would answer 635",
 			halfRing.TaxCents, formula, rateBps)
 	}
-	t.Logf("the half-cent sale %s: subtotal 2050 at %d bps lands on exactly 266.5, the tax is 267, half up once",
+	t.Logf("the half-cent sale %s: subtotal 8200 at %d bps lands on exactly 635.5, the tax is 636, half up once",
 		halfRing.OrderNo, rateBps)
 
 	// 12. a parked ticket, parked by Sales, resumed by the Sales manager.

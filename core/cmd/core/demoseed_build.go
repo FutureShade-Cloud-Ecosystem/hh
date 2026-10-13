@@ -21,7 +21,10 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
-const hstBps = 1300 // 13% HST, the rate the demo world prices at
+// hstBps is the rate the seed prices its documents at: 13 percent in a default build. The demo
+// build's world seam (demoseed_glsworld_tax_demo.go) sets it to the demo dealer's rate before any
+// plan is built; nothing else assigns it.
+var hstBps = 1300
 
 // taxOn is the money rule, done in integer cents with half-up rounding. The server is the
 // arithmetic authority everywhere else in this system; here the seed is writing the rows the server
