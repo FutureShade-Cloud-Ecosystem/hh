@@ -29,7 +29,7 @@ import {
   type WorkerLike,
 } from "@hardscapehouse/offline-store";
 import * as syncMachine from "../../../../statecharts/sync/machine.js";
-import type { DriverLine, DriverRun, DriverStop } from "./drive-api.js";
+import type { DriveApi, DriverLine, DriverRun, DriverStop } from "./drive-api.js";
 import { toLine, toRun, toStop } from "./drive-api.js";
 
 type Bag = Record<string, unknown>;
@@ -49,6 +49,10 @@ export interface DriveOfflineOptions {
   store: OfflineStore;
   sql: SqlExecutor;
   transport: SyncTransport;
+  /** The direct doors: the writes the core does not admit through sync (the
+   * run close, the proof of delivery). They wait on the outbox and need
+   * signal; nothing about them queues. */
+  direct: Pick<DriveApi, "completeRun" | "pod">;
   /** Told whenever the outbox's depth or the cards may have moved, so the
    * chrome's counts are never a stale word. */
   onChange?: () => void;
@@ -68,6 +72,7 @@ export class DriveOffline {
   readonly store: OfflineStore;
   readonly runner: SyncRunner;
   readonly #sql: SqlExecutor;
+  readonly #direct: Pick<DriveApi, "completeRun" | "pod">;
   readonly #onChange: (() => void) | undefined;
   readonly #now: () => string;
   readonly #newKey: () => string;
@@ -80,6 +85,7 @@ export class DriveOffline {
   constructor(options: DriveOfflineOptions) {
     this.store = options.store;
     this.#sql = options.sql;
+    this.#direct = options.direct;
     this.#onChange = options.onChange;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#newKey = options.newKey ?? (() => globalThis.crypto.randomUUID());
@@ -125,6 +131,36 @@ export class DriveOffline {
     await this.runner.request();
     this.#writtenSincePull.clear();
     this.#onChange?.();
+  }
+
+  /** Send what is queued and wait for the cycle to rest. True when the
+   * outbox is empty after it: only then has the pull landed too, so only then
+   * does the written since pull set clear. */
+  async #drain(): Promise<boolean> {
+    await this.runner.request();
+    await this.runner.settled();
+    const empty = (await this.waiting()) === 0;
+    if (empty) this.#writtenSincePull.clear();
+    this.#onChange?.();
+    return empty;
+  }
+
+  /** Close the run on its direct door (the manifest gives the runs scope no
+   * writable policy). The close never jumps the outbox: the queued stop moves
+   * and proofs go first, and while any is still waiting the close is refused
+   * in words, since the core would refuse it and name the open stop. */
+  async completeRun(runId: string): Promise<Result<true>> {
+    if (!(await this.#drain())) {
+      return {
+        ok: false,
+        error: "Your earlier moves are still waiting to send. Close the run once they have gone through.",
+        status: 409,
+      };
+    }
+    const answer = await this.#direct.completeRun(runId);
+    // The closed run lands in the store only through the next pull.
+    await this.#drain();
+    return answer;
   }
 
   async waiting(): Promise<number> {
@@ -289,6 +325,7 @@ export class DriveOffline {
 export async function openDriveOfflineOpfs(options: {
   dbName: string;
   transport: SyncTransport;
+  direct: Pick<DriveApi, "completeRun" | "pod">;
   onChange?: () => void;
 }): Promise<DriveOffline | null> {
   const locks = (globalThis as { navigator?: { locks?: unknown } }).navigator?.locks;
@@ -307,6 +344,7 @@ export async function openDriveOfflineOpfs(options: {
       store,
       sql: backend.sql,
       transport: options.transport,
+      direct: options.direct,
       ...(options.onChange !== undefined ? { onChange: options.onChange } : {}),
     });
   } catch {

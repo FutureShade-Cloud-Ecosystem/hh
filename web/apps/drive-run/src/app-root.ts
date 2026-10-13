@@ -321,6 +321,7 @@ export class DriveRunApp extends HHElement {
     const layer = await openDriveOfflineOpfs({
       dbName: "hh-drive-run",
       transport: apiClientTransport(this.#staffClient),
+      direct: this.#drive,
       onChange: () => void this.#refreshOfflineChrome(),
     });
     if (layer === null) return;
@@ -342,7 +343,8 @@ export class DriveRunApp extends HHElement {
   // The door the driver's stop moves and proofs go through: the offline layer
   // when it opened, the direct api when it did not. The photos and the run
   // close keep their direct doors (the attachments queue is item 6's other
-  // half, and the manifest gives the runs scope no writable policy).
+  // half, and the manifest gives the runs scope no writable policy); the
+  // layer's close waits for the outbox first.
   #door(): DriveApi | DriveOffline {
     return this.#driveOffline ?? this.#drive;
   }
@@ -525,15 +527,15 @@ export class DriveRunApp extends HHElement {
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
-    const result = await this.#drive.completeRun(runId);
+    // Through the layer when it opened: the close waits for the queued moves.
+    const result = await this.#door().completeRun(runId);
     if (result.ok) {
       this.#notice = `${run?.run_no ?? "The run"} is closed. Thanks: that is the day.`;
     } else {
       this.#error = roadsideError(result.error, result.status, "The run did not close. Check your signal and try again.");
     }
-    // The close door is direct, so the closed run lands in the store only
-    // through the next pull; wait for it, then read.
-    if (this.#driveOffline !== null) await this.#driveOffline.syncNow();
+    // The layer's close already waited for the pull that carries the closed
+    // run into the store; read it.
     await this.#refreshRuns();
     this.#closing = false;
     this.requestUpdate();
