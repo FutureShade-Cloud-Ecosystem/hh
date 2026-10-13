@@ -205,7 +205,6 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("demoseed: nothing was written: %w", err)
 	}
-	renamed += worldRenamed
 	// The seed-repair pass (the repair pair), inside the same transaction for the same reason:
 	// the world lands all-or-nothing. One guarded UPDATE, demo build only, its guarantees argued
 	// in demoseed_repair_demo.go beside the scrub-name pass it follows.
@@ -223,10 +222,13 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	if renamed > 0 {
 		fmt.Fprintf(out, "renamed:  %d migration-planted demo customer(s) off their scrub placeholder names\n", renamed)
 	}
+	if worldRenamed > 0 {
+		fmt.Fprintf(out, "world words:  %d migration-planted value(s) moved onto the demo dealer's words\n", worldRenamed)
+	}
 	if repaired > 0 {
 		fmt.Fprintf(out, "repaired:  %d row(s) an older apply left wrong (a home branch, an empty product application, a missing org stamp)\n", repaired)
 	}
-	if res.Created == 0 && renamed == 0 && repaired == 0 {
+	if res.Created == 0 && renamed == 0 && worldRenamed == 0 && repaired == 0 {
 		fmt.Fprintln(out, "the demo world was already complete, this run changed nothing.")
 	}
 	for _, t := range sortedKeys(res.ByTable) {

@@ -11,12 +11,14 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
 )
 
 // glsDenylist is the brief's denylist (the first dealer's name and cities, the real brand and
 // supplier names of the first dealer's seed, and the old system), plus the placeholder tokens
 // the scrub left in migration-planted names.
-var glsDenylist = regexp.MustCompile(`(?i)dibbits|quinte|trenton|belleville|kingston|brampton|techo|unilock|permacon|oaks|brown's|sika|rymar|alliance gator|in-lite|banas|bistrack|scrubbed party|scrubname`)
+var glsDenylist = regexp.MustCompile(`(?i)dibbits|quinte|trenton|belleville|kingston|brampton|techo|unilock|permacon|oaks|brown's|sika|rymar|alliance gator|in-lite|banas|bistrack|scrubbed party|scrubname|best.?way|brussels|holland|courtstone|granular a`)
 
 // glsPlanStrings returns every string value in the rows, with its table and column.
 func glsPlanStrings(rows []row) []string {
@@ -42,6 +44,18 @@ func glsWorldInput(t *testing.T) planInput {
 		{ID: "5d1b3f6e-0000-4000-9000-000000000001", Code: "PLM", Name: "Gable Landscape Supply, Point Loma"},
 	}
 	return in
+}
+
+// TestGLSWorld_TenantConfigNamesTheDealer: the config the demo box serves publicly names the demo
+// dealer and no word of the first dealer.
+func TestGLSWorld_TenantConfigNamesTheDealer(t *testing.T) {
+	c := demo.DealerConfig()
+	if c.DealerName != "Gable Landscape Supply" {
+		t.Errorf("the demo tenant config names %q, want Gable Landscape Supply", c.DealerName)
+	}
+	if glsDenylist.MatchString(c.Id + c.DealerName + c.SupportEmail + c.SupportPhone) {
+		t.Errorf("the demo tenant config reads a first dealer word: %+v", c)
+	}
 }
 
 // TestGLSWorld_PlanReadsNoFirstDealerWord: the premise first (the plan's own literals do carry

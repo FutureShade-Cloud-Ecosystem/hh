@@ -1,0 +1,36 @@
+[package]
+name = "hh-field"
+version.workspace = true
+description = "HH Field: the Tauri 2 profile for field roles, shipping the micro app bundles inside it."
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "hh_field_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.2", features = [] }
+
+[dependencies]
+hh-shell-core = { path = "../core" }
+tauri = { version = "=2.12.3", features = [] }
+# The Field channel's updater: endpoints and the verify key are configured in
+# src/updater.rs; the release signing key never enters git or this workspace.
+tauri-plugin-updater = { version = "=2.13.3", default-features = false, features = ["rustls-tls", "zip"] }
+# Probe only: the webview SQL plugin is an open grant, so it is not in a normal build.
+tauri-plugin-sql = { version = "=2.5.0", features = ["sqlite"], optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# `probe` is the probe 4 proof harness (probe.js and probe_report). Off by
+# default; enable it only for the proof runs. Removed when the real shell lands.
+[features]
+default = []
+probe = ["dep:tauri-plugin-sql", "hh-shell-core/probe"]
+# The Android Keystore debug leg (item 7): at startup the real custody stores a
+# fixed non secret value under a proof address and, on the next launch, reads
+# it back and removes it, printing one HH_CUSTODY_PROOF line. Off by default and
+# never in a release build.
+custody-proof = []

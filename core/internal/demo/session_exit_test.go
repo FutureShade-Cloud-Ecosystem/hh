@@ -96,7 +96,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, nine flows, the contract's three
+	// The flow listing: the closed table, fourteen flows (nine staff, five contractor), the contract's three
 	// fields, the labels the entry page renders. The yard-manager flow
 	// (Manager Home's first per-role landing) shows on the front door's
 	// picker, never on the till's own entry.
@@ -114,8 +114,8 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if err := json.Unmarshal([]byte(body(flowsRsp)), &listing); err != nil {
 		t.Fatalf("the flows body does not decode: %v", err)
 	}
-	if len(listing.Flows) != 9 {
-		t.Fatalf("the listing carries %d flows, want the closed table's nine", len(listing.Flows))
+	if len(listing.Flows) != 14 {
+		t.Fatalf("the listing carries %d flows, want the closed table's fourteen", len(listing.Flows))
 	}
 	for i, want := range []struct{ flow, role, label string }{
 		{"sales", "inside_sales", "Sales"},
@@ -127,6 +127,11 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		{"procurement-manager", "procurement_manager", "Procurement manager"},
 		{"financial-controller", "financial_controller", "Financial Controller"},
 		{"logistics-manager", "logistics_manager", "Logistics Manager"},
+		{"contractor-account-admin", "account_admin", "Contractor owner"},
+		{"contractor-buyer", "buyer", "Contractor buyer"},
+		{"contractor-buyer-no-pay", "buyer_no_pay", "Contractor buyer (no pay)"},
+		{"contractor-ap-finance", "ap_finance", "Contractor AP"},
+		{"contractor-field-crew", "field_crew", "Contractor field"},
 	} {
 		if listing.Flows[i].Flow != want.flow || listing.Flows[i].RoleCode != want.role ||
 			listing.Flows[i].Label != want.label {
@@ -496,6 +501,7 @@ func startDemoServe(t *testing.T, bin, dsn string) string {
 		"APP_ENV=demo",
 		"CORE_DATABASE_URL=" + dsn,
 		"CORE_STAFF_AUDIENCE=hh-staff",
+		"CORE_SIGNIN_MODE=demo",
 		"CORE_TENANT_AUDIENCE=hh-tenant",
 		"PAYMENT_VAULT_KEY=" + testVaultKey,
 		"HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1",

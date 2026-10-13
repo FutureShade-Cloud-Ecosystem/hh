@@ -1,0 +1,28 @@
+{
+  "name": "@hardscapehouse/pro-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./src/*.js": "./src/*.ts",
+    "./src/*": "./src/*",
+    "./test-stub/*": "./test-stub/*"
+  },
+  "description": "The shared ground of the three Pro contractor apps: the TenantSession seam, the tenant client, the capability gate, the money and tax words, the stage and status chips, the sign in screen and the Pro frame element, plus the shared tenant stub the apps test against.",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ../api-client/src/_ts-js-loader.mjs --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@hardscapehouse/api-client": "0.0.0",
+    "@hardscapehouse/auth": "0.0.0",
+    "@hardscapehouse/design-system": "0.0.0",
+    "@hardscapehouse/pos-kit": "0.0.0",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3"
+  }
+}

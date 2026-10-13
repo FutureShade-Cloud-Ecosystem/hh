@@ -88,7 +88,7 @@ run_core() {
 	(
 		cd core &&
 			DEMO_MODE=true APP_ENV=demo \
-			CORE_STAFF_AUDIENCE="hh-staff" CORE_TENANT_AUDIENCE="hh-tenant" \
+			CORE_STAFF_AUDIENCE="hh-staff" CORE_TENANT_AUDIENCE="hh-tenant" CORE_SIGNIN_MODE=demo \
 				DATABASE_URL="$DSN" CORE_DATABASE_URL="$DSN" \
 				PAYMENT_VAULT_KEY="$VAULT" \
 				HH_ACCEPTANCE_SIGN_KEY_ID=d2-fd-exit \
@@ -174,7 +174,7 @@ echo "== the core serving the mint routes"
 (
 	cd core &&
 		DEMO_MODE=true APP_ENV=demo \
-			CORE_STAFF_AUDIENCE="hh-staff" CORE_TENANT_AUDIENCE="hh-tenant" \
+			CORE_STAFF_AUDIENCE="hh-staff" CORE_TENANT_AUDIENCE="hh-tenant" CORE_SIGNIN_MODE=demo \
 			DATABASE_URL="$DSN" CORE_DATABASE_URL="$DSN" \
 			CORE_LISTEN_ADDR="127.0.0.1:$CORE_PORT" \
 			PAYMENT_VAULT_KEY="$VAULT" \

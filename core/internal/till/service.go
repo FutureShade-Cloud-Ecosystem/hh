@@ -949,8 +949,9 @@ func (s *Service) UpdateNSFPolicy(ctx context.Context, in NSFPolicy) error {
 	if err != nil {
 		return err
 	}
-	if !caller.IsManager() {
-		return forbidden("till: manager rights are required to edit the NSF policy")
+	// Backstop under the route's requireAdmin guard: a dealer wide setting is never a tier 2 write.
+	if !caller.IsAdmin() {
+		return forbidden("till: leadership is required to edit the NSF policy")
 	}
 	if in.FeeCents < 0 {
 		return unprocessable("till: fee_cents must be >= 0")
@@ -962,14 +963,35 @@ func (s *Service) UpdateNSFPolicy(ctx context.Context, in NSFPolicy) error {
 }
 
 // RecordPaymentAttempt persists one declined/errored gateway attempt (DX-14). Idempotent on the key. The
-// actor is stamped server-side from the authenticated caller (never trusted from the request body); the other
-// caller-supplied fields (customer/branch/amount) are out of scope for this remediation and left as-is.
+// actor is stamped server-side from the authenticated caller (never trusted from the request body), and so
+// is the branch: the attempt is written under a branch the caller's own reach covers. A named branch the
+// caller cannot reach is the shared 403; none named resolves to the caller's single granted branch (a global
+// caller may leave it unset, any other caller without exactly one grant must name one).
 func (s *Service) RecordPaymentAttempt(ctx context.Context, in PaymentAttempt) error {
 	caller, err := s.caller(ctx)
 	if err != nil {
 		return err
 	}
 	in.AttemptedBy = caller.UserID // server-stamped; overrides anything in the body
+	switch {
+	case in.BranchID != "":
+		if !caller.CanAccessBranch(in.BranchID) {
+			return errSharedForbidden
+		}
+		// A global caller reaches every id, so the reach check cannot tell a location from garbage.
+		if !isUUID(in.BranchID) {
+			return unprocessable("till: branch_id must be a branch id")
+		}
+	case caller.Scope != identity.ScopeGlobal:
+		if len(caller.Branches) != 1 {
+			return unprocessable("till: branch_id is required unless the caller has exactly one branch")
+		}
+		for b := range caller.Branches {
+			in.BranchID = b
+		}
+	}
+	// A global caller who names no branch has none to derive from (it reaches all of them) and none to
+	// derive it from (an attempt carries no invoice or drawer): the attempt is then org wide, a NULL branch.
 	if in.AmountCents <= 0 {
 		return unprocessable("till: attempt amount_cents must be > 0")
 	}
@@ -989,4 +1011,24 @@ func denomTotal(ds []DenominationCount) int64 {
 		sum += d.DenominationCents * int64(d.Quantity)
 	}
 	return sum
+}
+
+// isUUID reports whether s is the canonical 36 character form of a UUID.
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case i == 8 || i == 13 || i == 18 || i == 23:
+			if c != '-' {
+				return false
+			}
+		case (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'):
+		default:
+			return false
+		}
+	}
+	return true
 }

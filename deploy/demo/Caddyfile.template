@@ -58,6 +58,15 @@ handle /api/* {
 	}
 }
 
+# The session JWK Set (public halves only, no phrase): the core serves it
+# in the console sign in mode, and it must not fall to the front door below.
+# The same overwrite discipline as every other proxy leg.
+handle /.well-known/jwks.json {
+	reverse_proxy __UPSTREAM__ {
+		header_up X-Forwarded-For "{remote_host}"
+	}
+}
+
 handle /healthz {
 	reverse_proxy __UPSTREAM__ {
 		header_up X-Forwarded-For "{remote_host}"
@@ -130,6 +139,15 @@ handle /dispatch/* {
 	}
 	root * /srv/app
 	try_files {path} /dispatch/index.html
+	file_server
+}
+
+handle /dealer-admin/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /dealer-admin/index.html
 	file_server
 }
 

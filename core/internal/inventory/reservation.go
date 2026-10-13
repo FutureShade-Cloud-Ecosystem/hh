@@ -300,6 +300,19 @@ func (s *Service) ReleaseBySourceTx(ctx context.Context, tx pgx.Tx, sourceType, 
 	return s.db().CloseReservationsBySource(ctx, tx, sourceType, sourceRefID, status)
 }
 
+// LockHardHoldBalancesTx takes the stock_balances rows of one source document's ACTIVE HARD holds
+// FOR UPDATE, sorted by product then location (LockBalances' own order), on the caller's
+// transaction. It exists for a writer that will move those rows later in the same transaction,
+// after drawing a money counter: the order cancel's release hook unwinds these rows after the
+// deposit settlement draws the invoices feed counter, and the POS ring takes a stock row before
+// that same counter, so the cancel takes its stock rows first or the two can meet head on.
+func (s *Service) LockHardHoldBalancesTx(ctx context.Context, tx pgx.Tx, sourceType, sourceRefID string) error {
+	if sourceRefID == "" {
+		return badReq("inventory: source_ref_id is required")
+	}
+	return s.db().LockHardHoldBalancesTx(ctx, tx, sourceType, sourceRefID)
+}
+
 // ReleaseTx closes one reservation by id.
 func (s *Service) ReleaseTx(ctx context.Context, tx pgx.Tx, reservationID, status string) error {
 	switch status {

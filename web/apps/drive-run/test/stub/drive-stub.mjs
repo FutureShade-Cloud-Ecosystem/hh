@@ -97,6 +97,26 @@ let scenario;
 let log;
 let photoSeq;
 
+// ---- the sync surface's books (see the sync block by the server below) ----
+const SYNC_SCOPES = ["runs", "stops", "pod", "attachments"];
+const PULL_ONLY = new Set(["attachments"]);
+const WRITE_SCOPES = new Set(["stops", "pod"]);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const syncSeq = { runs: 0, stops: 0, pod: 0, attachments: 0 };
+const syncRowSeq = { runs: new Map(), stops: new Map(), pod: new Map(), attachments: new Map() };
+const podRows = new Map();
+const appliedKeys = new Map();
+
+function syncTouch(scope, id) {
+  syncSeq[scope] = (syncSeq[scope] ?? 0) + 1;
+  syncRowSeq[scope].set(id, syncSeq[scope]);
+  return syncSeq[scope];
+}
+
+function syncSeqOf(scope, id) {
+  return syncRowSeq[scope].get(id) ?? 0;
+}
+
 function buildWorld() {
   const day = houseDay();
   const created = new Date(nowMs()).toISOString();
@@ -148,6 +168,13 @@ function reset() {
   scenario = "";
   log = [];
   photoSeq = 0;
+  appliedKeys.clear();
+  podRows.clear();
+  // The seq books are NOT reset: a server's seq never walks backwards, and a
+  // device that kept its store across a stub reset must see the fresh world
+  // as changes, not as rows it already holds.
+  syncTouch("runs", world.run.id);
+  for (const stop of world.stops) syncTouch("stops", stop.id);
 }
 reset();
 
@@ -223,7 +250,20 @@ async function handle(req, res) {
     scenario = String(body.name ?? "");
     // A cancelled stop is something only dispatch records; the world starts with one.
     if (scenario === "has-cancelled") world.stops[2].status = "CANCELLED";
+    // A run the dispatcher never sent: the run's own status carries it, so
+    // every door (REST and sync) refuses the same move with the same words.
+    if (scenario === "run-planned") world.run.status = "PLANNED";
     return json(res, { ok: true, scenario });
+  }
+  // Dispatch moves a stop out from under the device: the status moves and the
+  // row's seq moves with it, the server wins story the exit test asks for.
+  if (req.method === "POST" && path === "/_stub/move-stop") {
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const stop = findStop(String(body.stop_id ?? ""));
+    if (!stop) return notFound(res);
+    stop.status = String(body.status ?? "CANCELLED");
+    syncTouch("stops", stop.id);
+    return json(res, { ok: true, seq: syncSeqOf("stops", stop.id) });
   }
   if (req.method === "GET" && path === "/_stub/log") return json(res, log);
   if (req.method === "GET" && path === "/_stub/state") return json(res, { run: world.run, stops: stopsInOrder() });
@@ -243,6 +283,22 @@ async function handle(req, res) {
   }
 
   // ---- the dispatch routes the driver uses ----
+  if (path.startsWith("/api/v1/sync/")) {
+    const authorization0 = req.headers.authorization ?? "";
+    const raw0 = await readBody(req);
+    let body0 = null;
+    const ct0 = String(req.headers["content-type"] ?? "").split(";")[0].trim();
+    if (ct0 === "application/json" && raw0.length > 0) {
+      try {
+        body0 = JSON.parse(raw0.toString("utf8"));
+      } catch {
+        return refuse(res, 400, "bad request");
+      }
+    }
+    log.push({ method: req.method, path, query: Object.fromEntries(url.searchParams), bearer: authorization0.startsWith("Bearer "), org: req.headers["x-org"] ?? "", contentType: ct0, body: body0 });
+    if (!authorization0.startsWith("Bearer ")) return refuse(res, 401, "unauthenticated");
+    return handleSync(req, res, url, body0);
+  }
   if (!path.startsWith("/api/v1/dispatch/")) return notFound(res);
   const authorization = req.headers.authorization ?? "";
   const raw = await readBody(req);
@@ -300,7 +356,7 @@ function advance(res, stop, input) {
   const to = String(input.status ?? "").trim().toUpperCase();
   if (to === "DELIVERED") return refuse(res, 409, "a delivery must carry a proof-of-delivery attestation");
   if (!(TRANSITIONS[stop.status] ?? []).includes(to)) return refuse(res, 409, "illegal status transition");
-  if (to === "EN_ROUTE" && (scenario === "run-planned" || world.run.status !== "DISPATCHED")) {
+  if (to === "EN_ROUTE" && world.run.status !== "DISPATCHED") {
     return refuse(res, 409, "the run has not been dispatched");
   }
   const reason = String(input.reason ?? "").trim();
@@ -310,6 +366,7 @@ function advance(res, stop, input) {
   if (to === "LOADED") stop.loaded_at = now;
   if (to === "EN_ROUTE") stop.en_route_at = now;
   if (to === "FAILED") stop.failure_reason = reason;
+  syncTouch("stops", stop.id);
   return json(res, stop);
 }
 
@@ -324,6 +381,9 @@ function capturePod(res, stop, input) {
   stop.pod_received_by = name;
   stop.pod_at = now;
   stop.delivered_at = now;
+  // The attestation has no sync door in the core: the pod feed carries the
+  // photo records only, so the proof moves the stop and nothing else.
+  syncTouch("stops", stop.id);
   return json(res, stopDetail(stop));
 }
 
@@ -351,6 +411,7 @@ function addPhoto(res, stop, contentType, caption, raw) {
   };
   world.photos.set(stop.id, [...(world.photos.get(stop.id) ?? []), meta]);
   stop.photo_count += 1;
+  syncTouch("stops", stop.id);
   return json(res, meta, 201);
 }
 
@@ -378,7 +439,160 @@ function completeRun(res) {
   }
   world.run.status = "COMPLETED";
   world.run.completed_at = new Date(nowMs()).toISOString();
+  syncTouch("runs", world.run.id);
   return json(res, world.run);
+}
+
+// ---- the sync surface ----------------------------------------------------
+//
+// The demo double of the core's sync surface: the same pull page shape and
+// the same push order of decisions, per operation, in push order. The pull
+// projects the same world the REST routes serve, no money anywhere (the
+// poisoned scenario never reaches these rows), and a proof of delivery moves
+// its stop the way the REST route does, so a device's pulled rows and the
+// day board never disagree.
+
+function projectRunRow() {
+  const run = { ...world.run };
+  delete run.dispatched_at;
+  return { id: run.id, seq: syncSeqOf("runs", run.id), data: run };
+}
+
+function projectStopRow(stop) {
+  const data = { ...stop };
+  delete data.branch_id;
+  data.lines = LINES[stop.stop_no] ?? [];
+  return { id: stop.id, seq: syncSeqOf("stops", stop.id), data };
+}
+
+function projectPodRow(pod) {
+  return { id: pod.id, seq: syncSeqOf("pod", pod.id), data: { ...pod } };
+}
+
+function handleSyncPull(res, scope, url) {
+  const since = Number(url.searchParams.get("since") ?? "0");
+  const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") ?? "200")));
+  let rows = [];
+  const empty = scenario === "empty" || scenario === "not-driver";
+  if (!empty && scope === "runs") rows = [projectRunRow()];
+  else if (!empty && scope === "stops") rows = stopsInOrder().map(projectStopRow);
+  else if (scope === "pod") rows = [...podRows.values()].map(projectPodRow);
+  // attachments answers empty pages in the demo: the photos ride their own
+  // door this slice, and the queue to Storage is item 6's other half.
+  const page = rows.filter((r) => r.seq > since).sort((a, b) => a.seq - b.seq).slice(0, limit);
+  const lastSeq = page.length > 0 ? page[page.length - 1].seq : since;
+  return json(res, {
+    scope,
+    items: page,
+    tombstones: [],
+    last_seq: lastSeq,
+    next_cursor: page.length === limit ? String(lastSeq) : null,
+  });
+}
+
+function syncRejected(op, message) {
+  return { client_id: op.client_id, status: "rejected", error: message };
+}
+
+function syncApplyStopUpdate(stop, op) {
+  const fields = op.payload ?? {};
+  const declared = Object.keys(fields).filter((k) => k !== "id");
+  // The core's stopWriteFields (core/internal/dispatch/syncscope_stops.go).
+  const allowed = new Set(["status", "failure_reason"]);
+  for (const key of declared) {
+    if (!allowed.has(key)) return syncRejected(op, `dispatch: field "${key}" is not writable through sync`);
+  }
+  // The engine's order: shape, dedup, load, STALE, then the write. A stale
+  // write never reaches the module's own rules: the policy answers it.
+  const rowSeq = syncSeqOf("stops", stop.id);
+  if (op.base_seq !== undefined && rowSeq > op.base_seq) {
+    return {
+      client_id: op.client_id,
+      status: "conflict",
+      conflict: { client_id: op.client_id, policy: "server_wins", server_state: projectStopRow(stop).data, applied: false },
+    };
+  }
+  const to = String(fields.status ?? "").trim().toUpperCase();
+  if (to === "DELIVERED") return syncRejected(op, "a delivery must carry a proof-of-delivery attestation");
+  if (!(TRANSITIONS[stop.status] ?? []).includes(to)) return syncRejected(op, "illegal status transition");
+  if (to === "EN_ROUTE" && world.run.status !== "DISPATCHED") return syncRejected(op, "the run has not been dispatched");
+  if (to === "FAILED" && String(fields.failure_reason ?? "").trim() === "") return syncRejected(op, "a failed stop needs a reason");
+  const now = new Date(nowMs()).toISOString();
+  stop.status = to;
+  if (to === "LOADED") stop.loaded_at = now;
+  if (to === "EN_ROUTE") stop.en_route_at = now;
+  if (to === "FAILED") stop.failure_reason = String(fields.failure_reason ?? "").trim();
+  syncTouch("stops", stop.id);
+  return { client_id: op.client_id, status: "applied", seq: syncSeqOf("stops", stop.id) };
+}
+
+// The core's pod scope is the photo record (core/internal/dispatch/syncscope_pod.go
+// podCreateFields): the stop it proves, the content type, the bytes base64 and
+// a caption. The typed name attestation has no sync door, it rides the REST
+// proof, so a pod create here never delivers a stop.
+const POD_CREATE_FIELDS = new Set(["id", "stop_id", "content_type", "image_bytes_b64", "caption"]);
+
+function syncApplyPodCreate(op) {
+  const input = op.payload ?? {};
+  for (const key of Object.keys(input)) {
+    if (!POD_CREATE_FIELDS.has(key)) return syncRejected(op, `dispatch: field "${key}" is not writable through sync`);
+  }
+  const stop = findStop(String(input.stop_id ?? ""));
+  if (!stop) return syncRejected(op, "stop not found");
+  const id = typeof input.id === "string" && UUID_RE.test(input.id) ? input.id : `7b000000-0000-4000-9000-${String(stop.stop_no).padStart(12, "0")}`;
+  const now = new Date(nowMs()).toISOString();
+  podRows.set(id, { id, stop_id: stop.id, content_type: String(input.content_type ?? ""), caption: String(input.caption ?? ""), captured_at: now });
+  syncTouch("pod", id);
+  return { client_id: op.client_id, status: "applied", seq: syncSeqOf("pod", id) };
+}
+
+function handleSyncPush(res, scope, body) {
+  const ops = Array.isArray(body?.ops) ? body.ops : [];
+  const results = [];
+  for (const op of ops) {
+    if (!UUID_RE.test(String(op.client_id ?? ""))) {
+      results.push(syncRejected(op, "client_id must be a uuid"));
+      continue;
+    }
+    if (!["create", "update", "delete"].includes(String(op.op ?? ""))) {
+      results.push(syncRejected(op, "op must be create, update or delete"));
+      continue;
+    }
+    const payload = op.payload;
+    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+      results.push(syncRejected(op, "payload is required"));
+      continue;
+    }
+    const done = appliedKeys.get(op.client_id);
+    if (done !== undefined) {
+      results.push({ client_id: op.client_id, status: "applied", seq: done });
+      continue;
+    }
+    let result;
+    if (scope === "stops") {
+      const stop = findStop(String(payload.id ?? ""));
+      if (!stop) result = syncRejected(op, "row not found");
+      else result = op.op === "update" ? syncApplyStopUpdate(stop, op) : syncRejected(op, "row not found");
+    } else if (scope === "pod") {
+      result = op.op === "create" ? syncApplyPodCreate(op) : syncRejected(op, "row not found");
+    } else {
+      result = syncRejected(op, `sync: scope ${scope} is not writable in this demo`);
+    }
+    if (result.status === "applied") appliedKeys.set(op.client_id, result.seq);
+    results.push(result);
+  }
+  return json(res, { results });
+}
+
+async function handleSync(req, res, url, body) {
+  const scope = url.pathname.slice("/api/v1/sync/".length);
+  if (!SYNC_SCOPES.includes(scope)) return refuse(res, 400, "unknown sync scope");
+  if (req.method === "GET") return handleSyncPull(res, scope, url);
+  if (PULL_ONLY.has(scope)) return refuse(res, 400, `sync: scope ${scope} is pull-only`);
+  if (!WRITE_SCOPES.has(scope)) return refuse(res, 501, `sync: scope ${scope} is not wired yet`);
+  // The body is already read and parsed by the caller; a second read of an
+  // ended stream would never answer.
+  return handleSyncPush(res, scope, body);
 }
 
 const server = createServer((req, res) => {

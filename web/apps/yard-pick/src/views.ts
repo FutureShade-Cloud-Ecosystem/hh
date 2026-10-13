@@ -109,6 +109,19 @@ export interface QueueModel {
   readonly error: string;
   readonly notice: string;
   readonly moreBehind: boolean;
+  /** How stale the store's yard world is, in words ("Pulled 2 min ago"). */
+  readonly staleness: string;
+  /** The open conflict cards: the Review door names the count. */
+  readonly conflicts: number;
+}
+
+/** The staleness words for a scope: reads answer from the device, so the
+ * board says when the world last came down. Relative words only. */
+export function stalenessWords(staleness: { neverPulled: boolean; ageMs: number | null }): string {
+  if (staleness.neverPulled || staleness.ageMs === null) return "Never pulled";
+  const minutes = Math.floor(staleness.ageMs / 60_000);
+  if (minutes < 1) return "Pulled just now";
+  return `Pulled ${minutes} min ago`;
 }
 
 function pickCard(entry: YardPick, me: string, busy: boolean): TemplateResult {
@@ -187,14 +200,29 @@ export function renderQueue(model: QueueModel): TemplateResult {
   return html`
     <div class="branch-row">
       <span class="pill branch-pill" data-branch>${model.branchName !== "" ? model.branchName : "This yard"}</span>
+      <button type="button" class="btn btn-secondary" data-action="open-conflicts" data-tap>
+        ${model.conflicts > 0 ? `Review ${model.conflicts}` : "Review"}
+      </button>
       <button type="button" class="btn btn-secondary" data-action="reload" data-tap>Refresh</button>
     </div>
     <h1>Pick queue</h1>
+    ${model.staleness !== "" ? html`<p class="dim small" data-staleness>${model.staleness}</p>` : nothing}
     ${renderMessages(model.error, model.notice)}
     ${body}
     ${model.picks.length > 0 || model.phase === "ready"
       ? html`<p class="dim small queue-footnote" data-queue-footnote>${QUEUE_FOOTNOTE}</p>`
       : nothing}
+  `;
+}
+
+/** The conflict card list: every outcome the sync came back with, dismissible,
+ * never deletable (the dismiss is the store's own, and it keeps the row). */
+export function renderConflicts(model: { cards: number }): TemplateResult {
+  return html`
+    <button type="button" class="back" data-action="back" data-tap>Back to the queue</button>
+    <h1>Review</h1>
+    <p class="dim small">What the server answered while you worked. A card is dismissed when you have read it; the record stays.</p>
+    <hh-shell-conflict-list data-conflict-list></hh-shell-conflict-list>
   `;
 }
 
