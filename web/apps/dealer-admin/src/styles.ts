@@ -402,8 +402,84 @@ export const dealerStyles = css`
     gap: var(--hh-s-8);
   }
 
-  /* -- the audit trail ------------------------------------------------------------------ */
+  /* -- the admin-rest surfaces (assist first; the rest land beside it) -- */
 
+  /* The allowance meter: a track and a fill whose width the host sets in
+     code (the position gate binds no style), the original's own two box
+     model on HH's tokens. A person at their limit is not an error: dimmed,
+     never red. */
+  .meter {
+    display: grid;
+    gap: var(--hh-s-4);
+    min-width: 150px;
+  }
+  .meter-track {
+    height: 6px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-widget-raised);
+    border: 1px solid var(--hh-hairline);
+    overflow: hidden;
+  }
+  .meter-fill {
+    height: 100%;
+    width: 0;
+    background: var(--hh-accent);
+  }
+  .meter-spent {
+    background: var(--hh-text-dim);
+  }
+  .edit-row {
+    display: flex;
+    gap: var(--hh-s-8);
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .budget-field {
+    max-width: 140px;
+    min-height: 32px;
+    font-size: 14px;
+  }
+  .toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) 0;
+    border-top: 1px solid var(--hh-hairline);
+  }
+  .toggle:first-of-type {
+    border-top: none;
+  }
+  .toggle input {
+    margin-top: 2px;
+    accent-color: var(--hh-accent);
+  }
+  .toggle-text {
+    display: grid;
+    gap: var(--hh-s-2);
+  }
+  .toggle-name {
+    font-size: 14px;
+  }
+  .toggle-why {
+    font-size: 14px;
+    color: var(--hh-text-dim);
+    max-width: 60ch;
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: var(--hh-s-4) var(--hh-s-16);
+    font-size: 14px;
+    margin: var(--hh-s-8) 0 0;
+  }
+  .kv dt {
+    color: var(--hh-text-dim);
+  }
+  .kv dd {
+    margin: 0;
+  }
+
+  /* -- the audit trail ------------------------------------------------------------------ */
   .filters {
     display: flex;
     flex-wrap: wrap;
