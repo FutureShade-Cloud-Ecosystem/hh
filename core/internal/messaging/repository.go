@@ -93,7 +93,8 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 	//   - GLOBAL auto_scope: any ACTIVE staff;
 	//   - BRANCH auto_scope: the user is GLOBAL-scoped (reaches every branch) OR holds a grant for
 	//     ch.branch_id (mirrors StaffContext.CanAccessBranch);
-	//   - auto_role narrows to a role code ('*'/NULL = any role).
+	//   - auto_role narrows to a role code ('*'/NULL = any role);
+	//   - member_roles (the money rooms, 0388) narrows to a list of role codes, NULL = no list.
 	const qualifies = `
 		ch.auto_scope IS NOT NULL
 		AND ch.is_archived = FALSE
@@ -108,6 +109,12 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 		   OR EXISTS (
 		         SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
 		         WHERE ur.user_id = $1 AND ro.code = ch.auto_role)
+		    )
+		AND (
+		      ch.member_roles IS NULL
+		   OR EXISTS (
+		         SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+		         WHERE ur.user_id = $1 AND ro.code::text = ANY(ch.member_roles))
 		    )`
 
 	// Insert the derived rows the user qualifies for. A non-ACTIVE user qualifies for nothing (the
@@ -1261,9 +1268,10 @@ func (r *Repository) CreateDM(ctx context.Context, aUserID, bUserID string) (Cha
 // auto_scope (a BRANCH-scoped room's membership belongs to the branch
 // model, so a target it would not derive in is refused).
 type channelFactsRow struct {
-	Kind      string
-	BranchID  string
-	AutoScope string
+	Kind        string
+	BranchID    string
+	AutoScope   string
+	MemberRoles []string
 }
 
 // channelFacts reads one room's kind, branch and auto_scope. An unknown
@@ -1275,9 +1283,9 @@ func (r *Repository) channelFacts(ctx context.Context, channelID string) (channe
 	}
 	var f channelFactsRow
 	err := r.pool.QueryRow(ctx, `
-		SELECT kind, COALESCE(branch_id::text,''), COALESCE(auto_scope,'')
+		SELECT kind, COALESCE(branch_id::text,''), COALESCE(auto_scope,''), COALESCE(member_roles, '{}')
 		FROM msg_channels WHERE id = $1`, channelID).
-		Scan(&f.Kind, &f.BranchID, &f.AutoScope)
+		Scan(&f.Kind, &f.BranchID, &f.AutoScope, &f.MemberRoles)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return channelFactsRow{}, errNotFound
 	}
@@ -1325,6 +1333,23 @@ func (r *Repository) userReachesBranch(ctx context.Context, userID, branchID str
 		return false, fmt.Errorf("user reaches branch: %w", err)
 	}
 	return reaches, nil
+}
+
+// userHoldsAnyRole reports whether one user holds at least one of the role codes: the add-target
+// wall on a room whose member_roles list names the roles it may seat.
+func (r *Repository) userHoldsAnyRole(ctx context.Context, userID string, codes []string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var holds bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+		              WHERE ur.user_id = $1 AND ro.code::text = ANY($2))`,
+		userID, codes).Scan(&holds)
+	if err != nil {
+		return false, fmt.Errorf("user holds role: %w", err)
+	}
+	return holds, nil
 }
 
 // AddChannelMember seats one staff member EXPLICIT in a channel
