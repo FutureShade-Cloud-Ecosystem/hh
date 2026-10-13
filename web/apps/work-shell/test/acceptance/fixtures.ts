@@ -12,7 +12,7 @@ export const test = base.extend<{ shellUrl: string }, { served: { url: string } 
     async ({}, use) => {
       const assembled = process.env["WS_DIST"];
       const dist: string = assembled !== undefined && assembled !== "" ? assembled : composeDist();
-      const server = await startServer(dist);
+      const server = await startServer(dist, { holdApi: assembled !== undefined && assembled !== "" });
       await use({ url: server.url });
       await server.close();
       if (assembled === undefined || assembled === "") rmSync(dist, { recursive: true, force: true });

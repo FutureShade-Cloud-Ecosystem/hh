@@ -47,8 +47,16 @@ function json(response, status, body) {
   response.end(JSON.stringify(body));
 }
 
-/** Serve `dist` on a free loopback port. Resolves { url, close }. */
-export async function startServer(dist) {
+/**
+ * Serve `dist` on a free loopback port. Resolves { url, close }.
+ * With `holdApi`, every /api/ call other than the demo mint is held: no answer
+ * is ever sent, like a core that has not replied yet. A real desk app that is
+ * hosted with no core behind it ends its own walk on an answer that fails
+ * (the Counter Till signs out and goes to the front door when its branch
+ * cannot resolve), so the legs that load the real bundles hold the request
+ * instead of failing it.
+ */
+export async function startServer(dist, { holdApi = false } = {}) {
   const server = createServer(async (request, response) => {
     const path = (request.url ?? "/").split("?")[0];
     if (path === "/api/v1/demo/flows" && request.method === "GET") {
@@ -75,7 +83,7 @@ export async function startServer(dist) {
       return;
     }
     if (path.startsWith("/api/")) {
-      json(response, 404, { error: "not found" });
+      if (!holdApi) json(response, 404, { error: "not found" });
       return;
     }
     const relative = normalize(path).replace(/^([/\\])+/, "");
@@ -98,6 +106,10 @@ export async function startServer(dist) {
   const { port } = server.address();
   return {
     url: `http://127.0.0.1:${port}`,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    close: () =>
+      new Promise((resolve) => {
+        server.close(() => resolve());
+        server.closeAllConnections();
+      }),
   };
 }
