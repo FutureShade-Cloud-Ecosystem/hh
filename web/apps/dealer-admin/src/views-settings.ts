@@ -42,11 +42,6 @@ export interface BrandSection {
 export interface PaymentsSection {
   readonly phase: "loading" | "ready" | "error";
   readonly status: PaymentsConfig | null;
-  readonly processor: string;
-  readonly merchantId: string;
-  readonly currency: string;
-  readonly busy: boolean;
-  readonly notice: string;
   readonly error: string;
 }
 
@@ -162,37 +157,19 @@ function renderPayments(s: PaymentsSection): TemplateResult {
         ${s.status?.configured ? html`<span class="chip">Configured</span>` : html`<span class="chip chip-wait">Not configured</span>`}
         ${s.status?.simulated ? html`<span class="chip" data-test="payments-simulated">Test mode: the card rail is the sandbox</span>` : nothing}
       </div>
-      <p class="card-sub">The card never touches this system: the till holds a token, and the credentials stay at the processor.</p>
+      <p class="card-sub">The card never touches this system: the till holds a token only.</p>
       ${s.phase === "loading" ? html`<p class="notice-line" data-test="payments-loading">Reading the card rail's configuration…</p>` : nothing}
       ${s.phase === "error" ? html`<p class="error-line" data-test="payments-error">${s.error}</p>` : nothing}
       ${s.phase === "ready"
         ? html`
-            ${s.notice === "" ? nothing : html`<p class="notice-line" data-test="payments-notice">${s.notice}</p>`}
-            ${s.error === "" ? nothing : html`<p class="error-line" data-test="payments-save-error">${s.error}</p>`}
-            <p class="card-sub">
+            <p class="card-sub" data-test="payments-status">
               ${s.status !== null && s.status.processor !== ""
-                ? html`The rail answers through <code class="mono">${s.status.processor}</code> for ${s.status.currency.toUpperCase()}.`
-                : nothing}
+                ? html`The rail answers through <code class="mono">${s.status.processor}</code> for ${s.status.currency.toUpperCase()}, merchant <code class="mono">${s.status.merchant_id}</code>.`
+                : html`No processor is set.`}
             </p>
-            <div class="form-grid">
-              <label class="field">
-                <span class="field-label">Processor</span>
-                <input class="text-field" type="text" data-field="pay-processor" ?disabled=${s.busy} />
-              </label>
-              <label class="field">
-                <span class="field-label">Merchant id</span>
-                <input class="text-field" type="text" data-field="pay-merchant" ?disabled=${s.busy} />
-              </label>
-              <label class="field">
-                <span class="field-label">Currency</span>
-                <input class="text-field" type="text" data-field="pay-currency" ?disabled=${s.busy} />
-              </label>
-            </div>
-            <div class="editor-actions">
-              <button type="button" class="btn btn-primary" data-action="settings-save-payments" ?disabled=${s.busy}>
-                ${s.busy ? "Saving…" : "Save the card rail"}
-              </button>
-            </div>
+            <p class="notice-line" data-test="payments-readonly">
+              The card rail is set at the dealer's implementation. Credentials are write only and never shown.
+            </p>
           `
         : nothing}
     </section>

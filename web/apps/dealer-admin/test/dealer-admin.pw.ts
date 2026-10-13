@@ -363,7 +363,7 @@ test("the deployment settings render their four sections, and the brand waits fo
   await expect(page.locator('[data-field="brand-name"]')).toBeDisabled();
 
   // The card rail answers: configured, in test mode, the sandbox named.
-  await expect(page.locator('[data-field="pay-merchant"]')).toHaveValue("gls-demo-rail");
+  await expect(page.locator("[data-test=payments-status]")).toContainText("gls-demo-rail");
   await expect(page.locator("[data-test=payments-simulated]")).toContainText("Test mode");
 
   // The counter's policy answers with its knobs, and the history carries
@@ -378,18 +378,13 @@ test("the deployment settings render their four sections, and the brand waits fo
   await expect(page.locator("[data-test=tour-readonly]")).toContainText("platform administrator's own");
 });
 
-test("the card rail saves the three fields the screen owns", async ({ page }) => {
+test("the card rail section is read only: no form, no save, and the credentials are never shown", async ({ page }) => {
   await openDeployment(page);
-
-  // A missing merchant id is refused before the write.
-  await page.locator('[data-field="pay-merchant"]').fill("");
-  await page.locator('[data-action="settings-save-payments"]').click();
-  await expect(page.locator("[data-test=payments-save-error]")).toContainText("Merchant id is required");
-
-  await page.locator('[data-field="pay-merchant"]').fill("gls-demo-rail-2");
-  await page.locator('[data-action="settings-save-payments"]').click();
-  await expect(page.locator("[data-test=payments-notice]")).toContainText("Saved");
-  await expect(page.locator('[data-field="pay-merchant"]')).toHaveValue("gls-demo-rail-2");
+  await expect(page.locator("[data-test=payments-simulated]")).toContainText("Test mode");
+  await expect(page.locator("[data-test=payments-readonly]")).toContainText("set at the dealer's implementation");
+  await expect(page.locator("[data-test=payments-readonly]")).toContainText("write only and never shown");
+  await expect(page.locator('[data-field^="pay-"]')).toHaveCount(0);
+  await expect(page.locator('[data-action="settings-save-payments"]')).toHaveCount(0);
 });
 
 test("the counter's policy saves whole, and its history grows by one row per changed knob", async ({ page }) => {

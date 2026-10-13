@@ -36,8 +36,6 @@ import {
   chipSetError,
   chipsOf,
   counterPolicyRefusalWords,
-  paymentsFormError,
-  paymentsRefusalWords,
   policyHistoryRefusalWords,
   restockingFeeError,
   tourLineError,
@@ -177,11 +175,6 @@ const emptySettingsModel = (): SettingsModel => ({
   payments: {
     phase: "loading",
     status: null,
-    processor: "",
-    merchantId: "",
-    currency: "",
-    busy: false,
-    notice: "",
     error: "",
   },
   policy: {
@@ -473,10 +466,6 @@ export class DealerAdminApp extends HHElement {
       void this.#saveBrand();
       return;
     }
-    if (action === "settings-save-payments") {
-      void this.#savePayments();
-      return;
-    }
     if (action === "policy-flag") {
       const field = control?.getAttribute("data-field") ?? "";
       const on = control instanceof HTMLInputElement ? control.checked : false;
@@ -622,9 +611,6 @@ export class DealerAdminApp extends HHElement {
     if (field === "brand-name") this.#patchSettingsBrand({ displayName: value });
     if (field === "brand-color") this.#patchSettingsBrand({ primaryColor: value });
     if (field === "brand-footer") this.#patchSettingsBrand({ footerText: value });
-    if (field === "pay-processor") this.#patchSettingsPayments({ processor: value });
-    if (field === "pay-merchant") this.#patchSettingsPayments({ merchantId: value });
-    if (field === "pay-currency") this.#patchSettingsPayments({ currency: value });
     if (field === "policy-notes") this.#patchSettingsPolicy({ notes: value });
     if (field === "policy-chips") this.#patchSettingsPolicy({ chips: value });
     if (field === "policy-fee") {
@@ -760,9 +746,6 @@ export class DealerAdminApp extends HHElement {
       "brand-name": s.brand.displayName,
       "brand-color": s.brand.primaryColor,
       "brand-footer": s.brand.footerText,
-      "pay-processor": s.payments.processor,
-      "pay-merchant": s.payments.merchantId,
-      "pay-currency": s.payments.currency,
       "policy-fee": String(s.policy.fee),
       "policy-split": String(s.policy.split),
       "policy-notes": s.policy.notes,
@@ -1263,9 +1246,6 @@ export class DealerAdminApp extends HHElement {
       this.#patchSettingsPayments({
         phase: "ready",
         status: payments.value,
-        processor: payments.value.processor,
-        merchantId: payments.value.merchant_id,
-        currency: payments.value.currency,
       });
     }
 
@@ -1334,37 +1314,6 @@ export class DealerAdminApp extends HHElement {
       return;
     }
     this.#patchSettingsBrand({ busy: false, notice: "Saved. The dealer's brand follows your words." });
-  }
-
-  async #savePayments(): Promise<void> {
-    const s = this.#settings.payments;
-    if (s.phase !== "ready" || s.busy) return;
-    const formError = paymentsFormError({ processor: s.processor, merchant_id: s.merchantId, currency: s.currency });
-    if (formError !== "") {
-      this.#patchSettingsPayments({ error: formError });
-      return;
-    }
-    this.#patchSettingsPayments({ busy: true, notice: "", error: "" });
-    // The card rail's configuration is a money write: it goes to the server
-    // now and never queues.
-    const result = await this.#settingsApi.putPaymentsConfig({
-      processor: s.processor,
-      merchant_id: s.merchantId,
-      currency: s.currency,
-    });
-    if (!result.ok) {
-      this.#patchSettingsPayments({ busy: false, error: paymentsRefusalWords(errorWords(result.error), result.status) });
-      return;
-    }
-    const fresh = await this.#settingsApi.paymentsConfig();
-    this.#patchSettingsPayments({
-      busy: false,
-      notice: "Saved. The rail answers for the merchant you named.",
-      status: fresh.ok ? fresh.value : s.status,
-      processor: fresh.ok ? fresh.value.processor : s.processor,
-      merchantId: fresh.ok ? fresh.value.merchant_id : s.merchantId,
-      currency: fresh.ok ? fresh.value.currency : s.currency,
-    });
   }
 
   #policyFlag(field: string, on: boolean): void {

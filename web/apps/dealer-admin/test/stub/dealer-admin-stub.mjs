@@ -1899,19 +1899,6 @@ async function handle(req, res) {
   if (req.method === "GET" && path === "/api/v1/payments/config") {
     return json(res, { configured: true, merchant_id: payments.merchant_id, processor: payments.processor, currency: payments.currency, simulated: true });
   }
-  if (req.method === "PUT" && path === "/api/v1/payments/config") {
-    if (!isManager(flow) || scenario === "refused-payments") return refuse(res, 403, "Forbidden");
-    if (String(body?.merchant_id ?? "") === "") return refuse(res, 400, "merchant_id is required");
-    if (body?.surcharge_enabled === true) {
-      return refuse(res, 422, "payment: surcharge_enabled cannot be enabled: no tender path on this server computes a surcharge and no surcharge jurisdiction and cap is recorded (D18)");
-    }
-    payments = {
-      processor: String(body?.processor ?? "") === "" ? "run_payments" : String(body.processor),
-      merchant_id: String(body.merchant_id),
-      currency: String(body?.currency ?? ""),
-    };
-    return json(res, { configured: true, merchant_id: payments.merchant_id, processor: payments.processor });
-  }
 
   if (req.method === "GET" && path === "/api/v1/pos/policy") {
     return json(res, posPolicy);

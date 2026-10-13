@@ -15,8 +15,6 @@ import {
   chipSetError,
   linePresentationWord,
   marginVisibilityWord,
-  paymentsFormError,
-  paymentsRefusalWords,
   policyHistoryRefusalWords,
   policyHistoryWho,
   restockingFeeError,
@@ -27,14 +25,6 @@ import {
 } from "../src/settings-logic.js";
 
 // -- the forms' checks, in the core's own words --------------------------------------------------------
-
-test("a card rail configuration without a merchant id is refused before the write", () => {
-  assert.equal(paymentsFormError({ processor: "run_payments", merchant_id: "m-1", currency: "usd" }), "");
-  assert.equal(
-    paymentsFormError({ processor: "run_payments", merchant_id: "", currency: "usd" }),
-    "Merchant id is required.",
-  );
-});
 
 test("a walkthrough line speaks in headlines: at most 72 characters, and never nothing", () => {
   assert.equal(tourLineError("Tap the yard queue to see what is waiting."), "");
@@ -89,11 +79,7 @@ test("the policy history names who changed a knob, or somebody when the trail ca
 
 // -- the refusals --------------------------------------------------------------------------------------
 
-test("a shared Forbidden at the card rail or the counter becomes words naming who may act", () => {
-  assert.equal(
-    paymentsRefusalWords("Forbidden", 403),
-    "You may not configure the card rail. Configuring it is the dealer's administrators' own.",
-  );
+test("a shared Forbidden at the counter becomes words naming who may act", () => {
   assert.equal(counterPolicyRefusalWords("Forbidden", 403), "You may not set the counter's policy. Setting it is the dealer's administrators' own.");
   assert.equal(counterPolicyRefusalWords("pos: line_presentation must be LINES or CARDS", 422), "pos: line_presentation must be LINES or CARDS");
 });
@@ -142,12 +128,9 @@ test("the card rail read projects the status and never a credential", async () =
   assert.match(calls[0].url, /\/api\/v1\/payments\/config$/);
 });
 
-test("the card rail write PUTs the three fields the screen owns, and nothing secret", async () => {
-  const { api, calls } = apiAnswering({ body: { configured: true, merchant_id: "m-1", processor: "run_payments" } });
-  const result = await api.putPaymentsConfig({ processor: "run_payments", merchant_id: "m-1", currency: "usd" });
-  assert.equal(result.ok, true);
-  const sent = JSON.parse(calls[0].init.body);
-  assert.deepEqual(Object.keys(sent).sort(), ["currency", "merchant_id", "processor"]);
+test("the card rail has no write door: the stored credentials are never replaced from here", () => {
+  const { api } = apiAnswering({ body: {} });
+  assert.equal(typeof api.putPaymentsConfig, "undefined");
 });
 
 test("the counter policy read and write ride the pos policy route", async () => {
@@ -182,7 +165,7 @@ test("the counter policy read and write ride the pos policy route", async () => 
 
 test("the counter policy history answers the page", async () => {
   const { api } = apiAnswering({
-    body: { items: [{ field: "restocking_fee_bps", before: "250", after: "300", who: "u1", when: "2000-01-01T00:00:00Z" }], next_cursor: null, limit: 50 },
+    body: { items: [{ field: "restocking_fee_bps", before: "250", after: "300", who: "u1", when: new Date(Date.now() - 86400000).toISOString() }], next_cursor: null, limit: 50 },
   });
   const result = await api.counterPolicyHistory();
   assert.equal(result.ok, true);

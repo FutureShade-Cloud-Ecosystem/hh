@@ -13,28 +13,6 @@ import type { BranchRow } from "./dealer-api.js";
 
 // -- the card rail -----------------------------------------------------------------------------------
 
-/** The card rail form, the three fields the screen owns. No secret rides it. */
-export interface PaymentsForm {
-  readonly processor: string;
-  readonly merchant_id: string;
-  readonly currency: string;
-}
-
-export function paymentsFormError(form: PaymentsForm): string {
-  if (form.merchant_id.trim() === "") {
-    return "Merchant id is required.";
-  }
-  return "";
-}
-
-/** A shared Forbidden at the card rail becomes words naming who may act. */
-export function paymentsRefusalWords(error: string, status: number | undefined): string {
-  if (status === 403) {
-    return "You may not configure the card rail. Configuring it is the dealer's administrators' own.";
-  }
-  return error !== "" ? error : "Try again in a moment.";
-}
-
 // -- the counter policy -------------------------------------------------------------------------------
 
 export const LINE_PRESENTATIONS: readonly string[] = Object.freeze(["LINES", "CARDS"]);

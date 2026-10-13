@@ -167,32 +167,6 @@ export class SettingsApi {
     };
   }
 
-  /**
-   * Configure the card rail. The body carries the three fields the screen
-   * owns and nothing else: no credential, no surcharge switch (the core
-   * refuses the enable with its own sentence, and no tender path computes
-   * one), no base url. The write goes to the server and never queues.
-   */
-  async putPaymentsConfig(form: { processor: string; merchant_id: string; currency: string }): Promise<Result<PaymentsConfig>> {
-    const answer = await staffPayment.paymentPutConfig(this.#client, {
-      processor: form.processor,
-      merchant_id: form.merchant_id,
-      currency: form.currency,
-    });
-    if (!answer.ok) return answer;
-    const r = bag(answer.value);
-    return {
-      ok: true,
-      value: {
-        configured: bool(r.configured),
-        merchant_id: text(r.merchant_id),
-        processor: text(r.processor),
-        currency: "",
-        simulated: false,
-      },
-    };
-  }
-
   // -- the counter's policy ---------------------------------------------------------------------------
 
   /** The counter's policy, the org wide default. */
