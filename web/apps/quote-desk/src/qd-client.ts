@@ -886,9 +886,9 @@ export class QdClient {
     const result = await staffQuote.quoteMintShareLink(this.#client, quoteId, {});
     if (!result.ok) return result;
     const record = result.value as unknown;
-    if (!isRecord(record)) return err("the minted link is not readable");
+    if (!isRecord(record)) return err("the share link could not be read");
     const token = stringAt(record, "token");
-    return token === null ? err("the minted link carried no token") : ok(token);
+    return token === null ? err("the share link did not carry its code") : ok(token);
   }
 
   /**

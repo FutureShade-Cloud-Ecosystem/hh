@@ -1,5 +1,5 @@
-// Round 13: a Cash On Demand customer with zero-day terms and a credit line beside them (the demo's Dibbits account) is
-// told in Convert's own steps what the Dibbits rule is (decision log row 1047 item 6): the order is held until it is paid
+// Round 13: a Cash On Demand customer with zero-day terms and a credit line beside them (the demo's Gable Landscape Supply account) is
+// told in Convert's own steps what the Gable Landscape Supply rule is (decision log row 1047 item 6): the order is held until it is paid
 // in full, a deposit puts it in process, and taking nothing now stays a choice only with that consequence stated.
 import { expect, test } from "@playwright/test";
 
@@ -64,7 +64,7 @@ test("an account customer's Payment step is unchanged: optional, with Skip payme
 
 // Round 14 item 24: the seeded Cash On Demand quote walked through the guided surface to payment before release, with
 // Will-call. On the stub it is the zero-day terms customer's accepted quote; the same story on the real demo core's
-// DEMO-TRT-Q4 is test/acceptance/cod-q4.acceptance.ts.
+// DEMO-PLM-Q4 is test/acceptance/cod-q4.acceptance.ts.
 test("a Cash On Demand quote converts through the guided surface with Will-call and the whole payment: order, invoice, payment, nothing released unpaid", async ({ page }) => {
   const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "ACCEPTED", customer_id: "c-cod-terms", lines: [{ p: "p-wall-std", q: 4 }] } });
   const id = ((await seeded.json()) as { id: string }).id;

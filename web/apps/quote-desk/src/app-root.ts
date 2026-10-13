@@ -425,14 +425,14 @@ export class QuoteDeskApp extends HHElement {
     const minted = await this.#account.chooseFlow(flow);
     if (!minted.ok) {
       this.#busy = false;
-      this.#message = `Demo sign-in refused: ${minted.error}`;
+      this.#message = `Sign-in did not go through. ${minted.error}`;
       this.requestUpdate();
       return;
     }
     const adopted = this.#controller.adopt(minted.value);
     this.#busy = false;
     if (!adopted) {
-      this.#message = "Demo sign-in refused: the mint's session was not usable.";
+      this.#message = "Sign-in did not go through. Try the role again.";
       this.requestUpdate();
       return;
     }

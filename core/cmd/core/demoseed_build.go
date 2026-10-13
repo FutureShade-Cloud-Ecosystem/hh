@@ -765,6 +765,9 @@ func (b *builder) fleet() {
 	depots := map[string][2]float64{
 		"KGN": {44.2312, -76.4860},
 		"TRT": {44.1001, -77.5766},
+		// The demo dealer's two yards (the demo build moves the branch codes to these).
+		"JUL": {33.0786, -116.6020},
+		"PLM": {32.7370, -117.2370},
 	}
 	for _, br := range b.in.Branches {
 		c, ok := depots[br.Code]

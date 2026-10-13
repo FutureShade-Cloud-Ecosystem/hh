@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Field main window only. The core's default window permissions and this profile's app commands, allowed by name (they are declared in build.rs; core:default does not cover app commands). Capabilities are per profile and never shared: camera and fine location are Field only (plan B.3), and no Work or Pro capability may copy this file's grants.",
+  "description": "Field main window only, bundled local origin only (no remote block, so no remote URL reaches any command). The core's default window permissions and this profile's app commands, allowed by name (they are declared in build.rs; core:default does not cover app commands). Capabilities are per profile and never shared: camera and fine location are Field only (plan B.3), and no Work or Pro capability may copy this file's grants.",
   "windows": [
     "main"
   ],
@@ -9,6 +9,10 @@
     "core:default",
     "allow-run-statement",
     "allow-run-atomic",
+    "allow-auth-sign-in",
+    "allow-auth-resume",
+    "allow-auth-exchange",
+    "allow-auth-sign-out",
     "updater:default"
   ]
 }

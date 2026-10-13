@@ -128,7 +128,7 @@ test("the assist panel recovers after a quote switch during a read", async ({ pa
   held.open();
   await answered;
   await settle(page);
-  await assist(page).locator("#jobtext").fill("20 sf holland stone");
+  await assist(page).locator("#jobtext").fill("20 sf charcoal stone");
   const button = assist(page).getByRole("button", { name: "Suggest lines from this text" });
   await expect(button).toBeEnabled();
   await button.click();
@@ -138,7 +138,7 @@ test("the assist panel recovers after a quote switch during a read", async ({ pa
 test("a confirm loop cut short by a quote switch says how far it got, and writes nothing to the new quote", async ({ page }) => {
   await signIn(page);
   await openQuote(page, "Q-1001");
-  await assist(page).locator("#jobtext").fill("3 yd clear stone, 20 sf holland stone");
+  await assist(page).locator("#jobtext").fill("3 yd clear stone, 20 sf charcoal stone");
   await assist(page).getByRole("button", { name: "Suggest lines from this text" }).click();
   const proposals = assist(page).getByTestId("qa-proposal");
   await expect(proposals).toHaveCount(2);

@@ -909,7 +909,7 @@ test("credit holds: the sweep's holds are listed, lifting is held for this role 
   const place = page.getByRole("button", { name: /Place a hold/ });
   await expect(place).toHaveAttribute("aria-disabled", "true");
   await place.click({ force: true });
-  await expect(page.locator("[data-hold-panel]")).toContainText("no route for it yet");
+  await expect(page.locator("[data-hold-panel]")).toContainText("there is no path for it yet");
   await expect(page.locator("[data-hold-panel] fieldset[disabled]")).toBeVisible();
   await page.getByRole("button", { name: "Run the sweep" }).click({ force: true });
   await expect(page.locator("[data-error]")).toContainText("Running the sweep is the Financial Controller's");

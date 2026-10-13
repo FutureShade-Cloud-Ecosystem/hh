@@ -31,9 +31,9 @@ function line(n, over = {}) {
 function order(n, over = {}) {
   return {
     order_id: uuid(n),
-    order_no: `SO-TRT-${n}`,
+    order_no: `SO-PLM-${n}`,
     branch_id: uuid(9000),
-    branch_name: "Trenton",
+    branch_name: "Point Loma",
     created_at: "2026-10-01T10:00:00Z",
     job_label: `Job ${n}`,
     source: "TILL",
@@ -55,7 +55,7 @@ test("a readable customer lines answer becomes orders; a half readable one becom
   const read = readCustomerLines(answer([order(16), order(11)]));
   assert.ok(read !== null);
   assert.equal(read.length, 2);
-  assert.equal(read[0].orderNo, "SO-TRT-16");
+  assert.equal(read[0].orderNo, "SO-PLM-16");
   assert.equal(read[0].lines[1].qtyOpen, 4);
   assert.equal(readCustomerLines({ customer_id: uuid(1) }), null, "no items array");
   const broken = order(16);
@@ -106,8 +106,8 @@ test("lines from two orders ride one draft, in order of the screen", () => {
   assert.deepEqual(
     picked.map((p) => [p.orderNo, p.orderLineId, p.qty]),
     [
-      ["SO-TRT-16", uuid(161), 2],
-      ["SO-TRT-11", uuid(111), 1],
+      ["SO-PLM-16", uuid(161), 2],
+      ["SO-PLM-11", uuid(111), 1],
     ],
   );
   assert.equal(draft.orderCount, 2);
@@ -145,14 +145,14 @@ test("choosing a disposition on an unpicked line picks one unit; an exhausted li
 });
 
 test("one credit note is for one branch: a line from another branch's order is refused in words", () => {
-  const other = order(11, { branch_id: uuid(9001), branch_name: "Kingston" });
+  const other = order(11, { branch_id: uuid(9001), branch_name: "Julian" });
   const draft = new ReturnDraft(readCustomerLines(answer([order(16), other])));
   assert.equal(draft.setQty(uuid(161), "1").ok, true);
   const refused = draft.setQty(uuid(111), "1");
   assert.equal(refused.ok, false);
   assert.match(refused.words, /one branch/);
-  assert.match(refused.words, /Kingston/, "the refusal names the order's branch");
-  assert.match(refused.words, /Trenton/, "and the branch the note is already at");
+  assert.match(refused.words, /Julian/, "the refusal names the order's branch");
+  assert.match(refused.words, /Point Loma/, "and the branch the note is already at");
   assert.equal(draft.qtyOf(uuid(111)), 0);
   // Taking the first branch's lines out frees the draft to start on the other branch.
   draft.setQty(uuid(161), "");
@@ -161,9 +161,9 @@ test("one credit note is for one branch: a line from another branch's order is r
 
 test("the sales order number filters the line list only; it never changes the draft", () => {
   const orders = readCustomerLines(answer([order(16), order(11)]));
-  assert.deepEqual(filterOrders(orders, "").map((o) => o.orderNo), ["SO-TRT-16", "SO-TRT-11"]);
-  assert.deepEqual(filterOrders(orders, " so-trt-11 ").map((o) => o.orderNo), ["SO-TRT-11"]);
-  assert.deepEqual(filterOrders(orders, "16").map((o) => o.orderNo), ["SO-TRT-16"]);
+  assert.deepEqual(filterOrders(orders, "").map((o) => o.orderNo), ["SO-PLM-16", "SO-PLM-11"]);
+  assert.deepEqual(filterOrders(orders, " so-plm-11 ").map((o) => o.orderNo), ["SO-PLM-11"]);
+  assert.deepEqual(filterOrders(orders, "16").map((o) => o.orderNo), ["SO-PLM-16"]);
   assert.deepEqual(filterOrders(orders, "nope"), []);
   const draft = new ReturnDraft(orders);
   draft.setQty(uuid(161), "2");
