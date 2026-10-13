@@ -47,6 +47,14 @@ import {
   driverLine,
   fleetStateWord,
   SCAN_SEQUENCE,
+  centsText,
+  dollarsToCents,
+  raiseLine,
+  raiseStateWord,
+  splitBody,
+  splitNotice,
+  splitRefusal,
+  validateSplit,
   historyFaultWords,
   manifestNotice,
   manifestRefusal,
@@ -653,4 +661,70 @@ test("the trail's summary never rounds up: two of three delivered is not a deliv
 test("a load's line says how far it got and when it was last scanned", () => {
   assert.match(scanLoadLine({ load_ref: "PLT-1", reached: ["RECEIVED", "YARD", "PICKED"], furthest: "PICKED", last_scanned_at: "2026-10-12T18:04:00Z" }), /^PLT-1: picked, last scanned Oct 12, 2026/);
   assert.match(scanLoadLine({ load_ref: "PLT-2", reached: ["DELIVERED"], furthest: "DELIVERED", last_scanned_at: "2026-10-12T18:04:00Z", pod_signature_ref: "sig" }), /^PLT-2: delivered, signed for/);
+});
+
+// ---- split freight (part C, sub item 6) ------------------------------------------------------------------
+
+test("a typed dollar amount becomes integer cents by its digits, never through a float", () => {
+  assert.equal(dollarsToCents("125"), 12500);
+  assert.equal(dollarsToCents("125.5"), 12550);
+  assert.equal(dollarsToCents("$1,250.05"), 125005);
+  assert.equal(dollarsToCents(" 0.07 "), 7);
+  assert.equal(dollarsToCents("19.99"), 1999, "19.99 times 100 is 1998.9999999999998 as a float");
+  assert.equal(dollarsToCents("1.10"), 110);
+  assert.equal(dollarsToCents(""), null);
+  for (const bad of ["12.345", "-5", "abc", "1.2.3", "12,34", "$", ".5", "5."]) assert.equal(dollarsToCents(bad), undefined, bad);
+});
+
+test("cents show as dollars by integer arithmetic, with the cents always", () => {
+  assert.equal(centsText(0), "$0.00");
+  assert.equal(centsText(7), "$0.07");
+  assert.equal(centsText(12550), "$125.50");
+  assert.equal(centsText(125005), "$1,250.05");
+  assert.equal(centsText(100000000), "$1,000,000.00");
+  assert.equal(centsText(-250), "-$2.50");
+});
+
+test("the split form wants a whole number of trucks and amounts that are dollars; the bounds and the sum are the core's", () => {
+  const f = (over = {}) => ({ loads: "2", freight: "", amounts: "", ...over });
+  assert.equal(validateSplit(f()), "");
+  assert.match(validateSplit(f({ loads: "" })), /Trucks is a whole number/);
+  assert.match(validateSplit(f({ loads: "2.5" })), /Trucks is a whole number/);
+  assert.equal(validateSplit(f({ loads: "300" })), "", "300 trucks is the core's to refuse in its words");
+  assert.match(validateSplit(f({ freight: "abc" })), /The charge is dollars and cents/);
+  assert.match(validateSplit(f({ amounts: "10, x" })), /Each share is dollars and cents/);
+  assert.equal(validateSplit(f({ freight: "$300", amounts: "100, 200" })), "");
+});
+
+test("the split body carries cents only, the proposal only when typed, the shares only when typed", () => {
+  assert.deepEqual(splitBody({ loads: "3", freight: "", amounts: "" }, "o1"), { order_id: "o1", loads: 3 });
+  assert.deepEqual(splitBody({ loads: "2", freight: "$150.50", amounts: "100, 50.50" }, "o1"), { order_id: "o1", loads: 2, freight_cents: 15050, amounts: [10000, 5050] });
+});
+
+test("an applied split says the order's freight and each truck's share only from what the core sent", () => {
+  const load = (c) => ({ id: "s", branch_id: "b", order_id: "o", stop_no: 0, scheduled_date: "d", status: "READY", photo_count: 0, created_at: "x", ...(c === undefined ? {} : { freight_cents: c }) });
+  assert.equal(splitNotice({ order_id: "o", freight_cents: 30000, override: false, loads: [load(15000), load(15000)] }), "Freight $300.00 split across 2 trucks: $150.00, $150.00.");
+  assert.equal(splitNotice({ order_id: "o", freight_cents: 100, override: false, loads: [load(34), load(33), load(33)] }), "Freight $1.00 split across 3 trucks: $0.34, $0.33, $0.33.");
+  assert.equal(splitNotice({ order_id: "o", freight_cents: 30000, override: false, loads: [load(), load()] }), "Freight split across 2 trucks.", "a share the core did not send is not drawn");
+  assert.equal(splitNotice({ order_id: "o", freight_cents: 30000, override: false, loads: [load(30000)] }), "Freight $300.00 on 1 truck.");
+  assert.match(splitNotice({ order_id: "o", freight_cents: 10000, override: false, loads: [load(10000)], parked: { id: "r", order_id: "o", branch_id: "b", loads: 2, asked_by: "a dispatch manager", asked_at: "x", state: "PARKED" } }), /^Nothing changed\. The extra charge is waiting for approval/);
+});
+
+test("a parked raise reads by state, and its figures show only when the core sent them", () => {
+  assert.equal(raiseStateWord("PARKED"), "Waiting for approval");
+  assert.equal(raiseStateWord("APPLIED"), "Approved and applied");
+  assert.equal(raiseStateWord("REFUSED"), "Refused");
+  assert.equal(raiseStateWord("NEW_STATE"), "new state");
+  const base = { id: "r", order_id: "o", order_no: "ORD-0014", customer_name: "Summit Ridge Builders", branch_id: "b", loads: 2, asked_by: "a dispatch manager", asked_at: "2026-10-12T18:00:00Z", state: "PARKED" };
+  assert.deepEqual(raiseLine(base), ["ORD-0014 for Summit Ridge Builders", "2 trucks, asked by a dispatch manager"]);
+  const withMoney = raiseLine({ ...base, money: { quoted_freight_cents: 10000, current_freight_cents: 10000, proposed_freight_cents: 15000, delta_cents: 5000 } });
+  assert.deepEqual(withMoney.slice(2), ["Quoted $100.00, charged now $100.00, asked for $150.00", "$50.00 above the quote"]);
+  assert.equal(raiseLine({ ...base, money: null }).length, 2, "null money is absent money");
+});
+
+test("a refused split keeps the core's sentence; a lost reply says asking again is safe", () => {
+  assert.equal(splitRefusal("dispatch: a freight raise on this order is already waiting for approval, that one has to be decided before another can be asked for", 409), "a freight raise on this order is already waiting for approval, that one has to be decided before another can be asked for");
+  assert.match(splitRefusal("dispatch: forbidden", 403), /not yours to do/);
+  assert.match(splitRefusal("", null), /could not reach the server.*asking again is safe/s);
+  assert.match(splitRefusal("", 500), /nothing changed/);
 });

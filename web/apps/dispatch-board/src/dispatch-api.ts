@@ -19,6 +19,7 @@ import {
   type DispatchCreatedRef,
   type DispatchDriver,
   type DispatchDriverPage,
+  type DispatchFreightRaiseView,
   type DispatchGapPage,
   type DispatchLoadBoardView,
   type DispatchLoadOutcomeList,
@@ -32,6 +33,8 @@ import {
   type DispatchRunDetail,
   type DispatchScanTrail,
   type DispatchScheduleInput,
+  type DispatchSplitInput,
+  type DispatchSplitResult,
   type DispatchStop,
   type DispatchTruck,
   type DispatchTruckPage,
@@ -67,6 +70,18 @@ export class DispatchApi {
 
   drivers(branchId: string, includeInactive = false): Promise<Result<DispatchDriverPage>> {
     return staffDispatch.dispatchListDrivers(this.#client, includeInactive ? { branch_id: branchId, include_inactive: true } : { branch_id: branchId });
+  }
+
+  // ---- split freight (money adjacent: cents only, never queued, the core divides and gates)
+
+  /** Divides an order's freight across its trucks, or parks a raise above the quote for an approver. Asking the same twice converges. */
+  splitFreight(body: DispatchSplitInput): Promise<Result<DispatchSplitResult>> {
+    return staffDispatch.dispatchSplitFreight(this.#client, body);
+  }
+
+  /** A parked ask as the core serves it now. Its money is absent for a caller the value policy refuses. */
+  freightRaise(id: string): Promise<Result<DispatchFreightRaiseView>> {
+    return staffDispatch.dispatchGetFreightRaise(this.#client, id);
   }
 
   // ---- the manifest and the scan trail

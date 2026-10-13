@@ -16,12 +16,15 @@ import type {
   DispatchLoadOutcome,
   DispatchLoadRow,
   DispatchDriver,
+  DispatchFreightRaiseView,
   DispatchLoadStop,
   DispatchPolicy,
   DispatchPolicyChange,
   DispatchScanLoad,
   DispatchScanTrail,
   DispatchScheduleInput,
+  DispatchSplitInput,
+  DispatchSplitResult,
   DispatchTruck,
   DispatchStopPaymentHold,
 } from "@hardscapehouse/api-client";
@@ -1184,4 +1187,91 @@ export function scanLoadLine(l: DispatchScanLoad): string {
     parts.push(`last scanned ${when.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}`);
   }
   return `${l.load_ref}: ${parts.join(", ")}`;
+}
+
+// ---- split freight (part C) ------------------------------------------------------------------------------
+//
+// Money rules, from the state note: a figure is drawn only if the core sent it; cents are integers end
+// to end; a typed amount becomes cents by its digits, never through a float; the board computes no
+// share, no total and no difference (the core divides, checks the sum and subtracts).
+
+/** Typed dollars to integer cents by digits. "" is nothing typed (null); anything that is not dollars and cents is undefined. */
+export function dollarsToCents(text: string): number | null | undefined {
+  const t = text.trim().replace(/^\$/, "");
+  if (t === "") return text.trim() === "" ? null : undefined;
+  if (!/^(\d{1,3}(,\d{3})+|\d+)(\.\d{1,2})?$/.test(t)) return undefined;
+  const [whole = "0", frac = ""] = t.replace(/,/g, "").split(".");
+  return Number(whole) * 100 + Number(frac.padEnd(2, "0"));
+}
+
+/** Integer cents as dollars, by integer arithmetic. */
+export function centsText(cents: number): string {
+  const neg = cents < 0 ? "-" : "";
+  const abs = Math.abs(cents);
+  const whole = Math.floor(abs / 100).toLocaleString("en-US");
+  return `${neg}$${whole}.${String(abs % 100).padStart(2, "0")}`;
+}
+
+export interface SplitFields {
+  readonly loads: string;
+  /** The charge for the extra truck, dollars, optional. */
+  readonly freight: string;
+  /** Each truck's share by hand, dollars, comma separated, optional. */
+  readonly amounts: string;
+}
+
+const shares = (text: string): string[] => text.split(",").map((p) => p.trim()).filter((p, i, all) => !(p === "" && all.length === 1));
+
+/** The form's own check: a whole number of trucks and amounts that are dollars. The bounds and the sum are the core's. */
+export function validateSplit(f: SplitFields): string {
+  if (!/^\d+$/.test(f.loads.trim())) return "Trucks is a whole number, like 2.";
+  if (dollarsToCents(f.freight) === undefined) return "The charge is dollars and cents, like 150.00.";
+  if (f.amounts.trim() !== "" && shares(f.amounts).some((p) => typeof dollarsToCents(p) !== "number")) return "Each share is dollars and cents, like 100.00, separated by commas.";
+  return "";
+}
+
+export function splitBody(f: SplitFields, orderId: string): DispatchSplitInput {
+  const body: DispatchSplitInput = { order_id: orderId, loads: Number(f.loads.trim()) };
+  const freight = dollarsToCents(f.freight);
+  if (typeof freight === "number") body.freight_cents = freight;
+  if (f.amounts.trim() !== "") body.amounts = shares(f.amounts).map((p) => dollarsToCents(p) as number);
+  return body;
+}
+
+/** What the core did, from what it sent: the order's freight and each truck's share only where a figure came. */
+export function splitNotice(r: DispatchSplitResult): string {
+  const n = r.loads.length;
+  const trucks = `${n} ${n === 1 ? "truck" : "trucks"}`;
+  if (r.parked) return "Nothing changed. The extra charge is waiting for approval; the loads and the charge are as they were.";
+  const each = r.loads.map((l) => l.freight_cents);
+  const known = each.length > 0 && each.every((c): c is number => typeof c === "number");
+  if (n === 1) return typeof r.freight_cents === "number" ? `Freight ${centsText(r.freight_cents)} on 1 truck.` : "Freight on 1 truck.";
+  if (!known) return `Freight split across ${trucks}.`;
+  return `Freight ${centsText(r.freight_cents)} split across ${trucks}: ${(each as number[]).map(centsText).join(", ")}.`;
+}
+
+const RAISE_WORD: Record<string, string> = { PARKED: "Waiting for approval", APPLIED: "Approved and applied", REFUSED: "Refused" };
+
+export function raiseStateWord(state: string): string {
+  return RAISE_WORD[state] ?? state.toLowerCase().replace(/_/g, " ");
+}
+
+/** A parked ask's lines. The figures ride only when the core sent them; an absent figure is absent. */
+export function raiseLine(v: DispatchFreightRaiseView): string[] {
+  const who = v.customer_name ? ` for ${v.customer_name}` : "";
+  const out = [`${v.order_no ?? "The order"}${who}`, `${v.loads} ${v.loads === 1 ? "truck" : "trucks"}, asked by ${v.asked_by}`];
+  const m = v.money;
+  if (m) {
+    out.push(`Quoted ${centsText(m.quoted_freight_cents)}, charged now ${centsText(m.current_freight_cents)}, asked for ${centsText(m.proposed_freight_cents)}`);
+    out.push(`${centsText(m.delta_cents)} above the quote`);
+  }
+  return out;
+}
+
+/** A refused split in the core's own words. A lost reply is not a refusal: asking the same again is safe, because the core converges. */
+export function splitRefusal(error: string, status: number | null): string {
+  if (status === null || status === 0) {
+    return "The board could not reach the server, so it may or may not have gone through. Read the load again, then ask again: asking again is safe.";
+  }
+  return refusalWords("The split", error, status);
 }

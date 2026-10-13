@@ -201,13 +201,19 @@ function seedWorld() {
     { id: "9c000001-0000-4000-9000-000000000001", order_id: orders[7].id, branch_id: BRANCH, status: "CONFIRMED", expires_at: `${addDays(TODAY, 9)}T18:00:00Z`, collected_by: "Pickup contact (demo)", confirmed_at: `${TODAY}T10:00:00Z`, created_at: `${addDays(TODAY, -2)}T09:00:00Z` },
     { id: "9c000001-0000-4000-9000-000000000002", order_id: orders[7].id, branch_id: BRANCH, status: "REVOKED", expires_at: `${addDays(TODAY, 8)}T18:00:00Z`, created_at: `${addDays(TODAY, -3)}T09:00:00Z` },
   ];
-  return { trucks, drivers, runs, stops, orders, pickups, seq: { run: 5, resched: 1, stop: 50, truck: 5, driver: 4, pickup: 10, job: 10 } };
+  // Freight per order, in cents: what it charges now and what the customer was quoted (null: never quoted).
+  const freight = {
+    [stops[3].order_id]: { current: 30000, quoted: 30000 },
+    [stops[4].order_id]: { current: 10000, quoted: 10000 },
+    [stops[5].order_id]: { current: 20000, quoted: null },
+  };
+  return { trucks, drivers, runs, stops, orders, pickups, freight, raises: [], shares: {}, seq: { run: 5, resched: 1, stop: 50, truck: 5, driver: 4, pickup: 10, job: 10, raise: 1, split: 60 } };
 }
 
 let world = seedWorld();
 // What a test arms: the next write's refusal, the caller's reopen right, and a hold's amount.
 let armed = null;
-let caller = { can_reopen: true, can_commit: true, can_manage: true, can_set_policy: true };
+let caller = { can_reopen: true, can_commit: true, can_manage: true, can_set_policy: true, can_see_value: true };
 let holdAmount = false;
 const HOLD_STOP = "5a000001-0000-4000-9000-000000000005";
 
@@ -483,6 +489,44 @@ function trailFor(orderId) {
   };
 }
 
+const usd = (cents) => `${cents < 0 ? "-" : ""}$${Math.floor(Math.abs(cents) / 100)}.${String(Math.abs(cents) % 100).padStart(2, "0")}`;
+
+function evenSplit(total, n) {
+  const base = Math.floor(total / n);
+  const rem = total % n;
+  return Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0));
+}
+
+function raiseView(r) {
+  const out = {
+    id: r.id,
+    order_id: r.order_id,
+    order_no: r.order_no,
+    customer_name: r.customer_name,
+    branch_id: BRANCH,
+    loads: r.loads,
+    asked_by: "a dispatch manager",
+    asked_at: r.asked_at,
+    state: r.state,
+    approval_id: r.approval_id,
+  };
+  // The figures ride only for a caller the load value policy lets see them: absent by type, no key.
+  if (caller.can_see_value) {
+    out.money = { quoted_freight_cents: r.quoted, current_freight_cents: r.current, proposed_freight_cents: r.proposed, delta_cents: r.proposed - r.quoted };
+  }
+  return out;
+}
+
+function splitLoads(orderId) {
+  return world.stops.filter((s) => s.order_id === orderId && s.status !== "CANCELLED").sort((a, b) => (a.load_seq ?? 1) - (b.load_seq ?? 1));
+}
+
+function splitView(s) {
+  const out = stopView(s);
+  if (typeof world.shares[s.id] === "number") out.freight_cents = world.shares[s.id];
+  return out;
+}
+
 function refuseIfArmed(res, method, path) {
   if (armed === null) return false;
   if (armed.path !== undefined && !path.includes(armed.path)) return false;
@@ -504,7 +548,7 @@ async function route(req, res, url) {
   if (path === "/_stub/reset") {
     world = seedWorld();
     armed = null;
-    caller = { can_reopen: true, can_commit: true, can_manage: true, can_set_policy: true };
+    caller = { can_reopen: true, can_commit: true, can_manage: true, can_set_policy: true, can_see_value: true };
     POLICY = { ...DEFAULT_POLICY };
     policyTrail = [];
     holdAmount = false;
@@ -525,6 +569,12 @@ async function route(req, res, url) {
   }
   if (path === "/_stub/branches" && method === "POST") {
     manyBranches = Boolean((await readBody(req)).many);
+    return json(res, { ok: true });
+  }
+  if (path === "/_stub/raise" && method === "POST") {
+    const b = await readBody(req);
+    const r = world.raises.find((x) => x.id === b.id);
+    if (r) r.state = b.state;
     return json(res, { ok: true });
   }
   if (path === "/_stub/world") {
@@ -602,6 +652,11 @@ async function route(req, res, url) {
       if (q("order_id") === "") return fail(res, 400, "order_id is required");
       const trail = trailFor(q("order_id"));
       return trail === null ? fail(res, 404, "dispatch: not found") : json(res, trail);
+    }
+    let m2 = /^freight-raises\/([^/]+)$/.exec(rest);
+    if (m2) {
+      const raise = world.raises.find((r) => r.id === m2[1]);
+      return raise ? json(res, raiseView(raise)) : fail(res, 404, "dispatch: not found");
     }
     if (rest === "policy") return json(res, POLICY);
     if (rest === "policy/history") {
@@ -717,6 +772,76 @@ async function route(req, res, url) {
   // ---- the auto assign seam: the core build answers 501 and says what would answer it
   if (rest === "auto-assign") {
     return fail(res, 501, "dispatch: automatic load assignment is part of the Pro module, build the loads here in the meantime");
+  }
+
+  if (rest === "freight-split") {
+    const order = resolveOrder(res, body.order_id);
+    if (order === null) return;
+    if (!caller.can_see_value) return fail(res, 403, "dispatch: forbidden");
+    const loads = Number(body.loads);
+    if (!(loads >= 1 && loads <= 10)) return fail(res, 422, "dispatch: an order goes out on between 1 and 10 loads");
+    const existing = splitLoads(order.id);
+    if (existing.length === 0) return fail(res, 409, "dispatch: schedule this order for delivery before splitting its freight");
+    if (existing.length > loads) return fail(res, 409, `dispatch: this order is already on ${existing.length} loads, cancel one before splitting into ${loads}`);
+    for (const st of existing) {
+      if (st.commit_state === "COMMITTED" && !caller.can_reopen) return fail(res, 409, `dispatch: ${st.order_no} is committed, reopen it first, or ask a dispatch manager to`);
+    }
+    let fr = world.freight[order.id];
+    const proposal = body.freight_cents === undefined || body.freight_cents === null ? null : Number(body.freight_cents);
+    if (!fr) {
+      if (proposal === null) return fail(res, 409, "dispatch: this order carries no freight to split");
+      fr = { current: 0, quoted: null };
+    }
+    const current = fr.current;
+    const proposed = proposal === null ? current : proposal;
+    if (proposed < 0) return fail(res, 422, "dispatch: freight cannot be negative");
+    if (proposed < current) return fail(res, 422, `dispatch: this order's freight is ${usd(current)}, lowering it is a credit note, not a split`);
+    let amounts = evenSplit(proposed, loads);
+    let override = false;
+    if (Array.isArray(body.amounts) && body.amounts.length > 0) {
+      if (body.amounts.length !== loads) return fail(res, 422, `dispatch: the split has ${body.amounts.length} amounts and the order is on ${loads} loads`);
+      if (body.amounts.some((a) => a < 0)) return fail(res, 422, "dispatch: a load's freight cannot be negative");
+      const sum = body.amounts.reduce((a, b) => a + b, 0);
+      if (sum !== proposed) return fail(res, 422, `dispatch: the split comes to ${usd(sum)} and the order's freight is ${usd(proposed)}, they have to match`);
+      amounts = body.amounts;
+      override = true;
+    }
+    // The gate: a raise above the quote that nobody has agreed to parks, and nothing is written.
+    if (fr.quoted !== null && proposed > fr.quoted && proposed > current) {
+      const parked = world.raises.find((r) => r.order_id === order.id && r.state === "PARKED");
+      const same = (r) => r.proposed === proposed && r.loads === loads && JSON.stringify(r.amounts ?? []) === JSON.stringify(body.amounts ?? []);
+      if (parked && !same(parked)) return fail(res, 409, "dispatch: a freight raise on this order is already waiting for approval, that one has to be decided before another can be asked for");
+      const raise = parked ?? {
+        id: `fa000001-0000-4000-9000-0000000000${String(world.seq.raise++).padStart(2, "0")}`,
+        order_id: order.id,
+        order_no: order.order_no,
+        customer_name: order.customer_name,
+        loads,
+        asked_at: `${TODAY}T08:00:00Z`,
+        state: "PARKED",
+        approval_id: `ab000001-0000-4000-9000-0000000000${String(world.seq.raise).padStart(2, "0")}`,
+        quoted: fr.quoted,
+        current,
+        proposed,
+        amounts: body.amounts,
+      };
+      if (!parked) world.raises.push(raise);
+      return json(res, { order_id: order.id, freight_cents: current, override: false, loads: existing.map(splitView), parked: raiseView(raise) });
+    }
+    const parent = existing[0];
+    while (existing.length < loads) {
+      const n = world.seq.split++;
+      const copy = { ...parent, id: `5a000001-0000-4000-9000-0000000000${n}`, run_id: "", stop_no: 0, status: "READY", commit_state: "REQUESTED", committed_at: null };
+      world.stops.push(copy);
+      existing.push(copy);
+    }
+    existing.forEach((st, i) => {
+      st.load_seq = i + 1;
+      st.load_count = loads;
+      world.shares[st.id] = amounts[i];
+    });
+    world.freight[order.id] = { current: proposed, quoted: fr.quoted };
+    return json(res, { order_id: order.id, freight_cents: proposed, override, loads: existing.map(splitView) });
   }
 
   if (rest === "will-call") {
