@@ -83,16 +83,18 @@ function mintToken(sub) {
   return `${part({ alg: "ES256", typ: "JWT" })}.${part(payload)}.c3R1Yi1zaWduYXR1cmUtYnl0ZXM`;
 }
 
-// One day source for every date the stub writes: the UTC day, so a day offset
-// never straddles a boundary between the stub's zone and a test's.
-function utcDay(at) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+// One day source for every date the stub writes: the machine's local day,
+// the same day the app calls today in the browser on the same machine. The
+// contract tests read it in the same zone (they pass TZ through), so an offset
+// of N days never straddles a boundary between the stub and its readers.
+function localDay(at) {
+  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
 }
 
 function dayOffset(offset) {
   const at = new Date();
-  at.setUTCDate(at.getUTCDate() + offset);
-  return utcDay(at);
+  at.setDate(at.getDate() + offset);
+  return localDay(at);
 }
 
 function uuid(kind, n) {

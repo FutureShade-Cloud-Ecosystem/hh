@@ -132,8 +132,8 @@ function refused(res, status, fragment, inSource = fragment) {
 
 const later = (days) => {
   const at = new Date();
-  at.setUTCDate(at.getUTCDate() + days);
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  at.setDate(at.getDate() + days);
+  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
 };
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
