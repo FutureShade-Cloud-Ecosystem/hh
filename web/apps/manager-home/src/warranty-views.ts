@@ -940,8 +940,8 @@ function claimFactsBox(claim: Claim): TemplateResult {
       <div class="kv"><span>Opened</span><span class="mono">${dateWords(claim.opened_at)}</span></div>
       ${claim.submitted_at !== "" ? html`<div class="kv"><span>Submitted</span><span class="mono">${dateWords(claim.submitted_at)}</span></div>` : nothing}
       ${claim.sla_due !== "" ? html`<div class="kv"><span>Service level due</span><span class="mono">${dateWords(claim.sla_due)}</span></div>` : nothing}
-      <div class="kv"><span>Expected</span><span class="amount">${centsWords(claim.expected_cents)}</span></div>
-      <div class="kv"><span>Realized</span><span class="amount">${centsWords(claim.realized_cents)}</span></div>
+      <div class="kv"><span>Expected</span><span class="amount">${claim.expected_cents !== 0 ? centsWords(claim.expected_cents) : NOT_ON_FILE}</span></div>
+      <div class="kv"><span>Realized</span><span class="amount">${claim.outcome !== "" || claim.realized_cents !== 0 ? centsWords(claim.realized_cents) : NOT_ON_FILE}</span></div>
       ${claim.outcome !== "" ? html`<div class="kv"><span>Outcome</span><span>${outcomeWord(claim.outcome)}</span></div>` : nothing}
       ${claim.description !== "" ? html`<p class="detail description">${claim.description}</p>` : nothing}
       ${claim.lines.map((line) => html`
