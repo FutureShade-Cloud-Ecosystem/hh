@@ -148,7 +148,19 @@ mod tests {
         // The shape is pinned: a new grant is a reviewed change to this list.
         let mut perms = capability_permissions();
         perms.sort();
-        assert_eq!(perms, ["allow-run-atomic", "allow-run-statement", "core:default", "updater:default"]);
+        assert_eq!(
+            perms,
+            [
+                "allow-auth-exchange",
+                "allow-auth-resume",
+                "allow-auth-sign-in",
+                "allow-auth-sign-out",
+                "allow-run-atomic",
+                "allow-run-statement",
+                "core:default",
+                "updater:default"
+            ]
+        );
         let cap: serde_json::Value = serde_json::from_str(CAPABILITY).unwrap();
         assert_eq!(cap["windows"], serde_json::json!(["main"]));
     }
@@ -275,5 +287,96 @@ mod tests {
         for secret in ["session_token", "secret", "password", "private"] {
             assert!(!line.to_lowercase().contains(secret), "a secret-shaped field ({secret}) is in the line");
         }
+    }
+
+    // ---- the four auth commands (mirrors Field's item 7 tests) ---------------
+
+    const AUTH_COMMANDS: [&str; 4] = ["auth_sign_in", "auth_resume", "auth_exchange", "auth_sign_out"];
+    const AUTH_PERMISSIONS: [&str; 4] =
+        ["allow-auth-sign-in", "allow-auth-resume", "allow-auth-exchange", "allow-auth-sign-out"];
+    const AUTH_SOURCE: &str = include_str!("auth.rs");
+
+    #[test]
+    fn the_auth_commands_are_allowed_by_name_to_the_bundled_local_origin_only() {
+        let cap: serde_json::Value = serde_json::from_str(CAPABILITY).expect("the capability parses");
+        let perms: Vec<&str> = cap["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+        for name in AUTH_PERMISSIONS {
+            assert!(perms.contains(&name), "{name} is allowed by name");
+        }
+        assert!(perms.iter().all(|p| !p.contains('*')), "no wildcard permission");
+        assert!(cap.get("remote").is_none(), "the default capability names no remote URL");
+        assert!(cap.get("local").is_none_or(|l| l == &serde_json::json!(true)));
+        assert_eq!(cap["windows"], serde_json::json!(["main"]), "the main window only");
+        assert!(cap.get("webviews").is_none(), "no extra webview is granted");
+        assert!(!TAURI_CONF.contains("dangerousRemoteDomainIpcAccess"));
+        assert!(!CAPABILITY.contains("keychain"), "the auth grants add no keychain command");
+    }
+
+    #[test]
+    fn the_auth_commands_are_declared_in_the_built_acl_manifest() {
+        for name in AUTH_COMMANDS {
+            assert!(BUILT_ACL_MANIFEST.contains(name), "{name} is declared in the ACL manifest");
+        }
+        for name in AUTH_PERMISSIONS {
+            assert!(BUILT_CAPABILITIES.contains(name), "{name} is granted in the merged capabilities");
+        }
+        assert!(!BUILT_ACL_MANIFEST.contains("keychain"));
+    }
+
+    #[test]
+    fn no_auth_command_takes_an_endpoint_a_project_or_a_core_url() {
+        let production = AUTH_SOURCE.split("#[cfg(test)]").next().unwrap();
+        let mut commands = 0;
+        for chunk in production.split("#[tauri::command]").skip(1) {
+            commands += 1;
+            let signature = chunk.split("{").next().unwrap().to_ascii_lowercase();
+            for banned in ["endpoint", "project", "core_url", "url", "jwt", "secret", "token"] {
+                assert!(!signature.contains(banned), "a command signature mentions {banned}: {signature}");
+            }
+        }
+        assert_eq!(commands, 4, "exactly the four contract commands");
+    }
+
+    #[test]
+    fn the_auth_module_prints_and_logs_nothing() {
+        let production = AUTH_SOURCE.split("#[cfg(test)]").next().unwrap();
+        for banned in ["println!", "eprintln!", "print!(", "dbg!", "log::", "tracing::", "info!(", "warn!(", "error!("] {
+            assert!(!production.contains(banned), "auth.rs contains {banned}");
+        }
+    }
+
+    #[test]
+    fn the_keychain_service_is_the_work_identifier_and_the_slot_is_per_project() {
+        // AUTH-SHELL-CONTRACT r7: service ai.futurebuild.hh.<profile>, account
+        // console-session:<project id>. Work is desktop custody only.
+        let address = hh_shell_core::custody::Address::console_session(profiles::work().identifier, "proj-1")
+            .expect("the Work identifier forms a custody address");
+        assert_eq!(address.service(), "ai.futurebuild.hh.work");
+        assert_eq!(address.account(), "console-session:proj-1");
+        assert!(!AUTH_SOURCE.contains("profiles::field"), "Work never reads Field's profile");
+    }
+
+    #[test]
+    fn a_build_without_its_sign_in_configuration_refuses_to_sign_in() {
+        // No HH_CONSOLE_PROJECT_ID or HH_CORE_URL at build time: the managed
+        // state is empty and every command answers `unavailable`.
+        if profiles::work().auth.validate().is_err() {
+            let state = super::auth::AuthState::for_profile();
+            assert!(
+                matches!(state.service(), Err(hh_shell_core::console::AuthCode::Unavailable)),
+                "an unconfigured build must hold no auth service and answer unavailable"
+            );
+        }
+    }
+
+    #[test]
+    fn the_csp_connect_src_is_unchanged_by_sign_in() {
+        // Sign in runs on the Rust side (Console and the core are called from
+        // Rust), so the webview's connect-src needs no network origin, exactly
+        // as in Field's config.
+        let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
+        let csp = conf["app"]["security"]["csp"].as_str().unwrap();
+        assert!(csp.contains("connect-src 'self' ipc: http://ipc.localhost;"), "{csp}");
+        assert!(!csp.contains("https:"), "no remote origin in the CSP");
     }
 }

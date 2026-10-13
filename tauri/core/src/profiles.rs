@@ -391,6 +391,19 @@ mod tests {
     }
 
     #[test]
+    fn work_signs_in_from_the_build_configuration_like_field() {
+        // Both profiles read the same three build time values (names only:
+        // HH_CONSOLE_ENDPOINT, HH_CONSOLE_PROJECT_ID, HH_CORE_URL); nothing
+        // about sign in is typed into the profile, and an unset build is
+        // refused by validate rather than guessed.
+        assert_eq!(work().auth, AuthConfig::from_build());
+        assert_eq!(work().auth, field().auth);
+        if option_env!("HH_CONSOLE_PROJECT_ID").is_none() {
+            assert!(work().auth.validate().is_err(), "an unconfigured build must not validate");
+        }
+    }
+
+    #[test]
     fn camera_and_fine_location_are_field_only() {
         // Plan B.3: Work and Pro must never copy Field's grants.
         assert_eq!(work().permissions, Permissions { camera: false, fine_location: false });
