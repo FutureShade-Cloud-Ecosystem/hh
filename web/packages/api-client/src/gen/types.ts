@@ -2596,7 +2596,7 @@ export type IdentityApprovalDecideRequest = {
   approve: boolean;
   reason: string;
 };
-export type TaxReasonCode = "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "FNGST_5" | "MANUAL_TAX_REVIEW";
+export type TaxReasonCode = "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "FNGST_5" | "MANUAL_TAX_REVIEW" | "FED_S87_GOODS_ON_RES" | "FED_S87_SERVICE_RESERVE" | "FED_BAND_MANAGEMENT" | "FNT_PRODUCT" | "TREATY_OR_SELF_GOV_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
 export type TaxRate = {
   id: string;
   jurisdiction: string;
@@ -2606,10 +2606,8 @@ export type TaxRate = {
   effective_to?: string;
   notes?: string;
 };
-export type TaxRatePage = {
-  items: TaxRate[];
-  next_cursor?: string | null;
-  limit?: number;
+export type TaxRateList = {
+  rates: TaxRate[] | null;
 };
 export type TaxProfileStatus = "ACTIVE" | "PENDING" | "RETIRED";
 export type TaxStatusCardProfile = {
@@ -2623,10 +2621,11 @@ export type TaxStatusCardProfile = {
   status: TaxProfileStatus;
   notes?: string;
 };
-export type TaxStatusCardProfilePage = {
-  items: TaxStatusCardProfile[];
-  next_cursor?: string | null;
-  limit?: number;
+export type TaxStatusCardProfileList = {
+  profiles: TaxStatusCardProfile[] | null;
+};
+export type TaxPendingProfileList = {
+  pending_profiles: TaxStatusCardProfile[];
 };
 export type TaxConfig = {
   branch_id?: string;
@@ -2649,10 +2648,8 @@ export type TaxEvidence = {
   created_at?: string;
   attestation_status?: string;
 };
-export type TaxEvidencePage = {
-  items: TaxEvidence[];
-  next_cursor?: string | null;
-  limit?: number;
+export type TaxEvidenceList = {
+  evidence: TaxEvidence[] | null;
 };
 export type TaxEvidenceCapture = {
   profile_id: string;

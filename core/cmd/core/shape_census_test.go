@@ -169,10 +169,6 @@ var shapeCensusAllowlist = map[string]string{
 	// (4) wrong key (11): the list sits under a key the contract does not
 	// declare (items is the contract's spelling).
 	"finstmtListSchedules":           "writes the (nil guarded) list under the key \"schedules\" (internal/finstmt/handler.go, Handler.listSchedules) against the contract's FinStmtSchedulePage (items, next_cursor); the fix is the owning lane's",
-	"taxListEvidence":                "writes the (possibly nil) list under the key \"evidence\" (internal/tax/handler.go, Handler.listEvidence, no nil guard; the observed empty answer was {\"evidence\":null}) against the contract's TaxEvidencePage; the fix is the owning lane's",
-	"taxListProfiles":                "writes the list under the key \"profiles\" (internal/tax/handler.go, Handler.listProfiles) against the contract's TaxStatusCardProfilePage; the fix is the owning lane's",
-	"taxListRates":                   "writes the list under the key \"rates\" (internal/tax/handler.go, Handler.listRates) against the contract's TaxRatePage; the fix is the owning lane's",
-	"taxReviewQueue":                 "writes the (nil guarded) list under the key \"pending_profiles\" (internal/tax/handler.go, Handler.reviewQueue) against the contract's TaxStatusCardProfilePage; the fix is the owning lane's",
 }
 
 // shapeCensusUncovered names every page shape operation the fixture cannot

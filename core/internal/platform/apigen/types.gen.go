@@ -3097,7 +3097,7 @@ type IdentityApprovalDecideRequest struct {
 	Reason  string `json:"reason"`
 }
 
-// TaxReasonCode is the document's enum: "STD_ON_HST_13", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW".
+// TaxReasonCode is the document's enum: "STD_ON_HST_13", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW", "FED_S87_GOODS_ON_RES", "FED_S87_SERVICE_RESERVE", "FED_BAND_MANAGEMENT", "FNT_PRODUCT", "TREATY_OR_SELF_GOV_REVIEW", "RELIEF_DECLINED_EVIDENCE".
 type TaxReasonCode string
 
 type TaxRate struct {
@@ -3110,10 +3110,8 @@ type TaxRate struct {
 	Notes         *string       `json:"notes,omitempty"`
 }
 
-type TaxRatePage struct {
-	Items      []TaxRate `json:"items"`
-	NextCursor *string   `json:"next_cursor,omitempty"`
-	Limit      *int32    `json:"limit,omitempty"`
+type TaxRateList struct {
+	Rates *[]TaxRate `json:"rates"`
 }
 
 // TaxProfileStatus is the document's enum: "ACTIVE", "PENDING", "RETIRED".
@@ -3131,10 +3129,12 @@ type TaxStatusCardProfile struct {
 	Notes               *string          `json:"notes,omitempty"`
 }
 
-type TaxStatusCardProfilePage struct {
-	Items      []TaxStatusCardProfile `json:"items"`
-	NextCursor *string                `json:"next_cursor,omitempty"`
-	Limit      *int32                 `json:"limit,omitempty"`
+type TaxStatusCardProfileList struct {
+	Profiles *[]TaxStatusCardProfile `json:"profiles"`
+}
+
+type TaxPendingProfileList struct {
+	PendingProfiles []TaxStatusCardProfile `json:"pending_profiles"`
 }
 
 type TaxConfig struct {
@@ -3160,10 +3160,8 @@ type TaxEvidence struct {
 	AttestationStatus *string    `json:"attestation_status,omitempty"`
 }
 
-type TaxEvidencePage struct {
-	Items      []TaxEvidence `json:"items"`
-	NextCursor *string       `json:"next_cursor,omitempty"`
-	Limit      *int32        `json:"limit,omitempty"`
+type TaxEvidenceList struct {
+	Evidence *[]TaxEvidence `json:"evidence"`
 }
 
 type TaxEvidenceCapture struct {
