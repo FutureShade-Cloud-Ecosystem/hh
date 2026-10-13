@@ -21,7 +21,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, tenantAuth, type TenantOrder, type TenantOrderDetail, type TenantProjectDashboard, type TenantProjectSummary, type TenantReturnEligibility, type TenantReturnRequest } from "@hardscapehouse/api-client";
+import { ApiClient, tenantAuth, tenantTeam, type TenantInvite, type TenantOrder, type TenantOrderDetail, type TenantProjectDashboard, type TenantProjectSummary, type TenantReturnEligibility, type TenantReturnRequest, type TenantUser } from "@hardscapehouse/api-client";
 import {
   CAPABILITIES,
   InMemoryTenantSession,
@@ -41,7 +41,7 @@ import { liveFieldPort, type FieldPort } from "./port.js";
 import { ordersSurfaceOf, sectionsFor, type Section } from "./sections.js";
 import { houseToday, instructionsEditable, instructionsNote } from "./timeline.js";
 import { returnRequestLines } from "./returns.js";
-import { instructionsCard, orderView, ordersList, projectStates, projectView, projectsList, returnsCard, sectionNav, sectionPlaceholder, type EligibilityState, type Phase, type ReturnFormState } from "./views.js";
+import { instructionsCard, orderView, ordersList, projectStates, projectView, projectsList, returnsCard, sectionNav, sectionPlaceholder, teamView, type EligibilityState, type Phase, type ReturnFormState } from "./views.js";
 import { fieldStyles } from "./styles.js";
 
 interface OrdersState {
@@ -84,6 +84,17 @@ interface ProjectState {
   data: TenantProjectDashboard | null;
 }
 
+interface TeamState {
+  phase: Phase;
+  users: TenantUser[];
+  invites: TenantInvite[];
+  inviteEmail: string;
+  inviteRole: string;
+  inviteBusy: boolean;
+  notice: string;
+  error: string;
+}
+
 const CANNOT_RETURN_WORDS = "This order cannot be returned through Pro. Ask the dealer to arrange it.";
 const RETURN_FAULT_WORDS = "Returns did not load. Try again in a moment.";
 
@@ -110,10 +121,12 @@ export class ProFieldApp extends HHElement {
   #order: OrderState | null = null;
   #projects: ProjectsState = { phase: "idle", items: [] };
   #project: ProjectState | null = null;
+  #team: TeamState = { phase: "idle", users: [], invites: [], inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
   #ordersSeq = 0;
   #orderSeq = 0;
   #projectsSeq = 0;
   #projectSeq = 0;
+  #teamSeq = 0;
   #unsubscribe: (() => void) | null = null;
 
   constructor() {
@@ -131,6 +144,8 @@ export class ProFieldApp extends HHElement {
       if (this.#section === "projects") {
         if (this.#project !== null) void this.#loadProject(this.#project.id);
         else void this.#loadProjects();
+      } else if (this.#section === "team") {
+        void this.#loadTeam();
       } else if (this.#order !== null) {
         void this.#loadOrder(this.#order.id);
       } else {
@@ -176,6 +191,14 @@ export class ProFieldApp extends HHElement {
       void this.#submitReturn();
       return;
     }
+    if (action === "create-invite") {
+      void this.#createInvite();
+      return;
+    }
+    if (action === "set-status") {
+      void this.#setUserStatus(control?.getAttribute("data-user-id") ?? "", control?.getAttribute("data-status") ?? "");
+      return;
+    }
     if (action === "section") {
       this.#selectSection(control?.getAttribute("data-value") ?? "");
     }
@@ -188,6 +211,19 @@ export class ProFieldApp extends HHElement {
     const target = event.target;
     if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) return;
     const field = target.getAttribute("data-field");
+    if (field === "invite-email" && target instanceof HTMLInputElement) {
+      this.#team.inviteEmail = target.value;
+      this.requestUpdate();
+      return;
+    }
+    if (field === "invite-role" && target instanceof HTMLSelectElement) {
+      this.#team.inviteRole = target.value;
+      return;
+    }
+    if (field === "member-role" && target instanceof HTMLSelectElement) {
+      void this.#setUserRole(target.getAttribute("data-user-id") ?? "", target.value);
+      return;
+    }
     const order = this.#order;
     if (order === null || order.detail === null) return;
     if (field === "instructions") {
@@ -250,6 +286,7 @@ export class ProFieldApp extends HHElement {
         this.#order = null;
         this.#projects = { phase: "idle", items: [] };
         this.#project = null;
+        this.#team = { phase: "idle", users: [], invites: [], inviteEmail: "", inviteRole: "buyer", inviteBusy: false, notice: "", error: "" };
       }
       this.requestUpdate();
     });
@@ -295,6 +332,15 @@ export class ProFieldApp extends HHElement {
     if (order !== null && order.returns.eligibility.phase === "done") {
       const reason = this.renderRoot.querySelector<HTMLSelectElement>("select[data-field=return-reason]");
       if (reason !== null) reason.value = order.returns.form.reason;
+    }
+    // The selects' selections are the wiring pass's job, never a binding.
+    if (this.#section === "team" && this.#team.phase === "ready") {
+      for (const select of Array.from(this.renderRoot.querySelectorAll<HTMLSelectElement>("select[data-field=member-role]"))) {
+        const user = this.#team.users.find((candidate) => candidate.id === select.getAttribute("data-user-id"));
+        if (user !== undefined) select.value = user.role;
+      }
+      const inviteRole = this.renderRoot.querySelector<HTMLSelectElement>("select[data-field=invite-role]");
+      if (inviteRole !== null) inviteRole.value = this.#team.inviteRole;
     }
   }
 
@@ -475,6 +521,86 @@ export class ProFieldApp extends HHElement {
     this.#project = null;
     this.requestUpdate();
     if (to === "projects") void this.#loadProjects();
+    if (to === "team") {
+      this.#team.notice = "";
+      this.#team.error = "";
+      void this.#loadTeam();
+    }
+  }
+
+  // The team reads ride the port; the team's writes stay off it on purpose
+  // (management actions never queue) and call the client directly. The words
+  // an action said survive its reload.
+  async #loadTeam(): Promise<void> {
+    const sequence = (this.#teamSeq += 1);
+    this.#team = { ...this.#team, phase: "loading" };
+    this.requestUpdate();
+    const [users, invites] = await Promise.all([this.#port.listUsers(), this.#port.listInvites()]);
+    if (sequence !== this.#teamSeq || this.#session.profile() === null || this.#section !== "team") return;
+    const refused = users.ok === false ? users : invites.ok === false ? invites : null;
+    if (refused !== null) {
+      if (refused.status === 401) {
+        this.#signinMessage = "You are signed out. Sign in again.";
+        await this.#session.signOut();
+        return;
+      }
+      this.#team = { ...this.#team, phase: refused.status === 403 ? "refusal" : "error" };
+    } else if (users.ok && invites.ok) {
+      this.#team = { ...this.#team, phase: "ready", users: users.value, invites: invites.value };
+    }
+    this.requestUpdate();
+  }
+
+  async #setUserRole(id: string, role: string): Promise<void> {
+    if (id === "" || role === "") return;
+    this.#team.notice = "";
+    this.#team.error = "";
+    this.requestUpdate();
+    const answer = await tenantTeam.tenantUpdateUserRole(this.#client, id, { role: role as "account_admin" | "buyer" | "buyer_no_pay" | "ap_finance" | "field_crew" });
+    if (this.#section !== "team" || this.#session.profile() === null) return;
+    if (answer.ok) {
+      this.#team.notice = "Role saved.";
+    } else {
+      this.#team.error = answer.error;
+    }
+    await this.#loadTeam();
+  }
+
+  async #setUserStatus(id: string, status: string): Promise<void> {
+    if (id === "" || (status !== "active" && status !== "inactive")) return;
+    this.#team.notice = "";
+    this.#team.error = "";
+    this.requestUpdate();
+    const answer = await tenantTeam.tenantUpdateUserStatus(this.#client, id, { status });
+    if (this.#section !== "team" || this.#session.profile() === null) return;
+    if (answer.ok) {
+      this.#team.notice = status === "inactive" ? "The member is deactivated. They cannot sign in until reactivated." : "The member is active again.";
+    } else {
+      this.#team.error = answer.error;
+    }
+    await this.#loadTeam();
+  }
+
+  async #createInvite(): Promise<void> {
+    const email = this.#team.inviteEmail.trim();
+    if (email === "" || this.#team.inviteBusy) return;
+    this.#team.inviteBusy = true;
+    this.#team.notice = "";
+    this.#team.error = "";
+    this.requestUpdate();
+    const answer = await tenantTeam.tenantCreateInvite(this.#client, { email, role: this.#team.inviteRole as "account_admin" | "buyer" | "buyer_no_pay" | "ap_finance" | "field_crew" });
+    if (this.#section !== "team" || this.#session.profile() === null) return;
+    this.#team.inviteBusy = false;
+    if (answer.ok) {
+      this.#team.inviteEmail = "";
+      const field = this.renderRoot.querySelector<HTMLInputElement>("input[data-field=invite-email]");
+      if (field !== null) field.value = "";
+      this.#team.notice = "Invite created. The dealer's email carries the link.";
+      await this.#loadTeam();
+    } else {
+      this.#team.error = answer.error;
+    }
+    this.requestUpdate();
   }
 
   async #loadProjects(): Promise<void> {
@@ -584,6 +710,17 @@ export class ProFieldApp extends HHElement {
           : projectStates(this.#project.phase);
       }
       return projectsList({ phase: this.#projects.phase, projects: this.#projects.items });
+    }
+    if (this.#section === "team") {
+      return teamView({
+        phase: this.#team.phase,
+        users: this.#team.users,
+        invites: this.#team.invites,
+        inviteBusy: this.#team.inviteBusy,
+        inviteEmail: this.#team.inviteEmail,
+        notice: this.#team.notice,
+        error: this.#team.error,
+      });
     }
     return sectionPlaceholder();
   }

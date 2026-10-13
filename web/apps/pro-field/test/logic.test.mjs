@@ -9,6 +9,7 @@ import { flowFor, timelineSteps, promisedWords, lateWords, houseToday, fulfillme
 import { sectionsFor, ordersSurfaceOf } from "../src/sections.ts";
 import { RETURN_STATUS_WORDS, RETURN_REASON_WORDS, returnChipTone, returnLineWords, returnRequestLines } from "../src/returns.ts";
 import { varianceWords, projectsEmptyWords } from "../src/projects.ts";
+import { ROLE_OPTIONS, memberRowWords } from "../src/team.ts";
 
 function order(status, fulfillment, extra = {}) {
   return { status, fulfillment, requested_date: "2042-05-01", ...extra };
@@ -183,4 +184,24 @@ test("the variance reads the dealer's own numbers as words, never a recomputatio
 test("the projects empty words are this app's own, sentence case, with no exclamation", () => {
   assert.ok(projectsEmptyWords.startsWith("No projects"));
   assert.doesNotMatch(projectsEmptyWords, /!/);
+});
+
+test("the role picker offers the core's five stored roles under the words a person reads", () => {
+  const options = ROLE_OPTIONS;
+  assert.equal(options.length, 5);
+  assert.deepEqual(options.map((o) => o.value).sort(), ["account_admin", "ap_finance", "buyer", "buyer_no_pay", "field_crew"]);
+  for (const option of options) {
+    assert.ok(option.label.length > 0);
+    assert.doesNotMatch(option.label, /_/);
+  }
+});
+
+test("a member row reads the name, the email, the role label and the status word, never a stored string", () => {
+  const words = memberRowWords({ id: "u1", customer_id: "c1", email: "contractor.field@hh-demo.invalid", name: "Contractor field crew", role: "field_crew", status: "active", notification_prefs: {}, created_at: "", updated_at: "" });
+  assert.ok(words.includes("Contractor field crew"));
+  assert.ok(words.includes("contractor.field@hh-demo.invalid"));
+  assert.ok(words.includes("Field crew"));
+  assert.ok(words.includes("Active"));
+  assert.doesNotMatch(words, /field_crew|account_admin/);
+  assert.doesNotMatch(words, /undefined|null|NaN/);
 });

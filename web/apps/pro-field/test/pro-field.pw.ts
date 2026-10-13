@@ -235,6 +235,52 @@ test.describe("phone", () => {
     await expect(nav.getByRole("button", { name: "Team" })).toHaveCount(0);
   });
 
+  test("the team lists its members, and a role change saves and says so", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    await expect(page.getByTestId("surface-title")).toHaveText("Team");
+    const members = page.getByTestId("team-members").getByTestId("member-row");
+    await expect(members).toHaveCount(5);
+    await expect(page.locator("hh-pro-frame")).toContainText("Field crew");
+    await expect(page.getByTestId("invites-empty")).toBeVisible();
+    const crewRow = members.filter({ hasText: "contractor.field@hh-demo.invalid" });
+    await crewRow.getByTestId("member-role").selectOption({ label: "Buyer" });
+    await expect(page.getByTestId("team-notice")).toHaveText("Role saved.");
+    await expect(crewRow.getByTestId("member-role")).toHaveValue("buyer");
+    await page.screenshot({ path: test.info().outputPath("team-phone.png") });
+  });
+
+  test("deactivating a member asks the server, and the row says so and offers to reactivate", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    const crewRow = page.getByTestId("team-members").getByTestId("member-row").filter({ hasText: "contractor.field@hh-demo.invalid" });
+    await crewRow.getByTestId("member-deactivate").click();
+    await expect(crewRow).toContainText("Inactive");
+    await expect(crewRow.getByTestId("member-reactivate")).toBeVisible();
+    await crewRow.getByTestId("member-reactivate").click();
+    await expect(crewRow).toContainText("Active");
+  });
+
+  test("the invite form asks the server and carries its answer in plain words", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    await page.getByTestId("invite-email").fill("new.crew@hh-demo.invalid");
+    await page.getByTestId("invite-role").selectOption({ label: "Field crew" });
+    await page.getByRole("button", { name: "Create invite" }).click();
+    await expect(page.getByTestId("team-error")).toHaveText("inviting users is not available yet");
+    await expect(page.getByTestId("invite-email")).toHaveValue("new.crew@hh-demo.invalid");
+  });
+
+  test("the server's refusal to open the team shows the refusal state with no retry", async ({ page, request }) => {
+    await request.post("/_stub/control", { data: { fault: { path: "/api/v1/tenant/users", status: 403 } } });
+    await signIn(page, "owner");
+    await page.getByTestId("section-nav").getByRole("button", { name: "Team" }).click();
+    const state = page.getByTestId("team-state");
+    await expect(state).toHaveAttribute("data-state", "refusal");
+    await expect(state).toContainText("Your role does not open this");
+    await expect(state.getByRole("button", { name: "Try again" })).toHaveCount(0);
+  });
+
   test("a surface in another app says it opens that app and asks to sign in again, one in this app says nothing", async ({ page }) => {
     await signIn(page, "owner");
     await page.getByTestId("frame-selector").click();

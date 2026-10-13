@@ -11,10 +11,12 @@
 // never a binding; every control names itself with data-field or data-action
 // so the root's one click and one input listener act for the whole app.
 import { html, nothing, type TemplateResult } from "lit";
-import type { TenantOrder, TenantOrderDetail, TenantProjectDashboard, TenantProjectSummary, TenantReturnEligibility, TenantReturnRequest } from "@hardscapehouse/api-client";
+import type { TenantInvite, TenantOrder, TenantOrderDetail, TenantProjectDashboard, TenantProjectSummary, TenantReturnEligibility, TenantReturnRequest, TenantUser } from "@hardscapehouse/api-client";
 import {
+  houseDay,
   money,
   qtyWithUnit,
+  roleLabel,
   statusChip,
   statusWords,
   trackingChip,
@@ -288,6 +290,92 @@ export function projectStates(phase: Phase): TemplateResult {
     default:
       return html`<hh-pro-state data-state="loading" data-testid="project-state"></hh-pro-state>`;
   }
+}
+
+// ---- team ---------------------------------------------------------------------------------------
+
+export interface TeamProps {
+  phase: Phase;
+  users: readonly TenantUser[];
+  invites: readonly TenantInvite[];
+  inviteBusy: boolean;
+  inviteEmail: string;
+  notice: string;
+  error: string;
+}
+
+export function teamView(props: TeamProps): TemplateResult {
+  if (props.phase !== "ready") {
+    if (props.phase === "refusal") return html`<hh-pro-state data-state="refusal" data-testid="team-state"></hh-pro-state>`;
+    if (props.phase === "error") return html`<hh-pro-state data-state="error" data-testid="team-state">This did not load. Nothing was changed.</hh-pro-state>`;
+    return html`<hh-pro-state data-state="loading" data-testid="team-state"></hh-pro-state>`;
+  }
+  return html`<div class="card">
+      <h3>Members</h3>
+      ${props.notice === "" ? nothing : html`<p class="notice" role="status" data-testid="team-notice">${props.notice}</p>`}
+      ${props.error === "" ? nothing : html`<p class="fault" role="alert" data-testid="team-error">${props.error}</p>`}
+      <ul class="lines" data-testid="team-members">
+        ${props.users.map((user) => memberRow(user))}
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Pending invites</h3>
+      ${props.invites.length === 0
+        ? html`<p class="dim" data-testid="invites-empty">No invites waiting.</p>`
+        : html`<ul class="lines" data-testid="team-invites">
+            ${props.invites.map(
+              (invite) => html`<li class="line">
+                <span class="linehead"><span class="mono name">${invite.email}</span><span class="dim">${roleLabel(invite.role)}</span></span>
+                <span class="dim">Ends ${houseDay(invite.expires_at)}</span>
+              </li>`,
+            )}
+          </ul>`}
+    </div>
+    <div class="card">
+      <h3>Invite a teammate</h3>
+      <p class="dim">The role decides what this person may open. The invite ends on its own day.</p>
+      <div class="form">
+        <label>
+          Their work email
+          <input class="control" type="text" data-field="invite-email" data-testid="invite-email" autocomplete="off" />
+        </label>
+        <label>
+          Their role
+          <select class="control" data-field="invite-role" data-testid="invite-role" aria-label="Their role">
+            ${roleOptions()}
+          </select>
+        </label>
+        <div class="formrow">
+          ${button({ label: "Create invite", action: "create-invite", disabled: props.inviteBusy || props.inviteEmail === "" })}
+        </div>
+      </div>
+    </div>`;
+}
+
+function memberRow(user: TenantUser): TemplateResult {
+  return html`<li class="line" data-user-id="${user.id}" data-testid="member-row">
+    <span class="linehead"><span class="name">${user.name}</span><span class="dim">${statusChip("team", user.status)}</span></span>
+    <span class="dim mono">${user.email}</span>
+    <div class="formrow">
+      <select class="control" aria-label="Role for ${user.name}" data-field="member-role" data-user-id="${user.id}" data-testid="member-role">
+        ${roleOptions()}
+      </select>
+      ${user.status === "active"
+        ? html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="inactive" data-testid="member-deactivate">Deactivate</button>`
+        : html`<button type="button" class="btn btn-secondary" data-action="set-status" data-user-id="${user.id}" data-status="active" data-testid="member-reactivate">Reactivate</button>`}
+    </div>
+  </li>`;
+}
+
+// The options stay literal markup: a bound value outside the data and aria
+// namespaces is refused by the position gate, and the select reads its own
+// option's value, so the stored role codes are written out as constants.
+function roleOptions(): TemplateResult {
+  return html`<option value="account_admin">Owner</option>
+    <option value="buyer">Buyer</option>
+    <option value="buyer_no_pay">Project manager</option>
+    <option value="ap_finance">Accounts payable</option>
+    <option value="field_crew">Field crew</option>`;
 }
 
 // ---- delivery instructions ----------------------------------------------------------------------
