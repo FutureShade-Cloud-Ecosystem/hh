@@ -7,8 +7,8 @@ use hh_shell_core::store::{self, SqlRow, SqlStatement, SqlValue, Store};
 
 // The contract's service name: `ai.futurebuild.hh.<profile>`, which is the
 // profile's own identifier. One source: the profile model is the definition
-// (the test below pins the two together). Rust side only: item 7's auth
-// commands are the writers; the webview holds no keychain command.
+// (the test below pins the two together). Rust side only: the auth commands
+// are the writers; the webview holds no keychain command.
 #[cfg_attr(not(feature = "probe"), allow(dead_code))]
 fn keychain_service() -> &'static str {
     profiles::field().identifier
@@ -255,24 +255,16 @@ mod tests {
 
     #[test]
     fn the_keychain_service_is_the_profiles_identifier() {
-        // AUTH-SHELL-CONTRACT r5: the service is ai.futurebuild.hh.<profile>,
-        // one entry per profile and project; the account dimension and the
-        // writers are the sign in item (item 7), not this crate.
+        // AUTH-SHELL-CONTRACT r6: the service is ai.futurebuild.hh.<profile>
+        // and the account console-session:<project id>, one entry per profile
+        // and project. The address is built by the core's custody module from
+        // the profile's identifier; the webview names neither part.
         assert_eq!(keychain_service(), profiles::field().identifier);
         assert_eq!(keychain_service(), "ai.futurebuild.hh.field");
-        assert!(keychain_service().starts_with("ai.futurebuild.hh."));
-        // The real slot set is the session token only (the probe build adds
-        // its own scaffolding slot); the webview's own token stays in memory
-        // per the contract.
-        let slots: Vec<&str> = hh_shell_core::keychain::Slot::ALL
-            .iter()
-            .map(|s| s.name())
-            .collect();
-        #[cfg(feature = "probe")]
-        let expected = ["session_token", "probe"];
-        #[cfg(not(feature = "probe"))]
-        let expected = ["session_token"];
-        assert_eq!(slots, expected);
+        let address = hh_shell_core::custody::Address::console_session(keychain_service(), "proj-1")
+            .expect("the Field identifier forms a custody address");
+        assert_eq!(address.service(), "ai.futurebuild.hh.field");
+        assert_eq!(address.account(), "console-session:proj-1");
     }
 
     #[test]
