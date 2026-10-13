@@ -466,8 +466,8 @@ export class ManagerHomeApp extends HHElement {
   }
 
   // The admin's config view. The gate is the server's: a caller the core does
-  // not make an admin gets the shared Forbidden body, shown as words naming who configures in the
-  // view (configRefusalWords), never paraphrased into a softer wall.
+  // not make an admin gets the shared Forbidden body, shown in the view as words
+  // naming who configures (configRefusalWords), never a softer wall.
   async #loadQuickAdmin(): Promise<void> {
     this.#quickAdmin = { ...this.#quickAdmin, phase: "loading", error: "", refusal: "" };
     this.requestUpdate();
