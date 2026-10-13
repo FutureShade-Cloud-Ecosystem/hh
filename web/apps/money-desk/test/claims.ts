@@ -161,6 +161,19 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   ],
   "office-dispute": [{ file: OFFICE, test: "a dispute is checked, opened, shown on the invoice and the register, and closed with an outcome" }],
   "office-reverse": [{ file: OFFICE, test: "a payment is reversed with a reason, and the invoice is owing what it was" }],
+  "office-settings": [
+    { file: OFFICE, test: "Payables and Receivables reads the rules, and every change is held and says who may make it" },
+    { file: OFFICE, test: "the controller changes the rules, checked first, and each change is on the record" },
+    { file: OFFICE, test: "the register settings are saved with their tones and read back" },
+    { file: OFFICE, test: "on a phone the settings fit the screen and work from the keyboard" },
+  ],
+  "office-fee": [{ file: OFFICE, test: "the returned payment fee is saved in dollars and is the fee the next bounce is charged" }],
+  "office-autohold": [
+    { file: OFFICE, test: "the automatic hold switch shows what it would apply, asks twice, and says when it cannot be changed" },
+    { file: OFFICE, test: "when the switch is not wired it is shown and cannot be changed" },
+  ],
+  "office-nsf-hold": [{ file: OFFICE, test: "a hold a returned payment placed names its payment and is lifted through the till's path" }],
+  "office-dispatch": [{ file: OFFICE, test: "an invoice says whether its order may go out, and why not" }],
   "phone-sideways": [{ file: RECEIVABLES, test: "on a phone no screen scrolls the page sideways" }],
   "empty-world": [{ file: RECEIVABLES, test: "the empty world: each screen says so in words" }],
 };

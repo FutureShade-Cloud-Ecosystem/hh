@@ -254,6 +254,7 @@ export function renderInvoiceActions(om: OfficeModel, d: BillingInvoiceDetail): 
       <div class="actions">
         <button type="button" class="btn btn-secondary small-btn" data-action="invoice-send" data-invoice-id="${d.id}" ?disabled=${om.busy}>Send the invoice</button>
         <button type="button" class="btn btn-secondary small-btn" data-action="invoice-document" data-invoice-id="${d.id}" aria-pressed="${om.invoiceMode === "document" ? "true" : "false"}">View the document</button>
+        ${d.order_id === undefined ? nothing : html`<button type="button" class="btn btn-secondary small-btn" data-action="invoice-dispatch" data-order-id="${d.order_id}" data-order-no="${d.order_no ?? ""}" ?disabled=${om.busy}>Can the order go out?</button>`}
         ${open
           ? html`<button type="button" class="btn btn-secondary small-btn" data-action="invoice-mode" data-choice="resolve" aria-pressed="${om.invoiceMode === "resolve" ? "true" : "false"}">Close the dispute</button>`
           : html`<button type="button" class="btn btn-secondary small-btn" data-action="invoice-mode" data-choice="dispute" aria-pressed="${om.invoiceMode === "dispute" ? "true" : "false"}">Open a dispute</button>`}

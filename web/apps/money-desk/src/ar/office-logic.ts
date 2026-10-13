@@ -273,3 +273,168 @@ export function reversalWords(result: PaymentsReversalResult, paymentNo: string)
   const kind = result.label === "VOID" ? "a void, the same day" : "a reversal";
   return `Payment ${paymentNo} is reversed as ${kind}. ${formatMoney(result.amount_cents)} is owing again on ${n} ${n === 1 ? "invoice" : "invoices"}.`;
 }
+
+// ---- settings: the receivables rules, the register, the returned payment fee, automatic holds ----------------------------
+
+import type { BillingAutoHoldSetting, BillingDispatchGateResult } from "@hardscapehouse/api-client";
+
+export interface LandingForm {
+  readonly warn: string;
+  readonly escalate: string;
+  readonly cadence: string;
+  readonly maxPerCycle: string;
+  readonly window: string;
+  readonly minSends: string;
+  readonly email: boolean;
+  readonly sms: boolean;
+  readonly fallback: string;
+  readonly tier: string;
+}
+
+export type LandingCheck = { ok: true; policy: Omit<BillingLandingPolicy, "branch_id"> } | { ok: false; words: string };
+
+interface Knob {
+  readonly key: keyof LandingForm;
+  /** How the knob starts a sentence, and how it reads after "Enter". */
+  readonly subject: string;
+  readonly entry: string;
+  readonly lo: number;
+  readonly hi: number;
+  readonly unit: "days" | "";
+}
+
+const KNOBS: readonly Knob[] = [
+  { key: "warn", subject: "Overdue warning", entry: "Overdue warning", lo: 1, hi: 364, unit: "days" },
+  { key: "escalate", subject: "Escalation", entry: "Escalation", lo: 2, hi: 365, unit: "days" },
+  { key: "cadence", subject: "Days between reminders", entry: "Days between reminders", lo: 1, hi: 90, unit: "" },
+  { key: "maxPerCycle", subject: "Reminders per cycle", entry: "Reminders per cycle", lo: 1, hi: 20, unit: "" },
+  { key: "window", subject: "The paper path window", entry: "the paper path window", lo: 7, hi: 365, unit: "days" },
+  { key: "minSends", subject: "Reminders before the paper path flag", entry: "Reminders before the paper path flag", lo: 1, hi: 20, unit: "" },
+];
+
+/** A whole number typed in a box, or null: digits only, no sign, no fraction. */
+function wholeNumber(text: string): number | null {
+  const t = text.trim();
+  return /^\d{1,9}$/.test(t) ? Number(t) : null;
+}
+
+/** The core's ValidateARLandingPolicy, said before the request is sent: the six ranges in order, the vocabularies, the edge order. */
+export function landingPolicyCheck(form: LandingForm): LandingCheck {
+  const n: Record<string, number> = {};
+  for (const k of KNOBS) {
+    const v = wholeNumber(String(form[k.key]));
+    if (v === null) return { ok: false, words: `Enter ${k.entry} as a whole number${k.unit === "days" ? " of days" : ""}.` };
+    if (v < k.lo || v > k.hi) return { ok: false, words: `${k.subject} must be between ${k.lo} and ${k.hi}${k.unit === "days" ? " days" : ""}.` };
+    n[k.key] = v;
+  }
+  if (form.fallback !== "CONFIRM" && form.fallback !== "REFUSE") return { ok: false, words: "Choose what happens when no AP contact is tagged." };
+  if (form.tier !== "BASE" && form.tier !== "PRO") return { ok: false, words: "Choose the plan." };
+  if ((n["warn"] ?? 0) >= (n["escalate"] ?? 0)) return { ok: false, words: `Overdue warning (${n["warn"]}) must be fewer than escalation (${n["escalate"]}).` };
+  return {
+    ok: true,
+    policy: {
+      aging_warn_days: n["warn"] ?? 0,
+      aging_escalate_days: n["escalate"] ?? 0,
+      reminder_cadence_days: n["cadence"] ?? 0,
+      reminder_max_per_cycle: n["maxPerCycle"] ?? 0,
+      black_hole_window_days: n["window"] ?? 0,
+      black_hole_min_sends: n["minSends"] ?? 0,
+      reminder_email_enabled: form.email,
+      reminder_sms_enabled: form.sms,
+      untagged_fallback: form.fallback,
+      ar_tier: form.tier,
+    },
+  };
+}
+
+export interface RegisterForm {
+  readonly visibility: string;
+  readonly dueSoon: string;
+  readonly cooldown: string;
+  readonly tones: readonly string[];
+  readonly showCredits: boolean;
+}
+
+export type RegisterCheck =
+  | { ok: true; values: { account_position_visibility: string; due_soon_days: number; reminder_cooldown_hours: number; reminder_tones: string[]; show_credits_default: boolean } }
+  | { ok: false; words: string };
+
+export function registerPolicyCheck(form: RegisterForm): RegisterCheck {
+  if (!["MANAGER_UP", "ALL_STAFF", "HIDDEN"].includes(form.visibility)) return { ok: false, words: "Choose who sees an account's position." };
+  const due = wholeNumber(form.dueSoon);
+  if (due === null) return { ok: false, words: "Enter the due soon window as a whole number of days." };
+  if (due < 1 || due > 90) return { ok: false, words: "The due soon window must be between 1 and 90 days." };
+  const cool = wholeNumber(form.cooldown);
+  if (cool === null) return { ok: false, words: "Enter the reminder cooldown as a whole number of hours." };
+  if (cool > 720) return { ok: false, words: "The reminder cooldown must be between 0 and 720 hours." };
+  return { ok: true, values: { account_position_visibility: form.visibility, due_soon_days: due, reminder_cooldown_hours: cool, reminder_tones: [...form.tones], show_credits_default: form.showCredits } };
+}
+
+export interface NsfForm {
+  readonly fee: string;
+  readonly taxable: boolean;
+  readonly code: string;
+  readonly autoHold: boolean;
+  readonly notes: string;
+}
+
+export type NsfCheck = { ok: true; policy: { fee_cents: number; fee_taxable: boolean; fee_account_code: string; auto_hold: boolean; notes: string } } | { ok: false; words: string };
+
+/** The fee is typed in dollars and sent in cents, through the decimal string; the core refuses a negative one. */
+export function nsfPolicyCheck(form: NsfForm): NsfCheck {
+  if (form.fee.trim() === "") return { ok: false, words: "Enter the fee, such as 35.00. Zero means no fee." };
+  const cents = parseAmountToCents(form.fee);
+  if (cents === null) return { ok: false, words: "Enter the fee as dollars and cents, such as 35.00." };
+  return { ok: true, policy: { fee_cents: cents, fee_taxable: form.taxable, fee_account_code: form.code.trim(), auto_hold: form.autoHold, notes: form.notes.trim() } };
+}
+
+const FIELD_WORD: Record<string, string> = {
+  aging_warn_days: "Overdue warning",
+  aging_escalate_days: "Escalation",
+  reminder_cadence_days: "Days between reminders",
+  reminder_max_per_cycle: "Reminders per cycle",
+  black_hole_window_days: "Paper path window",
+  black_hole_min_sends: "Reminders before the paper path flag",
+  reminder_email_enabled: "Email reminders",
+  reminder_sms_enabled: "Text reminders",
+  untagged_fallback: "With no AP contact tagged",
+  ar_tier: "Plan",
+};
+
+export function policyFieldWord(field: string): string {
+  return FIELD_WORD[field] ?? field;
+}
+
+const VALUE_WORD: Record<string, string> = { BASE: "Base", PRO: "Accelerated AR", CONFIRM: "Ask to confirm the account's address", REFUSE: "Refuse to send" };
+
+export function policyValueWord(field: string, value: string): string {
+  if (field.endsWith("_enabled")) return value === "true" ? "On" : "Off";
+  return VALUE_WORD[value] ?? value;
+}
+
+/** The switch as lines a person can read: what it is, what it would apply, and what it cannot do. */
+export function autoHoldLines(s: BillingAutoHoldSetting): string[] {
+  const lines = [
+    s.auto_hold_enabled
+      ? "Automatic holds are on. The credit sweep places holds by itself, and each one can be lifted or overridden here."
+      : "Automatic holds are off. The credit sweep reports what it would hold and places nothing by itself.",
+    s.aging_hold_enabled
+      ? `Aged receivables: held past ${s.aging_bucket_days} days overdue once ${formatMoney(s.aging_threshold_cents)} or more is in that age.`
+      : "Aged receivables: not held automatically.",
+    s.limit_hold_enabled
+      ? s.limit_tolerance_cents > 0
+        ? `Over the credit limit: held when a balance goes over the limit by more than ${formatMoney(s.limit_tolerance_cents)}.`
+        : "Over the credit limit: held when a balance goes over the limit."
+      : "Over the credit limit: not held automatically.",
+    s.cod_enforced ? "Pay before release accounts are held until the balance is paid." : "Pay before release accounts are not held automatically.",
+  ];
+  if (!s.thresholds_editable) lines.push("The thresholds are the dealer's policy and are read only here.");
+  if (!s.switch_wired) lines.push("The switch is not wired on this server, so it is shown but cannot be changed.");
+  return lines;
+}
+
+export function dispatchWords(result: BillingDispatchGateResult, orderNo: string): string {
+  if (result.allowed) return `Order ${orderNo} may go out: nothing on the account stops it.`;
+  const reason = result.reason.trim();
+  return `Order ${orderNo} is stopped: ${/[.!?]$/.test(reason) ? reason : `${reason}.`}`;
+}

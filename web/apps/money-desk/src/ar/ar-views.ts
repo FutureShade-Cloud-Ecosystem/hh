@@ -33,8 +33,9 @@ import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, 
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
 import type { OfficeModel } from "./office-desk.js";
 import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
+import { renderSettingsPanels } from "./office-settings-views.js";
 
-export type Tab = "receivables" | "statements" | "holds" | "reminders";
+export type Tab = "receivables" | "statements" | "holds" | "reminders" | "settings";
 export type RegisterFilter = "open" | "overdue" | "promised" | "disputed" | "paid";
 export type RightMode = "receive" | "invoice" | "promise";
 export type PayMethod = "CHEQUE" | "EFT" | "CARD" | "CASH";
@@ -146,7 +147,7 @@ function tabsBar(model: DeskModel): TemplateResult {
   const tab = (id: Tab, word: string): TemplateResult => html`<button type="button" class="tab" data-action="tab" data-tab="${id}" aria-current="${model.tab === id ? "true" : "false"}">${word}</button>`;
   return html`
     <nav class="tabs" aria-label="Money Desk views">
-      ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")} ${tab("reminders", "Reminders")}
+      ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")} ${tab("reminders", "Reminders")} ${tab("settings", "Settings")}
       <span class="tab tab-later" aria-disabled="true">Payables ${later()}</span>
     </nav>
   `;
@@ -161,7 +162,7 @@ function frame(body: TemplateResult): TemplateResult {
       <div><h1>Receivables</h1><p class="dim">The AR register with its aging, overdue first. Bounced payments and accounts on hold wait in Needs you.</p></div>
     </div>
     <nav class="tabs" aria-label="Money Desk views">
-      <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span><span class="tab" aria-disabled="true">Reminders</span>
+      <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span><span class="tab" aria-disabled="true">Reminders</span><span class="tab" aria-disabled="true">Settings</span>
     </nav>
     ${body}
   `;
@@ -446,6 +447,18 @@ export function renderReminders(model: DeskModel): TemplateResult {
   `;
 }
 
+// ---- settings tab ------------------------------------------------------------------------------
+
+export function renderSettings(model: DeskModel): TemplateResult {
+  return html`
+    <div class="head">
+      <div><h1>Settings</h1><p class="dim">The rules this desk runs on. Payables and Receivables reads them; the Financial Controller or the General Manager changes them, and every change is on the record.</p></div>
+    </div>
+    ${tabsBar(model)} ${messages(model)}
+    ${renderSettingsPanels(model.office.settings, model.office.nowMs)}
+  `;
+}
+
 // ---- credit holds ------------------------------------------------------------------------------
 
 function holdActions(model: DeskModel, h: BillingCreditHold): TemplateResult {
@@ -456,6 +469,14 @@ function holdActions(model: DeskModel, h: BillingCreditHold): TemplateResult {
       <button type="button" class="btn btn-secondary small-btn ${held ? "held" : ""}" data-action="hold-act" data-hold-id="${h.id}" data-choice="lift" aria-disabled="${held ? "true" : "false"}">Lift...</button>
     </div>
   `;
+}
+
+/** The payment a returned payment hold names, once the till's list has said it. */
+function placedBy(model: DeskModel, holdId: string): TemplateResult | typeof nothing {
+  const paymentId = model.office.tillHolds.get(holdId);
+  if (paymentId === undefined) return nothing;
+  const bounced = model.bounced.find((b) => b.payment_id === paymentId);
+  return html`<dt>Placed by</dt><dd data-hold-source>${bounced === undefined ? "A returned payment" : `Payment ${bounced.payment_no}, returned by the bank`}</dd>`;
 }
 
 function holdsPanel(model: DeskModel): TemplateResult {
@@ -490,6 +511,7 @@ function holdsPanel(model: DeskModel): TemplateResult {
       <dt>Account</dt><dd>${name}</dd>
       <dt>Placed</dt><dd>${relativeDay(hold.created_at, model.asOf)} ${hold.auto_placed ? "by the credit sweep · automatic" : "by hand"}</dd>
       <dt>Why</dt><dd>${hold.reason}</dd>
+      ${placedBy(model, hold.id)}
       ${hold.override_until !== undefined && hold.override_until !== null ? html`<dt>Override</dt><dd>Until ${dateOnly(hold.override_until)}${hold.override_reason ? `: ${hold.override_reason}` : ""}</dd>` : nothing}
     </dl>
   `;

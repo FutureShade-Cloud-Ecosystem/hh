@@ -45,4 +45,14 @@ sink, so every screen says what would go and to which contact by its role label,
 | Send an invoice, view its document | `app/src/ar-invoices-api.ts`, `app/src/ar-invoice-register.ts` | `renderInvoiceActions`, `mountDocument` (app root) | The send goes through the messaging sink and never shows the address; the document opens in a sandboxed frame with no scripts, never set into the page |
 | Open and close a dispute | `app/src/ar-invoice-register.ts` | `disputeCheck`, `renderInvoiceActions` | The amount is parsed through the decimal string and checked against the balance before the request; closing says it moves no money |
 | Reverse a payment | `app/src/ar-console.ts`, `app/src/ar-invoice-register.ts` | `reversalCheck`, `renderReverse`, `reversalWords` | A reason is required before the request; the invoice reloads to the server's balance; a returned cheque stays on Mark bounced |
+| Receivables rules (aging edges, reminder cadence, paper path window, plan) and their change history | `app/src/ar-landing.ts`, `app/src/ar-settings.ts` | `landingPolicyCheck`, `SettingsDesk`, `rulesPanel`, `historyPanel` | A manager reads, an administrator writes; the core's ranges and edge order checked before the request; history reads as words, never ids |
+| Register settings | `app/src/ar-invoice-register.ts` | `registerPolicyCheck`, `registerPanel` | The panel split and arrangement are layout of the original and ride along unchanged; HH lays its own panels out |
+| Returned payment fee | `app/src/ar-console.ts` | `nsfPolicyCheck`, `nsfPanel` | Typed in dollars through the decimal string, sent in cents; the bounce charges what was saved |
+| Automatic credit hold switch | `app/src/ar-console.ts` | `autoHoldLines`, `holdPanel` | Read as words with its thresholds read only; two presses and a reason; shown but not offered when the server says the switch is not wired |
+| Holds a returned payment placed, lifted by the till's path | `app/src/ar-console.ts` | `OfficeApi.releaseTillHold`, `placedBy` | The billing release refuses an NSF hold in the core's words, so the controller's Lift goes through the till's own route for one |
+| Dispatch gate read | `app/src/ar-console.ts` | `dispatchWords`, `renderInvoiceActions` | Asked from the invoice that names the order, answered in the server's reason |
+
+Not wired, with the reason: `billingRecordInvoicePayment` (one payment on one invoice: `paymentsApplyReceived` replaced it in round 3 and a second path to the
+same money is a way to take it twice), `billingTrackInvoiceOpened`, `billingTrackReminderOpen` and `billingTrackReminderClick` (public tracking pixels a
+customer's mail client fetches, not screens), `tillRecordPaymentAttempt` (the Counter Till's declined card log; its surface is the till, not this desk).
 

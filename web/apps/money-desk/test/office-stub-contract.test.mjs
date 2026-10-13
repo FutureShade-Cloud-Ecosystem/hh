@@ -294,3 +294,146 @@ test("a payment is reversed once, reopens what it paid, and is refused in the co
   holds("TillInvoicePayments", list.json);
   assert.ok(list.json.items.some((p) => p.status === "VOID"));
 });
+
+// ---- settings: the receivables rules, the register, the returned payment fee, automatic holds ------------------------
+
+/** A refusal whose core sentence is built by a format string: the format is in the core's source, the stub fills it. */
+function refusedBy(res, status, expected, format) {
+  assert.equal(res.status, status, JSON.stringify(res.json));
+  holds("Error", res.json);
+  assert.equal(res.json.error, expected);
+  assert.ok(coreSource.includes(format), `the core's source does not contain the format "${format}"`);
+}
+
+test("the receivables rules are read by a manager, written only by an administrator, and refused in the core's words", async () => {
+  await reset();
+  const read = await call("GET", "/api/v1/ar/landing/policy", undefined, "manager");
+  assert.equal(read.status, 200);
+  holds("BillingLandingPolicy", read.json);
+  assert.equal(read.json.ar_tier, "BASE");
+  forbidden(await call("PUT", "/api/v1/ar/landing/policy", read.json, "manager"));
+  forbidden(await call("GET", "/api/v1/ar/landing/policy/history", undefined, "manager"));
+  const put = (over) => call("PUT", "/api/v1/ar/landing/policy", { ...read.json, ...over });
+  refusedBy(await put({ aging_warn_days: 0 }), 422, "ar: aging_warn_days must be between 1 and 364", '"%s: %s must be between %d and %d"');
+  refusedBy(await put({ black_hole_min_sends: 21 }), 422, "ar: black_hole_min_sends must be between 1 and 20", '"%s: %s must be between %d and %d"');
+  assert.ok(coreSource.includes('{"black_hole_min_sends", p.BlackHoleMinSends, 1, 20}'));
+  refusedBy(await put({ aging_warn_days: 95, aging_escalate_days: 90 }), 422, "ar: aging_warn_days (95) must be fewer than aging_escalate_days (90)", '"ar: aging_warn_days (%d) must be fewer than aging_escalate_days (%d)"');
+  refusedBy(await put({ untagged_fallback: "SHRUG" }), 422, "ar: untagged_fallback must be CONFIRM or REFUSE, a send with no tagged contact is never a blast", "untagged_fallback must be CONFIRM or REFUSE");
+  refused(await put({ ar_tier: "GOLD" }), 422, "ar: ar_tier must be BASE or PRO");
+  const saved = await put({ reminder_cadence_days: 10, reminder_sms_enabled: true, ar_tier: "PRO" });
+  assert.equal(saved.status, 200);
+  holds("BillingLandingPolicy", saved.json);
+  assert.equal(saved.json.reminder_cadence_days, 10);
+  const history = await call("GET", "/api/v1/ar/landing/policy/history");
+  assert.equal(history.status, 200);
+  holds("BillingPolicyChangePage", history.json);
+  assert.deepEqual(history.json.items.map((c) => c.field).sort(), ["ar_tier", "reminder_cadence_days", "reminder_sms_enabled"]);
+  const cadence = history.json.items.find((c) => c.field === "reminder_cadence_days");
+  assert.deepEqual([cadence.before, cadence.after], ["7", "10"]);
+});
+
+test("the register settings are read by anyone and written only by an administrator", async () => {
+  await reset();
+  const read = await call("GET", "/api/v1/ar/register/policy", undefined, "manager");
+  assert.equal(read.status, 200);
+  holds("BillingRegisterPolicy", read.json);
+  forbidden(await call("PUT", "/api/v1/ar/register/policy", read.json, "manager"));
+  const put = (over) => call("PUT", "/api/v1/ar/register/policy", { ...read.json, ...over });
+  refused(await put({ account_position_visibility: "EVERYONE" }), 422, "account position visibility must be MANAGER_UP, ALL_STAFF or HIDDEN");
+  refused(await put({ due_soon_days: 0 }), 422, "the due-soon window is between 1 and 90 days");
+  refused(await put({ reminder_cooldown_hours: 721 }), 422, "the reminder cooldown is between 0 and 720 hours");
+  refused(await put({ workspace_split_pct: 10 }), 422, "the panel split is between 20 and 80 percent");
+  refused(await put({ workspace_arrangement: "CENTRE" }), 422, "the panel arrangement is PRIMARY_LEFT or PRIMARY_RIGHT");
+  refused(await put({ reminder_tones: ["LOUD"] }), 422, "a reminder tone is FRIENDLY, FIRM or FINAL");
+  const saved = await put({ due_soon_days: 10, reminder_tones: ["FINAL", "FRIENDLY", "FRIENDLY"] });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.json, { saved: true });
+  const after = await call("GET", "/api/v1/ar/register/policy");
+  holds("BillingRegisterPolicy", after.json);
+  assert.equal(after.json.due_soon_days, 10);
+  assert.deepEqual(after.json.reminder_tones, ["FRIENDLY", "FINAL"], "tones are kept once each, in escalation order");
+});
+
+test("the returned payment fee is read by a manager, written by an administrator, and is the fee a bounce charges", async () => {
+  await reset();
+  const read = await call("GET", "/api/v1/ar/nsf-policy", undefined, "manager");
+  assert.equal(read.status, 200);
+  holds("TillNSFPolicy", read.json);
+  forbidden(await call("PUT", "/api/v1/ar/nsf-policy", read.json, "manager"));
+  refused(await call("PUT", "/api/v1/ar/nsf-policy", { ...read.json, fee_cents: -1 }), 422, "till: fee_cents must be >= 0");
+  const saved = await call("PUT", "/api/v1/ar/nsf-policy", { ...read.json, fee_cents: 6000, fee_account_code: "", notes: "Fee raised" });
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.json, { status: "ok" });
+  const after = await call("GET", "/api/v1/ar/nsf-policy");
+  assert.equal(after.json.fee_cents, 6000);
+  assert.equal(after.json.fee_account_code, "4200", "a blank account code takes the core's default");
+  assert.ok(coreSource.includes('in.FeeAccountCode = "4200"'));
+  const inv = await invoiceOf("INV-1002");
+  const paid = await call("POST", `/api/v1/ar/register/invoices/${inv.id}/payments`, { method: "CHEQUE", amount_cents: 2500, reference: "r", idempotency_key: "nsf-1" });
+  const marked = await call("POST", `/api/v1/ar/payments/${paid.json.payment_id}/nsf`, { reason: "Returned" });
+  assert.equal(marked.json.fee_cents, 6000, "the bounce charges the policy's fee");
+});
+
+test("the automatic hold switch is an administrator's, shows what it would apply, and says when it cannot be changed", async () => {
+  await reset();
+  forbidden(await call("GET", "/api/v1/ar/auto-hold", undefined, "manager"));
+  forbidden(await call("PUT", "/api/v1/ar/auto-hold", { enabled: true }, "manager"));
+  const read = await call("GET", "/api/v1/ar/auto-hold");
+  assert.equal(read.status, 200);
+  holds("BillingAutoHoldSetting", read.json);
+  assert.equal(read.json.auto_hold_enabled, false, "the switch ships off");
+  assert.equal(read.json.thresholds_editable, false);
+  refused(await call("PUT", "/api/v1/ar/auto-hold", { reason: "x" }), 400, "enabled must be true or false, say which");
+  const on = await call("PUT", "/api/v1/ar/auto-hold", { enabled: true, reason: "Ready" });
+  assert.equal(on.status, 200);
+  holds("BillingAutoHoldSetting", on.json);
+  assert.equal(on.json.auto_hold_enabled, true);
+  assert.equal((await call("PUT", "/api/v1/ar/auto-hold", { enabled: true })).status, 200, "re-asserting the current value is not an error");
+  await reset("unwired");
+  const unwired = await call("GET", "/api/v1/ar/auto-hold");
+  assert.equal(unwired.json.switch_wired, false);
+  refused(await call("PUT", "/api/v1/ar/auto-hold", { enabled: true }), 503, "the auto-hold switch is not configured on this server, the AR policy write seam is not wired");
+});
+
+test("holds a returned payment placed are listed with their payment, and an NSF hold is released through the till's path", async () => {
+  await reset();
+  const list = await call("GET", "/api/v1/ar/credit-holds?status=ACTIVE", undefined, "manager");
+  assert.equal(list.status, 200);
+  holds("TillCreditHoldPage", list.json);
+  assert.equal(list.json.items.length, 1, "only the hold a returned payment placed");
+  assert.ok(list.json.items[0].source_payment_id);
+  forbidden(await call("POST", `/api/v1/ar/credit-holds/${list.json.items[0].id}/release`, { reason: "paid" }, "manager"));
+  const nsf = list.json.items[0];
+  // The billing release refuses an NSF hold in the core's words and points at the till's path.
+  const viaBilling = await call("POST", `/api/v1/ar/holds/${nsf.id}/ar-release`, { reason: "paid" });
+  assert.equal(viaBilling.status, 400);
+  assert.ok(viaBilling.json.error.includes("an NSF hold is released through the till's Tier-1 path"));
+  assert.ok(coreSource.includes("an NSF hold is released "));
+  refused(await call("POST", `/api/v1/ar/credit-holds/${nsf.id}/release`, { reason: "" }), 422, "till: a release reason is required");
+  refused(await call("POST", "/api/v1/ar/credit-holds/nope/release", { reason: "paid" }), 404, "not found");
+  const done = await call("POST", `/api/v1/ar/credit-holds/${nsf.id}/release`, { reason: "Replacement cheque cleared" });
+  assert.equal(done.status, 200);
+  holds("TillStatusResult", done.json);
+  assert.equal(done.json.status, "RELEASED");
+  const all = await call("GET", "/api/v1/ar/credit-holds");
+  assert.equal(all.json.items[0].status, "RELEASED");
+  assert.equal(all.json.items[0].release_reason, "Replacement cheque cleared");
+  assert.equal((await call("GET", "/api/v1/ar/credit-holds?status=ACTIVE")).json.items.length, 0);
+});
+
+test("the dispatch gate says whether an order may go out, and why not, in the core's words", async () => {
+  await reset();
+  const granite = await invoiceOf("INV-1001");
+  const clear = await invoiceOf("INV-1005");
+  const orderOf = async (inv) => (await call("GET", `/api/v1/ar/register/invoices/${inv.id}`)).json.order_id;
+  const stopped = await call("GET", `/api/v1/ar/dispatch-gate/${await orderOf(granite)}`, undefined, "manager");
+  assert.equal(stopped.status, 200);
+  holds("BillingDispatchGateResult", stopped.json);
+  assert.deepEqual(stopped.json, { allowed: false, reason: "ACCOUNT ON HOLD, a payment was returned; the office must clear this before delivery" });
+  assert.ok(coreSource.includes("ACCOUNT ON HOLD, a payment was returned; the office must clear this before delivery"));
+  const open = await call("GET", `/api/v1/ar/dispatch-gate/${await orderOf(clear)}`);
+  assert.deepEqual(open.json, { allowed: true, reason: "" });
+  const missing = await call("GET", "/api/v1/ar/dispatch-gate/e0000000-0000-4000-8000-0000000000ff");
+  assert.deepEqual(missing.json, { allowed: false, reason: "AR check unavailable: order not found" });
+  assert.ok(coreSource.includes("AR check unavailable: order not found"));
+});

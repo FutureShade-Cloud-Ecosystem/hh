@@ -132,3 +132,73 @@ test("a sent invoice says it went through the messaging sink, and a replay says 
   assert.equal(sendInvoiceWords({ sent: 0, replayed: 1, tone: "" }), "That invoice was already sent on this key, so nothing new went.");
   assert.match(sendInvoiceWords({ sent: 1, replayed: 0, tone: "", skipped: { "INV-1": "recorded, but delivery failed: x" } }), /was recorded, but did not go: nothing left the building/);
 });
+
+// ---- settings and the extra hold reads -------------------------------------------------------------------------------
+
+import { autoHoldLines, dispatchWords, landingPolicyCheck, nsfPolicyCheck, policyFieldWord, policyValueWord, registerPolicyCheck } from "../src/ar/office-logic.ts";
+
+const FORM = { warn: "60", escalate: "90", cadence: "7", maxPerCycle: "3", window: "45", minSends: "3", email: true, sms: false, fallback: "CONFIRM", tier: "PRO" };
+
+test("the receivables rules are checked before they are sent, in the core's ranges and order", () => {
+  assert.deepEqual(landingPolicyCheck(FORM), {
+    ok: true,
+    policy: { aging_warn_days: 60, aging_escalate_days: 90, reminder_cadence_days: 7, reminder_max_per_cycle: 3, black_hole_window_days: 45, black_hole_min_sends: 3, reminder_email_enabled: true, reminder_sms_enabled: false, untagged_fallback: "CONFIRM", ar_tier: "PRO" },
+  });
+  assert.equal(landingPolicyCheck({ ...FORM, warn: "0" }).words, "Overdue warning must be between 1 and 364 days.");
+  assert.equal(landingPolicyCheck({ ...FORM, escalate: "366" }).words, "Escalation must be between 2 and 365 days.");
+  assert.equal(landingPolicyCheck({ ...FORM, cadence: "91" }).words, "Days between reminders must be between 1 and 90.");
+  assert.equal(landingPolicyCheck({ ...FORM, maxPerCycle: "21" }).words, "Reminders per cycle must be between 1 and 20.");
+  assert.equal(landingPolicyCheck({ ...FORM, window: "6" }).words, "The paper path window must be between 7 and 365 days.");
+  assert.equal(landingPolicyCheck({ ...FORM, minSends: "0" }).words, "Reminders before the paper path flag must be between 1 and 20.");
+  assert.equal(landingPolicyCheck({ ...FORM, warn: "x" }).words, "Enter Overdue warning as a whole number of days.");
+  assert.equal(landingPolicyCheck({ ...FORM, warn: "1.5" }).ok, false);
+  assert.equal(landingPolicyCheck({ ...FORM, warn: "95", escalate: "90" }).words, "Overdue warning (95) must be fewer than escalation (90).");
+  assert.equal(landingPolicyCheck({ ...FORM, fallback: "SHRUG" }).words, "Choose what happens when no AP contact is tagged.");
+  assert.equal(landingPolicyCheck({ ...FORM, tier: "GOLD" }).words, "Choose the plan.");
+});
+
+test("the register settings are checked in the core's ranges", () => {
+  const f = { visibility: "MANAGER_UP", dueSoon: "7", cooldown: "24", tones: ["FINAL", "FRIENDLY"], showCredits: false };
+  assert.deepEqual(registerPolicyCheck(f), { ok: true, values: { account_position_visibility: "MANAGER_UP", due_soon_days: 7, reminder_cooldown_hours: 24, reminder_tones: ["FINAL", "FRIENDLY"], show_credits_default: false } });
+  assert.equal(registerPolicyCheck({ ...f, dueSoon: "0" }).words, "The due soon window must be between 1 and 90 days.");
+  assert.equal(registerPolicyCheck({ ...f, cooldown: "721" }).words, "The reminder cooldown must be between 0 and 720 hours.");
+  assert.equal(registerPolicyCheck({ ...f, cooldown: "" }).words, "Enter the reminder cooldown as a whole number of hours.");
+  assert.equal(registerPolicyCheck({ ...f, visibility: "EVERYONE" }).words, "Choose who sees an account's position.");
+});
+
+test("the returned payment fee is entered in dollars and sent in cents", () => {
+  assert.deepEqual(nsfPolicyCheck({ fee: "35.00", taxable: false, code: " 4200 ", autoHold: true, notes: " Per the schedule " }), { ok: true, policy: { fee_cents: 3500, fee_taxable: false, fee_account_code: "4200", auto_hold: true, notes: "Per the schedule" } });
+  assert.equal(nsfPolicyCheck({ fee: "0", taxable: false, code: "", autoHold: true, notes: "" }).policy.fee_cents, 0);
+  assert.equal(nsfPolicyCheck({ fee: "", taxable: false, code: "", autoHold: true, notes: "" }).words, "Enter the fee, such as 35.00. Zero means no fee.");
+  assert.equal(nsfPolicyCheck({ fee: "-5", taxable: false, code: "", autoHold: true, notes: "" }).words, "Enter the fee as dollars and cents, such as 35.00.");
+  assert.equal(nsfPolicyCheck({ fee: "35.001", taxable: false, code: "", autoHold: true, notes: "" }).ok, false);
+});
+
+test("a settings change reads as words in the history", () => {
+  assert.equal(policyFieldWord("reminder_email_enabled"), "Email reminders");
+  assert.equal(policyFieldWord("ar_tier"), "Plan");
+  assert.equal(policyFieldWord("something_new"), "something_new");
+  assert.equal(policyValueWord("reminder_email_enabled", "true"), "On");
+  assert.equal(policyValueWord("reminder_sms_enabled", "false"), "Off");
+  assert.equal(policyValueWord("ar_tier", "PRO"), "Accelerated AR");
+  assert.equal(policyValueWord("untagged_fallback", "CONFIRM"), "Ask to confirm the account's address");
+  assert.equal(policyValueWord("aging_warn_days", "60"), "60");
+});
+
+test("the automatic hold switch is read as what it would apply, and what it cannot do", () => {
+  const s = { auto_hold_enabled: false, scope: "ORG", aging_bucket_days: 30, aging_threshold_cents: 500_000, aging_hold_enabled: true, limit_hold_enabled: true, limit_tolerance_cents: 0, cod_enforced: true, thresholds_editable: false, switch_wired: true };
+  const lines = autoHoldLines(s);
+  assert.equal(lines[0], "Automatic holds are off. The credit sweep reports what it would hold and places nothing by itself.");
+  assert.ok(lines.includes("Aged receivables: held past 30 days overdue once $5,000.00 or more is in that age."));
+  assert.ok(lines.includes("Over the credit limit: held when a balance goes over the limit."));
+  assert.ok(lines.includes("Pay before release accounts are held until the balance is paid."));
+  assert.equal(autoHoldLines({ ...s, auto_hold_enabled: true })[0], "Automatic holds are on. The credit sweep places holds by itself, and each one can be lifted or overridden here.");
+  assert.equal(autoHoldLines({ ...s, switch_wired: false }).at(-1), "The switch is not wired on this server, so it is shown but cannot be changed.");
+  assert.ok(autoHoldLines(s).includes("The thresholds are the dealer's policy and are read only here."));
+});
+
+test("the dispatch gate reads as a yes or the server's reason", () => {
+  assert.equal(dispatchWords({ allowed: true, reason: "" }, "SO-2001"), "Order SO-2001 may go out: nothing on the account stops it.");
+  assert.equal(dispatchWords({ allowed: false, reason: "ACCOUNT ON HOLD, a payment was returned; the office must clear this before delivery" }, "SO-2001"), "Order SO-2001 is stopped: ACCOUNT ON HOLD, a payment was returned; the office must clear this before delivery.");
+  assert.equal(dispatchWords({ allowed: false, reason: "AR check unavailable: order not found" }, "SO-9"), "Order SO-9 is stopped: AR check unavailable: order not found.");
+});

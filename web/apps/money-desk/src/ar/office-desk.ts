@@ -17,6 +17,7 @@ import type {
   Result,
 } from "@hardscapehouse/api-client";
 import { OfficeApi } from "./office-api.js";
+import { SettingsDesk, type SettingsModel } from "./office-settings.js";
 import { newKey } from "./held-keys.js";
 import {
   AttemptKeys,
@@ -30,8 +31,10 @@ import {
   sendInvoiceWords,
   validateApContact,
   DISPUTE_OUTCOMES,
+  dispatchWords,
   type Channel,
 } from "./office-logic.js";
+import { canLiftHolds } from "./ar-logic.js";
 
 export interface OfficeHost {
   /** Asks the root to repaint. */
@@ -104,6 +107,9 @@ export interface OfficeModel {
   /** The paper path flag being closed and the way it closes, waiting on a note. */
   readonly closing: { readonly flagId: string; readonly status: "MOVED_TO_PAPER" | "DISMISSED" } | null;
   readonly run: RunView;
+  readonly settings: SettingsModel;
+  /** The holds a returned payment placed, by hold id: the payment each one names. */
+  readonly tillHolds: ReadonlyMap<string, string>;
   /** The AP contact read for each account asked about: the read, or "error" when it could not be read. */
   readonly contacts: ReadonlyMap<string, BillingAPContactRead | "error">;
   /** The account whose contact is being removed and waits for the second press. */
@@ -115,6 +121,8 @@ export class OfficeDesk {
   readonly #host: OfficeHost;
   readonly #who: OfficeWho;
   readonly #keys = new AttemptKeys(newKey);
+  readonly #settings: SettingsDesk;
+  readonly #tillHolds = new Map<string, string>();
 
   #busy = false;
   #run: RunView = { phase: "none" };
@@ -138,6 +146,7 @@ export class OfficeDesk {
     this.#api = api;
     this.#host = host;
     this.#who = who;
+    this.#settings = new SettingsDesk(api, host, canLiftHolds(who.roleCode));
   }
 
   get who(): OfficeWho {
@@ -159,6 +168,8 @@ export class OfficeDesk {
       paper: this.#paper,
       closing: this.#closing,
       run: this.#run,
+      settings: this.#settings.model(),
+      tillHolds: this.#tillHolds,
       contacts: this.#contacts,
       removing: this.#removing,
     };
@@ -493,6 +504,44 @@ export class OfficeDesk {
     this.#host.repaint();
   }
 
+  // ---- settings, holds a returned payment placed, the dispatch gate -----------------------------------------
+
+  openSettings(): Promise<void> {
+    return this.#settings.open();
+  }
+
+  /** Reads the holds a returned payment placed once: each names the payment that raised it. */
+  async openHolds(): Promise<void> {
+    const got = await this.#api.tillHolds();
+    if (!got.ok) return;
+    this.#tillHolds.clear();
+    for (const h of got.value.items) if (h.source_payment_id !== undefined) this.#tillHolds.set(h.id, h.source_payment_id);
+    this.#host.repaint();
+  }
+
+  /** Lifts a hold a returned payment placed, through the till's path: the billing release refuses it. */
+  releaseNsfHold(holdId: string, reason: string): Promise<Result<{ status: string }>> {
+    return this.#api.releaseTillHold(holdId, reason);
+  }
+
+  async #checkDispatch(orderId: string, orderNo: string): Promise<void> {
+    if (orderId === "" || this.#busy) return;
+    this.#busy = true;
+    this.#host.repaint();
+    const got = await this.#api.dispatchGate(orderId);
+    this.#busy = false;
+    if (!got.ok) {
+      this.#fail("dispatch", got);
+      this.#host.reveal("[data-error]");
+      this.#host.repaint();
+      return;
+    }
+    const words = dispatchWords(got.value, orderNo === "" ? "for this invoice" : orderNo);
+    if (got.value.allowed) this.#host.notice(words);
+    else this.#host.error(words);
+    this.#host.reveal(got.value.allowed ? "[data-notice]" : "[data-error]");
+  }
+
   // ---- the press ---------------------------------------------------------------------------------------------
 
   /** Acts on a control carrying data-action. Returns true when the press was this slice's. */
@@ -524,6 +573,9 @@ export class OfficeDesk {
         return true;
       case "remind-send":
         void this.#sendReminder();
+        return true;
+      case "invoice-dispatch":
+        void this.#checkDispatch(attr("data-order-id"), attr("data-order-no"));
         return true;
       case "invoice-send":
         void this.#sendInvoice(attr("data-invoice-id"));
@@ -569,12 +621,13 @@ export class OfficeDesk {
         void this.#resolvePaper(attr("data-flag-id"));
         return true;
       default:
-        return false;
+        return this.#settings.press(control);
     }
   }
 
   /** After each paint: a contact's name fills its field once the contact has been read. */
   afterRender(): void {
+    this.#settings.afterRender();
     if (this.#documentHtml !== null) {
       const text = this.#documentHtml;
       this.#documentHtml = null;
@@ -595,5 +648,7 @@ export class OfficeDesk {
     this.#history = { phase: "none" };
     this.#paper = { phase: "none" };
     this.#closing = null;
+    this.#settings.clear();
+    this.#tillHolds.clear();
   }
 }

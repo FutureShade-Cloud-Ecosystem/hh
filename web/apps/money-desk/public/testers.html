@@ -105,6 +105,13 @@
 <p data-claim="office-dispute">Open a dispute asks for a reason and an amount in dollars that is not above the balance, and refuses anything else before it is sent. An open dispute shows on the invoice and on the register as disputed, and closes with an outcome: paid, credited, written off or withdrawn. Closing records how it ended and moves no money.</p>
 <p data-claim="office-reverse">A payment taken in error is reversed from its invoice with a reason, which is required. The invoice is owing what it was and the payment shows a reversal entry. A payment that has been reversed is refused a second time in the server's words. A returned cheque is still Mark bounced.</p>
 
+<h2>Receivables office: settings and holds</h2>
+<p data-claim="office-settings">The Settings tab shows the receivables rules (where an account turns overdue, late and escalated, how often it is reminded, the paper path window, the plan), the register settings and the history of rule changes. Payables and Receivables can read the rules; the boxes are held for it and say that changing them is for the Financial Controller or the General Manager. The controller's changes are checked before they are sent, saved, and listed in the history with what each rule was and became.</p>
+<p data-claim="office-fee">The returned payment fee is typed in dollars and a fee with more than two decimals is refused before it is sent. The next payment marked bounced is charged the fee that was saved.</p>
+<p data-claim="office-autohold">The automatic credit hold switch is the controller's. It says in words whether the switch is on, what it would hold, and that the thresholds are read only. Turning it on or off asks a second time and takes a reason. When the server has no way to change it, the screen shows it and offers no button.</p>
+<p data-claim="office-nsf-hold">A hold that a returned payment placed names that payment, and the controller lifts it with a reason through the till's own path, which the receivables release refuses.</p>
+<p data-claim="office-dispatch">On an open invoice, Can the order go out asks the credit gate and says either that nothing on the account stops the order or why it is stopped, in the server's words.</p>
+
 <h2>Everywhere</h2>
 <p data-claim="phone-sideways">On a phone no screen scrolls the page sideways.</p>
 <p data-claim="empty-world">An empty world says so in words on each screen: "No invoices in this view.", "Nothing needs you right now." and "No account is on hold."</p>

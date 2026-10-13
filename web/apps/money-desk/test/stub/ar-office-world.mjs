@@ -33,6 +33,10 @@ export function createOfficeWorld(ctx) {
       kind,
       landingPolicy: { ...DEFAULT_POLICY, ar_tier: kind === "pro" ? "PRO" : "BASE" },
       policyHistory: [],
+      registerPolicy: { account_position_visibility: "MANAGER_UP", due_soon_days: 7, reminder_tones: ["FRIENDLY", "FIRM", "FINAL"], reminder_cooldown_hours: 24, show_credits_default: false, workspace_split_pct: 60, workspace_arrangement: "PRIMARY_LEFT" },
+      nsf: { branch_id: "", fee_cents: 3500, fee_taxable: false, fee_account_code: "4200", auto_hold: true, notes: "" },
+      autoHold: false,
+      switchWired: kind !== "unwired",
       invoiceSends: new Map(),
       sends: [],
       sendKeys: new Map(),
@@ -252,10 +256,127 @@ export function createOfficeWorld(ctx) {
     return ok({ label: "VOID", original_payment_id: p.id, reversal_payment_id: reversal.id, reversal_no: reversal.no, amount_cents: p.amount_cents, reason, same_day: true, reopened_invoices: reopened }, 201);
   }
 
+  // ---- settings: the register, the returned payment fee, automatic holds ----------------------------------------------------
+
+  const TONE_RANK = { FRIENDLY: 0, FIRM: 1, FINAL: 2 };
+
+  /** The core's RegisterService.SetPolicy checks, in its order (register_service.go). */
+  function putRegisterPolicy(body) {
+    if (body === null) return refuse(422, "the request body must be JSON");
+    if (!["MANAGER_UP", "ALL_STAFF", "HIDDEN"].includes(body.account_position_visibility)) return refuse(422, "account position visibility must be MANAGER_UP, ALL_STAFF or HIDDEN");
+    if (!Number.isInteger(body.due_soon_days) || body.due_soon_days < 1 || body.due_soon_days > 90) return refuse(422, "the due-soon window is between 1 and 90 days");
+    if (!Number.isInteger(body.reminder_cooldown_hours) || body.reminder_cooldown_hours < 0 || body.reminder_cooldown_hours > 720) return refuse(422, "the reminder cooldown is between 0 and 720 hours");
+    if (!Number.isInteger(body.workspace_split_pct) || body.workspace_split_pct < 20 || body.workspace_split_pct > 80) return refuse(422, "the panel split is between 20 and 80 percent");
+    if (!["PRIMARY_LEFT", "PRIMARY_RIGHT"].includes(body.workspace_arrangement)) return refuse(422, "the panel arrangement is PRIMARY_LEFT or PRIMARY_RIGHT");
+    const tones = [];
+    for (const raw of body.reminder_tones ?? []) {
+      const t = String(raw).trim().toUpperCase();
+      if (!["FRIENDLY", "FIRM", "FINAL"].includes(t)) return refuse(422, "a reminder tone is FRIENDLY, FIRM or FINAL");
+      if (!tones.includes(t)) tones.push(t);
+    }
+    tones.sort((a, b) => TONE_RANK[a] - TONE_RANK[b]);
+    w.registerPolicy = {
+      account_position_visibility: body.account_position_visibility,
+      due_soon_days: body.due_soon_days,
+      reminder_tones: tones,
+      reminder_cooldown_hours: body.reminder_cooldown_hours,
+      show_credits_default: body.show_credits_default === true,
+      workspace_split_pct: body.workspace_split_pct,
+      workspace_arrangement: body.workspace_arrangement,
+    };
+    return ok({ saved: true });
+  }
+
+  function putNsf(body) {
+    if (body === null) return refuse(400, "invalid_json");
+    if (!Number.isInteger(body.fee_cents) || body.fee_cents < 0) return refuse(422, "till: fee_cents must be >= 0");
+    w.nsf = { branch_id: "", fee_cents: body.fee_cents, fee_taxable: body.fee_taxable === true, fee_account_code: body.fee_account_code === "" || body.fee_account_code === undefined ? "4200" : body.fee_account_code, auto_hold: body.auto_hold === true, notes: String(body.notes ?? "") };
+    return ok({ status: "ok" });
+  }
+
+  const autoHoldView = () => ({
+    auto_hold_enabled: w.autoHold,
+    scope: "ORG",
+    aging_bucket_days: 30,
+    aging_threshold_cents: 500_000,
+    aging_hold_enabled: true,
+    limit_hold_enabled: true,
+    limit_tolerance_cents: 0,
+    cod_enforced: true,
+    thresholds_editable: false,
+    switch_wired: w.switchWired,
+  });
+
+  function putAutoHold(body) {
+    if (body === null) return refuse(400, "invalid JSON body");
+    if (typeof body.enabled !== "boolean") return refuse(400, "enabled must be true or false, say which");
+    if (!w.switchWired) return refuse(503, "the auto-hold switch is not configured on this server, the AR policy write seam is not wired");
+    w.autoHold = body.enabled;
+    return ok(autoHoldView());
+  }
+
+  // ---- holds a returned payment placed (core/internal/till handler.go, service.go) ----------------------------------------
+
+  const tillHold = (h) => ({
+    id: h.id,
+    customer_id: h.customer_id,
+    source_payment_id: h.src,
+    status: h.status,
+    reason: h.reason,
+    ...(h.release_reason === undefined ? {} : { release_reason: h.release_reason }),
+    created_at: h.created_at,
+    ...(h.released_at === undefined ? {} : { released_at: h.released_at }),
+  });
+
+  function releaseTillHold(id, body) {
+    if (body === null) return refuse(400, "invalid_json");
+    const reason = String(body.reason ?? "");
+    if (reason === "") return refuse(422, "till: a release reason is required");
+    const hold = ctx.world().holds.find((h) => h.id === id && h.src !== undefined);
+    if (hold === undefined || hold.status !== "ACTIVE") return refuse(404, "not found");
+    hold.status = "RELEASED";
+    hold.release_reason = reason;
+    hold.released_at = NOW_ISO();
+    return ok({ status: "RELEASED" });
+  }
+
+  /** The dispatch gate (core credit_gate.go CanDispatch): a hold with no override in force stops the order. */
+  function dispatchGate(orderId) {
+    const world = ctx.world();
+    const inv = world.invoices.find((i) => ctx.uuid("o", ctx.invNumber(i)) === orderId);
+    if (inv === undefined) return ok({ allowed: false, reason: "AR check unavailable: order not found" });
+    const hold = world.holds.find((h) => h.status === "ACTIVE" && h.customer_id === ctx.custId(inv.acct));
+    if (hold === undefined) return ok({ allowed: true, reason: "" });
+    if (typeof hold.override_until === "string" && Date.parse(hold.override_until) > Date.now()) return ok({ allowed: true, reason: "" });
+    if (hold.hold_kind === "COD") return ok({ allowed: false, reason: "PAYMENT DUE, this COD account is on hold until the balance is paid" });
+    if (hold.hold_kind === "NSF") return ok({ allowed: false, reason: "ACCOUNT ON HOLD, a payment was returned; the office must clear this before delivery" });
+    return ok({ allowed: false, reason: "ACCOUNT ON HOLD, the office must clear this account before delivery" });
+  }
+
   function handle(req, url, body) {
     const path = url.pathname;
     const method = req.method;
-    let m = path.match(/^\/api\/v1\/ar\/register\/invoices\/([^/]+)\/(send|document|dispute|dispute\/resolve)$/);
+    if (path === "/api/v1/ar/register/policy") {
+      if (method === "GET") return ok(w.registerPolicy);
+      if (method === "PUT") return gate(req, "admin") ?? putRegisterPolicy(body);
+    }
+    if (path === "/api/v1/ar/nsf-policy") {
+      if (method === "GET") return ok(w.nsf);
+      if (method === "PUT") return gate(req, "admin") ?? putNsf(body);
+    }
+    if (path === "/api/v1/ar/auto-hold") {
+      if (method === "GET") return gate(req, "admin") ?? ok(autoHoldView());
+      if (method === "PUT") return gate(req, "admin") ?? putAutoHold(body);
+    }
+    if (method === "GET" && path === "/api/v1/ar/credit-holds") {
+      const status = url.searchParams.get("status") ?? "";
+      return ok({ items: ctx.world().holds.filter((h) => h.src !== undefined && (status === "" || h.status === status)).map(tillHold) });
+    }
+    let m = path.match(/^\/api\/v1\/ar\/credit-holds\/([^/]+)\/release$/);
+    if (m && method === "POST") return gate(req, "admin") ?? releaseTillHold(m[1], body);
+    m = path.match(/^\/api\/v1\/ar\/dispatch-gate\/([^/]+)$/);
+    if (m && method === "GET") return dispatchGate(m[1]);
+    m = path.match(/^\/api\/v1\/ar\/register\/invoices\/([^/]+)\/(send|document|dispute|dispute\/resolve)$/);
     if (m) {
       if (m[2] === "send" && method === "POST") return sendInvoice(m[1], body);
       if (m[2] === "document" && method === "GET") return documentOf(m[1]);

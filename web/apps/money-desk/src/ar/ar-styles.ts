@@ -225,6 +225,12 @@ const officeStyles = css`
   .close-form { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }
   .close-form label { min-width: 220px; flex: 1 1 220px; }
   .inline-select { min-width: 200px; }
+  .settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-16); align-items: start; }
+  .settings-grid > div { min-width: 0; }
+  .pick.held { background: var(--hh-disabled-fill); border-color: var(--hh-disabled-line); cursor: not-allowed; }
+  @media (max-width: 1100px) {
+    .settings-grid { grid-template-columns: minmax(0, 1fr); }
+  }
   .inv-actions { margin: var(--hh-s-12) 0; padding-top: var(--hh-s-12); border-top: 1px solid var(--hh-line); }
   .row-actions { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }
   .doc-view { margin-top: var(--hh-s-12); }

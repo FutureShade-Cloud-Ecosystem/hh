@@ -24,6 +24,7 @@ import {
   renderLoadFailed,
   renderLoading,
   renderReminders,
+  renderSettings,
   renderStatements,
   shownInvoiceIds,
   type AccountModel,
@@ -367,6 +368,7 @@ export class ArDesk {
         this.#host.repaint();
         return true;
       case "show-hold":
+        void this.#office.openHolds();
         this.#tab = "holds";
         this.#selectedHoldId = attr("data-hold-id");
         this.#holdPanel = "about";
@@ -465,6 +467,8 @@ export class ArDesk {
     this.#host.repaint();
     if (tab === "statements") await Promise.all(this.#aging.map((a) => this.#loadStatement(a.customer_id)));
     if (tab === "reminders") await this.#office.openReminders();
+    if (tab === "settings") await this.#office.openSettings();
+    if (tab === "holds") await this.#office.openHolds();
   }
 
   async #loadPaid(): Promise<void> {
@@ -899,7 +903,9 @@ export class ArDesk {
     this.#busy = true;
     this.#clearMessages();
     this.#host.repaint();
-    const result = this.#liftChoice === "lift" ? await this.#api.releaseHold(id, reason) : await this.#api.overrideHold(id, reason);
+    // A hold a returned payment placed is lifted through the till's path: the billing release refuses it.
+    const nsf = this.#holds.find((h) => h.id === id)?.hold_kind === "NSF";
+    const result = this.#liftChoice === "override" ? await this.#api.overrideHold(id, reason) : nsf ? await this.#office.releaseNsfHold(id, reason) : await this.#api.releaseHold(id, reason);
     this.#busy = false;
     if (!result.ok) {
       this.#fail("release-hold", result);
@@ -969,6 +975,7 @@ export class ArDesk {
     if (model.account !== null) return html`${renderAccount(model, model.account)}`;
     if (model.tab === "statements") return html`${renderStatements(model)}`;
     if (model.tab === "reminders") return html`${renderReminders(model)}`;
+    if (model.tab === "settings") return html`${renderSettings(model)}`;
     if (model.tab === "holds") return html`${renderHolds(model)}`;
     return html`${renderHome(model)}`;
   }

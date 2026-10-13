@@ -5,17 +5,26 @@ import {
   staffBilling,
   type ApiClient,
   type BillingAPContactRead,
+  type BillingAutoHoldSetting,
+  type BillingDispatchGateResult,
   type BillingDisputeView,
+  type BillingLandingPolicy,
+  type BillingPolicyChangePage,
   type BillingPaperPathPage,
   type BillingPaperPathSweepResult,
   type BillingRegisterPage,
+  type BillingRegisterPolicy,
   type BillingReminderResult,
   type BillingReminderSend,
   type BillingReminderSendPage,
   type BillingStatementRunResult,
   type PaymentsReversalResult,
   type Result,
+  type TillCreditHoldPage,
+  type TillNSFPolicy,
+  type TillStatusResult,
   staffPayments,
+  staffTill,
 } from "@hardscapehouse/api-client";
 
 export class OfficeApi {
@@ -101,5 +110,58 @@ export class OfficeApi {
 
   reversePayment(paymentId: string, reason: string): Promise<Result<PaymentsReversalResult>> {
     return staffPayments.paymentsReversePayment(this.#client, paymentId, { reason });
+  }
+
+  // ---- settings: the receivables rules, the register, the returned payment fee, automatic holds -------------------
+
+  landingPolicy(): Promise<Result<BillingLandingPolicy>> {
+    return staffBilling.billingGetARLandingPolicy(this.#client);
+  }
+
+  putLandingPolicy(policy: Omit<BillingLandingPolicy, "branch_id">): Promise<Result<BillingLandingPolicy>> {
+    return staffBilling.billingPutARLandingPolicy(this.#client, policy);
+  }
+
+  policyHistory(): Promise<Result<BillingPolicyChangePage>> {
+    return staffBilling.billingGetARLandingPolicyHistory(this.#client, { limit: 50 });
+  }
+
+  registerPolicy(): Promise<Result<BillingRegisterPolicy>> {
+    return staffBilling.billingGetRegisterPolicy(this.#client);
+  }
+
+  putRegisterPolicy(policy: BillingRegisterPolicy): Promise<Result<{ saved: boolean }>> {
+    return staffBilling.billingPutRegisterPolicy(this.#client, policy);
+  }
+
+  nsfPolicy(): Promise<Result<TillNSFPolicy>> {
+    return staffTill.tillGetNSFPolicy(this.#client);
+  }
+
+  putNsfPolicy(policy: TillNSFPolicy): Promise<Result<TillStatusResult>> {
+    return staffTill.tillUpdateNSFPolicy(this.#client, policy);
+  }
+
+  autoHold(): Promise<Result<BillingAutoHoldSetting>> {
+    return staffBilling.billingGetAutoHold(this.#client);
+  }
+
+  putAutoHold(enabled: boolean, reason: string): Promise<Result<BillingAutoHoldSetting>> {
+    return staffBilling.billingPutAutoHold(this.#client, { enabled, ...(reason === "" ? {} : { reason }) });
+  }
+
+  // ---- holds a returned payment placed, and the dispatch gate -----------------------------------------------------
+
+  tillHolds(): Promise<Result<TillCreditHoldPage>> {
+    return staffTill.tillListCreditHolds(this.#client, { limit: 100 });
+  }
+
+  /** An NSF hold is lifted through the till's path: the billing release refuses it, in the core's words. */
+  releaseTillHold(holdId: string, reason: string): Promise<Result<TillStatusResult>> {
+    return staffTill.tillReleaseCreditHold(this.#client, holdId, { reason });
+  }
+
+  dispatchGate(orderId: string): Promise<Result<BillingDispatchGateResult>> {
+    return staffBilling.billingGetDispatchGate(this.#client, orderId);
   }
 }

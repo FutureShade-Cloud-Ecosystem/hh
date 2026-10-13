@@ -15,7 +15,7 @@ async function openOffice(page: Page, request: APIRequestContext, scenario: "pro
 }
 
 async function openTab(page: Page, name: string): Promise<void> {
-  await page.getByRole("button", { name, exact: true }).first().click();
+  await page.getByRole("navigation", { name: "Money Desk views" }).getByRole("button", { name, exact: true }).click();
 }
 
 async function openAccount(page: Page, name: string): Promise<void> {
@@ -335,4 +335,147 @@ test("on a phone the invoice's dispute form and the reversal fit the screen", as
   await page.getByRole("button", { name: "View the document" }).click();
   await expect(page.locator("[data-doc-slot] iframe")).toBeVisible();
   await noSidewaysScroll(page);
+});
+
+// ---- settings, holds a returned payment placed, and the dispatch gate -------------------------------------------------------
+
+test("Payables and Receivables reads the rules, and every change is held and says who may make it", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openTab(page, "Settings");
+  await expect(page.locator("[data-field='set-warn']")).toHaveValue("60");
+  await expect(page.locator("[data-field='set-escalate']")).toHaveValue("90");
+  await expect(page.locator("[data-field='set-tier']")).toHaveValue("BASE");
+  await expect(page.locator("[data-field='set-fee']")).toHaveValue("35.00");
+  await expect(page.locator("[data-field='set-warn']")).toBeDisabled();
+  await expect(page.locator("[data-settings-hold] [data-locked]")).toContainText("for the Financial Controller or the General Manager");
+  await expect(page.locator("[data-settings-history] [data-locked]")).toBeVisible();
+  await page.getByRole("button", { name: "Save the rules" }).click({ force: true });
+  await expect(page.locator("[data-error]")).toHaveText("Changing receivables rules is for the Financial Controller or the General Manager. Payables and Receivables can read the rules the desk runs on.");
+  await page.getByRole("button", { name: "Save the fee" }).click({ force: true });
+  await expect(page.locator("[data-error]")).toContainText("The returned payment fee and its hold are for the Financial Controller or the General Manager to change.");
+  await page.getByRole("checkbox", { name: "Email reminders" }).click({ force: true });
+  await expect(page.getByRole("checkbox", { name: "Email reminders" })).toHaveAttribute("aria-checked", "true");
+});
+
+test("the controller changes the rules, checked first, and each change is on the record", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openTab(page, "Settings");
+  await expect(page.locator("[data-settings-history] [data-history-none]")).toHaveText("No rule has been changed yet.");
+  await page.locator("[data-field='set-warn']").fill("95");
+  await page.getByRole("button", { name: "Save the rules" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("Overdue warning (95) must be fewer than escalation (90).");
+  await page.locator("[data-field='set-warn']").fill("55");
+  await page.locator("[data-field='set-cadence']").fill("10");
+  await page.getByRole("checkbox", { name: "Text reminders" }).click();
+  await page.locator("[data-field='set-tier']").selectOption("PRO");
+  await page.getByRole("button", { name: "Save the rules" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("The receivables rules are saved.");
+  await expect(page.locator("[data-change-row]")).toHaveCount(4);
+  await expect(page.locator("[data-change-row]", { hasText: "Days between reminders" })).toContainText("7");
+  await expect(page.locator("[data-change-row]", { hasText: "Days between reminders" })).toContainText("10");
+  await expect(page.locator("[data-change-row]", { hasText: "Text reminders" })).toContainText("Off");
+  await expect(page.locator("[data-change-row]", { hasText: "Plan" })).toContainText("Accelerated AR");
+  await openTab(page, "Reminders");
+  await expect(page.locator("[data-plan]")).toHaveText("Accelerated AR");
+});
+
+test("the register settings are saved with their tones and read back", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openTab(page, "Settings");
+  await page.locator("[data-field='set-duesoon']").fill("0");
+  await page.getByRole("button", { name: "Save the register settings" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("The due soon window must be between 1 and 90 days.");
+  await page.locator("[data-field='set-duesoon']").fill("10");
+  await page.getByRole("button", { name: "Firm", exact: true }).click();
+  await page.getByRole("button", { name: "Save the register settings" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("The register settings are saved.");
+  await openTab(page, "Statements");
+  await openTab(page, "Settings");
+  await expect(page.locator("[data-field='set-duesoon']")).toHaveValue("10");
+  await expect(page.getByRole("button", { name: "Firm", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("button", { name: "Final", exact: true })).toHaveAttribute("aria-pressed", "true");
+});
+
+test("the returned payment fee is saved in dollars and is the fee the next bounce is charged", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openTab(page, "Settings");
+  await page.locator("[data-field='set-fee']").fill("35.001");
+  await page.getByRole("button", { name: "Save the fee" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("Enter the fee as dollars and cents, such as 35.00.");
+  await page.locator("[data-field='set-fee']").fill("60.00");
+  await page.getByRole("button", { name: "Save the fee" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("The returned payment fee is saved.");
+  await openTab(page, "Receivables");
+  await openAccount(page, "Riverstone Paving (demo)");
+  await page.locator("[data-field='receive-amount']").fill("250.00");
+  await page.locator("[data-field='receive-reference']").fill("Cheque 7783");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("applied");
+  await page.locator("[data-invoice-row]", { hasText: "INV-1005" }).getByRole("button", { name: "INV-1005" }).click();
+  await page.locator("[data-payment-row]").getByRole("button", { name: "Mark bounced" }).click();
+  await page.locator("[data-field='bounce-reason']").fill("Cheque returned NSF");
+  await page.getByRole("button", { name: "Confirm bounced" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("the bank fee is $60.00");
+});
+
+test("the automatic hold switch shows what it would apply, asks twice, and says when it cannot be changed", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openTab(page, "Settings");
+  await expect(page.locator("[data-hold-state]")).toHaveText("Off");
+  await expect(page.locator("[data-settings-hold]")).toContainText("Automatic holds are off.");
+  await expect(page.locator("[data-settings-hold]")).toContainText("Aged receivables: held past 30 days overdue once $5,000.00 or more is in that age.");
+  await page.getByRole("button", { name: "Turn automatic holds on" }).click();
+  await expect(page.locator("[data-hold-confirm]")).toContainText("lets the sweep stop accounts from transacting by itself");
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.locator("[data-hold-state]")).toHaveText("Off");
+  await page.getByRole("button", { name: "Turn automatic holds on" }).click();
+  await page.locator("[data-field='set-hold-reason']").fill("Ready for the demo");
+  await page.getByRole("button", { name: "Turn on", exact: true }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("Automatic holds are on.");
+  await expect(page.locator("[data-hold-state]")).toHaveText("On");
+});
+
+test("when the switch is not wired it is shown and cannot be changed", async ({ page, request }) => {
+  await request.post("/_stub/scenario", { data: { name: "unwired" } });
+  const who: "controller" = "controller";
+  await page.addInitScript(receivablesHandoff, who);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Receivables", exact: true }).click();
+  await expect(page.locator("[data-card]")).toHaveCount(4);
+  await openTab(page, "Settings");
+  await expect(page.locator("[data-settings-hold]")).toContainText("The switch is not wired on this server, so it is shown but cannot be changed.");
+  await expect(page.getByRole("button", { name: /Turn automatic holds/ })).toHaveCount(0);
+});
+
+test("a hold a returned payment placed names its payment and is lifted through the till's path", async ({ page, request }) => {
+  await openDesk(page, request, "controller");
+  await openTab(page, "Credit holds");
+  await page.locator("[data-hold-row]", { hasText: "Granite" }).getByRole("button", { name: "Lift..." }).click();
+  await expect(page.locator("[data-hold-source]")).toHaveText("Payment PAY-0001, returned by the bank");
+  await page.locator("[data-field='release-reason']").fill("Replacement cheque cleared");
+  await page.getByRole("button", { name: "Lift hold" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("The credit hold is lifted.");
+  await expect(page.locator("[data-hold-row]")).toHaveCount(2);
+});
+
+test("an invoice says whether its order may go out, and why not", async ({ page, request }) => {
+  await openDesk(page, request);
+  await openInvoice(page, "Granite Edge Landscaping (demo)", "INV-1001");
+  await page.getByRole("button", { name: "Can the order go out?" }).click();
+  await expect(page.locator("[data-error]")).toHaveText("Order SO-2001 is stopped: ACCOUNT ON HOLD, a payment was returned; the office must clear this before delivery.");
+  await page.getByRole("button", { name: "‹ Receivables" }).click();
+  await openInvoice(page, "Riverstone Paving (demo)", "INV-1005");
+  await page.getByRole("button", { name: "Can the order go out?" }).click();
+  await expect(page.locator("[data-notice]")).toHaveText("Order SO-2005 may go out: nothing on the account stops it.");
+});
+
+test("on a phone the settings fit the screen and work from the keyboard", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openDesk(page, request, "controller");
+  await openTab(page, "Settings");
+  await expect(page.locator("[data-settings-rules]")).toBeVisible();
+  await noSidewaysScroll(page);
+  await page.locator("[data-field='set-warn']").focus();
+  await page.keyboard.press("Tab");
+  await expect(page.locator("[data-field='set-escalate']")).toBeFocused();
 });

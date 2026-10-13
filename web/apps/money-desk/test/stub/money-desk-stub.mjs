@@ -247,7 +247,7 @@ function reset(kind = "full") {
     ...extra,
   });
   world.holds.push(
-    hold(1, 1, "NSF", true, "Payment PAY-0001 came back from the bank", 2),
+    hold(1, 1, "NSF", true, "Payment PAY-0001 came back from the bank", 2, { src: uuid("c", 1) }),
     hold(2, 2, "AR_AGING", true, "Receivables are more than 90 days past due", 6),
     hold(3, 5, "CREDIT_LIMIT", false, "Balance is over the credit limit; override until the deposit clears", 1, {
       override_until: new Date(Date.now() + 5 * 86_400_000).toISOString(),
@@ -441,6 +441,7 @@ function detail(inv) {
   if (inv.promise !== null) out.promise = inv.promise;
   if (inv.dispute !== null) out.dispute = inv.dispute;
   out.order_no = `SO-${2000 + invNumber(inv)}`;
+  out.order_id = uuid("o", invNumber(inv));
   return out;
 }
 
@@ -476,7 +477,7 @@ function bouncedPage() {
       method: p.method,
       amount_cents: p.amount_cents,
       reason: p.reason,
-      fee_cents: NSF_FEE,
+      fee_cents: p.fee_cents ?? NSF_FEE,
       fee_taxable: false,
       bounced_at: p.bounced_at,
     }));
@@ -510,7 +511,7 @@ function history(p) {
 function holdsPage(status) {
   const items = world.holds
     .filter((h) => status === "" || h.status === status)
-    .map((h) => ({ ...h, customer_name: acctOfCust(h.customer_id)?.name }));
+    .map(({ src: _src, ...h }) => ({ ...h, customer_name: acctOfCust(h.customer_id)?.name }));
   return { items };
 }
 
@@ -550,7 +551,7 @@ async function handle(req, res) {
   }
   if (method === "POST" && path === "/_stub/scenario") {
     const body = await readBody(req);
-    reset(body?.name === "empty" ? "empty" : body?.name === "wide" ? "wide" : body?.name === "pro" ? "pro" : "full");
+    reset(["empty", "wide", "pro", "unwired"].includes(body?.name) ? body.name : "full");
     return send(res, 200, { ok: true });
   }
   if (method === "POST" && path === "/_stub/park-apply") {
@@ -801,6 +802,7 @@ async function handle(req, res) {
     if (body === null) return refuse(res, 422, "the request body must be JSON");
     if (p.status === "BOUNCED") return refuse(res, 409, "payment already marked BOUNCED");
     p.status = "BOUNCED";
+    p.fee_cents = officeWorld.state().nsf.fee_cents;
     p.reason = String(body.reason ?? "");
     p.bounced_at = NOW_ISO();
     let reopened = 0;
@@ -817,13 +819,14 @@ async function handle(req, res) {
       auto_placed: true,
       reason: `Payment ${p.no} came back from the bank`,
       created_at: NOW_ISO(),
+      src: p.id,
     };
     const already = world.holds.some((h) => h.status === "ACTIVE" && h.customer_id === hold.customer_id);
     if (!already) world.holds.push(hold);
     return send(res, 200, {
       payment_id: p.id,
       customer_id: custId(p.acct),
-      fee_cents: NSF_FEE,
+      fee_cents: p.fee_cents,
       fee_taxable: false,
       reversed_cents: p.amount_cents,
       reopened_invoices: reopened,
@@ -843,6 +846,7 @@ async function handle(req, res) {
     const hold = world.holds.find((h) => h.id === m[1]);
     if (!hold) return refuse(res, 404, "not found");
     if (m[2] === "ar-release") {
+      if (hold.hold_kind === "NSF" || hold.status !== "ACTIVE") return refuse(res, 400, `billing: hold ${hold.id} is not an ACTIVE non-NSF hold, an NSF hold is released through the till's Tier-1 path, which enforces an authorization this module does not`);
       hold.status = "RELEASED";
       return send(res, 200, { ok: true });
     }
