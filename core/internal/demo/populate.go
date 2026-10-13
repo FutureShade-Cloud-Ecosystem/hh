@@ -103,11 +103,19 @@ const (
 	controllerEmail       = "financial.controller@hh-demo.invalid"
 	controllerDisplayName = "Financial controller (demo)"
 
-	// The General Manager (global, tier one): the leadership login the roles roadmap's coming roles cycle makes live. Ids of the cycle's own block.
+	// The General Manager (global, tier one): the leadership login the coming
+	// roles cycle makes live. The cycle's ids sit in their own block.
 	gmUserID      = "de5b2000-0000-4000-9000-000000000001"
 	gmPlatformID  = "de5b2000-0000-4000-9000-000000000001"
 	gmEmail       = "general.manager@hh-demo.invalid"
 	gmDisplayName = "General manager (demo)"
+
+	// HR (global, tier one): the coming roles cycle's second login, whose
+	// only cells above None are House Messages and Dealer Admin.
+	hrUserID      = "de5b2000-0000-4000-9000-000000000002"
+	hrPlatformID  = "de5b2000-0000-4000-9000-000000000002"
+	hrEmail       = "hr@hh-demo.invalid"
+	hrDisplayName = "HR (demo)"
 
 	// The roles behind the accounts, resolved by code against the
 	// roles catalog 0015 plants. staff_role_grant rows derive from these
@@ -119,6 +127,7 @@ const (
 	buyerRoleCode      = "PROCUREMENT_MANAGER"
 	controllerRoleCode = "FINANCIAL_CONTROLLER"
 	gmRoleCode         = "GENERAL_MANAGER"
+	hrRoleCode         = "HR"
 
 	// The two personas migration 0200 plants, named by the same literals the
 	// flow table carries: the yard team's login and the driver's. The rows
@@ -447,6 +456,7 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 			buyerEmail:      buyerPlatformID,
 			controllerEmail: controllerPlatformID,
 			gmEmail:         gmPlatformID,
+			hrEmail:         hrPlatformID,
 		},
 	})
 	if err != nil {
@@ -517,6 +527,7 @@ func insertRoleAccounts(ctx context.Context, tx pgx.Tx) (int, error) {
 		{buyerUserID, buyerEmail, buyerDisplayName},
 		{controllerUserID, controllerEmail, controllerDisplayName},
 		{gmUserID, gmEmail, gmDisplayName},
+		{hrUserID, hrEmail, hrDisplayName},
 	} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO users (id, email, display_name, status)
@@ -548,6 +559,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		{buyerUserID, buyerRoleCode},
 		{controllerUserID, controllerRoleCode},
 		{gmUserID, gmRoleCode},
+		{hrUserID, hrRoleCode},
 	} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_roles (user_id, role_id)
@@ -566,7 +578,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 	// follows the role's scope, never user_branch_grants) and are written
 	// only so the accounts have the same shape as the others. The buyer is
 	// branch scoped, so its Trenton row is its real grant.
-	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID, gmUserID} {
+	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID, gmUserID, hrUserID} {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO user_branch_grants (user_id, branch_id)
 			SELECT $1, l.id FROM locations l WHERE l.id = $2::uuid
@@ -588,6 +600,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 		{buyerUserID, buyerRoleCode},
 		{controllerUserID, controllerRoleCode},
 		{gmUserID, gmRoleCode},
+		{hrUserID, hrRoleCode},
 	} {
 		var n int
 		if err := tx.QueryRow(ctx, `
@@ -601,7 +614,7 @@ func insertRoleAccountAccess(ctx context.Context, tx pgx.Tx) (roles, grants int,
 			return 0, 0, fmt.Errorf("demo-populate: refusing: the roles catalog holds no %s row, the %s account would reach nothing", a.roleCode, a.userID)
 		}
 	}
-	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID, gmUserID} {
+	for _, userID := range []string{salesUserID, managerUserID, yardMgrUserID, payRecUserID, buyerUserID, controllerUserID, gmUserID, hrUserID} {
 		var n int
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM user_branch_grants

@@ -164,6 +164,17 @@ var accounts = map[string]Account{
 		Label:          "General Manager",
 		Role:           "general_manager",
 	},
+	// HR, the second of the coming roles cycle's logins (global, tier one):
+	// no Manager Home, no selling surface; its cells are House Messages and
+	// Dealer Admin.
+	"hr": {
+		Flow:           "hr",
+		PlatformUserID: "de5b2000-0000-4000-9000-000000000002",
+		Email:          "hr@" + ReservedDomain,
+		DisplayName:    "HR (demo)",
+		Label:          "HR",
+		Role:           "hr",
+	},
 }
 
 // Get returns the account one flow name stands for. The second return is
@@ -187,6 +198,7 @@ func All() []Account {
 		accounts["procurement-manager"],
 		accounts["financial-controller"],
 		accounts["general-manager"],
+		accounts["hr"],
 	}
 }
 
