@@ -28,6 +28,7 @@ const coreDirs = [
   join(appDir, "..", "..", "..", "core", "internal", "warranty"),
   join(appDir, "..", "..", "..", "core", "internal", "platform", "authz"),
   join(appDir, "..", "..", "..", "core", "internal", "platform", "httpx"),
+  join(appDir, "..", "..", "..", "core", "internal", "reporting"),
 ];
 
 const coreSource = coreDirs
@@ -474,6 +475,214 @@ test("the role defaults refuse a caller who is not an admin, in the core's own w
 test("a caller without a bearer is refused before any route answers", async () => {
   const res = await call("GET", "/api/v1/dashboard/needs", { token: "" });
   refused(res, 401, "unauthenticated");
+});
+
+// ---- reporting: the catalogue, the runs, the saved views, the register ----
+
+const BRANCH = "5d1b3f6e-0000-4000-9000-000000000001";
+const FROM = "2026-10-01";
+const TO = "2026-10-14";
+
+test("the reporting catalogue, a run and an export fit the reporting contract", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+
+  const catalog = await call("GET", "/api/v1/reporting/templates", { token });
+  assert.equal(catalog.status, 200);
+  holds("ReportingTemplateCatalog", catalog.json);
+  assert.ok(catalog.json.categories.length > 0);
+  for (const category of catalog.json.categories) {
+    for (const t of category.templates) {
+      holds("ReportingTemplate", t);
+      for (const p of t.params) {
+        assert.ok(["date", "uuid", "enum", "int"].includes(p.kind), `param kind ${p.kind} outside the closed set`);
+      }
+      for (const c of t.columns) {
+        assert.ok(["text", "int", "cents", "qty", "date", "bool"].includes(c.kind), `column kind ${c.kind} outside the closed set`);
+      }
+    }
+  }
+
+  const code = catalog.json.categories[0].templates[0].code;
+  const detail = await call("GET", `/api/v1/reporting/templates/${code}`, { token });
+  assert.equal(detail.status, 200);
+  holds("ReportingTemplate", detail.json);
+
+  const run = await call("GET", `/api/v1/reporting/templates/${code}/run?from_date=${FROM}&to_date=${TO}&branch_id=${BRANCH}`, { token });
+  assert.equal(run.status, 200);
+  holds("ReportingResult", run.json);
+  assert.equal(run.json.row_count, run.json.rows.length);
+  for (const total of Object.values(run.json.totals)) assert.ok(typeof total === "number", "a total is a figure the server computed, never a string");
+
+  const unknown = await call("GET", `/api/v1/reporting/templates/${code}/run?from_date=${FROM}&to_date=${TO}&branch=oops`, { token });
+  refused(unknown, 400, 'unknown report parameter "branch"', 'unknown report parameter %q');
+
+  const missing = await call("GET", `/api/v1/reporting/templates/${code}/run?from_date=${FROM}`, { token });
+  refused(missing, 400, `report parameter "to_date" is required`, 'report parameter %q is required');
+
+  await scenario("reporting-out-of-scope");
+  const walled = await call("GET", `/api/v1/reporting/templates/${code}/run?from_date=${FROM}&to_date=${TO}`, { token });
+  refused(walled, 403, "this report is outside your branch scope");
+  await reset();
+
+  const csv = await call("GET", `/api/v1/reporting/templates/${code}/export.csv?from_date=${FROM}&to_date=${TO}`, { token });
+  assert.equal(csv.status, 200);
+  assert.ok(typeof csv.json !== "object" || csv.json === null, "the export answers text, not a JSON envelope");
+});
+
+test("a print freezes a run, the document answers, and a consolidated print is refused in the core's words", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+
+  const consolidated = await call("POST", "/api/v1/reporting/templates/sales_by_day/print", {
+    body: { params: { from_date: FROM, to_date: TO }, print_branch_id: "" },
+    token,
+  });
+  refused(consolidated, 400, "this report covers every branch, name the branch to print it at");
+
+  const print = await call("POST", "/api/v1/reporting/templates/sales_by_day/print", {
+    body: { params: { from_date: FROM, to_date: TO, branch_id: BRANCH }, print_branch_id: "" },
+    token,
+  });
+  assert.equal(print.status, 201);
+  holds("ReportingRun", print.json);
+  assert.ok(print.json.print_job_id !== "");
+
+  const runs = await call("GET", "/api/v1/reporting/runs?limit=25", { token });
+  assert.equal(runs.status, 200);
+  holds("ReportingRunPage", runs.json);
+  assert.ok(runs.json.items.some((r) => r.id === print.json.id), "the frozen print lands in the runs list");
+
+  const one = await call("GET", `/api/v1/reporting/runs/${print.json.id}`, { token });
+  assert.equal(one.status, 200);
+  holds("ReportingRun", one.json);
+
+  const doc = await call("GET", `/api/v1/reporting/runs/${print.json.id}/document`, { token });
+  assert.equal(doc.status, 200);
+  assert.ok(typeof doc.json !== "object" || doc.json === null, "the document answers html, not a JSON envelope");
+});
+
+test("saved views carry a name and answer the contract", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+
+  const list = await call("GET", "/api/v1/reporting/saved-views?template_code=sales_by_day", { token });
+  assert.equal(list.status, 200);
+  holds("ReportingSavedViewPage", list.json);
+
+  const unnamed = await call("POST", "/api/v1/reporting/saved-views", {
+    body: { template_code: "sales_by_day", name: "  ", params: { from_date: FROM, to_date: TO }, is_shared: false },
+    token,
+  });
+  refused(unnamed, 400, "a saved view needs a name");
+
+  const saved = await call("POST", "/api/v1/reporting/saved-views", {
+    body: { template_code: "sales_by_day", name: "The fortnight", params: { from_date: FROM, to_date: TO }, is_shared: false },
+    token,
+  });
+  assert.equal(saved.status, 201);
+  holds("ReportingSavedView", saved.json);
+
+  const dropped = await call("DELETE", `/api/v1/reporting/saved-views/${saved.json.id}`, { token });
+  assert.equal(dropped.status, 204);
+});
+
+test("the commission register fits the contract, and the rule wall is the shared Forbidden body", async () => {
+  await reset();
+  const manager = await mint("yard-manager");
+  const admin = await mint("financial-controller");
+
+  const preview = await call("GET", `/api/v1/reporting/commission/preview?from=${FROM}&to=${TO}&branch_id=${BRANCH}`, { token: manager });
+  assert.equal(preview.status, 200);
+  holds("ReportingCommissionPeriodPage", preview.json);
+  assert.equal(preview.json.posts_to_gl, false, "the register accrues and says so, it does not post");
+  for (const period of preview.json.items) {
+    holds("ReportingCommissionPeriod", { ...period, lines: undefined });
+    for (const line of period.lines ?? []) {
+      holds("ReportingCommissionLine", line);
+      assert.ok(["REVENUE", "MARGIN"].includes(line.basis), `basis ${line.basis} outside the closed pair`);
+    }
+  }
+
+  const badWindow = await call("GET", `/api/v1/reporting/commission/preview?from=nope&to=${TO}`, { token: manager });
+  refused(badWindow, 400, "from must be a date (YYYY-MM-DD)");
+
+  const accruals = await call("GET", `/api/v1/reporting/commission/accruals?from=${FROM}&to=${TO}`, { token: manager });
+  assert.equal(accruals.status, 200);
+  holds("ReportingAccrual", accruals.json);
+  assert.ok(accruals.json.note.includes("Accrued, not posted"), "the register's caveat is the server's own sentence");
+
+  const attribution = await call("GET", `/api/v1/reporting/commission/attribution-check?from=${FROM}&to=${TO}`, { token: manager });
+  assert.equal(attribution.status, 200);
+  holds("ReportingAttributionCheck", attribution.json);
+
+  const runs = await call("GET", `/api/v1/reporting/commission/runs?from=${FROM}&to=${TO}`, { token: manager });
+  assert.equal(runs.status, 200);
+  holds("ReportingCommissionPeriodPage", runs.json);
+  const stored = runs.json.items[0];
+  assert.ok(stored.run_id !== undefined && stored.run_id !== "", "a stored run names its run");
+
+  const one = await call("GET", `/api/v1/reporting/commission/runs/${stored.run_id}`, { token: manager });
+  assert.equal(one.status, 200);
+  holds("ReportingCommissionPeriod", one.json);
+  for (const line of one.json.lines ?? []) holds("ReportingCommissionLine", line);
+
+  const computed = await call("POST", "/api/v1/reporting/commission/runs", {
+    body: { rep_user_id: stored.rep_user_id, from: FROM, to: TO, branch_id: "" },
+    token: manager,
+  });
+  assert.equal(computed.status, 201);
+  holds("ReportingCommissionPeriod", computed.json);
+
+  const noRep = await call("POST", "/api/v1/reporting/commission/runs", {
+    body: { rep_user_id: "", from: FROM, to: TO, branch_id: "" },
+    token: manager,
+  });
+  refused(noRep, 400, "rep_user_id is required to compute a commission period");
+
+  const consolidatedPrint = await call("POST", `/api/v1/reporting/commission/runs/${computed.json.run_id}/print`, {
+    body: { print_branch_id: "" },
+    token: manager,
+  });
+  refused(consolidatedPrint, 400, "this commission period covers every branch, name the branch to print it at");
+
+  const crunCsv = await call("GET", `/api/v1/reporting/commission/runs/${stored.run_id}/export.csv`, { token: manager });
+  assert.equal(crunCsv.status, 200);
+  assert.ok(typeof crunCsv.json !== "object" || crunCsv.json === null, "the commission export answers text");
+
+  // The rules read is a manager read; the writes are the admin window.
+  const rules = await call("GET", "/api/v1/reporting/commission/rules", { token: manager });
+  assert.equal(rules.status, 200);
+  holds("ReportingCommissionRulePage", rules.json);
+
+  const managerWrite = await call("POST", "/api/v1/reporting/commission/rules", {
+    body: { rep_user_id: stored.rep_user_id, basis: "REVENUE", rate_bps: 250, effective_from: FROM },
+    token: manager,
+  });
+  assert.equal(managerWrite.status, 403);
+  assert.deepEqual(managerWrite.json, { error: "Forbidden" });
+  assert.ok(coreSource.includes('{"error":"Forbidden"}'), "the core's authz middleware does not write the shared Forbidden body");
+
+  const adminWrite = await call("POST", "/api/v1/reporting/commission/rules", {
+    body: { rep_user_id: stored.rep_user_id, basis: "MARGIN", rate_bps: 100, effective_from: FROM },
+    token: admin,
+  });
+  assert.equal(adminWrite.status, 201);
+  holds("ReportingCommissionRule", adminWrite.json);
+  assert.equal(adminWrite.json.is_active, true);
+
+  const badRate = await call("POST", "/api/v1/reporting/commission/rules", {
+    body: { rep_user_id: stored.rep_user_id, basis: "REVENUE", rate_bps: 20000, effective_from: FROM },
+    token: admin,
+  });
+  refused(badRate, 400, "rate_bps must be between 0 and 10000 (0-100%)", "rate_bps must be between 0 and 10000 (0-100%%)");
+
+  const retire = await call("DELETE", `/api/v1/reporting/commission/rules/${adminWrite.json.id}`, { token: admin });
+  assert.equal(retire.status, 204);
+
+  const managerRetire = await call("DELETE", `/api/v1/reporting/commission/rules/${rules.json.items[0].id}`, { token: manager });
+  assert.equal(managerRetire.status, 403);
+  assert.deepEqual(managerRetire.json, { error: "Forbidden" });
 });
 
 test("the warranty board and the claims list fit the warranty contract, field by field", async () => {

@@ -577,32 +577,59 @@ func TestGuard_ScheduleRefusesUnschedulableOrders(t *testing.T) {
 // (HH-3.2 B5: the positional stamp guard became the Guards constructor set
 // plus the module's stamp adapter, so the production shape minus the
 // verifier is now expressed exactly this way).
-func testMux(t *testing.T, h *harness, ctx context.Context) *http.ServeMux {
+//
+// The kit's guards are the real ones: a request with no staff bearer is refused 401 before the
+// authority is ever consulted. So the returned handler carries the bearer the double admits (and the
+// org header it resolves) on every request that has none, standing in for the signed in caller the
+// context describes. A context with no staff stamp is the anonymous caller: no bearer is sent, no
+// authority is resolved, and only the public routes answer.
+func testMux(t *testing.T, h *harness, ctx context.Context) http.Handler {
 	t.Helper()
+	sg := testkit.NewStaffGuards(t)
+	mux := http.NewServeMux()
 	sc, ok := identity.StaffContextFromContext(ctx)
 	if !ok {
-		t.Fatal("testMux needs a staff-stamped context")
+		NewHandler(h.svc, nil).RegisterRoutes(mux, sg.Guards)
+		NewHandler(h.svc, nil).RegisterPublicRoutes(mux)
+		return mux
 	}
 	branches := make([]string, 0, len(sc.Branches))
 	for b := range sc.Branches {
 		branches = append(branches, b)
 	}
-	sg := testkit.NewStaffGuards(t)
+	// The authority is the caller the context describes: its role, tier and scope. A fixed role and a
+	// branch scope would read every global caller as a branch caller with no grants, and every
+	// salesperson or yard hand as the dispatcher.
+	roleID, ok := identity.CanonicalForERPCode(sc.RoleCode)
+	if !ok {
+		t.Fatalf("testMux: no canonical role for %q", sc.RoleCode)
+	}
+	scope := identity2.ScopeBranch
+	if sc.Scope == identity.ScopeGlobal {
+		scope = identity2.ScopeGlobal
+		branches = nil
+	}
 	sg.SetAuthority(identity2.StaffAuthority{
-		RoleID:   "logistics_manager",
+		RoleID:   roleID,
 		Tier:     int(sc.Tier),
-		Scope:    identity2.ScopeBranch,
+		Scope:    scope,
 		Branches: branches,
 	})
-	mux := http.NewServeMux()
 	NewHandler(h.svc, nil).
 		WithUserLinker(func(context.Context, string) (string, bool) { return sc.UserID, true }).
 		RegisterRoutes(mux, sg.Guards)
 	NewHandler(h.svc, nil).RegisterPublicRoutes(mux)
-	return mux
+	bearer := sg.Bearer(t)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+			r.Header.Set("X-Org", testkit.OrgNorthSlug)
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
-func do(t *testing.T, mux *http.ServeMux, method, path, body string) *httptest.ResponseRecorder {
+func do(t *testing.T, mux http.Handler, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	var r *http.Request
 	if body == "" {

@@ -27,6 +27,18 @@ const FLOWS = [
 ];
 
 const USERS = {
+  // The front-line mint: the tier the reporting gate keeps out of the runs
+  // and the register. The flows table names the account; this app's door
+  // draws its card, and the landing answers with the sales profile.
+  sales: {
+    user_id: "de110000-0000-4000-9000-000000000001",
+    email: "sales@hh-demo.invalid",
+    display_name: "Sales (demo)",
+    role_code: "inside_sales",
+    role_name: "Sales",
+    tier: 3,
+    scope: "BRANCH",
+  },
   "sales-manager": {
     user_id: "de110000-0000-4000-9000-000000000002",
     email: "sales.manager@hh-demo.invalid",
@@ -45,12 +57,15 @@ const USERS = {
     tier: 2,
     scope: "BRANCH",
   },
+  // The financial controller mints by API only: the closed flows table names
+  // the account, this app's test door draws no card for it. The tier one
+  // global mint is what exercises the commission rules' admin window.
   "financial-controller": {
     user_id: "de110000-0000-4000-9000-0000000000c1",
     email: "financial.controller@hh-demo.invalid",
     display_name: "Financial controller (demo)",
     role_code: "financial_controller",
-    role_name: "Financial controller",
+    role_name: "Financial Controller",
     tier: 1,
     scope: "GLOBAL",
   },
@@ -773,12 +788,275 @@ function boardOf(warranty) {
   };
 }
 
+// ---- the reporting world --------------------------------------------------------------
+//
+// The reporting surface's test world: two published templates, one frozen
+// run with its document, one saved view, one standing commission rule, one
+// stored commission period with its drill-through lines, the accrual
+// register and the attribution check over the same window. Everything is
+// invented data in the demo tenant's own words; the reps are role labels.
+
+const REPORT_REP_ID = "a1000000-0000-4000-9000-00000000c001";
+const REPORT_REP_NAME = "Outside sales (demo)";
+const ACCRUAL_NOTE =
+  "Accrued, not posted. These figures are computed from invoiced sales and have no " +
+  "general-ledger entry: nothing here appears in the trial balance and no liability has been raised.";
+const ATTRIBUTION_MISMATCH_EXPLANATION =
+  "These sales are attributed differently by the commission report and by the " +
+  "rep-assignment resolver. Commission computed from this window may be paid to the wrong rep.";
+
+const REPORT_TEMPLATES = [
+  {
+    code: "sales_by_day",
+    name: "Sales by day",
+    category: "SALES",
+    description: "Invoices and their value, by the day they were issued.",
+    legacy_name: "Sales by Day",
+    sort_order: 1,
+    is_active: true,
+    params: [
+      { name: "from_date", kind: "date", required: true, label: "From date" },
+      { name: "to_date", kind: "date", required: true, label: "To date" },
+      { name: "branch_id", kind: "uuid", required: false, label: "Branch" },
+    ],
+    columns: [
+      { name: "day", label: "Day", kind: "date", total: false },
+      { name: "invoice_count", label: "Invoices", kind: "int", total: true },
+      { name: "subtotal_cents", label: "Subtotal", kind: "cents", total: true },
+      { name: "tax_cents", label: "Tax", kind: "cents", total: true },
+      { name: "total_cents", label: "Total", kind: "cents", total: true },
+    ],
+  },
+  {
+    code: "margin_by_product",
+    name: "Margin by product",
+    category: "MARGIN",
+    description: "What each product sold for, what it cost, and what was left.",
+    legacy_name: "",
+    sort_order: 2,
+    is_active: true,
+    params: [
+      { name: "from_date", kind: "date", required: true, label: "From date" },
+      { name: "to_date", kind: "date", required: true, label: "To date" },
+      { name: "branch_id", kind: "uuid", required: false, label: "Branch" },
+    ],
+    columns: [
+      { name: "sku", label: "SKU", kind: "text", total: false },
+      { name: "product_name", label: "Product", kind: "text", total: false },
+      { name: "qty_base", label: "Qty", kind: "qty", total: true },
+      { name: "revenue_cents", label: "Revenue", kind: "cents", total: true },
+      { name: "cost_cents", label: "Cost", kind: "cents", total: true },
+      { name: "margin_cents", label: "Margin", kind: "cents", total: true },
+    ],
+  },
+];
+
+const REPORT_CATEGORY_LABELS = {
+  SALES: "Sales",
+  MARGIN: "Margin",
+};
+
+function reportingRows(code) {
+  if (code === "sales_by_day") {
+    return [
+      ["2026-10-02", 4, 87000, 11310, 98310],
+      ["2026-10-09", 6, 132500, 17225, 149725],
+    ];
+  }
+  return [
+    ["GRAN-A-CYD", "Granular A gravel", 18, 54000, 32400, 21600],
+    ["PAVE-60MM", "Standard paver, 60 mm", 240, 165500, 118000, 47500],
+  ];
+}
+
+function totalsOf(code) {
+  const cols = REPORT_TEMPLATES.find((t) => t.code === code).columns;
+  const rows = reportingRows(code);
+  const out = {};
+  cols.forEach((c, i) => {
+    if (c.total) out[c.name] = rows.reduce((sum, row) => sum + row[i], 0);
+  });
+  return out;
+}
+
+function buildReportingWorld() {
+  return {
+    runs: [
+      {
+        id: "0c900000-0000-4000-9000-00000000r001",
+        kind: "TEMPLATE",
+        template_code: "sales_by_day",
+        name: "Sales by day",
+        params: { from_date: "2026-10-01", to_date: "2026-10-14", branch_id: BRANCH_ID },
+        branch_id: BRANCH_ID,
+        row_count: 2,
+        totals: totalsOf("sales_by_day"),
+        print_job_id: "pj-seed-1",
+        run_by: "de110000-0000-4000-9000-000000000003",
+        created_at: ago(5),
+      },
+    ],
+    savedViews: [
+      {
+        id: "0ca00000-0000-4000-9000-00000000v001",
+        template_code: "sales_by_day",
+        owner_user_id: "de110000-0000-4000-9000-000000000003",
+        name: "This month",
+        params: { from_date: "2026-10-01", to_date: "2026-10-14" },
+        is_shared: false,
+        created_at: ago(4),
+      },
+    ],
+    rules: [
+      {
+        id: "0cb00000-0000-4000-9000-00000000u001",
+        rep_user_id: REPORT_REP_ID,
+        rep_name: REPORT_REP_NAME,
+        basis: "REVENUE",
+        rate_bps: 250,
+        branch_id: "",
+        effective_from: "2026-01-01",
+        effective_to: "",
+        is_active: true,
+        note: "The standing rate",
+        created_at: ago(72),
+      },
+    ],
+    commissionRuns: [
+      {
+        run_id: "0cc00000-0000-4000-9000-00000000n001",
+        rep_user_id: REPORT_REP_ID,
+        rep_name: REPORT_REP_NAME,
+        period_start: "2026-10-01",
+        period_end: "2026-10-01",
+        branch_id: BRANCH_ID,
+        sale_count: 9,
+        revenue_cents: 231000,
+        cost_cents: 152000,
+        margin_cents: 79000,
+        commission_cents: 5775,
+        status: "ACCRUED",
+        computed_at: ago(3),
+        posts_to_gl: false,
+        unattributed_cents: 12000,
+        unattributed_count: 1,
+      },
+    ],
+  };
+}
+
+function commissionLines(periodStart) {
+  return [
+    {
+      invoice_id: "0cd00000-0000-4000-9000-00000000i001",
+      invoice_line_id: "0cd00000-0000-4000-9000-00000000i001-1",
+      invoice_no: "GT-2107",
+      invoice_date: periodStart,
+      customer_name: "Gable Landscape Supply (demo)",
+      product_sku: "PAVE-60MM",
+      category_id: "0ce00000-0000-4000-9000-00000000g001",
+      category_code: "PAVER",
+      branch_id: BRANCH_ID,
+      qty_base: 120,
+      revenue_cents: 84000,
+      cost_cents: 59400,
+      rep_user_id: REPORT_REP_ID,
+      margin_cents: 24600,
+      basis: "REVENUE",
+      basis_cents: 84000,
+      rate_bps: 250,
+      commission_cents: 2100,
+      rule_id: "0cb00000-0000-4000-9000-00000000u001",
+    },
+    {
+      invoice_id: "0cd00000-0000-4000-9000-00000000i002",
+      invoice_line_id: "0cd00000-0000-4000-9000-00000000i002-1",
+      invoice_no: "GT-2112",
+      invoice_date: periodStart,
+      customer_name: "Northline Hardscapes Ltd (demo)",
+      product_sku: "GRAN-A-CYD",
+      category_id: "0ce00000-0000-4000-9000-00000000g002",
+      category_code: "AGGREGATE",
+      branch_id: BRANCH_ID,
+      qty_base: 30,
+      revenue_cents: 27000,
+      cost_cents: 18900,
+      rep_user_id: REPORT_REP_ID,
+      margin_cents: 8100,
+      basis: "REVENUE",
+      basis_cents: 27000,
+      rate_bps: 250,
+      commission_cents: 675,
+      rule_id: "0cb00000-0000-4000-9000-00000000u001",
+    },
+    {
+      invoice_id: "0cd00000-0000-4000-9000-00000000i003",
+      invoice_line_id: "0cd00000-0000-4000-9000-00000000i003-1",
+      invoice_no: "GT-2118",
+      invoice_date: periodStart,
+      customer_name: "Fairhaven Builds (demo)",
+      product_sku: "EDGER-STEEL",
+      category_id: "0ce00000-0000-4000-9000-00000000g003",
+      category_code: "EDGING",
+      branch_id: BRANCH_ID,
+      qty_base: 40,
+      revenue_cents: 12000,
+      cost_cents: 8400,
+      rep_user_id: REPORT_REP_ID,
+      margin_cents: 3600,
+      basis: "REVENUE",
+      basis_cents: 12000,
+      rate_bps: 0,
+      commission_cents: 0,
+      no_rule_reason: "no rule covers the EDGING category",
+    },
+  ];
+}
+
+function previewPeriod(from, to, branchId) {
+  const stored = world.reporting.commissionRuns[0];
+  // A preview computes on the fly and writes nothing, the way the core's own
+  // preview does: it never carries a stored run's id.
+  const { run_id: _drop, ...rest } = stored;
+  return {
+    ...rest,
+    period_start: from,
+    period_end: to,
+    branch_id: branchId !== "" ? branchId : stored.branch_id,
+  };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function csvOf(run) {
+  const header = "invoice_no,invoice_date,customer_name,sku,qty,revenue_cents,commission_cents";
+  const rows = commissionLines(run.period_start).map(
+    (l) => `${l.invoice_no},${l.invoice_date},${l.customer_name},${l.product_sku},${l.qty_base},${l.revenue_cents},${l.commission_cents}`,
+  );
+  return [header, ...rows].join("\n") + "\n";
+}
+
+function documentOf(run) {
+  return [
+    "<!doctype html>",
+    "<html lang=\"en\"><head><meta charset=\"utf-8\"><title>Frozen run",
+    run.id,
+    "</title></head><body><h1>",
+    run.name !== "" ? run.name : run.template_code,
+    "</h1><p>Frozen copy for print job ",
+    run.print_job_id ?? "",
+    ".</p></body></html>",
+  ].join("");
+}
+
 let world;
 let scenario;
 let log;
 
 function reset() {
   world = buildWorld();
+  world.reporting = buildReportingWorld();
   scenario = "";
   log = [];
 }
@@ -1259,6 +1537,369 @@ async function handle(req, res) {
         mobile_only: body?.mobile_only === true,
         ...(unit === "" ? {} : { landing_unit: unit }),
         ...(String(body?.landing_module ?? "").trim() === "" ? {} : { landing_module: String(body.landing_module).trim() }),
+      });
+    }
+  }
+
+  // ---- the reporting surface -------------------------------------------------------
+  //
+  // The core's own gates, played honestly: the template catalogue and the
+  // saved views are staff reads; running, printing, the frozen runs and the
+  // whole commission register are manager reads; writing a commission rule is
+  // the admin window (tier one global), refused with the role gate's shared
+  // Forbidden body otherwise. Parameter and window validation carry the
+  // core's own refusal sentences.
+
+  if (path.startsWith("/api/v1/reporting/")) {
+    const tier = USERS[flow].tier;
+    const isManager = tier >= 1 && tier <= 2;
+    const isAdmin = tier === 1 && USERS[flow].scope === "GLOBAL";
+    const managerWord = () => refuse(res, 403, "Forbidden");
+
+    // Bind the query against a template's specs: unknown parameters and
+    // missing required ones are refused in the core's own words, empties are
+    // dropped (an absence is no filter).
+    const bindParams = (specs, query) => {
+      const out = {};
+      for (const [name, value] of Object.entries(query)) {
+        const spec = specs.find((s) => s.name === name);
+        if (spec === undefined) return { error: `unknown report parameter "${name}"` };
+        if (value !== "") out[name] = value;
+      }
+      for (const spec of specs) {
+        if (spec.required && (out[spec.name] ?? "") === "") return { error: `report parameter "${spec.name}" is required` };
+      }
+      return { params: out };
+    };
+
+    const freshRunId = () => `0c900000-0000-4000-9000-${String(world.reporting.runs.length + 2).padStart(12, "0")}`;
+
+    if (req.method === "GET" && path === "/api/v1/reporting/templates") {
+      const categories = Object.entries(REPORT_CATEGORY_LABELS).map(([code, label]) => ({
+        code,
+        label,
+        templates: REPORT_TEMPLATES.filter((t) => t.category === code),
+      }));
+      return json(res, { categories });
+    }
+
+    const templateMatch = path.match(/^\/api\/v1\/reporting\/templates\/([^/]+)$/);
+    if (req.method === "GET" && templateMatch) {
+      const tmpl = REPORT_TEMPLATES.find((t) => t.code === templateMatch[1]);
+      if (!tmpl) return notFound(res);
+      return json(res, tmpl);
+    }
+
+    const runMatch = path.match(/^\/api\/v1\/reporting\/templates\/([^/]+)\/run$/);
+    if (req.method === "GET" && runMatch) {
+      if (!isManager) return managerWord();
+      const tmpl = REPORT_TEMPLATES.find((t) => t.code === runMatch[1]);
+      if (!tmpl) return notFound(res);
+      if (scenario === "reporting-out-of-scope") return refuse(res, 403, "this report is outside your branch scope");
+      const bound = bindParams(tmpl.params, Object.fromEntries(url.searchParams));
+      if (bound.error !== undefined) return refuse(res, 400, bound.error);
+      const rows = reportingRows(tmpl.code);
+      return json(res, {
+        code: tmpl.code,
+        name: tmpl.name,
+        category: tmpl.category,
+        columns: tmpl.columns,
+        rows,
+        row_count: rows.length,
+        totals: totalsOf(tmpl.code),
+        params: bound.params,
+        run_at: new Date().toISOString(),
+      });
+    }
+
+    const exportMatch = path.match(/^\/api\/v1\/reporting\/templates\/([^/]+)\/export\.csv$/);
+    if (req.method === "GET" && exportMatch) {
+      if (!isManager) return managerWord();
+      const tmpl = REPORT_TEMPLATES.find((t) => t.code === exportMatch[1]);
+      if (!tmpl) return notFound(res);
+      const bound = bindParams(tmpl.params, Object.fromEntries(url.searchParams));
+      if (bound.error !== undefined) return refuse(res, 400, bound.error);
+      const header = tmpl.columns.map((c) => c.name).join(",");
+      const body = reportingRows(tmpl.code).map((row) => row.join(",")).join("\n");
+      res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8" });
+      res.end(`${header}\n${body}\n`);
+      return;
+    }
+
+    const printMatch = path.match(/^\/api\/v1\/reporting\/templates\/([^/]+)\/print$/);
+    if (req.method === "POST" && printMatch) {
+      if (!isManager) return managerWord();
+      const tmpl = REPORT_TEMPLATES.find((t) => t.code === printMatch[1]);
+      if (!tmpl) return notFound(res);
+      const bound = bindParams(tmpl.params, { ...Object.fromEntries(url.searchParams), ...(body?.params ?? {}) });
+      if (bound.error !== undefined) return refuse(res, 400, bound.error);
+      if ((bound.params.branch_id ?? "") === "" && (body?.print_branch_id ?? "") === "") {
+        return refuse(res, 400, "this report covers every branch, name the branch to print it at");
+      }
+      const rows = reportingRows(tmpl.code);
+      const run = {
+        id: freshRunId(),
+        kind: "TEMPLATE",
+        template_code: tmpl.code,
+        name: tmpl.name,
+        params: bound.params,
+        branch_id: bound.params.branch_id ?? body?.print_branch_id ?? "",
+        row_count: rows.length,
+        totals: totalsOf(tmpl.code),
+        print_job_id: `pj-${world.reporting.runs.length + 1}`,
+        run_by: USERS[flow].user_id,
+        created_at: new Date().toISOString(),
+        html: documentOf({ id: "x", name: tmpl.name, template_code: tmpl.code, print_job_id: `pj-${world.reporting.runs.length + 1}` }),
+      };
+      world.reporting.runs.unshift(run);
+      return json(res, run, 201);
+    }
+
+    if (req.method === "GET" && path === "/api/v1/reporting/runs") {
+      if (!isManager) return managerWord();
+      const limit = Number(url.searchParams.get("limit") ?? 25);
+      return json(res, { items: world.reporting.runs.slice(0, limit), next_cursor: null, limit });
+    }
+
+    const runsMatch = path.match(/^\/api\/v1\/reporting\/runs\/([^/]+)$/);
+    if (req.method === "GET" && runsMatch) {
+      if (!isManager) return managerWord();
+      const run = world.reporting.runs.find((r) => r.id === runsMatch[1]);
+      if (!run) return notFound(res);
+      const { html: _doc, ...rest } = run;
+      return json(res, rest);
+    }
+
+    const docMatch = path.match(/^\/api\/v1\/reporting\/runs\/([^/]+)\/document$/);
+    if (req.method === "GET" && docMatch) {
+      if (!isManager) return managerWord();
+      const run = world.reporting.runs.find((r) => r.id === docMatch[1]);
+      if (!run) return notFound(res);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(run.html ?? documentOf(run));
+      return;
+    }
+
+    if (req.method === "GET" && path === "/api/v1/reporting/saved-views") {
+      const code = url.searchParams.get("template_code") ?? "";
+      const items = world.reporting.savedViews.filter((v) => code === "" || v.template_code === code);
+      return json(res, { items, next_cursor: null, limit: 50 });
+    }
+
+    if (req.method === "POST" && path === "/api/v1/reporting/saved-views") {
+      const name = String(body?.name ?? "").trim();
+      if (name === "") return refuse(res, 400, "a saved view needs a name");
+      const tmpl = REPORT_TEMPLATES.find((t) => t.code === body?.template_code);
+      if (!tmpl) return notFound(res);
+      const bound = bindParams(tmpl.params, body?.params ?? {});
+      if (bound.error !== undefined) return refuse(res, 400, bound.error);
+      const view = {
+        id: `0ca00000-0000-4000-9000-${String(world.reporting.savedViews.length + 2).padStart(12, "0")}`,
+        template_code: tmpl.code,
+        owner_user_id: USERS[flow].user_id,
+        name,
+        params: bound.params,
+        is_shared: body?.is_shared === true,
+        created_at: new Date().toISOString(),
+      };
+      world.reporting.savedViews.unshift(view);
+      return json(res, view, 201);
+    }
+
+    const deleteViewMatch = path.match(/^\/api\/v1\/reporting\/saved-views\/([^/]+)$/);
+    if (req.method === "DELETE" && deleteViewMatch) {
+      const index = world.reporting.savedViews.findIndex((v) => v.id === deleteViewMatch[1]);
+      if (index === -1) return notFound(res);
+      world.reporting.savedViews.splice(index, 1);
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    if (req.method === "GET" && path === "/api/v1/reporting/commission/rules") {
+      if (!isManager) return managerWord();
+      const rep = url.searchParams.get("rep_user_id") ?? "";
+      const items = world.reporting.rules.filter((r) => rep === "" || r.rep_user_id === rep);
+      return json(res, { items, next_cursor: null, limit: 50 });
+    }
+
+    if (req.method === "POST" && path === "/api/v1/reporting/commission/rules") {
+      // The admin window: the shared Forbidden body exactly as the middleware writes it.
+      if (!isAdmin) return refuse(res, 403, "Forbidden");
+      if (!UUID_RE.test(String(body?.rep_user_id ?? ""))) return refuse(res, 400, "rep_user_id must be a uuid");
+      if (body?.basis !== "REVENUE" && body?.basis !== "MARGIN") return refuse(res, 400, "basis must be REVENUE or MARGIN");
+      const rate = Number(body?.rate_bps);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 10000) return refuse(res, 400, "rate_bps must be between 0 and 10000 (0-100%)");
+      if (!DATE_RE.test(String(body?.effective_from ?? ""))) return refuse(res, 400, "effective_from must be a date (YYYY-MM-DD)");
+      if (body?.effective_to !== undefined && body.effective_to !== "" && !DATE_RE.test(String(body.effective_to))) {
+        return refuse(res, 400, "effective_to must be a date (YYYY-MM-DD)");
+      }
+      const rule = {
+        id: `0cb00000-0000-4000-9000-${String(world.reporting.rules.length + 2).padStart(12, "0")}`,
+        rep_user_id: body.rep_user_id,
+        rep_name: REPORT_REP_NAME,
+        basis: body.basis,
+        rate_bps: rate,
+        branch_id: typeof body.branch_id === "string" ? body.branch_id : "",
+        effective_from: body.effective_from,
+        effective_to: typeof body.effective_to === "string" ? body.effective_to : "",
+        is_active: true,
+        note: typeof body.note === "string" ? body.note : "",
+        created_at: new Date().toISOString(),
+      };
+      world.reporting.rules.unshift(rule);
+      return json(res, rule, 201);
+    }
+
+    const retireMatch = path.match(/^\/api\/v1\/reporting\/commission\/rules\/([^/]+)$/);
+    if (req.method === "DELETE" && retireMatch) {
+      if (!isAdmin) return refuse(res, 403, "Forbidden");
+      if (!UUID_RE.test(retireMatch[1])) return notFound(res);
+      const rule = world.reporting.rules.find((r) => r.id === retireMatch[1]);
+      if (!rule) return notFound(res);
+      rule.is_active = false;
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    const windowError = () => {
+      const from = url.searchParams.get("from") ?? body?.from ?? "";
+      const to = url.searchParams.get("to") ?? body?.to ?? "";
+      if (!DATE_RE.test(from)) return "from must be a date (YYYY-MM-DD)";
+      if (!DATE_RE.test(to)) return "to must be a date (YYYY-MM-DD)";
+      if (to < from) return "to must not be before from";
+      return "";
+    };
+
+    if (req.method === "GET" && path === "/api/v1/reporting/commission/preview") {
+      if (!isManager) return managerWord();
+      const windowRefusal = windowError();
+      if (windowRefusal !== "") return refuse(res, 400, windowRefusal);
+      const from = url.searchParams.get("from");
+      const to = url.searchParams.get("to");
+      const branchId = url.searchParams.get("branch_id") ?? "";
+      const period = previewPeriod(from, to, branchId);
+      return json(res, { items: [{ ...period, lines: commissionLines(from) }], posts_to_gl: false, note: ACCRUAL_NOTE });
+    }
+
+    if (req.method === "POST" && path === "/api/v1/reporting/commission/runs") {
+      if (!isManager) return managerWord();
+      if (!UUID_RE.test(String(body?.rep_user_id ?? ""))) return refuse(res, 400, "rep_user_id is required to compute a commission period");
+      if (!DATE_RE.test(String(body?.from ?? ""))) return refuse(res, 400, "from must be a date (YYYY-MM-DD)");
+      if (!DATE_RE.test(String(body?.to ?? ""))) return refuse(res, 400, "to must be a date (YYYY-MM-DD)");
+      if (body.to < body.from) return refuse(res, 400, "to must not be before from");
+      const runId = `0cc00000-0000-4000-9000-${String(world.reporting.commissionRuns.length + 2).padStart(12, "0")}`;
+      const period = {
+        ...previewPeriod(body.from, body.to, typeof body.branch_id === "string" ? body.branch_id : ""),
+        // The window's own branch wins: a compute with no branch is a
+        // consolidated period, and printing one later is refused for it.
+        branch_id: typeof body.branch_id === "string" ? body.branch_id : "",
+        run_id: runId,
+        computed_at: new Date().toISOString(),
+        lines: commissionLines(body.from),
+      };
+      world.reporting.commissionRuns.unshift(period);
+      return json(res, period, 201);
+    }
+
+    if (req.method === "GET" && path === "/api/v1/reporting/commission/runs") {
+      if (!isManager) return managerWord();
+      const windowRefusal = windowError();
+      if (windowRefusal !== "") return refuse(res, 400, windowRefusal);
+      const from = url.searchParams.get("from");
+      const to = url.searchParams.get("to");
+      const rep = url.searchParams.get("rep_user_id") ?? "";
+      const items = world.reporting.commissionRuns
+        .filter((p) => p.period_start >= from && p.period_end <= to && (rep === "" || p.rep_user_id === rep))
+        .map((p) => ({ ...p, lines: p.lines ?? undefined }));
+      return json(res, { items, posts_to_gl: false });
+    }
+
+    const crunMatch = path.match(/^\/api\/v1\/reporting\/commission\/runs\/([^/]+)$/);
+    if (req.method === "GET" && crunMatch) {
+      if (!isManager) return managerWord();
+      const period = world.reporting.commissionRuns.find((p) => p.run_id === crunMatch[1]);
+      if (!period) return notFound(res);
+      return json(res, { ...period, lines: commissionLines(period.period_start) });
+    }
+
+    const crunCsvMatch = path.match(/^\/api\/v1\/reporting\/commission\/runs\/([^/]+)\/export\.csv$/);
+    if (req.method === "GET" && crunCsvMatch) {
+      if (!isManager) return managerWord();
+      const period = world.reporting.commissionRuns.find((p) => p.run_id === crunCsvMatch[1]);
+      if (!period) return notFound(res);
+      res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8" });
+      res.end(csvOf(period));
+      return;
+    }
+
+    const crunPrintMatch = path.match(/^\/api\/v1\/reporting\/commission\/runs\/([^/]+)\/print$/);
+    if (req.method === "POST" && crunPrintMatch) {
+      if (!isManager) return managerWord();
+      const period = world.reporting.commissionRuns.find((p) => p.run_id === crunPrintMatch[1]);
+      if (!period) return notFound(res);
+      if ((period.branch_id ?? "") === "" && (body?.print_branch_id ?? "") === "") {
+        return refuse(res, 400, "this commission period covers every branch, name the branch to print it at");
+      }
+      const run = {
+        id: freshRunId(),
+        kind: "COMMISSION",
+        template_code: "commission",
+        name: `Commission: ${period.rep_name}`,
+        params: { from: period.period_start, to: period.period_end },
+        branch_id: period.branch_id ?? "",
+        row_count: period.sale_count,
+        totals: { commission_cents: period.commission_cents },
+        print_job_id: `pj-${world.reporting.runs.length + 1}`,
+        run_by: USERS[flow].user_id,
+        created_at: new Date().toISOString(),
+        html: documentOf({ id: "x", name: `Commission: ${period.rep_name}`, template_code: "commission", print_job_id: `pj-${world.reporting.runs.length + 1}` }),
+      };
+      world.reporting.runs.unshift(run);
+      return json(res, run, 201);
+    }
+
+    if (req.method === "GET" && path === "/api/v1/reporting/commission/accruals") {
+      if (!isManager) return managerWord();
+      const from = url.searchParams.get("from") ?? "";
+      const to = url.searchParams.get("to") ?? "";
+      if (!DATE_RE.test(from)) return refuse(res, 400, "from must be a date (YYYY-MM-DD)");
+      if (!DATE_RE.test(to)) return refuse(res, 400, "to must be a date (YYYY-MM-DD)");
+      const lines = world.reporting.commissionRuns
+        .filter((p) => p.period_start >= from && p.period_end <= to)
+        .map((p) => ({ rep_user_id: p.rep_user_id, rep_name: p.rep_name, period_count: 1, commission_cents: p.commission_cents }));
+      return json(res, {
+        from,
+        to,
+        lines,
+        total_cents: lines.reduce((sum, l) => sum + l.commission_cents, 0),
+        posts_to_gl: false,
+        note: ACCRUAL_NOTE,
+      });
+    }
+
+    if (req.method === "GET" && path === "/api/v1/reporting/commission/attribution-check") {
+      if (!isManager) return managerWord();
+      const from = url.searchParams.get("from") ?? "";
+      const to = url.searchParams.get("to") ?? "";
+      if (!DATE_RE.test(from)) return refuse(res, 400, "from must be a date (YYYY-MM-DD)");
+      if (!DATE_RE.test(to)) return refuse(res, 400, "to must be a date (YYYY-MM-DD)");
+      return json(res, {
+        bound: false,
+        checked: 3,
+        mismatches: [
+          {
+            invoice_id: "0cd00000-0000-4000-9000-00000000i003",
+            invoice_no: "GT-2118",
+            customer_id: "0cf00000-0000-4000-9000-00000000p001",
+            order_id: "0d000000-0000-4000-9000-00000000o001",
+            report_rep_user_id: REPORT_REP_ID,
+            seam_rep_user_id: "",
+            seam_level: "order",
+          },
+        ],
+        explanation: ATTRIBUTION_MISMATCH_EXPLANATION,
       });
     }
   }
