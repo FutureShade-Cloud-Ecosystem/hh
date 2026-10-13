@@ -162,8 +162,77 @@ test("a frontline caller is refused the audit read", async ({ page }) => {
   await cards.nth(1).click();
   await page.locator('.surface-link[data-surface="audit"]').click();
 
-  // The trail is an admin read; the refusal names who may act.
-  await expect(page.locator("[data-test=audit-error]")).toContainText("managers and above");
+  // The trail is leadership's read; the refusal names who may act and the
+  // right surface, not the staff register's words.
+  await expect(page.locator("[data-test=audit-error]")).toContainText("leadership");
+  await expect(page.locator("[data-test=audit-error]")).not.toContainText("staff register");
+});
+
+test("a refused role change says so beside the register", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "refused-assign" } });
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await cards.first().click();
+  await expect(page.locator("[data-test=staff-count]")).toHaveText("5 staff");
+
+  // The server refuses the write: the select snaps back and the words stay
+  // on the glass beside the register, in the ready phase.
+  await page.locator(`select[data-user-id=${YARD_TEAM_ROW}]`).selectOption({ label: "Yard Manager" });
+  await expect(page.locator("[data-test=assign-error]")).toContainText("The role did not change.");
+  await expect(page.locator("[data-test=staff-count]")).toHaveText("5 staff");
+  await page.request.post("/_stub/reset");
+});
+
+async function openSaleTrail(page: import("@playwright/test").Page): Promise<void> {
+  await page.goto("/");
+  await page.locator("[data-flow]").first().click();
+  await page.locator('.surface-link[data-surface="audit"]').click();
+  await page.locator("[data-test^=audit-row-]").filter({ hasText: "SALE_COMPLETED" }).click();
+  await expect(page.locator("[data-detail-state=ready]")).toBeVisible();
+  await page.locator('[data-action="open-audit-trail"]').click();
+}
+
+test("the entity's trail reads the bare array the real core writes", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "bare-trail" } });
+  await openSaleTrail(page);
+  await expect(page.locator("[data-test^=audit-trail-row-]")).toHaveCount(2);
+  await page.request.post("/_stub/reset");
+});
+
+test("an entity trail with no entries says so in its own words", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "empty-trail" } });
+  await openSaleTrail(page);
+  await expect(page.locator("[data-test=audit-trail-empty]")).toContainText("holds no entries");
+  await page.request.post("/_stub/reset");
+});
+
+test("a refused filter leaves the filters on the glass, and Clear brings the trail back", async ({ page }) => {
+  await page.goto("/");
+  await page.locator("[data-flow]").first().click();
+  await page.locator('.surface-link[data-surface="audit"]').click();
+  await expect(page.locator("[data-test=audit-count]")).toHaveText("3 entries");
+
+  // An actor id that is not a UUID is refused in the server's words; the
+  // surface must not become a dead end.
+  await page.locator('[data-field="audit-actor-id"]').fill("not-a-uuid");
+  await page.locator('[data-action="apply-audit-filters"]').click();
+  await expect(page.locator("[data-test=audit-error]")).toContainText("actor_id must be a UUID");
+  await expect(page.locator('[data-field="audit-actor-id"]')).toHaveValue("not-a-uuid");
+
+  await page.locator('[data-action="clear-audit-filters"]').click();
+  await expect(page.locator("[data-test=audit-count]")).toHaveText("3 entries");
+});
+
+test("a core that has no staff register yet lands on the waits-for-sign-in state, not a raw 404", async ({ page }) => {
+  await page.request.post("/_stub/scenario", { data: { name: "unregistered-staff" } });
+  await page.goto("/");
+  await page.locator("[data-flow]").first().click();
+
+  await expect(page.locator("[data-test=waits-for-sign-in]")).toContainText("Waits for sign in");
+  await expect(page.locator("[data-test=waits-words]")).not.toContainText(/lane/i);
+  await expect(page.locator("body")).not.toContainText("404");
+  await expect(page.locator("[data-test=staff-error]")).toHaveCount(0);
+  await page.request.post("/_stub/reset");
 });
 
 test("the pricing surface: the margin policies, and an edit saved clean", async ({ page }) => {

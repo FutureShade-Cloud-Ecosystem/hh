@@ -51,7 +51,7 @@ import { pricingStyles } from "./pricing-styles.js";
 import { renderStaff, type StaffModel } from "./views-staff.js";
 import { renderHotkeys, type HotkeysModel } from "./views-hotkeys.js";
 import { renderAudit, type AuditDetail, type AuditModel, type AuditTrail } from "./views-audit.js";
-import { EMPTY_FILTERS, sinceWire, type AuditFilters } from "./audit-logic.js";
+import { EMPTY_FILTERS, auditRefusalWords, sinceWire, type AuditFilters } from "./audit-logic.js";
 import { PricingApi } from "./pricing-api.js";
 import { pricingAttrs, PricingController } from "./pricing-controller.js";
 import { renderPricing } from "./views-pricing.js";
@@ -445,7 +445,11 @@ export class DealerAdminApp extends HHElement {
     // A refusal of the reads is the phase the words name; the branches read
     // failing only costs the chips their names (the ids still show).
     const fail = (error: string, status: number | undefined): void => {
-      if (status === 403) {
+      if (status === 404) {
+        // The staff family is not served yet: that is the waits-for-sign-in
+        // state, not a failed read and never the mux's raw words.
+        this.#staff = { ...this.#staff, phase: "waits", branches: branchRows, error: "" };
+      } else if (status === 403) {
         this.#staff = {
           ...this.#staff,
           phase: "refused",
@@ -701,7 +705,7 @@ export class DealerAdminApp extends HHElement {
         this.#audit = {
           ...this.#audit,
           phase: "refused",
-          error: staffRefusalWords(errorWords(result.error), result.status),
+          error: auditRefusalWords(errorWords(result.error), result.status),
         };
       } else {
         this.#audit = {

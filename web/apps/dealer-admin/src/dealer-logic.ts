@@ -160,10 +160,10 @@ export function staffRefusalWords(error: string, status: number | undefined): st
 
 /**
  * The one marker the disabled controls carry, and the sentence beside them.
- * Creating a staff member and linking their sign in wait for the identity
- * work (the parity ledger holds the staff identity admin surface for the
- * auth lane), so the controls render disabled with this word rather than
- * pretending a submit could go through.
+ * Creating a staff member and linking their sign in open once sign in is
+ * connected for the dealer, so the controls render disabled with this word
+ * rather than pretending a submit could go through. A dealer reads it: it
+ * names no part of how the product is built.
  */
 export const WAITS_FOR_SIGN_IN_WORDS =
-  "Waits for sign in: creating a staff member and linking their identity land with the auth lane's sign in work.";
+  "Waits for sign in: creating a staff member and linking their sign in open once sign in is connected for this dealer.";

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/ratelimit"
 )
 
 // The mint path's own map bound legs: the session route spends its two
@@ -22,17 +24,17 @@ import (
 
 // floodMints is each leg's flood: one hundred admissions past the map
 // bound, so only the sweep stands between the maps and the bound.
-const floodMints = maxTrackedAddresses + 100
+const floodMints = ratelimit.MaxTrackedAddresses + 100
 
 // holdBothMapsAtTheBound asserts neither bucket's map grew past the
 // bound, naming the map that did when one did.
 func holdBothMapsAtTheBound(t *testing.T, m *Mint, when string) {
 	t.Helper()
-	if got := len(m.limit.entries); got > maxTrackedAddresses {
-		t.Fatalf("the per key limit's map holds %d entries %s, want it held at the bound %d", got, when, maxTrackedAddresses)
+	if got := m.limit.Tracked(); got > ratelimit.MaxTrackedAddresses {
+		t.Fatalf("the per key limit's map holds %d entries %s, want it held at the bound %d", got, when, ratelimit.MaxTrackedAddresses)
 	}
-	if got := len(m.ceiling.entries); got > maxTrackedAddresses {
-		t.Fatalf("the address ceiling's map holds %d entries %s, want it held at the bound %d", got, when, maxTrackedAddresses)
+	if got := m.ceiling.Tracked(); got > ratelimit.MaxTrackedAddresses {
+		t.Fatalf("the address ceiling's map holds %d entries %s, want it held at the bound %d", got, when, ratelimit.MaxTrackedAddresses)
 	}
 }
 

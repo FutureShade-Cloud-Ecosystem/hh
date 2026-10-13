@@ -128,7 +128,9 @@ test("a one word server error becomes plain words; a sentence stays the server's
 
 test("the waits-for-sign-in state is one stated fact, and it names what waits", () => {
   assert.match(WAITS_FOR_SIGN_IN_WORDS, /Waits for sign in/);
-  assert.match(WAITS_FOR_SIGN_IN_WORDS, /identity/);
+  assert.match(WAITS_FOR_SIGN_IN_WORDS, /staff member/);
+  // A dealer reads this: no word of the build's own lanes.
+  assert.doesNotMatch(WAITS_FOR_SIGN_IN_WORDS, /lane|auth|identity|ledger/i);
 });
 
 // -- the hotkeys: two grammars, two substrates, never one list -----------------------

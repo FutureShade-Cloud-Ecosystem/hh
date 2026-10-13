@@ -29,7 +29,7 @@ function roleAriaWords(displayName: string): string {
 }
 
 export interface StaffModel {
-  readonly phase: "loading" | "ready" | "error" | "refused";
+  readonly phase: "loading" | "ready" | "error" | "refused" | "waits";
   readonly rows: readonly StaffMemberRow[];
   readonly roles: readonly RoleRow[];
   readonly branches: readonly BranchRow[];
@@ -61,8 +61,14 @@ export function renderStaff(model: StaffModel): TemplateResult {
           <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="reload-staff">Try again</button></div>
         `
       : nothing}
+    ${model.phase === "ready" && model.error !== ""
+      ? html`<p class="error-line" data-test="assign-error">${model.error}</p>`
+      : nothing}
     ${model.phase === "ready" ? renderRegister(model) : nothing}
-    ${model.phase === "ready" ? renderCreate(model.roles, model.branches) : nothing}
+    ${model.phase === "waits"
+      ? html`<section class="card"><p class="notice-line" data-test="staff-waits">The staff register and the roles list open once sign in is connected for this dealer.</p></section>`
+      : nothing}
+    ${model.phase === "ready" || model.phase === "waits" ? renderCreate(model.roles, model.branches) : nothing}
     ${model.phase === "ready" ? renderRolesCatalog(model.roles) : nothing}
   `;
 }

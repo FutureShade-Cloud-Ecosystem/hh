@@ -656,6 +656,12 @@ async function handle(req, res) {
     return json(res, BRANCHES);
   }
 
+  // The real core's mux answers the unregistered staff family with a bare 404.
+  if (scenario === "unregistered-staff" && path.startsWith("/api/v1/staff")) {
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+    return res.end("404 page not found\n");
+  }
+
   if (req.method === "GET" && path === "/api/v1/staff") {
     if (!isManager(flow) || scenario === "refused-staff") return refuse(res, 403, "Forbidden");
     const items = scenario === "empty-staff" ? [] : staff;
@@ -1527,6 +1533,10 @@ async function handle(req, res) {
     const action = url.searchParams.get("action") ?? "";
     const actorId = url.searchParams.get("actor_id") ?? "";
     const since = url.searchParams.get("since") ?? "";
+    // The core refuses an actor id that is not a UUID with a 400 in words.
+    if (actorId !== "" && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(actorId)) {
+      return refuse(res, 400, "audit: actor_id must be a UUID");
+    }
     const items = audit.filter((e) => {
       if (entityType !== "" && e.entity_type !== entityType) return false;
       if (action !== "" && e.action !== action) return false;
@@ -1551,6 +1561,9 @@ async function handle(req, res) {
     const entityType = decodeURIComponent(transactionMatch[1]);
     const entityId = decodeURIComponent(transactionMatch[2]);
     const items = audit.filter((e) => e.entity_type === entityType && e.entity_id === entityId);
+    // The real core's reopen handler writes a bare array, not the page.
+    if (scenario === "bare-trail") return json(res, items);
+    if (scenario === "empty-trail") return json(res, []);
     return json(res, { items, next_cursor: null, limit: 200 });
   }
 

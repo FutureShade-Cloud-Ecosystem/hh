@@ -17,6 +17,7 @@ import {
   entityWords,
   filtersActive,
   isSensitive,
+  trailEmptyWords,
   whenWords,
   type AuditFilters,
 } from "./audit-logic.js";
@@ -60,6 +61,7 @@ export function renderAudit(model: AuditModel): TemplateResult {
           <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="reload-audit">Try again</button></div>
         `
       : nothing}
+    ${model.phase === "error" ? html`<section class="card">${renderFilters(model.filters)}</section>` : nothing}
     ${model.phase === "ready" ? renderTrail(model) : nothing}
   `;
 }
@@ -205,7 +207,10 @@ function renderTrailCard(trail: AuditTrail): TemplateResult {
       </div>
       ${trail.phase === "loading" ? html`<p class="notice-line">Loading the entity's trail…</p>` : nothing}
       ${trail.phase === "error" ? html`<p class="error-line">${trail.error}</p>` : nothing}
-      ${trail.phase === "ready"
+      ${trail.phase === "ready" && trail.rows.length === 0
+        ? html`<p class="notice-line" data-test="audit-trail-empty">${trailEmptyWords()}</p>`
+        : nothing}
+      ${trail.phase === "ready" && trail.rows.length > 0
         ? html`
             <div class="tablewrap">
               <table>
