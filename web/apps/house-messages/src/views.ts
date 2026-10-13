@@ -5,6 +5,8 @@
 import { html, nothing, type TemplateResult } from "lit";
 import {
   channelGroups,
+  queueOrder,
+  waitedWords,
   channelLine,
   channelTitle,
   eventWhy,
@@ -14,6 +16,7 @@ import {
   unreadWord,
   type Channel,
   type ChannelGroup,
+  type HouseConversation,
   type Message,
 } from "./messages-logic.js";
 import { liveWords, type LiveState } from "./live.js";
@@ -47,6 +50,13 @@ export interface BubbleModel {
   readonly error: string;
 }
 
+export interface QueueModel {
+  readonly rows: readonly HouseConversation[];
+  readonly busyId: string;
+  readonly note: string;
+  readonly error: string;
+}
+
 /** What one message says about acknowledgement, when it asks for one. */
 export interface AckView {
   readonly superseded: boolean;
@@ -70,6 +80,8 @@ export interface ConvoModel {
   /** Thread roots that are open, with their replies read so far. */
   readonly threads: ReadonlyMap<string, readonly Message[]>;
   readonly acks: ReadonlyMap<string, AckView>;
+  /** The house queue, only in a house room; null elsewhere. */
+  readonly queue: QueueModel | null;
   readonly replyTo: { readonly rootId: string; readonly excerpt: string } | null;
   readonly composerWords: string;
   readonly composerBad: boolean;
@@ -225,6 +237,36 @@ function renderBubble(b: BubbleModel): TemplateResult {
   `;
 }
 
+function renderQueueRow(r: HouseConversation, q: QueueModel, now: number): TemplateResult {
+  const claimed = r.claimed_by !== undefined && r.claimed_by !== "";
+  const who = r.customer_name || "A customer";
+  const count = `${r.message_count} message${r.message_count === 1 ? "" : "s"}`;
+  return html`
+    <li class="${claimed ? "queue-row" : "queue-row open"}" data-queue-row data-id=${r.id}>
+      <div class="who-line">
+        <span class="who">${who}</span>
+        <span class="dim small">${count} \u00b7 waiting ${waitedWords(r.first_at, now)}${claimed ? ` \u00b7 Claimed by ${r.claimed_by_name || "a rep"}` : ""}</span>
+      </div>
+      ${claimed
+        ? nothing
+        : html`<button type="button" class="btn btn-primary small-btn" data-action="claim" data-id=${r.id} ?disabled=${q.busyId !== ""}>Claim</button>`}
+    </li>
+  `;
+}
+
+function renderQueue(q: QueueModel, now: number): TemplateResult {
+  return html`
+    <section class="queue" data-queue>
+      <h4>Customers waiting</h4>
+      ${q.rows.length === 0
+        ? html`<p class="dim small" data-queue-empty>Nobody is waiting. Every customer here has an owner.</p>`
+        : html`<ul>${queueOrder(q.rows).map((r) => renderQueueRow(r, q, now))}</ul>`}
+      ${q.note === "" ? nothing : html`<p class="small" role="status" data-queue-note>${q.note}</p>`}
+      ${q.error === "" ? nothing : html`<p class="small words-bad" role="alert" data-queue-error>${q.error}</p>`}
+    </section>
+  `;
+}
+
 function renderComposer(c: ConvoModel): TemplateResult {
   return html`
     <form class="composer" data-composer>
@@ -262,6 +304,7 @@ function renderConvo(m: Model, c: ConvoModel): TemplateResult {
         ${tier === "" ? nothing : html`<span class="tier">${tier}</span>`}
       </div>
       <div class="convo-body">
+        ${c.queue === null ? nothing : renderQueue(c.queue, m.now)}
         ${c.loading
           ? html`<p class="dim" data-loading>Loading messages</p>`
           : html`

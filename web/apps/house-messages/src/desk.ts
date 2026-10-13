@@ -16,6 +16,7 @@ import {
   channelTitle,
   composerState,
   isAckable,
+  isHouseChannel,
   isSuperseded,
   mergeOlder,
   refusalWords,
@@ -25,9 +26,10 @@ import {
   youAcked,
   type AckProgress,
   type Channel,
+  type HouseConversation,
   type Message,
 } from "./messages-logic.js";
-import { renderDesk, type AckView, type BubbleModel, type ConvoModel, type Model } from "./views.js";
+import { renderDesk, type AckView, type BubbleModel, type ConvoModel, type Model, type QueueModel } from "./views.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -83,6 +85,14 @@ export class MessagesDesk {
   readonly #progress = new Map<string, AckProgress>();
   #ackBusy = "";
   #ackError: { id: string; text: string } | null = null;
+
+  // The house queue of the open room, when it is a house room.
+  #queue: readonly HouseConversation[] = [];
+  #claimBusy = "";
+  #queueNote = "";
+  // A refusal of the person's own claim stays until their next action; a failed read clears when a read succeeds.
+  #queueError = "";
+  #queueReadError = "";
 
   #refreshing = false;
   #refreshAgain = false;
@@ -175,6 +185,7 @@ export class MessagesDesk {
         await this.#refreshOpenThreads(active);
       }
       await this.#readAcks();
+      await this.#readQueue();
       // The channel is open on screen: what arrived is read, so the core is told.
       const current = this.#channels.find((c) => c.id === active);
       if (current !== undefined && current.unread_count > 0) await this.#markRead(active);
@@ -203,6 +214,39 @@ export class MessagesDesk {
         if (progress.ok) this.#progress.set(id, progress.value);
       }),
     );
+  }
+
+  /** The house queue, read again from the core; a claim is shown only as the core now reports it. */
+  async #readQueue(): Promise<void> {
+    const channel = this.#channels.find((c) => c.id === this.#activeId);
+    if (channel === undefined || !isHouseChannel(channel)) return;
+    const rows = await this.#api.houseQueue(channel.id);
+    if (this.#stopped || channel.id !== this.#activeId) return;
+    if (rows.ok) {
+      this.#queue = rows.value;
+      this.#queueReadError = "";
+    } else {
+      this.#queueReadError = refusalWords("The queue", rows.error, rows.status ?? null);
+    }
+  }
+
+  async #claim(conversationId: string): Promise<void> {
+    if (this.#claimBusy !== "") return;
+    const row = this.#queue.find((r) => r.id === conversationId);
+    this.#claimBusy = conversationId;
+    this.#queueNote = "";
+    this.#queueError = "";
+    this.#host.repaint();
+    const done = await this.#api.claim(conversationId);
+    this.#claimBusy = "";
+    if (this.#stopped) return;
+    // A lost race is the core's sentence; either way the queue is read again, so the row shows who
+    // owns it now.
+    if (done.ok) this.#queueNote = `You now own ${row?.customer_name || "this customer"}. Their next message goes straight to your DM.`;
+    else this.#queueError = refusalWords("The claim", done.error, done.status ?? null);
+    await this.#readQueue();
+    await this.#readOnce();
+    this.#host.repaint();
   }
 
   async #ack(channelId: string, messageId: string): Promise<void> {
@@ -254,6 +298,10 @@ export class MessagesDesk {
     this.#olderLoaded = false;
     this.#threads = new Map();
     this.#replyTo = null;
+    this.#queue = [];
+    this.#queueNote = "";
+    this.#queueError = "";
+    this.#queueReadError = "";
     this.#draft = this.#drafts.get(channelId) ?? "";
     this.#loadingChannel = true;
     this.#host.repaint();
@@ -270,6 +318,7 @@ export class MessagesDesk {
     this.#host.repaint();
     await this.#markRead(channelId);
     await this.#readAcks();
+    await this.#readQueue();
     this.#host.repaint();
   }
 
@@ -404,6 +453,9 @@ export class MessagesDesk {
       case "send":
         void this.#send();
         return true;
+      case "claim":
+        void this.#claim(id);
+        return true;
       case "ack":
         void this.#ack(control.getAttribute("data-channel") ?? "", id);
         return true;
@@ -460,8 +512,12 @@ export class MessagesDesk {
     if (channel === undefined) return null;
     const state = composerState(this.#draft);
     const messages = streamOrder(this.#held);
+    const queue: QueueModel | null = isHouseChannel(channel)
+      ? { rows: this.#queue, busyId: this.#claimBusy, note: this.#queueNote, error: this.#queueError || this.#queueReadError }
+      : null;
     return {
       channel,
+      queue,
       loading: this.#loadingChannel,
       messages,
       acks: this.#ackViews(channel, messages),
