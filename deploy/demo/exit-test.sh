@@ -377,8 +377,10 @@ code="$(curl -s -o /dev/null -w '%{http_code}' \
 # role's wall is the server's (L-wall): accounts payable reads invoices and is refused the buying routes, the field
 # crew reads orders and is refused billing, the buyer reads the buying routes. Tenant routes carry no X-Org and no
 # phrase: the bearer is the credential.
+# Each mint carries a fresh visitor id in the shape the listing issues (32 lower case hex), the way each tester's
+# browser holds its own: the mint's own limit is five per visitor, so one id for the five cards would be refused.
 tenant_mint() {
-	curl -s -u "demo:$PHRASE" -H 'Content-Type: application/json' -d "{\"flow\":\"$1\"}" "$BASE/api/v1/demo/session" \
+	curl -s -u "demo:$PHRASE" -H "Cookie: demo_visitor=$(random_hex 16)" -H 'Content-Type: application/json' -d "{\"flow\":\"$1\"}" "$BASE/api/v1/demo/session" \
 		| sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
 }
 tenant_code() {
@@ -406,11 +408,18 @@ buyer="$(tenant_mint contractor-buyer)"
 [ "$(tenant_code "$buyer" /api/v1/tenant/procurement/projects)" = "200" ] && pass "L-wall: the buyer reads the buying routes" || fail "L-wall: the buyer could not read the buying routes"
 [ "$(tenant_code "" /api/v1/tenant/orders)" = "401" ] && pass "L-wall: a tenant route with no bearer answers 401" || fail "L-wall: a tenant route with no bearer did not answer 401"
 # L-cost: nothing a contractor reads carries a dealer cost, margin or markup key.
-costs="$(curl -s -H "Authorization: Bearer $buyer" "$BASE/api/v1/tenant/catalog/search?q=a"; curl -s -H "Authorization: Bearer $buyer" "$BASE/api/v1/tenant/orders"; curl -s -H "Authorization: Bearer $buyer" "$BASE/api/v1/tenant/quotes")"
-if printf '%s' "$costs" | grep -qiE '"[a-z_]*(cost|margin|markup)[a-z_]*"[[:space:]]*:'; then
-	fail "L-cost: a catalog, order or quote answer carries a cost, margin or markup key"
+cost_scan=""
+for cpath in "/api/v1/tenant/catalog/search?q=paver" "/api/v1/tenant/orders" "/api/v1/tenant/quotes" "/api/v1/tenant/invoices" "/api/v1/tenant/procurement/projects"; do
+	answer="$(curl -s -w ' HTTP%{http_code}' -H "Authorization: Bearer $buyer" "$BASE$cpath")"
+	echo "   L-cost read $cpath: $(printf '%s' "$answer" | cut -c1-160)"
+	cost_scan="$cost_scan$answer"
+done
+if ! printf '%s' "$cost_scan" | grep -q '"product_id"'; then
+	fail "L-cost: the contractor's catalog read answered no rows, so the scan proved nothing (orders, quotes, invoices and projects are empty on the demo box today)"
+elif printf '%s' "$cost_scan" | grep -qiE '"[a-z_]*(cost|margin|markup)[a-z_]*"[[:space:]]*:'; then
+	fail "L-cost: a contractor read carries a cost, margin or markup key"
 else
-	pass "L-cost: no cost, margin or markup key in the contractor's catalog, order and quote answers"
+	pass "L-cost: no cost, margin or markup key in the contractor's catalog, order, quote, invoice and project answers"
 fi
 
 pay="$(curl -s -H "Authorization: Bearer $TOKEN" -H 'X-Org: hh-demo' \

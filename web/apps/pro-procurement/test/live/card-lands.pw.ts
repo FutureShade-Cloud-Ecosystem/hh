@@ -8,6 +8,10 @@
 //
 // L-branch does not apply: the tenant routes carry no branch (the caller's own account is the only scope).
 import { test, expect, type APIRequestContext } from "@playwright/test";
+import { mkdirSync } from "node:fs";
+
+// Set PRO_SHOTS to a folder to keep a screenshot of each landing for a visual review.
+const SHOTS = process.env.PRO_SHOTS ?? "";
 
 test.beforeEach(async ({ request }) => {
   expect((await request.post("/_stub/reset")).ok()).toBe(true);
@@ -26,6 +30,10 @@ const CARDS: ReadonlyArray<{ label: string; app: "procurement" | "pay" | "field"
 for (const card of CARDS) {
   test(`L-card: the ${card.label} card signs the persona in and lands in Pro ${card.app}`, async ({ page }) => {
     await page.goto("/");
+    if (SHOTS !== "" && card.label === "Owner") {
+      mkdirSync(SHOTS, { recursive: true });
+      await page.screenshot({ path: `${SHOTS}/front-door-picker.png`, fullPage: true });
+    }
     await page.getByTestId("contractor-section").getByRole("button", { name: card.label, exact: true }).click();
     await expect(page).toHaveURL(card.path);
     const frame = page.locator("hh-pro-frame");
@@ -36,6 +44,10 @@ for (const card of CARDS) {
     // No second sign in, no sign in card, and nothing of the person left in web storage.
     await expect(page.locator("hh-pro-signin")).toHaveCount(0);
     expect(await page.evaluate(() => window.localStorage.length + window.sessionStorage.length)).toBe(0);
+    if (SHOTS !== "") {
+      mkdirSync(SHOTS, { recursive: true });
+      await page.screenshot({ path: `${SHOTS}/landing-${card.app}-${card.label.toLowerCase().replace(/ /g, "-")}.png` });
+    }
   });
 }
 
