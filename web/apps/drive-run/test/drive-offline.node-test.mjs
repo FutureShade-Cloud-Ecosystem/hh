@@ -265,3 +265,23 @@ test("the banner mode maps the runner state and the ownership onto the chrome's 
   assert.equal(bannerMode("auth_expired", "owner"), "auth-expired");
   assert.equal(bannerMode("idle", "read_cache_only"), "read-only");
 });
+
+test("a later write on a stop names its base once the earlier request has settled, so a dispatcher's move is caught", async () => {
+  // The reviewer's probe: advance LOADED and let the request's own cycle
+  // settle (not cycle(), which also clears the written since pull set), have
+  // the server move the stop, then advance EN_ROUTE. The second write must
+  // carry the row's pulled seq as its base, and the server's move must come
+  // back as a card.
+  const { layer, server } = await rig();
+  await layer.advance(STOP_1, "LOADED");
+  await layer.runner.settled();
+  assert.equal(await layer.waiting(), 0, "the load drained");
+  server.touch("stops", STOP_1, { status: "CANCELLED" });
+  await layer.advance(STOP_1, "EN_ROUTE");
+  await layer.runner.settled();
+  const pushes = server.requests.filter((r) => r.kind === "push" && r.scope === "stops");
+  const last = pushes[pushes.length - 1].ops[0];
+  assert.equal(typeof last.base_seq, "number", "the second write names the pulled seq as its base");
+  const cards = await layer.openCards();
+  assert.equal(cards.length, 1, "the dispatcher's move shows as a card, never overwritten silently");
+});
