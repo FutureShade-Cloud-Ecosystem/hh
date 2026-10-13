@@ -19,7 +19,7 @@
 // product-edit.ts reads (repository hardscapeos_dibbits, read only; see
 // PROVENANCE.md), rebuilt on HH's generated client and narrowed to what this
 // app's screens use.
-import { ApiClient, staffAssist, staffPrinting, type Result } from "@hardscapehouse/api-client";
+import { ApiClient, staffAssist, staffExport, staffMessaging, staffPrinting, type Result } from "@hardscapehouse/api-client";
 import type { AssistSpendRow } from "./admin-logic.js";
 
 // -- the assistant's spend, budgets and settings --------------------------------------------------
@@ -100,6 +100,48 @@ function toPrintJobRow(raw: unknown): PrintJobRow {
     requested_at: text(r.requested_at),
     printed_at: text(r.printed_at),
   };
+}
+
+// -- the exports ---------------------------------------------------------------------------------
+
+/** The audit workbook's filters, the audit trail's own four. */
+export interface AuditWorkbookQuery {
+  readonly entity_type?: string;
+  readonly action?: string;
+  readonly actor_id?: string;
+  readonly since?: string;
+}
+
+/** One admin-masked message row, as the screens use it. */
+export interface MessagesExportRow {
+  readonly id: string;
+  readonly channel_id: string;
+  readonly kind: string;
+  readonly author_name: string;
+  readonly body: string;
+  readonly created_at: string;
+  readonly deleted_at: string;
+}
+
+function toMessagesExportRow(raw: unknown): MessagesExportRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    channel_id: text(r.channel_id),
+    kind: text(r.kind),
+    author_name: text(r.author_name),
+    body: text(r.body),
+    created_at: text(r.created_at),
+    deleted_at: text(r.deleted_at),
+  };
+}
+
+/** The messaging export's filters, the route's own optional four. */
+export interface MessagesExportQuery {
+  readonly channel_id?: string;
+  readonly user_id?: string;
+  readonly since?: string;
+  readonly until?: string;
 }
 
 /** Every call the admin-rest surfaces make. */
@@ -211,5 +253,20 @@ export class AdminApi {
     if (!answer.ok) return answer;
     const page = bag(answer.value);
     return { ok: true, value: list(page.jobs).map(toPrintJobRow) };
+  }
+
+  // -- the exports --------------------------------------------------------------------------------
+
+  /** The audit trail as a workbook: one call, the raw bytes of the file. */
+  async auditWorkbook(query: AuditWorkbookQuery): Promise<Result<Uint8Array>> {
+    return staffExport.exportAuditXlsx(this.#client, { ...query });
+  }
+
+  /** The house's messages, masked: one call, the rows the file is written from. */
+  async messagingExport(query: MessagesExportQuery): Promise<Result<readonly MessagesExportRow[]>> {
+    const answer = await staffMessaging.messagingExport(this.#client, { ...query });
+    if (!answer.ok) return answer;
+    const page = bag(answer.value);
+    return { ok: true, value: list(page.messages).map(toMessagesExportRow) };
   }
 }

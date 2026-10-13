@@ -150,3 +150,53 @@ test("the print queue read passes a refusal through as the transport's error", a
   assert.equal(result.ok, false);
   assert.match(result.error, /unknown print doc_type/);
 });
+
+// -- the exports: the audit workbook and the messages export ----------------------------------
+
+function bytesAnswering(bytes) {
+  const fetch = async () => new Response(bytes, { status: 200, headers: { "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } });
+  return new AdminApi(new ApiClient({ baseUrl: "http://core.test", fetch }));
+}
+
+test("the audit workbook read resolves the raw bytes, one call", async () => {
+  const body = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]);
+  const result = await bytesAnswering(body).auditWorkbook({ entity_type: "pos.sale" });
+  assert.equal(result.ok, true);
+  assert.equal(result.value.byteLength, 7);
+  assert.equal(result.value[0], 0x50);
+});
+
+test("the messages export projects the masked rows the server sent", async () => {
+  const result = await apiAnswering({
+    messages: [
+      {
+        id: "aa000000-0000-4000-9000-000000000001",
+        channel_id: "bb000000-0000-4000-9000-000000000001",
+        kind: "TEXT",
+        author_name: "Dealer admin (demo)",
+        body: "hello yard two",
+        created_at: "2000-01-01T10:00:00Z",
+        deleted_at: null,
+      },
+      {
+        id: "aa000000-0000-4000-9000-000000000002",
+        channel_id: "bb000000-0000-4000-9000-000000000001",
+        kind: "APPROVAL",
+        body: "payment approved",
+        created_at: "2000-01-01T10:05:00Z",
+        deleted_at: "2000-01-02T10:00:00Z",
+      },
+    ],
+  }).messagingExport({});
+  assert.equal(result.ok, true);
+  assert.equal(result.value.length, 2);
+  assert.equal(result.value[0].kind, "TEXT");
+  assert.equal(result.value[0].author_name, "Dealer admin (demo)");
+  assert.equal(result.value[1].deleted_at, "2000-01-02T10:00:00Z");
+});
+
+test("the messages export carries a refusal through in the server's own words", async () => {
+  const result = await apiAnswering({ error: "until must be an RFC3339 timestamp" }, 400).messagingExport({});
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "until must be an RFC3339 timestamp");
+});

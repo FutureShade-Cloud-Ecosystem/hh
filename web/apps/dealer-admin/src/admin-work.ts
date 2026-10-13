@@ -16,6 +16,9 @@ import { AdminApi } from "./admin-api.js";
 import {
   assistBudgetInputWords,
   assistRefusalWords,
+  auditWorkbookName,
+  messagesExportName,
+  messagesRefusalWords,
   printDocTypeFromLabel,
   spendTotal,
   usedFraction,
@@ -23,9 +26,11 @@ import {
 } from "./admin-logic.js";
 import { renderAssist, type AssistEditTarget, type AssistModel } from "./admin-assist.js";
 import { renderPrint, type PrintModel } from "./admin-print.js";
+import { renderExports, type MessagesModel, type WorkbookModel } from "./admin-exports.js";
+import { sinceWire } from "./audit-logic.js";
 
 /** The surfaces this controller owns, as the registry names them. */
-export const ADMIN_WORK_SURFACES: readonly string[] = ["assist", "printing"];
+export const ADMIN_WORK_SURFACES: readonly string[] = ["assist", "printing", "exports"];
 
 /** Is this surface id this controller's? The root's router line asks once. */
 export function isAdminWorkSurface(surface: string): boolean {
@@ -72,6 +77,28 @@ const emptyPrint = (): PrintModel => ({
   rows: [],
 });
 
+const emptyWorkbook = (): WorkbookModel => ({
+  busy: false,
+  error: "",
+  notice: "",
+  entityType: "",
+  action: "",
+  actorId: "",
+  since: "",
+});
+
+const emptyMessages = (): MessagesModel => ({
+  busy: false,
+  error: "",
+  notice: "",
+  asked: false,
+  channelId: "",
+  userId: "",
+  since: "",
+  until: "",
+  rows: [],
+});
+
 export class AdminWork {
   readonly #api: AdminApi;
   readonly #host: AdminHost;
@@ -81,6 +108,10 @@ export class AdminWork {
 
   // The print jobs surface's state.
   #print: PrintModel = emptyPrint();
+
+  // The exports surface's state: two cards, each its own call.
+  #workbook: WorkbookModel = emptyWorkbook();
+  #messages: MessagesModel = emptyMessages();
 
   constructor(api: AdminApi, host: AdminHost) {
     this.#api = api;
@@ -131,6 +162,14 @@ export class AdminWork {
       void this.#findPrintJobs();
       return true;
     }
+    if (action === "wb-download") {
+      void this.#downloadWorkbook();
+      return true;
+    }
+    if (action === "msg-export") {
+      void this.#downloadMessages();
+      return true;
+    }
     return false;
   }
 
@@ -159,6 +198,22 @@ export class AdminWork {
       this.#print = { ...this.#print, ref: value };
       return true;
     }
+    const wb = (key: keyof WorkbookModel): boolean => {
+      this.#workbook = { ...this.#workbook, [key]: value };
+      return true;
+    };
+    const msg = (key: keyof MessagesModel): boolean => {
+      this.#messages = { ...this.#messages, [key]: value };
+      return true;
+    };
+    if (field === "wb-entity-type") return wb("entityType");
+    if (field === "wb-action") return wb("action");
+    if (field === "wb-actor") return wb("actorId");
+    if (field === "wb-since") return wb("since");
+    if (field === "msg-channel") return msg("channelId");
+    if (field === "msg-user") return msg("userId");
+    if (field === "msg-since") return msg("since");
+    if (field === "msg-until") return msg("until");
     return false;
   }
 
@@ -184,12 +239,22 @@ export class AdminWork {
     // mirror the model, so a refused search leaves the person's words up.
     this.#host.setField("print-doc-type", this.#print.docType);
     this.#host.setField("print-ref", this.#print.ref);
+    // The exports' filter fields, the audit trail's own mirror rule.
+    this.#host.setField("wb-entity-type", this.#workbook.entityType);
+    this.#host.setField("wb-action", this.#workbook.action);
+    this.#host.setField("wb-actor", this.#workbook.actorId);
+    this.#host.setField("wb-since", this.#workbook.since);
+    this.#host.setField("msg-channel", this.#messages.channelId);
+    this.#host.setField("msg-user", this.#messages.userId);
+    this.#host.setField("msg-since", this.#messages.since);
+    this.#host.setField("msg-until", this.#messages.until);
   }
 
   /** The active surface's template, for the root's router line. */
   view(surface: string): TemplateResult | null {
     if (surface === "assist") return renderAssist(this.#assist);
     if (surface === "printing") return renderPrint(this.#print);
+    if (surface === "exports") return renderExports(this.#workbook, this.#messages);
     return null;
   }
 
@@ -197,6 +262,8 @@ export class AdminWork {
   signOut(): void {
     this.#assist = emptyAssist();
     this.#print = emptyPrint();
+    this.#workbook = emptyWorkbook();
+    this.#messages = emptyMessages();
   }
 
   // -- the assist surface ------------------------------------------------------------------------
@@ -349,6 +416,69 @@ export class AdminWork {
       return;
     }
     this.#print = { ...this.#print, busy: false, rows: result.value, error: "" };
+    this.#host.repaint();
+  }
+
+  // -- the exports surface -------------------------------------------------------------------------
+
+  /** The audit workbook: one call, the bytes to the person's downloads. */
+  async #downloadWorkbook(): Promise<void> {
+    if (this.#workbook.busy) return;
+    const w = this.#workbook;
+    const query = {
+      entity_type: w.entityType.trim() === "" ? undefined : w.entityType.trim(),
+      action: w.action === "" ? undefined : w.action,
+      actor_id: w.actorId.trim() === "" ? undefined : w.actorId.trim(),
+      since: sinceWire(w.since) === "" ? undefined : sinceWire(w.since),
+    };
+    this.#workbook = { ...w, busy: true, error: "", notice: "" };
+    this.#host.repaint();
+    const result = await this.#api.auditWorkbook(query);
+    if (!result.ok) {
+      this.#workbook = { ...this.#workbook, busy: false, error: serverWords(result.error) };
+      this.#host.repaint();
+      return;
+    }
+    this.#host.download(result.value, auditWorkbookName(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    this.#workbook = {
+      ...this.#workbook,
+      busy: false,
+      notice: `The workbook downloaded: ${auditWorkbookName()}, ${result.value.byteLength} bytes.`,
+    };
+    this.#host.repaint();
+  }
+
+  /** The house's messages: one call, the rows to the file, the file to the downloads. */
+  async #downloadMessages(): Promise<void> {
+    if (this.#messages.busy) return;
+    const m = this.#messages;
+    const query = {
+      channel_id: m.channelId.trim() === "" ? undefined : m.channelId.trim(),
+      user_id: m.userId.trim() === "" ? undefined : m.userId.trim(),
+      since: sinceWire(m.since) === "" ? undefined : sinceWire(m.since),
+      until: sinceWire(m.until) === "" ? undefined : sinceWire(m.until),
+    };
+    this.#messages = { ...m, busy: true, error: "", notice: "" };
+    this.#host.repaint();
+    const result = await this.#api.messagingExport(query);
+    if (!result.ok) {
+      this.#messages = {
+        ...this.#messages,
+        busy: false,
+        error: messagesRefusalWords(result.error, result.status),
+      };
+      this.#host.repaint();
+      return;
+    }
+    const file = new TextEncoder().encode(JSON.stringify({ messages: result.value }, null, 2));
+    this.#host.download(file, messagesExportName(), "application/json");
+    this.#messages = {
+      ...this.#messages,
+      busy: false,
+      asked: true,
+      rows: result.value,
+      notice: `The export downloaded: ${messagesExportName()}, ${result.value.length} messages.`,
+    };
     this.#host.repaint();
   }
 }

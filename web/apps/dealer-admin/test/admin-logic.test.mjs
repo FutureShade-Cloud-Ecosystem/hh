@@ -10,6 +10,9 @@ import {
   assistRefusalWords,
   budgetSentence,
   formatTokens,
+  messagesEmptyWords,
+  messagesRefusalWords,
+  messageKindWords,
   overBudget,
   printDocLabel,
   printEmptyWords,
@@ -112,4 +115,23 @@ test("an empty print history says the document has printed nothing yet, not that
   const words = printEmptyWords();
   assert.match(words, /No print jobs/);
   assert.match(words, /prints/);
+});
+
+// -- the exports: one call, one file, no queue ------------------------------------------------
+
+test("a message's kind reads as a word, and the export's empty is a real answer", () => {
+  assert.equal(messageKindWords("TEXT"), "Text");
+  assert.equal(messageKindWords("EVENT"), "Event");
+  assert.equal(messageKindWords("APPROVAL"), "Approval");
+  assert.equal(messageKindWords("ELSE"), "else");
+  const words = messagesEmptyWords();
+  assert.match(words, /No messages/);
+  assert.match(words, /export/);
+});
+
+test("the messages export refusal names leadership; other statuses pass through", () => {
+  const words = messagesRefusalWords("Forbidden", 403);
+  assert.match(words, /leadership/);
+  assert.match(words, /messages/);
+  assert.equal(messagesRefusalWords("until must be an RFC3339 timestamp", 400), "until must be an RFC3339 timestamp");
 });

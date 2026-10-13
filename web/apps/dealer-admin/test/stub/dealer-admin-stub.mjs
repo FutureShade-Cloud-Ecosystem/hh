@@ -626,7 +626,71 @@ async function handle(req, res) {
     return json(res, { jobs });
   }
 
+  // ---- the exports (the workbook is a staff read; the messages export is RequireAdmin) ----
+
+  if (req.method === "GET" && path === "/api/v1/exports/audit.xlsx") {
+    // A double's workbook: the xlsx magic followed by filler. The route's
+    // contract is the raw bytes, and the app never parses them.
+    const body = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(1020, 7)]);
+    res.writeHead(200, {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Length": body.byteLength,
+    });
+    res.end(body);
+    return;
+  }
+
+  if (req.method === "GET" && path === "/api/v1/messaging/export") {
+    // The core's RequireAdmin: a frontline caller is refused the export.
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const since = url.searchParams.get("since") ?? "";
+    const until = url.searchParams.get("until") ?? "";
+    if (since !== "" && Number.isNaN(new Date(since).getTime())) {
+      return refuse(res, 400, "since must be an RFC3339 timestamp");
+    }
+    if (until !== "" && Number.isNaN(new Date(until).getTime())) {
+      return refuse(res, 400, "until must be an RFC3339 timestamp");
+    }
+    const channelId = url.searchParams.get("channel_id") ?? "";
+    const rows = buildMessageExport().filter((m) => channelId === "" || m.channel_id === channelId);
+    return json(res, { messages: rows });
+  }
+
   return notFound(res);
+}
+
+// The masked messages export: a text row with an author, an event row, and a
+// deleted row the server has tombstoned. The masking is the server's own rule
+// stated in the schema; the double carries its shape.
+function buildMessageExport() {
+  const at = (minutes) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+  return [
+    {
+      id: "aa000000-0000-4000-9000-000000000001",
+      channel_id: "bb000000-0000-4000-9000-000000000001",
+      kind: "TEXT",
+      author_name: "Dealer admin (demo)",
+      body: "Yard two, the point loma truck is back with the pallet racking.",
+      created_at: at(50),
+      deleted_at: null,
+    },
+    {
+      id: "aa000000-0000-4000-9000-000000000002",
+      channel_id: "bb000000-0000-4000-9000-000000000001",
+      kind: "EVENT",
+      body: "order 4f000000-0000-4000-9000-000000000001 moved to PICKED",
+      created_at: at(40),
+      deleted_at: null,
+    },
+    {
+      id: "aa000000-0000-4000-9000-000000000003",
+      channel_id: "bb000000-0000-4000-9000-000000000002",
+      kind: "APPROVAL",
+      body: "payment of $196.80 approved against order 4f000000-0000-4000-9000-000000000002",
+      created_at: at(30),
+      deleted_at: at(10),
+    },
+  ];
 }
 
 const server = createServer((req, res) => {

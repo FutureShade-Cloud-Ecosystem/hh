@@ -199,3 +199,52 @@ function plainlyWords(value: string): string {
 export function printEmptyWords(): string {
   return "No print jobs for this document. A document prints its way into this list, and nothing has been sent to the printer for this one yet.";
 }
+
+// -- the exports: one call, one file, no queue ---------------------------------------------------
+//
+// Each export is a single server call that lands as a file in the person's
+// downloads. There is no queue and no second call: the workbook arrives as
+// the raw bytes the route answers, the messages export as the rows the route
+// answers, written to the file from that one answer.
+
+/** The audit workbook's file name. */
+export function auditWorkbookName(): string {
+  return "audit.xlsx";
+}
+
+/** The messages export's file name. */
+export function messagesExportName(): string {
+  return "house-messages-export.json";
+}
+
+/** A message's kind as a word. */
+export function messageKindWords(kind: string): string {
+  if (kind === "TEXT") return "Text";
+  if (kind === "EVENT") return "Event";
+  if (kind === "APPROVAL") return "Approval";
+  return plainlyWords(kind);
+}
+
+/** An export that found nothing: about the filters, never about the house. */
+export function messagesEmptyWords(): string {
+  return "No messages match this export. An export answers with the rows it finds, and this one found none, so widen the window or clear the channel.";
+}
+
+/**
+ * The messages export is leadership's read (the core's RequireAdmin). A
+ * refusal names who may act; the rest pass the server's own words through.
+ */
+export function messagesRefusalWords(error: string, status: number | undefined): string {
+  if (status === 403) {
+    return "You may not take this export. The house's messages export is leadership's own.";
+  }
+  return error !== "" ? error : "Try again in a moment.";
+}
+
+/**
+ * What the export carries, said once above the rows: the server's own masking
+ * rule, not this screen's promise.
+ */
+export function messagesMaskWords(): string {
+  return "The export is the masked projection: deleted messages are tombstoned and cleartext-looking identifiers are redacted before the rows leave the system.";
+}

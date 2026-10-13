@@ -148,3 +148,53 @@ test.describe("the print jobs surface", () => {
     await expect(page.locator("[data-test=print-idle]")).toContainText("Choose the paper");
   });
 });
+
+test.describe("the exports surface", () => {
+  const openExports = async (page: import("@playwright/test").Page): Promise<void> => {
+    await page.goto("/");
+    await page.locator("[data-flow]").first().click();
+    await expect(page.locator("[data-test=staff-count]")).toBeVisible();
+    await page.locator('.surface-link[data-surface="exports"]').click();
+    await expect(page.locator('[data-action="wb-download"]')).toBeVisible();
+  };
+
+  test("the audit workbook downloads, one call, and the notice names the file", async ({ page }) => {
+    await openExports(page);
+    // The workbook's filters ride the trail's own four: an entity type in,
+    // the file out.
+    await page.locator('[data-field="wb-entity-type"]').fill("pos.sale");
+    const downloadPromise = page.waitForEvent("download");
+    await page.locator('[data-action="wb-download"]').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("audit.xlsx");
+    await expect(page.locator("[data-test=wb-notice]")).toContainText("audit.xlsx");
+    await expect(page.locator("[data-test=wb-notice]")).toContainText("1024 bytes");
+  });
+
+  test("the messages export downloads, and the masked rows render under it", async ({ page }) => {
+    await openExports(page);
+    await expect(page.locator("[data-test=msg-empty]")).toContainText("Take the whole house");
+    const downloadPromise = page.waitForEvent("download");
+    await page.locator('[data-action="msg-export"]').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("house-messages-export.json");
+    await expect(page.locator("[data-test=msg-count]")).toHaveText("3 messages");
+    // A text row with an author, and the deleted row tombstoned.
+    await expect(page.locator("[data-test=msg-row-0]")).toContainText("Dealer admin (demo)");
+    await expect(page.locator("[data-test=msg-row-2]")).toContainText("deleted");
+  });
+
+  test("a frontline caller is refused the messages export, and the workbook still downloads", async ({ page }) => {
+    await page.goto("/");
+    await page.locator("[data-flow]").nth(1).click();
+    await page.locator('.surface-link[data-surface="exports"]').click();
+    await expect(page.locator('[data-action="wb-download"]')).toBeVisible();
+
+    // The messages export is leadership's; the workbook read is staff wide.
+    await page.locator('[data-action="msg-export"]').click();
+    await expect(page.locator("[data-test=msg-error]")).toContainText("leadership");
+    const downloadPromise = page.waitForEvent("download");
+    await page.locator('[data-action="wb-download"]').click();
+    expect((await downloadPromise).suggestedFilename()).toBe("audit.xlsx");
+  });
+});

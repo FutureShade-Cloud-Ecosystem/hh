@@ -9,8 +9,9 @@
 //
 // Today: Staff (the original's staff-roles.ts and staff-reset.ts), Hotkeys
 // (the original's platform-hotkeys.ts), Audit (the original's audit-log.ts),
-// Assist (the original's assist-admin.ts), and Print jobs (the core's print
-// queue), each with its PROVENANCE rows.
+// Assist (the original's assist-admin.ts), Print jobs (the core's print
+// queue), and Exports (the core's two export files), each with its
+// PROVENANCE rows.
 export interface SurfaceSpec {
   /** The id the list button, the router line and the tests name. */
   readonly id: string;
@@ -26,6 +27,7 @@ export const SURFACES: readonly SurfaceSpec[] = [
   { id: "audit", title: "Audit", blurb: "Who changed what, when, where and why." },
   { id: "assist", title: "Assist", blurb: "The assistant's month: who uses it, what it costs, what they may spend." },
   { id: "printing", title: "Print jobs", blurb: "One document's print history: how often it printed, and by whom." },
+  { id: "exports", title: "Exports", blurb: "Two files, one call each: the audit workbook and the house's messages." },
 ];
 
 export function isSurfaceId(value: string): value is SurfaceSpec["id"] {
