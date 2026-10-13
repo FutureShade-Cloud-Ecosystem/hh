@@ -8759,6 +8759,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/IdentityPing"
+  /.well-known/jwks.json:
+    get:
+      operationId: identitySessionJwks
+      tags:
+        - staff-identity
+      summary: Read the JWK Set of the deployment's session signing keys
+      description: Public and cacheable. Serves the public halves only of the current key and of the NEXT and PREVIOUS keys during a rotation (ES256, the kid is the RFC 7638 thumbprint). The core verifies its own session tokens through an in process source over the same keys; this route is for a remote verifier and for the rotation procedure. It carries no private member and no account data.
+      x-addition: the deployment's own session JWK Set (state note HH-S4-AUTH, section 2); the ERP signed with shared HS256 secrets and had no key set
+      x-role: public
+      security: []
+      responses:
+        "200":
+          description: The JWK Set, with Cache-Control public and a max-age equal to the verifier's key cache default
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionJwkSet"
+  /api/v1/auth/exchange:
+    post:
+      operationId: identityExchange
+      tags:
+        - staff-identity
+      summary: Exchange a FB Console JWT and an org slug for a core session token
+      description: "Public leg, no bearer, mounted only where the sign in mode is console. The person signs in to FB Console, asks it for a short JWT, and presents that JWT with the org slug. The core runs its gates in order (body shape, rate limit, the FB Console account under the JWT, the single use claim on the JWT, a verified and active account whose email is on the dealer's allow lists, an uncached Team membership read, the org anchor, a linked ACTIVE staff row with a grant, the role's session ceiling, the sign in age of the FB Console session) and, only then, writes an audit row and signs a session token. The token window is the shortest of the role's ceiling, the configured exchange window and the sign in age that remains, never under one minute. No refusal says which gate failed: a refusal carries one of the shared bodies of its status."
+      x-addition: the real sign in through FB Console (state note HH-S4-AUTH, section 3); the ERP signed in with its own password table
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityExchangeRequest"
+      responses:
+        "200":
+          description: The core session token, its expiry and the caller's staff identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityExchangeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: A dependency of the exchange could not answer; nothing was minted
   /api/v1/auth/login:
     post:
       operationId: identityLogin
@@ -35690,6 +35740,51 @@ components:
           type: string
         status:
           type: string
+    SessionJwkSet:
+      type: object
+      description: The session signing keys' public halves (RFC 7517), current first
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/SessionJwk"
+    SessionJwk:
+      type: object
+      description: One session signing key's public half; no private member exists in this shape
+      required:
+        - kty
+        - crv
+        - x
+        - y
+        - kid
+        - use
+        - alg
+      properties:
+        kty:
+          type: string
+          enum:
+            - EC
+        crv:
+          type: string
+          enum:
+            - P-256
+        x:
+          type: string
+        y:
+          type: string
+        kid:
+          type: string
+          description: RFC 7638 thumbprint of the public key
+        use:
+          type: string
+          enum:
+            - sig
+        alg:
+          type: string
+          enum:
+            - ES256
     IdentityLoginRequest:
       type: object
       required:
@@ -35741,6 +35836,34 @@ components:
         token:
           type: string
           description: The staff session bearer token
+        user:
+          $ref: "#/components/schemas/IdentityUser"
+    IdentityExchangeRequest:
+      type: object
+      required:
+        - jwt
+        - org
+      additionalProperties: false
+      properties:
+        jwt:
+          type: string
+          description: A fresh FB Console JWT; single use
+        org:
+          type: string
+          description: The org slug whose Team the person belongs to
+    IdentityExchangeResponse:
+      type: object
+      required:
+        - token
+        - expiresAtMs
+        - user
+      properties:
+        token:
+          type: string
+          description: The core session token (ES256), valid until expiresAtMs
+        expiresAtMs:
+          type: integer
+          format: int64
         user:
           $ref: "#/components/schemas/IdentityUser"
     IdentityChangePasswordRequest:
