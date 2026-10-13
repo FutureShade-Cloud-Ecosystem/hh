@@ -210,6 +210,16 @@ func (s *SyncStore) stampRecord(ctx context.Context, f sync.ScopeFilter, id, key
 		return sync.RowState{}, fmt.Errorf("tasks: begin sync record stamp: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Task row first, then the counter: the order UpsertPickedLines and InsertShortage take, so a direct
+	// record and a replayed one on the same task queue behind each other instead of deadlocking.
+	var locked bool
+	if err := tx.QueryRow(ctx, `SELECT true FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid AND task_type = 'PICK' AND deleted_at IS NULL FOR UPDATE`,
+		id, f.OrgID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return sync.RowState{}, sync.ErrRowNotFound
+		}
+		return sync.RowState{}, fmt.Errorf("tasks: lock task for sync record stamp %q: %w", id, err)
+	}
 	seq, err := allocatePickSeqTx(ctx, tx)
 	if err != nil {
 		return sync.RowState{}, err
