@@ -125,3 +125,11 @@ test("validUntilDate: the projection's timestamp becomes the date the desk shows
   assert.equal(validUntilDate(""), undefined);
   assert.equal(validUntilDate("soon"), undefined);
 });
+
+test("a row that exists only on the device is not listed even if it carries figures: the waiting rule stands on its own", async () => {
+  const w = await world();
+  const id = "0d000000-0000-4000-9000-0000000000ab";
+  await w.backend.sql.run("INSERT INTO ent_quotes (id, seq, data, deleted) VALUES (?, 0, ?, 0)", [id, JSON.stringify({ id, quote_no: "", customer_id: MAPLE, status: "DRAFT", valid_until: null, subtotal_cents: 100, tax_cents: 13, total_cents: 113, created_at: "2000-01-03T00:00:00Z" })]);
+  const out = await answer(w.routes, "/api/v1/quotes");
+  assert.ok(!out.body.items.some((i) => i.id === id));
+});
