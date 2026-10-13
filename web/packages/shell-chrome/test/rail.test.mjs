@@ -227,3 +227,28 @@ test('FLOOR: every row and the toggle are 44 px targets, at every size, because 
   assert.ok(px(toggle['width']) >= 44 && px(toggle['height']) >= 44, 'the toggle is a 44 px square');
 });
 
+
+// ── item 8d: the toggle is a visible, labelled control, not an empty box ─────────────────────────
+
+test('8d: the toggle carries an icon you can see: 20 px or more, in the full text colour, not the dim chevron', () => {
+  const rules = parseRules(ShellRail.styles.map((sheet) => sheet.cssText).join('\n'));
+  const icon = declsFor(rules, '.toggle svg');
+  assert.ok(px(icon['width']) >= 20 && px(icon['height']) >= 20, 'the glyph is at least 20 px');
+  const toggle = declsFor(rules, '.toggle');
+  assert.equal(toggle['color'], 'var(--hh-text)', 'the glyph is drawn in the text colour, not the dim one');
+});
+
+test('8d: the toggle is a panel icon with a name in both postures, and still 44 px and collapsed by default', () => {
+  const collapsed = toggleOf(renderKit(ShellRail, { pins: PINS }));
+  const expanded = toggleOf(renderKit(ShellRail, { pins: PINS, collapsed: false }));
+  for (const toggle of [collapsed, expanded]) {
+    assert.ok(/data-icon="rail-panel"/.test(toggle), 'one panel glyph, the same in both postures');
+    assert.ok(/aria-label="[^"]+"/.test(toggle), 'an accessible name');
+    assert.ok(/data-title="[^"]+"/.test(toggle), 'a tooltip');
+    assert.ok(!/M9 6l6 6-6 6|M15 6l-6 6 6 6/.test(toggle), 'the faint chevron paths are gone');
+  }
+  assert.ok(renderKit(ShellRail, { pins: PINS }).includes('data-collapsed="true"'), 'collapsed stays the default');
+  const rules = parseRules(ShellRail.styles.map((sheet) => sheet.cssText).join('\n'));
+  const box = declsFor(rules, '.toggle');
+  assert.ok(px(box['width']) >= 44 && px(box['height']) >= 44, 'the 44 px target is kept');
+});
