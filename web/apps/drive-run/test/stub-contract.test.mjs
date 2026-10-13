@@ -134,7 +134,9 @@ function refused(res, status, fragment) {
   assert.equal(res.status, status);
   holds("Error", res.json);
   assert.ok(res.json.error.includes(fragment), `expected "${fragment}" in "${res.json.error}"`);
-  assert.ok(coreSource.includes(fragment), `the core's source does not contain the sentence "${fragment}": the stub invented it`);
+  // A sentence the Go source builds from a constant (a bound in a %d) is read with the number as the verb.
+  const template = fragment.replace(/\b200\b/, "%d");
+  assert.ok(coreSource.includes(fragment) || coreSource.includes(template), `the core's source does not contain the sentence "${fragment}": the stub invented it`);
 }
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
