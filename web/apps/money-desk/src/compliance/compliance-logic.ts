@@ -50,7 +50,7 @@ export const STATUS_FILTERS: ReadonlyArray<{ id: "" | "OPEN" | "OVERDUE" | "SATI
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** 2026-03-04 reads "Mar 4, 2026". A day that is not a real day is left as the core wrote it. */
+/** An ISO day reads as the month name, the day and the year. A day that is not a real day is left as the core wrote it. */
 export function dueWords(day: string): string {
   if (day === "") return "No date";
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);

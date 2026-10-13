@@ -29,6 +29,11 @@ import { arStyles } from "./ar/ar-styles.js";
 import { GlApi } from "./gl/gl-api.js";
 import { GlDesk } from "./gl/gl-desk.js";
 import { glStyles } from "./gl/gl-styles.js";
+import { LienApi } from "./lien/lien-api.js";
+import { LienDesk, type LienHost } from "./lien/lien-desk.js";
+import { lienStyles } from "./lien/lien-styles.js";
+import { ComplianceApi } from "./compliance/compliance-api.js";
+import { ComplianceDesk } from "./compliance/compliance-desk.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -36,13 +41,35 @@ const DEMO_ORG = "hh-demo";
 // balance. The code is the role code the front door's handoff and the demo mint both carry. Every other
 // role lands on the receivables desk (src/ar); the controller reaches it from the area switch.
 const CONTROLLER_ROLE = "financial_controller";
+const PAYREC_ROLE = "payables_receivables";
+const GENERAL_MANAGER_ROLE = "general_manager";
+
+// The desk's areas, in switch order. A new area is one more entry here, one case in #onHostClick for its presses
+// and one in renderArea for its screens.
+const AREAS = ["ledger", "receivables", "liens", "compliance"] as const;
+type Area = (typeof AREAS)[number];
+
+// The areas each role holds, and the one it lands on (the first listed). The controller holds all four; Payables and
+// Receivables lands on receivables and holds the liens and the calendar beside it; the General Manager, who holds the
+// release gate of the liens, lands there.
+const AREAS_BY_ROLE: Readonly<Record<string, readonly Area[]>> = {
+  [CONTROLLER_ROLE]: ["ledger", "receivables", "liens", "compliance"],
+  [PAYREC_ROLE]: ["receivables", "liens", "compliance"],
+  [GENERAL_MANAGER_ROLE]: ["liens", "compliance"],
+};
+const AREA_LABEL: Readonly<Record<Area, string>> = {
+  ledger: "Approvals and ledger",
+  receivables: "Receivables",
+  liens: "Liens",
+  compliance: "Compliance",
+};
 
 // The demo flows whose modules include the Money Desk. The core lists its whole closed table (the till's pair
 // too); the app's own way in offers only the roles that can use it, as the till's entry offers only its pair.
 const MONEY_DESK_FLOWS: readonly string[] = ["payables-receivables", "financial-controller"];
 
 export class MoneyDeskApp extends HHElement {
-  static styles = [baseStyles, entryStyles, arStyles, glStyles, css`
+  static styles = [baseStyles, entryStyles, arStyles, glStyles, lienStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
     main.gl-desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
@@ -82,7 +109,60 @@ export class MoneyDeskApp extends HHElement {
   // The ledger slice (src/gl): its state, its loads, its presses. The field it reads is looked up in
   // this element's own shadow root. The controller holds both desks and switches between them.
   #gl = this.#newGlDesk();
-  #area: "ledger" | "receivables" = "ledger";
+  #area: Area = "ledger";
+
+  // The liens slice (src/lien) and the compliance slice (src/compliance): the fields they read are looked up in
+  // this element's own shadow root, a select by the id of its chosen option.
+  #lien = this.#newLienDesk();
+  #compliance = this.#newComplianceDesk();
+
+  #deskHost(): LienHost {
+    const found = (name: string, key?: string) =>
+      this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(key === undefined ? `[data-field="${name}"]` : `[data-field="${name}"][data-key="${key}"]`);
+    return {
+      repaint: () => this.requestUpdate(),
+      field: (name, key) => found(name, key)?.value ?? "",
+      choice: (name) => {
+        const el = found(name);
+        return el instanceof HTMLSelectElement ? (el.selectedOptions[0]?.getAttribute("data-id") ?? "") : "";
+      },
+      setField: (name, value, key) => {
+        const el = found(name, key);
+        if (el === null) return;
+        if (el instanceof HTMLSelectElement) {
+          const at = [...el.options].findIndex((o) => o.getAttribute("data-id") === value);
+          if (at >= 0 && el.selectedIndex !== at) el.selectedIndex = at;
+        } else if (el.value !== value) el.value = value;
+      },
+      reveal: (selector) => {
+        const el = this.renderRoot.querySelector<HTMLElement>(selector);
+        if (el === null) return;
+        el.scrollIntoView({ block: "start", behavior: "smooth" });
+        // A confirm step takes the reading position, so the keyboard and a screen reader land on it.
+        if (el.hasAttribute("tabindex") || el.hasAttribute("role")) el.focus({ preventScroll: true });
+      },
+      userId: () => this.#sessions.current?.user.userId ?? "",
+      roleCode: () => this.#roleCode,
+    };
+  }
+
+  #newLienDesk(): LienDesk {
+    return new LienDesk(new LienApi(this.#staffClient), this.#deskHost());
+  }
+
+  #newComplianceDesk(): ComplianceDesk {
+    return new ComplianceDesk(new ComplianceApi(this.#staffClient), this.#deskHost());
+  }
+
+  /** The areas the signed in role holds; none before sign in, and none for a role that holds only the receivables desk. */
+  #areas(): readonly Area[] {
+    return AREAS_BY_ROLE[this.#roleCode] ?? [];
+  }
+
+  /** Every role but the General Manager reads the receivables desk; the General Manager's money work is the liens. */
+  #holdsReceivables(): boolean {
+    return this.#roleCode !== GENERAL_MANAGER_ROLE;
+  }
 
   #newGlDesk(): GlDesk {
     return new GlDesk(new GlApi(this.#staffClient), {
@@ -190,13 +270,16 @@ export class MoneyDeskApp extends HHElement {
     }
     if (action === "area") {
       const area = control?.getAttribute("data-area");
-      if (area === "ledger" || area === "receivables") {
-        this.#area = area;
+      if (AREAS.some((id) => id === area) && this.#areas().includes(area as Area)) {
+        this.#area = area as Area;
+        this.#openArea();
         this.requestUpdate();
       }
       return;
     }
     if (control !== undefined && this.#isController() && this.#area === "ledger" && this.#gl.press(control)) return;
+    if (control !== undefined && this.#area === "liens" && this.#lien.press(control)) return;
+    if (control !== undefined && this.#area === "compliance" && this.#compliance.press(control)) return;
     if (control !== undefined && this.#ar.press(control)) return;
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
@@ -211,7 +294,11 @@ export class MoneyDeskApp extends HHElement {
 
   readonly #onChange = (event: Event): void => {
     const target = event.target;
-    if (target instanceof Element && target.hasAttribute("data-field")) this.#ar.change(target);
+    if (target instanceof Element && target.hasAttribute("data-field")) {
+      this.#ar.change(target);
+      if (this.#area === "liens") this.#lien.change(target);
+      if (this.#area === "compliance") this.#compliance.change(target);
+    }
   };
 
   connectedCallback(): void {
@@ -237,7 +324,7 @@ export class MoneyDeskApp extends HHElement {
         this.#userName = handoff.session.user.name;
         clearFrontDoorHandoff();
         this.#ar = this.#newDesk();
-        void this.#ar.load();
+        if (this.#holdsReceivables()) void this.#ar.load();
         this.#startGl();
       }
       this.requestUpdate();
@@ -260,6 +347,8 @@ export class MoneyDeskApp extends HHElement {
     super.updated(changed);
     this.#ar.afterRender();
     this.#gl.afterRender();
+    if (this.#area === "liens") this.#lien.afterRender();
+    if (this.#area === "compliance") this.#compliance.afterRender();
     const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
     if (header !== null) {
       header.roleLabel = this.#roleLabel;
@@ -292,7 +381,7 @@ export class MoneyDeskApp extends HHElement {
         this.#roleCode = result.value.roleCode;
         this.#userName = this.#sessions.current?.user.name ?? "";
         this.#ar = this.#newDesk();
-        void this.#ar.load();
+        if (this.#holdsReceivables()) void this.#ar.load();
         this.#startGl();
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
@@ -304,17 +393,28 @@ export class MoneyDeskApp extends HHElement {
     this.requestUpdate();
   }
 
-  // The controller lands on the ledger; its desk loads once it is signed in.
+  // Each role lands on the first area it holds; the controller's ledger loads once it is signed in, and the liens and
+  // compliance desks read themselves the first time their area opens.
   #startGl(): void {
     this.#gl = this.#newGlDesk();
-    this.#area = "ledger";
+    this.#lien = this.#newLienDesk();
+    this.#compliance = this.#newComplianceDesk();
+    this.#area = this.#areas()[0] ?? "receivables";
     if (this.#isController()) void this.#gl.load();
+    this.#openArea();
+  }
+
+  #openArea(): void {
+    if (this.#area === "liens") this.#lien.ensureLoaded();
+    if (this.#area === "compliance") this.#compliance.ensureLoaded();
   }
 
   #onSignOut(): void {
     this.#sessions.clear();
     this.#ar = this.#newDesk();
     this.#gl = this.#newGlDesk();
+    this.#lien = this.#newLienDesk();
+    this.#compliance = this.#newComplianceDesk();
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -326,29 +426,35 @@ export class MoneyDeskApp extends HHElement {
     return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
   }
 
-  // The controller's two desks: the ledger it lands on and the receivables desk its role also holds.
+  // The desks the role holds, as the area switch: the controller's four, Payables and Receivables' three and the General
+  // Manager's two.
   private renderAreas(): TemplateResult {
-    const area = (id: "ledger" | "receivables", label: string): TemplateResult => html`
-      <button type="button" class="gl-tab" data-action="area" data-area=${id} aria-current="${this.#area === id ? "true" : "false"}">${label}</button>
+    const area = (id: Area): TemplateResult => html`
+      <button type="button" class="gl-tab" data-action="area" data-area=${id} aria-current="${this.#area === id ? "true" : "false"}">${AREA_LABEL[id]}</button>
     `;
-    return html`<nav class="areas" aria-label="Money Desk areas">${area("ledger", "Approvals and ledger")} ${area("receivables", "Receivables")}</nav>`;
+    if (this.#areas().length === 0) return html``;
+    return html`<nav class="areas" aria-label="Money Desk areas">${this.#areas().map((id) => area(id))}</nav>`;
+  }
+
+  private renderArea(): TemplateResult {
+    switch (this.#area) {
+      case "ledger":
+        return html`<main class="gl-desk">${this.#gl.render()}</main>`;
+      case "liens":
+        return html`<main class="li-desk">${this.#lien.render()}</main>`;
+      case "compliance":
+        return html`<main class="li-desk">${this.#compliance.render()}</main>`;
+      default:
+        return html`<main class="desk">${this.#ar.render()}</main>`;
+    }
   }
 
   private renderSignedIn(): TemplateResult {
-    if (this.#isController()) {
-      return html`
-        <hos-app-header signed-in demo product-name="Money Desk" product-sub="Approvals and ledger · HH Work shell">${this.renderThemeControl()}</hos-app-header>
-        ${this.renderAreas()}
-        ${this.#area === "ledger"
-          ? html`<main class="gl-desk">${this.#gl.render()}</main>`
-          : html`<main class="desk">${this.#ar.render()}</main>`}
-      `;
-    }
     return html`
-      <hos-app-header signed-in demo product-name="Money Desk">${this.renderThemeControl()}</hos-app-header>
-      <main class="desk">
-        ${this.#ar.render()}
-      </main>
+      ${this.#isController()
+        ? html`<hos-app-header signed-in demo product-name="Money Desk" product-sub="Approvals and ledger · HH Work shell">${this.renderThemeControl()}</hos-app-header>`
+        : html`<hos-app-header signed-in demo product-name="Money Desk">${this.renderThemeControl()}</hos-app-header>`}
+      ${this.renderAreas()} ${this.renderArea()}
     `;
   }
 

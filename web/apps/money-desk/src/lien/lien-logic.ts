@@ -201,7 +201,7 @@ export function jobForm(values: JobFormValues): JobFormResult {
     return { ok: false, field: "percent", words: "The holdback percent is a number from 0.01 to 100, like 10 or 7.5. Leave it blank for the core's default." };
   }
   for (const [field, text] of [["perf", values.perf.trim()], ["supply", values.supply.trim()]] as const) {
-    if (text !== "" && !validDay(text)) return { ok: false, field, words: "Dates are year, month and day, like 2026-03-01." };
+    if (text !== "" && !validDay(text)) return { ok: false, field, words: "Dates are written yyyy-mm-dd." };
   }
   return {
     ok: true,
@@ -262,4 +262,55 @@ export function refusalWords(action: string, message: string, status: number): s
   if (words === "") return "The liens did not answer. Reload to try again.";
   if (action === "release" && status === 403 && lower.includes("gatekeeper must be")) return `${words} Releasing is the General Manager's, co-signed by a Financial Controller or Payables and Receivables.`;
   return words;
+}
+
+// ---- the sentences the desk says -----------------------------------------------------------------------
+
+/** What a holdback sync did, in the core's own counts. */
+export function syncWords(booked: number, bookedMoney: string, skipped: number): string {
+  const already = skipped > 0 ? `${skipped} already booked` : "";
+  if (booked === 0) return `Synced: nothing new to book${already === "" ? "" : `, ${already}`}.`;
+  return `Synced: ${booked} ${booked === 1 ? "invoice" : "invoices"} booked for ${bookedMoney}${already === "" ? "" : `, ${already}`}.`;
+}
+
+export function releasedWords(amount: string, jobNo: string, cosigner: string): string {
+  return `Released ${amount} on job ${jobNo}, co-signed by ${cosigner}.`;
+}
+
+export function renderedWords(version: number, form: string): string {
+  return `Rendered version ${version} of ${form}.`;
+}
+
+/** What a job holds right now, from its aging row: the amount and the oldest retention's age, or nothing. */
+export function heldNowWords(amount: string | null, oldestDays: number): string {
+  return amount === null ? "Nothing held." : `${amount} held, oldest ${ageWords(oldestDays)}`;
+}
+
+export function holdingWords(count: number): string {
+  if (count === 0) return "No job holds retention";
+  return count === 1 ? "1 job holds retention" : `${count} jobs hold retention`;
+}
+
+/** Whether a holdback is ready to go: the core's own eligibility for a receivable, a manual release for a payable. */
+export function releaseStatusWord(direction: string, eligible: boolean): string {
+  if (direction === "PAYABLE") return "Released by hand";
+  return eligible ? "Release due" : "Not yet";
+}
+
+/** The core's triage note is a lowercase clause; a row reads it as a sentence. */
+export function noteWords(note: string): string {
+  return sentence(note);
+}
+
+// ---- the co-signer -------------------------------------------------------------------------------------
+
+const COSIGNER_ROLES = ["FINANCIAL_CONTROLLER", "PAYABLES_RECEIVABLES"];
+
+/**
+ * The people on the roster the core would take as a co-signer: a Financial Controller or Payables and Receivables,
+ * and never the person releasing. The roster does not say who is still active, so the core is still the judge of
+ * that after the pick.
+ */
+export function cosigners<T extends { user_id: string; role_code: string }>(roster: readonly T[], releasingId: string): T[] {
+  return roster.filter((p) => COSIGNER_ROLES.includes(p.role_code.toUpperCase()) && p.user_id !== releasingId);
 }

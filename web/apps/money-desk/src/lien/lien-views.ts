@@ -1,0 +1,502 @@
+// The liens slice's screens, as plain render functions of a model. They hold no state and own no events: every
+// control is a plain element carrying a data-action name and the slice's click listener acts on it (the design
+// system's position rules allow no @ or . binding in an app, and the only bound values are class, role, aria- and
+// data- attributes). Form fields carry data-field names and are read when the button is pressed; none is bound.
+//
+// Every figure on a screen is the server's, formatted: the app computes no money. References: the Money Desk
+// boards (cards border first, no shadow, status as a word before a colour, a table that gives way to cards on a
+// phone), and the original app's Lien Cockpit tabs (triage, jobs, holdbacks, documents).
+import { html, nothing, type TemplateResult } from "lit";
+import type { Branch, IdentityStaffMember, LienAgingRow, LienDocument, LienJob, LienTriageItem } from "@hardscapehouse/api-client";
+import { dueWords, type BannerView } from "../compliance/compliance-logic.js";
+import { bannerStrip, branchName, empty, loadFailed, loading, messages, pill, tabsNav } from "./lien-kit.js";
+import {
+  ageWords,
+  badgeTone,
+  badgeWord,
+  bucketWord,
+  cosigners,
+  directionLine,
+  directionWord,
+  documentStatusWord,
+  documentTone,
+  heldNowWords,
+  holdingWords,
+  jobStatusTone,
+  jobStatusWord,
+  noteWords,
+  refusalWords,
+  releaseConfirmWords,
+  releaseStatusWord,
+  templateFields,
+  templateWord,
+  TEMPLATE_KINDS,
+} from "./lien-logic.js";
+import { bpsWords, formatMoney } from "./lien-money.js";
+
+export type LienTab = "triage" | "jobs" | "holdbacks" | "documents";
+
+export interface ReleaseModel {
+  readonly jobId: string;
+  readonly roster: "loading" | "ready" | "refused";
+  readonly people: readonly IdentityStaffMember[];
+  readonly rosterError: string;
+  readonly cosigner: string;
+}
+
+export interface LiensModel {
+  readonly phase: "loading" | "ready" | "error";
+  readonly tab: LienTab;
+  readonly canRelease: boolean;
+  readonly userId: string;
+  readonly banner: BannerView;
+  readonly bannerState: string;
+  readonly jobs: readonly LienJob[];
+  readonly triage: readonly LienTriageItem[];
+  readonly aging: readonly LienAgingRow[];
+  readonly branches: readonly Branch[];
+  readonly selectedJob: string | null;
+  readonly newJob: boolean;
+  readonly docJob: string;
+  readonly docs: readonly LienDocument[];
+  readonly docsPhase: "idle" | "loading" | "ready" | "error";
+  readonly docKind: string;
+  readonly viewing: LienDocument | null;
+  readonly versions: readonly LienDocument[] | null;
+  readonly release: ReleaseModel | null;
+  readonly busy: boolean;
+  readonly error: string;
+  readonly notice: string;
+}
+
+const jobNoOf = (jobs: readonly LienJob[], id: string): string => jobs.find((j) => j.id === id)?.job_no ?? "";
+
+function agingOf(model: LiensModel, jobId: string): LienAgingRow | undefined {
+  return model.aging.find((r) => r.job_id === jobId);
+}
+
+function stamp(iso: string | undefined): string {
+  return iso === undefined || iso === "" ? "" : dueWords(iso.slice(0, 10));
+}
+
+// ---- the tabs ---------------------------------------------------------------------------------------
+
+function tabs(model: LiensModel): TemplateResult {
+  return tabsNav("Lien views", "li-tab", model.tab, [
+    { id: "triage", label: "Triage", count: model.triage.length === 0 ? null : model.triage.length },
+    { id: "jobs", label: "Jobs", count: null },
+    { id: "holdbacks", label: "Holdbacks", count: null },
+    { id: "documents", label: "Documents", count: null },
+  ]);
+}
+
+// ---- triage -----------------------------------------------------------------------------------------
+
+function triageRow(model: LiensModel, t: LienTriageItem): TemplateResult {
+  return html`
+    <tr data-row="triage" data-job-no=${t.job_no}>
+      <td><strong class="li-mono">${t.job_no}</strong><span class="li-sub">${directionWord(t.holdback_direction)}</span></td>
+      <td>${branchName(model.branches, t.branch_id)}</td>
+      <td>${pill(badgeTone(t.badge), badgeWord(t.badge))}</td>
+      <td class="num">${formatMoney(t.outstanding_cents)}</td>
+      <td class="num">${ageWords(t.oldest_days)}</td>
+      <td>${noteWords(t.note)}</td>
+      <td><button type="button" class="li-link" data-action="li-open-job" data-id=${t.job_id}>Open job</button></td>
+    </tr>
+  `;
+}
+
+function triageCard(model: LiensModel, t: LienTriageItem): TemplateResult {
+  return html`
+    <li class="li-card" data-row="triage" data-job-no=${t.job_no}>
+      <div class="li-card-top"><strong class="li-mono">${t.job_no}</strong>${pill(badgeTone(t.badge), badgeWord(t.badge))}</div>
+      <div class="li-card-amount">${formatMoney(t.outstanding_cents)} <span class="li-dim">· ${ageWords(t.oldest_days)} · ${directionWord(t.holdback_direction)}</span></div>
+      <span class="li-sub">${branchName(model.branches, t.branch_id)}</span>
+      <span>${noteWords(t.note)}</span>
+      <button type="button" class="li-link" data-action="li-open-job" data-id=${t.job_id}>Open job</button>
+    </li>
+  `;
+}
+
+function triage(model: LiensModel): TemplateResult {
+  const rows = model.triage;
+  return html`
+    <section class="li-panel">
+      <div class="li-panel-head">
+        <h2>Monday triage</h2>
+        <span class="li-summary" data-triage-count>${holdingWords(rows.length)}</span>
+      </div>
+      <p class="li-dim">The holdback worklist: what needs attention, oldest first.</p>
+      ${rows.length === 0
+        ? empty("triage", "Nothing on the worklist", "Every held retention is inside its window or released.")
+        : html`
+            <div class="li-scroll li-hide-narrow">
+              <table aria-label="Monday triage">
+                <thead><tr><th>Job</th><th>Branch</th><th>Status</th><th class="num">Held</th><th class="num">Oldest</th><th>What the core says</th><th></th></tr></thead>
+                <tbody>${rows.map((t) => triageRow(model, t))}</tbody>
+              </table>
+            </div>
+            <ul class="li-cards">${rows.map((t) => triageCard(model, t))}</ul>
+          `}
+    </section>
+  `;
+}
+
+// ---- jobs -------------------------------------------------------------------------------------------
+
+function jobRow(model: LiensModel, j: LienJob): TemplateResult {
+  const selected = model.selectedJob === j.id;
+  return html`
+    <tr data-row="job" data-job-no=${j.job_no} aria-current="${selected ? "true" : "false"}">
+      <td><strong class="li-mono">${j.job_no}</strong><span class="li-sub">${j.description}</span></td>
+      <td>${branchName(model.branches, j.branch_id)}</td>
+      <td>${directionWord(j.holdback_direction)}</td>
+      <td class="num">${j.contract_cents === 0 ? "Not set" : formatMoney(j.contract_cents)}</td>
+      <td>${pill(jobStatusTone(j.status), jobStatusWord(j.status))}</td>
+      <td><button type="button" class="li-link" data-action="li-select-job" data-id=${j.id} aria-pressed="${selected ? "true" : "false"}">Open</button></td>
+    </tr>
+  `;
+}
+
+function jobCard(model: LiensModel, j: LienJob): TemplateResult {
+  const selected = model.selectedJob === j.id;
+  return html`
+    <li class="li-card" data-row="job" data-job-no=${j.job_no} aria-current="${selected ? "true" : "false"}">
+      <div class="li-card-top"><strong class="li-mono">${j.job_no}</strong>${pill(jobStatusTone(j.status), jobStatusWord(j.status))}</div>
+      <span>${j.description}</span>
+      <div class="li-card-amount">${j.contract_cents === 0 ? "Contract not set" : formatMoney(j.contract_cents)} <span class="li-dim">· ${directionWord(j.holdback_direction)}</span></div>
+      <span class="li-sub">${branchName(model.branches, j.branch_id)}</span>
+      <button type="button" class="li-link" data-action="li-select-job" data-id=${j.id} aria-pressed="${selected ? "true" : "false"}">Open</button>
+    </li>
+  `;
+}
+
+function jobForm(model: LiensModel): TemplateResult {
+  return html`
+    <section class="li-panel" data-job-form>
+      <div class="li-panel-head"><h2>New job</h2></div>
+      <div class="li-form">
+        <label class="li-field">Job number<input data-field="job_no" aria-label="Job number" autocomplete="off" /></label>
+        <label class="li-field">Branch
+          <select data-field="branch_id" aria-label="Branch"><option data-id="">Pick a branch</option>${model.branches.map((b) => html`<option data-id=${b.id}>${b.name}</option>`)}</select>
+        </label>
+        <label class="li-field li-field-wide">Description<input data-field="description" aria-label="Description" autocomplete="off" /></label>
+        <label class="li-field">Contract amount<input data-field="contract" aria-label="Contract amount" inputmode="decimal" autocomplete="off" /></label>
+        <label class="li-field">Holdback percent<input data-field="percent" aria-label="Holdback percent" inputmode="decimal" autocomplete="off" /></label>
+        <label class="li-field">Direction
+          <select data-field="direction" aria-label="Direction"><option data-id="RECEIVABLE">Receivable</option><option data-id="PAYABLE">Payable</option></select>
+        </label>
+        <label class="li-field">Substantial performance date<input type="date" data-field="perf" aria-label="Substantial performance date" /></label>
+        <label class="li-field">Last supply date<input type="date" data-field="supply" aria-label="Last supply date" /></label>
+      </div>
+      <p class="li-hint">A blank percent is the core's own default. With no customer on the job, the sync reads every held invoice at the branch.</p>
+      <div class="li-actions">
+        <button type="button" class="btn btn-primary" data-action="li-create-job" ?disabled=${model.busy}>Create job</button>
+        <button type="button" class="btn btn-secondary" data-action="li-cancel-job">Cancel</button>
+      </div>
+    </section>
+  `;
+}
+
+function jobPanel(model: LiensModel, job: LienJob): TemplateResult {
+  const held = agingOf(model, job.id);
+  return html`
+    <section class="li-panel" data-job-panel>
+      <div class="li-panel-head"><h2>${job.job_no}</h2>${pill(jobStatusTone(job.status), jobStatusWord(job.status))}</div>
+      <p class="li-fact">${job.description}</p>
+      <dl class="li-facts">
+        <dt>Branch</dt><dd>${branchName(model.branches, job.branch_id)}</dd>
+        <dt>Holdback</dt><dd>${directionWord(job.holdback_direction)}. ${directionLine(job.holdback_direction)}</dd>
+        <dt>Contract</dt><dd>${job.contract_cents === 0 ? "Not set" : formatMoney(job.contract_cents)}</dd>
+        <dt>Held back</dt><dd>${bpsWords(job.holdback_pct_bps)}</dd>
+        <dt>Substantial performance</dt><dd>${job.substantial_perf_date === undefined ? "Not set" : dueWords(job.substantial_perf_date)}</dd>
+        <dt>Last supply</dt><dd>${job.last_supply_date === undefined ? "Not set" : dueWords(job.last_supply_date)}</dd>
+        <dt>Held now</dt><dd data-held-now>${heldNowWords(held === undefined ? null : formatMoney(held.outstanding_cents), held?.oldest_days ?? 0)}</dd>
+      </dl>
+      <div class="li-actions">
+        <button type="button" class="btn btn-primary" data-action="li-sync" ?disabled=${model.busy}>Sync holdbacks</button>
+        <button type="button" class="btn btn-secondary" data-action="li-go-docs" data-id=${job.id}>Documents</button>
+        ${held !== undefined && held.holdback_direction === "RECEIVABLE"
+          ? html`<button type="button" class="btn btn-secondary" data-action="li-release-open" data-id=${job.id}>Release</button>`
+          : nothing}
+      </div>
+    </section>
+  `;
+}
+
+function jobs(model: LiensModel): TemplateResult {
+  const selected = model.jobs.find((j) => j.id === model.selectedJob);
+  return html`
+    <div class="li-split">
+      <section class="li-panel">
+        <div class="li-panel-head">
+          <h2>Jobs</h2>
+          <button type="button" class="btn btn-secondary" data-action="li-new-job">New job</button>
+        </div>
+        <p class="li-dim">The jobs a holdback and its release attach to, newest first.</p>
+        ${model.jobs.length === 0
+          ? empty("jobs", "No jobs yet", "Create the first job to start recording its holdback.")
+          : html`
+              <div class="li-scroll li-hide-narrow">
+                <table aria-label="Jobs">
+                  <thead><tr><th>Job</th><th>Branch</th><th>Holdback</th><th class="num">Contract</th><th>Status</th><th></th></tr></thead>
+                  <tbody>${model.jobs.map((j) => jobRow(model, j))}</tbody>
+                </table>
+              </div>
+              <ul class="li-cards">${model.jobs.map((j) => jobCard(model, j))}</ul>
+            `}
+      </section>
+      <div>
+        ${model.newJob
+          ? jobForm(model)
+          : selected !== undefined
+            ? jobPanel(model, selected)
+            : html`<section class="li-panel" data-job-hint><p class="li-dim">Open a job to see its facts, sync its holdbacks and reach its documents.</p></section>`}
+      </div>
+    </div>
+  `;
+}
+
+// ---- holdbacks and the release ----------------------------------------------------------------------
+
+function agingRow(model: LiensModel, r: LienAgingRow): TemplateResult {
+  const open = model.release?.jobId === r.job_id;
+  const status = releaseStatusWord(r.holdback_direction, r.release_eligible);
+  return html`
+    <tr data-row="aging" data-job-no=${r.job_no} aria-current="${open ? "true" : "false"}">
+      <td><strong class="li-mono">${r.job_no}</strong></td>
+      <td>${branchName(model.branches, r.branch_id)}</td>
+      <td>${directionWord(r.holdback_direction)}</td>
+      <td class="num">${formatMoney(r.outstanding_cents)}</td>
+      <td class="num">${ageWords(r.oldest_days)}</td>
+      <td>${bucketWord(r.bucket)}</td>
+      <td>${pill(r.release_eligible ? "watch" : "plain", status)}</td>
+      <td>${r.holdback_direction === "RECEIVABLE" ? html`<button type="button" class="li-link" data-action="li-release-open" data-id=${r.job_id} aria-pressed="${open ? "true" : "false"}">Release</button>` : nothing}</td>
+    </tr>
+  `;
+}
+
+function agingCard(model: LiensModel, r: LienAgingRow): TemplateResult {
+  const open = model.release?.jobId === r.job_id;
+  const status = releaseStatusWord(r.holdback_direction, r.release_eligible);
+  return html`
+    <li class="li-card" data-row="aging" data-job-no=${r.job_no} aria-current="${open ? "true" : "false"}">
+      <div class="li-card-top"><strong class="li-mono">${r.job_no}</strong>${pill(r.release_eligible ? "watch" : "plain", status)}</div>
+      <div class="li-card-amount">${formatMoney(r.outstanding_cents)} <span class="li-dim">· ${ageWords(r.oldest_days)} · ${bucketWord(r.bucket)}</span></div>
+      <span class="li-sub">${branchName(model.branches, r.branch_id)} · ${directionWord(r.holdback_direction)}</span>
+      ${r.holdback_direction === "RECEIVABLE" ? html`<button type="button" class="li-link" data-action="li-release-open" data-id=${r.job_id} aria-pressed="${open ? "true" : "false"}">Release</button>` : nothing}
+    </li>
+  `;
+}
+
+function releasePanel(model: LiensModel, release: ReleaseModel): TemplateResult {
+  const row = agingOf(model, release.jobId);
+  const jobNo = row?.job_no ?? jobNoOf(model.jobs, release.jobId);
+  const amount = row === undefined ? "" : formatMoney(row.outstanding_cents);
+  const people = cosigners(release.people, model.userId);
+  return html`
+    <section class="li-panel" data-release-panel tabindex="-1" role="region" aria-label="Release holdback">
+      <div class="li-panel-head"><h2>Release holdback</h2></div>
+      <dl class="li-facts">
+        <dt>Job</dt><dd>${jobNo}</dd>
+        <dt>Held</dt><dd>${amount === "" ? "Nothing held now." : amount}</dd>
+        ${row === undefined ? nothing : html`<dt>Oldest</dt><dd>${ageWords(row.oldest_days)}, ${bucketWord(row.bucket)}</dd>`}
+      </dl>
+      ${!model.canRelease
+        ? html`
+            <p class="li-note">${refusalWords("release", "", 403)}</p>
+            <div class="li-actions"><button type="button" class="btn btn-secondary" data-action="li-release-close">Close</button></div>
+          `
+        : release.roster === "loading"
+          ? loading("Loading the staff who can co-sign.")
+          : release.roster === "refused"
+            ? html`
+                <p class="li-alert li-alert-error" role="alert" data-error>${release.rosterError}</p>
+                <div class="li-actions"><button type="button" class="btn btn-secondary" data-action="li-release-close">Close</button></div>
+              `
+            : html`
+                <label class="li-field">Co-signer
+                  <select data-field="cosigner" aria-label="Co-signer"><option data-id="">Pick a co-signer</option>${people.map((p) => html`<option data-id=${p.user_id}>${p.display_name}</option>`)}</select>
+                </label>
+                <p class="li-hint">A Financial Controller or Payables and Receivables reviews the release with you. The core checks who they are.</p>
+                ${row === undefined
+                  ? html`<p class="li-hint" data-nothing-held>Nothing is held on this job now, so there is nothing to release.</p>`
+                  : html`<p class="li-confirm" data-confirm-words>${releaseConfirmWords(jobNo, amount)}</p>`}
+                <div class="li-actions">
+                  <button type="button" class="btn btn-primary" data-action="li-release-confirm" ?disabled=${model.busy || row === undefined}>Confirm release</button>
+                  <button type="button" class="btn btn-secondary" data-action="li-release-close">Cancel</button>
+                </div>
+              `}
+    </section>
+  `;
+}
+
+function holdbacks(model: LiensModel): TemplateResult {
+  return html`
+    <div class="li-split">
+      <section class="li-panel">
+        <div class="li-panel-head"><h2>Holdback aging</h2></div>
+        <p class="li-dim">What is held back by job, how long it has been held, and whether it is ready to release.</p>
+        ${model.aging.length === 0
+          ? empty("aging", "No holdback is outstanding", "Everything held has been released, or nothing is held yet.")
+          : html`
+              <div class="li-scroll li-hide-narrow">
+                <table aria-label="Holdback aging">
+                  <thead><tr><th>Job</th><th>Branch</th><th>Holdback</th><th class="num">Held</th><th class="num">Oldest</th><th>Age</th><th>Release</th><th></th></tr></thead>
+                  <tbody>${model.aging.map((r) => agingRow(model, r))}</tbody>
+                </table>
+              </div>
+              <ul class="li-cards">${model.aging.map((r) => agingCard(model, r))}</ul>
+            `}
+      </section>
+      ${model.release === null ? nothing : html`<div>${releasePanel(model, model.release)}</div>`}
+    </div>
+  `;
+}
+
+// ---- documents --------------------------------------------------------------------------------------
+
+function docRow(d: LienDocument, jobNo: string): TemplateResult {
+  return html`
+    <tr data-row="doc" data-job-no=${jobNo} data-kind=${d.template_kind}>
+      <td><strong>${templateWord(d.template_kind)}</strong></td>
+      <td class="num">Version ${d.version}</td>
+      <td>${pill(documentTone(d.status), documentStatusWord(d.status))}</td>
+      <td>${stamp(d.created_at)}</td>
+      <td class="li-nowrap"><button type="button" class="li-link" data-action="li-view" data-id=${d.id}>View</button> <button type="button" class="li-link" data-action="li-history" data-id=${d.id}>History</button></td>
+    </tr>
+  `;
+}
+
+function docCard(d: LienDocument, jobNo: string): TemplateResult {
+  return html`
+    <li class="li-card" data-row="doc" data-job-no=${jobNo} data-kind=${d.template_kind}>
+      <div class="li-card-top"><strong>${templateWord(d.template_kind)}</strong>${pill(documentTone(d.status), documentStatusWord(d.status))}</div>
+      <span class="li-sub">Version ${d.version} · ${stamp(d.created_at)}</span>
+      <div class="li-actions"><button type="button" class="li-link" data-action="li-view" data-id=${d.id}>View</button> <button type="button" class="li-link" data-action="li-history" data-id=${d.id}>History</button></div>
+    </li>
+  `;
+}
+
+function versionRow(d: LienDocument, jobNo: string): TemplateResult {
+  return html`
+    <tr data-row="version" data-job-no=${jobNo}>
+      <td class="num">Version ${d.version}</td>
+      <td>${pill(documentTone(d.status), documentStatusWord(d.status))}</td>
+      <td>${stamp(d.created_at)}</td>
+      <td><button type="button" class="li-link" data-action="li-view" data-id=${d.id}>View</button></td>
+    </tr>
+  `;
+}
+
+function versionCard(d: LienDocument, jobNo: string): TemplateResult {
+  return html`
+    <li class="li-card" data-row="version" data-job-no=${jobNo}>
+      <div class="li-card-top"><strong>Version ${d.version}</strong>${pill(documentTone(d.status), documentStatusWord(d.status))}</div>
+      <span class="li-sub">${stamp(d.created_at)}</span>
+      <button type="button" class="li-link" data-action="li-view" data-id=${d.id}>View</button>
+    </li>
+  `;
+}
+
+function renderForm(model: LiensModel): TemplateResult {
+  const fields = templateFields(model.docKind);
+  return html`
+    <section class="li-panel">
+      <div class="li-panel-head"><h2>Render a document</h2></div>
+      <div class="li-form">
+        <label class="li-field">Form
+          <select data-field="doc_kind" aria-label="Form">${TEMPLATE_KINDS.map((k) => html`<option data-id=${k}>${templateWord(k)}</option>`)}</select>
+        </label>
+        ${fields.map((f) => html`<label class="li-field" data-merge-field>${f.label}<input data-field="merge" data-key=${f.key} aria-label=${f.label} autocomplete="off" /></label>`)}
+      </div>
+      <p class="li-hint">A blank field prints as a blank line for the form. A second render of the same form is its next version.</p>
+      <div class="li-actions"><button type="button" class="btn btn-primary" data-action="li-render" ?disabled=${model.busy || model.docJob === ""}>Render draft</button></div>
+    </section>
+  `;
+}
+
+function documents(model: LiensModel): TemplateResult {
+  const jobNo = jobNoOf(model.jobs, model.docJob);
+  return html`
+    <div class="li-toolbar">
+      <label class="li-field">Job
+        <select data-field="doc_job" aria-label="Job">${model.jobs.map((j) => html`<option data-id=${j.id}>${j.job_no}</option>`)}</select>
+      </label>
+    </div>
+    ${model.jobs.length === 0
+      ? html`<section class="li-panel">${empty("jobs", "No jobs yet", "Create a job on the Jobs tab, then render its documents here.")}</section>`
+      : html`
+          <div class="li-split">
+            <div>
+              ${renderForm(model)}
+              <section class="li-panel">
+                <div class="li-panel-head"><h2>Documents for ${jobNo}</h2></div>
+                ${model.docsPhase === "loading"
+                  ? loading("Loading the documents.")
+                  : model.docs.length === 0
+                    ? html`<div class="li-empty" data-doc-empty><strong>No documents for this job yet.</strong><span class="li-dim">Render a form above and it lands here as a draft.</span></div>`
+                    : html`
+                        <div class="li-scroll li-hide-narrow">
+                          <table aria-label="Documents">
+                            <thead><tr><th>Form</th><th class="num">Latest</th><th>Status</th><th>Rendered</th><th></th></tr></thead>
+                            <tbody>${model.docs.map((d) => docRow(d, jobNo))}</tbody>
+                          </table>
+                        </div>
+                        <ul class="li-cards">${model.docs.map((d) => docCard(d, jobNo))}</ul>
+                      `}
+              </section>
+              ${model.versions === null
+                ? nothing
+                : html`
+                    <section class="li-panel" data-versions>
+                      <div class="li-panel-head"><h2>Version history</h2><button type="button" class="li-link" data-action="li-close-history">Close</button></div>
+                      <div class="li-scroll li-hide-narrow">
+                        <table aria-label="Versions">
+                          <thead><tr><th class="num">Version</th><th>Status</th><th>Rendered</th><th></th></tr></thead>
+                          <tbody>${model.versions.map((d) => versionRow(d, jobNo))}</tbody>
+                        </table>
+                      </div>
+                      <ul class="li-cards">${model.versions.map((d) => versionCard(d, jobNo))}</ul>
+                    </section>
+                  `}
+            </div>
+            <div>${documentView(model.viewing)}</div>
+          </div>
+        `}
+  `;
+}
+
+function documentView(doc: LienDocument | null): TemplateResult {
+  if (doc === null) {
+    return html`<section class="li-panel" data-doc-hint><p class="li-dim">Render a form, or open one from the list, to read it here.</p></section>`;
+  }
+  return html`
+    <section class="li-panel">
+      <div class="li-panel-head"><h2>${templateWord(doc.template_kind)}, version ${doc.version}</h2>${pill(documentTone(doc.status), documentStatusWord(doc.status))}</div>
+      ${doc.is_draft_banner ? html`<p class="li-hint">This is a draft. The core words the banner at its head.</p>` : nothing}
+      <pre class="li-pre" data-doc-view>${doc.rendered_content}</pre>
+    </section>
+  `;
+}
+
+// ---- the whole area ---------------------------------------------------------------------------------
+
+export function renderLiens(model: LiensModel): TemplateResult {
+  return html`
+    <div data-liens>
+      <header class="li-head">
+        <h1>Liens</h1>
+        <p class="li-dim">Holdback, release and lien documents for the jobs we are on. Demo data only.</p>
+      </header>
+      ${model.phase === "loading"
+        ? loading("Loading the liens.")
+        : model.phase === "error"
+          ? loadFailed(model.error, "li-reload")
+          : html`
+              ${bannerStrip(model.banner, model.bannerState)} ${tabs(model)} ${messages(model.error, model.notice)}
+              ${model.tab === "triage" ? triage(model) : model.tab === "jobs" ? jobs(model) : model.tab === "holdbacks" ? holdbacks(model) : documents(model)}
+            `}
+    </div>
+  `;
+}

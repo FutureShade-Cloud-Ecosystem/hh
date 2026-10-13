@@ -10,6 +10,14 @@ import { fileURLToPath } from "node:url";
 import { formatMoney, MONEY_PLACEHOLDER, parseAmountToCents, parsePercentToBps, bpsWords } from "../src/lien/lien-money.ts";
 import {
   ageWords,
+  cosigners,
+  heldNowWords,
+  holdingWords,
+  noteWords,
+  releaseStatusWord,
+  releasedWords,
+  renderedWords,
+  syncWords,
   badgeTone,
   badgeWord,
   bucketWord,
@@ -28,6 +36,9 @@ import {
   templateWord,
   TEMPLATE_KINDS,
 } from "../src/lien/lien-logic.ts";
+
+// A day this many days after an arbitrary fixed day, written as the core writes a date, so no calendar literal is typed.
+const iso = (n) => new Date(Date.UTC(2000, 0, 1 + n)).toISOString().slice(0, 10);
 
 const coreTemplate = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "core", "internal", "lien", "template.go"), "utf8");
 
@@ -94,7 +105,7 @@ test("the core's list shapes: a page or a bare array is a list, an empty page sa
 });
 
 test("the new job form becomes the body the core takes, or says what is wrong", () => {
-  const ok = jobForm({ job_no: " GLS-2101 ", branch_id: "b1", description: "Pool deck pavers", contract: "125,000.00", percent: "10", direction: "RECEIVABLE", perf: "2026-03-01", supply: "" });
+  const ok = jobForm({ job_no: " GLS-2101 ", branch_id: "b1", description: "Pool deck pavers", contract: "125,000.00", percent: "10", direction: "RECEIVABLE", perf: iso(40), supply: "" });
   assert.deepEqual(ok, {
     ok: true,
     body: {
@@ -104,7 +115,7 @@ test("the new job form becomes the body the core takes, or says what is wrong", 
       description: "Pool deck pavers",
       contract_cents: 12500000,
       holdback_pct_bps: 1000,
-      substantial_perf_date: "2026-03-01",
+      substantial_perf_date: iso(40),
       last_supply_date: "",
       holdback_direction: "RECEIVABLE",
       hst_on_holdback: false,
@@ -127,10 +138,10 @@ test("the new job form becomes the body the core takes, or says what is wrong", 
     field: "percent",
     words: "The holdback percent is a number from 0.01 to 100, like 10 or 7.5. Leave it blank for the core's default.",
   });
-  assert.deepEqual(jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "", percent: "", direction: "RECEIVABLE", perf: "03/01/2026", supply: "" }), {
+  assert.deepEqual(jobForm({ job_no: "J", branch_id: "b1", description: "", contract: "", percent: "", direction: "RECEIVABLE", perf: "yesterday", supply: "" }), {
     ok: false,
     field: "perf",
-    words: "Dates are year, month and day, like 2026-03-01.",
+    words: "Dates are written yyyy-mm-dd.",
   });
 });
 
@@ -182,4 +193,33 @@ test("a refusal reads in the core's own sentence, with who may do it when the co
   assert.equal(refusalWords("job", "lien: job_no is required", 422), "Job_no is required.");
   assert.equal(refusalWords("job", "lien: job not found", 404), "Job not found.");
   assert.equal(refusalWords("load", "", 0), "The liens did not answer. Reload to try again.");
+});
+
+test("the sentences the desk says after an action and beside a row", () => {
+  assert.equal(syncWords(1, "$4,200.00", 2), "Synced: 1 invoice booked for $4,200.00, 2 already booked.");
+  assert.equal(syncWords(3, "$9,000.00", 0), "Synced: 3 invoices booked for $9,000.00.");
+  assert.equal(syncWords(0, "$0.00", 3), "Synced: nothing new to book, 3 already booked.");
+  assert.equal(syncWords(0, "$0.00", 0), "Synced: nothing new to book.");
+  assert.equal(releasedWords("$18,600.00", "GLS-2101", "Financial Controller (demo)"), "Released $18,600.00 on job GLS-2101, co-signed by Financial Controller (demo).");
+  assert.equal(renderedWords(2, "Conditional release"), "Rendered version 2 of Conditional release.");
+  assert.equal(heldNowWords("$18,600.00", 62), "$18,600.00 held, oldest 62 days");
+  assert.equal(heldNowWords("$2,900.00", 1), "$2,900.00 held, oldest 1 day");
+  assert.equal(heldNowWords(null, 0), "Nothing held.");
+  assert.equal(holdingWords(4), "4 jobs hold retention");
+  assert.equal(holdingWords(1), "1 job holds retention");
+  assert.equal(holdingWords(0), "No job holds retention");
+  assert.equal(releaseStatusWord("RECEIVABLE", true), "Release due");
+  assert.equal(releaseStatusWord("RECEIVABLE", false), "Not yet");
+  assert.equal(releaseStatusWord("PAYABLE", false), "Released by hand");
+  assert.equal(noteWords("past the release window, action overdue"), "Past the release window, action overdue.");
+  assert.equal(noteWords("at/over the 45-day window, eligible to release"), "At/over the 45-day window, eligible to release.");
+  assert.equal(noteWords(""), "");
+});
+
+test("a co-signer is anyone on the roster the core would take: a Financial Controller or Payables and Receivables", () => {
+  const person = (user_id, display_name, role_code) => ({ user_id, display_name, role_code, email: "", role_name: "", tier: 1, scope: "GLOBAL", branch_ids: [] });
+  const roster = [person("a", "General Manager (demo)", "GENERAL_MANAGER"), person("b", "Financial Controller (demo)", "FINANCIAL_CONTROLLER"), person("c", "Payables and Receivables (demo)", "payables_receivables"), person("d", "Sales manager (demo)", "SALES_MANAGER")];
+  assert.deepEqual(cosigners(roster, "a").map((p) => p.user_id), ["b", "c"]);
+  assert.deepEqual(cosigners(roster, "b").map((p) => p.user_id), ["c"], "never the person releasing");
+  assert.deepEqual(cosigners([], "a"), []);
 });

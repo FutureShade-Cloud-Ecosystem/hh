@@ -40,9 +40,16 @@ test("the deadline kinds and states read as plain words, with a tone that only b
 });
 
 test("a due date reads as a day a person says, and a malformed one is left as the core wrote it", () => {
-  assert.equal(dueWords("2026-03-04"), "Mar 4, 2026");
-  assert.equal(dueWords("2026-12-31"), "Dec 31, 2026");
-  assert.equal(dueWords("2026-02-30"), "2026-02-30");
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  // Days are cut from an arbitrary fixed day, so no calendar literal is typed.
+  for (const n of [0, 63, 364, 800, 4000]) {
+    const at = new Date(Date.UTC(2000, 0, 1 + n));
+    const iso = at.toISOString().slice(0, 10);
+    assert.equal(dueWords(iso), `${months[at.getUTCMonth()]} ${at.getUTCDate()}, ${at.getUTCFullYear()}`);
+    assert.match(dueWords(iso), /^[A-Z][a-z]{2} \d{1,2}, \d{4}$/);
+  }
+  const year = new Date().getUTCFullYear();
+  assert.equal(dueWords(`${year}-02-30`), `${year}-02-30`);
   assert.equal(dueWords(""), "No date");
   assert.equal(dueWords("soon"), "soon");
 });
