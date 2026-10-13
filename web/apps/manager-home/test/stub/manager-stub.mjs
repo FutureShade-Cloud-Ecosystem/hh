@@ -776,7 +776,17 @@ const QUICK_ACTION = {
   default_enabled: true,
   default_profiles: { counter: true, yard: false, driver: false, manager: true, admin: true },
 };
-const QUICK_BASE_SHAPE = { "manager.yard": "yard", "manager.sales": "manager" };
+// The core's ManagerBaseShape, all eight rows (core/internal/dashboard/model.go).
+const QUICK_BASE_SHAPE = {
+  "manager.branch": "manager",
+  "manager.sales": "manager",
+  "manager.yard": "yard",
+  "manager.logistics": "yard",
+  "manager.procurement": "manager",
+  "manager.payables": "manager",
+  "manager.controller": "manager",
+  "manager.general": "admin",
+};
 let quickConfigs;
 
 function quickDefaultVisible(profile) {

@@ -372,6 +372,19 @@ test("the quick-actions config view is the admin's alone, and answers the contra
   assert.equal(row.profiles.admin, true);
   assert.equal(row.profiles.yard, false);
   assert.equal(row.profiles.driver, false, "the shipped default resolves every shape, so no cell is blank");
+  // Each manager shape resolves through the core's ManagerBaseShape: all eight rows, copied from model.go.
+  const baseShape = {
+    "manager.branch": "manager", "manager.sales": "manager", "manager.yard": "yard", "manager.logistics": "yard",
+    "manager.procurement": "manager", "manager.payables": "manager", "manager.controller": "manager", "manager.general": "admin",
+  };
+  for (const [shape, base] of Object.entries(baseShape)) {
+    const word = (name) => name.split(".").map((w) => w[0].toUpperCase() + w.slice(1)).join("");
+    const pattern = new RegExp(`Profile${word(shape)}:\\s+Profile${word(base)},`);
+    assert.ok(pattern.test(coreSource), `the core's ManagerBaseShape has no row ${shape} -> ${base}`);
+    assert.equal(row.profiles[shape], row.profiles[base], `${shape} does not resolve as its base shape ${base}`);
+  }
+  assert.equal(row.profiles["manager.branch"], true);
+  assert.equal(row.profiles["manager.general"], true);
 
   // The edit lands, and the answer is the action as it now resolves.
   const saved = await call("PUT", "/api/v1/quick-actions/config/sale.new", {
