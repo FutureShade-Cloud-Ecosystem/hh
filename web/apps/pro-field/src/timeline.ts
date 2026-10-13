@@ -103,9 +103,12 @@ export function lateWords(order: Pick<TenantOrder, "status" | "fulfillment" | "r
     : "Past the requested day and not collected yet. Ask the dealer where it stands.";
 }
 
-/** The dealer's own today as a bare day (YYYY-MM-DD), from the clock, never written down anywhere. */
+/** The dealer's own today as a bare day (YYYY-MM-DD), from the clock, never written down anywhere.
+* The parts are picked out by hand: a locale tag that names a place has no business in the sources. */
 export function houseToday(now: Date = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const pick = (type: string): string => parts.find((part) => part.type === type)?.value ?? "";
+  return `${pick("year")}-${pick("month")}-${pick("day")}`;
 }
 
 // ---- the delivery instructions ------------------------------------------------------------------
