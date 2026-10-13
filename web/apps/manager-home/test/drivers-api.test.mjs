@@ -6,22 +6,29 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { rowsForBoard, toDispatchBoard, toDispatchDriver, toDispatchRun, toDispatchStop, toDispatchTruck, truckWords } from "../src/drivers-api.ts";
 
+// The suite's relative stamps: every instant derives from one module clock,
+// never a calendar date.
+const NOW = Date.now();
+const minutesAgo = (m) => new Date(NOW - m * 60000).toISOString();
+const DISPATCHED_AT = minutesAgo(180);
+const CREATED_AT = minutesAgo(240);
+
 test("a run projects through the whitelist: the row's fields in, everything else dropped", () => {
   const run = toDispatchRun({
     id: "run-1",
     run_no: "RUN-1",
     branch_id: "b1",
-    scheduled_date: "2026-10-12",
+    scheduled_date: new Date(NOW).toISOString().slice(0, 10),
     status: "DISPATCHED",
     truck_id: "t1",
     driver_id: "d1",
     truck_code: "T1",
     driver_name: "Driver persona (demo)",
     notes: "the truck carries a boom",
-    dispatched_at: "2026-10-12T07:00:00Z",
+    dispatched_at: DISPATCHED_AT,
     completed_at: null,
     stop_count: 3,
-    created_at: "2026-10-12T06:00:00Z",
+    created_at: CREATED_AT,
     commit_state: "AUTO",
     reopened_at: "",
     reopen_reason: "",
@@ -29,7 +36,7 @@ test("a run projects through the whitelist: the row's fields in, everything else
   assert.equal(run.status, "DISPATCHED");
   assert.equal(run.driver_name, "Driver persona (demo)");
   assert.equal(run.stop_count, 3);
-  assert.equal(run.dispatched_at, "2026-10-12T07:00:00Z");
+  assert.equal(run.dispatched_at, DISPATCHED_AT);
   assert.equal(run.completed_at, null);
   assert.equal("notes" in run, false, "a field the screen does not read is dropped at the door");
   assert.equal("commit_state" in run, false);
@@ -54,12 +61,12 @@ test("a stop projects with its place in the day and its status timestamps", () =
     status: "EN_ROUTE",
     address_line: "12 invented street",
     city: "Stonebridge",
-    loaded_at: "2026-10-12T06:30:00Z",
+    loaded_at: minutesAgo(210),
     en_route_at: null,
     delivered_at: null,
     reopened_at: null,
     photo_count: 0,
-    created_at: "2026-10-12T05:00:00Z",
+    created_at: CREATED_AT,
   });
   assert.equal(stop.run_id, "run-1");
   assert.equal(stop.stop_no, 2);
@@ -72,8 +79,8 @@ test("a stop projects with its place in the day and its status timestamps", () =
 test("the board projects into runs, stops and the unassigned lane", () => {
   const board = toDispatchBoard({
     branch_id: "b1",
-    date: "2026-10-12",
-    runs: [{ id: "run-1", run_no: "RUN-1", status: "PLANNED", stop_count: 1, created_at: "2026-10-12T06:00:00Z" }],
+    date: new Date(NOW).toISOString().slice(0, 10),
+    runs: [{ id: "run-1", run_no: "RUN-1", status: "PLANNED", stop_count: 1, created_at: CREATED_AT }],
     stops: [{ id: "stop-1", run_id: "run-1", stop_no: 1, status: "READY" }],
     unassigned: [{ id: "stop-9", run_id: null, stop_no: 1, status: "READY" }],
   });
@@ -98,14 +105,14 @@ test("a driver and a truck project to their registry facts", () => {
 test("one row is built per run, from that run's own stops only", () => {
   const board = toDispatchBoard({
     branch_id: "b1",
-    date: "2026-10-12",
+    date: new Date(NOW).toISOString().slice(0, 10),
     runs: [
-      { id: "run-1", run_no: "RUN-1", status: "DISPATCHED", driver_id: "d1", driver_name: "Driver persona (demo)", truck_code: "T1", truck_id: "t1", stop_count: 2, created_at: "2026-10-12T06:00:00Z", dispatched_at: "2026-10-12T07:00:00Z" },
-      { id: "run-2", run_no: "RUN-2", status: "PLANNED", driver_id: "d2", driver_name: "Driver two (demo)", truck_code: "", truck_id: "t2", stop_count: 1, created_at: "2026-10-12T06:30:00Z" },
+      { id: "run-1", run_no: "RUN-1", status: "DISPATCHED", driver_id: "d1", driver_name: "Driver persona (demo)", truck_code: "T1", truck_id: "t1", stop_count: 2, created_at: CREATED_AT, dispatched_at: DISPATCHED_AT },
+      { id: "run-2", run_no: "RUN-2", status: "PLANNED", driver_id: "d2", driver_name: "Driver two (demo)", truck_code: "", truck_id: "t2", stop_count: 1, created_at: minutesAgo(210) },
     ],
     stops: [
       { id: "stop-3", run_id: "run-1", stop_no: 2, status: "READY" },
-      { id: "stop-1", run_id: "run-1", stop_no: 1, status: "DELIVERED", delivered_at: "2026-10-12T07:40:00Z" },
+      { id: "stop-1", run_id: "run-1", stop_no: 1, status: "DELIVERED", delivered_at: minutesAgo(140) },
       { id: "stop-9", run_id: null, stop_no: 1, status: "READY" },
       { id: "stop-4", run_id: "run-2", stop_no: 1, status: "READY" },
     ],

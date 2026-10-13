@@ -18,6 +18,15 @@ import {
   stopStatusWord,
 } from "../src/drivers-logic.ts";
 
+// The suite's relative stamps: every instant derives from one module clock,
+// never a calendar date. The clock rides the call where a function takes now.
+const NOW = Date.now();
+const minutesAgo = (m) => new Date(NOW - m * 60000).toISOString();
+const CREATED_AT = minutesAgo(240);
+const DISPATCHED_AT = minutesAgo(180);
+const DELIVERED_AT = minutesAgo(140);
+const EN_ROUTE_AT = minutesAgo(120);
+
 // A dispatched run with two stops, the second of them en route: the walking
 // case the board's first group is drawn from.
 const enRouteRun = {
@@ -29,8 +38,8 @@ const enRouteRun = {
   truck_id: "truck-1",
   truck_code: "T1",
   stop_count: 3,
-  created_at: "2026-10-12T06:00:00Z",
-  dispatched_at: "2026-10-12T07:00:00Z",
+  created_at: CREATED_AT,
+  dispatched_at: DISPATCHED_AT,
   completed_at: null,
   reopened_at: "",
 };
@@ -39,9 +48,9 @@ const deliveredStop = {
   run_id: "run-1",
   stop_no: 1,
   status: "DELIVERED",
-  loaded_at: "2026-10-12T06:30:00Z",
-  en_route_at: "2026-10-12T07:00:00Z",
-  delivered_at: "2026-10-12T07:40:00Z",
+  loaded_at: minutesAgo(210),
+  en_route_at: DISPATCHED_AT,
+  delivered_at: DELIVERED_AT,
   reopened_at: null,
 };
 const enRouteStop = {
@@ -49,8 +58,8 @@ const enRouteStop = {
   run_id: "run-1",
   stop_no: 2,
   status: "EN_ROUTE",
-  loaded_at: "2026-10-12T06:30:00Z",
-  en_route_at: "2026-10-12T08:00:00Z",
+  loaded_at: minutesAgo(210),
+  en_route_at: EN_ROUTE_AT,
   delivered_at: null,
   reopened_at: null,
 };
@@ -102,30 +111,31 @@ test("the row counts the stops done, left and did not go", () => {
 
 test("the last change is the newest status timestamp on the run or any of its stops", () => {
   const row = buildDriverRow(enRouteRun, [deliveredStop, enRouteStop, readyStop]);
-  assert.equal(row.last_changed_at, "2026-10-12T08:00:00Z");
+  assert.equal(row.last_changed_at, EN_ROUTE_AT);
 });
 
 test("a run with no transition timestamps falls back to the run's own creation", () => {
+  const opened = minutesAgo(285);
   const row = buildDriverRow(
-    { ...enRouteRun, status: "PLANNED", dispatched_at: null, completed_at: null, created_at: "2026-10-12T05:15:00Z" },
+    { ...enRouteRun, status: "PLANNED", dispatched_at: null, completed_at: null, created_at: opened },
     [],
   );
-  assert.equal(row.last_changed_at, "2026-10-12T05:15:00Z");
+  assert.equal(row.last_changed_at, opened);
   assert.equal(row.group, "not-started");
 });
 
 test("the four groups sit in the brief's order, empty ones are dropped, and the freshest row leads", () => {
   const planned = buildDriverRow(
-    { ...enRouteRun, id: "run-2", run_no: "RUN-2", status: "PLANNED", dispatched_at: null, created_at: "2026-10-12T06:00:00Z" },
+    { ...enRouteRun, id: "run-2", run_no: "RUN-2", status: "PLANNED", dispatched_at: null, created_at: CREATED_AT },
     [],
   );
   const completed = buildDriverRow(
-    { ...enRouteRun, id: "run-3", run_no: "RUN-3", status: "COMPLETED", completed_at: "2026-10-12T12:00:00Z" },
+    { ...enRouteRun, id: "run-3", run_no: "RUN-3", status: "COMPLETED", completed_at: minutesAgo(60) },
     [deliveredStop, { ...enRouteStop, status: "DELIVERED" }],
   );
   const slowOnStop = buildDriverRow({ ...enRouteRun, id: "run-4", run_no: "RUN-4" }, [
     deliveredStop,
-    { ...enRouteStop, en_route_at: "2026-10-12T07:30:00Z" },
+    { ...enRouteStop, en_route_at: minutesAgo(150) },
   ]);
   const fastOnStop = buildDriverRow(enRouteRun, [deliveredStop, enRouteStop]);
   const between = buildDriverRow({ ...enRouteRun, id: "run-5", run_no: "RUN-5" }, [deliveredStop, { ...enRouteStop, status: "LOADED" }]);
@@ -163,13 +173,12 @@ test("run and stop statuses carry the original board's words; an unknown one is 
 });
 
 test("the time since the last change reads in minutes, hours and days; unparsable answers nothing", () => {
-  const now = Date.parse("2026-10-12T10:00:00Z");
-  assert.equal(sinceWords("2026-10-12T09:56:00Z", now), "4m ago");
-  assert.equal(sinceWords("2026-10-12T08:00:00Z", now), "2h ago");
-  assert.equal(sinceWords("2026-10-10T10:00:00Z", now), "2d ago");
-  assert.equal(sinceWords("2026-10-12T09:59:40Z", now), "under a minute");
-  assert.equal(sinceWords("not-a-time", now), "");
-  assert.equal(sinceWords("", now), "");
+  assert.equal(sinceWords(minutesAgo(4), NOW), "4m ago");
+  assert.equal(sinceWords(minutesAgo(120), NOW), "2h ago");
+  assert.equal(sinceWords(minutesAgo(2880), NOW), "2d ago");
+  assert.equal(sinceWords(minutesAgo(0.3), NOW), "under a minute");
+  assert.equal(sinceWords("not-a-time", NOW), "");
+  assert.equal(sinceWords("", NOW), "");
 });
 
 test("the row's stop position reads as stop n of m, and answers nothing when there is no current stop", () => {
