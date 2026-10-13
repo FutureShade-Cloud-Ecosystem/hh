@@ -8,13 +8,14 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/sinks.test.mjs test/logic.test.mjs test/api.test.mjs test/admin-logic.test.mjs test/admin-api.test.mjs test/config.test.mjs test/settings.test.mjs test/pricing-logic.test.mjs test/pricing-controller.test.mjs && playwright test"
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/unit.test.mjs test/no-signal.test.mjs test/sinks.test.mjs test/logic.test.mjs test/api.test.mjs test/admin-logic.test.mjs test/admin-api.test.mjs test/config.test.mjs test/settings.test.mjs test/pricing-logic.test.mjs test/pricing-controller.test.mjs && playwright test"
   },
   "dependencies": {
     "@hardscapehouse/api-client": "0.0.0",
     "@hardscapehouse/auth": "0.0.0",
     "@hardscapehouse/design-system": "0.0.0",
     "@hardscapehouse/pos-kit": "0.0.0",
+    "@hardscapehouse/work-offline": "0.0.0",
     "lit": "3.3.3"
   },
   "devDependencies": {

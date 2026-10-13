@@ -33,14 +33,48 @@ signal" state, which is the shell chrome and the apps' work in item 8b.
 
 ## What ships inside the profile
 
-`assemble-dist.sh` (run by `beforeBuildCommand`) builds the front door and
-every Work app's web bundle with the demo image's flags
-(`deploy/demo/Dockerfile`) and assembles the launcher entry `dist/`: the
-front door at the root is the entry (sign in and the role picker) until the
-shell chrome mounts in item 8b; each desk app sits at the path the front
-door's tile opens; `profile.json` carries the generated profile data. Apps
-with no web bundle yet (House Messages) are
-skipped with a note. Like Field's, it needs a git checkout and bash.
+`assemble-dist.sh` (run by `beforeBuildCommand`) builds the Work shell host
+(`web/apps/work-shell`), the front door and every Work app's web bundle with
+the demo image's flags (`deploy/demo/Dockerfile`) and assembles the launcher
+entry `dist/`: the host at the root is the entry; the front door is a page
+under it at `/door/` (the host's sign in and role picker); each desk app sits
+at the path the front door's tile opens; `profile.json` carries the generated
+profile data and `launch.json` the `{app id: serve path}` of every bundle
+shipped, written from the script's `LAUNCH_MAP`. Apps with no web bundle yet
+(House Messages) are skipped with a note. Like Field's, it needs a git
+checkout and bash.
+
+## The host (item 8c)
+
+`web/apps/work-shell` is the one page the window opens. It mounts the shell
+chrome (`web/packages/shell-chrome`): the header band with the app and surface
+selector built from `profile.json` by the signed in role, the pin control, the
+sync chip and the account chip with Switch role, the offline banner, and the
+collapsed rail of the person's own pins. The role's landing is derived from the
+role catalog (a manager role lands on Manager Home, D48 and Q8; every other
+role on the first app of its catalog list that its switcher holds). The
+selected desk app runs in a frame of the content area, because each app is a
+complete bundle at its own base and registers the same custom element names as
+the others; the CSP therefore carries `frame-src 'self'` and `frame-ancestors
+'self'` (it opens no remote origin). Switch role clears the session and returns
+to the front door's picker; pins and per user stores stay for their person.
+In the shell the host tries the auth package's controller over the four Rust
+commands first (a shell with no Console configuration answers `unavailable`),
+then the front door's demo mint.
+
+## The shell proof (feature `shell-proof`)
+
+Off by default and compiled out of every shipped build (the webview cannot turn
+it on: it is a cargo feature, and its one command only prints and exits). Built
+with `cargo build -p hh-work --features shell-proof` after `assemble-dist.sh`
+and run under `xvfb-run -a`, it injects `proof.js` into every frame of the
+window, answers the front door's demo mint locally (there is no core in the run)
+and holds every other `/api/` call, drives the host through its role leg by the
+host's own controls, prints one `HH_SHELL_PROOF` JSON line (the roles tried, the
+switcher each saw, the landing, the app switch, the Switch role result) and
+exits by itself. The line proves the Tauri webview loaded the host, the front
+door and the real desk bundles from the shell's own origin; it does not prove
+any desk app past its boot (no core answers).
 
 ## Updates
 
