@@ -284,6 +284,59 @@ mod tests {
         assert!(err.contains("refused"));
     }
 
+    fn escape_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("hh-store-escape-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        dir
+    }
+
+    /// Every spelling of an escape the word check cannot see, plus the plain
+    /// ones: all go through the exact `Store::run` and `Store::atomic` paths
+    /// the commands call, on a file store, and none may create a file.
+    #[test]
+    fn no_form_of_attach_or_vacuum_into_escapes_the_fixed_file() {
+        let dir = escape_dir("p1");
+        let store = Store::open_path(&dir.join("store.sqlite3")).expect("the file store opens");
+        store.run("CREATE TABLE secret (note TEXT)", vec![]).expect("create");
+        store.run("INSERT INTO secret (note) VALUES ('row')", vec![]).expect("insert");
+        let target = |name: &str| dir.join(name).display().to_string();
+        let forms = [
+            format!("ATTACH DATABASE '{}' AS esc", target("plain.db")),
+            format!("/* c */ ATTACH DATABASE '{}' AS esc", target("comment.db")),
+            format!("-- c\nATTACH DATABASE '{}' AS esc", target("newline.db")),
+            format!("/* c */ -- d\n ATTACH '{}' AS esc", target("mixed.db")),
+            format!("VACUUM INTO '{}'", target("vacuum.db")),
+            format!("/* c */ VACUUM INTO '{}'", target("vacuum-comment.db")),
+        ];
+        for sql in &forms {
+            assert!(store.run(sql, vec![]).is_err(), "run must refuse: {sql}");
+            let batch = vec![SqlStatement { sql: sql.clone(), params: vec![] }];
+            assert!(store.atomic(batch).is_err(), "atomic must refuse: {sql}");
+        }
+        for name in ["plain.db", "comment.db", "newline.db", "mixed.db", "vacuum.db", "vacuum-comment.db"] {
+            assert!(!dir.join(name).exists(), "{name} was created: the store escaped its file");
+        }
+        let databases = store.run("SELECT name FROM pragma_database_list", vec![]).expect("list");
+        assert_eq!(databases.len(), 1, "only main is attached: {databases:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_in_memory_store_refuses_the_same_escapes() {
+        let store = store();
+        let dir = escape_dir("p1mem");
+        let file = dir.join("mem.db").display().to_string();
+        for sql in [
+            format!("/* c */ ATTACH DATABASE '{file}' AS esc"),
+            format!("VACUUM INTO '{file}'"),
+        ] {
+            assert!(store.run(&sql, vec![]).is_err(), "{sql}");
+        }
+        assert!(!dir.join("mem.db").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_file_store_keeps_its_data_across_connections() {
         let path = std::env::temp_dir().join(format!("hh-field-store-test-{}.sqlite3", std::process::id()));
