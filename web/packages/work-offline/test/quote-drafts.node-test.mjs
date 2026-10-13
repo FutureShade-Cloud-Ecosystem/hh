@@ -218,3 +218,27 @@ test("a second tab that only reads the cache cannot draft", async () => {
   assert.equal(answer.ok, false);
   assert.match(answer.error, /read cache only/);
 });
+
+test("a second press for the same customer keeps the draft already waiting and queues nothing new", async () => {
+  const d = await desk();
+  d.server.setOffline(true);
+  const first = await d.drafts.createDraft({ customerId: CUSTOMER, validUntil: "" });
+  const second = await d.drafts.createDraft({ customerId: CUSTOMER, validUntil: "" });
+  const third = await d.drafts.createDraft({ customerId: CUSTOMER, validUntil: "" });
+  assert.equal(first.ok && second.ok && third.ok, true);
+  assert.equal(second.value.id, first.value.id, "the same draft is named");
+  assert.equal(third.value.id, first.value.id);
+  assert.equal((await d.store.outbox.health()).waiting, 1, "one create in the outbox");
+  assert.equal((await d.drafts.waiting()).length, 1);
+});
+
+test("a withdrawn draft no longer holds its customer: the next press makes a new draft", async () => {
+  const d = await desk();
+  d.server.setOffline(true);
+  const first = await d.drafts.createDraft({ customerId: CUSTOMER, validUntil: "" });
+  await d.drafts.withdraw(first.value.id);
+  const again = await d.drafts.createDraft({ customerId: CUSTOMER, validUntil: "" });
+  assert.equal(again.ok, true);
+  assert.notEqual(again.value.id, first.value.id);
+  assert.equal((await d.drafts.waiting()).length, 1);
+});

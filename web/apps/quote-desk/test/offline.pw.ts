@@ -135,3 +135,28 @@ test("a withdrawn draft never reaches the server as a quote", async ({ page, con
   // The create and its withdrawal go in order; the server ends with no live quote for the draft.
   await expect.poll(async () => (await syncLog(page)).pushes.map((p) => p.op)).toEqual(["create", "delete"]);
 });
+
+test("pressing add again with no signal keeps one draft, not one per press, and one create reaches the server", async ({ page, context }) => {
+  await signIn(page);
+  await waitForFirstPull(page);
+  await context.setOffline(true);
+  await expect(banner(page)).toBeVisible();
+  await page.getByRole("button", { name: "New quote", exact: true }).click();
+  const picker = page.getByTestId("qb-identity").locator("hos-customer-picker");
+  await picker.getByPlaceholder("Search name or account #…").fill("Maple");
+  await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
+  const scan = page.getByRole("combobox", { name: "Search products by name, code or category" });
+  const waiting = page.getByTestId("qd-waiting");
+  for (const query of ["Holland", "Holland", "Holland"]) {
+    await scan.fill(query);
+    await page.getByRole("option", { name: /Holland Stone 60 mm/ }).first().click();
+    await expect(page.getByTestId("qb-error")).toContainText("saved on this device");
+    await expect(waiting.getByTestId("qd-waiting-item").first()).toBeVisible();
+  }
+  await expect(waiting.getByTestId("qd-waiting-item")).toHaveCount(1);
+  expect((await syncLog(page)).pushes).toEqual([]);
+  await context.setOffline(false);
+  await expect.poll(async () => (await syncLog(page)).pushes.length).toBeGreaterThan(0);
+  await expect(waiting).toHaveCount(0);
+  expect((await syncLog(page)).pushes.map((p) => p.op)).toEqual(["create"]);
+});
