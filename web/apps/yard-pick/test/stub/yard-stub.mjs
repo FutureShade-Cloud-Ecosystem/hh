@@ -1,8 +1,9 @@
 // Yard Pick's local stub: the demo way in, and the yard team's world
 // answered in the core's shapes. It is a development and test double only;
-// the real routes are the core's (core/internal/tasks, yard_handler.go).
-// Item 7's contract test holds every payload below to the contract's field
-// list, field by field, and every refusal to the core's own sentences.
+// the real routes are the core's (core/internal/tasks, yard_handler.go, and
+// the change queue of core/internal/order/change_queue.go). Item 7's contract
+// test holds every payload below to the contract's field list, field by
+// field, and every refusal to the core's own sentences.
 //
 // The rep notices are modelled the way the core builds them
 // (core/internal/tasks/yard_notice.go): the double records the sentence the
@@ -98,6 +99,23 @@ function callerRole(req) {
     }
   }
   return "yard_team";
+}
+
+// The caller's own id, the ack's by word (the demo mint's sub; the node legs'
+// fixed token and anything unreadable are the yard persona).
+function callerUserId(req) {
+  const token = String(req.headers.authorization ?? "").replace(/^Bearer /, "");
+  const parts = token.split(".");
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+      const user = Object.values(USERS).find((u) => u.user_id === payload.sub);
+      if (user !== undefined) return user.user_id;
+    } catch {
+      /* not the stub's token shape */
+    }
+  }
+  return YARD_USER;
 }
 
 // blankTicketMoney, the double of the core's (tasks/cost_gate.go): the owed
@@ -252,6 +270,80 @@ const TASK_SEED = [
   { id: "0a000000-0000-4000-9000-000000000041", ticket: "0b000000-0000-4000-9000-000000000041", status: "IN_PROGRESS", priority: "HIGH", claimed: true, created_min: 500 },
 ];
 
+// The changes waiting on the yard (the core's change_orders, migration 0125,
+// read through the change queue of change_queue.go): one under the threshold,
+// one over it, so an acknowledgement lands on both of the ladder's next
+// stages. The delta figures are the double of the core's stored numbers, held
+// for the till's kind; the yard app's projection drops them.
+const CHANGE_SEED = [
+  {
+    id: "5c000000-0000-4000-9000-000000000002",
+    change_no: "CO-2043",
+    order_id: "0b000000-0000-4000-9000-000000000039",
+    order_no: "SO-1039",
+    branch_id: TRENTON,
+    status: "PENDING_YARD",
+    reason: "Customer halved the wall block, the load is too heavy for one truck",
+    delta_cents: -63000,
+    finance_threshold_cents: 50000,
+    finance_required: true,
+    requested_by_role: "Sales Manager",
+    requested_min: 150,
+    order_status_at_request: "READY",
+    lines: [
+      {
+        seq: 1,
+        op: "QTY",
+        line_no: 1,
+        product_id: "1a000000-0000-4000-9000-0000000000b1",
+        product_name: "Retaining wall block",
+        description: "Retaining wall block, charcoal",
+        qty_entered_new: "42.0000",
+        uom_entered: "EA",
+        qty_base_before: 84,
+        qty_base_after: 42,
+        qty_delta_base: -42,
+        unit_price_cents: 1500,
+        price_uom: "EA",
+        line_delta_cents: -63000,
+      },
+    ],
+  },
+  {
+    id: "5c000000-0000-4000-9000-000000000001",
+    change_no: "CO-2042",
+    order_id: "0b000000-0000-4000-9000-000000000042",
+    order_no: "SO-1042",
+    branch_id: TRENTON,
+    status: "PENDING_YARD",
+    reason: "Customer added two more pallets of the charcoal paver",
+    delta_cents: 43200,
+    finance_threshold_cents: 50000,
+    finance_required: false,
+    requested_by_role: "Inside Sales",
+    requested_min: 50,
+    order_status_at_request: "PICKING",
+    lines: [
+      {
+        seq: 1,
+        op: "QTY",
+        line_no: 1,
+        product_id: "1a000000-0000-4000-9000-0000000000a1",
+        product_name: "Charcoal paver 60 mm",
+        description: "Charcoal pavers, 12 by 12 in",
+        qty_entered_new: "72.0000",
+        uom_entered: "EA",
+        qty_base_before: 24,
+        qty_base_after: 72,
+        qty_delta_base: 48,
+        unit_price_cents: 900,
+        price_uom: "EA",
+        line_delta_cents: 43200,
+      },
+    ],
+  },
+];
+
 let world;
 let scenario;
 let log;
@@ -310,8 +402,14 @@ function buildWorld() {
   const inProgress = tasks.find((t) => t.id === "0a000000-0000-4000-9000-000000000041");
   inProgress.open_shortages = 1;
   inProgress.total_shortages = 2;
+  const nowMs = Date.now();
+  const changes = CHANGE_SEED.map((seed) => ({
+    ...seed,
+    requested_at: new Date(nowMs - seed.requested_min * 60000).toISOString(),
+  }));
   return {
     tasks,
+    changes,
     shortages: [openShortage, clearedShortage],
     picked: new Map(),
     skids: new Map(),
@@ -395,6 +493,124 @@ function findTask(id) {
   return world.tasks.find((t) => t.id === id);
 }
 
+// ---- the changes waiting on the yard (the core's change queue) ----------
+
+const CHANGE_STATUSES = ["PENDING_YARD", "PENDING_FINANCE", "APPROVED", "APPLIED", "REJECTED", "CANCELLED"];
+const TERMINAL_CHANGES = ["APPLIED", "REJECTED", "CANCELLED"];
+// The core's changeNextActions (order/change.go) for a caller of each tier.
+const MANAGER_ROLES = new Set(["sales_manager", "yard_manager", "branch_manager", "general_manager", "financial_controller"]);
+
+function changeNextActions(status, isManager) {
+  switch (status) {
+    case "PENDING_YARD":
+      return ["yard_ack", "reject", "cancel"];
+    case "PENDING_FINANCE":
+      return isManager ? ["finance_approve", "reject", "cancel"] : ["reject", "cancel"];
+    case "APPROVED":
+      return isManager ? ["apply", "reject", "cancel"] : ["cancel"];
+    default:
+      return [];
+  }
+}
+
+function poisonChange(out) {
+  out.delta_cents = POISON;
+  out.finance_threshold_cents = POISON;
+  out.gauge = { value_cents: POISON, unit_price: POISON };
+  // Queue rows carry no lines; the whole change does. Both get the poison.
+  if (Array.isArray(out.lines)) out.lines = out.lines.map((l) => ({ ...l, unit_price_cents: POISON, line_delta_cents: POISON, margin: POISON }));
+  return out;
+}
+
+/** The queue row: the core's ChangeQueueItem (change_queue_repository.go). */
+function changeItemOut(change) {
+  const out = {
+    id: change.id,
+    change_no: change.change_no,
+    order_id: change.order_id,
+    order_no: change.order_no,
+    branch_id: change.branch_id,
+    status: change.status,
+    reason: change.reason,
+    delta_cents: change.delta_cents,
+    finance_threshold_cents: change.finance_threshold_cents,
+    finance_required: change.finance_required,
+    requested_by_role: change.requested_by_role,
+    requested_at: change.requested_at,
+    next_actions: changeNextActions(change.status, false),
+  };
+  if (change.yard_ack_note) out.yard_ack_note = change.yard_ack_note;
+  return scenario === "poisoned" ? poisonChange(out) : out;
+}
+
+/** The whole change: the core's ChangeOrder, the acknowledgement's answer shape. */
+function changeOut(change, isManager) {
+  const out = {
+    id: change.id,
+    order_id: change.order_id,
+    branch_id: change.branch_id,
+    change_no: change.change_no,
+    status: change.status,
+    reason: change.reason,
+    delta_cents: change.delta_cents,
+    finance_threshold_cents: change.finance_threshold_cents,
+    finance_required: change.finance_required,
+    order_status_at_request: change.order_status_at_request,
+    pick_started_at_request: true,
+    requested_by: "d0100000-0000-4000-9000-0000000000a1",
+    requested_at: change.requested_at,
+    lines: change.lines.map((l) => ({ ...l })),
+    next_actions: changeNextActions(change.status, isManager),
+  };
+  if (change.yard_acked_by) out.yard_acked_by = change.yard_acked_by;
+  if (change.yard_acked_at) out.yard_acked_at = change.yard_acked_at;
+  if (change.yard_ack_note) out.yard_ack_note = change.yard_ack_note;
+  return scenario === "poisoned" ? poisonChange(out) : out;
+}
+
+function changeQueue(res, url) {
+  const rawStatus = url.searchParams.get("status") ?? "";
+  const status = rawStatus.toUpperCase();
+  if (rawStatus !== "" && !CHANGE_STATUSES.includes(status)) {
+    return refuse(res, 400, `unknown status "${rawStatus}" (${CHANGE_STATUSES.join("|")})`);
+  }
+  if (scenario === "empty") return json(res, { items: [], next_cursor: null, limit: 50 });
+  const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? "50")));
+  const rows = world.changes
+    .filter((c) => status === "" || c.status === status)
+    .sort((a, b) => a.requested_at.localeCompare(b.requested_at) || a.id.localeCompare(b.id));
+  const cursor = url.searchParams.get("cursor") ?? "";
+  let start = 0;
+  if (cursor !== "") {
+    if (!/^\d+$/.test(cursor)) return refuse(res, 400, "cursor is malformed");
+    start = Number(cursor);
+  }
+  const page = rows.slice(start, start + limit);
+  const next = start + limit < rows.length ? String(start + limit) : null;
+  return json(res, { items: page.map(changeItemOut), next_cursor: next, limit });
+}
+
+function yardAck(res, changeId, input, req) {
+  const change = world.changes.find((c) => c.id === changeId);
+  if (!change) return refuse(res, 404, "not found");
+  // A colleague's acknowledgement this screen never saw: the race the core
+  // refuses by name (change.go YardAck), scripted so a browser leg can meet it.
+  if (scenario === "change-decided") {
+    return refuse(res, 409, "this change order is already closed: the yard has already acknowledged this change");
+  }
+  if (change.status !== "PENDING_YARD") {
+    if (TERMINAL_CHANGES.includes(change.status)) return refuse(res, 409, "this change order is already closed");
+    return refuse(res, 409, "this change order is already closed: the yard has already acknowledged this change");
+  }
+  // The note is optional and clamped, never refused (the core's clampNote).
+  const note = String(input.note ?? "").trim().slice(0, 400);
+  change.status = change.finance_required ? "PENDING_FINANCE" : "APPROVED";
+  change.yard_acked_by = callerUserId(req);
+  change.yard_acked_at = new Date().toISOString();
+  if (note !== "") change.yard_ack_note = note;
+  return json(res, changeOut(change, MANAGER_ROLES.has(callerRole(req))));
+}
+
 const SHORT_REASONS = ["CONDENSED_SKIDS", "DAMAGED", "NOT_IN_YARD", "COUNT_CORRECTION", "OTHER"];
 
 function reasonPhrase(code) {
@@ -455,7 +671,15 @@ async function handle(req, res) {
   }
 
   // ---- the routes the yard uses ----
-  const yardRoute = path.startsWith("/api/v1/yard/") || path === "/api/v1/branches" || (path.startsWith("/api/v1/tasks/") && req.method === "POST");
+  const changeAckMatch = /^\/api\/v1\/order-changes\/([^/]+)\/yard-ack$/.exec(path);
+  const yardRoute =
+    path.startsWith("/api/v1/yard/") ||
+    path === "/api/v1/branches" ||
+    (path.startsWith("/api/v1/tasks/") && req.method === "POST") ||
+    // The change queue and its acknowledgement (the core's order module,
+    // change_queue.go): the two routes the yard's stage 2 screen calls.
+    path === "/api/v1/order-changes" ||
+    (changeAckMatch !== null && req.method === "POST");
   if (!yardRoute) return notFound(res);
   const authorization = req.headers.authorization ?? "";
   const raw = await readBody(req);
@@ -506,6 +730,15 @@ async function handle(req, res) {
     const next = start + limit < sorted.length ? String(start + limit) : "";
     const allowed = COST_LIST.has(callerRole(req));
     return json(res, { items: page.map((t) => entryOut(findTask(t.id), true, allowed)), next_cursor: next, limit });
+  }
+
+  // The change queue: the yard's stage of the ladder, oldest first, the
+  // core's page envelope (items, next_cursor null on the last page, limit).
+  if (req.method === "GET" && path === "/api/v1/order-changes") {
+    return changeQueue(res, url);
+  }
+  if (req.method === "POST" && changeAckMatch) {
+    return yardAck(res, changeAckMatch[1], body ?? {}, req);
   }
 
   const pickMatch = /^\/api\/v1\/yard\/picks\/([^/]+)(?:\/([a-z-]+))?$/.exec(path);
