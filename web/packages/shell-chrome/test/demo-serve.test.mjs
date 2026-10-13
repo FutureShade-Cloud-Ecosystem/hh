@@ -28,8 +28,8 @@ test('every committed sheet is served as text/css with the committed bytes', () 
 });
 
 test('the page links exactly the sheets the server answers', () => {
-  const html = readFileSync(`${demoDir}index.html`, 'utf8');
-  const linked = new Set([...html.matchAll(/href="\.\/sheets\/([^"]+)"/g)].map((m) => m[1]));
+  const page = readFileSync(`${demoDir}index.html`, 'utf8');
+  const linked = new Set([...page.matchAll(/href="\.\/sheets\/([^"]+)"/g)].map((m) => m[1]));
   assert.ok(linked.size > 0, 'the page links sheets');
   for (const name of linked) assert.equal(respond(`/sheets/${name}`).status, 200, `${name} is served`);
 });

@@ -150,9 +150,9 @@ function installRig(updater) {
     listeners.click({ composedPath: () => [control] });
   };
   const buttons = () => {
-    const html = renderTemplate(el.render());
-    const tag = (action) => new RegExp(`<button[^>]*data-action="${action}"[^>]*>`).exec(html)?.[0] ?? '';
-    return { html: visible(html), install: tag('install'), later: tag('later') };
+    const markup = renderTemplate(el.render());
+    const tag = (action) => new RegExp(`<button[^>]*data-action="${action}"[^>]*>`).exec(markup)?.[0] ?? '';
+    return { words: visible(markup), install: tag('install'), later: tag('later') };
   };
   return { el, events, press, buttons };
 }
@@ -181,7 +181,7 @@ test('Update now calls updater.install() once, disables both buttons, and recove
   assert.equal(calls, 1, 'the seam is called');
   assert.deepEqual(rig.events, ['hh-shell-update-install'], 'the install event rides out');
   const during = rig.buttons();
-  assert.ok(during.html.includes('Installing'), 'the card says Installing');
+  assert.ok(during.words.includes('Installing'), 'the card says Installing');
   assert.ok(/disabled/.test(during.install) && /disabled/.test(during.later), 'both buttons are disabled');
   rig.press('install');
   assert.equal(calls, 1, 'a second press while installing does not call the seam again');
@@ -189,7 +189,7 @@ test('Update now calls updater.install() once, disables both buttons, and recove
   await gate.promise;
   await Promise.resolve();
   const after = rig.buttons();
-  assert.ok(after.html.includes('Update now'), 'the card returns to Update now');
+  assert.ok(after.words.includes('Update now'), 'the card returns to Update now');
   assert.ok(!/disabled/.test(after.install) && !/disabled/.test(after.later), 'and both buttons come back');
 });
 
