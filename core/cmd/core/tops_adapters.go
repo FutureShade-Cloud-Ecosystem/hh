@@ -358,6 +358,16 @@ func (a dealerZoneAdapter) BusinessZone(ctx context.Context) (houseday.Zone, err
 	return houseday.NewZone(c.BusinessZone)
 }
 
+// BusinessZoneTx is BusinessZone on the caller's open transaction (the ledger files a journal to its
+// period inside the posting transaction, where a pool read could deadlock a full pool).
+func (a dealerZoneAdapter) BusinessZoneTx(ctx context.Context, tx pgx.Tx) (houseday.Zone, error) {
+	c, err := a.r.DealerConfigTx(ctx, tx)
+	if err != nil {
+		return houseday.Zone{}, err
+	}
+	return houseday.NewZone(c.BusinessZone)
+}
+
 // newDealerZone builds the dealer zone source over the pool. Every composition that decides a
 // business day builds its own, so two dealers in one process never share a zone.
 func newDealerZone(pool *pgxpool.Pool) dealerZoneAdapter {
@@ -765,7 +775,7 @@ func w6aBranchScope(sc dashboard.Scope) any {
 //
 // dashboard.HouseDay owns the conversion, so the day boundary and the widget windows resolved beside
 // it cannot disagree.
-func w6aDay(sc dashboard.Scope) string { return dashboard.HouseDay(sc.Now) }
+func w6aDay(sc dashboard.Scope) string { return dashboard.HouseDayIn(sc.Zone, sc.Now) }
 
 // w6aCount builds a provider over a query that takes ONLY the branch scope and returns one bigint.
 func w6aCount(pool *pgxpool.Pool, sql string, hint func(int64) string) dashboard.MetricFunc {

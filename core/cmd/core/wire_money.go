@@ -102,7 +102,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// A-01 (W5): GL, with the rail filer bound. The invoice/tax/payment
 	// readers (billing, pos, till) land in B6 and B7; unwired, the posting
 	// legs answer their not-configured errors, never a silent skip.
-	glSvc := gl.NewService(gl.NewRepository(pool)).
+	glSvc := gl.NewService(gl.NewRepository(pool).WithZone(newDealerZone(pool))).
 		WithStandardRate(newTaxEngine(pool)). // the NSF fee backout reads the dealer's standard rate
 		WithDeadRequeuer(outboxStore).
 		WithAudit(auditSvc).

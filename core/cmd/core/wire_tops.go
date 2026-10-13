@@ -513,7 +513,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// widget substrate and the needs sources register over the pool; in
 	// scaffold mode (nil pool) every tile renders its labelled unwired
 	// state, the honest answer.
-	dashboardSvc := dashboard.NewService(dashboard.NewRepository(pool), log)
+	dashboardSvc := dashboard.NewService(dashboard.NewRepository(pool), log).WithZone(newDealerZone(pool))
 	if pool != nil {
 		for _, reg := range []struct {
 			tile     string
