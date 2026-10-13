@@ -107,3 +107,25 @@ export function lateWords(order: Pick<TenantOrder, "status" | "fulfillment" | "r
 export function houseToday(now: Date = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
 }
+
+// ---- the delivery instructions ------------------------------------------------------------------
+// The core calls the write "only meaningful for a DELIVERY order that is not
+// yet fulfilled" (core/internal/order/service.go), so the form follows that:
+// live deliveries take notes, everything else reads them.
+
+const DISPATCHED: readonly string[] = ["FULFILLED", "INVOICED", "CLOSED"];
+
+/** Whether this person, on this order, sees the notes form rather than the notes. */
+export function instructionsEditable(order: Pick<TenantOrder, "status" | "fulfillment">, mayEdit: boolean): boolean {
+  if (!mayEdit) return false;
+  if (order.fulfillment !== "DELIVERY") return false;
+  return !DISPATCHED.includes(order.status) && order.status !== "CANCELLED";
+}
+
+/** The one line that says why the notes read only, when they do. */
+export function instructionsNote(order: Pick<TenantOrder, "status" | "fulfillment">, mayEdit: boolean): string {
+  if (!mayEdit) return "Your role reads these notes; changing them is another role's to do.";
+  if (order.fulfillment !== "DELIVERY") return "This order is not a delivery, so its notes are set by the dealer.";
+  if (DISPATCHED.includes(order.status)) return "The truck already left with these notes.";
+  return "";
+}

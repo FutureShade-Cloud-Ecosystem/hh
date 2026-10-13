@@ -5,8 +5,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { flowFor, timelineSteps, promisedWords, lateWords, houseToday, fulfillmentWords } from "../src/timeline.ts";
+import { flowFor, timelineSteps, promisedWords, lateWords, houseToday, fulfillmentWords, instructionsEditable, instructionsNote } from "../src/timeline.ts";
 import { sectionsFor, ordersSurfaceOf } from "../src/sections.ts";
+import { RETURN_STATUS_WORDS, RETURN_REASON_WORDS, returnChipTone, returnLineWords, returnRequestLines } from "../src/returns.ts";
 
 function order(status, fulfillment, extra = {}) {
   return { status, fulfillment, requested_date: "2042-05-01", ...extra };
@@ -109,4 +110,64 @@ test("the catalogue's field surfaces are the order filters this app serves", () 
   assert.deepEqual(ordersSurfaceOf("deliveries").fulfillments, ["DELIVERY"]);
   assert.deepEqual(ordersSurfaceOf("pickups").fulfillments, ["PICKUP", "WILL_CALL"]);
   assert.equal(ordersSurfaceOf("no-such-surface"), undefined);
+});
+
+test("delivery instructions are editable on a live delivery, and read only once the truck has gone", () => {
+  assert.equal(instructionsEditable(order("PICKING", "DELIVERY"), true), true);
+  assert.equal(instructionsEditable(order("PARTIALLY_FULFILLED", "DELIVERY"), true), true);
+  assert.equal(instructionsEditable(order("CONFIRMED", "DELIVERY"), true), true);
+  assert.equal(instructionsEditable(order("FULFILLED", "DELIVERY"), true), false);
+  assert.equal(instructionsEditable(order("INVOICED", "DELIVERY"), true), false);
+  assert.equal(instructionsEditable(order("CANCELLED", "DELIVERY"), true), false);
+  assert.equal(instructionsEditable(order("READY", "WILL_CALL"), true), false);
+  assert.equal(instructionsEditable(order("PICKING", "DELIVERY"), false), false);
+});
+
+test("a locked order says why its notes are read only, and says so differently from a role refusal", () => {
+  assert.equal(instructionsNote(order("FULFILLED", "DELIVERY"), true), "The truck already left with these notes.");
+  assert.equal(instructionsNote(order("READY", "WILL_CALL"), true), "This order is not a delivery, so its notes are set by the dealer.");
+  assert.equal(instructionsNote(order("PICKING", "DELIVERY"), false), "Your role reads these notes; changing them is another role's to do.");
+});
+
+test("return statuses and reasons read as words, never stored strings", () => {
+  for (const status of ["PENDING", "APPROVED", "REJECTED"]) {
+    assert.ok(RETURN_STATUS_WORDS[status].length > 0, status);
+    assert.doesNotMatch(RETURN_STATUS_WORDS[status], /_/);
+  }
+  for (const reason of ["DAMAGED", "DEFECT", "WRONG_ITEM", "NO_LONGER_NEEDED", "OTHER"]) {
+    assert.ok(RETURN_REASON_WORDS[reason].length > 0, reason);
+    assert.doesNotMatch(RETURN_REASON_WORDS[reason], /_/);
+  }
+  assert.equal(returnChipTone("PENDING"), "watch");
+  assert.equal(returnChipTone("APPROVED"), "good");
+  assert.equal(returnChipTone("REJECTED"), "stop");
+});
+
+test("an eligible line reads sold and returned as words a person checks", () => {
+  const words = returnLineWords({ order_line_id: "l1", product_id: "p1", description: "Sandstone paver 6 x 9", qty_sold: 420, qty_returned: 10, unit_price_cents: 512, line_total_cents: 100, tax_cents: 0 });
+  assert.ok(words.includes("Sandstone paver 6 x 9"));
+  assert.ok(words.includes("410"), words);
+  assert.doesNotMatch(words, /qty_|undefined|null|NaN/);
+});
+
+test("a return request is built from the typed quantities, or refused in plain words", () => {
+  const lines = [
+    { order_line_id: "l1", product_id: "p1", description: "Paver", qty_sold: 420, qty_returned: 0, unit_price_cents: 1, line_total_cents: 1, tax_cents: 0 },
+    { order_line_id: "l2", product_id: "p2", description: "Edging", qty_sold: 160, qty_returned: 0, unit_price_cents: 1, line_total_cents: 1, tax_cents: 0 },
+  ];
+  const typed = new Map([["l1", "12"]]);
+  const built = returnRequestLines(typed, lines);
+  assert.deepEqual(built, { ok: true, lines: [{ order_line_id: "l1", qty_base: 12 }] });
+
+  const nothing = returnRequestLines(new Map(), lines);
+  assert.equal(nothing.ok, false);
+  assert.ok(nothing.words.includes("Say how many"));
+
+  const over = returnRequestLines(new Map([["l1", "421"]]), lines);
+  assert.equal(over.ok, false);
+  assert.match(over.words, /no more than 420/i);
+
+  const junk = returnRequestLines(new Map([["l1", "1.5 pizzas"]]), lines);
+  assert.equal(junk.ok, false);
+  assert.ok(junk.words.includes("whole number"));
 });

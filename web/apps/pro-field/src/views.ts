@@ -11,7 +11,7 @@
 // never a binding; every control names itself with data-field or data-action
 // so the root's one click and one input listener act for the whole app.
 import { html, nothing, type TemplateResult } from "lit";
-import type { TenantOrder, TenantOrderDetail } from "@hardscapehouse/api-client";
+import type { TenantOrder, TenantOrderDetail, TenantReturnEligibility, TenantReturnRequest } from "@hardscapehouse/api-client";
 import {
   money,
   qtyWithUnit,
@@ -24,6 +24,7 @@ import {
 import { button, segmented } from "@hardscapehouse/design-system/src/primitives.js";
 import type { SectionRef } from "./sections.js";
 import { fulfillmentWords, promisedWords, lateWords, timelineSteps } from "./timeline.js";
+import { RETURN_STATUS_WORDS, returnChipTone, returnLineWords, returnReasonWords } from "./returns.js";
 
 // ---- the section row ----------------------------------------------------------------------------
 
@@ -198,4 +199,135 @@ function itemsCard(o: TenantOrderDetail): TemplateResult {
 
 export function sectionPlaceholder(): TemplateResult {
   return html`<hh-pro-state data-state="empty" data-testid="section-state">This section is not open yet.</hh-pro-state>`;
+}
+
+// ---- delivery instructions ----------------------------------------------------------------------
+
+export interface InstructionsProps {
+  detail: TenantOrderDetail;
+  editable: boolean;
+  /** The read-only reason, empty when the form shows. */
+  note: string;
+  dirty: boolean;
+  busy: boolean;
+  saved: boolean;
+  error: string;
+}
+
+export function instructionsCard(props: InstructionsProps): TemplateResult {
+  const stored = props.detail.delivery_instructions;
+  return html`<div class="card" data-testid="instructions-card">
+    <h3>Delivery instructions</h3>
+    <p class="dim">Gate codes, where to stack it, who to call on arrival. The driver sees this.</p>
+    ${props.saved ? html`<p class="notice" role="status" data-testid="instructions-saved">Delivery instructions saved.</p>` : nothing}
+    ${props.error === "" ? nothing : html`<p class="fault" role="alert" data-testid="instructions-error">${props.error}</p>`}
+    ${props.editable
+      ? html`<div class="form">
+          <label for="instructions-input">Notes for the delivery</label>
+          <textarea class="control" id="instructions-input" data-field="instructions" data-testid="instructions-input" rows="3" placeholder="Gate code 4471. Stack on the gravel pad north of the garage, do not block the drive."></textarea>
+          <div class="formrow">
+            <span class="grow"></span>
+            ${button({ label: "Save notes", kind: "secondary", action: "save-instructions", disabled: props.busy || !props.dirty })}
+          </div>
+        </div>`
+      : html`<p class="readonly-note" data-testid="instructions-note">${stored === "" ? "No instructions." : stored}</p>
+          ${props.note === "" ? nothing : html`<p class="dim">${props.note}</p>`}`}
+  </div>`;
+}
+
+// ---- returns ------------------------------------------------------------------------------------
+
+export interface EligibilityState {
+  phase: "idle" | "loading" | "done" | "error";
+  data: TenantReturnEligibility | null;
+  words: string;
+  canRetry: boolean;
+}
+
+export interface ReturnFormState {
+  qty: Map<string, string>;
+  reason: string;
+  note: string;
+  busy: boolean;
+  error: string;
+}
+
+export interface ReturnsProps {
+  mayRequest: boolean;
+  requests: readonly TenantReturnRequest[] | null;
+  eligibility: EligibilityState;
+  form: ReturnFormState;
+  notice: string;
+}
+
+export function returnsCard(props: ReturnsProps): TemplateResult {
+  return html`<div class="card" data-testid="returns-card">
+    <h3>Returns</h3>
+    ${props.notice === "" ? nothing : html`<p class="notice" role="status" data-testid="return-notice">${props.notice}</p>`}
+    ${props.requests === null
+      ? nothing
+      : props.requests.length === 0
+        ? html`<p class="dim" data-testid="returns-empty">No return requests on this order.</p>`
+        : html`<ul class="lines" data-testid="return-requests">${props.requests.map(returnRequestRow)}</ul>`}
+    ${props.eligibility.phase === "idle" && props.mayRequest
+      ? html`<button type="button" class="btn btn-secondary" data-action="request-return" data-testid="request-return">Request a return</button>`
+      : nothing}
+    ${props.eligibility.phase === "loading" ? html`<p class="dim">Checking what can go back...</p>` : nothing}
+    ${props.eligibility.phase === "error"
+      ? html`<p class="dim" data-testid="return-words">${props.eligibility.words}</p>
+          ${props.eligibility.canRetry ? button({ label: "Try again", kind: "secondary", action: "request-return" }) : nothing}`
+      : nothing}
+    ${props.eligibility.phase === "done" && props.eligibility.data !== null ? returnForm(props.eligibility.data, props.form) : nothing}
+  </div>`;
+}
+
+function returnRequestRow(request: TenantReturnRequest): TemplateResult {
+  const tone = returnChipTone(request.status);
+  const words = Object.prototype.hasOwnProperty.call(RETURN_STATUS_WORDS, request.status) ? RETURN_STATUS_WORDS[request.status] : "Unknown";
+  const what = request.lines.map((line) => `${line.qty_base} of ${line.description === "" ? line.product_id : line.description}`).join(", ");
+  return html`<li class="line" data-request-no="${request.request_no}">
+    <span class="linehead"><span class="mono name">${request.request_no}</span><span class="pchip pchip-${tone}" data-return-status="${request.status}">${words}</span></span>
+    <span class="dim">${returnReasonWords(request.reason_code)} · ${what}</span>
+    ${request.status === "APPROVED"
+      ? html`<span class="dim">Credited to your account${request.fee_cents > 0 ? ` (less ${money(request.fee_cents)} restocking fee)` : ""}${request.return_no === undefined ? "" : ` as ${request.return_no}`}</span>`
+      : nothing}
+    ${request.status === "REJECTED" && request.decision_reason !== undefined && request.decision_reason !== "" ? html`<span class="dim">Declined: ${request.decision_reason}</span>` : nothing}
+  </li>`;
+}
+
+// The options stay literal markup: the position gate refuses a bound value
+// outside the data and aria namespaces, and a select reads its own option's
+// value, so the stored reason codes are written out here as constants.
+function returnForm(eligibility: TenantReturnEligibility, form: ReturnFormState): TemplateResult {
+  const open = eligibility.lines.filter((line) => line.qty_sold - line.qty_returned > 0);
+  if (open.length === 0) {
+    return html`<p class="dim">Everything returnable on this order has already gone back.</p>`;
+  }
+  return html`<div class="form" data-testid="return-form">
+    ${open.map(
+      (line) => html`<div class="formrow">
+        <span class="returnline">${returnLineWords(line)}</span>
+        <input class="control qty" type="number" min="0" inputmode="numeric" aria-label="How many of ${line.description} to return" data-field="return-qty" data-line-id="${line.order_line_id}" data-testid="return-qty" />
+      </div>`,
+    )}
+    <label>
+      Why is it going back
+      <select class="control" data-field="return-reason" data-testid="return-reason" aria-label="Why is it going back">
+        <option value="DAMAGED">Arrived damaged</option>
+        <option value="DEFECT">Faulty</option>
+        <option value="WRONG_ITEM">Wrong item</option>
+        <option value="NO_LONGER_NEEDED">No longer needed</option>
+        <option value="OTHER">Something else</option>
+      </select>
+    </label>
+    <label>
+      Anything the dealer should know
+      <textarea class="control" data-field="return-note" rows="2"></textarea>
+    </label>
+    ${form.error === "" ? nothing : html`<p class="fault" role="alert" data-testid="return-error">${form.error}</p>`}
+    <div class="formrow">
+      ${button({ label: "Send request", action: "submit-return", disabled: form.busy })}
+      ${button({ label: "Cancel", kind: "secondary", action: "cancel-return", disabled: form.busy })}
+    </div>
+  </div>`;
 }

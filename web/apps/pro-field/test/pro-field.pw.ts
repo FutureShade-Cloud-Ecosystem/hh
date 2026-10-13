@@ -157,6 +157,49 @@ test.describe("phone", () => {
     await expect(page.getByTestId("surface-title")).toHaveText("Tracking");
   });
 
+  test("the delivery notes open with the order's stored words, and saving them says so", async ({ page }) => {
+    await signIn(page, "field");
+    await page.locator("[data-testid='order-row']", { hasText: "SO-30503" }).click();
+    const input = page.getByTestId("instructions-input");
+    await expect(input).toHaveValue("Call the site lead 30 minutes before arrival.");
+    await input.fill("Call the site lead 30 minutes before arrival. Gate is on the north fence.");
+    await page.getByRole("button", { name: "Save notes" }).click();
+    await expect(page.getByTestId("instructions-saved")).toHaveText("Delivery instructions saved.");
+    await page.screenshot({ path: test.info().outputPath("instructions-phone.png") });
+  });
+
+  test("a delivered order's notes read only, with the reason said", async ({ page }) => {
+    await signIn(page, "field");
+    await page.locator("[data-testid='order-row']", { hasText: "SO-30502" }).click();
+    await expect(page.getByTestId("instructions-note")).toHaveText("No instructions.");
+    await expect(page.locator("hh-pro-frame")).toContainText("The truck already left with these notes.");
+    await expect(page.getByTestId("instructions-input")).toHaveCount(0);
+  });
+
+  test("a role without the notes capability reads them and is told why it cannot change them", async ({ page }) => {
+    await signIn(page, "ap");
+    await page.locator("[data-testid='order-row']", { hasText: "SO-30503" }).click();
+    await expect(page.getByTestId("instructions-note")).toHaveText("Call the site lead 30 minutes before arrival.");
+    await expect(page.locator("hh-pro-frame")).toContainText("Your role reads these notes");
+    await expect(page.getByRole("button", { name: "Save notes" })).toHaveCount(0);
+  });
+
+  test("requesting a return says what the dealer's answer allows, in plain words", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.locator("[data-testid='order-row']", { hasText: "SO-30501" }).click();
+    await expect(page.getByTestId("returns-empty")).toBeVisible();
+    await page.getByTestId("request-return").click();
+    await expect(page.getByTestId("return-words")).toHaveText("This order cannot be returned through Pro. Ask the dealer to arrange it.");
+    await expect(page.getByTestId("return-form")).toHaveCount(0);
+  });
+
+  test("a role that cannot commit a return sees no button and still sees the requests list", async ({ page }) => {
+    await signIn(page, "field");
+    await page.locator("[data-testid='order-row']", { hasText: "SO-30501" }).click();
+    await expect(page.getByTestId("returns-empty")).toBeVisible();
+    await expect(page.getByTestId("request-return")).toHaveCount(0);
+  });
+
   test("a surface in another app says it opens that app and asks to sign in again, one in this app says nothing", async ({ page }) => {
     await signIn(page, "owner");
     await page.getByTestId("frame-selector").click();

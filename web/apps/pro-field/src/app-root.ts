@@ -21,7 +21,7 @@
 import { html, nothing, type TemplateResult } from "lit";
 import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base.js";
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
-import { ApiClient, tenantAuth, type TenantOrder, type TenantOrderDetail } from "@hardscapehouse/api-client";
+import { ApiClient, tenantAuth, type TenantOrder, type TenantOrderDetail, type TenantReturnEligibility, type TenantReturnRequest } from "@hardscapehouse/api-client";
 import {
   CAPABILITIES,
   InMemoryTenantSession,
@@ -39,8 +39,9 @@ import type { SignInSubmit } from "@hardscapehouse/pro-kit/src/signin.js";
 import type { SurfaceSelect } from "@hardscapehouse/pro-kit/src/frame.js";
 import { liveFieldPort, type FieldPort } from "./port.js";
 import { ordersSurfaceOf, sectionsFor, type Section } from "./sections.js";
-import { houseToday } from "./timeline.js";
-import { orderView, ordersList, sectionNav, sectionPlaceholder, type Phase } from "./views.js";
+import { houseToday, instructionsEditable, instructionsNote } from "./timeline.js";
+import { returnRequestLines } from "./returns.js";
+import { instructionsCard, orderView, ordersList, returnsCard, sectionNav, sectionPlaceholder, type EligibilityState, type Phase, type ReturnFormState } from "./views.js";
 import { fieldStyles } from "./styles.js";
 
 interface OrdersState {
@@ -48,10 +49,39 @@ interface OrdersState {
   items: TenantOrder[];
 }
 
+interface InstructionsState {
+  draft: string;
+  busy: boolean;
+  saved: boolean;
+  error: string;
+  prefill: string | null;
+}
+
+interface ReturnsState {
+  requests: TenantReturnRequest[] | null;
+  listError: boolean;
+  eligibility: EligibilityState;
+  form: ReturnFormState;
+  notice: string;
+}
+
 interface OrderState {
   id: string;
   phase: Phase;
   detail: TenantOrderDetail | null;
+  instructions: InstructionsState;
+  returns: ReturnsState;
+}
+
+const CANNOT_RETURN_WORDS = "This order cannot be returned through Pro. Ask the dealer to arrange it.";
+const RETURN_FAULT_WORDS = "Returns did not load. Try again in a moment.";
+
+function freshInstructions(): InstructionsState {
+  return { draft: "", busy: false, saved: false, error: "", prefill: null };
+}
+
+function freshReturns(): ReturnsState {
+  return { requests: null, listError: false, eligibility: { phase: "idle", data: null, words: "", canRetry: false }, form: { qty: new Map(), reason: "DAMAGED", note: "", busy: false, error: "" }, notice: "" };
 }
 
 export class ProFieldApp extends HHElement {
@@ -96,15 +126,54 @@ export class ProFieldApp extends HHElement {
       this.requestUpdate();
       return;
     }
+    if (action === "save-instructions") {
+      void this.#saveInstructions();
+      return;
+    }
+    if (action === "request-return") {
+      void this.#openReturnFlow();
+      return;
+    }
+    if (action === "cancel-return") {
+      this.#closeReturnFlow();
+      return;
+    }
+    if (action === "submit-return") {
+      void this.#submitReturn();
+      return;
+    }
     if (action === "section") {
       this.#selectSection(control?.getAttribute("data-value") ?? "");
     }
   };
 
-  // The form fields: input does not cross a shadow boundary but change does
-  // not either from inside one, so both listeners sit on the render root.
+  // The form fields: input and change do not leave this element's shadow root,
+  // so the listeners sit on the render root. The drafts mirror the controls;
+  // the controls are never bound.
   readonly #onField = (event: Event): void => {
-    void event;
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement)) return;
+    const field = target.getAttribute("data-field");
+    const order = this.#order;
+    if (order === null || order.detail === null) return;
+    if (field === "instructions") {
+      order.instructions.draft = target.value;
+      order.instructions.saved = false;
+      this.requestUpdate();
+      return;
+    }
+    if (field === "return-qty" && target instanceof HTMLInputElement) {
+      const lineId = target.getAttribute("data-line-id") ?? "";
+      order.returns.form.qty.set(lineId, target.value);
+      return;
+    }
+    if (field === "return-reason" && target instanceof HTMLSelectElement) {
+      order.returns.form.reason = target.value;
+      return;
+    }
+    if (field === "return-note" && target instanceof HTMLTextAreaElement) {
+      order.returns.form.note = target.value;
+    }
   };
 
   readonly #onSignIn = (event: Event): void => {
@@ -175,6 +244,22 @@ export class ProFieldApp extends HHElement {
       signin.message = this.#signinMessage;
       signin.busy = this.#signinBusy;
     }
+    // The instructions field's first value, set once when the order opens: the
+    // control is never bound, so its typed words would otherwise be lost on a
+    // re-render that assigns over them.
+    const order = this.#order;
+    if (order !== null && order.instructions.prefill !== null) {
+      const field = this.renderRoot.querySelector<HTMLTextAreaElement>("textarea[data-field=instructions]");
+      if (field !== null) {
+        field.value = order.instructions.prefill;
+        order.instructions.draft = order.instructions.prefill;
+        order.instructions.prefill = null;
+      }
+    }
+    if (order !== null && order.returns.eligibility.phase === "done") {
+      const reason = this.renderRoot.querySelector<HTMLSelectElement>("select[data-field=return-reason]");
+      if (reason !== null) reason.value = order.returns.form.reason;
+    }
   }
 
   async #loadDealer(): Promise<void> {
@@ -225,27 +310,123 @@ export class ProFieldApp extends HHElement {
 
   #openOrder(id: string): void {
     if (id === "") return;
-    this.#order = { id, phase: "loading", detail: null };
+    this.#order = { id, phase: "loading", detail: null, instructions: freshInstructions(), returns: freshReturns() };
     this.requestUpdate();
     void this.#loadOrder(id);
   }
 
   async #loadOrder(id: string): Promise<void> {
     const sequence = (this.#orderSeq += 1);
-    this.#order = { id, phase: "loading", detail: null };
+    this.#order = { id, phase: "loading", detail: null, instructions: freshInstructions(), returns: freshReturns() };
     this.requestUpdate();
     const answer = await this.#port.getOrder(id);
     if (sequence !== this.#orderSeq || this.#session.profile() === null) return;
     if (answer.ok) {
-      this.#order = { id, phase: "ready", detail: answer.value };
+      const detail = answer.value;
+      this.#order = { id, phase: "ready", detail, instructions: { ...freshInstructions(), prefill: detail.delivery_instructions }, returns: freshReturns() };
+      void this.#loadReturns();
     } else if (answer.status === 401) {
       this.#signinMessage = "You are signed out. Sign in again.";
       await this.#session.signOut();
       return;
     } else if (answer.status === 403) {
-      this.#order = { id, phase: "refusal", detail: null };
+      this.#order = { id, phase: "refusal", detail: null, instructions: freshInstructions(), returns: freshReturns() };
     } else {
-      this.#order = { id, phase: "error", detail: null };
+      this.#order = { id, phase: "error", detail: null, instructions: freshInstructions(), returns: freshReturns() };
+    }
+    this.requestUpdate();
+  }
+
+  // The order's return requests: the list is the account's, so it is filtered
+  // to this order here, exactly as the portal screen did. A fault here is not
+  // fatal: the order renders without the list.
+  async #loadReturns(): Promise<void> {
+    const order = this.#order;
+    if (order === null || order.detail === null) return;
+    const answer = await this.#port.listReturnRequests();
+    if (this.#order !== order || this.#session.profile() === null) return;
+    if (answer.ok) {
+      order.returns.requests = answer.value.filter((request) => request.order_id === order.id);
+      order.returns.listError = false;
+    } else {
+      order.returns.requests = [];
+      order.returns.listError = true;
+    }
+    this.requestUpdate();
+  }
+
+  async #saveInstructions(): Promise<void> {
+    const order = this.#order;
+    if (order === null || order.detail === null || order.instructions.busy) return;
+    order.instructions.busy = true;
+    order.instructions.error = "";
+    this.requestUpdate();
+    const answer = await this.#port.setDeliveryInstructions(order.id, order.instructions.draft);
+    if (this.#order !== order) return;
+    order.instructions.busy = false;
+    if (answer.ok) {
+      order.detail.delivery_instructions = order.instructions.draft;
+      order.instructions.saved = true;
+    } else {
+      order.instructions.error = answer.error;
+    }
+    this.requestUpdate();
+  }
+
+  async #openReturnFlow(): Promise<void> {
+    const order = this.#order;
+    if (order === null || order.detail === null || order.returns.eligibility.phase === "loading") return;
+    order.returns.eligibility = { phase: "loading", data: null, words: "", canRetry: false };
+    order.returns.form = { qty: new Map(), reason: "DAMAGED", note: "", busy: false, error: "" };
+    order.returns.notice = "";
+    this.requestUpdate();
+    const answer = await this.#port.getReturnEligibility(order.id);
+    if (this.#order !== order || this.#session.profile() === null) return;
+    if (answer.ok) {
+      order.returns.eligibility = { phase: "done", data: answer.value, words: "", canRetry: false };
+    } else if (answer.status === 404) {
+      // The core answers not found for anything that was not a counter sale, on purpose
+      // (IDOR safe), so this is a plain no, not a fault to retry.
+      order.returns.eligibility = { phase: "error", data: null, words: CANNOT_RETURN_WORDS, canRetry: false };
+    } else {
+      order.returns.eligibility = { phase: "error", data: null, words: RETURN_FAULT_WORDS, canRetry: true };
+    }
+    this.requestUpdate();
+  }
+
+  #closeReturnFlow(): void {
+    const order = this.#order;
+    if (order === null) return;
+    order.returns.eligibility = { phase: "idle", data: null, words: "", canRetry: false };
+    order.returns.form = { qty: new Map(), reason: "DAMAGED", note: "", busy: false, error: "" };
+    this.requestUpdate();
+  }
+
+  async #submitReturn(): Promise<void> {
+    const order = this.#order;
+    if (order === null || order.detail === null || order.returns.eligibility.data === null || order.returns.form.busy) return;
+    const built = returnRequestLines(order.returns.form.qty, order.returns.eligibility.data.lines);
+    if (!built.ok) {
+      order.returns.form.error = built.words;
+      this.requestUpdate();
+      return;
+    }
+    order.returns.form.busy = true;
+    order.returns.form.error = "";
+    this.requestUpdate();
+    const answer = await this.#port.createReturnRequest(order.id, {
+      reason_code: order.returns.form.reason as "DAMAGED" | "DEFECT" | "WRONG_ITEM" | "NO_LONGER_NEEDED" | "OTHER",
+      note: order.returns.form.note,
+      lines: built.lines,
+    });
+    if (this.#order !== order) return;
+    order.returns.form.busy = false;
+    if (answer.ok) {
+      this.#closeReturnFlow();
+      order.returns.notice = `Return request ${answer.value.request_no} sent. The dealer decides it.`;
+      void this.#loadReturns();
+    } else {
+      order.returns.form.error = answer.error;
     }
     this.requestUpdate();
   }
@@ -271,7 +452,36 @@ export class ProFieldApp extends HHElement {
   #renderBody(): TemplateResult {
     if (this.#section === "orders") {
       if (this.#order !== null) {
-        return orderView({ detail: this.#order.detail, phase: this.#order.phase, today: houseToday() });
+        const order = this.#order;
+        const mayEdit = this.#session.can("edit_delivery_instructions");
+        const mayRequest = this.#session.can("create_orders");
+        return orderView({
+          detail: order.detail,
+          phase: order.phase,
+          today: houseToday(),
+          instructions:
+            order.phase === "ready" && order.detail !== null
+              ? instructionsCard({
+                  detail: order.detail,
+                  editable: instructionsEditable(order.detail, mayEdit),
+                  note: instructionsNote(order.detail, mayEdit),
+                  dirty: order.instructions.draft !== order.detail.delivery_instructions,
+                  busy: order.instructions.busy,
+                  saved: order.instructions.saved,
+                  error: order.instructions.error,
+                })
+              : undefined,
+          returns:
+            order.phase === "ready"
+              ? returnsCard({
+                  mayRequest,
+                  requests: order.returns.requests,
+                  eligibility: order.returns.eligibility,
+                  form: order.returns.form,
+                  notice: order.returns.notice,
+                })
+              : undefined,
+        });
       }
       return ordersList({
         phase: this.#orders.phase,
