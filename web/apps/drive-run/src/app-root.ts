@@ -594,11 +594,18 @@ export class DriveRunApp extends HHElement {
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
-    for (let next = this.#photoQueue.shift(); next !== undefined; next = this.#photoQueue.shift()) {
-      await this.#sendOnePhoto(next.file, next.stopId, next.late);
+    try {
+      for (let next = this.#photoQueue.shift(); next !== undefined; next = this.#photoQueue.shift()) {
+        try {
+          await this.#sendOnePhoto(next.file, next.stopId, next.late);
+        } catch {
+          this.#error = "The photo did not send. Take it again and try once more.";
+        }
+      }
+    } finally {
+      this.#photoBusy = false;
+      this.requestUpdate();
     }
-    this.#photoBusy = false;
-    this.requestUpdate();
   }
 
   async #sendOnePhoto(file: File, stopId: string, late: boolean): Promise<void> {
@@ -614,7 +621,9 @@ export class DriveRunApp extends HHElement {
     }
     const made = URL.createObjectURL(new Blob([ready.bytes as BlobPart], { type: ready.type }));
     this.#thumbs.set(stopId, [...(this.#thumbs.get(stopId) ?? []), made]);
-    if (late) {
+    // Decided at send time: a photo picked on the proof screen is late once the
+    // signature has landed before it went up. Attaching twice is harmless.
+    if (late || (this.#findStop(stopId)?.stop.pod_received_by ?? "") !== "") {
       const folded = await this.#drive.attachPhotos(stopId);
       if (!folded.ok) {
         this.#error = roadsideError(folded.error, folded.status, "The photo is up but is not on the proof yet. Add it again in a moment.");
