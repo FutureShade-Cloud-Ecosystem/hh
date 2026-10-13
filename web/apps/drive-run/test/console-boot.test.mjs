@@ -120,5 +120,7 @@ test("HH Drive: the app's source builds its custody from the served config and s
   assert.match(root, /this\.#custody\.coreBaseUrl/);
   assert.match(root, /activeOrg: \(\) => this\.#custody\.org/);
   const main = readFileSync(join(appDir, "src", "main.ts"), "utf8");
-  assert.match(main, /loadAppRuntime\(\)\.then\(\(\) => import\("\.\/app-root\.js"\)\)/);
+  assert.match(main, /loadAppRuntime\(\)\.then\(\(\) => import\("\.\/(app-root|index)\.js"\)\)/);
+  // Nothing may import the app's root before the config is read (a static import would build the custody first).
+  assert.doesNotMatch(main, /^import\s+(?:[^"']*from\s+)?["']\.\/(app-root|index)\.js["'];?$/m);
 });

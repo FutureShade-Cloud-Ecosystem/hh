@@ -120,5 +120,9 @@ test("The Quote Desk: the app's source builds its custody from the served config
   assert.match(root, /this\.#custody\.coreBaseUrl/);
   assert.match(root, /activeOrg: \(\) => this\.#custody\.org/);
   const main = readFileSync(join(appDir, "src", "main.ts"), "utf8");
-  assert.match(main, /loadAppRuntime\(\)\.then\(\(\) => import\("\.\/app-root\.js"\)\)/);
+  assert.match(main, /loadAppRuntime\(\)\.then\(\(\) => import\("\.\/(app-root|index)\.js"\)\)/);
+  // Nothing may import the app's root before the config is read (a static import would build the custody first).
+  // This app's index.ts holds only component registrations and never the root, so it may stay a static import.
+  assert.doesNotMatch(main, /^import\s+(?:[^"']*from\s+)?["']\.\/app-root\.js["'];?$/m);
+  assert.doesNotMatch(readFileSync(join(appDir, "src", "index.ts"), "utf8"), /app-root/);
 });
