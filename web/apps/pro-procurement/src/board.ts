@@ -23,6 +23,7 @@ import {
   calendarDay,
 } from "@hardscapehouse/pro-kit";
 import { confirmModal, metaLine, type Page, type SurfaceAnswer } from "./views.js";
+import { openReorder, reorderCommand } from "./reorder.js";
 
 export const BOARD_EMPTY = "Nothing is in motion. Start a plan from the catalog.";
 
@@ -72,11 +73,17 @@ function quoteCard(quote: TenantQuote): TemplateResult {
   </button>`;
 }
 
-function orderCard(order: TenantOrder): TemplateResult {
+function orderCard(order: TenantOrder, page: Page): TemplateResult {
   const tracking = trackingOf(order.status, order.fulfillment);
+  const mayBuy = page.session.can("view_orders_deliveries");
   return html`<div class="card" data-testid="board-order">
     <span class="rowline"><span class="mono figure">${order.order_no}</span><span class="grow"></span><span class="mono figure">${money(order.total_cents)}</span></span>
     <span class="rowline">${tracking === null ? statusChip("order", order.status) : trackingChip(tracking)}<span class="grow"></span><span class="dim">Wanted ${calendarDay(order.requested_date)}</span></span>
+    ${mayBuy
+      ? html`<span class="rowline line-actions">
+          <button type="button" class="btn btn-secondary" data-action="open-reorder" data-order="${order.id}" data-no="${order.order_no}" data-testid="buy-again">Buy again</button>
+        </span>`
+      : nothing}
   </div>`;
 }
 
@@ -106,11 +113,11 @@ export function boardView(dataRaw: unknown, page: Page): TemplateResult {
     <div class="board-columns">
       ${column(
         "plan",
-        planProjects.map((p) => projectCard(p)).concat(draftOrders.map((o) => orderCard(o))),
+        planProjects.map((p) => projectCard(p)).concat(draftOrders.map((o) => orderCard(o, page))),
       )}
       ${column("quote", quoteCards.map((q) => quoteCard(q)))}
-      ${column("order", orderCards.map((o) => orderCard(o)))}
-      ${column("invoice", invoiceCards.map((o) => orderCard(o)))}
+      ${column("order", orderCards.map((o) => orderCard(o, page)))}
+      ${column("invoice", invoiceCards.map((o) => orderCard(o, page)))}
     </div>`;
 }
 
@@ -140,6 +147,11 @@ function newPlanModal(state: PlanModalState): TemplateResult {
 }
 
 export function boardCommand(action: string, control: Element, page: Page): boolean {
+  if (action === "open-reorder") {
+    openReorder(page, control.getAttribute("data-order") ?? "", control.getAttribute("data-no") ?? "");
+    return true;
+  }
+  if (reorderCommand(action, control, page) === true) return true;
   if (action === "new-plan") {
     planStates.set(page, { error: "", busy: false });
     page.openModal("plan-modal", () => newPlanModal(planStates.get(page) as PlanModalState));

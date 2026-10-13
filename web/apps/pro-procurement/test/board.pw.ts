@@ -74,6 +74,24 @@ test.describe("phone 390", () => {
     await expect(state).toContainText("Nothing is in motion");
   });
 
+  test("Buy again opens the reorder preview, and the draft lands in Plan", async ({ page }) => {
+    await signIn(page, "owner");
+    await openBoard(page);
+    const card = page.locator("[data-testid='board-order']", { hasText: "SO-30503" });
+    await card.getByTestId("buy-again").click();
+    const sheet = page.getByTestId("reorder-modal-sheet");
+    await expect(sheet).toContainText("Reorder SO-30503");
+    await expect(sheet).toContainText("today's rates");
+    await expect(page.getByTestId("reorder-line")).toHaveCount(2);
+    await page.screenshot({ path: join(SHOTS, "reorder-phone.png"), fullPage: true });
+    // One line comes off; the draft carries the rest.
+    await page.getByTestId("reorder-line").first().click();
+    await sheet.getByRole("button", { name: /Create draft order \(1 line\)/ }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(page.getByTestId("notice")).toContainText("Draft order SO-");
+    await expect(page.locator("section[data-stage='plan']")).toContainText("SO-30507");
+  });
+
   test("a role without submit_rfq is not offered the board at all", async ({ page }) => {
     await signIn(page, "field");
     await page.getByTestId("frame-selector").click();

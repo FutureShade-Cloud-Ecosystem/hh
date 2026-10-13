@@ -89,6 +89,7 @@ export class ProProcurementApp extends HHElement {
       .result .name { flex: 1; }
       .line-actions { gap: var(--hh-s-8); }
       .result.chosen { border-color: var(--hh-focus-ring); background: var(--hh-widget); font-weight: 600; }
+      .result.off { opacity: 0.55; cursor: not-allowed; }
       .facts { display: flex; flex-direction: column; gap: var(--hh-s-8); margin-top: var(--hh-s-12); font-size: 0.875rem; }
       @media (min-width: 64rem) {
         .board-columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
