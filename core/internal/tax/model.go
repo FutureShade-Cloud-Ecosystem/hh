@@ -13,7 +13,7 @@ import (
 // -- reason codes + rate constants (mirror pos/model.go + tax_decision_snapshot CHECK) ---------------------
 const (
 	ReasonStdON13    = "STD_ON_HST_13"           // 13% standard-rated Ontario HST
-	ReasonStdSales   = "STD_SALES_TAX"           // the neutral standard rate of a jurisdiction other than Ontario (0389)
+	ReasonStdSales   = "STD_SALES_TAX"           // the neutral standard rate of a jurisdiction other than Ontario (0391)
 	ReasonONFNPos8   = "ON_FN_POS_8"             // Ontario First Nations point-of-sale: 8% credited → collect 5%
 	ReasonFedVendDel = "FED_S87_VENDOR_DELIVERY" // federal 0% provisional, Dibbits delivery to a reserve (evidence-gated)
 	ReasonFNGST5     = "FNGST_5"                 // First Nations GST 5%
@@ -31,7 +31,7 @@ const (
 
 	jurisdictionON = "ON"
 
-	stdRateBps      = 1300 // the Ontario standard: the fallback for an Ontario dealer with no row, and the rate of every snapshot written before 0389
+	stdRateBps      = 1300 // the Ontario standard: the fallback for an Ontario dealer with no row, and the rate of every snapshot written before 0391
 	ontarioCredBps  = 800  // the 8% Ontario credit on the ON_FN_POS_8 path
 	ontarioNetBps   = 500  // 13% − 8% = the 5% net collected on the Ontario path
 	roundHalfUpBase = 10000
@@ -249,7 +249,7 @@ type Snapshot struct {
 	NetCollectedCents int64  `json:"net_collected_cents"`
 	Automated         bool   `json:"automated"`
 
-	// StandardRateBps is the standard rate full_hst_cents was computed at (0389). Zero means a row
+	// StandardRateBps is the standard rate full_hst_cents was computed at (0391). Zero means a row
 	// written before the column existed, which is an Ontario row at 13 percent.
 	StandardRateBps int `json:"standard_rate_bps,omitempty"`
 }

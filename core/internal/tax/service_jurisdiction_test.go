@@ -248,3 +248,18 @@ func TestJurisdiction_RecomputeKeepsTheDealersStandardRateOnTheNewRow(t *testing
 		t.Fatalf("recomputed row: %+v", got)
 	}
 }
+
+// The admin edge normalises the jurisdiction's case as the engine does for the dealer's region: a row
+// posted as "ca" lands in CA, and "on" with the Ontario standard reason is accepted.
+func TestJurisdiction_CreateRateNormalisesTheJurisdictionCase(t *testing.T) {
+	svc := caSvc(californiaStore())
+	r, err := svc.CreateRate(context.Background(), Rate{Jurisdiction: " ca ", ReasonCode: ReasonStdSales, RateBps: 800, EffectiveFrom: "2026-08-01"})
+	if err != nil || r.Jurisdiction != "CA" {
+		t.Fatalf("lower case california: %+v %v", r, err)
+	}
+	on, _ := newSvc(newFakeStore())
+	r, err = on.CreateRate(context.Background(), Rate{Jurisdiction: "on", ReasonCode: ReasonStdON13, RateBps: 1300, EffectiveFrom: "2026-08-01"})
+	if err != nil || r.Jurisdiction != "ON" {
+		t.Fatalf("lower case ontario: %+v %v", r, err)
+	}
+}

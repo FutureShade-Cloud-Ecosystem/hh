@@ -74,3 +74,16 @@ func TestIntegration_DealerConfig_SeededDealerIsOntarioAndAWriteIsLive(t *testin
 		t.Fatalf("a refused write moved the config: %+v", got)
 	}
 }
+
+// A damaged tax_region row refuses at the reader (so at the engine); it never reads as Ontario.
+func TestIntegration_DealerConfig_MalformedTaxRegionRefuses(t *testing.T) {
+	r := NewDealerConfigReader(intPool(t))
+	restoreDealerConfig(t, r)
+	ctx := context.Background()
+	if _, err := r.pool.Exec(ctx, `UPDATE system_settings SET value = '"ca"' WHERE key = 'tax_region'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.DealerConfig(ctx); err == nil {
+		t.Fatal("a malformed tax region was read as a configuration")
+	}
+}

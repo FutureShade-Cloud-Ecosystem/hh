@@ -65,10 +65,29 @@ type Service struct {
 	store  portalStore
 	secret string
 	now    func() time.Time
+	// config is the dealer branding the login and refresh answers carry;
+	// the zero value selects defaultConfig, which names no dealer.
+	config *Config
 }
 
 func NewService(store portalStore, secret string) *Service {
 	return &Service{store: store, secret: secret, now: time.Now}
+}
+
+// WithConfig sets the dealer config the login and refresh answers carry,
+// returning the service. Call it at the wiring, before serving.
+func (s *Service) WithConfig(c Config) *Service {
+	s.config = &c
+	return s
+}
+
+// dealerConfig is the config the answers carry: the one the wiring gave, or
+// the neutral default.
+func (s *Service) dealerConfig() Config {
+	if s.config != nil {
+		return *s.config
+	}
+	return defaultConfig()
 }
 
 // Login authenticates by email+password and returns a signed JWT. Not-found, bad
@@ -87,7 +106,7 @@ func (s *Service) Login(ctx context.Context, email, password string) (LoginRespo
 		return LoginResponse{}, err
 	}
 	_ = s.store.TouchLastLogin(ctx, u.ID) // best-effort
-	return LoginResponse{Token: token, User: u, Config: defaultConfig()}, nil
+	return LoginResponse{Token: token, User: u, Config: s.dealerConfig()}, nil
 }
 
 // Authenticate verifies a Bearer token AND re-loads the user from the DB, so the

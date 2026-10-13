@@ -133,6 +133,43 @@ handle /money-desk/* {
 	file_server
 }
 
+handle /dealer-admin/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /dealer-admin/index.html
+	file_server
+}
+
+# The Pro contractor apps (Pro Procurement, Pro Pay, Pro Field), each behind the same gate.
+handle /pro-procurement/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /pro-procurement/index.html
+	file_server
+}
+
+handle /pro-pay/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /pro-pay/index.html
+	file_server
+}
+
+handle /pro-field/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /pro-field/index.html
+	file_server
+}
+
 handle /q/* {
 	basic_auth {
 		demo __GATE_HASH__

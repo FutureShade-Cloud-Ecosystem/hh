@@ -123,9 +123,15 @@ type ClaimInput struct {
 // ListQuery selects the attempts a manager reads. OpenOnly selects the ones that need a person.
 // A From and or To adds every attempt created in that range that carries a processor ref and is not
 // BOUND (a trans_id with no sale behind it). With neither, the list is refused.
+//
+// The query also carries the caller's branch reach, and it is deny by default: AllBranches (a global caller)
+// lists every branch, otherwise only rows of Branches are listed, and a zero ListQuery lists no row at all.
+// The reach rides in the WHERE clause, so the limit counts only reachable rows and a page is never short.
 type ListQuery struct {
-	OpenOnly bool
-	From, To time.Time
+	OpenOnly    bool
+	From, To    time.Time
+	AllBranches bool
+	Branches    []string
 }
 
 // attemptQuerier is the part of pgxpool.Pool and pgx.Tx the store reads and writes through.
@@ -382,6 +388,9 @@ func (s *Store) ListOpen(ctx context.Context, q ListQuery) ([]Attempt, error) {
 	if s.pool == nil {
 		return nil, errAttemptsNoDB
 	}
+	if !q.AllBranches && len(q.Branches) == 0 {
+		return nil, nil
+	}
 	var from, to *time.Time
 	if !q.From.IsZero() {
 		from = &q.From
@@ -391,12 +400,13 @@ func (s *Store) ListOpen(ctx context.Context, q ListQuery) ([]Attempt, error) {
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT `+attemptColumns+` FROM card_charge_attempts
-		 WHERE ($1::bool AND status IN (`+needsAPerson+`))
+		 WHERE (($1::bool AND status IN (`+needsAPerson+`))
 		    OR ($2::bool AND processor_ref <> '' AND status <> 'BOUND'
 		        AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
-		        AND ($4::timestamptz IS NULL OR created_at < $4::timestamptz))
+		        AND ($4::timestamptz IS NULL OR created_at < $4::timestamptz)))
+		   AND ($5::bool OR branch_id = ANY($6::uuid[]))
 		 ORDER BY created_at DESC, id
-		 LIMIT `+strconv.Itoa(listLimit), q.OpenOnly, ranged, from, to)
+		 LIMIT `+strconv.Itoa(listLimit), q.OpenOnly, ranged, from, to, q.AllBranches, q.Branches)
 	if err != nil {
 		return nil, err
 	}

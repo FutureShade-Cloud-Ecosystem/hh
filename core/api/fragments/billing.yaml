@@ -1389,7 +1389,11 @@ paths:
         second arm, every attempt in the range that carries a charge ref and
         is not BOUND. A missing from and to default from to the seven day
         window, so the range arm is bounded whatever the caller sends.
-        Newest first, bounded at 500 rows.
+        Newest first, bounded at 500 rows. The list is fenced by the
+        caller's branch reach: a global role reads every branch, a branch
+        scoped caller reads only the attempts of its granted branches, and
+        an attempt of a branch the caller does not reach is simply absent
+        (the bound counts reachable rows only).
       x-role: requireManager
       x-access:
         surfaces: [money-desk]

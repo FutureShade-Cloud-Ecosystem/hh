@@ -41,7 +41,7 @@ export default defineConfig({
       url: `http://127.0.0.1:${appPort}/`,
       reuseExistingServer: false,
       cwd: appDir,
-      env: { DA_STUB_PORT: stubPort, DA_APP_PORT: appPort },
+      env: { DA_STUB_PORT: stubPort, DA_APP_PORT: appPort, DA_NO_WATCH: "1" },
     },
   ],
 });

@@ -92,6 +92,9 @@ done
 export CORE_DATABASE_URL="$DATABASE_URL"
 export CORE_STAFF_AUDIENCE="${CORE_STAFF_AUDIENCE:-hh-staff}"
 export CORE_TENANT_AUDIENCE="${CORE_TENANT_AUDIENCE:-hh-tenant}"
+# The demo dealer's name, on every text, email and export the demo sends. A deploy
+# overrides it by setting DEALER_NAME in the box's environment.
+export DEALER_NAME="${DEALER_NAME:-Gable Landscape Supply}"
 # CORE_SIGNIN_MODE is passed through as the operator set it (checked above);
 # the core itself refuses any value it does not accept.
 

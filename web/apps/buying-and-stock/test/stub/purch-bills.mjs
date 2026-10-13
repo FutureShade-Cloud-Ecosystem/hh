@@ -161,8 +161,8 @@ export function makeBills(kit) {
     branchTolerance = new Map();
     policyStore = { vis: "MANAGER_UP", fb: "CONFIRM", branch: new Map() };
     const w = kit.world();
-    const po66 = w.pos.find((p) => p.no === "PO-TRT-66");
-    const po67 = w.pos.find((p) => p.no === "PO-TRT-67");
+    const po66 = w.pos.find((p) => p.no === "PO-PLM-66");
+    const po67 = w.pos.find((p) => p.no === "PO-PLM-67");
     const first = createBill(po66, { bill_no: "INV-7781", bill_date: kit.dayOffset(-6), due_date: kit.dayOffset(24), currency: "CAD", lines: [{ po_line_id: po66.lines[0].id, description: "Alcli Step 48in", qty_billed_base: 10, unit_cost_cents: 2500 }] }, 1);
     postBill(first, false, "");
     createBill(po67, { bill_no: "INV-7790", bill_date: kit.dayOffset(-2), due_date: kit.dayOffset(43), tax_cents: 0, currency: "CAD", lines: [{ po_line_id: po67.lines[0].id, description: "Unilock Wall Cap", qty_billed_base: 10, unit_cost_cents: 26200 }] }, 1);

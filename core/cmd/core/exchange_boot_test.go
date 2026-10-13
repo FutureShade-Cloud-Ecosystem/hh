@@ -68,6 +68,21 @@ func (s *consoleStack) jwtFor(sub, email string, verified bool) string {
 	return tok
 }
 
+// setProvider rewrites the provider of the subject's one Console session.
+func (s *consoleStack) setProvider(sub, provider string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[sub] = strings.Replace(s.sessions[sub], `"provider":"email"`, fmt.Sprintf(`"provider":%q`, provider), 1)
+}
+
+func getMethods(h http.Handler, query string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/auth/methods"+query, nil)
+	r.RemoteAddr = "198.51.100.21:4000"
+	h.ServeHTTP(rec, r)
+	return rec
+}
+
 func postExchange(h http.Handler, jwt, org string) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(map[string]string{"jwt": jwt, "org": org})
 	rec := httptest.NewRecorder()
@@ -190,5 +205,81 @@ func TestBootConsoleExchangeWithEmptyListsRefusesEveryone(t *testing.T) {
 	rsp := postExchange(rec.inner, stack.jwtFor(testkit.SubSalesManager, "fxstaff.sales.manager@fixture.test", true), testkit.OrgNorthSlug)
 	if rsp.Code != 403 {
 		t.Fatalf("= %d %s", rsp.Code, rsp.Body)
+	}
+}
+
+// The dealer's allowed sign in methods over the real database (item 6c): the
+// public route answers the default for an org with no row and for an unknown
+// or malformed slug, byte for byte; a row narrows both the route and gate 4b;
+// an unknown code in the table is a refusal on the route (503) and at the
+// exchange (503), never a smaller set.
+func TestBootConsoleSignInMethods(t *testing.T) {
+	env := newCompEnv(t)
+	stack := newConsoleStack(t, env)
+	env.set("CORE_APPWRITE_ENDPOINT", stack.server.URL)
+	env.set("CORE_SIGNIN_EMAIL_DOMAINS", "fixture.test")
+	rec, graph := registeredSurface(t, env)
+	h := rec.inner
+	ctx := context.Background()
+
+	const defaultBody = `{"methods":["email_password","google"]}` + "\n"
+	for name, q := range map[string]string{
+		"org with no row": "?org=" + testkit.OrgNorthSlug,
+		"unknown slug":    "?org=no-such-dealer",
+		"malformed slug":  "?org=NOT%20A%20SLUG",
+		"no org":          "",
+	} {
+		if r := getMethods(h, q); r.Code != 200 || r.Body.String() != defaultBody {
+			t.Fatalf("%s = %d %q", name, r.Code, r.Body)
+		}
+	}
+
+	var orgID string
+	if err := graph.pool.QueryRow(ctx, `SELECT id::text FROM org WHERE slug = $1`, testkit.OrgNorthSlug).Scan(&orgID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = graph.pool.Exec(ctx, `DELETE FROM org_signin_method WHERE org_id = $1`, orgID) })
+	sub := testkit.SubSalesManager
+	email := "fxstaff.sales.manager@fixture.test"
+
+	// A dealer with only google: the route says so, an email session is refused.
+	if _, err := graph.pool.Exec(ctx, `INSERT INTO org_signin_method (org_id, code) VALUES ($1, 'google')`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	if r := getMethods(h, "?org="+testkit.OrgNorthSlug); r.Code != 200 || r.Body.String() != `{"methods":["google"]}`+"\n" {
+		t.Fatalf("google only = %d %q", r.Code, r.Body)
+	}
+	if r := getMethods(h, "?org=no-such-dealer"); r.Body.String() != defaultBody {
+		t.Fatalf("an unknown slug stopped answering the default: %q", r.Body)
+	}
+	refusedBody := postExchange(h, stack.jwtFor(sub, email, true), testkit.OrgNorthSlug)
+	if refusedBody.Code != 403 || strings.Contains(refusedBody.Body.String(), "token") {
+		t.Fatalf("email session at a google only dealer = %d %s", refusedBody.Code, refusedBody.Body)
+	}
+	// The reverse: a dealer with only email_password refuses a google session.
+	if _, err := graph.pool.Exec(ctx, `DELETE FROM org_signin_method WHERE org_id = $1`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := graph.pool.Exec(ctx, `INSERT INTO org_signin_method (org_id, code) VALUES ($1, 'email_password')`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	g := stack.jwtFor(sub, email, true)
+	stack.setProvider(sub, "google")
+	if r := postExchange(h, g, testkit.OrgNorthSlug); r.Code != 403 {
+		t.Fatalf("google session at an email only dealer = %d %s", r.Code, r.Body)
+	}
+	// An email session passes there.
+	if r := postExchange(h, stack.jwtFor(sub, email, true), testkit.OrgNorthSlug); r.Code != 200 {
+		t.Fatalf("email session at an email only dealer = %d %s", r.Code, r.Body)
+	}
+	// An unknown code in the table refuses, never narrows.
+	if _, err := graph.pool.Exec(ctx, `INSERT INTO org_signin_method (org_id, code) VALUES ($1, 'sms')`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	if r := getMethods(h, "?org="+testkit.OrgNorthSlug); r.Code != 503 {
+		t.Fatalf("route with an unknown code = %d %s", r.Code, r.Body)
+	}
+	if r := postExchange(h, stack.jwtFor(sub, email, true), testkit.OrgNorthSlug); r.Code != 503 {
+		t.Fatalf("exchange with an unknown code = %d %s", r.Code, r.Body)
 	}
 }

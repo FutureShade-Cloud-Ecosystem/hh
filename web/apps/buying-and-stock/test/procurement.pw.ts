@@ -17,8 +17,13 @@ async function draftTheGap(page: Page): Promise<void> {
 test("the way in with no handoff offers this role's own card", async ({ page, request }) => {
   await resetStub(request);
   await page.goto("/");
-  await expect(page.locator("[data-flow]")).toHaveCount(1);
-  await expect(page.locator("[data-flow]")).toContainText("Procurement manager");
+  // The surface's three roles now hold cards here (the inventory and counts
+  // areas brought the yard manager and Payables and Receivables in), and the
+  // procurement manager's card is this app's landing role.
+  await expect(page.locator("[data-flow]")).toHaveCount(3);
+  await expect(page.locator('[data-flow="procurement-manager"]')).toContainText("Procurement manager");
+  await expect(page.locator('[data-flow="yard-manager"]')).toContainText("Yard manager");
+  await expect(page.locator('[data-flow="payables-receivables"]')).toContainText("Payables and Receivables");
 });
 
 test("the header names the role as the reference does, and the theme control is a small button", async ({ page, request }) => {
@@ -171,7 +176,7 @@ test("a line can be added to a draft from the catalogue, and removed again", asy
   await draftTheGap(page);
   const panel = page.locator("[data-draft]");
   await panel.getByRole("button", { name: "Add a line" }).click();
-  await page.locator("[data-add-product]").selectOption({ label: "TB-PAVER-60 Stoneview Paver 60mm" });
+  await page.locator("[data-add-product]").selectOption({ label: "TB-PAVER-60 Techo Bloc Paver 60mm" });
   await page.locator("[data-add-qty]").fill("12");
   await panel.getByRole("button", { name: "Add line" }).click();
   const lines = panel.locator("[data-draft-line]");
@@ -330,7 +335,7 @@ test("a draft is placed and seen incoming, and only the placed order closes the 
   await page.locator("[data-field='expected']").fill("2031-03-04");
   await page.getByRole("button", { name: "Place order" }).click();
   const notice = page.locator("[data-notice]");
-  await expect(notice.locator("strong")).toContainText("Placed: PO-PLM-142 to Alcli (demo), 240 Slate Dimensional, $2,016.00.");
+  await expect(notice.locator("strong")).toContainText("Placed: PO-PLM-142 to Alcli (demo), 240 Brussels Dimensional, $2,016.00.");
   await expect(notice).toContainText("Moved to Ordered, promised 2031-03-04. It shows under Incoming. The yard team receives it in Yard Pick and Receive.");
   await expect(notice).not.toContainText("the core reads");
   await expect(page.locator("[data-draft]")).toHaveCount(0);
@@ -446,7 +451,7 @@ test("on a phone the incoming row keeps the PO, the vendor and the expected date
   await openHome(page, request);
   const row = page.locator("[data-incoming-row]", { hasText: "PO-PLM-141" });
   await expect(row).toBeVisible();
-  await expect(row).toContainText("Stoneview (demo)");
+  await expect(row).toContainText("Techo Bloc (demo)");
   await expect(row.locator("[data-expected]")).toBeVisible();
   // The two wide screen columns are hidden on a phone, and the testers' page says so.
   await expect(row.locator("td.opt2")).toHaveCount(2);

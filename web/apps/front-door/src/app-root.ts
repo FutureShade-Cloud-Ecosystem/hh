@@ -53,7 +53,9 @@ import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-co
 import {
   COMING_ROLES,
   LIVE_ROLES,
+  contractorEntries,
   type ComingRole,
+  type ContractorEntry,
   type LiveRole,
   type ModuleTile,
 } from "./roles.js";
@@ -629,6 +631,8 @@ export class FrontDoorApp extends HHElement {
   #screen: Screen = { kind: "picker" };
   /** The flow whose mint is in flight, or null: one at a time. */
   #busyFlow: string | null = null;
+  /** The contractor cards the flows listing offers (rows of class tenant); empty until it answers, and when it fails. */
+  #contractors: readonly ContractorEntry[] = [];
   /** Per-card refusals, keyed by flow, cleared on that card's retry. */
   #refusals = new Map<string, string>();
   /** The polite region's sentence. Empty is the resting value. */
@@ -719,6 +723,7 @@ export class FrontDoorApp extends HHElement {
     // A reload or a back navigation in this tab restores the role the mint
     // was for, until the token's own expiry says otherwise. A new tab starts
     // at the picker: sessionStorage is per tab.
+    void this.#loadContractors();
     const restored = this.#store.current();
     if (restored !== null) {
       this.#session = restored;
@@ -778,6 +783,18 @@ export class FrontDoorApp extends HHElement {
     }
   };
 
+  /**
+   * The contractor cards come from the flows listing's class: a tenant row is a contractor persona and
+   * is routed to the Pro app for its role. A listing that fails shows no contractor cards and leaves the
+   * staff cards working: the listing is only the box's own table, never a gate.
+   */
+  async #loadContractors(): Promise<void> {
+    const answered = await staffDemo.demoListFlows(this.#demoClient);
+    if (!answered.ok) return;
+    this.#contractors = contractorEntries(answered.value.flows);
+    this.requestUpdate();
+  }
+
   /** The one tap's work: mint, validate, hold, land on the role's home. */
   #choose(flow: string): void {
     if (this.#busyFlow !== null) return;
@@ -803,7 +820,7 @@ export class FrontDoorApp extends HHElement {
       // The gate's or the mint's own words, verbatim, in the card that
       // earned them; the other card keeps working. The polite region
       // carries the pointer, not the sentence.
-      this.#refusals = new Map(this.#refusals).set(flow, `Demo sign-in refused: ${answered.error}`);
+      this.#refusals = new Map(this.#refusals).set(flow, `Sign-in did not go through. ${answered.error}`);
       this.#notice = "The demo refused that sign in; the card says why.";
       this.requestUpdate();
       return;
@@ -812,7 +829,7 @@ export class FrontDoorApp extends HHElement {
     if (minted === null) {
       this.#refusals = new Map(this.#refusals).set(
         flow,
-        "Demo sign-in refused: the mint's answer is not a usable session.",
+        "Sign-in did not go through. Pick the role again.",
       );
       this.#notice = "The demo refused that sign in; the card says why.";
       this.requestUpdate();
@@ -936,6 +953,7 @@ export class FrontDoorApp extends HHElement {
         <div class="cards">
           ${LIVE_ROLES.map((role) => this.#roleCard(role))}
         </div>
+        ${this.#contractorSection()}
         <details class="coming-card" data-testid="coming-disclosure">
           <summary>
             <span class="coming-heading">Five more roles are coming</span>
@@ -972,6 +990,32 @@ export class FrontDoorApp extends HHElement {
           ${refusal === undefined ? nothing : html`<span class="refusal">${refusal}</span>`}
         </span>
       </button>
+    `;
+  }
+
+  /** Summit Ridge Builders' five roles: one card each, opening the Pro app for the role. */
+  #contractorSection(): TemplateResult | typeof nothing {
+    if (this.#contractors.length === 0) return nothing;
+    return html`
+      <section class="contractors" data-testid="contractor-section" aria-labelledby="contractor-heading">
+        <h3 class="coming-next-heading" id="contractor-heading">Contractor accounts</h3>
+        <p class="intro">Summit Ridge Builders buys from Gable Landscape Supply. Tap a role to open the Pro apps as it.</p>
+        <div class="cards">
+          ${this.#contractors.map(
+            (entry) => html`
+              <button type="button" class="card" data-action="open-module" data-href=${entry.href} data-testid="contractor-card" aria-label=${entry.label}>
+                <span class="mark">${drawIcon(iconForId(entry.icon), 32)}</span>
+                <span class="words">
+                  <span class="role">${entry.label}</span>
+                  <span class="line">${entry.line}</span>
+                  <span class="chips" aria-hidden="true"><span class="chip">${entry.app}</span></span>
+                  <span class="cta" aria-hidden="true">Open ${entry.app} as ${entry.label}</span>
+                </span>
+              </button>
+            `,
+          )}
+        </div>
+      </section>
     `;
   }
 

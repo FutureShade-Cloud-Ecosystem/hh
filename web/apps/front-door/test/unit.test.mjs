@@ -14,7 +14,7 @@ import {
   FrontDoorSessionStore,
   validateMint,
 } from "../src/session.js";
-import { COMING_ROLES, LIVE_ROLES } from "../src/roles.js";
+import { COMING_ROLES, LIVE_ROLES, CONTRACTOR_ROLES, contractorEntries } from "../src/roles.js";
 
 /** A storage double with the map's own semantics, probed like the real thing. */
 function fakeStorage() {
@@ -182,7 +182,7 @@ test("the catalog holds the eight live roles with the contract's labels and the 
   );
   assert.deepEqual(
     manager.tiles.map((tile) => tile.href),
-    ["/till/", "/quote/", "/home/", null, null],
+    ["/till/", "/quote/", "/home/", "/dealer-admin/", null],
   );
   assert.deepEqual(
     buyer.tiles.map((tile) => tile.href),
@@ -204,8 +204,13 @@ test("the catalog holds the eight live roles with the contract's labels and the 
   assert.equal(controller.id, "financial_controller");
   assert.equal(controller.label, "Financial Controller");
   assert.equal(controller.flow, "financial-controller");
-  assert.deepEqual(controller.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
-  assert.deepEqual(controller.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", null]);
+  // Dealer Admin opens at /dealer-admin/ for the two live roles whose catalog lists it.
+  assert.deepEqual(
+    controller.tiles.map((tile) => tile.name),
+    ["Money Desk", "Manager Home", "Dealer Admin", "House Messages"],
+  );
+  assert.deepEqual(controller.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", "/dealer-admin/", null]);
+  assert.equal(controller.tiles[2], manager.tiles[3], "both roles open the one Dealer Admin tile");
   assert.equal(controller.tiles[0], payRec.tiles[0], "both roles open the one Money Desk tile");
 });
 
@@ -286,4 +291,49 @@ test("an unreadable answer, a bad row, a failed page or a repeated cursor yields
     null,
   );
   assert.equal(readApprovalsPage({ items: [], next_cursor: 5 }), null);
+});
+
+// The contractor entry: the flows listing carries each row's class, and a contractor persona
+// (class tenant) is routed to the Pro app for its role.
+const LISTING = [
+  { flow: "sales", role_code: "inside_sales", label: "Sales", class: "staff" },
+  { flow: "contractor-field-crew", role_code: "field_crew", label: "Contractor field crew", class: "tenant" },
+  { flow: "contractor-account-admin", role_code: "account_admin", label: "Contractor owner", class: "tenant" },
+  { flow: "contractor-ap-finance", role_code: "ap_finance", label: "Contractor AP", class: "tenant" },
+  { flow: "contractor-buyer", role_code: "buyer", label: "Contractor buyer", class: "tenant" },
+  { flow: "contractor-buyer-no-pay", role_code: "buyer_no_pay", label: "Contractor buyer (no pay)", class: "tenant" },
+];
+
+test("the five contractor roles route to the Pro app for their role, in the table's own order", () => {
+  assert.deepEqual(CONTRACTOR_ROLES.map((r) => r.roleCode), ["account_admin", "buyer", "buyer_no_pay", "ap_finance", "field_crew"]);
+  assert.deepEqual(CONTRACTOR_ROLES.map((r) => r.label), ["Owner", "Buyer", "Project manager", "Accounts payable", "Field crew"]);
+  const entries = contractorEntries(LISTING);
+  assert.deepEqual(entries.map((e) => e.label), ["Owner", "Buyer", "Project manager", "Accounts payable", "Field crew"]);
+  assert.deepEqual(entries.map((e) => e.href), [
+    "/pro-procurement/?as=account_admin",
+    "/pro-procurement/?as=buyer",
+    "/pro-procurement/?as=buyer_no_pay",
+    "/pro-pay/?as=ap_finance",
+    "/pro-field/?as=field_crew",
+  ]);
+});
+
+test("only a tenant class row with a known role becomes an entry; a staff row never does", () => {
+  assert.deepEqual(contractorEntries([{ flow: "sales", role_code: "inside_sales", label: "Sales", class: "staff" }]), []);
+  // A staff row that borrows a contractor role code is still staff.
+  assert.deepEqual(contractorEntries([{ flow: "x", role_code: "buyer", label: "x", class: "staff" }]), []);
+  // A tenant row with a role the table does not know is not offered, and no class at all reads as staff.
+  assert.deepEqual(contractorEntries([{ flow: "x", role_code: "janitor", label: "x", class: "tenant" }]), []);
+  assert.deepEqual(contractorEntries([{ flow: "x", role_code: "buyer", label: "x" }]), []);
+  assert.deepEqual(contractorEntries(undefined), []);
+  assert.deepEqual(contractorEntries("nonsense"), []);
+});
+
+test("every contractor card has a line and names the app it opens, in plain words", () => {
+  for (const role of CONTRACTOR_ROLES) {
+    assert.ok(role.line.length > 10, role.label);
+    assert.match(role.app, /^Pro (Procurement|Pay|Field)$/);
+    assert.match(role.prefix, /^\/pro-(procurement|pay|field)\/$/);
+    assert.doesNotMatch(role.line, /[\u2013\u2014!]|console|core|token|session/i);
+  }
 });

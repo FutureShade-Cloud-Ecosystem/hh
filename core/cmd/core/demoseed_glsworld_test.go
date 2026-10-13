@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
 )
 
 // glsDenylist is the brief's denylist (the first dealer's name and cities, the real brand and
@@ -47,7 +49,7 @@ func glsWorldInput(t *testing.T) planInput {
 // TestGLSWorld_TenantConfigNamesTheDealer: the config the demo box serves publicly names the demo
 // dealer and no word of the first dealer.
 func TestGLSWorld_TenantConfigNamesTheDealer(t *testing.T) {
-	c := demoTenantConfig()
+	c := demo.DealerConfig()
 	if c.DealerName != "Gable Landscape Supply" {
 		t.Errorf("the demo tenant config names %q, want Gable Landscape Supply", c.DealerName)
 	}

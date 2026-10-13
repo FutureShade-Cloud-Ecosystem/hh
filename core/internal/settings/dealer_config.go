@@ -196,9 +196,32 @@ func (r *DealerConfigReader) DealerConfig(ctx context.Context) (DealerConfig, er
 	if err := rows.Err(); err != nil {
 		return DealerConfig{}, err
 	}
-	return parseDealerConfig(raw, func(key string) {
+	return dealerConfigFromRows(raw, func(key string) {
 		r.log.Warn("settings: a dealer configuration value is malformed; using the default for the key", "key", key)
-	}), nil
+	})
+}
+
+// ErrMalformedTaxRegion refuses a stored tax region that is present but unusable. Every other key
+// falls back to its own default; the tax region does not, because the fallback is Ontario's 13
+// percent and a dealer whose row is damaged must not ring it in silence. An ABSENT region is still
+// the Ontario dealer.
+var ErrMalformedTaxRegion = errors.New("settings: the stored tax region is malformed; refusing to assume Ontario")
+
+// dealerConfigFromRows parses the rows with per-key fallbacks and refuses a malformed tax region.
+func dealerConfigFromRows(rows map[string]json.RawMessage, bad func(key string)) (DealerConfig, error) {
+	regionBad := false
+	cfg := parseDealerConfig(rows, func(key string) {
+		if key == KeyTaxRegion {
+			regionBad = true
+		}
+		if bad != nil {
+			bad(key)
+		}
+	})
+	if regionBad {
+		return DealerConfig{}, ErrMalformedTaxRegion
+	}
+	return cfg, nil
 }
 
 // DealerConfigExecer is the one write capability WriteDealerConfigTx needs: pgx.Tx and the demo
