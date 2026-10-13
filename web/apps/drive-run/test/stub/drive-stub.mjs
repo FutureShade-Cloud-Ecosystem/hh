@@ -374,6 +374,9 @@ function capturePod(res, stop, input) {
   if (stop.status !== "EN_ROUTE") return refuse(res, 409, "illegal status transition");
   const name = String(input.received_by ?? "").trim();
   if (name === "") return refuse(res, 400, "type the full name of the person receiving this delivery");
+  // The core's rule (CapturePOD checkTypedName): at most 200 bytes, no C0 or DEL, no bidi controls.
+  if (Buffer.byteLength(name, "utf8") > 200) return refuse(res, 400, "that name is too long, type the full name in at most 200 bytes");
+  if (/[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/.test(name)) return refuse(res, 400, "the name cannot hold control characters, type the full name as plain text");
   if (input.affirmed !== true) return refuse(res, 400, "the recipient must confirm the delivery before it can be signed");
   const now = new Date(nowMs()).toISOString();
   stop.status = "DELIVERED";

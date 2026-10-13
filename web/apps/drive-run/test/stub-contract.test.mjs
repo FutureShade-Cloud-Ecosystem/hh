@@ -217,6 +217,8 @@ test("the refusals carry the core's statuses, envelope and sentences", async () 
   refused(await call("POST", `/api/v1/dispatch/stops/${a.id}/status`, { body: { status: "FAILED", reason: "  " } }), 400, "a failed stop needs a reason");
   // Proof of delivery: the name, then the confirmation.
   refused(await call("POST", `/api/v1/dispatch/stops/${a.id}/pod`, { body: { received_by: " ", affirmed: true } }), 400, "type the full name of the person receiving this delivery");
+  refused(await call("POST", `/api/v1/dispatch/stops/${a.id}/pod`, { body: { received_by: "e".repeat(201), affirmed: true } }), 400, "that name is too long, type the full name in at most 200 bytes");
+  refused(await call("POST", `/api/v1/dispatch/stops/${a.id}/pod`, { body: { received_by: "Clerk\u202e", affirmed: true } }), 400, "the name cannot hold control characters, type the full name as plain text");
   refused(await call("POST", `/api/v1/dispatch/stops/${a.id}/pod`, { body: { received_by: "Clerk", affirmed: false } }), 400, "the recipient must confirm the delivery before it can be signed");
   refused(await call("POST", `/api/v1/dispatch/stops/${b.id}/pod`, { body: { received_by: "Clerk", affirmed: true } }), 409, "illegal status transition");
   // Photos: the stop must be on the road or settled, then the type, then the bytes.
