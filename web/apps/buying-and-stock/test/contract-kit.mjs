@@ -69,7 +69,7 @@ export async function startStub() {
     return { status: res.status, json: parsed, text, headers: res.headers };
   }
   const post = (path, body) => fetch(`${base}${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
-  return { call, post, reset: () => post("/_stub/reset"), stop: () => child.kill() };
+  return { base, call, post, reset: () => post("/_stub/reset"), stop: () => child.kill() };
 }
 
 function declared(d) {

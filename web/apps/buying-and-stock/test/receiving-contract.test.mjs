@@ -3,6 +3,7 @@
 // the refusal order is the core's (service.go Receive, AttachLandedCost, vendor_order.go SendPO).
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { request as httpRequest } from "node:http";
 import { BRANCH, coreSourceOf, holds, refusedBy, startStub } from "./contract-kit.mjs";
 
 const refused = refusedBy(coreSourceOf(["purchasing", "landedcost"]));
@@ -196,10 +197,27 @@ test("the wall refuses the writes of a role that is not a manager, and the reads
   assert.equal((await stub.call("GET", `${P}/receiving`)).status, 200);
 });
 
-test("an answer lost on the way back still leaves the write done", async () => {
+// One request on a connection of its own, so nothing can reuse a pooled socket or replay the request
+// behind the test's back (fetch may retry on a reused keep-alive connection, which would send the write
+// twice and swallow the very rejection this test is about). Resolves with what happened.
+function oneShot(base, method, path, body) {
+  return new Promise((resolve) => {
+    const payload = JSON.stringify(body);
+    const req = httpRequest(`${base}${path}`, { method, agent: false, headers: { Authorization: "Bearer stub-token", "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload), Connection: "close" } }, (res) => {
+      res.resume();
+      res.on("end", () => resolve({ answered: true, status: res.statusCode }));
+      res.on("error", () => resolve({ answered: false }));
+    });
+    req.on("error", () => resolve({ answered: false }));
+    req.end(payload);
+  });
+}
+
+test("an answer lost on the way back still leaves the write done, exactly once", async () => {
   await stub.reset();
   const po = await order("PO-TRT-136");
   await stub.post("/_stub/flag", { name: "dropNext", value: true });
-  await assert.rejects(stub.call("POST", `${P}/pos/${po.id}/receive`, { lines: [{ po_line_id: po.lines[0].id, qty_base: 2 }] }));
-  assert.equal((await order("PO-TRT-136")).lines[0].qty_received_base, 2);
+  const result = await oneShot(stub.base, "POST", `${P}/pos/${po.id}/receive`, { lines: [{ po_line_id: po.lines[0].id, qty_base: 2 }] });
+  assert.equal(result.answered, false, "the answer was lost");
+  assert.equal((await order("PO-TRT-136")).lines[0].qty_received_base, 2, "the write was made once");
 });
