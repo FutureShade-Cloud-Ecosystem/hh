@@ -195,8 +195,10 @@ describe.each(["field", "work"] as const)("%s launcher paths", (shell) => {
     const docker = readFileSync(resolve(REPO_ROOT, "deploy/demo/Dockerfile"), "utf8");
     for (const entry of launchEntries()) {
       const dir = entry.dir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Most apps have their own WORKDIR line; the Quote Desk builds inside
+      // the image's conditional (it is absent from some build contexts).
       const line = new RegExp(
-        `WORKDIR /src/web/apps/${dir}\\nRUN npx vite build --mode demo --base=${entry.path} `,
+        `(WORKDIR /src/web/apps/${dir}\\nRUN npx vite build|cd apps/${dir} && npx vite build) --mode demo --base=${entry.path} `,
       );
       expect(docker).toMatch(line);
     }
