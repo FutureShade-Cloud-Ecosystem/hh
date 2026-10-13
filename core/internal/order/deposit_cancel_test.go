@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 )
 
@@ -255,3 +256,57 @@ func TestOrderRead_DepositOnlyOrderOffersCancel(t *testing.T) {
 }
 
 var _ = identity.StaffContext{} // keeps the identity import at hand for fixture variants
+
+// The ruling (row 1579) names the Sales Manager, the Branch Manager and the General Manager: each
+// cancels with the keep override and a reason, and the reason is the audit row's, written once.
+func TestCancelOrder_ThreeManagerRolesKeepTheDepositWithAReason(t *testing.T) {
+	roles := []struct {
+		code  string
+		tier  identity.Tier
+		scope identity.Scope
+	}{
+		{"SALES_MANAGER", identity.TierManager, identity.ScopeBranch},
+		{"BRANCH_MANAGER", identity.TierManager, identity.ScopeBranch},
+		{"GENERAL_MANAGER", identity.TierLeadership, identity.ScopeGlobal},
+	}
+	for _, r := range roles {
+		t.Run(r.code, func(t *testing.T) {
+			svc, store, settler := depositCancelFixture(t, "CONFIRMED", nil, fakeDepositDefault{ans: "CREDIT_BACK"})
+			_ = store
+			rec := &recordingRecorder{}
+			svc.WithAudit(rec)
+			sc := identity.StaffContext{UserID: txnUser, RoleCode: r.code, Tier: r.tier, Scope: r.scope,
+				Status: identity.StatusActive, Branches: map[string]bool{histBranchA: true}}
+			ctx := ctxWith(context.Background(), sc)
+			// A blank reason is refused for every one of the three, before any settlement.
+			if _, err := svc.CancelOrderManual(ctx, txnOrder, " ", true); !isBadRequest(err) {
+				t.Fatalf("a blank reason must be a 400, got %v", err)
+			}
+			if _, err := svc.CancelOrderManual(ctx, txnOrder, "the supplier already ordered it", true); err != nil {
+				t.Fatalf("cancel with the keep override: %v", err)
+			}
+			if len(settler.calls) != 1 || settler.calls[0].disposition != "KEPT" {
+				t.Fatalf("settlement calls = %+v, want one KEPT", settler.calls)
+			}
+			if n := rec.countAction(audit.ActOrderStatusChanged); n != 1 {
+				t.Fatalf("audit rows = %d, want 1", n)
+			}
+			if got := rec.records[0].Reason; got != "the supplier already ordered it" {
+				t.Fatalf("audit reason = %q", got)
+			}
+		})
+	}
+}
+
+// The branch wall is unchanged: a branch scoped manager cannot cancel an order of a branch they
+// hold no grant for, and nothing settles.
+func TestCancelOrder_BranchScopedManagerStaysInTheirBranches(t *testing.T) {
+	svc, _, settler := depositCancelFixture(t, "CONFIRMED", nil, fakeDepositDefault{ans: "CREDIT_BACK"})
+	ctx := ctxWith(context.Background(), managerAt(txnUser, histBranchB)) // the order lives in branch A
+	if _, err := svc.CancelOrderManual(ctx, txnOrder, "wrong branch", true); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("a cross branch cancel must be refused, got %v", err)
+	}
+	if len(settler.calls) != 0 {
+		t.Fatalf("the refused cancel settled %d times", len(settler.calls))
+	}
+}

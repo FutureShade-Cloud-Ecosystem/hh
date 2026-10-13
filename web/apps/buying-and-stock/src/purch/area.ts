@@ -11,9 +11,9 @@ export interface AreaDesk {
   /** The area's template. */
   render(): TemplateResult;
   /** After a render: sets starting field values (the position gate allows no bound input value). */
-  seed?(set: (name: string, value: string) => void): void;
-  /** A form field changed: lets the area keep words under it in step with what is typed. */
-  typed?(name: string, value: string): void;
+  seed?(set: (name: string, value: string, key?: string) => void): void;
+  /** A form field changed (a repeated row's field carries its row key): lets the area keep words under it in step with what is typed. */
+  typed?(name: string, value: string, key?: string): void;
 }
 
 export interface AreaEntry {
@@ -25,7 +25,7 @@ export interface AreaEntry {
 /** What every desk is given: a way to repaint and a way to read the text of a form field. */
 export interface DeskHost {
   readonly repaint: () => void;
-  readonly field: (name: string) => string;
+  readonly field: (name: string, key?: string) => string;
   /** The signed in role's code (a read only seat is not offered the controls the wall would refuse). */
   readonly role: () => string;
 }

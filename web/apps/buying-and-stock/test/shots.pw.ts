@@ -37,7 +37,7 @@ for (const size of SIZES) {
 
       await request.post("/_stub/reset");
       await page.goto("/");
-      await expect(page.locator("[data-flow]")).toHaveCount(1);
+      await expect(page.locator('[data-flow="procurement-manager"]')).toHaveCount(1);
       await brandOn();
       await take("01", "way-in");
 
