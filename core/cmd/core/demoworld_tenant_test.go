@@ -124,8 +124,15 @@ func TestDemoWorld_TenantFlow(t *testing.T) {
 		return rsp.Code, rsp.Body.Bytes()
 	}
 
+	// The public tenant config names the demo's dealer, not the shared default's nothing and not
+	// another dealer (row 1592).
+	code, raw := do("GET", "/api/v1/tenant/config", "", "")
+	if code != 200 || !strings.Contains(string(raw), `"dealer_name":"Gable Landscape Supply"`) || strings.Contains(strings.ToLower(string(raw)), "dibbits") {
+		t.Fatalf("public tenant config = %d %s, want Gable Landscape Supply and no other dealer", code, raw)
+	}
+
 	// The listing carries the class of every flow.
-	code, raw := do("GET", "/api/v1/demo/flows", "", "")
+	code, raw = do("GET", "/api/v1/demo/flows", "", "")
 	if code != 200 {
 		t.Fatalf("flows: %d %s", code, raw)
 	}

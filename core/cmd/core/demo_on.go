@@ -47,6 +47,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
+	portalmod "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
@@ -336,12 +337,21 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// role gate.
 	rec := shims.NewRecorder(1024)
 	shims.RegisterRoutes(r, g, rec)
-	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
+	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(demo.DealerConfig())))
 
 	belt := buildSmsBelt(pool, log)
 	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL, roleCfg)
 	ops := wireOperations(r, pool, g, log, money, getenv("CORE_STREAM_TICKET_KEY"), belt.outbox)
 	tops := wireTops(r, pool, g, log, money, ops, cfg, roleCfg, belt)
+	// The demo dealer's name and brand reach the contractor answers too: the
+	// portal service's login and refresh config is the demo seed's, so the
+	// Pro apps read Gable Landscape Supply there as on the public route
+	// (the shared default names no dealer, decision log row 1592).
+	dealer := demo.DealerConfig()
+	tops.portalSvc.WithConfig(portalmod.Config{
+		ID: dealer.Id, DealerName: dealer.DealerName, LogoURL: dealer.LogoUrl,
+		PrimaryColor: dealer.PrimaryColor, SupportEmail: dealer.SupportEmail, SupportPhone: dealer.SupportPhone,
+	})
 	if err := wirePaymentGrant(r, g, roleGate, tops.posHandler); err != nil {
 		pool.Close()
 		return nil, err
