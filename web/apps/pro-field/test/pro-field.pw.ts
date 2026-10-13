@@ -119,15 +119,42 @@ test.describe("phone", () => {
     await expect(page.getByTestId("landing-state")).toHaveCount(0);
   });
 
-  test("an unbuilt surface says it is not open yet and the selector moves between them", async ({ page }) => {
+  test("the selector moves between the order surfaces and each one filters its rows", async ({ page }) => {
     await signIn(page, "field");
     await page.getByTestId("frame-selector").click();
     const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
-    const other = panel.locator("button[data-app='field']:not([aria-current='page'])").first();
-    const label = (await other.innerText()).trim();
-    await other.click();
-    await expect(page.getByTestId("surface-title")).toHaveText(label);
-    await expect(page.getByTestId("landing-state")).toContainText("This surface is not open yet.");
+    await panel.getByRole("button", { name: "Deliveries" }).click();
+    await expect(page.getByTestId("surface-title")).toHaveText("Deliveries");
+    const deliveryRows = page.getByTestId("landing-rows").getByTestId("order-row");
+    await expect(deliveryRows).not.toHaveCount(0);
+    for (const row of await deliveryRows.all()) await expect(row).toContainText("Delivery");
+    await page.getByTestId("frame-selector").click();
+    await panel.getByRole("button", { name: "Pickups" }).click();
+    await expect(page.getByTestId("surface-title")).toHaveText("Pickups");
+    const pickupRows = page.getByTestId("landing-rows").getByTestId("order-row");
+    await expect(pickupRows).not.toHaveCount(0);
+    for (const row of await pickupRows.all()) {
+      const words = (await row.innerText()).toLowerCase();
+      expect(words.includes("pickup") || words.includes("will call")).toBe(true);
+    }
+  });
+
+  test("a row opens the order with its journey and its asked-for day, and back returns to the list", async ({ page }) => {
+    await signIn(page, "field");
+    const firstRow = page.getByTestId("landing-rows").getByTestId("order-row").first();
+    const orderNo = (await firstRow.locator(".mono.name").innerText()).trim();
+    await firstRow.click();
+    await expect(page.getByTestId("surface-title")).toHaveText("Order");
+    await expect(page.getByTestId("order-head")).toContainText(orderNo);
+    await expect(page.getByTestId("order-head")).toContainText("Promised for");
+    const steps = page.getByTestId("order-timeline").locator(".tstep");
+    await expect(steps).toHaveCount(5);
+    await expect(page.getByTestId("order-lines")).toContainText("at $");
+    await expect(page.getByTestId("order-totals")).toContainText("Tax");
+    await page.screenshot({ path: test.info().outputPath("order-phone.png") });
+    await page.getByRole("button", { name: "Orders" }).click();
+    await expect(page.getByTestId("landing-rows")).toBeVisible();
+    await expect(page.getByTestId("surface-title")).toHaveText("Tracking");
   });
 
   test("a surface in another app says it opens that app and asks to sign in again, one in this app says nothing", async ({ page }) => {
@@ -158,12 +185,20 @@ test.describe("phone", () => {
 });
 
 test.describe("desktop", () => {
-  test.use({ viewport: { width: 1280, height: 800 } });
+  test.use({ viewport: { width: 1440, height: 900 } });
 
   test("the frame shows the role beside the sign out and the rows fit the page", async ({ page }) => {
     await signIn(page, "field");
     await expect(page.getByTestId("frame-role")).toBeVisible();
     await expect(page.getByTestId("landing-rows")).toBeVisible();
     await page.screenshot({ path: test.info().outputPath("landing-desktop.png") });
+  });
+
+  test("an order view reads as a page at desk width, with the journey beside its facts", async ({ page }) => {
+    await signIn(page, "field");
+    await page.getByTestId("landing-rows").getByTestId("order-row").first().click();
+    await expect(page.getByTestId("order-head")).toBeVisible();
+    await expect(page.getByTestId("order-timeline")).toBeVisible();
+    await page.screenshot({ path: test.info().outputPath("order-desktop.png") });
   });
 });
