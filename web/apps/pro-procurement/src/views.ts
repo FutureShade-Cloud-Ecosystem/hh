@@ -195,7 +195,7 @@ export interface ModalSpec {
 export function confirmModal(spec: ModalSpec): TemplateResult {
   return modalSheet(
     spec.heading,
-    spec.body,
+    html`${spec.body}${spec.error === undefined || spec.error === "" ? nothing : html`<p class="error" role="alert" data-testid="${spec.testid}-error">${spec.error}</p>`}`,
     html`${spec.extraFooter ?? nothing}${cancelButton}${button({
       label: spec.busy === true ? "Working" : spec.confirmLabel,
       action: spec.confirmAction,
