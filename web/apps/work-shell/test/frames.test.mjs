@@ -56,7 +56,8 @@ test("a host with no content frame yet sends nothing", () => {
 });
 
 test("every desk app frame is opened with the framed flag; the front door frame is not", () => {
-  assert.ok(/data-testid="app-frame"[^>]*src=\$\{hhAddress\(framedAddress\(current\.path\)\)\}/.test(hostSrc), "the app frame's address carries the flag");
+  assert.ok(/data-testid="app-frame"[^>]*src=\$\{hhAddress\(appAddress\)\}/.test(hostSrc), "the app frame's address is the framed one, checked whole by hhAddress");
+  assert.ok(/appAddress = current === undefined \? "" : framedAddress\(current\.path\)/.test(hostSrc), "built with the one framedAddress");
   assert.ok(/data-testid="door-frame"[^>]*src=\$\{hhAddress\(DOOR_PATH\)\}/.test(hostSrc), "the door frame keeps its plain address");
   assert.equal(FRAMED_PARAM, "hh-framed");
   assert.equal(FRAMED_BY_WORK_SHELL, "work-shell");

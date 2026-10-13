@@ -236,6 +236,7 @@ test('8d: the toggle carries an icon you can see: 20 px or more, in the full tex
   assert.ok(px(icon['width']) >= 20 && px(icon['height']) >= 20, 'the glyph is at least 20 px');
   const toggle = declsFor(rules, '.toggle');
   assert.equal(toggle['color'], 'var(--hh-text)', 'the glyph is drawn in the text colour, not the dim one');
+  assert.equal(toggle['padding'], '0', 'no sheet padding: in a 44 px box it would squeeze the glyph to a sliver');
 });
 
 test('8d: the toggle is a panel icon with a name in both postures, and still 44 px and collapsed by default', () => {
