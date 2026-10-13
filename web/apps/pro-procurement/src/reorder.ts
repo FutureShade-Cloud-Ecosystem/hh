@@ -27,13 +27,14 @@ export async function reorderCreate(
   page: Page,
   orderId: string,
   lines: number[],
+  idempotencyKey: string,
 ): Promise<{ kind: "ready"; data: { order_id: string; order_no: string; status: string } } | { kind: "refusal" } | { kind: "error"; error: string; status?: number }> {
   // The screen's gate before the wire: the core answers 403 to a role without
   // create_orders, and the screen never offers the move it holds.
   if (!page.session.can("create_orders")) return { kind: "refusal" };
   const answer = await tenantOrders.tenantCreateReorder(page.client, orderId, {
     lines: [...lines].sort((a, b) => a - b),
-    idempotency_key: crypto.randomUUID(),
+    idempotency_key: idempotencyKey,
   });
   if (answer.ok) return { kind: "ready", data: answer.value };
   return { kind: "error", error: answer.error, status: answer.status };
@@ -49,6 +50,14 @@ interface ReorderState {
   error: string;
   chosen: Set<number>;
   mayCreate: boolean;
+  /**
+   * The create's idempotency key, minted when the modal opened and sent
+   * unchanged on every press: the core replays the draft it made under a
+   * repeated key, so a retry after a transport error cannot mint a twin. It
+   * is minted again only when the selection changes (a different reorder) or
+   * on the next open.
+   */
+  key: string;
 }
 
 const reorderStates = new WeakMap<Page, ReorderState>();
@@ -93,7 +102,7 @@ function reorderModal(state: ReorderState): TemplateResult {
 }
 
 export function openReorder(page: Page, orderId: string, orderNo: string): void {
-  const state: ReorderState = { orderId, preview: null, loading: true, busy: false, error: "", chosen: new Set(), mayCreate: page.session.can("create_orders") };
+  const state: ReorderState = { orderId, preview: null, loading: true, busy: false, error: "", chosen: new Set(), mayCreate: page.session.can("create_orders"), key: crypto.randomUUID() };
   reorderStates.set(page, state);
   page.openModal("reorder-modal", () => reorderModal(state));
   void (async () => {
@@ -120,6 +129,8 @@ export function reorderCommand(action: string, control: Element, page: Page): bo
     if (Number.isFinite(lineNo)) {
       if (state.chosen.has(lineNo)) state.chosen.delete(lineNo);
       else state.chosen.add(lineNo);
+      // The lines the key covers changed: the next press creates under a fresh key.
+      state.key = crypto.randomUUID();
       page.touch();
     }
     return true;
@@ -137,7 +148,7 @@ async function createDraft(page: Page): Promise<void> {
   state.busy = true;
   state.error = "";
   page.touch();
-  const answer = await reorderCreate(page, state.orderId, [...state.chosen]);
+  const answer = await reorderCreate(page, state.orderId, [...state.chosen], state.key);
   state.busy = false;
   if (answer.kind === "ready") {
     reorderStates.delete(page);
