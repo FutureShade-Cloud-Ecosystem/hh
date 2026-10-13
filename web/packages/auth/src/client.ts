@@ -730,7 +730,7 @@ export class AuthController {
       // A console outage or throttle says nothing about the person either (the
       // shells contract: an outage cannot lock a subject): keep the profile and
       // the lock and back off, naming the reason.
-      if (error instanceof PlatformRefusedError && (error.status >= 500 || error.status === 429)) {
+      if (error instanceof PlatformRefusedError && error.status !== 401) {
         this.#backoffRefresh();
         return fail(`no platform session to resume: ${asMessage(error)}`, error.status === 429 ? "rate_limited" : "unavailable");
       }
