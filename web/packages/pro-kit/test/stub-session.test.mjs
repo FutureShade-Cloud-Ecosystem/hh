@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import { tenantAuth, tenantDashboard } from "@hardscapehouse/api-client";
 import { InMemoryTenantSession } from "../src/session.ts";
 import { stubAdapter } from "../src/stub-adapter.ts";
+import { demoTenantAdapter } from "../src/demo-adapter.ts";
+import { ROLE_LABELS } from "../src/capabilities.ts";
 import { tenantClient } from "../src/client.ts";
 import { can } from "../src/capabilities.ts";
 import { PERSONAS, STUB_PASSWORD } from "../test-stub/tenant-data.mjs";
@@ -103,4 +105,25 @@ test("after sign out the old token is not accepted and no bearer is sent", async
   const refused = await tenantDashboard.tenantGetDashboard(client);
   assert.equal(refused.ok, false);
   assert.equal(refused.status, 401);
+});
+
+test("the demo adapter signs each of the five roles in through the stub's demo routes, role from tenant me", async () => {
+  for (const persona of Object.values(PERSONAS)) {
+    const session = new InMemoryTenantSession({ adapter: demoTenantAdapter({ baseUrl: base }), baseUrl: base });
+    const result = await session.signInWith({ method: "persona", roleLabel: ROLE_LABELS[persona.role] });
+    assert.equal(result.ok, true, persona.role);
+    assert.equal(session.profile().role, persona.role);
+    for (const [capability, held] of Object.entries(session.profile().capabilities)) assert.equal(held, can(persona.role, capability));
+    const dashboard = await tenantDashboard.tenantGetDashboard(tenantClient(session, { baseUrl: base }));
+    assert.equal(dashboard.ok, can(persona.role, "view_billing"), persona.role);
+    if (!dashboard.ok) assert.equal(dashboard.status, 403);
+    await session.signOut();
+  }
+});
+
+test("the demo email link signs a role in by its demo address", async () => {
+  const session = new InMemoryTenantSession({ adapter: demoTenantAdapter({ baseUrl: base }), baseUrl: base });
+  const result = await session.signInWith({ method: "email_link", email: "ap_finance@hh-demo.invalid" });
+  assert.equal(result.ok, true);
+  assert.equal(session.profile().role, "ap_finance");
 });
