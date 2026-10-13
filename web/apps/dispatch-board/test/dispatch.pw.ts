@@ -21,7 +21,7 @@ test("the load board reads the quick cards, the staging lane, the trucks with th
   await expect(page.locator("[data-card='card.deliveries'] .figure")).toHaveText("8");
   await expect(page.locator("[data-card='card.pickups']")).toContainText("2 to pick · 1 ready");
   await expect(page.locator("[data-staging-count]")).toHaveText("3");
-  await expect(truck(page, "RUN-PLM-1").locator("[data-gauge='weight']")).toContainText("5,080 of 9,000 kg");
+  await expect(truck(page, "RUN-PLM-1").locator("[data-gauge='weight']")).toContainText("5.6 of 9.9 tons");
   await expect(truck(page, "RUN-PLM-1").locator("[data-gauge='weight']")).toContainText("Room");
   await expect(truck(page, "RUN-PLM-2").locator("[data-gauge='weight']")).toContainText("Near full");
   await expect(truck(page, "RUN-PLM-3").locator("[data-gauge='weight']")).toContainText("Over");
@@ -36,7 +36,7 @@ test("a load put on a truck is committed by the core and the gauge follows", asy
     await load(page, "ORD-0029").locator("select").first().selectOption({ index: 1 });
   });
   await expect(page.locator("[data-notice]")).toContainText("ORD-0029 moved to RUN-PLM-1");
-  await expect(truck(page, "RUN-PLM-1").locator("[data-gauge='weight']")).toContainText("8,480 of 9,000 kg");
+  await expect(truck(page, "RUN-PLM-1").locator("[data-gauge='weight']")).toContainText("9.3 of 9.9 tons");
   await expect(truck(page, "RUN-PLM-1").locator("[data-gauge='weight']")).toContainText("Near full");
   await expect(truck(page, "RUN-PLM-1").locator("li.load", { hasText: "ORD-0029" }).locator("[data-date-state]")).toHaveText("Committed");
   await expect(page.locator("[data-staging-count]")).toHaveText("2");
@@ -52,8 +52,10 @@ test("the move list names why a truck is not offered", async ({ page, request })
 
 test("a truck is dispatched only with a crew, and then loads what is on it", async ({ page, request }) => {
   await openBoard(page, request);
-  await expect(truck(page, "RUN-PLM-2").getByRole("button", { name: "Dispatch" })).toBeDisabled();
   await expect(truck(page, "RUN-PLM-2").locator("[data-dispatch-why]")).toContainText("needs a truck and a driver");
+  // Pressed without a crew, the core refuses and the refusal shows in that truck's lane, in words.
+  await truck(page, "RUN-PLM-2").getByRole("button", { name: "Dispatch" }).click();
+  await expect(truck(page, "RUN-PLM-2").locator("[data-lane-error]")).toContainText("RUN-PLM-2 did not go: a run needs both a truck and a driver before it can be dispatched");
   await truck(page, "RUN-PLM-2").locator("select[data-field='crew-driver']").selectOption({ index: 1 });
   await expect(page.locator("[data-notice]")).toHaveText("Crew set.");
   await truck(page, "RUN-PLM-2").getByRole("button", { name: "Dispatch" }).click();
@@ -77,7 +79,7 @@ test("many loads are marked loaded in one move, and the one the core refuses is 
 test("a payment hold shows as a hold in words and never as an amount unless the core sent one", async ({ page, request }) => {
   await openBoard(page, request);
   await expect(load(page, "ORD-0014").locator("[data-hold]")).toHaveText("Held for payment");
-  await expect(load(page, "ORD-0014").locator("[data-hold-words]")).toHaveText("payment needed before release, call the office");
+  await expect(load(page, "ORD-0014").locator("[data-hold-words]")).toHaveText("Payment needed before release, call the office.");
   await expect(page.locator("main")).not.toContainText("$");
   await stubPost(request, "hold-amount", { on: true });
   await page.getByRole("button", { name: "Refresh" }).click();
@@ -213,7 +215,7 @@ test("a stop that could not be delivered needs a reason, and the run closes once
   await page.locator("[data-tab-id='day']").first().click();
   const run4 = truck(page, "RUN-PLM-4");
   await run4.getByRole("button", { name: "Complete run" }).click();
-  await expect(page.locator("[data-error]")).toHaveText("the run still has stops that are not finished");
+  await expect(run4.locator("[data-lane-error]")).toContainText("RUN-PLM-4 did not go: the run still has stops that are not finished");
   await load(page, "ORD-0009").getByRole("button", { name: "Could not deliver" }).click();
   await load(page, "ORD-0009").getByRole("button", { name: "Record it" }).click();
   await expect(page.locator("[data-sheet-error]")).toContainText("Say what stopped");
@@ -262,3 +264,84 @@ for (const size of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) 
     }
   });
 }
+
+test("the way in at 1440 draws both role cards whole, in dispatch's own words, with no Coming list", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await resetStub(request);
+  await page.goto("/");
+  const cards = page.locator("[data-flow]");
+  await expect(cards).toHaveCount(2);
+  for (const i of [0, 1]) {
+    const box = await cards.nth(i).boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThan(200);
+  }
+  await expect(page.locator("main")).toContainText("Who is dispatching?");
+  await expect(page.locator("main")).toContainText("Tap a role to open the dispatch board.");
+  await expect(page.locator("main")).not.toContainText("counter");
+  await expect(page.locator("main")).not.toContainText("Coming");
+  await expect(page.locator("main")).not.toContainText("till");
+});
+
+test("a caller who reaches two yards gets a yard selector and the board follows it", async ({ page, request }) => {
+  await resetStub(request);
+  await stubPost(request, "branches", { many: true });
+  await page.addInitScript((await import("./helpers.js")).dispatchHandoff);
+  await page.goto("/");
+  const select = page.locator("select[data-field='branch']");
+  await expect(select).toBeVisible();
+  await expect(select.locator("option")).toHaveText(["Point Loma", "Julian"]);
+  await select.selectOption({ label: "Julian" });
+  await expect(page.locator("[data-staging-count]")).toHaveText("0");
+  await expect(page.locator("main")).toContainText("No trucks on the board");
+  await select.selectOption({ label: "Point Loma" });
+  await expect(page.locator("[data-staging-count]")).toHaveText("3");
+});
+
+test("the week span lists the days ahead and opens a day", async ({ page, request }) => {
+  await openBoard(page, request);
+  await page.getByRole("button", { name: "Week", exact: true }).click();
+  await expect(page.locator("[data-week-table] tbody tr")).toHaveCount(7);
+  await expect(page.locator("[data-run-no]")).toHaveCount(0);
+  await page.locator("[data-week-table] tbody tr").nth(1).getByRole("button", { name: "Open day" }).click();
+  await page.getByRole("button", { name: "Day", exact: true }).click();
+  await expect(page.locator("[data-staging-count]")).toBeVisible();
+});
+
+test("a day change shows a loading line and no stale figure until the board lands", async ({ page, request }) => {
+  await openBoard(page, request);
+  await page.route("**/api/v1/dispatch/loadboard?*", async (route) => {
+    await new Promise((r) => setTimeout(r, 600));
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Next day" }).click();
+  await expect(page.locator("[data-loading]")).toContainText("Reading the board for");
+  await expect(page.locator("[data-card]")).toHaveCount(0);
+  await expect(page.locator("[data-card]").first()).toBeVisible();
+});
+
+test("the day board at 390 keeps empty stages to one strip", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openBoard(page, request);
+  await page.locator("[data-tab-id='day']").first().click();
+  const run1 = truck(page, "RUN-PLM-1");
+  await expect(run1.locator("[data-strip]")).toBeVisible();
+  await expect(run1.locator("[data-col='EN_ROUTE']")).toBeHidden();
+  await expect(run1.locator("[data-col='READY']")).toBeVisible();
+  await expect(run1.locator("[data-strip]")).toContainText("2 ready");
+});
+
+test("the 390 header is one compact band: the theme and feedback buttons ride the page", async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openBoard(page, request);
+  const headerHeight = await page.evaluate(() => document.querySelector("dispatch-board-app")?.shadowRoot?.querySelector("hos-app-header")?.getBoundingClientRect().height ?? 0);
+  expect(headerHeight).toBeLessThan(170);
+  await expect(page.locator(".mob-tools").getByRole("button", { name: /Theme/ })).toBeVisible();
+  await page.locator(".mob-tools").getByRole("button", { name: /Theme/ }).click();
+  await expect(page.locator(".mob-tools").getByRole("button", { name: "Theme: Brand" })).toBeVisible();
+});
+
+test("weights read in pounds and tons for the San Diego yard", async ({ page, request }) => {
+  await openBoard(page, request);
+  await expect(page.locator("main")).not.toContainText(" kg");
+  await expect(truck(page, "RUN-PLM-3").locator("[data-gauge='weight']")).toContainText("3,351 of 2,425 lb");
+});

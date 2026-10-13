@@ -36,7 +36,7 @@ import {
   validateReschedule,
   type CardId,
 } from "./dispatch-logic.js";
-import { renderDesk, type Axis, type BoardModel, type Sheet, type Tab } from "./views.js";
+import { renderDesk, type Axis, type BoardModel, type Sheet, type Span, type Tab } from "./views.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -80,6 +80,9 @@ export class DispatchDesk {
   #drivers: readonly DispatchDriver[] = [];
   #holds: ReadonlyMap<string, DispatchStopPaymentHold> = new Map();
   #sheet: Sheet | null = null;
+  #loading = false;
+  #span: Span = "DAY";
+  #runError: { id: string; words: string } | null = null;
   // The sheet whose starting field values the screen has already been given.
   #sheetSeeded: string | null = null;
 
@@ -203,6 +206,9 @@ export class DispatchDesk {
       drivers: this.#drivers,
       holds: this.#holds,
       sheet: this.#sheet,
+      loading: this.#loading,
+      span: this.#span,
+      runError: this.#runError,
     };
   }
 
@@ -244,7 +250,7 @@ export class DispatchDesk {
         void this.load();
         return true;
       case "refresh":
-        void this.#run(NOOP, "");
+        void this.#run(NOOP, "", "That", true);
         return true;
       case "tab": {
         const next: Tab = attr("data-tab-id") === "day" ? "day" : "load";
@@ -252,7 +258,7 @@ export class DispatchDesk {
         this.#tab = next;
         this.#sheet = null;
         this.#clearMessages();
-        void this.#run(NOOP, "");
+        void this.#run(NOOP, "", "That", true);
         return true;
       }
       case "day-prev":
@@ -275,6 +281,10 @@ export class DispatchDesk {
       }
       case "card-clear":
         this.#card = "";
+        this.#host.repaint();
+        return true;
+      case "span":
+        this.#span = attr("data-span") === "WEEK" ? "WEEK" : "DAY";
         this.#host.repaint();
         return true;
       case "axis":
@@ -362,7 +372,7 @@ export class DispatchDesk {
       if (id !== "" && id !== this.#branchId) {
         this.#branchId = id;
         this.#selected = new Set();
-        void this.#run(NOOP, "");
+        void this.#run(NOOP, "", "That", true);
       }
       return true;
     }
@@ -380,6 +390,7 @@ export class DispatchDesk {
     this.#info = "";
     this.#notice = "";
     this.#refusals = [];
+    this.#runError = null;
   }
 
   #goto(day: string): void {
@@ -391,16 +402,17 @@ export class DispatchDesk {
     this.#sheet = null;
     this.#card = "";
     this.#clearMessages();
-    void this.#run(NOOP, "");
+    void this.#run(NOOP, "", "That", true);
   }
 
   /**
    * One write, then the board again. A refusal is shown in the core's own words and the board is
    * read again too, because a 409 usually means the world moved under the screen.
    */
-  async #run(write: () => Promise<Failure | null>, okNotice: string, what = "That"): Promise<boolean> {
+  async #run(write: () => Promise<Failure | null>, okNotice: string, what = "That", reading = false): Promise<boolean> {
     if (this.#busy) return false;
     this.#busy = true;
+    this.#loading = reading;
     this.#clearMessages();
     this.#host.repaint();
     let refused: Failure | null = null;
@@ -411,6 +423,7 @@ export class DispatchDesk {
       else this.#error = refusalWords(what, refused.error, refused.status ?? null);
       await this.#reload();
       this.#busy = false;
+      this.#loading = false;
       this.#host.repaint();
     }
     return refused === null;
@@ -487,7 +500,7 @@ export class DispatchDesk {
       "clear-reopen": `The reopen marker is off ${no}.`,
     }[act];
     const what = { dispatch: "Dispatching it", cancel: "Cancelling it", complete: "Completing it", "clear-reopen": "Clearing the marker" }[act];
-    await this.#run(
+    const ok = await this.#run(
       async () => {
         const r = await call();
         return r.ok ? null : r;
@@ -495,6 +508,12 @@ export class DispatchDesk {
       words,
       what,
     );
+    // A refusal belongs to the truck it was pressed on: it shows in that lane, in the core's words.
+    if (!ok && this.#error !== "") {
+      this.#runError = { id: runId, words: `${no} did not go: ${this.#error}` };
+      this.#error = "";
+      this.#host.repaint();
+    }
   }
 
   async #crew(runId: string): Promise<void> {

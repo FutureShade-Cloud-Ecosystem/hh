@@ -45,7 +45,7 @@ export const boardStyles = css`
   .alert ul { margin: var(--hh-s-8) 0 0; padding-inline-start: var(--hh-s-20); list-style: disc; }
 
   /* The quick cards. */
-  .cards { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--hh-s-12); margin-bottom: var(--hh-s-16); }
+  .qcards { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--hh-s-12); margin-bottom: var(--hh-s-16); }
   .tile { display: flex; flex-direction: column; align-items: flex-start; gap: var(--hh-s-2); padding: var(--hh-s-12) var(--hh-s-16); background: var(--hh-widget, var(--hh-card)); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-widget, var(--hh-radius-card)); min-width: 0; text-align: start; color: var(--hh-text); font: inherit; }
   .tile-btn { cursor: pointer; min-height: 88px; }
   .tile-btn:hover { border-color: var(--hh-control-line); }
@@ -182,9 +182,13 @@ export const boardStyles = css`
   .theme-btn:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
 
   .matrix p { max-width: 70ch; }
+  .strip { display: none; flex-wrap: wrap; gap: var(--hh-s-4) var(--hh-s-16); margin: var(--hh-s-8) 0; color: var(--hh-text-dim); font-size: 14px; }
+  .strip-cell strong { color: var(--hh-text); font-variant-numeric: tabular-nums; }
+  .mob-tools { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); margin-bottom: var(--hh-s-8); }
+  .mob-tools .theme-btn { min-height: 44px; padding: 0 var(--hh-s-16); }
 
   @media (max-width: 1279px) {
-    .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .qcards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .columns, .status-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   @media (max-width: 1099px) {
@@ -193,8 +197,11 @@ export const boardStyles = css`
   @media (max-width: 700px) {
     .week { display: flex; overflow-x: auto; scroll-snap-type: x proximity; padding-bottom: var(--hh-s-4); }
     .day { flex: 0 0 132px; scroll-snap-align: start; }
-    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .qcards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .columns, .status-lanes, .sheet-grid { grid-template-columns: minmax(0, 1fr); }
+    .strip { display: flex; }
+    .col.none { display: none; }
+    .did-not .count { margin-inline-start: var(--hh-s-8); }
     .tools { margin-inline-start: 0; }
     .toolbar { gap: var(--hh-s-8) var(--hh-s-16); }
     /* A table marked stack becomes a card per row: every cell keeps its label, none is hidden. */

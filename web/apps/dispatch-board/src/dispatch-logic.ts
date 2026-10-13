@@ -172,6 +172,40 @@ export function bandWord(band: Band): string {
   }
 }
 
+// ---- display units -------------------------------------------------------------------------------
+//
+// The core keeps metric (kilograms, cubic metres) and so does every wire field. The demo tenant is a
+// San Diego yard, so the screens show pounds and short tons and cubic yards. The conversion is for
+// display only: nothing converted is ever sent back, and the ratios (bands, bars) are unit free.
+
+const LB_PER_KG = 2.2046226218;
+const CUYD_PER_M3 = 1.30795062;
+
+/** Pounds below four thousand of them, short tons from there up, picked once for a gauge so both figures share a unit. */
+export function weightUnit(...refsKg: Array<number | null | undefined>): "lb" | "tons" {
+  const finite = refsKg.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  const top = finite.length > 0 ? Math.max(...finite) : 0;
+  return top * LB_PER_KG >= 4000 ? "tons" : "lb";
+}
+
+/** Kilograms as the number shown in the given unit. */
+export function toWeight(kg: number, unit: "lb" | "tons"): number {
+  const pounds = kg * LB_PER_KG;
+  return unit === "tons" ? pounds / 2000 : pounds;
+}
+
+/** Cubic metres as cubic yards. */
+export function toCuYd(m3: number): number {
+  return m3 * CUYD_PER_M3;
+}
+
+/** One weight with its unit: "7,496 lb" or "5.6 tons". An absent weight is words, never zero. */
+export function fmtWeight(kg: number | null | undefined, unit?: "lb" | "tons"): string {
+  if (typeof kg !== "number" || !Number.isFinite(kg)) return "n/a";
+  const u = unit ?? weightUnit(kg);
+  return `${fmtNum(toWeight(kg, u))} ${u}`;
+}
+
 /** Numbers are read at arm's length: no decimals unless they are the whole story. */
 export function fmtNum(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "n/a";
@@ -416,7 +450,7 @@ export function laneScopeNote(stops: readonly Pick<DispatchLoadStop, "scheduled_
 /** The day pill on a card: a card that is not for the lane's date says which day it is for. */
 export function dayOfLabel(stop: Pick<DispatchLoadStop, "scheduled_date">, laneDate: string): string {
   const day = (stop.scheduled_date ?? "").trim();
-  return day !== "" && day !== laneDate ? day.slice(5) : "";
+  return day !== "" && day !== laneDate ? shortDay(day) : "";
 }
 
 // ---- the keyboard path --------------------------------------------------------------------------
@@ -485,7 +519,8 @@ export function targetName(target: Pick<AssignTarget, "runNo" | "truckCode">): s
  */
 export function targetLine(target: AssignTarget): string {
   if (target.blocked !== "") return target.blocked;
-  const gauge = target.capacityKg ? `${fmtNum(target.weightAfter)} of ${fmtNum(target.capacityKg)} kg · ` : "";
+  const unit = weightUnit(target.capacityKg, target.weightAfter);
+  const gauge = target.capacityKg && target.weightAfter !== null ? `${fmtNum(toWeight(target.weightAfter, unit))} of ${fmtNum(toWeight(target.capacityKg, unit))} ${unit} · ` : "";
   return `${gauge}${bandWord(target.bandAfter)}`;
 }
 
@@ -501,7 +536,7 @@ export function moveAnnouncement(stop: Pick<DispatchLoadStop, "order_no" | "cust
   if (target === null) return `${what} taken off its truck. It is back in the staging lane.`;
   const gauge =
     typeof target.weightAfter === "number" && typeof target.capacityKg === "number"
-      ? ` ${fmtNum(target.weightAfter)} of ${fmtNum(target.capacityKg)} kg, ${bandWord(target.bandAfter).toLowerCase()}.`
+      ? ` ${fmtNum(toWeight(target.weightAfter, weightUnit(target.capacityKg, target.weightAfter)))} of ${fmtNum(toWeight(target.capacityKg, weightUnit(target.capacityKg, target.weightAfter)))} ${weightUnit(target.capacityKg, target.weightAfter)}, ${bandWord(target.bandAfter).toLowerCase()}.`
       : ` ${bandWord(target.bandAfter)}.`;
   return `${what} moved to ${targetName(target)}.${gauge}`;
 }
@@ -607,6 +642,13 @@ export function formatDayHeading(iso: string): string {
   return new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 }
 
+/** A short day for a pill or a strip: "Oct 13". */
+export function shortDay(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 /** A clock time from an ISO timestamp, or an empty string when absent. */
 export function formatTime(ts?: string | null): string {
   if (!ts) return "";
@@ -673,9 +715,12 @@ export function formatDue(cents: number | undefined | null): string {
  */
 export function holdWords(hold: Pick<DispatchStopPaymentHold, "held" | "reason" | "amount_due_cents"> | null | undefined): string {
   if (hold === null || hold === undefined || !hold.held) return "";
-  const reason = (hold.reason ?? "").trim() || "Payment is due on this order before it can be delivered.";
+  const said = (hold.reason ?? "").trim() || "Payment is due on this order before it can be delivered.";
+  // The core's own sentence may start lower case and carry no stop; the board says it in its voice.
+  const reason = `${said.charAt(0).toUpperCase()}${said.slice(1)}`;
+  const sentence = /[.!?]$/.test(reason) ? reason : `${reason}.`;
   const amount = formatDue(hold.amount_due_cents);
-  return amount !== "" ? `${reason} ${amount} due.` : reason;
+  return amount !== "" ? `${sentence} ${amount} due.` : sentence;
 }
 
 // ---- words for a refusal ------------------------------------------------------------------------
@@ -706,5 +751,3 @@ export function refusalWords(what: string, error: string, status: number | null)
   return `${what} was refused.`;
 }
 
-// The unit label the gauge cards print.
-export const WEIGHT_UNIT = "kg";

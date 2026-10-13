@@ -45,6 +45,7 @@ import {
   dueLabel,
   filterBoard,
   fmtNum,
+  fmtWeight,
   formatDayHeading,
   formatTime,
   groupByStatus,
@@ -54,6 +55,10 @@ import {
   pickupSplitLabel,
   rescheduleBlockedReason,
   rowEditable,
+  shortDay,
+  toCuYd,
+  toWeight,
+  weightUnit,
   stopActions,
   stopBlockedReason,
   targetLine,
@@ -99,7 +104,14 @@ export interface BoardModel {
   readonly drivers: readonly DispatchDriver[];
   readonly holds: ReadonlyMap<string, DispatchStopPaymentHold>;
   readonly sheet: Sheet | null;
+  /** True while the board for a new day, yard or span is being read: no stale figure is drawn meanwhile. */
+  readonly loading: boolean;
+  readonly span: Span;
+  /** A refusal that belongs to one truck's lane, shown in that lane. */
+  readonly runError: { readonly id: string; readonly words: string } | null;
 }
+
+export type Span = "DAY" | "WEEK";
 
 // ---- small pieces --------------------------------------------------------------------------------
 
@@ -124,6 +136,13 @@ function bandTone(band: Band): string {
 /** The fill step for a bar: the percentage rounded to the nearest five, a class the stylesheet knows. */
 function step(pct: number): number {
   return Math.max(0, Math.min(100, Math.round(pct / 5) * 5));
+}
+
+/** The weight gauge in the yard's units: the core's kilograms in, pounds or tons shown. */
+function weightGauge(used: number | null | undefined, capacity: number | null | undefined): TemplateResult {
+  const unit = weightUnit(capacity, used);
+  const conv = (v: number | null | undefined): number | null => (typeof v === "number" ? toWeight(v, unit) : null);
+  return gauge("Weight", conv(used), conv(capacity), unit);
 }
 
 function gauge(kind: string, used: number | null | undefined, capacity: number | null | undefined, unit: string): TemplateResult {
@@ -257,6 +276,12 @@ function toolbar(model: BoardModel): TemplateResult {
           ? html`<button type="button" class="btn btn-secondary small-btn" data-action="day-today">Today</button>`
           : nothing}
       </div>
+      ${model.tab === "load"
+        ? html`<div class="segs" role="group" aria-label="Span">
+            <button type="button" class="seg" data-action="span" data-span="DAY" aria-pressed=${model.span === "DAY" ? "true" : "false"}>Day</button>
+            <button type="button" class="seg" data-action="span" data-span="WEEK" aria-pressed=${model.span === "WEEK" ? "true" : "false"}>Week</button>
+          </div>`
+        : nothing}
       <div class="tools">
         <button type="button" class="btn btn-secondary small-btn" data-action="refresh" ?disabled=${model.busy}>Refresh</button>
         <button type="button" class="btn btn-primary small-btn" data-action="new-run" ?disabled=${model.busy}>New truck</button>
@@ -283,7 +308,7 @@ function tabs(model: BoardModel): TemplateResult {
 
 function quickCards(model: BoardModel, view: DispatchLoadBoardView): TemplateResult {
   return html`
-    <section class="cards" aria-label="Quick cards">
+    <section class="qcards" aria-label="Quick cards">
       ${CARD_ORDER.map((id) => {
         const count = cardCount(view, id);
         const scope = cardScopeLabel(view, id);
@@ -292,8 +317,7 @@ function quickCards(model: BoardModel, view: DispatchLoadBoardView): TemplateRes
           return html`<div class="tile" data-card=${id}>
             <span class="kicker">${CARD_LABEL[id]}</span>
             <span class="figure">${count}</span>
-            <span class="small">${split !== "" ? split : scope}</span>
-            <span class="small">Picked and collected at the counter</span>
+            <span class="small">${split !== "" ? `${split}, ${scope}` : scope}</span>
           </div>`;
         }
         const on = model.card === id;
@@ -315,7 +339,7 @@ function quickCards(model: BoardModel, view: DispatchLoadBoardView): TemplateRes
 
 function weightFact(stop: DispatchStop): TemplateResult {
   return typeof stop.weight_kg === "number"
-    ? html`<span class="fact">${fmtNum(stop.weight_kg)} kg</span>`
+    ? html`<span class="fact">${fmtWeight(stop.weight_kg)}</span>`
     : html`<span class="fact dim">Weight not on file</span>`;
 }
 
@@ -386,6 +410,11 @@ function loadCard(model: BoardModel, view: DispatchLoadBoardView, stop: Dispatch
   `;
 }
 
+function laneRefusal(model: BoardModel, runId: string): TemplateResult | typeof nothing {
+  const e = model.runError;
+  return e !== null && e.id === runId ? html`<p class="alert alert-error" role="alert" data-lane-error>${e.words}</p>` : nothing;
+}
+
 function crewLine(model: BoardModel, run: DispatchRun, editable: boolean): TemplateResult {
   if (run.status === "PLANNED" && editable) {
     return html`
@@ -425,8 +454,9 @@ function truckLane(model: BoardModel, view: DispatchLoadBoardView, row: Dispatch
         ${due !== "" ? html`<span class="status status-watch" data-due>${due}</span>` : nothing}
       </header>
       ${crewLine(model, run, editable)}
-      ${gauge("Weight", g.weight_kg, g.capacity_kg, "kg")}
-      ${typeof g.capacity_m3 === "number" ? gauge("Volume", g.volume_m3, g.capacity_m3, "m3") : nothing}
+      ${laneRefusal(model, run.id)}
+      ${weightGauge(g.weight_kg, g.capacity_kg)}
+      ${typeof g.capacity_m3 === "number" ? gauge("Volume", typeof g.volume_m3 === "number" ? toCuYd(g.volume_m3) : null, toCuYd(g.capacity_m3), "cu yd") : nothing}
       ${typeof g.pallet_positions === "number" ? gauge("Pallets", g.pallets, g.pallet_positions, "positions") : nothing}
       ${g.weighed_stops < g.stop_count ? html`<p class="small dim">${g.stop_count - g.weighed_stops} of ${g.stop_count} loads not weighed, so the total is a floor.</p>` : nothing}
       ${!editable && blocked !== "" ? html`<p class="small dim" data-blocked>${blocked}</p>` : nothing}
@@ -438,7 +468,7 @@ function truckLane(model: BoardModel, view: DispatchLoadBoardView, row: Dispatch
       <div class="actions">
         ${run.status === "PLANNED"
           ? html`<button type="button" class="btn btn-primary" data-action="dispatch-run" data-run-id=${run.id}
-              ?disabled=${model.busy || !crewed || run.stop_count === 0}>Dispatch</button>`
+              ?disabled=${model.busy}>Dispatch</button>`
           : nothing}
         ${run.status === "PLANNED" && (!crewed || run.stop_count === 0)
           ? html`<span class="small dim" data-dispatch-why>${!crewed ? "A truck needs a truck and a driver before it goes." : "Put a load on it first."}</span>`
@@ -534,7 +564,7 @@ function weekStrip(model: BoardModel): TemplateResult | typeof nothing {
       ${model.calendar.map(
         (d) => html`<button type="button" class="day" data-action="goto-day" data-day=${d.date} aria-current=${d.date === model.date ? "true" : "false"}>
           <span class="kicker">${formatDayHeading(d.date).split(",")[0]}</span>
-          <span class="day-no">${d.date.slice(5)}</span>
+          <span class="day-no">${shortDay(d.date)}</span>
           <span class="small">${d.stops} ${d.stops === 1 ? "stop" : "stops"}${d.unassigned > 0 ? `, ${d.unassigned} not on a truck` : ""}</span>
         </button>`,
       )}
@@ -542,9 +572,35 @@ function weekStrip(model: BoardModel): TemplateResult | typeof nothing {
   `;
 }
 
+/** The span view: the week ahead as a table, one row a day, each row opening that day's board. */
+function weekTable(model: BoardModel): TemplateResult {
+  const rows = model.calendar;
+  return html`
+    <section class="panel" data-week-table>
+      <div class="panel-head"><h3>The week ahead</h3></div>
+      ${rows.length === 0
+        ? html`<p class="dim">The week could not be read. Refresh to try again.</p>`
+        : html`<div class="scroll"><table class="stack">
+            <thead><tr><th>Day</th><th class="num">Trucks</th><th class="num">Stops</th><th class="num">Not on a truck</th><th class="num">Requested</th><th></th></tr></thead>
+            <tbody>
+              ${rows.map((d) => html`<tr>
+                <td data-label="Day"><span class="who">${formatDayHeading(d.date)}</span></td>
+                <td data-label="Trucks" class="num">${d.runs}</td>
+                <td data-label="Stops" class="num">${d.stops}</td>
+                <td data-label="Not on a truck" class="num">${d.unassigned}</td>
+                <td data-label="Requested" class="num">${d.requested}</td>
+                <td><button type="button" class="btn btn-secondary small-btn" data-action="goto-day" data-day=${d.date}>Open day</button></td>
+              </tr>`)}
+            </tbody>
+          </table></div>`}
+    </section>
+  `;
+}
+
 export function renderLoadBoard(model: BoardModel): TemplateResult {
   const raw = model.view;
   if (raw === null) return html``;
+  if (model.span === "WEEK") return html`${quickCards(model, raw)}${weekTable(model)}`;
   const view = filterBoard(raw, model.card);
   return html`
     ${quickCards(model, raw)}
@@ -647,7 +703,7 @@ function dayRun(model: BoardModel, day: DispatchBoard, run: DispatchRun): Templa
         <span class="spacer"></span>
         ${run.status === "PLANNED"
           ? html`<button type="button" class="btn btn-primary small-btn" data-action="dispatch-run" data-run-id=${run.id}
-                ?disabled=${model.busy || !crewed || run.stop_count === 0}>Dispatch</button>
+                ?disabled=${model.busy}>Dispatch</button>
               <button type="button" class="btn btn-secondary small-btn" data-action="cancel-run" data-run-id=${run.id} ?disabled=${model.busy || !editable}>Cancel truck</button>`
           : nothing}
         ${run.status === "DISPATCHED"
@@ -655,12 +711,16 @@ function dayRun(model: BoardModel, day: DispatchBoard, run: DispatchRun): Templa
           : nothing}
       </header>
       ${crewLine(model, run, editable)}
+      ${laneRefusal(model, run.id)}
       ${run.status === "PLANNED" && !crewed
         ? html`<p class="small dim" data-dispatch-why>A truck needs a truck and a driver before it goes.</p>`
         : nothing}
+      <p class="strip" data-strip>
+        ${BOARD_COLUMNS.map((col) => html`<span class="strip-cell"><strong>${stops.filter((s) => s.status === col).length}</strong> ${STOP_LABEL[col]?.toLowerCase()}</span>`)}
+      </p>
       <div class="columns">
         ${BOARD_COLUMNS.map(
-          (col) => html`<div class="col" data-col=${col}>
+          (col) => html`<div class="col ${stops.some((s) => s.status === col) ? "has" : "none"}" data-col=${col}>
             <h4>${STOP_LABEL[col]}<span class="count">${stops.filter((s) => s.status === col).length}</span></h4>
             <ul class="loads">${stops.filter((s) => s.status === col).map((s) => dayStopCard(model, s, day.runs))}</ul>
           </div>`,
@@ -715,6 +775,10 @@ export function renderDesk(model: BoardModel): TemplateResult {
     ${tabs(model)}
     ${toolbar(model)}
     ${renderMessages(model)}
-    ${model.tab === "load" ? renderLoadBoard(model) : renderDayBoard(model)}
+    ${model.loading
+      ? html`<p class="alert" role="status" data-loading>Reading the board for ${formatDayHeading(model.date)}...</p>`
+      : model.tab === "load"
+        ? renderLoadBoard(model)
+        : renderDayBoard(model)}
   `;
 }

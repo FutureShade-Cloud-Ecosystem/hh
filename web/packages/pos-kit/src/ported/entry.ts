@@ -201,7 +201,17 @@ export const entryStyles = css`
 /** The stage column: every state the entry shows lives on it, centred. */
 const stage = (content: TemplateResult): TemplateResult => html`<div class="stage">${content}</div>`;
 
-export function renderEntry(view: EntryView): TemplateResult {
+/**
+ * The words a host may change on the entry page. The defaults are the till's own. A dispatch or
+ * yard app says its own thing and shows no Coming list (the front door already carries it).
+ */
+export interface EntryCopy {
+  readonly headline?: string;
+  readonly intro?: string;
+  readonly coming?: boolean;
+}
+
+export function renderEntry(view: EntryView, copy: EntryCopy = {}): TemplateResult {
   if (view.flows.kind === "loading") {
     return stage(html`<p class="notice" role="status">Loading the demo roles.</p>`);
   }
@@ -231,8 +241,8 @@ export function renderEntry(view: EntryView): TemplateResult {
 		</p>`);
 	}
 	return stage(html`
-		<h2 class="headline">Who is at the counter?</h2>
-		<p class="intro">Tap a role to open the till:</p>
+		<h2 class="headline">${copy.headline ?? "Who is at the counter?"}</h2>
+		<p class="intro">${copy.intro ?? "Tap a role to open the till:"}</p>
 		<div class="cards">
 			${tillFlows.map(
         (flow) => html`
@@ -258,7 +268,7 @@ export function renderEntry(view: EntryView): TemplateResult {
       )}
     </div>
     ${view.message === null ? nothing : html`<p class="notice" role="status">${view.message}</p>`}
-    <section class="coming-card">
+    ${copy.coming === false ? nothing : html`<section class="coming-card">
       <h2 class="coming-heading">Coming</h2>
       <ul class="coming" aria-label="Coming roles">
         ${COMING_ROLES.map(
@@ -272,6 +282,6 @@ export function renderEntry(view: EntryView): TemplateResult {
           `,
         )}
       </ul>
-    </section>
+    </section>`}
   `);
 }
