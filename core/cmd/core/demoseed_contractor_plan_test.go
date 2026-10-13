@@ -55,6 +55,9 @@ func TestContractorPlan_TheWorldHoldsTheStatesTheAppsNeed(t *testing.T) {
 		t.Fatalf("world sizes: orders %d invoices %d quotes %d projects %d methods %d",
 			len(c["orders"]), len(c["invoices"]), len(c["quotes"]), len(c["procurement_projects"]), len(c["portal_payment_methods"]))
 	}
+	if len(sum.ContractorRowIDs) != contractorWorldRows {
+		t.Errorf("the world writes %d rows, contractorWorldRows says %d", len(sum.ContractorRowIDs), contractorWorldRows)
+	}
 	status := func(table string) map[string]int {
 		m := map[string]int{}
 		for _, f := range c[table] {

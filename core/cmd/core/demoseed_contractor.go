@@ -66,6 +66,11 @@ const (
 	contractorTermsDays = 30
 )
 
+// contractorWorldRows is the number of rows the section writes: 8 orders with 15 lines, 4 invoices with 7
+// lines, 2 payments with 2 allocations, 3 quotes with 6 lines, 3 procurement projects with 8 lines, and 2
+// saved payment methods. The plan test holds the figure to the plan.
+const contractorWorldRows = 8 + 15 + 4 + 7 + 2 + 2 + 3 + 6 + 3 + 8 + 2
+
 // contractorJobIDs are the three job sites the populate makes (flows.TenantJobs), in its order: La Jolla,
 // Santa Fe, Point Loma. Asserted against the flow table by the demo world proof.
 var contractorJobIDs = [3]string{
