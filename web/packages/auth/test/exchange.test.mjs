@@ -4,7 +4,7 @@
 // FakeScheduler's, so no test waits. Every value is fake.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AuthController, SessionStore, ThrowSafeMirror, SESSION_MIRROR_KEY } from "../src/index.ts";
+import { AuthController, PlatformUnreachableError, SessionStore, ThrowSafeMirror, SESSION_MIRROR_KEY } from "../src/index.ts";
 import {
   FAKE_ACCOUNT,
   FAKE_JWT,
@@ -78,7 +78,7 @@ test("sign-in refused by the exchange adopts nothing and ends the platform sessi
   }
 });
 
-test("sign-in refused for a transient reason adopts nothing and leaves the platform session alone", async () => {
+test("sign-in refused for a transient reason adopts nothing and still deletes the platform session, so the retry can sign in again", async () => {
   for (const code of ["offline", "unavailable", "rate_limited", "bad_request"]) {
     const account = new FakeAccountSurface();
     account.script(fakeExchangeRefusal(code));
@@ -86,7 +86,7 @@ test("sign-in refused for a transient reason adopts nothing and leaves the platf
     const result = await controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
     assert.equal(result.ok, false, code);
     assert.equal(sessions.current, null);
-    assert.equal(account.deleteCount, 0, `${code}: the platform session stays for a retry`);
+    assert.equal(account.deleteCount, 1, `${code}: nothing was adopted, so no platform session is kept for a retry`);
   }
 });
 
@@ -234,6 +234,72 @@ test("a controller with no active organisation wired never arms a refresh (the d
   assert.equal(controller.adopt({ token: FAKE_JWT, tokenExpiresAtMs: START_MS + WINDOW_MS, user: { ...FAKE_ACCOUNT } }), true);
   assert.equal(clock.pending, 0);
 });
+
+// A reload: a fresh custody over the SAME storage, so the display profile is
+// there and no token is, and a recording stand-in for the device lock.
+async function reloaded(account) {
+  const first = rig({ account });
+  const signed = await first.controller.signInWithPassword(FAKE_ACCOUNT.email, FAKE_PASSWORD);
+  assert.equal(signed.ok, true);
+  const sessions = new SessionStore({ mirror: new ThrowSafeMirror(SESSION_MIRROR_KEY, first.recorded), now: first.clock.now });
+  assert.equal(sessions.current, null, "a reload holds no token");
+  assert.notEqual(sessions.profile, null, "the profile survives the reload");
+  const lock = { disengages: 0, disengage() { this.disengages += 1; }, disengageUnlessBoundTo() {} };
+  const controller = new AuthController({ account, sessions, lock, activeOrg: () => ORG, now: first.clock.now, timers: first.clock, refreshBackoffMs: 10_000 });
+  return { account, clock: first.clock, controller, lock, sessions };
+}
+
+test("a resume that is offline, unavailable or rate limited keeps the profile and the lock, and the bearer returns later", async () => {
+  for (const code of ["offline", "unavailable", "rate_limited", "bad_request"]) {
+    const account = new FakeAccountSurface();
+    const r = await reloaded(account);
+    await controller_drain(r);
+    account.script(fakeExchangeRefusal(code));
+    const resumed = await r.controller.resume();
+    assert.equal(resumed.ok, false, code);
+    assert.match(resumed.error, new RegExp(code));
+    assert.notEqual(r.sessions.profile, null, `${code}: the profile is kept`);
+    assert.equal(r.lock.disengages, 0, `${code}: the lock is kept`);
+    assert.equal(account.deleteCount, 0, `${code}: the platform session stays`);
+    assert.equal(r.clock.pending, 1, `${code}: a backoff refresh is armed`);
+    await r.clock.advance(10_000);
+    assert.notEqual(r.sessions.current, null, `${code}: the bearer returns when the exchange answers`);
+  }
+});
+
+test("a resume whose platform read cannot reach the network keeps the profile and the lock", async () => {
+  const account = new FakeAccountSurface();
+  const r = await reloaded(account);
+  await controller_drain(r);
+  account.getSession = async () => {
+    throw new PlatformUnreachableError();
+  };
+  const resumed = await r.controller.resume();
+  assert.equal(resumed.ok, false);
+  assert.notEqual(r.sessions.profile, null);
+  assert.equal(r.lock.disengages, 0);
+  assert.equal(r.clock.pending, 1);
+});
+
+test("a resume refused with an ending code clears custody and the lock and deletes the platform session", async () => {
+  for (const code of ["unauthorized", "forbidden", "no_session"]) {
+    const account = new FakeAccountSurface();
+    const r = await reloaded(account);
+    await controller_drain(r);
+    account.script(fakeExchangeRefusal(code));
+    const resumed = await r.controller.resume();
+    assert.equal(resumed.ok, false, code);
+    assert.equal(r.sessions.profile, null, `${code}: custody cleared`);
+    assert.equal(r.lock.disengages, 1, `${code}: the lock goes`);
+    assert.equal(account.deleteCount, 1, `${code}: the platform session is deleted`);
+    assert.equal(r.clock.pending, 0);
+  }
+});
+
+// The sign in of reloaded() leaves its own refresh armed on the shared clock: drop it so the counts are the resume's.
+async function controller_drain(r) {
+  r.clock.cancelAll();
+}
 
 async function flush() {
   await new Promise((resolve) => setImmediate(resolve));

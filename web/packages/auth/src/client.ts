@@ -180,6 +180,18 @@ export type ExchangeRefusalCode =
 /** A typed answer, never a throw: the token, or the code of the refusal. */
 export type ExchangeResult = { ok: true; answer: ExchangeAnswer } | { ok: false; code: ExchangeRefusalCode };
 
+/**
+ * What an adapter throws from getSession, or a sign in, when the platform
+ * could not be reached at all. It says nothing about the person: a resume
+ * that meets it keeps the profile and the lock and tries again later.
+ */
+export class PlatformUnreachableError extends Error {
+  constructor(message = "the platform could not be reached (network)") {
+    super(message);
+    this.name = "PlatformUnreachableError";
+  }
+}
+
 const ENDS_SESSION: ReadonlySet<ExchangeRefusalCode> = new Set(["unauthorized", "forbidden", "no_session"]);
 
 /**
@@ -460,10 +472,11 @@ export class AuthController {
     }
     if (this.#signIns !== signIns) return this.#staleSignIn(signIns, user);
     if (!exchanged.ok) {
-      // A refusal that ends sessions leaves no platform session behind for a
-      // person the core will not serve. The delete is only for the newest
-      // submit, which the checks above established.
-      if (ENDS_SESSION.has(exchanged.code)) await this.#deleteQuietly();
+      // Nothing was adopted, so no platform session is kept "for a retry":
+      // a retry is another sign in, and the platform refuses a create while a
+      // session is active. The delete is only for the newest submit, which
+      // the checks above established.
+      await this.#deleteQuietly();
       return err(`sign-in failed: the exchange was refused (${exchanged.code})`);
     }
     const profile = profileOf(exchanged.answer);
@@ -547,6 +560,11 @@ export class AuthController {
     }
     // Rate limited, unavailable, bad request, offline, or an answer custody
     // would not take: the session stays, and the next try waits longer.
+    this.#backoffRefresh();
+  }
+
+  /** Try the refresh again after the current backoff, which then doubles up to the cap. */
+  #backoffRefresh(): void {
     const wait = this.#refreshBackoffMs;
     this.#refreshBackoffMs = Math.min(wait * 2, MAX_REFRESH_BACKOFF_MS);
     this.#scheduleRefresh(wait);
@@ -645,7 +663,16 @@ export class AuthController {
     try {
       await this.#account.getSession(); // proves the platform still holds a session; the exchange names the person
     } catch (error) {
-      if (this.#generation === generation) this.#failSignedOut();
+      if (this.#generation !== generation) {
+        return err(`no platform session to resume: ${asMessage(error)}`);
+      }
+      // No network says nothing about the person: keep the profile and the
+      // lock, and try again when the network may be back.
+      if (error instanceof PlatformUnreachableError) {
+        this.#backoffRefresh();
+        return err(`no platform session to resume: ${asMessage(error)}`);
+      }
+      this.#failSignedOut();
       return err(`no platform session to resume: ${asMessage(error)}`);
     }
     if (this.#generation !== generation) {
@@ -653,7 +680,17 @@ export class AuthController {
     }
     const exchanged = await this.#callExchange(org);
     if (!exchanged.ok) {
-      if (this.#generation === generation) this.#failSignedOut();
+      if (this.#generation === generation) {
+        if (ENDS_SESSION.has(exchanged.code)) {
+          this.#failSignedOut();
+          await this.#deleteQuietly();
+        } else {
+          // offline, unavailable, rate limited, bad request: the person is
+          // not refused, so the profile and the lock stay and the bearer is
+          // fetched again on the refresh's backoff.
+          this.#backoffRefresh();
+        }
+      }
       return err(`the token exchange failed (${exchanged.code})`);
     }
     if (this.#generation !== generation) {

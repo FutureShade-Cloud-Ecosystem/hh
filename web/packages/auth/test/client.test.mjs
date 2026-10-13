@@ -20,6 +20,7 @@ import {
   FAKE_ACCOUNT,
   FAKE_JWT,
   fakeExchangeAnswer,
+  fakeExchangeRefusal,
   FAKE_PASSWORD,
   FAKE_PIN,
   DeferredAccountSurface,
@@ -649,7 +650,7 @@ test("a failed mint with no sign-out in between still clears the custody it fail
   const pending = controller.resume();
   (await untilHandoff(account, "getSession")).complete({ ...FAKE_ACCOUNT });
   const mint = await untilHandoff(account, "exchange");
-  mint.fail(new Error("network down"));
+  mint.complete(fakeExchangeRefusal("no_session")); // a refusal that ends sessions; a mere network failure keeps the profile
   const result = await pending;
   assert.equal(result.ok, false);
   assert.match(result.error, /the token exchange failed/);

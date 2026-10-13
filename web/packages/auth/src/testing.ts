@@ -89,6 +89,11 @@ export class FakeScheduler implements RefreshTimers {
     this.#timers.delete(handle as number);
   }
 
+  /** Drop every armed timer (a test that wants to count only the timers armed afterwards). */
+  cancelAll(): void {
+    this.#timers.clear();
+  }
+
   /** The timers armed and not yet fired or cleared. */
   get pending(): number {
     return this.#timers.size;
