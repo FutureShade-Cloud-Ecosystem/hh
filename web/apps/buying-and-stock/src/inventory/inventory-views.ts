@@ -61,6 +61,15 @@ export interface ReceiveOrder {
   readonly lines: readonly { readonly id: string; readonly sku: string; readonly name: string; readonly uom: string; readonly outstanding: number }[];
 }
 
+/** A press waiting on its confirm: what it is, which row it is for, and the words the confirm says. */
+export interface InvConfirm {
+  readonly kind: "receive-transfer" | "cancel-transfer" | "release" | "expire" | "bootstrap";
+  readonly id: string;
+  readonly title: string;
+  readonly lines: readonly string[];
+  readonly go: string;
+}
+
 /** The order whose receive is waiting on its confirm, with the words the confirm names. */
 export interface ReceiveConfirm {
   readonly order: ReceiveOrder;
@@ -108,11 +117,29 @@ export interface InvModel {
   // Replenishment.
   readonly points: readonly InventoryReorderPoint[];
   readonly editingPoint: string | null;
+  // The held press that is asking first.
+  readonly confirm: InvConfirm | null;
 }
 
 function notice(model: InvModel): TemplateResult {
   if (model.notice === "") return html`${nothing}`;
   return html`<div class="alert alert-ok" role="status" data-notice><strong>${model.notice.split("\n")[0]}</strong></div>`;
+}
+
+/** The inline confirm for a held press, shown only where that press was made. */
+function confirmBlock(model: InvModel, kinds: readonly InvConfirm["kind"][], id?: string): TemplateResult {
+  const c = model.confirm;
+  if (c === null || !kinds.includes(c.kind) || (id !== undefined && c.id !== id)) return html`${nothing}`;
+  return html`
+    <div class="confirm" data-confirm=${c.kind} role="group" aria-label="Confirm">
+      <strong>${c.title}</strong>
+      ${c.lines.map((line) => html`<p>${line}</p>`)}
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" data-action="confirm-back">Back</button>
+        <button type="button" class="btn btn-primary" data-action="confirm-go" ?disabled=${model.busy}>${c.go}</button>
+      </div>
+    </div>
+  `;
 }
 
 function errorNote(model: InvModel): TemplateResult {
@@ -472,6 +499,7 @@ function reservationsPane(model: InvModel): TemplateResult {
               <button type="button" class="btn btn-secondary" data-action="expire-reservations" ?disabled=${model.busy}>Run the expiry sweep</button>
             </div>
           `}
+      ${confirmBlock(model, ["release", "expire"])}
       ${notice(model)}
       ${errorNote(model)}
       <h3 class="sub">Hold stock</h3>
@@ -541,6 +569,7 @@ function transferCard(model: InvModel, t: InventoryTransfer): TemplateResult {
           </span>
         </div>
       </div>
+      ${confirmBlock(model, ["receive-transfer", "cancel-transfer"], t.id)}
       ${shipping
         ? html`
             <div class="confirm" data-ship-row>
@@ -753,8 +782,16 @@ function replenishPane(model: InvModel): TemplateResult {
     <section class="panel" aria-label="Replenishment" data-replenish>
       <div class="panel-head">
         <h3>Reorder points</h3>
-        <button type="button" class="btn btn-secondary small-btn" data-action="bootstrap-points" ?disabled=${model.busy}>Open a line for every stocked product</button>
+        <div class="forms">
+          <label>Yard
+            <select data-field="bootstrap-branch">
+              ${[...model.branchNames.entries()].map(([id, name]) => html`<option value=${id}>${name}</option>`)}
+            </select>
+          </label>
+          <button type="button" class="btn btn-secondary small-btn" data-action="bootstrap-points" ?disabled=${model.busy}>Open a line for every stocked product</button>
+        </div>
       </div>
+      ${confirmBlock(model, ["bootstrap"])}
       ${model.points.length === 0
         ? html`<div class="empty"><strong>No managed lines at this yard yet.</strong><span class="dim">A managed line says who the product is bought from and how much of it to keep. The bootstrap opens one per stocked product at half of today's on hand.</span></div>`
         : html`

@@ -681,17 +681,11 @@ function sheetDetail(s) {
   const varianceLines = counted.filter((l) => l.variance_base !== 0);
   const net = varianceLines.reduce((sum, l) => sum + (l.variance_value_cents ?? 0), 0);
   const abs = varianceLines.reduce((sum, l) => sum + Math.abs(l.variance_value_cents ?? 0), 0);
-  return {
-    sheet: sheetView(s),
-    lines,
-    summary: {
-      line_count: lines.length,
-      counted_lines: counted.length,
-      variance_lines: varianceLines.length,
-      net_variance_value_cents: net,
-      abs_variance_value_cents: abs,
-    },
-  };
+  // The core values a variance only inside the post and omits a zero figure (omitempty).
+  const summary = { line_count: lines.length, counted_lines: counted.length, variance_lines: varianceLines.length };
+  if (net !== 0) summary.net_variance_value_cents = net;
+  if (abs !== 0) summary.abs_variance_value_cents = abs;
+  return { sheet: sheetView(s), lines, summary };
 }
 
 // ---- http --------------------------------------------------------------------------------------
@@ -1201,10 +1195,11 @@ async function handle(req, res) {
         return refuse(res, 400, "expected arrival must be a date like 2026-08-20, leave it blank if there is no promised date");
       }
       // The overdraft guard sits at ship: available at the origin must cover the load.
-      for (const l of t.lines) {
+      for (const [index, l] of t.lines.entries()) {
         const at = stockAt(t.from, l.product);
-        if (at.onHand - at.allocated + 1e-9 < l.qty) {
-          return refuse(res, 409, `transfer ${t.no} ships more than ${(at.onHand - at.allocated).toFixed(4)} ${glsProduct(l.product).uom} available at ${branchName(t.from)}`);
+        const available = at.onHand - at.allocated;
+        if (available + 1e-6 < l.qty) {
+          return refuse(res, 409, `transfer ${t.no} line ${index + 1} would overdraw the source branch, ${available.toFixed(4)} available (${at.onHand.toFixed(4)} on hand, ${at.allocated.toFixed(4)} reserved), ${l.qty.toFixed(4)} requested`);
         }
       }
       t.status = "IN_TRANSIT";

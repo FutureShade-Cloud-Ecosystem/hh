@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import {
   canApprove,
   canPost,
+  confirmCancelWords,
+  confirmPostLines,
   confirmPostWords,
   countsFromTyped,
   entryState,
@@ -81,10 +83,55 @@ test("a variance needs a reason; a flat count does not", () => {
 test("the counted field is read through its decimal string, junk and blanks are refused in words", () => {
   assert.deepEqual(countsFromTyped("12"), { ok: true, qty: 12 });
   assert.deepEqual(countsFromTyped("12.5"), { ok: true, qty: 12.5 });
-  assert.deepEqual(countsFromTyped("-3.25"), { ok: true, qty: -3.25 });
   assert.equal(countsFromTyped("").ok, false);
   assert.equal(countsFromTyped("about ten").ok, false);
   assert.notEqual(countsFromTyped("").words, "");
+});
+
+test("a negative counted quantity is refused: a count is zero or more", () => {
+  for (const typed of ["-400", "-0.5", " -3 "]) {
+    const check = countsFromTyped(typed);
+    assert.equal(check.ok, false, typed);
+    assert.equal(check.words, "A count is zero or more.");
+  }
+  assert.deepEqual(countsFromTyped("0"), { ok: true, qty: 0 });
+});
+
+test("a post confirm before the post states no dollar figure it does not have", () => {
+  const sheet = { sheet_no: "CS-PLM-0002", branch_name: "Point Loma yard" };
+  const unvalued = confirmPostWords(sheet, { variance_lines: 1, net_variance_value_cents: undefined });
+  assert.ok(!unvalued.includes("$0.00"), unvalued);
+  assert.ok(!unvalued.includes("$"), unvalued);
+  assert.ok(unvalued.includes("valued at the yard's average cost when it posts"), unvalued);
+  // A line with no value of its own keeps the whole figure unstated, even when a net is present.
+  const partly = confirmPostWords(sheet, { variance_lines: 1, net_variance_value_cents: 0 }, [
+    { product_label: "GLS-PAV-60 Copperline Paver 60mm", snapshot_qty_base: 400, counted_qty_base: 398, variance_base: -2 },
+  ]);
+  assert.ok(!partly.includes("$0.00"), partly);
+  assert.ok(partly.includes("average cost"), partly);
+  // Every variance valued: the server's figure is said through formatMoney.
+  const valued = confirmPostWords(sheet, { variance_lines: 1, net_variance_value_cents: -16400 }, [
+    { product_label: "GLS-PAV-60 Copperline Paver 60mm", snapshot_qty_base: 400, counted_qty_base: 398, variance_base: -2, variance_value_cents: -16400 },
+  ]);
+  assert.ok(valued.includes("$164.00"), valued);
+});
+
+test("the post confirm lists each variance line as product, yard and book to counted", () => {
+  const rows = confirmPostLines("Point Loma yard", [
+    { product_label: "GLS-PAV-60 Copperline Paver 60mm", snapshot_qty_base: 400, counted_qty_base: 398, variance_base: -2 },
+    { product_label: "GLS-AGG-DG Decomposed granite", snapshot_qty_base: 10, counted_qty_base: 10, variance_base: 0 },
+    { product_label: "GLS-X Not counted", snapshot_qty_base: 5, counted_qty_base: null, variance_base: 0 },
+  ]);
+  assert.equal(rows.length, 1, "only a moved line is listed");
+  assert.ok(rows[0].includes("Copperline"), rows[0]);
+  assert.ok(rows[0].includes("Point Loma yard"), rows[0]);
+  assert.ok(rows[0].includes("400") && rows[0].includes("398"), rows[0]);
+});
+
+test("the cancel confirm names the sheet and says nothing posts", () => {
+  const words = confirmCancelWords({ sheet_no: "CS-PLM-0002", branch_name: "Point Loma yard" });
+  assert.ok(words.includes("CS-PLM-0002") && words.includes("Point Loma yard"), words);
+  assert.ok(words.includes("Nothing posts"), words);
 });
 
 test("the post confirm names the branch, the sheet and the value, so the press is made with the facts", () => {

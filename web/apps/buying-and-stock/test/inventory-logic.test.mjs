@@ -11,6 +11,12 @@ import {
   moveDirectionWord,
   moveTypeWord,
   qtyFromTyped,
+  reorderFieldsFromTyped,
+  receiveTransferConfirm,
+  cancelTransferConfirm,
+  releaseConfirm,
+  expireConfirm,
+  bootstrapConfirm,
   refusalWords,
   reservationStatusWord,
   saleTypeWord,
@@ -78,7 +84,8 @@ test("holds and holds and sales read as words", () => {
 test("a counted quantity is read through its decimal string, junk is refused in words", () => {
   assert.deepEqual(qtyFromTyped("12"), { ok: true, qty: 12 });
   assert.deepEqual(qtyFromTyped("12.5"), { ok: true, qty: 12.5 });
-  assert.deepEqual(qtyFromTyped("-3"), { ok: true, qty: -3 });
+  assert.equal(qtyFromTyped("-3").ok, false);
+  assert.equal(qtyFromTyped("-3").words, "A count is zero or more.");
   assert.equal(qtyFromTyped("").ok, false);
   assert.equal(qtyFromTyped("abc").ok, false);
   assert.equal(qtyFromTyped("1.2.3").ok, false);
@@ -109,4 +116,44 @@ test("a walled move is named for who may do it, and the branch fence's own sente
   assert.equal(refusalWords("reserve", "caller cannot access this branch", 403), "Caller cannot access this branch.");
   assert.equal(refusalWords("reserve", "The server fell over", 500), "The server hit a problem. Nothing was changed. Try again.");
   assert.equal(refusalWords("reserve", "", undefined), "The server could not be reached. Nothing was changed. Try again.");
+});
+
+test("a blank reorder point or order quantity is refused in words, never saved as a zero", () => {
+  assert.deepEqual(reorderFieldsFromTyped("12", "10"), { ok: true, point: 12, reorderQty: 10 });
+  assert.deepEqual(reorderFieldsFromTyped("0", "0"), { ok: true, point: 0, reorderQty: 0 });
+  for (const [point, qty] of [["", "10"], ["12", ""], ["  ", "10"], ["", ""]]) {
+    const check = reorderFieldsFromTyped(point, qty);
+    assert.equal(check.ok, false, `[${point}] [${qty}]`);
+    assert.ok(check.words.includes("blank"), check.words);
+  }
+  assert.equal(reorderFieldsFromTyped("-1", "10").ok, false);
+  assert.equal(reorderFieldsFromTyped("abc", "10").ok, false);
+});
+
+test("the receive truck confirm names the transfer, the yard and each line's in transit quantity", () => {
+  const c = receiveTransferConfirm(
+    { transfer_no: "TRF-PLM-0001", lines: [{ product_name: "Copperline Paver 60mm", uom: "pc", qty_shipped_base: 40, qty_received_base: 10 }] },
+    "Julian yard",
+  );
+  const text = [c.title, ...c.lines].join(" ");
+  assert.ok(text.includes("TRF-PLM-0001") && text.includes("Julian yard"), text);
+  assert.ok(text.includes("Copperline Paver 60mm") && text.includes("30"), text);
+});
+
+test("the cancel transfer confirm names the number and says nothing moves", () => {
+  const c = cancelTransferConfirm({ transfer_no: "TRF-PLM-0002" });
+  assert.ok([c.title, ...c.lines].join(" ").includes("TRF-PLM-0002"));
+  assert.ok(c.lines.join(" ").includes("Nothing moves"));
+});
+
+test("the release confirm names the product, the yard and the quantity; the sweep says every expired hold", () => {
+  const r = releaseConfirm({ product: "GLS-PAV-60 Copperline Paver 60mm", yard: "Point Loma yard", qty: 12 });
+  const text = [r.title, ...r.lines].join(" ");
+  assert.ok(text.includes("Copperline") && text.includes("Point Loma yard") && text.includes("12"), text);
+  assert.ok([expireConfirm().title, ...expireConfirm().lines].join(" ").includes("every expired hold"));
+});
+
+test("the bootstrap confirm names the yard it will open lines at", () => {
+  const b = bootstrapConfirm("Julian yard");
+  assert.ok([b.title, ...b.lines].join(" ").includes("Julian yard"));
 });

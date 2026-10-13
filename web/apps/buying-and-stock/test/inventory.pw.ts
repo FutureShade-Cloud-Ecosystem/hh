@@ -81,8 +81,10 @@ test("a reservation is held through the policy, listed, and released; the expiry
   await expect(page.locator("[data-res-row]")).toHaveCount(2);
   const row = page.locator("[data-res-row]").first();
   await row.getByRole("button", { name: "Release" }).click();
+  await page.locator('[data-confirm="release"]').getByRole("button", { name: "Confirm release" }).click();
   await expect(page.locator("[data-notice]")).toContainText("released");
   await page.getByRole("button", { name: "Run the expiry sweep" }).click();
+  await page.locator('[data-confirm="expire"]').getByRole("button", { name: "Confirm sweep" }).click();
   await expect(page.locator("[data-notice]")).toContainText("no reservation had expired");
   await expect(page.locator("[data-policy]")).toContainText("Hard");
 });
@@ -115,6 +117,17 @@ test("a transfer is raised, shipped with the route's day pre-filled, and receive
   await expect(page.locator('[data-transfer="TRF-PLM-0002"]')).toContainText("In transit");
   const arrived = page.locator('[data-transfer="TRF-PLM-0002"]');
   await arrived.getByRole("button", { name: "Receive" }).click();
+  // The truck lands only after a confirm that names the transfer, the yard and the quantity in transit.
+  const unload = arrived.locator('[data-confirm="receive-transfer"]');
+  await expect(unload).toContainText("TRF-PLM-0002");
+  await expect(unload).toContainText("Julian yard");
+  await expect(unload).toContainText("in transit");
+  await expect(arrived).toContainText("In transit");
+  await unload.getByRole("button", { name: "Back" }).click();
+  await expect(unload).toHaveCount(0);
+  await expect(arrived).toContainText("In transit");
+  await arrived.getByRole("button", { name: "Receive" }).click();
+  await arrived.locator('[data-confirm="receive-transfer"]').getByRole("button", { name: "Confirm receive" }).click();
   await expect(page.locator('[data-transfer="TRF-PLM-0002"]')).toContainText("Received");
   // A shipped transfer offers no cancel: the correction is a transfer back.
   await expect(page.locator('[data-transfer="TRF-PLM-0002"]')).not.toContainText("Cancel");
@@ -136,6 +149,10 @@ test("a transfer is cancelled while it is only a draft, and a same-branch raise 
   await expect(page.locator("[data-notice]")).toContainText("raised as a draft");
   const raised = page.locator("[data-transfer]").first();
   await raised.getByRole("button", { name: "Cancel" }).click();
+  const confirm = raised.locator('[data-confirm="cancel-transfer"]');
+  await expect(confirm).toContainText("Nothing moves");
+  await expect(raised).toContainText("Draft");
+  await confirm.getByRole("button", { name: "Confirm cancel" }).click();
   await expect(raised).toContainText("Cancelled");
 });
 
@@ -150,7 +167,7 @@ test("shipping more than the yard holds is refused in the server's own words", a
   const raised = page.locator("[data-transfer]").first();
   await raised.getByRole("button", { name: "Ship", exact: true }).click();
   await raised.getByRole("button", { name: "Confirm ship" }).click();
-  await expect(page.locator("[data-error]")).toContainText("available at Julian yard");
+  await expect(page.locator("[data-error]")).toContainText("would overdraw the source branch");
 });
 
 test("receiving asks first, names the order, the yard and the quantity, then the stock lands", async ({ page, request }) => {
@@ -188,6 +205,10 @@ test("the replenishment list reads, an edit confirms the facts, and the nudge po
   await row.getByRole("button", { name: "Change" }).click();
   const editor = page.locator("[data-point-editor]");
   await expect(editor).toBeVisible();
+  // A cleared field is refused in words, never saved as a zero.
+  await editor.locator('[data-field="point"]').fill("");
+  await editor.getByRole("button", { name: "Save point" }).click();
+  await expect(page.locator("[data-error]")).toContainText("A blank field is not a zero");
   await editor.locator('[data-field="point"]').fill("12");
   await editor.getByRole("button", { name: "Save point" }).click();
   await expect(page.locator("[data-notice]")).toContainText("a reorder point of 12 and orders 10 at a time");
@@ -195,8 +216,38 @@ test("the replenishment list reads, an edit confirms the facts, and the nudge po
   await expect(page.locator("[data-notice]")).toContainText("sent to procurement");
   await row.getByRole("button", { name: "Nudge procurement" }).click();
   await expect(page.locator("[data-notice]")).toContainText("already sent this cycle");
+  await page.locator('[data-field="bootstrap-branch"]').selectOption({ label: "Julian yard" });
   await page.getByRole("button", { name: "Open a line for every stocked product" }).click();
+  const confirm = page.locator('[data-confirm="bootstrap"]');
+  await expect(confirm).toContainText("Julian yard");
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  await confirm.getByRole("button", { name: "Back" }).click();
+  await expect(confirm).toHaveCount(0);
+  await page.getByRole("button", { name: "Open a line for every stocked product" }).click();
+  await page.locator('[data-confirm="bootstrap"]').getByRole("button", { name: "Confirm open lines" }).click();
   await expect(page.locator("[data-notice]")).toContainText("reorder point row");
+});
+
+test("releasing a hold and the expiry sweep ask first, naming the hold and the sweep's reach", async ({ page, request }) => {
+  await openInventory(page, request, "reservations");
+  const row = page.locator("[data-res-row]", { hasText: "Active" }).first();
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Release" }).click();
+  const confirm = page.locator('[data-confirm="release"]');
+  await expect(confirm).toContainText("Release the hold on");
+  await expect(confirm).toContainText("yard");
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  await confirm.getByRole("button", { name: "Back" }).click();
+  await expect(confirm).toHaveCount(0);
+  await page.getByRole("button", { name: "Run the expiry sweep" }).click();
+  const sweep = page.locator('[data-confirm="expire"]');
+  await expect(sweep).toContainText("every expired hold");
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
+  await sweep.getByRole("button", { name: "Confirm sweep" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("sweep ran");
+  await row.getByRole("button", { name: "Release" }).click();
+  await page.locator('[data-confirm="release"]').getByRole("button", { name: "Confirm release" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("released");
 });
 
 test("the transit table lists every ordered pair and names the admin wall in words, with no editor to press", async ({ page, request }) => {

@@ -12,6 +12,8 @@
 // out, so a new state added to the schema shows up strange (a bug report)
 // rather than confident and wrong (a lie nobody catches).
 
+import { formatQty } from "../po/po-money.js";
+
 // ---- the ledger's words ---------------------------------------------------------------------------
 
 const MOVE_TYPE_WORD: Record<string, string> = {
@@ -166,9 +168,81 @@ export type QtyCheck = { ok: true; qty: number } | { ok: false; words: string };
 export function qtyFromTyped(text: string): QtyCheck {
   const value = text.trim();
   if (value === "") return { ok: false, words: "Write how many you counted." };
-  if (!/^-?\d+(?:\.\d+)?$/.test(value)) return { ok: false, words: "Write the quantity as a number." };
+  if (/^-\d+(?:\.\d+)?$/.test(value)) return { ok: false, words: "A count is zero or more." };
+  if (!/^\d+(?:\.\d+)?$/.test(value)) return { ok: false, words: "Write the quantity as a number." };
   const qty = Number(value);
   return Number.isFinite(qty) ? { ok: true, qty } : { ok: false, words: "Write the quantity as a number." };
+}
+
+export type ReorderCheck = { ok: true; point: number; reorderQty: number } | { ok: false; words: string };
+
+/**
+ * The reorder point and order quantity as typed. A blank field is refused in
+ * words: an empty box read as a number is a zero, and a zero point saved by
+ * accident turns the yard's reorder line off.
+ */
+export function reorderFieldsFromTyped(pointText: string, qtyText: string): ReorderCheck {
+  const point = pointText.trim();
+  const qty = qtyText.trim();
+  if (point === "" || qty === "") return { ok: false, words: "A blank field is not a zero. Write the point and the order quantity, zero or more." };
+  const number = /^\d+(?:\.\d+)?$/;
+  if (!number.test(point) || !number.test(qty)) return { ok: false, words: "Write the point and the order quantity as numbers, zero or more." };
+  return { ok: true, point: Number(point), reorderQty: Number(qty) };
+}
+
+// ---- the confirms for the presses that cannot be taken back ---------------------------------------------
+
+/** What a confirm says: a title, the facts beneath it, and the label of the button that goes ahead. */
+export interface ConfirmWords {
+  readonly title: string;
+  readonly lines: readonly string[];
+  readonly go: string;
+}
+
+export function receiveTransferConfirm(
+  t: { transfer_no: string; lines: readonly { product_name: string; uom: string; qty_shipped_base: number; qty_received_base: number }[] },
+  toName: string,
+): ConfirmWords {
+  return {
+    title: `Receive ${t.transfer_no} into ${toName}.`,
+    lines: [
+      ...t.lines.map((l) => `${l.product_name}: ${formatQty(inTransitBase(l), l.uom)} in transit`),
+      `The truck is unloaded at ${toName} and the stock lands there at the cost it travelled with. Nothing moves until you confirm, and there is no undo short of a transfer back.`,
+    ],
+    go: "Confirm receive",
+  };
+}
+
+export function cancelTransferConfirm(t: { transfer_no: string }): ConfirmWords {
+  return {
+    title: `Cancel ${t.transfer_no}.`,
+    lines: ["Nothing moves. The draft is closed for good; raise a new one to try again."],
+    go: "Confirm cancel",
+  };
+}
+
+export function releaseConfirm(hold: { product: string; yard: string; qty: number }): ConfirmWords {
+  return {
+    title: `Release the hold on ${hold.product} at ${hold.yard}.`,
+    lines: [`${formatQty(hold.qty, "")} goes back on the floor for anyone to sell. A hold can be placed again.`],
+    go: "Confirm release",
+  };
+}
+
+export function expireConfirm(): ConfirmWords {
+  return {
+    title: "Run the expiry sweep.",
+    lines: ["This expires every expired hold at once. A hold still inside its time is left alone."],
+    go: "Confirm sweep",
+  };
+}
+
+export function bootstrapConfirm(yard: string): ConfirmWords {
+  return {
+    title: `Open a reorder line for every stocked product at ${yard}.`,
+    lines: ["Each line starts at half of today's on hand. A line a person tuned is never overwritten."],
+    go: "Confirm open lines",
+  };
 }
 
 // ---- words for a refusal ------------------------------------------------------------------------------

@@ -72,9 +72,30 @@ test("posting before a checker's approval is refused in the server's words", asy
   await page.getByRole("button", { name: "Post adjustment" }).click();
   await page.locator("[data-post-confirm]").getByRole("button", { name: "Confirm post" }).click();
   await expect(page.locator("[data-error]")).toContainText("Post requires a checker approval");
-  // A sheet can still be abandoned before post.
+  // A sheet can still be abandoned before post, after a confirm that names it.
   await page.getByRole("button", { name: "Cancel sheet" }).click();
+  const confirm = page.locator("[data-cancel-confirm]");
+  await expect(confirm).toBeVisible();
+  await expect(confirm).toContainText("Point Loma yard");
+  await expect(confirm).toContainText("Nothing posts");
+  await expect(page.locator("[data-sheet-status]")).toHaveText("Counted");
+  await confirm.getByRole("button", { name: "Back" }).click();
+  await expect(confirm).toHaveCount(0);
+  await expect(page.locator("[data-sheet-status]")).toHaveText("Counted");
+  await page.getByRole("button", { name: "Cancel sheet" }).click();
+  await page.locator("[data-cancel-confirm]").getByRole("button", { name: "Confirm cancel" }).click();
   await expect(page.locator("[data-sheet-status]")).toHaveText("Cancelled");
+});
+
+test("a negative counted quantity is refused in words before any request", async ({ page, request }) => {
+  await openCounts(page, request, "sheets");
+  await startSheet(page);
+  await freeze(page);
+  const line = page.locator("[data-count-line]").first();
+  await line.locator('[data-field="counted"]').fill("-400");
+  await page.getByRole("button", { name: "Submit counts" }).click();
+  await expect(page.locator("[data-error]")).toContainText("A count is zero or more.");
+  await expect(page.locator("[data-sheet-status]")).toHaveText("Frozen");
 });
 
 test("the yard manager counts, the procurement manager approves and posts after the confirm names the facts", async ({ page, request }) => {
@@ -109,6 +130,12 @@ test("the yard manager counts, the procurement manager approves and posts after 
   await expect(confirm).toBeVisible();
   await expect(confirm).toContainText("Point Loma yard");
   await expect(confirm).toContainText("variance");
+  // Nothing is valued until the post, so the confirm states no dollar figure; it names the line and the counted figure.
+  await expect(confirm).not.toContainText("$0.00");
+  await expect(confirm).toContainText("valued at the yard's average cost when it posts");
+  await expect(confirm.locator("[data-post-lines] li").first()).toContainText("Copperline");
+  await expect(confirm.locator("[data-post-lines] li").first()).toContainText(/book [\d,.]+ to counted 0/);
+  await expect(page.locator("[data-variance-summary]")).toContainText("Net");
   await confirm.getByRole("button", { name: "Confirm post" }).click();
   await expect(page.locator("[data-sheet-status]")).toHaveText("Posted");
   await expect(page.locator("[data-notice]")).toContainText("Posted");

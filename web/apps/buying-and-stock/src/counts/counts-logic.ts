@@ -8,6 +8,7 @@
 // commit 87d7941b, read only). TIED and OUT_OF_TIE reuse the trial balance
 // strip's own words, the same accounting fact the product already names.
 import type { InvCountSheet, InvCountVarianceSummary } from "@hardscapehouse/api-client";
+import { formatMoney, formatQty } from "../po/po-money.js";
 
 // ---- the sheet's states -------------------------------------------------------------------------------
 
@@ -80,7 +81,8 @@ export type CountsCheck = { ok: true; qty: number } | { ok: false; words: string
 export function countsFromTyped(text: string): CountsCheck {
   const value = text.trim();
   if (value === "") return { ok: false, words: "Write how many you counted." };
-  if (!/^-?\d+(?:\.\d+)?$/.test(value)) return { ok: false, words: "Write the counted quantity as a number." };
+  if (/^-\d+(?:\.\d+)?$/.test(value)) return { ok: false, words: "A count is zero or more." };
+  if (!/^\d+(?:\.\d+)?$/.test(value)) return { ok: false, words: "Write the counted quantity as a number." };
   const qty = Number(value);
   return Number.isFinite(qty) ? { ok: true, qty } : { ok: false, words: "Write the counted quantity as a number." };
 }
@@ -93,19 +95,46 @@ export function varianceNeedsReason(line: { counted_qty_base: number | null; sna
 
 // ---- the post confirm ----------------------------------------------------------------------------------------
 
+/** One counted line as the confirm reads it: the product's label and the book and counted figures. */
+export interface ConfirmLine {
+  readonly product_label: string;
+  readonly snapshot_qty_base: number;
+  readonly counted_qty_base: number | null;
+  readonly variance_base: number;
+  readonly variance_value_cents?: number | null;
+}
+
+const UNVALUED = "valued at the yard's average cost when it posts";
+
 /**
  * The confirm's words, naming the sheet, the branch and the value, so the
- * press is made with the facts in front of the checker. The money figure is
- * the server's summary, formatted here and computed nowhere.
+ * press is made with the facts in front of the checker. The core values a
+ * variance only inside the post, so before it there is no figure to say: the
+ * words say how it will be valued, never a zero. A figure appears only when the
+ * server has valued every variance line, and is the server's, formatted.
  */
 export function confirmPostWords(
   sheet: { sheet_no: string; branch_name: string },
-  summary: Pick<InvCountVarianceSummary, "variance_lines" | "net_variance_value_cents">,
+  summary: { variance_lines: number; net_variance_value_cents?: InvCountVarianceSummary["net_variance_value_cents"] },
+  lines: readonly ConfirmLine[] = [],
 ): string {
-  const net = summary.net_variance_value_cents ?? 0;
-  const dollars = (Math.abs(net) / 100).toLocaleString("en-CA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const sign = net < 0 ? "-" : net > 0 ? "+" : "";
-  return `Post ${sheet.sheet_no} for ${sheet.branch_name}: ${summary.variance_lines} variance ${summary.variance_lines === 1 ? "line" : "lines"}, net ${sign}$${dollars}. This writes the stock moves and the reason-coded journal, and a re-post never doubles it.`;
+  const moved = lines.filter((l) => l.counted_qty_base !== null && l.variance_base !== 0);
+  const net = summary.net_variance_value_cents;
+  const allValued = typeof net === "number" && net !== 0 && moved.every((l) => typeof l.variance_value_cents === "number");
+  const worth = allValued ? `net ${net < 0 ? "-" : "+"}${formatMoney(Math.abs(net))}` : UNVALUED;
+  return `Post ${sheet.sheet_no} for ${sheet.branch_name}: ${summary.variance_lines} variance ${summary.variance_lines === 1 ? "line" : "lines"}, ${worth}. This writes the stock moves and the reason-coded journal, and a re-post never doubles it.`;
+}
+
+/** Each variance line as product, yard and book to counted quantity. */
+export function confirmPostLines(branchName: string, lines: readonly ConfirmLine[]): string[] {
+  return lines
+    .filter((l) => l.counted_qty_base !== null && l.variance_base !== 0)
+    .map((l) => `${l.product_label} at ${branchName}: book ${formatQty(l.snapshot_qty_base, "")} to counted ${formatQty(l.counted_qty_base, "")}`);
+}
+
+/** The cancel confirm's words: the sheet, the yard, and what is lost. */
+export function confirmCancelWords(sheet: { sheet_no: string; branch_name: string }): string {
+  return `Cancel ${sheet.sheet_no} for ${sheet.branch_name}. Nothing posts, the counted work on the sheet is lost, and a cancelled sheet cannot be reopened.`;
 }
 
 // ---- the recon ----------------------------------------------------------------------------------------------

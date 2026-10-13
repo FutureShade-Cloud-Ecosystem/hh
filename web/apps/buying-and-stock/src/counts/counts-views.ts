@@ -6,7 +6,7 @@
 // system at 1440 and 390.
 import { html, nothing, type TemplateResult } from "lit";
 import type { InvCountLine, InvCountReasonCode, InvCountReconRun, InvCountSheet, InvCountSheetDetail, InvCountNegativeStockRow } from "@hardscapehouse/api-client";
-import { confirmPostWords, entryState, reconStatusTone, reconStatusWord, reconcilePeriodWord, sheetScopeWord, sheetStatusTone, sheetStatusWord, signTone } from "./counts-logic.js";
+import { confirmCancelWords, confirmPostLines, confirmPostWords, entryState, reconStatusTone, reconStatusWord, reconcilePeriodWord, sheetScopeWord, sheetStatusTone, sheetStatusWord, signTone } from "./counts-logic.js";
 import { formatMoney, formatQty } from "../po/po-money.js";
 
 export type CountsTab = "sheets" | "recon";
@@ -33,6 +33,7 @@ export interface CountsModel {
   readonly lineReasons: ReadonlyMap<string, string>;
   // The post confirm.
   readonly confirmingPost: boolean;
+  readonly confirmingCancel: boolean;
   // The recon.
   readonly reconBranch: string;
   readonly recon: { readonly current: InvCountReconRun; readonly history: readonly InvCountReconRun[] } | null;
@@ -169,7 +170,7 @@ function lineRow(model: CountsModel, line: InvCountLine): TemplateResult {
       ${model.blind || !editable ? nothing : html`<td class="num" data-label="Book on hand"><span data-book-qty>${formatQty(line.snapshot_qty_base, "")}</span></td>`}
       <td class="num" data-label="Counted">
         ${editable
-          ? html`<input type="number" step="any" inputmode="decimal" data-field="counted" data-key=${line.id} />`
+          ? html`<input type="number" min="0" step="any" inputmode="decimal" data-field="counted" data-key=${line.id} />`
           : html`<span>${line.counted_qty_base === null ? html`<span class="dim">not counted</span>` : formatQty(line.counted_qty_base, "")}</span>`}
       </td>
       <td class="num ${variance === null || variance === 0 ? "" : variance > 0 ? "good" : "stop"}" data-label="Variance">
@@ -245,10 +246,16 @@ function variancePane(model: CountsModel): TemplateResult {
   if (detail === null) return html`${nothing}`;
   if (detail.sheet.status === "OPEN" || detail.sheet.status === "FROZEN") return html`${nothing}`;
   const summary = detail.summary;
-  const confirmWords = confirmPostWords(
-    { sheet_no: detail.sheet.sheet_no, branch_name: model.branchNames.get(detail.sheet.branch_id) ?? detail.sheet.branch_id },
-    { variance_lines: summary.variance_lines, net_variance_value_cents: summary.net_variance_value_cents },
-  );
+  const branchName = model.branchNames.get(detail.sheet.branch_id) ?? detail.sheet.branch_id;
+  const sheetFacts = { sheet_no: detail.sheet.sheet_no, branch_name: branchName };
+  const confirmLines = detail.lines.map((l) => ({
+    product_label: `${l.sku ?? ""} ${l.product_name ?? l.product_id}`.trim(),
+    snapshot_qty_base: l.snapshot_qty_base,
+    counted_qty_base: l.counted_qty_base,
+    variance_base: l.variance_base,
+    variance_value_cents: l.variance_value_cents,
+  }));
+  const confirmWords = confirmPostWords(sheetFacts, summary, confirmLines);
   return html`
     <section class="panel" aria-label="Variance and post" data-count-variance>
       <div class="panel-head">
@@ -311,9 +318,26 @@ function variancePane(model: CountsModel): TemplateResult {
             <div class="modal" role="dialog" aria-label="Confirm the post" data-post-confirm>
               <h3>Post the count adjustment</h3>
               <p>${confirmWords}</p>
+              <ul data-post-lines>
+                ${confirmPostLines(branchName, confirmLines).map((row) => html`<li>${row}</li>`)}
+              </ul>
               <div class="actions end">
                 <button type="button" class="btn btn-secondary" data-action="post-cancel">Back</button>
                 <button type="button" class="btn btn-primary" data-action="post-confirm" ?disabled=${model.busy}>Confirm post</button>
+              </div>
+            </div>
+          </div>
+        `
+      : nothing}
+    ${model.confirmingCancel
+      ? html`
+          <div class="scrim">
+            <div class="modal" role="dialog" aria-label="Confirm the cancel" data-cancel-confirm>
+              <h3>Cancel the count sheet</h3>
+              <p>${confirmCancelWords(sheetFacts)}</p>
+              <div class="actions end">
+                <button type="button" class="btn btn-secondary" data-action="cancel-back">Back</button>
+                <button type="button" class="btn btn-primary" data-action="cancel-confirm" ?disabled=${model.busy}>Confirm cancel</button>
               </div>
             </div>
           </div>

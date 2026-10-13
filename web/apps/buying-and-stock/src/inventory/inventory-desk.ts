@@ -12,8 +12,8 @@ import type { TemplateResult } from "lit";
 import type { InventoryAllocationPolicy, InventoryBranchStock, InventoryInTransitLine, InventoryOnHand, InventoryPendingFulfilment, InventoryReorderPoint, InventoryReservation, InventoryStockMove, InventoryTransitDaysPair, InventoryTransfer, Result } from "@hardscapehouse/api-client";
 import { formatMoney } from "../po/po-money.js";
 import { InventoryApi, browseAnswer, branchRows, incomingRows, moveRows, onHandRows, pendingRows, pointRows, reservationRows, transitPairs, transferRows, type BrowseAnswer } from "./inventory-api.js";
-import { defaultShipETA, refusalWords } from "./inventory-logic.js";
-import { renderInventory, type InvModel, type InvTab, type ReceiveOrder } from "./inventory-views.js";
+import { bootstrapConfirm, cancelTransferConfirm, defaultShipETA, expireConfirm, receiveTransferConfirm, refusalWords, releaseConfirm, reorderFieldsFromTyped } from "./inventory-logic.js";
+import { renderInventory, type InvConfirm, type InvModel, type InvTab, type ReceiveOrder } from "./inventory-views.js";
 import { formatQty } from "../po/po-money.js";
 
 type Field = (name: string) => string;
@@ -67,6 +67,8 @@ export class InventoryDesk {
   // Replenish.
   #points: readonly InventoryReorderPoint[] = [];
   #editingPoint: string | null = null;
+  // The one press waiting on its confirm: a move that cannot be taken back asks first.
+  #confirm: InvConfirm | null = null;
 
   // The seat the caller holds: it picks the words a walled move is named with.
   readonly #seat: "manage" | "work" | "read";
@@ -124,6 +126,7 @@ export class InventoryDesk {
   /** Loads one tab's reads when it is opened (once; the tab's own Refresh re-reads). */
   async #open(tab: InvTab): Promise<void> {
     this.#tab = tab;
+    this.#confirm = null;
     this.#clearMessages();
     if (!this.#loaded.has(tab)) {
       await this.#readTab(tab);
@@ -237,10 +240,18 @@ export class InventoryDesk {
         void this.#reserve();
         return true;
       case "release-reservation":
-        void this.#release(attr("data-res-id"));
+        this.#askRelease(attr("data-res-id"));
         return true;
       case "expire-reservations":
-        void this.#expire();
+        this.#ask({ kind: "expire", id: "", ...expireConfirm() });
+        return true;
+      case "confirm-back":
+        this.#confirm = null;
+        this.#clearMessages();
+        this.#repaint();
+        return true;
+      case "confirm-go":
+        void this.#confirmGo();
         return true;
       case "ship-transfer":
         this.#beginShip(attr("data-transfer-id"));
@@ -255,10 +266,10 @@ export class InventoryDesk {
         void this.#ship(attr("data-transfer-id"));
         return true;
       case "receive-transfer":
-        void this.#receiveTransfer(attr("data-transfer-id"));
+        this.#askTransfer("receive-transfer", attr("data-transfer-id"));
         return true;
       case "cancel-transfer":
-        void this.#cancelTransfer(attr("data-transfer-id"));
+        this.#askTransfer("cancel-transfer", attr("data-transfer-id"));
         return true;
       case "raise-transfer":
         void this.#raiseTransfer();
@@ -292,11 +303,61 @@ export class InventoryDesk {
       case "nudge":
         void this.#nudge(attr("data-point-id"));
         return true;
-      case "bootstrap-points":
-        void this.#bootstrap();
+      case "bootstrap-points": {
+        const branch = this.#field("bootstrap-branch");
+        if (branch === "") {
+          this.#error = "Pick the yard to open reorder lines at.";
+          this.#repaint();
+          return true;
+        }
+        this.#ask({ kind: "bootstrap", id: branch, ...bootstrapConfirm(this.#branchNames.get(branch) ?? branch) });
         return true;
+      }
       default:
         return false;
+    }
+  }
+
+  #ask(confirm: InvConfirm): void {
+    this.#confirm = confirm;
+    this.#clearMessages();
+    this.#repaint();
+  }
+
+  #askTransfer(kind: "receive-transfer" | "cancel-transfer", id: string): void {
+    const t = this.#transfers.find((x) => x.id === id);
+    if (t === undefined) return;
+    const words = kind === "receive-transfer" ? receiveTransferConfirm(t, this.#branchNames.get(t.to_branch_id) ?? "the yard") : cancelTransferConfirm(t);
+    this.#ask({ kind, id, ...words });
+  }
+
+  #askRelease(id: string): void {
+    const r = this.#reservations.find((x) => x.id === id);
+    if (r === undefined) return;
+    const picked = this.#catalogue.find((c) => c.id === r.product_id);
+    this.#ask({
+      kind: "release",
+      id,
+      ...releaseConfirm({ product: picked === undefined ? r.product_id : `${picked.sku} ${picked.name}`, yard: this.#branchNames.get(r.branch_id) ?? r.branch_id, qty: r.qty_base }),
+    });
+  }
+
+  /** The confirm's go ahead: the held press is made now, and the confirm closes first. */
+  async #confirmGo(): Promise<void> {
+    const confirm = this.#confirm;
+    if (confirm === null || this.#busy) return;
+    this.#confirm = null;
+    switch (confirm.kind) {
+      case "receive-transfer":
+        return this.#receiveTransfer(confirm.id);
+      case "cancel-transfer":
+        return this.#cancelTransfer(confirm.id);
+      case "release":
+        return this.#release(confirm.id);
+      case "expire":
+        return this.#expire();
+      case "bootstrap":
+        return this.#bootstrap(confirm.id);
     }
   }
 
@@ -433,6 +494,7 @@ export class InventoryDesk {
   #beginShip(transferId: string): void {
     const t = this.#transfers.find((x) => x.id === transferId);
     if (t === undefined) return;
+    this.#confirm = null;
     this.#shipping = transferId;
     this.#shipEta = defaultShipETA(this.#transit, t.from_branch_id, t.to_branch_id, this.#today);
     this.#clearMessages();
@@ -588,13 +650,13 @@ export class InventoryDesk {
   async #savePoint(): Promise<void> {
     const row = this.#points.find((r) => r.product_id === this.#editingPoint);
     if (row === undefined || this.#busy) return;
-    const point = Number(this.#field("point"));
-    const reorderQty = Number(this.#field("reorder-qty"));
-    if (!Number.isFinite(point) || point < 0 || !Number.isFinite(reorderQty) || reorderQty < 0) {
-      this.#error = "Write the point and the order quantity as numbers, zero or more.";
+    const check = reorderFieldsFromTyped(this.#field("point"), this.#field("reorder-qty"));
+    if (!check.ok) {
+      this.#error = check.words;
       this.#repaint();
       return;
     }
+    const { point, reorderQty } = check;
     this.#busy = true;
     this.#clearMessages();
     this.#repaint();
@@ -634,8 +696,7 @@ export class InventoryDesk {
     this.#repaint();
   }
 
-  async #bootstrap(): Promise<void> {
-    const branch = [...this.#branchNames.keys()][0] ?? "";
+  async #bootstrap(branch: string): Promise<void> {
     if (branch === "" || this.#busy) return;
     this.#busy = true;
     this.#clearMessages();
@@ -701,6 +762,7 @@ export class InventoryDesk {
       receiveConfirm: this.#receiveConfirm === null ? null : { order: this.#receiveConfirm },
       points: this.#points,
       editingPoint: this.#editingPoint,
+      confirm: this.#confirm,
     };
     return renderInventory(model);
   }

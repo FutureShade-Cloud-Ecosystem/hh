@@ -537,6 +537,31 @@ test("the maker cannot approve their own count, and the post refuses to run befo
   void plm;
 });
 
+test("a transfer that would overdraw the source is refused in the core's own words", async () => {
+  const { plm, jul, products } = await world();
+  const made = await call("POST", "/api/v1/inventory/transfers", { from_branch_id: jul, to_branch_id: plm, notes: "", lines: [{ product_id: products[0].id, qty_base: 10000 }] });
+  assert.equal(made.status, 200);
+  const res = await call("POST", `/api/v1/inventory/transfers/${made.json.id}/ship`);
+  refused(res, 409, "would overdraw the source branch", "would overdraw the source branch, %.4f available (%.4f on hand, %.4f reserved), %.4f requested");
+  assert.match(res.json.error, /^transfer TRF-\S+ line 1 would overdraw the source branch, -?\d+\.\d{4} available \(-?\d+\.\d{4} on hand, -?\d+\.\d{4} reserved\), 10000\.0000 requested$/);
+});
+
+test("an unposted sheet's summary carries no net figure, as the core's omitempty does", async () => {
+  const { plm } = await world();
+  const made = await call("POST", "/api/v1/counts/sheets", { branch_id: plm, scope: "FULL", notes: "unposted summary" });
+  await call("POST", `/api/v1/counts/sheets/${made.json.id}/freeze`);
+  const detail = await call("GET", `/api/v1/counts/sheets/${made.json.id}`);
+  const target = detail.json.lines.find((l) => l.snapshot_qty_base > 0);
+  const counted = await callAs("POST", `/api/v1/counts/sheets/${made.json.id}/counts`, YARD_ID, {
+    lines: [{ product_id: target.product_id, location_id: target.location_id, counted_qty_base: target.snapshot_qty_base - 2, reason_code: "SHRINK" }],
+  });
+  assert.equal(counted.status, 200);
+  const read = await call("GET", `/api/v1/counts/sheets/${made.json.id}`);
+  assert.equal(read.json.summary.variance_lines, 1);
+  assert.ok(!("net_variance_value_cents" in read.json.summary), "no net before the post");
+  assert.ok(!("abs_variance_value_cents" in read.json.summary), "no gross before the post");
+});
+
 test("posting a counted, approved sheet moves the stock and is a no-op the second time", async () => {
   const { plm } = await world();
   const made = await call("POST", "/api/v1/counts/sheets", { branch_id: plm, scope: "FULL", notes: "the aggregate check" });

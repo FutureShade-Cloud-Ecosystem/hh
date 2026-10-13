@@ -33,6 +33,7 @@ export class CountsDesk {
   #counts = new Map<string, string>();
   #lineReasons = new Map<string, string>();
   #confirmingPost = false;
+  #confirmingCancel = false;
   // The recon.
   #reconBranch = "";
   #recon: CountsModel["recon"] = null;
@@ -133,6 +134,8 @@ export class CountsDesk {
         return true;
       case "close-sheet":
         this.#detail = null;
+        this.#confirmingPost = false;
+        this.#confirmingCancel = false;
         this.#counts = new Map();
         this.#lineReasons = new Map();
         this.#blind = true;
@@ -161,6 +164,15 @@ export class CountsDesk {
         void this.#post();
         return true;
       case "cancel-sheet":
+        this.#confirmingCancel = true;
+        this.#clearMessages();
+        this.#repaint();
+        return true;
+      case "cancel-back":
+        this.#confirmingCancel = false;
+        this.#repaint();
+        return true;
+      case "cancel-confirm":
         void this.#cancelSheet();
         return true;
       case "recon-run":
@@ -213,6 +225,7 @@ export class CountsDesk {
     this.#lineReasons = new Map((detail.value.lines ?? []).filter((l) => l.reason_code !== undefined && l.reason_code !== "").map((l) => [l.id, l.reason_code as string]));
     this.#blind = true;
     this.#confirmingPost = false;
+    this.#confirmingCancel = false;
     this.#busy = false;
     this.#repaint();
   }
@@ -326,6 +339,7 @@ export class CountsDesk {
     this.#clearMessages();
     this.#repaint();
     const cancelled = await this.#api.cancel(detail.sheet.id);
+    this.#confirmingCancel = false;
     if (!cancelled.ok) {
       this.#fail("sheet-cancel", cancelled);
       this.#busy = false;
@@ -393,6 +407,7 @@ export class CountsDesk {
       counts: this.#counts,
       lineReasons: this.#lineReasons,
       confirmingPost: this.#confirmingPost,
+      confirmingCancel: this.#confirmingCancel,
       reconBranch: this.#reconBranch,
       recon: this.#recon,
       negatives: this.#negatives,
