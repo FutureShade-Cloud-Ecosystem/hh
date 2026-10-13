@@ -23,6 +23,7 @@ import {
   lineIsUnpaid,
   missingRequired,
   orderCategories,
+  parseRateToBps,
   periodLabel,
   printAtNeeded,
   qty,
@@ -216,4 +217,21 @@ test("the unattributed caveat is the server's own numbers, stated, or nothing", 
   assert.equal(unattributedWords([{ unattributedCount: 1, unattributedCents: 500 }]), "$5.00 of revenue over 1 line is not attributed to any rep (the house queue). It earns no commission and is not in the figures above.");
   assert.equal(unattributedWords([{ unattributedCount: 0, unattributedCents: 0 }]), "");
   assert.equal(unattributedWords([]), "");
+});
+
+test("a commission rate converts through the decimal string to basis points", () => {
+  assert.deepEqual(parseRateToBps("2.5"), { bps: 250 });
+  assert.deepEqual(parseRateToBps(" 100 "), { bps: 10000 });
+  assert.deepEqual(parseRateToBps("0.01"), { bps: 1 });
+  assert.deepEqual(parseRateToBps("0"), { bps: 0 });
+  assert.deepEqual(parseRateToBps("5.1"), { bps: 510 });
+  assert.deepEqual(parseRateToBps("1.15"), { bps: 115 });
+});
+
+test("a commission rate that is not plainly a percent is refused in words, never rounded", () => {
+  for (const bad of ["2.5x", "1,5", "2.505", "2e1", "", "   ", "-1", "100.01", "101", ".5", "5.", "abc"]) {
+    const got = parseRateToBps(bad);
+    assert.equal("bps" in got, false, `refused: ${JSON.stringify(bad)}`);
+    assert.match(got.error, /percent/);
+  }
 });

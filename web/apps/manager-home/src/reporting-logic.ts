@@ -72,6 +72,20 @@ export function bps(v: number): string {
   return `${(n / 100).toFixed(2)}%`;
 }
 
+/**
+ * A typed commission percent to integer basis points, through the decimal
+ * string (never a float multiply): digits, an optional point, at most two
+ * decimals, between 0 and 100. Anything else is refused in words and nothing is
+ * sent ("2.5x", "1,5", "2.505" and "2e1" never stand a rule at another rate).
+ */
+export function parseRateToBps(text: string): { bps: number } | { error: string } {
+  const refusal = { error: "The rate reads as a percent between 0 and 100, with at most two decimals." };
+  const match = text.trim().match(/^([0-9]{1,3})(?:\.([0-9]{1,2}))?$/);
+  if (match === null) return refusal;
+  const value = Number(`${match[1]}${(match[2] ?? "").padEnd(2, "0")}`);
+  return value > 10000 ? refusal : { bps: value };
+}
+
 /** A column kind that right aligns: comparing magnitudes needs aligned digits. */
 export function isNumericKind(kind: string): boolean {
   return kind === "cents" || kind === "qty" || kind === "int";

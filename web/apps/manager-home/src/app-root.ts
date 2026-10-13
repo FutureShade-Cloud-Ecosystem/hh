@@ -62,6 +62,7 @@ import {
   canAdminCommissionRules,
   canOpenReporting,
   commissionRuleRefusalWords,
+  parseRateToBps,
   csvName,
   defaultParams,
   missingRequired,
@@ -789,9 +790,9 @@ export class ManagerHomeApp extends HHElement {
   async #createCommissionRule(): Promise<void> {
     if (!this.#reporting.canWriteRules || this.#reporting.ruleDraft.busy) return;
     const d = this.#reporting.ruleDraft;
-    const percent = Number.parseFloat(d.ratePercent.trim());
-    if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
-      this.#patchReporting({ ruleDraft: { ...d, error: "The rate reads as a percent between 0 and 100." } });
+    const rate = parseRateToBps(d.ratePercent);
+    if ("error" in rate) {
+      this.#patchReporting({ ruleDraft: { ...d, error: rate.error } });
       return;
     }
     if (d.effectiveFrom.trim() === "") {
@@ -803,7 +804,7 @@ export class ManagerHomeApp extends HHElement {
     const result = await this.#reportingApi.createCommissionRule({
       repUserId: d.repUserId.trim(),
       basis: d.basis,
-      rateBps: Math.round(percent * 100),
+      rateBps: rate.bps,
       effectiveFrom: d.effectiveFrom.trim(),
       ...(d.effectiveTo.trim() !== "" ? { effectiveTo: d.effectiveTo.trim() } : {}),
       ...(branch !== undefined ? { branchId: branch.id } : {}),
