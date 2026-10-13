@@ -276,8 +276,9 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// till's role-configuration rules ride the same wiring (RT-B): the
 	// dealer's configuration loaded at boot, the approver credential
 	// through the same guards the routes register behind.
-	posRepo := pos.NewRepository(pool).WithPayBalanceSources(newPayBalanceSources(pool))
+	posRepo := pos.NewRepository(pool).WithPayBalanceSources(newPayBalanceSources(pool)).WithZone(newDealerZone(pool))
 	posSvc := wireTillRules(pos.NewService(posRepo).
+		WithZone(newDealerZone(pool)).
 		WithLineResolver(pricingSvc).
 		WithTenderTaker(tillSvc).
 		WithCreditGate(till.NewHoldAwareCreditGate(ops.tillRepo)).
@@ -290,7 +291,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 		WithOpenQuantityReleaser(orderRepo).
 		// A return releases the order's supplier deposit; the documents are billing's, read through
 		// its writer on the return's transaction.
-		WithDepositDocuments(billing.NewInvoiceWriter(pool)).
+		WithDepositDocuments(newInvoiceWriter(pool)).
 		WithClock(time.Now), roleCfg, g, link)
 	posHandler := pos.NewHandler(posSvc, log).WithUserLinker(link)
 	posHandler.RegisterRoutes(r, g)
@@ -310,7 +311,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// (billing owns them), under the dealer's default disposition read from
 	// the pos policy the counter administers. The boot fail-fast keeps a
 	// deploy from serving with the exit dark, the cancel guards' own posture.
-	orderSvc.WithDepositCanceller(billing.NewInvoiceWriter(pool).WithAudit(auditSvc))
+	orderSvc.WithDepositCanceller(newInvoiceWriter(pool).WithAudit(auditSvc))
 	orderSvc.WithDepositCancelDefault(posSvc)
 	if !orderSvc.DepositCancelWired() {
 		panic("order: deposit cancel seams not wired - a cancelled special order's deposit could not settle")
@@ -336,7 +337,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// with (the quoteMoneyDoor writer), on the take's own transaction, so the
 	// whole balance is one number at every door and there is no second writer
 	// to drift from the first.
-	posSvc.WithPayBalanceInvoicer(posPayBalanceInvoicer{w: billing.NewInvoiceWriter(pool).
+	posSvc.WithPayBalanceInvoicer(posPayBalanceInvoicer{w: newInvoiceWriter(pool).
 		WithTaxAssessor(w6cInvoiceTaxAdapter{svc: newTaxEngine(pool)}).
 		WithOrderSource(quoteAgreedOrderSource{w6cOrderInvoiceSource: w6cOrderInvoiceSource{svc: orderSvc}, svc: orderSvc})})
 
@@ -399,7 +400,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// receivables register mounts from here (billing's register handler,
 	// registered under the Finance unit's gates exactly as the pin did).
 	finstmtSvc := finstmt.NewService(finstmt.NewRepository(pool)).WithAudit(auditSvc)
-	finstmt.NewHandler(finstmtSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).RegisterRoutes(r, g)
+	finstmt.NewHandler(finstmtSvc, log).WithZone(newDealerZone(pool)).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).RegisterRoutes(r, g)
 
 	// M5 tax engine, then the W6 scaffold-owner rewire: the POS Sale leaves
 	// its stubs for the real engines (tax, stock, restock, the card
@@ -656,7 +657,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// SWARM-W6-C: the money tail. ONE writer value shared by all three
 	// consumers (order's multi-ship invoicer, warranty's customer credit,
 	// the credit-memo repost sweep the worker registers).
-	w6cInvoiceWriter := billing.NewInvoiceWriter(pool).
+	w6cInvoiceWriter := newInvoiceWriter(pool).
 		WithTaxAssessor(w6cInvoiceTaxAdapter{svc: taxSvc}).
 		WithOrderSource(w6cOrderInvoiceSource{svc: orderSvc}).
 		WithCreditMemoPoster(w6cCreditMemoPoster{svc: spine.glSvc, rules: gl.NewRepository(pool)})

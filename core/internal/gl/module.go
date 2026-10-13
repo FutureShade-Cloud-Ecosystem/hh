@@ -37,6 +37,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -402,7 +403,13 @@ type Handler struct {
 	userLink identity.UserIDLinker
 	svc      *Service
 	log      *slog.Logger
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. An explicit tie-out
+	// day is cut at the last instant of the dealer's own day.
+	zone houseday.Source
 }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (h *Handler) WithZone(src houseday.Source) *Handler { h.zone = src; return h }
 
 // NewHandler wires the service.
 func NewHandler(svc *Service, log *slog.Logger) *Handler {

@@ -204,7 +204,12 @@ type RegisterService struct {
 	statements statementRunner
 	clock      func() time.Time
 	callerFrom func(context.Context) (identity.StaffContext, bool)
+	zone       houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 }
+
+// WithZone binds the dealer's business day zone source, so "the promised date is already past" is
+// judged against the dealer's own calendar day. Nil keeps the Ontario dealer's.
+func (s *RegisterService) WithZone(src houseday.Source) *RegisterService { s.zone = src; return s }
 
 // NewRegisterService builds the service over a store.
 func NewRegisterService(store registerStore) *RegisterService {
@@ -660,7 +665,11 @@ func (s *RegisterService) AddPromise(ctx context.Context, in PromiseInput) (Prom
 	if err != nil {
 		return PromiseView{}, false, httpx.BadRequestf("the promised date must be a calendar date (YYYY-MM-DD)")
 	}
-	if today, _ := time.Parse("2006-01-02", houseday.Today(s.clock)); day.Before(today) {
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return PromiseView{}, false, err
+	}
+	if today, _ := time.Parse("2006-01-02", zone.Today(s.clock)); day.Before(today) {
 		// A promise for a date already gone is a typo, and accepting it would put a row in the
 		// worklist that is broken the moment it is written.
 		return PromiseView{}, false, httpx.BadRequestf("the promised date is already past")

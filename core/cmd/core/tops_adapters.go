@@ -25,6 +25,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
@@ -343,12 +344,39 @@ func newDealerCurrency(pool *pgxpool.Pool) dealerCurrencyAdapter {
 	return dealerCurrencyAdapter{r: settings.NewDealerConfigReader(pool)}
 }
 
+// dealerZoneAdapter binds the services' houseday.Source to the settings module's dealer configuration:
+// the dealer's business day zone, read at every business day decision, uncached, so a change of zone
+// is live at the next decision. The settings reader already answers America/Toronto for an absent or
+// malformed zone, so a dealer with no configuration is the Ontario dealer exactly.
+type dealerZoneAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerZoneAdapter) BusinessZone(ctx context.Context) (houseday.Zone, error) {
+	c, err := a.r.DealerConfig(ctx)
+	if err != nil {
+		return houseday.Zone{}, err
+	}
+	return houseday.NewZone(c.BusinessZone)
+}
+
+// newDealerZone builds the dealer zone source over the pool. Every composition that decides a
+// business day builds its own, so two dealers in one process never share a zone.
+func newDealerZone(pool *pgxpool.Pool) dealerZoneAdapter {
+	return dealerZoneAdapter{r: settings.NewDealerConfigReader(pool)}
+}
+
+// newInvoiceWriter builds an invoice writer over the pool filing its documents in the dealer's own
+// business day zone. Every composition that raises a billing document builds its writer here.
+func newInvoiceWriter(pool *pgxpool.Pool) *billing.InvoiceWriter {
+	return billing.NewInvoiceWriter(pool).WithZone(newDealerZone(pool))
+}
+
 // newTaxEngine builds a tax engine over the pool bound to the dealer's own jurisdiction. The engine
 // is stateless beyond its repository and its region source, so every composition that must assess a
 // tax builds its own, and two dealers in one process never share a jurisdiction.
 func newTaxEngine(pool *pgxpool.Pool) *tax.Service {
 	return tax.NewService(tax.NewRepository(pool)).
-		WithDealerRegion(dealerRegionAdapter{r: settings.NewDealerConfigReader(pool)})
+		WithDealerRegion(dealerRegionAdapter{r: settings.NewDealerConfigReader(pool)}).
+		WithZone(newDealerZone(pool))
 }
 
 // posTaxRuleAdapter satisfies pos.TaxRuleSource over *tax.Service: the round rule word the counter's

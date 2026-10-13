@@ -108,7 +108,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 		WithAudit(auditSvc).
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
 		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
-	gl.NewHandler(glSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	gl.NewHandler(glSvc, log).WithZone(newDealerZone(pool)).WithUserLinker(link).RegisterRoutes(r, g)
 	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
 
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
@@ -680,7 +680,7 @@ func (a w5cOverrideAuthority) MarginOverrideAuthority(ctx context.Context, userI
 // order source that also answers the agreed facts; the group invoicer of an order that later gains a
 // shipment plan is the money tail's writer, which looks for this document first.
 func quoteMoneyDoor(pool *pgxpool.Pool, orderSvc *order.Service) (quote.OrderInvoicer, quote.CounterPayer) {
-	w := billing.NewInvoiceWriter(pool).WithTaxAssessor(w6cInvoiceTaxAdapter{svc: newTaxEngine(pool)}).WithOrderSource(quoteAgreedOrderSource{
+	w := newInvoiceWriter(pool).WithTaxAssessor(w6cInvoiceTaxAdapter{svc: newTaxEngine(pool)}).WithOrderSource(quoteAgreedOrderSource{
 		w6cOrderInvoiceSource: w6cOrderInvoiceSource{svc: orderSvc}, svc: orderSvc,
 	})
 	return quoteOrderInvoicer{w: w}, quoteCounterPayer{repo: payments.NewRepository(pool)}

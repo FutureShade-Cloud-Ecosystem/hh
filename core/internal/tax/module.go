@@ -20,6 +20,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"log/slog"
@@ -115,6 +116,7 @@ type Service struct {
 	log       *slog.Logger
 	now       func() time.Time // injectable clock (tests); nil → time.Now
 	region    DealerRegionSource
+	zone      houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 }
 
 // NewService wires the repository. Optional deps are injected via the With* methods.
@@ -128,6 +130,10 @@ func (s *Service) WithGLBalances(r GLBalanceReader) *Service { s.glBalance = r; 
 // WithDealerRegion injects the dealer's jurisdiction source. Without it the engine is the Ontario
 // engine it always was.
 func (s *Service) WithDealerRegion(r DealerRegionSource) *Service { s.region = r; return s }
+
+// WithZone binds the dealer's business day zone source: a blank as-of date, and a rate row's default
+// effective date, are the dealer's own today. A nil source is the Ontario dealer's.
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
 
 // WithAudit injects the A-21 Recorder (evidence-access stamping, A-21 evidence audit).
 func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }

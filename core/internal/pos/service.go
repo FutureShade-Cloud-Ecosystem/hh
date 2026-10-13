@@ -382,6 +382,7 @@ type Service struct {
 	// orderInvoices resolves a converted order's live invoice (billing owns the documents).
 	orderInvoices OrderInvoiceReader
 	now           func() time.Time
+	zone          houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 	callerFrom    func(context.Context) (identity.StaffContext, bool)
 }
 
@@ -516,6 +517,10 @@ func (s *Service) WithBranchNames(b BranchNamer) *Service { s.branchNames = b; r
 // WithClock injects a deterministic clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
 
+// WithZone binds the dealer's business day zone source: the ring's issue and due days are filed in the
+// dealer's own calendar. Nil keeps the Ontario dealer's (America/Toronto).
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
+
 // salePlan is everything a sale resolves BEFORE its transaction opens (validation, the customer,
 // pricing and tax, the capture plan, the credit gate and the card captures), carried to the
 // transactional body (saleInTx) and the post-commit step (finishSale). The swap runs the same body
@@ -545,6 +550,9 @@ type salePlan struct {
 	applied          int64 // the swap credit spent on this order (10.5), 0 on an ordinary sale
 	actor            string
 	ring             *cardRing
+	// zone is the dealer's business day zone, resolved BEFORE any card is captured: a failed zone
+	// read refuses the ring while no money has moved, never after a capture.
+	zone houseday.Zone
 }
 
 // Sale commits one atomic counter sale (price → CheckCredit → order → tender → invoice → allocate, one
@@ -957,6 +965,10 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	if len(captures) > 0 && in.TillSessionID == "" {
 		return nil, nil, ErrNoOpenTill{}
 	}
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return nil, nil, err
+	}
 	ring, err := s.captureCardLegs(ctx, in, captures, customerID, actor)
 	if err != nil {
 		return nil, nil, err
@@ -974,6 +986,7 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 		lines: lines, priced: priced, taxReason: taxReason, poJobRef: poJobRef, jobAddress: jobAddress,
 		jobReference: jobReference, salespersonName: salespersonName, customerID: customerID, cust: cust,
 		captures: captures, capturedCents: capturedCents, fullyPaid: fullyPaid, applied: applied, actor: actor, ring: ring,
+		zone: zone,
 	}, nil, nil
 }
 
@@ -1150,7 +1163,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	// different "todays".
 	invStatus := "PAID"
 	balance := int64(0)
-	issueDate := houseday.Today(s.now)
+	issueDate := p.zone.Today(s.now)
 	dueDate := issueDate
 	if !fullyPaid {
 		invStatus = "FINALIZED"
@@ -1159,7 +1172,7 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 			invStatus = "PARTIALLY_PAID"
 		}
 		if !codSale {
-			dueDate = houseday.AddDays(s.now, cust.PaymentTermsDays)
+			dueDate = p.zone.AddDays(s.now, cust.PaymentTermsDays)
 		}
 	}
 	// Sub item 9.5: a supplier's demanded deposit rides the sale as its

@@ -206,6 +206,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// recorded decision (no transport is wired on this server; the send
 	// is recorded FAILED in words rather than DELIVERED into a log).
 	purchasingSvc := purchasing.NewService(purchasing.NewRepository(pool)).
+		WithZone(newDealerZone(pool)).
 		WithStockReceiver(w4cStockReceiver{svc: inventorySvc}).
 		WithVendors(w4cVendorDirectory{pool: pool}).
 		WithLandedCoster(w4cLandedCoster{svc: landedcostSvc}).
@@ -537,7 +538,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// SWARM-W1A-B: the printing module, print_queue's first consumer.
 	printRepo := printing.NewRepository(pool)
 	printQueue := printing.NewQueueService(printRepo)
-	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc).WithStandardRate(newTaxEngine(pool))
+	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc).WithStandardRate(newTaxEngine(pool)).WithZone(newDealerZone(pool))
 	printing.NewHandler(receiptSvc, printQueue, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// SWARM-W2-A: dispatch, the physical leg. The signature-capture seam
@@ -601,7 +602,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// the live invoice through billing (wire_yard_short.go).
 	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
 	// The delivery road asks billing, the owner of the deposit documents, to release them (deposit_release.go).
-	orderSvc.WithDepositReleaser(billing.NewInvoiceWriter(pool))
+	orderSvc.WithDepositReleaser(newInvoiceWriter(pool))
 	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
 	// Item 9 Opus P2-1: the yard's doors (Claim, Stage) carry the pick hold
