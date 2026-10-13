@@ -221,6 +221,34 @@ mod tests {
         assert!(!CAPABILITY.contains("sql:"), "no open SQL grant reaches a real build");
     }
 
+    // The ACL manifest and the merged capabilities that tauri-build wrote for
+    // THIS build (the same data the binary embeds, which `strings` on the
+    // default binary shows too).
+    #[cfg(not(feature = "probe"))]
+    const BUILT_ACL_MANIFEST: &str = include_str!(concat!(env!("OUT_DIR"), "/acl-manifests.json"));
+    #[cfg(not(feature = "probe"))]
+    const BUILT_CAPABILITIES: &str = include_str!(concat!(env!("OUT_DIR"), "/capabilities.json"));
+
+    #[test]
+    fn the_default_capability_grants_the_webview_no_keychain_command() {
+        // Item 4 review, P2 1: the Console session secret is used only on the
+        // Rust side (AUTH-SHELL-CONTRACT r6); the webview's only interface is
+        // the auth_* commands of item 7. A keychain grant here would let any
+        // script in the window read it back with one invoke.
+        assert!(!CAPABILITY.contains("keychain"), "default.json must hold no keychain grant");
+    }
+
+    #[cfg(not(feature = "probe"))]
+    #[test]
+    fn a_default_build_declares_no_keychain_command_in_its_acl_manifest() {
+        for built in [BUILT_ACL_MANIFEST, BUILT_CAPABILITIES] {
+            assert!(!built.contains("keychain"), "a keychain command or grant is in the default build's ACL");
+            assert!(!built.contains("probe"), "probe scaffolding is in the default build's ACL");
+        }
+        assert!(BUILT_ACL_MANIFEST.contains("run_statement"), "the store's commands are declared");
+        assert!(BUILT_ACL_MANIFEST.contains("run_atomic"), "the store's commands are declared");
+    }
+
     #[test]
     fn the_keychain_service_is_the_profiles_identifier() {
         // AUTH-SHELL-CONTRACT r5: the service is ai.futurebuild.hh.<profile>,
