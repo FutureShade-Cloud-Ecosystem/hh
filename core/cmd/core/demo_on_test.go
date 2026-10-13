@@ -26,6 +26,7 @@ func serveEnv(t *testing.T) map[string]string {
 		"APP_ENV":              "demo",
 		"CORE_DATABASE_URL":    "postgres://b3:b3@127.0.0.1:5432/b3?sslmode=disable",
 		"CORE_STAFF_AUDIENCE":  "hh-staff",
+		"CORE_SIGNIN_MODE":     "demo",
 		"CORE_TENANT_AUDIENCE": "hh-tenant",
 	}
 }
@@ -92,6 +93,48 @@ func TestDemoServeRefusesAProviderVariable(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "TWILIO_AUTH_TOKEN") {
 		t.Fatalf("refusal %q does not name TWILIO_AUTH_TOKEN", err)
+	}
+}
+
+// The demo environment guard through the serve entry: a CORE_ name on no
+// list refuses the boot, naming the variable and never its value, while the
+// console mode's declared names pass the guard (the next guard, the made up
+// database, is what stops the serve).
+func TestDemoServeRefusesAnUnknownCoreName(t *testing.T) {
+	env := serveEnv(t)
+	getenv, lookup, environ := envFuncs(env)
+	picture := append(environ(), "CORE_BRAND_NEW_WIRE=value-that-must-not-print")
+	err := demoServe(getenv, lookup, func() []string { return picture })
+	if err == nil {
+		t.Fatal("an unknown CORE_ name was accepted")
+	}
+	if !strings.Contains(err.Error(), "CORE_BRAND_NEW_WIRE") || strings.Contains(err.Error(), "must-not-print") {
+		t.Fatalf("refusal %q", err)
+	}
+}
+
+// The entrypoint-only operator variable is not the core's: the guard refuses
+// it, which is why the entrypoint un-exports it before the core starts
+// (deploy/demo/entrypoint-port-test.sh holds that side).
+func TestDemoServeRefusesTheEntrypointOnlyPortName(t *testing.T) {
+	env := serveEnv(t)
+	getenv, lookup, environ := envFuncs(env)
+	picture := append(environ(), "CORE_INTERNAL_PORT=9090")
+	err := demoServe(getenv, lookup, func() []string { return picture })
+	if err == nil || !strings.Contains(err.Error(), "CORE_INTERNAL_PORT") {
+		t.Fatalf("refusal %v", err)
+	}
+}
+
+func TestDemoServeAcceptsTheConsoleModeNames(t *testing.T) {
+	for _, name := range append([]string{"CORE_EXCHANGE_JWT_BOUND", "CORE_TRUSTED_PROXIES", "CORE_SIGNIN_EMAIL_DOMAINS", "CORE_SIGNIN_EMAIL_ADDRESSES"}, demoEnvAllowCoreNames...) {
+		env := serveEnv(t)
+		getenv, lookup, environ := envFuncs(env)
+		picture := append(environ(), name+"=x")
+		err := demoServe(getenv, lookup, func() []string { return picture })
+		if err != nil && strings.Contains(err.Error(), "is on no list") {
+			t.Errorf("%s refused by the guard: %v", name, err)
+		}
 	}
 }
 
