@@ -97,6 +97,7 @@ const FLOWS = [
   { flow: "hr", role_code: "hr", label: "HR" },
   { flow: "branch-manager", role_code: "branch_manager", label: "Branch Manager" },
   { flow: "logistics-manager", role_code: "logistics_manager", label: "Logistics Manager" },
+  { flow: "outside-sales", role_code: "outside_sales", label: "Outside Sales" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
@@ -181,6 +182,15 @@ const USERS = {
     role_code: "logistics_manager",
     role_name: "Logistics Manager",
     tier: 2,
+    scope: "BRANCH",
+  },
+  "outside-sales": {
+    user_id: "demo-account-outside-sales",
+    email: "outside-sales@demo.invalid",
+    display_name: "Outside sales (demo)",
+    role_code: "outside_sales",
+    role_name: "Outside Sales",
+    tier: 3,
     scope: "BRANCH",
   },
   driver: {

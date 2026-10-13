@@ -136,8 +136,8 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the twelve live roles with the contract's labels and the flows they mint", () => {
-  assert.equal(LIVE_ROLES.length, 12);
+test("the catalog holds the thirteen live roles with the contract's labels and the flows they mint", () => {
+  assert.equal(LIVE_ROLES.length, 13);
   const [sales, manager, yardManager, yardTeam, payRec, buyer, driver, controller] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
@@ -250,30 +250,40 @@ test("the catalog holds the twelve live roles with the contract's labels and the
   assert.deepEqual(logistics.tiles.map((tile) => tile.href), [null, "/home/", null]);
 });
 
-test("the catalog holds the coming roles, each with its matrix modules", () => {
-  const labels = ["Outside Sales"];
-  assert.deepEqual(COMING_ROLES.map((role) => role.label), labels);
-  // Every coming role shows at least the modules the matrix gives it at work
-  // level or above; Outside Sales' two are the only row left.
-  for (const role of COMING_ROLES) {
-    assert.ok(role.modules.length >= 2, `${role.label} shows its modules`);
-    assert.ok(role.modules.length <= 2, `${role.label} carries no invented module`);
-  }
-  // Spot checks against the matrix's cells (ROLE-ACCESS-r3 as row 1156
-  // amended it): Outside Sales has no till.
-  const outside = COMING_ROLES.find((role) => role.id === "outside_sales");
-  assert.equal(outside.modules.includes("Counter Till"), false);
-  for (const live of ["general_manager", "hr", "branch_manager", "logistics_manager"]) {
-    assert.equal(
-      COMING_ROLES.some((role) => role.id === live),
-      false,
-      "a live role is on no coming row",
-    );
-  }
+test("the catalog holds no coming role: every role the matrix names is live", () => {
+  // The thirteen roles of the decided matrix, by id: each is on a live card and
+  // none is left on a coming row. A role the matrix adds later goes on
+  // COMING_ROLES first.
+  const ids = [
+    "inside_sales",
+    "sales_manager",
+    "yard_manager",
+    "yard_team",
+    "payables_receivables",
+    "procurement_manager",
+    "driver",
+    "financial_controller",
+    "general_manager",
+    "hr",
+    "branch_manager",
+    "logistics_manager",
+    "outside_sales",
+  ];
+  assert.deepEqual(LIVE_ROLES.map((role) => role.id), ids);
+  assert.deepEqual(COMING_ROLES, []);
+  // Outside Sales holds no till (rows 363 and 364): the Quote Desk is its live
+  // tile and House Messages, not built yet, stays href null.
+  const outside = LIVE_ROLES.find((role) => role.id === "outside_sales");
+  assert.equal(outside.label, "Outside Sales");
+  assert.equal(outside.flow, "outside-sales");
+  assert.deepEqual(outside.tiles.map((tile) => tile.name), ["Quote Desk", "House Messages"]);
+  assert.deepEqual(outside.tiles.map((tile) => tile.href), ["/quote/", null]);
+  assert.equal(outside.tiles.some((tile) => tile.name === "Counter Till"), false);
+  assert.equal(outside.tiles[0], LIVE_ROLES[0].tiles[1], "both roles open the one Quote Desk tile");
 });
 
 test("the coming disclosure's heading counts the roles still coming, in words", () => {
-  assert.equal(comingHeading(COMING_ROLES.length), "One more role is coming");
+  assert.equal(comingHeading(COMING_ROLES.length), "No more roles are coming");
   assert.equal(comingHeading(5), "Five more roles are coming");
   assert.equal(comingHeading(1), "One more role is coming");
 });

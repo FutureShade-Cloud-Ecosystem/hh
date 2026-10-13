@@ -5,7 +5,7 @@
 // Kingston sale refused, and beyond the till.
 // The Driver, yard manager, Yard Team and Financial Controller cards are live
 // on the front door, so the till's entry serves the two Counter Till roles
-// only: none of those rows is in the coming list.
+// only: none of those rows is in the till (no coming list is drawn).
 // Driven against the demo image's own app and core; every figure the screen
 // shows is held against what the core answers through its own reads, and a
 // screenshot names every screen.
@@ -47,7 +47,7 @@ async function readSale(page: Page, bearer: string, orderId: string) {
   return answer.body;
 }
 
-test("the way in: two cards, the coming roles untapped, every other live role starts at the front door, and the banner", async ({
+test("the way in: two cards, every other live role starts at the front door, and the banner", async ({
   page,
 }, testInfo) => {
   await page.goto("/");
@@ -60,18 +60,14 @@ test("the way in: two cards, the coming roles untapped, every other live role st
   await expect(page.getByRole("button", { name: "Yard manager", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Yard Team", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Driver", exact: true })).toHaveCount(0);
-  // The coming roles: shown, labelled Coming, and dead controls. The yard
-  // manager, the Yard Team and the Driver are not among them: their cards
-  // live on the front door now.
-  for (const role of ["Outside Sales"]) {
-    const coming = page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role });
-    await expect(coming).toBeDisabled();
-  }
+  // No role is coming: every role of the matrix signs in at the front door, so
+  // the till draws no coming list.
+  await expect(page.getByRole("list", { name: "Coming roles" })).toHaveCount(0);
   // The yard manager, the Yard Team, Payables and Receivables and the
   // Financial Controller have live cards on the front door, so the till's
   // list drops them, as it dropped the Driver: its coming list is the front
   // door's coming rows.
-  for (const role of ["Yard manager", "Yard Team", "Payables and Receivables", "Financial Controller", "General Manager", "HR", "Branch Manager", "Logistics Manager"]) {
+  for (const role of ["Yard manager", "Yard Team", "Payables and Receivables", "Financial Controller", "General Manager", "HR", "Branch Manager", "Logistics Manager", "Outside Sales"]) {
     await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role })).toHaveCount(0);
   }
   await shot(page, "sales-01-way-in", testInfo);

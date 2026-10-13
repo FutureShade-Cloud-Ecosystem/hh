@@ -32,11 +32,13 @@
 //     Counter Till, the Quote Desk and Manager Home (live) with Dispatch and
 //     Load Building and House Messages still href null; the Logistics
 //     Manager's flow is "logistics-manager" and its only live tile is Manager
-//     Home, with Dispatch and Load Building and House Messages href null.
-//   - The others are COMING. Each shows the modules the matrix gives
-//     that role at work, manage or admin level, by the surfaces table's own
-//     names; read cells (and none) show nothing. A coming role is never
-//     tappable.
+//     Home, with Dispatch and Load Building and House Messages href null;
+//     Outside Sales' flow is "outside-sales" and its tiles are the Quote Desk
+//     (live) and House Messages (href null).
+//   - Any others are COMING (none today). Each shows the modules the matrix
+//     gives that role at work, manage or admin level, by the surfaces
+//     table's own names; read cells (and none) show nothing. A coming role is
+//     never tappable.
 //   - The manager's five tiles are the brief's own list: the two live
 //     modules of the box plus Manager Home, Dealer Admin and House Messages,
 //     the modules the matrix gives him at work or manage level, shown as the
@@ -103,7 +105,8 @@ export interface LiveRole {
     | "general_manager"
     | "hr"
     | "branch_manager"
-    | "logistics_manager";
+    | "logistics_manager"
+    | "outside_sales";
   /** The demo flow id the mint takes, the flows table's own mapping. */
   readonly flow:
     | "sales"
@@ -117,7 +120,8 @@ export interface LiveRole {
     | "general-manager"
     | "hr"
     | "branch-manager"
-    | "logistics-manager";
+    | "logistics-manager"
+    | "outside-sales";
   /**
    * The card's label and its accessible name, alone: the demo adapter's
    * contract words, never decorated.
@@ -241,18 +245,24 @@ export const LIVE_ROLES: readonly LiveRole[] = [
     icon: "lucide:route",
     tiles: [DISPATCH_TILE, MANAGER_HOME_TILE, HOUSE_MESSAGES_TILE],
   },
+  {
+    id: "outside_sales",
+    flow: "outside-sales",
+    label: "Outside Sales",
+    line: "Build quotes in the field.",
+    icon: "lucide:file-pen-line",
+    tiles: [QUOTE_TILE, HOUSE_MESSAGES_TILE],
+  },
 ];
 
 /**
- * The coming roles, in the till's entry view's own order, each with
- * the modules ROLE-ACCESS-r3 gives it at work, manage or admin level (read
- * cells and none show nothing). Outside Sales has no till (rows 363 and 364);
- * HR's two are House Messages and Dealer Admin, and the matrix gives its
- * demo login nothing until the staff routes exist.
+ * The roles the decided matrix lists but this box does not mint yet. None is
+ * left: every role of ROLE-ACCESS-r3 is live (Outside Sales has no till,
+ * rows 363 and 364). The list and the disclosure that draws it stay, so a
+ * role the matrix adds later goes in here first and moves to LIVE_ROLES by
+ * the same steps.
  */
-export const COMING_ROLES: readonly ComingRole[] = [
-  { id: "outside_sales", label: "Outside Sales", modules: ["Quote Desk", "House Messages"] },
-];
+export const COMING_ROLES: readonly ComingRole[] = [];
 
 const COUNT_WORDS = ["No", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"];
 

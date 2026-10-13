@@ -309,7 +309,7 @@ fi
 
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
-*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"general-manager"'*'"flow":"hr"'*'"flow":"branch-manager"'*'"flow":"logistics-manager"'*)
+*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"general-manager"'*'"flow":"hr"'*'"flow":"branch-manager"'*'"flow":"logistics-manager"'*'"flow":"outside-sales"'*)
 		pass "/api/v1/demo/flows answers the closed table's flows"
 		;;
 	*)

@@ -27,9 +27,7 @@ import { drawIcon, iconForId } from "./_icon-consumer.js";
  * so there is no third card either). Coming means coming: a disabled control
  * that drops its fill and goes grey, never a faded one.
  */
-export const COMING_ROLES: readonly string[] = [
-  "Outside Sales",
-];
+export const COMING_ROLES: readonly string[] = [];
 
 export type FlowsState =
   | { kind: "loading" }
@@ -62,6 +60,7 @@ const FLOW_ICONS: Record<string, string> = {
   hr: "lucide:users",
   "branch-manager": "lucide:store",
   "logistics-manager": "lucide:route",
+  "outside-sales": "lucide:file-pen-line",
 };
 const FLOW_BLURBS: Record<string, string> = {
   sales: "The counter sale flow.",
@@ -74,6 +73,7 @@ const FLOW_BLURBS: Record<string, string> = {
   hr: "People, messages and the dealer's staff settings.",
   "branch-manager": "Run the branch: the counter, quotes, dispatch and approvals.",
   "logistics-manager": "The dock and the day's deliveries.",
+  "outside-sales": "Build quotes in the field.",
 };
 
 export const entryStyles = css`
@@ -261,20 +261,24 @@ export function renderEntry(view: EntryView): TemplateResult {
       )}
     </div>
     ${view.message === null ? nothing : html`<p class="notice" role="status">${view.message}</p>`}
-    <section class="coming-card">
-      <h2 class="coming-heading">Coming</h2>
-      <ul class="coming" aria-label="Coming roles">
-        ${COMING_ROLES.map(
-          (role) => html`
-            <li>
-              <div class="coming-role">
-                <button type="button" disabled>${role}</button>
-                <span class="coming-tag">Coming</span>
-              </div>
-            </li>
-          `,
-        )}
-      </ul>
-    </section>
+    ${COMING_ROLES.length === 0
+      ? nothing
+      : html`
+      <section class="coming-card">
+        <h2 class="coming-heading">Coming</h2>
+        <ul class="coming" aria-label="Coming roles">
+          ${COMING_ROLES.map(
+            (role) => html`
+              <li>
+                <div class="coming-role">
+                  <button type="button" disabled>${role}</button>
+                  <span class="coming-tag">Coming</span>
+                </div>
+              </li>
+            `,
+          )}
+        </ul>
+      </section>
+    `}
   `);
 }

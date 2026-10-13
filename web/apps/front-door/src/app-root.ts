@@ -937,15 +937,19 @@ export class FrontDoorApp extends HHElement {
         <div class="cards">
           ${LIVE_ROLES.map((role) => this.#roleCard(role))}
         </div>
-        <details class="coming-card" data-testid="coming-disclosure">
-          <summary>
-            <span class="coming-heading">${comingHeading(COMING_ROLES.length)}</span>
-            <span class="chev" aria-hidden="true">${drawIcon(iconForId("lucide:chevron-up"), 16)}</span>
-          </summary>
-          <ul class="coming" aria-label="Coming roles">
-            ${COMING_ROLES.map((role) => html`<li>${this.#comingRow(role)}</li>`)}
-          </ul>
-        </details>
+        ${COMING_ROLES.length === 0
+          ? nothing
+          : html`
+          <details class="coming-card" data-testid="coming-disclosure">
+            <summary>
+              <span class="coming-heading">${comingHeading(COMING_ROLES.length)}</span>
+              <span class="chev" aria-hidden="true">${drawIcon(iconForId("lucide:chevron-up"), 16)}</span>
+            </summary>
+            <ul class="coming" aria-label="Coming roles">
+              ${COMING_ROLES.map((role) => html`<li>${this.#comingRow(role)}</li>`)}
+            </ul>
+          </details>
+        `}
       </div>
     `;
   }
