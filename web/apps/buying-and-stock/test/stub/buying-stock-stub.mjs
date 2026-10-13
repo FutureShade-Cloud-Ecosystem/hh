@@ -153,12 +153,28 @@ const SEEDED_POS = [
 
 // The trade products the stock reads answer for. Unmanaged: they never sit on
 // the procurement worklist, which grades the po world's managed lines only.
+// The seeded stock, restated as a maker so a reset restores what the writes
+// moved (holds, ships and posted counts mutate these numbers in place).
+const GLS_STOCK_SEED = {
+  1: { [PLM]: { onHand: 400, allocated: 60 }, [JUL]: { onHand: 0, allocated: 0 } },
+  2: { [PLM]: { onHand: 120, allocated: 0 }, [JUL]: { onHand: 40, allocated: 0 } },
+  3: { [PLM]: { onHand: 8, allocated: 0 }, [JUL]: { onHand: 2, allocated: 0 } },
+  4: { [PLM]: { onHand: 25, allocated: 5 }, [JUL]: { onHand: -6, allocated: 0 } },
+};
+
 const GLS_PRODUCTS = [
-  { n: 1, sku: "GLS-PAV-60", name: "Copperline Paver 60mm", uom: "pc", vendor: 5, cost: 8200, mfr: "Copperline Pavers", family: "Pavers", size: "60mm", stock: { [PLM]: { onHand: 400, allocated: 60 }, [JUL]: { onHand: 0, allocated: 0 } } },
-  { n: 2, sku: "GLS-WALL-CAP", name: "Heronfield Wall Cap", uom: "pc", vendor: 7, cost: 5400, mfr: "Heronfield Stone", family: "Wall block", size: "12in", stock: { [PLM]: { onHand: 120, allocated: 0 }, [JUL]: { onHand: 40, allocated: 0 } } },
-  { n: 3, sku: "GLS-AGG-DG", name: "Decomposed Granite", uom: "T", vendor: 6, cost: 6500, mfr: "Granite Run Quarry", family: "Aggregates", size: "minus 3/4", stock: { [PLM]: { onHand: 8, allocated: 0 }, [JUL]: { onHand: 2, allocated: 0 } } },
-  { n: 4, sku: "GLS-SAND-POLY", name: "Polymeric Sand", uom: "BG", vendor: 8, cost: 1900, mfr: "Prairie Bend Soils", family: "Sand", size: "50 lb", stock: { [PLM]: { onHand: 25, allocated: 5 }, [JUL]: { onHand: -6, allocated: 0 } } },
+  { n: 1, sku: "GLS-PAV-60", name: "Copperline Paver 60mm", uom: "pc", vendor: 5, cost: 8200, mfr: "Copperline Pavers", family: "Pavers", size: "60mm", stock: {} },
+  { n: 2, sku: "GLS-WALL-CAP", name: "Heronfield Wall Cap", uom: "pc", vendor: 7, cost: 5400, mfr: "Heronfield Stone", family: "Wall block", size: "12in", stock: {} },
+  { n: 3, sku: "GLS-AGG-DG", name: "Decomposed Granite", uom: "T", vendor: 6, cost: 6500, mfr: "Granite Run Quarry", family: "Aggregates", size: "minus 3/4", stock: {} },
+  { n: 4, sku: "GLS-SAND-POLY", name: "Polymeric Sand", uom: "BG", vendor: 8, cost: 1900, mfr: "Prairie Bend Soils", family: "Sand", size: "50 lb", stock: {} },
 ];
+
+function seedStock() {
+  for (const p of GLS_PRODUCTS) {
+    p.stock = JSON.parse(JSON.stringify(GLS_STOCK_SEED[p.n]));
+  }
+}
+seedStock();
 
 const glsProduct = (n) => GLS_PRODUCTS.find((p) => p.n === n);
 const glsId = (n) => uuid("f", 100 + n);
@@ -304,6 +320,7 @@ function bumpStock(branch, productN, delta) {
 }
 
 function resetInventoryWorld() {
+  seedStock();
   world.trfCounter = 4;
   world.sheetCounter = 8;
   world.receiptCounter = 90;
@@ -740,9 +757,18 @@ const MANAGE_MOVES = new Set([
   "sheet-post",
 ]);
 const SEAT_LEVEL = { procurement: 2, yard: 1, payables: 0 };
-const seatPasses = (move) => {
+// The seat answers the token the caller carries (the sub names the demo
+// account, as the counts gate reads it); a test token with no sub sits at
+// the switch's seat.
+function seatFor(req) {
+  const sub = callerOf(req);
+  if (sub.endsWith("000000000003")) return "yard";
+  if (sub.endsWith("0000000000a1")) return "payables";
+  return roleMode;
+}
+const seatPasses = (move, seat) => {
   const level = MANAGE_MOVES.has(move) ? 2 : WORK_MOVES.has(move) ? 1 : 0;
-  return SEAT_LEVEL[roleMode] >= level;
+  return SEAT_LEVEL[seat] >= level;
 };
 
 // The core's fenceNamedBranch: a branch the caller named outside its reach is refused in words;
@@ -1020,12 +1046,13 @@ async function handle(req, res) {
   };
   // The role wall answers before any handler, the shared body the gate writes.
   const move = moveOf(path);
+  const seat = seatFor(req);
   if (move !== "" && method !== "GET") {
     if (move === "po-writer") {
       // The po_writers list is the wall: the Procurement Manager, the General
       // Manager and the super admin; every other role is refused at the gate.
-      if (roleMode !== "procurement") return json(res, { error: "Forbidden" }, 403);
-    } else if (!seatPasses(move)) {
+      if (seat !== "procurement") return json(res, { error: "Forbidden" }, 403);
+    } else if (!seatPasses(move, seat)) {
       return json(res, { error: "Forbidden" }, 403);
     }
   }
@@ -1409,6 +1436,7 @@ async function handle(req, res) {
     if (body === null) return refuse(res, 400, "invalid_json");
     if (!body.branch_id) return refuse(res, 400, "branch_id is required");
     if (body.branch_id !== BRANCH && !reach().includes(body.branch_id)) return refuse(res, 403, "caller cannot access this branch");
+    if (!seatPasses("sheet-create", seatFor(req))) return json(res, { error: "Forbidden" }, 403);
     const n = ++world.sheetCounter;
     const sheet = {
       id: uuid("s", n + 40),

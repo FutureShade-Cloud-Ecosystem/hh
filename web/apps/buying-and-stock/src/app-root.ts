@@ -23,14 +23,30 @@ import { AuthController, authHeaderProvider, SessionStore, type AccountSurface }
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { entryStyles, renderEntry, type EntryView } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
+import { areaStyles } from "./area-styles.js";
 import { PoApi } from "./po/po-api.js";
 import { PoDesk } from "./po/po-desk.js";
 import { poStyles } from "./po/po-styles.js";
+import { InventoryApi } from "./inventory/inventory-api.js";
+import { InventoryDesk } from "./inventory/inventory-desk.js";
+import { CountsApi } from "./counts/counts-api.js";
+import { CountsDesk } from "./counts/counts-desk.js";
 
 const DEMO_ORG = "hh-demo";
 
+// The app's areas, in the order the bar shows them. A new area is one row
+// here, one arm in #onArea, and its own slice folder; landed cost and the
+// purchasing back office land the same way.
+const AREAS = [
+  { id: "purchasing", label: "Purchasing" },
+  { id: "inventory", label: "Inventory" },
+  { id: "counts", label: "Cycle counts" },
+] as const;
+
+type AreaId = (typeof AREAS)[number]["id"];
+
 export class BuyingAndStockApp extends HHElement {
-  static styles = [baseStyles, entryStyles, poStyles, css`
+  static styles = [baseStyles, entryStyles, poStyles, areaStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
   `];
@@ -61,10 +77,45 @@ export class BuyingAndStockApp extends HHElement {
   // fields it reads are looked up in this element's own shadow root.
   #po = this.#newDesk();
 
+  // The area the bar shows; the procurement desk keeps the landing.
+  #area: AreaId = "purchasing";
+
+  // The inventory and counts slices (src/inventory, src/counts), each loaded
+  // the first time its area is opened.
+  #inventory: InventoryDesk | null = null;
+  #counts: CountsDesk | null = null;
+
   #newDesk(): PoDesk {
     return new PoDesk(new PoApi(this.#staffClient), {
       repaint: () => this.requestUpdate(),
       field: (name) => this.#fieldElement(name)?.value ?? "",
+    });
+  }
+
+  // The seat the signed-in role holds on this surface, per the role matrix:
+  // the Procurement Manager manages, the Yard Manager works, the rest read.
+  #seat(): "manage" | "work" | "read" {
+    if (this.#roleCode === "procurement_manager") return "manage";
+    if (this.#roleCode === "yard_manager") return "work";
+    return "read";
+  }
+
+  #newInventoryDesk(): InventoryDesk {
+    return new InventoryDesk(new InventoryApi(this.#staffClient), {
+      repaint: () => this.requestUpdate(),
+      field: (name) => this.#fieldElement(name)?.value ?? "",
+      seat: this.#seat(),
+    });
+  }
+
+  #newCountsDesk(): CountsDesk {
+    return new CountsDesk(new CountsApi(this.#staffClient), {
+      repaint: () => this.requestUpdate(),
+      field: (name, key) => {
+        const scope = key === undefined ? "" : `[data-key="${key}"]`;
+        return this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]${scope}`)?.value ?? "";
+      },
+      seat: this.#seat(),
     });
   }
 
@@ -103,6 +154,9 @@ export class BuyingAndStockApp extends HHElement {
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
 
+  // The signed-in role's code: it picks the seat the refusal words name.
+  #roleCode = "";
+
   // The entry cards carry data-action="choose" and data-flow; one host
   // listener reads them, as the till's does.
   readonly #onHostClick = (event: MouseEvent): void => {
@@ -124,6 +178,13 @@ export class BuyingAndStockApp extends HHElement {
       this.requestUpdate();
       return;
     }
+    if (action === "area") {
+      const area = control?.getAttribute("data-area");
+      if (area === "purchasing" || area === "inventory" || area === "counts") this.#onArea(area);
+      return;
+    }
+    if (this.#area === "inventory" && this.#inventory !== null && control !== undefined && this.#inventory.press(control)) return;
+    if (this.#area === "counts" && this.#counts !== null && control !== undefined && this.#counts.press(control)) return;
     if (control !== undefined && this.#po.press(control)) return;
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
@@ -131,10 +192,30 @@ export class BuyingAndStockApp extends HHElement {
     }
   };
 
-  // The draft's date field: the words under it follow what is typed (the field itself is never bound).
+  // Opening an area loads its slice the first time, so the reads run when the
+  // reader arrives, not on every sign-in.
+  #onArea(area: AreaId): void {
+    if (this.#area === area) return;
+    this.#area = area;
+    if (area === "inventory" && this.#inventory === null) {
+      this.#inventory = this.#newInventoryDesk();
+      void this.#inventory.load();
+    }
+    if (area === "counts" && this.#counts === null) {
+      this.#counts = this.#newCountsDesk();
+      void this.#counts.load();
+    }
+    this.requestUpdate();
+  }
+
+  // The draft's date field: the words under it follow what is typed (the field itself is never
+  // bound). A counted figure is kept as typed, so the row's variance and reason select follow.
   readonly #onHostInput = (event: Event): void => {
     const target = event.composedPath()[0];
     if (target instanceof HTMLInputElement && target.getAttribute("data-field") === "expected") this.#po.expectedTyped(target.value);
+    if (target instanceof HTMLInputElement && target.getAttribute("data-field") === "counted" && this.#counts !== null) {
+      this.#counts.typed(target.getAttribute("data-key") ?? "", target.value);
+    }
   };
 
   connectedCallback(): void {
@@ -154,6 +235,7 @@ export class BuyingAndStockApp extends HHElement {
       });
       if (adopted) {
         this.#roleLabel = handoff.session.user.name;
+        this.#roleCode = handoff.session.roleCode;
         clearFrontDoorHandoff();
         void this.#po.load();
       }
@@ -186,6 +268,17 @@ export class BuyingAndStockApp extends HHElement {
       const field = this.#fieldElement(name);
       if (field !== null) field.value = value;
     });
+    // The ship box's pre-fill and the point editor's starting figures.
+    this.#inventory?.seed((name, value) => {
+      const field = this.#fieldElement(name);
+      if (field !== null && field.value !== value) field.value = value;
+    });
+    // The count sheet's seeded figures, per line, set once per open sheet.
+    this.#counts?.seed((name, value, key) => {
+      const scope = key === undefined ? "" : `[data-key="${key}"]`;
+      const field = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]${scope}`);
+      if (field !== null && field.value !== value) field.value = value;
+    });
   }
 
   private async loadFlows(): Promise<void> {
@@ -208,6 +301,7 @@ export class BuyingAndStockApp extends HHElement {
       const adopted = this.#auth.adopt(result.value);
       if (adopted) {
         this.#roleLabel = result.value.user.name;
+        this.#roleCode = result.value.roleCode;
         void this.#po.load();
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
@@ -222,6 +316,9 @@ export class BuyingAndStockApp extends HHElement {
   #onSignOut(): void {
     this.#sessions.clear();
     this.#po = this.#newDesk();
+    this.#area = "purchasing";
+    this.#inventory = null;
+    this.#counts = null;
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -236,8 +333,17 @@ export class BuyingAndStockApp extends HHElement {
   private renderSignedIn(): TemplateResult {
     return html`
       <hos-app-header signed-in demo compact product-name="Yard">${this.renderThemeControl()}</hos-app-header>
-      <main class="desk">
-        ${this.#po.render()}
+      <nav class="areas" aria-label="Buying and Stock areas">
+        ${AREAS.map(
+          (a) => html`<button type="button" class="area-tab" data-action="area" data-area=${a.id} aria-current="${this.#area === a.id ? "true" : "false"}">${a.label}</button>`,
+        )}
+      </nav>
+      <main class="desk desk-area">
+        ${this.#area === "inventory"
+          ? (this.#inventory?.render() ?? html`<p class="dim" role="status">Loading the stock reads.</p>`)
+          : this.#area === "counts"
+            ? (this.#counts?.render() ?? html`<p class="dim" role="status">Loading the count sheets.</p>`)
+            : this.#po.render()}
       </main>
       <hh-feedback screen="Buying and Stock" trigger="external"></hh-feedback>
     `;

@@ -181,8 +181,14 @@ export function qtyFromTyped(text: string): QtyCheck {
  * write is the tech admin's tier alone.
  */
 const WHO_MAY: Record<string, string> = {
+  write:
+    "Writing here is for the seats the role matrix holds at work or manage: the Procurement Manager and the Yard Manager among the demo roles. A read-only role can look but not touch.",
   reserve:
     "Holding stock, moving it between branches and setting the allocation policy are manage seats' moves on this surface: the Procurement Manager's among the demo roles.",
+  manage:
+    "Moving stock between branches, holding it, and setting points and policy are manage seats' moves on this surface: the Procurement Manager's among the demo roles.",
+  receive:
+    "Receiving an order into stock is a work move: the Yard Manager's and the Procurement Manager's among the demo roles.",
   "count-approve":
     "Approving a count and posting its variance are manager seats' moves: the Procurement Manager's among the demo roles. The maker never approves their own count.",
   "transit-days": "Setting a route's transit time is the tech admin's; no demo role on this box holds it.",

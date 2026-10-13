@@ -86,8 +86,16 @@ test("a counted quantity is read through its decimal string, junk is refused in 
 
 test("a walled move is named for who may do it, and the branch fence's own sentence is kept", () => {
   assert.equal(
-    refusalWords("reserve", "Forbidden", 403),
-    "Holding stock, moving it between branches and setting the allocation policy are manage seats' moves on this surface: the Procurement Manager's among the demo roles.",
+    refusalWords("write", "Forbidden", 403),
+    "Writing here is for the seats the role matrix holds at work or manage: the Procurement Manager and the Yard Manager among the demo roles. A read-only role can look but not touch.",
+  );
+  assert.equal(
+    refusalWords("manage", "Forbidden", 403),
+    "Moving stock between branches, holding it, and setting points and policy are manage seats' moves on this surface: the Procurement Manager's among the demo roles.",
+  );
+  assert.equal(
+    refusalWords("receive", "Forbidden", 403),
+    "Receiving an order into stock is a work move: the Yard Manager's and the Procurement Manager's among the demo roles.",
   );
   assert.equal(
     refusalWords("count-approve", "Forbidden", 403),
