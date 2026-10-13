@@ -169,7 +169,7 @@ export class ShellUpdate extends HHElement {
     return html`
       <div class="prompt" role="region" aria-label=${`${this.shellName} update`}>
         <span class="tile" aria-hidden="true">
-          <svg viewBox="0 0 3000 3000"><path fill="currentColor" d=${MARK_PATH}></path></svg>
+          <svg viewBox="0 0 3000 3000"><path fill="currentColor" d="${MARK_PATH}"></path></svg>
         </span>
         <div class="words">
           <p class="title">${this.shellName} update ready</p>

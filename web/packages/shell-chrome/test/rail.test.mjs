@@ -80,7 +80,7 @@ test('the glyph is decoration: it never contributes to a row\u2019s name', () =>
 test('collapsed, the rows are one roving stop: one row holds the tab, the rest wait for arrows', () => {
   const markup = renderKit(ShellRail, { pins: PINS });
   const rows = markup.match(/<button[^>]*data-action="rail-select"[^>]*>[\s\S]*?<\/button>/g) ?? [];
-  const stops = rows.map((r) => /tabindex="(-?\d)"/.exec(r)?.[1]);
+  const stops = rows.map((r) => /data-tab="(-?\d)"/.exec(r)?.[1]);
   assert.equal(stops.filter((t) => t === '0').length, 1, 'exactly one row tab stop');
   assert.equal(stops.filter((t) => t === '-1').length, 2, 'the other rows wait for the arrows');
   assert.ok(markup.includes('title="Keep your pins open"'), 'the toggle keeps its natural stop');
@@ -88,7 +88,8 @@ test('collapsed, the rows are one roving stop: one row holds the tab, the rest w
 
 test('expanded, every control is in the tab order', () => {
   const markup = renderKit(ShellRail, { pins: PINS, collapsed: false });
-  const stops = [...markup.matchAll(/tabindex="(-?\d)"/g)].map((m) => m[1]);
+  const rows = markup.match(/<button[^>]*data-action="rail-select"[^>]*>[\s\S]*?<\/button>/g) ?? [];
+  const stops = rows.map((r) => /data-tab="(-?\d)"/.exec(r)?.[1]);
   assert.ok(stops.every((t) => t === '0'), 'all tabbable when expanded');
 });
 

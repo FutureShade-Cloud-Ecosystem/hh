@@ -1,0 +1,1638 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>@hardscapehouse/shell-chrome demo</title>
+<style>
+/* @hardscapehouse/design-system tokens: ONE base vocabulary for internal apps, plus two
+   brand layers over it: the hh-pro override for the standalone shell, and the
+   contractor --cbrand-* layer that only the public proposal surface applies.
+   This sheet merges the two source vocabularies role for role:
+
+     - the ERP sheet (hardscapeos_dibbits app/src/styles/tokens.css), whose
+       --hos-* names are role names, is the structural parent: dark default in
+       :root, light opt-in via [data-theme="light"], every theme-capable role
+       carried in BOTH halves, and a measured pair behind every ruling;
+     - HH Pro's sheet (hh_pro_dibbits src/ui/styles/theme.css) contributes the
+       three-layer shape (platform, dealer --brand-*, contractor --cbrand-*)
+       and the exact role split of its dealer layer: identity (--brand, the
+       dealer AS TEXT), action (--brand-fill, a pressable control), chrome
+       (--brand-chrome*, the frame).
+
+   THE PREFIX IS --hh-*. The ERP's --hos-* names were NOT carried over verbatim,
+   and that is a decision, not an oversight. The ERP kept its names through its
+   rebrand because ~90 components already consumed them; this sheet has zero
+   consumers, so it starts on role names that belong to the house package
+   instead of to one source app. Every name below is a ROLE name, and the merge
+   decision for each role is recorded beside it: where the value came from, and
+   why. Where this sheet quotes a measured ratio, the number is the ERP sheet's
+   own measurement of the same two values, not a fresh claim.
+
+   THE GOLD RULE (carried unchanged). The brand gold #FFC313 is a SURFACE, never
+   an ink. Every gold fill carries the near-black --hh-accent-ink #0B1725 in
+   BOTH themes, never white: white on gold measures 1.61:1. On light surfaces
+   the gold ROLE as ink is carried by dark-gold #896400 (--hh-accent-text),
+   which is what the brand's own site does; it is also the focus ring, which is
+   why a keyboard ring is visible in Light Mode (a gold ring there is 1.35:1 and
+   fails WCAG 1.4.11).
+
+   THE MEASURED BARS (carried unchanged). 4.5:1 (WCAG AA) for anything read as
+   text; 3.0:1 (WCAG 1.4.11, non-text) for a boundary judged as a shape: a focus
+   ring, a solid fill against the surface it sits on. The gates in test/ hold
+   every pair the kits paint to the bar of its class, over the base vocabulary
+   AND each brand override AND each kit state; a pair under its bar fails the
+   suite naming the pair and its ratio.
+
+   PARSING WARNING, learned twice in the source repos. These gates and any
+   future reader of this file parse the token blocks by regex, and this header
+   CONSTANTLY names tokens next to colons. Every parser here strips comments
+   BEFORE it reads declarations, for exactly that reason: a name followed by a
+   colon in prose reads as a declaration whose value swallows the real ones
+   after it. Keep comments inside slash-star pairs and never let a parser see
+   prose as code.
+
+   Two carried conduct rules the kits are built on (from HH Pro's CLAUDE.md):
+   colour never encodes state alone (each state pairs its colour with an icon,
+   a label, or a pattern change), and disabled controls change COLOUR, not
+   opacity (a token swap, never a fade). */
+
+/* BRAND MODE (decision log rows 1047 item 10 and 1119, option A). The dark half of this
+   sheet is the brand mode: the HH badge's own navy #0F2944 as the page, calmer than the
+   richer blue (#071827) it replaced, with the gold family held invariant so the frame reads
+   as the brand. The token NAMES are the dark set's, so nothing that consumes them changes;
+   only the values moved. The stop state ink took one minimal step (#F07C6C to #F17E6E)
+   because the board did not measure it on the raised widget (4.48:1 there, 4.69:1 now), and the raised widget took one step darker (#1A3856 to #193653)
+   so the hh-pro identity blue reads on it (4.42:1 on the board's value, 4.55:1 now). The state inks, the fills, the stripe and the elevations are
+   carried as they were. The text and boundary pairs on the new surfaces are pinned in
+   test/brand-mode.test.mjs. Light stays the default theme. The dark half still lives in
+   :root, and the data-theme attribute is still absent for it. */
+
+:root {
+  /* ── canvases and surfaces ─────────────────────────────────────────────────
+     Carried from the ERP dark theme, role for role: the page, the card one step
+     off it, and the solid line between them. The ERP paints its line SOLID (an
+     alpha flattened over the navy canvas) because tints that resolve over a
+     translucent line collapse to a wash; the same reasoning holds here. */
+  --hh-page: #0F2944;
+  --hh-card: #173550;
+  --hh-line: #2C4763;
+  /* The one input fill (round 7): dark keeps the page's own deep tone, so a field sits inset in
+     its card as it always has; the light half re-values it, see there. */
+  --hh-field: #0F2944;
+
+  /* ── control boundary ──────────────────────────────────────────────────────
+     The outline a NON-FILLED control is seen by: WCAG 1.4.11 judges a control's
+     boundary as a shape at 3:1, and --hh-line above is a hairline (1.54:1 on
+     the dark page), not a boundary. --hh-control-line is declared in BOTH
+     halves to clear 3:1 against the page AND the card (dark: 3.92 and 3.35;
+     light: 3.89 and 4.62); the secondary button's border takes it. */
+  --hh-control-line: #6B86A3;
+
+  /* ── inks ──────────────────────────────────────────────────────────────────
+     Text, and the dimmed ink under it. The light half of --hh-text-dim is the
+     ERP's DIB-409 finding: the most-used dimmed text was under AA on its own
+     page, so the value is checked, not eyeballed. */
+  --hh-text: #FFFFFF;
+  --hh-text-dim: #A9BCD0;
+
+  /* ── the brand gold family (theme-INVARIANT, on purpose) ────────────────────
+     The fill does not flip between themes, so neither does its ink: that is the
+     whole gold rule, and it is why these three are declared once and re-valued
+     by no theme block. Gold AS INK is the one accent role that IS per-theme;
+     see the light half. */
+  --hh-accent: #FFC313;        /* a FILL, never an ink */
+  --hh-accent-hover: #FFD45B;  /* the gold hover fill */
+  --hh-accent-ink: #0B1725;    /* the ONLY ink a gold fill carries: 11.23:1 on the gold, 12.74:1 on the hover */
+  /* Gold as INK, dark half: on the dark page the gold itself reads (9.20:1). */
+  --hh-accent-text: #FFC313;
+
+  /* The focus ring is gold-as-INK (per theme), not the gold fill: the same rule
+     the ERP sheet states for its ring. Declared in both halves. */
+  --hh-focus-ring: var(--hh-accent-text);
+
+  /* ── the quote blue family (decision log rows 1047 item 7 and 1063) ─────────
+     Quotes and their documents read in an indigo quote blue; orders and the till keep gold,
+     so a conversion visibly changes colour. The roles mirror the gold family's. Brand mode
+     half here, light half below. The FILL is one value in both modes and carries white (the
+     D-077 shape), so those two are re-valued by no block; on navy the control is seen by its
+     1px fill-on border (the .btn-primary pattern). The tint is the quote header band's ground,
+     written flat so the gates can measure it: light is mix(#1D4ED8, white 90%), brand mode is
+     mix(#A3BCFF, black 78%), both in srgb. Nothing here re-values the gold family, and the
+     till never consumes these. */
+  --hh-quote: #A3BCFF;         /* the accent as ink: text, borders, the focus ring's quote twin */
+  --hh-quote-fill: #1D4ED8;    /* the pressable control, one value in both modes */
+  --hh-quote-fill-on: #FFFFFF; /* the ink the fill carries: 6.70:1 */
+  --hh-quote-link: #A3BCFF;    /* links and text actions */
+  --hh-quote-tint: #242938;    /* the quote header band's ground */
+
+  /* ── status inks ───────────────────────────────────────────────────────────
+     Danger, info and success AS TEXT, per theme. Each is tuned to be READ on
+     the theme's own page, and the values are the ERP's: #FF8F9F is 6.81:1 on
+     the dark page, #AB1C31 is 6.65:1 on the light one. */
+  --hh-danger: #FF8F9F;
+  --hh-info: #86BDF6;
+  --hh-success: #58D69B;
+
+  /* ── the solid danger fill, per theme (the D-077 ruling, carried) ───────────
+     A red tuned to be read AS TEXT wants the opposite of what a SOLID red fill
+     under white ink wants, and no single red can be both. So the FILL is
+     per-theme, tuned for one white ink in both halves: white is 4.55:1 on the
+     dark fill and 5.95:1 on the light one. The fill also clears the 3:1
+     non-text bar against the page and the card in both halves. Use
+     --hh-danger for everything red that is text, border or tint, and
+     --hh-danger-fill ONLY for a solid red fill carrying white. */
+  --hh-danger-fill: #D73A51;
+  /* The edge a solid danger button wears. In brand mode the fill alone is under 3:1 on the card
+     and the raised widget (and no red can hold 4.5:1 under white ink and 3:1 there), so the
+     button's own white 1px edge is its boundary, the .btn-primary pattern. Light needs none. */
+  --hh-danger-fill-edge: #FFFFFF;
+  --hh-danger-fill-ink: #FFFFFF; /* theme-invariant: the fill flips so the ink need not (the D-077 shape) */
+
+  /* ── the solid success fill, per theme (the DIB-468 pattern, carried) ───────
+     Same ruling on green: --hh-success above is text ink; a solid green badge
+     under the near-black accent ink is a second role and gets a second token.
+     The accent ink is 9.89:1 on the dark fill and 4.53:1 on the light one, and
+     both fills clear 3:1 against the page and the card (the row 987 page is
+     darker, and the light fill stepped from #319E69 to #2C9060 to keep its
+     boundary: 3.36:1 on the page, 3.99:1 on the card). Use --hh-success for
+     green text and borders, --hh-success-fill for solid fills. */
+  --hh-success-fill: #58D69B;
+
+  /* ── state colours, and they never travel alone ─────────────────────────────
+     good / watch / stop are meaning colours for marks: an icon, a dot, a pill
+     fill. Every use ships with an icon or a word; that rule is tested in
+     test/kits.test.mjs. The LIGHT values are this sheet's one deliberate
+     deviation from the ERP values: #2E8B57 and #C77A15 measure 3.96:1 and
+     3.14:1 as text on the light surfaces, under the 4.5 bar, so they are
+     darkened to #1E7544 and #955B0B (4.79:1 and 4.66:1 on the worst light
+     surface), the ERP's own treatment for a value that misses AA by a little:
+     the value is adjusted minimally rather than the bar softened. The row 987
+     surfaces (the page at #E7ECF1, the widget ground darker with it) pushed
+     the previous #1F7A48 and #9A5F0C back under the bar on the page itself
+     (4.49:1 and 4.40:1), so each takes one more minimal step. */
+  --hh-state-good: #5CC48A;
+  --hh-state-watch: #F0A93A;
+  --hh-state-stop: #F17E6E;
+
+  /* ── disabled is a colour, not a fade ───────────────────────────────────────
+     The carried rule from HH Pro: a filled control at reduced opacity still
+     reads as clickable in daylight. Disabled controls DROP their fill and go
+     grey. This family is the token swap the rule is implemented with, and the
+     kit gate fails if any shipped source reaches for opacity or a filter
+     instead of it. Both pairs clear AA (4.83:1 dark, 5.22:1 light) even though
+     WCAG exempts disabled controls: an honest grey is free. */
+  --hh-disabled-fill: #142C46;
+  --hh-disabled-ink: #8499AD;
+  --hh-disabled-line: #28455F;
+
+  /* ── the dashboard kit's own layer ──────────────────────────────────────────
+     A widget sits ONE step off the page, on its own ground; it is deliberately
+     not the card pair above. Dark steps the SURFACE and takes no shadow; light
+     keeps one surface and lifts with the shadow. */
+  --hh-ground: #0C2138;
+  --hh-widget: #142E49;
+  --hh-widget-raised: #193653;
+  --hh-hairline: rgba(255,255,255,.07);
+  --hh-track: rgba(255,255,255,.08);
+  --hh-widget-shadow: none;
+
+  --hh-scrim: rgba(4, 10, 20, 0.72);
+
+  /* ── the row stripe ─────────────────────────────────────────────────────────
+     Carried for the list kits: alternating rows, stated as "the row's own
+     ground" and "the row's own ground plus a whisper of the ink", so the pair
+     works on any surface a list is put on. 6% over the dark page, 5% over the
+     light one (near-black at 6% over white is a heavier stripe than white at
+     6% over navy, and light's dimmed ink keeps AA only at 5). A tint is not a
+     measured pair: it resolves over whatever the row sits on, and the inks on
+     it are held to AA by the matrix over the underlying surfaces. */
+  --hh-row: transparent;
+  --hh-row-alt: color-mix(in srgb, var(--hh-text) 6%, transparent);
+
+  --hh-color-scheme: dark;
+
+  /* ── type ───────────────────────────────────────────────────────────────────
+     The type pass (decision log row 942): Inter everywhere, and Inter for the
+     figures too, on its tabular widths. A webfont NOW ships in this package
+     (src/fonts/, four latin weights under SIL OFL 1.1, licence in
+     src/fonts/OFL.txt) and the @font-face rules at the foot of this sheet
+     register it, so every app importing this sheet gets the face with no
+     change to its own files; the stack after Inter keeps today's system
+     fallbacks for the glyphs the latin subset does not carry and for a failed
+     load. The mono ROLE survives as a token (porting seams still name it) but
+     resolves to Inter first: money, quantities, totals, times and codes read
+     in the same face as the words around them, lined up by the tabular
+     figures rule at the foot of this sheet and in the base styles. */
+  --hh-font-ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  --hh-font-mono: 'Inter', 'SF Mono', Consolas, monospace;
+
+  /* ── the spacing grid: value-named, and it is Pencil's ───────────────────────
+     The ERP adopted a continuous 4px grid named BY VALUE (--s-4 is 4px) beside
+     its old index scale (--hos-space-4 is 16px), and the index names are
+     legacy. A new sheet starts on the value-named grid only; the index scale is
+     a migration, not a vocabulary, and it is not carried. */
+  --hh-s-2: 2px;  /* the optical nudge, the only half-step */
+  --hh-s-4: 4px;
+  --hh-s-8: 8px;
+  --hh-s-12: 12px;
+  --hh-s-16: 16px;
+  --hh-s-20: 20px;
+  --hh-s-24: 24px;
+  --hh-s-28: 28px;
+  --hh-s-32: 32px;
+  --hh-s-40: 40px;
+  --hh-s-48: 48px;
+  --hh-s-64: 64px;
+
+  /* ── radius, by role ──────────────────────────────────────────────────────── */
+  --hh-radius-control: 10px;
+  /* The floor a host may raise for the app header's own buttons; zero leaves them as they are. */
+  --hh-header-control-min: 0px;
+  --hh-radius-card: 16px;
+  --hh-radius-pill: 999px;
+  --hh-radius-widget: 16px;
+
+  /* ── control sizes, by role ─────────────────────────────────────────────────
+     The one height of a form control: the sheet's button and .control faces
+     take it, and a consumer rows its own controls onto the same token so a
+     form row reads as one system (the demo polish round 2 bounds tests pin
+     their rows to it live). Theme-invariant like the spacing grid and the
+     radii: a control does not change height between themes. */
+  --hh-h-input: 44px;
+
+  /* ── elevation: exactly two levels, resting and raised ───────────────────────
+     Dark lifts with the SURFACE step and takes no resting shadow; light lifts
+     with the shadow (the ERP's two-layer light shadow: a 1px contact shadow and
+     a wide negative-spread ambient). */
+  --hh-elev-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --hh-elev-2: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --hh-elev-3: 0 32px 90px rgba(0, 0, 0, 0.34);
+
+  /* ── z-index, one ordered scale ───────────────────────────────────────────── */
+  --hh-z-nav: 100;
+  --hh-z-dropdown: 200;
+  --hh-z-overlay: 900;
+  --hh-z-modal: 1000;
+  --hh-z-toast: 1100;
+
+  /* ── breakpoints, documentation for JS/matchMedia; CSS mirrors the px ───────── */
+  --hh-bp-sm: 480px;
+  --hh-bp-md: 768px;
+  --hh-bp-lg: 1024px;
+
+  /* ── the page layout contract ────────────────────────────────────────────────
+     Two gutters, because the block and inline halves are different numbers and
+     a shorthand cannot be reached into by calc(). The measure caps TEXT that
+     has no measure of its own; the reading cap is the pane's. The form column
+     is guarded by min() so a narrow container never scrolls sideways. */
+  --hh-page-gutter: 28px;
+  --hh-page-gutter-block: 24px;
+  --hh-measure: 62ch;
+  --hh-reading-max: 1000px;
+  --hh-content-max: 1040px;
+  --hh-form-col: 320px;
+  --hh-pane-columns: repeat(auto-fit, minmax(min(var(--hh-form-col), 100%), 1fr));
+
+  /* ── safe-area insets ─────────────────────────────────────────────────────── */
+  --hh-safe-top: env(safe-area-inset-top, 0px);
+  --hh-safe-right: env(safe-area-inset-right, 0px);
+  --hh-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --hh-safe-left: env(safe-area-inset-left, 0px);
+
+  /* ── the dealer brand layer (HH Pro's roles, defaulting to the house gold) ────
+     HH Pro's split is carried verbatim as ROLES: identity is the dealer AS TEXT
+     on a card; action is a filled pressable control; chrome is the frame around
+     the content. A consumer that uses only --brand roles with no brand attribute
+     gets the house gold: identity resolves to gold-as-ink (per theme), the fill
+     to the gold fill, the fill's ink to the accent ink. THE GOLD RULE DRAWS A
+     LINE HERE: --brand-on (the ink on the IDENTITY colour) flips with the
+     identity, but --brand-fill-on is pinned to the invariant accent ink in both
+     halves, because the gold FILL never flips and its ink must never read white
+     (1.61:1). --brand-hover has no separate base value: the base brand keeps one
+     identity ink, so hover inherits it. */
+  --brand: var(--hh-accent-text);
+  --brand-hover: var(--hh-accent-text);
+  --brand-on: var(--hh-accent-ink);
+  --brand-fill: var(--hh-accent);
+  --brand-fill-hover: var(--hh-accent-hover);
+  --brand-fill-on: var(--hh-accent-ink);
+  --brand-tint: color-mix(in oklch, var(--brand), black 78%);
+  --brand-chrome: var(--hh-page);
+  --brand-chrome-2: var(--hh-card);
+  --brand-chrome-line: var(--hh-line);
+  --brand-chrome-on: var(--hh-text);
+  --brand-chrome-muted: var(--hh-text-dim);
+  --brand-chrome-accent: var(--brand);
+
+  /* ── the contractor brand layer (the public proposal surface ONLY) ────────────
+     The homeowner's client is the contractor, so on the public proposal the
+     contractor's accent beats the dealer's brand. The layer is TWO tokens,
+     exactly as HH Pro expresses it; the proposal surface sets them at runtime
+     from the quote's accent colour, with the on-ink CHOSEN for that accent and
+     never assumed white. Nothing outside the proposal surface may set or
+     consume them (asserted in test/tokens.test.mjs), and a runtime value must
+     clear the same 4.5:1 bar the static palette is held to. The defaults defer
+     to the dealer layer so the tokens always resolve. */
+  --cbrand: var(--brand);
+  --cbrand-on: var(--brand-on);
+}
+
+/* ══ LIGHT, the second half ═══════════════════════════════════════════════════════
+   Same token NAMES, light values, following the ERP sheet's structure: the light
+   theme was EXTRACTED, not inverted (roughly half the brand site is already a
+   worked light theme, and an algorithmic inversion of the navy would have produced
+   a worse one). Every theme-capable role is DECLARED here, not inherited: both
+   halves of a per-theme pair are a design decision each, and the light one must
+   not silently follow a future edit to the dark one. The gold FILL family, the
+   fonts, the spacing grid, the radii, the z scale and the layout contract are
+   theme-invariant ON PURPOSE and are re-valued by no block. */
+:root[data-theme="light"] {
+  --hh-page: #E7ECF1;
+  --hh-card: #FFFFFF;
+  /* Round 7: the line was #BCC8D4 (1.70:1 on the card, 1.43:1 on the page) and the cards, panes
+     and rows it edges barely read. #94A4B4 is 2.55:1 on the white card and 2.15:1 on the page.
+     The page stays put: the ink holds below (text-dim, accent-text, the state inks) are
+     measured against it, so a darker page would break them; the separation comes from the line
+     and the shadow. The input fill is ONE light treatment, the card white: a field on a white
+     card is white with its boundary, never a grey slab, and a field on the page ground is a
+     white field. */
+  --hh-line: #94A4B4;
+  --hh-field: #FFFFFF;
+  --hh-control-line: #6B7683;
+  --hh-text: #0B1725;
+  --hh-text-dim: #566471;
+  --hh-row: transparent;
+  --hh-row-alt: color-mix(in srgb, var(--hh-text) 5%, transparent);
+
+  /* Gold as INK flips; the fill does not. #FFC313 as text is 1.35:1 on the light
+     page; dark-gold #896400 is 4.55:1 there, and it carries the focus ring. The
+     row 987 page is darker than the one #8A6500 was measured on (4.96:1 there,
+     4.48:1 on the new page, under AA), so the ink re-holds: this is the lightest
+     dark-gold that clears 4.5:1 on the page, the card and the widget ground. */
+  --hh-accent-text: #896400;
+  --hh-focus-ring: var(--hh-accent-text);
+
+  /* The quote blue's light half: 8.10:1 on the card, 6.81:1 on the page; the tint is
+     mix(#1D4ED8, white 90%) and quote ink on it is 6.92:1. The fill and its ink stay put. */
+  --hh-quote: #1C45B8;
+  --hh-quote-link: #1C45B8;
+  --hh-quote-tint: #E8EDFB;
+
+  --hh-danger: #AB1C31;
+  --hh-danger-fill: #C0223A;
+  --hh-danger-fill-edge: transparent;
+  --hh-danger-fill-ink: #FFFFFF;
+  --hh-info: #14497B;
+  --hh-success: #0F6C43;
+  --hh-success-fill: #2C9060;
+  --hh-state-good: #1E7544;
+  --hh-state-watch: #955B0B;
+  --hh-state-stop: #C0392B;
+
+  --hh-disabled-fill: #E3E9EF;
+  --hh-disabled-ink: #51616F;
+  --hh-disabled-line: #CBD5DF;
+
+  /* The widget layer's light half: a warm grey ground under a pure white card,
+     because a cool ground under a white card reads as two whites. The lift is
+     the shadow, not a second surface. Decision log row 987 steps the ground
+     darker with the page and the shadow up with elev-1. The ground stops at
+     #EDEBE6, short of the row's indicative #E6E4DE: the hh-pro identity is
+     carried verbatim and is held at AA on every surface, and on #E6E4DE it
+     reads 4.36:1; #EDEBE6 is the darkest ground that keeps it (4.65:1) and
+     the stop state ink with it (4.56:1). The shadow's two alphas scale by
+     elev-1's own step (its largest alpha went 0.06 to 0.10, a factor of 5/3:
+     0.05 to 0.08, 0.26 to 0.43), so the front door's role cards lift like
+     the rest; the hairline steps to .14 with them. */
+  --hh-ground: #EDEBE6;
+  --hh-widget: #FFFFFF;
+  --hh-widget-raised: #FFFFFF;
+  --hh-hairline: rgba(0,0,0,.22);
+  --hh-track: rgba(0,0,0,.06);
+  --hh-widget-shadow: 0 1px 2px rgba(0,0,0,.08), 0 14px 34px -16px rgba(0,0,0,.43);
+
+  --hh-scrim: rgba(7, 24, 39, 0.42);
+
+  /* Light elevation: navy shadows, not black ones. A black shadow on a light
+     page reads as a smudge rather than a lift. Decision log row 987 gives
+     elev-1 the ERP's two-layer shape: a 3px ambient at 0.10 over the 1px
+     contact at 0.06, so a card's edge reads on the darker page. */
+  --hh-elev-1: 0 1px 3px rgba(7, 24, 39, 0.16), 0 1px 2px rgba(7, 24, 39, 0.10);
+  --hh-elev-2: 0 12px 30px rgba(7, 24, 39, 0.06);
+  --hh-elev-3: 0 24px 60px rgba(7, 24, 39, 0.16);
+
+  --hh-color-scheme: light;
+
+  /* The base brand's on-ink flips because the IDENTITY flips: in light the brand
+     identity is dark-gold #896400, and the ink that sits ON it is white (5.40:1).
+     The FILL's ink does NOT follow: --brand-fill-on stays the invariant accent
+     ink, declared in :root and re-valued by no block. */
+  --brand-on: #FFFFFF;
+  /* HH Pro's tint formula, light half: mixing toward white on a light ground. */
+  --brand-tint: color-mix(in oklch, var(--brand), white 90%);
+}
+
+/* ══ the hh-pro brand override: the standalone shell ══════════════════════════════
+   HH Pro's dealer layer, carried VERBATIM in oklch so this sheet says what that
+   product's sheet says (the values below are HH Pro's own, unconverted). The
+   identity roles are re-valued here, and the ACTION roles follow the identity
+   through HH Pro's own defaults (--brand-fill: var(--brand)), declared in BOTH
+   blocks because each half is its own decision: in this shell the pressable
+   control is the dealer blue, not the house gold. The identity flips per theme,
+   so --brand-on is declared in both blocks: white ink on the deep blue in
+   light, the dark surface ink on the light blue in dark. Measured against this
+   package's canvases: the light identity is 4.66:1 on the light page (and
+   4.65:1 on the widget ground, which is why the row 987 ground stops where it
+   does) and its white on-ink clears AA on the identity fill; the dark
+   identity is 5.43:1 on the dark page and its on-ink 7.03:1 on the fill. */
+:root[data-brand="hh-pro"] {
+  --brand: oklch(70% 0.17 255);
+  --brand-hover: oklch(76% 0.17 255);
+  --brand-on: oklch(17% 0.012 265);
+  --brand-fill: var(--brand);
+  --brand-fill-hover: var(--brand-hover);
+  --brand-fill-on: var(--brand-on);
+}
+
+:root[data-brand="hh-pro"][data-theme="light"] {
+  --brand: oklch(52% 0.19 255);
+  --brand-hover: oklch(46% 0.19 255);
+  --brand-on: oklch(100% 0 0);
+  --brand-fill: var(--brand);
+  --brand-fill-hover: var(--brand-hover);
+  --brand-fill-on: var(--brand-on);
+}
+
+/* The contractor layer needs no brand block: it is a runtime layer. The public
+   proposal surface sets --cbrand and --cbrand-on on its own root, from the quote.
+   See the :root declaration above for the rules that bind it. */
+
+/* ── the vendored face: Inter, latin, weights 400 to 700 ────────────────────
+   Copied from the @fontsource/inter package (version 5.3.0 on the public npm
+   registry), which repackages Inter by The Inter Project Authors under the
+   SIL Open Font License 1.1; the licence ships beside the bytes as
+   src/fonts/OFL.txt. No runtime dependency is added and no font CDN is
+   touched: the woff2 files are repo files under src/fonts/, the src URLs
+   below are relative to this sheet, and every bundler that carries this
+   sheet resolves and ships the bytes with it (the demo box's CSP allows no
+   font host, and nothing here would ask for one). The latin subset only; the
+   system fallbacks behind Inter in the stacks above carry the glyphs this
+   subset does not. sha256 of the vendored bytes:
+
+     inter-latin-400-normal.woff2  8909904ab6c872eb994093482a88a28eca2cd95912d7b6fecd72103b0dc07edc
+     inter-latin-500-normal.woff2  f3779f1efccc4bdcdf9c0a02ab95bf6bd092ed09c48c08cedc725889edd1d19f
+     inter-latin-600-normal.woff2  f9a06e79cd3a2a20951c0f0e28f66dd0e6d3fda73911d640a2125c8fcb78f21a
+     inter-latin-700-normal.woff2  6f56409fd3d64bb85f7d070bce20749db2d66b6d63cec586cc22d1c761be2491 */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./fonts/inter-latin-400-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('./fonts/inter-latin-500-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./fonts/inter-latin-600-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./fonts/inter-latin-700-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
+}
+
+/* ── tabular figures everywhere a person reads numbers ──────────────────────
+   The type pass's second ruling (row 942): figures line up in columns, and
+   true monospace survives nowhere a person reads them. Inter's tabular
+   figures give every digit one width, so one inherited rule on the root
+   replaces the old mono stack; the base styles (primitives.ts) repeat it
+   inside each kit's shadow root so a kit stays aligned even where a host
+   page never loads this half. The variant declaration is the high-level
+   author and the feature string its low-level pair; carrying both covers
+   engines that honor only one. */
+:root {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+</style>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--hh-page); color: var(--hh-text); font-family: var(--hh-font-ui); }
+  body { padding: var(--hh-s-24); }
+  h1 { font-size: var(--hh-s-24); }
+  p.lede { color: var(--hh-text-dim); max-width: var(--hh-measure); }
+  .width-frame { border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); padding: var(--hh-s-16); margin-block-end: var(--hh-s-24); }
+  .width-frame > h2 { margin: 0 0 var(--hh-s-12); font-size: var(--hh-s-16); color: var(--hh-text-dim); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr)); gap: var(--hh-s-16); align-items: start; }
+  figure.cell { margin: 0; display: grid; gap: var(--hh-s-8); min-width: 0; align-content: start; }
+  figure.cell figcaption { color: var(--hh-text-dim); font-size: var(--hh-s-12); overflow-wrap: anywhere; }
+  .shell-frame { border: 1px solid var(--hh-line); border-radius: var(--hh-radius-card); overflow: hidden; display: grid; grid-template-rows: auto auto 1fr; min-height: 260px; }
+  .frame-body { position: relative; display: flex; min-height: 240px; }
+  .ghost { flex: 1; display: grid; place-items: center; color: var(--hh-text-dim); font-size: var(--hh-s-12); padding: var(--hh-s-16); text-align: center; }
+</style>
+</head>
+<body>
+<h1>@hardscapehouse/shell-chrome demo</h1>
+<p class="lede">Static page, no scripts: the shell chrome over the demo tenant's fake Field manifest
+(Yard Pick and Receive, HH Drive and House Messages for the yard manager), every state the package
+paints, at the phone and tablet widths. Rendered by Node from the element render functions
+themselves, each cell into its own declarative shadow root. The committed pages are the two builds:
+<code>index.html</code> (brand mode, the default) beside <code>index-light.html</code>, with the
+element sheets under <code>demo/sheets/</code> travelling with them. Serve it live with
+<code>npm run demo</code> (a port in the field cycle's range, refused if taken). The model objects
+(the selector's groups, the rail's pins) are wired in code by a shell; this page carries their
+rendered output and the package's tests hold the wiring contract.</p>
+<section class="width-frame" data-section="frames"><h2>The frame: one band, the banner, the rail over a working surface</h2>
+<div class="grid">
+<figure class="cell"><figcaption>the frame, tablet 834, offline with three writes waiting</figcaption><div class="shell-frame" style="width:min(834px, 100%)"><hh-shell-header><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-header.css"><!--lit-part dxKdFmEPV/Q=-->
+      <header class="band" role="banner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 3000 3000"><!--lit-node 4--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+          </span>
+          <!--lit-part tIgfFvJV+oU=--><span class="org"><!--lit-part-->Gable Landscape Supply<!--/lit-part--></span><!--/lit-part-->
+        </div>
+        <!--lit-node 6--><button
+          class="selector"
+          type="button"
+          data-action="selector"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span class="stk" aria-hidden="true">
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+          </span>
+          <span class="crumb"><!--lit-part-->Yard Pick and Receive › Pick queue<!--/lit-part--></span>
+          <span class="caret" aria-hidden="true">
+            <svg viewBox="0 0 10 6"><path d="M0 0h10L5 6z" fill="currentColor"></path></svg>
+          </span>
+        </button>
+        <div class="cluster">
+          <!--lit-node 17--><span class="chip" data-state="offline" data-kind="stop" data-alarm="false">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="word"><!--lit-part-->Offline<!--/lit-part--></span>
+            <!--lit-part--><!--/lit-part-->
+          </span>
+          <!--lit-node 22--><button class="icon-btn" type="button" data-action="notifications" aria-label="Notifications, 2 unread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+          </button>
+          <!--lit-node 27--><button
+            class="icon-btn"
+            type="button"
+            data-action="pin"
+            aria-pressed="true"
+            title="Pin this surface"
+            aria-label="Pin this surface"
+            
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 17v5"></path>
+              <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
+            </svg>
+          </button>
+          <!--lit-node 31--><button class="account" type="button" data-action="account" aria-label="Yard Team account">
+            <!--lit-node 32--><span class="avatar" aria-hidden="true" data-initials="YT"><!--lit-part-->YT<!--/lit-part--></span>
+            <span class="account-word"><!--lit-part-->Yard Team<!--/lit-part--></span>
+          </button>
+        </div>
+      </header>
+      <!--lit-part--><!--/lit-part-->
+    <!--/lit-part--></template></hh-shell-header><hh-shell-offline-banner><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-offline-banner.css"><!--lit-part p4HH3KSRCak=-->
+      <!--lit-node 0--><div class="banner banner-shell" role="status" data-mode="offline">
+        <!--lit-part j3mtS7eG3v4=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+    
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M3 3l18 18"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M6 11a9 9 0 0 1 4-2.3"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 18h.01"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+        <span class="banner-text"><!--lit-part-->You&#39;re offline · 3 changes in the outbox · they send when you&#39;re back<!--/lit-part--></span>
+        <!--lit-part ag3lxII3zho=--><span class="count" aria-hidden="true"><!--lit-part-->3<!--/lit-part--></span><!--/lit-part-->
+        <!--lit-part--><!--/lit-part-->
+      </div>
+    <!--/lit-part--></template></hh-shell-offline-banner><div class="frame-body"><hh-shell-rail><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-rail.css"><!--lit-part XJ2n8tir4ts=-->
+      <!--lit-node 0--><nav class="rail" data-collapsed="false" aria-label="Pinned surfaces">
+        <div class="rhead">
+          <span class="heading"><!--lit-part-->Pinned<!--/lit-part--></span>
+          <!--lit-part O3Lh+s90vBg=-->
+                <button
+                  class="toggle"
+                  type="button"
+                  data-action="rail-toggle"
+                  tabindex="0"
+                  aria-expanded="true"
+                  title="Let your pins hide again"
+                  aria-label="Let your pins hide again"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M15 6l-6 6 6 6"></path>
+                  </svg>
+                </button>
+              <!--/lit-part-->
+        </div>
+        <!--lit-part--><!--lit-part p7dZMHFUKjA=-->
+      <!--lit-node 0--><button
+        class="row"
+        type="button"
+        data-action="rail-select"
+        data-key="yard-pick/pick-queue"
+        data-tab="0"
+        aria-current="true"
+        
+      >
+        <span class="glyph" aria-hidden="true"><!--lit-part-->P<!--/lit-part--></span>
+        <span class="label"><!--lit-part-->Pick queue<!--/lit-part--></span>
+      </button>
+    <!--/lit-part--><!--lit-part p7dZMHFUKjA=-->
+      <!--lit-node 0--><button
+        class="row"
+        type="button"
+        data-action="rail-select"
+        data-key="drive-run/my-run"
+        data-tab="0"
+        aria-current="false"
+        
+      >
+        <span class="glyph" aria-hidden="true"><!--lit-part-->D<!--/lit-part--></span>
+        <span class="label"><!--lit-part-->My run<!--/lit-part--></span>
+      </button>
+    <!--/lit-part--><!--lit-part p7dZMHFUKjA=-->
+      <!--lit-node 0--><button
+        class="row"
+        type="button"
+        data-action="rail-select"
+        data-key="house-messages/inbox"
+        data-tab="0"
+        aria-current="false"
+        
+      >
+        <span class="glyph" aria-hidden="true"><!--lit-part-->H<!--/lit-part--></span>
+        <span class="label"><!--lit-part-->House Messages<!--/lit-part--></span>
+      </button>
+    <!--/lit-part--><!--/lit-part-->
+      </nav>
+    <!--/lit-part--></template></hh-shell-rail><div class="ghost" aria-hidden="true">The surface works here; the rail borrows the edge and the band stays one band.</div></div></div></figure>
+<figure class="cell"><figcaption>the frame, phone 390, brand idle (the phone band drops the chip and the org word)</figcaption><div class="shell-frame" style="width:min(390px, 100%)"><hh-shell-header><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-header.css"><!--lit-part dxKdFmEPV/Q=-->
+      <header class="band" role="banner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 3000 3000"><!--lit-node 4--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+          </span>
+          <!--lit-part tIgfFvJV+oU=--><span class="org"><!--lit-part-->Gable Landscape Supply<!--/lit-part--></span><!--/lit-part-->
+        </div>
+        <!--lit-node 6--><button
+          class="selector"
+          type="button"
+          data-action="selector"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span class="stk" aria-hidden="true">
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+          </span>
+          <span class="crumb"><!--lit-part-->Yard Pick and Receive › Pick queue<!--/lit-part--></span>
+          <span class="caret" aria-hidden="true">
+            <svg viewBox="0 0 10 6"><path d="M0 0h10L5 6z" fill="currentColor"></path></svg>
+          </span>
+        </button>
+        <div class="cluster">
+          <!--lit-node 17--><span class="chip" data-state="idle" data-kind="good" data-alarm="false">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="word"><!--lit-part-->Synced<!--/lit-part--></span>
+            <!--lit-part--><!--/lit-part-->
+          </span>
+          <!--lit-node 22--><button class="icon-btn" type="button" data-action="notifications" aria-label="Notifications, 2 unread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+          </button>
+          <!--lit-node 27--><button
+            class="icon-btn"
+            type="button"
+            data-action="pin"
+            aria-pressed="true"
+            title="Pin this surface"
+            aria-label="Pin this surface"
+            
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 17v5"></path>
+              <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
+            </svg>
+          </button>
+          <!--lit-node 31--><button class="account" type="button" data-action="account" aria-label="Yard Team account">
+            <!--lit-node 32--><span class="avatar" aria-hidden="true" data-initials="YT"><!--lit-part-->YT<!--/lit-part--></span>
+            <span class="account-word"><!--lit-part-->Yard Team<!--/lit-part--></span>
+          </button>
+        </div>
+      </header>
+      <!--lit-part--><!--/lit-part-->
+    <!--/lit-part--></template></hh-shell-header><div class="frame-body"><hh-shell-rail><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-rail.css"><!--lit-part XJ2n8tir4ts=-->
+      <!--lit-node 0--><nav class="rail" data-collapsed="false" aria-label="Pinned surfaces">
+        <div class="rhead">
+          <span class="heading"><!--lit-part-->Pinned<!--/lit-part--></span>
+          <!--lit-part O3Lh+s90vBg=-->
+                <button
+                  class="toggle"
+                  type="button"
+                  data-action="rail-toggle"
+                  tabindex="0"
+                  aria-expanded="true"
+                  title="Let your pins hide again"
+                  aria-label="Let your pins hide again"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M15 6l-6 6 6 6"></path>
+                  </svg>
+                </button>
+              <!--/lit-part-->
+        </div>
+        <!--lit-part--><!--lit-part p7dZMHFUKjA=-->
+      <!--lit-node 0--><button
+        class="row"
+        type="button"
+        data-action="rail-select"
+        data-key="yard-pick/pick-queue"
+        data-tab="0"
+        aria-current="true"
+        
+      >
+        <span class="glyph" aria-hidden="true"><!--lit-part-->P<!--/lit-part--></span>
+        <span class="label"><!--lit-part-->Pick queue<!--/lit-part--></span>
+      </button>
+    <!--/lit-part--><!--lit-part p7dZMHFUKjA=-->
+      <!--lit-node 0--><button
+        class="row"
+        type="button"
+        data-action="rail-select"
+        data-key="drive-run/my-run"
+        data-tab="0"
+        aria-current="false"
+        
+      >
+        <span class="glyph" aria-hidden="true"><!--lit-part-->D<!--/lit-part--></span>
+        <span class="label"><!--lit-part-->My run<!--/lit-part--></span>
+      </button>
+    <!--/lit-part--><!--lit-part p7dZMHFUKjA=-->
+      <!--lit-node 0--><button
+        class="row"
+        type="button"
+        data-action="rail-select"
+        data-key="house-messages/inbox"
+        data-tab="0"
+        aria-current="false"
+        
+      >
+        <span class="glyph" aria-hidden="true"><!--lit-part-->H<!--/lit-part--></span>
+        <span class="label"><!--lit-part-->House Messages<!--/lit-part--></span>
+      </button>
+    <!--/lit-part--><!--/lit-part-->
+      </nav>
+    <!--/lit-part--></template></hh-shell-rail><div class="ghost" aria-hidden="true">The surface works here; the rail borrows the edge and the band stays one band.</div></div></div></figure>
+</div>
+</section>
+<section class="width-frame" data-section="selector"><h2>The selector open: the whole map, the current marked</h2>
+<div class="grid">
+<figure class="cell"><figcaption>the selector panel over the fake manifest</figcaption><hh-shell-header><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-header.css"><!--lit-part dxKdFmEPV/Q=-->
+      <header class="band" role="banner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 3000 3000"><!--lit-node 4--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+          </span>
+          <!--lit-part tIgfFvJV+oU=--><span class="org"><!--lit-part-->Gable Landscape Supply<!--/lit-part--></span><!--/lit-part-->
+        </div>
+        <!--lit-node 6--><button
+          class="selector"
+          type="button"
+          data-action="selector"
+          aria-haspopup="menu"
+          aria-expanded="true"
+        >
+          <span class="stk" aria-hidden="true">
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+          </span>
+          <span class="crumb"><!--lit-part-->Yard Pick and Receive › Pick queue<!--/lit-part--></span>
+          <span class="caret" aria-hidden="true">
+            <svg viewBox="0 0 10 6"><path d="M0 0h10L5 6z" fill="currentColor"></path></svg>
+          </span>
+        </button>
+        <div class="cluster">
+          <!--lit-node 17--><span class="chip" data-state="idle" data-kind="good" data-alarm="false">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="word"><!--lit-part-->Synced<!--/lit-part--></span>
+            <!--lit-part--><!--/lit-part-->
+          </span>
+          <!--lit-node 22--><button class="icon-btn" type="button" data-action="notifications" aria-label="Notifications, 2 unread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+          </button>
+          <!--lit-node 27--><button
+            class="icon-btn"
+            type="button"
+            data-action="pin"
+            aria-pressed="true"
+            title="Pin this surface"
+            aria-label="Pin this surface"
+            
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 17v5"></path>
+              <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
+            </svg>
+          </button>
+          <!--lit-node 31--><button class="account" type="button" data-action="account" aria-label="Yard Team account">
+            <!--lit-node 32--><span class="avatar" aria-hidden="true" data-initials="YT"><!--lit-part-->YT<!--/lit-part--></span>
+            <span class="account-word"><!--lit-part-->Yard Team<!--/lit-part--></span>
+          </button>
+        </div>
+      </header>
+      <!--lit-part abrXgdL8hHY=-->
+      <div class="panel" role="menu" aria-label="Surfaces">
+        <!--lit-part--><!--lit-part QdGxfYMBaRw=-->
+            <h4 class="group-label"><!--lit-part-->Yard Pick and Receive<!--/lit-part--></h4>
+            <!--lit-part--><!--lit-part TGTe5ZfhVh8=-->
+      <!--lit-node 0--><button
+        class="mi"
+        role="menuitem"
+        tabindex="-1"
+        data-action="select"
+        data-app="yard-pick"
+        data-surface="pick-queue"
+        data-key="yard-pick/pick-queue"
+        aria-current="true"
+      >
+        <span class="mi-label"><!--lit-part-->Pick queue<!--/lit-part--></span>
+        <!--lit-part Bs+uYPsxpg0=--><span class="hint">here</span><!--/lit-part-->
+      </button>
+    <!--/lit-part--><!--lit-part TGTe5ZfhVh8=-->
+      <!--lit-node 0--><button
+        class="mi"
+        role="menuitem"
+        tabindex="-1"
+        data-action="select"
+        data-app="yard-pick"
+        data-surface="receiving"
+        data-key="yard-pick/receiving"
+        aria-current="false"
+      >
+        <span class="mi-label"><!--lit-part-->Receiving<!--/lit-part--></span>
+        <!--lit-part--><!--/lit-part-->
+      </button>
+    <!--/lit-part--><!--/lit-part-->
+          <!--/lit-part--><!--lit-part QdGxfYMBaRw=-->
+            <h4 class="group-label"><!--lit-part-->HH Drive<!--/lit-part--></h4>
+            <!--lit-part--><!--lit-part TGTe5ZfhVh8=-->
+      <!--lit-node 0--><button
+        class="mi"
+        role="menuitem"
+        tabindex="-1"
+        data-action="select"
+        data-app="drive-run"
+        data-surface="my-run"
+        data-key="drive-run/my-run"
+        aria-current="false"
+      >
+        <span class="mi-label"><!--lit-part-->My run<!--/lit-part--></span>
+        <!--lit-part--><!--/lit-part-->
+      </button>
+    <!--/lit-part--><!--/lit-part-->
+          <!--/lit-part--><!--lit-part QdGxfYMBaRw=-->
+            <h4 class="group-label"><!--lit-part-->House Messages<!--/lit-part--></h4>
+            <!--lit-part--><!--lit-part TGTe5ZfhVh8=-->
+      <!--lit-node 0--><button
+        class="mi"
+        role="menuitem"
+        tabindex="-1"
+        data-action="select"
+        data-app="house-messages"
+        data-surface="inbox"
+        data-key="house-messages/inbox"
+        aria-current="false"
+      >
+        <span class="mi-label"><!--lit-part-->Inbox<!--/lit-part--></span>
+        <!--lit-part--><!--/lit-part-->
+      </button>
+    <!--/lit-part--><!--/lit-part-->
+          <!--/lit-part--><!--/lit-part-->
+      </div>
+    <!--/lit-part-->
+    <!--/lit-part--></template></hh-shell-header></figure>
+</div>
+</section>
+<section class="width-frame" data-section="sync-states"><h2>The sync statechart's states, as the band shows them</h2><div class="grid"><figure class="cell"><figcaption>sync chip / idle (at rest, outbox draining done)</figcaption><hh-shell-header><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-header.css"><!--lit-part dxKdFmEPV/Q=-->
+      <header class="band" role="banner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 3000 3000"><!--lit-node 4--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+          </span>
+          <!--lit-part tIgfFvJV+oU=--><span class="org"><!--lit-part-->Gable Landscape Supply<!--/lit-part--></span><!--/lit-part-->
+        </div>
+        <!--lit-node 6--><button
+          class="selector"
+          type="button"
+          data-action="selector"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span class="stk" aria-hidden="true">
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+          </span>
+          <span class="crumb"><!--lit-part-->Yard Pick and Receive › Pick queue<!--/lit-part--></span>
+          <span class="caret" aria-hidden="true">
+            <svg viewBox="0 0 10 6"><path d="M0 0h10L5 6z" fill="currentColor"></path></svg>
+          </span>
+        </button>
+        <div class="cluster">
+          <!--lit-node 17--><span class="chip" data-state="idle" data-kind="good" data-alarm="false">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="word"><!--lit-part-->Synced<!--/lit-part--></span>
+            <!--lit-part--><!--/lit-part-->
+          </span>
+          <!--lit-node 22--><button class="icon-btn" type="button" data-action="notifications" aria-label="Notifications, 2 unread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+          </button>
+          <!--lit-node 27--><button
+            class="icon-btn"
+            type="button"
+            data-action="pin"
+            aria-pressed="true"
+            title="Pin this surface"
+            aria-label="Pin this surface"
+            
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 17v5"></path>
+              <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
+            </svg>
+          </button>
+          <!--lit-node 31--><button class="account" type="button" data-action="account" aria-label="Yard Team account">
+            <!--lit-node 32--><span class="avatar" aria-hidden="true" data-initials="YT"><!--lit-part-->YT<!--/lit-part--></span>
+            <span class="account-word"><!--lit-part-->Yard Team<!--/lit-part--></span>
+          </button>
+        </div>
+      </header>
+      <!--lit-part--><!--/lit-part-->
+    <!--/lit-part--></template></hh-shell-header></figure>
+<figure class="cell"><figcaption>sync chip / pulling (the scopes are being pulled)</figcaption><hh-shell-header><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-header.css"><!--lit-part dxKdFmEPV/Q=-->
+      <header class="band" role="banner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 3000 3000"><!--lit-node 4--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+          </span>
+          <!--lit-part tIgfFvJV+oU=--><span class="org"><!--lit-part-->Gable Landscape Supply<!--/lit-part--></span><!--/lit-part-->
+        </div>
+        <!--lit-node 6--><button
+          class="selector"
+          type="button"
+          data-action="selector"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span class="stk" aria-hidden="true">
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+          </span>
+          <span class="crumb"><!--lit-part-->Yard Pick and Receive › Pick queue<!--/lit-part--></span>
+          <span class="caret" aria-hidden="true">
+            <svg viewBox="0 0 10 6"><path d="M0 0h10L5 6z" fill="currentColor"></path></svg>
+          </span>
+        </button>
+        <div class="cluster">
+          <!--lit-node 17--><span class="chip" data-state="pulling" data-kind="busy" data-alarm="false">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="word"><!--lit-part-->Pulling<!--/lit-part--></span>
+            <!--lit-part--><!--/lit-part-->
+          </span>
+          <!--lit-node 22--><button class="icon-btn" type="button" data-action="notifications" aria-label="Notifications, 2 unread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+          </button>
+          <!--lit-node 27--><button
+            class="icon-btn"
+            type="button"
+            data-action="pin"
+            aria-pressed="true"
+            title="Pin this surface"
+            aria-label="Pin this surface"
+            
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 17v5"></path>
+              <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
+            </svg>
+          </button>
+          <!--lit-node 31--><button class="account" type="button" data-action="account" aria-label="Yard Team account">
+            <!--lit-node 32--><span class="avatar" aria-hidden="true" data-initials="YT"><!--lit-part-->YT<!--/lit-part--></span>
+            <span class="account-word"><!--lit-part-->Yard Team<!--/lit-part--></span>
+          </button>
+        </div>
+      </header>
+      <!--lit-part--><!--/lit-part-->
+    <!--/lit-part--></template></hh-shell-header></figure>
+<figure class="cell"><figcaption>sync chip / pushing (the outbox is replaying, in order)</figcaption><hh-shell-header><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-header.css"><!--lit-part dxKdFmEPV/Q=-->
+      <header class="band" role="banner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 3000 3000"><!--lit-node 4--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+          </span>
+          <!--lit-part tIgfFvJV+oU=--><span class="org"><!--lit-part-->Gable Landscape Supply<!--/lit-part--></span><!--/lit-part-->
+        </div>
+        <!--lit-node 6--><button
+          class="selector"
+          type="button"
+          data-action="selector"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span class="stk" aria-hidden="true">
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+          </span>
+          <span class="crumb"><!--lit-part-->Yard Pick and Receive › Pick queue<!--/lit-part--></span>
+          <span class="caret" aria-hidden="true">
+            <svg viewBox="0 0 10 6"><path d="M0 0h10L5 6z" fill="currentColor"></path></svg>
+          </span>
+        </button>
+        <div class="cluster">
+          <!--lit-node 17--><span class="chip" data-state="pushing" data-kind="busy" data-alarm="false">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="word"><!--lit-part-->Pushing<!--/lit-part--></span>
+            <!--lit-part 8JJGLtyyooI=--><span class="note"><!--lit-part-->3 in the outbox<!--/lit-part--></span><!--/lit-part-->
+          </span>
+          <!--lit-node 22--><button class="icon-btn" type="button" data-action="notifications" aria-label="Notifications, 2 unread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+          </button>
+          <!--lit-node 27--><button
+            class="icon-btn"
+            type="button"
+            data-action="pin"
+            aria-pressed="true"
+            title="Pin this surface"
+            aria-label="Pin this surface"
+            
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 17v5"></path>
+              <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
+            </svg>
+          </button>
+          <!--lit-node 31--><button class="account" type="button" data-action="account" aria-label="Yard Team account">
+            <!--lit-node 32--><span class="avatar" aria-hidden="true" data-initials="YT"><!--lit-part-->YT<!--/lit-part--></span>
+            <span class="account-word"><!--lit-part-->Yard Team<!--/lit-part--></span>
+          </button>
+        </div>
+      </header>
+      <!--lit-part--><!--/lit-part-->
+    <!--/lit-part--></template></hh-shell-header></figure>
+<figure class="cell"><figcaption>sync chip / offline (the platform says no network)</figcaption><hh-shell-header><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-header.css"><!--lit-part dxKdFmEPV/Q=-->
+      <header class="band" role="banner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 3000 3000"><!--lit-node 4--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+          </span>
+          <!--lit-part tIgfFvJV+oU=--><span class="org"><!--lit-part-->Gable Landscape Supply<!--/lit-part--></span><!--/lit-part-->
+        </div>
+        <!--lit-node 6--><button
+          class="selector"
+          type="button"
+          data-action="selector"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span class="stk" aria-hidden="true">
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+          </span>
+          <span class="crumb"><!--lit-part-->Yard Pick and Receive › Pick queue<!--/lit-part--></span>
+          <span class="caret" aria-hidden="true">
+            <svg viewBox="0 0 10 6"><path d="M0 0h10L5 6z" fill="currentColor"></path></svg>
+          </span>
+        </button>
+        <div class="cluster">
+          <!--lit-node 17--><span class="chip" data-state="offline" data-kind="stop" data-alarm="false">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="word"><!--lit-part-->Offline<!--/lit-part--></span>
+            <!--lit-part--><!--/lit-part-->
+          </span>
+          <!--lit-node 22--><button class="icon-btn" type="button" data-action="notifications" aria-label="Notifications, 2 unread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+          </button>
+          <!--lit-node 27--><button
+            class="icon-btn"
+            type="button"
+            data-action="pin"
+            aria-pressed="true"
+            title="Pin this surface"
+            aria-label="Pin this surface"
+            
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 17v5"></path>
+              <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
+            </svg>
+          </button>
+          <!--lit-node 31--><button class="account" type="button" data-action="account" aria-label="Yard Team account">
+            <!--lit-node 32--><span class="avatar" aria-hidden="true" data-initials="YT"><!--lit-part-->YT<!--/lit-part--></span>
+            <span class="account-word"><!--lit-part-->Yard Team<!--/lit-part--></span>
+          </button>
+        </div>
+      </header>
+      <!--lit-part--><!--/lit-part-->
+    <!--/lit-part--></template></hh-shell-header></figure>
+<figure class="cell"><figcaption>sync chip / unreachable (online, but the request did not land)</figcaption><hh-shell-header><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-header.css"><!--lit-part dxKdFmEPV/Q=-->
+      <header class="band" role="banner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 3000 3000"><!--lit-node 4--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+          </span>
+          <!--lit-part tIgfFvJV+oU=--><span class="org"><!--lit-part-->Gable Landscape Supply<!--/lit-part--></span><!--/lit-part-->
+        </div>
+        <!--lit-node 6--><button
+          class="selector"
+          type="button"
+          data-action="selector"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span class="stk" aria-hidden="true">
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+          </span>
+          <span class="crumb"><!--lit-part-->Yard Pick and Receive › Pick queue<!--/lit-part--></span>
+          <span class="caret" aria-hidden="true">
+            <svg viewBox="0 0 10 6"><path d="M0 0h10L5 6z" fill="currentColor"></path></svg>
+          </span>
+        </button>
+        <div class="cluster">
+          <!--lit-node 17--><span class="chip" data-state="unreachable" data-kind="busy" data-alarm="false">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="word"><!--lit-part-->Reconnecting<!--/lit-part--></span>
+            <!--lit-part--><!--/lit-part-->
+          </span>
+          <!--lit-node 22--><button class="icon-btn" type="button" data-action="notifications" aria-label="Notifications, 2 unread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+          </button>
+          <!--lit-node 27--><button
+            class="icon-btn"
+            type="button"
+            data-action="pin"
+            aria-pressed="true"
+            title="Pin this surface"
+            aria-label="Pin this surface"
+            
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 17v5"></path>
+              <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
+            </svg>
+          </button>
+          <!--lit-node 31--><button class="account" type="button" data-action="account" aria-label="Yard Team account">
+            <!--lit-node 32--><span class="avatar" aria-hidden="true" data-initials="YT"><!--lit-part-->YT<!--/lit-part--></span>
+            <span class="account-word"><!--lit-part-->Yard Team<!--/lit-part--></span>
+          </button>
+        </div>
+      </header>
+      <!--lit-part--><!--/lit-part-->
+    <!--/lit-part--></template></hh-shell-header></figure>
+<figure class="cell"><figcaption>sync chip / conflict (cards wait for a person)</figcaption><hh-shell-header><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-header.css"><!--lit-part dxKdFmEPV/Q=-->
+      <header class="band" role="banner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 3000 3000"><!--lit-node 4--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+          </span>
+          <!--lit-part tIgfFvJV+oU=--><span class="org"><!--lit-part-->Gable Landscape Supply<!--/lit-part--></span><!--/lit-part-->
+        </div>
+        <!--lit-node 6--><button
+          class="selector"
+          type="button"
+          data-action="selector"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span class="stk" aria-hidden="true">
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+          </span>
+          <span class="crumb"><!--lit-part-->Yard Pick and Receive › Pick queue<!--/lit-part--></span>
+          <span class="caret" aria-hidden="true">
+            <svg viewBox="0 0 10 6"><path d="M0 0h10L5 6z" fill="currentColor"></path></svg>
+          </span>
+        </button>
+        <div class="cluster">
+          <!--lit-node 17--><span class="chip" data-state="conflict" data-kind="stop" data-alarm="false">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="word"><!--lit-part-->1 to review<!--/lit-part--></span>
+            <!--lit-part--><!--/lit-part-->
+          </span>
+          <!--lit-node 22--><button class="icon-btn" type="button" data-action="notifications" aria-label="Notifications, 2 unread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+          </button>
+          <!--lit-node 27--><button
+            class="icon-btn"
+            type="button"
+            data-action="pin"
+            aria-pressed="true"
+            title="Pin this surface"
+            aria-label="Pin this surface"
+            
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 17v5"></path>
+              <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
+            </svg>
+          </button>
+          <!--lit-node 31--><button class="account" type="button" data-action="account" aria-label="Yard Team account">
+            <!--lit-node 32--><span class="avatar" aria-hidden="true" data-initials="YT"><!--lit-part-->YT<!--/lit-part--></span>
+            <span class="account-word"><!--lit-part-->Yard Team<!--/lit-part--></span>
+          </button>
+        </div>
+      </header>
+      <!--lit-part--><!--/lit-part-->
+    <!--/lit-part--></template></hh-shell-header></figure>
+<figure class="cell"><figcaption>sync chip / auth_expired (the session is gone; the outbox is parked)</figcaption><hh-shell-header><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-header.css"><!--lit-part dxKdFmEPV/Q=-->
+      <header class="band" role="banner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 3000 3000"><!--lit-node 4--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+          </span>
+          <!--lit-part tIgfFvJV+oU=--><span class="org"><!--lit-part-->Gable Landscape Supply<!--/lit-part--></span><!--/lit-part-->
+        </div>
+        <!--lit-node 6--><button
+          class="selector"
+          type="button"
+          data-action="selector"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span class="stk" aria-hidden="true">
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+          </span>
+          <span class="crumb"><!--lit-part-->Yard Pick and Receive › Pick queue<!--/lit-part--></span>
+          <span class="caret" aria-hidden="true">
+            <svg viewBox="0 0 10 6"><path d="M0 0h10L5 6z" fill="currentColor"></path></svg>
+          </span>
+        </button>
+        <div class="cluster">
+          <!--lit-node 17--><span class="chip" data-state="auth_expired" data-kind="stop" data-alarm="false">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="word"><!--lit-part-->Sign in expired<!--/lit-part--></span>
+            <!--lit-part--><!--/lit-part-->
+          </span>
+          <!--lit-node 22--><button class="icon-btn" type="button" data-action="notifications" aria-label="Notifications, 2 unread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+          </button>
+          <!--lit-node 27--><button
+            class="icon-btn"
+            type="button"
+            data-action="pin"
+            aria-pressed="true"
+            title="Pin this surface"
+            aria-label="Pin this surface"
+            
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 17v5"></path>
+              <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
+            </svg>
+          </button>
+          <!--lit-node 31--><button class="account" type="button" data-action="account" aria-label="Yard Team account">
+            <!--lit-node 32--><span class="avatar" aria-hidden="true" data-initials="YT"><!--lit-part-->YT<!--/lit-part--></span>
+            <span class="account-word"><!--lit-part-->Yard Team<!--/lit-part--></span>
+          </button>
+        </div>
+      </header>
+      <!--lit-part--><!--/lit-part-->
+    <!--/lit-part--></template></hh-shell-header></figure>
+<figure class="cell"><figcaption>sync chip / pushing (stuck: two attempts, the chip alarms in words)</figcaption><hh-shell-header><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-header.css"><!--lit-part dxKdFmEPV/Q=-->
+      <header class="band" role="banner">
+        <div class="brand">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 3000 3000"><!--lit-node 4--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+          </span>
+          <!--lit-part tIgfFvJV+oU=--><span class="org"><!--lit-part-->Gable Landscape Supply<!--/lit-part--></span><!--/lit-part-->
+        </div>
+        <!--lit-node 6--><button
+          class="selector"
+          type="button"
+          data-action="selector"
+          aria-haspopup="menu"
+          aria-expanded="false"
+        >
+          <span class="stk" aria-hidden="true">
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+            <span class="stk-r"></span>
+          </span>
+          <span class="crumb"><!--lit-part-->Yard Pick and Receive › Pick queue<!--/lit-part--></span>
+          <span class="caret" aria-hidden="true">
+            <svg viewBox="0 0 10 6"><path d="M0 0h10L5 6z" fill="currentColor"></path></svg>
+          </span>
+        </button>
+        <div class="cluster">
+          <!--lit-node 17--><span class="chip" data-state="pushing" data-kind="busy" data-alarm="true">
+            <span class="dot" aria-hidden="true"></span>
+            <span class="word"><!--lit-part-->Pushing<!--/lit-part--></span>
+            <!--lit-part 8JJGLtyyooI=--><span class="note"><!--lit-part-->4 in the outbox · retrying<!--/lit-part--></span><!--/lit-part-->
+          </span>
+          <!--lit-node 22--><button class="icon-btn" type="button" data-action="notifications" aria-label="Notifications, 2 unread">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+            <!--lit-part DU5MnUMgDQk=--><span class="badge" aria-hidden="true"><!--lit-part-->2<!--/lit-part--></span><!--/lit-part-->
+          </button>
+          <!--lit-node 27--><button
+            class="icon-btn"
+            type="button"
+            data-action="pin"
+            aria-pressed="true"
+            title="Pin this surface"
+            aria-label="Pin this surface"
+            
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 17v5"></path>
+              <path d="M9 10.8V4h6v6.8l2.6 2.7a1 1 0 0 1-.7 1.7H7.1a1 1 0 0 1-.7-1.7z"></path>
+            </svg>
+          </button>
+          <!--lit-node 31--><button class="account" type="button" data-action="account" aria-label="Yard Team account">
+            <!--lit-node 32--><span class="avatar" aria-hidden="true" data-initials="YT"><!--lit-part-->YT<!--/lit-part--></span>
+            <span class="account-word"><!--lit-part-->Yard Team<!--/lit-part--></span>
+          </button>
+        </div>
+      </header>
+      <!--lit-part--><!--/lit-part-->
+    <!--/lit-part--></template></hh-shell-header></figure></div></section>
+<section class="width-frame" data-section="rail"><h2>The pinned rail: collapsed, expanded, and the empty first impression</h2>
+<div class="grid">
+<figure class="cell"><figcaption>collapsed, the pins only, icons and tooltips</figcaption><hh-shell-rail><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-rail.css"><!--lit-part XJ2n8tir4ts=-->
+      <!--lit-node 0--><nav class="rail" data-collapsed="true" aria-label="Pinned surfaces">
+        <div class="rhead">
+          <span class="heading"><!--lit-part-->Pinned<!--/lit-part--></span>
+          <!--lit-part gBXNOIJUFow=-->
+                <button
+                  class="toggle"
+                  type="button"
+                  data-action="rail-toggle"
+                  tabindex="0"
+                  aria-expanded="false"
+                  title="Keep your pins open"
+                  aria-label="Keep your pins open"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M9 6l6 6-6 6"></path>
+                  </svg>
+                </button>
+              <!--/lit-part-->
+        </div>
+        <!--lit-part--><!--lit-part p7dZMHFUKjA=-->
+      <!--lit-node 0--><button
+        class="row"
+        type="button"
+        data-action="rail-select"
+        data-key="yard-pick/pick-queue"
+        data-tab="0"
+        aria-current="true"
+        aria-label="Pick queue"
+      >
+        <span class="glyph" aria-hidden="true"><!--lit-part-->P<!--/lit-part--></span>
+        <span class="label"><!--lit-part-->Pick queue<!--/lit-part--></span>
+      </button>
+    <!--/lit-part--><!--lit-part p7dZMHFUKjA=-->
+      <!--lit-node 0--><button
+        class="row"
+        type="button"
+        data-action="rail-select"
+        data-key="drive-run/my-run"
+        data-tab="-1"
+        aria-current="false"
+        aria-label="My run"
+      >
+        <span class="glyph" aria-hidden="true"><!--lit-part-->D<!--/lit-part--></span>
+        <span class="label"><!--lit-part-->My run<!--/lit-part--></span>
+      </button>
+    <!--/lit-part--><!--lit-part p7dZMHFUKjA=-->
+      <!--lit-node 0--><button
+        class="row"
+        type="button"
+        data-action="rail-select"
+        data-key="house-messages/inbox"
+        data-tab="-1"
+        aria-current="false"
+        aria-label="House Messages"
+      >
+        <span class="glyph" aria-hidden="true"><!--lit-part-->H<!--/lit-part--></span>
+        <span class="label"><!--lit-part-->House Messages<!--/lit-part--></span>
+      </button>
+    <!--/lit-part--><!--/lit-part-->
+      </nav>
+    <!--/lit-part--></template></hh-shell-rail></figure>
+<figure class="cell"><figcaption>expanded, the words on, the active pin marked</figcaption><hh-shell-rail><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-rail.css"><!--lit-part XJ2n8tir4ts=-->
+      <!--lit-node 0--><nav class="rail" data-collapsed="false" aria-label="Pinned surfaces">
+        <div class="rhead">
+          <span class="heading"><!--lit-part-->Pinned<!--/lit-part--></span>
+          <!--lit-part O3Lh+s90vBg=-->
+                <button
+                  class="toggle"
+                  type="button"
+                  data-action="rail-toggle"
+                  tabindex="0"
+                  aria-expanded="true"
+                  title="Let your pins hide again"
+                  aria-label="Let your pins hide again"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M15 6l-6 6 6 6"></path>
+                  </svg>
+                </button>
+              <!--/lit-part-->
+        </div>
+        <!--lit-part G98GDPhprjE=-->
+      <p class="empty">
+        <strong>No surfaces pinned yet.</strong>
+        Pin the surfaces you use most from the surface selector, and they will
+        be waiting here every time you sign in.
+      </p>
+    <!--/lit-part-->
+      </nav>
+    <!--/lit-part--></template></hh-shell-rail></figure>
+</div>
+</section>
+<section class="width-frame" data-section="banner"><h2>The offline banner: the connection's truth, or nothing</h2>
+<div class="grid">
+<figure class="cell"><figcaption>offline, three writes in the outbox</figcaption><hh-shell-offline-banner><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-offline-banner.css"><!--lit-part p4HH3KSRCak=-->
+      <!--lit-node 0--><div class="banner banner-shell" role="status" data-mode="offline">
+        <!--lit-part j3mtS7eG3v4=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+    
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M3 3l18 18"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M6 11a9 9 0 0 1 4-2.3"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 18h.01"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+        <span class="banner-text"><!--lit-part-->You&#39;re offline · 3 changes in the outbox · they send when you&#39;re back<!--/lit-part--></span>
+        <!--lit-part ag3lxII3zho=--><span class="count" aria-hidden="true"><!--lit-part-->3<!--/lit-part--></span><!--/lit-part-->
+        <!--lit-part--><!--/lit-part-->
+      </div>
+    <!--/lit-part--></template></hh-shell-offline-banner></figure>
+<figure class="cell"><figcaption>the server can't be reached</figcaption><hh-shell-offline-banner><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-offline-banner.css"><!--lit-part p4HH3KSRCak=-->
+      <!--lit-node 0--><div class="banner banner-shell" role="status" data-mode="unreachable">
+        <!--lit-part j3mtS7eG3v4=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+    
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M3 3l18 18"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M9.5 14.5a4 4 0 0 1 5 0"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M6 11a9 9 0 0 1 4-2.3"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M18 11a9 9 0 0 0-3.4-2.1"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M12 18h.01"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+        <span class="banner-text"><!--lit-part-->The server can&#39;t be reached · your changes are safe and send in order<!--/lit-part--></span>
+        <!--lit-part--><!--/lit-part-->
+        <!--lit-part--><!--/lit-part-->
+      </div>
+    <!--/lit-part--></template></hh-shell-offline-banner></figure>
+<figure class="cell"><figcaption>read only: a second tab owns the sync</figcaption><hh-shell-offline-banner><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-offline-banner.css"><!--lit-part p4HH3KSRCak=-->
+      <!--lit-node 0--><div class="banner banner-shell" role="status" data-mode="read-only">
+        <!--lit-part j3mtS7eG3v4=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+    
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 4h16v16H4z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M4 13h5l2 3h2l2-3h5"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+        <span class="banner-text"><!--lit-part-->This tab is read only · another tab is syncing<!--/lit-part--></span>
+        <!--lit-part--><!--/lit-part-->
+        <!--lit-part--><!--/lit-part-->
+      </div>
+    <!--/lit-part--></template></hh-shell-offline-banner></figure>
+<figure class="cell"><figcaption>sign in expired, the work safe</figcaption><hh-shell-offline-banner><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-offline-banner.css"><!--lit-part p4HH3KSRCak=-->
+      <!--lit-node 0--><div class="banner banner-shell" role="status" data-mode="auth-expired">
+        <!--lit-part j3mtS7eG3v4=--><!--lit-node 0--><svg
+    class="icon"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+    role="presentation"
+    
+  ><!--lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M8 2h8l6 6v8l-6 6H8l-6-6V8z"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M9 9l6 6"></path><!--/lit-part--><!--lit-part EusbVuQCq5s=--><!--lit-node 0--><path d="M15 9l-6 6"></path><!--/lit-part--><!--/lit-part--></svg><!--/lit-part-->
+        <span class="banner-text"><!--lit-part-->Sign in expired · your offline work is safe<!--/lit-part--></span>
+        <!--lit-part--><!--/lit-part-->
+        <!--lit-part phyk24Iv3kc=--><button class="btn btn-primary sign-in" type="button" data-action="sign-in">Sign in</button><!--/lit-part-->
+      </div>
+    <!--/lit-part--></template></hh-shell-offline-banner></figure>
+</div>
+</section>
+<section class="width-frame" data-section="update"><h2>The update prompt: quiet until the download is whole</h2>
+<div class="grid">
+<figure class="cell"><figcaption>HH Field update ready, Update now and Later</figcaption><hh-shell-update-prompt><template shadowrootmode="open"><link rel="stylesheet" href="./sheets/hh-shell-update-prompt.css"><!--lit-part TSzVjgvGXNg=-->
+      <!--lit-node 0--><div class="prompt" role="region" aria-label="HH Field update">
+        <span class="tile" aria-hidden="true">
+          <svg viewBox="0 0 3000 3000"><!--lit-node 3--><path fill="currentColor" d="M644.94 465.17 H1386.06 A29.15 29.15 0 0 1 1415.21 494.32 V1306.38 A84.79 84.79 0 0 0 1500 1391.17 H2355.05 A29.15 29.15 0 0 1 2384.2 1420.32 V2505.68 A29.15 29.15 0 0 1 2355.05 2534.83 H1613.94 A29.15 29.15 0 0 1 1584.79 2505.68 V1940.1 A84.79 84.79 0 0 0 1415.21 1940.1 V2505.68 A29.15 29.15 0 0 1 1386.06 2534.83 H644.94 A29.15 29.15 0 0 1 615.79 2505.68 V494.32 A29.15 29.15 0 0 1 644.94 465.17 Z M1613.94 465.17 H2355.05 A29.15 29.15 0 0 1 2384.2 494.32 V1192.85 A29.15 29.15 0 0 1 2355.05 1222 H1613.94 A29.15 29.15 0 0 1 1584.79 1192.85 V494.32 A29.15 29.15 0 0 1 1613.94 465.17 Z"></path></svg>
+        </span>
+        <div class="words">
+          <p class="title"><!--lit-part-->HH Field<!--/lit-part--> update ready</p>
+          <!--lit-part sJd6fwd4E/0=--><p class="sub"><!--lit-part-->r18<!--/lit-part--> is downloaded</p><!--/lit-part-->
+          <p class="body"><!--lit-part-->Restart to update. Your sign in, your pins and everything in the outbox carry over; nothing queued is lost.<!--/lit-part--></p>
+        </div>
+        <div class="actions">
+          <!--lit-node 11--><button class="btn btn-primary" type="button" data-action="install" >
+            <!--lit-part-->Update now<!--/lit-part-->
+          </button>
+          <!--lit-node 13--><button class="btn btn-secondary" type="button" data-action="later" >Later</button>
+        </div>
+      </div>
+    <!--/lit-part--></template></hh-shell-update-prompt></figure>
+</div>
+</section>
+</body>
+</html>

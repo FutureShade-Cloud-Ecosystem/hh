@@ -24,7 +24,7 @@
 // Home and End jump; Tab leaves the rail), the original's own collapsed
 // keyboard; expanded, every control keeps its native place in the tab order.
 
-import { css, html, nothing, type TemplateResult as Template } from 'lit';
+import { css, html, nothing, type PropertyValues, type TemplateResult as Template } from 'lit';
 import { HHElement, defineElement } from '@hardscapehouse/design-system/src/base.js';
 import { baseStyles } from '@hardscapehouse/design-system/src/primitives.js';
 import {
@@ -389,6 +389,18 @@ export class ShellRail extends HHElement {
     return index === Math.min(Math.max(this.#rovingIdx, 0), Math.max(0, this.pins.length - 1)) ? '0' : '-1';
   }
 
+  protected override updated(changed: PropertyValues): void {
+    super.updated(changed);
+    // The roving stop is carried in data-tab and applied to the real
+    // tabindex here: the design system's position gate refuses a bound
+    // tabindex, and the attribute keeps the contract visible to the server
+    // render and the tests.
+    for (const row of this.#rows()) {
+      const wanted = Number(row.getAttribute('data-tab') ?? '0');
+      if (row.tabIndex !== wanted) row.tabIndex = wanted;
+    }
+  }
+
   render(): Template {
     return html`
       <nav class="rail" data-collapsed=${this.collapsed ? 'true' : 'false'} aria-label="Pinned surfaces">
@@ -449,7 +461,7 @@ export class ShellRail extends HHElement {
         type="button"
         data-action="rail-select"
         data-key=${pin.key}
-        tabindex=${this.#tabFor(index)}
+        data-tab=${this.#tabFor(index)}
         aria-current=${current ? 'true' : 'false'}
         aria-label=${this.collapsed ? pin.label : nothing}
       >

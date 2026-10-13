@@ -588,7 +588,7 @@ export class ShellHeader extends HHElement {
       <header class="band" role="banner">
         <div class="brand">
           <span class="mark" aria-hidden="true">
-            <svg viewBox="0 0 3000 3000"><path fill="currentColor" d=${MARK_PATH}></path></svg>
+            <svg viewBox="0 0 3000 3000"><path fill="currentColor" d="${MARK_PATH}"></path></svg>
           </span>
           ${this.org !== '' ? html`<span class="org">${this.org}</span>` : nothing}
         </div>
