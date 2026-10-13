@@ -948,8 +948,12 @@ func (r *Repository) ChannelIDBySlug(ctx context.Context, slug string) (string, 
 }
 
 // BranchYardSlug returns the yard channel slug for a branch id (the FR-3 map: order/stock/delivery
-// events for a branch land in that branch's #yard-<name> channel). It resolves the branch's short
-// code from locations and lowercases it, so #yard-trenton / #yard-kingston fall out of the data.
+// events for a branch land in that branch's #yard-<name> channel). The branch's own system yard room
+// names it: the BRANCH kind row for that branch carrying the auto_scope marker (no caller founded
+// room ever has one), so a dealer whose rooms are named after the city (yard-point-loma on a branch
+// coded PLM) routes to them, and the house and payments slugs derived from this one follow. A branch
+// with no such room falls back to its short code from locations, lowercased (a branch coded NWB is
+// yard-nwb), with the two first seeded yards keeping their city names.
 func (r *Repository) BranchYardSlug(ctx context.Context, branchID string) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
@@ -962,8 +966,18 @@ func (r *Repository) BranchYardSlug(ctx context.Context, branchID string) (strin
 		}
 		return "", fmt.Errorf("resolve branch code: %w", err)
 	}
-	// locations.code is TRT/KGN; the seeded yard slugs are yard-trenton/yard-kingston. Map via a
-	// lookup on the branch's city name so the slug matches the seed regardless of code casing.
+	var slug string
+	err = r.pool.QueryRow(ctx, `
+		SELECT slug::text FROM msg_channels
+		WHERE branch_id = $1 AND kind = 'BRANCH' AND auto_scope IS NOT NULL AND is_archived = FALSE
+		  AND slug LIKE 'yard-%'
+		ORDER BY created_at, id LIMIT 1`, branchID).Scan(&slug)
+	if err == nil {
+		return slug, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("resolve branch yard room: %w", err)
+	}
 	switch code {
 	case "trt":
 		return "yard-trenton", nil
