@@ -204,3 +204,46 @@ func TestCardAttempts_Resolve_PairingRefused(t *testing.T) {
 		}
 	}
 }
+
+// The resolve is fenced by the caller's branch reach (the item 3 review, P2-2): a branch scoped manager
+// resolves attempts of its own branches only. Another branch's attempt answers exactly as an unknown id
+// (404, no branch named) and nothing moves; a global role and a manager granted the branch are admitted.
+func TestCardAttempts_Resolve_FencedByBranchReach(t *testing.T) {
+	const otherBranch = "a0a0a0a0-0000-0000-0000-00000000000a"
+	fake := &fakeAttemptStore{
+		byID:          map[string]Attempt{listFixture.ID: listFixture},
+		resolveResult: listFixture,
+		resolveMoved:  true,
+	}
+	sg, mux := newManagerTestMux(t, fake)
+	path := "/api/v1/payments/card-attempts/" + listFixture.ID + "/resolve"
+
+	// A branch manager of another branch: refused as a missing id, nothing moved.
+	sg.SetAuthority(identity.StaffAuthority{RoleID: "branch_manager", Tier: 2, Scope: "branch", Branches: []string{otherBranch}})
+	unknown := doReq(t, sg, mux, http.MethodPost, "/api/v1/payments/card-attempts/00000000-0000-0000-0000-00000000abcd/resolve", resolveBody)
+	rec := doReq(t, sg, mux, http.MethodPost, path, resolveBody)
+	if rec.Code != http.StatusNotFound || rec.Body.String() != unknown.Body.String() {
+		t.Fatalf("another branch's attempt = %d %q, want the unknown id answer %d %q", rec.Code, rec.Body.String(), unknown.Code, unknown.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), listFixture.BranchID) {
+		t.Fatalf("the refusal must not name the branch: %s", rec.Body.String())
+	}
+	if len(fake.resolveCalls) != 0 {
+		t.Fatalf("Resolve calls after a refused branch = %d, want 0", len(fake.resolveCalls))
+	}
+
+	// The same person granted two branches, one of them the attempt's: admitted.
+	sg.SetAuthority(identity.StaffAuthority{RoleID: "branch_manager", Tier: 2, Scope: "branch", Branches: []string{otherBranch, listFixture.BranchID}})
+	if rec := doReq(t, sg, mux, http.MethodPost, path, resolveBody); rec.Code != http.StatusOK {
+		t.Fatalf("manager granted the attempt's branch = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+
+	// A global role is admitted whatever the branch.
+	managerAuth(sg)
+	if rec := doReq(t, sg, mux, http.MethodPost, path, resolveBody); rec.Code != http.StatusOK {
+		t.Fatalf("global role = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if len(fake.resolveCalls) != 2 {
+		t.Fatalf("Resolve calls = %d, want 2 (the two admitted callers)", len(fake.resolveCalls))
+	}
+}
