@@ -43,6 +43,7 @@ import {
 } from "@hardscapehouse/auth";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { capabilitiesFor } from "./capabilities.js";
+import type { SignInMethod } from "./signin-methods.js";
 
 /** What an adapter hands back once a person has proved who they are. */
 export interface TenantAnswer {
@@ -58,8 +59,28 @@ export interface TenantAnswer {
  */
 export interface TenantSignInAdapter {
   signIn(email: string, password: string): Promise<Result<TenantAnswer>>;
+  /** The dealer's allowed methods, for the sign in card. Absent reads as the password way only. */
+  methods?(): readonly SignInMethod[];
+  /** A method the dealer refuses, shown as the card's refusal; absent or null shows none. */
+  refused?(): SignInMethod | null;
+  /** The role labels a demo build lets a person pick instead of proving who they are. Absent means none. */
+  personas?(): readonly string[];
+  /** Any way in other than email and password: an email link, a provider, a demo role. */
+  signInWith?(request: SignInRequest): Promise<Result<TenantAnswer>>;
   /** End whatever the adapter holds. Best effort; the custody is cleared either way. */
   signOut(): Promise<void>;
+}
+
+/** One way in other than email and password: an email link or a provider, or (demo build only) a role label. */
+export type SignInRequest =
+  | { method: "persona"; roleLabel: string }
+  | { method: SignInMethod; email?: string };
+
+/** What the sign in card is told: the dealer's methods, one it refuses, and the demo roles on offer. */
+export interface SignInOptions {
+  methods: readonly SignInMethod[];
+  refused: SignInMethod | null;
+  personas: readonly string[];
 }
 
 /** The signed in person, as the core describes them. */
@@ -74,6 +95,10 @@ export interface TenantProfile {
 export interface TenantSession {
   /** Prove who you are. On success the profile is the core's answer from tenant me. */
   signIn(email: string, password: string): Promise<Result<TenantProfile>>;
+  /** Any way in other than email and password; the profile is the core's answer from tenant me. */
+  signInWith(request: SignInRequest): Promise<Result<TenantProfile>>;
+  /** What the sign in card offers, from the adapter. */
+  options(): SignInOptions;
   signOut(): Promise<void>;
   /** The live bearer and its expiry, or null when signed out or expired. For the transport only. */
   current(): { token: string; expiresAtMs: number } | null;
@@ -99,6 +124,7 @@ export function memoryStorage(): StorageLike {
 const NOT_SIGNED_IN_WORDS = "You are signed out. Sign in again.";
 const CANNOT_OPEN_WORDS = "This account cannot open Pro. Ask the dealer to check your access.";
 const REPLACED_WORDS = "That sign in was replaced by a newer one or by a sign out. Sign in again.";
+const UNAVAILABLE_METHOD_WORDS = "That way of signing in is not open yet. Use another way.";
 const UNAVAILABLE_WORDS = "Pro is not reachable right now. Try again in a moment.";
 
 export interface InMemoryTenantSessionOptions {
@@ -128,6 +154,24 @@ export class InMemoryTenantSession implements TenantSession {
   }
 
   async signIn(email: string, password: string): Promise<Result<TenantProfile>> {
+    return this.#enter(() => this.#adapter.signIn(email, password));
+  }
+
+  async signInWith(request: SignInRequest): Promise<Result<TenantProfile>> {
+    const adapter = this.#adapter;
+    return this.#enter(async () => (adapter.signInWith === undefined ? err<TenantAnswer>(UNAVAILABLE_METHOD_WORDS) : adapter.signInWith(request)));
+  }
+
+  options(): SignInOptions {
+    const adapter = this.#adapter;
+    return {
+      methods: adapter.methods?.() ?? ["futurebuild"],
+      refused: adapter.refused?.() ?? null,
+      personas: adapter.personas?.() ?? [],
+    };
+  }
+
+  async #enter(prove: () => Promise<Result<TenantAnswer>>): Promise<Result<TenantProfile>> {
     // A tenant sign in has no organisation and no platform exchange to ask: the adapter's answer is the
     // session, adopted straight into custody (the auth controller's exchange path is for staff).
     const generation = ++this.#generation;
@@ -135,7 +179,7 @@ export class InMemoryTenantSession implements TenantSession {
       this.#profile = null;
       this.#notify();
     }
-    const signedIn = await this.#adapter.signIn(email, password);
+    const signedIn = await prove();
     if (generation !== this.#generation) return err(REPLACED_WORDS);
     if (!signedIn.ok) return signedIn.status === undefined ? err(signedIn.error) : err(signedIn.error, signedIn.status);
     const held = signedIn.value;
