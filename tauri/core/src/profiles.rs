@@ -3,9 +3,9 @@
 //! micro app set, permissions, brand, the offline scope sets, window defaults
 //! and the update channel.
 //!
-//! The Field profile is complete. Work and Pro are declared skeletons:
-//! identifier, product name, apps and channel, nothing else, until their own
-//! items land (their crates are still READMEs).
+//! The Field and Work profiles are complete. Pro is a declared skeleton:
+//! identifier, product name, apps and channel, nothing else, until its own
+//! item lands (its crate is still a README).
 //!
 //! The micro apps and their offline scope sets are never typed by hand twice:
 //! `scripts/generate-field-profiles.ts` derives them from manifest.yaml into
@@ -179,17 +179,22 @@ pub fn field() -> &'static Profile {
     })
 }
 
-/// The Work profile, declared skeleton (its crate is still a README).
-pub fn work() -> &'static Skeleton {
-    static WORK: OnceLock<Skeleton> = OnceLock::new();
+/// The Work profile, complete: identifier, product name, brand, channel, the
+/// manifest's hh-work micro apps with their offline blocks, NO camera and NO
+/// fine location (those are Field only, plan B.3) and desktop and tablet
+/// window defaults (a tablet sizes the window itself).
+pub fn work() -> &'static Profile {
+    static WORK: OnceLock<Profile> = OnceLock::new();
     WORK.get_or_init(|| {
         let file = parse(WORK_JSON, "hh-work");
-        Skeleton {
+        Profile {
             identifier: "ai.futurebuild.hh.work",
             product_name: "HH Work",
             brand: "fb-tokens",
             channel: UpdateChannel::Work,
             apps: file.apps,
+            permissions: Permissions { camera: false, fine_location: false },
+            window: WindowDefaults { title: "HH Work", width: 1280.0, height: 800.0 },
         }
     })
 }
