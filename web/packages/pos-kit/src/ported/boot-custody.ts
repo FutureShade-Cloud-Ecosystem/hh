@@ -192,7 +192,7 @@ export interface Custody {
   /**
    * An app's own start failed for a reason that is not the person's (the branch read met a 5xx, a throttle,
    * no network): recover again after the backoff (15 s, doubling to 120 s), reporting through onOutcome. The
-   * session is not touched, so nothing is deleted at the console. Demo mode: nothing.
+   * session is not touched, so the partner stays signed in at FB Console. Demo mode: nothing.
    */
   retry(appId: AppId, onOutcome: (outcome: AppStart) => void): void;
   /** Sign out for good: end the session, forget the persona id, stop the loops, then go to the front door. True when it navigated. */
@@ -308,7 +308,7 @@ export function bootCustody(config: RuntimeConfig | null, deps: BootDeps): Custo
       if (testersCopy) {
         // After a persona entry the front door mirrored the persona's profile; resuming over it would let the
         // controller's own refresh (armed by a transient) see the partner answer for someone else and sign out,
-        // which deletes the partner's console session. The profile is display only: forget it, keep the console.
+        // which ends the partner at FB Console. The profile is display only: forget it, keep the session.
         if (deps.sessions.profile?.userId.startsWith("persona:")) deps.sessions.clear();
         const partner = await controller.resume();
         if (!partner.ok) {
