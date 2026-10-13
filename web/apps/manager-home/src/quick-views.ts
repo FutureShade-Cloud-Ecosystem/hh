@@ -101,7 +101,7 @@ export interface QuickAdminModel {
  *
  * THE GATE IS THE SERVER'S, and this app invents none of its own: the view is
  * reachable from every landing, and a caller the core does not make an admin
- * gets the shared Forbidden body, shown here verbatim. An action's draft is
+ * gets the shared Forbidden body, shown here as words naming who may configure. An action's draft is
  * local until Save; a mis-click costs nothing.
  */
 export function renderQuickAdmin(model: QuickAdminModel): TemplateResult {

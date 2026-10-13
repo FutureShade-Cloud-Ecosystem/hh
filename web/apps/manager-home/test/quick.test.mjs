@@ -194,12 +194,17 @@ test("every job shape renders as the words a person reads, never a raw profile k
   assert.equal(profileWord("night"), "night");
 });
 
-test("the config view's refusal is the core's own words, never a paraphrase", () => {
+test("the config view's bare Forbidden body becomes a sentence naming who may configure, a core sentence passes through", () => {
   // errorWords would turn the gate's one word body into "Try again in a
-  // moment."; the admin view must show the server's sentence verbatim.
-  assert.equal(configRefusalWords("Forbidden"), "Forbidden");
-  assert.equal(configRefusalWords("unknown quick action"), "unknown quick action");
-  assert.equal(configRefusalWords(""), "");
+  // moment."; the admin view names who configures instead, and shows any
+  // sentence the core wrote verbatim.
+  assert.equal(
+    configRefusalWords("Forbidden", 403),
+    "You may not change the quick actions. Registry configuration belongs to the tier 1 roles: the general manager, the financial controller, and the dealer administrator.",
+  );
+  assert.equal(configRefusalWords("unknown quick action", 404), "unknown quick action");
+  assert.equal(configRefusalWords("a sentence the core wrote", 403), "a sentence the core wrote");
+  assert.equal(configRefusalWords("", 500), "");
 });
 
 test("the config projection whitelists each action's admin view, and nothing else rides through", () => {

@@ -56,13 +56,15 @@ test("the landing's view links carry the config view", async ({ page }) => {
   await expect(links.filter({ hasText: "Quick actions" })).toBeVisible();
 });
 
-test("the config view shows the core's refusal verbatim, never a paraphrase", async ({ page }) => {
+test("the config view names who may configure when the core's one word wall answers", async ({ page }) => {
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   await page.locator(".view-link", { hasText: "Quick actions" }).click();
   const refusal = page.locator("[data-test='quick-refusal']");
-  await expect(refusal).toHaveText("Forbidden");
-  // No row, no try-again words dressed up as a wall: the core's own body, alone.
+  await expect(refusal).toHaveText(
+    "You may not change the quick actions. Registry configuration belongs to the tier 1 roles: the general manager, the financial controller, and the dealer administrator.",
+  );
+  // No row, no try-again words dressed up as a wall.
   await expect(page.locator("[data-quick]")).toHaveCount(0);
 });
 

@@ -466,7 +466,7 @@ export class ManagerHomeApp extends HHElement {
   }
 
   // The admin's config view. The gate is the server's: a caller the core does
-  // not make an admin gets the shared Forbidden body, shown verbatim in the
+  // not make an admin gets the shared Forbidden body, shown as words naming who configures in the
   // view (configRefusalWords), never paraphrased into a softer wall.
   async #loadQuickAdmin(): Promise<void> {
     this.#quickAdmin = { ...this.#quickAdmin, phase: "loading", error: "", refusal: "" };
@@ -484,7 +484,7 @@ export class ManagerHomeApp extends HHElement {
         busyId: "",
       };
     } else {
-      const refusal = result.status === 403 ? configRefusalWords(result.error) : "";
+      const refusal = result.status === 403 ? configRefusalWords(result.error, result.status) : "";
       this.#quickAdmin = {
         ...this.#quickAdmin,
         phase: refusal !== "" ? "refused" : "error",
@@ -532,7 +532,7 @@ export class ManagerHomeApp extends HHElement {
       this.#quickAdmin = {
         ...this.#quickAdmin,
         busyId: "",
-        error: `The change did not go through. ${configRefusalWords(result.error)}`,
+        error: `The change did not go through. ${configRefusalWords(result.error, result.status)}`,
       };
     }
     this.requestUpdate();

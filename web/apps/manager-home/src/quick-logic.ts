@@ -19,6 +19,7 @@
 // itself: an action navigates, and the destination owns whatever happens next.
 import { DEFAULTS } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import type { QuickAction } from "./quick-api.js";
+import { isForbiddenBody, VENDOR_ADMIN_WORDS } from "./warranty-logic.js";
 
 /** The known intents. Exported so a destination names the same string the catalog does. */
 export const INTENT_POS_NEW_TICKET = "pos.new_ticket";
@@ -114,11 +115,15 @@ export function profileWord(profile: string): string {
 }
 
 /**
- * The admin view's refusal, VERBATIM. The core decides who configures; when
- * it refuses, the screen shows its own sentence (the shared Forbidden body is
- * exactly one word), never a paraphrase and never a softer wording: an admin
- * reading the wall should be able to paste what it said.
+ * The admin view's refusal. The core decides who configures; when it refuses
+ * with a sentence of its own, the screen shows that sentence VERBATIM, never a
+ * paraphrase. Only the shared Forbidden body, which is exactly one word and
+ * says nothing, is turned into words naming who may configure (the warranty
+ * desk's words and test), so no manager meets a bare wall.
  */
-export function configRefusalWords(error: string): string {
+export function configRefusalWords(error: string, status: number | undefined): string {
+  if (status === 403 && isForbiddenBody(error)) {
+    return `You may not change the quick actions. ${VENDOR_ADMIN_WORDS}`;
+  }
   return error;
 }
