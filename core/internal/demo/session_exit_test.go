@@ -96,7 +96,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, twelve flows, the contract's three
+	// The flow listing: the closed table, thirteen flows, the contract's three
 	// fields, the labels the entry page renders. The yard-manager flow
 	// (Manager Home's first per-role landing) shows on the front door's
 	// picker, never on the till's own entry.
@@ -114,8 +114,8 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if err := json.Unmarshal([]byte(body(flowsRsp)), &listing); err != nil {
 		t.Fatalf("the flows body does not decode: %v", err)
 	}
-	if len(listing.Flows) != 12 {
-		t.Fatalf("the listing carries %d flows, want the closed table's twelve", len(listing.Flows))
+	if len(listing.Flows) != 13 {
+		t.Fatalf("the listing carries %d flows, want the closed table's thirteen", len(listing.Flows))
 	}
 	for i, want := range []struct{ flow, role, label string }{
 		{"sales", "inside_sales", "Sales"},
@@ -130,6 +130,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		{"hr", "hr", "HR"},
 		{"branch-manager", "branch_manager", "Branch Manager"},
 		{"logistics-manager", "logistics_manager", "Logistics Manager"},
+		{"outside-sales", "outside_sales", "Outside Sales"},
 	} {
 		if listing.Flows[i].Flow != want.flow || listing.Flows[i].RoleCode != want.role ||
 			listing.Flows[i].Label != want.label {

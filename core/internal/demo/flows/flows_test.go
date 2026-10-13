@@ -12,8 +12,8 @@ import "testing"
 // facts the other lanes share.
 func TestTableIsTheClosedSet(t *testing.T) {
 	all := All()
-	if len(all) != 12 {
-		t.Fatalf("table holds %d flows, want the closed set of twelve", len(all))
+	if len(all) != 13 {
+		t.Fatalf("table holds %d flows, want the closed set of thirteen", len(all))
 	}
 	if all[0].Flow != "sales" || all[1].Flow != "sales-manager" ||
 		all[2].Flow != "yard-manager" || all[3].Flow != "yard-team" ||
@@ -23,17 +23,18 @@ func TestTableIsTheClosedSet(t *testing.T) {
 		all[8].Flow != "general-manager" ||
 		all[9].Flow != "hr" ||
 		all[10].Flow != "branch-manager" ||
-		all[11].Flow != "logistics-manager" {
-		t.Fatalf("flow order drifted: %q, %q, %q, %q, %q, %q, %q, %q, %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow, all[4].Flow, all[5].Flow, all[6].Flow, all[7].Flow, all[8].Flow, all[9].Flow, all[10].Flow, all[11].Flow)
+		all[11].Flow != "logistics-manager" ||
+		all[12].Flow != "outside-sales" {
+		t.Fatalf("flow order drifted: %q, %q, %q, %q, %q, %q, %q, %q, %q, %q, %q, %q, %q", all[0].Flow, all[1].Flow, all[2].Flow, all[3].Flow, all[4].Flow, all[5].Flow, all[6].Flow, all[7].Flow, all[8].Flow, all[9].Flow, all[10].Flow, all[11].Flow, all[12].Flow)
 	}
 	for _, a := range all {
 		if a.PlatformUserID == "" || a.Email == "" || a.DisplayName == "" || a.Label == "" || a.Role == "" {
 			t.Fatalf("flow %q carries an empty fact: %+v", a.Flow, a)
 		}
 		switch a.Role {
-		case "inside_sales", "sales_manager", "yard_manager", "yard_team", "driver", "payables_receivables", "procurement_manager", "financial_controller", "general_manager", "hr", "branch_manager", "logistics_manager":
+		case "inside_sales", "sales_manager", "yard_manager", "yard_team", "driver", "payables_receivables", "procurement_manager", "financial_controller", "general_manager", "hr", "branch_manager", "logistics_manager", "outside_sales":
 		default:
-			t.Fatalf("flow %q holds role %q, want one of the table's twelve staff roles", a.Flow, a.Role)
+			t.Fatalf("flow %q holds role %q, want one of the table's thirteen staff roles", a.Flow, a.Role)
 		}
 	}
 }
@@ -91,6 +92,10 @@ func TestLookups(t *testing.T) {
 	a, ok = Get("logistics-manager")
 	if !ok || a.Role != "logistics_manager" || a.Label != "Logistics Manager" || a.PlatformUserID != "de5b2000-0000-4000-9000-000000000004" {
 		t.Fatalf("Get(logistics-manager) = %+v %v", a, ok)
+	}
+	a, ok = Get("outside-sales")
+	if !ok || a.Role != "outside_sales" || a.Label != "Outside Sales" || a.PlatformUserID != "de5b2000-0000-4000-9000-000000000005" {
+		t.Fatalf("Get(outside-sales) = %+v %v", a, ok)
 	}
 	if _, ok := Get("yard-pick"); ok {
 		t.Fatal("a flow outside the table answered")

@@ -197,6 +197,17 @@ var accounts = map[string]Account{
 		Label:          "Logistics Manager",
 		Role:           "logistics_manager",
 	},
+	// Outside Sales, the last of the coming roles cycle's logins (branch
+	// scoped, tier three): the field seller who works quotes at the Quote
+	// Desk and holds no till.
+	"outside-sales": {
+		Flow:           "outside-sales",
+		PlatformUserID: "de5b2000-0000-4000-9000-000000000005",
+		Email:          "outside.sales@" + ReservedDomain,
+		DisplayName:    "Outside sales (demo)",
+		Label:          "Outside Sales",
+		Role:           "outside_sales",
+	},
 }
 
 // Get returns the account one flow name stands for. The second return is
@@ -223,6 +234,7 @@ func All() []Account {
 		accounts["hr"],
 		accounts["branch-manager"],
 		accounts["logistics-manager"],
+		accounts["outside-sales"],
 	}
 }
 
