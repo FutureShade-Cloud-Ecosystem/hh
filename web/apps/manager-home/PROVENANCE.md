@@ -17,6 +17,32 @@ the header of each file below.
 | Needs-you queue shape (rows, total, worst) | `app/src/home-bento-logic.ts` (`NeedsQueue`) | `src/manager-api.ts` | Whitelist projection over the generated client |
 | The approvals surface's shape | `app/src/pending-approvals.ts` | `renderApprovals` in `src/views.ts` | By-kind tabs over the core's `kind` filter; decide actions; refusal words naming who decides |
 | API call set | `app/src/home-bento-logic.ts` (the widget reads) | `src/manager-api.ts` | Over the generated client; every read goes through a whitelist projection |
+| The warranty desk's call set and wire vocabulary (phases, outcomes, registry enums, recovery buckets, money paths, SLA states) | `app/src/warranty-api.ts` | `src/warranty-api.ts` | Rebuilt on the generated client's `staffWarranty` operations; every answer goes through a whitelist projection; money stays integer cents end to end |
+| The Kanban board (columns in the confirmed phase order, the exits last; cards open the claim) and the capture sheet with the back-date field (FR-2, FR-9) | `app/src/warranty-board.ts` | `renderBoardTab` and `renderCaptureForm` in `src/warranty-views.ts`, `#capture` in `src/warranty-desk.ts` | The branch is the caller's own resolved branch, never a hardcoded list; the vendor pick list carries words and maps back by row; capture goes to the server in one call and opens the answer's detail |
+| The claims list with the phase filter | `app/src/warranty-api.ts` (`listClaims`) | `renderClaimsTab` in `src/warranty-views.ts` | A tab of its own (the original exported the call without a screen); filter chips carry the phase words |
+| The claim detail: lifecycle moves (the transition map), the per-phase checklist, the evidence-ref seam, the audit-spine timeline | `app/src/warranty-claim.ts` | `renderClaimDetail` and its boxes in `src/warranty-views.ts`, `#advance`, `#tick`, `#attachEvidence` in `src/warranty-desk.ts` | Checkbox rows are gate-clean buttons; the tick and the move re-read the server's answer; the gate refusal is the core's own sentence naming the missing items |
+| Manager settlement recording (FR-5) and the per-outcome money paths (ERP:warranty-p2) | `app/src/warranty-claim.ts` (`onSettle`), `app/src/warranty-api.ts` (`SettlementResult`, `claimPostings`, `PATH_STATUS_LABEL`, `MONEY_PATH_LABEL`) | `settlementBox`, `postingsBox` in `src/warranty-views.ts`, `#settle` in `src/warranty-desk.ts` | Settle goes to the server and never queues; the answer's figures are what the claim then shows; the sheet is offered only from the decision phase on, in the core's own sequence |
+| The vendor warranty registry with the explicit UNDOCUMENTED state (FR-1, the Oaks case) and the product overrides | `app/src/warranty-registry.ts`, `app/src/warranty-api.ts` (`upsertVendorProfile`, `VENDOR_STATUS_LABEL`, `CLAIM_CHANNEL_LABEL`) | `renderVendorsTab` in `src/warranty-views.ts`, `#saveVendor`, `#addOverride`, `#expandVendor` in `src/warranty-desk.ts` | The expansion reads the whole profile through the single-vendor route; the write is offered to everyone and the tier 1 wall is the walled words, never a client-side gate |
+| The recovery worklist: outstanding is the server's subtraction, aging from the accrual, the chase log with the five actions | `app/src/warranty-recovery.ts` | `renderRecoveryTab` in `src/warranty-views.ts`, `#logChase`, `#loadChaseLog` in `src/warranty-desk.ts` | A receipt re-reads the board rather than patching it; an over-receipt is the server's refusal in its own words |
+| The service levels: timers, the durable breach alerts with their notification status, the configured targets, the sweep | `app/src/warranty-sla.ts` | `renderSlaTab` in `src/warranty-views.ts`, `#sweep`, `#ack` in `src/warranty-desk.ts` | The targets section reads the targets route (the board's own target rows are dropped at the projection door); acknowledging closes the alert |
+| The FR-7 reports: funnel, by manufacturer with win/loss, time to settlement, exposure by vendor, open claims by age | `app/src/warranty-reports.ts` | `renderReportsTab` in `src/warranty-views.ts` | The funnel bars reuse the landing's quantized width classes and the landing's data ink, never the action gold |
+| The board tabs (Board, Claims, Vendor registry, Recovery, Service levels, Reports) and the claim overlay | `app/src/warranty-surface.ts` | `renderWarranty` in `src/warranty-views.ts`, `WarrantyDesk` in `src/warranty-desk.ts` | One Warranty view kind on the landing, reachable for every staff role (the core's reads are RequireStaff); per-call refusals carry the core's words |
+
+What has no source in the original app and is new here, each from its named
+reference:
+
+- The walled refusal words for the tier gates (who settles, who sweeps, who
+  configures the registry, who chases): the guards' tier lists
+  (identity/guards.go, the role catalog 0215) as the approvals view words its
+  walls.
+- The public intake's photos on the claim detail: the original's public form
+  predates the photos seam. The list and the bytes come from the intake photo
+  routes; an object address cannot ride a template binding, so the picture is
+  hydrated after render, as the drive-run app's drop thumbs are.
+- The assign-to-vendor sheet: the original exported the assign call without a
+  screen. The owner rides through unchanged; only the vendor moves.
+- The public intake form itself (`warrantySubmitPublicIntake`) is the public
+  desk's item, not this app's.
 
 What has no source in the original app and is new here, each from its named
 reference:
