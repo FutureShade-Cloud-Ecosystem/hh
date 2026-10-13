@@ -448,6 +448,39 @@ export const dealerStyles = css`
     color: var(--hh-text);
   }
 
+  /* -- the role by surface grid -------------------------------------------------- */
+
+  /* The grid is an eleven column table (the job shapes' own column plus the
+     ten surfaces), so the wrap scrolls rather than squeezing a column into
+     nothing. A cell button keeps its words short: the count by kind, or the
+     registry default. */
+  .cell-btn {
+    white-space: nowrap;
+  }
+  tbody tr th[scope="row"] {
+    font-weight: 400;
+  }
+
+  /* The editor's field rows: the add row's fields and its buttons ride one
+     line while the width holds, and wrap on a narrow card. */
+  .editor-actions {
+    display: flex;
+    align-items: end;
+    gap: var(--hh-s-12);
+    flex-wrap: wrap;
+  }
+  .editor-actions .field {
+    min-width: 140px;
+  }
+  .editor-actions .field-label {
+    display: block;
+  }
+  .section-title {
+    font-size: var(--hh-s-16);
+    font-weight: 650;
+    margin: 0;
+  }
+
   /* -- the way in (the demo door) ------------------------------------------------------------------ */
 
   .stage {
