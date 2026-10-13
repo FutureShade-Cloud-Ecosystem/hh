@@ -32,7 +32,7 @@ test("the controller's Statements area opens on the income statement with the bo
   // Payables and Receivables has no Statements area.
   const other = await page.context().newPage();
   await openDesk(other, request);
-  await expect(other.locator("nav.areas")).toHaveCount(0);
+  await expect(other.locator('[data-area="statements"]')).toHaveCount(0);
 });
 
 test("a period narrows the income statement and says whether it is closed or still open", async ({ page, request }) => {

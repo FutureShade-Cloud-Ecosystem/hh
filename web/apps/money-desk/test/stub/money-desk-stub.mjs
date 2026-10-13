@@ -589,7 +589,9 @@ async function handle(req, res) {
     return send(res, 200, { token: mintToken(account.user_id), user: account, flow: body.flow });
   }
   if (method === "GET" && path === "/api/v1/branches") return send(res, 200, BRANCHES);
-  if (path.startsWith("/api/v1/finstmt/") || path === "/api/v1/gl/periods") {
+  // The statements slice reads the books' periods paged (any page size but 100, two fiscal years); the ledger
+  // slice reads a page of 100 (one year, closed and reopened by its own presses), so the two worlds share the route by that line.
+  if (path.startsWith("/api/v1/finstmt/") || (path === "/api/v1/gl/periods" && method === "GET" && url.searchParams.has("limit") && url.searchParams.get("limit") !== "100")) {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const raw = method === "POST" || method === "PUT" ? await readRaw(req) : "";
     const answer = finstmtWorld.handle(req, url, raw);

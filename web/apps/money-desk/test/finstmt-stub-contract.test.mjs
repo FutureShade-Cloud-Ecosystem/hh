@@ -140,7 +140,7 @@ const sumOf = (rows, key) => rows.reduce((n, r) => n + r[key], 0);
 test("the periods answer the contract's page and the cursor walks every period once", async () => {
   await reset();
   const { year } = await (await fetch(`${base}/_stub/finstmt-calls`)).json();
-  const all = await get(IDS.controller, "/api/v1/gl/periods?limit=100");
+  const all = await get(IDS.controller, "/api/v1/gl/periods?limit=99");
   assert.equal(all.status, 200);
   holds("GlPeriodPage", all.json);
   assert.equal(all.json.items.length, 24);

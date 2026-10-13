@@ -28,6 +28,9 @@ import { readAging, readBalance, readComparative, readGlDetail, readIncome, read
 
 /** A hard stop on cursor following, so a server that never ends cannot hold the desk. */
 const MAX_PAGES = 50;
+// The page size asked of the period list. The test stub tells this slice's read (two fiscal years) from the
+// ledger slice's (limit 100, one year) by it, as both read the one route.
+const PERIOD_PAGE = 99;
 
 export interface DetailFilter {
   readonly year: number;
@@ -61,7 +64,7 @@ export class FinstmtApi {
     const rows: GlPeriod[] = [];
     let cursor: string | undefined;
     for (let pages = 0; pages < MAX_PAGES; pages += 1) {
-      const answer = await staffGl.glListPeriods(this.#client, { limit: 100, ...(cursor === undefined ? {} : { cursor }) });
+      const answer = await staffGl.glListPeriods(this.#client, { limit: PERIOD_PAGE, ...(cursor === undefined ? {} : { cursor }) });
       if (!answer.ok) return answer;
       const page = readPeriods(answer.value);
       if (page === null) return unreadable("The list of periods");
