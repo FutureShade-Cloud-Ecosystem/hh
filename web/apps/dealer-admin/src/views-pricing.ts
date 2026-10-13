@@ -34,6 +34,8 @@ import {
   derivationWord,
   importResultWords,
   outcomeWord,
+  auditActionWord,
+  deltaWords,
   lowMarginEmptyWords,
   lowMarginWords,
   priceFileCountsWords,
@@ -62,7 +64,8 @@ import {
   validityWords,
   PRICING_TABS,
 } from "./pricing-logic.js";
-import type { BreakRow, ClearanceRow, LowMarginScanRow as LowMarginScanRowApi, OverrideRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
+import { whenWords } from "./audit-logic.js";
+import type { BreakRow, ChangeLogRow, ClearanceRow, LowMarginScanRow as LowMarginScanRowApi, OverrideRow, PricingAuditRow, PromotionRow, RebateRow, RuleRow, UomConversionRow } from "./pricing-api.js";
 type BatchLineRow = Parameters<typeof batchLineWords>[0];
 type PriceFileModel = PricingModel["priceFile"];
 type LowMarginScanRow = LowMarginScanRowApi;
@@ -107,6 +110,8 @@ function renderTab(model: PricingModel): TemplateResult {
   if (model.tab === "batches") return renderBatches(model);
   if (model.tab === "pricefile") return renderPriceFile(model);
   if (model.tab === "lowmargin") return renderLowMargin(model);
+  if (model.tab === "audit") return renderPricingAudit(model);
+  if (model.tab === "changelog") return renderChangeLog(model);
   const tab = PRICING_TABS.find((t) => t.id === model.tab);
   return html`<p class="notice-line">${pricingEmptyWords(tab?.title ?? model.tab)}</p>`;
 }
@@ -2332,5 +2337,162 @@ function renderLowMarginProbe(model: PricingModel): TemplateResult {
         </button>
       </div>
     </section>
+  `;
+}
+
+// -- the pricing audit tab ---------------------------------------------------------------------------
+
+function auditEntityWords(row: PricingAuditRow): string {
+  return `${row.entity_type} / ${row.entity_id.slice(0, 8)}`;
+}
+
+export function renderPricingAudit(model: PricingModel): TemplateResult {
+  const m = model.audit;
+  return html`
+    ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-audit-loading">Loading the pricing log…</p>` : nothing}
+    ${m.phase === "error" || m.phase === "refused"
+      ? html`<p class="error-line" data-test="pr-audit-error">${m.error}</p>
+          <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-audit-reload">Try again</button></div>`
+      : nothing}
+    ${m.phase === "ready"
+      ? html`
+          <section class="card">
+            <div class="card-head">
+              <h2 class="card-title">Pricing log</h2>
+              <span class="count" data-test="pr-audit-count">${m.rows.length} ${m.rows.length === 1 ? "entry" : "entries"}</span>
+            </div>
+            <div class="filters" role="group" aria-label="Log filters">
+              <select class="select" aria-label="Entity" data-field="pr-aud-entity">
+                <option value="">All entities</option>
+                <option value="pricing_rule">Pricing rules</option>
+                <option value="category_policy">Category policies</option>
+                <option value="customer_override">Customer overrides</option>
+                <option value="margin_enforcement">Margin enforcement</option>
+              </select>
+              <select class="select" aria-label="Action" data-field="pr-aud-action">
+                <option value="">All actions</option>
+                <option value="CREATE">${auditActionWord("CREATE")}</option>
+                <option value="UPDATE">${auditActionWord("UPDATE")}</option>
+                <option value="DELETE">${auditActionWord("DELETE")}</option>
+                <option value="BYPASS">${auditActionWord("BYPASS")}</option>
+              </select>
+              <button type="button" class="btn btn-secondary" data-action="pr-audit-apply">Apply</button>
+              <button type="button" class="btn btn-secondary" data-action="pr-audit-clear">Clear</button>
+            </div>
+            ${m.rows.length === 0
+              ? html`<p class="notice-line" data-test="pr-audit-empty">No pricing log entries match. The log is append only: the filters are narrower than the record, not the actions undone.</p>`
+              : html`
+                  <div class="tablewrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th scope="col">When</th>
+                          <th scope="col">Entity</th>
+                          <th scope="col">Action</th>
+                          <th scope="col">Field</th>
+                          <th scope="col">Change</th>
+                          <th scope="col">Actor</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${m.rows.map((row) => renderPricingAuditRow(row))}
+                      </tbody>
+                    </table>
+                  </div>
+                `}
+          </section>
+        `
+      : nothing}
+  `;
+}
+
+function renderPricingAuditRow(row: PricingAuditRow): TemplateResult {
+  const bypass = row.action === "BYPASS";
+  const delta = deltaWords(row.old_value === "" ? null : row.old_value, row.new_value === "" ? null : row.new_value);
+  return html`
+    <tr data-audit=${row.id}>
+      <td class="mono dim">${whenWords(row.created_at)}</td>
+      <td class="mono">${auditEntityWords(row)}</td>
+      <td><span class="chip ${bypass ? "chip-danger" : ""}">${auditActionWord(row.action)}</span></td>
+      <td class="dim">${row.field_name === "" ? "-" : row.field_name}</td>
+      <td>${delta === "" ? html`<span class="dim">-</span>` : delta}</td>
+      <td class="mono dim">${row.user_id === "" ? "the engine" : row.user_id.slice(0, 8)}</td>
+    </tr>
+    ${bypass && row.bypass_reason !== ""
+      ? html`<tr data-audit-reason=${row.id}><td colspan="6"><span class="chip chip-danger">bypass: ${row.bypass_reason}</span></td></tr>`
+      : nothing}
+  `;
+}
+
+// -- the change log tab ---------------------------------------------------------------------------------
+
+function changeFieldWord(field: string): string {
+  if (field === "cost_cents") return "cost";
+  if (field === "retail_cents") return "retail";
+  return field;
+}
+
+export function renderChangeLog(model: PricingModel): TemplateResult {
+  const m = model.changeLog;
+  return html`
+    ${m.phase === "loading" ? html`<p class="notice-line" data-test="pr-log-loading">Loading the change log…</p>` : nothing}
+    ${m.phase === "error" || m.phase === "refused"
+      ? html`<p class="error-line" data-test="pr-log-error">${m.error}</p>
+          <div class="row-actions"><button type="button" class="btn btn-secondary" data-action="pr-log-reload">Try again</button></div>`
+      : nothing}
+    ${m.phase === "ready"
+      ? html`
+          <section class="card">
+            <div class="card-head">
+              <h2 class="card-title">Change log</h2>
+              <span class="count" data-test="pr-log-count">${m.rows.length} ${m.rows.length === 1 ? "change" : "changes"}</span>
+            </div>
+            <div class="filters" role="group" aria-label="Change log filters">
+              <input class="text-field" type="text" placeholder="Product id" aria-label="Product id" data-field="pr-log-product" />
+              <input class="text-field" type="text" placeholder="Batch id" aria-label="Batch id" data-field="pr-log-batch" />
+              <button type="button" class="btn btn-secondary" data-action="pr-log-apply">Apply</button>
+              <button type="button" class="btn btn-secondary" data-action="pr-log-clear">Clear</button>
+            </div>
+            ${m.rows.length === 0
+              ? html`<p class="notice-line" data-test="pr-log-empty">No changes logged yet. A cost or a retail that moved through a batch lands here: who moved it, from what to what.</p>`
+              : html`
+                  <div class="tablewrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th scope="col">When</th>
+                          <th scope="col">Product</th>
+                          <th scope="col">Field</th>
+                          <th scope="col">From</th>
+                          <th scope="col">To</th>
+                          <th scope="col">Effective</th>
+                          <th scope="col">Batch</th>
+                          <th scope="col">By</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${m.rows.map((row) => renderChangeLogRow(row))}
+                      </tbody>
+                    </table>
+                  </div>
+                `}
+          </section>
+        `
+      : nothing}
+  `;
+}
+
+function renderChangeLogRow(row: ChangeLogRow): TemplateResult {
+  return html`
+    <tr data-log=${row.id}>
+      <td class="mono dim">${whenWords(row.created_at)}</td>
+      <td class="mono">${row.product_id === "" ? "-" : row.product_id.slice(0, 8)}</td>
+      <td>${changeFieldWord(row.field)}</td>
+      <td class="num">${moneyWords(row.before_cents)}</td>
+      <td class="num">${moneyWords(row.after_cents)}</td>
+      <td class="mono dim">${row.effective_date === "" ? "-" : row.effective_date.slice(0, 10)}</td>
+      <td class="mono dim">${row.batch_id === "" ? "-" : row.batch_id.slice(0, 8)}</td>
+      <td class="mono dim">${row.changed_by === "" ? "-" : row.changed_by.slice(0, 8)}</td>
+    </tr>
   `;
 }

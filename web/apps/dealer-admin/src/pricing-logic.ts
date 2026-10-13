@@ -826,6 +826,25 @@ export function lowMarginWords(line: {
   return parts.join(", ");
 }
 
+// -- the pricing audit tab --------------------------------------------------------------------------------
+
+/** The pricing audit's empty words. */
+export function pricingAuditEmptyWords(): string {
+  return "No pricing log entries yet. Every pricing write lands here, and so does every bypass: the log is how a quiet price change stays findable.";
+}
+
+/**
+ * A log row's change as the delta reads: what a field went from and to. The
+ * server carries the values as text; a null old is a set, a null new is a
+ * clearing, and both nulls say nothing rather than an arrow to nowhere.
+ */
+export function deltaWords(oldValue: string | null, newValue: string | null): string {
+  if (oldValue !== null && newValue !== null) return `${oldValue} to ${newValue}`;
+  if (oldValue === null && newValue !== null) return `set to ${newValue}`;
+  if (oldValue !== null && newValue === null) return "cleared";
+  return "";
+}
+
 /** An import's answer, told from the server's own counts. */
 export function importResultWords(result: {
   readonly total_lines: number;

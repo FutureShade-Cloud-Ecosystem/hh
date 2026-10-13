@@ -59,6 +59,8 @@ import type {
   PriceFileVendorRow,
   LowMarginEntry,
   LowMarginScanRow,
+  ChangeLogRow,
+  PricingAuditRow,
 } from "./pricing-api.js";
 import type { PricingOverrideWrite, PricingRulePatch, PricingRuleWrite } from "@hardscapehouse/api-client";
 
@@ -119,6 +121,8 @@ export interface PricingDoor {
   priceFileRuns(): Promise<{ ok: true; value: readonly { readonly id: string; readonly batch_no: string; readonly source_name: string; readonly source_format: string; readonly created_at: string; readonly counts: { readonly rows: number; readonly changed: number; readonly unknown: number }; readonly imported_by_name: string }[] } | { ok: false; error: string; status?: number }>;
   lowMarginScan(query?: { from?: string; to?: string; doc_type?: string; cleared_only?: boolean; sort?: string }): Promise<{ ok: true; value: readonly LowMarginScanRow[] } | { ok: false; error: string; status?: number }>;
   lowMarginReport(lines: readonly { customer_id: string; customer_type: string; product_id: string; category_id: string; branch_id: string; qty_entered: number; uom_entered: string; cost_cents: number }[]): Promise<{ ok: true; value: readonly LowMarginEntry[] } | { ok: false; error: string; status?: number }>;
+  pricingAudit(query?: { entity_type?: string; action?: string }): Promise<{ ok: true; value: readonly PricingAuditRow[] } | { ok: false; error: string; status?: number }>;
+  changeLog(query?: { product_id?: string; batch_id?: string }): Promise<{ ok: true; value: readonly ChangeLogRow[] } | { ok: false; error: string; status?: number }>;
   previewFloor(body: PricingFloorPreviewRequest): Promise<
     { ok: true; value: FloorPreview } | { ok: false; error: string; status?: number }
   >;
@@ -441,6 +445,20 @@ export interface LowMarginProbe {
   readonly entries: readonly LowMarginEntry[];
 }
 
+export interface PricingAuditModel {
+  readonly phase: LoadPhase;
+  readonly rows: readonly PricingAuditRow[];
+  readonly filters: { readonly entityType: string; readonly action: string };
+  readonly error: string;
+}
+
+export interface ChangeLogModel {
+  readonly phase: LoadPhase;
+  readonly rows: readonly ChangeLogRow[];
+  readonly filters: { readonly productId: string; readonly batchId: string };
+  readonly error: string;
+}
+
 export interface LowMarginModel {
   readonly phase: LoadPhase;
   readonly rows: readonly LowMarginScanRow[];
@@ -542,6 +560,8 @@ export interface PricingModel {
   readonly batches: BatchesModel;
   readonly priceFile: PriceFileModel;
   readonly lowMargin: LowMarginModel;
+  readonly audit: PricingAuditModel;
+  readonly changeLog: ChangeLogModel;
 }
 
 function emptyMargin(): MarginModel {
@@ -634,6 +654,24 @@ function emptyPriceFile(): PriceFileModel {
     runsPhase: "idle",
     runs: [],
     runsError: "",
+  };
+}
+
+function emptyPricingAudit(): PricingAuditModel {
+  return {
+    phase: "idle",
+    rows: [],
+    filters: { entityType: "", action: "" },
+    error: "",
+  };
+}
+
+function emptyChangeLog(): ChangeLogModel {
+  return {
+    phase: "idle",
+    rows: [],
+    filters: { productId: "", batchId: "" },
+    error: "",
   };
 }
 
@@ -734,6 +772,8 @@ function emptyModel(): PricingModel {
     batches: emptyBatches(),
     priceFile: emptyPriceFile(),
     lowMargin: emptyLowMargin(),
+    audit: emptyPricingAudit(),
+    changeLog: emptyChangeLog(),
   };
 }
 
@@ -830,6 +870,14 @@ export class PricingController {
 
   #setProbeMargin(patch: Partial<LowMarginProbe>): void {
     this.#set({ lowMargin: { ...this.model.lowMargin, probe: { ...this.model.lowMargin.probe, ...patch } } });
+  }
+
+  #setAudit(patch: Partial<PricingAuditModel>): void {
+    this.#set({ audit: { ...this.model.audit, ...patch } });
+  }
+
+  #setChangeLog(patch: Partial<ChangeLogModel>): void {
+    this.#set({ changeLog: { ...this.model.changeLog, ...patch } });
   }
 
   #setOpen(patch: Partial<OpenBatch>): void {
@@ -1133,6 +1181,10 @@ export class PricingController {
     if (field === "lm-doc-type") this.#setLowMargin({ filters: { ...this.model.lowMargin.filters, docType: value } });
     if (field === "lm-sort") this.#setLowMargin({ filters: { ...this.model.lowMargin.filters, sort: value } });
     if (field === "lm-cleared") this.#setLowMargin({ filters: { ...this.model.lowMargin.filters, clearedOnly: value === "yes" } });
+    if (field === "aud-entity") this.#setAudit({ filters: { ...this.model.audit.filters, entityType: value } });
+    if (field === "aud-action") this.#setAudit({ filters: { ...this.model.audit.filters, action: value } });
+    if (field === "log-product") this.#setChangeLog({ filters: { ...this.model.changeLog.filters, productId: value } });
+    if (field === "log-batch") this.#setChangeLog({ filters: { ...this.model.changeLog.filters, batchId: value } });
     if (field === "lm-customer-type") this.#setProbeMargin({ customerType: value });
     if (field === "pf-vendor") {
       const hit = this.model.priceFile.vendors.find((v) => v.name === value);
@@ -1408,6 +1460,14 @@ export class PricingController {
         return this.model.lowMargin.probe.uomInput;
       case "lm-cost":
         return this.model.lowMargin.probe.costInput;
+      case "aud-entity":
+        return this.model.audit.filters.entityType;
+      case "aud-action":
+        return this.model.audit.filters.action;
+      case "log-product":
+        return this.model.changeLog.filters.productId;
+      case "log-batch":
+        return this.model.changeLog.filters.batchId;
       case "batch-no":
         return this.model.batches.creating?.batchNo ?? "";
       case "batch-vendor":
@@ -1484,6 +1544,8 @@ export class PricingController {
         if (tab === "batches" && this.model.batches.phase === "idle") await this.loadBatches();
         if (tab === "pricefile" && this.model.priceFile.vendorsPhase === "idle") await this.loadPriceFile();
         if (tab === "lowmargin" && this.model.lowMargin.phase === "idle") await this.loadLowMargin();
+        if (tab === "audit" && this.model.audit.phase === "idle") await this.loadPricingAudit();
+        if (tab === "changelog" && this.model.changeLog.phase === "idle") await this.loadChangeLog();
         return;
       }
       case "pr-reload-margin":
@@ -1732,6 +1794,27 @@ export class PricingController {
         return;
       case "pr-lm-grade":
         await this.#gradeLine();
+        return;
+      // -- the pricing audit and change log tabs --
+      case "pr-audit-apply":
+        await this.loadPricingAudit();
+        return;
+      case "pr-audit-clear":
+        this.#setAudit({ filters: { entityType: "", action: "" } });
+        await this.loadPricingAudit();
+        return;
+      case "pr-audit-reload":
+        await this.loadPricingAudit();
+        return;
+      case "pr-log-apply":
+        await this.loadChangeLog();
+        return;
+      case "pr-log-clear":
+        this.#setChangeLog({ filters: { productId: "", batchId: "" } });
+        await this.loadChangeLog();
+        return;
+      case "pr-log-reload":
+        await this.loadChangeLog();
         return;
       case "pr-break-drop-item": {
         const editing = this.model.breaks.editing;
@@ -3340,6 +3423,35 @@ export class PricingController {
       return;
     }
     this.#setProbeMargin({ busy: false, entries: result.value });
+  }
+  // -- the pricing audit and the change log tabs -------------------------------------------------------------
+
+  async loadPricingAudit(): Promise<void> {
+    this.#setAudit({ ...emptyPricingAudit(), filters: this.model.audit.filters });
+    const f = this.model.audit.filters;
+    const result = await this.#door.pricingAudit({ entity_type: f.entityType, action: f.action });
+    if (!result.ok) {
+      this.#setAudit({
+        phase: result.status === 403 ? "refused" : "error",
+        error: pricingRefusalWords(result.error, result.status, "read"),
+      });
+      return;
+    }
+    this.#setAudit({ phase: "ready", rows: result.value });
+  }
+
+  async loadChangeLog(): Promise<void> {
+    this.#setChangeLog({ ...emptyChangeLog(), filters: this.model.changeLog.filters });
+    const f = this.model.changeLog.filters;
+    const result = await this.#door.changeLog({ product_id: f.productId.trim(), batch_id: f.batchId.trim() });
+    if (!result.ok) {
+      this.#setChangeLog({
+        phase: result.status === 403 ? "refused" : "error",
+        error: pricingRefusalWords(result.error, result.status, "read"),
+      });
+      return;
+    }
+    this.#setChangeLog({ phase: "ready", rows: result.value });
   }
 }
 

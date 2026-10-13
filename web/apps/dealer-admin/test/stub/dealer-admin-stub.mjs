@@ -1461,6 +1461,62 @@ async function handle(req, res) {
     })));
   }
 
+  // ---- the pricing log and the change log ----
+
+  if (req.method === "GET" && path === "/api/v1/pricing/audit") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const entityType = url.searchParams.get("entity_type") ?? "";
+    const action = url.searchParams.get("action") ?? "";
+    const ago = (days) => new Date(Date.now() - days * 86400000).toISOString();
+    const items = [
+      {
+        id: "0e110000-0000-4000-9000-0000000000a1",
+        entity_type: "category_policy",
+        entity_id: "ca7a0000-0000-4000-9000-0000000000a1",
+        action: "UPDATE",
+        field_name: "margin_floor_bps",
+        old_value: "2000",
+        new_value: "1000",
+        user_id: "da110000-0000-4000-9000-000000000001",
+        created_at: ago(3),
+        bypass_reason: "",
+      },
+      {
+        id: "0e110000-0000-4000-9000-0000000000a2",
+        entity_type: "customer_override",
+        entity_id: "8a110000-0000-4000-9000-0000000000a1",
+        action: "BYPASS",
+        field_name: "",
+        old_value: "",
+        new_value: "",
+        user_id: "da110000-0000-4000-9000-000000000002",
+        created_at: ago(1),
+        bypass_reason: "APPROVED_OVERRIDE",
+      },
+    ].filter((e) => (entityType === "" || e.entity_type === entityType) && (action === "" || e.action === action));
+    return json(res, { items: scenario === "empty-pricing" ? [] : items, next_cursor: null, limit: 200 });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/pricing/change-log") {
+    if (scenario === "refused-pricing") return refuse(res, 403, "Forbidden");
+    const productId = url.searchParams.get("product_id") ?? "";
+    const batchId = url.searchParams.get("batch_id") ?? "";
+    const items = [
+      {
+        id: "0d110000-0000-4000-9000-0000000000a1",
+        product_id: "fa110000-0000-4000-9000-0000000000a1",
+        batch_id: "3a110000-0000-4000-9000-0000000000a1",
+        field: "retail_cents",
+        before_cents: 480,
+        after_cents: 520,
+        effective_date: null,
+        changed_by: "da110000-0000-4000-9000-000000000001",
+        created_at: "2026-09-01T09:05:00Z",
+      },
+    ].filter((e) => (productId === "" || e.product_id === productId) && (batchId === "" || e.batch_id === batchId));
+    return json(res, { items: scenario === "empty-pricing" ? [] : items, next_cursor: null, limit: 200 });
+  }
+
   // ---- the audit trail ----
 
   if (req.method === "GET" && path === "/api/v1/audit") {

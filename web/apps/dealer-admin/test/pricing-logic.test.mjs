@@ -504,3 +504,21 @@ test("a scanned line reads as its margin against its target and floor, the stamp
 test("the low margin tab's empty words are its own", () => {
   assert.match(lowMarginEmptyWords(), /No committed lines under target or floor/);
 });
+
+// -- the pricing audit tab -------------------------------------------------------------------------------
+
+import {
+  deltaWords,
+  pricingAuditEmptyWords,
+} from "../src/pricing-logic.ts";
+
+test("a log row's change reads as from to to; the bypass names its reason", () => {
+  assert.equal(deltaWords("480", "420"), "480 to 420");
+  assert.equal(deltaWords(null, "420"), "set to 420");
+  assert.equal(deltaWords("480", null), "cleared");
+  assert.equal(deltaWords(null, null), "");
+});
+
+test("the pricing audit's empty words say what the log holds", () => {
+  assert.match(pricingAuditEmptyWords(), /No pricing log entries/);
+});

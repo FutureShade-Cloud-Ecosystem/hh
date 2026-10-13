@@ -836,6 +836,78 @@ export interface LowMarginScanQuery {
   readonly sort?: string;
 }
 
+// -- the pricing audit log ---------------------------------------------------------------------------------
+
+/** One pricing log row as the viewer shows it. */
+export interface PricingAuditRow {
+  readonly id: string;
+  readonly entity_type: string;
+  readonly entity_id: string;
+  readonly action: string;
+  readonly field_name: string;
+  readonly old_value: string;
+  readonly new_value: string;
+  readonly user_id: string;
+  readonly created_at: string;
+  readonly bypass_reason: string;
+}
+
+export function toPricingAuditRow(raw: unknown): PricingAuditRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    entity_type: text(r.entity_type),
+    entity_id: text(r.entity_id),
+    action: text(r.action),
+    field_name: text(r.field_name),
+    old_value: text(r.old_value),
+    new_value: text(r.new_value),
+    user_id: text(r.user_id),
+    created_at: text(r.created_at),
+    bypass_reason: text(r.bypass_reason),
+  };
+}
+
+export interface PricingAuditQuery {
+  readonly entity_type?: string;
+  readonly action?: string;
+}
+
+// -- the change log --------------------------------------------------------------------------------------
+
+/** One append only change log row: who moved a cost or a retail, from what to what. */
+export interface ChangeLogRow {
+  readonly id: string;
+  readonly product_id: string;
+  readonly batch_id: string;
+  readonly field: string;
+  readonly before_cents: number | null;
+  readonly after_cents: number | null;
+  readonly effective_date: string;
+  readonly changed_by: string;
+  readonly created_at: string;
+}
+
+export function toChangeLogRow(raw: unknown): ChangeLogRow {
+  const r = bag(raw);
+  return {
+    id: text(r.id),
+    product_id: text(r.product_id),
+    batch_id: text(r.batch_id),
+    field: text(r.field),
+    before_cents: maybeNum(r.before_cents),
+    after_cents: maybeNum(r.after_cents),
+    effective_date: text(r.effective_date),
+    changed_by: text(r.changed_by),
+    created_at: text(r.created_at),
+  };
+}
+
+export interface ChangeLogQuery {
+  readonly product_id?: string;
+  readonly batch_id?: string;
+}
+
 // -- the customer overrides --------------------------------------------------------------------------
 
 /** One customer category override as the screens use it. */
@@ -1339,6 +1411,30 @@ export class PricingApi {
     });
     if (!answer.ok) return answer;
     return { ok: true, value: (Array.isArray(answer.value) ? answer.value : []).map(toLowMarginEntry) };
+  }
+
+  // -- the pricing audit log and the change log -------------------------------------------------------------
+
+  /** The pricing log, filtered by entity and action. The server applies authority. */
+  async pricingAudit(query: PricingAuditQuery = {}): Promise<Result<readonly PricingAuditRow[]>> {
+    const answer = await staffPricing.pricingListAudit(this.#client, {
+      limit: 200,
+      entity_type: query.entity_type === "" ? undefined : query.entity_type,
+      action: query.action === "" || query.action === undefined ? undefined : (query.action as "CREATE" | "UPDATE" | "DELETE" | "BYPASS"),
+    });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toPricingAuditRow) };
+  }
+
+  /** The change log, filtered by product or batch. */
+  async changeLog(query: ChangeLogQuery = {}): Promise<Result<readonly ChangeLogRow[]>> {
+    const answer = await staffPricing.pricingListChangeLog(this.#client, {
+      limit: 200,
+      product_id: query.product_id === "" ? undefined : query.product_id,
+      batch_id: query.batch_id === "" ? undefined : query.batch_id,
+    });
+    if (!answer.ok) return answer;
+    return { ok: true, value: page(answer.value).map(toChangeLogRow) };
   }
 
   // -- the floor warning ------------------------------------------------------------------------------
