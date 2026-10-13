@@ -78,6 +78,14 @@ fn profile_line(plugin_config: &tauri::utils::config::PluginConfig) -> String {
     .to_string()
 }
 
+// `hh-work --print-profile` runs the whole startup (the profile line, the
+// store opening, the window building) and then ends the run by itself. It is
+// how the desktop gate and a device leg read the profile line without a
+// signal; it grants nothing and prints nothing the line does not.
+fn print_profile_only(args: impl Iterator<Item = String>) -> bool {
+    args.skip(1).any(|a| a == "--print-profile")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -94,6 +102,9 @@ pub fn run() {
                 .title(profile.window.title)
                 .inner_size(profile.window.width, profile.window.height)
                 .build()?;
+            if print_profile_only(std::env::args()) {
+                app.handle().exit(0);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
