@@ -2,7 +2,7 @@
 // by line, with the reason a short line needs, and change the skid count on
 // the skid stepper with a reason.
 import { test, expect } from "@playwright/test";
-import { resetStub, stubLog, yardHandoff } from "./helpers.js";
+import { resetStub, stubLog, yardHandoff, type LoggedCall } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -85,7 +85,15 @@ test("a quantity above what was ordered is refused in the server's own words", a
   await page.locator("[data-field=qty]").fill("3");
   await page.getByRole("button", { name: "Done" }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
-  await expect(page.locator("[data-error]")).toContainText("that is more than was ordered, the yard cannot raise a quantity");
+  // The write rides the outbox, and the refusal comes back as its own card,
+  // carrying the server's sentence; the board names the count.
+  await expect(page.locator("[data-notice]")).toContainText("pulled in full");
+  await page.getByRole("button", { name: "Back to the queue" }).click();
+  await expect(page.getByRole("button", { name: "Review 1" })).toBeVisible();
+  await page.getByRole("button", { name: "Review 1" }).click();
+  const list = page.locator("[data-conflict-list]");
+  await expect(list).toContainText("Not accepted");
+  await expect(list).toContainText("that is more than was ordered, the yard cannot raise a quantity");
 });
 
 test("the skid stepper says Not counted until it is changed, then changes with a reason", async ({ page }) => {
@@ -143,10 +151,28 @@ test("the record goes to the server as one call, in the ticket's own order", asy
   await page.getByRole("button", { name: /^All \d+/ }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("pulled");
-  const calls = (await stubLog(request)).filter((c) => c.path.endsWith("/lines"));
-  expect(calls).toHaveLength(1);
-  expect(calls[0]?.body?.lines).toEqual([
-    { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Granular A gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE" },
-    { order_line_no: 3, product_id: "1a000000-0000-4000-9000-0000000000c3", sku: "FAB-GEO", description: "Geotextile fabric, 4 by 300 ft", qty_ordered: "2.0000", qty_picked: "2", uom: "ROLL" },
+  // The record rides the outbox as one queued operation, and the replay sends
+  // it as one push on the sync surface, the picked set in the ticket's order.
+  // The start and the record are two operations on the same scope; each push
+  // carries the operations queued when it ran, in order, and the record is one
+  // operation whose picked set rides whole, in the ticket's own order.
+  interface PushCall extends LoggedCall {
+    body: { ops: Array<Record<string, unknown>> } | null;
+  }
+  let recordOps: Array<Record<string, unknown>> = [];
+  await expect
+    .poll(async () => {
+      const pushes = (await stubLog(request)).filter(
+        (c): c is PushCall => c.path === "/api/v1/sync/pick_tasks" && c.method === "POST",
+      );
+      const withPicked = pushes.find((p) => (p.body?.ops ?? []).some((op) => "picked" in ((op?.payload ?? {}) as Record<string, unknown>)));
+      recordOps = withPicked?.body?.ops ?? [];
+      return recordOps.length;
+    })
+    .toBe(1);
+  const payloadOf = (op: unknown): Record<string, unknown> => ((op as { payload?: unknown })?.payload ?? {}) as Record<string, unknown>;
+  expect(payloadOf(recordOps[0]).picked).toEqual([
+    { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Granular A gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE", short_reason: "", short_note: "" },
+    { order_line_no: 3, product_id: "1a000000-0000-4000-9000-0000000000c3", sku: "FAB-GEO", description: "Geotextile fabric, 4 by 300 ft", qty_ordered: "2.0000", qty_picked: "2", uom: "ROLL", short_reason: "", short_note: "" },
   ]);
 });

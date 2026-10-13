@@ -69,6 +69,10 @@ export interface YardOfflineOptions {
   transport: SyncTransport;
   /** The signed in person's id: the optimistic claim is marked theirs. */
   actorId: string;
+  /** Told whenever the outbox's depth or the cards may have moved: a write
+   * just landed, or a cycle came to rest. The chrome reads health() and the
+   * open cards on it, so the banner's count is never a stale word. */
+  onChange?: () => void;
   now?: () => string;
   newKey?: () => string;
 }
@@ -77,6 +81,24 @@ export type QueueAnswer = Result<{ picks: YardPick[]; nextCursor: string }> & { 
 export type PickAnswer = Result<YardPick> & { staleness: Staleness };
 
 const PRIORITY_RANK: Record<string, number> = { URGENT: 0, HIGH: 1, NORMAL: 2, LOW: 3 };
+
+/** The short stage handle off a task id: the alphabet without I O 0 1, six
+ * marks, the same shape the core's own derivation answers. */
+function stableRef(id: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < id.length; i += 1) {
+    hash ^= id.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  let n = hash >>> 0;
+  for (let i = 0; i < 6; i += 1) {
+    out += alphabet[n % alphabet.length];
+    n = Math.floor(n / alphabet.length);
+  }
+  return `STG-${out}`;
+}
 
 interface StoredRowLike {
   id: string;
@@ -89,6 +111,7 @@ export class YardOffline {
   readonly runner: SyncRunner;
   readonly #sql: SqlExecutor;
   readonly #actorId: string;
+  readonly #onChange: (() => void) | undefined;
   readonly #now: () => string;
   readonly #newKey: () => string;
 
@@ -96,6 +119,7 @@ export class YardOffline {
     this.store = options.store;
     this.#sql = options.sql;
     this.#actorId = options.actorId;
+    this.#onChange = options.onChange;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#newKey = options.newKey ?? (() => globalThis.crypto.randomUUID());
     this.runner = new SyncRunner({ store: options.store, transport: options.transport, machine: syncMachine });
@@ -105,11 +129,14 @@ export class YardOffline {
   async cycle(): Promise<void> {
     await this.runner.dispatch({ type: "ONLINE" });
     await this.runner.settled();
+    this.#onChange?.();
   }
 
   /** Ask for a cycle without waiting for it (a write just landed in the outbox). */
   requestSync(): void {
-    void this.runner.request();
+    // The count moved now, and it moves again when the replay lands or fails.
+    this.#onChange?.();
+    void this.runner.request().then(() => this.#onChange?.());
   }
 
   /** Feed the platform's connectivity to the machine. */
@@ -190,9 +217,11 @@ export class YardOffline {
 
   // ---- writes ---------------------------------------------------------
 
-  /** Claim an unclaimed pick: the claim queues, the local row shows it. */
+  /** Claim an unclaimed pick: the claim queues, the local row shows it. The
+   * payload declares the status alone: who claimed is the caller's own fact,
+   * stamped by the server, never a field the device declares. */
   async claim(taskId: string): Promise<Result<YardTask>> {
-    const answer = await this.#taskWrite(taskId, { status: "ACCEPTED", claimed_by: this.#actorId });
+    const answer = await this.#taskWrite(taskId, { status: "ACCEPTED", claimed_by: this.#actorId }, { status: "ACCEPTED" });
     if (answer.ok) this.requestSync();
     return answer;
   }
@@ -282,10 +311,12 @@ export class YardOffline {
     return { ok: true, value: { skid_count: skidCount, previous_skid_count: previous, changed: previous !== skidCount, order_no: ticket?.order_no ?? "" } };
   }
 
-  /** Park the pick: where the material sits. */
+  /** Park the pick: where the material sits. A blank ref derives its short
+   * handle on the device, the same shape the core derives, so the counter can
+   * be told before the replay lands. */
   async stage(taskId: string, location: string, ref: string): Promise<Result<YardTask>> {
     const fields: Bag = { status: "STAGED", stage_location: location };
-    if (ref !== "") fields["stage_ref"] = ref;
+    fields["stage_ref"] = ref !== "" ? ref : stableRef(taskId);
     const answer = await this.#taskWrite(taskId, fields);
     if (answer.ok) this.requestSync();
     return answer;
@@ -347,14 +378,14 @@ export class YardOffline {
 
   // ---- internals ------------------------------------------------------
 
-  async #taskWrite(taskId: string, fields: Bag): Promise<Result<YardTask>> {
+  async #taskWrite(taskId: string, fields: Bag, payloadFields: Bag = fields): Promise<Result<YardTask>> {
     const found = await this.store.read("pick_tasks", taskId);
     if (found.row === null) return { ok: false, error: "task not found", status: 404 };
     const enqueued = await this.#enqueueWithBase({
       scope: "pick_tasks",
       op: "update",
       entity: "pick_tasks",
-      payload: { ...fields, id: taskId },
+      payload: { ...payloadFields, id: taskId },
       row: found.row,
     });
     if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };
@@ -413,6 +444,7 @@ export async function openYardOfflineOpfs(options: {
   dbName: string;
   transport: SyncTransport;
   actorId: string;
+  onChange?: () => void;
 }): Promise<YardOffline | null> {
   const locks = (globalThis as { navigator?: { locks?: unknown } }).navigator?.locks;
   if (typeof Worker === "undefined" || !locks || typeof globalThis.crypto?.subtle !== "object") return null;
@@ -421,12 +453,18 @@ export async function openYardOfflineOpfs(options: {
       dbName: options.dbName,
       locks: locks as Parameters<typeof createOpfsBackend>[0]["locks"],
       createWorker: () =>
-        new Worker(new URL("../../packages/offline-store/src/opfs-worker.ts", import.meta.url), {
+        new Worker(new URL("../../../packages/offline-store/src/opfs-worker.ts", import.meta.url), {
           type: "module",
         }) as unknown as WorkerLike,
     });
     const store = await OfflineStore.open({ backend, scopes: scopeBookFor(["yard-pick"]) });
-    return new YardOffline({ store, sql: backend.sql, transport: options.transport, actorId: options.actorId });
+    return new YardOffline({
+      store,
+      sql: backend.sql,
+      transport: options.transport,
+      actorId: options.actorId,
+      ...(options.onChange !== undefined ? { onChange: options.onChange } : {}),
+    });
   } catch {
     return null;
   }
