@@ -192,6 +192,7 @@ type recordingMinter struct {
 	inner *identity.SessionMinter
 	mu    sync.Mutex
 	calls int
+	err   error // when set, MintTenantAt fails after it is counted
 	log   *[]string
 }
 
@@ -212,6 +213,9 @@ func (m *recordingMinter) MintTenantAt(subject, tenantID string, window time.Dur
 		*m.log = append(*m.log, "mint")
 	}
 	m.mu.Unlock()
+	if m.err != nil {
+		return "", m.err
+	}
 	return m.inner.MintTenantAt(subject, tenantID, window, at)
 }
 

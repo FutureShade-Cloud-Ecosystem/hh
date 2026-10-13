@@ -1,6 +1,7 @@
 package exchange
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -282,4 +283,25 @@ func TestNewRefusesAHalfConfiguredTenantLeg(t *testing.T) {
 		}
 	}
 	_ = context.Background()
+}
+
+func TestTenantAuditFailureRefusesAndMintsNothing(t *testing.T) {
+	f := newFx(t)
+	f.audit.err = errBoom
+	f.assertRefusal(f.postTenant(f.tenantJWT("magic-url")), 503, bodyV)
+}
+
+func TestTenantMintFailureRefusesWithTheSharedBodyAndNoToken(t *testing.T) {
+	f := newFx(t)
+	f.minter.err = errBoom
+	rec := f.postTenant(f.tenantJWT("magic-url"))
+	if rec.Code != 503 || !bytes.Equal(rec.Body.Bytes(), bodyV) {
+		t.Fatalf("status %d body %q, want 503 and the shared body", rec.Code, rec.Body.Bytes())
+	}
+	if strings.Contains(rec.Body.String(), "token") {
+		t.Fatal("a failed mint carries a token")
+	}
+	if f.minter.calls != 1 || len(f.audit.rows) != 1 {
+		t.Fatalf("%d mints, %d audit rows, want the audit row then one failed mint", f.minter.calls, len(f.audit.rows))
+	}
 }
