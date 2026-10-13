@@ -63,7 +63,7 @@ test("the yard manager decides no kind, and every tab says who does", async ({ p
   await page.goto("/");
   await page.locator(".view-link", { hasText: "Approvals" }).click();
   await expect(page.locator("[data-test='approvals-refusal']")).toContainText(
-    "Margin approvals are decided by the financial controller, the general manager, and a sales manager or branch manager in their own branch.",
+    "Margin approvals are decided by the financial controller, the general manager, and a sales manager in their own branch.",
   );
   await page.locator(".kind-tab", { hasText: "Journal entry" }).click();
   await expect(page.locator("[data-test='approvals-refusal']")).toContainText(
