@@ -130,6 +130,20 @@ test.describe("phone", () => {
     await expect(page.getByTestId("landing-state")).toContainText("This surface is not open yet.");
   });
 
+  test("a surface in another app says it opens that app and asks to sign in again, one in this app says nothing", async ({ page }) => {
+    await signIn(page, "owner");
+    await page.getByTestId("frame-selector").click();
+    const panel = page.locator("hh-pro-frame").getByRole("navigation", { name: "Apps and surfaces" });
+    const elsewhere = panel.locator("button[data-app]:not([data-app='field'])");
+    expect(await elsewhere.count()).toBeGreaterThan(0);
+    for (const button of await elsewhere.all()) {
+      const app = await button.getAttribute("data-app");
+      const name = app === "pay" ? "Pro Pay" : app === "field" ? "Pro Field" : "Pro Procurement";
+      await expect(button.getByTestId("opens-note")).toHaveText(`opens ${name}, sign in again`);
+    }
+    await expect(panel.locator("button[data-app='field'] [data-testid='opens-note']")).toHaveCount(0);
+  });
+
   test("choosing another app's surface goes to that app's own address", async ({ page }) => {
     await page.route(/^https?:\/\/[^/]+\/pro-(procurement|pay|field)\/$/, (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<title>elsewhere</title>" }));
     await signIn(page, "owner");

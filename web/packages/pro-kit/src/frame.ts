@@ -126,6 +126,7 @@ export class HHProFrame extends HHElement {
         text-align: left;
         cursor: pointer;
       }
+      .item .note { margin-inline-start: auto; padding-inline-start: var(--hh-s-8); font-size: 0.75rem; font-weight: 400; color: var(--hh-text-dim); text-align: right; }
       .item[aria-current="page"] { background: var(--hh-widget); font-weight: 700; border-inline-start: 3px solid var(--hh-focus-ring); }
       main { display: block; padding: var(--hh-s-16) var(--hh-page-gutter, var(--hh-s-16)); max-width: var(--hh-content-max, 72rem); margin: 0 auto; }
       .out { white-space: nowrap; }
@@ -190,7 +191,7 @@ export class HHProFrame extends HHElement {
       ${groups.map(
         ({ app, surfaces }) => html`<p class="group">${app.label}</p>
           ${surfaces.map(
-            (s) => html`<button type="button" class="item" data-action="select-surface" data-app="${app.key}" data-surface="${s.id}" aria-current="${app.key === this.app && s.id === this.surface ? "page" : "false"}">${s.label}</button>`,
+            (s) => html`<button type="button" class="item" data-action="select-surface" data-app="${app.key}" data-surface="${s.id}" aria-current="${app.key === this.app && s.id === this.surface ? "page" : "false"}">${s.label}${app.key === this.app ? nothing : html`<span class="note" data-testid="opens-note">opens ${app.label}, sign in again</span>`}</button>`,
           )}`,
       )}
     </nav>`;
