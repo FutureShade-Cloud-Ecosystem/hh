@@ -132,6 +132,37 @@ test('the nav names itself as the person\u2019s pins, never a navigation tree', 
   assert.ok(markup.includes('aria-label="Pinned surfaces"'), 'the nav\u2019s own name');
 });
 
+// ── the toggle is one button across postures, so it keeps keyboard focus ─────────────────────────
+
+const toggleOf = (markup) => /<button[^>]*data-action="rail-toggle"[^>]*>[\s\S]*?<\/button>/.exec(markup)?.[0] ?? '';
+
+test('the toggle is one template in both postures: Lit keeps the focused button instead of replacing it', () => {
+  const collapsed = renderKit(ShellRail, { pins: PINS });
+  const expanded = renderKit(ShellRail, { pins: PINS, collapsed: false });
+  // Lit swaps the DOM when the template changes, and the focused button is lost.
+  // The server render keeps the template hash in its part comments, so two
+  // templates show as two different skeletons once the bound values are blanked.
+  const skeleton = (markup) => {
+    const head = /<div class="rhead">[\s\S]*?<\/button>/.exec(markup)?.[0] ?? '';
+    return head.replace(/="[^"]*"/g, '=""');
+  };
+  assert.notEqual(skeleton(collapsed), '', 'the header band is found');
+  assert.equal(skeleton(expanded), skeleton(collapsed), 'one button, posture bound on its attributes');
+  assert.equal(railSrc.match(/data-action="rail-toggle"/g)?.length, 1, 'the source spells the toggle once');
+});
+
+test('the toggle carries the posture on aria-expanded and says the words for it', () => {
+  const collapsed = toggleOf(renderKit(ShellRail, { pins: PINS }));
+  const expanded = toggleOf(renderKit(ShellRail, { pins: PINS, collapsed: false }));
+  assert.ok(collapsed.includes('aria-expanded="false"') && collapsed.includes('Keep your pins open'));
+  assert.ok(expanded.includes('aria-expanded="true"') && expanded.includes('Let your pins hide again'));
+  for (const markup of [collapsed, expanded]) {
+    const title = /title="([^"]*)"/.exec(markup)?.[1];
+    const label = /aria-label="([^"]*)"/.exec(markup)?.[1];
+    assert.ok(title && title === label, 'title and aria-label say the same words, character for character');
+  }
+});
+
 // ── the actions: one select verb, one toggle verb ────────────────────────────────────────────────
 
 test('every row routes through one action name carrying its key', () => {
