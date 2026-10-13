@@ -2464,6 +2464,18 @@ export type IdentityPing = {
   module: string;
   status: string;
 };
+export type SessionJwkSet = {
+  keys: SessionJwk[];
+};
+export type SessionJwk = {
+  kty: "EC";
+  crv: "P-256";
+  x: string;
+  y: string;
+  kid: string;
+  use: "sig";
+  alg: "ES256";
+};
 export type IdentityLoginRequest = {
   email: string;
   password: string;
@@ -2479,6 +2491,15 @@ export type IdentityUser = {
 };
 export type IdentityLoginResponse = {
   token: string;
+  user: IdentityUser;
+};
+export type IdentityExchangeRequest = {
+  jwt: string;
+  org: string;
+};
+export type IdentityExchangeResponse = {
+  token: string;
+  expiresAtMs: number;
   user: IdentityUser;
 };
 export type IdentityChangePasswordRequest = {
@@ -3509,6 +3530,7 @@ export type OrderTransitionResult = {
 };
 export type OrderCancelRequest = {
   reason: string;
+  keep_deposit?: boolean;
 };
 export type OrderHeaderEditRequest = {
   requested_date: string;
@@ -4426,6 +4448,7 @@ export type PosPolicy = {
   lookup_presentation: "CARDS" | "ROWS";
   margin_visibility: "MANAGER_UP" | "ALL_STAFF" | "HIDDEN";
   balance_visibility: "ALL_STAFF" | "MANAGER_UP" | "HIDDEN";
+  supplier_deposit_cancel: "CREDIT_BACK" | "KEPT";
   quick_chip_set?: string[];
 };
 export type PosPolicyChange = {

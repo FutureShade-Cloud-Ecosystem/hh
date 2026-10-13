@@ -203,6 +203,7 @@ func newCompEnv(t *testing.T) *compEnv {
 		customerquote.EnvKeyID:   fixtureAcceptanceKeyID,
 		customerquote.EnvKey:     hex.EncodeToString(rawKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.values = values
 	env.getenv = func(k string) string { return env.values[k] }
 	return env
