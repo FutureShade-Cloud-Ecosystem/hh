@@ -3556,59 +3556,44 @@ type InventoryNudgeResult struct {
 	Note    string `json:"note"`
 }
 
-type InventoryOnHandPage struct {
-	Items      []InventoryOnHand `json:"items"`
-	NextCursor *string           `json:"next_cursor,omitempty"`
-	Limit      *int32            `json:"limit,omitempty"`
+type InventoryOnHandList struct {
+	OnHand []InventoryOnHand `json:"on_hand"`
 }
 
-type InventoryMovePage struct {
-	Items      []InventoryStockMove `json:"items"`
-	NextCursor *string              `json:"next_cursor,omitempty"`
-	Limit      *int32               `json:"limit,omitempty"`
+type InventoryMoveList struct {
+	Moves []InventoryStockMove `json:"moves"`
 }
 
-type InventoryPendingFulfilmentPage struct {
-	Items      []InventoryPendingFulfilment `json:"items"`
-	NextCursor *string                      `json:"next_cursor,omitempty"`
-	Limit      *int32                       `json:"limit,omitempty"`
+type InventoryPendingFulfilmentList struct {
+	Pending []InventoryPendingFulfilment `json:"pending"`
 }
 
-type InventoryTransitDaysPairPage struct {
-	Items      []InventoryTransitDaysPair `json:"items"`
-	NextCursor *string                    `json:"next_cursor,omitempty"`
-	Limit      *int32                     `json:"limit,omitempty"`
+type InventoryTransitDaysPairList struct {
+	Pairs []InventoryTransitDaysPair `json:"pairs"`
 }
 
-type InventoryBranchStockPage struct {
-	Items      []InventoryBranchStock `json:"items"`
-	NextCursor *string                `json:"next_cursor,omitempty"`
-	Limit      *int32                 `json:"limit,omitempty"`
+type InventoryBranchStockList struct {
+	Branches *[]InventoryBranchStock `json:"branches"`
 }
 
-type InventoryBrowsePage struct {
-	Items      []InventoryBrowseRow `json:"items"`
-	Facets     []InventoryFacet     `json:"facets"`
-	NextCursor *string              `json:"next_cursor,omitempty"`
-	Limit      *int32               `json:"limit,omitempty"`
+type InventoryBrowseResult struct {
+	Rows   []InventoryBrowseRow `json:"rows"`
+	Facets *[]InventoryFacet    `json:"facets"`
+	Total  int32                `json:"total"`
+	Limit  int32                `json:"limit"`
+	Offset int32                `json:"offset"`
 }
 
-type InventoryReservationPage struct {
-	Items      []InventoryReservation `json:"items"`
-	NextCursor *string                `json:"next_cursor,omitempty"`
-	Limit      *int32                 `json:"limit,omitempty"`
+type InventoryReservationList struct {
+	Reservations *[]InventoryReservation `json:"reservations"`
 }
 
-type InventoryTransferPage struct {
-	Items      []InventoryTransfer `json:"items"`
-	NextCursor *string             `json:"next_cursor,omitempty"`
-	Limit      *int32              `json:"limit,omitempty"`
+type InventoryTransferList struct {
+	Transfers *[]InventoryTransfer `json:"transfers"`
 }
 
-type InventoryInTransitLinePage struct {
-	Items      []InventoryInTransitLine `json:"items"`
-	NextCursor *string                  `json:"next_cursor,omitempty"`
-	Limit      *int32                   `json:"limit,omitempty"`
+type InventoryInTransitLineList struct {
+	Lines []InventoryInTransitLine `json:"lines"`
 }
 
 type InventoryShortfallPage struct {
@@ -3618,10 +3603,8 @@ type InventoryShortfallPage struct {
 	Limit           *int32                  `json:"limit,omitempty"`
 }
 
-type InventoryReorderPointPage struct {
-	Items      []InventoryReorderPoint `json:"items"`
-	NextCursor *string                 `json:"next_cursor,omitempty"`
-	Limit      *int32                  `json:"limit,omitempty"`
+type InventoryReorderPointList struct {
+	ReorderPoints *[]InventoryReorderPoint `json:"reorder_points"`
 }
 
 type InvCountSheet struct {

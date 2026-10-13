@@ -70,12 +70,16 @@ import (
 
 // shapeCensusWantPages pins the page shape operation count the document
 // carries (119 at this census's cut: 114 staff lists, 3 tenant lists, the
-// sync pull and the public products list, all answered at 200). The pin is
+// sync pull and the public products list, all answered at 200). The pin moved
+// to 109 when ten inventory reads stopped being page shapes: the contract
+// now declares the key the core writes (on_hand, moves, pending, branches,
+// reservations, transfers, lines, pairs, reorder_points; rows for browse).
+// The pin is
 // the census's knowing (the same discipline as the 611 staff operation pin
 // in census_test.go): a page shape added or removed must move this number
 // consciously, with the live half's report (the new operation is driven,
 // or the dropped one is named) as the evidence.
-const shapeCensusWantPages = 119
+const shapeCensusWantPages = 109
 
 // shapeCensusAllowlist names (per the brief) the page shape operations
 // whose served answer already breaks the page shape, each with the reason
@@ -166,12 +170,6 @@ var shapeCensusAllowlist = map[string]string{
 	// (4) wrong key (11): the list sits under a key the contract does not
 	// declare (items is the contract's spelling).
 	"finstmtListSchedules":           "writes the (nil guarded) list under the key \"schedules\" (internal/finstmt/handler.go, Handler.listSchedules) against the contract's FinStmtSchedulePage (items, next_cursor); the fix is the owning lane's",
-	"inventoryBrowse":                "writes the (nil guarded) list under the key \"rows\" (beside facets and total) (internal/inventory/stock_truth_handler.go, Handler.browse writes the BrowseResult struct) against the contract's InventoryBrowsePage; the fix is the owning lane's",
-	"inventoryListPendingFulfilment": "writes the (nil guarded) list under the key \"pending\" (internal/inventory/handler.go, Handler.pendingFulfilment) against the contract's InventoryPendingFulfilmentPage; the fix is the owning lane's",
-	"inventoryListReorderPoints":     "writes the (possibly nil) list under the key \"reorder_points\" (internal/inventory/stock_truth_handler.go, Handler.listReorderPoints, no nil guard) against the contract's InventoryReorderPointPage; the fix is the owning lane's",
-	"inventoryListReservations":      "writes the (possibly nil) list under the key \"reservations\" (internal/inventory/stock_truth_handler.go, Handler.listReservations, no nil guard) against the contract's InventoryReservationPage; the fix is the owning lane's",
-	"inventoryListTransfers":         "writes the (possibly nil) list under the key \"transfers\" (internal/inventory/stock_truth_handler.go, Handler.listTransfers, no nil guard; the observed empty answer was {\"transfers\":null}) against the contract's InventoryTransferPage; the fix is the owning lane's",
-	"inventoryListTransitDays":       "writes the (nil guarded) list under the key \"pairs\" (internal/inventory/stock_truth_handler.go, Handler.transitDays) against the contract's InventoryTransitDaysPairPage; the fix is the owning lane's",
 	"taxListEvidence":                "writes the (possibly nil) list under the key \"evidence\" (internal/tax/handler.go, Handler.listEvidence, no nil guard; the observed empty answer was {\"evidence\":null}) against the contract's TaxEvidencePage; the fix is the owning lane's",
 	"taxListProfiles":                "writes the list under the key \"profiles\" (internal/tax/handler.go, Handler.listProfiles) against the contract's TaxStatusCardProfilePage; the fix is the owning lane's",
 	"taxListRates":                   "writes the list under the key \"rates\" (internal/tax/handler.go, Handler.listRates) against the contract's TaxRatePage; the fix is the owning lane's",
@@ -211,10 +209,6 @@ var shapeCensusUncovered = map[string]string{
 	"dispatchListRunReschedules":     "the kit plants no dispatch run row (the same guardRun (GetRun, ErrNotFound) behind the same leg split: 404 for the gate passing legs, 403 for the rest)",
 	"dispatchListStopReschedules":    "the kit plants no dispatch stop row (guardStop (GetStop, ErrNotFound) in internal/dispatch/service.go, the same leg split: 404 for the gate passing legs, 403 for the rest)",
 	"invcountListNegativeStock":      "the handler reads the branch_id query and passes the (absent) empty string into a uuid cast (internal/invcount/handler.go, negativeStock, via Service.NegativeStock (SnapshotOnHand (internal/inventory/repository.go, WHERE sb.branch_id = $1 with the empty string))); Postgres refuses the cast and the raw error lands in the module's 500 arm (all legs 500). No query string means no 2xx, and the empty value is a 500 where a 400 would be honest (a finding the owning lane may want beside the page fix)",
-	"inventoryBranchStock":           "the handler requires the product_id query (internal/inventory/visibility.go, AvailabilityAllBranches, product_id is required); all legs 400 (no query string means no 2xx; the kit's planted product id (testkit.ProductID) would answer, but a query fill is outside the brief's path parameter discipline)",
-	"inventoryListIncomingTransfers": "the handler requires the product_id query (internal/inventory/incoming.go, InTransitForProduct, the same guard); all legs 400",
-	"inventoryListMoves":             "the handler requires the product_id query (internal/inventory/handler.go, productIDParam, product_id is required); all legs 400",
-	"inventoryOnHand":                "the handler requires the product_id query (internal/inventory/handler.go, productIDParam, the same guard; the role gate admits the tier legs (the matrix suite's admitted leg for this route proves it) and the 400 is the handler's own guard, not a gate refusal); all legs 400",
 	"posListParked":                  "the service requires the branch_id query (internal/pos/policy.go, Service.ListParked, pos: branch_id is required); the counter till legs (inside_sales, sales_manager, GM, branch_manager) answer 400 (the guard), the money and yard legs 403 (the counter till gate (their cells do not reach the route))",
 	"posListPricingOrders":           "the service requires the branch_id query (internal/pos/pricing_orders.go, Service.ListPricingOrders, the same guard); the same leg split (counter legs 400 (the guard), money and yard legs 403 (the counter till gate))",
 	"posListReturnPickups":           "the service requires the branch_id query (internal/pos/returns.go, Service.ListReturnPickups); the dispatch-board legs (sales_manager, GM, branch_manager) answer 400 (the guard), the counter and money legs 403 (the dispatch-board gate (the route's surface))",

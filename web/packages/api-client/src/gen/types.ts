@@ -3002,51 +3002,36 @@ export type InventoryNudgeResult = {
   body: string;
   note: string;
 };
-export type InventoryOnHandPage = {
-  items: InventoryOnHand[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryOnHandList = {
+  on_hand: InventoryOnHand[];
 };
-export type InventoryMovePage = {
-  items: InventoryStockMove[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryMoveList = {
+  moves: InventoryStockMove[];
 };
-export type InventoryPendingFulfilmentPage = {
-  items: InventoryPendingFulfilment[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryPendingFulfilmentList = {
+  pending: InventoryPendingFulfilment[];
 };
-export type InventoryTransitDaysPairPage = {
-  items: InventoryTransitDaysPair[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryTransitDaysPairList = {
+  pairs: InventoryTransitDaysPair[];
 };
-export type InventoryBranchStockPage = {
-  items: InventoryBranchStock[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryBranchStockList = {
+  branches: InventoryBranchStock[] | null;
 };
-export type InventoryBrowsePage = {
-  items: InventoryBrowseRow[];
-  facets: InventoryFacet[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryBrowseResult = {
+  rows: InventoryBrowseRow[];
+  facets: InventoryFacet[] | null;
+  total: number;
+  limit: number;
+  offset: number;
 };
-export type InventoryReservationPage = {
-  items: InventoryReservation[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryReservationList = {
+  reservations: InventoryReservation[] | null;
 };
-export type InventoryTransferPage = {
-  items: InventoryTransfer[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryTransferList = {
+  transfers: InventoryTransfer[] | null;
 };
-export type InventoryInTransitLinePage = {
-  items: InventoryInTransitLine[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryInTransitLineList = {
+  lines: InventoryInTransitLine[];
 };
 export type InventoryShortfallPage = {
   items: InventoryShortfallRow[];
@@ -3054,10 +3039,8 @@ export type InventoryShortfallPage = {
   next_cursor?: string | null;
   limit?: number;
 };
-export type InventoryReorderPointPage = {
-  items: InventoryReorderPoint[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryReorderPointList = {
+  reorder_points: InventoryReorderPoint[] | null;
 };
 export type InvCountSheet = {
   id: string;
