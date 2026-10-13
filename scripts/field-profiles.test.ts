@@ -245,8 +245,9 @@ describe("work shell host assembly", () => {
 
   test("the host is built into the dist root and is the launcher entry", () => {
     const script = work();
-    expect(script).toContain('npm --prefix "$ROOT/web/apps/work-shell" run build');
-    expect(script).toContain('cp -r "$ROOT/web/apps/work-shell/dist/." "$DIST/"');
+    // built straight into the dist root: no dist folder is left inside the app
+    // (the design system's dependents gate scans an app's own dist if it exists)
+    expect(script).toContain('npm --prefix "$ROOT/web/apps/work-shell" run build -- --outDir "$DIST" --emptyOutDir');
   });
 
   test("the front door is built at /door/ and is not copied to the dist root", () => {

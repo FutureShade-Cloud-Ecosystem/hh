@@ -51,8 +51,7 @@ rm -rf "$DIST"
 mkdir -p "$DIST"
 
 echo "assemble: building the Work shell host (the launcher entry)"
-npm --prefix "$ROOT/web/apps/work-shell" run build
-cp -r "$ROOT/web/apps/work-shell/dist/." "$DIST/"
+npm --prefix "$ROOT/web/apps/work-shell" run build -- --outDir "$DIST" --emptyOutDir
 
 # The front door is a page under the host, at /door/ (the host mounts it as
 # its sign in and role picker). Its tiles open the desk apps at the launch
