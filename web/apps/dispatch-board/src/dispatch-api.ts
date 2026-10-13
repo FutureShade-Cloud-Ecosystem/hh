@@ -26,9 +26,11 @@ import {
   type DispatchPolicy,
   type DispatchPolicyChangePage,
   type DispatchPaymentHoldPage,
+  type DispatchPrintJobRef,
   type DispatchRescheduleResult,
   type DispatchRun,
   type DispatchRunDetail,
+  type DispatchScanTrail,
   type DispatchScheduleInput,
   type DispatchStop,
   type DispatchTruck,
@@ -65,6 +67,23 @@ export class DispatchApi {
 
   drivers(branchId: string, includeInactive = false): Promise<Result<DispatchDriverPage>> {
     return staffDispatch.dispatchListDrivers(this.#client, includeInactive ? { branch_id: branchId, include_inactive: true } : { branch_id: branchId });
+  }
+
+  // ---- the manifest and the scan trail
+
+  /** The core's own manifest document, as the page it prints. */
+  runManifest(runId: string): Promise<Result<string>> {
+    return staffDispatch.dispatchGetRunManifest(this.#client, runId);
+  }
+
+  /** Records a manifest print in the print queue: who printed which run's manifest and when. */
+  recordManifestPrint(runId: string): Promise<Result<DispatchPrintJobRef>> {
+    return staffDispatch.dispatchPrintRunManifest(this.#client, runId);
+  }
+
+  /** Where an order's pallets are, by stage. The trail is read, never written, from this board. */
+  scanTrail(orderId: string): Promise<Result<DispatchScanTrail>> {
+    return staffDispatch.dispatchGetScanTrail(this.#client, { order_id: orderId });
   }
 
   // ---- will call: pickup codes for an order on the rack (the order is named by the number on the paperwork)

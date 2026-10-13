@@ -19,6 +19,8 @@ import type {
   DispatchLoadStop,
   DispatchPolicy,
   DispatchPolicyChange,
+  DispatchScanLoad,
+  DispatchScanTrail,
   DispatchScheduleInput,
   DispatchTruck,
   DispatchStopPaymentHold,
@@ -1129,4 +1131,57 @@ export function historyRow(c: DispatchPolicyChange): HistoryRow {
 export function historyFaultWords(error: string, status: number | null): string {
   if (status === 403) return "Managers read the change history. It is not shown to this login.";
   return refusalWords("The change history", error, status);
+}
+
+// ---- the manifest and the scan trail (part B) ------------------------------------------------------------
+
+export function manifestRefusal(error: string, status: number | null): string {
+  if (status === 403) return "That run belongs to another yard. Its manifest is not available here.";
+  if (status === 404) return "There is no such run.";
+  return refusalWords("The manifest", error, status);
+}
+
+export function manifestNotice(runNo: string): string {
+  return `Manifest for ${runNo} sent to the printer window, and the print is recorded.`;
+}
+
+/** The five checkpoints a pallet passes, in order. Mirrors the core's sequence. */
+export const SCAN_SEQUENCE = ["RECEIVED", "YARD", "PICKED", "IN_TRANSIT", "DELIVERED"] as const;
+
+const STAGE_LABEL: Record<string, string> = {
+  RECEIVED: "Received",
+  YARD: "In the yard",
+  PICKED: "Picked",
+  IN_TRANSIT: "On the road",
+  DELIVERED: "Delivered",
+};
+
+/** A stage in plain words. An unmapped stage comes back as itself, lowercased, never as an invented phrase. */
+export function scanStageLabel(stage: string): string {
+  return STAGE_LABEL[stage] ?? stage.toLowerCase().replace(/_/g, " ");
+}
+
+/**
+ * The one line answering "where is this order". It says all delivered only when the core does:
+ * an order of three pallets with two delivered is not a delivered order, and a summary that rounds up
+ * is the most dangerous sentence this screen could print.
+ */
+export function trailSummary(trail: DispatchScanTrail | null | undefined): string {
+  if (!trail || trail.loads.length === 0) return "No scans yet";
+  const n = trail.loads.length;
+  const noun = n === 1 ? "load" : "loads";
+  if (trail.complete) return `${n} ${noun}, all delivered`;
+  const delivered = trail.loads.filter((l) => l.furthest === "DELIVERED").length;
+  return `${delivered} of ${n} ${noun} delivered`;
+}
+
+/** One pallet's line: how far it got, whether it was signed for, and when it was last scanned. */
+export function scanLoadLine(l: DispatchScanLoad): string {
+  const when = new Date(l.last_scanned_at);
+  const parts = [scanStageLabel(l.furthest).toLowerCase()];
+  if (l.pod_signature_ref) parts.push("signed for");
+  if (!Number.isNaN(when.getTime())) {
+    parts.push(`last scanned ${when.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}`);
+  }
+  return `${l.load_ref}: ${parts.join(", ")}`;
 }

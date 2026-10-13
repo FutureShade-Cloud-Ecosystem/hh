@@ -186,6 +186,14 @@ export const boardStyles = css`
   .sched-form .wide { grid-column: 1 / -1; }
   .sched-form .alert, .sched-form p { margin: 0; }
 
+  /* The scan trail: five stages in one row per pallet; reached ones are filled and the furthest is ringed, so it reads in greyscale. */
+  .trail-summary { margin: 0 0 var(--hh-s-8); font-weight: 700; font-size: 18px; }
+  .trail-load { margin: var(--hh-s-8) 0; }
+  .spine { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--hh-s-4); }
+  .stage { display: flex; align-items: center; justify-content: center; text-align: center; min-height: 44px; padding: var(--hh-s-4); font-size: 12px; font-weight: 600; border: 1px dashed var(--hh-control-line); border-radius: var(--hh-radius-control); color: var(--hh-text-dim); overflow-wrap: anywhere; }
+  .stage.reached { border-style: solid; border-color: var(--hh-text); background: var(--hh-card); color: var(--hh-text); }
+  .stage[data-furthest="true"] { outline: 3px solid var(--hh-text); outline-offset: 1px; font-weight: 700; }
+
   /* The rules: a name, its value in words, and the one sentence that keeps it apart from its neighbour. */
   .rules { display: grid; gap: var(--hh-s-12); }
   .rules li { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, 1fr) minmax(0, 2fr); gap: var(--hh-s-4) var(--hh-s-16); align-items: baseline; padding-bottom: var(--hh-s-12); border-bottom: 1px solid var(--hh-line); }

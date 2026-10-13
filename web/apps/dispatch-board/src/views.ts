@@ -22,6 +22,7 @@ import type {
   DispatchPolicy,
   DispatchPolicyChange,
   DispatchRun,
+  DispatchScanTrail,
   DispatchStop,
   DispatchStopPaymentHold,
   DispatchTruck,
@@ -45,6 +46,7 @@ import {
   CARD_LABEL,
   CARD_ORDER,
   RUN_LABEL,
+  SCAN_SEQUENCE,
   STATUS_LANES,
   STOP_LABEL,
   addressLine,
@@ -72,9 +74,12 @@ import {
   pickupSplitLabel,
   rescheduleBlockedReason,
   rowEditable,
+  scanLoadLine,
+  scanStageLabel,
   shortDay,
   toCuYd,
   toWeight,
+  trailSummary,
   weightUnit,
   stopActions,
   stopBlockedReason,
@@ -92,7 +97,7 @@ export type Axis = "TRUCK" | "STATUS";
 export interface Sheet {
   readonly kind:
     | "reschedule-stop" | "reschedule-run" | "reopen-stop" | "reopen-run" | "fail-stop" | "new-run" | "cancel-run"
-    | "add-truck" | "edit-truck" | "add-driver" | "edit-driver" | "revoke-willcall" | "edit-policy";
+    | "add-truck" | "edit-truck" | "add-driver" | "edit-driver" | "revoke-willcall" | "edit-policy" | "scan-trail";
   readonly id: string;
   /** What was typed when a refusal sent the sheet back, so the person keeps their work. */
   readonly values?: Readonly<Record<string, string>>;
@@ -130,6 +135,14 @@ export interface BoardModel {
   readonly span: Span;
   /** The schedule form's own refusal, shown beside its button. */
   readonly scheduleError: string;
+  /** The scan trail open on a card: the order named, and its read in progress, done or refused. */
+  readonly trail: {
+    readonly stopId: string;
+    readonly orderNo: string;
+    readonly state: "loading" | "ready" | "error";
+    readonly value?: DispatchScanTrail;
+    readonly words?: string;
+  } | null;
   /** The settings tab: the yard's rules, the trail of changes, and why the trail is not shown when it is not. */
   readonly policy: DispatchPolicy | null;
   readonly history: readonly DispatchPolicyChange[];
@@ -216,6 +229,50 @@ export function renderMessages(model: Pick<BoardModel, "error" | "notice" | "inf
   `;
 }
 
+// ---- the scan trail ------------------------------------------------------------------------------
+
+/** Where an order's pallets are, as a spine of the five stages per pallet: reached ones filled, the furthest ringed. */
+function scanTrailSheet(sheet: Sheet, model: BoardModel): TemplateResult {
+  const t = model.trail;
+  const trail = t !== null && t.stopId === sheet.id ? t : null;
+  return html`
+    <section class="sheet" data-sheet=${sheet.kind} data-sheet-id=${sheet.id} aria-label="Scan trail">
+      <h4>Scan trail for ${trail?.orderNo ?? "the order"}</h4>
+      ${trail === null || trail.state === "loading"
+        ? html`<p class="dim" role="status">Reading the trail...</p>`
+        : trail.state === "error"
+          ? html`<p class="alert alert-error" role="alert" data-sheet-error>${trail.words}</p>`
+          : html`
+              <p class="trail-summary" data-trail-summary>${trailSummary(trail.value)}</p>
+              ${(trail.value?.loads ?? []).length === 0
+                ? html`<p class="small dim">No pallets scanned against this order yet.</p>`
+                : (trail.value?.loads ?? []).map(
+                    (l) => html`
+                      <div class="trail-load" data-trail-load=${l.load_ref}>
+                        <p class="small">${scanLoadLine(l)}</p>
+                        <div class="spine">
+                          ${SCAN_SEQUENCE.map(
+                            (stage) => html`<span class="stage ${l.reached.includes(stage) ? "reached" : ""}" data-stage=${stage} data-reached=${l.reached.includes(stage) ? "true" : "false"} data-furthest=${l.furthest === stage ? "true" : "false"}>${scanStageLabel(stage)}</span>`,
+                          )}
+                        </div>
+                      </div>`,
+                  )}
+            `}
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" data-action="sheet-cancel">Close</button>
+      </div>
+    </section>
+  `;
+}
+
+function printManifestButton(model: BoardModel, run: DispatchRun): TemplateResult {
+  return html`<button type="button" class="btn btn-secondary small-btn" data-action="print-manifest" data-run-id=${run.id} ?disabled=${model.busy}>Print manifest</button>`;
+}
+
+function scanTrailButton(model: BoardModel, stop: DispatchStop): TemplateResult {
+  return html`<button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="scan-trail" data-stop-id=${stop.id} ?disabled=${model.busy}>Scan trail</button>`;
+}
+
 // ---- the registry sheets -------------------------------------------------------------------------
 
 function fleetSheet(sheet: Sheet, model: BoardModel): TemplateResult {
@@ -291,6 +348,7 @@ function sheetPanel(sheet: Sheet, model: BoardModel): TemplateResult {
       </form>
     `;
   }
+  if (sheet.kind === "scan-trail") return scanTrailSheet(sheet, model);
   if (sheet.kind === "revoke-willcall") {
     return html`
       <form class="sheet" data-sheet=${sheet.kind} data-sheet-id=${sheet.id} novalidate>
@@ -530,8 +588,9 @@ function loadCard(model: BoardModel, view: DispatchLoadBoardView, stop: Dispatch
         ${reschedBlock === ""
           ? html`<button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="reschedule-stop" data-stop-id=${stop.id} ?disabled=${model.busy}>Move date</button>`
           : nothing}
+        ${scanTrailButton(model, stop)}
       </div>
-      ${sheetFor(model, ["reopen-stop", "reschedule-stop"], stop.id)}
+      ${sheetFor(model, ["reopen-stop", "reschedule-stop", "scan-trail"], stop.id)}
     </li>
   `;
 }
@@ -601,6 +660,7 @@ function truckLane(model: BoardModel, view: DispatchLoadBoardView, row: Dispatch
         ${run.status === "PLANNED" && (!crewed || run.stop_count === 0)
           ? html`<span class="small dim" data-dispatch-why>${!crewed ? "A truck needs a truck and a driver before it goes." : "Put a load on it first."}</span>`
           : nothing}
+        ${printManifestButton(model, run)}
         ${run.status === "PLANNED" && editable
           ? html`<button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="reschedule-run" data-run-id=${run.id}>Move truck date</button>
               <button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="cancel-run" data-run-id=${run.id} ?disabled=${model.busy}>Cancel truck</button>`
@@ -811,8 +871,9 @@ function dayStopCard(model: BoardModel, stop: DispatchStop, runs: readonly Dispa
               ${planned.map((r) => html`<option data-run-id=${r.id}>${r.run_no}${r.truck_code ? ` · ${r.truck_code}` : ""}</option>`)}
             </select>`
           : nothing}
+        ${scanTrailButton(model, stop)}
       </div>
-      ${sheetFor(model, ["fail-stop", "reschedule-stop"], stop.id)}
+      ${sheetFor(model, ["fail-stop", "reschedule-stop", "scan-trail"], stop.id)}
     </li>
   `;
 }
@@ -829,6 +890,7 @@ function dayRun(model: BoardModel, day: DispatchBoard, run: DispatchRun): Templa
         ${statusPill(run.status, RUN_LABEL[run.status] ?? run.status)}
         ${run.commit?.committed ? html`<span class="status status-good" data-committed>Committed</span>` : nothing}
         <span class="spacer"></span>
+        ${printManifestButton(model, run)}
         ${run.status === "PLANNED"
           ? html`<button type="button" class="btn btn-primary small-btn" data-action="dispatch-run" data-run-id=${run.id}
                 ?disabled=${model.busy}>Dispatch</button>
@@ -935,7 +997,8 @@ function booksStop(model: BoardModel, stop: DispatchStop): TemplateResult {
       ${block === ""
         ? html`<div class="actions"><button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="reschedule-stop" data-stop-id=${stop.id} ?disabled=${model.busy}>Move date</button></div>`
         : html`<p class="small dim" data-move-why>${block}</p>`}
-      ${sheetFor(model, ["reschedule-stop"], stop.id)}
+      <div class="actions">${scanTrailButton(model, stop)}</div>
+      ${sheetFor(model, ["reschedule-stop", "scan-trail"], stop.id)}
     </li>
   `;
 }
@@ -949,9 +1012,13 @@ function booksRun(model: BoardModel, run: DispatchRun): TemplateResult {
         ${statusPill(run.status, RUN_LABEL[run.status] ?? run.status)}
       </div>
       <div class="small dim">${run.truck_code ?? "No truck yet"} · ${run.stop_count} ${run.stop_count === 1 ? "stop" : "stops"}</div>
-      ${movable
-        ? html`<div class="actions"><button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="reschedule-run" data-run-id=${run.id} ?disabled=${model.busy}>Move truck</button></div>`
-        : html`<p class="small dim">A truck that has left is a record, not a plan.</p>`}
+      <div class="actions">
+        ${printManifestButton(model, run)}
+        ${movable
+          ? html`<button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="reschedule-run" data-run-id=${run.id} ?disabled=${model.busy}>Move truck</button>`
+          : nothing}
+      </div>
+      ${movable ? nothing : html`<p class="small dim">A truck that has left is a record, not a plan.</p>`}
       ${sheetFor(model, ["reschedule-run"], run.id)}
     </li>
   `;

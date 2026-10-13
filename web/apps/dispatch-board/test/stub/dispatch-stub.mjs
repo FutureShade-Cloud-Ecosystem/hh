@@ -201,7 +201,7 @@ function seedWorld() {
     { id: "9c000001-0000-4000-9000-000000000001", order_id: orders[7].id, branch_id: BRANCH, status: "CONFIRMED", expires_at: `${addDays(TODAY, 9)}T18:00:00Z`, collected_by: "Pickup contact (demo)", confirmed_at: `${TODAY}T10:00:00Z`, created_at: `${addDays(TODAY, -2)}T09:00:00Z` },
     { id: "9c000001-0000-4000-9000-000000000002", order_id: orders[7].id, branch_id: BRANCH, status: "REVOKED", expires_at: `${addDays(TODAY, 8)}T18:00:00Z`, created_at: `${addDays(TODAY, -3)}T09:00:00Z` },
   ];
-  return { trucks, drivers, runs, stops, orders, pickups, seq: { run: 5, resched: 1, stop: 50, truck: 5, driver: 4, pickup: 10 } };
+  return { trucks, drivers, runs, stops, orders, pickups, seq: { run: 5, resched: 1, stop: 50, truck: 5, driver: 4, pickup: 10, job: 10 } };
 }
 
 let world = seedWorld();
@@ -451,6 +451,38 @@ function resolveOrder(res, raw) {
   return order;
 }
 
+function manifestHtml(run) {
+  const rows = stopsOnRun(run.id)
+    .map((s) => `<tr><td>${s.stop_no}</td><td>${s.order_no}</td><td>${s.customer_name}</td><td>${s.address_line || "-"}</td></tr>`)
+    .join("");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Run manifest ${run.run_no}</title></head><body><h1>Run manifest ${run.run_no}</h1><table>${rows}</table></body></html>`;
+}
+
+// The scan trail an order has: ORD-0012 has two pallets, one still in the yard and one delivered and signed for.
+function trailFor(orderId) {
+  const stop = world.stops.find((s) => s.order_id === orderId);
+  if (!stop) return null;
+  const at = (hh) => `${TODAY}T${hh}:00:00Z`;
+  const cp = (n, load, checkpoint, hh, extra) => ({ id: `ca000001-0000-4000-9000-0000000000${n}`, branch_id: BRANCH, order_id: orderId, load_ref: load, checkpoint, scanned_at: at(hh), ...extra });
+  if (stop.order_no !== "ORD-0012") return { order_id: orderId, checkpoints: [], loads: [], complete: false };
+  const checkpoints = [
+    cp(10, "PLT-0012-A", "RECEIVED", "06"),
+    cp(11, "PLT-0012-A", "YARD", "07"),
+    cp(12, "PLT-0012-A", "PICKED", "08"),
+    cp(13, "PLT-0012-B", "RECEIVED", "06"),
+    cp(14, "PLT-0012-B", "DELIVERED", "09", { pod_signature_ref: "sig-demo" }),
+  ];
+  return {
+    order_id: orderId,
+    checkpoints,
+    loads: [
+      { load_ref: "PLT-0012-A", reached: ["RECEIVED", "YARD", "PICKED"], furthest: "PICKED", last_scanned_at: at("08") },
+      { load_ref: "PLT-0012-B", reached: ["RECEIVED", "DELIVERED"], furthest: "DELIVERED", pod_signature_ref: "sig-demo", last_scanned_at: at("09") },
+    ],
+    complete: false,
+  };
+}
+
 function refuseIfArmed(res, method, path) {
   if (armed === null) return false;
   if (armed.path !== undefined && !path.includes(armed.path)) return false;
@@ -558,6 +590,18 @@ async function route(req, res, url) {
         });
       }
       return json(res, { items, limit: 60 });
+    }
+    let m1 = /^runs\/([^/]+)\/manifest$/.exec(rest);
+    if (m1) {
+      const run = runOf(m1[1]);
+      if (!run) return fail(res, 404, "dispatch: not found");
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+      return res.end(manifestHtml(run));
+    }
+    if (rest === "scan-trail") {
+      if (q("order_id") === "") return fail(res, 400, "order_id is required");
+      const trail = trailFor(q("order_id"));
+      return trail === null ? fail(res, 404, "dispatch: not found") : json(res, trail);
     }
     if (rest === "policy") return json(res, POLICY);
     if (rest === "policy/history") {
@@ -871,6 +915,12 @@ async function route(req, res, url) {
       for (const s of moved) s.scheduled_date = body.to_date;
       return json(res, { entity_type: "delivery_run", entity_id: run.id, from_date: from, to_date: body.to_date, stops_moved: moved.length, reschedule_id: `rs000001-0000-4000-9000-00000000000${world.seq.resched++}`, run: runView(run) });
     }
+  }
+
+  m = /^runs\/([^/]+)\/manifest\/print$/.exec(rest);
+  if (m) {
+    if (!runOf(m[1])) return fail(res, 404, "dispatch: not found");
+    return json(res, { job_id: `pj000001-0000-4000-9000-0000000000${String(world.seq.job++).padStart(2, "0")}`, doc_type: "DELIVERY_DOC" }, 201);
   }
 
   m = /^stops\/([^/]+)\/(assign|commit|status|reopen|reschedule)$/.exec(rest);

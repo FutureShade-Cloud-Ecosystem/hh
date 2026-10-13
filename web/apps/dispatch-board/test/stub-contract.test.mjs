@@ -469,3 +469,32 @@ test("the dispatch rules: read, rewritten, each change recorded with who and whe
   await post("/_stub/caller", { can_set_policy: true, can_manage: false });
   refused(await call("GET", `/api/v1/dispatch/policy/history?branch_id=${branch}`), 403, "Forbidden");
 });
+
+test("the manifest and the scan trail: a run's document, a print recorded, an order's pallets by stage, and the core's sentences", async () => {
+  await reset();
+  const { stop, run } = await ids();
+  const doc = await fetch(`${base}/api/v1/dispatch/runs/${run("RUN-PLM-1").id}/manifest`, { headers: { Authorization: "Bearer stub-token", "X-Org": "hh-demo" } });
+  assert.equal(doc.status, 200);
+  assert.match(doc.headers.get("content-type") ?? "", /^text\/html/);
+  assert.equal(doc.headers.get("cache-control"), "no-store", "a manifest is a point in time document");
+  const html = await doc.text();
+  assert.ok(html.includes("Run manifest RUN-PLM-1"));
+  assert.ok(html.includes("ORD-0012"));
+  const printed = await call("POST", `/api/v1/dispatch/runs/${run("RUN-PLM-1").id}/manifest/print`);
+  assert.equal(printed.status, 201);
+  holds("DispatchPrintJobRef", printed.json);
+  assert.equal(printed.json.doc_type, "DELIVERY_DOC");
+  refused(await call("GET", "/api/v1/dispatch/runs/00000000-0000-4000-9000-000000000000/manifest"), 404, "not found");
+  refused(await call("POST", "/api/v1/dispatch/runs/00000000-0000-4000-9000-000000000000/manifest/print"), 404, "not found");
+  const trail = await call("GET", `/api/v1/dispatch/scan-trail?order_id=${stop("ORD-0012").order_id}`);
+  assert.equal(trail.status, 200);
+  holds("DispatchScanTrail", trail.json);
+  assert.equal(trail.json.complete, false);
+  assert.equal(trail.json.loads.length, 2);
+  assert.deepEqual(trail.json.loads.map((l) => l.furthest).sort(), ["DELIVERED", "PICKED"]);
+  const quiet = await call("GET", `/api/v1/dispatch/scan-trail?order_id=${stop("ORD-0029").order_id}`);
+  holds("DispatchScanTrail", quiet.json);
+  assert.deepEqual(quiet.json.loads, []);
+  refused(await call("GET", "/api/v1/dispatch/scan-trail"), 400, "order_id is required");
+  refused(await call("GET", "/api/v1/dispatch/scan-trail?order_id=00000000-0000-4000-9000-000000000000"), 404, "not found");
+});

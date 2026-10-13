@@ -46,7 +46,13 @@ import {
   driverBody,
   driverLine,
   fleetStateWord,
+  SCAN_SEQUENCE,
   historyFaultWords,
+  manifestNotice,
+  manifestRefusal,
+  scanLoadLine,
+  scanStageLabel,
+  trailSummary,
   historyRow,
   policyBody,
   policyRefusal,
@@ -616,4 +622,35 @@ test("the history's fault is the core's sentence, and a refusal for a non manage
   assert.match(historyFaultWords("Forbidden", 403), /managers read the change history/i);
   assert.match(historyFaultWords("", 500), /nothing changed/);
   assert.equal(historyFaultWords("dispatch: branch_id is required", 400), "branch_id is required");
+});
+
+// ---- the manifest and the scan trail (part B, sub item 5) ------------------------------------------------
+
+test("the manifest's refusals say what the dispatcher can do, and the notice says it was recorded", () => {
+  assert.match(manifestRefusal("Forbidden", 403), /belongs to another yard/);
+  assert.equal(manifestRefusal("dispatch: not found", 404), "There is no such run.");
+  assert.match(manifestRefusal("", 401), /Your session ended/);
+  assert.match(manifestRefusal("", 500), /nothing changed/);
+  assert.equal(manifestNotice("RUN-PLM-1"), "Manifest for RUN-PLM-1 sent to the printer window, and the print is recorded.");
+});
+
+test("the scan trail's five stages are in the order a pallet moves, in plain words", () => {
+  assert.deepEqual([...SCAN_SEQUENCE], ["RECEIVED", "YARD", "PICKED", "IN_TRANSIT", "DELIVERED"]);
+  assert.deepEqual(SCAN_SEQUENCE.map(scanStageLabel), ["Received", "In the yard", "Picked", "On the road", "Delivered"]);
+  assert.equal(scanStageLabel("SOMETHING_NEW"), "something new", "an unmapped stage degrades to itself");
+});
+
+test("the trail's summary never rounds up: two of three delivered is not a delivered order", () => {
+  assert.equal(trailSummary(null), "No scans yet");
+  assert.equal(trailSummary({ order_id: "o", checkpoints: [], loads: [], complete: false }), "No scans yet");
+  const load = (furthest) => ({ load_ref: "L", reached: [furthest], furthest, last_scanned_at: "2026-10-12T18:00:00Z" });
+  assert.equal(trailSummary({ order_id: "o", checkpoints: [], loads: [load("DELIVERED"), load("DELIVERED"), load("PICKED")], complete: false }), "2 of 3 loads delivered");
+  assert.equal(trailSummary({ order_id: "o", checkpoints: [], loads: [load("DELIVERED")], complete: true }), "1 load, all delivered");
+  assert.equal(trailSummary({ order_id: "o", checkpoints: [], loads: [load("DELIVERED"), load("DELIVERED")], complete: true }), "2 loads, all delivered");
+  assert.equal(trailSummary({ order_id: "o", checkpoints: [], loads: [load("PICKED")], complete: false }), "0 of 1 load delivered");
+});
+
+test("a load's line says how far it got and when it was last scanned", () => {
+  assert.match(scanLoadLine({ load_ref: "PLT-1", reached: ["RECEIVED", "YARD", "PICKED"], furthest: "PICKED", last_scanned_at: "2026-10-12T18:04:00Z" }), /^PLT-1: picked, last scanned Oct 12, 2026/);
+  assert.match(scanLoadLine({ load_ref: "PLT-2", reached: ["DELIVERED"], furthest: "DELIVERED", last_scanned_at: "2026-10-12T18:04:00Z", pod_signature_ref: "sig" }), /^PLT-2: delivered, signed for/);
 });

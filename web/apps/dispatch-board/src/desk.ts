@@ -30,6 +30,8 @@ import {
   bulkLoadOutcome,
   driverBody,
   historyFaultWords,
+  manifestNotice,
+  manifestRefusal,
   policyBody,
   policyRefusal,
   loadableStops,
@@ -59,6 +61,7 @@ import {
   type TruckFields,
   type CardId,
 } from "./dispatch-logic.js";
+import { BLOCKED_WINDOW_WORDS, browserPrintDeps, openPrintWindow, printHtmlInto } from "./print-window.js";
 import { renderDesk, type Axis, type BoardModel, type Sheet, type Span, type Tab } from "./views.js";
 
 export interface DeskHost {
@@ -108,6 +111,8 @@ export class DispatchDesk {
   #runError: { id: string; words: string } | null = null;
   #scheduleError = "";
   // Will call: the order as typed, its codes, whether a lookup has run, and the code just minted (held in memory, shown once).
+  // The scan trail open on a card: its read, in progress, done or refused.
+  #trail: BoardModel["trail"] = null;
   #policy: DispatchPolicy | null = null;
   #history: readonly DispatchPolicyChange[] = [];
   #historyFault = "";
@@ -245,6 +250,7 @@ export class DispatchDesk {
   async #reload(): Promise<void> {
     await this.#readBoard();
     this.#sheet = null;
+    this.#trail = null;
     this.#sheetSeeded = null;
   }
 
@@ -279,6 +285,7 @@ export class DispatchDesk {
       loading: this.#loading,
       span: this.#span,
       scheduleError: this.#scheduleError,
+      trail: this.#trail,
       policy: this.#policy,
       history: this.#history,
       historyFault: this.#historyFault,
@@ -417,6 +424,10 @@ export class DispatchDesk {
       case "schedule-submit":
         void this.#schedule();
         return true;
+      case "print-manifest":
+        // The window is opened inside the press, while the click still counts as the person's own act.
+        this.#printManifest(attr("data-run-id"), openPrintWindow());
+        return true;
       case "wc-lookup":
         void this.#wcLookup();
         return true;
@@ -438,11 +449,16 @@ export class DispatchDesk {
         return true;
       case "open-sheet": {
         const kind = attr("data-sheet-kind") as Sheet["kind"];
+        if (kind === "scan-trail") {
+          void this.#openTrail(attr("data-stop-id"));
+          return true;
+        }
         this.#openSheet(kind, attr("data-stop-id") || attr("data-run-id") || attr("data-fleet-id") || attr("data-code-id"));
         return true;
       }
       case "sheet-cancel":
         this.#sheet = null;
+        this.#trail = null;
         this.#sheetSeeded = null;
         this.#host.repaint();
         return true;
@@ -701,6 +717,66 @@ export class DispatchDesk {
     else this.#error = refusalWords("Auto assign", result.error, result.status ?? null);
     await this.#reload();
     this.#busy = false;
+    this.#host.repaint();
+  }
+
+  // ---- the manifest and the scan trail ---------------------------------------------------------
+
+  /**
+   * The manifest: the core's document is read, the print is recorded, and only then does the window
+   * take it. A window the browser blocked, a manifest the core refused and a print the queue could
+   * not record each stop the flow with a sentence, and no window is left open behind them.
+   */
+  async #printManifest(runId: string, win: ReturnType<typeof openPrintWindow>): Promise<void> {
+    if (this.#busy) {
+      (win as { close?: () => void } | null)?.close?.();
+      return;
+    }
+    const runs = [...(this.#view?.loads.map((r) => r.run) ?? []), ...(this.#day?.runs ?? [])];
+    const no = runs.find((r) => r.id === runId)?.run_no ?? "The run";
+    this.#clearMessages();
+    if (win === null) {
+      this.#error = BLOCKED_WINDOW_WORDS;
+      this.#host.repaint();
+      return;
+    }
+    this.#busy = true;
+    this.#host.repaint();
+    const fail = (words: string): void => {
+      win.close?.();
+      this.#error = words;
+    };
+    const doc = await this.#api.runManifest(runId);
+    if (!doc.ok) fail(manifestRefusal(doc.error, doc.status ?? null));
+    else {
+      const recorded = await this.#api.recordManifestPrint(runId);
+      if (!recorded.ok) fail(manifestRefusal(recorded.error, recorded.status ?? null));
+      else {
+        const outcome = printHtmlInto(win, doc.value, browserPrintDeps);
+        if (outcome.ok) this.#notice = manifestNotice(no);
+        else this.#error = outcome.message;
+      }
+    }
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
+  /** Opens a card's scan trail: the sheet shows at once and fills when the core answers. */
+  async #openTrail(stopId: string): Promise<void> {
+    const all: DispatchStop[] = [...(this.#view?.staging ?? []), ...(this.#view?.loads.flatMap((r) => r.stops) ?? []), ...(this.#day?.stops ?? []), ...(this.#day?.unassigned ?? [])];
+    const stop = all.find((s) => s.id === stopId);
+    if (stop === undefined) return;
+    this.#clearMessages();
+    this.#sheet = { kind: "scan-trail", id: stopId, error: "" };
+    this.#sheetSeeded = null;
+    this.#trail = { stopId, orderNo: stop.order_no ?? "the order", state: "loading" };
+    this.#host.repaint();
+    const result = await this.#api.scanTrail(stop.order_id);
+    // The sheet may have been closed, or another card's opened, while the core was answering.
+    if (this.#trail === null || this.#trail.stopId !== stopId) return;
+    this.#trail = result.ok
+      ? { stopId, orderNo: this.#trail.orderNo, state: "ready", value: result.value }
+      : { stopId, orderNo: this.#trail.orderNo, state: "error", words: refusalWords("The scan trail", result.error, result.status ?? null) };
     this.#host.repaint();
   }
 
