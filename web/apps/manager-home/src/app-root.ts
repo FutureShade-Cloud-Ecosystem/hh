@@ -45,10 +45,11 @@ import {
 import { homeStyles } from "./styles.js";
 import { warrantyStyles } from "./warranty-styles.js";
 import { quickStyles } from "./quick-styles.js";
-import { QuickApi } from "./quick-api.js";
+import { QuickApi, type QuickActionConfig } from "./quick-api.js";
 import { publishIntent } from "./quick-intent.js";
 import { actionHref, findAction } from "./quick-logic.js";
-import { renderQuickBar, type QuickBarModel } from "./quick-views.js";
+import { renderQuickAdmin, renderQuickBar, type QuickAdminModel, type QuickBarModel } from "./quick-views.js";
+import { configRefusalWords } from "./quick-logic.js";
 import { WarrantyApi } from "./warranty-api.js";
 import { WarrantyDesk } from "./warranty-desk.js";
 import { renderWarranty } from "./warranty-views.js";
@@ -129,6 +130,9 @@ export class ManagerHomeApp extends HHElement {
   // The landing's quick-action bar: the caller's resolved registry rows.
   #quickBar: QuickBarModel = { phase: "loading", actions: [] };
 
+  // The admin's quick-actions config: the draft rows are local until Save.
+  #quickAdmin: QuickAdminModel = { phase: "loading", actions: [], profiles: [], error: "", refusal: "", savedFor: "", busyId: "" };
+
   // The views' states.
   #shortages: ShortagesModel = {
     phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
@@ -168,13 +172,29 @@ export class ManagerHomeApp extends HHElement {
     }
     if (action === "open-view") {
       const view = control?.getAttribute("data-view");
-      if (view === "shortages" || view === "receiving" || view === "approvals" || view === "warranty") {
+      if (view === "shortages" || view === "receiving" || view === "approvals" || view === "warranty" || view === "quick-actions") {
         this.#openView(view);
       }
       return;
     }
     if (action === "quick-run") {
       this.#runQuick(control?.getAttribute("data-action-id") ?? "");
+      return;
+    }
+    if (action === "quick-toggle-show") {
+      this.#patchQuick(control?.getAttribute("data-action-id") ?? "", (row) => ({ ...row, enabled: !row.enabled }));
+      return;
+    }
+    if (action === "quick-toggle-shape") {
+      const profile = control?.getAttribute("data-profile") ?? "";
+      this.#patchQuick(control?.getAttribute("data-action-id") ?? "", (row) => ({
+        ...row,
+        profiles: { ...row.profiles, [profile]: !(row.profiles[profile] === true) },
+      }));
+      return;
+    }
+    if (action === "quick-save") {
+      void this.#saveQuick(control?.getAttribute("data-action-id") ?? "");
       return;
     }
     if (action === "back") {
@@ -185,6 +205,7 @@ export class ManagerHomeApp extends HHElement {
       if (this.#view === "shortages") void this.#loadShortages();
       if (this.#view === "receiving") void this.#loadReceiving();
       if (this.#view === "approvals") void this.#loadApprovals();
+      if (this.#view === "quick-actions") void this.#loadQuickAdmin();
       return;
     }
     // The warranty desk's own controls (every data-action beginning w-). Its
@@ -365,6 +386,7 @@ export class ManagerHomeApp extends HHElement {
     this.#warranty.reset();
     this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "" };
     this.#quickBar = { phase: "loading", actions: [] };
+    this.#quickAdmin = { phase: "loading", actions: [], profiles: [], error: "", refusal: "", savedFor: "", busyId: "" };
     this.#shortages = {
       phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
       resolverWords: SHORTAGE_RESOLVER_WORDS,
@@ -443,6 +465,79 @@ export class ManagerHomeApp extends HHElement {
     window.location.assign(href);
   }
 
+  // The admin's config view. The gate is the server's: a caller the core does
+  // not make an admin gets the shared Forbidden body, shown verbatim in the
+  // view (configRefusalWords), never paraphrased into a softer wall.
+  async #loadQuickAdmin(): Promise<void> {
+    this.#quickAdmin = { ...this.#quickAdmin, phase: "loading", error: "", refusal: "" };
+    this.requestUpdate();
+    const result = await this.#quickApi.config();
+    if (result.ok) {
+      this.#quickAdmin = {
+        ...this.#quickAdmin,
+        phase: "ready",
+        actions: result.value.actions,
+        profiles: result.value.profiles,
+        error: "",
+        refusal: "",
+        savedFor: "",
+        busyId: "",
+      };
+    } else {
+      const refusal = result.status === 403 ? configRefusalWords(result.error) : "";
+      this.#quickAdmin = {
+        ...this.#quickAdmin,
+        phase: refusal !== "" ? "refused" : "error",
+        actions: [],
+        profiles: [],
+        error: refusal !== "" ? "" : `The quick actions did not load. ${errorWords(result.error)}`,
+        refusal,
+        savedFor: "",
+        busyId: "",
+      };
+    }
+    this.requestUpdate();
+  }
+
+  // A draft edit: nothing is saved until Save is pressed, so a mis-click
+  // costs nothing (the original surface's own rule).
+  #patchQuick(id: string, change: (row: QuickActionConfig) => QuickActionConfig): void {
+    if (id === "" || this.#quickAdmin.busyId !== "") return;
+    this.#quickAdmin = {
+      ...this.#quickAdmin,
+      actions: this.#quickAdmin.actions.map((row) => (row.action_id === id ? change(row) : row)),
+      savedFor: "",
+    };
+    this.requestUpdate();
+  }
+
+  // The save goes to the server and the answer's resolved row replaces the
+  // draft; the landing's bar re-reads in the same breath, so the admin sees
+  // the effect of their own change without being told to reload.
+  async #saveQuick(id: string): Promise<void> {
+    const row = this.#quickAdmin.actions.find((a) => a.action_id === id);
+    if (row === undefined || this.#quickAdmin.busyId !== "") return;
+    this.#quickAdmin = { ...this.#quickAdmin, busyId: id, error: "", savedFor: "" };
+    this.requestUpdate();
+    const result = await this.#quickApi.putConfig(id, row.enabled, row.profiles);
+    if (result.ok) {
+      this.#quickAdmin = {
+        ...this.#quickAdmin,
+        busyId: "",
+        savedFor: id,
+        actions: this.#quickAdmin.actions.map((a) => (a.action_id === id ? result.value : a)),
+      };
+      void this.#loadQuickBar();
+    } else {
+      this.#quickAdmin = {
+        ...this.#quickAdmin,
+        busyId: "",
+        error: `The change did not go through. ${configRefusalWords(result.error)}`,
+      };
+    }
+    this.requestUpdate();
+  }
+
   // A landing refresh that keeps the screen standing: the server's answers
   // win, a failed re-read keeps what is on the glass.
   async #refreshLanding(): Promise<void> {
@@ -470,6 +565,7 @@ export class ManagerHomeApp extends HHElement {
     if (view === "receiving" && this.#receiving.phase === "loading") void this.#loadReceiving();
     if (view === "approvals" && this.#approvals.phase === "loading") void this.#loadApprovals();
     if (view === "warranty") this.#warranty.open();
+    if (view === "quick-actions") void this.#loadQuickAdmin();
   }
 
   // -- Shortages · open -----------------------------------------------------------------------------
@@ -621,6 +717,7 @@ export class ManagerHomeApp extends HHElement {
     if (this.#view === "receiving") return renderReceiving(this.#receiving);
     if (this.#view === "approvals") return renderApprovals(this.#approvals);
     if (this.#view === "warranty") return renderWarranty(this.#warranty.model());
+    if (this.#view === "quick-actions") return renderQuickAdmin(this.#quickAdmin);
     if (this.#view === "home") return html`${renderQuickBar(this.#quickBar)}${renderLanding(this.#landing)}`;
     return renderLanding(this.#landing);
   }

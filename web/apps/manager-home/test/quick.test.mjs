@@ -9,11 +9,13 @@ import {
   INTENT_POS_NEW_TICKET,
   actionHref,
   actionIconId,
+  configRefusalWords,
   findAction,
+  profileWord,
   savedWords,
   wordOf,
 } from "../src/quick-logic.ts";
-import { toQuickAction, toQuickActionsMine } from "../src/quick-api.ts";
+import { toQuickAction, toQuickActionConfig, toQuickActionsMine, toQuickConfigAnswer } from "../src/quick-api.ts";
 import {
   INTENT_EVENT,
   clearPendingIntent,
@@ -170,4 +172,77 @@ test("the channel announces on the window so an already-mounted destination hear
     globalThis.window.dispatchEvent = prev;
     clearPendingIntent();
   }
+});
+
+// -- the admin config view (sub item 2) ------------------------------------------------------------
+
+test("every job shape renders as the words a person reads, never a raw profile key", () => {
+  assert.equal(profileWord("counter"), "Counter");
+  assert.equal(profileWord("yard"), "Yard");
+  assert.equal(profileWord("driver"), "Driver");
+  assert.equal(profileWord("manager"), "Manager");
+  assert.equal(profileWord("admin"), "Admin");
+  assert.equal(profileWord("manager.branch"), "Branch manager");
+  assert.equal(profileWord("manager.sales"), "Sales manager");
+  assert.equal(profileWord("manager.yard"), "Yard manager");
+  assert.equal(profileWord("manager.logistics"), "Logistics manager");
+  assert.equal(profileWord("manager.procurement"), "Procurement manager");
+  assert.equal(profileWord("manager.payables"), "Payables and Receivables");
+  assert.equal(profileWord("manager.controller"), "Financial controller");
+  assert.equal(profileWord("manager.general"), "General manager");
+  // An unknown shape is not invented into a lie; it answers as itself.
+  assert.equal(profileWord("night"), "night");
+});
+
+test("the config view's refusal is the core's own words, never a paraphrase", () => {
+  // errorWords would turn the gate's one word body into "Try again in a
+  // moment."; the admin view must show the server's sentence verbatim.
+  assert.equal(configRefusalWords("Forbidden"), "Forbidden");
+  assert.equal(configRefusalWords("unknown quick action"), "unknown quick action");
+  assert.equal(configRefusalWords(""), "");
+});
+
+test("the config projection whitelists each action's admin view, and nothing else rides through", () => {
+  const action = toQuickActionConfig({
+    ...newSale,
+    lead: "Jumps to Point of Sale with a fresh ticket.",
+    enabled: true,
+    profiles: { counter: true, yard: false },
+    stored: false,
+    default_enabled: true,
+    default_profiles: { counter: true },
+    extra: "dropped",
+  });
+  assert.deepEqual(Object.keys(action).sort(), [
+    "action_id",
+    "enabled",
+    "glyph",
+    "intent",
+    "label",
+    "lead",
+    "profiles",
+    "screen",
+    "stored",
+    "title",
+    "unit",
+  ]);
+  assert.equal(action.enabled, true);
+  assert.deepEqual(action.profiles, { counter: true, yard: false });
+  assert.equal(action.stored, false, "stored false is the shipped default the view names");
+  // A malformed answer degrades to a default-off row, never a throw.
+  const blank = toQuickActionConfig(null);
+  assert.equal(blank.enabled, false);
+  assert.deepEqual(blank.profiles, {});
+  assert.equal(blank.stored, false);
+});
+
+test("the config answer projection carries the catalog and the closed shape list", () => {
+  const answer = toQuickConfigAnswer({
+    actions: [{ ...newSale, enabled: true, profiles: { counter: true }, stored: false }],
+    profiles: ["counter", "yard", "driver"],
+  });
+  assert.equal(answer.actions.length, 1);
+  assert.equal(answer.actions[0].action_id, "sale.new");
+  assert.deepEqual(answer.profiles, ["counter", "yard", "driver"]);
+  assert.deepEqual(toQuickConfigAnswer(null), { actions: [], profiles: [] });
 });

@@ -3,8 +3,13 @@
 // sell, so the yard manager's landing draws no bar); the bar carries the
 // core's own words and mark; a click navigates to the destination the core
 // names and never acts by itself.
+//
+// Sub item 2: the admin's config view. The gate is the server's, so a demo
+// manager opening it reads the core's own one word refusal verbatim; under
+// the stub's quick-admin scenario the view a real admin gets is walked end to
+// end, save included.
 import { test, expect } from "@playwright/test";
-import { managerHandoff, resetStub, signInByCard } from "./helpers.js";
+import { managerHandoff, resetStub, signInByCard, useScenario } from "./helpers.js";
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
@@ -41,4 +46,59 @@ test("clicking the action navigates to the till the core names, and acts nowhere
   await page.locator("[data-quick-bar] [data-action='quick-run']").click();
   await page.waitForURL((url) => url.pathname === "/till/");
   expect(page.url().endsWith("/till/")).toBe(true);
+});
+
+test("the landing's view links carry the config view", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  const links = page.locator(".view-link");
+  await expect(links).toHaveCount(5);
+  await expect(links.filter({ hasText: "Quick actions" })).toBeVisible();
+});
+
+test("the config view shows the core's refusal verbatim, never a paraphrase", async ({ page }) => {
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  await page.locator(".view-link", { hasText: "Quick actions" }).click();
+  const refusal = page.locator("[data-test='quick-refusal']");
+  await expect(refusal).toHaveText("Forbidden");
+  // No row, no try-again words dressed up as a wall: the core's own body, alone.
+  await expect(page.locator("[data-quick]")).toHaveCount(0);
+});
+
+test("the admin's config view shows every registered action with its resolved switch and matrix", async ({ request, page }) => {
+  await useScenario(request, "quick-admin");
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  await page.locator(".view-link", { hasText: "Quick actions" }).click();
+  const row = page.locator("[data-quick='sale.new']");
+  await expect(row.locator(".qa-name")).toHaveText("+ Sale");
+  await expect(row.locator(".qa-id")).toHaveText("sale.new");
+  await expect(row.locator(".qa-lead")).toHaveText("Jumps to Point of Sale with a fresh ticket.");
+  await expect(row.locator(".qa-switch")).toHaveAttribute("aria-pressed", "true");
+  // The core's matrix, resolved for every shape: no blank cell, the shipped
+  // default named rather than implying somebody chose it.
+  const shapes = row.locator(".qa-shape");
+  await expect(shapes).toHaveCount(13);
+  await expect(shapes.first()).toHaveText("Counter");
+  await expect(shapes.filter({ hasText: "Manager" }).first()).toHaveAttribute("aria-pressed", "true");
+  await expect(shapes.filter({ hasText: "Yard manager" })).toHaveAttribute("aria-pressed", "false");
+  await expect(shapes.filter({ hasText: "Driver" })).toHaveAttribute("aria-pressed", "false");
+  await expect(row.locator(".qa-default")).toHaveText("shipped default");
+});
+
+test("a saved edit lands on the server's answer, names it, and drops the default note", async ({ request, page }) => {
+  await useScenario(request, "quick-admin");
+  await page.addInitScript(managerHandoff);
+  await page.goto("/");
+  await page.locator(".view-link", { hasText: "Quick actions" }).click();
+  const row = page.locator("[data-quick='sale.new']");
+  // Turn the admin shape off and save: the draft is local until Save.
+  await row.locator(".qa-shape", { hasText: "Admin" }).click();
+  await expect(row.locator(".qa-shape", { hasText: "Admin" })).toHaveAttribute("aria-pressed", "false");
+  await row.locator("[data-action='quick-save']").click();
+  const saved = row.locator(".qa-saved");
+  await expect(saved).toHaveText("+ Sale saved. Everyone picks it up on their next page load.");
+  await expect(row.locator(".qa-default")).toHaveCount(0);
+  await expect(row.locator(".qa-switch")).toHaveAttribute("aria-pressed", "true");
 });

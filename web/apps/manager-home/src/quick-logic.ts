@@ -85,3 +85,40 @@ export function savedWords(label: string): string {
   if (label === "") return "Saved. Everyone picks it up on their next page load.";
   return `${label} saved. Everyone picks it up on their next page load.`;
 }
+
+/**
+ * The job shapes as the words a person reads. The closed set is the core's
+ * Profiles (model.go), the five shapes and the manager refinements born from
+ * them; the words are the role names the core's own comments and the demo
+ * flow table carry. A shape outside the set answers as itself, never an
+ * invented word.
+ */
+const PROFILE_WORD: Readonly<Record<string, string>> = Object.freeze({
+  counter: "Counter",
+  yard: "Yard",
+  driver: "Driver",
+  manager: "Manager",
+  admin: "Admin",
+  "manager.branch": "Branch manager",
+  "manager.sales": "Sales manager",
+  "manager.yard": "Yard manager",
+  "manager.logistics": "Logistics manager",
+  "manager.procurement": "Procurement manager",
+  "manager.payables": "Payables and Receivables",
+  "manager.controller": "Financial controller",
+  "manager.general": "General manager",
+});
+
+export function profileWord(profile: string): string {
+  return PROFILE_WORD[profile] ?? profile;
+}
+
+/**
+ * The admin view's refusal, VERBATIM. The core decides who configures; when
+ * it refuses, the screen shows its own sentence (the shared Forbidden body is
+ * exactly one word), never a paraphrase and never a softer wording: an admin
+ * reading the wall should be able to paste what it said.
+ */
+export function configRefusalWords(error: string): string {
+  return error;
+}

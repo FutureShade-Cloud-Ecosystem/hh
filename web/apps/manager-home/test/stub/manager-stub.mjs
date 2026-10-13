@@ -974,6 +974,31 @@ async function handle(req, res) {
     return json(res, { profile, actions });
   }
 
+  // The quick-actions config routes (core/internal/dashboard/quickaction_handler.go):
+  // both behind RequireAdmin, a tier 1 global gate. No login the stub's door
+  // mints holds one, so the shared Forbidden body answers, exactly as the
+  // core answers these demo logins. The stub's own quick-admin scenario plays
+  // the caller the gate would admit, so the browser legs can walk the view a
+  // real admin gets.
+  const quickAdmin = scenario === "quick-admin";
+  if (req.method === "GET" && path === "/api/v1/quick-actions/config") {
+    if (!quickAdmin) return refuse(res, 403, "Forbidden");
+    return json(res, { actions: [quickEffective()], profiles: PROFILES });
+  }
+
+  const quickPutMatch = path.match(/^\/api\/v1\/quick-actions\/config\/([^/]+)$/);
+  if (req.method === "PUT" && quickPutMatch) {
+    if (!quickAdmin) return refuse(res, 403, "Forbidden");
+    if (quickPutMatch[1] !== QUICK_ACTION.action_id) return refuse(res, 404, "unknown quick action");
+    // The submitted matrix is normalised against the closed set first: a
+    // profile nobody resolves to is dropped, never stored (NormalizeProfiles).
+    const submitted = body?.profiles ?? {};
+    const profiles = {};
+    for (const p of PROFILES) if (Object.hasOwn(submitted, p)) profiles[p] = submitted[p] === true;
+    quickConfigs[QUICK_ACTION.action_id] = { action_id: QUICK_ACTION.action_id, enabled: body?.enabled === true, profiles };
+    return json(res, quickEffective());
+  }
+
   if (req.method === "GET" && path === "/api/v1/yard/pick-queue") {
     const items = world.tasks.map((entry) => ({
       task: { ...entry.task, open_shortages: entry.shortages.filter((s) => s.resolved_at === undefined).length },

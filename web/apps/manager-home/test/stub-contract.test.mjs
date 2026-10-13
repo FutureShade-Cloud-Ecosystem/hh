@@ -334,6 +334,67 @@ test("the caller's quick actions are the core's registry resolved for the caller
   assert.ok(coreSource.includes("Jumps to Point of Sale with a fresh ticket."), "the stub's lead is not the core's sentence");
 });
 
+test("the quick-actions config view is the admin's alone, and answers the contract under the admin scenario", async () => {
+  await reset();
+  const sales = await mint("sales-manager");
+
+  // The gate is the server's: no login this door mints is an admin, so the
+  // shared Forbidden body answers, the core's own one word, exactly.
+  const walled = await call("GET", "/api/v1/quick-actions/config", { token: sales });
+  assert.equal(walled.status, 403);
+  assert.deepEqual(walled.json, { error: "Forbidden" });
+  assert.ok(coreSource.includes('{"error":"Forbidden"}'), "the core's authz middleware does not write the shared Forbidden body");
+
+  const putWalled = await call("PUT", "/api/v1/quick-actions/config/sale.new", {
+    body: { enabled: false, profiles: {} },
+    token: sales,
+  });
+  assert.equal(putWalled.status, 403);
+  assert.deepEqual(putWalled.json, { error: "Forbidden" });
+
+  await scenario("quick-admin");
+  const config = await call("GET", "/api/v1/quick-actions/config", { token: sales });
+  assert.equal(config.status, 200);
+  holds("DashboardQuickActionConfigView", config.json);
+  // The closed set of job shapes, in the core's Profiles order.
+  assert.deepEqual(config.json.profiles, [
+    "counter", "yard", "driver", "manager", "admin",
+    "manager.branch", "manager.sales", "manager.yard", "manager.logistics",
+    "manager.procurement", "manager.payables", "manager.controller", "manager.general",
+  ]);
+  assert.equal(config.json.actions.length, 1);
+  const row = config.json.actions[0];
+  holds("DashboardEffectiveActionConfig", row);
+  assert.equal(row.stored, false, "nothing saved yet: the view says default, not chosen");
+  assert.equal(row.enabled, true);
+  assert.equal(row.profiles.counter, true);
+  assert.equal(row.profiles.manager, true);
+  assert.equal(row.profiles.admin, true);
+  assert.equal(row.profiles.yard, false);
+  assert.equal(row.profiles.driver, false, "the shipped default resolves every shape, so no cell is blank");
+
+  // The edit lands, and the answer is the action as it now resolves.
+  const saved = await call("PUT", "/api/v1/quick-actions/config/sale.new", {
+    body: { enabled: true, profiles: { counter: true, manager: true, admin: false, night: true } },
+    token: sales,
+  });
+  assert.equal(saved.status, 200);
+  holds("DashboardEffectiveActionConfig", saved.json);
+  assert.equal(saved.json.stored, true);
+  assert.equal(saved.json.profiles.admin, false);
+  assert.equal(saved.json.profiles.yard, false, "an unstored shape still answers the default it is getting");
+
+  const again = await call("GET", "/api/v1/quick-actions/config", { token: sales });
+  assert.equal(again.json.actions[0].stored, true, "the saved edit is the stored config the next read answers");
+
+  // A caller naming an action outside the registry is refused in the core's own words.
+  const unknown = await call("PUT", "/api/v1/quick-actions/config/quote.new", {
+    body: { enabled: true, profiles: {} },
+    token: sales,
+  });
+  refused(unknown, 404, "unknown quick action");
+});
+
 test("a caller without a bearer is refused before any route answers", async () => {
   const res = await call("GET", "/api/v1/dashboard/needs", { token: "" });
   refused(res, 401, "unauthenticated");
