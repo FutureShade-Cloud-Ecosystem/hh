@@ -1145,7 +1145,7 @@ func TestAttempts_ListOpen(t *testing.T) {
 		return m
 	}
 
-	open, err := fx.store.ListOpen(ctx, ListQuery{OpenOnly: true})
+	open, err := fx.store.ListOpen(ctx, ListQuery{OpenOnly: true, AllBranches: true})
 	if err != nil {
 		t.Fatalf("ListOpen open: %v", err)
 	}
@@ -1154,7 +1154,7 @@ func TestAttempts_ListOpen(t *testing.T) {
 	}
 
 	from, to := time.Now().Add(-time.Hour), time.Now().Add(time.Hour)
-	ranged, err := fx.store.ListOpen(ctx, ListQuery{OpenOnly: true, From: from, To: to})
+	ranged, err := fx.store.ListOpen(ctx, ListQuery{OpenOnly: true, From: from, To: to, AllBranches: true})
 	if err != nil {
 		t.Fatalf("ListOpen range: %v", err)
 	}
@@ -1164,7 +1164,7 @@ func TestAttempts_ListOpen(t *testing.T) {
 		t.Fatalf("range list statuses = %v, want the open three plus VOIDED", got)
 	}
 
-	past, err := fx.store.ListOpen(ctx, ListQuery{OpenOnly: true, From: from.Add(-48 * time.Hour), To: from.Add(-24 * time.Hour)})
+	past, err := fx.store.ListOpen(ctx, ListQuery{OpenOnly: true, From: from.Add(-48 * time.Hour), To: from.Add(-24 * time.Hour), AllBranches: true})
 	if err != nil {
 		t.Fatalf("ListOpen past range: %v", err)
 	}

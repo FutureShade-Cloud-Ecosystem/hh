@@ -133,6 +133,15 @@ handle /money-desk/* {
 	file_server
 }
 
+handle /dealer-admin/* {
+	basic_auth {
+		demo __GATE_HASH__
+	}
+	root * /srv/app
+	try_files {path} /dealer-admin/index.html
+	file_server
+}
+
 handle /q/* {
 	basic_auth {
 		demo __GATE_HASH__

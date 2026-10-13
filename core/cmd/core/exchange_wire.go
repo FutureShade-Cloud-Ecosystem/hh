@@ -6,7 +6,6 @@ package main
 // FB Console source, never from the cache the per request gate sits behind.
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -67,17 +66,6 @@ func loadExchangeConfig(getenv func(string) string) (exchangeConfig, error) {
 	return cfg, nil
 }
 
-// defaultSignInMethods is the named seam of gate 4b until item 6c lands the
-// dealer's allowed sign in methods: it admits the house sign in (the
-// Console email and password provider) and nothing else, so a session of
-// any other provider is refused rather than passed.
-type defaultSignInMethods struct{}
-
-// SignInMethodAllowed implements exchange.SignInMethods.
-func (defaultSignInMethods) SignInMethodAllowed(_ context.Context, _ string, provider string) (bool, error) {
-	return provider == "email", nil
-}
-
 // exchangeDeps is what the two builds hand the exchange composition.
 type exchangeDeps struct {
 	getenv   func(string) string
@@ -115,10 +103,30 @@ func buildExchange(d exchangeDeps) (*exchange.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	methods, err := identity.NewSignInMethodStore(d.pool)
+	if err != nil {
+		return nil, err
+	}
 	return exchange.New(exchange.Config{
 		Console: console, Members: raw, Orgs: d.orgs, Claims: claims, Staff: d.staff,
-		Knob: d.knob, Audit: d.audit, Minter: d.session.minter, Methods: defaultSignInMethods{},
+		Knob: d.knob, Audit: d.audit, Minter: d.session.minter, Methods: methods,
 		AllowedDomains: cfg.domains, AllowedAddresses: cfg.addresses,
 		TokenTTL: d.session.exchangeTTL, Trusted: cfg.trusted, Log: d.log,
 	})
+}
+
+// buildMethods constructs the public methods route (item 6c): the sign in
+// screen's read of the dealer's allowed sign in methods. It shares the
+// exchange's trusted proxy list so the per address allowance counts the
+// same client the exchange does.
+func buildMethods(d exchangeDeps) (*exchange.MethodsHandler, error) {
+	cfg, err := loadExchangeConfig(d.getenv)
+	if err != nil {
+		return nil, err
+	}
+	methods, err := identity.NewSignInMethodStore(d.pool)
+	if err != nil {
+		return nil, err
+	}
+	return exchange.NewMethodsHandler(exchange.MethodsConfig{Orgs: d.orgs, Methods: methods, Trusted: cfg.trusted})
 }
