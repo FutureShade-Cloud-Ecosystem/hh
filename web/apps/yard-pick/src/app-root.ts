@@ -426,6 +426,20 @@ export class YardPickApp extends HHElement {
       else if (name === "change-note") value = this.#changeNote;
       if (value !== null && field.value !== value) field.value = value;
     }
+    // The change sheet takes the yard's attention when it opens: at phone
+    // width it draws above a list longer than the screen, so a lower row's
+    // tap or Enter must land on it, in view and in focus, not leave both on
+    // the row behind. Focus already inside the sheet (the note, the buttons,
+    // the heading this pass put there) is left alone.
+    const sheet = this.renderRoot.querySelector<HTMLElement>("[data-change-sheet]");
+    if (sheet !== null) {
+      const active = this.renderRoot instanceof ShadowRoot ? this.renderRoot.activeElement : document.activeElement;
+      if (!(active instanceof Node && sheet.contains(active))) {
+        sheet.scrollIntoView({ block: "start" });
+        const head = sheet.querySelector<HTMLElement>(".sheet-head");
+        if (head !== null) head.focus();
+      }
+    }
   }
 
   private async loadFlows(): Promise<void> {

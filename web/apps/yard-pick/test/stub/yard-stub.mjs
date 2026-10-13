@@ -575,6 +575,26 @@ function changeQueue(res, url) {
     return refuse(res, 400, `unknown status "${rawStatus}" (${CHANGE_STATUSES.join("|")})`);
   }
   if (scenario === "empty") return json(res, { items: [], next_cursor: null, limit: 50 });
+  // A yard with a full day of changes: twelve waiting rows, oldest first,
+  // the same shapes as the two seeded ones, so the phone legs can open a
+  // row below the first screen.
+  if (scenario === "changes-many") {
+    const nowMs = Date.now();
+    const rows = Array.from({ length: 12 }, (_, index) =>
+      changeItemOut({
+        id: `5c000000-0000-4000-9000-0000000001${index + 10}`,
+        change_no: `CO-21${index + 10}`,
+        order_id: "0b000000-0000-4000-9000-000000000042",
+        order_no: `SO-11${index + 10}`,
+        branch_id: TRENTON,
+        status: "PENDING_YARD",
+        reason: "Customer added two more pallets of the charcoal paver",
+        requested_by_role: "Inside Sales",
+        requested_at: new Date(nowMs - (12 - index) * 60000).toISOString(),
+      }),
+    );
+    return json(res, { items: rows, next_cursor: null, limit: 50 });
+  }
   const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? "50")));
   const rows = world.changes
     .filter((c) => status === "" || c.status === status)

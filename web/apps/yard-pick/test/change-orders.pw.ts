@@ -123,6 +123,34 @@ test("the sheet and its typed note do not outlive the person: switch role, and s
   await expect(page.locator("[data-change-row]")).toHaveCount(2);
 });
 
+test("at phone width a lower row's sheet is in view and takes the focus", async ({ page, request }) => {
+  await useScenario(request, "changes-many");
+  await page.goto("/");
+  await page.locator("[data-changes-door]").click();
+  const rows = page.locator("[data-change-row]");
+  await expect(rows).toHaveCount(12);
+  // A yard with more waiting changes than one screen holds taps the last
+  // row: the sheet must answer where the finger was, not at the page top.
+  await rows.last().locator(".line-row").click();
+  const sheet = page.locator("[data-change-sheet]");
+  await expect(sheet).toBeInViewport();
+  await expect(sheet.locator(".sheet-head")).toBeFocused();
+});
+
+test("keyboard Enter on a row lands the focus on the sheet", async ({ page, request }) => {
+  await useScenario(request, "changes-many");
+  await page.goto("/");
+  await page.locator("[data-changes-door]").click();
+  const rows = page.locator("[data-change-row]");
+  await expect(rows).toHaveCount(12);
+  const row = rows.last().locator(".line-row");
+  await row.focus();
+  await page.keyboard.press("Enter");
+  const sheet = page.locator("[data-change-sheet]");
+  await expect(sheet).toBeInViewport();
+  await expect(sheet.locator(".sheet-head")).toBeFocused();
+});
+
 test("back from the changes, the door's count has caught up", async ({ page }) => {
   await page.goto("/");
   await page.locator("[data-changes-door]").click();

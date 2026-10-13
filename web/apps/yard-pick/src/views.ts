@@ -579,7 +579,7 @@ export interface ChangesModel {
 function changeSheet(model: ChangesModel, change: YardChange): TemplateResult {
   return html`
     <section class="card sheet change-sheet" data-change-sheet data-change-id=${change.id}>
-      <p class="sheet-head">Change ${change.change_no} · ${change.order_no}</p>
+      <p class="sheet-head" tabindex="-1">Change ${change.change_no} · ${change.order_no}</p>
       <p class="dim">"${change.reason}"</p>
       <p class="dim small">asked by ${change.requested_by_role !== "" ? change.requested_by_role : "the counter"} · waiting ${ageLabel(change.requested_at, new Date())}</p>
       <p class="pill" data-change-status>${changeStatusWord(change.status)}</p>
