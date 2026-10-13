@@ -110,7 +110,7 @@ function grouped(value: number): string {
 }
 
 /** A totals-row cell, or empty where a column does not total. */
-export function totalCell(col: { name: string; kind: string; total: boolean }, totals: Record<string, unknown>): string {
+export function totalCell(col: { name: string; kind: string; total: boolean }, totals: Readonly<Record<string, unknown>>): string {
   if (!col.total) return "";
   const v = totals?.[col.name];
   if (v === undefined || v === null) return "";
@@ -226,9 +226,9 @@ export function findTemplate<T extends { code: string }>(cats: readonly { templa
  * because "83 rows" alone tells a reader nothing about whether they ran the
  * right thing. Both figures are the server's.
  */
-export function resultSummary(res: { row_count: number; columns: readonly { name: string; kind: string; total: boolean; label: string }[]; totals: Record<string, unknown> } | null): string {
+export function resultSummary(res: { rowCount: number; columns: readonly { name: string; kind: string; total: boolean; label: string }[]; totals: Readonly<Record<string, unknown>> } | null): string {
   if (!res) return "";
-  const rows = `${grouped(res.row_count)} row${res.row_count === 1 ? "" : "s"}`;
+  const rows = `${grouped(res.rowCount)} row${res.rowCount === 1 ? "" : "s"}`;
   const moneyCol = res.columns.find((c) => c.total && c.kind === "cents");
   if (!moneyCol) return rows;
   const total = res.totals?.[moneyCol.name];
@@ -267,6 +267,12 @@ export function commissionRuleRefusalWords(error: string, status: number | undef
 
 // -- commission words -------------------------------------------------------------------------
 
+/** The two bases a rate may apply to, in the words the form shows and the wire's closed pair. */
+export const BASIS_CHOICES: readonly { readonly value: string; readonly word: string }[] = Object.freeze([
+  { value: "REVENUE", word: "A percent of revenue" },
+  { value: "MARGIN", word: "A percent of gross margin" },
+]);
+
 /** What a rate was applied to: "MARGIN" alone has been read as "margin percent" too often to show raw. */
 export function basisLabel(basis: string): string {
   if (basis === "MARGIN") return "on gross margin";
@@ -275,8 +281,8 @@ export function basisLabel(basis: string): string {
 }
 
 /** A drill-through line that earned nothing because no rule covered it. A zero with no explanation reads as an omission. */
-export function lineIsUnpaid(line: { no_rule_reason?: string; rate_bps: number; commission_cents: number }): boolean {
-  return !!line.no_rule_reason || (line.rate_bps === 0 && line.commission_cents === 0);
+export function lineIsUnpaid(line: { noRuleReason?: string; rateBps: number; commissionCents: number }): boolean {
+  return !!line.noRuleReason || (line.rateBps === 0 && line.commissionCents === 0);
 }
 
 /** The human name for a computed period. */
@@ -290,12 +296,12 @@ export function periodLabel(p: { rep_user_id: string; rep_name: string; period_s
  * sales report is a report two people will spend an afternoon reconciling; the
  * server reports the gap, this says it.
  */
-export function unattributedWords(periods: readonly { unattributed_count: number; unattributed_cents: number }[]): string {
-  const p = periods.find((x) => x.unattributed_count > 0);
+export function unattributedWords(periods: readonly { unattributedCount: number; unattributedCents: number }[]): string {
+  const p = periods.find((x) => x.unattributedCount > 0);
   if (!p) return "";
   return (
-    `${money(p.unattributed_cents)} of revenue over ${grouped(p.unattributed_count)} line` +
-    `${p.unattributed_count === 1 ? "" : "s"} is not attributed to any rep (the house queue). ` +
+    `${money(p.unattributedCents)} of revenue over ${grouped(p.unattributedCount)} line` +
+    `${p.unattributedCount === 1 ? "" : "s"} is not attributed to any rep (the house queue). ` +
     `It earns no commission and is not in the figures above.`
   );
 }
