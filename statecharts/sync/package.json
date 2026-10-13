@@ -1,0 +1,9 @@
+{
+  "name": "sync-statechart",
+  "private": true,
+  "type": "module",
+  "description": "The device-local sync statechart: a pure transition table with no imports. Its table test also runs from the offline-store package, which the web CI loop covers.",
+  "scripts": {
+    "test": "node --test test/machine.test.mjs"
+  }
+}

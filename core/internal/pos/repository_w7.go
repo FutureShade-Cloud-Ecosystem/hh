@@ -33,7 +33,8 @@ func (r *Repository) ReadPosPolicy(ctx context.Context, branchID string) (PosPol
 	const q = `
 SELECT COALESCE(branch_id::text,''), cod_enabled, restocking_fee_bps, notes,
        line_presentation, quick_chips_enabled, workspace_split_pct, workspace_arrangement,
-       lookup_presentation, margin_visibility, quick_chip_set, balance_visibility
+       lookup_presentation, margin_visibility, quick_chip_set, balance_visibility,
+       supplier_deposit_cancel
   FROM pos_policy
  WHERE ($1 <> '' AND branch_id::text = $1) OR branch_id IS NULL
  ORDER BY branch_id::text NULLS LAST
@@ -42,7 +43,8 @@ SELECT COALESCE(branch_id::text,''), cod_enabled, restocking_fee_bps, notes,
 	var chipSet string // 0170: comma-separated in the column; split for the wire in the service
 	err := r.pool.QueryRow(ctx, q, branchID).Scan(&p.BranchID, &p.CODEnabled, &p.RestockingFeeBps, &p.Notes,
 		&p.LinePresentation, &p.QuickChipsEnabled, &p.WorkspaceSplitPct, &p.WorkspaceArrangement,
-		&p.LookupPresentation, &p.MarginVisibility, &chipSet, &p.BalanceVisibility)
+		&p.LookupPresentation, &p.MarginVisibility, &chipSet, &p.BalanceVisibility,
+		&p.SupplierDepositCancel)
 	p.QuickChipSet = splitChipSet(chipSet)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PosPolicy{}, clientErr(http.StatusInternalServerError, "pos: pos_policy default row missing (0043 seed)")
@@ -61,18 +63,18 @@ func (r *Repository) UpsertPosPolicy(ctx context.Context, p PosPolicy) error {
 			        line_presentation = $4, quick_chips_enabled = $5,
 			        workspace_split_pct = $6, workspace_arrangement = $7,
 			        lookup_presentation = $8, margin_visibility = $9, quick_chip_set = $10,
-			        balance_visibility = $11, updated_at = now()
-			  WHERE branch_id IS NULL`,
+			        balance_visibility = $11, supplier_deposit_cancel = $12, updated_at = now()
+				  WHERE branch_id IS NULL`,
 			p.CODEnabled, p.RestockingFeeBps, p.Notes, p.LinePresentation, p.QuickChipsEnabled,
 			p.WorkspaceSplitPct, p.WorkspaceArrangement, p.LookupPresentation,
-			p.MarginVisibility, joinChipSet(p.QuickChipSet), p.BalanceVisibility)
+			p.MarginVisibility, joinChipSet(p.QuickChipSet), p.BalanceVisibility, p.SupplierDepositCancel)
 		return err
 	}
 	_, err := r.pool.Exec(ctx, `
 INSERT INTO pos_policy (branch_id, cod_enabled, restocking_fee_bps, notes, line_presentation, quick_chips_enabled,
                         workspace_split_pct, workspace_arrangement, lookup_presentation,
-                        margin_visibility, quick_chip_set, balance_visibility)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        margin_visibility, quick_chip_set, balance_visibility, supplier_deposit_cancel)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (branch_id) DO UPDATE SET cod_enabled = EXCLUDED.cod_enabled,
   restocking_fee_bps = EXCLUDED.restocking_fee_bps, notes = EXCLUDED.notes,
   line_presentation = EXCLUDED.line_presentation, quick_chips_enabled = EXCLUDED.quick_chips_enabled,
@@ -80,10 +82,11 @@ ON CONFLICT (branch_id) DO UPDATE SET cod_enabled = EXCLUDED.cod_enabled,
   lookup_presentation = EXCLUDED.lookup_presentation,
   margin_visibility = EXCLUDED.margin_visibility, quick_chip_set = EXCLUDED.quick_chip_set,
   balance_visibility = EXCLUDED.balance_visibility,
+  supplier_deposit_cancel = EXCLUDED.supplier_deposit_cancel,
   updated_at = now()`,
 		p.BranchID, p.CODEnabled, p.RestockingFeeBps, p.Notes, p.LinePresentation, p.QuickChipsEnabled,
 		p.WorkspaceSplitPct, p.WorkspaceArrangement, p.LookupPresentation,
-		p.MarginVisibility, joinChipSet(p.QuickChipSet), p.BalanceVisibility)
+		p.MarginVisibility, joinChipSet(p.QuickChipSet), p.BalanceVisibility, p.SupplierDepositCancel)
 	return err
 }
 
