@@ -28,6 +28,7 @@ const TEXT_FILES = [
   'demo/demo-page.ts',
   'demo/build.mjs',
   'demo/serve.mjs',
+  'demo/respond.mjs',
   'test/shell-state.test.mjs',
   'test/header.test.mjs',
   'test/rail.test.mjs',

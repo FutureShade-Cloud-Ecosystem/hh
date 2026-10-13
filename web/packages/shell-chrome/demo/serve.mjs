@@ -4,15 +4,18 @@
 // server refuses an occupied port instead of failing later, grades its own
 // page before announcing (the key words must be in the bytes it is about to
 // serve), and answers ?theme=light with the light build. No build step, no
-// client scripts; this is the committed page, served.
+// client scripts; this is the committed page, served, with the element
+// sheets it links (demo/respond.mjs answers both).
 //
 //   SHELL_DEMO_PORT=<free> node --import ./test/_ts-js-loader.mjs demo/serve.mjs
 
 import { createServer } from 'node:http';
 import { connect } from 'node:net';
-import { readFileSync, existsSync } from 'node:fs';
-import { dirname, join, normalize } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { respond } from './respond.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const requested = Number(process.env.SHELL_DEMO_PORT ?? 56250);
@@ -42,23 +45,10 @@ const GRADE_WORDS = [
   'Update now',
 ];
 
-const page = (name) => {
-  const path = normalize(name).replace(/^([.][.][/\\])+/, '');
-  const file = join(here, path);
-  if (!file.startsWith(here) || !existsSync(file) || !file.endsWith('.html')) return null;
-  return readFileSync(file);
-};
-
 const server = createServer((req, res) => {
-  const url = new URL(req.url ?? '/', 'http://127.0.0.1');
-  const body = url.searchParams.get('theme') === 'light' ? page('index-light.html') : page('index.html');
-  if (body === null) {
-    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
-    res.end('not found');
-    return;
-  }
-  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-  res.end(body);
+  const answer = respond(req.url);
+  res.writeHead(answer.status, answer.headers);
+  res.end(answer.body);
 });
 
 server.listen(requested, '127.0.0.1', () => {

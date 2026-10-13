@@ -56,7 +56,11 @@ test('the sheets guard holds: no traversal, no other file, no unknown sheet', ()
     '/sheets/%',
   ]) {
     const answer = respond(bad);
-    assert.equal(answer.status, 404, `${bad} is refused`);
+    // The URL parser folds a literal ../ out of the path before the handler sees it, which lands on the
+    // page like any other path; what must never happen is any other file, or a css answer, for these.
+    const isPage = answer.status === 200 && Buffer.from(answer.body).equals(readFileSync(`${demoDir}index.html`));
+    assert.ok(answer.status === 404 || isPage, `${bad} is refused or answers the page, got ${answer.status}`);
     assert.doesNotMatch(String(answer.headers['content-type']), /css/, `${bad} is not served as css`);
+    assert.ok(!Buffer.from(answer.body).toString('utf8').includes('createServer'), `${bad} never serves the server source`);
   }
 });
