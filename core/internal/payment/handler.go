@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	hhidentity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
@@ -203,10 +204,19 @@ func looksLikeUUID(s string) bool {
 // needs-a-person filter; from and to are RFC3339 and bound the arm of the
 // list that carries a processor ref; a missing pair defaults from to the
 // seven day window, so the range is bounded whatever the caller sends (the
-// store refuses a list with neither the open filter nor a range).
-func (h *Handler) listAttempts(w http.ResponseWriter, r *http.Request, _ guards.StaffCaller) {
+// store refuses a list with neither the open filter nor a range). The list is fenced by the caller's branch
+// reach, as the resolve is: a global role lists every branch, a branch scoped caller lists the rows of its
+// granted branches only, and a row of a branch it does not reach is simply absent (no refusal, no count).
+func (h *Handler) listAttempts(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	q := r.URL.Query()
-	listQ := ListQuery{OpenOnly: q.Get("state") == "open"}
+	listQ := ListQuery{OpenOnly: q.Get("state") == "open", AllBranches: caller.StaffAuthority.Scope == hhidentity.ScopeGlobal}
+	if !listQ.AllBranches {
+		for _, b := range caller.Branches {
+			if looksLikeUUID(b) {
+				listQ.Branches = append(listQ.Branches, b)
+			}
+		}
+	}
 	if v := q.Get("from"); v != "" {
 		from, err := time.Parse(time.RFC3339, v)
 		if err != nil {
@@ -234,6 +244,11 @@ func (h *Handler) listAttempts(w http.ResponseWriter, r *http.Request, _ guards.
 	}
 	out := make([]CardAttemptSummary, 0, len(attempts))
 	for _, a := range attempts {
+		// The query already fenced the rows; this is the same predicate the resolve uses, kept so a store
+		// that ignored the reach could never serve a row the caller does not reach.
+		if !caller.CanAccessBranch(a.BranchID) {
+			continue
+		}
 		out = append(out, attemptSummary(a))
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
