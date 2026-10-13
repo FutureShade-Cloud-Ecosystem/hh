@@ -233,12 +233,14 @@ export type DemoSessionResponse = {
   token?: string;
   user?: { [key: string]: unknown };
   flow?: string;
+  class?: "staff" | "tenant";
   chapter_key?: string;
 };
 export type DemoFlow = {
   flow?: string;
   role_code?: string;
   label?: string;
+  class?: "staff" | "tenant";
 };
 export type DemoFlowList = {
   flows: DemoFlow[];
@@ -2501,6 +2503,9 @@ export type IdentityExchangeResponse = {
   token: string;
   expiresAtMs: number;
   user: IdentityUser;
+};
+export type IdentityAuthMethodsResponse = {
+  methods: ("email_password" | "google" | "microsoft" | "magic_link")[];
 };
 export type IdentityChangePasswordRequest = {
   current_password: string;

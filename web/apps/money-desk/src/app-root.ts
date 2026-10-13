@@ -32,20 +32,53 @@ import { glStyles } from "./gl/gl-styles.js";
 import { BankrecApi } from "./bankrec/bankrec-api.js";
 import { BankrecDesk } from "./bankrec/bankrec-desk.js";
 import { bankrecStyles } from "./bankrec/bankrec-styles.js";
+import { TaxApi } from "./tax/tax-api.js";
+import { TaxDesk } from "./tax/tax-desk.js";
+import { taxStyles } from "./tax/tax-styles.js";
+import { LienApi } from "./lien/lien-api.js";
+import { LienDesk, type LienHost } from "./lien/lien-desk.js";
+import { lienStyles } from "./lien/lien-styles.js";
+import { ComplianceApi } from "./compliance/compliance-api.js";
+import { ComplianceDesk } from "./compliance/compliance-desk.js";
 
 const DEMO_ORG = "hh-demo";
 
-// The role whose landing is the ledger slice (src/gl): the approvals queue, the journals and the trial
-// balance. The code is the role code the front door's handoff and the demo mint both carry. Every other
-// role lands on the receivables desk (src/ar); the controller reaches it from the area switch.
+// The role whose landing is the ledger slice (src/gl): the approvals queue, the journals, the chart, the trial
+// balance, the periods, the checks and the policy. The code is the role code the front door's handoff and the
+// demo mint both carry. Every other role lands on the receivables desk (src/ar); the controller reaches it from
+// the area switch. Payables and Receivables reaches the ledger from the same switch, as a reader.
 const CONTROLLER_ROLE = "financial_controller";
+const PAYREC_ROLE = "payables_receivables";
+const GENERAL_MANAGER_ROLE = "general_manager";
+
+// The desk's areas, in switch order. A new area is one more entry here, one case in #onHostClick for its presses
+// and one in renderArea for its screens.
+const AREAS = ["ledger", "receivables", "bank", "tax", "liens", "compliance"] as const;
+type Area = (typeof AREAS)[number];
+
+// The areas each role holds, and the one it lands on (the first listed). The controller holds all six; Payables and
+// Receivables lands on receivables and holds the ledger as a reader, the liens and the calendar beside it; the General Manager, who holds the
+// release gate of the liens, lands there.
+const AREAS_BY_ROLE: Readonly<Record<string, readonly Area[]>> = {
+  [CONTROLLER_ROLE]: ["ledger", "receivables", "bank", "tax", "liens", "compliance"],
+  [PAYREC_ROLE]: ["ledger", "receivables", "liens", "compliance"],
+  [GENERAL_MANAGER_ROLE]: ["liens", "compliance"],
+};
+const AREA_LABEL: Readonly<Record<Area, string>> = {
+  ledger: "Approvals and ledger", // the reader's switch says just "Ledger"
+  receivables: "Receivables",
+  bank: "Bank reconciliation",
+  tax: "Tax",
+  liens: "Liens",
+  compliance: "Compliance",
+};
 
 // The demo flows whose modules include the Money Desk. The core lists its whole closed table (the till's pair
 // too); the app's own way in offers only the roles that can use it, as the till's entry offers only its pair.
 const MONEY_DESK_FLOWS: readonly string[] = ["payables-receivables", "financial-controller"];
 
 export class MoneyDeskApp extends HHElement {
-  static styles = [baseStyles, entryStyles, arStyles, glStyles, bankrecStyles, css`
+  static styles = [baseStyles, entryStyles, arStyles, glStyles, bankrecStyles, taxStyles, lienStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
     main.gl-desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
@@ -85,9 +118,35 @@ export class MoneyDeskApp extends HHElement {
   // The ledger slice (src/gl): its state, its loads, its presses. The field it reads is looked up in
   // this element's own shadow root. The controller holds both desks and switches between them.
   #gl = this.#newGlDesk();
-  #area: "ledger" | "receivables" | "bank" = "ledger";
+  #area: Area = "ledger";
+  // The ledger is read the first time its area opens, not at sign in.
+  #glLoaded = false;
 
-  // The bank reconciliation slice (src/bankrec): the controller's third area, loaded when it is first chosen.
+  // The tax slice (src/tax): the controller's tax administration area, loaded when it is first chosen.
+  #tax = this.#newTaxDesk();
+
+  #newTaxDesk(): TaxDesk {
+    const named = (name: string): HTMLInputElement | HTMLSelectElement | null => this.renderRoot.querySelector(`[data-field="${name}"]`);
+    return new TaxDesk(new TaxApi(this.#staffClient), {
+      repaint: () => this.requestUpdate(),
+      setField: (name, value) => {
+        const el = named(name);
+        if (el === null) return;
+        if (el instanceof HTMLSelectElement) {
+          const at = [...el.options].findIndex((o) => o.getAttribute("data-id") === value);
+          if (at >= 0 && el.selectedIndex !== at) el.selectedIndex = at;
+        } else if (el.type === "checkbox") {
+          const want = value === "true";
+          if (el.checked !== want) el.checked = want;
+        } else if (el.value !== value) el.value = value;
+      },
+      field: (name) => named(name)?.value ?? "",
+      reveal: (selector) => this.renderRoot.querySelector(selector)?.scrollIntoView({ block: "center", behavior: "smooth" }),
+      focus: (selector) => this.renderRoot.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true }),
+    });
+  }
+
+  // The bank reconciliation slice (src/bankrec): the controller's area, loaded when it is first chosen.
   #bank = this.#newBankDesk();
 
   #newBankDesk(): BankrecDesk {
@@ -107,17 +166,98 @@ export class MoneyDeskApp extends HHElement {
     });
   }
 
-  #newGlDesk(): GlDesk {
-    return new GlDesk(new GlApi(this.#staffClient), {
+  // The liens slice (src/lien) and the compliance slice (src/compliance): the fields they read are looked up in
+  // this element's own shadow root, a select by the id of its chosen option.
+  #lien = this.#newLienDesk();
+  #compliance = this.#newComplianceDesk();
+
+  #deskHost(): LienHost {
+    const found = (name: string, key?: string) =>
+      this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(key === undefined ? `[data-field="${name}"]` : `[data-field="${name}"][data-key="${key}"]`);
+    return {
       repaint: () => this.requestUpdate(),
-      field: (name) => this.renderRoot.querySelector<HTMLTextAreaElement>(`[data-field="${name}"]`)?.value ?? "",
+      field: (name, key) => found(name, key)?.value ?? "",
+      choice: (name) => {
+        const el = found(name);
+        return el instanceof HTMLSelectElement ? (el.selectedOptions[0]?.getAttribute("data-id") ?? "") : "";
+      },
+      setField: (name, value, key) => {
+        const el = found(name, key);
+        if (el === null) return;
+        if (el instanceof HTMLSelectElement) {
+          const at = [...el.options].findIndex((o) => o.getAttribute("data-id") === value);
+          if (at >= 0 && el.selectedIndex !== at) el.selectedIndex = at;
+        } else if (el.value !== value) el.value = value;
+      },
+      reveal: (selector) => {
+        const el = this.renderRoot.querySelector<HTMLElement>(selector);
+        if (el === null) return;
+        el.scrollIntoView({ block: "start", behavior: "smooth" });
+        // A confirm step takes the reading position, so the keyboard and a screen reader land on it.
+        if (el.hasAttribute("tabindex") || el.hasAttribute("role")) el.focus({ preventScroll: true });
+      },
       userId: () => this.#sessions.current?.user.userId ?? "",
-      reveal: (selector) => this.renderRoot.querySelector(selector)?.scrollIntoView({ block: "start", behavior: "smooth" }),
-    });
+      roleCode: () => this.#roleCode,
+    };
+  }
+
+  #newLienDesk(): LienDesk {
+    return new LienDesk(new LienApi(this.#staffClient), this.#deskHost());
+  }
+
+  #newComplianceDesk(): ComplianceDesk {
+    return new ComplianceDesk(new ComplianceApi(this.#staffClient), this.#deskHost());
+  }
+
+  /** The areas the signed in role holds; none before sign in, and none for a role that holds only the receivables desk. */
+  #areas(): readonly Area[] {
+    return AREAS_BY_ROLE[this.#roleCode] ?? [];
+  }
+
+  /** Every role but the General Manager reads the receivables desk; the General Manager's money work is the liens. */
+  #holdsReceivables(): boolean {
+    return this.#roleCode !== GENERAL_MANAGER_ROLE;
+  }
+
+  #newGlDesk(): GlDesk {
+    const scoped = (name: string, key?: string): string => (key === undefined ? `[data-field="${name}"]` : `[data-field="${name}"][data-key="${key}"]`);
+    return new GlDesk(
+      new GlApi(this.#staffClient),
+      {
+        repaint: () => this.requestUpdate(),
+        field: (name, key) => this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(scoped(name, key))?.value ?? "",
+        setField: (name, value, key) => {
+          const found = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(scoped(name, key));
+          if (found !== null && found.value !== value) found.value = value;
+        },
+        download: (text, filename) => {
+          const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = filename;
+          link.click();
+          URL.revokeObjectURL(url);
+        },
+        userId: () => this.#sessions.current?.user.userId ?? "",
+        reveal: (selector) => {
+          const el = this.renderRoot.querySelector<HTMLElement>(selector);
+          if (el === null) return;
+          el.scrollIntoView({ block: "start", behavior: "smooth" });
+          // A confirm step or a refusal takes the reading position, so the keyboard and a screen reader land on it.
+          if (el.hasAttribute("tabindex") || el.hasAttribute("role")) el.focus({ preventScroll: true });
+        },
+      },
+      this.#isController() ? "controller" : "reader",
+    );
   }
 
   #isController(): boolean {
     return this.#roleCode === CONTROLLER_ROLE;
+  }
+
+  // The roles that hold the ledger area: the controller in full, Payables and Receivables as a reader.
+  #holdsLedger(): boolean {
+    return this.#roleCode === CONTROLLER_ROLE || this.#roleCode === PAYREC_ROLE;
   }
 
   #newDesk(): ArDesk {
@@ -213,15 +353,18 @@ export class MoneyDeskApp extends HHElement {
     }
     if (action === "area") {
       const area = control?.getAttribute("data-area");
-      if (area === "ledger" || area === "receivables" || area === "bank") {
-        this.#area = area;
-        if (area === "bank") this.#bank.ensureLoaded();
+      if (AREAS.some((id) => id === area) && this.#areas().includes(area as Area)) {
+        this.#area = area as Area;
+        this.#openArea();
         this.requestUpdate();
       }
       return;
     }
-    if (control !== undefined && this.#isController() && this.#area === "ledger" && this.#gl.press(control)) return;
+    if (control !== undefined && this.#holdsLedger() && this.#area === "ledger" && this.#gl.press(control)) return;
     if (control !== undefined && this.#isController() && this.#area === "bank" && this.#bank.press(control)) return;
+    if (control !== undefined && this.#isController() && this.#area === "tax" && this.#tax.press(control)) return;
+    if (control !== undefined && this.#area === "liens" && this.#lien.press(control)) return;
+    if (control !== undefined && this.#area === "compliance" && this.#compliance.press(control)) return;
     if (control !== undefined && this.#ar.press(control)) return;
     const flow = control?.getAttribute("data-flow");
     if (action === "choose" && typeof flow === "string" && flow !== "") {
@@ -234,6 +377,7 @@ export class MoneyDeskApp extends HHElement {
     if (target instanceof Element && target.hasAttribute("data-field")) {
       this.#ar.input(target);
       this.#bank.input(target);
+      this.#tax.input(target);
     }
   };
 
@@ -242,6 +386,9 @@ export class MoneyDeskApp extends HHElement {
     if (target instanceof Element && target.hasAttribute("data-field")) {
       this.#ar.change(target);
       this.#bank.change(target);
+      this.#tax.change(target);
+      if (this.#area === "liens") this.#lien.change(target);
+      if (this.#area === "compliance") this.#compliance.change(target);
     }
   };
 
@@ -268,7 +415,7 @@ export class MoneyDeskApp extends HHElement {
         this.#userName = handoff.session.user.name;
         clearFrontDoorHandoff();
         this.#ar = this.#newDesk();
-        void this.#ar.load();
+        if (this.#holdsReceivables()) void this.#ar.load();
         this.#startGl();
       }
       this.requestUpdate();
@@ -292,6 +439,9 @@ export class MoneyDeskApp extends HHElement {
     this.#ar.afterRender();
     this.#gl.afterRender();
     if (this.#area === "bank") this.#bank.afterRender();
+    if (this.#area === "tax") this.#tax.afterRender();
+    if (this.#area === "liens") this.#lien.afterRender();
+    if (this.#area === "compliance") this.#compliance.afterRender();
     const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
     if (header !== null) {
       header.roleLabel = this.#roleLabel;
@@ -324,7 +474,7 @@ export class MoneyDeskApp extends HHElement {
         this.#roleCode = result.value.roleCode;
         this.#userName = this.#sessions.current?.user.name ?? "";
         this.#ar = this.#newDesk();
-        void this.#ar.load();
+        if (this.#holdsReceivables()) void this.#ar.load();
         this.#startGl();
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
@@ -336,12 +486,29 @@ export class MoneyDeskApp extends HHElement {
     this.requestUpdate();
   }
 
-  // The controller lands on the ledger; its desk loads once it is signed in.
+  // The controller lands on the ledger, Payables and Receivables on receivables and the General Manager on the liens.
+  // The ledger is read the first time its area opens; the liens and compliance desks likewise.
   #startGl(): void {
     this.#gl = this.#newGlDesk();
     this.#bank = this.#newBankDesk();
-    this.#area = "ledger";
-    if (this.#isController()) void this.#gl.load();
+    this.#tax = this.#newTaxDesk();
+    this.#lien = this.#newLienDesk();
+    this.#compliance = this.#newComplianceDesk();
+    this.#glLoaded = false;
+    const held = this.#areas();
+    this.#area = this.#isController() ? "ledger" : held.includes("receivables") ? "receivables" : (held[0] ?? "receivables");
+    this.#openArea();
+  }
+
+  #openArea(): void {
+    if (this.#area === "ledger" && !this.#glLoaded && this.#holdsLedger()) {
+      this.#glLoaded = true;
+      void this.#gl.load();
+    }
+    if (this.#area === "bank") this.#bank.ensureLoaded();
+    if (this.#area === "tax") this.#tax.ensureLoaded();
+    if (this.#area === "liens") this.#lien.ensureLoaded();
+    if (this.#area === "compliance") this.#compliance.ensureLoaded();
   }
 
   #onSignOut(): void {
@@ -349,6 +516,9 @@ export class MoneyDeskApp extends HHElement {
     this.#ar = this.#newDesk();
     this.#gl = this.#newGlDesk();
     this.#bank = this.#newBankDesk();
+    this.#tax = this.#newTaxDesk();
+    this.#lien = this.#newLienDesk();
+    this.#compliance = this.#newComplianceDesk();
     clearFrontDoorHandoff();
     void this.loadFlows();
   }
@@ -360,31 +530,41 @@ export class MoneyDeskApp extends HHElement {
     return html`<button slot="theme" type="button" class="btn btn-secondary" data-action="theme">${label}</button>`;
   }
 
-  // The controller's two desks: the ledger it lands on and the receivables desk its role also holds.
+  // The desks the role holds, as the area switch: the controller's five, Payables and Receivables' four and the General
+  // Manager's two. The ledger reads "Ledger" to a reader.
   private renderAreas(): TemplateResult {
-    const area = (id: "ledger" | "receivables" | "bank", label: string): TemplateResult => html`
-      <button type="button" class="gl-tab" data-action="area" data-area=${id} aria-current="${this.#area === id ? "true" : "false"}">${label}</button>
+    const area = (id: Area): TemplateResult => html`
+      <button type="button" class="gl-tab" data-action="area" data-area=${id} aria-current="${this.#area === id ? "true" : "false"}">${id === "ledger" && !this.#isController() ? "Ledger" : AREA_LABEL[id]}</button>
     `;
-    return html`<nav class="areas" aria-label="Money Desk areas">${area("ledger", "Approvals and ledger")} ${area("receivables", "Receivables")} ${area("bank", "Bank reconciliation")}</nav>`;
+    if (this.#areas().length === 0) return html``;
+    return html`<nav class="areas" aria-label="Money Desk areas">${this.#areas().map((id) => area(id))}</nav>`;
+  }
+
+  private renderArea(): TemplateResult {
+    switch (this.#area) {
+      case "ledger":
+        return html`<main class="gl-desk">${this.#gl.render()}</main>`;
+      case "bank":
+        return html`<main class="br-desk">${this.#bank.render()}</main>`;
+      case "tax":
+        return html`<main class="tx-desk">${this.#tax.render()}</main>`;
+      case "liens":
+        return html`<main class="li-desk">${this.#lien.render()}</main>`;
+      case "compliance":
+        return html`<main class="li-desk">${this.#compliance.render()}</main>`;
+      default:
+        return html`<main class="desk">${this.#ar.render()}</main>`;
+    }
   }
 
   private renderSignedIn(): TemplateResult {
-    if (this.#isController()) {
-      return html`
-        <hos-app-header signed-in demo product-name="Money Desk" product-sub="Approvals and ledger · HH Work shell">${this.renderThemeControl()}</hos-app-header>
-        ${this.renderAreas()}
-        ${this.#area === "ledger"
-          ? html`<main class="gl-desk">${this.#gl.render()}</main>`
-          : this.#area === "bank"
-            ? html`<main class="br-desk">${this.#bank.render()}</main>`
-            : html`<main class="desk">${this.#ar.render()}</main>`}
-      `;
-    }
     return html`
-      <hos-app-header signed-in demo product-name="Money Desk">${this.renderThemeControl()}</hos-app-header>
-      <main class="desk">
-        ${this.#ar.render()}
-      </main>
+      ${this.#isController()
+        ? html`<hos-app-header signed-in demo product-name="Money Desk" product-sub="Approvals and ledger · HH Work shell">${this.renderThemeControl()}</hos-app-header>`
+        : this.#holdsLedger()
+          ? html`<hos-app-header signed-in demo product-name="Money Desk" product-sub="Receivables and ledger · HH Work shell">${this.renderThemeControl()}</hos-app-header>`
+          : html`<hos-app-header signed-in demo product-name="Money Desk">${this.renderThemeControl()}</hos-app-header>`}
+      ${this.renderAreas()} ${this.renderArea()}
     `;
   }
 

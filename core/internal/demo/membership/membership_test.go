@@ -13,6 +13,9 @@ func TestFlowAccountsAreMembersOfTheDemoOrg(t *testing.T) {
 	s := New()
 	ctx := context.Background()
 	for _, a := range flows.All() {
+		if a.Class() == flows.ClassTenant {
+			continue // a contractor is never a staff member, see membership_tenant_test.go
+		}
 		got, err := s.OrgMember(ctx, a.PlatformUserID, flows.OrgSlug)
 		if err != nil {
 			t.Fatalf("OrgMember(%s): %v", a.Flow, err)
@@ -47,18 +50,5 @@ func TestEveryoneElseIsNotAMember(t *testing.T) {
 		if got {
 			t.Fatalf("%s: answered member", c.name)
 		}
-	}
-}
-
-// The tenant leg answers empty for everyone, so a demo token can never
-// ride the tenant path.
-func TestTenantOrgsAlwaysEmpty(t *testing.T) {
-	s := New()
-	orgs, err := s.TenantOrgs(context.Background(), flows.All()[0].PlatformUserID)
-	if err != nil {
-		t.Fatalf("TenantOrgs: %v", err)
-	}
-	if len(orgs) != 0 {
-		t.Fatalf("TenantOrgs answered %v, want empty", orgs)
 	}
 }

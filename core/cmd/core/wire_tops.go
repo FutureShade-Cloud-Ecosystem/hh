@@ -120,6 +120,9 @@ func buildSmsBelt(pool *pgxpool.Pool, log *slog.Logger) *smsBelt {
 // built and the card rail test pins the handoff (the default build's serve
 // path never reads them; the worker never reads any of it).
 type topsSpine struct {
+	// portalSvc is the portal BFF's service, held so a build can give its
+	// login and refresh answers a dealer config (the demo's) after wiring.
+	portalSvc     *portal.Service
 	bistrackSvc   *bistrack.Service
 	billingRepo   *billing.Repository
 	notifier      notify.Notifier
@@ -233,7 +236,8 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// issuer world: an empty secret leaves the mint paths unable to sign and
 	// no served mux registers them (the bearer-split carry note on
 	// RegisterRoutes); the BFF's tenant legs resolve through the Guards.
-	portalHandler := portal.NewHandler(portal.NewService(portal.NewRepository(pool), ""), log).
+	portalSvc := portal.NewService(portal.NewRepository(pool), "")
+	portalHandler := portal.NewHandler(portalSvc, log).
 		WithCustomers(customerSvc).
 		WithBilling(billingSvc).
 		WithOrders(orderSvc).
@@ -700,6 +704,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	}
 
 	return &topsSpine{
+		portalSvc:     portalSvc,
 		bistrackSvc:   bistrackSvc,
 		billingRepo:   billingRepo,
 		notifier:      notifier,

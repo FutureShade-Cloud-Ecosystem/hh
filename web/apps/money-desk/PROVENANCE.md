@@ -28,9 +28,56 @@ Round 3: the payment panel no longer splits in the app; the received payment rou
 `paymentsApplyReceived`, with the stub held to the core's sentences). Final round: one key per payment, reused on a lost or
 5xx answer, which says the outcome is unknown.
 
+## Ledger beyond its three reads (`src/gl/`)
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Chart of accounts, add, deactivate | `app/src/gl-accounts.ts`, `app/src/gl-api.ts` | `chartView` in `src/gl/gl-books.ts`, `GlApi.accounts` | Deactivate opens a review (no route turns an account back on); inactive accounts stay listed with a word |
+| New journal composer | `app/src/gl-journal-entry.ts` | `composerView`, `checkDraft` in `src/gl/gl-logic.ts` | A review step before posting; no running totals on screen (the app adds no money, the server refuses an unbalanced journal in words); a lost answer is never retried |
+| Reverse guard with a summary | `app/src/_gl-workbench-rules.ts` (`reverseSummary`, `reverseNeedsConfirm`) | `reverseConfirm` | The review lists the journal's lines instead of a computed total; Void gets a review too |
+| Recurring templates | `app/src/gl-api.ts` | `recurringView` | Run adds a draft for a second approver |
+| Periods, close, reopen, year end close | `app/src/gl-periods.ts` | `periodsView`, confirm panels | In page reviews replace `window.confirm` and `window.prompt`; each names the period or year and what changes |
+| Trial balance period, export | `app/src/gl-trial-balance.ts`, `app/src/_gl-export.ts` | `trialView`, `GlApi.exportBooks` | The server's parity export route replaces the client CSV projection; the Excel workbook stays later |
+| Tie out, BisTrack check, policy | `app/src/gl-workbench.ts`, `app/src/gl-trial-balance.ts` | `checksView`, `policyView` | A word beside each colour; the BisTrack check says it reads a synthetic snapshot |
+| Payables and Receivables as a reader | none | `mode: "reader"` in `src/gl/gl-desk.ts` | Reads only; writes held with the roles that may |
+
+Visual reference: the Money Desk boards (`hh-sup/design-refs/money-desk/`, trial-balance and controller-home) for the cards and
+pills; the original's GL workbench tabs second. No FB Design board for these tabs existed when this was built.
+
 Not ported on purpose: auto credit hold settings, the paper path and reminders
 (Base tier extras, not this role's first increment), the pop out and duplicate
 windows.
+
+## Liens slice (`src/lien/`) and compliance slice (`src/compliance/`)
+
+Ported from the original app's Lien Cockpit (`app/src/lien-cockpit.ts` and its five tabs: `lien-triage.ts`, `lien-jobs.ts`,
+`lien-holdbacks.ts`, `lien-documents.ts`, `lien-calendar.ts`, with `lien-shared.ts` and `lien-api.ts`), read only, at the
+commit the cycle names. The logic ports as plain code onto HH's generated api-client; the screens are rebuilt on HH's
+design system against the Money Desk references (`hh-sup/design-refs/money-desk/`, trial-balance and controller-home for
+the frame: pill tabs, bordered cards with no shadow, status as a word before a colour, a table that gives way to cards on
+a phone). The original's cockpit hosted the calendar as a fifth tab; here Compliance is its own area, as the cycle's
+brief names it.
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Job, direction, badge, bucket and deadline words | `app/src/lien-shared.ts` | `src/lien/lien-logic.ts`, `src/compliance/compliance-logic.ts` | Stored tokens opened out into plain words; the statutory phrase "Substantially performed" kept; a word always sits beside the colour |
+| Monday triage | `app/src/lien-triage.ts` | `triage` in `src/lien/lien-views.ts` | The core's note is shown as a sentence beside the row; the row opens its job; cards on a phone |
+| Jobs and new job | `app/src/lien-jobs.ts` | `jobs`, `jobForm` | The contract was read as `Number(...) * 100`; it is parsed through the decimal string and refused in words when it is not dollars and cents. A blank holdback percent is the core's default. The tax on holdback box is not offered: the core's flag adds a fixed placeholder rate that is not California's |
+| Sync holdbacks | `app/src/lien-jobs.ts` | `#sync` in `src/lien/lien-desk.ts` | The result says how many invoices were booked and how many already were |
+| Holdback aging and release | `app/src/lien-holdbacks.ts` | `holdbacks`, `releasePanel`, `#confirmRelease` | The release asked for the co-signer's user id and role in two browser prompts; it is a pick from the staff roster (Financial Controller or Payables and Receivables, never the caller), a confirm naming the job and the amount, and the core's refusal sentences shown in words. The General Manager's gate is shown before a press and enforced again by the core |
+| Documents and versions | `app/src/lien-documents.ts` | `documents`, `renderForm` | The merge data was a line of JSON; each form shows its own fields, the core's labels. The latest of each form lists, History reads every version, newest first |
+| Release calendar | `app/src/lien-calendar.ts` | `upcoming`, `calendar` in `src/compliance/compliance-views.ts` | The upcoming list takes a look ahead typed as a whole number; the calendar reads the upcoming list's overdue mark, because the core stores a past due deadline as open |
+| Shared review status banner | `app/src/lien-shared.ts` (`bannerFor`) | `bannerStrip`, `banner` | The banner words and state are the core's; Compliance can set them, for the whole cockpit or for one job |
+| `parseAmountToCents` | the receivables slice's `src/ar/ar-money.ts` | `src/lien/lien-money.ts` | Same parse; a holdback percent parses to basis points the same way, through the string |
+
+Choices the cycle's brief left open: the lien screens carry no idempotency key because the contract has none (the sync is
+idempotent on the invoice, the release's journal on the job, a render appends a version by design). The core answers an
+empty list as `{"items": null}`; the slice reads that as an empty list and the stub copies it. The review status for the
+whole cockpit keeps the original's one subject id, so rows the core already holds still match.
+
+Not ported on purpose: a customer pick on the new job form (the customer search is the Counter Till's and Quote Desk's
+surface, not the Money Desk's, so a job is made with no customer and its sync sweeps the whole branch), the tax on holdback
+box (above), and any hard coded legal wording or date: what a lien form says, and what a deadline is, is the core's answer.
 
 ## Bank reconciliation slice (`src/bankrec/`)
 
@@ -52,3 +99,24 @@ against the Money Desk references (`hh-sup/design-refs/money-desk/`, trial-balan
 Not ported on purpose: excluding and restoring a line (the core has no route for either), adjusting entries (none on the
 bank routes: a fee or interest is booked as a journal and the line matched to it), the bank feed, and file upload to FB
 Console Storage (the contract has no storage seam on the import route: the rows ride the JSON body).
+
+## Tax administration (`src/tax/`)
+
+The tax slice ports the original app's tax administration (`app/src/tax-admin.ts`, `tax-admin-logic.ts`,
+`tax-api.ts`, `tax-evidence.ts`, same repository, read only) onto the generated client's fourteen `staff-tax` routes.
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Rate table, effective dated rows, hot add | `app/src/tax-admin.ts` (Rates tab), `tax-api.ts` `listRates`, `createRate` | `src/tax/tax-views.ts` `ratesView`, `src/tax/tax-desk.ts` `#askRate` | The rate is typed as a percent and parsed through its decimal string to basis points; the add asks first, naming the reason, rate and days; new rows join the tax area of the standard rate in force |
+| Reason words | `app/src/tax-api.ts` `taxReasonWord` | `reasonWord`, `reasonLine` in `src/tax/tax-logic.ts` | California trade words (standard sales tax, exempt delivery with proof, reduced rate with a certificate); no Canadian tax word on any screen |
+| Exemption profiles and the review queue | `app/src/tax-admin.ts` (Profiles, Review Queue), `tax-admin-logic.ts` `forcedEvidence` | `profilesView`, `queuePanel`, `forcedEvidence` | One screen, queue first; Put in force and Edit load the form and ask before the upsert; the three required items read as one sentence |
+| Certificates, masked only, view, download, validate | `app/src/tax-evidence.ts`, `tax-api.ts` | `certificatesView`, `evidenceDetail`, `captureForm` | Capture form added; the number is read at the press, sent once and cleared; a record is checked as of a day; download shows the photo's place and the file fetch is marked later |
+| Tax configuration | `app/src/tax-admin.ts` (Certificates tab config card) | `settingsView`, `#askConfig` | Company wide row; the two dormant switches are shown off and marked later and always sent off |
+| Recompute and reconciliation | `app/src/tax-admin.ts` (snapshot recompute, HST recon cards) | `checksView`, `#askRecompute`, `#runRecon` | Recompute asks first and says it adds audit rows only; the reconciliation names the ledger account and reads the variance in words |
+| Money format | `app/src/tax-api.ts` `fmtCents`, `fmtBps` | `src/tax/tax-money.ts` | No locale call; US dollars; a rate is whole hundredths of a percent |
+| Visual references | Money Desk boards (`hh-sup/design-refs/money-desk/`), original tax admin screens | the screens | Panels and pills as the ledger and bank reconciliation slices; cards border first, no shadow, HH tokens |
+
+Not ported on purpose: the separate Certificates and Review Queue tabs (merged into Exemption profiles and
+Certificates), per-branch config overrides, and any change to the core's Ontario reason codes or its Ontario
+jurisdiction default (the modules cycle's).
+

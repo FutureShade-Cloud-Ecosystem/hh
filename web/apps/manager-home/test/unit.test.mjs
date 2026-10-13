@@ -137,7 +137,7 @@ test("a kind this caller does not decide becomes plain words naming who decides 
   assert.equal(
     words,
     "You do not decide margin approvals. Margin approvals are decided by the financial controller, " +
-      "the general manager, and a sales manager or branch manager in their own branch.",
+      "the general manager, and a sales manager in their own branch.",
   );
   const cod = approvalsRefusalWords("COD_CONSTRAINT", "you do not decide COD_CONSTRAINT approvals", 403);
   assert.equal(
@@ -216,4 +216,12 @@ test("Cash On Demand is named as the house names it, never cash on delivery (dec
   const words = [kindWord("COD_CONSTRAINT"), approvalsRefusalWords("COD_CONSTRAINT", "x", 403), APPROVAL_DECIDER_WORDS.COD_CONSTRAINT].join(" ");
   assert.match(words, /Cash On Demand/);
   assert.doesNotMatch(words, /on delivery/i);
+});
+
+test("the Branch Manager decides no approval kind, so no kind's words name a branch manager", () => {
+  for (const words of Object.values(APPROVAL_DECIDER_WORDS)) assert.doesNotMatch(words, /branch manager/i);
+  assert.equal(
+    APPROVAL_DECIDER_WORDS.MARGIN_BELOW_MINIMUM,
+    "Margin approvals are decided by the financial controller, the general manager, and a sales manager in their own branch.",
+  );
 });

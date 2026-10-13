@@ -45,8 +45,10 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
+	portalmod "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
@@ -275,6 +277,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
+	dealer.Set(cfg.DealerName)
 	log := slog.Default()
 
 	demoCfg, err := loadDemoServeConfig(getenv)
@@ -305,7 +308,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		warnUnusedJWKSURL(log, getenv)
 		keySource, claimIss = session.keys, demoCfg.issuer
 	} else {
-		iss, err = issuer.New(demoCfg.staffAudience, demoCfg.tokenTTL)
+		iss, err = issuer.New(demoCfg.staffAudience, demoCfg.tokenTTL, issuer.WithTenantAudience(demoCfg.tenantAudience))
 		if err != nil {
 			return nil, err
 		}
@@ -405,7 +408,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// role gate.
 	rec := shims.NewRecorder(1024)
 	shims.RegisterRoutes(r, g, rec)
-	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
+	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(demo.DealerConfig())))
 	if session != nil {
 		r.Handle("GET /.well-known/jwks.json", g.Public(session.keys.JWKSHandler()))
 	}
@@ -414,6 +417,15 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL, roleCfg)
 	ops := wireOperations(r, pool, g, log, money, getenv("CORE_STREAM_TICKET_KEY"), belt.outbox)
 	tops := wireTops(r, pool, g, log, money, ops, cfg, roleCfg, belt)
+	// The demo dealer's name and brand reach the contractor answers too: the
+	// portal service's login and refresh config is the demo seed's, so the
+	// Pro apps read Gable Landscape Supply there as on the public route
+	// (the shared default names no dealer, decision log row 1592).
+	dealer := demo.DealerConfig()
+	tops.portalSvc.WithConfig(portalmod.Config{
+		ID: dealer.Id, DealerName: dealer.DealerName, LogoURL: dealer.LogoUrl,
+		PrimaryColor: dealer.PrimaryColor, SupportEmail: dealer.SupportEmail, SupportPhone: dealer.SupportPhone,
+	})
 	if err := wirePaymentGrant(r, g, roleGate, tops.posHandler); err != nil {
 		pool.Close()
 		return nil, err
@@ -461,6 +473,12 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 			return nil, err
 		}
 		r.Handle("POST /api/v1/auth/exchange", g.Public(exch))
+		methodsRoute, err := buildMethods(exchangeDeps{getenv: getenv, pool: pool, orgs: orgs})
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		r.Handle("GET /api/v1/auth/methods", g.Public(methodsRoute))
 	}
 
 	// The demo module's mint routes (W2): the tap-a-role sign-in, the
@@ -476,7 +494,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// sessions has no credential-free mint.
 	var demoMint func(string) (string, error)
 	if demoCfg.signin == signinDemo {
-		mint, err := demo.NewMint(demo.MintDeps{Minter: iss, Orgs: orgs, Staff: staff, Audit: money.auditSvc})
+		mint, err := demo.NewMint(demo.MintDeps{Minter: iss, TenantMinter: iss, Portal: portal, Orgs: orgs, Staff: staff, Audit: money.auditSvc})
 		if err != nil {
 			pool.Close()
 			return nil, err

@@ -44,6 +44,7 @@ import (
 	staffcontext "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
@@ -316,6 +317,7 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
+	dealer.Set(cfg.DealerName)
 	log := slog.Default()
 
 	auth, err := loadServeConfig(getenv)
@@ -548,6 +550,16 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 		return nil, err
 	}
 	r.Handle("POST /api/v1/auth/exchange", g.Public(exch))
+
+	// The sign in screen's read of the dealer's allowed sign in methods
+	// (item 6c): public leg, the codes only, the same answer for an unknown
+	// org as for one holding the default set.
+	methodsRoute, err := buildMethods(exchangeDeps{getenv: getenv, pool: pool, orgs: orgs})
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	r.Handle("GET /api/v1/auth/methods", g.Public(methodsRoute))
 
 	// The load doors (HH-LOAD-1 LD-1, ADR-0024) register only where the
 	// deployment switched them on (CORE_LOAD_DOORS, the same switch that
