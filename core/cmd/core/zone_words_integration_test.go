@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func TestIntegration_CaliforniaCreditMemoCarriesTheWordAndThePacificDay(t *testi
 	t.Cleanup(func() { _ = reader.WriteDealerConfig(context.Background(), orig) })
 
 	const branch = "5d1b3f6e-0000-4000-9000-000000000001"
-	tag := fmt.Sprintf("zw-%d", time.Now().UnixNano()%1_000_000_000)
+	tag := fmt.Sprintf("zw-%d", rand.Int63n(1_000_000_000))
 	var cust string
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO customers (account_no, name, customer_type, home_branch_id, credit_limit_cents)
