@@ -79,6 +79,11 @@ type Config struct {
 	// (internal/platform/dealer), never another dealer's name.
 	DealerName string
 
+	// DealerCurrency is the ISO 4217 code the portal's card charges are made in (DEALER_CURRENCY,
+	// upper cased). Empty is allowed: the payments service then charges in its default, US dollars.
+	// A malformed value is refused at boot, in dev too, so no processor ever sees it.
+	DealerCurrency string
+
 	// Plane feedback bridge (#16 / IMP-038): staff feedback submitted in the ERP is
 	// filed as an issue on the Dibbits Plane board. All three must be set for the
 	// /api/v1/feedback route to be wired; otherwise the module stays dark (dev default).
@@ -181,6 +186,7 @@ func Load() Config {
 		PaymentVaultKey:     strEnv("PAYMENT_VAULT_KEY", ""),
 		PortalBaseURL:       strEnv("PORTAL_BASE_URL", portalDef),
 		DealerName:          strEnv("DEALER_NAME", ""),
+		DealerCurrency:      strings.ToUpper(strings.TrimSpace(strEnv("DEALER_CURRENCY", ""))),
 		PlaneAPIURL:         strEnv("PLANE_API_URL", ""),
 		PlaneAPIKey:         strEnv("PLANE_API_KEY", ""),
 		PlaneProject:        strEnv("PLANE_PROJECT_ID", ""),
@@ -203,6 +209,15 @@ func Load() Config {
 // world they served: token verification is no longer this package's to
 // configure.)
 func (c Config) Validate() error {
+	if c.DealerCurrency != "" {
+		ok := len(c.DealerCurrency) == 3
+		for _, r := range c.DealerCurrency {
+			ok = ok && r >= 'A' && r <= 'Z'
+		}
+		if !ok {
+			return fmt.Errorf("DEALER_CURRENCY is not a three letter ISO 4217 code: set it to one such as USD or CAD, or leave it unset for USD")
+		}
+	}
 	// An unset APP_ENV is refused before the dev short-circuit: the default is "dev", and a
 	// production box that forgot the variable must not pass as one. An explicit APP_ENV=dev
 	// is the deliberate spelling and stays permissive. Only serve and worker (and the demo

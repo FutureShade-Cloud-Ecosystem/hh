@@ -224,7 +224,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// first construction, DIB-416; the second service the W3-B block built
 	// stays in wireOperations, the duplication the A1 ruling carries
 	// verbatim).
-	portalPaySvc := payments.NewService(payments.NewRepository(pool), ops.unionGateway)
+	portalPaySvc := payments.NewService(payments.NewRepository(pool), ops.unionGateway).WithCurrency(cfg.DealerCurrency)
 
 	// Procurement Planning board: pricing + customers + the catalog seam.
 	procurementSvc := procurement.NewService(procurement.NewRepository(pool)).

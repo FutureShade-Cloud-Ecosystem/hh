@@ -58,3 +58,24 @@ func TestValidate_NonDevRequiresVaultKey(t *testing.T) {
 		t.Fatal("a short PAYMENT_VAULT_KEY must be rejected in production")
 	}
 }
+
+func TestLoadDealerCurrency(t *testing.T) {
+	if c := Load(); c.DealerCurrency != "" {
+		t.Fatalf("unset DEALER_CURRENCY = %q, want empty (the payments default applies)", c.DealerCurrency)
+	}
+	t.Setenv("DEALER_CURRENCY", "cad")
+	if c := Load(); c.DealerCurrency != "CAD" {
+		t.Fatalf("DEALER_CURRENCY = %q, want CAD (upper cased)", c.DealerCurrency)
+	}
+}
+
+func TestValidate_DealerCurrencyMalformedRefusedEvenInDev(t *testing.T) {
+	for _, bad := range []string{"CA", "CADD", "C4D", "$"} {
+		if err := (Config{Env: "dev", DealerCurrency: bad}).Validate(); err == nil {
+			t.Fatalf("DEALER_CURRENCY %q must be refused at boot", bad)
+		}
+	}
+	if err := (Config{Env: "dev", DealerCurrency: "USD"}).Validate(); err != nil {
+		t.Fatalf("USD must pass: %v", err)
+	}
+}
