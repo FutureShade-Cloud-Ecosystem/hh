@@ -7,7 +7,7 @@
 // scope. One checked in generated file per shell:
 //
 //   tauri/core/profiles/field.json  complete (apps with their offline blocks)
-//   tauri/core/profiles/work.json   declared skeleton (id and name only)
+//   tauri/core/profiles/work.json   complete (apps with their offline blocks)
 //   tauri/core/profiles/pro.json    declared skeleton (id and name only)
 //
 // Usage:
@@ -100,7 +100,7 @@ export function buildDoc(manifest: ManifestDoc, shell: ShellName): GeneratedDoc 
     throw new Error(`manifest does not declare shape 1 of app hh`);
   }
   const frontends = (manifest.frontends ?? []).filter((f) => shellHolds(f, shell));
-  const complete = shell === "field";
+  const complete = shell === "field" || shell === "work";
   const apps = frontends.map((f) => {
     if (complete) {
       if (!f.offline || !Array.isArray(f.offline.scopes)) {
@@ -119,8 +119,8 @@ export function buildDoc(manifest: ManifestDoc, shell: ShellName): GeneratedDoc 
         },
       };
     }
-    // A declared skeleton: what the profile loads, nothing about how (the
-    // offline blocks land with each skeleton's own item).
+    // A declared skeleton (Pro today): what the profile loads, nothing about
+    // how (the offline blocks land with the skeleton's own item).
     return { id: f.id, name: f.name };
   });
   return {

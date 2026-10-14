@@ -18,6 +18,7 @@ import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
+import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
@@ -104,6 +105,8 @@ export class MoneyDeskApp extends HHElement {
   // The staff client: carries the mint's bearer after adoption.
   readonly #staffClient = new ApiClient({
     baseUrl: "",
+    // The Work shell's rule: money never queues. With no signal a write is refused before it dials, with one honest state.
+    fetch: noSignalFetch(undefined, browserSignal()),
     headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
   });
 

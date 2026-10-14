@@ -15,13 +15,13 @@ func TestTenantFlowsAreSummitRidgeBuildersFivePersonas(t *testing.T) {
 		{"contractor-field-crew", "field_crew", "Contractor field"},
 	}
 	all := All()
-	if len(all) != 13 {
-		t.Fatalf("table holds %d flows, want 8 staff and 5 contractor", len(all))
+	if len(all) != 14 {
+		t.Fatalf("table holds %d flows, want 9 staff and 5 contractor", len(all))
 	}
 	for i, w := range want {
-		a := all[8+i]
+		a := all[9+i]
 		if a.Flow != w.flow || a.Role != w.role || a.Label != w.label {
-			t.Fatalf("row %d = %q %q %q, want %q %q %q", 8+i, a.Flow, a.Role, a.Label, w.flow, w.role, w.label)
+			t.Fatalf("row %d = %q %q %q, want %q %q %q", 9+i, a.Flow, a.Role, a.Label, w.flow, w.role, w.label)
 		}
 		if a.Class() != ClassTenant {
 			t.Fatalf("%s class = %q, want tenant", a.Flow, a.Class())

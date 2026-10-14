@@ -3,54 +3,27 @@
 // capability shape of its routes, and the words its rows and states carry.
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { liveFieldPort } from "../src/port.ts";
 import { ordersSurfaceOf } from "../src/sections.ts";
 import { orderRowWords } from "../src/views.ts";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { InMemoryTenantSession, tenantClient, stubAdapter, surfaceOf, can } from "@hardscapehouse/pro-kit";
 import { PERSONAS, STUB_PASSWORD } from "@hardscapehouse/pro-kit/test-stub/tenant-data.mjs";
+import { spawnStub } from "@hardscapehouse/pro-kit/test-stub/spawn-stub.mjs";
 
-const stubFile = fileURLToPath(new URL("../../../packages/pro-kit/test-stub/tenant-stub.mjs", import.meta.url));
-let child;
+let stub;
 let base;
 let session;
 let port;
 
-// A free port inside the Pro cycle's own range (this app's block is 56830 to 56839), never an ephemeral one.
-async function freePort(start, count) {
-  for (let p = start; p < start + count; p += 1) {
-    const free = await new Promise((resolve) => {
-      const probe = createServer();
-      probe.once("error", () => resolve(false));
-      probe.listen(p, "127.0.0.1", () => probe.close(() => resolve(true)));
-    });
-    if (free) return p;
-  }
-  throw new Error(`no free port in ${start} to ${start + count - 1}`);
-}
-
 before(async () => {
-  const p = await freePort(56832, 4);
-  base = `http://127.0.0.1:${p}`;
-  child = spawn(process.execPath, [stubFile], { env: { ROLE_STUB_PORT: String(p), ROLE_STUB_IDLE_EXIT_MS: "120000" }, stdio: "ignore" });
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      if ((await fetch(`${base}/healthz`)).ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  throw new Error("the stub did not start");
+  stub = await spawnStub();
+  base = stub.base;
 });
 
-// End the stub by its own door: no signal is ever sent to a process.
+// End the stub by its own door and await its exit: no signal is ever sent to a process.
 after(async () => {
-  await fetch(`${base}/_stub/exit`, { method: "POST" }).catch(() => {});
+  await stub.stop();
 });
 
 async function signIn(who) {

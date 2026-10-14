@@ -1,0 +1,25 @@
+{
+  "name": "@hardscapehouse/work-shell",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Work shell host: the one page the HH Work profile opens. It signs in through the front door's picker (a page under it), mounts the shell chrome (header band, pinned rail, offline banner), builds the app switcher from the profile by the signed in role, lands each role on its own app, hosts the selected desk app in the content area, and returns to the picker on Switch role.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ../../packages/api-client/src/_ts-js-loader.mjs --test test/*.test.mjs && playwright test --config test/acceptance.config.ts"
+  },
+  "dependencies": {
+    "@hardscapehouse/auth": "0.0.0",
+    "@hardscapehouse/design-system": "0.0.0",
+    "@hardscapehouse/shell-chrome": "0.0.0",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.20.4",
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
+  }
+}
