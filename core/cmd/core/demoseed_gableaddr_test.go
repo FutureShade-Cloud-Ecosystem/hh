@@ -175,3 +175,48 @@ func TestDemoWorld_NoExampleInvalidRemains(t *testing.T) {
 
 	t.Logf("migrated world carried %d example.invalid user emails; after the demoseed the probe reads none", before)
 }
+
+// TestDemoWorld_GableRenameNeverRunsOnABuiltBox: the entrypoint applies on every boot, so the rename
+// must leave a built box alone. Once demo_box holds its row, a migration-planted address that is back
+// in place is NOT renamed, and a tester's user already holding the Gable address cannot make the apply
+// fail on the users email unique key (which would stop the boot).
+func TestDemoWorld_GableRenameNeverRunsOnABuiltBox(t *testing.T) {
+	dsn := os.Getenv(tillDemoDBEnvVar)
+	if dsn == "" {
+		t.Skip(tillDemoDBEnvVar + " is not set: the demo world proof needs its own throwaway local Postgres")
+	}
+	requireLocalDSN(t, dsn)
+	ctx := context.Background()
+	pool, testDSN := snFreshDB(t, ctx, dsn)
+	t.Setenv("DATABASE_URL", testDSN)
+	t.Setenv("CORE_DATABASE_URL", testDSN)
+	t.Setenv("APP_ENV", "dev")
+	if _, created := qwApply(t); created == 0 {
+		t.Fatal("the demoseed created nothing on a fresh database")
+	}
+	// The box is now "built": the populate's demo_box row exists.
+	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS demo_box (built_at timestamptz NOT NULL DEFAULT now())`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO demo_box DEFAULT VALUES`); err != nil {
+		t.Fatal(err)
+	}
+	// A planted address back where the migration put it, and a tester's user on the Gable address.
+	var gone string
+	if err := pool.QueryRow(ctx, `UPDATE users SET email = 'scrubbed-0004@example.invalid'
+		WHERE id = '40000061-0000-4000-9000-000000000001' RETURNING email`).Scan(&gone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, display_name, status)
+		VALUES ('7e570000-0000-4000-9000-000000000001', 'general.manager@gablelandscape.example', 'Tester made', 'ACTIVE')`); err != nil {
+		t.Skipf("the users table shape differs from this probe's insert (%v): the first half still proves the rename is skipped", err)
+	}
+	qwApply(t)
+	var email string
+	if err := pool.QueryRow(ctx, `SELECT email FROM users WHERE id = '40000061-0000-4000-9000-000000000001'`).Scan(&email); err != nil {
+		t.Fatal(err)
+	}
+	if email != "scrubbed-0004@example.invalid" {
+		t.Fatalf("a built box was renamed: the planted user now reads %q", email)
+	}
+}

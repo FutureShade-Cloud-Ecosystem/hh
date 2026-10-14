@@ -64,10 +64,10 @@ type gableDisplayRename struct {
 // gableDisplayRenames moves the migration-planted homework/UAT staff display names off their
 // personal-name tokens and onto role labels. The persona addresses on hh-demo.invalid are not touched.
 var gableDisplayRenames = []gableDisplayRename{
-	{"40000061-0000-4000-9000-000000000001", "speaker-0007 (homework — Pricing Admin)", "General Manager (demo)"},
-	{"40000061-0000-4000-9000-000000000002", "Scrubname0030 (homework — Till Day)", "Inside Sales (demo)"},
-	{"40000061-0000-4000-9000-000000000003", "Scrubname0025 Scrubname0024 (homework — Sale to Statements)", "Counter Sales (demo)"},
-	{"40000061-0000-4000-9000-000000000004", "Scrubname0016 (homework — Inside Sales)", "Branch Manager (demo)"},
+	{"40000061-0000-4000-9000-000000000001", "speaker-0007 (homework \u2014 Pricing Admin)", "General Manager (demo)"},
+	{"40000061-0000-4000-9000-000000000002", "Scrubname0030 (homework \u2014 Till Day)", "Inside Sales (demo)"},
+	{"40000061-0000-4000-9000-000000000003", "Scrubname0025 Scrubname0024 (homework \u2014 Sale to Statements)", "Counter Sales (demo)"},
+	{"40000061-0000-4000-9000-000000000004", "Scrubname0016 (homework \u2014 Inside Sales)", "Branch Manager (demo)"},
 	{"", "UAT Tier-3 (Inside Sales, Trenton)", "UAT Inside Sales (demo)"},
 }
 
@@ -79,10 +79,31 @@ func gableAddressesPlan(out *os.File) {
 	fmt.Fprintf(out, "  gable addresses %d migration-planted email addresses and %d display names renamed onto Gable Landscape Supply addresses with -apply\n", len(gableAddrRenames), len(gableDisplayRenames))
 }
 
+// gableBoxBuilt reports whether the populate's demo_box row exists: the world is built and these
+// renames never run again (the entrypoint applies on every boot; a pass on a built box could collide
+// with an address a tester created and stop the boot on the users email unique key).
+func gableBoxBuilt(ctx context.Context, tx glsTx) (bool, error) {
+	var hasBox bool
+	if err := tx.QueryRow(ctx, `SELECT to_regclass('demo_box') IS NOT NULL`).Scan(&hasBox); err != nil {
+		return false, fmt.Errorf("demoseed: reading the build state: %w", err)
+	}
+	if !hasBox {
+		return false, nil
+	}
+	var built bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM demo_box)`).Scan(&built); err != nil {
+		return false, fmt.Errorf("demoseed: reading the build state: %w", err)
+	}
+	return built, nil
+}
+
 // renameGableAddresses renames the migration-planted demo email addresses inside the apply
 // transaction, and returns how many rows it renamed. On the second run against the same world every
 // address already reads its Gable one, so every statement matches no row and the answer is 0.
-func renameGableAddresses(ctx context.Context, tx txExec, now time.Time) (int, error) {
+func renameGableAddresses(ctx context.Context, tx glsTx, now time.Time) (int, error) {
+	if built, err := gableBoxBuilt(ctx, tx); err != nil || built {
+		return 0, err
+	}
 	renamed := 0
 	for _, r := range gableAddrRenames {
 		var tag pgconn.CommandTag
@@ -119,7 +140,10 @@ func renameGableAddresses(ctx context.Context, tx txExec, now time.Time) (int, e
 // the apply transaction, and returns how many rows it renamed. On the second run against the same
 // world every display name already reads its Gable role label, so every statement matches no row
 // and the answer is 0.
-func renameGableDisplayNames(ctx context.Context, tx txExec, now time.Time) (int, error) {
+func renameGableDisplayNames(ctx context.Context, tx glsTx, now time.Time) (int, error) {
+	if built, err := gableBoxBuilt(ctx, tx); err != nil || built {
+		return 0, err
+	}
 	renamed := 0
 	for _, r := range gableDisplayRenames {
 		var tag pgconn.CommandTag
