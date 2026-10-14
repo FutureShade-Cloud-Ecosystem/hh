@@ -398,6 +398,7 @@ func wholeNumber(raw any) (int64, bool) {
 // connection or a transaction satisfies it.
 type Execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
 // PinnedAccount is one customer account written under a caller chosen id,
@@ -427,6 +428,15 @@ func EnsureAccount(ctx context.Context, db Execer, a PinnedAccount) (created boo
 	}
 	if !validCustomerType(a.CustomerType) {
 		return false, fmt.Errorf("customer: invalid customer_type %q", a.CustomerType)
+	}
+	// The sequence CTE draws its number whether or not the insert lands, so a
+	// row that is already there is recognised first and a re-run draws nothing.
+	var one int
+	switch err := db.QueryRow(ctx, `SELECT 1 FROM customers WHERE id = $1::uuid`, a.ID).Scan(&one); {
+	case err == nil:
+		return false, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return false, fmt.Errorf("customer: pinned account read: %w", err)
 	}
 	tag, err := db.Exec(ctx, customerSeqCTE+`
 		INSERT INTO customers (id, account_no, name, customer_type, home_branch_id,

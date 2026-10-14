@@ -1,7 +1,7 @@
 // Ported from hardscapeos_dibbits master 87d7941b app/src/pos-api.ts; adapted for HH.
 
 // A-19 POS client helpers. Thin typed wrappers over the staff API (Bearer JWT via api()).
-import { api, getSessionToken } from './ports.js';
+import { api, getSessionToken, refusal } from './ports.js';
 import { formatDollars } from './_money-format.js';
 import { asRows } from './_response-shape.js'; // loader-boundary coercion (DIB-471): no ad-hoc arrays
 import type { CounterQuote } from './_pos-searchdrop.js';
@@ -188,13 +188,13 @@ export async function resolveLine(input: {
   cost_cents: number;
 }): Promise<PriceBreakdown> {
   const res = await api('/api/v1/pricing/resolve', { method: 'POST', body: JSON.stringify(input) });
-  if (!res.ok) throw new Error(`resolve ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'resolve');
   return (await res.json()) as PriceBreakdown;
 }
 
 export async function stockGlance(productId: string): Promise<StockGlance> {
   const res = await api(`/api/v1/pos/stock-glance?product_id=${encodeURIComponent(productId)}`);
-  if (!res.ok) throw new Error(`glance ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'glance');
   return (await res.json()) as StockGlance;
 }
 
@@ -210,7 +210,7 @@ import type { PosCustomer } from './pos-customer-strip.js';
 export async function searchCustomers(q: string, limit = 20, branchId = ''): Promise<PosCustomer[]> {
   const branch = branchId ? `&branch_id=${encodeURIComponent(branchId)}` : '';
   const res = await api(`/api/v1/customers/search?q=${encodeURIComponent(q)}&limit=${limit}${branch}`);
-  if (!res.ok) throw new Error(`customer search ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'customer search');
   return (await res.json()) as PosCustomer[];
 }
 
@@ -305,7 +305,7 @@ export async function assessRelief(body: {
   purpose_ack: boolean;
 }): Promise<ReliefOutcome> {
   const res = await api('/api/v1/pos/assess-relief', { method: 'POST', body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`assess-relief ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'assess-relief');
   return (await res.json()) as ReliefOutcome;
 }
 
@@ -314,7 +314,7 @@ export async function captureSignature(purpose: string, refType: string, refId: 
     method: 'POST',
     body: JSON.stringify({ purpose, ref_type: refType, ref_id: refId }),
   });
-  if (!res.ok) throw new Error(`signature ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'signature');
   const body = (await res.json()) as { signature_ref: string };
   return body.signature_ref;
 }
@@ -334,7 +334,7 @@ export interface OpenTillSession {
 export async function findOpenTillSession(branchId: string, station = 'MAIN'): Promise<OpenTillSession | null> {
   const params = new URLSearchParams({ branch_id: branchId, station });
   const res = await api(`/api/v1/till/sessions/open?${params.toString()}`);
-  if (!res.ok) throw new Error(`till session lookup ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'till session lookup');
   const body = (await res.json()) as { open: boolean; id?: string; opened_at?: string };
   return body.open && body.id ? { id: body.id, opened_at: body.opened_at ?? '' } : null;
 }
@@ -352,7 +352,7 @@ export interface Salesperson {
  */
 export async function listSalespeople(): Promise<Salesperson[]> {
   const res = await api('/api/v1/pos/salespeople');
-  if (!res.ok) throw new Error(`salespeople ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'salespeople');
   const body = (await res.json()) as { items: Salesperson[] };
   return body.items ?? [];
 }
@@ -365,7 +365,7 @@ export async function listSalespeople(): Promise<Salesperson[]> {
  */
 export async function listDiscountApprovers(branchId: string): Promise<DiscountApprover[]> {
   const res = await api(`/api/v1/pos/discount-approvers?branch_id=${encodeURIComponent(branchId)}`);
-  if (!res.ok) throw new Error(`discount approvers ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'discount approvers');
   const body = (await res.json()) as { items: DiscountApprover[] };
   return body.items ?? [];
 }
@@ -403,7 +403,7 @@ export interface PosPolicy {
 
 export async function getPosPolicy(branchId: string): Promise<PosPolicy> {
   const res = await api(`/api/v1/pos/policy?branch_id=${encodeURIComponent(branchId)}`);
-  if (!res.ok) throw new Error(`policy ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'policy');
   return (await res.json()) as PosPolicy;
 }
 
@@ -424,7 +424,7 @@ export interface WorkspacePrefsRow {
 
 export async function getWorkspacePrefs(branchId: string): Promise<WorkspacePrefsRow> {
   const res = await api(`/api/v1/pos/workspace?branch_id=${encodeURIComponent(branchId)}`);
-  if (!res.ok) throw new Error(`workspace ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'workspace');
   return (await res.json()) as WorkspacePrefsRow;
 }
 
@@ -440,14 +440,14 @@ export async function putWorkspacePrefs(body: {
   margin_hidden?: boolean;
 }): Promise<WorkspacePrefsRow> {
   const res = await api('/api/v1/pos/workspace', { method: 'PUT', body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`workspace save ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'workspace save');
   return (await res.json()) as WorkspacePrefsRow;
 }
 
 /** Reset to the dealer defaults: reset IS a delete of the per-user row (the dashboard ruling). */
 export async function resetWorkspacePrefs(): Promise<void> {
   const res = await api('/api/v1/pos/workspace', { method: 'DELETE' });
-  if (!res.ok) throw new Error(`workspace reset ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'workspace reset');
 }
 
 export interface ParkedLine {
@@ -476,25 +476,25 @@ export async function parkTicket(body: {
   lines: ParkedLine[];
 }): Promise<ParkedTicket> {
   const res = await api('/api/v1/pos/parked', { method: 'POST', body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`park ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'park');
   return (await res.json()) as ParkedTicket;
 }
 
 export async function listParked(branchId: string): Promise<ParkedTicket[]> {
   const res = await api(`/api/v1/pos/parked?branch_id=${encodeURIComponent(branchId)}`);
-  if (!res.ok) throw new Error(`parked ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'parked');
   return (await res.json()) as ParkedTicket[];
 }
 
 export async function resumeParked(id: string): Promise<ParkedTicket> {
   const res = await api(`/api/v1/pos/parked/${encodeURIComponent(id)}/resume`, { method: 'POST', body: '{}' });
-  if (!res.ok) throw new Error(`resume ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'resume');
   return (await res.json()) as ParkedTicket;
 }
 
 export async function discardParked(id: string): Promise<void> {
   const res = await api(`/api/v1/pos/parked/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(`discard ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'discard');
 }
 
 export interface ReturnableLine {
@@ -600,7 +600,7 @@ export async function createPricingOrder(body: {
   lines: { product_id: string; qty_entered: number; uom_entered: string }[];
 }): Promise<PricingOrder> {
   const res = await api('/api/v1/pos/pricing-orders', { method: 'POST', body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`pricing order ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'pricing order');
   return (await res.json()) as PricingOrder;
 }
 
@@ -721,7 +721,7 @@ export async function counterSearch(q: string, branchId: string, limit = 20): Pr
   const params = new URLSearchParams({ q, limit: String(limit) });
   if (branchId) params.set('branch_id', branchId);
   const res = await api(`/api/v1/products/counter-search?${params.toString()}`);
-  if (!res.ok) throw new Error(`search ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'search');
   const body = (await res.json()) as { items: CounterHit[] };
   return body.items ?? [];
 }
@@ -756,7 +756,7 @@ export async function counterPrices(
       })),
     }),
   });
-  if (!res.ok) throw new Error(`counter-prices ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'counter-prices');
   const body = (await res.json()) as { customer_type?: string; prices?: CounterQuote[] };
   return { customer_type: body.customer_type ?? '', prices: asRows<CounterQuote>(body, ['prices']) };
 }
@@ -797,7 +797,7 @@ export async function posHotkeys(branchId: string): Promise<unknown> {
   const params = new URLSearchParams();
   if (branchId) params.set('branch_id', branchId);
   const res = await api(`/api/v1/pos/hotkeys?${params.toString()}`);
-  if (!res.ok) throw new Error(`hotkeys ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'hotkeys');
   return (await res.json()) as unknown;
 }
 
@@ -827,7 +827,7 @@ export async function quickPicks(branchId: string, customerId: string): Promise<
   if (branchId) params.set('branch_id', branchId);
   if (customerId) params.set('customer_id', customerId);
   const res = await api(`/api/v1/pos/quick-picks?${params.toString()}`);
-  if (!res.ok) throw new Error(`quick-picks ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'quick-picks');
   const body = (await res.json()) as { source?: string };
   return { source: typeof body.source === 'string' ? body.source : '', items: asRows<HotPick>(body, ['items']) };
 }
@@ -844,7 +844,7 @@ export async function resolveScan(code: string, branchId: string): Promise<Count
   if (branchId) params.set('branch_id', branchId);
   const res = await api(`/api/v1/products/scan?${params.toString()}`);
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`scan ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'scan');
   return (await res.json()) as CounterHit;
 }
 
@@ -888,7 +888,7 @@ export async function lookupSales(query: SaleLookupQuery): Promise<SaleSummary[]
   const res = await api(`/api/v1/pos/sales?${params.toString()}`);
   if (!res.ok) {
     if (res.status === 403) throw new Error('You can only look up sales for your own branch.');
-    throw new Error(`sale lookup ${res.status}`);
+    throw await refusal(res, 'sale lookup');
   }
   const body = (await res.json()) as { items: SaleSummary[] };
   return body.items ?? [];
@@ -940,7 +940,7 @@ export async function getSale(id: string): Promise<SaleView> {
   if (!res.ok) {
     if (res.status === 403) throw new Error('That sale belongs to another branch.');
     if (res.status === 404) throw new Error('Sale not found.');
-    throw new Error(`sale ${res.status}`);
+    throw await refusal(res, 'sale');
   }
   return (await res.json()) as SaleView;
 }
@@ -998,7 +998,7 @@ export async function marginGlance(body: {
   lines: { product_id: string; qty_entered: number; uom_entered: string }[];
 }): Promise<MarginGlanceResult> {
   const res = await api('/api/v1/pos/margin-glance', { method: 'POST', body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`margin ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'margin');
   return (await res.json()) as MarginGlanceResult;
 }
 
@@ -1021,7 +1021,7 @@ export interface AddonSuggestion {
 export async function addonSuggestions(productIds: string[]): Promise<AddonSuggestion[]> {
   const q = encodeURIComponent(productIds.join(','));
   const res = await api(`/api/v1/pos/addon-suggestions?product_ids=${q}`);
-  if (!res.ok) throw new Error(`addons ${res.status}`);
+  if (!res.ok) throw await refusal(res, 'addons');
   const body = (await res.json()) as { suggestions?: AddonSuggestion[] };
   return Array.isArray(body.suggestions) ? body.suggestions : [];
 }

@@ -67,6 +67,7 @@
 // here (the stub stands in for the core, which is the only place money is
 // ever computed) and never in the app. Quantities ride as the contract's
 // numbers, every one carrying its unit of measure.
+import { createSyncStub } from "./sync-stub.mjs";
 import { createServer } from "node:http";
 
 const port = Number(process.env.CT_STUB_PORT ?? 4821);
@@ -93,6 +94,7 @@ const FLOWS = [
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
+  { flow: "logistics-manager", role_code: "logistics_manager", label: "Logistics Manager" },
 ];
 
 // The minted accounts, one per flow, shaped field for field like the staff
@@ -178,6 +180,15 @@ const USERS = {
     role_name: "Financial Controller",
     tier: 1,
     scope: "GLOBAL",
+  },
+  "logistics-manager": {
+    user_id: "demo-account-logistics-manager",
+    email: "logistics-manager@demo.invalid",
+    display_name: "Dispatch persona (demo)",
+    role_code: "logistics_manager",
+    role_name: "Logistics Manager",
+    tier: 2,
+    scope: "BRANCH",
   },
 };
 
@@ -1827,6 +1838,14 @@ function sawOrg(request) {
   return { "x-stub-saw-org": request.headers["x-org"] ?? "" };
 }
 
+// The offline store's pull routes over this world (sync-stub.mjs): the till is read cache only, so it pulls and never pushes.
+const syncStub = createSyncStub({
+  products: () => PRODUCTS,
+  customers: () => CUSTOMERS,
+  parked: () => parked,
+  homeBranchId: POINT_LOMA_ID,
+});
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
   const path = url.pathname;
@@ -2165,6 +2184,12 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // The suite's peek at the sync ledger (a harness route, no credential).
+  if (path === "/_stub/sync-log") {
+    respondJson(response, 200, syncStub.log);
+    return;
+  }
+
   // Every route below is a counter route: the caller read comes first, org
   // header and all.
   const caller = callerOf(request, url);
@@ -2173,6 +2198,9 @@ const server = createServer(async (request, response) => {
     return;
   }
   const callerBranch = caller.branchId;
+
+  // The offline store's pull routes (and the refusals of any push: the till has no outbox).
+  if (syncStub.handle({ request, response, path, url, respondJson })) return;
 
   if (request.method === "GET" && path === "/api/v1/branches") {
     respondJson(response, 200, BRANCHES.filter((b) => b.id === callerBranch));

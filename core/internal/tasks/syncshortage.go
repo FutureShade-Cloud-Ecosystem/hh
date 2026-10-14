@@ -153,6 +153,20 @@ func shortageRowState(r syncShortageRow) (sync.RowState, error) {
 type ShortageSyncStore struct {
 	pool *pgxpool.Pool
 	link identity.UserIDLinker
+	// noticer posts the counter's chat event for a created shortage, the direct door's twin.
+	noticer ShortageNoticer
+}
+
+// ShortageNoticer is the counter notice the direct door posts after it stores a shortage: the tasks
+// Service satisfies it. Best effort by contract; nil posts nothing.
+type ShortageNoticer interface {
+	NoticeShortage(ctx context.Context, taskID, shortageID string)
+}
+
+// WithNoticer wires the counter notice a created shortage owes.
+func (s *ShortageSyncStore) WithNoticer(n ShortageNoticer) *ShortageSyncStore {
+	s.noticer = n
+	return s
 }
 
 // NewShortageSyncStore wires the adapter.
@@ -402,10 +416,10 @@ func (s *ShortageSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key 
 	// The parent task must exist in the caller's org: a shortage against
 	// another org's pick is that org's fact, and the refusal is the same
 	// not-found that an absent task reads (existence never leaks).
-	var parentStatus string
+	var parentStatus, parentType string
 	if err := tx.QueryRow(ctx,
-		`SELECT status FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid FOR UPDATE`,
-		taskID, f.OrgID).Scan(&parentStatus); err != nil {
+		`SELECT status, task_type FROM tasks WHERE id = $1::uuid AND org_id = $2::uuid FOR UPDATE`,
+		taskID, f.OrgID).Scan(&parentStatus, &parentType); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return sync.RowState{}, sync.ErrRowNotFound
 		}
@@ -436,6 +450,16 @@ func (s *ShortageSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key 
 	if err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: shortage sync create insert: %w", err)
 	}
+	// The parent pick draws its own scope's seq beside the shortage, as the direct door's insert does:
+	// the task projection carries the shortage counts, so a device holding the task row must see them
+	// move.
+	taskSeq, err := allocateTaskSeqTx(ctx, tx, parentType)
+	if err != nil {
+		return sync.RowState{}, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE tasks SET seq = $2 WHERE id = $1::uuid`, taskID, taskSeq); err != nil {
+		return sync.RowState{}, fmt.Errorf("tasks: shortage sync bump task: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO task_events (task_id, from_status, to_status, actor_id, note)
 		VALUES ($1::uuid, NULL, $2, NULLIF($3,'')::uuid, $4)`,
@@ -444,6 +468,11 @@ func (s *ShortageSyncStore) Create(ctx context.Context, f sync.ScopeFilter, key 
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return sync.RowState{}, fmt.Errorf("tasks: commit shortage sync create: %w", err)
+	}
+	// The counter hears of it after the record is safe, as the direct door tells it. Best effort: a
+	// messaging blip never fails the write, and a replay never reaches here (the dedup answers first).
+	if s.noticer != nil {
+		s.noticer.NoticeShortage(ctx, taskID, r.shortage.ID)
 	}
 	return shortageRowState(r)
 }
