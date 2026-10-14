@@ -38,7 +38,7 @@ Round 3: the payment panel no longer splits in the app; the received payment rou
 | Recurring templates | `app/src/gl-api.ts` | `recurringView` | Run adds a draft for a second approver |
 | Periods, close, reopen, year end close | `app/src/gl-periods.ts` | `periodsView`, confirm panels | In page reviews replace `window.confirm` and `window.prompt`; each names the period or year and what changes |
 | Trial balance period, export | `app/src/gl-trial-balance.ts`, `app/src/_gl-export.ts` | `trialView`, `GlApi.exportBooks` | The server's parity export route replaces the client CSV projection; the Excel workbook stays later |
-| Tie out, BisTrack check, policy | `app/src/gl-workbench.ts`, `app/src/gl-trial-balance.ts` | `checksView`, `policyView` | A word beside each colour; the BisTrack check says it reads a synthetic snapshot |
+| Tie out, legacy import check, policy | `app/src/gl-workbench.ts`, `app/src/gl-trial-balance.ts` | `checksView`, `policyView` | A word beside each colour; the legacy import check says it reads a synthetic snapshot |
 | Payables and Receivables as a reader | none | `mode: "reader"` in `src/gl/gl-desk.ts` | Reads only; writes held with the roles that may |
 
 Visual reference: the Money Desk boards (`hh-sup/design-refs/money-desk/`, trial-balance and controller-home) for the cards and

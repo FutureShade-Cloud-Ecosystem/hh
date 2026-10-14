@@ -584,7 +584,12 @@ async function handle(req, res) {
     return send(res, 200, { token: mintToken(account.user_id), user: account, flow: body.flow });
   }
   if (method === "GET" && path === "/api/v1/branches") return send(res, 200, BRANCHES);
-  if (path.startsWith("/api/v1/staff/approvals") || path.startsWith("/api/v1/gl/")) {
+  if (method === "POST" && path === "/_stub/legacy-import") {
+    const body = await readBody(req);
+    const answer = glWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return send(res, answer.status, answer.body);
+  }
+  if (path.startsWith("/api/v1/staff/approvals") || path.startsWith("/api/v1/gl/") || path === "/api/v1/surfaces/money-desk/config") {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const body = method === "POST" ? await readBody(req) : null;
     const answer = glWorld.handle(req, url, JSON.stringify(body ?? {}));
