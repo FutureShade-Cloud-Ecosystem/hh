@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // sale_lookup_day_test.go, THE DAY THE COUNTER MEANS.
@@ -157,5 +159,33 @@ func TestLookupSales_AnUnreadableDateIsRefusedRatherThanWidened(t *testing.T) {
 	if _, err := h.svc.LookupSales(context.Background(),
 		SaleLookupQuery{BranchID: "branch-trt", From: "2026-08-05", To: "2026-08-05"}); err != nil {
 		t.Fatalf("a well-formed date range must be accepted: %v", err)
+	}
+}
+
+// The From/To days are read in the dealer's calendar (item 3b slice 3): the 5th begins at Los Angeles
+// midnight, three hours after Toronto's. The zero Zone is Toronto exactly.
+func TestSaleLookupBounds_FollowTheQuerysZone(t *testing.T) {
+	la, err := houseday.NewZone("America/Los_Angeles")
+	if err != nil {
+		t.Skipf("no tzdata: %v", err)
+	}
+	q := SaleLookupQuery{From: "2026-08-05", To: "2026-08-05"}
+	tSince, tUntil, ok := saleLookupBounds(q)
+	if !ok {
+		t.Fatal("the default bounds did not resolve")
+	}
+	q.Zone = la
+	lSince, lUntil, ok := saleLookupBounds(q)
+	if !ok {
+		t.Fatal("the Los Angeles bounds did not resolve")
+	}
+	if got := lSince.Sub(tSince); got != 3*time.Hour {
+		t.Fatalf("Los Angeles starts the day %s after Toronto, want 3h", got)
+	}
+	if got := lUntil.Sub(tUntil); got != 3*time.Hour {
+		t.Fatalf("Los Angeles ends the day %s after Toronto, want 3h", got)
+	}
+	if lSince.In(la.Location()).Format("2006-01-02 15:04") != "2026-08-05 00:00" {
+		t.Fatalf("Los Angeles day begins at %s", lSince.In(la.Location()))
 	}
 }

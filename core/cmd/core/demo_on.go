@@ -90,16 +90,17 @@ type demoServeConfig struct {
 	// The fields below it that the console mode needs (issuer and the FB
 	// Console values) stay empty in the demo mode, whose composition is the
 	// one this file always made.
-	signin         signinMode
-	issuer         string
-	appwriteURL    string
-	appwriteProj   string
-	appwriteKey    string
-	databaseURL    string
-	staffAudience  string
-	tenantAudience string
-	tokenTTL       time.Duration
-	listenAddr     string
+	signin           signinMode
+	issuer           string
+	appwriteURL      string
+	appwriteProj     string
+	appwriteKey      string
+	databaseURL      string
+	staffAudience    string
+	tenantAudience   string
+	tokenTTL         time.Duration
+	listenAddr       string
+	visitorAllowance int
 }
 
 func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
@@ -131,11 +132,12 @@ func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
 		return demoServeConfig{}, err
 	}
 	cfg := demoServeConfig{
-		signin:         mode,
-		databaseURL:    databaseURL,
-		staffAudience:  staff,
-		tenantAudience: tenant,
-		listenAddr:     addr,
+		signin:           mode,
+		databaseURL:      databaseURL,
+		staffAudience:    staff,
+		tenantAudience:   tenant,
+		listenAddr:       addr,
+		visitorAllowance: demo.VisitorAllowance(getenv(demo.VisitorAllowanceVar)),
 	}
 	if mode == signinConsole {
 		// The console mode runs the real issuer and FB Console membership,
@@ -486,15 +488,20 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// public leg the tenant config uses. The module builds on this file's
 	// issuer, the org resolver and the staff resolver above, the audit
 	// recorder the money spine already writes its trail with, and the
-	// closed flow table; the per-address limit arrives by constructor too
-	// and the wiring names none, so the default allowance stands.
+	// closed flow table; the per-visitor limit arrives by constructor too,
+	// read from HH_DEMO_MINT_VISITOR_ALLOWANCE once at boot, while the
+	// address ceiling stays at DefaultAddressCeiling whatever the visitor
+	// allowance is set to.
 	//
 	// Registered in the demo mode only. Under the console mode the old mint
 	// routes are not registered and answer 404: a copy that signs real
 	// sessions has no credential-free mint.
 	var demoMint func(string) (string, error)
 	if demoCfg.signin == signinDemo {
-		mint, err := demo.NewMint(demo.MintDeps{Minter: iss, TenantMinter: iss, Portal: portal, Orgs: orgs, Staff: staff, Audit: money.auditSvc})
+		mint, err := demo.NewMint(demo.MintDeps{
+			Minter: iss, TenantMinter: iss, Portal: portal, Orgs: orgs, Staff: staff, Audit: money.auditSvc,
+			Limit: demo.NewAddressLimit(demoCfg.visitorAllowance, 0, nil),
+		})
 		if err != nil {
 			pool.Close()
 			return nil, err

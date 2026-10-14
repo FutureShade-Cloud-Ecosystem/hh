@@ -169,6 +169,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// projection by ERP user id; decide-time authority never runs through
 	// it).
 	lienSvc := lien.NewService(lien.NewRepository(pool)).
+		WithStandardRate(newTaxEngine(pool)). // the HST on holdback gross up reads the dealer's standard rate
 		WithOrderHoldback(orderRepo).
 		WithGLPoster(lienGLPoster{svc: spine.glSvc}).
 		WithCoSigner(identity.NewApprovalRepository(pool)).
@@ -205,6 +206,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// recorded decision (no transport is wired on this server; the send
 	// is recorded FAILED in words rather than DELIVERED into a log).
 	purchasingSvc := purchasing.NewService(purchasing.NewRepository(pool)).
+		WithZone(newDealerZone(pool)).
 		WithStockReceiver(w4cStockReceiver{svc: inventorySvc}).
 		WithVendors(w4cVendorDirectory{pool: pool}).
 		WithLandedCoster(w4cLandedCoster{svc: landedcostSvc}).
@@ -231,7 +233,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// stream-ticket route answers 501 and clients use the Bearer stream.
 	messagingRepo := messaging.NewRepository(pool)
 	messagingHub := messaging.NewSSEHub(messagingRepo, log)
-	messagingSvc := messaging.NewService(messagingRepo).WithRealtime(messagingHub)
+	messagingSvc := messaging.NewService(messagingRepo).WithZone(newDealerZone(pool)).WithRealtime(messagingHub)
 	messaging.NewHandler(messagingSvc, log).WithHub(messagingHub).
 		WithStreamTickets(streamTicketKey).
 		WithUserLinker(link).RegisterRoutes(r, g)
@@ -521,7 +523,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if err := syncEngine.RegisterScope("payment_methods", payments.NewPaymentMethodsStore(pool)); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
-	if err := syncEngine.RegisterScope("aging", billing.NewAgingStore(pool, nil)); err != nil {
+	if err := syncEngine.RegisterScope("aging", billing.NewAgingStore(pool, nil).WithZone(newDealerZone(pool))); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
@@ -566,7 +568,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// SWARM-W1A-B: the printing module, print_queue's first consumer.
 	printRepo := printing.NewRepository(pool)
 	printQueue := printing.NewQueueService(printRepo)
-	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc)
+	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc).WithStandardRate(newTaxEngine(pool)).WithZone(newDealerZone(pool)).WithTaxLabel(newTaxWords(pool))
 	printing.NewHandler(receiptSvc, printQueue, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// SWARM-W2-A: dispatch, the physical leg. The signature-capture seam
@@ -634,9 +636,9 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithAudit(auditSvc)
 	// The yard's short pick: the order takes the shortfall as a backorder and the notice facts read
 	// the live invoice through billing (wire_yard_short.go).
-	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool)})
+	orderSvc.WithInvoiceStanding(invoiceStandingAdapter{repo: billing.NewRepository(pool).WithZone(newDealerZone(pool))})
 	// The delivery road asks billing, the owner of the deposit documents, to release them (deposit_release.go).
-	orderSvc.WithDepositReleaser(billing.NewInvoiceWriter(pool))
+	orderSvc.WithDepositReleaser(newInvoiceWriter(pool))
 	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
 	// The sync record door's body is the yard service, the one the REST record door runs.
@@ -685,7 +687,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	}
 	ops.unionGateway = unionGateway
 	w3bPaymentsRepo := payments.NewRepository(pool)
-	w3bPaySvc := payments.NewService(w3bPaymentsRepo, unionGateway)
+	w3bPaySvc := payments.NewService(w3bPaymentsRepo, unionGateway).WithCurrency(newDealerCurrency(pool))
 	_ = w3bPaySvc // consumed by the portal BFF at the tops batch; constructed so boot proves it wires
 	// DIB-170: payment reversal, manager-gated, reason-required, audited.
 	w3bReverseSvc := payments.NewReverseService(w3bPaymentsRepo).WithAudit(auditSvc)

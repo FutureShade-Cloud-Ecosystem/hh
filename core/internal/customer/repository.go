@@ -189,7 +189,7 @@ func (r *Repository) GetPrimaryContact(ctx context.Context, customerID string) (
 }
 
 // -- write path (M5 / A-5) ----------------------------------------------------
-// The service has already validated + normalized billing_address (Canadian postal/province)
+// The service has already validated + normalized billing_address (postal/province for the dealer's country)
 // before these run; the repository just persists. billing_address is stored as JSONB.
 
 // InsertCustomer inserts a new customer and returns the resolved Account. home_branch_id ""

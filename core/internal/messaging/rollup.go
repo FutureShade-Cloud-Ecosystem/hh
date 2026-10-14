@@ -148,7 +148,10 @@ func (s *Service) PostRoutineEvent(ctx context.Context, slug, eventKey, body str
 	if err != nil {
 		return RollupResult{}, err
 	}
-	day := rollupDay(at)
+	day, err := s.rollupDayFor(ctx, at)
+	if err != nil {
+		return RollupResult{}, err
+	}
 
 	// - 1. the day's ONE message -
 	root, err := s.ensureRollupRoot(ctx, rs, channelID, slug, day)
