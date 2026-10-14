@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
@@ -62,6 +63,15 @@ func runGateCases(t *testing.T, base string, build func() (*Handler, func() bool
 			rec := gateGet(t, h, c.as, base+c.query)
 			if rec.Code != c.want {
 				t.Fatalf("status %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
+			}
+			if c.want == http.StatusForbidden {
+				// A branch refusal must be the shared 403, byte for byte what the guard itself writes,
+				// so a caller cannot tell a reach refusal from a gate refusal.
+				shared := httptest.NewRecorder()
+				authz.RefuseForbidden(shared)
+				if rec.Body.String() != shared.Body.String() {
+					t.Fatalf("403 body %q, want the shared 403 body %q", rec.Body.String(), shared.Body.String())
+				}
 			}
 			if called() != c.served {
 				t.Fatalf("the finance or audit read ran = %v, want %v: a refused caller must reach no read", called(), c.served)
