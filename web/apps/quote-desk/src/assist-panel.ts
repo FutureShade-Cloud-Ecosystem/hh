@@ -560,7 +560,7 @@ export class QdQuoteAssist extends PanelBase {
       <textarea
         id="jobtext"
         data-field="text"
-        placeholder="e.g. 480 sq ft of Holland Stone for the back patio, 12 yd of clear stone, 6 bags of polymeric sand"
+        placeholder="e.g. 480 sq ft of charcoal paver for the back patio, 12 yd of clear stone, 6 bags of polymeric sand"
       ></textarea>
       <div class="row">
         <button type="button" class="primary" data-action="read" ?disabled=${this.reading || this.text.trim() === ""}>

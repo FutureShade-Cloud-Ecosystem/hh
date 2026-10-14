@@ -39,9 +39,9 @@ test("the entry page shows the two till role cards and no coming role, and no ya
   await expect(yardManager).toHaveCount(0);
 
   // The stub's table, like the core's, mints the full closed set of thirteen
-  // logins (sales, sales manager, the yard manager, the Yard Team, the
+  // staff logins (sales, sales manager, the yard manager, the Yard Team, the
   // Driver, Payables and Receivables, the Procurement Manager, the Financial
-  // Controller, the General Manager, HR, the Branch Manager, the Logistics Manager, Outside Sales); the till offers a card for its own pair alone (any other
+  // Controller, the Logistics Manager, the General Manager, HR, the Branch Manager, Outside Sales); the till offers a card for its own pair alone (any other
   // card would lead into a surface the server refuses). The yard manager
   // (Manager Home is its app), the Yard Team, the Driver, Payables and
   // Receivables, the Procurement Manager and the Financial Controller (the
@@ -58,10 +58,10 @@ test("the entry page shows the two till role cards and no coming role, and no ya
     "payables-receivables",
     "procurement-manager",
     "financial-controller",
+    "logistics-manager",
     "general-manager",
     "hr",
     "branch-manager",
-    "logistics-manager",
     "outside-sales",
   ]);
   await expect(page.getByRole("button", { name: "Yard Team", exact: true })).toHaveCount(0);

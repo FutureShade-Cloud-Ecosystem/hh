@@ -40,7 +40,7 @@
 <p class="lede">One page about what the Money Desk does and what it does not do yet. If the box and this page disagree, the box is wrong and that is a bug worth reporting.</p>
 
 <h2>What this is</h2>
-<p>The Money Desk has two sides. The receivables side is for the Payables and Receivables role: it reads the book's aging, works the bounced payment the queue shows, takes a payment in against open invoices, records a promise to pay and runs a statement. The ledger side is for the Financial Controller: it decides the approvals queue, approves a parked journal, reads the journal register and the trial balance. The controller holds both sides.</p>
+<p>The Money Desk has five areas. The receivables side is for the Payables and Receivables role: it reads the book's aging, works the bounced payment the queue shows, takes a payment in against open invoices, records a promise to pay and runs a statement. The ledger side is for the Financial Controller: it decides the approvals queue, approves a parked journal, reads the journal register and the trial balance. The controller holds both sides. Liens and Compliance are the holdback and deadline areas: jobs that hold back retention, the release of that retention, the lien forms, and the calendar of deadlines they register.</p>
 
 <h2>How to sign in</h2>
 <p data-claim="sign-in-cards">On the front door, tap <strong>Payables and Receivables</strong> ("Chase overdue accounts and work the bounced payments.") or <strong>Financial Controller</strong> ("Decide approvals and keep the ledger."). Each card shows a <strong>Money Desk</strong> tile, and the tile opens the same Money Desk with no second sign in.</p>
@@ -52,7 +52,7 @@
 
 <h2>The receivables world</h2>
 <p data-claim="world-invoices">The receivables side works the book's 18 invoices, spread across the aging buckets, and one bounced payment.</p>
-<p data-claim="world-bounce">The bounced payment is the cheque for the whole of one Trenton contractor invoice, returned by the bank with the reason "Cheque returned by the bank, not sufficient funds" and a policy fee of $45.00. The payment is DEMO-PAY-B01 and the cheque reference is DEMO-CHQ-B01, which the queue's reference search finds. No allocation remains on it, so that invoice stands open for its full amount.</p>
+<p data-claim="world-bounce">The bounced payment is the cheque for the whole of one Point Loma contractor invoice, returned by the bank with the reason "Cheque returned by the bank, not sufficient funds" and a policy fee of $45.00. The payment is DEMO-PAY-B01 and the cheque reference is DEMO-CHQ-B01, which the queue's reference search finds. No allocation remains on it, so that invoice stands open for its full amount.</p>
 <p data-claim="no-seeded-hold">The seeded book plants no credit hold. A hold appears when the sweep places one, or when a payment you mark bounced meets the dealer's returned payment policy.</p>
 
 <h2>Receivables: the tiles and the register</h2>
@@ -74,7 +74,7 @@
 <p data-claim="bounced-work">A payment can be marked bounced from its invoice, with a reason, and it joins the queue. In the queue it is worked three ways: a replacement payment, a promise to pay, or a reminder to the account.</p>
 <p data-claim="statement">An account's Statement tab has none until you run it. Run a statement to read the aging strip, then send it to the AP contact. Download PDF, the Activity tab and the Contacts tab are marked later.</p>
 <p data-claim="statements-all">The Statements tab lists every account, and Run for every account runs them all.</p>
-<p data-claim="holds-payrec">The Credit holds tab lists the holds. For Payables and Receivables, Lift and Override are held. Pressing Lift says in words that releasing a hold is for the Financial Controller or the General Manager, and the bare word Forbidden is not shown. Run the sweep is refused in words as the Financial Controller's. Place a hold is marked later: the core has no route for it yet.</p>
+<p data-claim="holds-payrec">The Credit holds tab lists the holds. For Payables and Receivables, Lift and Override are held. Pressing Lift says in words that releasing a hold is for the Financial Controller or the General Manager, and the bare word Forbidden is not shown. Run the sweep is refused in words as the Financial Controller's. Place a hold is marked later: there is no path for it yet.</p>
 <p data-claim="holds-controller">The Financial Controller lifts a hold with a reason, or overrides another, and has no Place a hold button.</p>
 <p data-claim="walls-core">Approving a parked journal and releasing a credit hold are refused to Payables and Receivables by the server, in its shared refusal body. Payables and Receivables has no control for either on its screens.</p>
 
@@ -89,8 +89,74 @@
 <p data-claim="phone-decision">On a phone, choosing a request brings its decision into view.</p>
 
 <h2>The ledger: journals and the trial balance</h2>
-<p data-claim="journal-register">The Journals tab lists the journals with filters that carry counts, such as Pending. A journal number never wraps onto two lines. Void and Reverse are marked later.</p>
-<p data-claim="trial-balance">The Trial balance tab reads in balance with the server's totals, and takes All branches or one branch. The tie out, choosing a period and the Excel download are marked later.</p>
+<p data-claim="journal-register">The Journals tab lists the journals with filters that carry counts, such as Pending. A journal number never wraps onto two lines. A parked draft offers Void and a posted journal offers Reverse, and each opens a review before anything is sent.</p>
+<p data-claim="trial-balance">The Trial balance tab reads in balance with the server's totals, and takes All branches or one branch, and the whole year or one month. A typed Excel workbook is marked later.</p>
+<p data-claim="chart">The Chart tab lists every account with Active or Inactive in words. The Financial Controller adds an account, and deactivating one opens a review saying the account keeps its history, takes no new journal and cannot be turned back on from here.</p>
+<p data-claim="journal-post">New journal takes a memo, a branch and two or more lines, each with exactly one of debit or credit. Review shows the lines and the approval threshold before Post journal. Below the threshold it posts at once; at or over it, it parks and files its request in the approvals queue. An unbalanced journal is refused by the server in words and nothing is saved.</p>
+<p data-claim="post-unknown">If the answer to a post is lost, the screen says the journal may or may not have been saved and tells you to look at the register before pressing again. The desk never sends the post a second time by itself.</p>
+<p data-claim="reverse-void">Reverse opens a review listing the journal's lines and saying every side is swapped and the original stays posted. Void opens a review saying the draft never touched the ledger. Cancelling either changes nothing.</p>
+<p data-claim="recurring">Recurring templates list under the register. Run adds a draft journal for review: it never posts by itself.</p>
+<p data-claim="periods">The Periods tab lists each month as Open or Closed. Closing a month opens a review naming the month, saying no journal can post into it, and counting the parked journals waiting in it. Reopening needs a reason. A journal dated into a closed month is refused in words that say the Financial Controller can reopen it.</p>
+<p data-claim="year-close">Close fiscal year opens a review naming the year, the move of net income to account 3900 Retained Earnings and the periods it closes. After it, the screen reports the server's net income.</p>
+<p data-claim="trial-export">The trial balance takes one month, and the export downloads a draft file in the parity format for the branch and month chosen. It is not a filing.</p>
+<p data-claim="checks">The Checks tab shows the receivables ledger against account 1100, with a word beside its colour: In tie or Out of tie. The BisTrack check compares one month against a fixed synthetic snapshot and says so.</p>
+<p data-claim="policy">The Policy tab reads the approval threshold, the month the fiscal year starts and the cost basis. Changing the policy is not on this screen.</p>
+<p data-claim="reader">Payables and Receivables opens the Ledger area beside Receivables and reads the journals, chart, trial balance, periods, tie out and policy. Every write is held, with words naming who may do it.</p>
+
+<h2>Liens: the areas and the banner</h2>
+<p data-claim="liens-areas">Liens and Compliance sit beside the other areas on the area switch. The Financial Controller's switch holds five: Approvals and ledger, Receivables, Bank reconciliation, Liens and Compliance. Payables and Receivables holds Receivables, Liens and Compliance, and reads the last two. The General Manager's switch holds Liens and Compliance, and the General Manager card on the front door signs in to reach it.</p>
+<p data-claim="liens-payrec-reads">Payables and Receivables reads the jobs, the triage, the holdbacks, the documents and the calendar, and is offered no write: no New job, no Sync holdbacks, no Render draft and no way to set the review status. The server gives that role work, not manage, on the Money Desk and Manager Home, so those controls would only be refused. The Financial Controller and the General Manager write.</p>
+<p data-claim="liens-banner">Every Liens screen carries a draft banner. Its words and its state come from the core's review status, so they are the core's and not the app's.</p>
+<p data-claim="liens-core-words">The triage notes and the form titles are the core's own words, and they name a fixed release window and the Construction Act, which are not California terms. The core has not been given California's yet, and this screen shows what the core says.</p>
+
+<h2>Liens: triage, jobs and the sync</h2>
+<p data-claim="liens-triage">Triage lists the jobs that hold retention, oldest first. Each row has a status word (Release due, Overdue, Aging, or Payable, released by hand), what is held, how long it has been held and the core's note. Open job goes to that job's facts and what is held now.</p>
+<p data-claim="liens-jobs">Jobs lists every job, newest first. A new job is refused in words before anything is sent when it has no number, no branch, a contract amount that is not dollars and cents, a holdback percent outside 0.01 to 100, or a date that is not written year, month, day. A job given a substantial performance date registers its release deadline on the Compliance calendar. The form never asks the core to add tax to a holdback.</p>
+<p data-claim="liens-sync">Sync holdbacks books a job's held invoices as retention: the job's customer's invoices, or the whole branch's when the job has no customer. Pressing it again books nothing new, and the screen says how many were already booked.</p>
+
+<h2>Liens: holdbacks and the release</h2>
+<p data-claim="liens-aging">Holdbacks ages what is held by job, with how long it has been held and its age band, and says whether it is ready to release. A payable holdback is released by hand and has no Release control.</p>
+<p data-claim="liens-release">Releasing a holdback is the General Manager's. Release opens a panel that names the job and the amount; the General Manager picks a co-signer from the staff roster, a Financial Controller or Payables and Receivables and never the person releasing, and confirms. The core checks who the co-signer is, posts one journal, and the job leaves the aging. When the core refuses, the screen shows the core's own sentence, for example that the co-signer must be an active staff member, or that nothing is outstanding to release.</p>
+<p data-claim="liens-release-read">Every other role can open the release panel and read what would be released. It says who releases and offers no confirm.</p>
+
+<h2>Liens: documents</h2>
+<p data-claim="liens-documents">Documents renders a lien form from that form's own fields, and a blank field prints as a blank line. Each is a draft, headed by the core's draft banner. A second render of the same form is its next version, the list shows the latest of each form, and History reads every version, newest first.</p>
+
+<h2>Compliance</h2>
+<p data-claim="compliance-upcoming">Compliance opens on what is due soon: the open deadlines inside the look ahead, soonest first, with those already past marked Overdue. The look ahead is a whole number of days from 1 to 365, or blank for the core's own. Anything else is refused in words before it is asked.</p>
+<p data-claim="compliance-calendar">Calendar lists every deadline by due date and filters by status. The core keeps a past due deadline as open and marks it overdue only in the upcoming list, so the calendar reads that mark and the two tabs never disagree.</p>
+<p data-claim="compliance-review">Review status sets the banner the Liens screens carry, for the whole lien cockpit or for one job. A blank banner is the core's default words, and the core records who set it.</p>
+
+<h2>Liens and Compliance: states and the phone</h2>
+<p data-claim="liens-states">While either area loads the screen says so, a failed load names the refusal and offers Try again, and an empty list says it is empty.</p>
+<p data-claim="liens-phone">On a phone each table becomes cards, a chosen job or release brings its panel into view, nothing scrolls sideways, and every control works from the keyboard.</p>
+
+<h2>Bank reconciliation</h2>
+<p data-claim="bankrec-area">The Financial Controller has a third area, Bank reconciliation, beside Approvals and ledger and Receivables. Payables and Receivables does not have it. It lists the operating account and the two cards with the number of lines waiting on each, and the cards are marked tracking only.</p>
+<p data-claim="bankrec-import">Import takes a statement as a chosen file or as pasted rows. Importing the same rows again adds nothing and says so. A file the core cannot read is refused in words that say what it lacked, such as a missing Amount column, a date it does not read or an amount that is not money. Uploading to storage and a bank feed are marked later.</p>
+<p data-claim="bankrec-auto">Auto match pairs the card settlements, the cash and cheque lodgements and the batch settlements to what the till received, and leaves the rest. It can be held to a window of dates. Debits such as fees are matched by hand.</p>
+<p data-claim="bankrec-hand">A line is matched by hand to a payment, a lodgement, a posted journal or a group. A payment or lodgement posts its clearing entry; a journal posts nothing new. A refused match says what to do, and an id that is not an id is refused before anything is sent.</p>
+<p data-claim="bankrec-undo">Undo match asks first, returns the line to unmatched, and the line keeps its history, with the undone match marked as undone.</p>
+<p data-claim="bankrec-month">Opening a month takes the closing balance on the statement and shows the difference in words. The ledger side is the core's. The difference is worked out when the month is opened or refreshed, so refresh the figures after matching. Sign off is held until the difference is zero, and the core refuses it in words while any line is unmatched. A signed off month is closed and cannot be opened again.</p>
+<p data-claim="bankrec-zero">A closing balance of zero is not sent quietly: the core replaces a zero with the net of the month's lines, and the screen says so. A blank or invalid balance is refused in the browser and nothing is sent.</p>
+<p data-claim="bankrec-rules">The Rules tab lists every version of each match rule and which is in use. Approving a new version puts it in use and retires the one before it.</p>
+<p data-claim="bankrec-refused">A refused import, match, undo, month or rule names who may do it, the Financial Controller or a manager, and never shows the bare word Forbidden.</p>
+<p data-claim="bankrec-states">While the accounts load the screen says so, a failed load offers Try again, and an empty list says so. A list that is not the shape the core sends is refused, never half read. More than a page of lines shows more on request.</p>
+<p data-claim="bankrec-phone">On a phone each table becomes cards, a chosen line brings its panel into view, and nothing scrolls sideways. Every control works from the keyboard.</p>
+<h2>Tax</h2>
+<p data-claim="tax-area">The Financial Controller has a Tax area beside Approvals and ledger and Receivables. Payables and Receivables does not have it. It says California sales tax and US dollars, and no screen carries a Canadian tax word or currency.</p>
+<p data-claim="tax-rates">The Rates tab lists the rate table in words: the standard sales tax at 7.75%, the exempt delivery row that needs proof of delivery, and the row held for a person to decide, each with its first day, its last day and whether it is in force.</p>
+<p data-claim="tax-rate-add">Adding a rate holds a rate that is not a percent, a day that is not a day and a last day before the first, and sends nothing. A good one asks first, naming the reason, the rate and the days it covers, and says rows are never edited or removed. Not yet sends nothing; the second press adds one row.</p>
+<p data-claim="tax-rate-refused">A refused rate, a wall on the write, a server failure and a lost answer are each said in words. A lost answer says the rate may or may not have gone through and reads the table again.</p>
+<p data-claim="tax-queue">The Exemption profiles tab lists the profiles and what each requires to be kept. A profile saved as waiting for review lands in the queue, the tab counts it, and Put in force asks first, then moves it out of the queue.</p>
+<p data-claim="tax-profile">A profile is saved or edited by its code and asks before replacing one. A profile the core treats as reduced must require the certificate number, and the refusal says so in the screen's own words.</p>
+<p data-claim="tax-certificates">The Certificates tab lists the certificates on file newest first, with only the last four digits of each number. A record can be opened, checked as of a day (an expired certificate or a missing signed statement cannot back a reduced rate) and downloaded; each is logged. The list filters by order.</p>
+<p data-claim="tax-capture">Recording a certificate holds what its profile requires before anything is sent. The number is sent once and cleared from the screen, and only its last four digits come back. The photo upload itself is marked later.</p>
+<p data-claim="tax-settings">The Settings tab shows the company wide seller's permit number and how tax is rounded. A change asks first and says past sales are not recomputed. Automatic tax lookup and postal code routing are shown off and marked later.</p>
+<p data-claim="tax-recon">Recompute and reconcile compares the tax the sales collected with the sales tax payable in the ledger for a month or a whole year, and says tied out or off by an amount, with the direction in words. A year that is not a year is held.</p>
+<p data-claim="tax-recompute">Recompute past sales asks first, saying a second audit only record is added for each sale in the range, nothing is rewritten and the ledger is not corrected. A second run says nothing new.</p>
+<p data-claim="tax-states">While the tables load the screen says so, a failed load offers Try again, a wall on the read is named, and each empty list says so. A list that is not the shape the core sends is refused, never half read.</p>
+<p data-claim="tax-phone">On a phone each table becomes cards, a chosen record or a confirm step comes into view, and nothing scrolls sideways. Every control works from the keyboard and the confirm step takes the focus.</p>
 
 <h2>Everywhere</h2>
 <p data-claim="phone-sideways">On a phone no screen scrolls the page sideways.</p>

@@ -110,7 +110,7 @@ func TestStatementXLSX_CarriesATitleBlockAndTypedMoney(t *testing.T) {
 	wb := xlsxSvc().incomeStatementWorkbook(rep, export.StatementQuery{Report: export.ReportIncomeStatement, Year: 2026, Month: 3})
 	sh := sheetByName(t, wb, "Income Statement")
 
-	if sh.Title != "Dibbits, Income Statement" {
+	if sh.Title != "Dealer, Income Statement" {
 		t.Fatalf("sheet title = %q, want the entity and the report", sh.Title)
 	}
 	if !strings.Contains(sh.Subtitle, "March 2026") {

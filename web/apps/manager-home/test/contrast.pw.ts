@@ -6,7 +6,7 @@
 // resolves the effective background up the tree (compositing any translucent
 // layers), and computes the WCAG ratio the way the reviewer's script did.
 import { test, expect, type Page } from "@playwright/test";
-import { resetStub } from "./helpers.js";
+import { resetStub, useScenario } from "./helpers.js";
 
 const FLOOR = 4.5;
 
@@ -121,6 +121,7 @@ for (const size of SIZES) {
       test.setTimeout(120_000);
       await page.setViewportSize(size);
       await resetStub(request);
+      await useScenario(request, "plain-profile");
 
       // The way in, unsigned.
       await page.goto("/");

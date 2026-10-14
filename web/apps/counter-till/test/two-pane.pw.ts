@@ -62,7 +62,7 @@ test.afterEach(async ({ page }) => {
 async function twoPaneWithTicket(page: Page): Promise<void> {
   await signIn(page);
   await pickPanels(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await addLine(page, "edge", "Edge Restraint 8 ft");
   await addLine(page, "polymeric", "Polymeric Locking Sand");
   await addLine(page, "wall", "Retaining Wall Stone");

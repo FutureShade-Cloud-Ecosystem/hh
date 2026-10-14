@@ -16,11 +16,13 @@ demo badge, the role's name, Switch role and Sign out.
   `logistics-manager`, `outside_sales` to flow `outside-sales`), labelled
   on the cards the way the demo adapter's contract names them ("Sales",
   "Sales manager", "Yard manager", "Yard Team", "Payables and Receivables",
-  "Procurement manager", "Driver", "Financial Controller", "General Manager", "HR", "Branch Manager", "Logistics Manager", "Outside Sales"), the same rule the
+  "Procurement manager", "Driver", "Financial Controller", "Logistics Manager", "General Manager", "HR", "Branch Manager", "Outside Sales"), the same rule the
   till's entry view follows. The yard manager's live module is Manager Home
   at `/home/`; the Yard Team's live module is the Yard Pick app at `/yard/`;
   the Money Desk at `/money-desk/` is the live module of Payables and
-  Receivables and of the Financial Controller.
+  Receivables and of the Financial Controller; the dispatch board at
+  `/dispatch/` is the live module of the Logistics Manager and the yard manager's
+  Dispatch tile.
 - Every role of ROLE-ACCESS-r3 is live, so no coming row is drawn and the
   coming disclosure does not render; a role the matrix adds later would sit
   in `COMING_ROLES` first, shown with the modules the matrix gives it at

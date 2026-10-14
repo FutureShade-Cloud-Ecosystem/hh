@@ -181,8 +181,8 @@ test("the front door walk: pick a role, open each module signed in, Switch role,
   await expect(page.getByRole("heading", { name: "Coming next" })).toBeVisible();
 
   // ── a not yet module opens its coming soon page and returns ─────────────
-  await page.getByRole("button", { name: "Dealer Admin", exact: true }).click();
-  await expect(page.getByRole("heading", { name: /Dealer Admin/ })).toBeVisible();
+  await page.getByRole("button", { name: "House Messages", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /House Messages/ })).toBeVisible();
   await expect(page.getByText("not on this demo box yet")).toBeVisible();
   await expect(page.getByTestId("header-word")).toHaveText("Sales manager");
   await page.getByRole("button", { name: "Back to Sales manager" }).click();

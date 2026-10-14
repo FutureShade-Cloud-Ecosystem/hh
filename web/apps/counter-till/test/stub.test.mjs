@@ -12,7 +12,7 @@
 // The stub runs here as its own process on a free port (the same script the
 // Playwright harness starts), and the cases speak to it the way the till
 // does: a minted bearer, the demo org header, an open drawer, one priced
-// line. The Holland paver at list, no account: one square foot is 400 cents
+// line. The Charcoal paver at list, no account: one square foot is 400 cents
 // plus 13 percent tax, a 452 cent total; three hundred square feet is a
 // 135600 cent total, past the first thousands group.
 import { spawn } from "node:child_process";
@@ -22,8 +22,8 @@ import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const stubPath = fileURLToPath(new URL("./stub/demo-stub.mjs", import.meta.url));
-const TRENTON = "6f1c2b3a-0000-4000-8000-000000000001";
-const HOLLAND = "p-holland-60";
+const POINT_LOMA = "6f1c2b3a-0000-4000-8000-000000000001";
+const HOLLAND = "p-charcoal-60";
 const HOUSE_ZONE = "America/Toronto";
 
 function houseDay() {
@@ -80,12 +80,12 @@ async function post(path, body, bearer) {
 const session = await post("/api/v1/demo/session", { flow: "sales" });
 assert.equal(session.status, 200, "the stub did not mint a bearer");
 const bearer = session.body.token;
-const drawer = await post("/api/v1/till/sessions", { branch_id: TRENTON, station: "1", float_cents: 30000 }, bearer);
+const drawer = await post("/api/v1/till/sessions", { branch_id: POINT_LOMA, station: "1", float_cents: 30000 }, bearer);
 assert.equal(drawer.status, 201, "the stub did not open the branch's drawer");
 
 function saleBody(overrides) {
   return {
-    branch_id: TRENTON,
+    branch_id: POINT_LOMA,
     till_session_id: drawer.body.id,
     sale_type: "COLLECT_NOW",
     tender: "CASH",

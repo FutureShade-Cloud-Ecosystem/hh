@@ -79,6 +79,9 @@ type planInput struct {
 	// that product uncategorised rather than inventing a taxonomy on a live system.
 	Categories map[string]string
 	Seal       sealer
+	// Contractor is what the contractor world needs from the database (demoseed_contractor.go): that
+	// the populate has made the account, its branch and its portal users. Zero value: no world.
+	Contractor contractorFacts
 }
 
 // planSummary is what the command prints. It is the human-readable half of the same arithmetic the
@@ -116,6 +119,10 @@ type planSummary struct {
 	// every row the section wrote.
 	ProcurementLines  []string
 	ProcurementRowIDs []string
+	// The contractor world (demoseed_contractor.go): one line per document, and the id of every row
+	// the section wrote.
+	ContractorLines  []string
+	ContractorRowIDs []string
 }
 
 // -- the catalogue of demo entities, as tables ----------------------------------------------------
@@ -276,6 +283,14 @@ var demoOrders = []orderSpec{
 	{"O03", 1, "C03", "CONFIRMED", "DELIVERY", 2, 1, []lineSpec{ln("P07", "18.0000", 18), ln("P08", "6.0000", 6)}},
 	{"O04", 1, "C02", "CONFIRMED", "PICKUP", 1, 0, []lineSpec{ln("P02", "220.0000", 220)}},
 	{"O05", 0, "C08", "CONFIRMED", "DELIVERY", 5, 2, []lineSpec{ln("P03", "410.0000", 410)}},
+	// The Logistics Manager's load board material (roadmap 2.4): two open delivery orders with
+	// requested dates and NO stop, so the first Dispatch increment's walk builds its own load
+	// rather than inheriting one. Every other open delivery order above sits on a stop already;
+	// these two are the board's own work, requested today and tomorrow so they land inside the
+	// commit-prompt window the persona signs in under. At branch 1 (Trenton before the demo world
+	// renames it, the Point Loma main yard), the yard the demo populate converges the persona onto.
+	{"O29", 1, "C03", "CONFIRMED", "DELIVERY", 0, 0, []lineSpec{ln("P04", "120.0000", 120)}},
+	{"O30", 1, "C05", "CONFIRMED", "DELIVERY", 0, 1, []lineSpec{ln("P01", "480.0000", 480), ln("P06", "6.0000", 6)}},
 	{"O06", 0, "C01", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "320.0000", 320), ln("P10", "24.0000", 24)}},
 	{"O07", 0, "C04", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "2400.0000", 2400)}},
 	{"O08", 1, "C05", "PICKING", "WILL_CALL", 1, 0, []lineSpec{ln("P09", "12.0000", 12)}},

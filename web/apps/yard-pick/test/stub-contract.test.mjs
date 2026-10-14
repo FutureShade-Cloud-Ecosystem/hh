@@ -163,10 +163,10 @@ function refused(res, status, fragment) {
   assert.ok(coreSource.includes(fragment), `the core's source does not contain the sentence "${fragment}": the stub invented it`);
 }
 
-const TRENTON = "5d1b3f6e-0000-4000-9000-000000000001";
+const POINT_LOMA = "5d1b3f6e-0000-4000-9000-000000000001";
 
 const FULL_LINES = (id) => [
-  { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Granular A gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE" },
+  { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Class 2 base rock gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE" },
 ];
 
 test("the demo way in answers the contract's shapes", async () => {
@@ -182,12 +182,12 @@ test("the branches read answers the contract's row shape", async () => {
   const res = await call("GET", "/api/v1/branches");
   assert.equal(res.status, 200);
   for (const branch of res.json) holds("Branch", branch);
-  assert.equal(res.json[0].id, TRENTON);
+  assert.equal(res.json[0].id, POINT_LOMA);
 });
 
 test("the pick queue answers the core's page and entry shapes, field by field", async () => {
   await reset();
-  const res = await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`);
+  const res = await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`);
   assert.equal(res.status, 200);
   holdsShape("TaskPickQueuePage", res.json);
   assert.equal(res.json.items.length, 5);
@@ -211,7 +211,7 @@ test("the pick queue answers the core's page and entry shapes, field by field", 
 
 test("one pick answers the detail: the task, the ticket, the whole shortage history, what was pulled", async () => {
   await reset();
-  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`)).json.items;
+  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`)).json.items;
   const inProgress = queue.find((e) => e.task.id === "0a000000-0000-4000-9000-000000000041");
   const res = await call("GET", `/api/v1/yard/picks/${inProgress.task.id}`);
   assert.equal(res.status, 200);
@@ -224,7 +224,7 @@ test("one pick answers the detail: the task, the ticket, the whole shortage hist
 
 test("claim and start walk the lifecycle the generic tasks routes own", async () => {
   await reset();
-  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`)).json.items;
+  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`)).json.items;
   const unclaimed = queue.find((e) => e.task.order_id === "0b000000-0000-4000-9000-000000000039");
   const claimed = await call("POST", `/api/v1/tasks/${unclaimed.task.id}/claim`);
   assert.equal(claimed.status, 200);
@@ -282,7 +282,7 @@ test("the money fence follows the cost list: the yard persona receives no figure
   // and the owed figure is byte-absent (ruling 91: absence, not zero).
   const minted = await call("POST", "/api/v1/demo/session", { body: { flow: "yard-team" } });
   assert.equal(minted.status, 200);
-  const queue = await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`, { token: minted.json.token });
+  const queue = await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`, { token: minted.json.token });
   assert.equal(queue.status, 200);
   const held = queue.json.items.find((e) => e.ticket?.held_from_picking === true);
   assert.ok(held, "the world holds no held ticket to fence");
@@ -292,7 +292,7 @@ test("the money fence follows the cost list: the yard persona receives no figure
   // figure, the contract's declared money held to the descriptor.
   const manager = await call("POST", "/api/v1/demo/session", { body: { flow: "yard-manager" } });
   assert.equal(manager.status, 200);
-  const managerQueue = await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`, { token: manager.json.token });
+  const managerQueue = await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`, { token: manager.json.token });
   assert.equal(managerQueue.status, 200);
   const managerHeld = managerQueue.json.items.find((e) => e.ticket?.held_from_picking === true);
   assert.ok(managerHeld, "the manager's queue holds no held ticket");
@@ -345,7 +345,7 @@ test("staging answers the task with its spot and its handle", async () => {
 
 test("the refusals carry the core's statuses, envelope and sentences", async () => {
   await reset();
-  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${TRENTON}`)).json.items;
+  const queue = (await call("GET", `/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`)).json.items;
   const held = queue.find((e) => e.task.order_id === "0b000000-0000-4000-9000-000000000044");
   const mine = queue.find((e) => e.task.id === "0a000000-0000-4000-9000-000000000040");
   const inProgress = queue.find((e) => e.task.id === "0a000000-0000-4000-9000-000000000041");
@@ -385,7 +385,7 @@ test("the refusals carry the core's statuses, envelope and sentences", async () 
   refused(await call("POST", `/api/v1/yard/picks/${inProgress.task.id}/shortages/3a000000-0000-4000-9000-000000000002/resolve`, { body: { resolution: "" } }), 400, "resolution is required");
   refused(await call("POST", `/api/v1/yard/picks/${inProgress.task.id}/shortages/3a000000-0000-4000-9000-000000000002/resolve`, { body: { resolution: "Settled" } }), 409, "shortage already resolved");
   // The caller.
-  const anon = await fetch(`${base}/api/v1/yard/pick-queue?branch_id=${TRENTON}`);
+  const anon = await fetch(`${base}/api/v1/yard/pick-queue?branch_id=${POINT_LOMA}`);
   assert.equal(anon.status, 401);
   refused({ status: 401, json: await anon.json() }, 401, "unauthenticated");
 });

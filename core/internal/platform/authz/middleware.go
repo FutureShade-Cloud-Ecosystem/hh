@@ -343,3 +343,7 @@ func refuse(w http.ResponseWriter, status int, body []byte) {
 	// be derived from a body-write error, so it is not branched on.
 	_, _ = w.Write(body)
 }
+
+// ValidOrgSlug reports whether the string has the pinned org slug shape,
+// for the routes that take the org in a body instead of the X-Org header.
+func ValidOrgSlug(slug string) bool { return orgSlugPattern.MatchString(slug) }

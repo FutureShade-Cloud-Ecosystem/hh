@@ -427,7 +427,7 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 	})
 	t.Run("logistics-manager", func(t *testing.T) {
 		lm := mint(t, "logistics-manager")
-		if lm.user.UserID != "de5b2000-0000-4000-9000-000000000004" || lm.user.RoleCode != "logistics_manager" ||
+		if lm.user.UserID != "d0200000-0000-4000-9000-000000000001" || lm.user.RoleCode != "logistics_manager" ||
 			lm.user.RoleName != "Logistics Manager" || lm.user.Tier != 2 || lm.user.Scope != "BRANCH" {
 			t.Errorf("the credential is %+v, want the Logistics Manager at tier 2 BRANCH", lm.user)
 		}

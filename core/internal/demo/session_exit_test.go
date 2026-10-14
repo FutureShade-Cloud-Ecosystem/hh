@@ -96,7 +96,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		return string(raw)
 	}
 
-	// The flow listing: the closed table, thirteen flows, the contract's three
+	// The flow listing: the closed table, eighteen flows (thirteen staff, five contractor), the contract's three
 	// fields, the labels the entry page renders. The yard-manager flow
 	// (Manager Home's first per-role landing) shows on the front door's
 	// picker, never on the till's own entry.
@@ -114,8 +114,8 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	if err := json.Unmarshal([]byte(body(flowsRsp)), &listing); err != nil {
 		t.Fatalf("the flows body does not decode: %v", err)
 	}
-	if len(listing.Flows) != 13 {
-		t.Fatalf("the listing carries %d flows, want the closed table's thirteen", len(listing.Flows))
+	if len(listing.Flows) != 18 {
+		t.Fatalf("the listing carries %d flows, want the closed table's eighteen", len(listing.Flows))
 	}
 	for i, want := range []struct{ flow, role, label string }{
 		{"sales", "inside_sales", "Sales"},
@@ -126,11 +126,16 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 		{"payables-receivables", "payables_receivables", "Payables and Receivables"},
 		{"procurement-manager", "procurement_manager", "Procurement manager"},
 		{"financial-controller", "financial_controller", "Financial Controller"},
+		{"logistics-manager", "logistics_manager", "Logistics Manager"},
 		{"general-manager", "general_manager", "General Manager"},
 		{"hr", "hr", "HR"},
 		{"branch-manager", "branch_manager", "Branch Manager"},
-		{"logistics-manager", "logistics_manager", "Logistics Manager"},
 		{"outside-sales", "outside_sales", "Outside Sales"},
+		{"contractor-account-admin", "account_admin", "Contractor owner"},
+		{"contractor-buyer", "buyer", "Contractor buyer"},
+		{"contractor-buyer-no-pay", "buyer_no_pay", "Contractor buyer (no pay)"},
+		{"contractor-ap-finance", "ap_finance", "Contractor AP"},
+		{"contractor-field-crew", "field_crew", "Contractor field"},
 	} {
 		if listing.Flows[i].Flow != want.flow || listing.Flows[i].RoleCode != want.role ||
 			listing.Flows[i].Label != want.label {
@@ -272,10 +277,10 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	// roadmap's queue); the driver's is Kingston, where its seeded driver
 	// and runs are.
 	var trentonID, kingstonID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'TRT'`).Scan(&trentonID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'PLM'`).Scan(&trentonID); err != nil {
 		t.Fatalf("the Trenton branch: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'KGN'`).Scan(&kingstonID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'JUL'`).Scan(&kingstonID); err != nil {
 		t.Fatalf("the Kingston branch: %v", err)
 	}
 	mintPersona := func(flow, wantRole, wantLabel, wantID string) (string, map[string]string) {
@@ -326,7 +331,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	}
 
 	yardToken, yardHeaders := mintPersona("yard-team", "yard_team", "Yard Team", "d0200000-0000-4000-9000-000000000002")
-	if codes := branchCodes(yardHeaders); len(codes) != 1 || codes[0] != "TRT" {
+	if codes := branchCodes(yardHeaders); len(codes) != 1 || codes[0] != "PLM" {
 		t.Errorf("the yard persona reaches %v, want Trenton alone", codes)
 	}
 	if rsp := get("/api/v1/yard/pick-queue?branch_id="+trentonID, yardHeaders); rsp.StatusCode != http.StatusOK {
@@ -340,7 +345,7 @@ func TestDemoModule_MintsASessionThatReachesTheTill(t *testing.T) {
 	}
 
 	driverToken, driverHeaders := mintPersona("driver", "driver", "Driver", "d0200000-0000-4000-9000-000000000003")
-	if codes := branchCodes(driverHeaders); len(codes) != 1 || codes[0] != "KGN" {
+	if codes := branchCodes(driverHeaders); len(codes) != 1 || codes[0] != "JUL" {
 		t.Errorf("the driver persona reaches %v, want Kingston alone", codes)
 	}
 	runsRsp := get("/api/v1/dispatch/my-runs?date="+seedClock.UTC().Format("2006-01-02"), driverHeaders)
@@ -500,6 +505,7 @@ func startDemoServe(t *testing.T, bin, dsn string) string {
 		"APP_ENV=demo",
 		"CORE_DATABASE_URL=" + dsn,
 		"CORE_STAFF_AUDIENCE=hh-staff",
+		"CORE_SIGNIN_MODE=demo",
 		"CORE_TENANT_AUDIENCE=hh-tenant",
 		"PAYMENT_VAULT_KEY=" + testVaultKey,
 		"HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1",

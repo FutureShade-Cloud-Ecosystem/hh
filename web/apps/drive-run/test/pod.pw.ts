@@ -1,7 +1,7 @@
 // HH Drive, sub item 3: proof of delivery. A typed name, the recipient's own
 // confirmation and, if the driver wants it, a photo. Sent as the core's shape:
 // {received_by, affirmed}, and the photo as the raw picture on its own call.
-import { test, expect, TINY_PNG, driverHandoff, resetStub, stubLog, takeFirstStopEnRoute, useScenario } from "./helpers.js";
+import { test, expect, TINY_PNG, driverHandoff, resetStub, stubLog, takeFirstStopEnRoute, useScenario, type LoggedCall } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -14,7 +14,7 @@ test("proof of delivery opens with the name to type and the confirmation unticke
   await takeFirstStopEnRoute(page);
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Proof of delivery" })).toBeVisible();
-  await expect(page.locator("[data-pod]")).toContainText("Stop 1 · Northline Hardscapes Ltd (demo) · SO-1001");
+  await expect(page.locator("[data-pod]")).toContainText("Stop 1 · Bluffside Builders · SO-1001");
   await expect(page.getByLabel("Full name of the person receiving")).toHaveValue("Site contact (demo)");
   await expect(page.getByRole("checkbox")).not.toBeChecked();
   await expect(page.locator(".confirm")).toContainText("not a captured signature image");
@@ -37,11 +37,16 @@ test("signing sends the core's POD shape and the stop reads delivered", async ({
   await expect(page.getByRole("heading", { name: "Stop 1" })).toBeVisible();
   await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
   await expect(page.locator(".signed")).toContainText("Signed by Receiving clerk");
-  await expect(page.getByRole("status")).toContainText("Delivery to Northline Hardscapes Ltd (demo) is signed for.");
-  const pod = (await stubLog(request)).filter((c) => c.path.endsWith("/pod"));
+  await expect(page.getByRole("status")).toContainText("Delivery to Bluffside Builders is signed for.");
+  // The attestation has no sync door in the core (its pod scope is the photo
+  // record), so the proof is one call on its direct door, the recipient
+  // trimmed and the affirmation set; nothing rides the pod scope.
+  const calls = await stubLog(request);
+  const pod = calls.filter((c) => c.path.endsWith("/pod") && !c.path.includes("/sync/"));
   expect(pod).toHaveLength(1);
-  expect(pod[0].method).toBe("POST");
-  expect(pod[0].body).toEqual({ received_by: "Receiving clerk", affirmed: true });
+  expect(pod[0]?.method).toBe("POST");
+  expect(pod[0]?.body).toEqual({ received_by: "Receiving clerk", affirmed: true });
+  expect(calls.filter((c) => c.path === "/api/v1/sync/pod" && c.method === "POST")).toHaveLength(0);
   await page.getByRole("button", { name: "Back to my run" }).click();
   await expect(page.locator("[data-progress]")).toHaveText("2 stops left · 1 delivered");
 });
@@ -61,7 +66,8 @@ test("Not yet goes back to the stop and sends nothing", async ({ page, request }
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await page.getByRole("button", { name: "Not yet" }).click();
   await expect(page.getByRole("heading", { name: "Stop 1" })).toBeVisible();
-  expect((await stubLog(request)).filter((c) => c.path.endsWith("/pod"))).toHaveLength(0);
+  // Nothing was SENT: the pulls read, but no proof create rode the outbox.
+  expect((await stubLog(request)).filter((c) => c.method === "POST" && c.path.endsWith("/pod"))).toHaveLength(0);
 });
 
 test("a photo goes up as the raw picture and is counted on the proof", async ({ page, request }) => {

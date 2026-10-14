@@ -359,6 +359,7 @@ func TestRefresh_LegacyTokenWithoutAnAnchorMeasuresFromItsOwnIat(t *testing.T) {
 // whether the token was bad, the user gone, or the session simply too old.
 func TestRefreshRoute_GuardedAndAnswersAPlain401(t *testing.T) {
 	svc, store, setNow := refreshFixture(t)
+	svc.WithConfig(Config{ID: "acme", DealerName: "Acme Yard"})
 	h := NewHandler(svc, nil)
 	tok := login(t, svc)
 
@@ -386,7 +387,7 @@ func TestRefreshRoute_GuardedAndAnswersAPlain401(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Token == "" || body.User.ID != "u1" || body.Config.DealerName == "" {
+	if body.Token == "" || body.User.ID != "u1" || body.Config.DealerName != "Acme Yard" {
 		t.Fatalf("refresh response must carry {token, user, config}: %+v", body)
 	}
 	if body.SessionExpiresAt.IsZero() || body.ExpiresAt.IsZero() {

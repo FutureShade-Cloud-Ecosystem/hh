@@ -66,10 +66,31 @@ import {
 } from './_pos-counter-view.js';
 import './settings-history.js';
 import type { PolicyChangeRow } from './settings-history-logic.js';
-import { POS_HISTORY_WORDS } from './pos-counter-settings-logic.js';
+import { POS_HISTORY_WORDS, SUPPLIER_DEPOSIT_CANCEL_WORDS } from './pos-counter-settings-logic.js';
 
 const PROFILES = ['counter', 'yard', 'driver', 'manager', 'admin'] as const;
 type Profile = (typeof PROFILES)[number];
+
+/**
+ * The pos_policy row this screen reads and writes, in the contract's shape.
+ * Every field the write replaces is held, so a one-knob save cannot clobber a
+ * knob this screen does not show.
+ */
+type CounterPolicyRow = {
+  branch_id: string;
+  cod_enabled: boolean;
+  restocking_fee_bps: number;
+  notes: string;
+  line_presentation: string;
+  quick_chips_enabled: boolean;
+  workspace_split_pct: number;
+  workspace_arrangement: string;
+  lookup_presentation: string;
+  margin_visibility: string;
+  balance_visibility: string;
+  supplier_deposit_cancel: string;
+  quick_chip_set?: string[];
+};
 
 /** The kit item kind one hot-list tile is filed under (quickpicks.go's `chip`). */
 const CHIP_KIND = 'chip';
@@ -119,6 +140,17 @@ export class HosPosCounterSettings extends LitElement {
   @state() private history: PolicyChangeRow[] = [];
   /** The server's own sentence when the history read failed; '' means it did not. */
   @state() private historyFault = '';
+  /**
+   * The dealer's counter policy row (pos_policy), held WHOLE because the policy
+   * write replaces the row: a one-knob save PUTs the row it read with the one
+   * field moved, never a partial body that would clobber the knobs this screen
+   * does not show. Null means the read has not answered or refused.
+   */
+  @state() private policyRow: CounterPolicyRow | null = null;
+  /** The sentence when the policy read failed; '' means it did not. */
+  @state() private policyFault = '';
+  /** The deposit disposition draft: the select's value, saved on Save. */
+  @state() private depositCancelDraft = 'CREDIT_BACK';
 
   static styles = [
     focusRing,
@@ -404,6 +436,7 @@ export class HosPosCounterSettings extends LitElement {
     void this.load();
     void this.loadCatalogue();
     void this.loadHistory();
+    void this.loadPolicy();
   }
 
   disconnectedCallback(): void {
@@ -461,16 +494,17 @@ export class HosPosCounterSettings extends LitElement {
   }
 
   /**
- * The COUNTER RULES change history: who moved a pos_policy knob, and what it was before.
+   * The COUNTER RULES change history: who moved a pos_policy knob, and what it was before.
    *
-   * ── WHY IT IS ON THIS SCREEN AND NOT NEXT TO AN EDITOR ────────────────────────────────────────
+   * ── WHY IT IS ON THIS SCREEN ─────────────────────────────────────────────────────────────────
    *
-   * Because there is no editor. pos_policy has been dealer-configurable over the API and by nobody
-   * else since it shipped, which is precisely the accountability gap this panel closes: the two
-   * knobs that decide who may receive a dealer's margin and a customer's past-due balance could be
-   * moved with no record of who moved them. Counter settings is where an administrator already comes
- * to configure the counter, so it is where the record of counter configuration belongs: and when
-   * the typed-policy editor does land, the trail is already here rather than starting from empty.
+   * Counter settings is where an administrator already comes to configure the counter, so it is
+   * where the record of counter configuration belongs. The deposit disposition box above is this
+   * screen's first typed-policy editor; before it, pos_policy was dealer-configurable over the API
+   * and by nobody else, which was precisely the accountability gap this panel closed: the knobs
+   * that decide who may receive a dealer's margin and a customer's past-due balance could be moved
+   * with no record of who moved them. The trail predates the editor, so it also covers every knob
+   * moved over the API.
    *
    * A FAILURE NEVER BLOCKS THE SCREEN. It lands in the disclosure's own fault box with a retry; the
    * keys, tiles and panels above it stay editable.
@@ -489,6 +523,65 @@ export class HosPosCounterSettings extends LitElement {
       this.history = body.items ?? [];
     } catch {
       this.historyFault = 'The server could not be reached.';
+    }
+  }
+
+  /**
+   * The counter policy row behind the one money rule this screen edits: the
+   * disposition a cancelled special order's supplier deposit takes. Held whole
+   * (see CounterPolicyRow) because the write replaces the row. A failure never
+   * blocks the screen: the rule's box shows the fault and the control stays
+   * disabled, the keys, tiles and panels above it keep working.
+   */
+  private async loadPolicy(): Promise<void> {
+    this.policyFault = '';
+    try {
+      const res = await api(
+        `/api/v1/pos/policy${this.branchId ? `?branch_id=${encodeURIComponent(this.branchId)}` : ''}`,
+      );
+      if (!res.ok) {
+        this.policyFault = (await readErr(res)) || `request failed (${res.status})`;
+        return;
+      }
+      const row = (await res.json()) as CounterPolicyRow;
+      this.policyRow = row;
+      this.depositCancelDraft = row.supplier_deposit_cancel || 'CREDIT_BACK';
+    } catch {
+      this.policyFault = 'The server could not be reached.';
+    }
+  }
+
+  /**
+   * Save the deposit disposition: the read row with the one field moved. The
+   * server walls the write to administrators (the surface's own posture: the
+   * server is the authority on who may do this, and this screen shows its
+   * sentence rather than evaluating any authority of its own).
+   */
+  private async saveDepositCancel(): Promise<void> {
+    const row = this.policyRow;
+    if (!row || this.busy) return;
+    this.busy = true;
+    this.error = '';
+    this.notice = '';
+    try {
+      const res = await api('/api/v1/pos/policy', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...row, supplier_deposit_cancel: this.depositCancelDraft }),
+      });
+      if (!res.ok) {
+        this.error = (await readErr(res)) || `Could not save the deposit rule (${res.status}).`;
+        return;
+      }
+      const saved = (await res.json()) as CounterPolicyRow;
+      this.policyRow = saved;
+      this.depositCancelDraft = saved.supplier_deposit_cancel || 'CREDIT_BACK';
+      this.notice = 'Deposit rule saved. A cancelled special order now takes this disposition.';
+      await this.loadHistory();
+    } catch {
+      this.error = 'Could not reach the server.';
+    } finally {
+      this.busy = false;
     }
   }
 
@@ -824,7 +917,7 @@ export class HosPosCounterSettings extends LitElement {
             a worse defect than a gap and an invisible one to whoever fixes the gap next.
             The reading order this gives is also the better one: the two small rosters (which keys,
             which panels) together, then the board somebody scrolls, then the history. */ ''}
-      ${this.renderKeys()} ${this.renderPanels()} ${this.renderTiles()}
+      ${this.renderKeys()} ${this.renderPanels()} ${this.renderTiles()} ${this.renderMoneyRule()}
       ${/* LAST, AND BEHIND A DISCLOSURE. A history is a look-something-up surface, not a next
             action; a table of old values above the controls somebody came here to change would be
             the screen arguing with itself about what it is for.
@@ -866,7 +959,7 @@ export class HosPosCounterSettings extends LitElement {
           class="info"
           type="button"
           aria-label="About counter keys"
-          title="F4 advances and F12 takes payment, the way BisTrack does. Press Set, then press the key you want: function keys, or Ctrl or Alt with a letter."
+          title="F4 advances and F12 takes payment, the way the counter system before this one did. Press Set, then press the key you want: function keys, or Ctrl or Alt with a letter."
         >
           ${drawIcon(iconForId('pencil:info'), 19)}
         </button>
@@ -1105,6 +1198,65 @@ export class HosPosCounterSettings extends LitElement {
       <div class="foot">
         <button class="go" data-testid="cs-panels-save" ?disabled=${this.busy} @click=${() => void this.savePanels()}>
           Save defaults
+        </button>
+      </div>
+    </div>`;
+  }
+
+  /**
+   * The counter's one money rule this screen edits: what a cancelled special
+   * order's supplier deposit takes. The select carries the words the history
+   * renders (one idea, one spelling), and the control only goes live once the
+   * policy row has answered: a rule whose current value is unknown is shown
+   * disabled rather than offered at a guessed default, the never-render-a-
+   * confident-wrong-number rule. A manager may still keep a given order's
+   * deposit at the cancel itself, with a reason; this is only the default.
+   */
+  private renderMoneyRule() {
+    const loaded = this.policyRow !== null;
+    return html`<div class="box" data-testid="cs-money-rule">
+      <h3>
+        Counter money rules
+        <button
+          class="info"
+          type="button"
+          aria-label="About the deposit rule"
+          title="When an order whose only money is a supplier deposit is cancelled, the deposit takes this disposition. A manager can still keep it on a given order at the cancel, with a reason."
+        >
+          ${drawIcon(iconForId('pencil:info'), 19)}
+        </button>
+      </h3>
+      ${this.policyFault
+        ? html`<p class="err" role="alert" data-testid="cs-money-rule-fault">
+            Could not read the deposit rule. ${this.policyFault}
+            <button class="q" type="button" @click=${() => void this.loadPolicy()}>Retry</button>
+          </p>`
+        : nothing}
+      <div class="krow">
+        <label for="cs-deposit-cancel">${POS_HISTORY_WORDS.rule['supplier_deposit_cancel']}</label>
+        <span></span>
+        <select
+          id="cs-deposit-cancel"
+          data-testid="cs-deposit-cancel"
+          ?disabled=${!loaded || this.busy}
+          @change=${(e: Event) => {
+            this.depositCancelDraft = (e.target as HTMLSelectElement).value;
+          }}
+        >
+          ${Object.entries(SUPPLIER_DEPOSIT_CANCEL_WORDS).map(
+            ([value, word]) =>
+              html`<option value=${value} ?selected=${this.depositCancelDraft === value}>${word}</option>`,
+          )}
+        </select>
+      </div>
+      <div class="foot">
+        <button
+          class="go"
+          data-testid="cs-deposit-cancel-save"
+          ?disabled=${!loaded || this.busy}
+          @click=${() => void this.saveDepositCancel()}
+        >
+          Save deposit rule
         </button>
       </div>
     </div>`;

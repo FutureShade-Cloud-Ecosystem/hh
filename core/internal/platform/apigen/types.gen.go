@@ -288,6 +288,7 @@ type DemoSessionResponse struct {
 	Token      *string         `json:"token,omitempty"`
 	User       *map[string]any `json:"user,omitempty"`
 	Flow       *string         `json:"flow,omitempty"`
+	Class      *string         `json:"class,omitempty"`
 	ChapterKey *string         `json:"chapter_key,omitempty"`
 }
 
@@ -295,6 +296,7 @@ type DemoFlow struct {
 	Flow     *string `json:"flow,omitempty"`
 	RoleCode *string `json:"role_code,omitempty"`
 	Label    *string `json:"label,omitempty"`
+	Class    *string `json:"class,omitempty"`
 }
 
 type DemoFlowList struct {
@@ -2934,6 +2936,20 @@ type IdentityPing struct {
 	Status string `json:"status"`
 }
 
+type SessionJwkSet struct {
+	Keys []SessionJwk `json:"keys"`
+}
+
+type SessionJwk struct {
+	Kty string `json:"kty"`
+	Crv string `json:"crv"`
+	X   string `json:"x"`
+	Y   string `json:"y"`
+	Kid string `json:"kid"`
+	Use string `json:"use"`
+	Alg string `json:"alg"`
+}
+
 type IdentityLoginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
@@ -2952,6 +2968,21 @@ type IdentityUser struct {
 type IdentityLoginResponse struct {
 	Token string       `json:"token"`
 	User  IdentityUser `json:"user"`
+}
+
+type IdentityExchangeRequest struct {
+	Jwt string `json:"jwt"`
+	Org string `json:"org"`
+}
+
+type IdentityExchangeResponse struct {
+	Token       string       `json:"token"`
+	ExpiresAtMs int64        `json:"expiresAtMs"`
+	User        IdentityUser `json:"user"`
+}
+
+type IdentityAuthMethodsResponse struct {
+	Methods []string `json:"methods"`
 }
 
 type IdentityChangePasswordRequest struct {
@@ -4140,7 +4171,8 @@ type OrderTransitionResult struct {
 }
 
 type OrderCancelRequest struct {
-	Reason string `json:"reason"`
+	Reason      string `json:"reason"`
+	KeepDeposit *bool  `json:"keep_deposit,omitempty"`
 }
 
 type OrderHeaderEditRequest struct {
@@ -5164,18 +5196,19 @@ type PosTaxRate struct {
 }
 
 type PosPolicy struct {
-	BranchId             string    `json:"branch_id"`
-	CodEnabled           bool      `json:"cod_enabled"`
-	RestockingFeeBps     int32     `json:"restocking_fee_bps"`
-	Notes                string    `json:"notes"`
-	LinePresentation     string    `json:"line_presentation"`
-	QuickChipsEnabled    bool      `json:"quick_chips_enabled"`
-	WorkspaceSplitPct    int32     `json:"workspace_split_pct"`
-	WorkspaceArrangement string    `json:"workspace_arrangement"`
-	LookupPresentation   string    `json:"lookup_presentation"`
-	MarginVisibility     string    `json:"margin_visibility"`
-	BalanceVisibility    string    `json:"balance_visibility"`
-	QuickChipSet         *[]string `json:"quick_chip_set,omitempty"`
+	BranchId              string    `json:"branch_id"`
+	CodEnabled            bool      `json:"cod_enabled"`
+	RestockingFeeBps      int32     `json:"restocking_fee_bps"`
+	Notes                 string    `json:"notes"`
+	LinePresentation      string    `json:"line_presentation"`
+	QuickChipsEnabled     bool      `json:"quick_chips_enabled"`
+	WorkspaceSplitPct     int32     `json:"workspace_split_pct"`
+	WorkspaceArrangement  string    `json:"workspace_arrangement"`
+	LookupPresentation    string    `json:"lookup_presentation"`
+	MarginVisibility      string    `json:"margin_visibility"`
+	BalanceVisibility     string    `json:"balance_visibility"`
+	SupplierDepositCancel string    `json:"supplier_deposit_cancel"`
+	QuickChipSet          *[]string `json:"quick_chip_set,omitempty"`
 }
 
 type PosPolicyChange struct {
