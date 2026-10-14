@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func raw(m map[string]string) map[string]json.RawMessage {
@@ -105,6 +107,29 @@ func TestDealerConfig_ReaderWithNoPoolAnswersTheDefault(t *testing.T) {
 	got, err := r.DealerConfig(context.Background())
 	if err != nil || got != DefaultDealerConfig() {
 		t.Fatalf("nil pool: %+v %v", got, err)
+	}
+}
+
+type recordExecer struct{ calls int }
+
+func (r *recordExecer) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	r.calls++
+	return pgconn.CommandTag{}, nil
+}
+
+// The currency alone is written through the seam, validated before any write reaches the table.
+func TestWriteDealerCurrencyTx_ValidatesBeforeWriting(t *testing.T) {
+	ex := &recordExecer{}
+	for _, bad := range []string{"", "us", "usd", "USDX", "U5D"} {
+		if err := WriteDealerCurrencyTx(context.Background(), ex, bad); err == nil {
+			t.Fatalf("currency %q was accepted", bad)
+		}
+	}
+	if ex.calls != 0 {
+		t.Fatalf("a refused currency reached the table %d time(s)", ex.calls)
+	}
+	if err := WriteDealerCurrencyTx(context.Background(), ex, "USD"); err != nil || ex.calls != 1 {
+		t.Fatalf("a valid currency: err=%v writes=%d, want one write", err, ex.calls)
 	}
 }
 

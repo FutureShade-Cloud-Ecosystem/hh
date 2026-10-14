@@ -75,6 +75,38 @@ func TestIntegration_DealerConfig_SeededDealerIsOntarioAndAWriteIsLive(t *testin
 	}
 }
 
+// The currency read rides the caller's transaction: the card rail's sale transaction holds a
+// connection while it charges, and a pool read there can deadlock a full pool.
+func TestIntegration_DealerCurrencyTx_ReadsOnTheCallersTransaction(t *testing.T) {
+	r := NewDealerConfigReader(intPool(t))
+	restoreDealerConfig(t, r)
+	ctx := context.Background()
+	want := DealerConfig{Currency: "USD", TaxRegion: "CA", BusinessZone: "America/Los_Angeles", HSTRateBps: 775, Country: "US"}
+	if err := r.WriteDealerConfig(ctx, want); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// An uncommitted change on this transaction is what its own read sees (the pool would not).
+	if _, err := tx.Exec(ctx, `UPDATE system_settings SET value = '"EUR"' WHERE key = 'currency'`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.DealerConfigTx(ctx, tx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Currency != "EUR" {
+		t.Fatalf("tx read currency = %q, want the transaction's own EUR", got.Currency)
+	}
+	if pooled, _ := r.DealerConfig(ctx); pooled.Currency != "USD" {
+		t.Fatalf("pool read currency = %q, want the committed USD", pooled.Currency)
+	}
+}
+
 // A damaged tax_region row refuses at the reader (so at the engine); it never reads as Ontario.
 func TestIntegration_DealerConfig_MalformedTaxRegionRefuses(t *testing.T) {
 	r := NewDealerConfigReader(intPool(t))

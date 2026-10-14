@@ -79,7 +79,7 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 	if err != nil {
 		return nil, err
 	}
-	payStore := payment.NewStore(pool, payVault)
+	payStore := payment.NewStore(pool, payVault).WithDealerCurrency(newDealerCurrency(pool))
 	paySvc := payment.NewService(payStore, payment.RunPaymentsStub{})
 
 	tillRepo := till.NewRepository(pool)

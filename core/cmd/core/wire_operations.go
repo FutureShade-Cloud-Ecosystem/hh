@@ -686,7 +686,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	}
 	ops.unionGateway = unionGateway
 	w3bPaymentsRepo := payments.NewRepository(pool)
-	w3bPaySvc := payments.NewService(w3bPaymentsRepo, unionGateway)
+	w3bPaySvc := payments.NewService(w3bPaymentsRepo, unionGateway).WithCurrency(newDealerCurrency(pool))
 	_ = w3bPaySvc // consumed by the portal BFF at the tops batch; constructed so boot proves it wires
 	// DIB-170: payment reversal, manager-gated, reason-required, audited.
 	w3bReverseSvc := payments.NewReverseService(w3bPaymentsRepo).WithAudit(auditSvc)

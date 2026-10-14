@@ -36,6 +36,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -157,7 +158,7 @@ const (
 	demoMerchantID     = "DEMO-MERCHANT-0001"
 	demoCardCredential = "demo-not-a-key-0001"
 	demoProcessor      = "run_payments"
-	demoCurrency       = "CAD"
+	demoCurrency       = "USD" // the demo dealer trades in US dollars (item 3b slice 2)
 )
 
 // demoPaymentConfigID is the populate's payment configuration row's fixed
@@ -488,6 +489,12 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	report.PaymentConfigCreated = payCreated
 	if err != nil {
 		return report, err
+	}
+	// The rail's row says demoCurrency, and the card rail refuses a charge whose row disagrees with
+	// the dealer's currency, so the dealer's own currency is written beside it, through the settings
+	// module's seam. The build's seed writes the whole configuration after this.
+	if err := settings.WriteDealerCurrencyTx(ctx, tx, demoCurrency); err != nil {
+		return report, fmt.Errorf("demo-populate: dealer currency: %w", err)
 	}
 
 	// The demo_box row: the one-row table only this populate creates,

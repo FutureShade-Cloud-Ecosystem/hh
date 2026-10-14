@@ -291,3 +291,24 @@ func TestRunPaymentsClient_Refund_NoBaseURL_Off(t *testing.T) {
 		t.Fatalf("live Refund off must return a zero RefundResult, got %+v", res)
 	}
 }
+
+// The live client sends the row's currency, whatever it is: a USD row is charged in USD (item 3b
+// slice 2). The CAD fallback only serves bare creds that never came through the store.
+func TestRunPaymentsClient_SendsTheRowsCurrency(t *testing.T) {
+	var sent []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := decodeChargeBody(t, r)
+		sent = append(sent, body["currency"].(string))
+		_, _ = io.WriteString(w, `{"result":"A","trans_id":"t1"}`)
+	}))
+	defer srv.Close()
+
+	c := NewRunPaymentsClient(srv.URL)
+	if _, err := c.Charge(context.Background(),
+		map[string]string{"api_key": "k", "currency": "USD"}, "MID-1", 100, "tok"); err != nil {
+		t.Fatalf("USD charge: %v", err)
+	}
+	if len(sent) != 1 || sent[0] != "USD" {
+		t.Fatalf("currencies sent = %v, want exactly [USD]", sent)
+	}
+}

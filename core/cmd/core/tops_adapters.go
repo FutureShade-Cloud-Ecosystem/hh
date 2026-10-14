@@ -322,6 +322,28 @@ func (a dealerRegionAdapter) TaxRegion(ctx context.Context) (string, error) {
 	return c.TaxRegion, err
 }
 
+// dealerCurrencyAdapter binds the card rails' currency sources (payment.DealerCurrencySource for the
+// POS rail, payments.CurrencySource for the portal rail) to the settings module's dealer
+// configuration. Both reads are uncached, so a change of currency is live at the next charge. The Tx
+// read rides the caller's open transaction: the pos Sale transaction holds a connection while it
+// charges, and a pool read there can deadlock a full pool.
+type dealerCurrencyAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerCurrencyAdapter) DealerCurrency(ctx context.Context) (string, error) {
+	c, err := a.r.DealerConfig(ctx)
+	return c.Currency, err
+}
+
+func (a dealerCurrencyAdapter) DealerCurrencyTx(ctx context.Context, tx pgx.Tx) (string, error) {
+	c, err := a.r.DealerConfigTx(ctx, tx)
+	return c.Currency, err
+}
+
+// newDealerCurrency builds the dealer currency source over the pool.
+func newDealerCurrency(pool *pgxpool.Pool) dealerCurrencyAdapter {
+	return dealerCurrencyAdapter{r: settings.NewDealerConfigReader(pool)}
+}
+
 // dealerCountryAdapter binds the customer module's CountrySource to the same dealer configuration:
 // the country the address rules follow, read live at each customer write and each loaded item.
 type dealerCountryAdapter struct{ r *settings.DealerConfigReader }

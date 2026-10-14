@@ -351,7 +351,9 @@ func demoWorldRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (orgID
 
 // demoPaymentConfig plants the one active payment configuration the card rail needs before even
 // the simulator will charge: an invented merchant id, an invented credential that is not a key,
-// sealed under the test's own vault key, no host.
+// sealed under the test's own vault key, no host. The rail's currency is the demo dealer's own, US
+// dollars, as the populate writes it: a rail row that disagrees with the dealer's currency refuses
+// every charge (item 3b slice 2).
 func demoPaymentConfig(t *testing.T, ctx context.Context, pool *pgxpool.Pool, vaultKeyHex string) {
 	t.Helper()
 	vault, err := payment.NewVault(vaultKeyHex)
@@ -366,11 +368,18 @@ func demoPaymentConfig(t *testing.T, ctx context.Context, pool *pgxpool.Pool, va
 	if err != nil {
 		t.Fatalf("seal creds: %v", err)
 	}
+	// The rail trades in the dealer's own currency, which the card rail checks at every charge: US
+	// dollars in the demo build (the seed writes the dealer's configuration), the Ontario default in a
+	// default build that runs this leg with the demo database variable set.
+	var dealerCurrency string
+	if err := pool.QueryRow(ctx, `SELECT COALESCE((SELECT value #>> '{}' FROM system_settings WHERE key = 'currency'), 'CAD')`).Scan(&dealerCurrency); err != nil {
+		t.Fatalf("the dealer's currency: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO payment_config (processor, merchant_id, currency, credentials_ciphertext,
 			key_version, base_url, mdr_bps, surcharge_enabled, status)
-		VALUES ('run_payments', $1, 'CAD', $2, $3, '', 0, FALSE, 'active')`,
-		demoMerchantID, ct, kv); err != nil {
+		VALUES ('run_payments', $1, $4, $2, $3, '', 0, FALSE, 'active')`,
+		demoMerchantID, ct, kv, dealerCurrency); err != nil {
 		t.Fatalf("insert payment config: %v", err)
 	}
 }
@@ -1113,8 +1122,12 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	if cfg.MerchantID != demoMerchantID {
 		t.Fatalf("the payments status names merchant %q, want the demo configuration's %q", cfg.MerchantID, demoMerchantID)
 	}
-	if cfg.Processor != "run_payments" || cfg.Currency != "CAD" {
-		t.Fatalf("the payments status names processor %q currency %q, want run_payments and CAD", cfg.Processor, cfg.Currency)
+	var wantCurrency string
+	if err := pool.QueryRow(ctx, `SELECT COALESCE((SELECT value #>> '{}' FROM system_settings WHERE key = 'currency'), 'CAD')`).Scan(&wantCurrency); err != nil {
+		t.Fatalf("the dealer's currency: %v", err)
+	}
+	if cfg.Processor != "run_payments" || cfg.Currency != wantCurrency {
+		t.Fatalf("the payments status names processor %q currency %q, want run_payments and the dealer's %s", cfg.Processor, cfg.Currency, wantCurrency)
 	}
 	t.Logf("RECORDED (PX changes it): the status route answers simulated: %v", cfg.Simulated)
 
