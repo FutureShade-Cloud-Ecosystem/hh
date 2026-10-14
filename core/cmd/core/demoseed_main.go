@@ -163,6 +163,10 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	// says how many migration-planted customers -apply renames, the default build's
 	// says nothing because it carries no rename at all.
 	scrubNamesPlan(out)
+	// The Gable-address rename pass is the demo build's too (the gableaddr pair): the demo build's
+	// plan says how many migration-planted email addresses -apply renames onto the demo dealer's
+	// addresses; the default build's says nothing.
+	gableAddressesPlan(out)
 	// The seed-repair pass is the demo build's too (the repair pair): the plan says the guarded
 	// repair -apply would make, and only when the row still sits where the pass moves it from,
 	// so a world with nothing to repair reports nothing.
@@ -209,6 +213,14 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("demoseed: nothing was written: %w", err)
 	}
+	// The Gable-address rename pass (the gableaddr pair), in the same transaction for the same reason:
+	// the migration-planted demo email addresses move onto invented Gable Landscape Supply addresses,
+	// one guarded UPDATE per fixed id / exact old value.
+	addrRenamed, err := renameGableAddresses(ctx, tx, now)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("demoseed: nothing was written: %w", err)
+	}
 	// The seed-repair pass (the repair pair), inside the same transaction for the same reason:
 	// the world lands all-or-nothing. One guarded UPDATE, demo build only, its guarantees argued
 	// in demoseed_repair_demo.go beside the scrub-name pass it follows.
@@ -229,10 +241,13 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	if worldRenamed > 0 {
 		fmt.Fprintf(out, "world words:  %d migration-planted value(s) moved onto the demo dealer's words\n", worldRenamed)
 	}
+	if addrRenamed > 0 {
+		fmt.Fprintf(out, "gable addresses: %d migration-planted email address(es) moved onto Gable Landscape Supply addresses\n", addrRenamed)
+	}
 	if repaired > 0 {
 		fmt.Fprintf(out, "repaired:  %d row(s) an older apply left wrong (a home branch, an empty product application, a missing org stamp)\n", repaired)
 	}
-	if res.Created == 0 && renamed == 0 && worldRenamed == 0 && repaired == 0 {
+	if res.Created == 0 && renamed == 0 && worldRenamed == 0 && addrRenamed == 0 && repaired == 0 {
 		fmt.Fprintln(out, "the demo world was already complete, this run changed nothing.")
 	}
 	for _, t := range sortedKeys(res.ByTable) {
