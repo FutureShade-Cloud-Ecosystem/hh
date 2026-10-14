@@ -154,6 +154,8 @@ export class QdOrderPayment extends PanelBase {
 
   /** The POST still out for a quote, by quote id: what a sign out waits on, bounded. */
   private readonly posting = new Map<string, Promise<Result<OrderPaymentAnswer>>>();
+  /** The phase an open attempt was in when its retry went out, per quote: where a retry that met no signal puts it back. */
+  private readonly reopenedFrom = new Map<string, "not-known" | "held">();
 
   /** The quote numbers of the quotes this session read, for the entry page's words at sign out. */
   private readonly quoteNos = new Map<string, string>();
@@ -581,6 +583,7 @@ export class QdOrderPayment extends PanelBase {
       // the server replays the first result and nothing is posted a second time. The retry is
       // marked in flight BEFORE it is sent, so a person who leaves and comes back while it is
       // out finds the attempt still out, its button held, and no third POST can be opened.
+      this.reopenedFrom.set(ctx.id, kept.phase);
       this.book.mark(ctx.id, "in-flight");
       const inflight = this.book.attempt(ctx.id);
       if (inflight !== null) {
@@ -592,6 +595,7 @@ export class QdOrderPayment extends PanelBase {
       tender = kept.tender;
       reference = kept.reference;
     } else {
+      this.reopenedFrom.delete(ctx.id);
       const parsed = parseTypedAmount(this.amountRaw);
       if (parsed.cents === null) {
         this.error = parsed.problem;
@@ -630,6 +634,8 @@ export class QdOrderPayment extends PanelBase {
     this.posting.delete(ctx.id);
     // The quote the person moved to meanwhile owns the screen now: this answer says nothing on it.
     if (result === undefined) return;
+    const reopened = this.reopenedFrom.get(ctx.id);
+    this.reopenedFrom.delete(ctx.id);
     this.busy = false;
     if (result.ok) {
       this.taken(ctx.id, result.value);
@@ -641,6 +647,12 @@ export class QdOrderPayment extends PanelBase {
       return;
     }
     const words = paymentRefusalWords(result.status, result.error);
+    // A retry of an OPEN attempt that met no signal sent nothing, so it decided nothing: the attempt goes back to the
+    // phase it was in (its note, its locked fields, its place in the sign out's keep), never to "kept".
+    if (reopened !== undefined && isNoSignal(result)) {
+      this.reopen(ctx.id, reopened, words);
+      return;
+    }
     this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? "held" : "kept", words);
     // With no signal nothing was sent: the server's state has not moved, there is nothing to read again, and a read
     // now would only fail and replace the payment box (and the refusal in it) with a read error.
@@ -675,6 +687,17 @@ export class QdOrderPayment extends PanelBase {
     this.announceChanged();
   }
 
+  /** An open attempt's retry sent nothing (no signal): the attempt is as it was before the press, and the words say why. */
+  private reopen(id: string, phase: "not-known" | "held", words: string): void {
+    this.book.mark(id, phase);
+    const rec = this.record(id);
+    rec.attempt = this.book.attempt(id);
+    rec.refusal = words;
+    this.attempt = rec.attempt;
+    this.error = words;
+    this.unknown = phase === "not-known" ? unknownOutcomeNote() : "";
+  }
+
   /** A definite answer that was not a taken payment: the attempt's new phase and, when the server spoke, its words. */
   private marked(id: string, phase: "not-known" | "held" | "kept", refusal: string): void {
     this.book.mark(id, phase);
@@ -700,7 +723,11 @@ export class QdOrderPayment extends PanelBase {
    * nothing.
    */
   private lateAnswer(ctx: QuoteContext, late: Result<OrderPaymentAnswer>): void {
-    if (late.ok) {
+    const reopened = this.reopenedFrom.get(ctx.id);
+    this.reopenedFrom.delete(ctx.id);
+    if (!late.ok && reopened !== undefined && isNoSignal(late)) {
+      this.reopen(ctx.id, reopened, paymentRefusalWords(late.status, late.error ?? ""));
+    } else if (late.ok) {
       this.book.clear(ctx.id);
       const rec = this.record(ctx.id);
       rec.attempt = null;
@@ -797,6 +824,13 @@ export class QdOrderPayment extends PanelBase {
     }
     if (isDifferentPaymentRefusal(answer.error ?? "")) {
       this.book.mark(quoteId, "held");
+      return;
+    }
+    // A retry of an open attempt that met no signal sent nothing: the attempt stays what it was, and is kept below.
+    const reopened = this.reopenedFrom.get(quoteId);
+    this.reopenedFrom.delete(quoteId);
+    if (reopened !== undefined && isNoSignal(answer)) {
+      this.book.mark(quoteId, reopened);
       return;
     }
     // A plain refusal decided the attempt: nothing is owed to it, and the session ends with it.

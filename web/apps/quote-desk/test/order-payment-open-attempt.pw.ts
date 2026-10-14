@@ -149,12 +149,12 @@ test("a held key, retried with no signal, is still carried across a sign out on 
   await expect(pay(page).locator('[data-field="amount"]')).toBeDisabled();
   await expect(pay(page).locator('[data-field="amount"]')).toHaveValue("10.00");
   // The held key is still the one it was: a retry says the same words on the same key, and no
-  // payment is taken beside the phantom the crossed key stored.
+  // payment is taken beside the phantom the crossed key stored (the stub's payments list holds only payments it took on a post).
   await pay(page).getByTestId("op-take").click();
   await expect(pay(page).getByTestId("op-error")).toContainText("took a different payment");
   const seen = await serverSaw(page);
   expect(seen.keys).toEqual([firstKey, firstKey]);
-  expect(seen.taken).toBe(1);
+  expect(seen.taken).toBe(0);
 });
 
 test("a no signal take of a fresh attempt sends nothing, leaves the form editable, and online the same payment is taken once", async ({ page, context }) => {

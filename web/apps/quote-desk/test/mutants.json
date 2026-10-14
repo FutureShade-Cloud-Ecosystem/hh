@@ -2199,5 +2199,12 @@
     "test": "readPolicy reads the very body the core answered",
     "runner": "node",
     "testFile": "test/panels.test.mjs"
+  },
+  {
+    "id": "op-nosignal-keeps-open-phase",
+    "file": "src/order-payment-panel.ts",
+    "find": "    if (reopened !== undefined && isNoSignal(result)) {\n      this.reopen(ctx.id, reopened, words);\n      return;\n    }\n",
+    "replace": "",
+    "test": "a no signal retry of a payment whose outcome is not known keeps the note and the locked fields, and sends nothing"
   }
 ]
