@@ -49,6 +49,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 	syncengine "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
 )
 
 func main() {
@@ -620,6 +621,11 @@ func serve(getenv func(string) string) error {
 	// slot lock; a pool of one would hang every keyed push, so refuse to
 	// boot rather than serve a door that wedges.
 	if err := syncengine.RequireLedgerPool(graph.pool); err != nil {
+		return err
+	}
+	// A pick record holds the task row's transaction across the order call, and a sync record also holds
+	// the ledger's lock connection: three connections are the least that can finish one.
+	if err := tasks.RequireRecordPool(graph.pool); err != nil {
 		return err
 	}
 
