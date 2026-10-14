@@ -94,7 +94,7 @@ func (s *WeightSyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since in
 			tombstones = append(tombstones, sync.Tombstone{ID: r.task.ID, Seq: r.seq})
 			continue
 		}
-		data, err := taskData(r.task)
+		data, err := taskData(r.task, nil)
 		if err != nil {
 			return nil, nil, err
 		}

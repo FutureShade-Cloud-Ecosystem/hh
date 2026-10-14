@@ -162,7 +162,8 @@ test("A P2-1 a panel that has left the page reads nothing when it is asked to re
   await quiet(page);
   const requests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) requests.push(`${request.method()} ${request.url()}`);
+    // The Work shell's own background pulls are not the work area reading.
+    if (request.url().includes("/api/") && !request.url().includes("/api/v1/sync/")) requests.push(`${request.method()} ${request.url()}`);
   });
   // Each panel is taken off the page with its last quote id still set and asked to re-read, as the builder's fan-out would.
   // The related documents panel first, with its quote id moved to another quote: the seam's shared
@@ -191,7 +192,8 @@ test("A P2-1 a work area that has left the page reads nothing when it is asked t
   await quiet(page);
   const requests: string[] = [];
   page.on("request", (request) => {
-    if (request.url().includes("/api/")) requests.push(`${request.method()} ${request.url()}`);
+    // The Work shell's own background pulls are not the work area reading.
+    if (request.url().includes("/api/") && !request.url().includes("/api/v1/sync/")) requests.push(`${request.method()} ${request.url()}`);
   });
   await page.locator("qd-quote-workarea").evaluate((el) => {
     el.remove();

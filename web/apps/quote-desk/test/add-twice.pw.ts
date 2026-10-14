@@ -89,7 +89,7 @@ test("a raise adds exact decimals, never a float sum", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Sales", exact: true }).click();
   await expect(page.getByTestId("qb-list")).toBeVisible();
-  const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "DRAFT", customer_id: "c-fenwick", lines: [{ p: "p-holland-60", q: 3 }, { p: "p-polymer-sand", q: 0.57 }] } });
+  const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "DRAFT", customer_id: "c-fenwick", lines: [{ p: "p-charcoal-60", q: 3 }, { p: "p-polymer-sand", q: 0.57 }] } });
   const id = ((await seeded.json()) as { id: string }).id;
   await page.evaluate((quote) => {
     window.location.hash = `#/quotes/${quote}`;

@@ -13,7 +13,6 @@ import { expect, test, type Page } from "@playwright/test";
 
 const COMING_LABELS = [
   "Outside Sales",
-  "Logistics Manager",
   "Branch Manager",
   "General Manager",
   "HR",
@@ -44,7 +43,7 @@ async function storedFlow(page: Page): Promise<string | null> {
 
 async function stubArmsRefusal(page: Page, flow: string): Promise<void> {
   const armed = await page.request.post("/_stub/refuse", {
-    data: { status: 429, error: "the demo mint limit is spent for now, wait a moment and tap again", flows: [flow] },
+    data: { status: 429, error: "too many sign-ins just now, wait a moment and tap again", flows: [flow] },
   });
   expect(armed.ok()).toBe(true);
 }
@@ -64,7 +63,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
 
-test("the picker renders the eight live cards and the five coming rows", async ({ page }) => {
+test("the picker renders the nine live cards and the four coming rows", async ({ page }) => {
   const sales = page.getByRole("button", { name: "Sales", exact: true });
   await expect(sales).toBeVisible();
   await expect(sales).toBeEnabled();
@@ -136,15 +135,23 @@ test("the picker renders the eight live cards and the five coming rows", async (
   await expect(controller).toContainText("Sign in as Financial Controller");
   await expect(controller).toContainText("Money Desk");
 
+  // The Logistics Manager's card is live with the dispatch board as its first tile.
+  const logistics = page.getByRole("button", { name: "Logistics Manager", exact: true });
+  await expect(logistics).toBeVisible();
+  await expect(logistics).toBeEnabled();
+  await expect(logistics).toContainText("Build the day's loads and send the trucks out.");
+  await expect(logistics).toContainText("Sign in as Logistics Manager");
+  await expect(logistics).toContainText("Dispatch and Load Building");
+
   // Coming recedes: the disclosure starts collapsed and opens to today's
   // list, unchanged, its rows disabled with their muted chips.
   const disclosure = page.getByTestId("coming-disclosure");
-  await expect(disclosure).toContainText("Five more roles are coming");
+  await expect(disclosure).toContainText("Four more roles are coming");
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).not.toBeVisible();
-  await disclosure.getByText("Five more roles are coming").click();
+  await disclosure.getByText("Four more roles are coming").click();
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(5);
+  await expect(coming.getByRole("listitem")).toHaveCount(4);
   for (const label of COMING_LABELS) {
     const row = coming.getByRole("listitem").filter({ hasText: label });
     await expect(row).toBeVisible();
@@ -284,7 +291,7 @@ test("a refused mint speaks in its own card, verbatim, and both cards keep worki
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   const manager = page.getByRole("button", { name: "Sales manager", exact: true });
   await expect(manager).toContainText(
-    "Demo sign-in refused: the demo mint limit is spent for now, wait a moment and tap again",
+    "Sign-in did not go through. too many sign-ins just now, wait a moment and tap again",
   );
   expect(await storedKeys(page)).toEqual([]);
   await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
@@ -310,4 +317,46 @@ test("a reload in the same tab resumes the role home from the stored session", a
   await page.reload();
   await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
   await expect(page.getByTestId("header-word")).toHaveText("Sales");
+});
+
+// The contractor entry: the flows listing carries each row's class, and a tenant row is a contractor
+// persona routed to the Pro app for its role. The card does not mint; it opens the app with the role.
+const CONTRACTOR_CARDS: ReadonlyArray<[label: string, app: string, path: string]> = [
+  ["Owner", "Pro Procurement", "/pro-procurement/?as=account_admin"],
+  ["Buyer", "Pro Procurement", "/pro-procurement/?as=buyer"],
+  ["Project manager", "Pro Procurement", "/pro-procurement/?as=buyer_no_pay"],
+  ["Accounts payable", "Pro Pay", "/pro-pay/?as=ap_finance"],
+  ["Field crew", "Pro Field", "/pro-field/?as=field_crew"],
+];
+
+test("the contractor accounts section lists the five roles, each naming the Pro app it opens", async ({ page }) => {
+  const section = page.getByTestId("contractor-section");
+  await expect(section).toBeVisible();
+  await expect(section).toContainText("Summit Ridge Builders buys from Gable Landscape Supply.");
+  await expect(page.getByTestId("contractor-card")).toHaveCount(5);
+  for (const [label, app] of CONTRACTOR_CARDS) {
+    const card = section.getByRole("button", { name: label, exact: true });
+    await expect(card).toBeEnabled();
+    await expect(card).toContainText(app);
+    await expect(card).toContainText(`Open ${app} as ${label}`);
+  }
+  // The staff cards are untouched.
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+});
+
+for (const [label, , path] of CONTRACTOR_CARDS) {
+  test(`the ${label} card opens its Pro app with the role, and mints nothing at the front door`, async ({ page }) => {
+    // The harness serves the front door alone, so the navigation target is answered by a stand-in page.
+    await page.route("**/pro-*/**", (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<title>Pro</title>" }));
+    await page.getByTestId("contractor-section").getByRole("button", { name: label, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${path.replace(/[?]/g, "\\?")}$`));
+    expect(await storedKeys(page)).toEqual([]);
+  });
+}
+
+test("a flows listing that fails shows no contractor cards and leaves the staff cards working", async ({ page }) => {
+  expect((await page.request.post("/_stub/listing-fails")).ok()).toBe(true);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  await expect(page.getByTestId("contractor-section")).toHaveCount(0);
 });

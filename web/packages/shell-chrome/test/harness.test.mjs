@@ -11,6 +11,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import './lib/dom.mjs';
 import { buildDemoPage, demoSheets, DEMO_TITLE } from '../demo/demo-page.ts';
 
 const pkgDir = fileURLToPath(new URL('..', import.meta.url));
@@ -23,6 +24,7 @@ const TEXT_FILES = [
   'src/shell-header.ts',
   'src/shell-rail.ts',
   'src/shell-banner.ts',
+  'src/shell-cards.ts',
   'src/shell-update.ts',
   'src/index.ts',
   'demo/demo-page.ts',
@@ -33,7 +35,11 @@ const TEXT_FILES = [
   'test/header.test.mjs',
   'test/rail.test.mjs',
   'test/banner-update.test.mjs',
+  'test/cards.test.mjs',
   'test/lib/render.mjs',
+  'test/lib/dom.mjs',
+  'test/lib/window-stub-probe.mjs',
+  'test/window-stub.test.mjs',
   'test/_ts-js-loader.mjs',
 ];
 
@@ -84,6 +90,7 @@ test('no hex colour literals in the element and demo sources: tokens only', () =
     'src/shell-rail.ts',
     'src/shell-banner.ts',
     'src/shell-update.ts',
+    'src/shell-cards.ts',
     'demo/demo-page.ts',
   ];
   const offences = [];
@@ -96,7 +103,7 @@ test('no hex colour literals in the element and demo sources: tokens only', () =
 // ── the import gate, over the package's own sources ──────────────────────────────────────────────
 
 test('the element sources import only lit, the design system, and their siblings', () => {
-  const sources = ['src/shell-state.ts', 'src/shell-header.ts', 'src/shell-rail.ts', 'src/shell-banner.ts', 'src/shell-update.ts', 'src/index.ts'];
+  const sources = ['src/shell-state.ts', 'src/shell-header.ts', 'src/shell-rail.ts', 'src/shell-banner.ts', 'src/shell-cards.ts', 'src/shell-update.ts', 'src/index.ts'];
   const allowed = [/^lit$/, /^@hardscapehouse\/design-system\/src\/[a-z-]+\.js$/, /^\.\/[a-z-]+\.js$/];
   const offences = [];
   const statementRes = [

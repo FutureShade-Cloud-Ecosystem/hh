@@ -34,7 +34,7 @@ test("the receiving difference definition is said in words, and only the differe
   await expect(note).toContainText("leaves this list when the rest lands or the order is closed short");
   const cards = page.locator("[data-po]");
   await expect(cards).toHaveCount(1);
-  await expect(cards.first().locator(".order")).toHaveText("PO-TRT-77");
+  await expect(cards.first().locator(".order")).toHaveText("PO-PLM-77");
   await expect(cards.first().locator(".chip")).toContainText("Partial");
   await expect(cards.first().locator(".detail").first()).toContainText("1 line still short");
   // Cost, visible: the order's still-open value, the core's integer cents formatted for a person.

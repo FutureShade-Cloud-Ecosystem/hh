@@ -9,7 +9,7 @@ import {
   normalizeTypedName,
 } from './pos-signature-logic.ts';
 
-const draft = (over = {}) => ({ typedName: 'Avery Trenton', affirmed: true, busy: false, ...over });
+const draft = (over = {}) => ({ typedName: 'Homeowner A', affirmed: true, busy: false, ...over });
 
 // ── DIB-386: the affirmative is a SEPARATE required act ─────────────────────
 test('DIB-386: a typed name WITHOUT the affirmative cannot be submitted', () => {
@@ -38,7 +38,7 @@ test('DIB-386: an in-flight capture is not resubmittable (no double-signing)', (
 
 // ── the name that is actually sealed ────────────────────────────────────────
 test('DIB-386: the sealed name is trimmed: surrounding whitespace is not part of a name', () => {
-  assert.equal(normalizeTypedName('  Avery Trenton  '), 'Avery Trenton');
-  assert.equal(normalizeTypedName('Avery Trenton'), 'Avery Trenton');
+  assert.equal(normalizeTypedName('  Homeowner A  '), 'Homeowner A');
+  assert.equal(normalizeTypedName('Homeowner A'), 'Homeowner A');
   assert.equal(normalizeTypedName('   '), '');
 });

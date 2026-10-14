@@ -32,7 +32,7 @@ test("a cleared price names who cleared it, and a quote's trail and queue carry 
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   await signIn(page, "Sales manager");
-  const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "DRAFT", customer_id: "c-maple-ridge", lines: [{ p: "p-holland-60", q: 120 }] } });
+  const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "DRAFT", customer_id: "c-maple-ridge", lines: [{ p: "p-charcoal-60", q: 120 }] } });
   const id = ((await seeded.json()) as { id: string }).id;
   await page.evaluate((quote) => {
     window.location.hash = `#/quotes/${quote}`;

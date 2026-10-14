@@ -31,8 +31,8 @@ test('the money trail reads the whole answer, then the take', () => {
 });
 
 test('paid in full says released only when the answer says so', () => {
-  assert.equal(paidInFullWords('DEMO-TRT-D01', 'Paid in full', true), 'DEMO-TRT-D01 reads Paid in full and is released to picking.');
-  assert.equal(paidInFullWords('DEMO-TRT-D01', 'Paid in full', false), 'DEMO-TRT-D01 reads Paid in full.');
+  assert.equal(paidInFullWords('DEMO-PLM-D01', 'Paid in full', true), 'DEMO-PLM-D01 reads Paid in full and is released to picking.');
+  assert.equal(paidInFullWords('DEMO-PLM-D01', 'Paid in full', false), 'DEMO-PLM-D01 reads Paid in full.');
 });
 
 test('the button names the whole balance', () => {
@@ -67,13 +67,13 @@ test('a refused find speaks in words, never the raw error string', () => {
 
 test('the find answer is read whole, an unreadable row is dropped', () => {
   const row = {
-    order_id: 'o1', order_no: 'DEMO-TRT-D01', customer_id: 'c1', customer_name: 'Bay Ridge', fulfilment: 'WILL_CALL',
+    order_id: 'o1', order_no: 'DEMO-PLM-D01', customer_id: 'c1', customer_name: 'Ridgeview', fulfilment: 'WILL_CALL',
     order_total_cents: 100, paid_cents: 40, still_owed_cents: 60, held_from_picking: true, hold_words: 'held', payments: wire,
     job: 'Marina Road patio',
   };
   const read = readOwingOrders({ items: [row, { order_no: 'x' }, null] });
   assert.equal(read.length, 1);
-  assert.equal(read[0].orderNo, 'DEMO-TRT-D01');
+  assert.equal(read[0].orderNo, 'DEMO-PLM-D01');
   assert.equal(read[0].stillOwedCents, 60);
   assert.equal(read[0].job, 'Marina Road patio');
   assert.deepEqual(readOwingOrders(null), []);
@@ -81,10 +81,10 @@ test('the find answer is read whole, an unreadable row is dropped', () => {
 
 test('the take answer is read whole or not at all', () => {
   const answer = {
-    order_id: 'o1', order_no: 'DEMO-TRT-D01', customer_id: 'c1', payment_id: 'p3', method: 'CARD', amount_cents: 60,
+    order_id: 'o1', order_no: 'DEMO-PLM-D01', customer_id: 'c1', payment_id: 'p3', method: 'CARD', amount_cents: 60,
     paid_words: 'Paid in full', released_to_picking: true, still_owed_cents: 0, held_from_picking_now: false, payments: wire, replayed: true,
   };
-  assert.equal(readTaken(answer).orderNo, 'DEMO-TRT-D01');
+  assert.equal(readTaken(answer).orderNo, 'DEMO-PLM-D01');
   assert.equal(readTaken(answer).replayed, true);
   assert.equal(readTaken({ ...answer, still_owed_cents: '0' }), null);
   assert.equal(readTaken(null), null);
