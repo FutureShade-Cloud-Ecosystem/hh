@@ -2976,6 +2976,10 @@ type IdentityExchangeRequest struct {
 	Org string `json:"org"`
 }
 
+type IdentityPersonaRequest struct {
+	Persona string `json:"persona"`
+}
+
 type IdentityExchangeResponse struct {
 	Token       string       `json:"token"`
 	ExpiresAtMs int64        `json:"expiresAtMs"`
