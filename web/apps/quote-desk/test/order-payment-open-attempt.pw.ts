@@ -164,6 +164,7 @@ test("a no signal take of a fresh attempt sends nothing, leaves the form editabl
   await openWithPayment(page, "Q-2101");
   const dialed = dialedPayments(page);
   await context.setOffline(true);
+  await page.waitForFunction(() => navigator.onLine === false);
   await take(page, "10.00", "AUTH 9", "CARD");
   await expect(pay(page).getByTestId("op-error")).toContainText("No signal");
   await expect(pay(page).getByTestId("op-unknown")).toHaveCount(0);
@@ -172,6 +173,7 @@ test("a no signal take of a fresh attempt sends nothing, leaves the form editabl
   expect(dialed).toEqual([]);
   expect((await serverSaw(page)).keys).toEqual([]);
   await context.setOffline(false);
+  await page.waitForFunction(() => navigator.onLine === true);
   await pay(page).getByTestId("op-take").click();
   await expect(pay(page).getByTestId("op-receipt-amount")).toHaveText("$10.00");
   const seen = await serverSaw(page);
