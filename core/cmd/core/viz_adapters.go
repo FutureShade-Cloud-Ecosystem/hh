@@ -94,7 +94,7 @@ func w6aWindow(sc dashboard.Scope) (time.Time, time.Time) {
 	if !sc.Window.IsZero() {
 		return sc.Window.Since, sc.Window.Until
 	}
-	w := dashboard.ResolveWindow(dashboard.RangeToday, sc.Now)
+	w := dashboard.ResolveWindowIn(sc.Zone, dashboard.RangeToday, sc.Now)
 	return w.Since, w.Until
 }
 

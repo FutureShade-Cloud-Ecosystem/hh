@@ -193,7 +193,7 @@ resume_refusals() {
 	if has_table users; then
 		foreign_users="$(psql "$DATABASE_URL" -tAqc "
 			SELECT count(*) FROM users
-			 WHERE lower(email::text) <> 'scrubbed-0009@example.invalid'
+			 WHERE lower(email::text) NOT IN ('scrubbed-0009@example.invalid', 'uat.inside.sales@gablelandscape.example')
 			   AND id::text NOT IN (
 			     'd7000000-0000-4000-9000-000000000010',
 			     'd7000000-0000-4000-9000-0000000000da',

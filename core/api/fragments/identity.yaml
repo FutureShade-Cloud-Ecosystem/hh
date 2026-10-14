@@ -1320,6 +1320,7 @@ components:
       description: The tax decision reason vocabulary (the tax_decision_snapshot CHECK)
       enum:
         - STD_ON_HST_13
+        - STD_SALES_TAX
         - ON_FN_POS_8
         - FED_S87_VENDOR_DELIVERY
         - FNGST_5

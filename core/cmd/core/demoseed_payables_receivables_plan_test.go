@@ -2,7 +2,7 @@ package main
 
 // demoseed_payables_receivables_plan_test.go, the receivables world's promises asserted on the PLAN
 // (item 64, Payables and Receivables). The persona signs in against the 18 seeded invoices across the
-// aging buckets and finds one bounced payment in the queue.
+// aging buckets and finds one bounced payment per branch in the queue.
 
 import (
 	"fmt"
@@ -30,7 +30,7 @@ func TestReceivablesPlan_TheEighteenInvoicesSpanTheAgingBuckets(t *testing.T) {
 	}
 }
 
-func TestReceivablesPlan_OneBouncedPaymentTheQueueShows(t *testing.T) {
+func TestReceivablesPlan_BouncedPaymentsTheQueueShows(t *testing.T) {
 	rows, _ := buildForTest(t)
 	var bounced []map[string]any
 	nsf := map[string]map[string]any{}
@@ -51,37 +51,38 @@ func TestReceivablesPlan_OneBouncedPaymentTheQueueShows(t *testing.T) {
 			invoices[fmt.Sprint(f["customer_id"])+"|"+fmt.Sprint(f["id"])] = f
 		}
 	}
-	if len(bounced) != 1 {
-		t.Fatalf("the plan holds %d bounced payments, want exactly one", len(bounced))
+	if len(bounced) != 2 {
+		t.Fatalf("the plan holds %d bounced payments, want exactly one per branch", len(bounced))
 	}
-	p := bounced[0]
-	id := fmt.Sprint(p["id"])
-	// The queue is payments joined to their NSF record: without the record the payment is invisible.
-	n, ok := nsf[id]
-	if !ok {
-		t.Fatalf("the bounced payment has no payment_nsf row, the bounced queue joins on it")
-	}
-	if fmt.Sprint(n["customer_id"]) != fmt.Sprint(p["customer_id"]) || n["reason"] == "" {
-		t.Errorf("the NSF record must name the payment's customer and a reason, got %v", n)
-	}
-	if allocated[id] {
-		t.Errorf("a bounced payment is reversed: it must carry no allocation")
-	}
-	if !strings.Contains(fmt.Sprint(p["payment_no"]), demoPrefix) || p["method"] != "CHEQUE" {
-		t.Errorf("the payment is a DEMO cheque, got %v %v", p["payment_no"], p["method"])
-	}
-	// The invoice it was tendered against stands open for the whole of it, which is what a bounce
-	// leaves behind: the account's open balance includes the cheque's amount.
-	var open bool
-	for k, inv := range invoices {
-		if !strings.HasPrefix(k, fmt.Sprint(p["customer_id"])+"|") {
-			continue
+	for _, p := range bounced {
+		id := fmt.Sprint(p["id"])
+		// The queue is payments joined to their NSF record: without the record the payment is invisible.
+		n, ok := nsf[id]
+		if !ok {
+			t.Fatalf("the bounced payment %s has no payment_nsf row, the bounced queue joins on it", id)
 		}
-		if inv["status"] == "FINALIZED" && inv["balance_cents"] == p["amount_cents"] {
-			open = true
+		if fmt.Sprint(n["customer_id"]) != fmt.Sprint(p["customer_id"]) || n["reason"] == "" {
+			t.Errorf("the NSF record for %s must name the payment's customer and a reason, got %v", id, n)
 		}
-	}
-	if !open {
-		t.Errorf("the bounced cheque's customer must hold an open invoice for exactly its amount (%v)", p["amount_cents"])
+		if allocated[id] {
+			t.Errorf("a bounced payment is reversed: %s must carry no allocation", id)
+		}
+		if !strings.Contains(fmt.Sprint(p["payment_no"]), demoPrefix) || p["method"] != "CHEQUE" {
+			t.Errorf("the payment is a DEMO cheque, got %v %v", p["payment_no"], p["method"])
+		}
+		// The invoice it was tendered against stands open for the whole of it, which is what a bounce
+		// leaves behind: the account's open balance includes the cheque's amount.
+		var open bool
+		for k, inv := range invoices {
+			if !strings.HasPrefix(k, fmt.Sprint(p["customer_id"])+"|") {
+				continue
+			}
+			if inv["status"] == "FINALIZED" && inv["balance_cents"] == p["amount_cents"] {
+				open = true
+			}
+		}
+		if !open {
+			t.Errorf("the bounced cheque's customer must hold an open invoice for exactly its amount (%v)", p["amount_cents"])
+		}
 	}
 }

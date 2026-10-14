@@ -673,12 +673,13 @@ var demoScans = []scanSpec{
 
 // -- §12b the yard manager's receiving difference (Needs-you · purchasing.receiving_differences) ----
 //
-// ONE PARTIAL PURCHASE ORDER AT TRENTON, with one line still short: the board the yard manager's
-// landing draws carries exactly this row (a PO that landed part of what was ordered), and without
-// it the receiving difference source counts zero everywhere (no other seed writes purchasing_pos),
+// ONE PARTIAL PURCHASE ORDER PER BRANCH, each with one line still short: the board the yard manager's
+// landing draws carries exactly these rows (a PO that landed part of what was ordered), and without
+// them the receiving difference source counts zero everywhere (no other seed writes purchasing_pos),
 // the "Receiving · short" view lands empty on the demo box, and the open value the cost gate lets
-// a yard manager read has no row to ride. The vendor is an invented demo vendor; the numbers are
-// the seed's own (20 ordered, 18 landed: 2 CYD of mulch short at $27.00, $54.00 still open).
+// a yard manager read has no row to ride. The vendors are invented demo vendors; the numbers are
+// the seed's own (PB0: 100 ordered, 90 landed: 10 PC of pavers short at $3.95, $39.50 still open;
+// PB1: 20 ordered, 18 landed: 2 CYD of mulch short at $27.00, $54.00 still open).
 type poSpec struct {
 	Key        string
 	Branch     int
@@ -701,6 +702,15 @@ type poLineSpec struct {
 }
 
 var demoPurchaseOrders = []poSpec{
+	{
+		Key: "PB0", Branch: 0, VendorKey: "V2", VendorNo: demoPrefix + "V-00",
+		VendorName: "Kingston Hardscape Supply (demo)", PONo: demoPrefix + "PO-76", Status: "PARTIAL",
+		Lines: []poLineSpec{
+			{Prod: "P01", Qty: "100.0000", Received: "90.0000", UnitCost: 395},
+			{Prod: "P06", Qty: "20.0000", Received: "20.0000", UnitCost: 3560},
+		},
+		AgeHours: 5, ExpectedIn: 2,
+	},
 	{
 		Key: "PB1", Branch: 1, VendorKey: "V1", VendorNo: demoPrefix + "V-01",
 		VendorName: "Northland Stone Supply (demo)", PONo: demoPrefix + "PO-77", Status: "PARTIAL",

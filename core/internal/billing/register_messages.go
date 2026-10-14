@@ -27,6 +27,7 @@ package billing
 
 import (
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"html"
 	"strconv"
 	"strings"
@@ -114,6 +115,12 @@ func invoiceBody(customer, invoiceNo string, balanceCents int64, due time.Time) 
 // already assembled and it lays it out. A renderer that added a subtotal would be a second opinion
 // about what an invoice says, printed on the copy the customer keeps.
 func renderInvoiceHTML(d InvoiceDetail, branchName string) string {
+	return renderInvoiceHTMLWithTax(d, branchName, taxwords.HST)
+}
+
+// renderInvoiceHTMLWithTax is renderInvoiceHTML naming the tax row by the dealer's word ("HST",
+// "Sales tax").
+func renderInvoiceHTMLWithTax(d InvoiceDetail, branchName, taxWord string) string {
 	var b strings.Builder
 	esc := html.EscapeString
 	b.WriteString(`<!doctype html><html lang="en"><head><meta charset="utf-8">`)
@@ -175,7 +182,7 @@ func renderInvoiceHTML(d InvoiceDetail, branchName string) string {
 
 	b.WriteString(`<table class="totals"><tbody>`)
 	b.WriteString(`<tr><td>Subtotal</td><td class="n">` + money(d.Totals.SubtotalCents) + `</td></tr>`)
-	b.WriteString(`<tr><td>HST</td><td class="n">` + money(d.Totals.TaxCents) + `</td></tr>`)
+	b.WriteString(`<tr><td>` + esc(taxWord) + `</td><td class="n">` + money(d.Totals.TaxCents) + `</td></tr>`)
 	b.WriteString(`<tr><td>Total</td><td class="n">` + money(d.Totals.TotalCents) + `</td></tr>`)
 	if d.Totals.AppliedCents != 0 {
 		b.WriteString(`<tr><td>Deposit &amp; payments</td><td class="n">−` + money(d.Totals.AppliedCents) + `</td></tr>`)

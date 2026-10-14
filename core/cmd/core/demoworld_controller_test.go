@@ -105,7 +105,7 @@ func TestDemoWorld_Controller(t *testing.T) {
 	if _, created := qwApply(t); created == 0 {
 		t.Fatal("the second apply created nothing")
 	}
-	census := map[string]int{"gl_journals": 2, "gl_journal_lines": 4, "permission_approval_requests": 1 + 2}
+	census := map[string]int{"gl_journals": 2, "gl_journal_lines": 4, "permission_approval_requests": 2 + 2}
 	for tb, add := range census {
 		if n := qwCount(t, ctx, pool, `SELECT count(*) FROM `+tb); n != before[tb]+add {
 			t.Errorf("%s holds %d rows after the second apply, want %d plus the worlds' %d", tb, n, before[tb], add)
