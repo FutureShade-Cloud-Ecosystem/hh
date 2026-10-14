@@ -149,3 +149,14 @@ test("every control a driver taps is at least 56 px tall at 390 px", async ({ pa
   expect(heights.length).toBeGreaterThan(0);
   for (const h of heights) expect(h).toBeGreaterThanOrEqual(56);
 });
+
+test("a stalled zone read does not hold the run sheet: the store answers on the last served zone", async ({ page }) => {
+  // The surface config read never answers (a weak connection that stalls, not a hard offline
+  // that rejects at once). The run sheet reads the offline store at once and does not wait on it.
+  await page.route("**/api/v1/surfaces/drive-run/config*", () => {
+    /* held: never fulfilled, never continued */
+  });
+  await page.goto("/");
+  await expect(page.locator("[data-run]")).toHaveCount(1, { timeout: 2_000 });
+  await expect(page.locator("[data-stop]")).toHaveCount(3);
+});

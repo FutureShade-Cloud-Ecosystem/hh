@@ -20,6 +20,7 @@ import "@hardscapehouse/design-system/src/header.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 // The offline strip and the conflict cards ride the shell chrome package,
 // wired here through their properties (the injected seams): this app maps the
 // runner's state, the backend's ownership and the store's cards onto them.
@@ -430,8 +431,11 @@ export class DriveRunApp extends HHElement {
     this.#phase = "loading";
     this.requestUpdate();
     await this.#bootOffline();
-    const day = await this.#drive.dealersDay();
     if (this.#driveOffline !== null) {
+      // The store answers at once on the last served zone (the default until one is served);
+      // the zone is refreshed on the side and never holds the run sheet.
+      const day = houseDay();
+      void this.#drive.dealersDay();
       // The run sheet reads answer from the store, with the scope's staleness.
       const answer: RunsAnswer = await this.#driveOffline.runs(day);
       if (answer.ok) {
@@ -449,7 +453,7 @@ export class DriveRunApp extends HHElement {
       this.requestUpdate();
       return;
     }
-    const result = await this.#drive.myRuns(day);
+    const result = await this.#drive.myRuns(await this.#drive.dealersDay());
     if (result.ok) {
       this.#runs = result.value;
       this.#phase = "ready";
@@ -622,7 +626,8 @@ export class DriveRunApp extends HHElement {
   // statuses win, and a failed re-read keeps what is on the glass.
   async #refreshRuns(): Promise<void> {
     if (this.#driveOffline !== null) {
-      const answer = await this.#driveOffline.runs(await this.#drive.dealersDay());
+      void this.#drive.dealersDay();
+      const answer = await this.#driveOffline.runs(houseDay());
       if (answer.ok) this.#runs = answer.value.runs;
       await this.#refreshOfflineChrome();
       return;

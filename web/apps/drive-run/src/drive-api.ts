@@ -118,6 +118,9 @@ export function toRun(raw: unknown): DriverRun {
   };
 }
 
+/** A stalling connection must not hold the day: the zone read gives up after a few seconds. */
+const ZONE_READ_TIMEOUT_MS = 4_000;
+
 /** Every call the driver's screens make. */
 export class DriveApi {
   readonly #client: ApiClient;
@@ -132,7 +135,7 @@ export class DriveApi {
    * so the driver still gets a day, never a blank screen.
    */
   async dealersDay(now: Date = new Date()): Promise<string> {
-    const config = await staffSettings.settingsGetSurfaceConfig(this.#client, "drive-run", {});
+    const config = await staffSettings.settingsGetSurfaceConfig(this.#client, "drive-run", {}, { timeoutMs: ZONE_READ_TIMEOUT_MS });
     if (config.ok) serveHouseZoneFrom(config.value);
     return houseDay(now);
   }
