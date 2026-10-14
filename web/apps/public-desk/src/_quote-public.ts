@@ -27,16 +27,29 @@
 
 import { formatMoney } from "./format.js";
 
-/** The money a quote (or an acceptance echo) carries. Both validated refs expose these three fields. */
+/**
+ * The money a quote (or an acceptance echo) carries. Both validated refs expose these fields. taxLabel is
+ * the name of the dealer's tax ("HST", "Sales tax"), the server's own word: the page renders it and never
+ * guesses it from a rate or a country.
+ */
 export interface QuoteMoney {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  taxLabel: string;
+}
+
+/**
+ * midSentence is the tax word as it reads inside a sentence: an acronym ("HST", "GST") stays as it is,
+ * a phrase ("Sales tax") drops its capital ("before sales tax").
+ */
+export function midSentence(label: string): string {
+  return label === label.toUpperCase() ? label : label.charAt(0).toLowerCase() + label.slice(1);
 }
 
 /** One rendered row of the totals block. */
 export interface TotalsRow {
-  /** Row text, already money formatted, e.g. "HST $12.57". */
+  /** Row text, already money formatted, e.g. "HST $12.57" or "Sales tax $7.75". */
   label: string;
   /** True for the emphasised bottom line (the grand row). Exactly one row is grand. */
   grand: boolean;
@@ -45,20 +58,23 @@ export interface TotalsRow {
 export interface TotalsBlock {
   rows: TotalsRow[];
   /**
-   * The "HST is applied when this quote is invoiced." footnote, or null when
-   * it must be SUPPRESSED: printing it under a total that already contains
-   * HST is the defect this module exists to prevent.
+   * The "HST is applied when this quote is invoiced." footnote (the dealer's own
+   * tax word), or null when it must be SUPPRESSED: printing it under a total
+   * that already contains the tax is the defect this module exists to prevent.
    */
   note: string | null;
-  /** True when this quote's figures are pre-tax. Drives the before-HST wording everywhere. */
+  /** True when this quote's figures are pre-tax. Drives the before-tax wording everywhere. */
   preTax: boolean;
 }
 
-export const INVOICE_TAX_NOTE = "HST is applied when this quote is invoiced.";
+/** invoiceTaxNote is the pre-tax footnote, naming the dealer's tax. */
+export function invoiceTaxNote(label: string): string {
+  return `${label} is applied when this quote is invoiced.`;
+}
 
 /**
  * carriesTax is the single predicate the whole page branches on: a finite,
- * positive tax figure means the total already includes HST.
+ * positive tax figure means the total already includes the tax.
  */
 export function carriesTax(m: Partial<QuoteMoney> | null | undefined): boolean {
   const tax = m?.taxCents;
@@ -75,7 +91,7 @@ export function totalsBlock(m: QuoteMoney): TotalsBlock {
       preTax: false,
       rows: [
         { label: `Subtotal ${formatMoney(m.subtotalCents)}`, grand: false },
-        { label: `HST ${formatMoney(m.taxCents)}`, grand: false },
+        { label: `${m.taxLabel} ${formatMoney(m.taxCents)}`, grand: false },
         { label: `Total ${formatMoney(m.totalCents)}`, grand: true },
       ],
       note: null,
@@ -84,25 +100,25 @@ export function totalsBlock(m: QuoteMoney): TotalsBlock {
   return {
     preTax: true,
     rows: [
-      { label: `Subtotal (before HST) ${formatMoney(m.subtotalCents)}`, grand: false },
-      { label: `Amount before HST ${formatMoney(m.totalCents)}`, grand: true },
+      { label: `Subtotal (before ${midSentence(m.taxLabel)}) ${formatMoney(m.subtotalCents)}`, grand: false },
+      { label: `Amount before ${midSentence(m.taxLabel)} ${formatMoney(m.totalCents)}`, grand: true },
     ],
-    note: INVOICE_TAX_NOTE,
+    note: invoiceTaxNote(m.taxLabel),
   };
 }
 
 /**
  * acceptanceAmountPhrase is the amount clause of the acceptance checkbox and
  * of any sentence that restates what the customer is agreeing to pay. Taxed
- * quotes name the HST inside the total rather than just dropping the tail:
+ * quotes name the tax inside the total rather than just dropping the tail:
  * the customer is being asked to tick a box, and the box should say what the
  * number contains.
  */
 export function acceptanceAmountPhrase(m: QuoteMoney): string {
   if (carriesTax(m)) {
-    return `${formatMoney(m.totalCents)}, including ${formatMoney(m.taxCents)} HST,`;
+    return `${formatMoney(m.totalCents)}, including ${formatMoney(m.taxCents)} ${m.taxLabel},`;
   }
-  return `${formatMoney(m.totalCents)} before HST`;
+  return `${formatMoney(m.totalCents)} before ${midSentence(m.taxLabel)}`;
 }
 
 /**

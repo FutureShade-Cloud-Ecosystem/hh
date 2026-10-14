@@ -83,5 +83,5 @@ func (a tasksPickHoldAdapter) OrderHeldFromPicking(ctx context.Context, orderID 
 // customer's terms through (billing declares the two seams and never imports
 // either module).
 func holdBillingRepo(pool *pgxpool.Pool) *billing.Repository {
-	return billing.NewRepository(pool).WithPickHoldSources(order.NewRepository(pool), customer.NewRepository(pool))
+	return billing.NewRepository(pool).WithZone(newDealerZone(pool)).WithPickHoldSources(order.NewRepository(pool), customer.NewRepository(pool))
 }

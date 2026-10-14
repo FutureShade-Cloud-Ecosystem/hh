@@ -3,6 +3,8 @@ package messagingprovider
 import (
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // policy_test.go, the send window and the throttle, tested with an INJECTED CLOCK and no sleeps.
@@ -315,5 +317,30 @@ func TestPolicyFromEnv_DefaultsToTheHouseRuleAndCannotBeSwitchedOff(t *testing.T
 		if w.Allows(at(t, loc, 2026, time.August, 5, 3, 0)) {
 			t.Fatalf("junk configuration %q opened the window at 03:00", junk)
 		}
+	}
+}
+
+// The send window is read in the dealer's zone (item 3b slice 3): 08:00 opens at Los Angeles 08:00, not
+// Toronto's, unless the operator named SMS_WINDOW_ZONE, which stands.
+func TestSendPolicy_WithDealerZoneMovesTheWindowUnlessTheOperatorNamedOne(t *testing.T) {
+	la, err := houseday.NewZone("America/Los_Angeles")
+	if err != nil {
+		t.Skipf("no tzdata: %v", err)
+	}
+	t.Setenv("SMS_WINDOW_ZONE", "")
+	p := PolicyFromEnv().WithDealerZone(la)
+	// 14:30 UTC in August is 10:30 in Toronto and 07:30 in Los Angeles: closed in LA, open in Toronto.
+	at := time.Date(2026, time.August, 27, 14, 30, 0, 0, time.UTC)
+	if p.window.Allows(at) {
+		t.Fatal("a Los Angeles dealer's window was open at 07:30 local")
+	}
+	if !PolicyFromEnv().window.Allows(at) {
+		t.Fatal("the default Ontario window was closed at 10:30 local")
+	}
+
+	t.Setenv("SMS_WINDOW_ZONE", "America/Toronto")
+	named := PolicyFromEnv().WithDealerZone(la)
+	if !named.window.Allows(at) {
+		t.Fatal("the operator's SMS_WINDOW_ZONE was overridden by the dealer's zone")
 	}
 }

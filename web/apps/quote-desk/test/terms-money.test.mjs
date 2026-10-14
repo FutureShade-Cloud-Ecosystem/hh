@@ -16,8 +16,17 @@ const good = {
   subtotal_cents: 100,
   tax_cents: 13,
   total_cents: 113,
+  tax_label: "HST",
   lines: [],
 };
+
+test("the terms carry the dealer's tax word, and an answer without it is refused, never guessed", () => {
+  assert.equal(validateTerms(good)?.taxLabel, "HST");
+  assert.equal(validateTerms({ ...good, tax_label: "Sales tax" })?.taxLabel, "Sales tax");
+  const { tax_label: _gone, ...bare } = good;
+  assert.equal(validateTerms(bare), null);
+  assert.equal(validateTerms({ ...good, tax_label: "" }), null);
+});
 
 test("a complete terms answer reads", () => {
   assert.equal(validateTerms(good)?.deliveryFeeCents, 0);

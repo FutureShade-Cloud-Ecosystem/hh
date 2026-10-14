@@ -82,7 +82,11 @@ func (c *RunPaymentsClient) Charge(ctx context.Context, creds map[string]string,
 	}
 	currency := creds["currency"]
 	if currency == "" {
-		currency = "CAD" // config-driven; CAD-at-Run is UNVERIFIED (open Q) but we send CAD
+		// Unreachable through the store: activeConfig threads the row's currency in, the column is NOT
+		// NULL and the migration's check holds three letters, and Service.charge has already refused a
+		// row that differs from the dealer's currency. Kept as the Ontario default for a client driven
+		// directly with bare creds (the unit legs).
+		currency = "CAD"
 	}
 
 	body, _ := json.Marshal(runChargeRequest{

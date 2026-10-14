@@ -17,7 +17,7 @@ test("the end of the run is one tap from the run sheet and, with stops open, nam
   const card = page.locator("[data-close-run]");
   await expect(card).toContainText("3 stops left · 0 delivered");
   await expect(card.locator("[data-close-blocked]")).toContainText(
-    "Stop 1 · Summit Ridge Builders is not loaded yet. Every stop has to be delivered or marked not delivered before the run can be closed.",
+    "Stop 1 · Bluffside Builders is not loaded yet. Every stop has to be delivered or marked not delivered before the run can be closed.",
   );
   await expect(page.getByRole("button", { name: "Complete run" })).toHaveCount(0);
 });

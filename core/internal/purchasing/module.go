@@ -39,6 +39,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -203,7 +204,14 @@ type Service struct {
 	// now is the injected clock. The document stamps a printed-at time, and a document that read
 	// the wall clock directly could not be rendered identically twice in a test.
 	now func() time.Time
+
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. A bill entered with
+	// no bill date is dated the dealer's own day.
+	zone houseday.Source
 }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
 
 // NewService wires the repository. Optional deps are injected via the With* methods.
 func NewService(repo *Repository) *Service {
