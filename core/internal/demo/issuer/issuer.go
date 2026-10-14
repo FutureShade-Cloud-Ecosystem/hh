@@ -54,15 +54,33 @@ const DefaultTTL = 8 * time.Hour
 type Issuer struct {
 	key      *ecdsa.PrivateKey
 	audience string
-	ttl      time.Duration
-	now      func() time.Time
+	// tenantAudience is the audience of a tenant class token; empty means
+	// this issuer mints staff tokens only and MintTenant refuses.
+	tenantAudience string
+	tenantSet      bool
+	ttl            time.Duration
+	now            func() time.Time
+}
+
+// Option configures New.
+type Option func(*Issuer)
+
+// WithTenantAudience gives the issuer the tenant audience the demo build
+// constructed its verifier with, so MintTenant can mint a tenant class
+// bearer. Without it the issuer mints staff tokens only. New refuses an
+// empty value and the staff audience: one token must never claim both.
+func WithTenantAudience(audience string) Option {
+	return func(i *Issuer) {
+		i.tenantAudience = audience
+		i.tenantSet = true
+	}
 }
 
 // New generates the key and returns the issuer. The audience is the staff
 // audience the demo build constructed its verifier with, so every token
 // classifies as a staff bearer and nothing else; the verifier's
 // audience vocabulary is unchanged. A non positive ttl selects DefaultTTL.
-func New(audience string, ttl time.Duration) (*Issuer, error) {
+func New(audience string, ttl time.Duration, opts ...Option) (*Issuer, error) {
 	if audience == "" {
 		return nil, fmt.Errorf("demoissuer: audience is required")
 	}
@@ -73,7 +91,14 @@ func New(audience string, ttl time.Duration) (*Issuer, error) {
 	if ttl <= 0 {
 		ttl = DefaultTTL
 	}
-	return &Issuer{key: key, audience: audience, ttl: ttl, now: time.Now}, nil
+	i := &Issuer{key: key, audience: audience, ttl: ttl, now: time.Now}
+	for _, o := range opts {
+		o(i)
+	}
+	if i.tenantSet && (i.tenantAudience == "" || i.tenantAudience == audience) {
+		return nil, fmt.Errorf("demoissuer: the tenant audience is required and must differ from the staff audience")
+	}
+	return i, nil
 }
 
 // KeySource returns the verifier's key source over the public half. The
@@ -92,9 +117,31 @@ func (i *Issuer) Mint(subject string) (string, error) {
 	return i.mintAt(subject, i.now())
 }
 
+// MintTenant signs one tenant class token: the tenant audience and the
+// tenant claim carrying the contractor account's id (ADR-0016 C33), the
+// subject the portal user's platform user id. Both are the closed flow
+// table's values, never a request's. The tenant class carries no org and no
+// role: the gate's tenant leg reads the org from the membership source and
+// the guards read the portal role from portal_users per request.
+func (i *Issuer) MintTenant(subject, tenantID string) (string, error) {
+	if i.tenantAudience == "" {
+		return "", fmt.Errorf("demoissuer: this issuer has no tenant audience")
+	}
+	if tenantID == "" {
+		return "", fmt.Errorf("demoissuer: the contractor account is required")
+	}
+	return i.sign(subject, i.tenantAudience, tenantID, i.now())
+}
+
 // mintAt signs at an explicit moment; the isolation tests and the expiry
 // test drive it with their own clocks.
 func (i *Issuer) mintAt(subject string, at time.Time) (string, error) {
+	return i.sign(subject, i.audience, "", at)
+}
+
+// sign builds and signs one token. A non empty tenantID adds the tenant
+// claim; the staff vocabulary carries none.
+func (i *Issuer) sign(subject, audience, tenantID string, at time.Time) (string, error) {
 	if subject == "" {
 		return "", fmt.Errorf("demoissuer: subject is required")
 	}
@@ -102,13 +149,17 @@ func (i *Issuer) mintAt(subject string, at time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	claims, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"iss": ClaimIssuer,
 		"sub": subject,
-		"aud": i.audience,
+		"aud": audience,
 		"iat": at.Unix(),
 		"exp": at.Add(i.ttl).Unix(),
-	})
+	}
+	if tenantID != "" {
+		payload["tenant"] = tenantID
+	}
+	claims, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}

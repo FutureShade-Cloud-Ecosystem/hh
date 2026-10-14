@@ -57,8 +57,8 @@ test("a sale: the same engine prices, the manager's margin column, no price fiel
   page,
 }, testInfo) => {
   await signIn(page, "Sales manager");
-  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking Paver 60 mm, Charcoal");
-  const charcoal = lineRow(page, "Interlocking Paver 60 mm, Charcoal");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
+  const charcoal = lineRow(page, "Interlocking paver 60 mm, charcoal");
   await expect(charcoal.locator(".lprice")).toHaveText(cad(595));
   // The engine price is the clerk's; the margin column is the manager's: the
   // policy word is MANAGER_UP and the manager holds a tier 2 role, so the
@@ -73,8 +73,8 @@ test("a contractor's pavers: the account price the clerk sees, and the margin co
 }, testInfo) => {
   await signIn(page, "Sales manager");
   await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
-  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking Paver 60 mm, Charcoal");
-  const charcoal = lineRow(page, "Interlocking Paver 60 mm, Charcoal");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
+  const charcoal = lineRow(page, "Interlocking paver 60 mm, charcoal");
   await expect(charcoal.locator(".lprice")).toHaveText(cad(524));
   await expect(charcoal.getByTestId("pos-line-margin")).toContainText("%");
   await shot(page, "manager-04-contractor-pavers", testInfo);
@@ -87,7 +87,7 @@ test("an account that cannot carry the sale on account: the same words to the ma
   // The same no credit account as the clerk's leg (20-sales): the shape
   // refusal and its words do not bend for the manager's role.
   await pickCustomer(page, "DEMO-C07", "DEMO-C07");
-  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking Paver 60 mm, Charcoal");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Charge Account" }).click();
   await page.getByTestId("pos-complete-sale").click();
@@ -102,7 +102,7 @@ test("tender and receipt: a card sale under the manager carries the same simulat
   page,
 }, testInfo) => {
   await signIn(page, "Sales manager");
-  await searchAndAdd(page, "DEMO-PAV-BASALT", "Large Format Paver, Basalt");
+  await searchAndAdd(page, "DEMO-PAV-BASALT", "Large format paver, basalt");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Card", exact: true }).click();
   await expect(page.getByText("TEST MODE: simulated terminal")).toBeVisible();
@@ -121,7 +121,7 @@ test("parked sales: a ticket parks and either role picks it up, at the same coun
   // manager picks it up. Each pickup re-prices the ticket through the engine,
   // and the other branch's ticket never shows at any point.
   const park = async () => {
-    await searchAndAdd(page, "DEMO-MULCH-BLACK", "Black Cedar Mulch");
+    await searchAndAdd(page, "DEMO-MULCH-BLACK", "Black cedar mulch");
     await page.getByRole("button", { name: "Park ticket" }).click();
     await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
   };

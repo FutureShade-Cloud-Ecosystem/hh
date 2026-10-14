@@ -43,7 +43,7 @@ async function storedFlow(page: Page): Promise<string | null> {
 
 async function stubArmsRefusal(page: Page, flow: string): Promise<void> {
   const armed = await page.request.post("/_stub/refuse", {
-    data: { status: 429, error: "the demo mint limit is spent for now, wait a moment and tap again", flows: [flow] },
+    data: { status: 429, error: "too many sign-ins just now, wait a moment and tap again", flows: [flow] },
   });
   expect(armed.ok()).toBe(true);
 }
@@ -206,8 +206,11 @@ test("a Sales manager sign in shows the five tiles", async ({ page }) => {
   for (const name of ["Counter Till", "Quote Desk", "Manager Home", "Dealer Admin", "House Messages"]) {
     await expect(page.getByRole("button", { name, exact: true })).toBeVisible();
   }
-  // The manager's not-yet modules recede under their own word.
-  await expect(page.getByRole("heading", { name: "Coming next" })).toBeVisible();
+  // All five are on the box (Dealer Admin at /dealer-admin/, House Messages at
+  // /messages/), so nothing recedes under the coming-next word.
+  await expect(page.getByRole("heading", { name: "Coming next" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "House Messages", exact: true })).toHaveAttribute("data-href", "/messages/");
+  await expect(page.getByRole("button", { name: "Dealer Admin", exact: true })).toHaveAttribute("data-href", "/dealer-admin/");
   await expect(page.getByTestId("header-word")).toHaveText("Sales manager");
   expect(await storedFlow(page)).toBe("sales-manager");
 });
@@ -294,7 +297,7 @@ test("a refused mint speaks in its own card, verbatim, and both cards keep worki
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   const manager = page.getByRole("button", { name: "Sales manager", exact: true });
   await expect(manager).toContainText(
-    "Demo sign-in refused: the demo mint limit is spent for now, wait a moment and tap again",
+    "Sign-in did not go through. too many sign-ins just now, wait a moment and tap again",
   );
   expect(await storedKeys(page)).toEqual([]);
   await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
@@ -304,15 +307,18 @@ test("a refused mint speaks in its own card, verbatim, and both cards keep worki
   await expect(page.getByTestId("header-word")).toHaveText("Sales");
 });
 
-test("the manager's not-yet modules open the coming-soon page and back again", async ({ page }) => {
+test("the manager's five tiles all open an app of the box, so none leads to the coming-soon page", async ({ page }) => {
   await signIn(page, "Sales manager");
-  await page.getByRole("button", { name: "Dealer Admin", exact: true }).click();
-  await expect(page.getByRole("heading", { name: /Dealer Admin/ })).toBeVisible();
-  await expect(page.getByText("not on this demo box yet")).toBeVisible();
-  // The header stays: the demo badge, the role's name, the two controls.
-  await expect(page.getByTestId("header-word")).toHaveText("Sales manager");
-  await page.getByRole("button", { name: "Back to Sales manager" }).click();
-  await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
+  for (const [name, href] of [
+    ["Counter Till", "/till/"],
+    ["Quote Desk", "/quote/"],
+    ["Manager Home", "/home/"],
+    ["Dealer Admin", "/dealer-admin/"],
+    ["House Messages", "/messages/"],
+  ] as const) {
+    await expect(page.getByRole("button", { name, exact: true })).toHaveAttribute("data-href", href);
+  }
+  await expect(page.getByText("not on this demo box yet")).toHaveCount(0);
 });
 
 test("a reload in the same tab resumes the role home from the stored session", async ({ page }) => {
@@ -320,4 +326,46 @@ test("a reload in the same tab resumes the role home from the stored session", a
   await page.reload();
   await expect(page.getByRole("button", { name: "Counter Till", exact: true })).toBeVisible();
   await expect(page.getByTestId("header-word")).toHaveText("Sales");
+});
+
+// The contractor entry: the flows listing carries each row's class, and a tenant row is a contractor
+// persona routed to the Pro app for its role. The card does not mint; it opens the app with the role.
+const CONTRACTOR_CARDS: ReadonlyArray<[label: string, app: string, path: string]> = [
+  ["Owner", "Pro Procurement", "/pro-procurement/?as=account_admin"],
+  ["Buyer", "Pro Procurement", "/pro-procurement/?as=buyer"],
+  ["Project manager", "Pro Procurement", "/pro-procurement/?as=buyer_no_pay"],
+  ["Accounts payable", "Pro Pay", "/pro-pay/?as=ap_finance"],
+  ["Field crew", "Pro Field", "/pro-field/?as=field_crew"],
+];
+
+test("the contractor accounts section lists the five roles, each naming the Pro app it opens", async ({ page }) => {
+  const section = page.getByTestId("contractor-section");
+  await expect(section).toBeVisible();
+  await expect(section).toContainText("Summit Ridge Builders buys from Gable Landscape Supply.");
+  await expect(page.getByTestId("contractor-card")).toHaveCount(5);
+  for (const [label, app] of CONTRACTOR_CARDS) {
+    const card = section.getByRole("button", { name: label, exact: true });
+    await expect(card).toBeEnabled();
+    await expect(card).toContainText(app);
+    await expect(card).toContainText(`Open ${app} as ${label}`);
+  }
+  // The staff cards are untouched.
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+});
+
+for (const [label, , path] of CONTRACTOR_CARDS) {
+  test(`the ${label} card opens its Pro app with the role, and mints nothing at the front door`, async ({ page }) => {
+    // The harness serves the front door alone, so the navigation target is answered by a stand-in page.
+    await page.route("**/pro-*/**", (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<title>Pro</title>" }));
+    await page.getByTestId("contractor-section").getByRole("button", { name: label, exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${path.replace(/[?]/g, "\\?")}$`));
+    expect(await storedKeys(page)).toEqual([]);
+  });
+}
+
+test("a flows listing that fails shows no contractor cards and leaves the staff cards working", async ({ page }) => {
+  expect((await page.request.post("/_stub/listing-fails")).ok()).toBe(true);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
+  await expect(page.getByTestId("contractor-section")).toHaveCount(0);
 });

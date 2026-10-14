@@ -71,9 +71,11 @@ var demoEnvAllowNames = []string{
 	"ALLOW_SEED",
 	"APP_ENV",
 	"DATABASE_URL",
+	"DEALER_NAME",
 	"DEMO_MODE",
 	"ERP_BASE_URL",
 	"HH_CORE_TEST_DATABASE_URL",
+	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
 	"JWKS_URL",
 	"PAYMENT_VAULT_KEY",
 	"PLANE_FEEDBACK_MODULE",
@@ -83,9 +85,48 @@ var demoEnvAllowNames = []string{
 }
 
 var demoEnvAllowPrefixes = []string{
-	"CORE_",
 	"HH_ACCEPTANCE_SIGN_",
 	"SMS_WINDOW_",
+}
+
+// demoEnvExplicitPrefix is the prefix the demo serve no longer allows
+// wholesale: a CORE_ name is allowed on a demo box only when it is on
+// demoEnvAllowCoreNames, so a new name under it fails the boot until it is
+// stated by name here (the demo environment guard, G4's blind spot closed).
+const demoEnvExplicitPrefix = "CORE_"
+
+// demoEnvAllowCoreNames are the CORE_ names a demo box may carry. The
+// console sign in mode is a declared shape of a demo image: the key file
+// names (secret files, paths only), the FB Console connection (the one
+// outbound a console mode box makes, to FB Console and nothing else), the
+// issuer, the exchange windows, the allow lists, the trusted proxy list and
+// the JWT bound. CORE_LOAD_DOORS is not here: it is denied by name.
+var demoEnvAllowCoreNames = []string{
+	"CORE_APPWRITE_API_KEY",
+	"CORE_APPWRITE_ENDPOINT",
+	"CORE_APPWRITE_PROJECT",
+	"CORE_CLOCK_SKEW",
+	"CORE_DATABASE_URL",
+	"CORE_DEMO_TOKEN_TTL",
+	"CORE_EXCHANGE_JWT_BOUND",
+	"CORE_EXCHANGE_TOKEN_TTL",
+	"CORE_JWKS_CACHE_TTL",
+	"CORE_JWKS_REFRESH_FLOOR",
+	"CORE_JWKS_URL",
+	"CORE_LISTEN_ADDR",
+	"CORE_MACHINE_AUDIENCE",
+	"CORE_MACHINE_JWKS_URL",
+	"CORE_SESSION_KEY_NEXT_FILE",
+	"CORE_SESSION_KEY_PREVIOUS_FILE",
+	"CORE_SESSION_SIGNING_KEY_FILE",
+	"CORE_SIGNIN_EMAIL_ADDRESSES",
+	"CORE_SIGNIN_EMAIL_DOMAINS",
+	"CORE_SIGNIN_MODE",
+	"CORE_STAFF_AUDIENCE",
+	"CORE_STREAM_TICKET_KEY",
+	"CORE_TENANT_AUDIENCE",
+	"CORE_TOKEN_ISSUER",
+	"CORE_TRUSTED_PROXIES",
 }
 
 // envInventoryFixture is the maintained inventory of every environment
@@ -116,6 +157,8 @@ var envInventoryFixture = []string{
 	"CORE_CLOCK_SKEW",
 	"CORE_DATABASE_URL",
 	"CORE_DEMO_TOKEN_TTL",
+	"CORE_EXCHANGE_JWT_BOUND",
+	"CORE_EXCHANGE_TOKEN_TTL",
 	"CORE_JWKS_CACHE_TTL",
 	"CORE_JWKS_REFRESH_FLOOR",
 	"CORE_JWKS_URL",
@@ -123,13 +166,22 @@ var envInventoryFixture = []string{
 	"CORE_LOAD_DOORS",
 	"CORE_MACHINE_AUDIENCE",
 	"CORE_MACHINE_JWKS_URL",
+	"CORE_SESSION_KEY_NEXT_FILE",
+	"CORE_SESSION_KEY_PREVIOUS_FILE",
+	"CORE_SESSION_SIGNING_KEY_FILE",
+	"CORE_SIGNIN_EMAIL_ADDRESSES",
+	"CORE_SIGNIN_EMAIL_DOMAINS",
+	"CORE_SIGNIN_MODE",
 	"CORE_STAFF_AUDIENCE",
 	"CORE_STREAM_TICKET_KEY",
 	"CORE_TENANT_AUDIENCE",
 	"CORE_TOKEN_ISSUER",
+	"CORE_TRUSTED_PROXIES",
 	"DATABASE_URL",
+	"DEALER_NAME",
 	"DEMO_MODE",
 	"ERP_BASE_URL",
+	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
 	"HH_ACCEPTANCE_SIGN_KEY",
 	"HH_ACCEPTANCE_SIGN_KEY_ID",
 	"HH_ACCEPTANCE_SIGN_KEY_PREVIOUS",

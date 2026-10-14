@@ -1,9 +1,10 @@
 // order_cancel_seam.go, B2/R2: the invoice half of the order module's cancel predicate. A manual order
-// CANCELLED is refused when money is already attached; this answers "does this order have an invoice
-// that has been finalized?" without the order module importing billing or reading the invoices table
-// (module boundary). Satisfies order.FinalizedInvoiceReader structurally, billingRepo is passed to
-// orderSvc.WithCancelGuards in the composition root, the same way it already satisfies
-// order.InvoiceOrderResolver (order_seam.go).
+// CANCELLED is refused when money the cancel has no exit for is already attached; this answers "does
+// this order have a finalized invoice other than its supplier deposit documents?" without the order
+// module importing billing or reading the invoices table (module boundary). The deposit documents are
+// the cancel's own money to settle (deposit_cancel.go, row 1193). Satisfies order.FinalizedInvoiceReader
+// structurally, billingRepo is passed to orderSvc.WithCancelGuards in the composition root, the same way
+// it already satisfies order.InvoiceOrderResolver (order_seam.go).
 package billing
 
 import (
@@ -13,13 +14,19 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// OrderHasFinalizedInvoice reports whether the order has at least one invoice whose finalize
-// transaction has run.
+// OrderHasFinalizedInvoice reports whether the order has at least one invoice
+// whose finalize transaction has run, OTHER THAN a supplier deposit document.
 //
 // invoices.status ∈ (DRAFT, FINALIZED, PARTIALLY_PAID, PAID, VOID). We count FINALIZED / PARTIALLY_PAID
 // / PAID:
 //   - DRAFT is excluded, nothing has posted yet, so cancelling orphans nothing.
 //   - VOID is excluded, the invoice has already been unwound, so it is not money still attached.
+//
+// A SUPPLIER_DEPOSIT document is excluded (decision log row 1193): an order
+// whose ONLY money is its deposit document may be cancelled, and the cancel
+// itself settles the deposit (billing.CancelOrderDeposits, credited back or
+// kept). The document is money the cancel has an exit for, not money it
+// orphans; any OTHER finalized invoice still blocks, exactly as before.
 //
 // A read failure is returned, never swallowed: the caller must not treat an unreadable predicate as
 // permission to cancel (fail closed).
@@ -43,6 +50,7 @@ func (r *Repository) OrderHasFinalizedInvoiceTx(ctx context.Context, tx pgx.Tx, 
 			SELECT 1 FROM invoices
 			WHERE order_id = $1::uuid
 			  AND status IN ('FINALIZED','PARTIALLY_PAID','PAID')
+			  AND source_kind <> 'SUPPLIER_DEPOSIT'
 		)`
 	var exists bool
 	var err error

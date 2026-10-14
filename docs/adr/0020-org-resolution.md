@@ -24,7 +24,7 @@ The rule is bearer-conditioned and operation-agnostic, enforced in the server be
 
 1. JWKS verification; the bearer class is resolved first (staff, tenant, or none).
 2. None (public): no org resolution; `X-Org`, if sent, is an undeclared header and is ignored. It can grant nothing, because org context is stamped only under a verified staff bearer. This leg is a named non-rule, not a silent one, and it is testable as an absence of effect: a public request carrying `X-Org` behaves identically to one without it.
-3. Staff (the 595 XOrg-bearing operations, and the staff leg of the 2 sync operations): `X-Org` absent: refuse, status below. Present: validate Team membership for the slug per D28 (`docs/analysis/DECISIONS.md:147`: per-request resolution against the platform source, a short-lived in-process cache, the credential never cached). Platform teams are named `org:<slug>` (`context/FUTURESHADE-CONTEXT.md:61`), so the membership check keys on the slug itself and touches no core table. No membership: refuse, status below, one identical body whether the slug is unknown or the membership is absent. Only after membership passes does the middleware resolve the slug against the `org` anchor table (migration `core/db/migrations/0213_org_tenant_seq_deleted_idem.sql:26`) and stamp `org_id`; only then may any module pool be acquired. Pool acquisition is therefore observably later than org resolution, which is the strong form of the acceptance line that a valid token with a wrong `X-Org` never reaches a repository (QA B1 inventory, finding F5: the sweep counts statements per refused request with a tracer).
+3. Staff (the 595 XOrg-bearing operations, and the staff leg of the 2 sync operations): `X-Org` absent: refuse, status below. Present: validate Team membership for the slug per D28 (`docs/analysis/DECISIONS.md:147`: per-request resolution against the platform source, a short-lived in-process cache, the credential never cached). Platform teams are named `org-<slug>` (the context file's `org:<slug>` at `context/FUTURESHADE-CONTEXT.md:61` is refused by the Console because of the colon, so the id is `org-<slug>`; the `org-` prefix is reserved for HH in the Console project and creating a Team under it is an operator act), so the membership check keys on the slug itself and touches no core table. No membership: refuse, status below, one identical body whether the slug is unknown or the membership is absent. Only after membership passes does the middleware resolve the slug against the `org` anchor table (migration `core/db/migrations/0213_org_tenant_seq_deleted_idem.sql:26`) and stamp `org_id`; only then may any module pool be acquired. Pool acquisition is therefore observably later than org resolution, which is the strong form of the acceptance line that a valid token with a wrong `X-Org` never reaches a repository (QA B1 inventory, finding F5: the sweep counts statements per refused request with a tracer).
 4. Tenant (the 47 TenantBearer operations, and the tenant leg of the 2 sync operations): `X-Org` present: refuse, status below. Absent: the org comes from the Team behind the token and `tenant_id` is stamped from the token.
 5. Scoping is stamped request context in middleware, never left to individual queries (`context/FUTURESHADE-CONTEXT.md:136`, the first 4.4 convention).
 
@@ -47,7 +47,7 @@ Family summary, as the sweeps assert it: shape failures 400, identity failures 4
 
 The G3 rejected option: the per-org servers entry (`openapi.yaml:13-15`) read as "the org is whichever org this edge serves", with `X-Org` dropped or treated as advisory. What it loses:
 
-- The operator and multi-org staff surfaces. D4 (`docs/analysis/DECISIONS.md:41-43`) puts operator reads and writes on ordinary org-scoped endpoints, and platform teams carry membership across orgs (`context/FUTURESHADE-CONTEXT.md:61`, `org:<slug>` teams). An operator, or any staff member holding membership in two orgs, cannot be served by one org-pinned edge without per-org credentials; the header model serves them from any edge with one login.
+- The operator and multi-org staff surfaces. D4 (`docs/analysis/DECISIONS.md:41-43`) puts operator reads and writes on ordinary org-scoped endpoints, and platform teams carry membership across orgs (`context/FUTURESHADE-CONTEXT.md:61`, whose `org:<slug>` is spelled `org-<slug>` in the Console). An operator, or any staff member holding membership in two orgs, cannot be served by one org-pinned edge without per-org credentials; the header model serves them from any edge with one login.
 - Defense in depth. Org identity becomes a property of infrastructure configuration rather than a validated per-request membership. A misrouted edge, a wrong route table, or a reused preview host under the wildcard sandbox domain (`context/FUTURESHADE-CONTEXT.md:57`) would serve one org's data with no in-application check to catch it. The context rule at `:65` and `:139` exists precisely so the core never trusts routing; the rejected option deletes the rule.
 - The contract's parameter becomes dead text: `XOrg` declared `required: true` on 595 operations while the server ignores it (`openapi.yaml:21272-21278` with the B1 crosstab). A required parameter the server does not read is a lying contract.
 - D28 loses its meaning. Per-request membership validation validates a requested org; the edge supplies no requested org to validate, so the revocation window, and with it the whole D28 resolution, would have nothing to bite on.
@@ -130,12 +130,12 @@ cached (D28's cache stores answers, never errors).
 
 The server enforces one slug shape ahead of any platform or database
 call: lowercase letters, digits, dot, underscore and hyphen, starting
-lowercase alphanumeric, at most 64 characters, sent exactly once. A
+lowercase alphanumeric, at most 32 characters (so that `org-<slug>` fits the Console's 36 character Team id cap), sent exactly once. A
 header failing that shape answers 400 in the shape family, as does a
 repeated header and an empty-valued header on tenant routes. The
 contract's XOrg parameter is a bare string (core/api/skeleton.yaml,
 parameters.XOrg); this shape is a server-side pin of the vocabulary the
-platform's `org:<slug>` team names carry, and the concrete resolver
+platform's `org-<slug>` team names carry, and the concrete resolver
 normalizes to the lowercase form the platform guarantees (the anchor
 slug column is CITEXT).
 

@@ -43,13 +43,16 @@ FROM node:22-alpine AS web-build
 # The whole workspace is copied before the install: npm resolves the
 # workspaces from the packages' directories on disk, so a manifest-only
 # copy installs nothing but the root.
+# The drive app's offline data layer imports the sync statechart, which sits beside the
+# web workspace (web/apps/drive-run/src/drive-offline.ts), so that one folder comes too.
+COPY statecharts/ /src/statecharts/
 WORKDIR /src/web
 COPY web/ ./
 RUN npm ci
 # The builds run from inside each app's directory so npm puts the
 # workspace root's binaries on PATH (vite is hoisted there). Every app lands
 # in /out under the name of its prefix, so the final stage copies one tree.
-RUN mkdir -p /out/till /out/q /out/quote /out/drive /out/home /out/yard /out/money-desk /out/dispatch /out/messages
+RUN mkdir -p /out/till /out/q /out/quote /out/drive /out/home /out/yard /out/money-desk /out/dispatch /out/messages /out/dealer-admin /out/pro-procurement /out/pro-pay /out/pro-field
 WORKDIR /src/web/apps/front-door
 RUN npx vite build --outDir /out/root
 WORKDIR /src/web/apps/counter-till
@@ -84,6 +87,21 @@ RUN npx vite build --mode demo --base=/dispatch/ --outDir /out/dispatch --emptyO
 # role holds: a staff app, the same shape as HH Drive.
 WORKDIR /src/web/apps/house-messages
 RUN npx vite build --mode demo --base=/messages/ --outDir /out/messages --emptyOutDir
+# Dealer Admin, staff, roles, pricing rules and the audit log: a staff app,
+# so the demo mode compiles the front door's handoff in, under its own prefix.
+WORKDIR /src/web/apps/dealer-admin
+RUN npx vite build --mode demo --base=/dealer-admin/ --outDir /out/dealer-admin --emptyOutDir
+# The three Pro contractor apps (Pro Procurement, Pro Pay, Pro Field): tenant apps, each under its own prefix.
+# The demo mode picks the demo sign in adapter (the contractor persona by role label, from the core's demo
+# routes) in place of the real exchange, which refuses until the auth lead's go; a production build never
+# carries it. A tenant app keeps its bearer in memory, so the front door's handoff is not compiled in: the
+# front door's contractor card opens the app with the role (?as=) and the app signs the persona in itself.
+WORKDIR /src/web/apps/pro-procurement
+RUN npx vite build --mode demo --base=/pro-procurement/ --outDir /out/pro-procurement --emptyOutDir
+WORKDIR /src/web/apps/pro-pay
+RUN npx vite build --mode demo --base=/pro-pay/ --outDir /out/pro-pay --emptyOutDir
+WORKDIR /src/web/apps/pro-field
+RUN npx vite build --mode demo --base=/pro-field/ --outDir /out/pro-field --emptyOutDir
 WORKDIR /src/web
 RUN if [ -d apps/quote-desk ]; then \
 		cd apps/quote-desk && npx vite build --mode demo --base=/quote/ --outDir /out/quote --emptyOutDir; \
@@ -111,6 +129,10 @@ COPY --from=web-build /out/yard /srv/app/yard
 COPY --from=web-build /out/money-desk /srv/app/money-desk
 COPY --from=web-build /out/dispatch /srv/app/dispatch
 COPY --from=web-build /out/messages /srv/app/messages
+COPY --from=web-build /out/dealer-admin /srv/app/dealer-admin
+COPY --from=web-build /out/pro-procurement /srv/app/pro-procurement
+COPY --from=web-build /out/pro-pay /srv/app/pro-pay
+COPY --from=web-build /out/pro-field /srv/app/pro-field
 COPY core/db/migrations /srv/core/db/migrations
 COPY deploy/demo/Caddyfile.template /srv/templates/Caddyfile.template
 COPY deploy/demo/entrypoint.sh /usr/local/bin/entrypoint

@@ -5,7 +5,7 @@ package main
 // demoworld_customersearch_test.go: proof that every customer the demo world gives documents to
 // at a branch is findable by name in the staff customer search at that branch.
 //
-// The visual check that produced this proof: the Quote Desk at Trenton showed Summit Ridge Builders'
+// The visual check that produced this proof: the Quote Desk at Trenton showed Bluffside Builders'
 // quote, and the staff customer search at the same branch answered nothing for the name. The reason
 // was the branch, not the name: the search is branch-fenced (customer/search_scope.go, U-park E4,
 // a deliberate fence and not a bug to work around), it admits accounts homed to the searched branch
@@ -79,7 +79,7 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 	// The served surface and the demo Sales login, the one branch-scoped caller a tester actually
 	// holds (every demo login's single grant is at Trenton).
 	appwrite := newAppwriteFake(t)
-	appwrite.setTeam(qwSalesUserID, "org:"+demoOrgSlug)
+	appwrite.setTeam(qwSalesUserID, "org-"+demoOrgSlug)
 	keys := testkit.NewKeys(t)
 	acceptKey := make([]byte, 32)
 	if _, err := rand.Read(acceptKey); err != nil {
@@ -96,6 +96,7 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 		"CORE_APPWRITE_PROJECT": "fx-appwrite-project", "CORE_APPWRITE_API_KEY": "fx-appwrite-key-placeholder",
 		customerquote.EnvKeyID: "fx-accept-sign-key", customerquote.EnvKey: hex.EncodeToString(acceptKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.getenv = func(k string) string { return values[k] }
 	rec, _ := registeredSurface(t, env)
 	sales := &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, qwSalesUserID), who: "Sales"}
@@ -172,7 +173,7 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 	// INSERT-only, so the plan's own customers row cannot move on a database that already holds it;
 	// the demoseed_repair pair's one guarded UPDATE is what re-homes it. Reproduce the old world
 	// exactly (the row homed at the first branch by code order), run the apply again, and the
-	// search must find Summit Ridge once more. A second apply after it must repair nothing: the
+	// search must find Bluffside once more. A second apply after it must repair nothing: the
 	// guard names the value it repairs, so a repaired row is out of its reach.
 	var kingstonID string
 	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'JUL'`).Scan(&kingstonID); err != nil {
@@ -187,29 +188,29 @@ func TestDemoWorld_CustomerSearch(t *testing.T) {
 	}
 	foundAgain := func() bool {
 		t.Helper()
-		rsp := sales.call("GET", "/api/v1/customers/search?q="+url.QueryEscape("Summit Ridge")+"&branch_id="+trentonBranchID, nil)
+		rsp := sales.call("GET", "/api/v1/customers/search?q="+url.QueryEscape("Bluffside")+"&branch_id="+trentonBranchID, nil)
 		rsp.ok(t, http.StatusOK)
 		return strings.Contains(string(rsp.body), demoID("customer:C01"))
 	}
 	rehome(kingstonID)
 	if foundAgain() {
-		t.Fatal("the repair leg's premise is wrong: Summit Ridge homed at Kingston is already findable at Trenton")
+		t.Fatal("the repair leg's premise is wrong: Bluffside homed at Kingston is already findable at Trenton")
 	}
 	qwApply(t)
 	var home string
 	if err := pool.QueryRow(ctx, `SELECT home_branch_id::text FROM customers WHERE id = $1`, demoID("customer:C01")).Scan(&home); err != nil {
-		t.Fatalf("reading Summit Ridge's home after the repair: %v", err)
+		t.Fatalf("reading Bluffside's home after the repair: %v", err)
 	}
 	if home != trentonBranchID {
-		t.Fatalf("the apply's repair pass left Summit Ridge homed at %s, want Trenton %s", home, trentonBranchID)
+		t.Fatalf("the apply's repair pass left Bluffside homed at %s, want Trenton %s", home, trentonBranchID)
 	}
 	if !foundAgain() {
-		t.Error("after the repair apply, Summit Ridge is still not findable by name at Trenton")
+		t.Error("after the repair apply, Bluffside is still not findable by name at Trenton")
 	}
 	// A second apply repairs nothing: the guard names the old home, and a row already at Trenton
 	// (by the repair before it or by a hand) is out of its reach.
 	qwApply(t)
 	if err := pool.QueryRow(ctx, `SELECT home_branch_id::text FROM customers WHERE id = $1`, demoID("customer:C01")).Scan(&home); err != nil || home != trentonBranchID {
-		t.Errorf("the second apply moved Summit Ridge's home again (%s, err %v); the guard must match nothing once repaired", home, err)
+		t.Errorf("the second apply moved Bluffside's home again (%s, err %v); the guard must match nothing once repaired", home, err)
 	}
 }

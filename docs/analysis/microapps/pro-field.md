@@ -4,7 +4,7 @@
 
 # pro-field: Pro Field
 
-Audience: external   Roles: contractor_field, contractor_buyer, contractor_owner   Devices: phone   Environment: site
+Audience: external   Roles: contractor_field, contractor_buyer, contractor_buyer_no_pay, contractor_owner   Devices: phone   Environment: site
 Kit: list-detail   Brand: hh-pro   Shell: hh-pro
 Offline: read_cache_plus_outbox. Scopes: orders, tracking_events, delivery_instructions, pickups. Conflict policy: tracking_events server_wins, delivery_instructions last_write_wins_by_field, pickups manual. Why this mode: the field crew is on a site with poor signal and needs to know where the material is without a connection. Tracking is the supplier's fact, so it is server authoritative and never queued. A pickup confirmation is `manual` on conflict because the supplier may have auto-collected it, and appending an additional delivered event plus a duplicate invoice is the exact failure the shipped action guards against (`hh_pro_dibbits/src/core/actions/fulfillment.ts`, `confirmWillCallPickup`).
 

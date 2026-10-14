@@ -34,7 +34,8 @@ func TestInternalScopesRouteTenancy(t *testing.T) {
 			t.Fatalf("register %s: %v", scope, err)
 		}
 	}
-	h, err := NewHandler(engine, nil)
+	staffDouble, portalStub := allWriters()
+	h, err := NewHandler(engine, staffDouble, portalStub, nil)
 	if err != nil {
 		t.Fatalf("NewHandler: %v", err)
 	}

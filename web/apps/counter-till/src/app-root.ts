@@ -34,6 +34,7 @@ import {
   HHFeedback,
   type FeedbackSender,
 } from "@hardscapehouse/design-system/src/feedback.js";
+import { announceChromeControls, chromeActionFrom, framedByShell } from "@hardscapehouse/design-system/src/framed.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
@@ -70,6 +71,14 @@ import { payBalanceStyles, renderPayBalance } from "./views/pay-balance.js";
 // host wiring (ports.ts) answers its seams.
 import "./ported/pos-terminal.js";
 import { clearSessionState, setBranches, wirePorts, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
+// The Work shell's offline layer (item 8b): the till is READ CACHE ONLY. Its client is built on the no signal
+// guard, so every write (the ring, every tender, a refund, a payment, a park) is refused with no signal and
+// never queues; its reads fall back to the copy on the device, with the copy's age shown.
+import { browserSignal, noSignalFetch, noSignalWebFetch, readThroughFetch, readThroughWebFetch, type CachedRoute, type ReadThroughHooks, type WorkDesk } from "@hardscapehouse/work-offline";
+import { apiClientTransport, createTillDesk, dbNameFor, tillRoutes } from "./till-offline.js";
+// The strip registers itself; the wiring pass hands it the controller.
+import "./offline-strip.js";
+import type { CtOfflineStrip } from "./offline-strip.js";
 
 const DEMO_ORG = "hh-demo";
 
@@ -367,6 +376,12 @@ export class CounterTillApp extends HHElement {
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
   readonly #tillClient: TillClient;
+  /** The staff client with no guard: only the offline store's pull rides it (the till pushes nothing). */
+  readonly #syncClient: ApiClient;
+  /** The device's connection, read each time it is asked. */
+  readonly #signal = browserSignal();
+  /** The Work shell's read cache for the signed in person; null before the till is up and after sign out. */
+  #offline: WorkDesk | null = null;
   /** The theme choice: Auto follows the system, Light and Brand pin it; tab memory only (see theme.ts). */
   readonly #theme = new ThemeController(() => this.requestUpdate());
   /** What a screen reader hears after a Theme press: focus stays on the button, so the new name is not re-read. */
@@ -452,7 +467,19 @@ export class CounterTillApp extends HHElement {
     });
     // The pay balance refusal's money fields ride the same transport: one more wrapper, same rule.
     const payBalanceCapture = new PayBalanceCapture(capture.fetch);
-    const client = new ApiClient({ baseUrl: "", fetch: payBalanceCapture.fetch, headers: staffHeaders });
+    // The Work shell's guard: a write with no signal is refused before it dials (never queued: money never
+    // queues), and a read the device holds a copy of is answered from it when the network does not answer.
+    const routes: CachedRoute[] = tillRoutes(() => this.#offline?.reader() ?? null);
+    const hooks: ReadThroughHooks = {
+      onCached: (words) => this.#offline?.hooks.onCached?.(words),
+      onLive: () => this.#offline?.hooks.onLive?.(),
+    };
+    const client = new ApiClient({
+      baseUrl: "",
+      fetch: noSignalFetch(readThroughFetch(payBalanceCapture.fetch, this.#signal, routes, hooks), this.#signal),
+      headers: staffHeaders,
+    });
+    this.#syncClient = new ApiClient({ baseUrl: "", headers: staffHeaders });
     // The feedback widget's sender rides the staff client: the feedback
     // route is staff guarded and the till's own custody holds the bearer.
     this.#feedbackSender = async (request) => {
@@ -490,6 +517,8 @@ export class CounterTillApp extends HHElement {
     const approverCredential = new OneTimeCredential();
     const approverClient = new ApiClient({
       baseUrl: "",
+      // The credit note is a money write: it is refused with no signal like every other.
+      fetch: noSignalFetch(undefined, this.#signal),
       headers: async () => {
         const headers = await staffHeaders();
         const token = approverCredential.take();
@@ -544,6 +573,8 @@ export class CounterTillApp extends HHElement {
       // picture shows its category's tile for every dealer, and keeps the stone-stack glyph only
       // where the tiles do not know the category (test/product-tiles-build.test.mjs).
       productTile: productTileUrl,
+      // The ported surface's request door: the ring and every tender go through it, so the guard rides it too.
+      fetch: noSignalWebFetch(readThroughWebFetch(undefined, this.#signal, routes, hooks), this.#signal),
     });
   }
 
@@ -551,6 +582,10 @@ export class CounterTillApp extends HHElement {
     super.connectedCallback();
     this.#route = this.#readRoute();
     window.addEventListener("hashchange", this.#onHashChange);
+    if (this.#framed) {
+      window.addEventListener("message", this.#onChromeAction);
+      announceChromeControls(window, ["theme", "feedback"]);
+    }
     // The kits' wiring rule, carried for this app's own templates: listen on
     // the HOST and read the control off composedPath(), never @click in a
     // template and never event.target.closest, because the shadow boundary
@@ -667,6 +702,7 @@ export class CounterTillApp extends HHElement {
     this.removeEventListener("input", this.#onHostInput);
     this.removeEventListener("keydown", this.#onHostKey);
     window.removeEventListener("hashchange", this.#onHashChange);
+    window.removeEventListener("message", this.#onChromeAction);
     this.#theme.stop();
     super.disconnectedCallback();
   }
@@ -734,6 +770,32 @@ export class CounterTillApp extends HHElement {
   /** The feedback widget's sender; built once beside the staff client. */
   #feedbackSender: FeedbackSender = async () => ({ ok: false, error: "not ready" });
 
+  /** The Theme control's press: the shell's account menu asks for it too, when this till is framed. */
+  #pressTheme(): void {
+    this.#theme.cycle();
+    this.#themeStatus = themeStatusText(this.#theme.choice);
+  }
+
+  /** The Feedback control's press: the shell's account menu asks for it too, when this till is framed. */
+  #openFeedback(): void {
+    const widget = this.renderRoot.querySelector("hh-feedback");
+    if (widget instanceof HHFeedback) widget.show();
+  }
+
+  /**
+   * Framed by the Work shell (item 8d, row 1520: one header band): the till wears no band of its own, because
+   * the shell's band carries the app selector, the Demo badge, Theme, Feedback and the account. Read once, at
+   * boot, from the frame's address; a till opened on its own never takes this path.
+   */
+  readonly #framed = framedByShell();
+
+  /** The shell asked the till to press Theme or Feedback, which it carries for a framed app. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action = chromeActionFrom(event, window);
+    if (action === "theme") this.#pressTheme();
+    if (action === "feedback") this.#openFeedback();
+  };
+
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
@@ -748,14 +810,8 @@ export class CounterTillApp extends HHElement {
       writePanesSwapped(this.#panesSwapped);
       this.requestUpdate();
     }
-    if (control.getAttribute("data-action") === "theme") {
-      this.#theme.cycle();
-      this.#themeStatus = themeStatusText(this.#theme.choice);
-    }
-    if (control.getAttribute("data-action") === "feedback") {
-      const widget = this.renderRoot.querySelector("hh-feedback");
-      if (widget instanceof HHFeedback) widget.show();
-    }
+    if (control.getAttribute("data-action") === "theme") this.#pressTheme();
+    if (control.getAttribute("data-action") === "feedback") this.#openFeedback();
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
     }
@@ -862,14 +918,14 @@ export class CounterTillApp extends HHElement {
     const minted = await this.#account.chooseFlow(flow);
     if (!minted.ok) {
       this.#busy = false;
-      this.#message = `Demo sign-in refused: ${minted.error}`;
+      this.#message = `Sign-in did not go through. ${minted.error}`;
       this.requestUpdate();
       return;
     }
     const adopted = this.#controller.adopt(minted.value);
     this.#busy = false;
     if (!adopted) {
-      this.#message = "Demo sign-in refused: the mint's session was not usable.";
+      this.#message = "Sign-in did not go through. Try the role again.";
       this.requestUpdate();
       return;
     }
@@ -927,6 +983,9 @@ export class CounterTillApp extends HHElement {
     this.#busy = true;
     this.requestUpdate();
     await this.#controller.signOut();
+    // The copy on this device is released with the session.
+    await this.#offline?.close();
+    this.#offline = null;
     // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
     clearFrontDoorHandoff();
     this.#busy = false;
@@ -983,6 +1042,16 @@ export class CounterTillApp extends HHElement {
     // names beside stock): filled in place from the route's own answer, before
     // anything mounts.
     setBranches([{ id: branch.value.id, name: branch.value.name }]);
+    // The Work shell's read cache on this device, the person's own: opened before the terminal mounts so a read
+    // that loses the network has something to answer from; the first pull runs behind the till.
+    const offline = createTillDesk({
+      signal: this.#signal,
+      transport: apiClientTransport(this.#syncClient),
+      dbName: dbNameFor(this.#sessions.current?.user.userId ?? ""),
+    });
+    this.#offline = offline;
+    await offline.open(branch.value.id);
+    void offline.cycle();
     this.#surface = "terminal";
     this.#openPayBalanceOnOrder();
     this.requestUpdate();
@@ -1073,7 +1142,9 @@ export class CounterTillApp extends HHElement {
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       ${this.#surface === "terminal"
         ? nothing
-        : html`
+        : this.#framed
+          ? html`<h1 class="visually-hidden">Counter Till</h1>`
+          : html`
             <header>
               ${this.#brandLockup()}
               ${demoPresent ? demoBanner() : nothing}
@@ -1100,17 +1171,17 @@ export class CounterTillApp extends HHElement {
               <h2 class="visually-hidden">Till</h2>
               <div class="till-screen">
               <div class="surfacebar">
-                ${this.#brandLockup()}
-                ${demoPresent ? demoBanner() : nothing}
+                ${this.#framed ? nothing : this.#brandLockup()}
+                ${demoPresent && !this.#framed ? demoBanner() : nothing}
                 <p class="signed-in">
-                  <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                  ${this.#framed ? nothing : html`<span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>`}
                   ${this.#route !== "sale"
                     ? html`<a class="btn-secondary nav-link" href="#/" data-testid="till-sale-entry">Back to the sale</a>`
                     : html`<a class="btn-secondary nav-link" href="#/returns" data-testid="till-returns-entry">Returns</a>
                         <a class="btn-secondary nav-link" href="#/pay-balance" data-testid="till-pay-balance-entry">Pay balance</a>`}
                   ${this.#route === "sale" ? this.#swapControl() : nothing}
-                  ${this.#themeControl()}
-                  ${this.#feedbackControl()}
+                  ${this.#framed ? nothing : this.#themeControl()}
+                  ${this.#framed ? nothing : this.#feedbackControl()}
                   ${this.#isPopout
                     ? nothing
                     : html`<button
@@ -1122,11 +1193,14 @@ export class CounterTillApp extends HHElement {
                       >
                         Pop out
                       </button>`}
-                  <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
-                    Sign out
-                  </button>
+                  ${this.#framed
+                    ? nothing
+                    : html`<button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
+                        Sign out
+                      </button>`}
                 </p>
               </div>
+              <ct-offline-strip></ct-offline-strip>
               <div class="surface" data-hidden="${this.#route !== "sale" ? "true" : "false"}">
                 <hos-pos-terminal
                   data-paused="${this.#route !== "sale" ? "true" : "false"}"
@@ -1180,6 +1254,7 @@ export class CounterTillApp extends HHElement {
       termField.value = this.#payBalance.term;
     }
     this.#syncReturnsFields();
+    this.renderRoot.querySelector<CtOfflineStrip>("ct-offline-strip")?.attach(this.#offline);
     const widget = this.renderRoot.querySelector("hh-feedback");
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
       widget.send = this.#feedbackSender;

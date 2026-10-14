@@ -1,0 +1,409 @@
+
+  :host {
+    display: block;
+    font-family: var(--hh-font-ui);
+    /* The sheet declares the scheme per half; the kits follow it, so form
+       controls and scrollbars inside a kit answer the theme too. */
+    color-scheme: var(--hh-color-scheme);
+    /* Tabular figures inside the kit as well (row 942): the sheet sets the
+       same pair on the document root, but a kit can be embedded where that
+       half never loaded, and a shadow root inherits only what the host page
+       set. Inter renders every digit one width, so columns of money,
+       quantities and codes line up without a mono face. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  * { box-sizing: border-box; }
+
+  /* Word-only-on-the-outside utility: visually gone, fully present to
+     assistive tech. The state system pairs it with a VISIBLE cue (an icon, a
+     marker), never with colour alone. */
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+
+  button {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-20);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  /* One line, centred both ways: a .btn that carries an icon beside its
+     label draws the two on the same centre line at the design system's icon
+     gap, the icon at the label's own size (1em of the button's font), so the
+     mark is never larger than or higher than the word. Scoped to .btn: a bare
+     button keeps the author's own text alignment (the till's left aligned role
+     and approver cards). */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--hh-s-8);
+  }
+  .btn .icon {
+    flex: none;
+    width: 1em;
+    height: 1em;
+  }
+  button:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--brand-fill);
+    color: var(--brand-fill-on);
+    border-color: var(--brand-fill-on);
+  }
+  .btn-primary:hover { background: var(--brand-fill-hover); }
+  .btn-secondary {
+    background: transparent;
+    color: var(--hh-text);
+    /* The boundary of a control is judged as a shape at 3:1 (WCAG 1.4.11), and
+       the line token sits under that bar against the page, so the secondary
+       button takes its own boundary token, declared in both halves to clear
+       3:1 on the page and the card. Measured in test/contrast.test.mjs. */
+    border-color: var(--hh-control-line);
+  }
+  .btn-danger {
+    background: var(--hh-danger-fill);
+    color: var(--hh-danger-fill-ink);
+    /* On the brand mode card the fill alone is 2.78:1: no red can be both 4.5:1 under white
+       ink and 3:1 against that card, so the button's own 1px edge is its boundary in brand
+       mode (white there, transparent in light), the same pattern .btn-primary uses. */
+    border-color: var(--hh-danger-fill-edge);
+  }
+  /* THE disabled rule, stated once: a token swap, never a fade. Filled kinds
+     drop their fill and go grey; the grey pair clears AA in both halves. */
+  button:disabled,
+  button:disabled:hover,
+  .control:disabled {
+    background: var(--hh-disabled-fill);
+    color: var(--hh-disabled-ink);
+    border-color: var(--hh-disabled-line);
+    cursor: default;
+  }
+  /* The form controls: the same face the button carries (height, radius, the
+     focus ring, the disabled swap above), so a form row reads as one system.
+     The VALUE of a control is the consumer's wiring-pass job, never a binding:
+     the shell sets it in its own update pass, as the quote desk already does. */
+  .control {
+    font-family: inherit;
+    font-size: var(--hh-s-16);
+    line-height: 1;
+    min-height: var(--hh-h-input);
+    padding: 0 var(--hh-s-12);
+    border-radius: var(--hh-radius-control);
+    border: 1px solid var(--hh-control-line);
+    background: var(--hh-card);
+    color: var(--hh-text);
+  }
+  select.control {
+    padding-inline-end: var(--hh-s-20);
+  }
+  .control:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: 2px;
+  }
+  /* The segmented control: a joined row of buttons on the recessed track,
+     the pill of the till's own view flip at the sheet's own face. The
+     pressed segment is marked by aria-pressed and the row face (the row-alt
+     fill), never by colour alone. */
+  .segmented {
+    display: inline-flex;
+    align-items: stretch;
+    gap: var(--hh-s-2);
+    padding: var(--hh-s-2);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-track);
+  }
+  .seg-btn {
+    /* The row's own box sits at the control face height (the sheet's input
+       token), so a segmented control beside a text control reads as one
+       row: the segment's height less its padding and the row's borders. */
+    min-height: calc(var(--hh-h-input) - 6px);
+    padding: 0 var(--hh-s-16);
+    border: 1px solid transparent;
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+  }
+  .seg-btn:hover:not(:disabled) {
+    color: var(--hh-text);
+  }
+  .seg-btn.seg-on {
+    background: var(--hh-row-alt);
+    border-color: var(--hh-control-line);
+    color: var(--hh-text);
+    font-weight: 600;
+  }
+  /* The named group: the fieldset keeps its legend (the group's accessible
+     name) and the legend is set as the group's visible heading. */
+  .field-group {
+    border: 1px solid var(--hh-line);
+    border-radius: var(--hh-radius-control);
+    margin: 0;
+    padding: var(--hh-s-12);
+  }
+  .field-group-heading {
+    font-family: inherit;
+    font-size: var(--hh-s-12);
+    color: var(--hh-text-dim);
+    padding: 0 var(--hh-s-4);
+  }
+
+  .spinner-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-12);
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--hh-radius-pill);
+    border: 3px solid var(--hh-track);
+    /* The moving arc is gold-as-INK, per theme: the gold FILL is 1.50:1 against
+       the light page and a spinner drawn with it would vanish in Light Mode. */
+    border-top-color: var(--hh-accent-text);
+    animation: hh-spin 0.9s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner { animation: none; border-inline-end-color: var(--hh-accent-text); }
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    padding: var(--hh-s-4) var(--hh-s-12);
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-card);
+    font-size: var(--hh-s-12);
+  }
+  .chip .icon { width: 14px; height: 14px; }
+  .chip-neutral { color: var(--hh-text-dim); border: 1px solid var(--hh-line); }
+  .chip-good { color: var(--hh-state-good); border: 1px solid var(--hh-state-good); }
+  .chip-watch { color: var(--hh-state-watch); border: 1px solid var(--hh-state-watch); }
+  .chip-stop { color: var(--hh-state-stop); border: 1px solid var(--hh-state-stop); }
+
+  ul.rows { list-style: none; margin: 0; padding: 0; }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) var(--hh-s-16);
+    background: var(--hh-row);
+    border-bottom: 1px solid var(--hh-line);
+    color: var(--hh-text);
+  }
+  .row-alt { background: var(--hh-row-alt); }
+  .row-selected { border-inline-start: 3px solid var(--hh-focus-ring); font-weight: 600; }
+
+  @keyframes hh-spin { to { transform: rotate(360deg); } }
+
+  :host {
+    display: block;
+    width: fit-content;
+    height: 100%;
+    font-family: var(--hh-font-ui);
+    color-scheme: var(--hh-color-scheme);
+  }
+  * { box-sizing: border-box; }
+
+  .rail {
+    position: relative;
+    width: 196px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--hh-s-12) 10px;
+    background: var(--hh-card);
+    border-right: 1px solid var(--hh-line);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  /* Collapsed: the narrow strip the brief arrives as, icons only. */
+  .rail[data-collapsed='true'] {
+    width: 56px;
+    padding: var(--hh-s-12) 6px;
+    align-items: center;
+  }
+  .rhead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--hh-s-8);
+    width: 100%;
+    padding: 0 2px var(--hh-s-8);
+    flex: none;
+  }
+  .rail[data-collapsed='true'] .rhead {
+    justify-content: center;
+    padding: 0 0 var(--hh-s-8);
+  }
+  .heading {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--hh-text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .rail[data-collapsed='true'] .heading {
+    display: none;
+  }
+  .toggle {
+    width: 44px;
+    height: 44px;
+    flex: none;
+    /* The sheet's button padding would squeeze the glyph out of a 44 px box: the glyph is the content, centred. */
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    color: var(--hh-text);
+    border: 1px solid var(--hh-line);
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .toggle:hover {
+    color: var(--hh-text);
+    border-color: var(--hh-accent-text);
+  }
+  .toggle[aria-expanded='true'] {
+    color: var(--hh-accent-text);
+    border-color: var(--hh-accent-text);
+  }
+  .toggle:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+  .toggle svg {
+    display: block;
+    width: 22px;
+    height: 22px;
+  }
+  .row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    /* The rail is the phone rail too: every row is a 44 px target at every
+     * size, the floor the brief carries for phone and tablet. */
+    min-height: 44px;
+    padding: 0 10px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-family: inherit;
+    font-size: 12.5px;
+    line-height: 1.15;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .row:hover {
+    background: var(--hh-row-alt);
+    color: var(--hh-text);
+  }
+  .row:focus-visible {
+    outline: 2px solid var(--hh-focus-ring);
+    outline-offset: -2px;
+  }
+  .row[aria-current='true'] {
+    background: var(--hh-row-alt);
+    color: var(--hh-text);
+    box-shadow: inset 3px 0 0 var(--hh-accent-text);
+  }
+  .glyph {
+    width: 18px;
+    text-align: center;
+    font-size: 15px;
+    flex: none;
+  }
+  .row[aria-current='true'] .glyph {
+    color: var(--hh-accent-text);
+  }
+  .label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1 1 auto;
+  }
+  /* Collapsed, the label becomes the tooltip: real text, revealed beside the
+   * strip on hover and on keyboard focus, so the name survives both channels
+   * and no native title rides on top of it (one name per row). */
+  .rail[data-collapsed='true'] .row {
+    justify-content: center;
+    padding: 0;
+  }
+  .rail[data-collapsed='true'] .label {
+    position: absolute;
+    left: calc(100% + 10px);
+    top: 50%;
+    transform: translateY(-50%);
+    flex: none;
+    max-width: 180px;
+    background: var(--hh-widget-raised);
+    border: 1px solid var(--hh-line);
+    border-radius: 8px;
+    padding: var(--hh-s-4) var(--hh-s-8);
+    font-size: var(--hh-s-12);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+    z-index: var(--hh-z-dropdown);
+  }
+  .rail[data-collapsed='true'] .row:hover .label,
+  .rail[data-collapsed='true'] .row:focus-visible .label {
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rail[data-collapsed='true'] .label {
+      transition: none;
+    }
+  }
+  /* The empty state (D-107): no pins is the FIRST thing a new person sees,
+   * so it is a calm sentence naming the action and where to make one, not a
+   * blank strip and never some other list. Collapsed it waits; the words
+   * show when the rail does. */
+  .empty {
+    margin: 0;
+    padding: 10px 8px 4px;
+    color: var(--hh-text-dim);
+    font-size: var(--hh-s-12);
+    line-height: 1.45;
+  }
+  .empty strong {
+    display: block;
+    margin-bottom: var(--hh-s-4);
+    color: var(--hh-text);
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .rail[data-collapsed='true'] .empty {
+    display: none;
+  }

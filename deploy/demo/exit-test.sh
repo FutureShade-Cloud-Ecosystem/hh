@@ -18,7 +18,9 @@
 #
 # The script force-removes only the containers it names with its own
 # prefix, never a substring match, so another lane's or a reviewer's
-# containers are never touched.
+# containers are never touched. An EXIT trap removes, on a passing and on a
+# failing run alike, the Postgres container and the network this run
+# started (by name, and only if this run started them); ones it found stay.
 #
 # What is asserted, clause by clause:
 #
@@ -27,7 +29,12 @@
 #   each app serves under its own prefix behind the phrase gate (refused
 #     without, served with): the front door at /, the till at /till/, the
 #     public desk at /q/ and /quote.html, /quote/ per the desk being present;
-#   /api/v1/demo/flows answers the closed table's nine flows;
+#   /api/v1/demo/flows answers the closed table's nine staff flows, the five contractor
+#     flows and both classes; the three Pro apps serve under /pro-procurement/,
+#     /pro-pay/ and /pro-field/ (gated, assets under their own prefixes); the five
+#     contractor cards mint a tenant bearer whose role tenant me answers (L-card),
+#     the server refuses what a role lacks (L-wall) and no cost key reaches a
+#     contractor (L-cost);
 #   POST /api/v1/demo/session without the phrase is refused by the gate,
 #     and with the phrase mints a token;
 #   GET /api/v1/quotes with a valid demo bearer and no phrase answers 200
@@ -44,7 +51,7 @@
 #   a marked build holding a real user or a real payment configuration is
 #     refused by the resume refusals before migrate or the seed write;
 #   the forwarded address discipline (W2's review): the source pin (the
-#     template the image carries holds the three overwrite lines), a
+#     template the image carries holds the four overwrite lines), a
 #     client-written X-Forwarded-For never survives the image's Caddy
 #     (proven at the traffic level, one capture behind the proxy), and
 #     rotating forged values buy the mint's limit no bucket;
@@ -83,6 +90,30 @@ CAP="$PREFIX-cap"
 CAPCLI="$PREFIX-capcli"
 
 FAILURES=0
+net_made=0
+pg_started=0
+
+# Runs on every exit, pass or fail: removes by exact name only what this run
+# started. The exit status of the run is kept.
+cleanup() {
+	status=$?
+	trap - EXIT
+	docker rm -f "$HAPPY" "$RESUME" "$CAP" "$CAPCLI" >/dev/null 2>&1 || true
+	if [ "$pg_started" = "1" ]; then
+		docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
+	elif [ "$pg_found" = "1" ]; then
+		for db in "$DBPFX"_happy "$DBPFX"_nohash "$DBPFX"_nomode "$DBPFX"_build "$DBPFX"_foreign "$DBPFX"_appdb "$DBPFX"_realuser "$DBPFX"_realpay; do
+			docker exec "$PG_NAME" psql -U postgres -q -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
+		done
+	fi
+	if [ "$net_made" = "1" ]; then
+		docker network rm "$NET" >/dev/null 2>&1 || true
+	fi
+	exit "$status"
+}
+pg_found=0
+trap cleanup EXIT
+
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*"; FAILURES=$((FAILURES + 1)); }
 
@@ -182,11 +213,14 @@ case "$HASH" in
 esac
 
 echo "== the throwaway Postgres"
-docker network inspect "$NET" >/dev/null 2>&1 || docker network create "$NET" >/dev/null
+if ! docker network inspect "$NET" >/dev/null 2>&1; then
+	docker network create "$NET" >/dev/null
+	net_made=1
+fi
 if docker ps --format '{{.Names}}' | grep -qx "$PG_NAME"; then
-	pg_up=1
+	pg_found=1
 else
-	pg_up=0
+	pg_started=1
 	docker rm -f "$PG_NAME" >/dev/null 2>&1 || true
 	docker run -d --name "$PG_NAME" --network "$NET" \
 		-p "127.0.0.1:$PG_PORT:5432" \
@@ -208,6 +242,7 @@ docker run -d --name "$HAPPY" --network "$NET" -p "127.0.0.1:$APP_PORT:8080" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_happy)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" >/dev/null
@@ -254,6 +289,10 @@ page_has /yard/ yard-pick-app "Yard Pick at /yard/"
 page_has /money-desk/ money-desk-app "the Money Desk at /money-desk/"
 page_has /dispatch/ dispatch-board-app "the dispatch board at /dispatch/"
 page_has /messages/ house-messages-app "House Messages at /messages/"
+page_has /dealer-admin/ dealer-admin-app "Dealer Admin at /dealer-admin/"
+page_has /pro-procurement/ pro-procurement-app "Pro Procurement at /pro-procurement/"
+page_has /pro-pay/ pro-pay-app "Pro Pay at /pro-pay/"
+page_has /pro-field/ pro-field-app "Pro Field at /pro-field/"
 page_has /q/ pd-quote-public "the public desk at /q/"
 page_has "/quote.html?t=x" pd-quote-public "the public desk at /quote.html"
 page_gated /till/ "the counter till at /till/"
@@ -264,6 +303,10 @@ page_gated /yard/ "Yard Pick at /yard/"
 page_gated /money-desk/ "the Money Desk at /money-desk/"
 page_gated /dispatch/ "the dispatch board at /dispatch/"
 page_gated /messages/ "House Messages at /messages/"
+page_gated /dealer-admin/ "Dealer Admin at /dealer-admin/"
+page_gated /pro-procurement/ "Pro Procurement at /pro-procurement/"
+page_gated /pro-pay/ "Pro Pay at /pro-pay/"
+page_gated /pro-field/ "Pro Field at /pro-field/"
 page_gated /q/ "the public desk at /q/"
 page_gated /quote/ "the /quote/ prefix"
 # Never indexed, gate open or shut (decision log row 981): the header rides the
@@ -311,6 +354,22 @@ else
 	fail "Yard Pick's script asset did not resolve under /yard/ (found: ${asset:-none})"
 fi
 
+# The three Pro apps' script assets resolve under their own prefixes (the base flag reached each build).
+for pp in pro-procurement pro-pay pro-field; do
+	asset="$(curl -s -u "demo:$PHRASE" "$BASE/$pp/" | sed -n "s/.*src=\"\(\/$pp\/assets\/[^\"]*\.js\)\".*/\1/p" | head -1)"
+	if [ -n "$asset" ] && [ "$(curl -s -o /dev/null -w '%{http_code}' -u "demo:$PHRASE" "$BASE$asset")" = "200" ]; then
+		pass "$pp's script asset resolves under /$pp/"
+		# The bundle is a demo build: only a --mode demo build carries the demo session mint.
+		if curl -s -u "demo:$PHRASE" "$BASE$asset" | grep -q '/api/v1/demo/session'; then
+			pass "$pp's bundle is a demo build (it carries the demo session route)"
+		else
+			fail "$pp's bundle is not a demo build (no demo session route in $asset)"
+		fi
+	else
+		fail "$pp's script asset did not resolve under /$pp/ (found: ${asset:-none})"
+	fi
+done
+
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
 *'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"yard-manager"'*'"flow":"yard-team"'*'"flow":"driver"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*'"flow":"logistics-manager"'*)
@@ -319,6 +378,18 @@ case "$flows" in
 	*)
 		fail "/api/v1/demo/flows did not answer the nine flows: $flows"
 		;;
+esac
+
+# The listing carries each row's class and the five contractor flows (Summit Ridge Builders): the front door
+# routes a tenant row to the Pro app for its role.
+case "$flows" in
+*'"flow":"contractor-account-admin"'*'"flow":"contractor-buyer"'*'"flow":"contractor-buyer-no-pay"'*'"flow":"contractor-ap-finance"'*'"flow":"contractor-field-crew"'*)
+		pass "/api/v1/demo/flows answers the five contractor flows" ;;
+	*) fail "/api/v1/demo/flows did not answer the five contractor flows: $flows" ;;
+esac
+case "$flows" in
+	*'"class":"tenant"'*'"class":"staff"'* | *'"class":"staff"'*'"class":"tenant"'*) pass "/api/v1/demo/flows carries both classes, staff and tenant" ;;
+	*) fail "/api/v1/demo/flows does not carry both classes: $flows" ;;
 esac
 
 code="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
@@ -340,6 +411,128 @@ code="$(curl -s -o /dev/null -w '%{http_code}' \
 	"$BASE/api/v1/quotes")"
 [ "$code" = "200" ] && pass "a staff read with a valid demo bearer and no phrase answers 200" \
 	|| fail "GET /api/v1/quotes with a bearer and no phrase answered $code, want 200"
+
+# A contractor persona's card (L-card): the mint answers a tenant class bearer, tenant me answers the role, and the
+# role's wall is the server's (L-wall): accounts payable reads invoices and is refused the buying routes, the field
+# crew reads orders and is refused billing, the buyer reads the buying routes. Tenant routes carry no X-Org and no
+# phrase: the bearer is the credential.
+# Each mint carries a fresh visitor id in the shape the listing issues (32 lower case hex), the way each tester's
+# browser holds its own: the mint's own limit is five per visitor, so one id for the five cards would be refused.
+tenant_mint() {
+	curl -s -u "demo:$PHRASE" -H "Cookie: demo_visitor=$(random_hex 16)" -H 'Content-Type: application/json' -d "{\"flow\":\"$1\"}" "$BASE/api/v1/demo/session" \
+		| sed -n 's/.*"token":"\([^"]*\)".*/\1/p'
+}
+tenant_code() {
+	# bearer, path
+	curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $1" "$BASE$2"
+}
+for pair in "contractor-account-admin account_admin" "contractor-buyer buyer" "contractor-buyer-no-pay buyer_no_pay" "contractor-ap-finance ap_finance" "contractor-field-crew field_crew"; do
+	flow="${pair% *}"
+	role="${pair#* }"
+	tok="$(tenant_mint "$flow")"
+	if [ -z "$tok" ]; then fail "the mint for $flow answered no token"; continue; fi
+	me="$(curl -s -H "Authorization: Bearer $tok" "$BASE/api/v1/tenant/me")"
+	case "$me" in
+		*"\"role\":\"$role\""*) pass "L-card: $flow mints a tenant bearer and tenant me answers the $role role" ;;
+		*) fail "L-card: $flow's tenant me did not answer the $role role: $me" ;;
+	esac
+done
+ap="$(tenant_mint contractor-ap-finance)"
+crew="$(tenant_mint contractor-field-crew)"
+buyer="$(tenant_mint contractor-buyer)"
+[ "$(tenant_code "$ap" /api/v1/tenant/invoices)" = "200" ] && pass "L-wall: accounts payable reads invoices" || fail "L-wall: accounts payable could not read invoices"
+[ "$(tenant_code "$ap" /api/v1/tenant/procurement/projects)" = "403" ] && pass "L-wall: accounts payable is refused the buying routes by the server" || fail "L-wall: accounts payable was not refused the buying routes"
+[ "$(tenant_code "$crew" /api/v1/tenant/orders)" = "200" ] && pass "L-wall: the field crew reads orders" || fail "L-wall: the field crew could not read orders"
+[ "$(tenant_code "$crew" /api/v1/tenant/invoices)" = "403" ] && pass "L-wall: the field crew is refused billing by the server" || fail "L-wall: the field crew was not refused billing"
+[ "$(tenant_code "$buyer" /api/v1/tenant/procurement/projects)" = "200" ] && pass "L-wall: the buyer reads the buying routes" || fail "L-wall: the buyer could not read the buying routes"
+[ "$(tenant_code "" /api/v1/tenant/orders)" = "401" ] && pass "L-wall: a tenant route with no bearer answers 401" || fail "L-wall: a tenant route with no bearer did not answer 401"
+# The contractor world (PRO-H): every read below is proved on its own. A leg passes only when the answer carries at
+# least the rows the world holds for that read (counted by the key one row of that answer carries once) AND no dealer
+# cost, margin or markup key, so an empty list can no longer pass the cost scan (the PRR line from the PR 380 review).
+# ROWS: the legs name the rows they count.
+tenant_get() {
+	# bearer, path
+	curl -s -H "Authorization: Bearer $1" "$BASE$2"
+}
+row_count() {
+	# answer, key: how many times the key opens a row
+	printf '%s' "$1" | grep -o "\"$2\"[[:space:]]*:" | wc -l | tr -d ' '
+}
+# tenant_read <label> <bearer> <path> <row key> <least rows>: one read, rows counted, cost keys scanned (L-cost).
+tenant_read() {
+	label="$1"; bearer="$2"; path="$3"; key="$4"; least="$5"
+	answer="$(tenant_get "$bearer" "$path")"
+	n="$(row_count "$answer" "$key")"
+	echo "   ROWS $label $path: $n x $key (least $least)"
+	if [ "$n" -lt "$least" ]; then
+		fail "L-cost: $label read $path answered $n rows of $key, want at least $least, so the cost scan proved nothing: $(printf '%s' "$answer" | cut -c1-160)"
+	elif printf '%s' "$answer" | grep -qiE '"[a-z_]*(cost|margin|markup)[a-z_]*"[[:space:]]*:'; then
+		fail "L-cost: $label read $path carries a cost, margin or markup key"
+	else
+		pass "L-cost: $label read $path answers $n rows and no cost, margin or markup key"
+	fi
+}
+# tenant_refused <label> <bearer> <path>: the server's wall for a role.
+tenant_refused() {
+	[ "$(tenant_code "$2" "$3")" = "403" ] && pass "L-wall: $1 is refused $3 by the server" || fail "L-wall: $1 was not refused $3"
+}
+admin="$(tenant_mint contractor-account-admin)"
+# The buyer reads the buying routes and the catalog; the world holds 8 orders, 3 quotes, 3 procurement projects and 4 invoices.
+tenant_read "buyer" "$buyer" "/api/v1/tenant/catalog/search?q=paver" product_id 1
+tenant_read "buyer" "$buyer" /api/v1/tenant/orders order_no 8
+tenant_read "buyer" "$buyer" /api/v1/tenant/quotes quote_no 3
+tenant_read "buyer" "$buyer" /api/v1/tenant/procurement/projects line_count 3
+tenant_read "buyer" "$buyer" /api/v1/tenant/invoices invoice_no 4
+tenant_read "buyer" "$buyer" /api/v1/tenant/payments payment_no 2
+tenant_read "buyer" "$buyer" /api/v1/tenant/payment-methods last4 2
+tenant_read "buyer" "$buyer" /api/v1/tenant/addresses line1 3
+# Accounts payable reads the money: invoices, the payment history, the saved methods, and the orders an invoice answers.
+tenant_read "accounts payable" "$ap" /api/v1/tenant/invoices invoice_no 4
+tenant_read "accounts payable" "$ap" /api/v1/tenant/payments payment_no 2
+tenant_read "accounts payable" "$ap" /api/v1/tenant/payment-methods last4 2
+tenant_read "accounts payable" "$ap" /api/v1/tenant/orders order_no 8
+tenant_refused "accounts payable" "$ap" /api/v1/tenant/quotes
+# The field crew reads orders and the delivery addresses and nothing financial.
+tenant_read "field crew" "$crew" /api/v1/tenant/orders order_no 8
+tenant_read "field crew" "$crew" /api/v1/tenant/addresses line1 3
+tenant_refused "the field crew" "$crew" /api/v1/tenant/quotes
+tenant_refused "the field crew" "$crew" /api/v1/tenant/payments
+tenant_refused "the field crew" "$crew" /api/v1/tenant/payment-methods
+tenant_refused "the field crew" "$crew" /api/v1/tenant/procurement/projects
+# The owner reads everything, and the team is the five roles.
+tenant_read "owner" "$admin" /api/v1/tenant/users email 5
+tenant_read "owner" "$admin" /api/v1/tenant/procurement/projects line_count 3
+
+# Order states and delivery instructions: the list answers every state of the contract's map, and some orders carry a
+# delivery note (read per order, the detail is where the note lives).
+orders_answer="$(tenant_get "$crew" /api/v1/tenant/orders)"
+for st in CONFIRMED READY PARTIALLY_FULFILLED FULFILLED INVOICED; do
+	case "$orders_answer" in
+		*"\"status\":\"$st\""*) pass "the contractor's order list holds a $st order" ;;
+		*) fail "the contractor's order list holds no $st order: $(printf '%s' "$orders_answer" | cut -c1-160)" ;;
+	esac
+done
+noted=0
+for oid in $(printf '%s' "$orders_answer" | grep -o '"id":"[^"]*"' | sed 's/"id":"\([^"]*\)"/\1/'); do
+	detail="$(tenant_get "$crew" "/api/v1/tenant/orders/$oid")"
+	case "$detail" in *'"delivery_instructions":""'*) ;; *'"delivery_instructions":"'*) noted=$((noted + 1)) ;; esac
+done
+echo "   ROWS field crew orders with a delivery note: $noted"
+[ "$noted" -ge 3 ] && pass "at least three orders carry delivery instructions" || fail "only $noted orders carry delivery instructions, want at least 3"
+
+# Money: the invoices carry California tax (775 basis points, half up once) and a balance that follows what was paid.
+inv_answer="$(tenant_get "$ap" /api/v1/tenant/invoices)"
+bad="$(printf '%s' "$inv_answer" | tr '{' '\n' | sed -n 's/.*"subtotal_cents":\([0-9]*\),"tax_cents":\([0-9]*\).*/\1 \2/p' | while read -r sub tax; do
+	want=$(( (sub * 775 + 5000) / 10000 ))
+	[ "$tax" = "$want" ] || echo "$sub:$tax:$want"
+done)"
+[ -z "$bad" ] && pass "every invoice's tax is 7.75 percent of its subtotal, half up" || fail "an invoice's tax is not 7.75 percent of its subtotal (subtotal:tax:want) $bad"
+for st in PAID PARTIALLY_PAID FINALIZED; do
+	case "$inv_answer" in
+		*"\"status\":\"$st\""*) pass "the contractor's invoices hold a $st invoice" ;;
+		*) fail "the contractor's invoices hold no $st invoice" ;;
+	esac
+done
 
 pay="$(curl -s -H "Authorization: Bearer $TOKEN" -H 'X-Org: hh-demo' \
 	"$BASE/api/v1/payments/config")"
@@ -412,6 +605,7 @@ nohash_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_nohash)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	"$IMAGE" 2>&1)" && nohash_ok=0 || nohash_ok=1
 [ "$nohash_ok" = "1" ] && pass "without the hash the image exits non-zero" \
@@ -428,6 +622,29 @@ esac
 	&& pass "the refused boot wrote nothing to the database" \
 	|| fail "the refused boot left user tables behind"
 
+echo "== without the sign in mode, before serve and before anything writes"
+freshdb "$DBPFX"_nomode
+nomode_log="$(docker run --rm --network "$NET" \
+	-e "DATABASE_URL=$(dsn_for "$DBPFX"_nomode)" \
+	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
+	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
+	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
+	"$IMAGE" 2>&1)" && nomode_ok=0 || nomode_ok=1
+[ "$nomode_ok" = "1" ] && pass "without the sign in mode the image exits non-zero" \
+	|| fail "without the sign in mode the image exited 0"
+case "$nomode_log" in
+	*CORE_SIGNIN_MODE*"is not set"*) pass "the refusal names the missing sign in mode" ;;
+	*) fail "the refusal does not name the missing sign in mode" ;;
+esac
+case "$nomode_log" in
+	*listening*) fail "the image reached serve without the sign in mode" ;;
+	*) pass "the image exited before serve" ;;
+esac
+[ "$(tables_count "$DBPFX"_nomode)" = "0" ] \
+	&& pass "the refused boot wrote nothing to the database" \
+	|| fail "the refused boot left user tables behind"
+
 echo "== an interrupted build this image started resumes"
 freshdb "$DBPFX"_build
 migrate_only "$DBPFX"_build marked
@@ -435,6 +652,7 @@ docker run -d --name "$RESUME" --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_build)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" >/dev/null
@@ -467,6 +685,7 @@ foreign_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_foreign)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && foreign_ok=0 || foreign_ok=1
@@ -498,6 +717,7 @@ app_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_appdb)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && app_ok=0 || app_ok=1
@@ -525,6 +745,7 @@ realuser_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_realuser)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && realuser_ok=0 || realuser_ok=1
@@ -554,6 +775,7 @@ realpay_log="$(docker run --rm --network "$NET" \
 	-e "DATABASE_URL=$(dsn_for "$DBPFX"_realpay)" \
 	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
 	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "CORE_SIGNIN_MODE=demo" \
 	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
 	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
 	"$IMAGE" 2>&1)" && realpay_ok=0 || realpay_ok=1
@@ -576,8 +798,8 @@ fi
 echo "== the forwarded address discipline, at the source"
 pin_template="$(docker run --rm --entrypoint sh "$IMAGE" \
 	-c 'grep -c "header_up X-Forwarded-For" /srv/templates/Caddyfile.template' 2>/dev/null || true)"
-[ "$pin_template" = "3" ] && pass "the template the image carries holds the three overwrite lines" \
-	|| fail "the template in the image holds $pin_template header_up lines, want 3"
+[ "$pin_template" = "4" ] && pass "the template the image carries holds the four overwrite lines" \
+	|| fail "the template in the image holds $pin_template header_up lines, want 4"
 
 echo "== the forwarded address discipline, at the proxy"
 # One capture behind a Caddy built from the image's own template: the
@@ -609,8 +831,8 @@ while [ "$probes" -lt 30 ]; do
 done
 [ "$ready" = "1" ] || fail "the capture proxy never came up"
 pin_generated="$(docker exec "$CAP" grep -c "header_up X-Forwarded-For" /tmp/cf 2>/dev/null || true)"
-[ "$pin_generated" = "3" ] && pass "the generated configuration carries the three overwrite lines" \
-	|| fail "the generated configuration holds $pin_generated header_up lines, want 3"
+[ "$pin_generated" = "4" ] && pass "the generated configuration carries the four overwrite lines" \
+	|| fail "the generated configuration holds $pin_generated header_up lines, want 4"
 docker run -d --name "$CAPCLI" --network "$NET" \
 	--entrypoint curl \
 	curlimages/curl:8.22.0 \
@@ -682,14 +904,8 @@ esac
 [ "$forged" = "0" ] && pass "rotating forged forwarded values bought no bucket" \
 	|| fail "$forged mint(s) bought by forged forwarded values"
 
-# --------------------------------------------------------------------------
-# Cleanup: the containers and the throwaway databases go; the Postgres
-# stays for the next run.
-# --------------------------------------------------------------------------
-docker rm -f "$HAPPY" "$RESUME" "$CAP" "$CAPCLI" >/dev/null 2>&1 || true
-for db in "$DBPFX"_happy "$DBPFX"_nohash "$DBPFX"_build "$DBPFX"_foreign "$DBPFX"_appdb "$DBPFX"_realuser "$DBPFX"_realpay; do
-	docker exec "$PG_NAME" psql -U postgres -q -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" >/dev/null 2>&1 || true
-done
+# Cleanup is the EXIT trap above: the containers, the databases of a
+# Postgres that was found, and the Postgres and network this run started.
 
 echo "== done: $FAILURES failure(s)"
 [ "$FAILURES" -eq 0 ]

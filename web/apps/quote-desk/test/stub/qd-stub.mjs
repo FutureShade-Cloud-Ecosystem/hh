@@ -71,6 +71,7 @@
 // core's own FloorRefusalError marshals.
 import { createServer } from "node:http";
 import { handlePricing, resetPricing } from "./pricing-stub.mjs";
+import { createSyncStub } from "./sync-stub.mjs";
 
 const port = Number(process.env.QD_STUB_PORT ?? 4839);
 
@@ -124,6 +125,12 @@ const BRANCHES = [
     is_active: true,
   },
 ];
+
+// The core's MarginFloorBps (staffcontext rbac.go): the floor the policy check holds a quote to.
+const MARGIN_FLOOR_BPS = 1200;
+// The core bounds the check's amounts (staffcontext maxPolicyCheckCents) and parses the branch as a uuid.
+const MAX_CHECK_CENTS = 1_000_000_000_000;
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const ACCOUNT_BRANCH = {
   "demo-account-sales": POINT_LOMA_ID,
@@ -642,7 +649,7 @@ function netUnitCents(ruleCents, discPct) {
 
 function marginBps(unitCents, costCents) {
   if (unitCents <= 0) return 0;
-  return Math.floor(((unitCents - costCents) * 10000) / unitCents);
+  return Math.trunc(((unitCents - costCents) * 10000) / unitCents);
 }
 
 // The floor decision on a discount write. Returns null when the write goes
@@ -1177,6 +1184,25 @@ function editResult(quote, line) {
   };
 }
 
+// The offline store's sync routes over this world (sync-stub.mjs): the pull
+// feeds of the desk's read scopes and the quotes push, with the core's own
+// writable sets read from the Go source.
+const syncStub = createSyncStub({
+  products: () => PRODUCTS,
+  customers: () => CUSTOMERS,
+  quotes,
+  customerById,
+  branchIds: new Set([POINT_LOMA_ID, JULIAN_ID]),
+  // A Work caller sees its own quotes, a Manage caller every quote in its branch (the list rule).
+  viewable: (caller, quote) => caller.account.role_code === "sales_manager" || quote.owner_id === caller.account.user_id,
+  makeQuote: ({ id, customerId, caller, validUntil }) => {
+    quoteCounter += 1;
+    const made = seedQuote("DRAFT", customerId, caller.flow, [], { salesperson_id: caller.account.user_id, salesperson_name: caller.account.display_name }, id === undefined ? null : { id, quoteNo: `Q-${quoteCounter}` });
+    if (validUntil !== "") made.valid_until = validUntil;
+    return made;
+  },
+});
+
 // ---------------------------------------------------------------------------
 // The server.
 // ---------------------------------------------------------------------------
@@ -1194,6 +1220,10 @@ const server = createServer(async (request, response) => {
   // The suite's peek routes: the ledgers the layout save assertions read, and
   // the cost list switch the wrong-role page flips. Test scaffolding; no
   // contract path shares the namespace.
+  if (path === "/_stub/sync-log") {
+    respondJson(response, 200, syncStub.log);
+    return;
+  }
   if (path === "/_stub/state") {
     respondJson(response, 200, { workspaceWrites, itemsWrites, policyWrites, decisions, staffDecisions, conversions, payments, posts, switches: { ...switches } });
     return;
@@ -1295,7 +1325,7 @@ const server = createServer(async (request, response) => {
         return;
       }
       const key = `${quote.id}:${lineNo}`;
-      const request = { id: `fr-${key}`, status: "PENDING", line_no: lineNo, disc_pct: Number(body.disc_pct) || 10 };
+      const request = { id: `fr-${key}`, status: body.status === "APPROVED" ? "APPROVED" : "PENDING", line_no: lineNo, disc_pct: Number(body.disc_pct) || 10, ...(body.used === true ? { used: true } : {}) };
       floorRequests.set(key, request);
       approvalCards.set(request.id, {
         quote_id: quote.id,
@@ -1418,6 +1448,7 @@ const server = createServer(async (request, response) => {
   // changes quotes, policy or switches leaves the next one a clean stub.
   if (path === "/_stub/reset" && request.method === "POST") {
     seedWorld();
+    syncStub.reset();
     shareLinks.clear();
     floorRequests.clear();
     resetSeamWorld();
@@ -1567,6 +1598,9 @@ const server = createServer(async (request, response) => {
     return;
   }
   const userId = caller.account.user_id;
+
+  // The offline store's pull and push routes.
+  if (syncStub.handle({ request, response, path, url, caller, readBody, respondJson })) return;
 
   if (request.method === "GET" && path === "/api/v1/branches") {
     respondJson(response, 200, BRANCHES);
@@ -1805,7 +1839,17 @@ const server = createServer(async (request, response) => {
             respondJson(response, 400, { error: "quote: the discount must be a whole percent from 0 to 100" });
             return;
           }
-          const decision = floorDecision(caller, product, customer, disc);
+          let decision = floorDecision(caller, product, customer, disc);
+          if (decision !== null && !decision.cleared) {
+            // The requester's own APPROVED, unused request for this line clears the write once and is used up
+            // (the core's ConsumeApprovedFloorTx).
+            const standing = floorRequests.get(`${quote.id}:${lineNo}`);
+            const card = standing === undefined ? undefined : approvalCards.get(standing.id);
+            if (standing !== undefined && standing.status === "APPROVED" && standing.used !== true && card !== undefined && card.requested_by === caller.account.user_id) {
+              standing.used = true;
+              decision = { cleared: true, by: card.decided_by ?? caller.account.user_id };
+            }
+          }
           if (decision !== null && decision.cleared) {
             // The manager's own clearing: accepted once, stamped on the line.
             const before = snapshotOf(quote, line);
@@ -3009,14 +3053,45 @@ const server = createServer(async (request, response) => {
   }
 
   if (path === "/api/v1/staff/policy/check" && request.method === "POST") {
+    // The core's order (identity staffcontext, policyCheck): the body, then the caller's branch grants, then
+    // the margin against the 12% floor with the caller's own approved override; below the floor with no
+    // override is a 403 whose error is the block's sentence and whose block key carries the action block.
     readBody(request, response, (body) => {
-      if (!Number.isInteger(body.price_cents) || !Number.isInteger(body.cost_cents) || typeof body.branch_id !== "string") {
-        respondJson(response, 400, { error: "identity: price_cents, cost_cents and branch_id are required" });
+      if (!Number.isInteger(body.price_cents) || !Number.isInteger(body.cost_cents) || typeof body.branch_id !== "string" || body.branch_id === "") {
+        respondJson(response, 400, { error: "price_cents, cost_cents and branch_id are required" });
+        return;
+      }
+      if (!UUID_SHAPE.test(body.branch_id)) {
+        respondJson(response, 400, { error: "branch_id must be a branch id" });
+        return;
+      }
+      if (body.price_cents < 0 || body.cost_cents < 0 || body.price_cents > MAX_CHECK_CENTS || body.cost_cents > MAX_CHECK_CENTS) {
+        respondJson(response, 400, { error: "price_cents and cost_cents must be between 0 and 1000000000000" });
+        return;
+      }
+      // A global caller reaches any branch; every stub account is branch scoped today, so this is its own branch.
+      if (caller.account.scope !== "GLOBAL" && body.branch_id !== caller.branchId) {
+        respondJson(response, 403, { error: "that branch is outside your grants" });
         return;
       }
       const margin = marginBps(body.price_cents, body.cost_cents);
-      const override = caller.account.role_code === "sales_manager";
-      respondJson(response, 200, { allowed: margin >= 2000 || override, margin_bps: margin, override });
+      // The caller's own APPROVED request at the branch that no line write has used up yet (the core's
+      // HasUnusedApprovedOverride).
+      let override = false;
+      for (const row of floorRequests.values()) {
+        const card = approvalCards.get(row.id);
+        const quote = card === undefined ? undefined : quotes.get(card.quote_id);
+        if (row.status === "APPROVED" && row.used !== true && card !== undefined && card.requested_by === caller.account.user_id && (quote === undefined ? TRENTON_ID : quote.branch_id) === body.branch_id) override = true;
+      }
+      if (margin < MARGIN_FLOOR_BPS && !override) {
+        const detail = `margin ${margin} bps is below the ${MARGIN_FLOOR_BPS} bps floor`;
+        respondJson(response, 403, {
+          error: detail,
+          block: { policy_type: "MARGIN_BELOW_MINIMUM", branch_id: body.branch_id, detail, data: { margin_bps: String(margin), floor_bps: String(MARGIN_FLOOR_BPS) } },
+        });
+        return;
+      }
+      respondJson(response, 200, { allowed: true, margin_bps: margin, override });
     });
     return;
   }
