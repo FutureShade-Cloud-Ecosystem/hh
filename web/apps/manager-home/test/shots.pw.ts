@@ -8,7 +8,7 @@
 // The brand theme is the design system's dark half; light is this app's
 // default, one tap on the header's theme control moves between them.
 import { test, expect, type Page } from "@playwright/test";
-import { managerHandoff, resetStub } from "./helpers.js";
+import { managerHandoff, resetStub, useScenario } from "./helpers.js";
 import { join } from "node:path";
 
 const dir = process.env.MH_SHOT_DIR ?? "";
@@ -31,6 +31,7 @@ for (const size of SIZES) {
       test.setTimeout(120_000);
       await page.setViewportSize(size);
       await resetStub(request);
+      await useScenario(request, "plain-profile");
       const take = (order: string, name: string) => shot(page, theme, size.width, order, name);
       const brandOn = async () => {
         if (theme === "brand") await page.getByRole("button", { name: "Brand theme" }).click();
