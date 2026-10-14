@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 )
@@ -25,6 +26,9 @@ func fenceRows() []Attempt {
 		a := listFixture
 		a.ID, a.BranchID, a.SaleKey, a.ProcessorRef, a.AmountCents = id, branch, saleKey, ref, cents
 		a.LastError = "last error of " + id
+		// A fixed instant: the listing fixture's clock reading carries nanosecond digits that can spell a hidden
+		// amount ("4444") and fail the body scan below on a visible row's timestamp.
+		a.CreatedAt = time.Date(2026, 1, 15, 10, 0, 0, 0, time.UTC)
 		return a
 	}
 	return []Attempt{
