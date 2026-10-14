@@ -48,6 +48,7 @@ const FLOWS = [
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
+  { flow: "logistics-manager", role_code: "logistics_manager", label: "Logistics Manager" },
 ];
 
 // Summit Ridge Builders' contractor personas, as the core's listing carries them (class "tenant"). The front
@@ -123,6 +124,15 @@ const USERS = {
     role_name: "Financial Controller",
     tier: 1,
     scope: "GLOBAL",
+  },
+  "logistics-manager": {
+    user_id: "demo-account-logistics-manager",
+    email: "logistics-manager@demo.invalid",
+    display_name: "Dispatch persona (demo)",
+    role_code: "logistics_manager",
+    role_name: "Logistics Manager",
+    tier: 2,
+    scope: "BRANCH",
   },
   driver: {
     user_id: "demo-account-driver",
