@@ -67,7 +67,7 @@ function unsent(why: "session" | "quote"): Unsent {
   return { ok: false, error: NOT_SENT, unsent: why };
 }
 
-const NOT_SENT = "This change was not sent, because the quote or the session it was made on is no longer the one on screen.";
+const NOT_SENT = "This change was not sent. The quote or the sign-in on screen is no longer the one you started with.";
 
 /**
  * Send one deferred write, or refuse. The session check: the same client, still attached, the same signed in person.

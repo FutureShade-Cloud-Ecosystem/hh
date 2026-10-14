@@ -88,6 +88,11 @@ var scrubTextRenames = []scrubTextRename{
 	{"roles", "name", "e7000000-0000-4000-9000-000000000008", "Logistics Scrubname0019", "Logistics Manager", true},
 	{"roles", "name", "e7000000-0000-4000-9000-000000000010", "Scrubname0014 Scrubname0027", "Inside Sales", true},
 	{"roles", "name", "e7000000-0000-4000-9000-000000000011", "Outside Scrubname0027", "Outside Sales", true},
+	// 0055's portal login (df…0a1) carries the first dealer's name in its email and a scrub placeholder
+	// for a name; a staff portal-users screen lists both. Migration 0055 is never edited (forward
+	// only), so the demo world renames the row here, by its fixed id and the exact literals.
+	{"portal_users", "name", "df000000-0000-4000-9000-0000000000a1", "Scrubbed Party 0003", "Portal admin (demo)", true},
+	{"portal_users", "email", "df000000-0000-4000-9000-0000000000a1", "portal.demo@dibbits.example", "portal.demo@demo.example", true},
 	{"msg_channels", "name", "a6000000-0000-4000-9000-0000000000d1", "Scrubname0005, Scrubname0008 Reyes", "Platform admin (demo), Demo teammate (demo)", true},
 	{"msg_messages", "body", "b6000000-0000-4000-9000-0000000000d1",
 		"Hey Scrubname0008 \u2014 sending you the Techo-Bloc restock ETA once the yard confirms.",
@@ -98,7 +103,7 @@ var scrubTextRenames = []scrubTextRename{
 // migration-planted demo customers -apply renames off their scrub placeholders. The
 // default build's side of the pair prints nothing, because that build carries no rename.
 func scrubNamesPlan(out *os.File) {
-	fmt.Fprintf(out, "  scrub names    %d migration-planted demo customers and %d role titles, conversation titles and messages renamed off their placeholders with -apply\n", len(scrubRenames), len(scrubTextRenames))
+	fmt.Fprintf(out, "  scrub names    %d migration-planted demo customers and %d role titles, conversation titles, messages and portal logins renamed off their placeholders with -apply\n", len(scrubRenames), len(scrubTextRenames))
 }
 
 // renameScrubbedDemoCustomers renames the migration-planted demo customers inside the apply

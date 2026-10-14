@@ -52,12 +52,12 @@ test("a find the server cut short says more orders match and to search by order 
     const body = await real.json();
     return route.fulfill({ response: real, json: { ...body, truncated: true } });
   });
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM");
   await page.getByTestId("pay-balance-find").click();
   await expect(page.getByTestId("pay-balance-more")).toHaveText("More orders match: search by order number.");
   // A whole find carries no such line.
   await page.unroute("**/api/v1/pos/pay-balance?*");
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM");
   await page.getByTestId("pay-balance-find").click();
   await expect(page.getByTestId("pay-balance-more")).toHaveCount(0);
 });
@@ -66,12 +66,12 @@ test("find the order, see the money, take the whole rest by cash, and read Paid 
   await signIn(page);
   await openDrawer(page);
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
   await page.getByTestId("pay-balance-find").click();
 
   const card = page.getByTestId("pay-balance-order");
   await expect(card).toContainText("Cash On Demand Landscaping");
-  await expect(card).toContainText(/Order · DEMO-TRT-D02/i);
+  await expect(card).toContainText(/Order · DEMO-PLM-D02/i);
   await expect(card).toContainText("Order total");
   await expect(card).toContainText("$61.02");
   await expect(card).toContainText("Paid so far: Cash");
@@ -93,7 +93,7 @@ test("find the order, see the money, take the whole rest by cash, and read Paid 
   expect(typeof body.idempotency_key).toBe("string");
 
   const done = page.getByTestId("pay-balance-done");
-  await expect(done).toContainText("DEMO-TRT-D02 reads Paid in full and is released to picking.");
+  await expect(done).toContainText("DEMO-PLM-D02 reads Paid in full and is released to picking.");
   await expect(done).toContainText("Money trail: $20.00 by Cash, then $41.02 by Cash.");
 });
 
@@ -114,19 +114,19 @@ test("a card take rides a card token, and a credit order that was not held has n
   // carries (pos-kit's host-facts), never a second literal.
   expect(body.payment_token).toBe("demo-card-token");
   const done = page.getByTestId("pay-balance-done");
-  await expect(done).toContainText("DEMO-TRT-D01 reads Paid in full.");
+  await expect(done).toContainText("DEMO-PLM-D01 reads Paid in full.");
   await expect(done).not.toContainText("released to picking");
 });
 
 test("several matches list as rows to pick, and a miss says so in words", async ({ page }) => {
   await signIn(page);
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D0");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D0");
   await page.getByTestId("pay-balance-find").click();
   const rows = page.getByTestId("pay-balance-match");
   await expect(rows).toHaveCount(2);
-  await rows.filter({ hasText: "DEMO-TRT-D02" }).click();
-  await expect(page.getByTestId("pay-balance-order")).toContainText(/Order · DEMO-TRT-D02/i);
+  await rows.filter({ hasText: "DEMO-PLM-D02" }).click();
+  await expect(page.getByTestId("pay-balance-order")).toContainText(/Order · DEMO-PLM-D02/i);
   await page.getByTestId("pay-balance-term").fill("NOPE-0");
   await page.getByTestId("pay-balance-find").click();
   await expect(page.getByTestId("pay-balance-notice")).toContainText("No order that still owes matches");
@@ -149,7 +149,7 @@ test("a refused find speaks in words, never the envelope's raw string", async ({
     return route.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify(body) });
   });
   const notice = page.getByTestId("pay-balance-notice");
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
   await page.getByTestId("pay-balance-find").click();
   await expect(notice).toHaveText("Sign in again to search.");
   mode = "bare";
@@ -167,7 +167,7 @@ test("after a refusal that names a changed balance the card is read again", asyn
   await signIn(page);
   await openDrawer(page);
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
   await page.getByTestId("pay-balance-find").click();
   await expect(page.getByTestId("pay-balance-take")).toHaveText("Take $41.02");
   let finds = 0;
@@ -205,7 +205,7 @@ test("after a refusal that names a changed balance the card is read again", asyn
   await expect(page.getByTestId("pay-balance-notice")).toContainText("not a part payment");
   // The refused take's key was dropped: the next take is a new key, never the refused one's replay.
   await page.getByTestId("pay-balance-take").click();
-  await expect(page.getByTestId("pay-balance-done")).toContainText("DEMO-TRT-D02 reads Paid in full");
+  await expect(page.getByTestId("pay-balance-done")).toContainText("DEMO-PLM-D02 reads Paid in full");
   expect(keys).toHaveLength(2);
   expect(keys[1]).not.toBe(keys[0]);
 });
@@ -214,7 +214,7 @@ test("a replay shows the same result and the server charges nothing twice", asyn
   await signIn(page);
   await openDrawer(page);
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
   await page.getByTestId("pay-balance-find").click();
   await page.getByTestId("pay-balance-method-CASH").click();
   const first = page.waitForRequest((r) => r.url().endsWith("/api/v1/pos/pay-balance") && r.method() === "POST");
@@ -235,7 +235,7 @@ test("a take that got no answer is retried on the same key, so it can never char
   await signIn(page);
   await openDrawer(page);
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
   await page.getByTestId("pay-balance-find").click();
   await page.getByTestId("pay-balance-method-CASH").click();
   const keys: string[] = [];
@@ -252,7 +252,7 @@ test("a take that got no answer is retried on the same key, so it can never char
   await page.getByTestId("pay-balance-take").click();
   await expect(page.getByTestId("pay-balance-notice")).toBeVisible();
   await page.getByTestId("pay-balance-take").click();
-  await expect(page.getByTestId("pay-balance-done")).toContainText("DEMO-TRT-D02 reads Paid in full");
+  await expect(page.getByTestId("pay-balance-done")).toContainText("DEMO-PLM-D02 reads Paid in full");
   expect(keys).toHaveLength(2);
   expect(keys[1]).toBe(keys[0]);
 });
@@ -261,7 +261,7 @@ test("at 390 the Pay balance surface does not scroll sideways", async ({ page })
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
   await page.getByTestId("pay-balance-find").click();
   await expect(page.getByTestId("pay-balance-order")).toBeVisible();
   const read = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, view: window.innerWidth }));

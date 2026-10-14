@@ -5287,6 +5287,51 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/dispatch/trucks/{id}:
+    put:
+      operationId: dispatchUpdateTruck
+      tags:
+        - staff-dispatch
+      summary: Update a truck's registry facts, including active or not
+      description: "An absolute PUT of the row the caller read: the fields the create takes plus is_active. The same body twice leaves the same row, so a retry is never a conflict; only a different code colliding with another truck at the branch answers 409. A branch_id naming another yard is refused in words, a truck's runs and crew hang off the yard it lives at. Branch-walled on the row's own branch."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dispatch-board
+        level: manage
+      x-guards:
+        - requireBranch
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchTruck"
+      responses:
+        "200":
+          description: The stored truck
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchTruck"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/dispatch/drivers:
     get:
       operationId: dispatchListDrivers
@@ -5360,6 +5405,49 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/dispatch/drivers/{id}:
+    put:
+      operationId: dispatchUpdateDriver
+      tags:
+        - staff-dispatch
+      summary: Update a driver's registry facts, including active or not
+      description: "An absolute PUT of the row the caller read: the fields the create takes (including the login link user_id) plus is_active. Idempotent under an identical retry; a branch_id naming another yard is refused in words, the truck update's own rule. Branch-walled on the row's own branch."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dispatch-board
+        level: manage
+      x-guards:
+        - requireBranch
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchDriver"
+      responses:
+        "200":
+          description: The stored driver
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchDriver"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/dispatch/board:
     get:
       operationId: dispatchGetBoard
@@ -6289,12 +6377,13 @@ paths:
       tags:
         - staff-dispatch
       summary: Save the dispatch policy for a branch
-      description: Malformed values are refused in words before any database CHECK can fire; omitted knobs normalise to the column defaults rather than to zero.
+      description: "Malformed values are refused in words before any database CHECK can fire; omitted knobs normalise to the column defaults rather than to zero. Beside the level, the route names the configuration's dispatch_policy_setters list (X13): a role off the list is refused the write whatever its cells say, the pricing_editors precedent."
       x-role: requireManager
       x-access:
         surfaces:
           - dispatch-board
         level: manage
+        list: dispatch_policy_setters
       x-guards:
         - requireBranch
       parameters:
@@ -27687,6 +27776,12 @@ components:
           additionalProperties: true
         flow:
           type: string
+        class:
+          type: string
+          enum:
+            - staff
+            - tenant
+          description: "The bearer class of the token: a tenant flow (a contractor persona of the demo account) carries a tenant token and a user block with no tier and no scope, and the front door routes it to the Pro apps"
         chapter_key:
           type: string
     DemoFlow:
@@ -27698,6 +27793,12 @@ components:
           type: string
         label:
           type: string
+        class:
+          type: string
+          enum:
+            - staff
+            - tenant
+          description: The bearer class the flow mints, so the front door can route a contractor to the Pro apps
     DemoFlowList:
       type: object
       required:

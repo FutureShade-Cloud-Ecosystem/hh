@@ -32,7 +32,7 @@ test.afterAll(async ({ request }) => {
 test("P2-1 an add that was out when the person left lands, and the note counts it and the line is there on return", async ({ page }) => {
   await signIn(page);
   await openQuote(page, "Q-1001");
-  await assist(page).locator("#jobtext").fill("3 yd clear stone, 20 sf holland stone");
+  await assist(page).locator("#jobtext").fill("3 yd clear stone, 20 sf charcoal stone");
   await assist(page).getByRole("button", { name: "Suggest lines from this text" }).click();
   const proposals = assist(page).getByTestId("qa-proposal");
   await expect(proposals).toHaveCount(2);
@@ -296,7 +296,7 @@ test("P3 availability: an older read of the quote answered late does not undo a 
   await reloadOf(page, "qd-quote-availability");
   await older.asked;
   armed = false;
-  await request.put("/_stub/stock", { data: { product_id: "p-wall-std", trenton: 2 } });
+  await request.put("/_stub/stock", { data: { product_id: "p-wall-std", pointLoma: 2 } });
   await reloadOf(page, "qd-quote-availability");
   await expect.poll(() => chip.innerText()).not.toBe(before);
   const after = await chip.innerText();
@@ -319,14 +319,14 @@ test("P3 availability: a peek answered after a newer read of the quote is droppe
   await older.asked;
   armed = false;
   // The stock moves, the quote is read again, and the open peek is read again with it.
-  await request.put("/_stub/stock", { data: { product_id: "p-clear-stone", belleville: 7 } });
+  await request.put("/_stub/stock", { data: { product_id: "p-clear-stone", julian: 7 } });
   await reloadOf(page, "qd-quote-availability");
-  await expect(panel.getByTestId("av-branch").filter({ hasText: "BEL: 7 available" })).toBeVisible();
+  await expect(panel.getByTestId("av-branch").filter({ hasText: "JUL: 7 available" })).toBeVisible();
   await quiet(page);
   await older.release();
   await settle(page);
-  await expect(panel.getByTestId("av-branch").filter({ hasText: "BEL: 7 available" })).toBeVisible();
-  await expect(panel.getByTestId("av-branch").filter({ hasText: "BEL: 60 available" })).toHaveCount(0);
+  await expect(panel.getByTestId("av-branch").filter({ hasText: "JUL: 7 available" })).toBeVisible();
+  await expect(panel.getByTestId("av-branch").filter({ hasText: "JUL: 60 available" })).toHaveCount(0);
 });
 
 test("P3 follow-ups: an older read of the quote answered late does not undo a newer one", async ({ page, request }) => {
@@ -434,7 +434,7 @@ test("P3 the assist panel: leaving a quote and coming back inside one update lea
   });
   await extract.release();
   await settle(page);
-  await assist(page).locator("#jobtext").fill("20 sf holland stone");
+  await assist(page).locator("#jobtext").fill("20 sf charcoal stone");
   await expect(assist(page).getByRole("button", { name: "Suggest lines from this text" })).toBeEnabled();
 });
 

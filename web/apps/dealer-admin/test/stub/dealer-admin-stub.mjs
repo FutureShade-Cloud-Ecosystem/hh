@@ -269,6 +269,170 @@ let hotkeys;
 let audit;
 let scenario;
 let log;
+let assist;
+let printJobs;
+let products;
+
+// The catalog world: two invented Gable products, the unit catalogue and the
+// categories. The writes carry the core's own gates and refusals: the
+// attribute PUT and the picture routes are the manager gate (tier 1 to 2), an
+// unknown attribute key is named by the column, and the picture's content
+// type must be one the contract declares.
+const PRODUCT_TEXT_KEYS = new Set([
+  "name",
+  "description",
+  "manufacturer",
+  "collection",
+  "color",
+  "finish",
+  "application",
+  "color_family",
+  "texture",
+  "product_size",
+  "sold_by",
+  "dimensions_lwh",
+  "is_featured",
+  "is_special_order",
+  "contractor_pricing_event_discount",
+  "full_skid_quantity",
+  "layer_quantity",
+  "pallet_count",
+  "minimum_order_qty",
+  "metadata",
+]);
+
+function buildProducts() {
+  return [
+    {
+      id: "3a000000-0000-4000-9000-000000000001",
+      sku: "PAV-60-CH",
+      name: "Charcoal 60 paver",
+      description: "A 60 mm paver in charcoal.",
+      manufacturer: "Techo-Bloc",
+      collection: "Blu",
+      color: "Charcoal",
+      color_family: "Grey",
+      finish: "smooth",
+      application: "patios and walkways",
+      texture: "",
+      product_size: "60 mm",
+      sold_by: "SF",
+      base_uom: "SF",
+      dimensions_lwh: "",
+      is_featured: false,
+      is_special_order: false,
+      contractor_pricing_event_discount: false,
+      full_skid_quantity: null,
+      layer_quantity: null,
+      pallet_count: null,
+      minimum_order_qty: "120",
+      is_active: true,
+      metadata: {},
+      list_price_cents: 488,
+      list_price_uom: "SF",
+    },
+    {
+      id: "3a000000-0000-4000-9000-000000000002",
+      sku: "WALL-SEM-BR",
+      name: "Seminole wall block",
+      description: "A split face wall block for garden walls.",
+      manufacturer: "Risi",
+      collection: "Seminole",
+      color: "Brown",
+      color_family: "Brown",
+      finish: "split",
+      application: "garden walls",
+      texture: "",
+      product_size: "8 inch",
+      sold_by: "EA",
+      base_uom: "EA",
+      dimensions_lwh: "",
+      is_featured: false,
+      is_special_order: false,
+      contractor_pricing_event_discount: false,
+      full_skid_quantity: 144,
+      layer_quantity: 36,
+      pallet_count: 4,
+      minimum_order_qty: null,
+      is_active: true,
+      metadata: {},
+      list_price_cents: null,
+      list_price_uom: "",
+    },
+  ];
+}
+
+// The categories read is the pricing world's (its three categories, below); the
+// catalog's finder and cards read the same route.
+const UOMS = [
+  { code: "SF", name: "square feet", dimension: "area", is_active: true },
+  { code: "CYD", name: "cubic yards", dimension: "volume", is_active: true },
+  { code: "EA", name: "each", dimension: "count", is_active: true },
+  { code: "TON", name: "tons", dimension: "weight", is_active: true },
+];
+
+// The print queue: one sale's receipt history, a first print and a reprint,
+// and one label nobody has printed. The reference is the stub sale's own id,
+// the same document the audit world's trail spans.
+function buildPrintJobs() {
+  const ago = (minutes) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+  return [
+    {
+      id: "9a000000-0000-4000-9000-000000000001",
+      doc_type: "RECEIPT",
+      ref_id: SALE_REF,
+      branch_id: BRANCHES[0].id,
+      render_target: "BROWSER",
+      status: "PRINTED",
+      requested_by: USERS["dealer-admin"].user_id,
+      requested_at: ago(40),
+      printed_at: ago(39),
+    },
+    {
+      id: "9a000000-0000-4000-9000-000000000002",
+      doc_type: "RECEIPT",
+      ref_id: SALE_REF,
+      branch_id: BRANCHES[0].id,
+      render_target: "BROWSER",
+      status: "QUEUED",
+      requested_by: USERS["dealer-admin"].user_id,
+      requested_at: ago(5),
+    },
+    {
+      id: "9a000000-0000-4000-9000-000000000003",
+      doc_type: "LABEL_ZPL",
+      ref_id: "0f000000-0000-4000-9000-0000000000s2",
+      branch_id: BRANCHES[1].id,
+      render_target: "ZPL",
+      status: "FAILED",
+      failure_reason: "the label printer was not reachable",
+      requested_at: ago(30),
+    },
+  ];
+}
+
+const SALE_REF = "0f000000-0000-4000-9000-000000000001";
+const DOC_TYPES = new Set(["RECEIPT", "LABEL_ZPL", "DELIVERY_DOC"]);
+
+// The assist admin world, the core's own shapes: the spend report zero filled
+// from the staff list (every active person appears, the ones who never opened
+// the assistant included), the budgets with one role default and one person's
+// override, and the four settings keys with the key's NAME and a no.
+function buildAssist() {
+  return {
+    role_budgets: { GENERAL_MANAGER: 500000 },
+    user_overrides: { [USERS["inside-sales"].user_id]: 0 },
+    default_budget: 60000,
+    exchanges: {
+      [USERS["dealer-admin"].user_id]: { exchanges: 4, tokens_in: 300, tokens_out: 200 },
+    },
+    settings: {
+      settings: { provider: "stub", model: "hos-stub-1", chat_enabled: true, spend_visible_to_non_admin: false },
+      key_env_var: "HH_ASSIST_API_KEY",
+      key_present: false,
+    },
+  };
+}
 let payments;
 let posPolicy;
 let policyHistory;
@@ -650,6 +814,9 @@ function reset() {
   staff = buildStaff();
   hotkeys = buildHotkeys();
   audit = buildAudit();
+  assist = buildAssist();
+  printJobs = buildPrintJobs();
+  products = buildProducts();
   surfaces = buildSurfaces();
   mine = buildMine();
   payments = buildPayments();
@@ -1758,6 +1925,221 @@ async function handle(req, res) {
     return json(res, { items, next_cursor: null, limit: 200 });
   }
 
+  // ---- the assist admin (the core's RequireAdmin: tier 1 global) ----
+
+  const assistSpendReport = () => {
+    // The core zero fills the report from the staff list, biggest spender
+    // first: the exchange count is the answer, the tokens the next question.
+    const rows = staff.map((m) => {
+      const used = assist.exchanges[m.user_id] ?? { exchanges: 0, tokens_in: 0, tokens_out: 0 };
+      const override = assist.user_overrides[m.user_id];
+      const roleBudget = assist.role_budgets[m.role_code];
+      const budget =
+        override !== undefined
+          ? { tokens: override, source: "user" }
+          : roleBudget !== undefined
+            ? { tokens: roleBudget, source: "role" }
+            : { tokens: assist.default_budget, source: "default" };
+      return {
+        user_id: m.user_id,
+        display_name: m.display_name,
+        email: m.email,
+        role_code: m.role_code,
+        exchanges: used.exchanges,
+        tokens_in: used.tokens_in,
+        tokens_out: used.tokens_out,
+        budget,
+      };
+    });
+    rows.sort((a, b) => b.tokens_in + b.tokens_out - (a.tokens_in + a.tokens_out) || b.exchanges - a.exchanges);
+    return { month: "2026-10", users: rows };
+  };
+
+  if (req.method === "GET" && path === "/api/v1/assist/admin/spend") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    return json(res, assistSpendReport());
+  }
+
+  if (req.method === "GET" && path === "/api/v1/assist/admin/limits") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    return json(res, {
+      role_budgets: assist.role_budgets,
+      user_overrides: assist.user_overrides,
+      default_budget: assist.default_budget,
+    });
+  }
+
+  const roleLimitMatch = path.match(/^\/api\/v1\/assist\/admin\/limits\/role\/([^/]+)$/);
+  if (req.method === "PUT" && roleLimitMatch) {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const role = decodeURIComponent(roleLimitMatch[1]);
+    const tokens = Number(body?.tokens);
+    if (!Number.isInteger(tokens) || tokens < 0) {
+      return refuse(res, 400, "A budget can't be negative. Use 0 to switch the assistant off for this role.");
+    }
+    assist.role_budgets[role] = tokens;
+    return json(res, { role_code: role, tokens });
+  }
+
+  const userLimitMatch = path.match(/^\/api\/v1\/assist\/admin\/limits\/user\/([^/]+)$/);
+  if (req.method === "PUT" && userLimitMatch) {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const user = decodeURIComponent(userLimitMatch[1]);
+    const tokens = Number(body?.tokens);
+    if (!Number.isInteger(tokens) || tokens < 0) {
+      return refuse(res, 400, "A budget can't be negative. Use 0 to switch the assistant off for this person.");
+    }
+    assist.user_overrides[user] = tokens;
+    return json(res, { user_id: user, tokens, source: "user" });
+  }
+
+  if (req.method === "DELETE" && userLimitMatch) {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    // Reset to role is idempotent: resetting a person with no override succeeds.
+    delete assist.user_overrides[decodeURIComponent(userLimitMatch[1])];
+    return json(res, { user_id: decodeURIComponent(userLimitMatch[1]), source: "role" });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/assist/admin/settings") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    return json(res, assist.settings);
+  }
+
+  if (req.method === "PUT" && path === "/api/v1/assist/admin/settings") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const key = String(body?.key ?? "");
+    const value = String(body?.value ?? "");
+    const yesNo = key === "chat_enabled" || key === "spend_visible_to_non_admin";
+    if (!yesNo) return refuse(res, 400, `"${key}" isn't an assistant setting.`);
+    if (value !== "true" && value !== "false") {
+      return refuse(res, 400, `${key} is a yes/no setting, use true or false.`);
+    }
+    assist.settings.settings[key] = value === "true";
+    return json(res, { key, value });
+  }
+
+  // ---- the print queue (the core's RequireStaff: any signed in caller) ----
+
+  if (req.method === "GET" && path === "/api/v1/printing/jobs") {
+    const docType = url.searchParams.get("doc_type") ?? "";
+    const refId = url.searchParams.get("ref_id") ?? "";
+    // The core's own refusals, in its own words and in its own order: the
+    // paper first, then the reference.
+    if (!DOC_TYPES.has(docType)) return refuse(res, 400, `unknown print doc_type "${docType}"`);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(refId)) {
+      return refuse(res, 404, "not found");
+    }
+    const jobs = printJobs.filter((j) => j.doc_type === docType && j.ref_id === refId);
+    return json(res, { jobs });
+  }
+
+  // ---- the exports (the workbook is a staff read; the messages export is RequireAdmin) ----
+
+  if (req.method === "GET" && path === "/api/v1/exports/audit.xlsx") {
+    // A double's workbook: the xlsx magic followed by filler. The route's
+    // contract is the raw bytes, and the app never parses them.
+    const body = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(1020, 7)]);
+    res.writeHead(200, {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Length": body.byteLength,
+    });
+    res.end(body);
+    return;
+  }
+
+  if (req.method === "GET" && path === "/api/v1/messaging/export") {
+    // The core's RequireAdmin: a frontline caller is refused the export.
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const since = url.searchParams.get("since") ?? "";
+    const until = url.searchParams.get("until") ?? "";
+    if (since !== "" && Number.isNaN(new Date(since).getTime())) {
+      return refuse(res, 400, "since must be an RFC3339 timestamp");
+    }
+    if (until !== "" && Number.isNaN(new Date(until).getTime())) {
+      return refuse(res, 400, "until must be an RFC3339 timestamp");
+    }
+    const channelId = url.searchParams.get("channel_id") ?? "";
+    const rows = buildMessageExport().filter((m) => channelId === "" || m.channel_id === channelId);
+    return json(res, { messages: rows });
+  }
+
+  // ---- the catalog (the reads are the public catalogue; the writes are the manager gate) ----
+
+  if (req.method === "GET" && path === "/api/v1/products") {
+    const q = (url.searchParams.get("q") ?? "").toLowerCase();
+    const items = q === "" ? products : products.filter((p) => `${p.name} ${p.sku} ${p.collection}`.toLowerCase().includes(q));
+    return json(res, { items, next_cursor: null, limit: 20 });
+  }
+
+  const productMatch = path.match(/^\/api\/v1\/products\/([^/]+)$/);
+  if (req.method === "GET" && productMatch) {
+    const p = products.find((x) => x.id === productMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    return json(res, p);
+  }
+
+  if (req.method === "PUT" && productMatch) {
+    // The core's RequireManager: a frontline caller is refused the write.
+    if (!isManager(flow) || scenario === "refused-product") return refuse(res, 403, "Forbidden");
+    const p = products.find((x) => x.id === productMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    for (const [key, value] of Object.entries(body ?? {})) {
+      if (!PRODUCT_TEXT_KEYS.has(key)) return refuse(res, 400, `update product: column "${key}" is not editable`);
+      p[key] = value;
+    }
+    return json(res, p);
+  }
+
+  const imageMatch = path.match(/^\/api\/v1\/products\/([^/]+)\/image$/);
+  if (req.method === "PUT" && imageMatch) {
+    if (!isManager(flow) || scenario === "refused-product") return refuse(res, 403, "Forbidden");
+    const p = products.find((x) => x.id === imageMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    return json(res, { product_id: p.id, byte_size: raw.byteLength });
+  }
+
+  if (req.method === "DELETE" && imageMatch) {
+    if (!isManager(flow) || scenario === "refused-product") return refuse(res, 403, "Forbidden");
+    const p = products.find((x) => x.id === imageMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    return json(res, { status: "DELETED" });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/uoms") {
+    return json(res, { items: UOMS, next_cursor: null, limit: 100 });
+  }
+
+  // ---- the platform keys (staff wide read; the core does not serve it yet, the parity fact the waits state names) ----
+
+  if (req.method === "GET" && path === "/api/v1/operator/platform-keys") {
+    if (scenario === "unregistered-keys") {
+      // The real mux answers the unregistered route with a bare 404.
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      return res.end("404 page not found\n");
+    }
+    return json(res, {
+      items: [
+        {
+          key: "launcher.tiles",
+          platform_floor: { launcher: true, order: ["sales", "stock", "money"] },
+          dealer_override: { launcher: true, order: ["money", "sales", "stock"] },
+          credential_configured: false,
+          updated_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+          updated_by: "platform operator",
+        },
+        {
+          key: "providers.card",
+          platform_floor: { mode: "hosted" },
+          dealer_override: null,
+          credential_configured: true,
+          updated_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+          updated_by: "platform operator",
+        },
+      ],
+      next_cursor: null,
+    });
+  }
+
   // ---- the configurable surfaces (the settings kit) ----
   // The curation writes are admin gated in the kit's service, so the refusal
   // is the service's own sentence, not the shared Forbidden body.
@@ -1966,6 +2348,40 @@ async function handle(req, res) {
   }
 
   return notFound(res);
+}
+
+// The masked messages export: a text row with an author, an event row, and a
+// deleted row the server has tombstoned. The masking is the server's own rule
+// stated in the schema; the double carries its shape.
+function buildMessageExport() {
+  const at = (minutes) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+  return [
+    {
+      id: "aa000000-0000-4000-9000-000000000001",
+      channel_id: "bb000000-0000-4000-9000-000000000001",
+      kind: "TEXT",
+      author_name: "Dealer admin (demo)",
+      body: "Yard two, the point loma truck is back with the pallet racking.",
+      created_at: at(50),
+      deleted_at: null,
+    },
+    {
+      id: "aa000000-0000-4000-9000-000000000002",
+      channel_id: "bb000000-0000-4000-9000-000000000001",
+      kind: "EVENT",
+      body: "order 4f000000-0000-4000-9000-000000000001 moved to PICKED",
+      created_at: at(40),
+      deleted_at: null,
+    },
+    {
+      id: "aa000000-0000-4000-9000-000000000003",
+      channel_id: "bb000000-0000-4000-9000-000000000002",
+      kind: "APPROVAL",
+      body: "payment of $196.80 approved against order 4f000000-0000-4000-9000-000000000002",
+      created_at: at(30),
+      deleted_at: at(10),
+    },
+  ];
 }
 
 const server = createServer((req, res) => {

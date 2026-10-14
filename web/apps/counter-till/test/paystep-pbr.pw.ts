@@ -34,10 +34,10 @@ async function pickAccount(page: Page, search: string, name: string): Promise<vo
   await row.click();
 }
 
-async function addHolland(page: Page): Promise<void> {
+async function addCharcoal(page: Page): Promise<void> {
   await openStep(page, "items");
-  await page.getByTestId("pos-scan-input").fill("holland");
-  const row = page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first();
+  await page.getByTestId("pos-scan-input").fill("charcoal");
+  const row = page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first();
   await expect(row).toBeVisible();
   await row.click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
@@ -75,7 +75,7 @@ test("the Cash On Demand account's payment step offers Pay Before Release, and t
 }) => {
   await signIn(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
 
@@ -125,7 +125,7 @@ test("the pay before release option rides Collect now too, and only the Cash On 
 }) => {
   await signIn(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  await addHolland(page);
+  await addCharcoal(page);
   await openStep(page, "payment");
 
   // Collect now keeps the menu standing for the pay before release shape alone (any
@@ -148,7 +148,7 @@ test("the pay before release option rides Collect now too, and only the Cash On 
   // account's alone, and the server says so in the menu it answers.
   await signIn(page);
   await pickAccount(page, "C02", "Fenwick Builders Ltd");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
   await expect(page.getByTestId("pay-shape-PAY_BEFORE_RELEASE")).toHaveCount(0);
@@ -158,15 +158,15 @@ test("the pay before release option rides Collect now too, and only the Cash On 
   // and the walk-in itself reads the same list (the house row has no line to draw the unpaid
   // exposure against, the credit gate's own COD constraint).
   await signIn(page);
-  await pickAccount(page, "C07", "Lachance Retail");
-  await addHolland(page);
+  await pickAccount(page, "C07", "Homeowner B Retail");
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
   await expect(page.getByTestId("pay-shape-PAY_BEFORE_RELEASE")).toHaveCount(0);
   await expect(page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER")).toBeVisible();
 
   await signIn(page);
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
   await expect(page.getByTestId("pay-shape-PAY_BEFORE_RELEASE")).toHaveCount(0);
@@ -182,7 +182,7 @@ for (const [tile, tender] of [
   }) => {
     await signIn(page);
     await pickAccount(page, "C10", "Cash On Demand Landscaping");
-    await addHolland(page);
+    await addCharcoal(page);
     await chooseWillCall(page);
     await openStep(page, "payment");
 
@@ -210,7 +210,7 @@ for (const [tile, tender] of [
 test("Charge Account still steps out of Pay Before Release", async ({ page }) => {
   await signIn(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
 

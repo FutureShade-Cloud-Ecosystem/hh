@@ -106,7 +106,7 @@ function readBody(req) {
 
 // ---- the world -----------------------------------------------------------------------
 //
-// Trenton, the one branch the demo grants reach. Two open shortages on two
+// Point Loma, the one branch the demo grants reach. Two open shortages on two
 // picks, one resolved shortage beside them (the counter-case), one stale
 // pick past its accept deadline, one purchase order PARTIAL with a short
 // line (the receiving difference), and one margin approval the sales
@@ -133,6 +133,87 @@ const CLAIM_WEB = "10000000-0000-4000-9000-0000000000c5";
 
 const ago = (hours) => new Date(Date.now() - hours * 3600 * 1000).toISOString();
 
+// ---- the dispatch day -------------------------------------------------------------------
+//
+// The Drivers view's world, in the core's board shape: one branch, today, its
+// runs and its stops. Four runs, one per board state (on a stop, between
+// stops, not started, done), five active drivers with one on no run, three
+// trucks. Every driver is a role label, per the demo tenant sheet (GLS-
+// TENANT-r2): no person's name rides this board.
+
+function buildDispatch() {
+  const day = new Date().toISOString().slice(0, 10);
+  const stop = (id, runId, stopNo, status, stamps = {}) => ({
+    id,
+    branch_id: BRANCH_ID,
+    order_id: `0d000000-0000-4000-9000-0000000000${stopNo}${runId.slice(-1)}`,
+    order_no: `SO-TRT-10${stopNo}${runId.slice(-1)}`,
+    customer_name: "Northline Hardscapes (demo)",
+    run_id: runId,
+    stop_no: stopNo,
+    scheduled_date: day,
+    status,
+    time_window: "",
+    loaded_at: stamps.loaded ?? null,
+    en_route_at: stamps.enRoute ?? null,
+    delivered_at: stamps.delivered ?? null,
+    pod_at: null,
+    photo_count: 0,
+    created_at: ago(5),
+  });
+  const run = (id, runNo, status, truckId, truckCode, driverId, driverName, stopCount, stamps = {}) => ({
+    id,
+    run_no: runNo,
+    branch_id: BRANCH_ID,
+    scheduled_date: day,
+    status,
+    truck_id: truckId,
+    driver_id: driverId,
+    truck_code: truckCode,
+    driver_name: driverName,
+    notes: "",
+    dispatched_at: stamps.dispatched ?? null,
+    completed_at: stamps.completed ?? null,
+    stop_count: stopCount,
+    created_at: ago(5),
+    commit_state: "AUTO",
+    reopened_at: "",
+    reopen_reason: "",
+  });
+  return {
+    runs: [
+      run("d1000000-0000-4000-9000-0000000000r1", "RUN-1", "DISPATCHED", "d1000000-0000-4000-9000-0000000000t1", "T1", "d1000000-0000-4000-9000-0000000000d1", "Driver persona (demo)", 3, { dispatched: ago(3) }),
+      run("d1000000-0000-4000-9000-0000000000r2", "RUN-2", "DISPATCHED", "d1000000-0000-4000-9000-0000000000t2", "T2", "d1000000-0000-4000-9000-0000000000d2", "Driver two (demo)", 2, { dispatched: ago(2) }),
+      run("d1000000-0000-4000-9000-0000000000r3", "RUN-3", "PLANNED", "d1000000-0000-4000-9000-0000000000t3", "", "d1000000-0000-4000-9000-0000000000d3", "Driver three (demo)", 1),
+      run("d1000000-0000-4000-9000-0000000000r4", "RUN-4", "COMPLETED", "d1000000-0000-4000-9000-0000000000t1", "T1", "d1000000-0000-4000-9000-0000000000d4", "Driver four (demo)", 2, { dispatched: ago(4), completed: ago(2) }),
+    ],
+    stops: [
+      stop("d1000000-0000-4000-9000-0000000000s1", "d1000000-0000-4000-9000-0000000000r1", 1, "DELIVERED", { loaded: ago(3.5), enRoute: ago(3), delivered: ago(1) }),
+      stop("d1000000-0000-4000-9000-0000000000s2", "d1000000-0000-4000-9000-0000000000r1", 2, "EN_ROUTE", { loaded: ago(3.5), enRoute: ago(0.3) }),
+      stop("d1000000-0000-4000-9000-0000000000s3", "d1000000-0000-4000-9000-0000000000r1", 3, "READY"),
+      stop("d1000000-0000-4000-9000-0000000000s4", "d1000000-0000-4000-9000-0000000000r2", 1, "DELIVERED", { loaded: ago(2.5), enRoute: ago(2), delivered: ago(0.7) }),
+      stop("d1000000-0000-4000-9000-0000000000s5", "d1000000-0000-4000-9000-0000000000r2", 2, "LOADED", { loaded: ago(0.5) }),
+      stop("d1000000-0000-4000-9000-0000000000s6", "d1000000-0000-4000-9000-0000000000r3", 1, "READY"),
+      stop("d1000000-0000-4000-9000-0000000000s7", "d1000000-0000-4000-9000-0000000000r4", 1, "DELIVERED", { loaded: ago(4), enRoute: ago(3.8), delivered: ago(3) }),
+      stop("d1000000-0000-4000-9000-0000000000s8", "d1000000-0000-4000-9000-0000000000r4", 2, "DELIVERED", { loaded: ago(4), enRoute: ago(3.5), delivered: ago(2.4) }),
+    ],
+    unassigned: [],
+    drivers: [
+      { id: "d1000000-0000-4000-9000-0000000000d1", branch_id: BRANCH_ID, name: "Driver persona (demo)", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000d2", branch_id: BRANCH_ID, name: "Driver two (demo)", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000d3", branch_id: BRANCH_ID, name: "Driver three (demo)", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000d4", branch_id: BRANCH_ID, name: "Driver four (demo)", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000d5", branch_id: BRANCH_ID, name: "Driver five (demo)", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000d6", branch_id: BRANCH_ID, name: "Driver off roster (demo)", is_active: false },
+    ],
+    trucks: [
+      { id: "d1000000-0000-4000-9000-0000000000t1", branch_id: BRANCH_ID, code: "T1", name: "Truck 1 flatbed", truck_type: "FLATBED", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000t2", branch_id: BRANCH_ID, code: "T2", name: "Truck 2 dump", truck_type: "DUMP", is_active: true },
+      { id: "d1000000-0000-4000-9000-0000000000t3", branch_id: BRANCH_ID, code: "T3", name: "Truck 3 pickup", truck_type: "PICKUP", is_active: true },
+    ],
+  };
+}
+
 function buildWorld() {
   const shortages = [
     {
@@ -141,7 +222,7 @@ function buildWorld() {
       order_line_no: 1,
       product_id: "00000000-0000-4000-9000-0000000000p9",
       sku: "GRAN-A-CYD",
-      description: "Granular A gravel",
+      description: "Class 2 base rock gravel",
       qty_short: "4.0000",
       uom: "CYD",
       note: "Only 8 yards left in the bin",
@@ -175,7 +256,7 @@ function buildWorld() {
       reported_at: ago(48),
       resolved_at: ago(47),
       resolved_by: "de110000-0000-4000-9000-000000000003",
-      resolution: "Substituted from the Trenton skid",
+      resolution: "Substituted from the Point Loma skid",
     },
   ];
   const tasks = [
@@ -197,11 +278,11 @@ function buildWorld() {
       },
       ticket: {
         order_id: "0d000000-0000-4000-9000-000000000008",
-        order_no: "SO-TRT-1042",
-        customer_name: "K. Villeneuve (demo)",
+        order_no: "SO-PLM-1042",
+        customer_name: "Site foreman",
         fulfillment: "WILL_CALL",
         lines: [
-          { line_no: 1, product_id: "00000000-0000-4000-9000-0000000000p9", sku: "GRAN-A-CYD", description: "Granular A gravel", qty_ordered: "12.0000", uom: "CYD" },
+          { line_no: 1, product_id: "00000000-0000-4000-9000-0000000000p9", sku: "GRAN-A-CYD", description: "Class 2 base rock gravel", qty_ordered: "12.0000", uom: "CYD" },
         ],
         source: "DISPATCH",
       },
@@ -226,8 +307,8 @@ function buildWorld() {
       },
       ticket: {
         order_id: "0d000000-0000-4000-9000-000000000001",
-        order_no: "SO-TRT-1038",
-        customer_name: "Northline Hardscapes Ltd (demo)",
+        order_no: "SO-PLM-1038",
+        customer_name: "Summit Ridge Builders",
         fulfillment: "DELIVERY",
         lines: [],
         source: "DISPATCH",
@@ -238,6 +319,7 @@ function buildWorld() {
   const world = {
     shortages,
     tasks,
+    dispatch: buildDispatch(),
     needsByProfile: {
       "manager.yard": {
         profile: "manager.yard",
@@ -358,8 +440,8 @@ function buildWorld() {
           total: 14,
           range: "today",
           points: [
-            { label: "Trenton", number: 10 },
-            { label: "Kingston", number: 4 },
+            { label: "Point Loma", number: 10 },
+            { label: "Julian", number: 4 },
           ],
         },
         "picks.gauge": { widget_key: "picks.gauge", state: "ok", total: 20, range: "open" },
@@ -377,9 +459,9 @@ function buildWorld() {
     receiving: [
       {
         po_id: PO_PARTIAL,
-        po_no: "PO-TRT-77",
+        po_no: "PO-PLM-77",
         vendor_id: "0c000000-0000-4000-9000-0000000000v1",
-        vendor_name: "Northland Stone Supply (demo)",
+        vendor_name: "Prairie Bend Soils",
         branch_id: BRANCH_ID,
         status: "PARTIAL",
         expected_at: ago(-24).slice(0, 10),
@@ -389,7 +471,7 @@ function buildWorld() {
       },
       {
         po_id: "0b000000-0000-4000-9000-0000000000p2",
-        po_no: "PO-TRT-78",
+        po_no: "PO-PLM-78",
         vendor_id: "0c000000-0000-4000-9000-0000000000v2",
         vendor_name: "Bay Aggregate (demo)",
         branch_id: BRANCH_ID,
@@ -1291,9 +1373,9 @@ async function handle(req, res) {
     return json(res, [
       {
         id: BRANCH_ID,
-        code: "TRT",
-        name: "Dibbits Landscape Supply · Trenton",
-        address: { line1: "TBD", city: "Trenton", province: "ON", postal: "K8V 0A0", country: "CA" },
+        code: "PLM",
+        name: "Gable Landscape Supply · Point Loma",
+        address: { line1: "TBD", city: "Point Loma", province: "CA", postal: "92106", country: "US" },
         is_default: true,
         is_system_default: false,
         is_active: true,
@@ -1393,6 +1475,32 @@ async function handle(req, res) {
     approval.status = body?.approve === true ? "APPROVED" : "REJECTED";
     approval.decided_by = USERS[flow].user_id;
     return json(res, { ok: true });
+  }
+
+  // ---- the dispatch reads the Drivers view uses ----
+  //
+  // The board answers its own today when no date rides the query, the way the
+  // core's Board does (service.go: date == "" becomes the server's today).
+  // drivers-refused is the role gate's own body, the one word.
+  if (req.method === "GET" && path === "/api/v1/dispatch/board") {
+    if (scenario === "drivers-refused") return refuse(res, 403, "Forbidden");
+    const day = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
+    const empty = scenario === "no-runs";
+    return json(res, {
+      branch_id: url.searchParams.get("branch_id") || BRANCH_ID,
+      date: day,
+      runs: empty ? [] : world.dispatch.runs,
+      stops: empty ? [] : world.dispatch.stops,
+      unassigned: empty ? [] : world.dispatch.unassigned,
+    });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/dispatch/drivers") {
+    return json(res, { items: world.dispatch.drivers, next_cursor: null, limit: 100 });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/dispatch/trucks") {
+    return json(res, { items: world.dispatch.trucks, next_cursor: null, limit: 100 });
   }
 
   // ---- the dashboard builder's routes ----

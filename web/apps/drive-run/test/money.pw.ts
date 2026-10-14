@@ -57,7 +57,7 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   await expect(page.getByRole("heading", { name: "End of run" })).toBeVisible();
   screens.push(await everyWordOnScreen(page));
 
-  expect(screens.every((text) => text.includes("Northline") || text.includes("End of run") || text.includes("Proof") || text.includes("Could not"))).toBe(true);
+  expect(screens.every((text) => text.includes("Summit Ridge") || text.includes("End of run") || text.includes("Proof") || text.includes("Could not"))).toBe(true);
   for (const text of screens) {
     for (const figure of FIGURES) expect(text).not.toContain(figure);
     expect(text.toLowerCase()).not.toMatch(/cents|unit_price|freight|gauge|amount_due|payment_hold/);

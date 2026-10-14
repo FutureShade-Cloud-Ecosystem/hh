@@ -19,7 +19,7 @@ import { refusalWords } from "../src/po/po-logic.ts";
 
 const PO = {
   id: "c0000000-0000-4000-8000-000000000066",
-  po_no: "PO-TRT-66",
+  po_no: "PO-PLM-66",
   branch_id: "b0000000-0000-4000-8000-000000000001",
   status: "RECEIVED",
   lines: [
@@ -29,7 +29,7 @@ const PO = {
 };
 
 const text = (over = {}) => ({
-  poNo: "PO-TRT-66",
+  poNo: "PO-PLM-66",
   currency: "CAD",
   fx: "",
   freight: "480.00",
@@ -74,7 +74,7 @@ test("a capture builds the body the core expects, amounts as exact cents", () =>
   assert.equal(made.ok, true);
   assert.deepEqual(made.body, {
     po_id: PO.id,
-    po_ref: "PO-TRT-66",
+    po_ref: "PO-PLM-66",
     branch_id: PO.branch_id,
     currency: "CAD",
     freight_cents: 48000,
@@ -133,14 +133,14 @@ test("a retro capture can follow only an applied landed cost of the same order",
 });
 
 test("the confirm step names the order, the basis and the server's own total", () => {
-  const apply = confirmWords("apply", { po_ref: "PO-TRT-66", allocation_basis: "WEIGHT", retro_of_id: undefined }, 51550);
-  assert.match(apply, /PO-TRT-66/);
+  const apply = confirmWords("apply", { po_ref: "PO-PLM-66", allocation_basis: "WEIGHT", retro_of_id: undefined }, 51550);
+  assert.match(apply, /PO-PLM-66/);
   assert.match(apply, /\$515\.50/);
   assert.match(apply, /by weight/i);
   assert.match(apply, /raises the cost of the goods/i);
-  const voided = confirmWords("void", { po_ref: "PO-TRT-66", allocation_basis: "VALUE" }, 51550);
+  const voided = confirmWords("void", { po_ref: "PO-PLM-66", allocation_basis: "VALUE" }, 51550);
   assert.match(voided, /reverses/i);
-  const retro = confirmWords("retro", { po_ref: "PO-TRT-66", allocation_basis: "VALUE", retro_of_id: "x" }, 51550);
+  const retro = confirmWords("retro", { po_ref: "PO-PLM-66", allocation_basis: "VALUE", retro_of_id: "x" }, 51550);
   assert.match(retro, /sold/i);
   assert.equal(confirmWords("apply", { po_ref: "", allocation_basis: "VALUE" }, undefined).includes("(no figure)"), true);
 });

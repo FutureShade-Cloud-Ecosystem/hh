@@ -24,6 +24,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 )
 
@@ -401,7 +402,7 @@ func (r *Repository) Browse(ctx context.Context, f BrowseFilter) (BrowseResult, 
 
 	// The two boolean facets are counted as single toggles rather than value lists.
 	for _, bf := range []struct{ Field, Column, Label string }{
-		{"is_featured", "is_featured", "Dibbits favourite"},
+		{"is_featured", "is_featured", featuredFacetLabel()},
 		{"is_special_order", "is_special_order", "Special order"},
 	} {
 		boolArgs := []any{}
@@ -420,3 +421,7 @@ func (r *Repository) Browse(ctx context.Context, f BrowseFilter) (BrowseResult, 
 
 	return out, nil
 }
+
+// featuredFacetLabel is the label of the featured-product toggle: the dealer's own configured name
+// ("<name> favourite"), or the neutral "Dealer favourite" when none is set. Never a name in code.
+func featuredFacetLabel() string { return dealer.Or("Dealer") + " favourite" }
