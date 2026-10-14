@@ -55,6 +55,10 @@ RUN npm ci
 RUN mkdir -p /out/till /out/q /out/quote /out/drive /out/home /out/yard /out/money-desk /out/dispatch /out/dealer-admin /out/pro-procurement /out/pro-pay /out/pro-field
 WORKDIR /src/web/apps/front-door
 RUN npx vite build --outDir /out/root
+# The front door has no default sign in mode (it reads /config.json), so this
+# image says its own: the demo box is the tap a role page. Written after the
+# build, which empties its output directory.
+RUN printf '{"mode":"demo"}' > /out/root/config.json
 WORKDIR /src/web/apps/counter-till
 RUN npx vite build --mode demo --base=/till/ --outDir /out/till --emptyOutDir
 # Buying and Stock, the procurement slice: a staff app, so the demo mode

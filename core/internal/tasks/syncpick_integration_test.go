@@ -46,6 +46,9 @@ type pickDoor struct {
 	f       hhsync.ScopeFilter
 	// authority is what the staff seam answers; tests replace it.
 	authority func() (identity.StaffContext, bool, error)
+	// hold is the order double the service talks to; it can hold a pooled connection for the length of the
+	// call, as the real order module does.
+	hold *connOrder
 	// user is the linked ERP user the default authority answers.
 	user string
 	// actors records who the record body was asked to attribute to.
@@ -62,14 +65,24 @@ func (a actorSpy) RecordPick(ctx context.Context, taskID, actorID string, lines 
 	return a.inner.RecordPick(ctx, taskID, actorID, lines)
 }
 
-func newPickDoor(t *testing.T) *pickDoor {
+func newPickDoor(t *testing.T) *pickDoor { return newPickDoorConns(t, 0) }
+
+// newPickDoorConns is newPickDoor over a pool capped at conns connections (zero keeps the default).
+func newPickDoorConns(t *testing.T, conns int32) *pickDoor {
 	t.Helper()
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
 		t.Skip("pick record door leg: DATABASE_URL not set")
 	}
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, url)
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatalf("pool config: %v", err)
+	}
+	if conns > 0 {
+		cfg.MaxConns = conns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("pool: %v", err)
 	}
@@ -92,7 +105,8 @@ func newPickDoor(t *testing.T) *pickDoor {
 			_, _ = pool.Exec(bg, `DELETE FROM org WHERE id = $1`, o)
 		}
 	})
-	d.svc = NewService(NewRepository(pool)).WithYardOrderChanges(d.yard)
+	d.hold = &connOrder{fakeYardOrder: d.yard, pool: pool}
+	d.svc = NewService(NewRepository(pool)).WithYardOrderChanges(d.hold)
 	// The caller is a linked ERP user, as the direct door requires (taskBranchFence answers 401 without one).
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO users (email, display_name, status) VALUES ($1, 'pick door leg', 'ACTIVE') RETURNING id::text`,

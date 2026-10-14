@@ -89,6 +89,46 @@ paths:
         "503":
           description: A dependency of the exchange could not answer; nothing was minted
 
+  /api/v1/auth/persona:
+    post:
+      operationId: identityPersona
+      tags: [staff-identity]
+      summary: Enter the demo as one persona of the fixed list
+      description: >-
+        Mounted only in the demo build under the console sign in mode, and
+        absent from the default build and from the demo mode. A persona is
+        not an FB Console user: the core mints the persona's session itself
+        with the deployment's own signing key. The subject of the token is
+        persona:<id>. On the testers' copy the caller sends the core bearer
+        of a real partner exchange and the partner must be on the pinned
+        list; a persona token cannot call it. On the public copy no bearer
+        is sent and the route is limited per address and per address and
+        persona. The token window is the persona role's session ceiling,
+        with no refresh. An id outside the fixed list and the contractor
+        personas answer the shared Forbidden body, and no refusal says which
+        check failed.
+      x-addition: "the demo build's tap-a-role entry under the real sign in (state note HH-S4-AUTH, section 5); the ERP minted demo sessions from a flow table"
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityPersonaRequest"
+      responses:
+        "200":
+          description: The persona's core session token, its expiry and its staff identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityExchangeResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503":
+          description: A dependency of the entry could not answer; nothing was minted
   /api/v1/auth/methods:
     get:
       operationId: identityAuthMethods
@@ -1072,6 +1112,15 @@ components:
         org:
           type: string
           description: The org slug whose Team the person belongs to
+
+    IdentityPersonaRequest:
+      type: object
+      required: [persona]
+      additionalProperties: false
+      properties:
+        persona:
+          type: string
+          description: One id of the build's fixed persona list
 
     IdentityExchangeResponse:
       type: object

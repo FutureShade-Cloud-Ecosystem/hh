@@ -281,6 +281,12 @@ page_gated() {
 		|| fail "$2 answered $code without the phrase, want 401"
 }
 page_has / fd-app-root "the front door at /"
+cfg="$(curl -s -u "demo:$PHRASE" "$BASE/config.json")"
+case "$cfg" in
+	*'"mode":"demo"'*) pass "the front door's config.json carries mode demo" ;;
+	*) fail "the front door's config.json is missing or not mode demo (answer: $cfg)" ;;
+esac
+page_gated /config.json "the front door's config.json"
 page_has /till/ ct-app-root "the counter till at /till/"
 page_has /buying-and-stock/ buying-and-stock-app "Buying and Stock at /buying-and-stock/"
 page_has /drive/ drive-run-app "HH Drive at /drive/"

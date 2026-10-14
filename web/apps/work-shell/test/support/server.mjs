@@ -137,6 +137,11 @@ export async function startServer(dist, { holdApi = false } = {}) {
       });
       return;
     }
+    // The image writes {"mode":"demo"} at /config.json; the front door reads it before it draws a role card.
+    if (path === "/config.json") {
+      json(response, 200, { mode: "demo" });
+      return;
+    }
     if (path.startsWith("/api/")) {
       if (!holdApi) json(response, 404, { error: "not found" });
       return;

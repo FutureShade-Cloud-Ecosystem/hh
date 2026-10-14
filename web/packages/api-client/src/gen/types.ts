@@ -2500,6 +2500,9 @@ export type IdentityExchangeRequest = {
   jwt: string;
   org: string;
 };
+export type IdentityPersonaRequest = {
+  persona: string;
+};
 export type IdentityExchangeResponse = {
   token: string;
   expiresAtMs: number;
