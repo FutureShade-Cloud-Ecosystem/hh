@@ -39,6 +39,9 @@ var publicQuoteViewKeys = []string{
 	// quantity_notice is the dealer's own wording that the quantities are the customer's to confirm:
 	// shown to the customer by design, and it carries nothing but the dealer's sentence.
 	"quantity_notice",
+	// tax_label is the name of the dealer's own tax ("HST", "Sales tax") printed beside the tax figure:
+	// a word of the dealer's, nothing of the customer's or the staff's.
+	"tax_label",
 }
 
 // TestPublicQuoteView_LeaksNoStaffField asserts KEY-SET EQUALITY, in both directions, over the public

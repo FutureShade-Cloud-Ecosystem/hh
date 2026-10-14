@@ -75,7 +75,7 @@ func TestJurisdiction_CaliforniaPreviewAndRateRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Jurisdiction != "CA" || got.ReasonCode != TaxStdSales || got.RateBps != 775 {
+	if got.Jurisdiction != "CA" || got.ReasonCode != TaxStdSales || got.RateBps != 775 || got.TaxLabel != "Sales tax" {
 		t.Fatalf("the counter's rate read: %+v", got)
 	}
 	pv, err := h.svc.SalePreview(context.Background(), SalePreviewInput{BranchID: "branch-trt", CustomerID: "cust-abc", SaleType: SaleCollectNow, Lines: baseInput().Lines})
@@ -97,7 +97,7 @@ func TestJurisdiction_CaliforniaReliefAssessmentSpeaksTheDealersStandard(t *test
 	if err != nil {
 		t.Fatalf("assess: %v", err)
 	}
-	if out.ReasonCode != TaxStdSales || out.Outcome != "7.75%" || out.RateBps != 775 {
+	if out.ReasonCode != TaxStdSales || out.Outcome != "7.75%" || out.RateBps != 775 || out.TaxLabel != "Sales tax" {
 		t.Fatalf("standard outcome: %+v", out)
 	}
 	if len(h.store.snapshots) != 1 || h.store.snapshots[0].TaxReasonCode != TaxStdSales || h.store.snapshots[0].StandardRateBps != 775 {
@@ -120,13 +120,13 @@ func TestJurisdiction_OntarioWordsAndFiguresUnchanged(t *testing.T) {
 	rel, err := h.svc.AssessRelief(context.Background(), ReliefAssessInput{
 		ProfileID: "prof-1", OrderID: "order-1", DeclaredUse: "personal", Fulfilment: "pickup", SubtotalCents: 10000,
 	})
-	if err != nil || rel.Outcome != "13%" || rel.ReasonCode != TaxStdON13 {
+	if err != nil || rel.Outcome != "13%" || rel.ReasonCode != TaxStdON13 || rel.TaxLabel != "HST" {
 		t.Fatalf("ontario relief outcome: %+v %v", rel, err)
 	}
 	// An assessor that answers only the old fields (the older fakes) is the Ontario dealer.
 	h.svc.WithTaxAssessor(fixedBpsAssessor{bps: 800})
 	rate, _ := h.svc.TaxRate(context.Background())
-	if rate.Jurisdiction != "ON" || rate.ReasonCode != TaxStdON13 {
+	if rate.Jurisdiction != "ON" || rate.ReasonCode != TaxStdON13 || rate.TaxLabel != "HST" {
 		t.Fatalf("an old assessor's read: %+v", rate)
 	}
 }
