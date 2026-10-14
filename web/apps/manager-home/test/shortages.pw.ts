@@ -111,7 +111,7 @@ test("each open shortage is a review card: what, how much, who by role, when, an
   await expect(cards).toHaveCount(2);
   const first = cards.first();
   await expect(first.locator(".status")).toHaveText("Needs review");
-  await expect(first.locator(".line")).toHaveText("Granular A gravel");
+  await expect(first.locator(".line")).toHaveText("Class 2 base rock gravel");
   await expect(first.locator(".detail").first()).toHaveText("line 1, short 4 CYD");
   await expect(first.locator(".who-when")).toHaveText(/^Reported by staff · \d+[mh] ago$/);
   await expect(first.getByRole("button", { name: "Resolve" })).toBeVisible();
