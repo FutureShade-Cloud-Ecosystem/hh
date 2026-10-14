@@ -348,7 +348,7 @@ test.describe("the persona cards", () => {
     await expect(page.getByTestId("persona-cards")).toHaveCount(0);
     await signInAsPartner(page);
     await expect(page.getByTestId("persona-cards")).toBeVisible();
-    await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(8);
+    await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(9);
     await expect(page.getByTestId("coming-disclosure")).toBeVisible();
     await page.getByTestId("persona-cards").getByRole("button", { name: "Driver", exact: true }).click();
     await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Driver", exact: true })).toContainText("Too many tries. Wait a moment, then tap again.");
@@ -368,12 +368,12 @@ test.describe("the persona cards", () => {
     await serve(page, baseURL!, { personas: true, personasOpen: true, personaCaller: "public" });
     await page.goto("/");
     const publicCards = page.getByTestId("persona-cards").getByRole("button");
-    await expect(publicCards).toHaveCount(7);
+    await expect(publicCards).toHaveCount(8);
     await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Financial Controller", exact: true })).toHaveCount(0);
     await serve(page, baseURL!, { personas: true, personasOpen: false, personaCaller: "partner" });
     await page.goto("/");
     await signInAsPartner(page);
-    await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(8);
+    await expect(page.getByTestId("persona-cards").getByRole("button")).toHaveCount(9);
     await expect(page.getByTestId("persona-cards").getByRole("button", { name: "Financial Controller", exact: true })).toHaveCount(1);
   });
 
