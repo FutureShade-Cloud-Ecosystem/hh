@@ -33,6 +33,7 @@ package quote
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"net/http"
 	"strings"
 	"time"
@@ -311,25 +312,28 @@ func (s *StaffService) MarginGlance(ctx context.Context, quoteID string) (QuoteM
 // QuoteTerms is the terms + summary read: everything the right panel edits, plus per-line extras
 // the concept's line table renders (disc %, gross totals, thumbnails).
 type QuoteTerms struct {
-	QuoteID          string      `json:"quote_id"`
-	DepositRequired  bool        `json:"deposit_required"`
-	DepositPct       int         `json:"deposit_pct"`
-	IncludeImages    bool        `json:"include_images"`
-	CustomerNotes    string      `json:"customer_notes"`
-	ContactName      string      `json:"contact_name"`
-	ProjectJob       string      `json:"project_job"`
-	CustomerPO       string      `json:"customer_po"`
-	SalespersonID    string      `json:"salesperson_id,omitempty"`
-	SalespersonName  string      `json:"salesperson_name,omitempty"`
-	Fulfillment      string      `json:"fulfillment"`
-	DeliveryAddress  string      `json:"delivery_address"`
-	RequestedDate    string      `json:"requested_date,omitempty"`
-	DeliveryFeeCents int64       `json:"delivery_fee_cents"`
-	DepositCents     int64       `json:"deposit_cents"`
-	SubtotalCents    int64       `json:"subtotal_cents"`
-	TaxCents         int64       `json:"tax_cents"`
-	TotalCents       int64       `json:"total_cents"`
-	Lines            []TermsLine `json:"lines"`
+	QuoteID          string `json:"quote_id"`
+	DepositRequired  bool   `json:"deposit_required"`
+	DepositPct       int    `json:"deposit_pct"`
+	IncludeImages    bool   `json:"include_images"`
+	CustomerNotes    string `json:"customer_notes"`
+	ContactName      string `json:"contact_name"`
+	ProjectJob       string `json:"project_job"`
+	CustomerPO       string `json:"customer_po"`
+	SalespersonID    string `json:"salesperson_id,omitempty"`
+	SalespersonName  string `json:"salesperson_name,omitempty"`
+	Fulfillment      string `json:"fulfillment"`
+	DeliveryAddress  string `json:"delivery_address"`
+	RequestedDate    string `json:"requested_date,omitempty"`
+	DeliveryFeeCents int64  `json:"delivery_fee_cents"`
+	DepositCents     int64  `json:"deposit_cents"`
+	SubtotalCents    int64  `json:"subtotal_cents"`
+	TaxCents         int64  `json:"tax_cents"`
+	TotalCents       int64  `json:"total_cents"`
+	// TaxLabel is the name of the dealer's tax ("HST", "Sales tax") the totals row prints; the screen
+	// renders it and never guesses it.
+	TaxLabel string      `json:"tax_label"`
+	Lines    []TermsLine `json:"lines"`
 }
 
 // TermsLine is one line's builder extras, keyed by line_no.
@@ -433,7 +437,12 @@ func (s *StaffService) Terms(ctx context.Context, quoteID string) (QuoteTerms, e
 	if !caller.CanAccessBranch(branchID) {
 		return QuoteTerms{}, ErrForbidden
 	}
-	return b.ReadQuoteTerms(ctx, quoteID)
+	t, err := b.ReadQuoteTerms(ctx, quoteID)
+	if err != nil {
+		return QuoteTerms{}, err
+	}
+	t.TaxLabel = s.taxLabel(ctx)
+	return t, nil
 }
 
 // UpdateTerms writes the terms strip under the quote row lock. Authorization rides the ratified
@@ -462,7 +471,12 @@ func (s *StaffService) UpdateTerms(ctx context.Context, quoteID string, in Terms
 		}
 		rate = int64(bps)
 	}
-	return b.UpdateTermsGuarded(ctx, quoteID, in, rule.fromList(), caller.UserID, rate)
+	t, err := b.UpdateTermsGuarded(ctx, quoteID, in, rule.fromList(), caller.UserID, rate)
+	if err != nil {
+		return QuoteTerms{}, err
+	}
+	t.TaxLabel = s.taxLabel(ctx)
+	return t, nil
 }
 
 // StandardRateReader answers the dealer's standard tax rate in basis points on a date ("" is today). The
@@ -475,6 +489,20 @@ type StandardRateReader interface {
 func (s *StaffService) WithStandardRate(r StandardRateReader) *StaffService {
 	s.standardRate = r
 	return s
+}
+
+// WithTaxLabel injects the dealer's tax word seam (platform/taxwords): the name every totals row and
+// customer page of a quote prints. Unwired is the Ontario dealer's "HST".
+func (s *StaffService) WithTaxLabel(src taxwords.Source) *StaffService {
+	s.taxWords = src
+	return s
+}
+
+// taxLabel reads the dealer's tax word. A read-only display degrades to the neutral word on a failed
+// read; the figures beside it are the quote's own stored ones.
+func (s *StaffService) taxLabel(ctx context.Context) string {
+	w, _ := taxwords.Resolve(ctx, s.taxWords)
+	return w
 }
 
 // - per-line discount -

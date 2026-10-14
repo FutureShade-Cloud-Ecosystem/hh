@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"time"
 
 	"log/slog"
@@ -319,6 +320,33 @@ type dealerRegionAdapter struct{ r *settings.DealerConfigReader }
 func (a dealerRegionAdapter) TaxRegion(ctx context.Context) (string, error) {
 	c, err := a.r.DealerConfig(ctx)
 	return c.TaxRegion, err
+}
+
+// dealerCountryAdapter binds the customer module's CountrySource to the same dealer configuration:
+// the country the address rules follow, read live at each customer write and each loaded item.
+type dealerCountryAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerCountryAdapter) DealerCountry(ctx context.Context) (string, error) {
+	c, err := a.r.DealerConfig(ctx)
+	return c.Country, err
+}
+
+// dealerTaxWordsAdapter binds platform/taxwords.Source to the same dealer configuration: the name of
+// the dealer's tax ("HST" for an Ontario dealer, "Sales tax" for every other jurisdiction), read live at
+// each use so a configuration change shows at the next receipt, quote, journal or printed invoice.
+type dealerTaxWordsAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerTaxWordsAdapter) TaxLabel(ctx context.Context) (string, error) {
+	c, err := a.r.DealerConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+	return taxwords.For(c.TaxRegion), nil
+}
+
+// newTaxWords builds the dealer's tax word source over the pool.
+func newTaxWords(pool *pgxpool.Pool) dealerTaxWordsAdapter {
+	return dealerTaxWordsAdapter{r: settings.NewDealerConfigReader(pool)}
 }
 
 // newTaxEngine builds a tax engine over the pool bound to the dealer's own jurisdiction. The engine
@@ -1116,6 +1144,7 @@ func (a w6cWarrantyCreditIssuer) IssueCustomerCredit(ctx context.Context, in war
 type w6cCreditMemoPoster struct {
 	svc   *gl.Service
 	rules *gl.Repository
+	words taxwords.Source // the dealer's tax word for the tax leg's memo; nil is "HST"
 }
 
 func (a w6cCreditMemoPoster) PostCreditMemoJournal(ctx context.Context, in billing.CreditMemoJournal) (string, error) {
@@ -1127,7 +1156,8 @@ func (a w6cCreditMemoPoster) PostCreditMemoJournal(ctx context.Context, in billi
 	// module whose rule it is. This adapter does one thing: role → account code. (It used to do the
 	// swap too, and a mutation survived here because nothing can test a composition-root adapter.)
 	var lines []gl.ExternalLine
-	for _, leg := range in.ReversingLegs() {
+	word, _ := taxwords.Resolve(ctx, a.words) // a failed read memos the neutral "Tax"
+	for _, leg := range in.ReversingLegsFor(word) {
 		code := rules[leg.Role]
 		if code == "" {
 			// Refused, not guessed. A journal posted to an account nobody chose is worse than no

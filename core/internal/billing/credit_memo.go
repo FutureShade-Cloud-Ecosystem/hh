@@ -58,6 +58,7 @@ package billing
 import (
 	"context"
 	"fmt"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -154,10 +155,14 @@ type JournalLeg struct {
 //
 // A zero-tax memo emits NO tax leg at all rather than a zero one, since a zero leg would violate that
 // same CHECK.
-func (j CreditMemoJournal) ReversingLegs() []JournalLeg {
+func (j CreditMemoJournal) ReversingLegs() []JournalLeg { return j.ReversingLegsFor(taxwords.HST) }
+
+// ReversingLegsFor is ReversingLegs with the tax leg's memo naming the tax by the dealer's word
+// ("HST reversed", "Sales tax reversed"). The amounts and roles do not depend on the word.
+func (j CreditMemoJournal) ReversingLegsFor(taxWord string) []JournalLeg {
 	legs := []JournalLeg{{Role: RoleRevenue, DebitCents: j.RevenueCents, Memo: "revenue reversed"}}
 	if j.TaxCents != 0 {
-		legs = append(legs, JournalLeg{Role: RoleTax, DebitCents: j.TaxCents, Memo: "HST reversed"})
+		legs = append(legs, JournalLeg{Role: RoleTax, DebitCents: j.TaxCents, Memo: taxWord + " reversed"})
 	}
 	legs = append(legs, JournalLeg{Role: RoleAR, CreditCents: j.ARCents, Memo: "AR credited"})
 	return legs

@@ -10,6 +10,7 @@ package finstmt
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"log/slog"
 	"time"
 
@@ -158,6 +159,8 @@ type Handler struct {
 	// paymentTrail says whether a caller holds the payment trail reads (ruling 87); the register's
 	// invoice detail shows the payment entries of its timeline to those callers alone.
 	paymentTrail billing.PaymentTrailReader
+	// registerTaxWords is the dealer's tax word for the register's printed invoice (nil: "HST").
+	registerTaxWords taxwords.Source
 }
 
 // NewHandler wires the service.

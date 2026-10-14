@@ -2664,7 +2664,7 @@ components:
     PosReliefOutcome:
       type: object
       description: Masked-only assessment answer with the displayed outcome and the snapshot fields
-      required: [purchaser_type, masked_identifier, outcome, reason_code, rate_bps, full_hst_cents, on_credit_cents, net_collected_cents, automated, requires_evidence, evidence_satisfied]
+      required: [purchaser_type, masked_identifier, outcome, reason_code, rate_bps, full_hst_cents, on_credit_cents, net_collected_cents, automated, requires_evidence, evidence_satisfied, tax_label]
       properties:
         purchaser_type: { type: string }
         masked_identifier: { type: string, description: The only identifier a cashier ever sees }
@@ -2677,6 +2677,7 @@ components:
         automated: { type: boolean }
         requires_evidence: { type: boolean }
         evidence_satisfied: { type: boolean }
+        tax_label: { type: string, description: "The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it" }
 
     # ── POS: signatures ──────────────────────────────────────────────────────
     PosSignatureCapture:
@@ -2919,7 +2920,7 @@ components:
       description: >-
         The counter-readable tax facts: the rate the ring binds (read through
         the ring's own assessor) and the configured rounding rule.
-      required: [jurisdiction, reason_code, rate_bps, round_mode]
+      required: [jurisdiction, reason_code, rate_bps, round_mode, tax_label]
       properties:
         jurisdiction: { type: string, description: The dealer's own tax jurisdiction code, ON for an Ontario dealer }
         reason_code:
@@ -2927,6 +2928,7 @@ components:
           enum: [STD_ON_HST_13, STD_SALES_TAX]
           description: The standard reason of the dealer's jurisdiction, STD_ON_HST_13 for an Ontario dealer and STD_SALES_TAX for every other
         rate_bps: { type: integer, format: int32, description: Basis points, 1300 is 13 percent }
+        tax_label: { type: string, description: "The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it" }
         round_mode:
           type: string
           enum: [INVOICE_TOTAL, PER_LINE]

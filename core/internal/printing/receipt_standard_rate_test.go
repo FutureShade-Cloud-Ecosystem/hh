@@ -9,6 +9,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 )
 
 type fakeReceiptStandardRate struct {
@@ -51,5 +53,53 @@ func TestReceipt_TaxLabelKeepsTheLetterheadFigureWhenUnwiredOrTheReadFails(t *te
 	rec, err = svc2.Receipt(staffFor(trentonID), saleOrderID)
 	if err != nil || !strings.Contains(rec.TaxLabel, "13%") {
 		t.Fatalf("read failed: %q %v", rec.TaxLabel, err)
+	}
+}
+
+type fakeReceiptWords struct {
+	w   string
+	err error
+}
+
+func (f fakeReceiptWords) TaxLabel(context.Context) (string, error) { return f.w, f.err }
+
+// The word on the tax line is the dealer's: HST exactly as today for an Ontario dealer (and unwired),
+// "Sales tax" for a California one, the neutral "Tax" when the jurisdiction could not be read.
+func TestReceipt_TaxLabelWordFollowsTheDealersJurisdiction(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		src  taxwords.Source
+		want string
+	}{
+		{"unwired", nil, "HST (13%)"},
+		{"ontario", fakeReceiptWords{w: "HST"}, "HST (13%)"},
+		{"california", fakeReceiptWords{w: "Sales tax"}, "Sales tax (7.75%)"},
+		{"failed read", fakeReceiptWords{err: errors.New("down")}, "Tax (13%)"},
+	} {
+		svc, _ := receiptHarness(t)
+		if c.name == "california" {
+			svc.WithStandardRate(fakeReceiptStandardRate{bps: 775})
+		}
+		if c.src != nil {
+			svc.WithTaxLabel(c.src)
+		}
+		rec, err := svc.Receipt(staffFor(trentonID), saleOrderID)
+		if err != nil || rec.TaxLabel != c.want {
+			t.Errorf("%s: %q %v, want %q", c.name, rec.TaxLabel, err, c.want)
+		}
+	}
+}
+
+func TestTaxLabelCarriesTheWordAndTheRate(t *testing.T) {
+	for _, tc := range []struct {
+		word string
+		bps  int
+		want string
+	}{
+		{"Sales tax", 775, "Sales tax (7.75%)"}, {"Sales tax", 600, "Sales tax (6%)"}, {"Sales tax", 0, "Sales tax"},
+	} {
+		if got := taxLabel(tc.word, tc.bps); got != tc.want {
+			t.Errorf("taxLabel(%q,%d) = %q, want %q", tc.word, tc.bps, got, tc.want)
+		}
 	}
 }
