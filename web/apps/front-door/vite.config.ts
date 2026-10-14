@@ -31,6 +31,15 @@ export default defineConfig({
       "/_stub": {
         target: `http://127.0.0.1:${stubPort}`,
       },
+      // The served runtime configuration and the console mode's fake FB
+      // Console (test scaffolding): same origin as the page, so the
+      // credentialed fetches need no CORS and the cookie is first party.
+      "/config.json": {
+        target: `http://127.0.0.1:${stubPort}`,
+      },
+      "/console": {
+        target: `http://127.0.0.1:${stubPort}`,
+      },
     },
   },
   build: {
