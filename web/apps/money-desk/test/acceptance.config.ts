@@ -28,7 +28,6 @@ export default defineConfig({
   testMatch: "*.pw.ts",
   timeout: 60_000,
   workers: 1,
-  retries: 1,
   use: {
     baseURL: `http://127.0.0.1:${appPort}`,
     channel: "chrome",
