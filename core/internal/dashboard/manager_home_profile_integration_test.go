@@ -234,7 +234,7 @@ func TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared(t *testing.T) {
 		}
 		got = append(got, key)
 	}
-	want := []string{"tasks.open_shortages", "tasks.stale_picks", "purchasing.receiving_differences"}
+	want := []string{NeedsDueToCommit, NeedsOpenShortages, NeedsStalePicks, NeedsReceivingDifferences}
 	if len(got) != len(want) {
 		t.Fatalf("the yard manager declares %d needs sources (%v), want the three the roadmap names (%v)",
 			len(got), got, want)
@@ -369,6 +369,21 @@ func TestIntegration_0392_TheProcurementManagersNeedsAreTheBuyersOwn(t *testing.
 func TestIntegration_0392_TheBranchManagerCommitsDeliveries(t *testing.T) {
 	wantKeys(t, "manager.branch", needsOf(t, "manager.branch"),
 		[]string{NeedsDueToCommit, NeedsUnassigned, NeedsApprovals, NeedsAREscalation, NeedsParkedTickets})
+}
+
+// TestIntegration_0395_TheLogisticsManagersNeedsIncludeFiledPending pins the seeded rows of 2D gap 12:
+// the freight raise the logistics manager files and waits on surfaces as an "approvals you filed"
+// row. The existing dock-shape dispatch sources stay.
+func TestIntegration_0395_TheLogisticsManagersNeedsIncludeFiledPending(t *testing.T) {
+	wantKeys(t, "manager.logistics", needsOf(t, "manager.logistics"),
+		[]string{NeedsUnassigned, NeedsDueToCommit, NeedsStalePicks, NeedsFiledPending})
+}
+
+// TestIntegration_0395_TheYardManagersNeedsIncludeDueToCommit pins the seeded rows of 2D gap 11:
+// committing a delivery date on a load being built leads the yard manager's queue.
+func TestIntegration_0395_TheYardManagersNeedsIncludeDueToCommit(t *testing.T) {
+	wantKeys(t, "manager.yard", needsOf(t, "manager.yard"),
+		[]string{NeedsDueToCommit, NeedsOpenShortages, NeedsStalePicks, NeedsReceivingDifferences})
 }
 
 // widgetsOf reads one profile's seeded widgets in order, and runs them through the write gate: a

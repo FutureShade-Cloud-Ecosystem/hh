@@ -106,7 +106,7 @@ func TestManagerProfilesFallBackToTheirBaseShapesDefaults(t *testing.T) {
 			t.Errorf("%s has no fallback needs policy; an unreadable table would blank its queue", p)
 		}
 	}
-	want := []string{NeedsOpenShortages, NeedsStalePicks, NeedsReceivingDifferences}
+	want := []string{NeedsDueToCommit, NeedsOpenShortages, NeedsStalePicks, NeedsReceivingDifferences}
 	got := defaultNeedsFor(ProfileManagerYard)
 	if len(got) != len(want) {
 		t.Fatalf("the yard manager's fallback holds %d sources, want %v", len(got), want)
@@ -115,6 +115,11 @@ func TestManagerProfilesFallBackToTheirBaseShapesDefaults(t *testing.T) {
 		if got[i].SourceKey != k {
 			t.Errorf("yard manager source %d is %q, want %q", i, got[i].SourceKey, k)
 		}
+	}
+	// 0395: the logistics manager's fallback carries the approvals they filed that are still pending.
+	if logistics := defaultNeedsFor(ProfileManagerLogistics); len(logistics) != 4 || logistics[3].SourceKey != NeedsFiledPending {
+		t.Errorf("the logistics manager's fallback is %v, want four sources ending with %q",
+			needsKeys(logistics), NeedsFiledPending)
 	}
 	if a, b := defaultNeedsFor(ProfileManagerSales), DefaultNeedsSources[ProfileManager]; len(a) != len(b) {
 		t.Errorf("the sales manager's fallback is %d sources, its base shape ships %d", len(a), len(b))
