@@ -1777,11 +1777,13 @@ func (s *Service) AssessRelief(ctx context.Context, in ReliefAssessInput) (Relie
 		FullHSTCents:     fallback.TaxCents,
 	}
 	eligible := !prof.Expired && (prof.OntarioEligibility == "ON_RESIDENT" || prof.OntarioEligibility == "AKWESASNE")
+	// The Ontario 5% pickup path is Ontario's alone; an assessor that names no jurisdiction is Ontario.
+	ontarioDealer := fallback.Jurisdiction == "" || fallback.Jurisdiction == "ON"
 
 	switch in.Fulfilment {
 	case "pickup", "purchaser_carrier":
 		// Customer pickup NEVER qualifies for 0%, the outcome is 5% (Ontario path) or 13%.
-		if eligible && in.DeclaredUse == "personal" {
+		if eligible && ontarioDealer && in.DeclaredUse == "personal" {
 			out.Outcome = "5%"
 			out.ReasonCode = TaxONFNPos8
 			out.RateBps = ontarioNetBps
