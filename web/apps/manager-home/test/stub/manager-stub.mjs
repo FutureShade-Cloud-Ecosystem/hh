@@ -308,7 +308,7 @@ function buildWorld() {
       ticket: {
         order_id: "0d000000-0000-4000-9000-000000000001",
         order_no: "SO-PLM-1038",
-        customer_name: "Summit Ridge Builders",
+        customer_name: "Bluffside Builders",
         fulfillment: "DELIVERY",
         lines: [],
         source: "DISPATCH",

@@ -263,6 +263,17 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* The Demo badge: the demo's gold chip (a fill, so it carries the accent ink), the word and nothing else. */
+  .demo {
+    flex: none;
+    padding: var(--hh-s-2) var(--hh-s-8);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    border-radius: var(--hh-radius-control);
+    font-size: var(--hh-s-12);
+    font-weight: 700;
+    line-height: 1.3;
+  }
   .selector {
     display: inline-flex;
     align-items: center;

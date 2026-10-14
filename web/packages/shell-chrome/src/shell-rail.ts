@@ -94,11 +94,13 @@ const styles = css`
     width: 44px;
     height: 44px;
     flex: none;
+    /* The sheet's button padding would squeeze the glyph out of a 44 px box: the glyph is the content, centred. */
+    padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     background: transparent;
-    color: var(--hh-text-dim);
+    color: var(--hh-text);
     border: 1px solid var(--hh-line);
     border-radius: 8px;
     cursor: pointer;
@@ -118,8 +120,8 @@ const styles = css`
   }
   .toggle svg {
     display: block;
-    width: 14px;
-    height: 14px;
+    width: 22px;
+    height: 22px;
   }
   .row {
     position: relative;
@@ -421,8 +423,9 @@ export class ShellRail extends HHElement {
             data-title="${this.collapsed ? 'Keep your pins open' : 'Let your pins hide again'}"
             aria-label=${this.collapsed ? 'Keep your pins open' : 'Let your pins hide again'}
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="${this.collapsed ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6'}"></path>
+            <svg data-icon="rail-panel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+              <path d="M9 4v16"></path>
             </svg>
           </button>
         </div>

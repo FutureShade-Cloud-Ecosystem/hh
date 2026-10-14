@@ -91,6 +91,17 @@ const styles = css`
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* The Demo badge: the demo's gold chip (a fill, so it carries the accent ink), the word and nothing else. */
+  .demo {
+    flex: none;
+    padding: var(--hh-s-2) var(--hh-s-8);
+    background: var(--hh-accent);
+    color: var(--hh-accent-ink);
+    border-radius: var(--hh-radius-control);
+    font-size: var(--hh-s-12);
+    font-weight: 700;
+    line-height: 1.3;
+  }
   .selector {
     display: inline-flex;
     align-items: center;
@@ -376,6 +387,7 @@ export class ShellHeader extends HHElement {
   static properties = {
     ...HHElement.properties,
     org: { attribute: 'org' },
+    demo: { type: Boolean, attribute: 'demo' },
     user: { attribute: 'user' },
     breadcrumb: { attribute: 'breadcrumb' },
     groups: { attribute: false },
@@ -392,6 +404,8 @@ export class ShellHeader extends HHElement {
 
   /** The org's name, beside the mark. Empty renders no word. */
   declare org: string;
+  /** Whether the Demo badge renders beside the org: the shell of a demo build says so once, for every app it frames. */
+  declare demo: boolean;
   /** The signed in person's role label; drives the initials. */
   declare user: string;
   /** The band's breadcrumb words, the model's answer for where the person is. */
@@ -418,6 +432,7 @@ export class ShellHeader extends HHElement {
   constructor() {
     super();
     this.org = '';
+    this.demo = false;
     this.user = '';
     this.breadcrumb = '';
     this.groups = [];
@@ -594,6 +609,7 @@ export class ShellHeader extends HHElement {
             <svg viewBox="0 0 3000 3000"><path fill="currentColor" d="${MARK_PATH}"></path></svg>
           </span>
           ${this.org !== '' ? html`<span class="org">${this.org}</span>` : nothing}
+          ${this.demo ? html`<span class="demo" role="note">Demo</span>` : nothing}
         </div>
         <button
           class="selector"
