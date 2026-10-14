@@ -234,6 +234,8 @@ test("a stop that could not be delivered needs a reason, and the run closes once
 test("the day board puts an unassigned stop on a planned run", async ({ page, request }) => {
   await openBoard(page, request);
   await load(page, "ORD-0029").locator("select").first().selectOption({ index: 1 });
+  // The move is a write in flight: a tab pressed while the board is busy switches the tab but drops its read, so wait for the core's answer.
+  await expect(page.locator("[data-notice]")).toContainText("ORD-0029 moved to RUN-PLM-1");
   await page.locator("[data-tab-id='day']").first().click();
   await expect(truck(page, "RUN-PLM-1").locator("li.load", { hasText: "ORD-0029" })).toBeVisible();
 });
@@ -241,7 +243,7 @@ test("the day board puts an unassigned stop on a planned run", async ({ page, re
 test("a failed read says so in words and offers to try again", async ({ page, request }) => {
   await resetStub(request);
   await page.addInitScript((await import("./helpers.js")).dispatchHandoff);
-  await stubPost(request, "refuse", { status: 500, error: "internal error", path: "loadboard", reads: true });
+  await stubPost(request, "refuse", { status: 500, error: "internal error", path: "/api/v1/dispatch/loadboard", exact: true, reads: true });
   await page.goto("/");
   await expect(page.locator("[data-error]")).toContainText("The server could not finish");
   await page.getByRole("button", { name: "Try again" }).click();

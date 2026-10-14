@@ -380,6 +380,10 @@ type AssignInput struct {
 type PODInput struct {
 	ReceivedBy string `json:"received_by"`
 	Affirmed   bool   `json:"affirmed"`
+	// IdempotencyKey is the sync door's client key. It never travels on the REST body (json "-"): the
+	// stop row carries it from the same statement that delivers it, so a replayed attestation is
+	// found, not re-run.
+	IdempotencyKey string `json:"-"`
 }
 
 // TypedAttestation mirrors pos.TypedAttestation BY VALUE so this package never imports pos. The

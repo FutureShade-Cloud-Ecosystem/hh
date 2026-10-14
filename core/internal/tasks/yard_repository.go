@@ -494,12 +494,22 @@ func (r *Repository) UpsertPickedLines(ctx context.Context, taskID, actorID stri
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var status string
-	if err := tx.QueryRow(ctx, `SELECT status FROM tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&status); err != nil {
+	var status, taskType string
+	if err := tx.QueryRow(ctx, `SELECT status, task_type FROM tasks WHERE id = $1 FOR UPDATE`, taskID).Scan(&status, &taskType); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, fmt.Errorf("tasks: lock %q for pick lines: %w", taskID, err)
+	}
+	// The task row draws a fresh seq in the same transaction, as InsertShortage does: the row re-appears
+	// in a device's pull with the recorded lines, and a queued sync record based on the older seq meets
+	// server wins instead of applying blind over this one.
+	seq, err := allocateTaskSeqTx(ctx, tx, taskType)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE tasks SET seq = $2 WHERE id = $1`, taskID, seq); err != nil {
+		return nil, fmt.Errorf("tasks: bump task after pick lines: %w", err)
 	}
 
 	for _, l := range lines {

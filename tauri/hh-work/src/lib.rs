@@ -19,12 +19,8 @@ fn open_store(app: &tauri::AppHandle) -> Result<Store, String> {
 
 // The blocking helper keeps the store's SQLite work on a blocking thread,
 // never on the main thread or an async worker.
-async fn blocking<T: Send + 'static>(
-    f: impl FnOnce() -> Result<T, String> + Send + 'static,
-) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(f)
-        .await
-        .map_err(|e| e.to_string())?
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
 // The offline store's executor seam: the store package's SQLite backend
@@ -44,12 +40,37 @@ async fn run_statement(
 }
 
 #[tauri::command]
-async fn run_atomic(
-    statements: Vec<SqlStatement>,
-    store: tauri::State<'_, Store>,
-) -> Result<(), String> {
+async fn run_atomic(statements: Vec<SqlStatement>, store: tauri::State<'_, Store>) -> Result<(), String> {
     let store = store.inner().clone();
     blocking(move || store.atomic(statements)).await
+}
+
+// The built shell's role leg proof (feature `shell-proof`, off by default,
+// compiled out of every shipped build): proof.js is injected into every frame
+// of the main window, drives the host page through its role leg and reports
+// one JSON string here. The command prints the single HH_SHELL_PROOF line
+// and ends the run. The webview cannot turn the mode on (the gate is a
+// compile time feature, there is no command that enables it) and the command
+// grants nothing else: it reads and writes nothing.
+#[cfg(feature = "shell-proof")]
+#[tauri::command]
+fn proof_report(app: tauri::AppHandle, json: String) {
+    println!("HH_SHELL_PROOF {json}");
+    app.exit(0);
+}
+
+// The proof run ends by itself even if the page never reports: after this
+// long it prints a timeout line and exits non zero.
+#[cfg(feature = "shell-proof")]
+const PROOF_WATCHDOG_SECS: u64 = 120;
+
+#[cfg(feature = "shell-proof")]
+fn start_proof_watchdog(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(PROOF_WATCHDOG_SECS));
+        println!("HH_SHELL_PROOF {{\"ok\":false,\"error\":\"the page did not report in time\"}}");
+        app.exit(1);
+    });
 }
 
 // One startup line naming the profile the shell is running (the gates and
@@ -97,19 +118,31 @@ fn print_profile_only(args: impl Iterator<Item = String>) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // The Work channel's updater (see tauri.conf.json plugins.updater and
         // the README): registered, but nothing polls until the shell chrome's
         // update prompt asks, so the placeholder endpoint stays idle.
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![
-            run_statement,
-            run_atomic,
-            auth::auth_sign_in,
-            auth::auth_resume,
-            auth::auth_exchange,
-            auth::auth_sign_out
-        ])
+        .plugin(tauri_plugin_updater::Builder::new().build());
+    #[cfg(feature = "shell-proof")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        proof_report,
+        run_statement,
+        run_atomic,
+        auth::auth_sign_in,
+        auth::auth_resume,
+        auth::auth_exchange,
+        auth::auth_sign_out
+    ]);
+    #[cfg(not(feature = "shell-proof"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        run_statement,
+        run_atomic,
+        auth::auth_sign_in,
+        auth::auth_resume,
+        auth::auth_exchange,
+        auth::auth_sign_out
+    ]);
+    builder
         .setup(|app| {
             let profile = profiles::work();
             println!("HH_PROFILE {}", profile_line(&app.config().plugins));
@@ -117,10 +150,16 @@ pub fn run() {
             // The sign in commands' state: custody and the Console client, built
             // from the profile's fixed configuration (never the webview's).
             app.manage(auth::AuthState::for_profile());
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+            #[cfg(feature = "shell-proof")]
+            start_proof_watchdog(app.handle().clone());
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title(profile.window.title)
-                .inner_size(profile.window.width, profile.window.height)
-                .build()?;
+                .inner_size(profile.window.width, profile.window.height);
+            // The proof driver reaches the front door's frame as well, which
+            // answers the demo mint locally (there is no core in this run).
+            #[cfg(feature = "shell-proof")]
+            let window = window.initialization_script_for_all_frames(include_str!("../proof.js"));
+            window.build()?;
             if print_profile_only(std::env::args()) {
                 app.handle().exit(0);
             }
@@ -144,39 +183,22 @@ mod tests {
     const BUILT_CAPABILITIES: &str = include_str!(concat!(env!("OUT_DIR"), "/capabilities.json"));
 
     fn capability_permissions() -> Vec<String> {
-        let cap: serde_json::Value =
-            serde_json::from_str(CAPABILITY).expect("the capability parses");
+        let cap: serde_json::Value = serde_json::from_str(CAPABILITY).expect("the capability parses");
         cap["permissions"]
             .as_array()
             .expect("a permissions list")
             .iter()
-            .map(|p| {
-                p.as_str()
-                    .expect("permission names are strings")
-                    .to_string()
-            })
+            .map(|p| p.as_str().expect("permission names are strings").to_string())
             .collect()
     }
 
     #[test]
     fn the_stores_commands_are_allowed_by_name_and_no_sql_grant_is_open() {
         let perms = capability_permissions();
-        assert!(
-            perms.iter().any(|p| p == "allow-run-statement"),
-            "run_statement is allowed by name"
-        );
-        assert!(
-            perms.iter().any(|p| p == "allow-run-atomic"),
-            "run_atomic is allowed by name"
-        );
-        assert!(
-            !CAPABILITY.contains("sql:"),
-            "no open SQL grant reaches a real build"
-        );
-        assert!(
-            !CARGO_TOML.contains("tauri-plugin-sql"),
-            "the webview SQL plugin is not a dependency"
-        );
+        assert!(perms.iter().any(|p| p == "allow-run-statement"), "run_statement is allowed by name");
+        assert!(perms.iter().any(|p| p == "allow-run-atomic"), "run_atomic is allowed by name");
+        assert!(!CAPABILITY.contains("sql:"), "no open SQL grant reaches a real build");
+        assert!(!CARGO_TOML.contains("tauri-plugin-sql"), "the webview SQL plugin is not a dependency");
     }
 
     #[test]
@@ -206,67 +228,103 @@ mod tests {
         // The Console session secret is used only on the Rust side
         // (AUTH-SHELL-CONTRACT r7); a keychain grant would let any script in
         // the window read it back with one invoke.
-        assert!(
-            !CAPABILITY.contains("keychain"),
-            "default.json must hold no keychain grant"
-        );
+        assert!(!CAPABILITY.contains("keychain"), "default.json must hold no keychain grant");
     }
 
     #[test]
     fn a_work_build_declares_no_keychain_probe_camera_or_location_in_its_acl() {
         for built in [BUILT_ACL_MANIFEST, BUILT_CAPABILITIES] {
-            assert!(
-                !built.contains("keychain"),
-                "a keychain command or grant is in the Work build's ACL"
-            );
-            assert!(
-                !built.contains("probe"),
-                "probe scaffolding is in the Work build's ACL"
-            );
+            assert!(!built.contains("keychain"), "a keychain command or grant is in the Work build's ACL");
+            assert!(!built.contains("probe"), "probe scaffolding is in the Work build's ACL");
             let lower = built.to_lowercase();
             for banned in ["camera", "geolocation", "location"] {
-                assert!(
-                    !lower.contains(banned),
-                    "{banned} is Field only and is in the Work build's ACL"
-                );
+                assert!(!lower.contains(banned), "{banned} is Field only and is in the Work build's ACL");
             }
         }
-        assert!(
-            BUILT_ACL_MANIFEST.contains("run_statement"),
-            "the store's commands are declared"
-        );
-        assert!(
-            BUILT_ACL_MANIFEST.contains("run_atomic"),
-            "the store's commands are declared"
-        );
+        assert!(BUILT_ACL_MANIFEST.contains("run_statement"), "the store's commands are declared");
+        assert!(BUILT_ACL_MANIFEST.contains("run_atomic"), "the store's commands are declared");
     }
 
     #[test]
-    fn the_work_crate_has_no_probe_feature() {
-        // Field keeps a probe feature for the probe 4 proof runs, off by
-        // default; Work never had a probe, so there is nothing to turn on.
-        assert!(
-            !CARGO_TOML.contains("probe"),
-            "Work carries no probe scaffolding"
-        );
-        assert!(
-            !CARGO_TOML.contains("[features]"),
-            "Work declares no cargo features"
-        );
+    fn the_work_crate_has_no_probe_feature_and_one_gated_proof_feature() {
+        // Field keeps a probe feature for the probe 4 proof runs; Work never had
+        // a probe. Work has exactly one cargo feature, `shell-proof` (the built
+        // shell's role leg proof, item 8c), off by default.
+        assert!(!CARGO_TOML.contains("probe"), "Work carries no probe scaffolding");
+        let features = CARGO_TOML.split("[features]").nth(1).expect("a [features] table");
+        let features = features.split("\n[").next().unwrap();
+        let declared: Vec<&str> = features.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+        assert_eq!(declared, ["default = []", "shell-proof = []"], "the feature table is exactly default and shell-proof");
+    }
+
+    // The proof mode's source files, read from disk so a missing file is an
+    // assertion failure here and not a build break in the default build.
+    fn crate_file(rel: &str) -> String {
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/").to_string() + rel).unwrap_or_default()
+    }
+
+    #[test]
+    fn the_proof_mode_is_compiled_in_only_with_its_feature() {
+        let lib = include_str!("lib.rs");
+        let production = lib.split("#[cfg(test)]").next().unwrap();
+        // every use of the script and the report command sits under the gate
+        for needle in ["include_str!(\"../proof.js\")", "fn proof_report", "proof_report,"] {
+            let at = production.find(needle).unwrap_or_else(|| panic!("{needle} is missing from lib.rs"));
+            let before = &production[..at];
+            let gate = before.rfind("#[cfg(feature = \"shell-proof\")]").unwrap_or_else(|| panic!("no gate before {needle}"));
+            assert!(at - gate < 400, "{needle} is not directly under the shell-proof gate");
+        }
+        let build = crate_file("build.rs");
+        assert!(build.contains("#[cfg(feature = \"shell-proof\")]"), "build.rs gates the proof command");
+        assert!(build.contains("\"proof_report\""), "build.rs declares the proof command by name");
+        assert!(build.contains("./capabilities*/*.json") && build.contains("./capabilities/*.json"), "build.rs reads the proof capability folder only with the feature");
+    }
+
+    #[test]
+    fn a_default_build_carries_no_proof_command_grant_or_capability() {
+        #[cfg(not(feature = "shell-proof"))]
+        for built in [BUILT_ACL_MANIFEST, BUILT_CAPABILITIES] {
+            assert!(!built.contains("proof"), "proof scaffolding is in the default build's ACL");
+        }
+        assert!(!CAPABILITY.contains("proof"), "default.json grants no proof command");
+        assert!(!TAURI_CONF.contains("proof"), "tauri.conf.json names no proof mode");
+        let cap: serde_json::Value = serde_json::from_str(&crate_file("capabilities-proof/proof.json")).expect("the proof capability parses");
+        assert_eq!(cap["permissions"], serde_json::json!(["allow-proof-report"]), "the proof capability grants the report command and nothing else");
+        assert_eq!(cap["windows"], serde_json::json!(["main"]));
+        assert!(cap.get("remote").is_none());
+    }
+
+    #[test]
+    fn the_proof_script_drives_the_host_through_its_own_page_and_opens_no_remote_origin() {
+        let script = crate_file("proof.js");
+        assert!(!script.is_empty(), "proof.js exists");
+        assert!(script.contains("proof_report"), "the script reports through the one proof command");
+        assert!(script.contains("HH_SHELL_PROOF") || !script.contains("println"), "the Rust side prints the line, not the script");
+        for banned in ["eval(", "new Function", "http://", "https://", "keychain", "auth_sign_in", "run_statement", "innerHTML", "WebSocket"] {
+            assert!(!script.contains(banned), "proof.js contains {banned}");
+        }
+        // it answers the demo mint locally, only for the two demo paths
+        assert!(script.contains("/api/v1/demo/session") && script.contains("/api/v1/demo/flows"));
+    }
+
+    #[test]
+    fn the_proof_mode_ends_the_run_by_itself_with_one_line() {
+        let lib = include_str!("lib.rs");
+        let production = lib.split("#[cfg(test)]").next().unwrap();
+        assert!(production.contains("HH_SHELL_PROOF"), "one HH_SHELL_PROOF line is printed");
+        assert!(production.contains("app.exit("), "the run ends itself");
+        assert!(production.contains("initialization_script_for_all_frames"), "the script reaches the door frame");
+        // the webview cannot enable the mode: there is no command that sets it,
+        // and the report command only prints and exits
+        assert!(!production.contains("fn enable_proof"), "no command turns the proof mode on");
     }
 
     #[test]
     fn no_work_file_names_a_field_only_device_permission() {
-        for (name, text) in [
-            ("tauri.conf.json", TAURI_CONF),
-            ("capabilities/default.json", CAPABILITY),
-        ] {
+        for (name, text) in [("tauri.conf.json", TAURI_CONF), ("capabilities/default.json", CAPABILITY)] {
             let lower = text.to_lowercase();
             for banned in ["camera", "geolocation", "location", "microphone"] {
-                assert!(
-                    !lower.contains(banned),
-                    "{name} names {banned}, a Field only grant"
-                );
+                assert!(!lower.contains(banned), "{name} names {banned}, a Field only grant");
             }
         }
         let p = profiles::work();
@@ -281,30 +339,21 @@ mod tests {
 
     #[test]
     fn the_work_update_channel_is_configured_with_placeholders() {
-        let conf: serde_json::Value =
-            serde_json::from_str(TAURI_CONF).expect("tauri.conf.json parses");
+        let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).expect("tauri.conf.json parses");
         let updater = &conf["plugins"]["updater"];
         let endpoint = updater["endpoints"]
             .as_array()
             .and_then(|e| e.first())
             .and_then(|e| e.as_str())
             .expect("the updater has one configured endpoint");
-        assert!(
-            endpoint.contains("/hh/work/"),
-            "the endpoint names the Work channel: {endpoint}"
-        );
+        assert!(endpoint.contains("/hh/work/"), "the endpoint names the Work channel: {endpoint}");
         assert!(!endpoint.contains("/hh/field/"));
         for part in ["{{target}}", "{{arch}}", "{{current_version}}"] {
             assert!(endpoint.contains(part), "the endpoint carries {part}");
         }
-        let pubkey = updater["pubkey"]
-            .as_str()
-            .expect("the updater has a pubkey");
+        let pubkey = updater["pubkey"].as_str().expect("the updater has a pubkey");
         assert_eq!(pubkey, "PLACEHOLDER: the release verify public key comes from FB Vault at the first signed release");
-        assert_eq!(
-            conf["bundle"]["createUpdaterArtifacts"],
-            serde_json::json!(true)
-        );
+        assert_eq!(conf["bundle"]["createUpdaterArtifacts"], serde_json::json!(true));
     }
 
     #[test]
@@ -321,47 +370,31 @@ mod tests {
     #[test]
     fn the_csp_is_strict_and_the_window_is_built_by_the_shell() {
         let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
-        let csp = conf["app"]["security"]["csp"]
-            .as_str()
-            .expect("a CSP is set");
+        let csp = conf["app"]["security"]["csp"].as_str().expect("a CSP is set");
         for directive in [
             "default-src 'self'",
             "script-src 'self'",
             "object-src 'none'",
-            "frame-ancestors 'none'",
+            "frame-src 'self'",
+            "frame-ancestors 'self'",
         ] {
             assert!(csp.contains(directive), "the CSP holds {directive}");
         }
+        assert!(!csp.contains("frame-ancestors 'none'"), "the host frames its own desk apps, so 'none' is gone");
+        assert!(!csp.contains("child-src"), "frame-src alone carries the frames");
         assert!(!csp.contains("unsafe-eval"), "no eval");
-        assert!(
-            !csp.contains("script-src 'self' 'unsafe-inline'"),
-            "no inline script"
-        );
+        assert!(!csp.contains("script-src 'self' 'unsafe-inline'"), "no inline script");
         assert_eq!(conf["app"]["withGlobalTauri"], serde_json::json!(false));
         assert_eq!(conf["app"]["windows"], serde_json::json!([]));
     }
 
     #[test]
     fn print_profile_is_the_only_argument_that_ends_the_run_after_setup() {
-        let args = |v: &[&str]| {
-            v.iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
-                .into_iter()
-        };
-        assert!(super::print_profile_only(args(&[
-            "hh-work",
-            "--print-profile"
-        ])));
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>().into_iter();
+        assert!(super::print_profile_only(args(&["hh-work", "--print-profile"])));
         assert!(!super::print_profile_only(args(&["hh-work"])));
-        assert!(!super::print_profile_only(args(&[
-            "hh-work",
-            "--print-profile-and-more"
-        ])));
-        assert!(!super::print_profile_only(args(&[
-            "hh-work",
-            "print-profile"
-        ])));
+        assert!(!super::print_profile_only(args(&["hh-work", "--print-profile-and-more"])));
+        assert!(!super::print_profile_only(args(&["hh-work", "print-profile"])));
     }
 
     #[test]
@@ -374,15 +407,9 @@ mod tests {
         assert_eq!(v["identifier"], "ai.futurebuild.hh.work");
         assert_eq!(v["product"], "HH Work");
         assert_eq!(v["channel"], "work");
-        assert_eq!(
-            v["permissions"],
-            serde_json::json!({ "camera": false, "fine_location": false })
-        );
+        assert_eq!(v["permissions"], serde_json::json!({ "camera": false, "fine_location": false }));
         assert_eq!(v["store"]["file"], "work.sqlite3");
-        assert!(v["updates"]["endpoint"]
-            .as_str()
-            .unwrap()
-            .contains("/hh/work/"));
+        assert!(v["updates"]["endpoint"].as_str().unwrap().contains("/hh/work/"));
         let apps = v["apps"].as_array().unwrap();
         assert_eq!(apps.len(), 8);
         let money = apps.iter().find(|a| a["id"] == "money-desk").unwrap();
@@ -390,79 +417,40 @@ mod tests {
         let till = apps.iter().find(|a| a["id"] == "counter-till").unwrap();
         assert_eq!(till["offline"]["mode"], "read_cache_only");
         for secret in ["session_token", "secret", "password", "private"] {
-            assert!(
-                !line.to_lowercase().contains(secret),
-                "a secret-shaped field ({secret}) is in the line"
-            );
+            assert!(!line.to_lowercase().contains(secret), "a secret-shaped field ({secret}) is in the line");
         }
     }
 
     // ---- the four auth commands (mirrors Field's item 7 tests) ---------------
 
-    const AUTH_COMMANDS: [&str; 4] = [
-        "auth_sign_in",
-        "auth_resume",
-        "auth_exchange",
-        "auth_sign_out",
-    ];
-    const AUTH_PERMISSIONS: [&str; 4] = [
-        "allow-auth-sign-in",
-        "allow-auth-resume",
-        "allow-auth-exchange",
-        "allow-auth-sign-out",
-    ];
+    const AUTH_COMMANDS: [&str; 4] = ["auth_sign_in", "auth_resume", "auth_exchange", "auth_sign_out"];
+    const AUTH_PERMISSIONS: [&str; 4] =
+        ["allow-auth-sign-in", "allow-auth-resume", "allow-auth-exchange", "allow-auth-sign-out"];
     const AUTH_SOURCE: &str = include_str!("auth.rs");
 
     #[test]
     fn the_auth_commands_are_allowed_by_name_to_the_bundled_local_origin_only() {
-        let cap: serde_json::Value =
-            serde_json::from_str(CAPABILITY).expect("the capability parses");
-        let perms: Vec<&str> = cap["permissions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|p| p.as_str().unwrap())
-            .collect();
+        let cap: serde_json::Value = serde_json::from_str(CAPABILITY).expect("the capability parses");
+        let perms: Vec<&str> = cap["permissions"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
         for name in AUTH_PERMISSIONS {
             assert!(perms.contains(&name), "{name} is allowed by name");
         }
-        assert!(
-            perms.iter().all(|p| !p.contains('*')),
-            "no wildcard permission"
-        );
-        assert!(
-            cap.get("remote").is_none(),
-            "the default capability names no remote URL"
-        );
-        assert!(cap
-            .get("local")
-            .is_none_or(|l| l == &serde_json::json!(true)));
-        assert_eq!(
-            cap["windows"],
-            serde_json::json!(["main"]),
-            "the main window only"
-        );
+        assert!(perms.iter().all(|p| !p.contains('*')), "no wildcard permission");
+        assert!(cap.get("remote").is_none(), "the default capability names no remote URL");
+        assert!(cap.get("local").is_none_or(|l| l == &serde_json::json!(true)));
+        assert_eq!(cap["windows"], serde_json::json!(["main"]), "the main window only");
         assert!(cap.get("webviews").is_none(), "no extra webview is granted");
         assert!(!TAURI_CONF.contains("dangerousRemoteDomainIpcAccess"));
-        assert!(
-            !CAPABILITY.contains("keychain"),
-            "the auth grants add no keychain command"
-        );
+        assert!(!CAPABILITY.contains("keychain"), "the auth grants add no keychain command");
     }
 
     #[test]
     fn the_auth_commands_are_declared_in_the_built_acl_manifest() {
         for name in AUTH_COMMANDS {
-            assert!(
-                BUILT_ACL_MANIFEST.contains(name),
-                "{name} is declared in the ACL manifest"
-            );
+            assert!(BUILT_ACL_MANIFEST.contains(name), "{name} is declared in the ACL manifest");
         }
         for name in AUTH_PERMISSIONS {
-            assert!(
-                BUILT_CAPABILITIES.contains(name),
-                "{name} is granted in the merged capabilities"
-            );
+            assert!(BUILT_CAPABILITIES.contains(name), "{name} is granted in the merged capabilities");
         }
         assert!(!BUILT_ACL_MANIFEST.contains("keychain"));
     }
@@ -474,13 +462,8 @@ mod tests {
         for chunk in production.split("#[tauri::command]").skip(1) {
             commands += 1;
             let signature = chunk.split("{").next().unwrap().to_ascii_lowercase();
-            for banned in [
-                "endpoint", "project", "core_url", "url", "jwt", "secret", "token",
-            ] {
-                assert!(
-                    !signature.contains(banned),
-                    "a command signature mentions {banned}: {signature}"
-                );
+            for banned in ["endpoint", "project", "core_url", "url", "jwt", "secret", "token"] {
+                assert!(!signature.contains(banned), "a command signature mentions {banned}: {signature}");
             }
         }
         assert_eq!(commands, 4, "exactly the four contract commands");
@@ -489,17 +472,7 @@ mod tests {
     #[test]
     fn the_auth_module_prints_and_logs_nothing() {
         let production = AUTH_SOURCE.split("#[cfg(test)]").next().unwrap();
-        for banned in [
-            "println!",
-            "eprintln!",
-            "print!(",
-            "dbg!",
-            "log::",
-            "tracing::",
-            "info!(",
-            "warn!(",
-            "error!(",
-        ] {
+        for banned in ["println!", "eprintln!", "print!(", "dbg!", "log::", "tracing::", "info!(", "warn!(", "error!("] {
             assert!(!production.contains(banned), "auth.rs contains {banned}");
         }
     }
@@ -508,15 +481,11 @@ mod tests {
     fn the_keychain_service_is_the_work_identifier_and_the_slot_is_per_project() {
         // AUTH-SHELL-CONTRACT r7: service ai.futurebuild.hh.<profile>, account
         // console-session:<project id>. Work is desktop custody only.
-        let address =
-            hh_shell_core::custody::Address::console_session(profiles::work().identifier, "proj-1")
-                .expect("the Work identifier forms a custody address");
+        let address = hh_shell_core::custody::Address::console_session(profiles::work().identifier, "proj-1")
+            .expect("the Work identifier forms a custody address");
         assert_eq!(address.service(), "ai.futurebuild.hh.work");
         assert_eq!(address.account(), "console-session:proj-1");
-        assert!(
-            !AUTH_SOURCE.contains("profiles::field"),
-            "Work never reads Field's profile"
-        );
+        assert!(!AUTH_SOURCE.contains("profiles::field"), "Work never reads Field's profile");
     }
 
     #[test]
@@ -526,10 +495,7 @@ mod tests {
         if profiles::work().auth.validate().is_err() {
             let state = super::auth::AuthState::for_profile();
             assert!(
-                matches!(
-                    state.service(),
-                    Err(hh_shell_core::console::AuthCode::Unavailable)
-                ),
+                matches!(state.service(), Err(hh_shell_core::console::AuthCode::Unavailable)),
                 "an unconfigured build must hold no auth service and answer unavailable"
             );
         }
@@ -542,10 +508,7 @@ mod tests {
         // as in Field's config.
         let conf: serde_json::Value = serde_json::from_str(TAURI_CONF).unwrap();
         let csp = conf["app"]["security"]["csp"].as_str().unwrap();
-        assert!(
-            csp.contains("connect-src 'self' ipc: http://ipc.localhost;"),
-            "{csp}"
-        );
+        assert!(csp.contains("connect-src 'self' ipc: http://ipc.localhost;"), "{csp}");
         assert!(!csp.contains("https:"), "no remote origin in the CSP");
     }
 }
