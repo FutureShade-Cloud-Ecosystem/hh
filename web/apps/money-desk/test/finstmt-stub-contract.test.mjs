@@ -165,10 +165,10 @@ test("the income statement answers the contract, its totals are its rows, and a 
   assert.equal(whole.json.net_income_cents, whole.json.revenue_cents - whole.json.expense_cents);
   const one = await get(IDS.controller, `/api/v1/finstmt/income-statement?year=${year}&month=2`);
   assert.ok(one.json.revenue_cents < whole.json.revenue_cents);
-  const trenton = await get(IDS.controller, `/api/v1/finstmt/income-statement?year=${year}&branch_id=${IDS.trenton}`);
-  const kingston = await get(IDS.controller, `/api/v1/finstmt/income-statement?year=${year}&branch_id=${IDS.kingston}`);
-  assert.equal(trenton.json.revenue_cents + kingston.json.revenue_cents, whole.json.revenue_cents);
-  holds("FinStmtIncomeStatementReport", trenton.json);
+  const pointLoma = await get(IDS.controller, `/api/v1/finstmt/income-statement?year=${year}&branch_id=${IDS.pointLoma}`);
+  const julian = await get(IDS.controller, `/api/v1/finstmt/income-statement?year=${year}&branch_id=${IDS.julian}`);
+  assert.equal(pointLoma.json.revenue_cents + julian.json.revenue_cents, whole.json.revenue_cents);
+  holds("FinStmtIncomeStatementReport", pointLoma.json);
   const compared = await get(IDS.controller, `/api/v1/finstmt/income-statement?year=${year}&compare=1`);
   assert.equal(compared.status, 200);
   holds("FinStmtComparativeRows", compared.json);
@@ -225,8 +225,8 @@ test("the receivables aging answers the contract, in the core's band order, and 
   assert.deepEqual(aging.json.buckets.map((b) => b.bucket), ["CURRENT", "1_30", "31_60", "61_90", "90_PLUS"]);
   assert.equal(aging.json.grand_total_cents, sumOf(aging.json.rows, "amount_cents"));
   assert.equal(aging.json.grand_total_cents, sumOf(aging.json.buckets, "cents"));
-  const one = await get(IDS.controller, `/api/v1/finstmt/ar-aging?branch_id=${IDS.trenton}`);
-  assert.ok(one.json.rows.every((r) => r.branch_id === IDS.trenton));
+  const one = await get(IDS.controller, `/api/v1/finstmt/ar-aging?branch_id=${IDS.pointLoma}`);
+  assert.ok(one.json.rows.every((r) => r.branch_id === IDS.pointLoma));
 });
 
 test("the saved packs list under the key the core writes, and create, change and delete answer the contract", async () => {
@@ -242,7 +242,7 @@ test("the saved packs list under the key the core writes, and create, change and
   assert.equal(made.json.report, "TRIAL_BALANCE");
   assert.equal(made.json.recipients, "a@b.example,c@d.example");
   assert.equal(made.json.cadence, "DAILY");
-  const changed = await call(IDS.controller, "PUT", `/api/v1/finstmt/schedules/${made.json.id}`, { report: "GL_DETAIL", recipients: "a@b.example", cadence: "WEEKLY", branch_id: IDS.trenton, is_active: false });
+  const changed = await call(IDS.controller, "PUT", `/api/v1/finstmt/schedules/${made.json.id}`, { report: "GL_DETAIL", recipients: "a@b.example", cadence: "WEEKLY", branch_id: IDS.pointLoma, is_active: false });
   assert.equal(changed.status, 200);
   holds("FinStmtSchedule", changed.json);
   assert.equal(changed.json.is_active, false);
@@ -263,10 +263,10 @@ test("the read refusals are the core's sentences, in the core's order", async ()
   refused(await get(IDS.controller, "/api/v1/finstmt/trial-balance?year=99999"), 400, "year must be a 4-digit fiscal year");
   // Then the branch fence: a scoped manager must name a branch it holds, and the trial balance is global only.
   refused(await get(IDS.manager, `/api/v1/finstmt/income-statement?year=${year}`), 403, "finstmt: caller cannot access this branch");
-  refused(await get(IDS.manager, `/api/v1/finstmt/income-statement?year=${year}&branch_id=${IDS.kingston}`), 403, "finstmt: caller cannot access this branch");
+  refused(await get(IDS.manager, `/api/v1/finstmt/income-statement?year=${year}&branch_id=${IDS.julian}`), 403, "finstmt: caller cannot access this branch");
   refused(await get(IDS.manager, `/api/v1/finstmt/trial-balance?year=${year}`), 403, "finstmt: caller cannot access this branch");
   refused(await get(IDS.manager, "/api/v1/finstmt/ar-aging"), 403, "finstmt: caller cannot access this branch");
-  assert.equal((await get(IDS.manager, `/api/v1/finstmt/income-statement?year=${year}&branch_id=${IDS.trenton}`)).status, 200);
+  assert.equal((await get(IDS.manager, `/api/v1/finstmt/income-statement?year=${year}&branch_id=${IDS.pointLoma}`)).status, 200);
   assert.equal((await get(IDS.payrec, `/api/v1/finstmt/trial-balance?year=${year}`)).status, 200);
 });
 

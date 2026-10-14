@@ -7,8 +7,8 @@ import { test, expect, openStatements, openStatementsAs, stubCalls, stubExports,
 import { openDesk } from "./helpers.js";
 
 // The shared stub names its two branches this way.
-const TRENTON = "Trenton (demo)";
-const KINGSTON = "Kingston (demo)";
+const POINT_LOMA = "Point Loma (demo)";
+const JULIAN = "Julian (demo)";
 
 const tile = (page: import("@playwright/test").Page, id: string) => page.locator(`[data-tile="${id}"]`);
 const tab = (page: import("@playwright/test").Page, id: string) => page.locator(`[data-tab-id="${id}"]`);
@@ -57,16 +57,16 @@ test("a period narrows the income statement and says whether it is closed or sti
 test("a branch narrows the statements, and the whole company is the two branches together", async ({ page, request }) => {
   await openStatements(page, request);
   const both = await tile(page, "revenue").innerText();
-  await page.getByLabel("Branch", { exact: true }).selectOption({ label: TRENTON });
-  await expect(page.locator("[data-statement-sub]")).toContainText(`· ${TRENTON}`);
+  await page.getByLabel("Branch", { exact: true }).selectOption({ label: POINT_LOMA });
+  await expect(page.locator("[data-statement-sub]")).toContainText(`· ${POINT_LOMA}`);
   const one = await tile(page, "revenue").innerText();
   expect(one).not.toBe(both);
-  await page.getByLabel("Branch", { exact: true }).selectOption({ label: KINGSTON });
-  await expect(page.locator("[data-statement-sub]")).toContainText(`· ${KINGSTON}`);
+  await page.getByLabel("Branch", { exact: true }).selectOption({ label: JULIAN });
+  await expect(page.locator("[data-statement-sub]")).toContainText(`· ${JULIAN}`);
   await expect(tile(page, "revenue")).not.toHaveText(one);
   // The branch choice rides to the balance sheet.
   await tab(page, "balance").click();
-  await expect(page.locator("[data-statement-sub]")).toContainText(`· ${KINGSTON}`);
+  await expect(page.locator("[data-statement-sub]")).toContainText(`· ${JULIAN}`);
 });
 
 test("a manager who holds one branch is refused the consolidated books in words, and reads that branch", async ({ page, request }) => {
@@ -74,10 +74,10 @@ test("a manager who holds one branch is refused the consolidated books in words,
   await expect(page.locator("[data-error]")).toHaveText("You cannot read the books of that branch. Choose a branch you hold.");
   await expect(page.locator("[data-error]")).not.toContainText("finstmt");
   await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
-  await page.getByLabel("Branch", { exact: true }).selectOption({ label: TRENTON });
+  await page.getByLabel("Branch", { exact: true }).selectOption({ label: POINT_LOMA });
   await expect(page.locator("[data-statement]")).toBeVisible();
   await expect(page.locator("[data-error]")).toHaveCount(0);
-  await expect(page.locator("[data-statement-sub]")).toContainText(`· ${TRENTON}`);
+  await expect(page.locator("[data-statement-sub]")).toContainText(`· ${POINT_LOMA}`);
   // The trial balance has no branch: it is the whole company's, and a manager of one branch is refused it.
   await tab(page, "trial").click();
   await expect(page.locator("[data-error]")).toHaveText("You cannot read the books of that branch. Choose a branch you hold.");
@@ -179,9 +179,9 @@ test("the receivables aging shows its bands and total, and a branch narrows it",
   await expect(page.locator("[data-statement]")).toContainText("Over 90 days past due");
   await expect(page.locator("[data-statement]")).toContainText("Summit Ridge Builders");
   const all = await page.locator('[data-total="grand"]').innerText();
-  await page.getByLabel("Branch", { exact: true }).selectOption({ label: TRENTON });
+  await page.getByLabel("Branch", { exact: true }).selectOption({ label: POINT_LOMA });
   await expect(page.locator('[data-total="grand"]')).not.toHaveText(all);
-  await expect(page.locator("[data-statement-sub]")).toHaveText(`As of now · ${TRENTON}`);
+  await expect(page.locator("[data-statement-sub]")).toHaveText(`As of now · ${POINT_LOMA}`);
 });
 
 test("the CSV is the core's own export, recorded as an export, in plain decimals and named for the period", async ({ page, request }) => {
@@ -231,15 +231,15 @@ test("a refused export says so in words and downloads nothing", async ({ page, r
 
 test("a printed statement carries its title, period and scope and nothing around it", async ({ page, request }) => {
   await openStatements(page, request);
-  await page.getByLabel("Branch", { exact: true }).selectOption({ label: TRENTON });
-  await expect(page.locator("[data-statement-sub]")).toContainText(TRENTON);
+  await page.getByLabel("Branch", { exact: true }).selectOption({ label: POINT_LOMA });
+  await expect(page.locator("[data-statement-sub]")).toContainText(POINT_LOMA);
   await page.emulateMedia({ media: "print" });
   await expect(page.locator("hos-app-header")).toBeHidden();
   await expect(page.locator("nav.areas")).toBeHidden();
   await expect(page.locator(".fs-tabs")).toBeHidden();
   await expect(page.locator(".fs-controls")).toBeHidden();
   await expect(page.locator("[data-statement-title]")).toBeVisible();
-  await expect(page.locator("[data-statement-sub]")).toContainText(TRENTON);
+  await expect(page.locator("[data-statement-sub]")).toContainText(POINT_LOMA);
   await expect(page.getByRole("table", { name: "Income statement lines" })).toBeVisible();
   await expect(page.locator(".fs-print-only")).toBeVisible();
   await page.emulateMedia({ media: "screen" });
@@ -378,7 +378,7 @@ test("the core's page of packs and the key it writes today are both read, and an
   // A statement whose figures are not integers is refused whole too.
   await page.route("**/api/v1/finstmt/income-statement*", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ year: 1, month: 0, branch_id: "", revenue: "none", expenses: [], revenue_cents: 1.5, expense_cents: 0, net_income_cents: 0 }) }));
   await tab(page, "income").click();
-  await page.getByLabel("Branch", { exact: true }).selectOption({ label: TRENTON });
+  await page.getByLabel("Branch", { exact: true }).selectOption({ label: POINT_LOMA });
   await expect(page.locator("[data-error]")).toHaveText("The income statement was not in a shape this screen can read.");
 });
 

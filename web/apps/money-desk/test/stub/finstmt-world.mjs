@@ -20,8 +20,8 @@ export const IDS = {
   payrec: "de110000-0000-4000-9000-000000000007",
   manager: GL_IDS.manager,
   sales: GL_IDS.sales,
-  trenton: GL_IDS.trenton,
-  kingston: GL_IDS.kingston,
+  pointLoma: GL_IDS.pointLoma,
+  julian: GL_IDS.julian,
   pack1: "5c4a0000-0000-4000-9000-0000000000a1",
   pack2: "5c4a0000-0000-4000-9000-0000000000a2",
 };
@@ -79,7 +79,7 @@ function buildBooks() {
     // The prior year ran a little smaller, so the comparison has something to say.
     const scale = year === FY ? 100 : 86;
     for (let month = 1; month <= last; month += 1) {
-      for (const [bi, branch] of [[0, GL_IDS.trenton], [1, GL_IDS.kingston]]) {
+      for (const [bi, branch] of [[0, GL_IDS.pointLoma], [1, GL_IDS.julian]]) {
         const rev = Math.round(((820000 + month * 41000 + bi * 133000) * scale) / 100);
         const delivery = Math.round(((46000 + bi * 12000) * scale) / 100);
         const tax = Math.round(((rev + delivery) * 775) / 10000);
@@ -124,13 +124,13 @@ function buildAging() {
   ];
   // [customer, branch, source type, cents, age in days past due]
   const spec = [
-    [0, GL_IDS.trenton, "INVOICE", 1284500, 0],
-    [0, GL_IDS.trenton, "INVOICE", 640000, 24],
-    [0, GL_IDS.kingston, "INVOICE", 215075, 47],
-    [1, GL_IDS.trenton, "INVOICE", 905000, 12],
-    [1, GL_IDS.kingston, "INVOICE", 330000, 75],
-    [2, GL_IDS.kingston, "INVOICE", 478250, 102],
-    [2, GL_IDS.trenton, "ADJUSTMENT", -25000, 8],
+    [0, GL_IDS.pointLoma, "INVOICE", 1284500, 0],
+    [0, GL_IDS.pointLoma, "INVOICE", 640000, 24],
+    [0, GL_IDS.julian, "INVOICE", 215075, 47],
+    [1, GL_IDS.pointLoma, "INVOICE", 905000, 12],
+    [1, GL_IDS.julian, "INVOICE", 330000, 75],
+    [2, GL_IDS.julian, "INVOICE", 478250, 102],
+    [2, GL_IDS.pointLoma, "ADJUSTMENT", -25000, 8],
   ];
   return spec
     .map(([ci, branch, type, cents, days], i) => ({
@@ -195,7 +195,7 @@ export function createFinstmtWorld() {
       const sub = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")).sub;
       if (sub === GL_IDS.controller) return { id: sub, tier: 1, global: true, branches: [] };
       if (sub === IDS.payrec) return { id: sub, tier: 2, global: true, branches: [] };
-      if (sub === GL_IDS.manager) return { id: sub, tier: 2, global: false, branches: [GL_IDS.trenton] };
+      if (sub === GL_IDS.manager) return { id: sub, tier: 2, global: false, branches: [GL_IDS.pointLoma] };
       return { id: sub, tier: 3, global: false, branches: [] };
     } catch {
       return { id: "", tier: 0, global: false, branches: [] };
