@@ -407,9 +407,13 @@ export class ManagerApi {
   /**
    * The approvals list, narrowed to one policy kind the caller decides. An empty kind is the
    * whole list; a kind the caller does not decide is refused in the core's own words.
+   * The opening read asks for the waiting ones only.
    */
-  async approvals(kind: string): Promise<Result<readonly ApprovalRow[]>> {
-    const opts = kind === "" ? {} : { kind: kind as IdentityPolicyType };
+  async approvals(kind: string, pendingOnly = false): Promise<Result<readonly ApprovalRow[]>> {
+    const opts = {
+      ...(kind === "" ? {} : { kind: kind as IdentityPolicyType }),
+      ...(pendingOnly ? { status: "PENDING" as const } : {}),
+    };
     const answer = await staffIdentity.identityListApprovals(this.#client, opts);
     if (!answer.ok) return answer;
     const page = bag(answer.value);

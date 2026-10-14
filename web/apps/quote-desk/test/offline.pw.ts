@@ -160,3 +160,32 @@ test("pressing add again with no signal keeps one draft, not one per press, and 
   await expect(waiting).toHaveCount(0);
   expect((await syncLog(page)).pushes.map((p) => p.op)).toEqual(["create"]);
 });
+
+test("a payment refused with no signal keeps its refusal on screen: nothing is read again and the payment form stays", async ({ page, context }) => {
+  await signIn(page);
+  await showList(page);
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
+  const detail = page.getByTestId("qb-detail");
+  if ((await detail.getAttribute("open")) === null) await page.getByText("Quote detail & admin").click();
+  const pay = page.locator("qd-order-payment");
+  await expect(pay.getByTestId("op-box")).toBeVisible();
+  await expect(pay.locator('[data-field="amount"]')).toBeVisible();
+  await waitForFirstPull(page);
+  const dialed = dialedWrites(page);
+  // Reads of the quote this page asks for from here on, by path: a refused write reached no server, so nothing moved and nothing is re-read.
+  const reads: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "GET" && /^\/api\/v1\/quotes\/[^/]+$/.test(new URL(r.url()).pathname)) reads.push(new URL(r.url()).pathname);
+  });
+
+  await context.setOffline(true);
+  await expect(banner(page)).toBeVisible();
+  await pay.locator('[data-field="amount"]').fill("10.00");
+  await pay.getByTestId("op-take").click();
+  // The button is released only after the answer is in, and in the same step the old code asked for the quote again.
+  await expect(pay.getByTestId("op-take")).toBeEnabled();
+  expect(reads).toEqual([]);
+  await expect(pay.getByTestId("op-unread")).toHaveCount(0);
+  await expect(pay.getByTestId("op-error")).toContainText("No signal");
+  expect(dialed.filter((w) => w.includes("/order-payment"))).toEqual([]);
+});
