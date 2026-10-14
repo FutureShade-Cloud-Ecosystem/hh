@@ -160,7 +160,7 @@ const TICKETS = {
     order_id: "0b000000-0000-4000-9000-000000000042",
     order_no: "SO-1042",
     branch_id: POINT_LOMA,
-    customer_name: "Summit Ridge Builders",
+    customer_name: "Bluffside Builders",
     fulfillment: "PICKUP",
     mto_class: "STANDARD",
     priority: "URGENT",
@@ -633,7 +633,7 @@ function parseQty(raw) {
 
 function recordPick(res, task, input) {
   const record = recordPickedLines(task, input.lines);
-  if (record.error) return refuse(res, 400, record.error);
+  if (record.error) return refuse(res, record.status ?? 400, record.error);
   task.updated_at = new Date().toISOString();
   syncTouch("pick_tasks", task.id);
   return json(res, { items: record.picked.map(pickedOut) });
@@ -879,6 +879,15 @@ function syncApplyTaskUpdate(task, op, moneyAllowed) {
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("pick_tasks", task.id) };
 }
 
+// A CANCELLED or DONE pick takes no record (core/internal/tasks/yard_short.go ErrPickClosed): both are
+// terminal and the module has no correction path for a done pick. The REST door answers 409, a sync op
+// is rejected with the same words.
+function closedPickWords(task) {
+  if (task.status === "CANCELLED") return "tasks: this pick was cancelled, its record cannot change";
+  if (task.status === "DONE") return "tasks: this pick is done, its record cannot change";
+  return "";
+}
+
 // The legs one recorded line may carry through sync (syncpick.go pickedLineLegs): the direct door's
 // body keys. A local row id, task id or picked_at stamp is not on the wire.
 const PICKED_LINE_LEGS = new Set(["order_line_no", "product_id", "sku", "description", "qty_ordered", "qty_picked", "uom", "short_reason", "short_note"]);
@@ -893,6 +902,8 @@ function syncApplyPickRecord(task, op, declared, lines) {
   for (const key of declared) {
     if (key !== "picked") return syncRejected(op, `tasks: field "${key}" cannot travel with picked, a pick record is its own operation`);
   }
+  const closed = closedPickWords(task);
+  if (closed !== "") return syncRejected(op, closed);
   if (!Array.isArray(lines)) return syncRejected(op, "tasks: picked must be an array of lines");
   if (lines.length > 500) return syncRejected(op, "tasks: that is more lines than any one ticket carries (max 500)");
   for (const [i, l] of lines.entries()) {
@@ -944,6 +955,8 @@ function recordPickedLines(task, lines) {
       if (reason === "OTHER" && note === "") return { error: `line ${lineNo}: say what happened in the note when the reason is OTHER` };
     }
   }
+  const closed = closedPickWords(task);
+  if (closed !== "") return { error: closed, status: 409 };
   const picked = list.map((l) => {
     const lineNo = Number(l.order_line_no);
     const ticketLine = ticket.lines.find((t) => t.line_no === lineNo) ?? {};

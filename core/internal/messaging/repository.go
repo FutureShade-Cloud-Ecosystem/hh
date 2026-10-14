@@ -93,7 +93,8 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 	//   - GLOBAL auto_scope: any ACTIVE staff;
 	//   - BRANCH auto_scope: the user is GLOBAL-scoped (reaches every branch) OR holds a grant for
 	//     ch.branch_id (mirrors StaffContext.CanAccessBranch);
-	//   - auto_role narrows to a role code ('*'/NULL = any role).
+	//   - auto_role narrows to a role code ('*'/NULL = any role);
+	//   - member_roles (the money rooms, 0390) narrows to a list of role codes, NULL = no list.
 	const qualifies = `
 		ch.auto_scope IS NOT NULL
 		AND ch.is_archived = FALSE
@@ -108,6 +109,12 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 		   OR EXISTS (
 		         SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
 		         WHERE ur.user_id = $1 AND ro.code = ch.auto_role)
+		    )
+		AND (
+		      ch.member_roles IS NULL
+		   OR EXISTS (
+		         SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+		         WHERE ur.user_id = $1 AND ro.code::text = ANY(ch.member_roles))
 		    )`
 
 	// Insert the derived rows the user qualifies for. A non-ACTIVE user qualifies for nothing (the
@@ -196,6 +203,40 @@ func (r *Repository) SyncMembership(ctx context.Context, userID string) error {
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return fmt.Errorf("prune derived members (inactive): %w", err)
+		}
+		changed = append(changed, pruned...)
+	}
+
+	// A room carrying a member_roles list is a fence for EVERY seat source: an EXPLICIT row the
+	// user holds there, given while they held one of the roles (or before the list existed), goes
+	// when they hold none of them now. It owes the feed the same bump as any other prune.
+	if status == "ACTIVE" {
+		rows, err := tx.Query(ctx, `
+			DELETE FROM msg_members m
+			USING msg_channels ch
+			WHERE m.user_id = $1
+			  AND m.source = 'EXPLICIT'
+			  AND ch.id = m.channel_id
+			  AND ch.member_roles IS NOT NULL
+			  AND NOT EXISTS (
+			        SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+			        WHERE ur.user_id = $1 AND ro.code::text = ANY(ch.member_roles))
+			RETURNING m.channel_id`, userID)
+		if err != nil {
+			return fmt.Errorf("prune fenced explicit members: %w", err)
+		}
+		var pruned []string
+		for rows.Next() {
+			var ch string
+			if err := rows.Scan(&ch); err != nil {
+				rows.Close()
+				return fmt.Errorf("scan pruned channel: %w", err)
+			}
+			pruned = append(pruned, ch)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("prune fenced explicit members: %w", err)
 		}
 		changed = append(changed, pruned...)
 	}
@@ -948,8 +989,12 @@ func (r *Repository) ChannelIDBySlug(ctx context.Context, slug string) (string, 
 }
 
 // BranchYardSlug returns the yard channel slug for a branch id (the FR-3 map: order/stock/delivery
-// events for a branch land in that branch's #yard-<name> channel). It resolves the branch's short
-// code from locations and lowercases it, so #yard-trenton / #yard-kingston fall out of the data.
+// events for a branch land in that branch's #yard-<name> channel). The branch's own system yard room
+// names it: the BRANCH kind row for that branch carrying the auto_scope marker (no caller founded
+// room ever has one), so a dealer whose rooms are named after the city (yard-point-loma on a branch
+// coded PLM) routes to them, and the house and payments slugs derived from this one follow. A branch
+// with no such room falls back to its short code from locations, lowercased (a branch coded NWB is
+// yard-nwb), with the two first seeded yards keeping their city names.
 func (r *Repository) BranchYardSlug(ctx context.Context, branchID string) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
@@ -962,8 +1007,18 @@ func (r *Repository) BranchYardSlug(ctx context.Context, branchID string) (strin
 		}
 		return "", fmt.Errorf("resolve branch code: %w", err)
 	}
-	// locations.code is TRT/KGN; the seeded yard slugs are yard-trenton/yard-kingston. Map via a
-	// lookup on the branch's city name so the slug matches the seed regardless of code casing.
+	var slug string
+	err = r.pool.QueryRow(ctx, `
+		SELECT slug::text FROM msg_channels
+		WHERE branch_id = $1 AND kind = 'BRANCH' AND auto_scope IS NOT NULL AND is_archived = FALSE
+		  AND slug LIKE 'yard-%'
+		ORDER BY created_at, id LIMIT 1`, branchID).Scan(&slug)
+	if err == nil {
+		return slug, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("resolve branch yard room: %w", err)
+	}
 	switch code {
 	case "trt":
 		return "yard-trenton", nil
@@ -1247,9 +1302,10 @@ func (r *Repository) CreateDM(ctx context.Context, aUserID, bUserID string) (Cha
 // auto_scope (a BRANCH-scoped room's membership belongs to the branch
 // model, so a target it would not derive in is refused).
 type channelFactsRow struct {
-	Kind      string
-	BranchID  string
-	AutoScope string
+	Kind        string
+	BranchID    string
+	AutoScope   string
+	MemberRoles []string
 }
 
 // channelFacts reads one room's kind, branch and auto_scope. An unknown
@@ -1261,9 +1317,9 @@ func (r *Repository) channelFacts(ctx context.Context, channelID string) (channe
 	}
 	var f channelFactsRow
 	err := r.pool.QueryRow(ctx, `
-		SELECT kind, COALESCE(branch_id::text,''), COALESCE(auto_scope,'')
+		SELECT kind, COALESCE(branch_id::text,''), COALESCE(auto_scope,''), COALESCE(member_roles, '{}')
 		FROM msg_channels WHERE id = $1`, channelID).
-		Scan(&f.Kind, &f.BranchID, &f.AutoScope)
+		Scan(&f.Kind, &f.BranchID, &f.AutoScope, &f.MemberRoles)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return channelFactsRow{}, errNotFound
 	}
@@ -1311,6 +1367,23 @@ func (r *Repository) userReachesBranch(ctx context.Context, userID, branchID str
 		return false, fmt.Errorf("user reaches branch: %w", err)
 	}
 	return reaches, nil
+}
+
+// userHoldsAnyRole reports whether one user holds at least one of the role codes: the add-target
+// wall on a room whose member_roles list names the roles it may seat.
+func (r *Repository) userHoldsAnyRole(ctx context.Context, userID string, codes []string) (bool, error) {
+	if r.pool == nil {
+		return false, errNoDB
+	}
+	var holds bool
+	err := r.pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+		              WHERE ur.user_id = $1 AND ro.code::text = ANY($2))`,
+		userID, codes).Scan(&holds)
+	if err != nil {
+		return false, fmt.Errorf("user holds role: %w", err)
+	}
+	return holds, nil
 }
 
 // AddChannelMember seats one staff member EXPLICIT in a channel

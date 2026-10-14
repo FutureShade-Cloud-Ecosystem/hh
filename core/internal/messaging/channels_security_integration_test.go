@@ -59,24 +59,24 @@ func TestIntegration_CreateChannel_Collision_AnswersWithoutSeating(t *testing.T)
 	svc := NewService(repo)
 
 	// Sync first, so the caller's membership state is deterministic on the
-	// shared gate database: Sam is a derived member of the GLOBAL #finance.
+	// shared gate database: Sam is a derived member of the GLOBAL #office.
 	if err := repo.SyncMembership(ctx, uSamRivera); err != nil {
 		t.Fatalf("sync sam: %v", err)
 	}
-	if _, _, ok := memberRow(ctx, t, pool, chFinance, uSamRivera); !ok {
-		t.Fatalf("setup: sam must hold a derived row in #finance after sync")
+	if _, _, ok := memberRow(ctx, t, pool, chOffice, uSamRivera); !ok {
+		t.Fatalf("setup: sam must hold a derived row in #office after sync")
 	}
 
 	ch, created, err := svc.CreateChannel(ctx, samCaller(), CreateChannelInput{
-		Kind: KindTeam, Name: "finance",
+		Kind: KindTeam, Name: "office",
 	})
 	if err != nil {
 		t.Fatalf("founding a room the caller is already in must answer it, got %v", err)
 	}
-	if created || ch.ID != chFinance {
-		t.Fatalf("the collision must answer the existing room: created=%v id=%s want %s", created, ch.ID, chFinance)
+	if created || ch.ID != chOffice {
+		t.Fatalf("the collision must answer the existing room: created=%v id=%s want %s", created, ch.ID, chOffice)
 	}
-	role, source, ok := memberRow(ctx, t, pool, chFinance, uSamRivera)
+	role, source, ok := memberRow(ctx, t, pool, chOffice, uSamRivera)
 	if !ok {
 		t.Fatalf("the caller's derived row vanished")
 	}

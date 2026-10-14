@@ -105,6 +105,7 @@ var Routes = []Route{
 	{Method: "POST", Path: "/api/v1/auth/login", OperationID: "identityLogin", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/auth/methods", OperationID: "identityAuthMethods", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "POST", Path: "/api/v1/auth/password-reset/confirm", OperationID: "identityConfirmPasswordReset", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: false, Surfaces: nil, Level: "", List: ""},
+	{Method: "POST", Path: "/api/v1/auth/persona", OperationID: "identityPersona", Tag: "staff-identity", XRole: "public", Bearer: "public", Addition: true, Surfaces: nil, Level: "", List: ""},
 	{Method: "GET", Path: "/api/v1/bankrec/accounts", OperationID: "bankrecListAccounts", Tag: "staff-bankrec", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},
 	{Method: "POST", Path: "/api/v1/bankrec/imports", OperationID: "bankrecCreateImport", Tag: "staff-bankrec", XRole: "requireManager", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "manage", List: ""},
 	{Method: "GET", Path: "/api/v1/bankrec/lines", OperationID: "bankrecListLines", Tag: "staff-bankrec", XRole: "requireStaff", Bearer: "staff", Addition: false, Surfaces: []string{"money-desk"}, Level: "read", List: ""},

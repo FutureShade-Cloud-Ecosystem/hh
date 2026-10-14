@@ -34,14 +34,14 @@ import {
   HHFeedback,
   type FeedbackSender,
 } from "@hardscapehouse/design-system/src/feedback.js";
+import { announceChromeControls, chromeActionFrom, framedByShell } from "@hardscapehouse/design-system/src/framed.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import {
   TillClient,
-  HOUSE_ZONE,
-  houseDayInZone,
+  houseDay,
   type BranchRef,
 } from "./till-client.js";
 import { demoBanner, demoBannerStyles } from "./demo-banner.js";
@@ -570,7 +570,7 @@ export class CounterTillApp extends HHElement {
     // the house zone's day, the conversion the sale's ring already rides.
     wirePorts({
       headers: staffHeaders,
-      houseDay: () => houseDayInZone(HOUSE_ZONE),
+      houseDay: () => houseDay(),
       user: () => this.#clerkIdentity,
       token: () => this.#sessions.current?.token ?? "",
       // The drawn category tiles ship in every build (decision log row 1057): a product with no
@@ -587,6 +587,10 @@ export class CounterTillApp extends HHElement {
     super.connectedCallback();
     this.#route = this.#readRoute();
     window.addEventListener("hashchange", this.#onHashChange);
+    if (this.#framed) {
+      window.addEventListener("message", this.#onChromeAction);
+      announceChromeControls(window, ["theme", "feedback"]);
+    }
     // The kits' wiring rule, carried for this app's own templates: listen on
     // the HOST and read the control off composedPath(), never @click in a
     // template and never event.target.closest, because the shadow boundary
@@ -761,6 +765,7 @@ export class CounterTillApp extends HHElement {
     this.removeEventListener("input", this.#onHostInput);
     this.removeEventListener("keydown", this.#onHostKey);
     window.removeEventListener("hashchange", this.#onHashChange);
+    window.removeEventListener("message", this.#onChromeAction);
     this.#theme.stop();
     super.disconnectedCallback();
   }
@@ -828,6 +833,32 @@ export class CounterTillApp extends HHElement {
   /** The feedback widget's sender; built once beside the staff client. */
   #feedbackSender: FeedbackSender = async () => ({ ok: false, error: "not ready" });
 
+  /** The Theme control's press: the shell's account menu asks for it too, when this till is framed. */
+  #pressTheme(): void {
+    this.#theme.cycle();
+    this.#themeStatus = themeStatusText(this.#theme.choice);
+  }
+
+  /** The Feedback control's press: the shell's account menu asks for it too, when this till is framed. */
+  #openFeedback(): void {
+    const widget = this.renderRoot.querySelector("hh-feedback");
+    if (widget instanceof HHFeedback) widget.show();
+  }
+
+  /**
+   * Framed by the Work shell (item 8d, row 1520: one header band): the till wears no band of its own, because
+   * the shell's band carries the app selector, the Demo badge, Theme, Feedback and the account. Read once, at
+   * boot, from the frame's address; a till opened on its own never takes this path.
+   */
+  readonly #framed = framedByShell();
+
+  /** The shell asked the till to press Theme or Feedback, which it carries for a framed app. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action = chromeActionFrom(event, window);
+    if (action === "theme") this.#pressTheme();
+    if (action === "feedback") this.#openFeedback();
+  };
+
   readonly #onHostClick = (event: MouseEvent): void => {
     const control = event
       .composedPath()
@@ -842,14 +873,8 @@ export class CounterTillApp extends HHElement {
       writePanesSwapped(this.#panesSwapped);
       this.requestUpdate();
     }
-    if (control.getAttribute("data-action") === "theme") {
-      this.#theme.cycle();
-      this.#themeStatus = themeStatusText(this.#theme.choice);
-    }
-    if (control.getAttribute("data-action") === "feedback") {
-      const widget = this.renderRoot.querySelector("hh-feedback");
-      if (widget instanceof HHFeedback) widget.show();
-    }
+    if (control.getAttribute("data-action") === "theme") this.#pressTheme();
+    if (control.getAttribute("data-action") === "feedback") this.#openFeedback();
     if (control.getAttribute("data-action") === "sign-out") {
       void this.#signOut();
     }
@@ -1192,7 +1217,9 @@ export class CounterTillApp extends HHElement {
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       ${this.#surface === "terminal"
         ? nothing
-        : html`
+        : this.#framed
+          ? html`<h1 class="visually-hidden">Counter Till</h1>`
+          : html`
             <header>
               ${this.#brandLockup()}
               ${demoPresent ? demoBanner() : nothing}
@@ -1219,17 +1246,17 @@ export class CounterTillApp extends HHElement {
               <h2 class="visually-hidden">Till</h2>
               <div class="till-screen">
               <div class="surfacebar">
-                ${this.#brandLockup()}
-                ${demoPresent ? demoBanner() : nothing}
+                ${this.#framed ? nothing : this.#brandLockup()}
+                ${demoPresent && !this.#framed ? demoBanner() : nothing}
                 <p class="signed-in">
-                  <span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>
+                  ${this.#framed ? nothing : html`<span class="role-name" data-testid="signed-in-role">${this.#signedInRoleLabel()}</span>`}
                   ${this.#route !== "sale"
                     ? html`<a class="btn-secondary nav-link" href="#/" data-testid="till-sale-entry">Back to the sale</a>`
                     : html`<a class="btn-secondary nav-link" href="#/returns" data-testid="till-returns-entry">Returns</a>
                         <a class="btn-secondary nav-link" href="#/pay-balance" data-testid="till-pay-balance-entry">Pay balance</a>`}
                   ${this.#route === "sale" ? this.#swapControl() : nothing}
-                  ${this.#themeControl()}
-                  ${this.#feedbackControl()}
+                  ${this.#framed ? nothing : this.#themeControl()}
+                  ${this.#framed ? nothing : this.#feedbackControl()}
                   ${this.#isPopout
                     ? nothing
                     : html`<button
@@ -1241,9 +1268,11 @@ export class CounterTillApp extends HHElement {
                       >
                         Pop out
                       </button>`}
-                  <button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
-                    Sign out
-                  </button>
+                  ${this.#framed
+                    ? nothing
+                    : html`<button type="button" class="btn-secondary" data-action="sign-out" ?disabled=${this.#busy}>
+                        Sign out
+                      </button>`}
                 </p>
               </div>
               <ct-offline-strip></ct-offline-strip>

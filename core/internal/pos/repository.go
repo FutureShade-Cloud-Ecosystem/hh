@@ -20,7 +20,13 @@ type Repository struct {
 	// payBalance is the Pay balance door's seam to the owning modules
 	// (pay_balance_sources.go), bound at the composition root.
 	payBalance PayBalanceSources
+	// zone is the dealer's business day zone source; nil keeps the Ontario dealer's.
+	zone houseday.Source
 }
+
+// WithZone binds the dealer's business day zone source, so a purchaser certificate lapses with the
+// dealer's own day.
+func (r *Repository) WithZone(src houseday.Source) *Repository { r.zone = src; return r }
 
 // NewRepository wraps a pool (may be nil in scaffold/offline mode). The Sale opens a tx from this pool.
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
@@ -222,9 +228,13 @@ SELECT id::text, purchaser_type, proof_identifier_mask, COALESCE(ontario_eligibi
   FROM purchaser_eligibility_profile WHERE id = $1`
 	// The certificate lapses with the dealer's day, so today is decided in Go in the house zone
 	// and bound, not read from CURRENT_DATE, which is the database session's zone.
-	houseDay := houseday.Today(nil)
+	zone, err := houseday.Resolve(ctx, r.zone)
+	if err != nil {
+		return eligibilityMasked{}, err
+	}
+	houseDay := zone.Today(nil)
 	var p eligibilityMasked
-	err := r.pool.QueryRow(ctx, q, profileID, houseDay).Scan(
+	err = r.pool.QueryRow(ctx, q, profileID, houseDay).Scan(
 		&p.ProfileID, &p.PurchaserType, &p.MaskedIdentifier, &p.OntarioEligibility, &p.EligibilityType, &p.Expired,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -450,12 +460,12 @@ func (r *Repository) InsertTaxSnapshot(ctx context.Context, tx pgx.Tx, snap taxS
 	const q = `
 INSERT INTO tax_decision_snapshot (order_id, order_line_id, tax_reason_code, rule_version, rate_bps,
                                    full_hst_cents, on_credit_cents, net_collected_cents, automated,
-                                   evidence_doc_id, signature_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id::text`
+                                   evidence_doc_id, signature_id, standard_rate_bps)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id::text`
 	var id string
 	err := tx.QueryRow(ctx, q, snap.OrderID, nullStr(snap.OrderLineID), snap.TaxReasonCode, snap.RuleVersion,
 		snap.RateBps, snap.FullHSTCents, snap.OnCreditCents, snap.NetCollectedCents, snap.Automated,
-		nullStr(snap.EvidenceDocID), nullStr(snap.SignatureID)).Scan(&id)
+		nullStr(snap.EvidenceDocID), nullStr(snap.SignatureID), standardOrFlat(snap.StandardRateBps)).Scan(&id)
 	return id, err
 }
 
@@ -653,3 +663,12 @@ func nullStr(s string) any {
 
 // compile-time assertion: *Repository satisfies the service's store seam.
 var _ posStore = (*Repository)(nil)
+
+// standardOrFlat is the standard rate a snapshot row is written with: zero, a row built by a caller
+// that names none, is the Ontario 13 percent the column defaults to.
+func standardOrFlat(bps int) int {
+	if bps <= 0 {
+		return flatHSTRateBps
+	}
+	return bps
+}

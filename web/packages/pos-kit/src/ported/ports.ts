@@ -26,7 +26,7 @@
 //      plausible answer. An honest refusal beats a quiet zero at a counter.
 
 import { formatDollars } from "./_money-format.js";
-import { DEMO_CARD_TOKEN, HOUSE_ZONE, houseDayInZone } from "./host-facts.js";
+import { DEMO_CARD_TOKEN } from "./host-facts.js";
 
 /**
  * The port seam every unwired host call raises. The message names the seam so

@@ -33,7 +33,6 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
@@ -230,7 +229,7 @@ func qwWithoutContractor(table string) string {
 // in, minus the three columns the stamp itself moves (see qwDriverStampColumns), and the assertion
 // below checks the stamp landed on exactly them, so the exception is named and held, not a hole.
 func qwDriverDayIDs() []string {
-	stamp := qwClock.In(houseday.Location()).Format("20060102")
+	stamp := qwClock.In(seedLocation()).Format("20060102")
 	ids := []string{demoID(dayKey(stamp, "driver-run"))}
 	ids = append(ids, driverDayStopIDs(stamp)...)
 	return ids
@@ -377,7 +376,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	}
 	before := fingerprint()
 	proposed, created := qwApply(t)
-	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 + controllerWorldRows + contractorWorldRows // quotes, lines, links, acceptances, audit rows, events, log rows, request, and the controller and contractor worlds the same apply adds
+	const wantQuoteRows = 5 + 10 + 3 + 2 + 2 + 2 + 4 + 2 + controllerWorldRows + contractorWorldRows // quotes, lines, links, acceptances, audit rows, events, log rows, requests, and the controller and contractor worlds the same apply adds
 	if created != wantQuoteRows {
 		t.Fatalf("the second apply created %d rows, want exactly the quote world's %d (proposed %d)", created, wantQuoteRows, proposed)
 	}
@@ -403,17 +402,17 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		t.Errorf("the org stamp left %d of 1 run and %d of %d stops stamped, want the day's whole Driver set",
 			runsStamped, stopsStamped, len(driverDayIDs)-1)
 	}
-	census := map[string]int{"quotes": 4, "quote_lines": 9, "quote_share_links": 3, "quote_acceptances": 2,
-		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 1 + 2}
+	census := map[string]int{"quotes": 5, "quote_lines": 10, "quote_share_links": 3, "quote_acceptances": 2,
+		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 2 + 2}
 	for table, add := range census {
 		if n := qwCount(t, ctx, pool, `SELECT count(*) FROM `+table+qwWithoutContractor(table)); n != baseline[table]+add {
 			t.Errorf("%s holds %d rows, want the baseline %d plus the world's %d", table, n, baseline[table], add)
 		}
 	}
-	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1 AND customer_id <> $2::uuid`, demoMarker, contractorCustomerID); n != 4 {
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1 AND customer_id <> $2::uuid`, demoMarker, contractorCustomerID); n != 5 {
 		t.Errorf("demo quotes found by the world's marker: %d, want 4", n)
 	}
-	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'MARGIN_BELOW_MINIMUM'`); n != 1 {
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'MARGIN_BELOW_MINIMUM'`); n != 2 {
 		t.Errorf("floor requests: %d, want 1", n)
 	}
 

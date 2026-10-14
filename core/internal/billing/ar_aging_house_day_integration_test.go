@@ -40,9 +40,14 @@ func TestIntegrationARAgingView_DerivesItsDayFromTheHouseZone(t *testing.T) {
 		`SELECT pg_get_viewdef('v_ar_aging'::regclass, true)`).Scan(&def); err != nil {
 		t.Fatalf("read the installed view: %v", err)
 	}
-	if !strings.Contains(strings.ToLower(def), "at time zone 'america/toronto'") {
-		t.Fatalf("the AR aging view must derive its day from the house zone expression %s, the one "+
-			"choice the 0376 migration names; installed definition: %s", houseDaySQL, def)
+	// 0394 moved the view from the Ontario literal to the dealer's zone, read through settings'
+	// function; the Ontario dealer's answer is pinned by the zone legs in ar_aging_zone_integration_test.go.
+	if !strings.Contains(strings.ToLower(def), "settings_business_zone()") {
+		t.Fatalf("the AR aging view must derive its day from the dealer's zone through settings_business_zone(), "+
+			"the one choice the 0394 migration names; installed definition: %s", def)
+	}
+	if strings.Contains(strings.ToLower(def), "'america/toronto'") {
+		t.Fatalf("the AR aging view must not carry the Ontario zone as a literal; installed definition: %s", def)
 	}
 	if strings.Contains(strings.ToLower(def), "current_date") {
 		t.Fatalf("the AR aging view must not read the session's CURRENT_DATE, it is the UTC day on "+

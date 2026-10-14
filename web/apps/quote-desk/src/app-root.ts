@@ -30,7 +30,7 @@ import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js"
 import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
-import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import { QdClient, type BranchRef } from "./qd-client.js";
 // The Work shell's offline layer (item 8b): writes are refused with no signal and never queue (money never
@@ -217,7 +217,7 @@ export class QuoteDeskApp extends HHElement {
     // second place.
     wirePorts({
       headers: staffHeaders,
-      houseDay: () => houseDayInZone(HOUSE_ZONE),
+      houseDay: () => houseDay(),
       user: () => this.#deskIdentity,
       token: () => this.#sessions.current?.token ?? "",
       baseUrl: this.#custody.coreBaseUrl,

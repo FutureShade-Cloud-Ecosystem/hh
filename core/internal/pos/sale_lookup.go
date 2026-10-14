@@ -10,6 +10,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/likeutil"
 	"github.com/jackc/pgx/v5"
 )
@@ -60,6 +61,9 @@ type SaleLookupQuery struct {
 	From          string // inclusive ISO date (YYYY-MM-DD) on created_at
 	To            string // inclusive ISO date
 	Limit         int
+	// Zone is the dealer's business day zone the From/To days are read in. The SERVICE stamps it
+	// (the zero Zone is the Ontario dealer's, America/Toronto); a caller's value is overwritten.
+	Zone houseday.Zone
 }
 
 const (
@@ -159,12 +163,12 @@ func houseLocation() *time.Location {
 //
 // DST needs no special case: America/Toronto transitions at 02:00, so local midnight is
 // single-valued for every civil date. That is window.go:87-93's argument and it holds here.
-func houseMidnight(day string) (time.Time, bool) {
+func houseMidnight(zone houseday.Zone, day string) (time.Time, bool) {
 	d, err := time.Parse("2006-01-02", day)
 	if err != nil {
 		return time.Time{}, false
 	}
-	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, houseLocation()), true
+	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, zone.Location()), true
 }
 
 // saleLookupBounds resolves the query's From/To into the half-open instant pair the SQL binds. A
@@ -176,14 +180,14 @@ func houseMidnight(day string) (time.Time, bool) {
 // show up as a search that silently returned nothing.
 func saleLookupBounds(q SaleLookupQuery) (since, until time.Time, ok bool) {
 	if q.From != "" {
-		start, good := houseMidnight(q.From)
+		start, good := houseMidnight(q.Zone, q.From)
 		if !good {
 			return time.Time{}, time.Time{}, false
 		}
 		since = start
 	}
 	if q.To != "" {
-		start, good := houseMidnight(q.To)
+		start, good := houseMidnight(q.Zone, q.To)
 		if !good {
 			return time.Time{}, time.Time{}, false
 		}
@@ -217,6 +221,11 @@ func (s *Service) LookupSales(ctx context.Context, q SaleLookupQuery) ([]SaleSum
 		q.Limit = maxSaleLookupLimit
 	}
 	q.Q = strings.TrimSpace(q.Q)
+	// The dealer's calendar, stamped on the query so the validation here and the predicate the store
+	// builds read the same days.
+	if q.Zone, err = houseday.Resolve(ctx, s.zone); err != nil {
+		return nil, err
+	}
 	if _, _, ok := saleLookupBounds(q); !ok {
 		return nil, errLookupBadDate
 	}

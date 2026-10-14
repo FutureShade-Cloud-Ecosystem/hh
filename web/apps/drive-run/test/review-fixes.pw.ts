@@ -118,6 +118,68 @@ test("each photo taken shows as a thumbnail beside the add tile", async ({ page 
   await expect(page.locator("img[data-thumb]")).toHaveCount(2);
 });
 
+test("a second photo picked while the first is still going up is kept, never dropped", async ({ page }) => {
+  await takeFirstStopEnRoute(page);
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
+  // Both pictures arrive in the same breath, as two quick taps from a driver would.
+  await page.locator("input[type=file]").evaluate(async (input: HTMLInputElement, bytes: number[]) => {
+    for (const name of ["a.png", "b.png"]) {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([new Uint8Array(bytes)], name, { type: "image/png" }));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true, composed: false }));
+    }
+  }, Array.from(TINY_PNG));
+  await expect(page.locator("img[data-thumb]")).toHaveCount(2);
+  await expect(page.locator("[data-photo-sent]")).toHaveCount(2);
+});
+
+test("a photo picked on the proof screen and sent after the signature is attached to the proof", async ({ page }) => {
+  await takeFirstStopEnRoute(page);
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(/\/photos(\?|$)/, async (route) => {
+    await held;
+    await route.continue();
+  });
+  const attached: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/attach-photos")) attached.push(request.url());
+  });
+  await page.locator("input[type=file]").setInputFiles({ name: "a.png", mimeType: "image/png", buffer: TINY_PNG });
+  await page.getByLabel("Full name of the person receiving").fill("Receiving clerk");
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Sign for this delivery" }).click();
+  await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
+  expect(attached).toHaveLength(0);
+  release();
+  await expect(page.locator("img[data-thumb]")).toHaveCount(1);
+  expect(attached).toHaveLength(1);
+});
+
+test("a throw while a photo is being made ready does not wedge the queue", async ({ page }) => {
+  await takeFirstStopEnRoute(page);
+  await page.getByRole("button", { name: "Delivered", exact: true }).click();
+  await page.evaluate(() => {
+    const original = File.prototype.arrayBuffer;
+    let thrown = false;
+    File.prototype.arrayBuffer = function (this: File) {
+      if (!thrown) {
+        thrown = true;
+        return Promise.reject(new Error("unreadable"));
+      }
+      return original.call(this);
+    };
+  });
+  await page.locator("input[type=file]").setInputFiles({ name: "a.png", mimeType: "image/png", buffer: TINY_PNG });
+  await expect(page.getByText("Add a photo")).toBeVisible();
+  await page.locator("input[type=file]").setInputFiles({ name: "b.png", mimeType: "image/png", buffer: TINY_PNG });
+  await expect(page.locator("img[data-thumb]")).toHaveCount(1);
+});
+
 test("in brand the unticked box and the grey sign control can be found at 3:1", async ({ page }) => {
   await takeFirstStopEnRoute(page);
   await page.getByRole("button", { name: "Brand theme" }).click();
