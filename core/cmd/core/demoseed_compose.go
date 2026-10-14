@@ -41,7 +41,6 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 )
 
@@ -74,7 +73,7 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 		WithMarginGate(pricing.NewIdentityMarginGate())
 
 	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithAudit(auditSvc)
-	taxSvc := tax.NewService(tax.NewRepository(pool)).WithAudit(auditSvc)
+	taxSvc := newTaxEngine(pool).WithAudit(auditSvc)
 
 	payVault, err := payment.NewVault(vaultKey)
 	if err != nil {

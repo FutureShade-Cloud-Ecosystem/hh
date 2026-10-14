@@ -2608,7 +2608,7 @@ export type IdentityApprovalDecideRequest = {
   approve: boolean;
   reason: string;
 };
-export type TaxReasonCode = "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "FNGST_5" | "MANUAL_TAX_REVIEW";
+export type TaxReasonCode = "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "FNGST_5" | "MANUAL_TAX_REVIEW";
 export type TaxRate = {
   id: string;
   jurisdiction: string;
@@ -4120,7 +4120,7 @@ export type PosSale = {
   supplier_deposit_cents?: number;
   supplier_deposit_invoice_id?: string;
   supplier_deposit_invoice_no?: string;
-  tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+  tax_reason_code: "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   status: "COMMITTED" | "VOIDED";
   replayed: boolean;
   po_job_ref?: string;
@@ -4151,7 +4151,7 @@ export type PosSalePreview = {
   total_cents: number;
   payment_options: PosPaymentOption[];
   supplier_deposit: PosSupplierDepositOption;
-  tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+  tax_reason_code: "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   discount_cents?: number;
   sale_discount_cents?: number;
   ticket_base_cents?: number;
@@ -4190,7 +4190,7 @@ export type PosSaleView = {
   subtotal_cents: number;
   tax_cents: number;
   total_cents: number;
-  tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+  tax_reason_code: "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   invoice_id: string;
   invoice_no: string;
   payment_id?: string;
@@ -4436,8 +4436,8 @@ export type PosAddonSuggestions = {
   suggestions: PosAddonSuggestion[];
 };
 export type PosTaxRate = {
-  jurisdiction: "ON";
-  reason_code: "STD_ON_HST_13";
+  jurisdiction: string;
+  reason_code: "STD_ON_HST_13" | "STD_SALES_TAX";
   rate_bps: number;
   round_mode: "INVOICE_TOTAL" | "PER_LINE";
 };

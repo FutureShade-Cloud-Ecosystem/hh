@@ -302,9 +302,23 @@ type paymentBouncedPayload struct {
 	Cleared     bool   `json:"cleared"`     // true = had settled to bank 1000; false = still undeposited/clearing
 }
 
-// hstRateBps is the 13% Ontario HST rate used to back out the tax embedded in a tax-inclusive (gross) NSF fee.
-// It mirrors pos.flatHSTRateBps, the frozen W4/W5 provisional standard rate (M5 owns the real rate table).
-const hstRateBps = 1300
+// ontarioHSTRateBps is the 13% Ontario HST rate an unwired service backs out of a tax-inclusive (gross) NSF
+// fee: the rate every dealer had before the standard rate came through StandardRateReader.
+const ontarioHSTRateBps = 1300
+
+// nsfBackoutRateBps is the standard rate the tax embedded in a tax-inclusive NSF fee is backed out at: the
+// dealer's own through the seam, the Ontario 13 percent when none is wired. A failed read is an error, never
+// a guess: the posting is retried rather than booked at a rate the dealer does not charge.
+func (s *Service) nsfBackoutRateBps(ctx context.Context) (int64, error) {
+	if s.standardRate == nil {
+		return ontarioHSTRateBps, nil
+	}
+	bps, err := s.standardRate.StandardRateBps(ctx, "")
+	if err != nil {
+		return 0, fmt.Errorf("gl: the dealer's standard rate for the NSF fee backout: %w", err)
+	}
+	return int64(bps), nil
+}
 
 func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (journalDraft, bool, error) {
 	var p paymentBouncedPayload
@@ -372,7 +386,11 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 		}
 		if p.FeeTaxable {
 			// Back the HST out of the tax-inclusive gross fee: net = gross·10000/(10000+rate); HST = gross − net.
-			net := p.FeeCents * 10000 / (10000 + hstRateBps)
+			rate, err := s.nsfBackoutRateBps(ctx)
+			if err != nil {
+				return journalDraft{}, false, err
+			}
+			net := p.FeeCents * 10000 / (10000 + rate)
 			hst := p.FeeCents - net
 			hstCode, err := pick(rules, et, "hst")
 			if err != nil {

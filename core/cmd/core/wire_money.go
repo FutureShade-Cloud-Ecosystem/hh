@@ -103,6 +103,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// readers (billing, pos, till) land in B6 and B7; unwired, the posting
 	// legs answer their not-configured errors, never a silent skip.
 	glSvc := gl.NewService(gl.NewRepository(pool)).
+		WithStandardRate(newTaxEngine(pool)). // the NSF fee backout reads the dealer's standard rate
 		WithDeadRequeuer(outboxStore).
 		WithAudit(auditSvc).
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
@@ -197,6 +198,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// admin and fails closed to owner-only.
 	messaging.PublishRoleConfig(roleCfg)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
+		WithStandardRate(newTaxEngine(pool)). // the terms write stamps the dealer's standard rate
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithPricing(pricingSvc).
@@ -678,7 +680,7 @@ func (a w5cOverrideAuthority) MarginOverrideAuthority(ctx context.Context, userI
 // order source that also answers the agreed facts; the group invoicer of an order that later gains a
 // shipment plan is the money tail's writer, which looks for this document first.
 func quoteMoneyDoor(pool *pgxpool.Pool, orderSvc *order.Service) (quote.OrderInvoicer, quote.CounterPayer) {
-	w := billing.NewInvoiceWriter(pool).WithOrderSource(quoteAgreedOrderSource{
+	w := billing.NewInvoiceWriter(pool).WithTaxAssessor(w6cInvoiceTaxAdapter{svc: newTaxEngine(pool)}).WithOrderSource(quoteAgreedOrderSource{
 		w6cOrderInvoiceSource: w6cOrderInvoiceSource{svc: orderSvc}, svc: orderSvc,
 	})
 	return quoteOrderInvoicer{w: w}, quoteCounterPayer{repo: payments.NewRepository(pool)}

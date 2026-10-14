@@ -27,6 +27,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tasks"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
@@ -304,7 +305,28 @@ func (a posTaxAdapter) AssessSale(ctx context.Context, in pos.TaxQuoteInput) (po
 		}
 		return pos.QuoteResult{}, err
 	}
-	return pos.QuoteResult{TaxCents: q.TaxCents, RateBps: q.RateBps, OnCreditCents: q.OnCreditCents}, nil
+	return pos.QuoteResult{
+		TaxCents: q.TaxCents, RateBps: q.RateBps, OnCreditCents: q.OnCreditCents,
+		ReasonCode: q.ReasonCode, Jurisdiction: q.Jurisdiction, StandardRateBps: q.StandardRateBps,
+	}, nil
+}
+
+// dealerRegionAdapter binds the tax engine's DealerRegionSource to the settings module's dealer
+// configuration: the one seam the dealer's tax jurisdiction is read through. It reads at every
+// assessment, uncached, so a configuration change is live at the next ring.
+type dealerRegionAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerRegionAdapter) TaxRegion(ctx context.Context) (string, error) {
+	c, err := a.r.DealerConfig(ctx)
+	return c.TaxRegion, err
+}
+
+// newTaxEngine builds a tax engine over the pool bound to the dealer's own jurisdiction. The engine
+// is stateless beyond its repository and its region source, so every composition that must assess a
+// tax builds its own, and two dealers in one process never share a jurisdiction.
+func newTaxEngine(pool *pgxpool.Pool) *tax.Service {
+	return tax.NewService(tax.NewRepository(pool)).
+		WithDealerRegion(dealerRegionAdapter{r: settings.NewDealerConfigReader(pool)})
 }
 
 // posTaxRuleAdapter satisfies pos.TaxRuleSource over *tax.Service: the round rule word the counter's

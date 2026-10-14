@@ -777,6 +777,8 @@ func (s *Service) prepareSale(ctx context.Context, in SaleInput) (*salePlan, *Sa
 	subtotal := priced.subtotal
 	tax := priced.tax
 	total := priced.total
+	// The ring records the reason the assessor bound: the dealer's own standard for a standard sale.
+	taxReason = priced.reasonCode
 	// Item 10.5: a swap spends its credit note on the new order first; the tender takes the rest.
 	var applied int64
 	if in.swapCreditCents > 0 {
@@ -1319,15 +1321,15 @@ func (s *Service) saleInTx(ctx context.Context, tx pgx.Tx, p *salePlan, outp *Sa
 	if in.Relief != nil {
 		// The audit snapshot records the quote the ring bound, in the shape the tax package's W4
 		// recompute reads back: rate_bps the ASSESSED rate, full_hst_cents the STANDARD-rate HST on
-		// the subtotal (flatHST13, bit-identical to the engine's hstOn at 1300; the recompute's
-		// reconstructBase divides this column by the constant 1300, so it must never carry the
-		// assessed rate's tax), on_credit_cents the quote's ON credit, net_collected_cents the
+		// the subtotal (taxAt at the quote's standard rate, bit-identical to the engine's hstOn; the
+		// recompute's reconstructBase divides this column by the standard_rate_bps stored beside it,
+		// so it must never carry the assessed rate's tax), on_credit_cents the quote's ON credit, net_collected_cents the
 		// assessed tax the ring actually collected. At the standard rate this row is byte-identical
 		// to the old flat-constant write.
 		if _, err := s.store.InsertTaxSnapshot(ctx, tx, taxSnapshotRow{
 			OrderID: orderID, TaxReasonCode: taxReason, RuleVersion: ruleVersionW4, RateBps: priced.rateBps,
-			FullHSTCents: flatHST13(subtotal), OnCreditCents: priced.onCreditCents,
-			NetCollectedCents: tax, Automated: false,
+			FullHSTCents: taxAt(subtotal, priced.standardRateBps), StandardRateBps: priced.standardRateBps,
+			OnCreditCents: priced.onCreditCents, NetCollectedCents: tax, Automated: false,
 			EvidenceDocID: in.Relief.EvidenceDocID,
 		}); err != nil {
 			return err
@@ -1763,6 +1765,11 @@ func (s *Service) AssessRelief(ctx context.Context, in ReliefAssessInput) (Relie
 		return ReliefOutcome{}, err
 	}
 
+	// The dealer's own standard: its reason, its rate and its plain word ("13%" for an Ontario dealer).
+	stdReason := firstNonEmpty(fallback.ReasonCode, TaxStdON13)
+	stdRate := standardRateOrFlat(fallback)
+	stdWord := standardOutcomeWord(stdRate)
+
 	out := ReliefOutcome{
 		PurchaserType:    firstNonEmpty(prof.PurchaserType, in.PurchaserType),
 		MaskedIdentifier: prof.MaskedIdentifier,
@@ -1770,19 +1777,21 @@ func (s *Service) AssessRelief(ctx context.Context, in ReliefAssessInput) (Relie
 		FullHSTCents:     fallback.TaxCents,
 	}
 	eligible := !prof.Expired && (prof.OntarioEligibility == "ON_RESIDENT" || prof.OntarioEligibility == "AKWESASNE")
+	// The Ontario 5% pickup path is Ontario's alone; an assessor that names no jurisdiction is Ontario.
+	ontarioDealer := fallback.Jurisdiction == "" || fallback.Jurisdiction == "ON"
 
 	switch in.Fulfilment {
 	case "pickup", "purchaser_carrier":
 		// Customer pickup NEVER qualifies for 0%, the outcome is 5% (Ontario path) or 13%.
-		if eligible && in.DeclaredUse == "personal" {
+		if eligible && ontarioDealer && in.DeclaredUse == "personal" {
 			out.Outcome = "5%"
 			out.ReasonCode = TaxONFNPos8
 			out.RateBps = ontarioNetBps
 			out.OnCreditCents = (in.SubtotalCents*ontarioCreditBps + 5000) / 10000
 			out.NetCollectedCents = (in.SubtotalCents*ontarioNetBps + 5000) / 10000
 		} else {
-			out.Outcome = "13%"
-			out.ReasonCode = TaxStdON13
+			out.Outcome = stdWord
+			out.ReasonCode = stdReason
 			out.RateBps = fallback.RateBps
 			out.NetCollectedCents = out.FullHSTCents
 		}
@@ -1803,8 +1812,8 @@ func (s *Service) AssessRelief(ctx context.Context, in ReliefAssessInput) (Relie
 				out.NetCollectedCents = out.FullHSTCents
 			}
 		} else {
-			out.Outcome = "13%"
-			out.ReasonCode = TaxStdON13
+			out.Outcome = stdWord
+			out.ReasonCode = stdReason
 			out.RateBps = fallback.RateBps
 			out.NetCollectedCents = out.FullHSTCents
 		}
@@ -1822,7 +1831,7 @@ func (s *Service) AssessRelief(ctx context.Context, in ReliefAssessInput) (Relie
 			_, e := s.store.InsertTaxSnapshot(ctx, tx, taxSnapshotRow{
 				OrderID: in.OrderID, TaxReasonCode: out.ReasonCode, RuleVersion: ruleVersionW4, RateBps: out.RateBps,
 				FullHSTCents: out.FullHSTCents, OnCreditCents: out.OnCreditCents, NetCollectedCents: out.NetCollectedCents,
-				Automated: false,
+				Automated: false, StandardRateBps: stdRate,
 			})
 			return e
 		}); err != nil {

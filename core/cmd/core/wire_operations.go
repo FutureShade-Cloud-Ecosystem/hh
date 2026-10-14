@@ -169,6 +169,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// projection by ERP user id; decide-time authority never runs through
 	// it).
 	lienSvc := lien.NewService(lien.NewRepository(pool)).
+		WithStandardRate(newTaxEngine(pool)). // the HST on holdback gross up reads the dealer's standard rate
 		WithOrderHoldback(orderRepo).
 		WithGLPoster(lienGLPoster{svc: spine.glSvc}).
 		WithCoSigner(identity.NewApprovalRepository(pool)).
@@ -566,7 +567,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// SWARM-W1A-B: the printing module, print_queue's first consumer.
 	printRepo := printing.NewRepository(pool)
 	printQueue := printing.NewQueueService(printRepo)
-	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc)
+	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc).WithStandardRate(newTaxEngine(pool))
 	printing.NewHandler(receiptSvc, printQueue, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// SWARM-W2-A: dispatch, the physical leg. The signature-capture seam

@@ -25,8 +25,9 @@ package quote
 //   TAX ON THE TERMS WRITE      the one deliberate extension of quote money: the terms write
 //                               stamps tax_cents = flat HST over (subtotal + delivery fee), the
 //                               SAME arithmetic as billing/pos FlatHSTAssessor ((amt*bps+5000)/
-//                               10000, half-up once at the header), rate from system_settings
-//                               hst_rate_bps (fallback 1300). The shipped line-write recompute
+//                               10000, half-up once at the header), rate from the tax engine's
+//                               standard rate when wired, else system_settings hst_rate_bps
+//                               (fallback settings.DefaultHSTRateBps, 1300). The shipped line-write recompute
 //                               still never writes tax; the work area refreshes terms after cart
 //                               changes so the stamped tax tracks the lines. Stated in NOTES.
 
@@ -451,7 +452,29 @@ func (s *StaffService) UpdateTerms(ctx context.Context, quoteID string, in Terms
 	if err != nil {
 		return QuoteTerms{}, err
 	}
-	return b.UpdateTermsGuarded(ctx, quoteID, in, rule.fromList(), caller.UserID, b.ReadHSTRateBps(ctx))
+	rate := b.ReadHSTRateBps(ctx)
+	if s.standardRate != nil {
+		// The engine's standard rate is the authority when wired, so the quote and the ring it becomes
+		// stamp one rate. A failed read refuses the write; it never stamps a rate the dealer does not charge.
+		bps, err := s.standardRate.StandardRateBps(ctx, "")
+		if err != nil {
+			return QuoteTerms{}, err
+		}
+		rate = int64(bps)
+	}
+	return b.UpdateTermsGuarded(ctx, quoteID, in, rule.fromList(), caller.UserID, rate)
+}
+
+// StandardRateReader answers the dealer's standard tax rate in basis points on a date ("" is today). The
+// composition root binds an adapter over the tax engine.
+type StandardRateReader interface {
+	StandardRateBps(ctx context.Context, asOf string) (int, error)
+}
+
+// WithStandardRate injects the dealer's standard rate seam.
+func (s *StaffService) WithStandardRate(r StandardRateReader) *StaffService {
+	s.standardRate = r
+	return s
 }
 
 // - per-line discount -

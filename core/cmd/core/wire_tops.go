@@ -341,6 +341,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// whole balance is one number at every door and there is no second writer
 	// to drift from the first.
 	posSvc.WithPayBalanceInvoicer(posPayBalanceInvoicer{w: billing.NewInvoiceWriter(pool).
+		WithTaxAssessor(w6cInvoiceTaxAdapter{svc: newTaxEngine(pool)}).
 		WithOrderSource(quoteAgreedOrderSource{w6cOrderInvoiceSource: w6cOrderInvoiceSource{svc: orderSvc}, svc: orderSvc})})
 
 	// A-21 audit viewer routes (the module carried since the foundations;
@@ -407,7 +408,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// M5 tax engine, then the W6 scaffold-owner rewire: the POS Sale leaves
 	// its stubs for the real engines (tax, stock, restock, the card
 	// refunder).
-	taxSvc := tax.NewService(tax.NewRepository(pool)).
+	taxSvc := newTaxEngine(pool).
 		WithGLBalances(glBalanceAdapter{svc: spine.glSvc}).
 		WithAudit(auditSvc)
 	tax.NewHandler(taxSvc, log).WithUserLinker(link).RegisterRoutes(r, g)

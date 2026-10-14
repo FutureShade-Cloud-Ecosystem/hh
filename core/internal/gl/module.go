@@ -199,6 +199,7 @@ type Service struct {
 	dead            DeadRequeuer
 	audit           audit.Recorder
 	approvalFiler   ApprovalFiler        // 0075: nil-able JE park → approvals-rail filing seam
+	standardRate    StandardRateReader   // the dealer's standard tax rate; nil is the Ontario 13 percent
 	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
 	log             *slog.Logger
 	now             func() time.Time
@@ -272,6 +273,16 @@ func (s *Service) clock() time.Time {
 	}
 	return s.now()
 }
+
+// StandardRateReader answers the dealer's standard tax rate in basis points on a date ("" is today). The
+// composition root binds an adapter over the tax engine; gl reads it to back the tax out of a tax-inclusive
+// NSF fee, so it never carries a rate of its own. Unwired, the Ontario 13 percent stands.
+type StandardRateReader interface {
+	StandardRateBps(ctx context.Context, asOf string) (int, error)
+}
+
+// WithStandardRate injects the dealer's standard rate seam.
+func (s *Service) WithStandardRate(r StandardRateReader) *Service { s.standardRate = r; return s }
 
 // WithInvoiceReader injects the billing invoice-facts seam.
 func (s *Service) WithInvoiceReader(r InvoiceReader) *Service { s.invoices = r; return s }

@@ -57,6 +57,19 @@ type Quote struct {
 	OnCreditCents     int64  `json:"on_credit_cents"`
 	NetCollectedCents int64  `json:"net_collected_cents"`
 	RequiresEvidence  bool   `json:"requires_evidence"`
+
+	// Jurisdiction is the dealer's tax jurisdiction the rate was bound in, and StandardRateBps the
+	// standard rate of that jurisdiction on the sale date: the rate full-tax figures (the snapshot's
+	// full_hst_cents) are computed at, whatever relief rate the sale binds.
+	Jurisdiction    string `json:"jurisdiction"`
+	StandardRateBps int    `json:"standard_rate_bps"`
+}
+
+// DealerRegionSource answers the dealer's tax jurisdiction code. The composition root binds an
+// adapter over the settings module's dealer configuration; a nil source is the Ontario dealer. It
+// is read at every assessment, never cached, so a configuration change is live at the next ring.
+type DealerRegionSource interface {
+	TaxRegion(ctx context.Context) (string, error)
 }
 
 // GLBalanceReader reads a GL account balance for the HST→GL reconciliation. Satisfied by a main.go adapter
@@ -101,6 +114,7 @@ type Service struct {
 	audit     audit.Recorder
 	log       *slog.Logger
 	now       func() time.Time // injectable clock (tests); nil → time.Now
+	region    DealerRegionSource
 }
 
 // NewService wires the repository. Optional deps are injected via the With* methods.
@@ -110,6 +124,10 @@ func NewService(repo *Repository) *Service {
 
 // WithGLBalances injects the GL balance seam (the HST→GL reconciliation tie-out).
 func (s *Service) WithGLBalances(r GLBalanceReader) *Service { s.glBalance = r; return s }
+
+// WithDealerRegion injects the dealer's jurisdiction source. Without it the engine is the Ontario
+// engine it always was.
+func (s *Service) WithDealerRegion(r DealerRegionSource) *Service { s.region = r; return s }
 
 // WithAudit injects the A-21 Recorder (evidence-access stamping, A-21 evidence audit).
 func (s *Service) WithAudit(r audit.Recorder) *Service { s.audit = r; return s }
