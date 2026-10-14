@@ -17,9 +17,7 @@
 // every total adds up.
 import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
-import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SCHEMA_DESCRIPTORS } from "../../api-client/src/testing.ts";
@@ -27,6 +25,7 @@ import { validateValue } from "../../api-client/test/_validate.mjs";
 import { can } from "../src/capabilities.ts";
 import { ROUTES } from "../test-stub/tenant-stub.mjs";
 import { taxOn, STUB_PASSWORD, PERSONAS } from "../test-stub/tenant-data.mjs";
+import { spawnStub } from "../test-stub/spawn-stub.mjs";
 
 const pkgDir = fileURLToPath(new URL("..", import.meta.url));
 const repo = join(pkgDir, "..", "..", "..");
@@ -67,35 +66,13 @@ const MINTING = ["tenantLogin", "tenantAcceptInvite", "tenantRequestPasswordRese
 
 // ---- the stub process ----------------------------------------------------------------------------
 
-let child;
+let stub;
 let base;
 const tokens = {};
 
-// A free port inside the Pro cycle's own range (the kit's block is 56800 to 56809), never an ephemeral one.
-async function freePort(start, count) {
-  for (let port = start; port < start + count; port += 1) {
-    const free = await new Promise((resolve) => {
-      const probe = createServer();
-      probe.once("error", () => resolve(false));
-      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
-    });
-    if (free) return port;
-  }
-  throw new Error(`no free port in ${start} to ${start + count - 1}`);
-}
-
 before(async () => {
-  const port = await freePort(56800, 2);
-  base = `http://127.0.0.1:${port}`;
-  child = spawn(process.execPath, [join(pkgDir, "test-stub", "tenant-stub.mjs")], { env: { ROLE_STUB_PORT: String(port), ROLE_STUB_IDLE_EXIT_MS: "120000" }, stdio: "ignore" });
-  for (let i = 0; i < 100; i += 1) {
-    try {
-      if ((await fetch(`${base}/healthz`)).ok) break;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 50));
-  }
+  stub = await spawnStub();
+  base = stub.base;
   for (const [key, persona] of Object.entries(PERSONAS)) {
     const res = await fetch(`${base}/_stub/session`, { method: "POST", body: JSON.stringify({ email: persona.email, password: STUB_PASSWORD }) });
     tokens[key] = (await res.json()).token;
@@ -103,8 +80,8 @@ before(async () => {
 });
 
 after(async () => {
-  // End the stub by its own door: no signal is ever sent to a process.
-  await fetch(`${base}/_stub/exit`, { method: "POST" }).catch(() => {});
+  // End the stub by its own door and await its exit: no signal is ever sent to a process.
+  await stub.stop();
 });
 
 beforeEach(async () => {

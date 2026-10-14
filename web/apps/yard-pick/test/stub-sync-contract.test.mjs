@@ -114,3 +114,21 @@ test("the stub's weights feed is the core's: no row carries a skid count", async
   for (const item of json.items ?? []) assert.equal("skid_count" in item.data, false, "the core's weights feed is the NEED_WEIGHT task feed, not a skid count");
 });
 
+
+// The pick record door (core/internal/tasks/syncpick.go): picked is its own operation with the direct
+// door's line legs, and the rejection words are the core's.
+test("pick_tasks update: picked is its own operation, the line legs are the direct door's", async () => {
+  const id = (await pullIds("pick_tasks"))[0];
+  const line = { order_line_no: 1, product_id: "", sku: "", description: "", qty_ordered: "1", qty_picked: "1", uom: "EA", short_reason: "", short_note: "" };
+  const mixed = await push("pick_tasks", "update", { id, picked: [line], status: "ACCEPTED" });
+  assert.equal(mixed.status, "rejected");
+  assert.match(mixed.error, /cannot travel with picked, a pick record is its own operation/);
+  const unknown = await push("pick_tasks", "update", { id, picked: [{ ...line, picked_at: "x" }] });
+  assert.match(unknown.error, /picked line 1: field "picked_at" is not writable through sync/);
+  const nul = await push("pick_tasks", "update", { id, picked: [{ ...line, short_note: "dock\u0000two" }] });
+  assert.match(nul.error, /cannot hold control characters/);
+  const notArray = await push("pick_tasks", "update", { id, picked: "x" });
+  assert.match(notArray.error, /picked must be an array of lines/);
+  const ok = await push("pick_tasks", "update", { id, picked: [{ ...line, qty_picked: "0", short_reason: "NOT_IN_YARD", short_note: "two\nlines\tand\r\nmore" }] });
+  assert.equal(ok.status, "applied", JSON.stringify(ok));
+});

@@ -40,6 +40,17 @@ export default defineConfig(({ mode }) => ({
     port: Number(appPort),
     strictPort: true,
     host: "127.0.0.1",
+    // The offline store's sync statechart (statecharts/sync/machine.ts) sits
+    // beside the web workspace, not inside it; the offline layer imports it,
+    // so the dev server serves that one folder of the repository beside the
+    // workspace itself (an explicit allow list replaces the default, so the
+    // workspace root is named first).
+    fs: {
+      allow: [
+        fileURLToPath(new URL("../..", import.meta.url)),
+        fileURLToPath(new URL("../../../statecharts", import.meta.url)),
+      ],
+    },
     proxy: {
       "/api": {
         target: `http://127.0.0.1:${stubPort}`,
@@ -52,6 +63,11 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
+  // wa-sqlite must not ride the prebundler (its wasm is fetched beside the
+  // module, the offline-store probe's own finding), and workers stay ES
+  // modules, the shape the OPFS backend's worker entry is written in.
+  optimizeDeps: { exclude: ["wa-sqlite"] },
+  worker: { format: "es" },
   build: {
     outDir: "dist",
   },

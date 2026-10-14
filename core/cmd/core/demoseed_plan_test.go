@@ -53,6 +53,16 @@ func testInput(t *testing.T) planInput {
 			// The controller login the populate plants beside them (the parked journals' decider).
 			personaController: "9e70a000-0000-4000-9000-00000000ad13",
 		},
+		// The contractor account the populate makes, present so every invariant in this file runs over
+		// the contractor world's rows too (demoseed_contractor_plan_test.go asserts them in particular).
+		Contractor: contractorFacts{
+			Ready:    true,
+			BranchID: "5d1b3f6e-0000-4000-9000-000000000001",
+			Users: map[string]string{
+				"account_admin": "9e70a000-0000-4000-9000-00000000ad21",
+				"buyer":         "9e70a000-0000-4000-9000-00000000ad22",
+			},
+		},
 		// A stub sealer: these tests are about the plan's shape, and the real sealer's AES nonce is
 		// random by design (see TestPlan_OnlyTheSealedBytesDifferBetweenRuns for that half).
 		Seal: func(refKey, typedName, purpose, refType, refID string, at time.Time) (string, []byte, error) {
@@ -538,8 +548,14 @@ func TestPlan_OrderTotalsAddUp(t *testing.T) {
 		if sub != lineTotals[id] {
 			t.Errorf("order %s: subtotal %d but its lines sum to %d", id, sub, lineTotals[id])
 		}
-		if want := taxOn(sub); tax != want {
-			t.Errorf("order %s: tax %d, expected %d at %d bps", id, tax, want, hstBps)
+		// The contractor world's orders carry the California rate, asserted in
+		// demoseed_contractor_plan_test.go; this test holds the Ontario world's.
+		want := taxOn(sub)
+		if f["tenant_id"] != nil {
+			want = contractorTax(sub)
+		}
+		if tax != want {
+			t.Errorf("order %s: tax %d, expected %d", id, tax, want)
 		}
 		if total != sub+tax {
 			t.Errorf("order %s: total %d != subtotal %d + tax %d", id, total, sub, tax)
@@ -1216,3 +1232,64 @@ func dayKeyCarriesTheHouseDay(t *testing.T, sum planSummary, want string) {
 		t.Fatalf("the plan reports a day key on the UTC day 20260115, which is not the dealer's day at the pinned clock: %v", sum.DayKeys)
 	}
 }
+
+// TestPlan_TheLogisticsManagerOwnsLoadBoardMaterial. The roadmap's first Dispatch increment (2.4)
+// walks the Logistics Manager onto the load board and has it build a load from the open orders, so
+// the demo world owes that role OPEN DELIVERY ORDERS WITH REQUESTED DATES AND NO STOP at its own
+// branch: an order already on a stop is a load somebody else already built, and an order with no
+// requested date is a promise with no date to commit against. Two is the walk's minimum, one to
+// commit and one to leave on the board, and the requested dates sit inside the commit-prompt window
+// (today or tomorrow) so the board the persona lands on is due to commit the moment it signs in.
+//
+// The branch is Trenton, branch 1 by code order (resolveBranches), the demo dealer's Point Loma main yard where
+// every demo login is homed: the seeded dispatch world's Truck 03 and 04, the run that needs a
+// crew and the over capacity run live there, so the two orders and the demo populate's
+// convergence of the dispatch persona onto the same yard name one place.
+func TestPlan_TheLogisticsManagerOwnsLoadBoardMaterial(t *testing.T) {
+	in := testInput(t)
+	rows, _, err := buildPlan(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	onAStop := map[string]bool{}
+	for _, r := range rows {
+		if r.table != "delivery_stops" {
+			continue
+		}
+		f := fieldMap(r)
+		if oid, _ := f["order_id"].(string); oid != "" {
+			onAStop[oid] = true
+		}
+	}
+	material := 0
+	for _, r := range rows {
+		if r.table != "orders" {
+			continue
+		}
+		f := fieldMap(r)
+		if f["branch_id"] != in.Branches[1].ID || f["status"] != "CONFIRMED" || f["fulfillment"] != "DELIVERY" {
+			continue
+		}
+		if onAStop[f["id"].(string)] {
+			continue
+		}
+		req, ok := f["requested_date"].(time.Time)
+		if !ok {
+			t.Fatalf("order %v carries no requested_date, the load board has no date to commit against", f["order_no"])
+		}
+		days := req.UTC().Format("2006-01-02")
+		today := in.Now.UTC().Format("2006-01-02")
+		tomorrow := in.Now.UTC().AddDate(0, 0, 1).Format("2006-01-02")
+		if days != today && days != tomorrow {
+			t.Errorf("open delivery order %v is requested for %s, outside the commit-prompt window (%s, %s)",
+				f["order_no"], days, today, tomorrow)
+		}
+		material++
+	}
+	if material < 2 {
+		t.Fatalf("the Point Loma load board holds %d open delivery orders with requested dates and no stop, the increment's walk needs two", material)
+	}
+}
+
+// TestPlan_EveryClaimedTaskNamesWhoClaimedIt. 0073 gave tasks a claimed_at AND a claimed_by, and
+// this seed used to write only the first, nine tasks stamped "somebody took this" with nobody on
