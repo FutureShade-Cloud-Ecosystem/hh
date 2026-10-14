@@ -263,3 +263,17 @@ func TestJurisdiction_CreateRateNormalisesTheJurisdictionCase(t *testing.T) {
 		t.Fatalf("lower case ontario: %+v %v", r, err)
 	}
 }
+
+// The Ontario first nations credit is Ontario's alone: a non Ontario dealer with the evidence attached
+// binds a standard sale at its own standard, with no credit, no evidence flag and the standard reason.
+func TestJurisdiction_OntarioCreditNeverReachesANonOntarioDealer(t *testing.T) {
+	svc := caSvc(californiaStore())
+	q, err := svc.AssessSale(context.Background(), SaleAssessment{SubtotalCents: 100_000, ReasonCode: ReasonONFNPos8, EvidenceAttached: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.OnCreditCents != 0 || q.RequiresEvidence || q.ReasonCode != ReasonStdSales ||
+		q.RateBps != 775 || q.TaxCents != 7_750 || q.NetCollectedCents != 7_750 {
+		t.Fatalf("california with the Ontario relief reason and evidence: %+v", q)
+	}
+}
