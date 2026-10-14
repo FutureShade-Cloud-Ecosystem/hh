@@ -294,7 +294,7 @@ func TestIntegration_MoneyRooms_MigrationRemovesTheSeatsOfNonFinanceUsers(t *tes
 		t.Fatalf("plant the old explicit seats: %v", err)
 	}
 
-	sqlText, err := os.ReadFile("../../db/migrations/0389_msg_money_rooms_member_roles.sql")
+	sqlText, err := os.ReadFile("../../db/migrations/0390_msg_money_rooms_member_roles.sql")
 	if err != nil {
 		t.Fatalf("read the migration: %v", err)
 	}

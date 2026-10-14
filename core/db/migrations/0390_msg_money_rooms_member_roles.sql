@@ -1,4 +1,4 @@
--- 0389: the money rooms keep their seats for the finance roles.
+-- 0390: the money rooms keep their seats for the finance roles.
 -- Owner: internal/messaging.
 --
 -- WHAT WAS WRONG. #finance (0052), #payments and #payments-<branch> (0152)
