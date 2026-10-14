@@ -82,7 +82,7 @@ test("offline, the stop moves wait in the outbox and the proof says no signal, t
   // The banner says the truth about the connection, with the outbox's depth.
   await platformWord(page, false, "You're offline");
   // Stop one: loaded, en route. Each move queues.
-  await page.locator("[data-stop]", { hasText: "Summit Ridge Builders" }).click();
+  await page.locator("[data-stop]", { hasText: "Bluffside Builders" }).click();
   await page.getByRole("button", { name: "Mark loaded" }).click();
   await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
   await page.getByRole("button", { name: "Mark en route" }).click();
@@ -113,7 +113,7 @@ test("offline, the stop moves wait in the outbox and the proof says no signal, t
   expect(calls.filter((c) => c.path === "/api/v1/sync/pod" && c.method === "POST")).toHaveLength(0);
   // The day board agrees: the stop is delivered on the pulled row.
   await page.getByRole("button", { name: "Back to my run" }).click();
-  await expect(page.locator("[data-stop]", { hasText: "Summit Ridge Builders" }).locator("[data-stop-status]")).toHaveText("Delivered");
+  await expect(page.locator("[data-stop]", { hasText: "Bluffside Builders" }).locator("[data-stop-status]")).toHaveText("Delivered");
 });
 
 test("a stop the test moved first comes back superseded, and the server row is what reads show", async ({ page, request }) => {

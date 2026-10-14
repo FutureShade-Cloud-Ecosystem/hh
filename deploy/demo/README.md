@@ -103,6 +103,7 @@ forged chain is never the answer.
 | `CORE_INTERNAL_PORT` | the core's loopback port (the default is 9090) |
 | `CORE_STAFF_AUDIENCE`, `CORE_TENANT_AUDIENCE` | the token audiences (defaults `hh-staff` and `hh-tenant`) |
 | `CORE_DEMO_TOKEN_TTL` | the demo session length the mint issues, optional |
+| `HH_DEMO_MINT_VISITOR_ALLOWANCE` | the per-visitor mint allowance on the testers' copy, optional; unset or non-positive keeps the default of 5, and the value is capped at 20. Staging and public deployments leave this unset. |
 | `CORE_SIGNIN_MODE` | `demo` or `console`, required, no default (the image refuses to start without it) |
 | `CORE_SESSION_SIGNING_KEY_FILE` | console mode: path of the PEM EC P-256 private key. The secret mount must be mode 0400 or 0600 and owned by the user the core runs as (a file readable by group or other is refused at boot, and so is one the core's user cannot read); mount it read only |
 | `CORE_SESSION_KEY_NEXT_FILE`, `CORE_SESSION_KEY_PREVIOUS_FILE` | console mode, optional: PEM public halves only, any mode, one PEM block each |
