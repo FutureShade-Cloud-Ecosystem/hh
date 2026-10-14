@@ -34,7 +34,7 @@ import { groupDriverRows, idleDriverWords } from "./drivers-logic.js";
 import { rowsForBoard } from "./drivers-api.js";
 import { BuilderApi } from "./builder-api.js";
 import { BuilderDesk } from "./builder-desk.js";
-import { ManagerApi, type BranchRef, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
+import { ManagerApi, type BranchRef, type NeedsQueue, type QueueEntry, type ReceivingRow, type WidgetDatum } from "./manager-api.js";
 import { DriversApi } from "./drivers-api.js";
 import {
   APPROVAL_KINDS,
@@ -55,7 +55,11 @@ import { reportingStyles } from "./reporting-styles.js";
 import { warrantyStyles } from "./warranty-styles.js";
 import { quickStyles } from "./quick-styles.js";
 import { QuickApi, type QuickActionConfig } from "./quick-api.js";
+import { WeightsApi } from "./weights-api.js";
+import { hasWeightsWork, mergeWeights, unsourcedFor } from "./weights-logic.js";
 import { publishIntent } from "./quick-intent.js";
+import { waitingKinds } from "./approvals-logic.js";
+import { isLiveHref } from "./landing-links.js";
 import { actionHref, findAction } from "./quick-logic.js";
 import { renderQuickAdmin, renderQuickBar, type QuickAdminModel, type QuickBarModel } from "./quick-views.js";
 import { configRefusalWords } from "./quick-logic.js";
@@ -137,6 +141,7 @@ export class ManagerHomeApp extends HHElement {
   // The quick actions' calls (src/quick-*): the caller's resolved registry
   // rows, over the same staff client.
   readonly #quickApi = new QuickApi(this.#staffClient);
+  readonly #weightsApi = new WeightsApi(this.#staffClient);
 
   // The Drivers view's calls, the dispatch reads, over the same staff client.
   readonly #driversApi = new DriversApi(this.#staffClient);
@@ -185,7 +190,7 @@ export class ManagerHomeApp extends HHElement {
   #branchList: readonly BranchRef[] = [];
 
   // The landing's state.
-  #landing: LandingModel = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false };
+  #landing: LandingModel = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false, unsourcedNeeds: [] };
 
   // The landing's quick-action bar: the caller's resolved registry rows.
   #quickBar: QuickBarModel = { phase: "loading", actions: [] };
@@ -252,6 +257,12 @@ export class ManagerHomeApp extends HHElement {
         this.#keepFocus(control);
         this.#desk.act(control);
       }
+      return;
+    }
+    if (action === "open-app") {
+      // A click carries only an address the closed table names (landing-links.ts).
+      const href = control?.getAttribute("data-href") ?? "";
+      if (isLiveHref(href)) window.location.assign(href);
       return;
     }
     if (action === "quick-run") {
@@ -322,6 +333,7 @@ export class ManagerHomeApp extends HHElement {
     if (action === "pick-kind") {
       const kind = control?.getAttribute("data-kind") ?? "";
       if (kind !== this.#approvals.kind && APPROVAL_KINDS.some((k) => k.kind === kind)) {
+        this.#approvalsOpening += 1;
         this.#approvals = { ...this.#approvals, kind, rows: [], refusal: "", error: "", phase: "loading" };
         this.requestUpdate();
         void this.#loadApprovals();
@@ -587,7 +599,7 @@ export class ManagerHomeApp extends HHElement {
     this.#desk.close();
     this.#branch = null;
     this.#warranty.reset();
-    this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false };
+    this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false, unsourcedNeeds: [] };
     this.#shortages = {
       phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
       resolverWords: SHORTAGE_RESOLVER_WORDS,
@@ -634,6 +646,7 @@ export class ManagerHomeApp extends HHElement {
         for (const datum of measured.value) data.set(datum.key, datum);
       }
     }
+    const weighed = await this.#withWeights(needs.value, widgets.value.profile);
     this.#landing = {
       phase: "ready",
       profile: widgets.value.profile,
@@ -641,9 +654,10 @@ export class ManagerHomeApp extends HHElement {
       roleLabel: this.#roleLabel,
       widgets: widgets.value.widgets,
       data,
-      needs: needs.value,
+      needs: weighed.needs,
       error: "",
       canOpenReporting: canOpenReporting(this.#tier),
+      unsourcedNeeds: weighed.unsourced,
     };
     this.requestUpdate();
   }
@@ -747,11 +761,25 @@ export class ManagerHomeApp extends HHElement {
     this.requestUpdate();
   }
 
+  // The yard shaped homes count their pending weights from the caller's own home tile
+  // (weights-logic.ts); every other profile's queue is the core's alone. A home that did not
+  // load is said as words, never a zero.
+  async #withWeights(needs: NeedsQueue, profile: string): Promise<{ needs: NeedsQueue; unsourced: LandingModel["unsourcedNeeds"] }> {
+    if (!hasWeightsWork(profile)) return { needs, unsourced: [] };
+    const result = await this.#weightsApi.pending();
+    const weights = result.ok ? result.value : null;
+    return { needs: mergeWeights(needs, weights, profile), unsourced: unsourcedFor(profile, weights) };
+  }
+
   // A landing refresh that keeps the screen standing: the server's answers
   // win, a failed re-read keeps what is on the glass.
   async #refreshLanding(): Promise<void> {
     const [needs, widgets] = await Promise.all([this.#api.needs(), this.#api.widgets()]);
-    if (needs.ok) this.#landing = { ...this.#landing, needs: needs.value };
+    const profile = widgets.ok ? widgets.value.profile : this.#landing.profile;
+    if (needs.ok) {
+      const weighed = await this.#withWeights(needs.value, profile);
+      this.#landing = { ...this.#landing, needs: weighed.needs, unsourcedNeeds: weighed.unsourced };
+    }
     if (widgets.ok) {
       const keys = widgets.value.widgets.filter((w) => w.visible).map((w) => w.widget_key);
       const data = new Map(this.#landing.data);
@@ -776,7 +804,7 @@ export class ManagerHomeApp extends HHElement {
     if (leaving === "builder" && view === "home") void this.#loadLanding();
     if (view === "shortages" && this.#shortages.phase === "loading") void this.#loadShortages();
     if (view === "receiving" && this.#receiving.phase === "loading") void this.#loadReceiving();
-    if (view === "approvals" && this.#approvals.phase === "loading") void this.#loadApprovals();
+    if (view === "approvals" && leaving !== "approvals") void this.#openApprovals();
     if (view === "drivers" && this.#drivers.phase === "loading") void this.#loadDrivers();
     if (view === "reporting") void this.#openReporting();
     if (view === "warranty") this.#warranty.open();
@@ -1505,6 +1533,33 @@ export class ManagerHomeApp extends HHElement {
   }
 
   // -- Approvals ----------------------------------------------------------------------------------------
+
+  // Opening from the landing: the whole list names what is waiting, which can
+  // include kinds this caller may not decide. The waiting kinds are read in the
+  // vocabulary's order and the first the core does not refuse opens; none opens
+  // the first kind, whose own read words the refusal (approvals-logic.ts). A tab
+  // picked while this was in flight wins: the late answer is dropped.
+  #approvalsOpening = 0;
+
+  async #openApprovals(): Promise<void> {
+    const opening = ++this.#approvalsOpening;
+    this.#approvals = { ...this.#approvals, phase: "loading", rows: [], error: "", refusal: "" };
+    this.requestUpdate();
+    const all = await this.#api.approvals("", true);
+    const candidates = all.ok ? waitingKinds(all.value) : [];
+    for (const kind of candidates) {
+      const result = await this.#api.approvals(kind);
+      if (opening !== this.#approvalsOpening) return;
+      if (result.ok) {
+        this.#approvals = { ...this.#approvals, kind, phase: "ready", rows: result.value, error: "", refusal: "" };
+        this.requestUpdate();
+        return;
+      }
+    }
+    if (opening !== this.#approvalsOpening) return;
+    this.#approvals = { ...this.#approvals, kind: APPROVAL_KINDS[0].kind };
+    await this.#loadApprovals();
+  }
 
   async #loadApprovals(): Promise<void> {
     this.#approvals = { ...this.#approvals, phase: "loading", error: "", refusal: "" };

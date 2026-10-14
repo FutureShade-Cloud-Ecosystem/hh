@@ -94,15 +94,15 @@ test("the two new needs links open this app's views, and receiving opens Receivi
   assert.deepEqual(needsRowTarget(row("tasks.open_shortages", "Shortages · open")), { view: "shortages" });
   assert.deepEqual(needsRowTarget(row("purchasing.receiving_differences", "Receiving · short")), { view: "receiving" });
   assert.deepEqual(needsRowTarget(row("approvals.waiting", "Waiting on you")), { view: "approvals" });
-  const stale = needsRowTarget(row("tasks.stale_picks", "Picks · past deadline", "yard"));
-  assert.equal(stale.view, null);
-  assert.equal(stale.screen, "Picks · past deadline");
+  const dispatch = needsRowTarget(row("dispatch.unassigned", "Staging · unassigned", "dispatch"));
+  assert.equal(dispatch.view, null);
+  assert.equal(dispatch.screen, "Staging · unassigned");
 });
 
-test("the board rows nothing measures are said plainly, never counted", () => {
+test("the board row the core could not measure is said plainly, never counted", () => {
   assert.equal(UNSOURCED_NEEDS.length, 1);
   assert.equal(UNSOURCED_NEEDS[0].what, "Weights pending");
-  assert.match(UNSOURCED_NEEDS[0].words, /no source is wired/i);
+  assert.match(UNSOURCED_NEEDS[0].words, /not counted/i);
   assert.equal(UNSOURCED_TILES.length, 1);
   assert.equal(UNSOURCED_TILES[0].title, "Unread messages");
   assert.match(UNSOURCED_TILES[0].words, /no measure is wired/i);

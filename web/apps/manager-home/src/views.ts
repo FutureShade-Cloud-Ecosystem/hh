@@ -10,6 +10,9 @@
 import { html, nothing, type TemplateResult } from "lit";
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
+import { widgetLink } from "./landing-links.js";
+import { roleWords } from "./role-words.js";
+import { gaugeSegments } from "./widget-shapes.js";
 import type {
   ApprovalRow,
   NeedsQueue,
@@ -54,6 +57,8 @@ export interface LandingModel {
   readonly error: string;
   /** Whether the landing draws the reporting link: the core's manager roles only, mirrored from the mint's tier. */
   readonly canOpenReporting: boolean;
+  /** The needs rows the core could not measure on this profile, said in words (weights-logic.ts). */
+  readonly unsourcedNeeds: typeof UNSOURCED_NEEDS;
 }
 
 const NOT_HERE = "not on this box yet";
@@ -76,25 +81,26 @@ export function renderLanding(model: LandingModel): TemplateResult {
   const shown = model.widgets.filter((w) => w.visible);
   const large = shown.filter((w) => w.size === "L");
   const strip = shown.filter((w) => w.size !== "L");
+  const words = roleWords(model.profile);
   return html`
     <header class="page-head">
       <h1>${welcomeLine(model.roleLabel)}</h1>
-      <p class="page-sub">Your day at a glance.</p>
+      <p class="page-sub">${words.sub}</p>
       <div class="head-actions">
         <button type="button" class="btn btn-secondary edit-open" data-action="open-view" data-view="builder">Arrange home</button>
       </div>
     </header>
     <p class="eyebrow">Today</p>
     <div class="bento">
-      ${large.map((w, index) => renderWidget(w, model.data.get(w.widget_key), model.needs, index === 0))}
+      ${large.map((w, index) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, index === 0, model.profile))}
     </div>
     <div class="strip">
-      ${strip.map((w) => renderWidget(w, model.data.get(w.widget_key), model.needs, false))}
+      ${strip.map((w) => renderWidget(w, model.data.get(w.widget_key), model.needs, model.unsourcedNeeds, false, model.profile))}
       ${UNSOURCED_TILES.map((t) => renderUnsourcedTile(t))}
     </div>
     <nav class="view-links" aria-label="Views">
       <span class="nav-label">Open a view</span>
-      ${(["shortages", "receiving", "approvals", "drivers", "warranty", "quick-actions"] as const).map((v) => html`
+      ${words.views.map((v) => html`
         <button type="button" class="view-link" data-action="open-view" data-view=${v}>${VIEW_TITLE[v]}<span class="chev" aria-hidden="true">›</span></button>
       `)}
       ${model.canOpenReporting ? html`
@@ -121,25 +127,40 @@ function renderWidget(
   w: WidgetView,
   datum: WidgetDatum | undefined,
   needs: NeedsQueue | null,
+  unsourced: typeof UNSOURCED_NEEDS,
   first: boolean,
+  profile: string,
 ): TemplateResult {
   if (w.measure === "needs.you") {
     return placed(w, html`
       <article class="card" data-widget=${w.widget_key}>
         <h2 class="card-title">${w.title}</h2>
-        ${needs === null ? html`<p class="needs-empty">The queue did not load.</p>` : renderNeedsList(needs)}
+        ${needs === null ? html`<p class="needs-empty">The queue did not load.</p>` : renderNeedsList(needs, unsourced, profile)}
       </article>
     `);
   }
   const figure = figureFor(datum, w.kind);
   const caption = rangeWord(datum?.range !== "" && datum !== undefined ? datum.range : w.range);
   const hero = first && w.shape === "stat" && w.span_cols >= 6;
-  const foot = html`<p class="tile-foot">${NOT_HERE}</p>`;
+  const foot = renderFoot(w, profile);
   if (w.shape === "board" || w.shape === "bars") {
     return placed(w, html`
       <article class="card" data-widget=${w.widget_key}>
         <h2 class="card-title">${w.title}</h2>
         ${renderBars(datum, w, w.shape === "bars")}
+        ${foot}
+      </article>
+    `);
+  }
+  // A trend stays its figure: the core measures it over the metric's first dimension, which is the
+  // branch for the sales measures, so its points are a comparison and no time series to draw.
+  if (w.shape === "gauge" && figure !== null && datum !== undefined) {
+    return placed(w, html`
+      <article class="card" data-widget=${w.widget_key}>
+        <h2 class="card-title">${w.title}</h2>
+        <p class="figure small">${figure}</p>
+        <p class="card-sub">${caption}</p>
+        ${renderGauge(datum, w)}
         ${foot}
       </article>
     `);
@@ -156,6 +177,40 @@ function renderWidget(
       ${foot}
     </article>
   `);
+}
+
+/**
+ * The foot of a card: a link to the live app (or this app's view) that owns the measure, and the
+ * honest coming words only where no app exists. A link never carries a figure of its own.
+ */
+function renderFoot(w: WidgetView, profile: string): TemplateResult {
+  const link = widgetLink(w, profile);
+  if (link.kind === "app") {
+    return html`<p class="tile-foot"><button type="button" class="foot-link" data-action="open-app" data-href=${link.href}>Open ${link.app}<span class="chev" aria-hidden="true">›</span></button></p>`;
+  }
+  if (link.kind === "view") {
+    return html`<p class="tile-foot"><button type="button" class="foot-link" data-action="open-view" data-view=${link.view}>Open ${VIEW_TITLE[link.view]}<span class="chev" aria-hidden="true">›</span></button></p>`;
+  }
+  return html`<p class="tile-foot">${NOT_HERE}</p>`;
+}
+
+/**
+ * The gauge: the points' shares of their own sum as one segmented meter, with the tone the server
+ * named, and a legend that carries every exact figure as text. The core measures this as a count
+ * with no ceiling, so the meter shows composition, never "how full": no invented scale.
+ */
+function renderGauge(datum: WidgetDatum, w: WidgetView): TemplateResult | typeof nothing {
+  const segments = gaugeSegments(datum.points, w.kind);
+  if (segments === null) return nothing;
+  const spoken = `${w.title}: ${segments.map((g) => `${g.label} ${g.figure}`).join(", ")}`;
+  return html`
+    <div class="meter" role="img" aria-label=${spoken}>
+      ${segments.map((g) => html`<span class="seg ${g.widthClass} ${g.toneClass}"></span>`)}
+    </div>
+    <ul class="legend">
+      ${segments.map((g) => html`<li class="legend-row"><span class="swatch ${g.toneClass}" aria-hidden="true"></span><span class="label">${g.label}</span><span class="value">${g.figure}</span></li>`)}
+    </ul>
+  `;
 }
 
 function placed(w: WidgetView, body: TemplateResult): TemplateResult {
@@ -198,13 +253,13 @@ function barWidthClass(part: number, max: number): string {
 
 // -- the needs-you card --------------------------------------------------------------------------------
 
-export function renderNeedsList(needs: NeedsQueue): TemplateResult {
+export function renderNeedsList(needs: NeedsQueue, unsourced: typeof UNSOURCED_NEEDS, profile?: string): TemplateResult {
   const rows = needs.rows;
   // The queue link opens the first view a row names; with none on this box it is not drawn.
-  const first = rows.map((r) => needsRowTarget(r)).find((t) => t.view !== null);
+  const first = rows.map((r) => needsRowTarget(r, profile)).find((t) => t.view !== null);
   return html`
-    ${rows.length === 0 ? html`<p class="needs-empty">Nothing is waiting on you right now.</p>` : rows.map((row) => renderNeedsRow(row))}
-    ${UNSOURCED_NEEDS.map((u) => html`
+    ${rows.length === 0 ? html`<p class="needs-empty">Nothing is waiting on you right now.</p>` : rows.map((row) => renderNeedsRow(row, profile))}
+    ${unsourced.map((u) => html`
       <div class="needs-row unsourced" data-unsourced=${u.key}>
         <span class="sev" aria-hidden="true"></span>
         <div class="needs-body">
@@ -226,8 +281,8 @@ export function renderNeedsList(needs: NeedsQueue): TemplateResult {
   `;
 }
 
-function renderNeedsRow(row: NeedsRow): TemplateResult {
-  const target = needsRowTarget(row);
+function renderNeedsRow(row: NeedsRow, profile?: string): TemplateResult {
+  const target = needsRowTarget(row, profile);
   return html`
     <div class="needs-row" data-needs=${row.source_key}>
       <span class="sev ${row.severity}" aria-hidden="true"></span>
@@ -239,7 +294,9 @@ function renderNeedsRow(row: NeedsRow): TemplateResult {
       </div>
       ${target.view !== null
         ? html`<button type="button" class="row-chip" data-action="open-view" data-view=${target.view}>${row.action}<span class="chev" aria-hidden="true">›</span></button>`
-        : html`<span class="not-here">${NOT_HERE}</span>`}
+        : "href" in target
+          ? html`<button type="button" class="row-chip" data-action="open-app" data-href=${target.href} aria-label=${`${row.action}, opens ${target.app}`}>${row.action}<span class="chev" aria-hidden="true">›</span></button>`
+          : html`<span class="not-here">${NOT_HERE}</span>`}
     </div>
   `;
 }
