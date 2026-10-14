@@ -35,6 +35,16 @@
 // 30px mark, the 56px bar), which has no token and keeps the front door's
 // literal shape.
 //
+// Framed by the Work shell (item 8d, row 1520: one header band): a desk app the
+// shell frames shows no band of its own, because the shell's band carries the
+// app and surface selector, the Demo badge, Theme, Feedback and the account.
+// The element reads framedByShell() once, at construction, and renders nothing
+// while it is set (it stays in the document, so the app keeps setting its
+// inputs, the theme above all). The app's slotted Theme and Feedback buttons
+// stay in the light DOM, unrendered: the element tells the shell which of the
+// two it holds, and presses them when the shell asks, so the app's own handlers
+// run unchanged. A standalone page never takes this path.
+//
 // One host knob: --hh-header-control-min sets the floor of the Switch role and
 // Sign out buttons. Unset, they keep their own height (44 px on the compact
 // phone layout, content height elsewhere); an app with a taller target floor
@@ -42,6 +52,7 @@
 
 import { css, html, nothing, type PropertyValues, type TemplateResult as Template } from 'lit';
 import { defineElement, HHElement } from './base.js';
+import { announceChromeControls, chromeActionFrom, framedByShell, type ChromeAction } from './framed.js';
 import { baseStyles } from './primitives.js';
 
 /** The word the centre zone carries when nobody is signed in. */
@@ -276,6 +287,7 @@ export class HosAppHeader extends HHElement {
     productName: { attribute: 'product-name' },
     productSub: { attribute: 'product-sub' },
     compact: { type: Boolean, reflect: true },
+    framed: { type: Boolean },
   };
 
   /** The centred role name; the default word when empty or unsigned. */
@@ -292,6 +304,8 @@ export class HosAppHeader extends HHElement {
   declare productSub: string;
   /** The compact narrow layout, opt in. */
   declare compact: boolean;
+  /** Framed by the Work shell: the band renders nothing. Read once at boot, from the frame's address. */
+  declare framed: boolean;
 
   constructor() {
     super();
@@ -302,6 +316,7 @@ export class HosAppHeader extends HHElement {
     this.productName = '';
     this.productSub = '';
     this.compact = false;
+    this.framed = framedByShell();
   }
 
   /** Whether light DOM children claim the theme slot by name. */
@@ -316,11 +331,38 @@ export class HosAppHeader extends HHElement {
       this.#themeSlotted = claimed;
       this.requestUpdate();
     }
+    this.#announceControls();
   }
+
+  /** The shell controls this host's light DOM holds, last told to the shell. */
+  #announced = '';
+
+  /** Framed: tells the shell which of its controls (Theme, Feedback) the app holds, when that changes. */
+  #announceControls(): void {
+    if (!this.framed) return;
+    const held = (['theme', 'feedback'] as const).filter((name) => this.querySelector(`[data-action="${name}"]`) !== null);
+    const key = held.join(',');
+    if (key === this.#announced) return;
+    this.#announced = key;
+    try {
+      announceChromeControls(window, held);
+    } catch {
+      // no parent to tell: the shell simply shows no app controls
+    }
+  }
+
+  /** The shell asked the app to press one of the controls it carries. */
+  readonly #onChromeAction = (event: MessageEvent): void => {
+    const action: ChromeAction | null = chromeActionFrom(event, window);
+    if (action === null) return;
+    this.querySelector<HTMLElement>(`[data-action="${action}"]`)?.click();
+  };
 
   override connectedCallback(): void {
     super.connectedCallback();
+    if (this.framed) window.addEventListener('message', this.#onChromeAction);
     this.#syncThemeSlot();
+    this.#announceControls();
     if (typeof MutationObserver === 'function') {
       this.#themeObserver = new MutationObserver(() => this.#syncThemeSlot());
       this.#themeObserver.observe(this, { childList: true, subtree: true, attributeFilter: ['slot'] });
@@ -330,6 +372,7 @@ export class HosAppHeader extends HHElement {
   override disconnectedCallback(): void {
     this.#themeObserver?.disconnect();
     this.#themeObserver = null;
+    window.removeEventListener('message', this.#onChromeAction);
     super.disconnectedCallback();
   }
 
@@ -345,6 +388,7 @@ export class HosAppHeader extends HHElement {
   }
 
   render(): Template {
+    if (this.framed) return html``;
     const signedIn = this.signedIn === true;
     const word = signedIn && this.roleLabel !== '' ? this.roleLabel : DEFAULT_WORD;
     const product = this.productName !== '' ? this.productName : DEFAULT_PRODUCT;

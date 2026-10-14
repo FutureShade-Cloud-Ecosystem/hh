@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { IdentityApproval, IdentityApprovalCreateRequest, IdentityApprovalDecideRequest, IdentityApprovalPage, IdentityApprovalStatus, IdentityAssignRoleRequest, IdentityAssignRoleResponse, IdentityAuthMethodsResponse, IdentityChangePasswordRequest, IdentityCreateStaffRequest, IdentityExchangeRequest, IdentityExchangeResponse, IdentityLoginRequest, IdentityLoginResponse, IdentityPasswordResetConfirmRequest, IdentityPasswordResetLink, IdentityPing, IdentityPolicyCheckRequest, IdentityPolicyCheckResponse, IdentityPolicyType, IdentityRolePage, IdentityStaffMember, IdentityStaffMemberPage, IdentityStatusResponse, SessionJwkSet } from "./types.js";
+import type { IdentityApproval, IdentityApprovalCreateRequest, IdentityApprovalDecideRequest, IdentityApprovalPage, IdentityApprovalStatus, IdentityAssignRoleRequest, IdentityAssignRoleResponse, IdentityAuthMethodsResponse, IdentityChangePasswordRequest, IdentityCreateStaffRequest, IdentityExchangeRequest, IdentityExchangeResponse, IdentityLoginRequest, IdentityLoginResponse, IdentityPasswordResetConfirmRequest, IdentityPasswordResetLink, IdentityPersonaRequest, IdentityPing, IdentityPolicyCheckRequest, IdentityPolicyCheckResponse, IdentityPolicyType, IdentityRolePage, IdentityStaffMember, IdentityStaffMemberPage, IdentityStatusResponse, SessionJwkSet } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -126,6 +126,21 @@ export async function identityConfirmPasswordReset(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "identityConfirmPasswordReset",
+  });
+}
+
+export async function identityPersona(
+  client: ApiClient,
+  body: IdentityPersonaRequest,
+  call?: ApiCallOptions
+): Promise<Result<IdentityExchangeResponse>> {
+  return client.request<IdentityExchangeResponse>({
+    method: "POST",
+    path: "/api/v1/auth/persona",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "identityPersona",
   });
 }
 

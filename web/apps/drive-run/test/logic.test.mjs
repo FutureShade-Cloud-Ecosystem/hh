@@ -188,7 +188,7 @@ import {
   stopHandle,
 } from "../src/drive-logic.ts";
 
-const stop = (over) => ({ stop_no: 1, customer_name: "Summit Ridge", status: "READY", ...over });
+const stop = (over) => ({ stop_no: 1, customer_name: "Bluffside", status: "READY", ...over });
 
 test("the handback words tell the driver the stop is closed and the load comes back to the yard", () => {
   assert.equal(HANDBACK_TITLE, "Recorded. This stop is closed.");
@@ -204,9 +204,9 @@ test("a stop is marked not delivered only with a reason in the driver's own word
 });
 
 test("a stop is named by its number and its customer", () => {
-  assert.equal(stopHandle(stop()), "Stop 1 · Summit Ridge");
+  assert.equal(stopHandle(stop()), "Stop 1 · Bluffside");
   assert.equal(stopHandle({ status: "READY" }), "A stop");
-  assert.equal(closeLine(stop({ status: "DELIVERED" })), "Stop 1 · Summit Ridge · Delivered");
+  assert.equal(closeLine(stop({ status: "DELIVERED" })), "Stop 1 · Bluffside · Delivered");
 });
 
 test("a run closes only from a dispatched run whose every stop is delivered or not delivered", () => {
@@ -220,8 +220,8 @@ test("an open stop blocks the close and is named, with the rule", () => {
   const out = runClose({ status: "DISPATCHED" }, [stop({ status: "DELIVERED" }), stop({ stop_no: 2, customer_name: "Harbourview", status: "LOADED" })]);
   assert.equal(out.can, false);
   assert.equal(out.blocked, `Stop 2 · Harbourview is on the truck. ${CLOSE_RULE}`);
-  assert.equal(runClose({ status: "DISPATCHED" }, [stop({ status: "READY" })]).blocked, `Stop 1 · Summit Ridge is not loaded yet. ${CLOSE_RULE}`);
-  assert.equal(runClose({ status: "DISPATCHED" }, [stop({ status: "EN_ROUTE" })]).blocked, `Stop 1 · Summit Ridge is still en route. ${CLOSE_RULE}`);
+  assert.equal(runClose({ status: "DISPATCHED" }, [stop({ status: "READY" })]).blocked, `Stop 1 · Bluffside is not loaded yet. ${CLOSE_RULE}`);
+  assert.equal(runClose({ status: "DISPATCHED" }, [stop({ status: "EN_ROUTE" })]).blocked, `Stop 1 · Bluffside is still en route. ${CLOSE_RULE}`);
 });
 
 test("a cancelled stop blocks a driver's close, as the core does, and says who closes it", () => {

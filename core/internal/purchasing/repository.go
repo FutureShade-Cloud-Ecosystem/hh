@@ -691,11 +691,18 @@ type insertBillParams struct {
 	// the paper invoice needs in order to agree with the screen.
 	Currency string
 	FXRate   float64
+	// HouseDay is the dealer's business day the service decided before the transaction opened: the
+	// bill date when none was named. Blank is the Ontario dealer's day.
+	HouseDay string
 }
 
 func (r *Repository) InsertBill(ctx context.Context, tx pgx.Tx, in insertBillParams) (string, error) {
 	if r.pool == nil {
 		return "", errNoDB
+	}
+	houseDay := in.HouseDay
+	if houseDay == "" {
+		houseDay = houseday.Today(nil)
 	}
 	var id string
 	err := r.q(tx).QueryRow(ctx, `
@@ -706,7 +713,7 @@ func (r *Repository) InsertBill(ctx context.Context, tx pgx.Tx, in insertBillPar
 		RETURNING id::text`,
 		in.BillNo, in.VendorID, in.BranchID, nullStr(in.POID), in.Match, nullStr(in.BillDate),
 		nullStr(in.DueDate), in.Subtotal, in.Tax, in.Total, nullStr(in.CreatedBy),
-		in.Currency, in.FXRate, houseday.Today(nil)).Scan(&id)
+		in.Currency, in.FXRate, houseDay).Scan(&id)
 	if isUniqueViolation(err) {
 		return "", conflict("purchasing: bill %q has already been entered for this vendor", in.BillNo)
 	}

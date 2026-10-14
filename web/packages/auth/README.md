@@ -74,6 +74,20 @@ payload that validates but carries extra fields is rewritten to the four
 known ones), and no field other than the four known ones (v, userId,
 email, name) is ever written.
 
+### Why a sign in or a resume failed (item 7b)
+
+`signInWithPassword` and `resume` answer a `SignInResult`: the `Result` convention with a closed
+`reason` on the failure leg (`bad_credentials`, any exchange code, `cancelled`, `superseded`,
+`failed`), so a screen words each case itself without reading an error message. An adapter
+throws `PlatformRefusedError(status)` when the console answered and refused a sign in, and
+`PlatformUnreachableError` when it could not be reached; the controller maps the status
+(429 to `rate_limited`, 5xx to `unavailable`, the rest to `bad_credentials`). `adopt` takes
+`refresh: false` for a session with no platform session behind it (a persona entry): no
+refresh is armed and the token simply ends at its expiry.
+
+The served runtime configuration (`/config.json`, the `./runtime-config` entry) has no default
+mode: a missing, unreadable, mode less or unknown file is a refusal with its own reason.
+
 ### Sign-out goes through signOut()
 
 The shell must sign out through `AuthController.signOut()`, never by

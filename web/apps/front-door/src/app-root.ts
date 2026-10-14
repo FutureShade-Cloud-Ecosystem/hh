@@ -65,11 +65,24 @@ import {
   type FrontDoorSession,
 } from "./session.js";
 import { countMarginApprovals } from "./approvals-count.js";
+import { createAppwriteAccountSurface } from "@hardscapehouse/auth/appwrite-adapter";
+import { loadRuntimeConfig, type RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
+import { ConsoleSession, coreBaseFor } from "./console.js";
+import { consoleStyles } from "./console-styles.js";
+import { bootScreen, configErrorScreen, dealerLockup, personaCards, signInScreen } from "./console-views.js";
+import { landingFor } from "./signin.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
 
 const DEMO_ORG = "hh-demo";
 
 type Screen = { kind: "picker" } | { kind: "home" } | { kind: "coming-soon"; module: string };
+
+/**
+ * How this copy signs people in, from the served config.json: `boot` until it
+ * is read, `demo` (tap a role), `console` (the real sign in), or
+ * `config-error` (no usable mode: an honest error page, never the demo cards).
+ */
+type Mode = "boot" | "demo" | "console" | "config-error";
 
 /** The tile's one line of what the module is, keyed by the module's name. */
 const TILE_BLURBS: Record<string, string> = {
@@ -623,6 +636,7 @@ export class FrontDoorApp extends HHElement {
         color: var(--hh-text-dim);
       }
     `,
+    consoleStyles,
   ];
 
   readonly #store = new FrontDoorSessionStore();
@@ -638,7 +652,11 @@ export class FrontDoorApp extends HHElement {
   /** The polite region's sentence. Empty is the resting value. */
   #notice = "";
   /** The staff client carries the session's bearer token. */
-  readonly #staffClient: ApiClient;
+  #staffClient: ApiClient;
+  #mode: Mode = "boot";
+  #configFailure: RuntimeConfigFailure = "missing";
+  #console: ConsoleSession | null = null;
+  #watch: ReturnType<typeof setInterval> | null = null;
   /** Count of pending margin approvals for the manager, fetched on session adopt. */
   #approvalCount = 0;
 
@@ -660,22 +678,23 @@ export class FrontDoorApp extends HHElement {
     this.#feedbackClient = new ApiClient({
       baseUrl: "",
       headers: async () => {
-        const headers: Record<string, string> = { "X-Org": DEMO_ORG };
-        const session = this.#store.current();
-        if (session !== null) headers["Authorization"] = `Bearer ${session.token}`;
+        const headers: Record<string, string> = { "X-Org": this.#org() };
+        const bearer = this.#bearer();
+        if (bearer !== null) headers["Authorization"] = `Bearer ${bearer}`;
         return headers;
       },
     });
     this.#staffClient = new ApiClient({
       baseUrl: "",
       headers: async () => ({
-        Authorization: `Bearer ${this.#session !== null ? this.#session.token : ""}`,
+        Authorization: `Bearer ${this.#bearer() ?? ""}`,
+        ...(this.#console !== null ? { "X-Org": this.#console.config.org } : {}),
       }),
     });
   }
 
   /** The feedback bridge's client (the widget's sender rides it). */
-  readonly #feedbackClient: ApiClient;
+  #feedbackClient: ApiClient;
 
   /** The sender the widget calls on Send; the wire and its errors stay here. */
   #feedbackSender: FeedbackSender = async (request) => {
@@ -720,19 +739,122 @@ export class FrontDoorApp extends HHElement {
     // Light is the box's default unless the person chose otherwise in this tab (the choice is carried
     // between the front door, the till and the Quote Desk); Auto follows the system.
     this.#theme.start();
-    // A reload or a back navigation in this tab restores the role the mint
-    // was for, until the token's own expiry says otherwise. A new tab starts
-    // at the picker: sessionStorage is per tab.
-    void this.#loadContractors();
-    const restored = this.#store.current();
-    if (restored !== null) {
-      this.#session = restored;
-      this.#screen = { kind: "home" };
-      void this.#loadApprovals();
-    }
+    this.renderRoot.addEventListener("submit", this.#onSubmit);
+    window.addEventListener("online", this.#onNetwork);
+    window.addEventListener("offline", this.#onNetwork);
+    void this.#boot();
   }
 
+  /** Read the served config.json, then become the demo picker, the console sign in, or the error page. */
+  async #boot(): Promise<void> {
+    const loaded = await loadRuntimeConfig();
+    if (!this.isConnected) return;
+    if (!loaded.ok) {
+      this.#configFailure = loaded.reason;
+      this.#mode = "config-error";
+      this.requestUpdate();
+      return;
+    }
+    if (loaded.config.mode === "demo") {
+      this.#mode = "demo";
+      void this.#loadContractors();
+      // A reload or a back navigation in this tab restores the role the mint
+      // was for, until the token's own expiry says otherwise. A new tab starts
+      // at the picker: sessionStorage is per tab.
+      const restored = this.#store.current();
+      if (restored !== null) {
+        this.#session = restored;
+        this.#screen = { kind: "home" };
+        void this.#loadApprovals();
+      }
+      this.requestUpdate();
+      return;
+    }
+    const config = loaded.config;
+    let account;
+    try {
+      account = createAppwriteAccountSurface({
+        endpoint: config.consoleEndpoint,
+        projectId: config.consoleProjectId,
+        coreBaseUrl: config.coreBaseUrl === "" ? window.location.origin : config.coreBaseUrl,
+      });
+    } catch {
+      // A page origin that cannot carry a password (plain http off localhost) is a configuration fault.
+      this.#configFailure = "incomplete";
+      this.#mode = "config-error";
+      this.requestUpdate();
+      return;
+    }
+    const session = new ConsoleSession({
+      config,
+      account,
+      fetch: globalThis.fetch.bind(globalThis),
+      online: () => navigator.onLine !== false,
+      pageUrl: () => window.location.href,
+      replaceUrl: (url) => window.history.replaceState(null, "", url),
+      onChange: () => this.requestUpdate(),
+    });
+    // The page's own core calls (the feedback send, the approvals count) were built before the
+    // config was read, with the page's origin; a console copy may name its core elsewhere.
+    const coreBase = coreBaseFor(config, window.location.origin);
+    this.#feedbackClient = new ApiClient({
+      baseUrl: coreBase,
+      headers: async () => {
+        const headers: Record<string, string> = { "X-Org": this.#org() };
+        const bearer = this.#bearer();
+        if (bearer !== null) headers["Authorization"] = `Bearer ${bearer}`;
+        return headers;
+      },
+    });
+    this.#staffClient = new ApiClient({
+      baseUrl: coreBase,
+      headers: async () => ({
+        Authorization: `Bearer ${this.#bearer() ?? ""}`,
+        "X-Org": config.org,
+      }),
+    });
+    this.#console = session;
+    this.#mode = "console";
+    // A session that ended underneath the page (a refresh the core refused, a token that ran out) is noticed here.
+    this.#watch = setInterval(() => session.tick(), 2000);
+    this.requestUpdate();
+    await session.start();
+    if (session.phase === "signed-in" && session.landed) void this.#loadApprovals();
+  }
+
+  /** The org header the page's own calls carry: the demo box's constant, or the console copy's org. */
+  #org(): string {
+    return this.#console !== null ? this.#console.config.org : DEMO_ORG;
+  }
+
+  /** The bearer a call made by this page carries: the demo mint's, or the core's session token. Read per request. */
+  #bearer(): string | null {
+    if (this.#console !== null) return this.#console.bearer;
+    return this.#store.current()?.token ?? null;
+  }
+
+  readonly #onNetwork = (): void => {
+    this.#console?.setOnline();
+  };
+
+  readonly #onSubmit = (event: Event): void => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || form.getAttribute("data-form") !== "signin") return;
+    // Never a navigation: the password must not travel in an address or a reload.
+    event.preventDefault();
+    const field = (name: string): string => {
+      const control = form.elements.namedItem(name);
+      return control instanceof HTMLInputElement ? control.value : "";
+    };
+    void this.#console?.submit(field("email"), field("password"));
+  };
+
   disconnectedCallback(): void {
+    if (this.#watch !== null) clearInterval(this.#watch);
+    this.#watch = null;
+    this.renderRoot.removeEventListener("submit", this.#onSubmit);
+    window.removeEventListener("online", this.#onNetwork);
+    window.removeEventListener("offline", this.#onNetwork);
     this.#theme.stop();
     this.removeEventListener("hh-feedback-toggle", this.#onFeedbackToggle);
     this.removeEventListener("click", this.#onHostClick);
@@ -745,7 +867,7 @@ export class FrontDoorApp extends HHElement {
       .find((node): node is Element => node instanceof Element && node.hasAttribute("data-action"));
     if (control === undefined) return;
     const action = control.getAttribute("data-action");
-    if (action === "choose") {
+    if (action === "choose" && this.#mode === "demo") {
       const flow = control.getAttribute("data-flow");
       if (typeof flow === "string" && flow !== "") this.#choose(flow);
     }
@@ -772,16 +894,50 @@ export class FrontDoorApp extends HHElement {
       this.requestUpdate();
     }
     if (action === "switch-role") {
+      if (this.#console !== null) {
+        this.#approvalCount = 0;
+        this.#screen = { kind: "home" };
+        void this.#console.switchRole();
+        return;
+      }
       this.#endSession();
       this.#notice = "Role cleared: pick a role.";
       this.requestUpdate();
     }
     if (action === "sign-out") {
+      if (this.#console !== null) {
+        this.#approvalCount = 0;
+        this.#screen = { kind: "home" };
+        void this.#console.signOut();
+        return;
+      }
       this.#endSession();
       this.#notice = "Signed out. The demo is ready for the next person.";
       this.requestUpdate();
     }
+    if (this.#console !== null) this.#onConsoleAction(action, control);
+    if (action === "reload") window.location.reload();
   };
+
+  /** The console mode's own controls; the shared ones (theme, feedback, modules) are handled above. */
+  #onConsoleAction(action: string | null, control: Element): void {
+    const session = this.#console;
+    if (session === null) return;
+    if (action === "google") void session.google();
+    if (action === "methods-retry") void session.retryMethods();
+    if (action === "continue-own") {
+      session.continueOwn();
+      this.#screen = { kind: "home" };
+      void this.#loadApprovals();
+    }
+    if (action === "persona") {
+      const persona = control.getAttribute("data-persona");
+      if (typeof persona === "string" && persona !== "") {
+        this.#screen = { kind: "home" };
+        void session.persona(persona).then(() => this.#loadApprovals());
+      }
+    }
+  }
 
   /**
    * The contractor cards come from the flows listing's class: a tenant row is a contractor persona and
@@ -854,8 +1010,9 @@ export class FrontDoorApp extends HHElement {
 
   /** Fetch pending approval count for the sales manager role. */
   async #loadApprovals(): Promise<void> {
-    const session = this.#session;
+    const session = this.#identity();
     if (session === null) return;
+    const key = `${session.roleCode}|${session.name}`;
     if (session.roleCode !== "sales_manager") {
       this.#approvalCount = 0;
       return;
@@ -867,7 +1024,8 @@ export class FrontDoorApp extends HHElement {
       }),
     );
     // The session changed while the request was out: the answer is for someone else.
-    if (this.#session !== session) return;
+    const after = this.#identity();
+    if (after === null || `${after.roleCode}|${after.name}` !== key) return;
     this.#approvalCount = count ?? 0;
     this.requestUpdate();
   }
@@ -876,15 +1034,82 @@ export class FrontDoorApp extends HHElement {
     return html`
       <p class="visually-hidden" role="status" aria-live="polite" data-testid="theme-status">${this.#themeStatus}</p>
       ${this.#header()}
-      <main>
-        ${this.#screen.kind === "picker" ? this.#picker() : nothing}
-        ${this.#screen.kind === "home" ? this.#home() : nothing}
-        ${this.#screen.kind === "coming-soon" ? this.#comingSoon() : nothing}
-      </main>
-      <div class="stage">
-        <p class="notice" role="status" aria-live="polite" aria-atomic="true">${this.#notice}</p>
-      </div>
+      <main>${this.#body()}</main>
+      ${this.#mode === "demo"
+        ? html`<div class="stage">
+            <p class="notice" role="status" aria-live="polite" aria-atomic="true">${this.#notice}</p>
+          </div>`
+        : nothing}
       <hh-feedback screen="Front door" trigger="external"></hh-feedback>
+    `;
+  }
+
+  #body(): TemplateResult | typeof nothing {
+    if (this.#mode === "boot") return bootScreen();
+    if (this.#mode === "config-error") return configErrorScreen(this.#configFailure);
+    const consoleSession = this.#console;
+    if (this.#mode === "console" && consoleSession !== null) {
+      if (consoleSession.phase === "starting") return bootScreen();
+      if (consoleSession.phase === "signed-in") {
+        if (!consoleSession.landed) return this.#entry(consoleSession);
+        return this.#screen.kind === "coming-soon" ? this.#comingSoon() : this.#home();
+      }
+      const open = consoleSession.config.personas && consoleSession.config.personasOpen;
+      return signInScreen(
+        consoleSession,
+        open
+          ? html`<div class="persona-stage">
+              <h2 class="entry-subhead">Or walk the demo as a role</h2>
+              ${this.#personaCards(consoleSession)}
+            </div>`
+          : nothing,
+      );
+    }
+    if (this.#screen.kind === "picker") return this.#picker();
+    if (this.#screen.kind === "home") return this.#home();
+    return this.#comingSoon();
+  }
+
+  /** The eight live cards and the five coming rows, calling the persona route. */
+  #personaCards(session: ConsoleSession): TemplateResult {
+    return personaCards(
+      session,
+      (role, refusal, busy) =>
+        this.#roleCard(role, {
+          action: "persona",
+          verb: "Enter as",
+          busy,
+          anyBusy: session.personaBusy !== null,
+          refusal: refusal === "" ? undefined : refusal,
+        }),
+      () => this.#comingList(),
+    );
+  }
+
+  /** The role entry after sign in: continue as the person's own role, and the persona cards where the deployment has them. */
+  #entry(session: ConsoleSession): TemplateResult {
+    const who = session.who;
+    const landing = who === null ? null : landingFor(who.roleCode);
+    return html`
+      <div class="stage">
+        <section class="entry-card" aria-labelledby="entry-title" data-testid="role-entry">
+          <h2 id="entry-title">You are signed in</h2>
+          <p data-testid="entry-name">${who?.name ?? ""}</p>
+          ${landing === null
+            ? html`<p data-testid="entry-no-screens">This site has no screens for your role yet. Ask your administrator.</p>`
+            : html`
+                <button type="button" class="btn btn-primary btn-wide" data-action="continue-own" data-testid="continue-own">
+                  Continue as ${who?.roleLabel ?? landing.label}
+                </button>
+                <span class="chips" aria-hidden="true">
+                  ${landing.tiles.map((tile) => html`<span class="chip">${tile.name}</span>`)}
+                </span>
+              `}
+        </section>
+        ${session.config.personas
+          ? html`<h3 class="entry-subhead">Or walk the demo as another role</h3>${this.#personaCards(session)}`
+          : nothing}
+      </div>
     `;
   }
 
@@ -895,14 +1120,28 @@ export class FrontDoorApp extends HHElement {
     if (widget instanceof HHFeedback && widget.send !== this.#feedbackSender) {
       widget.send = this.#feedbackSender;
     }
+    // The fields stay put (value and focus) and only stop taking input while a sign in is in flight.
+    const signingIn = this.#console?.phase === "signing-in";
+    for (const id of ["#signin-email", "#signin-password"]) {
+      const field = this.renderRoot.querySelector<HTMLInputElement>(id);
+      if (field !== null) field.readOnly = signingIn;
+    }
+    // Focus returns to where the person was after a refused sign in: the
+    // password field after wrong credentials, the button otherwise.
+    const focus = this.#console?.takeFocus() ?? null;
+    if (focus !== null) {
+      const target = focus === "submit" ? '[data-testid="signin-submit"]' : `#signin-${focus}`;
+      const control = this.renderRoot.querySelector<HTMLElement>(target);
+      if (control !== null) {
+        control.focus();
+        if (control instanceof HTMLInputElement) control.select();
+      }
+    }
   }
 
-  #header(): TemplateResult {
-    const session = this.#session;
-    const signedIn = session !== null;
+  /** The HH Yard lockup, the ERP shell's own: the mark in the house gold, the product name and the house line. */
+  #brand(): TemplateResult {
     return html`
-      <header>
-        <div class="demo-banner-cell">
           <div class="brand" role="img" aria-label="HH Yard, a Hardscape House product">
             <span class="brand-mark" aria-hidden="true">
               <svg viewBox="0 0 3000 3000">
@@ -914,6 +1153,86 @@ export class FrontDoorApp extends HHElement {
               <span class="brand-sub">a Hardscape House product</span>
             </span>
           </div>
+    `;
+  }
+
+  /** Before the mode is known, and on the configuration error page: the lockup alone, no demo badge and no session controls. */
+  #plainHeader(): TemplateResult {
+    return html`
+      <header>
+        <div class="demo-banner-cell">${this.#brand()}</div>
+        <p class="who" data-testid="header-word"></p>
+        <div class="controls"></div>
+      </header>
+    `;
+  }
+
+  /**
+   * The console copy's header band (RULES-S4 section 3): the dealer lockup and,
+   * once signed in, the app and surface selector; the person's name and role in
+   * the middle; Theme, Feedback and Sign out on the right. The pin control and
+   * the rail of pinned surfaces are the shells cycle's.
+   */
+  #consoleHeader(session: ConsoleSession): TemplateResult {
+    const who = session.who;
+    const landing = who === null ? undefined : (landingFor(who.roleCode) ?? undefined);
+    const openable = landing === undefined ? [] : landing.tiles.filter((tile) => tile.href !== null);
+    return html`
+      <header>
+        <div class="demo-banner-cell">
+          ${dealerLockup(session.config.dealer)}
+          ${who !== null && session.landed
+            ? html`
+                <details class="apps-menu" data-testid="apps-menu">
+                  <summary aria-label="Apps and surfaces">Apps</summary>
+                  <ul class="apps-list">
+                    ${openable.map(
+                      (tile) =>
+                        html`<li><button type="button" data-action="open-module" data-href=${tile.href ?? nothing}>${tile.name}</button></li>`,
+                    )}
+                  </ul>
+                </details>
+              `
+            : nothing}
+        </div>
+        ${who === null
+          ? html`<p class="who" data-testid="header-word">Sign in</p>`
+          : html`<p class="person" data-testid="header-word">
+              <span class="person-name">${who.name}</span>
+              <span class="person-role">${who.roleLabel}</span>
+            </p>`}
+        <div class="controls console-controls">
+          <button
+            type="button"
+            class="btn-secondary"
+            data-action="theme"
+            data-testid="theme-control"
+            aria-label=${themeControlLabel(this.#theme.choice)}
+            title="Cycle the theme: Auto, Light, Brand"
+          >
+            Theme: ${THEME_LABEL[this.#theme.choice]}
+          </button>
+          <button type="button" class="btn-secondary" data-action="feedback" data-testid="feedback-button" aria-haspopup="dialog" aria-expanded=${this.#feedbackOpen ? "true" : "false"} title="Send feedback about this screen">
+            Feedback
+          </button>
+          ${who !== null && session.config.personas && session.landed
+            ? html`<button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>`
+            : nothing}
+          ${who !== null ? html`<button type="button" class="btn-secondary" data-action="sign-out">Sign out</button>` : nothing}
+        </div>
+      </header>
+    `;
+  }
+
+  #header(): TemplateResult {
+    if (this.#mode === "boot" || this.#mode === "config-error") return this.#plainHeader();
+    if (this.#mode === "console" && this.#console !== null) return this.#consoleHeader(this.#console);
+    const session = this.#session;
+    const signedIn = session !== null;
+    return html`
+      <header>
+        <div class="demo-banner-cell">
+          ${this.#brand()}
           <div class="demo-banner" role="note">
             <span class="word">Demo</span>
             <span class="copy">Everything on this box is invented demo data: nothing here is real.</span>
@@ -951,33 +1270,53 @@ export class FrontDoorApp extends HHElement {
         <h2 class="headline">Pick a role to walk the demo.</h2>
         <p class="intro">Tap a role to sign in as it and open what it works:</p>
         <div class="cards">
-          ${LIVE_ROLES.map((role) => this.#roleCard(role))}
+          ${LIVE_ROLES.map((role) =>
+            this.#roleCard(role, {
+              action: "choose",
+              verb: "Sign in as",
+              busy: this.#busyFlow === role.flow,
+              anyBusy: this.#busyFlow !== null,
+              refusal: this.#refusals.get(role.flow),
+            }),
+          )}
         </div>
         ${this.#contractorSection()}
-        <details class="coming-card" data-testid="coming-disclosure">
-          <summary>
-            <span class="coming-heading">Four more roles are coming</span>
-            <span class="chev" aria-hidden="true">${drawIcon(iconForId("lucide:chevron-up"), 16)}</span>
-          </summary>
-          <ul class="coming" aria-label="Coming roles">
-            ${COMING_ROLES.map((role) => html`<li>${this.#comingRow(role)}</li>`)}
-          </ul>
-        </details>
+        ${this.#comingList()}
       </div>
     `;
   }
 
-  #roleCard(role: LiveRole): TemplateResult {
-    const starting = this.#busyFlow === role.flow;
-    const refusal = this.#refusals.get(role.flow);
+  /** The five roles that are coming, as the one collapsed disclosure both modes show. */
+  #comingList(): TemplateResult {
+    return html`
+      <details class="coming-card" data-testid="coming-disclosure">
+        <summary>
+          <span class="coming-heading">Four more roles are coming</span>
+          <span class="chev" aria-hidden="true">${drawIcon(iconForId("lucide:chevron-up"), 16)}</span>
+        </summary>
+        <ul class="coming" aria-label="Coming roles">
+          ${COMING_ROLES.map((role) => html`<li>${this.#comingRow(role)}</li>`)}
+        </ul>
+      </details>
+    `;
+  }
+
+  /** One live role card. The demo's calls the mint with the flow; the console's calls the persona route with the flow id (the core's persona id). */
+  #roleCard(
+    role: LiveRole,
+    options: { action: "choose" | "persona"; verb: string; busy: boolean; anyBusy: boolean; refusal: string | undefined },
+  ): TemplateResult {
+    const starting = options.busy;
+    const refusal = options.refusal;
     return html`
       <button
         type="button"
         class="card ${starting ? "starting" : ""}"
-        data-action="choose"
-        data-flow=${role.flow}
+        data-action=${options.action}
+        data-flow=${options.action === "choose" ? role.flow : nothing}
+        data-persona=${options.action === "persona" ? role.flow : nothing}
         aria-label=${role.label}
-        ?disabled=${this.#busyFlow !== null}
+        ?disabled=${options.anyBusy}
       >
         <span class="mark">${drawIcon(iconForId(role.icon), 32)}</span>
         <span class="words">
@@ -986,7 +1325,7 @@ export class FrontDoorApp extends HHElement {
           <span class="chips" aria-hidden="true">
             ${role.tiles.map((tile) => html`<span class="chip">${tile.name}</span>`)}
           </span>
-          <span class="cta" aria-hidden="true">Sign in as ${role.label}</span>
+          <span class="cta" aria-hidden="true">${options.verb} ${role.label}</span>
           ${refusal === undefined ? nothing : html`<span class="refusal">${refusal}</span>`}
         </span>
       </button>
@@ -1031,13 +1370,37 @@ export class FrontDoorApp extends HHElement {
     `;
   }
 
-  #home(): TemplateResult {
+  /** Who is signed in, in either mode: the one place the header, the home and the approvals read it. */
+  #identity(): { label: string; roleCode: string; name: string } | null {
+    if (this.#console !== null) {
+      const who = this.#console.who;
+      return who === null ? null : { label: who.roleLabel, roleCode: who.roleCode, name: who.name };
+    }
     const session = this.#session;
-    const role =
-      session === null
-        ? undefined
-        : LIVE_ROLES.find((candidate) => candidate.flow === session.flow);
-    if (session === null || role === undefined) {
+    return session === null ? null : { label: session.roleLabel, roleCode: session.roleCode, name: session.user.name };
+  }
+
+  /** The live role whose home the signed in person lands on: by the mint's flow in the demo, by the person's own role code in the console. */
+  #landingRole(): LiveRole | undefined {
+    if (this.#console !== null) {
+      const who = this.#console.who;
+      return who === null ? undefined : (landingFor(who.roleCode) ?? undefined);
+    }
+    const session = this.#session;
+    return session === null ? undefined : LIVE_ROLES.find((candidate) => candidate.flow === session.flow);
+  }
+
+  #home(): TemplateResult {
+    const role = this.#landingRole();
+    if (this.#console !== null && role === undefined) {
+      return html`
+        <div class="stage">
+          <h2 class="headline" data-testid="home-title">No screens for your role yet</h2>
+          <p class="intro">This site has no screens for your role yet. Ask your administrator.</p>
+        </div>
+      `;
+    }
+    if (this.#identity() === null || role === undefined) {
       // A flow the catalog does not know cannot render a home: the honest
       // answer is the picker, not a wrong page. The custody stays (the
       // server minted it); only this page declines to guess.
@@ -1110,8 +1473,7 @@ export class FrontDoorApp extends HHElement {
   #comingSoon(): TemplateResult {
     if (this.#screen.kind !== "coming-soon") return this.#picker();
     const module = this.#screen.module;
-    const session = this.#session;
-    const roleLabel = session === null ? "" : session.roleLabel;
+    const roleLabel = this.#identity()?.label ?? "";
     const tile = LIVE_ROLES.flatMap((role) => role.tiles).find((candidate) => candidate.name === module);
     return html`
       <div class="stage">

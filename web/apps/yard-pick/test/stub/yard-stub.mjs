@@ -160,7 +160,7 @@ const TICKETS = {
     order_id: "0b000000-0000-4000-9000-000000000042",
     order_no: "SO-1042",
     branch_id: POINT_LOMA,
-    customer_name: "Summit Ridge Builders",
+    customer_name: "Bluffside Builders",
     fulfillment: "PICKUP",
     mto_class: "STANDARD",
     priority: "URGENT",

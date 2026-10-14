@@ -103,6 +103,7 @@ forged chain is never the answer.
 | `CORE_INTERNAL_PORT` | the core's loopback port (the default is 9090) |
 | `CORE_STAFF_AUDIENCE`, `CORE_TENANT_AUDIENCE` | the token audiences (defaults `hh-staff` and `hh-tenant`) |
 | `CORE_DEMO_TOKEN_TTL` | the demo session length the mint issues, optional |
+| `HH_DEMO_MINT_VISITOR_ALLOWANCE` | the per-visitor mint allowance on the testers' copy, optional; unset or non-positive keeps the default of 5, and the value is capped at 20. Staging and public deployments leave this unset. |
 | `CORE_SIGNIN_MODE` | `demo` or `console`, required, no default (the image refuses to start without it) |
 | `CORE_SESSION_SIGNING_KEY_FILE` | console mode: path of the PEM EC P-256 private key. The secret mount must be mode 0400 or 0600 and owned by the user the core runs as (a file readable by group or other is refused at boot, and so is one the core's user cannot read); mount it read only |
 | `CORE_SESSION_KEY_NEXT_FILE`, `CORE_SESSION_KEY_PREVIOUS_FILE` | console mode, optional: PEM public halves only, any mode, one PEM block each |
@@ -138,7 +139,19 @@ image and nothing is committed.
 | `CORE_SIGNIN_EMAIL_DOMAINS` | public value | comma list; with `CORE_SIGNIN_EMAIL_ADDRESSES` the allow list of sign in emails; both empty or unset refuses every sign in |
 | `CORE_SIGNIN_EMAIL_ADDRESSES` | public value | comma list of whole addresses |
 | `CORE_TRUSTED_PROXIES` | public value | comma list of peer addresses allowed to name the client: set it to the address Caddy connects from (`127.0.0.1` in this image), or every visitor shares the proxy's one rate limit bucket |
+| `CORE_PERSONA_CALLER` | public value | `partner` on the testers' copy, `open` on the public copy; no default, a console copy that does not say does not boot. It decides who may call `POST /api/v1/auth/persona` |
+| `CORE_PERSONA_PARTNERS` | public value | comma list of FB Console user ids that may enter as a persona on the testers' copy (each also needs a linked ACTIVE staff row); empty refuses every caller; refused at boot on an `open` copy |
 | `CORE_JWKS_URL` | unset | the console copy verifies its own tokens; if it is still set the boot logs one warning and ignores it |
+
+The persona route (`POST /api/v1/auth/persona`) exists in this image's console
+mode only. The tap-a-role cards mint a persona's own session with the copy's
+signing key; a persona is not an FB Console user and its subject is
+`persona:<id>`. On the testers' copy the caller sends the core bearer of a real
+partner exchange (a persona token cannot call it); on the public copy it is open
+and limited per address and per address and persona. The demo populate creates
+the persona rows (`persona.<id>@hh-demo.invalid`, never a Console style
+account); the four contractor personas are listed and answer the shared 403
+until the Pro cycle.
 
 The rest of the table above (database, vault key, gate hash, acceptance
 signing pair) is unchanged. The JWK Set at `/.well-known/jwks.json` is served

@@ -16,10 +16,16 @@ import (
 // names, a delivery site, and the dealer's yard name.
 var glsWorldSignatures = []string{
 	"Summit Ridge Builders",
+	"Bluffside Builders",
 	"Copperline Pavers",
 	"Granite Run Quarry",
 	"1180 Quarry Gate Road",
 	"Gable Landscape Supply, Point Loma",
+	// The money and tax words (demoseed_glsworld_tax_demo.go): the default build keeps the first
+	// dealer's rate, currency and ledger words.
+	"San Diego County combined sales tax rate.",
+	"Retired exemption profile",
+	"Sales tax relief recoverable",
 }
 
 func TestDefaultBuildCarriesNoGableLandscapeSupplyWorld(t *testing.T) {

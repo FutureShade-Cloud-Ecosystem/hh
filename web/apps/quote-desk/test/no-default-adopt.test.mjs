@@ -21,12 +21,15 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
-const scratchDir = join(appDir, "test", ".no-default-adopt-build");
+// A fresh directory under the OS temp dir, never under the package: the kits raw markup guard walks every
+// dependent's folder and a built bundle sitting there while it walks (or left by a killed run) fails the drift gate.
+const scratchDir = mkdtempSync(join(tmpdir(), "hh-no-default-adopt-"));
 
 /** The front door's own session record key: the seam's one string artifact. */
 const FRONT_DOOR_KEY = "hh-demo.front-door.session.v1";
