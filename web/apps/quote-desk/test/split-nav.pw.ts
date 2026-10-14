@@ -471,7 +471,7 @@ test("split page: each route sets the document title and moves focus to the page
   await picker.getByRole("option", { name: /Maple Ridge Contracting/ }).click();
   await expect(page.getByRole("combobox", { name: "Search products by name, code or category" })).toBeFocused();
   await page.goBack();
-  await expect(page).toHaveTitle("Quotes");
+  await expect(page).toHaveTitle("Gable Landscape Supply · Quotes");
 });
 
 test("split page: a quote id that cannot be read says so with a way back, never a New Quote shell", async ({ page }) => {

@@ -1,8 +1,9 @@
 // Tenant-driven browser tab title. Reads the public dealer config once,
-// caches it, and composes "<dealer> · <app>" for staff apps or
+// caches a success, and composes "<dealer> · <app>" for staff apps or
 // "Your quote from <dealer>" for the public quote page. A failed read keeps
 // the neutral static title and never throws, so the page is never left with
-// a blank or wrong title because of a network fault.
+// a blank or wrong title because of a network fault. The neutral title is set
+// synchronously before the async read starts, then composed when the read lands.
 
 import { ApiClient, tenantAuth } from "@hardscapehouse/api-client";
 
@@ -21,17 +22,23 @@ export function __resetTenantTitleCache(): void {
   readOnce = null;
 }
 
+const READ_TIMEOUT_MS = 5000;
+
 function readTenantConfig(): Promise<TenantTitleConfig | TenantTitleFailure> {
   if (readOnce !== null) return readOnce;
   const origin = typeof location !== "undefined" && location?.origin ? location.origin : "";
   const client = new ApiClient({ baseUrl: origin });
   readOnce = tenantAuth
-    .tenantGetConfig(client)
+    .tenantGetConfig(client, { timeoutMs: READ_TIMEOUT_MS })
     .then((result) => {
       if (result.ok) return { ok: true as const, dealerName: result.value.dealer_name };
+      readOnce = null;
       return { ok: false as const };
     })
-    .catch(() => ({ ok: false as const }));
+    .catch(() => {
+      readOnce = null;
+      return { ok: false as const };
+    });
   return readOnce;
 }
 
@@ -41,17 +48,14 @@ export interface ApplyTenantTitleOptions {
   quote?: boolean;
 }
 
-/** Set the tab title from the tenant config. The call is async only so the
- *  config read can settle; the title is updated synchronously with the neutral
- *  fallback first if the read is not yet cached, then again when the config
- *  arrives. */
+/** Set the tab title from the tenant config. The neutral fallback is written
+ *  synchronously first, then replaced with the composed title when the config
+ *  read lands. */
 export async function applyTenantTitle(appName: string, options?: ApplyTenantTitleOptions): Promise<void> {
+  setNeutralTitle(appName, options);
   const config = await readTenantConfig();
-  const dealerName = config.ok ? config.dealerName : "";
-  if (dealerName === "") {
-    document.title = options?.quote === true ? "Your quote" : appName;
-    return;
-  }
+  if (!config.ok) return;
+  const dealerName = config.dealerName;
   document.title = options?.quote === true ? `Your quote from ${dealerName}` : `${dealerName} · ${appName}`;
 }
 

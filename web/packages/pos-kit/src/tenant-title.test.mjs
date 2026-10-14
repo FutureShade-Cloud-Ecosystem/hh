@@ -107,3 +107,28 @@ test("setNeutralTitle with the quote option sets 'Your quote'", () => {
   setNeutralTitle("Your quote", { quote: true });
   assert.equal(globalThis.document.title, "Your quote");
 });
+
+test("the neutral title is set synchronously before the config read lands", async () => {
+  globalThis.fetch = (...args) =>
+    new Promise((resolve) =>
+      setTimeout(() => resolve(okConfig("Gable Landscape Supply")(...args)), 10)
+    );
+  const pending = applyTenantTitle("Counter Till");
+  assert.equal(globalThis.document.title, "Counter Till");
+  await pending;
+  assert.equal(globalThis.document.title, "Gable Landscape Supply · Counter Till");
+});
+
+test("a failed config read is retried on the next call", async () => {
+  let calls = 0;
+  globalThis.fetch = (...args) => {
+    calls += 1;
+    if (calls === 1) return failingConfig()(...args);
+    return okConfig("Gable Landscape Supply")(...args);
+  };
+  await applyTenantTitle("Counter Till");
+  assert.equal(globalThis.document.title, "Counter Till");
+  await applyTenantTitle("Counter Till");
+  assert.equal(calls, 2);
+  assert.equal(globalThis.document.title, "Gable Landscape Supply · Counter Till");
+});
