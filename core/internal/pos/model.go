@@ -261,6 +261,8 @@ type ReliefOutcome struct {
 	Automated         bool   `json:"automated"`          // ALWAYS false at W4 (M5 flips it true)
 	RequiresEvidence  bool   `json:"requires_evidence"`  // the 0% fulfilment hard gate
 	EvidenceSatisfied bool   `json:"evidence_satisfied"` // POD/waybill attached
+	// TaxLabel is the name of the dealer's tax ("HST", "Sales tax") for the screen's words.
+	TaxLabel string `json:"tax_label"`
 }
 
 // -- internal row types for the M2-debt writes (consumed by Repository + the test fake) --

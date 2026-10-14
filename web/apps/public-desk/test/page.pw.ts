@@ -72,6 +72,18 @@ test("a quote is viewed by its token: header, lines, totals", async ({ page }) =
   await expect(page.getByText("Total $109.22")).toBeVisible();
 });
 
+test("a California dealer's page speaks Sales tax, from the server's own word and nowhere else", async ({ page }) => {
+  await page.route(/\/api\/public\/v1\/quotes\/[^/?]+$/, async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    await route.fulfill({ response, json: { ...json, tax_label: "Sales tax" } });
+  });
+  await page.goto(`/?t=${GOOD_TOKEN}`);
+  await expect(page.getByText("Sales tax $12.57")).toBeVisible();
+  await expect(page.getByText("Subtotal $96.65")).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("HST");
+});
+
 test("the line thumbnails ride the product image read, when the dealer chose images", async ({ page }) => {
   await page.goto(`/?t=${GOOD_TOKEN}`);
   const thumbs = page.locator("img.thumb");
@@ -478,6 +490,7 @@ const ECHO_28 = {
   subtotal_cents: 52000,
   tax_cents: 6760,
   total_cents: 58760,
+  tax_label: "HST",
 };
 
 async function slowAccept(page: Page): Promise<() => number> {

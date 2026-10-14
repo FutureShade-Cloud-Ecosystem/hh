@@ -171,7 +171,7 @@ func (s *Service) buildInvoiceFinalized(ctx context.Context, payload []byte) (jo
 		}
 		lines = append(lines, dr(hbCode, a.HoldbackCents, "holdback receivable"))
 	}
-	lines = append(lines, cr(revCode, a.SubtotalCents, "revenue"), cr(taxCode, a.TaxCents, "HST"))
+	lines = append(lines, cr(revCode, a.SubtotalCents, "revenue"), cr(taxCode, a.TaxCents, s.taxWord(ctx)))
 	return journalDraft{
 		Source:         SourceInvoice,
 		SourceRefID:    p.InvoiceID,
@@ -396,7 +396,7 @@ func (s *Service) buildPaymentBounced(ctx context.Context, payload []byte) (jour
 			if err != nil {
 				return journalDraft{}, false, err
 			}
-			lines = append(lines, cr(feeCode, net, "NSF fee income (net)"), cr(hstCode, hst, "HST on NSF fee"))
+			lines = append(lines, cr(feeCode, net, "NSF fee income (net)"), cr(hstCode, hst, s.taxWord(ctx)+" on NSF fee"))
 		} else {
 			lines = append(lines, cr(feeCode, p.FeeCents, "NSF fee income"))
 		}
@@ -751,7 +751,7 @@ func (s *Service) buildPosReturnCommitted(ctx context.Context, payload []byte) (
 		if err != nil {
 			return journalDraft{}, false, err
 		}
-		lines = append(lines, dr(hstCode, p.TaxCents, "HST reversed"))
+		lines = append(lines, dr(hstCode, p.TaxCents, s.taxWord(ctx)+" reversed"))
 	}
 	if net := p.TotalCents - p.FeeCents - p.AppliedCents - p.InvoiceOffsetCents; net > 0 {
 		lines = append(lines, cr(railCode, net, "refund ("+p.RefundMethod+")"))

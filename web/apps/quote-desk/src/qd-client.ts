@@ -120,6 +120,8 @@ export interface TermsRef {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  /** The name of the dealer's tax ("HST", "Sales tax"), the server's own word for the totals row. */
+  taxLabel: string;
   lines: Array<{ lineNo: number; discPct: number; preDiscountTotalCents: number; hasImage: boolean; sku: string | null }>;
 }
 
@@ -330,8 +332,9 @@ export function validateTerms(value: unknown): TermsRef | null {
   const totalCents = integerAt(value, "total_cents");
   const depositCents = integerAt(value, "deposit_cents");
   const deliveryFeeCents = integerAt(value, "delivery_fee_cents");
+  const taxLabel = stringAt(value, "tax_label");
   if (
-    quoteId === null || depositRequired === null || depositPct === null || includeImages === null ||
+    quoteId === null || taxLabel === null || taxLabel === "" || depositRequired === null || depositPct === null || includeImages === null ||
     fulfillmentRaw === null || (fulfillmentRaw !== "PICKUP" && fulfillmentRaw !== "DELIVERY") ||
     deliveryFeeCents === null || depositCents === null ||
     subtotalCents === null || taxCents === null || totalCents === null
@@ -357,6 +360,7 @@ export function validateTerms(value: unknown): TermsRef | null {
     subtotalCents,
     taxCents,
     totalCents,
+    taxLabel,
     lines,
   };
 }

@@ -39,6 +39,7 @@ package finstmt
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/billing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/notify"
@@ -75,6 +76,13 @@ func (h *Handler) WithPaymentTrail(t billing.PaymentTrailReader) *Handler {
 	return h
 }
 
+// WithRegisterTaxLabel binds the dealer's tax word seam (platform/taxwords) for the register's printed
+// invoice. Unbound is the Ontario dealer's "HST".
+func (h *Handler) WithRegisterTaxLabel(src taxwords.Source) *Handler {
+	h.registerTaxWords = src
+	return h
+}
+
 // NotifierSender adapts the shipped notify port onto the register's Sender. Pure translation: the
 // register composes the words (billing/register_messages.go), notify decides how they travel.
 type NotifierSender struct{ N notify.Notifier }
@@ -106,6 +114,7 @@ func (h *Handler) mountInvoiceRegister(r httpx.Registrar, g *guards.Guards) {
 		WithBranchNamer(branchNamer(pool)).
 		WithUserLinker(h.userLink).
 		WithPaymentTrail(h.paymentTrail).
+		WithTaxLabel(h.registerTaxWords).
 		RegisterRoutes(r, g)
 }
 
