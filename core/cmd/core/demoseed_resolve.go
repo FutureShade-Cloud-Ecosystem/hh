@@ -18,8 +18,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -91,8 +93,16 @@ func resolveCategories(ctx context.Context, pool *pgxpool.Pool) (map[string]stri
 // persona it cannot resolve, a driver row with no login is the ordinary case the schema was built
 // for (0090:47 "a driver MAY be a staff user … and may not be"), not a degraded one.
 func resolvePersonas(ctx context.Context, pool *pgxpool.Pool) (map[string]string, error) {
+	// A persona may sit under the address the demo populate moved it to (the glsworld pair's
+	// aliases, empty in the default build); the map is keyed by the address the plan names.
+	emails := resolvablePersonaEmails()
+	byAlias := map[string]string{}
+	for from, to := range personaEmailAliases() {
+		emails = append(emails, to)
+		byAlias[to] = from
+	}
 	rows, err := pool.Query(ctx,
-		`SELECT email::text, id::text FROM users WHERE email = ANY($1)`, resolvablePersonaEmails())
+		`SELECT email::text, id::text FROM users WHERE email = ANY($1)`, emails)
 	if err != nil {
 		return nil, fmt.Errorf("demoseed: reading demo personas: %w", err)
 	}
@@ -103,7 +113,47 @@ func resolvePersonas(ctx context.Context, pool *pgxpool.Pool) (map[string]string
 		if err := rows.Scan(&email, &id); err != nil {
 			return nil, fmt.Errorf("demoseed: scanning persona: %w", err)
 		}
+		if from, moved := byAlias[email]; moved {
+			email = from
+		}
 		out[email] = id
 	}
 	return out, rows.Err()
+}
+
+// resolveContractor reads what the contractor world needs from the database: that the populate has made
+// the account (the world waits for it, like the quote world waits for its two logins), the branch it is
+// homed at, and the portal user of each role. An absent account is not an error: the section builds
+// nothing and the summary says so.
+func resolveContractor(ctx context.Context, pool *pgxpool.Pool) (contractorFacts, error) {
+	var f contractorFacts
+	var branch *string
+	err := pool.QueryRow(ctx,
+		`SELECT home_branch_id::text FROM customers WHERE id = $1::uuid`, contractorCustomerID).Scan(&branch)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return f, nil
+	}
+	if err != nil {
+		return f, fmt.Errorf("demoseed: reading the contractor account: %w", err)
+	}
+	if branch == nil {
+		return f, nil
+	}
+	f.BranchID = *branch
+	f.Users = map[string]string{}
+	rows, err := pool.Query(ctx,
+		`SELECT role, id::text FROM portal_users WHERE customer_id = $1::uuid`, contractorCustomerID)
+	if err != nil {
+		return f, fmt.Errorf("demoseed: reading the contractor portal users: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var role, id string
+		if err := rows.Scan(&role, &id); err != nil {
+			return f, fmt.Errorf("demoseed: scanning a contractor portal user: %w", err)
+		}
+		f.Users[role] = id
+	}
+	f.Ready = true
+	return f, rows.Err()
 }

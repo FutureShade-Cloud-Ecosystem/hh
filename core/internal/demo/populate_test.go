@@ -301,19 +301,16 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
 		t.Errorf("the org scope did not stamp clean: %+v", counts)
 	}
-	// 22 linked: the 8 demo role accounts (sales, manager, yard-manager,
-	// payables-receivables, buyer, controller, yard, driver) and the 14
-	// enterable sign in personas, linked to their namespaced subjects.
-	if counts.UsersLinked != 22 || counts.UsersUnlinked != 8 {
-		t.Errorf("linked %d / unlinked %d users, want the 8 demo role accounts and the 14 sign in personas linked and the 8 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	// 23 linked: the 9 demo role accounts (sales, manager, yard-manager,
+	// payables-receivables, buyer, controller, yard, driver, dispatch) and the
+	// 14 enterable sign in personas, linked to their namespaced subjects.
+	if counts.UsersLinked != 23 || counts.UsersUnlinked != 7 {
+		t.Errorf("linked %d / unlinked %d users, want the 9 demo role accounts and the 14 sign in personas linked and the 7 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	// 23 grants: the 8 of the role accounts (six branch scoped, two global)
-	// and 15 of the personas (ten branch scoped: eight roles of the branch
-	// kind plus the yard manager's driver grant and the driver; five global:
-	// General Manager, HR, Payables and Receivables, Financial Controller and
-	// the Dealer Admin).
-	if counts.StaffGrants != 23 || counts.StaffGrantsBranch != 16 || counts.StaffGrantsGlobal != 7 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the role accounts' 8 and the personas' 15", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	// 24 grants: the 9 of the role accounts (seven branch scoped, two global)
+	// and 15 of the personas (ten branch scoped, five global).
+	if counts.StaffGrants != 24 || counts.StaffGrantsBranch != 17 || counts.StaffGrantsGlobal != 7 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the role accounts' 9 and the personas' 15", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -348,12 +345,15 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	// world is Trenton (the roadmap's queue); the driver's is Kingston,
 	// where its seeded driver and runs are. 0200 granted every branch; the
 	// populate converges the demo box onto the one branch each persona
-	// works, and the dispatch persona (a later increment) keeps 0200's shape.
+	// works. The dispatch persona's is Trenton, the Point Loma main yard once
+	// the demo world renames it, where the load board's two open orders sit.
 	assertRoleAccount(t, ctx, pool, yardUserID, yardEmail, yardDisplayName, "YARD_TEAM", trentonBranchID)
 	assertRoleAccount(t, ctx, pool, driverUserID, driverEmail, driverDisplayName, "DRIVERS", kingstonBranchID)
+	assertRoleAccount(t, ctx, pool, dispatchUserID, dispatchEmail, dispatchDisplayName, "LOGISTICS_MANAGER", trentonBranchID)
 	for _, p := range []struct{ id, branch string }{
 		{yardUserID, trentonBranchID},
 		{driverUserID, kingstonBranchID},
+		{dispatchUserID, trentonBranchID},
 	} {
 		var live, atOwn int
 		if err := pool.QueryRow(ctx, `
@@ -366,16 +366,6 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 			t.Errorf("persona %s holds %d live branch grant(s) (%d at its own), want exactly its own branch", p.id, live, atOwn)
 		}
 	}
-	var dispatchLive int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*) FROM user_branch_grants
-		 WHERE user_id = 'd0200000-0000-4000-9000-000000000001' AND deleted_at IS NULL`).Scan(&dispatchLive); err != nil {
-		t.Fatalf("dispatch persona branch grants: %v", err)
-	}
-	if dispatchLive != 2 {
-		t.Errorf("the dispatch persona holds %d live branch grants, want 0200's both (a later increment's to converge)", dispatchLive)
-	}
-
 	// The real-domain planted rows are inactive, renamed, re-addressed on
 	// the reserved demo domain and carry no credential.
 	for _, r := range []struct{ id, name, email string }{
@@ -602,8 +592,8 @@ func TestPopulate_ReceiptHeaderCarriesTheInventedName(t *testing.T) {
 	if header.OrgName != demoOrgName {
 		t.Errorf("the receipt header's org field carries %q, want the invented demo name %q", header.OrgName, demoOrgName)
 	}
-	if header.Name != "Hardscape House (demo), Trenton" {
-		t.Errorf("the receipt header's branch field carries %q, want the invented branch name %q", header.Name, "Hardscape House (demo), Trenton")
+	if header.Name != "Gable Landscape Supply, Point Loma" {
+		t.Errorf("the receipt header's branch field carries %q, want the invented branch name %q", header.Name, "Gable Landscape Supply, Point Loma")
 	}
 }
 

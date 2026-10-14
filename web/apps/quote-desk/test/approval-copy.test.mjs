@@ -36,7 +36,7 @@ test("decisionWord words the three states and degrades honestly", () => {
 });
 
 test("approvalDetail keeps the server sentence and only humanises basis points", () => {
-  assert.equal(approvalDetail("Quote Q-1, line 1, Holland, 10% discount, margin 20.0% against a floor of 25.0%"), "Quote Q-1, line 1, Holland, 10% discount, margin 20.0% against a floor of 25.0%");
+  assert.equal(approvalDetail("Quote Q-1, line 1, Charcoal, 10% discount, margin 20.0% against a floor of 25.0%"), "Quote Q-1, line 1, Charcoal, 10% discount, margin 20.0% against a floor of 25.0%");
   assert.equal(approvalDetail("margin 600 bps is below the 1200 bps floor"), "margin 6% is below the 12% floor");
   assert.equal(approvalDetail("   "), "Override requested");
 });

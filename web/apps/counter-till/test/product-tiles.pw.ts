@@ -43,7 +43,7 @@ test("a hot list item and a search result show their category tile and keep thei
   await page.getByTestId("hot-group").filter({ hasText: "Pavers" }).click();
   await expect(page.getByTestId("hot-item").locator("img")).toHaveAttribute("src", /pavers|data:image\/svg/);
 
-  await page.getByTestId("pos-scan-input").fill("holland");
+  await page.getByTestId("pos-scan-input").fill("charcoal");
   const results = page.getByTestId("drop-row");
   await expect(results.first()).toBeVisible();
   const thumb = results.first().locator("hos-product-thumb img");
@@ -54,13 +54,13 @@ test("a hot list item and a search result show their category tile and keep thei
 
 test("the cart line of an added product shows its category tile", async ({ page }) => {
   await signInToItems(page);
-  await page.getByTestId("pos-scan-input").fill("holland");
-  await page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first().click();
-  const line = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  await page.getByTestId("pos-scan-input").fill("charcoal");
+  await page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first().click();
+  const line = page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" });
   await expect(line).toHaveCount(1);
   const img = line.locator("hos-product-thumb img");
   await expect(img).toHaveAttribute("src", /^data:image\/svg\+xml|pavers/);
-  await expect(img).toHaveAttribute("alt", "Holland Stone 60 mm");
+  await expect(img).toHaveAttribute("alt", "Charcoal Stone 60 mm");
 });
 
 // Round 7: the demo seed gives each mulch colour a real 1x1 swatch PNG, which the thumb scaled to a

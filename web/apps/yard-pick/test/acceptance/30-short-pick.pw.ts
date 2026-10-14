@@ -4,7 +4,7 @@
 // list and message read) until House Messages is live. Written against PR
 // 274's notice wiring and proved on the demo image.
 import { expect, test } from "./helpers.js";
-import { TRENTON, arriveFromFrontDoor, mint, queue, shot, staff } from "./helpers.js";
+import { POINT_LOMA, arriveFromFrontDoor, mint, queue, shot, staff } from "./helpers.js";
 
 test("a short pick with a reason backorders the line and the rep's read holds the notice", async ({ page }, testInfo) => {
   await arriveFromFrontDoor(page);

@@ -1,0 +1,4 @@
+# Playwright run artifacts and build output stay beside the app, out of git.
+test-results/
+playwright-report/
+dist/

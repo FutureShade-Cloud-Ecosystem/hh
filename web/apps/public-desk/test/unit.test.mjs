@@ -96,7 +96,7 @@ test("the accept button is ready only with the quantities box, a name and the co
 });
 
 test("thumbnails render only when the dealer chose images and a line carries one", () => {
-  const line = { imageRef: "p-banas" };
+  const line = { imageRef: "p-bluff" };
   const bare = {};
   assert.equal(showsImages({ includeImages: true, lines: [line] }), true);
   assert.equal(showsImages({ includeImages: false, lines: [line] }), false);
@@ -150,19 +150,19 @@ test("money renders from integer cents, and the unknown renders as a placeholder
 
 const FULL_VIEW = {
   quote_no: "Q-25",
-  customer_name: "Quinte Hardscapes Inc",
+  customer_name: "Fieldstone Hardscapes Inc",
   status: "SENT",
   valid_until: "the-valid-until-marker",
   expired: false,
   lines: [
     {
       line_no: 1,
-      description: "Banas Natural Step",
+      description: "Bluff Natural Step",
       qty_entered: "1.0000",
       uom_entered: "PC",
       unit_price_cents: 2057,
       line_total_cents: 2057,
-      image_ref: "p-banas",
+      image_ref: "p-bluff",
     },
   ],
   subtotal_cents: 2057,
@@ -176,12 +176,12 @@ test("a complete quote view parses field by field", () => {
   const view = validateQuoteView(FULL_VIEW);
   assert.notEqual(view, null);
   assert.equal(view.quoteNo, "Q-25");
-  assert.equal(view.customerName, "Quinte Hardscapes Inc");
+  assert.equal(view.customerName, "Fieldstone Hardscapes Inc");
   assert.equal(view.status, "SENT");
   assert.equal(view.validUntil, "the-valid-until-marker");
   assert.equal(view.expired, false);
   assert.equal(view.lines.length, 1);
-  assert.equal(view.lines[0].imageRef, "p-banas");
+  assert.equal(view.lines[0].imageRef, "p-bluff");
   assert.equal(view.subtotalCents, 2057);
   assert.equal(view.acceptable, true);
 });
@@ -195,8 +195,8 @@ test("the dealer's quantity notice is read as sent, and absent is honest, never 
 });
 
 test("the order number is read only on a CONVERTED quote, as sent, and absent is honest", () => {
-  const converted = { ...FULL_VIEW, status: "CONVERTED", acceptable: false, order_no: "SO-TRT-17" };
-  assert.equal(validateQuoteView(converted).orderNo, "SO-TRT-17");
+  const converted = { ...FULL_VIEW, status: "CONVERTED", acceptable: false, order_no: "SO-PLM-17" };
+  assert.equal(validateQuoteView(converted).orderNo, "SO-PLM-17");
   // The fence is the view's own: a number on any other status is not honoured, whatever sent it.
   for (const status of ["DRAFT", "SENT", "ACCEPTED", "EXPIRED", "LOST"]) {
     assert.equal(validateQuoteView({ ...converted, status }).orderNo, null, `${status} carries no order number`);

@@ -19,3 +19,6 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# Called only from Rust over JNI (hh-shell-core android_keystore.rs), so R8
+# must not rename or strip it in a release build.
+-keep class ai.futurebuild.hh.field.KeystoreCustody { *; }

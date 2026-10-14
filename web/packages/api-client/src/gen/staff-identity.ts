@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { IdentityApproval, IdentityApprovalCreateRequest, IdentityApprovalDecideRequest, IdentityApprovalPage, IdentityApprovalStatus, IdentityAssignRoleRequest, IdentityAssignRoleResponse, IdentityChangePasswordRequest, IdentityCreateStaffRequest, IdentityExchangeRequest, IdentityExchangeResponse, IdentityLoginRequest, IdentityLoginResponse, IdentityPasswordResetConfirmRequest, IdentityPasswordResetLink, IdentityPersonaRequest, IdentityPing, IdentityPolicyCheckRequest, IdentityPolicyCheckResponse, IdentityPolicyType, IdentityRolePage, IdentityStaffMember, IdentityStaffMemberPage, IdentityStatusResponse, SessionJwkSet } from "./types.js";
+import type { IdentityApproval, IdentityApprovalCreateRequest, IdentityApprovalDecideRequest, IdentityApprovalPage, IdentityApprovalStatus, IdentityAssignRoleRequest, IdentityAssignRoleResponse, IdentityAuthMethodsResponse, IdentityChangePasswordRequest, IdentityCreateStaffRequest, IdentityExchangeRequest, IdentityExchangeResponse, IdentityLoginRequest, IdentityLoginResponse, IdentityPasswordResetConfirmRequest, IdentityPasswordResetLink, IdentityPersonaRequest, IdentityPing, IdentityPolicyCheckRequest, IdentityPolicyCheckResponse, IdentityPolicyType, IdentityRolePage, IdentityStaffMember, IdentityStaffMemberPage, IdentityStatusResponse, SessionJwkSet } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -96,6 +96,21 @@ export async function identityLogin(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "identityLogin",
+  });
+}
+
+export async function identityAuthMethods(
+  client: ApiClient,
+  opts?: { org?: string },
+  call?: ApiCallOptions
+): Promise<Result<IdentityAuthMethodsResponse>> {
+  return client.request<IdentityAuthMethodsResponse>({
+    method: "GET",
+    path: "/api/v1/auth/methods",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "identityAuthMethods",
   });
 }
 

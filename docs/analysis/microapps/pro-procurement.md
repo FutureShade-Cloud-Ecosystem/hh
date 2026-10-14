@@ -4,7 +4,7 @@
 
 # pro-procurement: Pro Procurement Board
 
-Audience: external   Roles: contractor_owner, contractor_buyer   Devices: phone, desktop   Environment: site
+Audience: external   Roles: contractor_owner, contractor_buyer, contractor_buyer_no_pay   Devices: phone, desktop   Environment: site
 Kit: list-detail   Brand: hh-pro   Shell: hh-pro
 Offline: read_cache_plus_outbox. Scopes: projects, orders, scope_items, price_matrix, catalog, customer_quotes, team. Conflict policy: orders server_wins, scope_items last_write_wins_by_field, customer_quotes manual, team manual. Why this mode: the contractor plans on a phone at a site, so a draft must survive a dead spot, but the supplier owns the order once it is placed and the scope locks at that point by rule (`hh_pro_dibbits/CLAUDE.md`, the M3 scope-lock rule). A customer quote is `manual` because a signed acceptance is frozen evidence, and the team store is `manual` because who you are acting as is per window and must never be adopted wholesale from another one (same file).
 

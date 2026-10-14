@@ -148,9 +148,9 @@ func TestSalePreview_PaymentOptions_CashOnDemandCustomer(t *testing.T) {
 // customer type's label.
 func TestSalePreview_PaymentOptions_PayBeforeReleaseIsTheCashOnDemandAccountsAlone(t *testing.T) {
 	cases := []struct {
-		name  string
-		cust  customerRec
-		want  bool
+		name   string
+		cust   customerRec
+		want   bool
 		reason string
 	}{
 		{"cash on demand account (zero day terms with a line)", customerRec{CustomerType: "CONTRACTOR",

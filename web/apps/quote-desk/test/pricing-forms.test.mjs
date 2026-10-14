@@ -287,10 +287,10 @@ test("a policy save needs two percentages and a floor not above the target", () 
 });
 
 test("a rule's applies to reads as the list shows it", () => {
-  const branch = (id) => (id === "b1" ? "Trenton" : id.slice(0, 8));
+  const branch = (id) => (id === "b1" ? "Point Loma" : id.slice(0, 8));
   const cat = (id) => (id === CAT ? "Pavers" : id.slice(0, 8));
   assert.equal(ruleAppliesTo(ruleRow, branch, cat), "CONTRACTOR · Pavers");
-  assert.equal(ruleAppliesTo({ ...ruleRow, branchId: "b1" }, branch, cat), "CONTRACTOR · Pavers · Trenton");
+  assert.equal(ruleAppliesTo({ ...ruleRow, branchId: "b1" }, branch, cat), "CONTRACTOR · Pavers · Point Loma");
   assert.equal(ruleAppliesTo({ ...ruleRow, scope: "TIER_DEFAULT", categoryId: undefined }, branch, cat), "CONTRACTOR");
   assert.equal(ruleAppliesTo({ ...ruleRow, scope: "CUSTOMER_PRODUCT", customerId: CUST, productId: PROD }, branch, cat), "a customer · a product");
 });
@@ -329,8 +329,8 @@ test("a rule's start date is read as the day the core wrote, whatever offset it 
 test("a rule's customer reads by name where one is known", () => {
   const names = (id) => (id === CUST ? "Maple Ridge Contracting" : "");
   const row = { ...ruleRow, scope: "CUSTOMER_CATEGORY", customerId: CUST };
-  assert.equal(ruleAppliesTo(row, () => "Trenton", () => "Pavers", names), "Maple Ridge Contracting · Pavers");
-  assert.equal(ruleAppliesTo(row, () => "Trenton", () => "Pavers"), "a customer · Pavers");
+  assert.equal(ruleAppliesTo(row, () => "Point Loma", () => "Pavers", names), "Maple Ridge Contracting · Pavers");
+  assert.equal(ruleAppliesTo(row, () => "Point Loma", () => "Pavers"), "a customer · Pavers");
   const prod = { ...ruleRow, scope: "CUSTOMER_PRODUCT", customerId: CUST, productId: PROD };
-  assert.equal(ruleAppliesTo(prod, () => "Trenton", () => "Pavers", names), "Maple Ridge Contracting · a product");
+  assert.equal(ruleAppliesTo(prod, () => "Point Loma", () => "Pavers", names), "Maple Ridge Contracting · a product");
 });
