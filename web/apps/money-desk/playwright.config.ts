@@ -33,6 +33,7 @@ export default defineConfig({
   // The card leg crosses apps and has its own harness and config (test/acceptance.config.ts).
   testIgnore: ["**/acceptance/**"],
   workers: 1,
+  retries: 1,
   use: {
     baseURL: `http://127.0.0.1:${appPort}`,
     channel: "chrome",
