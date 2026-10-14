@@ -71,8 +71,8 @@ type glsAccount struct{ code, from, to string }
 
 var glsAccounts = []glsAccount{
 	{"2200", "HST Payable", "Sales tax payable"},
-	{"2201", "HST Payable — Federal 5% Portion", "Sales tax payable, spare one"},
-	{"2202", "HST Payable — Ontario 8% Portion", "Sales tax payable, spare two"},
+	{"2201", "HST Payable \u2014 Federal 5% Portion", "Sales tax payable, spare one"},
+	{"2202", "HST Payable \u2014 Ontario 8% Portion", "Sales tax payable, spare two"},
 	{"1165", "FN Point-of-Sale Relief Recoverable (ON 8%)", "Sales tax relief recoverable"},
 }
 
