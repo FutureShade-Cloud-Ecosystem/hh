@@ -246,7 +246,8 @@ export class BuyingAndStockApp extends HHElement {
     if (outcome.kind === "ready") {
       this.#roleLabel = outcome.entry.roleLabel;
       this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
-      void this.#po.load();
+      this.#roleCode = outcome.entry.roleCode;
+      void this.#areas[0]!.desk.load();
     } else if (outcome.kind === "front-door" && outcome.why === "ended") {
       this.#onSignOut();
       return;
