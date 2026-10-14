@@ -36,6 +36,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/db"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -157,7 +158,7 @@ const (
 	demoMerchantID     = "DEMO-MERCHANT-0001"
 	demoCardCredential = "demo-not-a-key-0001"
 	demoProcessor      = "run_payments"
-	demoCurrency       = "CAD"
+	demoCurrency       = "USD" // the demo dealer trades in US dollars (item 3b slice 2)
 )
 
 // demoPaymentConfigID is the populate's payment configuration row's fixed
@@ -194,6 +195,7 @@ var plantedUserIDs = []string{
 // stable handle it has, pinned here in code beside the ids.
 var plantedUserEmails = []string{
 	"scrubbed-0009@example.invalid",
+	"uat.inside.sales@gablelandscape.example",
 }
 
 // deactivatedUserIDs is the pair of planted rows whose emails sit on a
@@ -248,10 +250,10 @@ var plantedEmailMoves = []struct{ id, email string }{
 var plantedDisplayNames = []struct{ id, name string }{
 	{"d7000000-0000-4000-9000-000000000010", "Platform admin (demo)"},
 	{"d7000000-0000-4000-9000-0000000000da", "Demo teammate (demo)"},
-	{"40000061-0000-4000-9000-000000000001", "Homework account one (demo)"},
-	{"40000061-0000-4000-9000-000000000002", "Homework account two (demo)"},
-	{"40000061-0000-4000-9000-000000000003", "Homework account three (demo)"},
-	{"40000061-0000-4000-9000-000000000004", "Homework account four (demo)"},
+	{"40000061-0000-4000-9000-000000000001", "General Manager (demo)"},
+	{"40000061-0000-4000-9000-000000000002", "Inside Sales (demo)"},
+	{"40000061-0000-4000-9000-000000000003", "Counter Sales (demo)"},
+	{"40000061-0000-4000-9000-000000000004", "Branch Manager (demo)"},
 	{"d0200000-0000-4000-9000-000000000001", "Dispatch persona (demo)"},
 	{"d0200000-0000-4000-9000-000000000002", "Yard persona (demo)"},
 	{"d0200000-0000-4000-9000-000000000003", "Driver persona (demo)"},
@@ -260,7 +262,7 @@ var plantedDisplayNames = []struct{ id, name string }{
 // plantedDisplayNamesByEmail renames the one planted row known by email
 // rather than id (0077's, whose id the database minted).
 var plantedDisplayNamesByEmail = []struct{ email, name string }{
-	{"scrubbed-0009@example.invalid", "Counter UAT account (demo)"},
+	{"uat.inside.sales@gablelandscape.example", "UAT Inside Sales (demo)"},
 }
 
 // Options is RunPopulate's input. Getenv is the environment reader (the
@@ -516,6 +518,12 @@ func RunPopulate(ctx context.Context, opt Options) (Report, error) {
 	report.PaymentConfigCreated = payCreated
 	if err != nil {
 		return report, err
+	}
+	// The rail's row says demoCurrency, and the card rail refuses a charge whose row disagrees with
+	// the dealer's currency, so the dealer's own currency is written beside it, through the settings
+	// module's seam. The build's seed writes the whole configuration after this.
+	if err := settings.WriteDealerCurrencyTx(ctx, tx, demoCurrency); err != nil {
+		return report, fmt.Errorf("demo-populate: dealer currency: %w", err)
 	}
 
 	// The demo_box row: the one-row table only this populate creates,

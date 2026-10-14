@@ -398,22 +398,22 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	// nothing else. A surname token or an unreplaced placeholder on any row
 	// fails the allowlist, without the test itself naming a token.
 	allowedNames := map[string]bool{
-		salesDisplayName:                true,
-		managerDisplayName:              true,
-		yardMgrDisplayName:              true,
-		payRecDisplayName:               true,
-		controllerDisplayName:           true,
-		"Platform admin (demo)":         true,
-		"Demo teammate (demo)":          true,
-		"Homework account one (demo)":   true,
-		"Homework account two (demo)":   true,
-		"Homework account three (demo)": true,
-		"Homework account four (demo)":  true,
-		"Counter UAT account (demo)":    true,
-		"Dispatch persona (demo)":       true,
-		"Yard persona (demo)":           true,
-		"Driver persona (demo)":         true,
-		"Procurement manager (demo)":    true,
+		salesDisplayName:             true,
+		managerDisplayName:           true,
+		yardMgrDisplayName:           true,
+		payRecDisplayName:            true,
+		controllerDisplayName:        true,
+		"Platform admin (demo)":      true,
+		"Demo teammate (demo)":       true,
+		"General Manager (demo)":     true,
+		"Inside Sales (demo)":        true,
+		"Counter Sales (demo)":       true,
+		"Branch Manager (demo)":      true,
+		"UAT Inside Sales (demo)":    true,
+		"Dispatch persona (demo)":    true,
+		"Yard persona (demo)":        true,
+		"Driver persona (demo)":      true,
+		"Procurement manager (demo)": true,
 	}
 	for _, p := range flows.Personas() {
 		if !p.Contractor {
@@ -488,6 +488,17 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	}
 	if !configured || merchantID != demoMerchantID || processor != demoProcessor || currency != demoCurrency {
 		t.Errorf("payment config: configured=%v merchant=%q processor=%q currency=%q", configured, merchantID, processor, currency)
+	}
+
+	// The dealer's own currency is written beside the card rail row and agrees with it: the rail
+	// refuses a charge whose row disagrees with the dealer (item 3b slice 2).
+	var dealerCurrency string
+	if err := pool.QueryRow(ctx,
+		`SELECT value #>> '{}' FROM system_settings WHERE key = 'currency'`).Scan(&dealerCurrency); err != nil {
+		t.Fatalf("system_settings currency is missing: %v", err)
+	}
+	if dealerCurrency != "USD" || currency != "USD" {
+		t.Errorf("dealer currency %q and card rail currency %q, want both USD", dealerCurrency, currency)
 	}
 
 	// The demo_box row records the run's moment, and the newest seeded

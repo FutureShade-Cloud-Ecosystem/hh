@@ -13,7 +13,11 @@
 // ever true when nothing is connected. See Service.Resolve.
 package dashboard
 
-import "time"
+import (
+	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+)
 
 // Kind classifies a tile's number so the client formats it without guessing. The client must not
 // infer "this looks like cents" from magnitude.
@@ -172,6 +176,9 @@ type Scope struct {
 	// receives, absent, not hidden and not zeroed.
 	CostAllowed bool
 	Now         time.Time
+	// Zone is the dealer's business day zone the window and the day literals below are read in,
+	// stamped by the service beside Now (the zero Zone is the Ontario dealer's, America/Toronto).
+	Zone houseday.Zone
 	// Window is the resolved [Since, Until) the caller's widget named, in the HOUSE zone, never in
 	// the process's. Resolved by the handler from the STORED row's `time_range`, so it is a fact
 	// about the widget rather than a query parameter, and a caller cannot widen it by editing a URL.

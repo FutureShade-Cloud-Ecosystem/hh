@@ -17,6 +17,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// seedBuildIsDemo says this binary seeds the Ontario dealer (the demo build's twin says true).
+const seedBuildIsDemo = false
+
 // glsPrepareWorld is the no-op: no branch row moves.
 func glsPrepareWorld(context.Context, *pgxpool.Pool) error { return nil }
 

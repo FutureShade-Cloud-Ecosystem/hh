@@ -21,6 +21,7 @@ import { drawIcon, iconForId } from '@hardscapehouse/pos-kit/src/ported/_icon-co
 // (see CLOSURE.md). Until the wiring item lands they render as unknown
 // elements and nothing else on the surface depends on them.
 import { surfaceConfigUrl } from './surface-config-url.js';
+import { serveHouseZoneFrom } from '@hardscapehouse/pos-kit/src/ported/host-facts.js';
 import '@hardscapehouse/pos-kit/src/ported/price-breakdown.js';
 import '@hardscapehouse/pos-kit/src/ported/pos-product-grid.js';
 import './pos-search-drop.js';
@@ -5438,6 +5439,8 @@ export class HosPosTerminal extends LitElement {
       );
       if (!res.ok) return;
       const body = (await res.json()) as unknown;
+      // The dealer's business day zone rides on this read; the ring's requested date follows it.
+      serveHouseZoneFrom(body);
       this.panelRoleItems = asSurfaceItems(body, 'role_items');
       this.panels = panelView(this.panelRoleItems, asSurfaceItems(body, 'user_items'));
     } catch {
