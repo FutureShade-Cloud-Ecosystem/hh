@@ -32,10 +32,16 @@ type ReceiptService struct {
 	// standardRate is the dealer's standard tax rate, read on the sale date for the tax line's label.
 	// Nil keeps the letterhead's settings figure.
 	standardRate StandardRateReader
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. The sale's tax label
+	// is read on the dealer's day of the sale.
+	zone houseday.Source
 	// taxWords is the dealer's tax word for the tax line ("HST", "Sales tax"). Nil is the Ontario
 	// dealer's "HST".
 	taxWords taxwords.Source
 }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (s *ReceiptService) WithZone(src houseday.Source) *ReceiptService { s.zone = src; return s }
 
 // StandardRateReader answers the dealer's standard tax rate in basis points on a date ("YYYY-MM-DD", "" is
 // today). The composition root binds an adapter over the tax engine.
@@ -136,9 +142,12 @@ func (s *ReceiptService) Receipt(ctx context.Context, id string) (Receipt, error
 	// read keeps the letterhead's figure: the label is the one fact a receipt can degrade on, since the
 	// amounts printed beside it are the sale's own stored figures.
 	if s.standardRate != nil {
-		soldAt := sale.SoldAt
-		if bps, err := s.standardRate.StandardRateBps(ctx, houseday.Today(func() time.Time { return soldAt })); err == nil {
-			head.HSTRateBps = bps
+		zone, zerr := houseday.Resolve(ctx, s.zone)
+		if zerr == nil {
+			soldAt := sale.SoldAt
+			if bps, err := s.standardRate.StandardRateBps(ctx, zone.Today(func() time.Time { return soldAt })); err == nil {
+				head.HSTRateBps = bps
+			}
 		}
 	}
 	// The word is the dealer's own; a failed read prints the neutral "Tax", true for every dealer.

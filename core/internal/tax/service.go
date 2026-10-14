@@ -7,6 +7,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -15,6 +16,25 @@ import (
 const attestationPendingBanner = "PENDING_LEGAL_REVIEW"
 
 // clock returns the service clock (time.Now unless a test injects one).
+// today is the dealer's business day on the service's clock: the dealer's zone, read at the moment
+// the default is needed. A service with no zone source is the Ontario dealer's.
+func (s *Service) today(ctx context.Context) (string, error) {
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return "", err
+	}
+	return zone.Today(s.clock), nil
+}
+
+// normDate is the package normDate in the dealer's zone: a blank date is the dealer's today, a named
+// one is validated and kept (and reads no zone).
+func (s *Service) normDate(ctx context.Context, d string) (string, error) {
+	if d == "" {
+		return s.today(ctx)
+	}
+	return normDate(d, s.clock)
+}
+
 func (s *Service) clock() time.Time {
 	if s.now == nil {
 		return time.Now()
@@ -32,7 +52,7 @@ func (s *Service) clock() time.Time {
 // Both standard fallback reads check found: with the standard row not in effect either, the engine REFUSES with
 // the typed ErrNoStandardRate, never a silent 0%.
 func (s *Service) assessSale(ctx context.Context, in SaleAssessment) (Quote, error) {
-	asOf, err := normDate(in.AsOf, s.clock)
+	asOf, err := s.normDate(ctx, in.AsOf)
 	if err != nil {
 		return Quote{}, err
 	}
@@ -188,7 +208,7 @@ func (s *Service) jurisdiction(ctx context.Context) (string, error) {
 // status-card profile rule, the NSF fee backout). An Ontario dealer with no row keeps the Ontario 13
 // percent; any other jurisdiction refuses with the typed no standard rate error.
 func (s *Service) StandardRateBps(ctx context.Context, asOf string) (int, error) {
-	day, err := normDate(asOf, s.clock)
+	day, err := s.normDate(ctx, asOf)
 	if err != nil {
 		return 0, err
 	}
@@ -259,7 +279,11 @@ func (s *Service) CreateRate(ctx context.Context, r Rate) (Rate, error) {
 		return Rate{}, httpx.BadRequestf("the standard reason for jurisdiction %s is %s", boundReason(r.Jurisdiction), StandardReasonFor(r.Jurisdiction))
 	}
 	if r.EffectiveFrom == "" {
-		r.EffectiveFrom = today(s.clock)
+		day, err := s.today(ctx)
+		if err != nil {
+			return Rate{}, err
+		}
+		r.EffectiveFrom = day
 	}
 	if _, err := time.Parse("2006-01-02", r.EffectiveFrom); err != nil {
 		return Rate{}, httpx.BadRequestf("effective_from must be YYYY-MM-DD")
@@ -396,7 +420,7 @@ func (s *Service) DownloadEvidence(ctx context.Context, id string) (Evidence, bo
 // ValidateReliefEvidence checks an evidence record for relief eligibility on a date. An EXPIRED tcrd BLOCKS
 // relief (tcrd_expiry gate), as does a missing forced field. It writes an A-21 EVIDENCE_VIEW row (an access).
 func (s *Service) ValidateReliefEvidence(ctx context.Context, evidenceID, asOf string) (ReliefEligibility, error) {
-	on, err := normDate(asOf, s.clock)
+	on, err := s.normDate(ctx, asOf)
 	if err != nil {
 		return ReliefEligibility{}, err
 	}

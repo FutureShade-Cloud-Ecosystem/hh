@@ -26,6 +26,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/messagingprovider"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/order"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pos"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
@@ -344,6 +345,43 @@ func newDealerCurrency(pool *pgxpool.Pool) dealerCurrencyAdapter {
 	return dealerCurrencyAdapter{r: settings.NewDealerConfigReader(pool)}
 }
 
+// dealerZoneAdapter binds the services' houseday.Source to the settings module's dealer configuration:
+// the dealer's business day zone, read at every business day decision, uncached, so a change of zone
+// is live at the next decision. The settings reader already answers America/Toronto for an absent or
+// malformed zone, so a dealer with no configuration is the Ontario dealer exactly.
+type dealerZoneAdapter struct{ r *settings.DealerConfigReader }
+
+func (a dealerZoneAdapter) BusinessZone(ctx context.Context) (houseday.Zone, error) {
+	c, err := a.r.DealerConfig(ctx)
+	if err != nil {
+		return houseday.Zone{}, err
+	}
+	return houseday.NewZone(c.BusinessZone)
+}
+
+// BusinessZoneTx is BusinessZone on the caller's open transaction (the ledger files a journal to its
+// period inside the posting transaction, where a pool read could deadlock a full pool).
+func (a dealerZoneAdapter) BusinessZoneTx(ctx context.Context, tx pgx.Tx) (houseday.Zone, error) {
+	c, err := a.r.DealerConfigTx(ctx, tx)
+	if err != nil {
+		return houseday.Zone{}, err
+	}
+	return houseday.NewZone(c.BusinessZone)
+}
+
+// newDealerZone builds the dealer zone source over the pool. Every composition that decides a
+// business day builds its own, so two dealers in one process never share a zone.
+func newDealerZone(pool *pgxpool.Pool) dealerZoneAdapter {
+	return dealerZoneAdapter{r: settings.NewDealerConfigReader(pool)}
+}
+
+// newInvoiceWriter builds an invoice writer over the pool filing its documents in the dealer's own
+// business day zone. Every composition that raises a billing document builds its writer here.
+func newInvoiceWriter(pool *pgxpool.Pool) *billing.InvoiceWriter {
+	return billing.NewInvoiceWriter(pool).WithZone(newDealerZone(pool))
+
+}
+
 // dealerCountryAdapter binds the customer module's CountrySource to the same dealer configuration:
 // the country the address rules follow, read live at each customer write and each loaded item.
 type dealerCountryAdapter struct{ r *settings.DealerConfigReader }
@@ -376,7 +414,8 @@ func newTaxWords(pool *pgxpool.Pool) dealerTaxWordsAdapter {
 // tax builds its own, and two dealers in one process never share a jurisdiction.
 func newTaxEngine(pool *pgxpool.Pool) *tax.Service {
 	return tax.NewService(tax.NewRepository(pool)).
-		WithDealerRegion(dealerRegionAdapter{r: settings.NewDealerConfigReader(pool)})
+		WithDealerRegion(dealerRegionAdapter{r: settings.NewDealerConfigReader(pool)}).
+		WithZone(newDealerZone(pool))
 }
 
 // posTaxRuleAdapter satisfies pos.TaxRuleSource over *tax.Service: the round rule word the counter's
@@ -765,7 +804,7 @@ func w6aBranchScope(sc dashboard.Scope) any {
 //
 // dashboard.HouseDay owns the conversion, so the day boundary and the widget windows resolved beside
 // it cannot disagree.
-func w6aDay(sc dashboard.Scope) string { return dashboard.HouseDay(sc.Now) }
+func w6aDay(sc dashboard.Scope) string { return dashboard.HouseDayIn(sc.Zone, sc.Now) }
 
 // w6aCount builds a provider over a query that takes ONLY the branch scope and returns one bigint.
 func w6aCount(pool *pgxpool.Pool, sql string, hint func(int64) string) dashboard.MetricFunc {

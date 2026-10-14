@@ -139,7 +139,7 @@ func w6bAREscalation(svc *billing.ARLandingService) dashboard.NeedsFunc {
 func w6bLoadBoard(pool *pgxpool.Pool, svc *dispatch.Service, dueToCommit bool) dashboard.NeedsFunc {
 	return func(ctx context.Context, sc dashboard.Scope) (dashboard.NeedsMeasure, error) {
 		n := 0
-		day := dashboard.HouseDay(sc.Now)
+		day := dashboard.HouseDayIn(sc.Zone, sc.Now)
 		for _, b := range w6bBranches(ctx, pool, sc) {
 			view, err := svc.LoadBoard(ctx, b, day)
 			if err != nil {

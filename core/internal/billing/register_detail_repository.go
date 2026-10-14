@@ -169,6 +169,10 @@ func (r *Repository) AccountPositionFor(ctx context.Context, asOf time.Time, cus
 	if r.pool == nil {
 		return AccountPosition{}, errNoDB
 	}
+	day, err := r.clockAt(ctx, asOf)
+	if err != nil {
+		return AccountPosition{}, err
+	}
 	var a AccountPosition
 	if err := r.pool.QueryRow(ctx,
 		`SELECT COALESCE(SUM(i.balance_cents),0),
@@ -177,7 +181,7 @@ func (r *Repository) AccountPositionFor(ctx context.Context, asOf time.Time, cus
 		   FROM customers c
 		   LEFT JOIN invoices i
 		          ON i.customer_id = c.id AND i.status IN ('FINALIZED','PARTIALLY_PAID')
-		  WHERE c.id = $1::uuid`, customerID, houseClock(asOf)).
+		  WHERE c.id = $1::uuid`, customerID, day).
 		Scan(&a.OpenBalanceCents, &a.OverdueCents, &a.CreditLimitCents); err != nil {
 		return AccountPosition{}, fmt.Errorf("billing: account position: %w", err)
 	}

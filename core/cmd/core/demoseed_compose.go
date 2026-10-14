@@ -72,7 +72,7 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 		WithUOMConverter(productSvc).
 		WithMarginGate(pricing.NewIdentityMarginGate())
 
-	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithAudit(auditSvc)
+	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	taxSvc := newTaxEngine(pool).WithAudit(auditSvc)
 
 	payVault, err := payment.NewVault(vaultKey)
@@ -93,7 +93,8 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 	// no serving surface (the one-shot seeds and stops), so the approver
 	// credential source has no gate to resolve through here; the demo
 	// serve path wires it with wireTillRules like the serve role.
-	posSvc := pos.NewService(pos.NewRepository(pool).WithPayBalanceSources(newPayBalanceSources(pool))).
+	posSvc := pos.NewService(pos.NewRepository(pool).WithPayBalanceSources(newPayBalanceSources(pool)).WithZone(newDealerZone(pool))).
+		WithZone(newDealerZone(pool)).
 		WithLineResolver(pricingSvc).
 		WithTenderTaker(tillSvc).
 		WithCreditGate(till.NewHoldAwareCreditGate(tillRepo)).
@@ -110,7 +111,7 @@ func compose(pool *pgxpool.Pool, log *slog.Logger, vaultKey string) (*world, err
 	orderRepo := order.NewRepository(pool)
 	orderSvc := order.NewService(orderRepo).WithAudit(auditSvc).WithAuditTrail(auditSvc)
 
-	messagingSvc := messaging.NewService(messaging.NewRepository(pool))
+	messagingSvc := messaging.NewService(messaging.NewRepository(pool)).WithZone(newDealerZone(pool))
 
 	tasksSvc := tasks.NewService(tasks.NewRepository(pool)).
 		WithOrderReader(orderReaderAdapter{repo: orderRepo}).

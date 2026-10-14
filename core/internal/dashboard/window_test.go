@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // A fixed instant to reason from: Wednesday 12 August 2026, 09:15 Toronto time.
@@ -350,5 +353,49 @@ func backendRoot(t *testing.T) string {
 			t.Fatalf("no go.mod above %s, the gate cannot find the module root", dir)
 		}
 		dir = parent
+	}
+}
+
+// The window is the dealer's own calendar day (item 3b slice 3): at 05:00 UTC on the 27th, "today" is
+// the 27th in Toronto and the 26th in Los Angeles, and the scope carries the zone the service stamped.
+func TestResolveWindowIn_FollowsTheDealersZone(t *testing.T) {
+	la, err := houseday.NewZone("America/Los_Angeles")
+	if err != nil {
+		t.Skipf("no tzdata: %v", err)
+	}
+	now := time.Date(2026, time.August, 27, 5, 0, 0, 0, time.UTC)
+	got := ResolveWindowIn(la, RangeToday, now)
+	if d := HouseDayIn(la, got.Since); d != "2026-08-26" {
+		t.Fatalf("Los Angeles today starts on %s, want 2026-08-26", d)
+	}
+	if want := ResolveWindow(RangeToday, now); HouseDayIn(houseday.DefaultZone(), want.Since) != "2026-08-27" {
+		t.Fatalf("the default window moved: %+v", want)
+	}
+	if HouseDayIn(la, now) != "2026-08-26" || HouseDay(now) != "2026-08-27" {
+		t.Fatalf("day literals: LA %s, default %s", HouseDayIn(la, now), HouseDay(now))
+	}
+}
+
+type dashZone struct{ z houseday.Zone }
+
+func (d dashZone) BusinessZone(context.Context) (houseday.Zone, error) { return d.z, nil }
+
+// The service stamps the zone beside the clock, and a zone that cannot be read degrades the page to
+// the Ontario day rather than failing it (a measurement never fails the page).
+func TestService_StampScopeCarriesTheDealersZone(t *testing.T) {
+	la, err := houseday.NewZone("America/Los_Angeles")
+	if err != nil {
+		t.Skipf("no tzdata: %v", err)
+	}
+	s := NewService(nil, nil).WithZone(dashZone{z: la})
+	var sc Scope
+	s.stampScope(context.Background(), &sc)
+	if sc.Zone.Name() != "America/Los_Angeles" || sc.Now.IsZero() {
+		t.Fatalf("scope = zone %s now %v", sc.Zone.Name(), sc.Now)
+	}
+	var plain Scope
+	NewService(nil, nil).stampScope(context.Background(), &plain)
+	if plain.Zone.Name() != "America/Toronto" {
+		t.Fatalf("no source stamped %s, want America/Toronto", plain.Zone.Name())
 	}
 }

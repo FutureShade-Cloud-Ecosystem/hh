@@ -20,7 +20,13 @@ type Repository struct {
 	// payBalance is the Pay balance door's seam to the owning modules
 	// (pay_balance_sources.go), bound at the composition root.
 	payBalance PayBalanceSources
+	// zone is the dealer's business day zone source; nil keeps the Ontario dealer's.
+	zone houseday.Source
 }
+
+// WithZone binds the dealer's business day zone source, so a purchaser certificate lapses with the
+// dealer's own day.
+func (r *Repository) WithZone(src houseday.Source) *Repository { r.zone = src; return r }
 
 // NewRepository wraps a pool (may be nil in scaffold/offline mode). The Sale opens a tx from this pool.
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
@@ -222,9 +228,13 @@ SELECT id::text, purchaser_type, proof_identifier_mask, COALESCE(ontario_eligibi
   FROM purchaser_eligibility_profile WHERE id = $1`
 	// The certificate lapses with the dealer's day, so today is decided in Go in the house zone
 	// and bound, not read from CURRENT_DATE, which is the database session's zone.
-	houseDay := houseday.Today(nil)
+	zone, err := houseday.Resolve(ctx, r.zone)
+	if err != nil {
+		return eligibilityMasked{}, err
+	}
+	houseDay := zone.Today(nil)
 	var p eligibilityMasked
-	err := r.pool.QueryRow(ctx, q, profileID, houseDay).Scan(
+	err = r.pool.QueryRow(ctx, q, profileID, houseDay).Scan(
 		&p.ProfileID, &p.PurchaserType, &p.MaskedIdentifier, &p.OntarioEligibility, &p.EligibilityType, &p.Expired,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

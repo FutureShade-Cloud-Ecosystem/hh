@@ -9,7 +9,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 )
 
@@ -53,6 +55,46 @@ func TestReceipt_TaxLabelKeepsTheLetterheadFigureWhenUnwiredOrTheReadFails(t *te
 	rec, err = svc2.Receipt(staffFor(trentonID), saleOrderID)
 	if err != nil || !strings.Contains(rec.TaxLabel, "13%") {
 		t.Fatalf("read failed: %q %v", rec.TaxLabel, err)
+	}
+}
+
+type receiptZoneSrc struct{ z houseday.Zone }
+
+func (s receiptZoneSrc) BusinessZone(context.Context) (houseday.Zone, error) { return s.z, nil }
+
+// The tax label's rate is read on the dealer's day of the sale (item 3b slice 3). A sale rung at 05:00
+// UTC on the fourth is still the third in Los Angeles.
+func TestReceipt_TaxLabelRateIsReadOnTheDealersDayOfTheSale(t *testing.T) {
+	la, err := houseday.NewZone("America/Los_Angeles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		src  houseday.Source
+		want string
+	}{
+		{"no source, the Ontario dealer", nil, "2026-08-04"},
+		{"Los Angeles", receiptZoneSrc{z: la}, "2026-08-03"},
+		{"Toronto after Los Angeles", receiptZoneSrc{z: houseday.DefaultZone()}, "2026-08-04"},
+	} {
+		qs := &fakeQueueStore{markFind: true, markUpd: true}
+		store := &fakeReceiptStore{found: true, sale: receiptSale{
+			OrderID: saleOrderID, OrderNo: "#SO-42", BranchID: trentonID, InvoiceNo: "#INV-9",
+			Tender: "CASH", SaleType: "COLLECT_NOW", Status: "COMMITTED",
+			SubtotalCents: 12340, TaxCents: 1604, TotalCents: 13944,
+			SoldAt: time.Date(2026, 8, 4, 5, 0, 0, 0, time.UTC),
+		}}
+		var asked string
+		svc := NewReceiptService(store, NewQueueService(qs)).
+			WithStandardRate(fakeReceiptStandardRate{bps: 775, asOf: &asked}).
+			WithZone(tc.src)
+		if _, err := svc.Receipt(staffFor(trentonID), saleOrderID); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if asked != tc.want {
+			t.Fatalf("%s: the rate was read as of %q, want %s", tc.name, asked, tc.want)
+		}
 	}
 }
 
@@ -101,5 +143,35 @@ func TestTaxLabelCarriesTheWordAndTheRate(t *testing.T) {
 		if got := taxLabel(tc.word, tc.bps); got != tc.want {
 			t.Errorf("taxLabel(%q,%d) = %q, want %q", tc.word, tc.bps, got, tc.want)
 		}
+	}
+}
+
+// Both features hold together for a California dealer: the tax line carries the dealer's word AND the
+// rate read on the Pacific day of the sale (a sale rung at 05:00 UTC on the fourth is the third in Los Angeles).
+func TestReceipt_CaliforniaDealerGetsTheWordAndThePacificDayRate(t *testing.T) {
+	la, err := houseday.NewZone("America/Los_Angeles")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeReceiptStore{found: true, sale: receiptSale{
+		OrderID: saleOrderID, OrderNo: "#SO-42", BranchID: trentonID, InvoiceNo: "#INV-9",
+		Tender: "CASH", SaleType: "COLLECT_NOW", Status: "COMMITTED",
+		SubtotalCents: 12340, TaxCents: 1604, TotalCents: 13944,
+		SoldAt: time.Date(2026, 8, 4, 5, 0, 0, 0, time.UTC),
+	}}
+	var asked string
+	svc := NewReceiptService(store, NewQueueService(&fakeQueueStore{markFind: true, markUpd: true})).
+		WithStandardRate(fakeReceiptStandardRate{bps: 775, asOf: &asked}).
+		WithZone(receiptZoneSrc{z: la}).
+		WithTaxLabel(fakeReceiptWords{w: "Sales tax"})
+	rec, err := svc.Receipt(staffFor(trentonID), saleOrderID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.TaxLabel != "Sales tax (7.75%)" {
+		t.Fatalf("tax label = %q, want the word and the rate", rec.TaxLabel)
+	}
+	if asked != "2026-08-03" {
+		t.Fatalf("rate read as of %q, want the Pacific day 2026-08-03", asked)
 	}
 }

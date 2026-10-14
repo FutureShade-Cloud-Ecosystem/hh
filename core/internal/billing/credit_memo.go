@@ -424,11 +424,15 @@ func (w *InvoiceWriter) insertCreditMemo(ctx context.Context, in CreditMemoInput
 	// here on the writer's clock and bound: between the UTC day change and the house zone's own the
 	// database session's CURRENT_DATE is a day the yard has not reached, so an evening memo would
 	// otherwise be issued tomorrow and due tomorrow, one day late for its whole life.
-	issueDate := houseday.Today(w.now)
+	zone, err := houseday.Resolve(ctx, w.zone)
+	if err != nil {
+		return InvoiceDoc{}, err
+	}
+	issueDate := zone.Today(w.now)
 	dueDate := issueDate
 
 	var doc InvoiceDoc
-	err := w.inTx(ctx, func(tx pgx.Tx) error {
+	err = w.inTx(ctx, func(tx pgx.Tx) error {
 		var id, no string
 		// Sign flipped HERE, once, for the whole file.
 		err := tx.QueryRow(ctx, `

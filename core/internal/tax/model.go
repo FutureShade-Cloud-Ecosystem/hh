@@ -338,7 +338,7 @@ func maskCardNumber(raw string) string {
 	return "•••• " + string(digits[len(digits)-4:])
 }
 
-// today returns YYYY-MM-DD, the house zone's day, for the given clock (or time.Now when nil).
+// today returns YYYY-MM-DD, the default (Ontario) zone's day, for the given clock (or time.Now when nil).
 func today(now func() time.Time) string { return houseday.Today(now) }
 
 // normDate coerces "" → today and validates YYYY-MM-DD; returns a BadRequestError on a malformed date.

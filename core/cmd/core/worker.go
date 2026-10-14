@@ -153,7 +153,7 @@ func worker(getenv func(string) string) error {
 	// pin's own order and wording.
 	unionCreditSweep := billing.CreditHoldSweepJob(graph.tops.creditSvc, "")
 	creditMemoRepost := billing.CreditMemoRepostJob(
-		billing.NewInvoiceWriter(pool).
+		newInvoiceWriter(pool).
 			WithCreditMemoPoster(w6cCreditMemoPoster{svc: graph.money.glSvc, rules: gl.NewRepository(pool), words: newTaxWords(pool)}).
 			WithDeliveredOrders(graph.money.orderSvc). // the deposit release sweep rides this job
 			WithJournalKeyReader(graph.money.glSvc),   // and asks the ledger, not gl_journals, which releases posted

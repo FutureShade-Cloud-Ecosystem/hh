@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -159,8 +160,17 @@ type Handler struct {
 	// paymentTrail says whether a caller holds the payment trail reads (ruling 87); the register's
 	// invoice detail shows the payment entries of its timeline to those callers alone.
 	paymentTrail billing.PaymentTrailReader
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. The receivables
+	// register judges "past" and "due" on the dealer's own calendar day.
+	zone houseday.Source
 	// registerTaxWords is the dealer's tax word for the register's printed invoice (nil: "HST").
 	registerTaxWords taxwords.Source
+}
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (h *Handler) WithZone(src houseday.Source) *Handler {
+	h.zone = src
+	return h
 }
 
 // NewHandler wires the service.
