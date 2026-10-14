@@ -56,6 +56,11 @@ func (s *Service) assessSale(ctx context.Context, in SaleAssessment) (Quote, err
 	if reason == "" || isStandardReason(reason) {
 		reason = stdReason
 	}
+	// The Ontario first nations point-of-sale credit is Ontario's alone. Any other jurisdiction rings the
+	// sale as a standard sale at its own standard: no relief reason, no evidence gate, no credit.
+	if reason == ReasonONFNPos8 && jur != jurisdictionON {
+		reason = stdReason
+	}
 
 	rateBps, found, err := s.rate(ctx, jur, reason, asOf)
 	if err != nil {
