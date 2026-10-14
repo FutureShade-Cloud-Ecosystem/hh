@@ -393,7 +393,7 @@ export function advanceRefusalWords(error: string, status: number | undefined): 
 }
 
 /** The shared Forbidden body is exactly one word; a sentence the core wrote passes through. */
-function isForbiddenBody(error: string): boolean {
+export function isForbiddenBody(error: string): boolean {
   return error.trim() === "Forbidden";
 }
 

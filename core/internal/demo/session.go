@@ -135,7 +135,9 @@ type MintDeps struct {
 	Audit AuditRecorder
 	// Limit refuses a burst from the mint's own key: the visitor id when
 	// the request carries a well formed one, the address otherwise; a nil
-	// limit selects the default allowance and window.
+	// limit selects the default allowance and window. The testers' copy
+	// may raise the visitor allowance through HH_DEMO_MINT_VISITOR_ALLOWANCE;
+	// staging and public deployments leave it unset.
 	Limit *AddressLimit
 	// Ceiling caps the mints one address may spend however its visitor
 	// ids rotate; a nil ceiling selects the team scale default allowance

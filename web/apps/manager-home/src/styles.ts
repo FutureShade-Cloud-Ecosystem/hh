@@ -349,6 +349,20 @@ export const homeStyles = css`
   .view-link:hover {
     border-color: var(--hh-accent-text);
   }
+  .foot-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--hh-accent-text);
+    font: inherit;
+    cursor: pointer;
+  }
+  .foot-link:hover {
+    text-decoration: underline;
+  }
   .not-here {
     flex: none;
     max-width: 7.5em;
@@ -454,6 +468,49 @@ export const homeStyles = css`
     color: var(--hh-text-dim);
   }
 
+  /* -- trend and gauge ------------------------------------------------------------------ */
+
+  .meter {
+    display: flex;
+    gap: var(--hh-s-2);
+    height: 12px;
+    margin-top: var(--hh-s-8);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--hh-track);
+  }
+  .seg {
+    display: block;
+    height: 100%;
+  }
+  .tone-none { background: var(--hh-success-fill); }
+  .tone-good { background: var(--hh-state-good); }
+  .tone-watch { background: var(--hh-state-watch); }
+  .tone-stop { background: var(--hh-state-stop); }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-4) var(--hh-s-16);
+    margin: var(--hh-s-8) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .legend-row {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    font-size: 14px;
+  }
+  .legend-row .value {
+    font-weight: 650;
+  }
+  .swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+  }
+
   /* -- the views' links ------------------------------------------------------------------ */
 
   /* The landing's own way into its three views: small chips with chevrons. The needs rows link
@@ -518,6 +575,23 @@ export const homeStyles = css`
     font-weight: 600;
   }
   .shortage .detail {
+    font-size: 14px;
+    color: var(--hh-text-dim);
+    margin-top: var(--hh-s-4);
+  }
+  .shortage .status {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--hh-danger);
+    margin-bottom: var(--hh-s-4);
+  }
+  .shortage .status.status-done {
+    color: var(--hh-text-dim);
+  }
+  .shortage .who-when {
     font-size: 14px;
     color: var(--hh-text-dim);
     margin-top: var(--hh-s-4);

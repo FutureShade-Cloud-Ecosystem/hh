@@ -250,7 +250,7 @@ function photoAdd(label: string, busy: boolean): TemplateResult {
   // The picker is a real file input behind a large tile: the camera or the
   // library, as the phone offers. It stays focusable for a keyboard.
   return html`<label class="photo-add" data-tap>
-    <input type="file" accept="image/jpeg,image/png,image/webp" class="visually-hidden" data-field="photo" ?disabled=${busy} />
+    <input type="file" accept="image/jpeg,image/png,image/webp" class="visually-hidden" data-field="photo" />
     <span class="photo-plus" aria-hidden="true">+</span>
     <span>${busy ? "Sending the photo" : label}</span>
   </label>`;

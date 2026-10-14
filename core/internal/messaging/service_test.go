@@ -320,6 +320,12 @@ func (f *fakeStore) userReachesBranch(_ context.Context, userID, branchID string
 	return f.userBranches[userID][branchID] || f.userGlobal[userID], nil
 }
 
+// userHoldsAnyRole: the fake carries no role list for a target; no fake room names member_roles, so
+// the wall never asks it.
+func (f *fakeStore) userHoldsAnyRole(_ context.Context, _ string, _ []string) (bool, error) {
+	return true, nil
+}
+
 // svcWith builds a service over a fake store (bypassing the *Repository constructor).
 func svcWith(f *fakeStore) *Service { return &Service{repo: f} }
 

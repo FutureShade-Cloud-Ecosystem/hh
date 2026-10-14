@@ -110,6 +110,9 @@ export class DriveRunApp extends HHElement {
   #podBusy = false;
   #podPrefill: string | null = null;
   #photoBusy = false;
+  // Pictures chosen while one is still going up wait here, in order, each with
+  // the stop it was taken for; none is ever dropped.
+  readonly #photoQueue: Array<{ file: File; stopId: string; late: boolean }> = [];
   // The pictures taken in this visit, by stop, kept in memory for the
   // thumbnails: the core's photo route needs the bearer, so a picture cannot
   // load as an image address, and one taken before this visit shows as a tile.
@@ -585,41 +588,54 @@ export class DriveRunApp extends HHElement {
   // it is a late photo and is folded into the proof once it is up. A failure
   // never touches the signature.
   async #sendPhoto(file: File): Promise<void> {
-    if (this.#view.kind === "run" || this.#view.kind === "close" || this.#view.kind === "fail" || this.#view.kind === "conflicts" || this.#photoBusy) {
+    if (this.#view.kind === "run" || this.#view.kind === "close" || this.#view.kind === "fail" || this.#view.kind === "conflicts") {
       return;
     }
-    const stopId = this.#view.id;
-    const late = this.#view.kind === "stop";
+    this.#photoQueue.push({ file, stopId: this.#view.id, late: this.#view.kind === "stop" });
+    if (this.#photoBusy) return;
     this.#photoBusy = true;
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
+    try {
+      for (let next = this.#photoQueue.shift(); next !== undefined; next = this.#photoQueue.shift()) {
+        try {
+          await this.#sendOnePhoto(next.file, next.stopId, next.late);
+        } catch {
+          this.#error = "The photo did not send. Take it again and try once more.";
+        }
+      }
+    } finally {
+      this.#photoBusy = false;
+      this.requestUpdate();
+    }
+  }
+
+  async #sendOnePhoto(file: File, stopId: string, late: boolean): Promise<void> {
     const ready = await readyPhoto(file);
     if (!ready.ok) {
       this.#error = ready.error;
-    } else {
-      const sent = await this.#drive.uploadPhoto(stopId, ready.bytes, ready.type);
-      if (sent.ok) {
-        const made = URL.createObjectURL(new Blob([ready.bytes as BlobPart], { type: ready.type }));
-        this.#thumbs.set(stopId, [...(this.#thumbs.get(stopId) ?? []), made]);
-      }
-      if (!sent.ok) {
-        this.#error = roadsideError(sent.error, sent.status, "The photo did not send. Check your signal and add it again.");
-      } else {
-        if (late) {
-          const folded = await this.#drive.attachPhotos(stopId);
-          if (!folded.ok) {
-            this.#error = roadsideError(folded.error, folded.status, "The photo is up but is not on the proof yet. Add it again in a moment.");
-          }
-        }
-        // The photo door is direct, so the count it moved lands in the store
-        // only through the next pull; wait for it, then read.
-        if (this.#driveOffline !== null) await this.#driveOffline.syncNow();
-        await this.#refreshRuns();
+      return;
+    }
+    const sent = await this.#drive.uploadPhoto(stopId, ready.bytes, ready.type);
+    if (!sent.ok) {
+      this.#error = roadsideError(sent.error, sent.status, "The photo did not send. Check your signal and add it again.");
+      return;
+    }
+    const made = URL.createObjectURL(new Blob([ready.bytes as BlobPart], { type: ready.type }));
+    this.#thumbs.set(stopId, [...(this.#thumbs.get(stopId) ?? []), made]);
+    // Decided at send time: a photo picked on the proof screen is late once the
+    // signature has landed before it went up. Attaching twice is harmless.
+    if (late || (this.#findStop(stopId)?.stop.pod_received_by ?? "") !== "") {
+      const folded = await this.#drive.attachPhotos(stopId);
+      if (!folded.ok) {
+        this.#error = roadsideError(folded.error, folded.status, "The photo is up but is not on the proof yet. Add it again in a moment.");
       }
     }
-    this.#photoBusy = false;
-    this.requestUpdate();
+    // The photo door is direct, so the count it moved lands in the store
+    // only through the next pull; wait for it, then read.
+    if (this.#driveOffline !== null) await this.#driveOffline.syncNow();
+    await this.#refreshRuns();
   }
 
   // Re-read the day without blanking the screen: the server's order and
