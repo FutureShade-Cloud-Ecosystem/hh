@@ -85,9 +85,9 @@ func (k dispatchDriverSessionKnob) DriverSessionHours(ctx context.Context, orgID
 	return p.DriverSessionHours, nil
 }
 
-// tasksDefaultChannelSlug is the fallback chat channel for a task EVENT
+// tasksDefaultChannelSlug is a variable, not a constant, so the demo build can point it at its own room. It is the fallback chat channel for a task EVENT
 // when the task carries no branch (the pin's constant, carried).
-const tasksDefaultChannelSlug = "yard-trenton"
+var tasksDefaultChannelSlug = "yard-trenton"
 
 // yardCounterFallbackSlug is where a counter-audience EVENT lands when the
 // branch has no counter channel (or no branch at all), the pin's constant.
@@ -271,8 +271,37 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// ride the carried audit service through the seam adapter below.
 	// Later Phase D items register their scopes beside this block, one
 	// RegisterScope per owning module.
-	syncEngine := sync.NewEngine().WithAudit(syncAuditSeam{svc: spine.auditSvc, link: link}, log)
-	if err := syncEngine.RegisterScope("pick_tasks", tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
+	// The key ledger (sync_op_hashes, migration 0389) is the engine's
+	// fourth guarantee: an idempotency key reused with a different body is
+	// refused, never applied.
+	syncEngine := sync.NewEngine().
+		WithAudit(syncAuditSeam{svc: spine.auditSvc, link: link}, log).
+		WithKeyLedger(sync.NewPgKeyLedger(pool))
+	// The pick record door (Field CP-2) runs the yard service's RecordPick under the branch fence the
+	// REST door applies: the sync store takes the staff authority seam (the subject's authority in
+	// the org, with the linked ERP user) here and the yard service, the record body, where that
+	// service is built below. A nil pool (the wiring-shape tests) wires no seam; a real boot fails
+	// fast without both.
+	var syncStaff identity.SyncStaffResolver
+	if pool != nil {
+		authority, authErr := erpidentity.NewStaffAuthorityResolver(pool)
+		if authErr != nil {
+			panic("sync: pick record door authority resolver refused to boot: " + authErr.Error())
+		}
+		syncStaff = func(ctx context.Context, platformUserID, orgID string) (identity.StaffContext, bool, error) {
+			a, has, err := authority.ResolveStaff(ctx, platformUserID, orgID)
+			if err != nil || !has {
+				return identity.StaffContext{}, false, err
+			}
+			sc := identity.FromAuthority(a)
+			if uid, ok := link(ctx, platformUserID); ok {
+				sc.UserID = uid
+			}
+			return sc, true, nil
+		}
+	}
+	pickSync := tasks.NewSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link).WithStaffAuthority(syncStaff)
+	if err := syncEngine.RegisterScope("pick_tasks", pickSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	// The yard-pick item's scopes (HH-3.5 #166): shortages and weights
@@ -285,7 +314,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// carry the ERP's own per-PO values), which is the D26 schema-shaped
 	// stop condition reported to the supervisor rather than routed
 	// around; both routes answer the honest 501 for it.
-	if err := syncEngine.RegisterScope("shortages", tasks.NewShortageSyncStore(pool, link)); err != nil {
+	shortageSync := tasks.NewShortageSyncStore(pool, link)
+	if err := syncEngine.RegisterScope("shortages", shortageSync); err != nil {
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 	if err := syncEngine.RegisterScope("weights", tasks.NewWeightSyncStore(pool, orderReaderAdapter{repo: orderRepo}, link)); err != nil {
@@ -337,7 +367,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// same idiom the will-call pick hold gate carries.
 	runsSync := dispatch.NewRunsSyncStore(pool, link).WithDriverRole(driverRole)
 	stopsSync := dispatch.NewStopsSyncStore(pool, dispatchOrderAdapter{repo: orderRepo}, link).WithDriverRole(driverRole)
-	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole)
+	podSync := dispatch.NewPODSyncStore(pool, link).WithDriverRole(driverRole).WithStaffAuthority(syncStaff)
 	if pool != nil && (!runsSync.DriverRoleWired() || !stopsSync.DriverRoleWired() || !podSync.DriverRoleWired()) {
 		panic("dispatch: driver fence role seam not wired - a driver login's sync pull would answer every run in the org")
 	}
@@ -565,6 +595,12 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	if !dispatchSvc.CostRolesWired() {
 		panic("dispatch: cost roles not wired - the payment hold would answer the door money figure to every caller")
 	}
+	// The pod scope's typed name attestation door (Field CP-2) runs the same CapturePOD body the REST
+	// door runs; the boot fail fast keeps a deploy from serving with the door dark.
+	podSync.WithAttestor(dispatchSvc)
+	if pool != nil && !podSync.AttestDoorWired() {
+		panic("dispatch: pod attestation sync door not wired - a driver's offline proof of delivery would refuse every replay")
+	}
 	dispatchHandler := dispatch.NewHandler(dispatchSvc, log).WithUserLinker(link)
 	dispatchHandler.RegisterRoutes(r, g)
 	dispatchHandler.RegisterPublicRoutes(r)
@@ -603,6 +639,14 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	orderSvc.WithDepositReleaser(billing.NewInvoiceWriter(pool))
 	orderSvc.WithBackorderNotifier(backorderNoticeAdapter{chat: yardChatNotifier{svc: messagingSvc, log: log, figuresOK: spine.roleCfg.SeesCostAndMargin}})
 	yardTasksSvc.WithYardOrderChanges(yardOrderAdapter{svc: orderSvc})
+	// The sync record door's body is the yard service, the one the REST record door runs.
+	pickSync.WithPickRecorder(yardTasksSvc)
+	// A shortage created through sync tells the counter as the REST report does, through the yard
+	// service's notifier.
+	shortageSync.WithNoticer(yardTasksSvc)
+	if pool != nil && !pickSync.PickDoorWired() {
+		panic("tasks: pick record sync door not wired - a yard device's recorded pick would refuse every replay")
+	}
 	// Item 9 Opus P2-1: the yard's doors (Claim, Stage) carry the pick hold
 	// the will call doors carry, over the same billing read, with the boot
 	// fail-fast keeping a deploy from serving with the yard door dark.

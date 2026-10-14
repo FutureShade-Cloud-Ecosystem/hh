@@ -29,8 +29,8 @@ async function toPayment(page: Page, search: string, name: string): Promise<void
   await page.getByPlaceholder("Search name or account #…").fill(search);
   await page.locator("button.row").filter({ hasText: name }).first().click();
   await openStep(page, "items");
-  await page.getByTestId("pos-scan-input").fill("holland");
-  await page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first().click();
+  await page.getByTestId("pos-scan-input").fill("charcoal");
+  await page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first().click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
   await page.getByRole("button", { name: "Will-call" }).click();
   await openStep(page, "payment");
@@ -53,7 +53,7 @@ test("the Cash On Demand account's card says the posture, not a credit figure; a
   await expect(creditCard).toContainText(/Credit available\s*\$[\d,]+\.\d\d/i);
   await expect(creditCard.getByTestId("cust-cod-posture")).toHaveCount(0);
 
-  await toPayment(page, "C07", "Lachance Retail");
+  await toPayment(page, "C07", "Homeowner B Retail");
   const retailCard = page.getByTestId("pay-customer-card");
   await expect(retailCard).toContainText("No credit line");
   await expect(retailCard.getByTestId("cust-cod-posture")).toHaveCount(0);

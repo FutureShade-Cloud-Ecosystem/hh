@@ -52,7 +52,7 @@
 
 <h2>The receivables world</h2>
 <p data-claim="world-invoices">The receivables side works the book's 18 invoices, spread across the aging buckets, and one bounced payment.</p>
-<p data-claim="world-bounce">The bounced payment is the cheque for the whole of one Trenton contractor invoice, returned by the bank with the reason "Cheque returned by the bank, not sufficient funds" and a policy fee of $45.00. The payment is DEMO-PAY-B01 and the cheque reference is DEMO-CHQ-B01, which the queue's reference search finds. No allocation remains on it, so that invoice stands open for its full amount.</p>
+<p data-claim="world-bounce">The bounced payment is the cheque for the whole of one Point Loma contractor invoice, returned by the bank with the reason "Cheque returned by the bank, not sufficient funds" and a policy fee of $45.00. The payment is DEMO-PAY-B01 and the cheque reference is DEMO-CHQ-B01, which the queue's reference search finds. No allocation remains on it, so that invoice stands open for its full amount.</p>
 <p data-claim="no-seeded-hold">The seeded book plants no credit hold. A hold appears when the sweep places one, or when a payment you mark bounced meets the dealer's returned payment policy.</p>
 
 <h2>Receivables: the tiles and the register</h2>
@@ -74,7 +74,7 @@
 <p data-claim="bounced-work">A payment can be marked bounced from its invoice, with a reason, and it joins the queue. In the queue it is worked three ways: a replacement payment, a promise to pay, or a reminder to the account.</p>
 <p data-claim="statement">An account's Statement tab has none until you run it. Run a statement to read the aging strip, then send it to the AP contact. Download PDF, the Activity tab and the Contacts tab are marked later.</p>
 <p data-claim="statements-all">The Statements tab lists every account, and Run for every account runs them all.</p>
-<p data-claim="holds-payrec">The Credit holds tab lists the holds. For Payables and Receivables, Lift and Override are held. Pressing Lift says in words that releasing a hold is for the Financial Controller or the General Manager, and the bare word Forbidden is not shown. Run the sweep is refused in words as the Financial Controller's. Place a hold is marked later: the core has no route for it yet.</p>
+<p data-claim="holds-payrec">The Credit holds tab lists the holds. For Payables and Receivables, Lift and Override are held. Pressing Lift says in words that releasing a hold is for the Financial Controller or the General Manager, and the bare word Forbidden is not shown. Run the sweep is refused in words as the Financial Controller's. Place a hold is marked later: there is no path for it yet.</p>
 <p data-claim="holds-controller">The Financial Controller lifts a hold with a reason, or overrides another, and has no Place a hold button.</p>
 <p data-claim="walls-core">Approving a parked journal and releasing a credit hold are refused to Payables and Receivables by the server, in its shared refusal body. Payables and Receivables has no control for either on its screens.</p>
 
@@ -143,6 +143,20 @@
 <p data-claim="bankrec-refused">A refused import, match, undo, month or rule names who may do it, the Financial Controller or a manager, and never shows the bare word Forbidden.</p>
 <p data-claim="bankrec-states">While the accounts load the screen says so, a failed load offers Try again, and an empty list says so. A list that is not the shape the core sends is refused, never half read. More than a page of lines shows more on request.</p>
 <p data-claim="bankrec-phone">On a phone each table becomes cards, a chosen line brings its panel into view, and nothing scrolls sideways. Every control works from the keyboard.</p>
+<h2>Tax</h2>
+<p data-claim="tax-area">The Financial Controller has a Tax area beside Approvals and ledger and Receivables. Payables and Receivables does not have it. It says California sales tax and US dollars, and no screen carries a Canadian tax word or currency.</p>
+<p data-claim="tax-rates">The Rates tab lists the rate table in words: the standard sales tax at 7.75%, the exempt delivery row that needs proof of delivery, and the row held for a person to decide, each with its first day, its last day and whether it is in force.</p>
+<p data-claim="tax-rate-add">Adding a rate holds a rate that is not a percent, a day that is not a day and a last day before the first, and sends nothing. A good one asks first, naming the reason, the rate and the days it covers, and says rows are never edited or removed. Not yet sends nothing; the second press adds one row.</p>
+<p data-claim="tax-rate-refused">A refused rate, a wall on the write, a server failure and a lost answer are each said in words. A lost answer says the rate may or may not have gone through and reads the table again.</p>
+<p data-claim="tax-queue">The Exemption profiles tab lists the profiles and what each requires to be kept. A profile saved as waiting for review lands in the queue, the tab counts it, and Put in force asks first, then moves it out of the queue.</p>
+<p data-claim="tax-profile">A profile is saved or edited by its code and asks before replacing one. A profile the core treats as reduced must require the certificate number, and the refusal says so in the screen's own words.</p>
+<p data-claim="tax-certificates">The Certificates tab lists the certificates on file newest first, with only the last four digits of each number. A record can be opened, checked as of a day (an expired certificate or a missing signed statement cannot back a reduced rate) and downloaded; each is logged. The list filters by order.</p>
+<p data-claim="tax-capture">Recording a certificate holds what its profile requires before anything is sent. The number is sent once and cleared from the screen, and only its last four digits come back. The photo upload itself is marked later.</p>
+<p data-claim="tax-settings">The Settings tab shows the company wide seller's permit number and how tax is rounded. A change asks first and says past sales are not recomputed. Automatic tax lookup and postal code routing are shown off and marked later.</p>
+<p data-claim="tax-recon">Recompute and reconcile compares the tax the sales collected with the sales tax payable in the ledger for a month or a whole year, and says tied out or off by an amount, with the direction in words. A year that is not a year is held.</p>
+<p data-claim="tax-recompute">Recompute past sales asks first, saying a second audit only record is added for each sale in the range, nothing is rewritten and the ledger is not corrected. A second run says nothing new.</p>
+<p data-claim="tax-states">While the tables load the screen says so, a failed load offers Try again, a wall on the read is named, and each empty list says so. A list that is not the shape the core sends is refused, never half read.</p>
+<p data-claim="tax-phone">On a phone each table becomes cards, a chosen record or a confirm step comes into view, and nothing scrolls sideways. Every control works from the keyboard and the confirm step takes the focus.</p>
 
 <h2>Everywhere</h2>
 <p data-claim="phone-sideways">On a phone no screen scrolls the page sideways.</p>

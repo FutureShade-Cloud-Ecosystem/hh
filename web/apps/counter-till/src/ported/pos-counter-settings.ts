@@ -959,7 +959,7 @@ export class HosPosCounterSettings extends LitElement {
           class="info"
           type="button"
           aria-label="About counter keys"
-          title="F4 advances and F12 takes payment, the way BisTrack does. Press Set, then press the key you want: function keys, or Ctrl or Alt with a letter."
+          title="F4 advances and F12 takes payment, the way the counter system before this one did. Press Set, then press the key you want: function keys, or Ctrl or Alt with a letter."
         >
           ${drawIcon(iconForId('pencil:info'), 19)}
         </button>

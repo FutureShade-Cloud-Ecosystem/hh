@@ -18,6 +18,7 @@ import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
+import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
@@ -32,6 +33,9 @@ import { glStyles } from "./gl/gl-styles.js";
 import { BankrecApi } from "./bankrec/bankrec-api.js";
 import { BankrecDesk } from "./bankrec/bankrec-desk.js";
 import { bankrecStyles } from "./bankrec/bankrec-styles.js";
+import { TaxApi } from "./tax/tax-api.js";
+import { TaxDesk } from "./tax/tax-desk.js";
+import { taxStyles } from "./tax/tax-styles.js";
 import { LienApi } from "./lien/lien-api.js";
 import { LienDesk, type LienHost } from "./lien/lien-desk.js";
 import { lienStyles } from "./lien/lien-styles.js";
@@ -50,14 +54,14 @@ const GENERAL_MANAGER_ROLE = "general_manager";
 
 // The desk's areas, in switch order. A new area is one more entry here, one case in #onHostClick for its presses
 // and one in renderArea for its screens.
-const AREAS = ["ledger", "receivables", "bank", "liens", "compliance"] as const;
+const AREAS = ["ledger", "receivables", "bank", "tax", "liens", "compliance"] as const;
 type Area = (typeof AREAS)[number];
 
-// The areas each role holds, and the one it lands on (the first listed). The controller holds all five; Payables and
+// The areas each role holds, and the one it lands on (the first listed). The controller holds all six; Payables and
 // Receivables lands on receivables and holds the ledger as a reader, the liens and the calendar beside it; the General Manager, who holds the
 // release gate of the liens, lands there.
 const AREAS_BY_ROLE: Readonly<Record<string, readonly Area[]>> = {
-  [CONTROLLER_ROLE]: ["ledger", "receivables", "bank", "liens", "compliance"],
+  [CONTROLLER_ROLE]: ["ledger", "receivables", "bank", "tax", "liens", "compliance"],
   [PAYREC_ROLE]: ["ledger", "receivables", "liens", "compliance"],
   [GENERAL_MANAGER_ROLE]: ["liens", "compliance"],
 };
@@ -65,6 +69,7 @@ const AREA_LABEL: Readonly<Record<Area, string>> = {
   ledger: "Approvals and ledger", // the reader's switch says just "Ledger"
   receivables: "Receivables",
   bank: "Bank reconciliation",
+  tax: "Tax",
   liens: "Liens",
   compliance: "Compliance",
 };
@@ -74,7 +79,7 @@ const AREA_LABEL: Readonly<Record<Area, string>> = {
 const MONEY_DESK_FLOWS: readonly string[] = ["payables-receivables", "financial-controller"];
 
 export class MoneyDeskApp extends HHElement {
-  static styles = [baseStyles, entryStyles, arStyles, glStyles, bankrecStyles, lienStyles, css`
+  static styles = [baseStyles, entryStyles, arStyles, glStyles, bankrecStyles, taxStyles, lienStyles, css`
     :host { display: block; min-height: 100vh; background: var(--hh-page); color: var(--hh-text); }
     main { padding: var(--hh-s-4) 0; }
     main.gl-desk { max-width: 1440px; margin: 0 auto; padding: var(--hh-s-24) var(--hh-s-24) var(--hh-s-48); }
@@ -100,6 +105,8 @@ export class MoneyDeskApp extends HHElement {
   // The staff client: carries the mint's bearer after adoption.
   readonly #staffClient = new ApiClient({
     baseUrl: "",
+    // The Work shell's rule: money never queues. With no signal a write is refused before it dials, with one honest state.
+    fetch: noSignalFetch(undefined, browserSignal()),
     headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
   });
 
@@ -117,6 +124,30 @@ export class MoneyDeskApp extends HHElement {
   #area: Area = "ledger";
   // The ledger is read the first time its area opens, not at sign in.
   #glLoaded = false;
+
+  // The tax slice (src/tax): the controller's tax administration area, loaded when it is first chosen.
+  #tax = this.#newTaxDesk();
+
+  #newTaxDesk(): TaxDesk {
+    const named = (name: string): HTMLInputElement | HTMLSelectElement | null => this.renderRoot.querySelector(`[data-field="${name}"]`);
+    return new TaxDesk(new TaxApi(this.#staffClient), {
+      repaint: () => this.requestUpdate(),
+      setField: (name, value) => {
+        const el = named(name);
+        if (el === null) return;
+        if (el instanceof HTMLSelectElement) {
+          const at = [...el.options].findIndex((o) => o.getAttribute("data-id") === value);
+          if (at >= 0 && el.selectedIndex !== at) el.selectedIndex = at;
+        } else if (el.type === "checkbox") {
+          const want = value === "true";
+          if (el.checked !== want) el.checked = want;
+        } else if (el.value !== value) el.value = value;
+      },
+      field: (name) => named(name)?.value ?? "",
+      reveal: (selector) => this.renderRoot.querySelector(selector)?.scrollIntoView({ block: "center", behavior: "smooth" }),
+      focus: (selector) => this.renderRoot.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true }),
+    });
+  }
 
   // The bank reconciliation slice (src/bankrec): the controller's area, loaded when it is first chosen.
   #bank = this.#newBankDesk();
@@ -334,6 +365,7 @@ export class MoneyDeskApp extends HHElement {
     }
     if (control !== undefined && this.#holdsLedger() && this.#area === "ledger" && this.#gl.press(control)) return;
     if (control !== undefined && this.#isController() && this.#area === "bank" && this.#bank.press(control)) return;
+    if (control !== undefined && this.#isController() && this.#area === "tax" && this.#tax.press(control)) return;
     if (control !== undefined && this.#area === "liens" && this.#lien.press(control)) return;
     if (control !== undefined && this.#area === "compliance" && this.#compliance.press(control)) return;
     if (control !== undefined && this.#ar.press(control)) return;
@@ -348,6 +380,7 @@ export class MoneyDeskApp extends HHElement {
     if (target instanceof Element && target.hasAttribute("data-field")) {
       this.#ar.input(target);
       this.#bank.input(target);
+      this.#tax.input(target);
     }
   };
 
@@ -356,6 +389,7 @@ export class MoneyDeskApp extends HHElement {
     if (target instanceof Element && target.hasAttribute("data-field")) {
       this.#ar.change(target);
       this.#bank.change(target);
+      this.#tax.change(target);
       if (this.#area === "liens") this.#lien.change(target);
       if (this.#area === "compliance") this.#compliance.change(target);
     }
@@ -408,6 +442,7 @@ export class MoneyDeskApp extends HHElement {
     this.#ar.afterRender();
     this.#gl.afterRender();
     if (this.#area === "bank") this.#bank.afterRender();
+    if (this.#area === "tax") this.#tax.afterRender();
     if (this.#area === "liens") this.#lien.afterRender();
     if (this.#area === "compliance") this.#compliance.afterRender();
     const header = this.renderRoot.querySelector("hos-app-header") as (HTMLElement & { roleLabel: string; theme: string }) | null;
@@ -446,10 +481,10 @@ export class MoneyDeskApp extends HHElement {
         this.#startGl();
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
       } else {
-        this.#entryView = { ...this.#entryView, busy: false, message: "Demo sign-in refused: the mint's session was not usable." };
+        this.#entryView = { ...this.#entryView, busy: false, message: "Sign-in did not go through. Try the role again." };
       }
     } else {
-      this.#entryView = { ...this.#entryView, busy: false, message: `Demo sign-in refused: ${result.error}` };
+      this.#entryView = { ...this.#entryView, busy: false, message: `Sign-in did not go through. ${result.error}` };
     }
     this.requestUpdate();
   }
@@ -459,6 +494,7 @@ export class MoneyDeskApp extends HHElement {
   #startGl(): void {
     this.#gl = this.#newGlDesk();
     this.#bank = this.#newBankDesk();
+    this.#tax = this.#newTaxDesk();
     this.#lien = this.#newLienDesk();
     this.#compliance = this.#newComplianceDesk();
     this.#glLoaded = false;
@@ -473,6 +509,7 @@ export class MoneyDeskApp extends HHElement {
       void this.#gl.load();
     }
     if (this.#area === "bank") this.#bank.ensureLoaded();
+    if (this.#area === "tax") this.#tax.ensureLoaded();
     if (this.#area === "liens") this.#lien.ensureLoaded();
     if (this.#area === "compliance") this.#compliance.ensureLoaded();
   }
@@ -482,6 +519,7 @@ export class MoneyDeskApp extends HHElement {
     this.#ar = this.#newDesk();
     this.#gl = this.#newGlDesk();
     this.#bank = this.#newBankDesk();
+    this.#tax = this.#newTaxDesk();
     this.#lien = this.#newLienDesk();
     this.#compliance = this.#newComplianceDesk();
     clearFrontDoorHandoff();
@@ -511,6 +549,8 @@ export class MoneyDeskApp extends HHElement {
         return html`<main class="gl-desk">${this.#gl.render()}</main>`;
       case "bank":
         return html`<main class="br-desk">${this.#bank.render()}</main>`;
+      case "tax":
+        return html`<main class="tx-desk">${this.#tax.render()}</main>`;
       case "liens":
         return html`<main class="li-desk">${this.#lien.render()}</main>`;
       case "compliance":

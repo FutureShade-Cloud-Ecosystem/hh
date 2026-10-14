@@ -13,9 +13,41 @@ probe = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The offline store's SQLite engine behind the fixed database file (the
+# webview never gets an open SQL grant; see store.rs). `bundled` compiles the
+# SQLite C amalgamation, so no system sqlite header is needed on any target.
+# The 0.31 line is the one whose libsqlite3-sys (0.28) is the same crate the
+# probe's tauri-plugin-sql builds through sqlx: the `links` to the native
+# library allow exactly one of it in the graph.
+rusqlite = { version = "=0.31.0", features = ["bundled", "limits", "hooks"] }
+
+# The FB Console and core REST client (src/console.rs). reqwest is already in
+# the graph through the updater; this takes it with no default features and
+# the rustls path without a bundled provider, so the graph gains no OpenSSL
+# and no aws-lc. The TLS config is built here with the ring provider (the one
+# the updater installs) and the Mozilla roots compiled in, so one trust path
+# serves Linux and Android and nothing needs the platform verifier's JNI setup.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+# Secret values (the session secret, a JWT, the core token) are wiped on drop.
+zeroize = "1"
+# spawn_blocking for custody calls and the sign out time bound; Tauri runs on this runtime.
+tokio = { version = "1", default-features = false, features = ["rt", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "time"] }
 
 # keyring 3.6 with its pure Rust Secret Service path (zbus, no libsecret and
 # no libdbus headers). Desktop Linux only: Android has no keyring backend in
 # this crate, so the core reports that plainly (see keychain.rs).
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "=3.6.3", default-features = false, features = ["async-secret-service", "tokio", "crypto-rust"] }
+
+# The Android Keystore bridge (src/android_keystore.rs): JNI into the Kotlin
+# KeystoreCustody class. tao initialises ndk-context with the JavaVM and the
+# application context.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "=0.21.1"
+ndk-context = "0.1"

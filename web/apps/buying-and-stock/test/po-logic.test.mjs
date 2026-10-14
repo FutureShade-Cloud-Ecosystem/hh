@@ -124,7 +124,7 @@ test("quantities read plainly, with the unit unless it is a piece", () => {
 });
 
 test("a row carries the draft that does not cover it, or none", () => {
-  assert.deepEqual(draftOf({ draft_po_id: "d1", draft_po_no: "PO-TRT-142" }), { id: "d1", no: "PO-TRT-142" });
+  assert.deepEqual(draftOf({ draft_po_id: "d1", draft_po_no: "PO-PLM-142" }), { id: "d1", no: "PO-PLM-142" });
   assert.equal(draftOf({}), null);
   assert.equal(draftOf({ draft_po_id: "" }), null);
 });

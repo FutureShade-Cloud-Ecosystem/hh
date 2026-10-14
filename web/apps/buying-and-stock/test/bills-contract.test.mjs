@@ -62,7 +62,7 @@ test("a bill reads with its lines and the verdict on each, in the core's arithme
 test("entering a bill is a draft, matched on entry; the validators come in the core's order", async () => {
   await stub.reset();
   await money();
-  const po = await order("PO-TRT-67");
+  const po = await order("PO-PLM-67");
   const line = po.lines[0];
   const enter = (body) => stub.call("POST", `${P}/bills`, body);
   refused(await enter({}), 400, "bill_no (the vendor's invoice number) is required");
@@ -96,7 +96,7 @@ test("entering a bill is a draft, matched on entry; the validators come in the c
 test("a bill with no order line is unmatched, and the header takes the worst line's state", async () => {
   await stub.reset();
   await money();
-  const po = await order("PO-TRT-67");
+  const po = await order("PO-PLM-67");
   const made = await stub.call("POST", `${P}/bills`, {
     bill_no: "INV-9100",
     po_id: po.id,
@@ -122,7 +122,7 @@ test("a post of a bill inside the tolerance books it once; a second post is refu
   assert.equal(posted.json.status, "POSTED");
   assert.ok(posted.json.gl_journal_id);
   refused(await stub.call("POST", `${P}/bills/${b.id}/post`, {}), 409, "bill is already POSTED", "bill is already %s");
-  const po = await order("PO-TRT-67");
+  const po = await order("PO-PLM-67");
   assert.equal(po.lines[0].qty_billed_base, 4, "the posted bill moved the order line's billed quantity");
 });
 
@@ -148,7 +148,7 @@ test("the post runs the match again against what has arrived by then", async () 
   assert.equal(b.match_state, "VARIANCE");
   // The rest arrives (the yard receives as the Procurement manager does): ten received, so the
   // quantity is in step and only the price is off.
-  const po = await order("PO-TRT-67");
+  const po = await order("PO-PLM-67");
   assert.equal((await stub.call("POST", `${P}/pos/${po.id}/receive`, { lines: [{ po_line_id: po.lines[0].id, qty_base: 4 }] })).status, 200);
   await money();
   const refusal = await stub.call("POST", `${P}/bills/${b.id}/post`, {});

@@ -26,6 +26,16 @@ import (
 // (order, quote) keep both halves provable.
 type UserIDLinker func(ctx context.Context, platformUserID string) (userID string, ok bool)
 
+// SyncStaffResolver resolves the staff context a sync door runs a direct
+// door's service body under: the caller's authority in the org (role,
+// tier, scope, branches) with the linked ERP users.id on it, so the
+// branch fence and the audit actor are the REST door's. The sync core's
+// ScopeFilter carries the platform subject and the org and no role, so a
+// store that must hold the REST door's fences reads them again through
+// this seam. ok false is no active authority in the org. The composition
+// root builds it over identity's own resolver and the user linker.
+type SyncStaffResolver func(ctx context.Context, platformUserID, orgID string) (StaffContext, bool, error)
+
 // StampRequest stamps the bridged StaffContext onto r and returns the
 // request to pass on. sc is the authority half (FromAuthority of the
 // caller the guard resolved); link, when non-nil, supplies the linked ERP
