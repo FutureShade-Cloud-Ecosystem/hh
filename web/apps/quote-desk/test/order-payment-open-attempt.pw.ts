@@ -79,6 +79,8 @@ async function heldAttempt(page: Page): Promise<string> {
 /** The signal goes and the cashier retries. */
 async function retryOffline(page: Page, context: BrowserContext): Promise<void> {
   await context.setOffline(true);
+  // The app reads navigator.onLine per call: the press waits until the page itself says it is offline.
+  await page.waitForFunction(() => navigator.onLine === false);
   await pay(page).getByTestId("op-take").click();
   await expect(pay(page).getByTestId("op-take")).toBeEnabled();
   await expect(pay(page).getByTestId("op-error")).toContainText("No signal");
@@ -175,4 +177,64 @@ test("a no signal take of a fresh attempt sends nothing, leaves the form editabl
   const seen = await serverSaw(page);
   expect(seen.keys).toHaveLength(1);
   expect(seen.taken).toBe(1);
+});
+
+// The two copies of the rule a no signal answer cannot reach through the real transport today (it is
+// refused in microtasks, before any click can land): the leg forces the interleaving by handing the
+// panel's own answer sites the answer, as the platform would if it ever came late.
+const NO_SIGNAL = { ok: false, status: 0, error: "No signal. This needs the server and does not wait in a queue: try again when you are back online." };
+
+test("a no signal answer that lands late for a quote the person has left changes that quote's record only, never the screen of the quote now open", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await unknownAttempt(page);
+  await showList(page);
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-1001" }).first().click();
+  await expect(page.getByTestId("qe-title")).toContainText("Q-1001");
+  const seen = await pay(page).evaluate((el, noSignal) => {
+    const panel = el as unknown as Record<string, any>;
+    panel.reopenedFrom.set("q-2101", "not-known");
+    panel.book.mark("q-2101", "in-flight");
+    panel.lateAnswer({ id: "q-2101" }, noSignal);
+    return { attempt: panel.attempt, unknown: panel.unknown, error: panel.error, phaseOfLeft: panel.book.attempt("q-2101")?.phase };
+  }, NO_SIGNAL);
+  expect(seen.attempt).toBeNull();
+  expect(seen.unknown).toBe("");
+  expect(seen.error).toBe("");
+  expect(seen.phaseOfLeft).toBe("not-known");
+  // Back on the quote it belongs to: the note, the locked fields and the figures are there.
+  await showList(page);
+  await page.getByTestId("qb-list-row").filter({ hasText: "Q-2101" }).first().click();
+  await expect(pay(page).getByTestId("op-unknown")).toContainText("not known");
+  await expect(pay(page).locator('[data-field="amount"]')).toBeDisabled();
+});
+
+test("the sign out wait and a late answer both meeting one no signal answer, in either order, keep the open attempt unsettled", async ({ page }) => {
+  await signIn(page);
+  await openWithPayment(page, "Q-2101");
+  await unknownAttempt(page);
+  const phases = await pay(page).evaluate(async (el, noSignal) => {
+    const panel = el as unknown as Record<string, any>;
+    const id = "q-2101";
+    const out: string[] = [];
+    const arm = () => {
+      panel.reopenedFrom.set(id, "not-known");
+      panel.book.mark(id, "in-flight");
+      panel.posting.set(id, Promise.resolve(noSignal));
+      return panel.book.attempt(id);
+    };
+    const seenPhase = () => panel.book.unsettled().map((row: { quoteId: string; attempt: { phase: string } }) => `${row.quoteId}:${row.attempt.phase}`).join(",");
+    // The answer site runs first, the sign out wait second.
+    let attempt = arm();
+    panel.lateAnswer({ id }, noSignal);
+    await panel.waitOneAtSignOut({ notes: [] }, id, attempt);
+    out.push(seenPhase());
+    // The sign out wait runs first, the answer site second.
+    attempt = arm();
+    await panel.waitOneAtSignOut({ notes: [] }, id, attempt);
+    panel.lateAnswer({ id }, noSignal);
+    out.push(seenPhase());
+    return out;
+  }, NO_SIGNAL);
+  expect(phases).toEqual(["q-2101:not-known", "q-2101:not-known"]);
 });
