@@ -10,5 +10,8 @@ import "@hardscapehouse/design-system/src/tokens.css";
 // --hh-font-ui's first name never resolves and every user sees a fallback.
 import "./fonts.css";
 import "@hardscapehouse/pos-kit/src/ported/styles/tokens.css";
+import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import "./index.js";
 import "./app-root.js";
+
+applyTenantTitle("Quote Desk");

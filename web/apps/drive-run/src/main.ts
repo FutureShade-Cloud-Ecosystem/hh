@@ -3,5 +3,8 @@
 // sheet. The app root's registration and the shared components' element
 // registrations are the only side effects.
 import "@hardscapehouse/design-system/src/tokens.css";
+import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import "./index.js";
 import "./app-root.js";
+
+applyTenantTitle("Drive");

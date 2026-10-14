@@ -7,4 +7,7 @@
 // registrations are the only side effects.
 import "@hardscapehouse/design-system/src/tokens.css";
 import "@hardscapehouse/pos-kit/src/ported/styles/tokens.css";
+import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import "./app-root.js";
+
+applyTenantTitle("Counter Till");

@@ -4,4 +4,7 @@
 // registration is the only side effect.
 import "@hardscapehouse/design-system/src/tokens.css";
 import "./page.css";
+import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import "./app-root.js";
+
+applyTenantTitle("Front Door");
