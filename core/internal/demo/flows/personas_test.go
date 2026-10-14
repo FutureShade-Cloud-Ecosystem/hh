@@ -61,9 +61,14 @@ func TestPersonaFactsAreCompleteAndUnique(t *testing.T) {
 }
 
 // The flow table's roles and labels are reused where they exist: the eight
-// flows are personas of the same id, role and label.
+// staff flows are personas of the same id, role and label. The contractor
+// flows (tenant class) are the demo mint's own five accounts; the contractor
+// personas are listed, not enterable, and carry their own ids.
 func TestFlowRolesAndLabelsAreReused(t *testing.T) {
 	for _, a := range All() {
+		if a.Class() == ClassTenant {
+			continue
+		}
 		p, ok := PersonaByID(a.Flow)
 		if !ok || p.Role != a.Role || p.Label != a.Label {
 			t.Fatalf("flow %q is not the persona of the same role and label: %+v %v", a.Flow, p, ok)
