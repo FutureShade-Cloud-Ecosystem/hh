@@ -384,6 +384,110 @@ test("the approvals list fits the identity contract, and the refusals are the co
   refused(yardDecide, 403, "you do not decide MARGIN_BELOW_MINIMUM approvals", "you do not decide %s approvals");
 });
 
+test("the caller's quick actions are the core's registry resolved for the caller's job shape", async () => {
+  await reset();
+  const yard = await mint("yard-manager");
+  const sales = await mint("sales-manager");
+
+  const yardMine = await call("GET", "/api/v1/quick-actions", { token: yard });
+  assert.equal(yardMine.status, 200);
+  holds("DashboardQuickActionsMine", yardMine.json);
+  assert.equal(yardMine.json.profile, "manager.yard");
+  assert.deepEqual(yardMine.json.actions, [], "the yard shape does not sell, so the core resolves it no action");
+
+  const salesMine = await call("GET", "/api/v1/quick-actions", { token: sales });
+  assert.equal(salesMine.status, 200);
+  holds("DashboardQuickActionsMine", salesMine.json);
+  assert.equal(salesMine.json.profile, "manager.sales");
+  assert.equal(salesMine.json.actions.length, 1);
+  holds("DashboardActionMeta", salesMine.json.actions[0]);
+  assert.equal(salesMine.json.actions[0].action_id, "sale.new");
+  assert.equal(salesMine.json.actions[0].title, "Start a new counter sale at the till.");
+  assert.equal(salesMine.json.actions[0].intent, "pos.new_ticket");
+
+  // The stub's catalog row is the core's, not an invention: the id, the
+  // intent, the button's sentence and the admin's lead line all exist in the
+  // core's quick-action source.
+  assert.ok(coreSource.includes('ActionNewSale = "sale.new"'), "the stub's action id is not the core's constant");
+  assert.ok(coreSource.includes('IntentPosNewTicket = "pos.new_ticket"'), "the stub's intent is not the core's constant");
+  assert.ok(coreSource.includes("Start a new counter sale at the till."), "the stub's title is not the core's sentence");
+  assert.ok(coreSource.includes("Jumps to Point of Sale with a fresh ticket."), "the stub's lead is not the core's sentence");
+});
+
+test("the quick-actions config view is the admin's alone, and answers the contract under the admin scenario", async () => {
+  await reset();
+  const sales = await mint("sales-manager");
+
+  // The gate is the server's: no login this door mints is an admin, so the
+  // shared Forbidden body answers, the core's own one word, exactly.
+  const walled = await call("GET", "/api/v1/quick-actions/config", { token: sales });
+  assert.equal(walled.status, 403);
+  assert.deepEqual(walled.json, { error: "Forbidden" });
+  assert.ok(coreSource.includes('{"error":"Forbidden"}'), "the core's authz middleware does not write the shared Forbidden body");
+
+  const putWalled = await call("PUT", "/api/v1/quick-actions/config/sale.new", {
+    body: { enabled: false, profiles: {} },
+    token: sales,
+  });
+  assert.equal(putWalled.status, 403);
+  assert.deepEqual(putWalled.json, { error: "Forbidden" });
+
+  await scenario("quick-admin");
+  const config = await call("GET", "/api/v1/quick-actions/config", { token: sales });
+  assert.equal(config.status, 200);
+  holds("DashboardQuickActionConfigView", config.json);
+  // The closed set of job shapes, in the core's Profiles order.
+  assert.deepEqual(config.json.profiles, [
+    "counter", "yard", "driver", "manager", "admin",
+    "manager.branch", "manager.sales", "manager.yard", "manager.logistics",
+    "manager.procurement", "manager.payables", "manager.controller", "manager.general",
+  ]);
+  assert.equal(config.json.actions.length, 1);
+  const row = config.json.actions[0];
+  holds("DashboardEffectiveActionConfig", row);
+  assert.equal(row.stored, false, "nothing saved yet: the view says default, not chosen");
+  assert.equal(row.enabled, true);
+  assert.equal(row.profiles.counter, true);
+  assert.equal(row.profiles.manager, true);
+  assert.equal(row.profiles.admin, true);
+  assert.equal(row.profiles.yard, false);
+  assert.equal(row.profiles.driver, false, "the shipped default resolves every shape, so no cell is blank");
+  // Each manager shape resolves through the core's ManagerBaseShape: all eight rows, copied from model.go.
+  const baseShape = {
+    "manager.branch": "manager", "manager.sales": "manager", "manager.yard": "yard", "manager.logistics": "yard",
+    "manager.procurement": "manager", "manager.payables": "manager", "manager.controller": "manager", "manager.general": "admin",
+  };
+  for (const [shape, base] of Object.entries(baseShape)) {
+    const word = (name) => name.split(".").map((w) => w[0].toUpperCase() + w.slice(1)).join("");
+    const pattern = new RegExp(`Profile${word(shape)}:\\s+Profile${word(base)},`);
+    assert.ok(pattern.test(coreSource), `the core's ManagerBaseShape has no row ${shape} -> ${base}`);
+    assert.equal(row.profiles[shape], row.profiles[base], `${shape} does not resolve as its base shape ${base}`);
+  }
+  assert.equal(row.profiles["manager.branch"], true);
+  assert.equal(row.profiles["manager.general"], true);
+
+  // The edit lands, and the answer is the action as it now resolves.
+  const saved = await call("PUT", "/api/v1/quick-actions/config/sale.new", {
+    body: { enabled: true, profiles: { counter: true, manager: true, admin: false, night: true } },
+    token: sales,
+  });
+  assert.equal(saved.status, 200);
+  holds("DashboardEffectiveActionConfig", saved.json);
+  assert.equal(saved.json.stored, true);
+  assert.equal(saved.json.profiles.admin, false);
+  assert.equal(saved.json.profiles.yard, false, "an unstored shape still answers the default it is getting");
+
+  const again = await call("GET", "/api/v1/quick-actions/config", { token: sales });
+  assert.equal(again.json.actions[0].stored, true, "the saved edit is the stored config the next read answers");
+
+  // A caller naming an action outside the registry is refused in the core's own words.
+  const unknown = await call("PUT", "/api/v1/quick-actions/config/quote.new", {
+    body: { enabled: true, profiles: {} },
+    token: sales,
+  });
+  refused(unknown, 404, "unknown quick action");
+});
+
 test("the builder's writes fit the dashboard contract and answer what the write stored", async () => {
   await reset();
   const token = await mint("yard-manager");
