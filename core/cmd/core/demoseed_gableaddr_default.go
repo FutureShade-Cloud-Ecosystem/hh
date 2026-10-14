@@ -22,6 +22,11 @@ func renameGableAddresses(context.Context, txExec, time.Time) (int, error) {
 	return 0, nil
 }
 
+// renameGableDisplayNames is the no-op: the default build carries no display_name rename path.
+func renameGableDisplayNames(context.Context, txExec, time.Time) (int, error) {
+	return 0, nil
+}
+
 // gableAddressesPlan is the no-op: the default build's plan says nothing about an address rename
 // pass it does not carry.
 func gableAddressesPlan(*os.File) {}

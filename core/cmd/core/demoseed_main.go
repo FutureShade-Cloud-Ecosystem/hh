@@ -213,9 +213,19 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("demoseed: nothing was written: %w", err)
 	}
-	// The Gable-address rename pass (the gableaddr pair), in the same transaction for the same reason:
-	// the migration-planted demo email addresses move onto invented Gable Landscape Supply addresses,
-	// one guarded UPDATE per fixed id / exact old value.
+	// The Gable-address display-name rename pass (the gableaddr pair), in the same transaction for the
+	// same reason: the migration-planted demo staff display names move onto invented Gable Landscape
+	// Supply role labels. This runs BEFORE the email rename because the UAT staff account has no fixed
+	// id and is looked up by its migration-planted email; once that email moves, the display_name guard
+	// would match no row.
+	displayRenamed, err := renameGableDisplayNames(ctx, tx, now)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return fmt.Errorf("demoseed: nothing was written: %w", err)
+	}
+	// The Gable-address rename pass (the gableaddr pair), in the same transaction: the migration-planted
+	// demo email addresses move onto invented Gable Landscape Supply addresses, one guarded UPDATE per
+	// fixed id / exact old value.
 	addrRenamed, err := renameGableAddresses(ctx, tx, now)
 	if err != nil {
 		_ = tx.Rollback(ctx)
@@ -244,10 +254,13 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	if addrRenamed > 0 {
 		fmt.Fprintf(out, "gable addresses: %d migration-planted email address(es) moved onto Gable Landscape Supply addresses\n", addrRenamed)
 	}
+	if displayRenamed > 0 {
+		fmt.Fprintf(out, "gable display names: %d migration-planted display name(s) moved onto Gable Landscape Supply role labels\n", displayRenamed)
+	}
 	if repaired > 0 {
 		fmt.Fprintf(out, "repaired:  %d row(s) an older apply left wrong (a home branch, an empty product application, a missing org stamp)\n", repaired)
 	}
-	if res.Created == 0 && renamed == 0 && worldRenamed == 0 && addrRenamed == 0 && repaired == 0 {
+	if res.Created == 0 && renamed == 0 && worldRenamed == 0 && addrRenamed == 0 && displayRenamed == 0 && repaired == 0 {
 		fmt.Fprintln(out, "the demo world was already complete, this run changed nothing.")
 	}
 	for _, t := range sortedKeys(res.ByTable) {

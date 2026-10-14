@@ -107,6 +107,44 @@ func TestDemoWorld_NoExampleInvalidRemains(t *testing.T) {
 		t.Errorf("uat.inside.sales@gablelandscape.example user count = %d, want 1", uatCount)
 	}
 
+	// 5b. the new display names are in place: role labels, no personal-name tokens.
+	wantDisplays := map[string]string{
+		"40000061-0000-4000-9000-000000000001": "General Manager (demo)",
+		"40000061-0000-4000-9000-000000000002": "Inside Sales (demo)",
+		"40000061-0000-4000-9000-000000000003": "Counter Sales (demo)",
+		"40000061-0000-4000-9000-000000000004": "Branch Manager (demo)",
+	}
+	for id, want := range wantDisplays {
+		var got string
+		if err := pool.QueryRow(ctx, `SELECT display_name::text FROM users WHERE id = $1::uuid`, id).Scan(&got); err != nil {
+			t.Fatalf("reading user %s display_name: %v", id, err)
+		}
+		if got != want {
+			t.Errorf("user %s display_name = %q, want %q", id, got, want)
+		}
+	}
+	var uatDisplay string
+	if err := pool.QueryRow(ctx, `SELECT display_name::text FROM users WHERE email = 'uat.inside.sales@gablelandscape.example'`).Scan(&uatDisplay); err != nil {
+		t.Fatalf("reading uat inside sales display_name: %v", err)
+	}
+	if uatDisplay != "UAT Inside Sales (demo)" {
+		t.Errorf("uat inside sales display_name = %q, want %q", uatDisplay, "UAT Inside Sales (demo)")
+	}
+	var tokensLeft int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM users
+		 WHERE id IN ('40000061-0000-4000-9000-000000000001'::uuid,
+		              '40000061-0000-4000-9000-000000000002'::uuid,
+		              '40000061-0000-4000-9000-000000000003'::uuid,
+		              '40000061-0000-4000-9000-000000000004'::uuid,
+		              (SELECT id FROM users WHERE email = 'uat.inside.sales@gablelandscape.example'))
+		   AND display_name LIKE '%Scrubname%'`).Scan(&tokensLeft); err != nil {
+		t.Fatalf("counting scrub tokens in display names: %v", err)
+	}
+	if tokensLeft != 0 {
+		t.Errorf("%d migration-planted user(s) still carry a Scrubname token in display_name", tokensLeft)
+	}
+
 	wantWarranty := map[string]string{
 		"f5700000-0000-4000-9000-000000000003": "orders@copperlinepavers.example",
 		"f5700000-0000-4000-9000-000000000005": "orders@heronfieldstone.example",
