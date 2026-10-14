@@ -215,6 +215,26 @@ func TestPartnerCopyRefusesOtherBearerClasses(t *testing.T) {
 	}
 }
 
+// A contractor's token is refused outright on the testers' copy, whatever
+// the partner list says (principal entry 36): a verified tenant class bearer
+// whose subject is on the list gets the shared 403, no audit row, no mint.
+func TestPartnerCopyRefusesTenantBearerOnTheListWithoutAuditOrMint(t *testing.T) {
+	f := newFx(t, CallerPartner)
+	if !f.h.partners[fxPartner] {
+		t.Fatalf("the fixture's partner is not on the list")
+	}
+	fv := &fakeVerifier{tok: identity.Token{Class: identity.ClassTenant, Subject: fxPartner, TenantID: "t"}}
+	f.cfg.Verifier = fv
+	f.rebuild()
+	f.assertShared(f.enter("sales"), 403)
+	if fv.calls != 1 {
+		t.Fatalf("verifier calls %d", fv.calls)
+	}
+	if f.minter.calls != 0 || len(f.audit.rows) != 0 {
+		t.Fatalf("the refusal minted or wrote: %d mints, %d audit rows", f.minter.calls, len(f.audit.rows))
+	}
+}
+
 func TestVerifierOperationalFailureIs503(t *testing.T) {
 	f := newFx(t, CallerPartner)
 	f.cfg.Verifier = &fakeVerifier{err: operationalError(t)}
