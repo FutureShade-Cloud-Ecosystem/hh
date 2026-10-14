@@ -44,7 +44,8 @@ export type RoleCode =
   | "payables_receivables"
   | "procurement_manager"
   | "driver"
-  | "financial_controller";
+  | "financial_controller"
+  | "logistics_manager";
 
 /** The demo flow id each live role maps to (the flows table's own mapping; the persona route takes the same ids). */
 export const ROLE_FLOWS: Readonly<Record<RoleCode, string>> = {
@@ -56,6 +57,7 @@ export const ROLE_FLOWS: Readonly<Record<RoleCode, string>> = {
   procurement_manager: "procurement-manager",
   driver: "driver",
   financial_controller: "financial-controller",
+  logistics_manager: "logistics-manager",
 };
 
 export const APP_IDS = [
@@ -79,14 +81,14 @@ export type AppId = (typeof APP_IDS)[number];
 export const APP_ROLES: Readonly<Record<AppId, readonly RoleCode[]>> = {
   "counter-till": ["inside_sales", "sales_manager"],
   "quote-desk": ["inside_sales", "sales_manager"],
-  "manager-home": ["sales_manager", "yard_manager", "payables_receivables", "procurement_manager", "financial_controller"],
+  "manager-home": ["sales_manager", "yard_manager", "payables_receivables", "procurement_manager", "financial_controller", "logistics_manager"],
   "drive-run": ["driver"],
   "buying-and-stock": ["yard_manager", "procurement_manager"],
   "money-desk": ["payables_receivables", "financial_controller"],
   "yard-pick": ["yard_manager", "yard_team"],
-  "dealer-admin": ["sales_manager"],
+  "dealer-admin": ["sales_manager", "financial_controller"],
   // The role template admits every live role until the role that copies it narrows this list (ROLE-GOES-LIVE.md).
-  "role-template": ["inside_sales", "sales_manager", "yard_manager", "yard_team", "payables_receivables", "procurement_manager", "driver", "financial_controller"],
+  "role-template": ["inside_sales", "sales_manager", "yard_manager", "yard_team", "payables_receivables", "procurement_manager", "driver", "financial_controller", "logistics_manager"],
 };
 
 /** What an app needs from the session the exchange named, in its own terms. */
