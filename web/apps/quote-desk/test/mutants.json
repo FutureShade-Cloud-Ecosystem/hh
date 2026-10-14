@@ -2206,5 +2206,19 @@
     "find": "    if (reopened !== undefined && isNoSignal(result)) {\n      this.reopen(ctx.id, reopened, words);\n      return;\n    }\n",
     "replace": "",
     "test": "a no signal retry of a payment whose outcome is not known keeps the note and the locked fields, and sends nothing"
+  },
+  {
+    "id": "op-nosignal-late-record-only",
+    "file": "src/order-payment-panel.ts",
+    "find": "      rec.refusal = paymentRefusalWords(late.status, late.error ?? \"\");\n    } else if (late.ok) {",
+    "replace": "      rec.refusal = paymentRefusalWords(late.status, late.error ?? \"\");\n      this.attempt = rec.attempt;\n      this.error = rec.refusal;\n    } else if (late.ok) {",
+    "test": "a no signal answer that lands late for a quote the person has left changes that quote's record only, never the screen of the quote now open"
+  },
+  {
+    "id": "op-nosignal-peek-not-consume",
+    "file": "src/order-payment-panel.ts",
+    "find": "    const reopened = this.reopenedFrom.get(quoteId);\n    if (reopened !== undefined && isNoSignal(answer)) {",
+    "replace": "    const reopened = this.reopenedFrom.get(quoteId);\n    this.reopenedFrom.delete(quoteId);\n    if (reopened !== undefined && isNoSignal(answer)) {",
+    "test": "the sign out wait and a late answer both meeting one no signal answer, in either order, keep the open attempt unsettled"
   }
 ]

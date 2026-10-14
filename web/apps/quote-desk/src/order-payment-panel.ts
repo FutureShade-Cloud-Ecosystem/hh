@@ -365,6 +365,7 @@ export class QdOrderPayment extends PanelBase {
       this.byQuote.clear();
       this.lateNotes.clear();
       this.posting.clear();
+      this.reopenedFrom.clear();
       this.quoteNos.clear();
       familyShare.beginCycle();
     }
@@ -634,8 +635,9 @@ export class QdOrderPayment extends PanelBase {
     this.posting.delete(ctx.id);
     // The quote the person moved to meanwhile owns the screen now: this answer says nothing on it.
     if (result === undefined) return;
+    // The entry is read, not consumed, while the answer is a no signal: the sign out wait may meet the same answer.
     const reopened = this.reopenedFrom.get(ctx.id);
-    this.reopenedFrom.delete(ctx.id);
+    if (reopened === undefined || result.ok || !isNoSignal(result)) this.reopenedFrom.delete(ctx.id);
     this.busy = false;
     if (result.ok) {
       this.taken(ctx.id, result.value);
@@ -724,9 +726,14 @@ export class QdOrderPayment extends PanelBase {
    */
   private lateAnswer(ctx: QuoteContext, late: Result<OrderPaymentAnswer>): void {
     const reopened = this.reopenedFrom.get(ctx.id);
-    this.reopenedFrom.delete(ctx.id);
+    if (reopened === undefined || late.ok || !isNoSignal(late)) this.reopenedFrom.delete(ctx.id);
     if (!late.ok && reopened !== undefined && isNoSignal(late)) {
-      this.reopen(ctx.id, reopened, paymentRefusalWords(late.status, late.error ?? ""));
+      // Nothing was sent: the quote's own record goes back to its open phase, and only the record. The screen
+      // below is refreshed only when this quote is the one open (the person may be on another quote now).
+      this.book.mark(ctx.id, reopened);
+      const rec = this.record(ctx.id);
+      rec.attempt = this.book.attempt(ctx.id);
+      rec.refusal = paymentRefusalWords(late.status, late.error ?? "");
     } else if (late.ok) {
       this.book.clear(ctx.id);
       const rec = this.record(ctx.id);
@@ -827,12 +834,13 @@ export class QdOrderPayment extends PanelBase {
       return;
     }
     // A retry of an open attempt that met no signal sent nothing: the attempt stays what it was, and is kept below.
+    // Read, not consumed: take() or lateAnswer may meet the same answer, and each restores the same phase.
     const reopened = this.reopenedFrom.get(quoteId);
-    this.reopenedFrom.delete(quoteId);
     if (reopened !== undefined && isNoSignal(answer)) {
       this.book.mark(quoteId, reopened);
       return;
     }
+    this.reopenedFrom.delete(quoteId);
     // A plain refusal decided the attempt: nothing is owed to it, and the session ends with it.
     this.book.clear(quoteId);
   }
