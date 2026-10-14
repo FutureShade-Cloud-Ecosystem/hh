@@ -608,7 +608,9 @@ func (s *StaffService) settingsKitService() *settings.Service {
 	if !ok || r.pool == nil {
 		return nil
 	}
-	return settings.NewService(settings.NewStore(r.pool)).WithSurface("quotes.builder", s.SurfaceHooks())
+	return settings.NewService(settings.NewStore(r.pool)).
+		WithZone(settings.NewDealerConfigReader(r.pool)).
+		WithSurface("quotes.builder", s.SurfaceHooks())
 }
 
 // identityCallerOK is referenced by tests to prove the gate consults the identity caller, kept

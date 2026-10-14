@@ -149,3 +149,68 @@ test("every control a driver taps is at least 56 px tall at 390 px", async ({ pa
   expect(heights.length).toBeGreaterThan(0);
   for (const h of heights) expect(h).toBeGreaterThanOrEqual(56);
 });
+
+test("a stalled zone read does not hold the run sheet: the store answers on the last served zone", async ({ page }) => {
+  // The surface config read never answers (a weak connection that stalls, not a hard offline
+  // that rejects at once). The run sheet reads the offline store at once and does not wait on it.
+  await page.route("**/api/v1/surfaces/drive-run/config*", () => {
+    /* held: never fulfilled, never continued */
+  });
+  await page.goto("/");
+  await expect(page.locator("[data-run]")).toHaveCount(1, { timeout: 2_000 });
+  await expect(page.locator("[data-stop]")).toHaveCount(3);
+});
+
+// The dealer's zone arrives after the first read of the store (nothing serves it before the run
+// sheet loads). The page stands at 22:30 Pacific the previous evening (05:30 UTC); the stub's
+// world is dated the Pacific day (pinned to 19:30 in the Toronto zone the stub dates by).
+const PACIFIC_EVENING = utcAt(5, 30);
+const STORE_READS = "__storeReads";
+
+async function countStoreReads(page: import("@playwright/test").Page): Promise<void> {
+  await page.addInitScript((key) => {
+    (window as unknown as Record<string, number>)[key] = 0;
+    const post = Worker.prototype.postMessage;
+    Worker.prototype.postMessage = function (this: Worker, ...args: unknown[]) {
+      try {
+        if (JSON.stringify(args[0]).includes("SELECT id, seq, data FROM")) (window as unknown as Record<string, number>)[key] += 1;
+      } catch {
+        /* a message that does not stringify is not a store read */
+      }
+      return (post as (...a: unknown[]) => void).apply(this, args);
+    } as typeof Worker.prototype.postMessage;
+  }, STORE_READS);
+}
+
+async function serveConfigAfter(page: import("@playwright/test").Page, ms: number, body: Record<string, unknown>): Promise<void> {
+  await page.route("**/api/v1/surfaces/drive-run/config*", async (route) => {
+    await new Promise((r) => setTimeout(r, ms));
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  });
+}
+
+test("a zone that arrives after the first read moves the run sheet onto the dealer's day", async ({ page, request }) => {
+  await page.clock.setSystemTime(PACIFIC_EVENING);
+  await resetStub(request, PACIFIC_EVENING - 6 * 3_600_000);
+  await countStoreReads(page);
+  await serveConfigAfter(page, 1_000, { business_zone: "America/Los_Angeles" });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "My run" })).toBeVisible();
+  await page.waitForTimeout(4_000);
+  await expect(page.locator("[data-run]")).toHaveCount(1);
+  // The sheet was read twice: on the default day at once, and again on the served day.
+  expect(await page.evaluate((k) => (window as unknown as Record<string, number>)[k], STORE_READS)).toBeGreaterThanOrEqual(4);
+});
+
+test("an Ontario dealer (zone absent) does not read the store again when the zone read answers", async ({ page, request }) => {
+  await page.clock.setSystemTime(utcAt(19, 0));
+  await resetStub(request, utcAt(19, 0));
+  await countStoreReads(page);
+  await serveConfigAfter(page, 1_000, {});
+  await page.goto("/");
+  await expect(page.locator("[data-run]")).toHaveCount(1);
+  const readsAtFirstSheet = await page.evaluate((k) => (window as unknown as Record<string, number>)[k], STORE_READS);
+  await page.waitForTimeout(3_000);
+  await expect(page.locator("[data-run]")).toHaveCount(1);
+  expect(await page.evaluate((k) => (window as unknown as Record<string, number>)[k], STORE_READS)).toBe(readsAtFirstSheet);
+});

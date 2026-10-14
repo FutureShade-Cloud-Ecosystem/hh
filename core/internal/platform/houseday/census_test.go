@@ -32,8 +32,6 @@ var defaultUses = map[string]struct {
 }{
 	"internal/purchasing/repository.go": {1, "the bill date fallback for a caller that bound no day; the service binds the dealer's day before the transaction"},
 	"internal/tax/model.go":             {1, "the package normDate helper kept for the default zone; the service's own normDate takes the dealer's"},
-	"cmd/core/demoseed_build.go":        {1, "the seed's day keys stay on the Ontario calendar until the web till reads the served zone; the two move together"},
-	"cmd/core/demoseed_repair_demo.go":  {2, "the seed's day keys, as above"},
 }
 
 func coreRoot(t *testing.T) string {

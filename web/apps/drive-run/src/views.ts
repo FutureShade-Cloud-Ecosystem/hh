@@ -10,7 +10,7 @@
 // system under row 563 (take the existing and improve it).
 import { html, nothing, type TemplateResult } from "lit";
 import { hhAddress } from "@hardscapehouse/design-system/src/address.js";
-import { HOUSE_ZONE } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import type { DriverLine, DriverRun, DriverStop } from "./drive-api.js";
 import {
@@ -209,7 +209,7 @@ export function renderStopDetail(model: StopDetailModel): TemplateResult {
           </div>`
         : nothing}
       ${stop.pod_received_by !== ""
-        ? html`<p class="signed">Signed by ${stop.pod_received_by}${stop.pod_at !== "" ? ` at ${formatTime(stop.pod_at, HOUSE_ZONE)}` : ""}${stop.photo_count > 0 ? ` · ${stop.photo_count} ${stop.photo_count === 1 ? "photo" : "photos"} on the proof` : ""}</p>`
+        ? html`<p class="signed">Signed by ${stop.pod_received_by}${stop.pod_at !== "" ? ` at ${formatTime(stop.pod_at, houseZone())}` : ""}${stop.photo_count > 0 ? ` · ${stop.photo_count} ${stop.photo_count === 1 ? "photo" : "photos"} on the proof` : ""}</p>`
         : nothing}
     </section>
     ${linesBlock(stop, run.lines[stop.id])}

@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
@@ -40,7 +41,18 @@ const glsSalesTaxBps = 775
 // glsSalesTaxNote is the note the standard and manual review rows carry.
 const glsSalesTaxNote = "San Diego County combined sales tax rate."
 
-func init() { hstBps = glsSalesTaxBps }
+// seedBuildIsDemo says this binary seeds the demo dealer (the default build's twin says false).
+const seedBuildIsDemo = true
+
+func init() {
+	hstBps = glsSalesTaxBps
+	// The seed's calendar day is the demo dealer's own: the zone its configuration names.
+	zone, err := houseday.NewZone(glsDealerConfig.BusinessZone)
+	if err != nil {
+		panic("demoseed: the demo dealer's business zone is not a zone: " + err.Error())
+	}
+	seedZone = zone
+}
 
 // glsDealerConfig is the demo dealer's own configuration: the jurisdiction the engine binds by, US
 // dollars, the Pacific business day and the flat rate the quote header and receipt fall back to.

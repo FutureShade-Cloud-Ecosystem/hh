@@ -17,8 +17,6 @@ import (
 	"sort"
 	"strconv"
 	"time"
-
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // hstBps is the rate the seed prices its documents at: 13 percent in a default build. The demo
@@ -64,7 +62,7 @@ func (b *builder) add(r row) { b.rows = append(b.rows, r) }
 // system already obeys (the sales.today window, the rollup day, the ledger's period, the tax
 // assessor's today).
 func (b *builder) day(off int) time.Time {
-	y, m, d := b.in.Now.In(houseday.Location()).Date()
+	y, m, d := b.in.Now.In(seedLocation()).Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC).AddDate(0, 0, off)
 }
 

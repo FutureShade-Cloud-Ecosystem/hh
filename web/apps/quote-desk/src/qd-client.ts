@@ -14,6 +14,7 @@
 // the work area parses it through floor-refusal.ts, which validates it field
 // by field like every other read.
 import { err, ok, type ApiClient, type Result } from "@hardscapehouse/api-client";
+import { serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { isNoSignal } from "@hardscapehouse/work-offline";
 import type {
   IdentityApproval,
@@ -1067,6 +1068,8 @@ export class QdClient {
       ...(profile === undefined ? {} : { profile }),
     });
     if (!result.ok) return result;
+    // The dealer's business day zone rides on this read; the desk's day counts follow it.
+    serveHouseZoneFrom(result.value);
     const config = validateConfig(result.value);
     return config === null ? err("the surface config is not readable") : ok(config);
   }
