@@ -16,6 +16,7 @@ import (
 // names, a delivery site, and the dealer's yard name.
 var glsWorldSignatures = []string{
 	"Summit Ridge Builders",
+	"Bluffside Builders",
 	"Copperline Pavers",
 	"Granite Run Quarry",
 	"1180 Quarry Gate Road",
