@@ -134,13 +134,17 @@ func run(args []string, out *os.File, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
+	contractor, err := resolveContractor(ctx, pool)
+	if err != nil {
+		return err
+	}
 	seal, keyed, err := newSealer(cfg.PaymentVaultKey)
 	if err != nil {
 		return err
 	}
 
 	rows, summary, err := buildPlan(planInput{
-		Now: now, Branches: branches, Categories: cats, Personas: personas, Seal: seal})
+		Now: now, Branches: branches, Categories: cats, Personas: personas, Seal: seal, Contractor: contractor})
 	if err != nil {
 		return err
 	}
@@ -260,6 +264,14 @@ func writeSummary(out *os.File, s planSummary) {
 		}
 		fmt.Fprintln(out, "  quote share links")
 		for _, l := range s.QuoteLinks {
+			fmt.Fprintf(out, "    %s\n", l)
+		}
+	}
+	if len(s.ContractorLines) == 0 {
+		fmt.Fprintln(out, "  contractor   none, the contractor account is not on this database yet (apply again after the demo populate)")
+	} else {
+		fmt.Fprintln(out, "  contractor world")
+		for _, l := range s.ContractorLines {
 			fmt.Fprintf(out, "    %s\n", l)
 		}
 	}

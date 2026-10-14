@@ -3,14 +3,19 @@
 // proxied to it. Both servers start here before any test.
 //
 // The browser is the system Chrome through the chrome channel: no browser
-// download rides the npm install. The ports are this app's pair in the Pro
-// cycle's range (stub 56830, app 56831), overridable inline.
+// download rides the npm install. The stub and app ports are free ones taken at
+// config load (never a fixed pair, which an overlapping suite's client sockets can
+// hold), overridable inline with ROLE_STUB_PORT and ROLE_APP_PORT.
 import { defineConfig } from "@playwright/test";
 import { fileURLToPath } from "node:url";
+import { freePorts } from "@hardscapehouse/pro-kit/test-stub/free-port.mjs";
 
 const appDir = fileURLToPath(new URL(".", import.meta.url));
-const appPort = process.env.ROLE_APP_PORT ?? "56831";
-const stubPort = process.env.ROLE_STUB_PORT ?? "56830";
+const [freeApp, freeStub] = await freePorts(2);
+process.env.ROLE_APP_PORT ??= freeApp;
+process.env.ROLE_STUB_PORT ??= freeStub;
+const appPort = process.env.ROLE_APP_PORT;
+const stubPort = process.env.ROLE_STUB_PORT;
 
 export default defineConfig({
   testDir: "./test",

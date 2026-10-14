@@ -949,11 +949,12 @@ export function startStub(port) {
     handle(req, res).catch(() => refuse(res, 500, "internal error"));
   });
   arm();
+  // Port 0 asks the system for a free one; the caller reads the bound port from server.address().
   return new Promise((resolve) => server.listen(port, "127.0.0.1", () => resolve(server)));
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.ROLE_STUB_PORT ?? 56810);
-  await startStub(port);
-  console.log(`tenant-stub listening on ${port}`);
+  const server = await startStub(port);
+  console.log(`tenant-stub listening on ${server.address().port}`);
 }
