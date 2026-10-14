@@ -143,3 +143,39 @@ func TestJurisdiction_TwoDealersInOneProcessDoNotLeak(t *testing.T) {
 		}
 	}
 }
+
+// The Ontario 5 percent relief is Ontario's alone: a California dealer with an Ontario resident or
+// Akwesasne profile and personal use rings a pickup at its own standard, with no 8 percent credit, no
+// 5 percent figure and no Ontario relief reason on the snapshot. An Ontario dealer keeps the 5 percent.
+func TestJurisdiction_OntarioReliefOnlyForAnOntarioDealer(t *testing.T) {
+	for _, elig := range []string{"ON_RESIDENT", "AKWESASNE"} {
+		h := newHarness()
+		h.svc.WithTaxAssessor(californiaAssessor{})
+		h.store.profiles["prof-1"] = eligibilityMasked{ProfileID: "prof-1", OntarioEligibility: elig, MaskedIdentifier: "•••• 1"}
+		out, err := h.svc.AssessRelief(context.Background(), ReliefAssessInput{
+			ProfileID: "prof-1", OrderID: "order-1", DeclaredUse: "personal", Fulfilment: "pickup", SubtotalCents: 10000,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", elig, err)
+		}
+		if out.ReasonCode != TaxStdSales || out.Outcome != "7.75%" || out.RateBps != 775 ||
+			out.OnCreditCents != 0 || out.NetCollectedCents != 775 {
+			t.Fatalf("%s california outcome: %+v", elig, out)
+		}
+		if len(h.store.snapshots) != 1 || h.store.snapshots[0].OnCreditCents != 0 || h.store.snapshots[0].TaxReasonCode != TaxStdSales {
+			t.Fatalf("%s snapshot: %+v", elig, h.store.snapshots)
+		}
+
+		on := newHarness()
+		on.store.profiles["prof-1"] = eligibilityMasked{ProfileID: "prof-1", OntarioEligibility: elig, MaskedIdentifier: "•••• 1"}
+		got, err := on.svc.AssessRelief(context.Background(), ReliefAssessInput{
+			ProfileID: "prof-1", OrderID: "order-1", DeclaredUse: "personal", Fulfilment: "pickup", SubtotalCents: 10000,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Outcome != "5%" || got.ReasonCode != TaxONFNPos8 || got.OnCreditCents != 800 || got.NetCollectedCents != 500 {
+			t.Fatalf("%s ontario outcome: %+v", elig, got)
+		}
+	}
+}
