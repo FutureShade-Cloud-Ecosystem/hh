@@ -62,6 +62,19 @@ func (h *Handler) createTruck(w http.ResponseWriter, r *http.Request, caller gua
 	httpx.WriteJSON(w, http.StatusCreated, map[string]string{"id": id})
 }
 
+func (h *Handler) updateTruck(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in Truck
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	updated, err := h.svc.UpdateTruck(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, updated)
+}
+
 func (h *Handler) listDrivers(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	q := r.URL.Query()
 	items, err := h.svc.Drivers(r.Context(), q.Get("branch_id"), q.Get("include_inactive") == "true")
@@ -83,6 +96,19 @@ func (h *Handler) createDriver(w http.ResponseWriter, r *http.Request, caller gu
 		return
 	}
 	httpx.WriteJSON(w, http.StatusCreated, map[string]string{"id": id})
+}
+
+func (h *Handler) updateDriver(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in Driver
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	updated, err := h.svc.UpdateDriver(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, updated)
 }
 
 // - board + stops -

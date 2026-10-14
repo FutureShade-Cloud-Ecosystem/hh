@@ -246,8 +246,20 @@ func TestDemoWorld_NoCustomerNamedLikeAScrubPlaceholder(t *testing.T) {
 		Scan(&islandAfter); err != nil {
 		t.Fatalf("the island customer vanished from the world: %v", err)
 	}
-	if islandAfter == snIslandScrubbedName || !strings.Contains(islandAfter, "(demo)") {
-		t.Errorf("the island customer reads %q after the seed, want a believable (demo) name in the style of the seeded customers", islandAfter)
+	if islandAfter == snIslandScrubbedName || islandAfter == "" {
+		t.Errorf("the island customer reads %q after the seed, want a believable invented name", islandAfter)
+	}
+
+	// 5b. the island's portal login is the other Dibbits flavoured row 0055 plants (a staff
+	// portal-users screen lists it): after the seed no portal user carries a dealer's name in its
+	// email or a scrub placeholder for a name. Migration 0055 itself is never edited.
+	var portalBad int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM portal_users WHERE email ILIKE '%dibbits%' OR name ~ 'Scrubbed (Party|Customer|Record|Acct) [0-9]{4}'`).
+		Scan(&portalBad); err != nil {
+		t.Fatalf("reading portal users: %v", err)
+	}
+	if portalBad != 0 {
+		t.Errorf("after the demoseed ran, %d portal user(s) still carry a dealer's name or a scrub placeholder", portalBad)
 	}
 
 	// 6. idempotent: a second apply creates nothing and moves no name.

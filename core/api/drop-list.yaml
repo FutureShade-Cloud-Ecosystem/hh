@@ -16,6 +16,12 @@ drops:
     reason: "Not a route: a comment line in order/activity.go:27 quoting an API framing the surface exists to hide. The literal grep cannot tell comments from registrations."
 
 additions:
+  - route: "GET /.well-known/jwks.json"
+    reason: "The deployment's own session JWK Set (current, NEXT and PREVIOUS public keys); the ERP signed with shared HS256 secrets and had no key set."
+  - route: "POST /api/v1/auth/exchange"
+    reason: "The real sign in through FB Console: a Console JWT and an org slug for a core session token, behind the gates of the state note HH-S4-AUTH section 3; the ERP signed in with its own password table."
+  - route: "GET /api/v1/auth/methods"
+    reason: "The dealer's own allowed sign in methods, read by the sign in screen before anyone signs in (state note HH-S4-AUTH section 5b); the ERP offered one password sign in to every dealer."
   - route: "GET /api/v1/sync/{scope}"
     reason: "Context 4.5 sync protocol, one pull per manifest offline scope; the ERP has no sync endpoint."
   - route: "POST /api/v1/sync/{scope}"
@@ -146,3 +152,7 @@ additions:
     reason: "The vendor create route of the roles roadmap's Buying and Stock core slice (vendor_master.go); the ERP had no vendor create or edit route."
   - route: "PUT /api/v1/purchasing/vendors/{vendorID}"
     reason: "The vendor edit route of the roles roadmap's Buying and Stock core slice (vendor_master.go); the ERP had no vendor create or edit route."
+  - route: "PUT /api/v1/dispatch/trucks/{id}"
+    reason: "The truck registry update, the fields the create takes plus active or not (the roles roadmap's Dispatch core): the ERP registered trucks but never edited one; no ERP source route."
+  - route: "PUT /api/v1/dispatch/drivers/{id}"
+    reason: "The driver registry update, the truck update's twin (the login link included): the ERP registered drivers but never edited one; no ERP source route."

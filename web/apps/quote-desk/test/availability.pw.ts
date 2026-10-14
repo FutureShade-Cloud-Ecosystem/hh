@@ -49,8 +49,8 @@ test("a thin line says so in words and its peek shows every branch the server re
   await thin.getByRole("button", { name: "Other branches" }).click();
   const rows = panel(page).getByTestId("av-branch");
   await expect(rows).toHaveCount(2);
-  await expect(rows.nth(0)).toContainText("TRE (this branch): 2 available");
-  await expect(rows.nth(1)).toContainText("BEL: 60 available");
+  await expect(rows.nth(0)).toContainText("PLM (this branch): 2 available");
+  await expect(rows.nth(1)).toContainText("JUL: 60 available");
   // The caller is on the cost list: the average cost rides, in money words.
   await expect(rows.nth(1)).toContainText("avg cost $");
   await shot(panel(page), "availability-peek");
@@ -60,12 +60,12 @@ test("a thin line says so in words and its peek shows every branch the server re
 });
 
 test("a branch with nothing is still a row, said as none available", async ({ page, request }) => {
-  await request.put("/_stub/stock", { data: { product_id: "p-clear-stone", trenton: 2, belleville: 0 } });
+  await request.put("/_stub/stock", { data: { product_id: "p-clear-stone", pointLoma: 2, julian: 0 } });
   await signIn(page);
   await openQuote(page, "Accepted");
   await panel(page).getByRole("button", { name: "Other branches" }).click();
   await expect(panel(page).getByTestId("av-branch")).toHaveCount(2);
-  await expect(panel(page).getByTestId("av-branch").nth(1)).toContainText("BEL: none available");
+  await expect(panel(page).getByTestId("av-branch").nth(1)).toContainText("JUL: none available");
 });
 
 test("the average cost is absent for an off list caller, and never a zero", async ({ page, request }) => {
@@ -79,13 +79,13 @@ test("the average cost is absent for an off list caller, and never a zero", asyn
 });
 
 test("each grade carries its own word and look: none and thin and unreported are different answers", async ({ page, request }) => {
-  await request.put("/_stub/stock", { data: { product_id: "p-clear-stone", trenton: 0 } });
+  await request.put("/_stub/stock", { data: { product_id: "p-clear-stone", pointLoma: 0 } });
   await signIn(page);
   await openQuote(page, "Accepted");
   const none = panel(page).getByTestId("av-chip").filter({ hasText: "none available" });
   await expect(none).toHaveAttribute("data-avail-grade", "NONE");
   await expect(none).toHaveClass(/red/);
-  await request.put("/_stub/stock", { data: { product_id: "p-clear-stone", trenton: 2 } });
+  await request.put("/_stub/stock", { data: { product_id: "p-clear-stone", pointLoma: 2 } });
   await page.reload();
   await page.getByRole("button", { name: "Sales manager", exact: true }).click();
   await openQuote(page, "Accepted");
@@ -111,7 +111,7 @@ test("a stock change shows when quote-changed reaches the panel", async ({ page,
   await signIn(page);
   await openQuote(page, "Q-1001");
   await expect(panel(page).getByTestId("av-chip").first()).toHaveText("400 available");
-  await request.put("/_stub/stock", { data: { product_id: "p-holland-60", trenton: 5 } });
+  await request.put("/_stub/stock", { data: { product_id: "p-charcoal-60", pointLoma: 5 } });
   await panel(page).evaluate((el) => el.dispatchEvent(new CustomEvent("quote-changed", { bubbles: true, composed: true, detail: { quoteId: "q-1001" } })));
   await expect(panel(page).getByTestId("av-chip").first()).toHaveText("only 5 of 120");
 });

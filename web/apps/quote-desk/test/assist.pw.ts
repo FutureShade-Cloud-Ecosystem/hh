@@ -11,7 +11,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { shot } from "./shot";
 import { showList } from "./switch-helpers.js";
 
-const TEXT = "3 yd clear stone, 20 sf holland stone, jointing sand, a bobcat for the day";
+const TEXT = "3 yd clear stone, 20 sf charcoal stone, jointing sand, a bobcat for the day";
 
 async function openDraft(page: Page): Promise<void> {
   await page.goto("/");
@@ -82,7 +82,7 @@ test("ticking and confirming adds only the ticked lines, and the suggestions shr
   await expect(edit(page).getByTestId("qe-line").nth(2)).toContainText("Clear Stone");
   // The untouched proposals are still waiting, unticked.
   await expect(proposals(page)).toHaveCount(2);
-  await expect(rowOf(page, "Holland Stone").locator('input[type="checkbox"]')).not.toBeChecked();
+  await expect(rowOf(page, "Charcoal Stone").locator('input[type="checkbox"]')).not.toBeChecked();
   // A base line now stands, so the base suggestion is gone and the others remain.
   await expect(assist(page).getByTestId("qa-finding")).toHaveCount(2);
   await expect(assist(page).getByTestId("qa-gaps")).not.toContainText("Granular base for the paved area");
@@ -112,10 +112,10 @@ test("Not this removes a proposal", async ({ page }) => {
   await openDraft(page);
   await paste(page, TEXT);
   await expect(proposals(page)).toHaveCount(3);
-  await rowOf(page, "Holland Stone").getByRole("button", { name: "Not this" }).click();
+  await rowOf(page, "Charcoal Stone").getByRole("button", { name: "Not this" }).click();
   await expect(proposals(page)).toHaveCount(2);
   await expect(assist(page).getByText("0 of 2 ticked")).toBeVisible();
-  await expect(rowOf(page, "Holland Stone")).toHaveCount(0);
+  await expect(rowOf(page, "Charcoal Stone")).toHaveCount(0);
 });
 
 test("a gap can be dismissed and brought back, and Find reads its query into the review list", async ({ page }) => {

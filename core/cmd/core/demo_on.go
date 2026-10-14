@@ -45,8 +45,10 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
+	portalmod "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/portal"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
@@ -84,6 +86,15 @@ func demoDispatch(role string, args []string) bool {
 // JWK Set URL (the key source is in memory) and none of the platform
 // client's values (the demo membership source replaces it).
 type demoServeConfig struct {
+	// signin is the mode the copy declared (CORE_SIGNIN_MODE, no default).
+	// The fields below it that the console mode needs (issuer and the FB
+	// Console values) stay empty in the demo mode, whose composition is the
+	// one this file always made.
+	signin         signinMode
+	issuer         string
+	appwriteURL    string
+	appwriteProj   string
+	appwriteKey    string
 	databaseURL    string
 	staffAudience  string
 	tenantAudience string
@@ -115,11 +126,39 @@ func loadDemoServeConfig(getenv func(string) string) (demoServeConfig, error) {
 	if err != nil {
 		return demoServeConfig{}, err
 	}
+	mode, err := readSigninMode(getenv, true)
+	if err != nil {
+		return demoServeConfig{}, err
+	}
 	cfg := demoServeConfig{
+		signin:         mode,
 		databaseURL:    databaseURL,
 		staffAudience:  staff,
 		tenantAudience: tenant,
 		listenAddr:     addr,
+	}
+	if mode == signinConsole {
+		// The console mode runs the real issuer and FB Console membership,
+		// so it needs the same names the default build needs for them.
+		cfg.issuer = strings.TrimSpace(getenv("CORE_TOKEN_ISSUER"))
+		cfg.appwriteURL = strings.TrimSpace(getenv("CORE_APPWRITE_ENDPOINT"))
+		cfg.appwriteProj = strings.TrimSpace(getenv("CORE_APPWRITE_PROJECT"))
+		cfg.appwriteKey = strings.TrimSpace(getenv("CORE_APPWRITE_API_KEY"))
+		var missing []string
+		for env, v := range map[string]string{
+			"token issuer (CORE_TOKEN_ISSUER)":           cfg.issuer,
+			"Appwrite endpoint (CORE_APPWRITE_ENDPOINT)": cfg.appwriteURL,
+			"Appwrite project (CORE_APPWRITE_PROJECT)":   cfg.appwriteProj,
+			"Appwrite API key (CORE_APPWRITE_API_KEY)":   cfg.appwriteKey,
+		} {
+			if v == "" {
+				missing = append(missing, env)
+			}
+		}
+		if len(missing) > 0 {
+			return demoServeConfig{}, fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
+		}
+		return cfg, nil
 	}
 	if raw := strings.TrimSpace(getenv(issuer.TokenTTLVar)); raw != "" {
 		d, err := time.ParseDuration(raw)
@@ -148,16 +187,18 @@ func demoServe(getenv func(string) string, lookupEnv func(string) (string, bool)
 	// test holds against the source tree. The environment picture arrives
 	// as an argument, the way getenv and lookupEnv do, so this call is
 	// pinned by a test through demoServe and not only inside the boot
-	// package. The allow list's CORE_ prefix is the plan's own: every
-	// future CORE_* name classes as allowed on the demo box without
-	// anyone looking at it, which is G4's stated blind spot and not an
-	// oversight of this wiring.
+	// package. CORE_ is not allowed wholesale: a CORE_ name is carried on
+	// a demo box only when demoEnvAllowCoreNames states it, so a future
+	// name fails the boot until someone classes it. The console sign in
+	// mode is a declared shape (its names are on that list).
 	if err := boot.RefuseProviderVars(environ(), boot.ProviderDeny{
 		Prefixes:         demoEnvDenyPrefixes,
 		PrefixExceptions: demoEnvPlaneBridgeAllowNames,
 		Names:            demoEnvDenyNames,
 		CardVar:          demoEnvCardProcessorVar,
 		CardAllowed:      demoEnvCardProcessorValue,
+		ExplicitPrefix:   demoEnvExplicitPrefix,
+		ExplicitAllowed:  demoEnvAllowCoreNames,
 	}); err != nil {
 		return err
 	}
@@ -236,6 +277,7 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
+	dealer.Set(cfg.DealerName)
 	log := slog.Default()
 
 	demoCfg, err := loadDemoServeConfig(getenv)
@@ -247,13 +289,34 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// process; the verifier is the unchanged production verifier over the
 	// static key source, so no JWK Set URL is configured and no key set
 	// route exists.
-	iss, err := issuer.New(demoCfg.staffAudience, demoCfg.tokenTTL)
-	if err != nil {
-		return nil, err
+	//
+	// Under CORE_SIGNIN_MODE=console the in memory issuer is not built at
+	// all: the persistent key source and the deployment's real issuer take
+	// its place (state note section 6), and the verifier reads the same
+	// in process key set the JWK Set route serves.
+	var (
+		iss       *issuer.Issuer
+		session   *sessionComposition
+		keySource identity.KeySource
+		claimIss  string
+	)
+	if demoCfg.signin == signinConsole {
+		session, err = loadSessionComposition(getenv, demoCfg.issuer, demoCfg.staffAudience)
+		if err != nil {
+			return nil, err
+		}
+		warnUnusedJWKSURL(log, getenv)
+		keySource, claimIss = session.keys, demoCfg.issuer
+	} else {
+		iss, err = issuer.New(demoCfg.staffAudience, demoCfg.tokenTTL, issuer.WithTenantAudience(demoCfg.tenantAudience))
+		if err != nil {
+			return nil, err
+		}
+		keySource, claimIss = iss.KeySource(), issuer.ClaimIssuer
 	}
 	verifier, err := identity.NewVerifier(identity.Config{
-		KeySource:      iss.KeySource(),
-		Issuer:         issuer.ClaimIssuer,
+		KeySource:      keySource,
+		Issuer:         claimIss,
 		StaffAudience:  demoCfg.staffAudience,
 		TenantAudience: demoCfg.tenantAudience,
 	})
@@ -278,7 +341,16 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// Piece 3: the demo membership source. The platform client is never
 	// constructed on a demo box and its environment values are never
 	// read; membership answers only the demo org and the flow accounts.
-	members := membership.New()
+	var members authz.MembershipSource
+	if demoCfg.signin == signinConsole {
+		members, err = demoConsoleMembership(demoCfg)
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+	} else {
+		members = membership.New()
+	}
 	orgs, err := authz.NewPgxOrgResolver(pool)
 	if err != nil {
 		pool.Close()
@@ -336,12 +408,24 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// role gate.
 	rec := shims.NewRecorder(1024)
 	shims.RegisterRoutes(r, g, rec)
-	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
+	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(demo.DealerConfig())))
+	if session != nil {
+		r.Handle("GET /.well-known/jwks.json", g.Public(session.keys.JWKSHandler()))
+	}
 
 	belt := buildSmsBelt(pool, log)
 	money := wireMoney(r, pool, g, log, cfg.StaffBaseURL, roleCfg)
 	ops := wireOperations(r, pool, g, log, money, getenv("CORE_STREAM_TICKET_KEY"), belt.outbox)
 	tops := wireTops(r, pool, g, log, money, ops, cfg, roleCfg, belt)
+	// The demo dealer's name and brand reach the contractor answers too: the
+	// portal service's login and refresh config is the demo seed's, so the
+	// Pro apps read Gable Landscape Supply there as on the public route
+	// (the shared default names no dealer, decision log row 1592).
+	dealer := demo.DealerConfig()
+	tops.portalSvc.WithConfig(portalmod.Config{
+		ID: dealer.Id, DealerName: dealer.DealerName, LogoURL: dealer.LogoUrl,
+		PrimaryColor: dealer.PrimaryColor, SupportEmail: dealer.SupportEmail, SupportPhone: dealer.SupportPhone,
+	})
 	if err := wirePaymentGrant(r, g, roleGate, tops.posHandler); err != nil {
 		pool.Close()
 		return nil, err
@@ -374,6 +458,29 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
+	// The sign in exchange (item 6b), console mode only: the same handler
+	// the default build mounts, over the uncached FB Console source. The
+	// demo mode has no exchange.
+	if demoCfg.signin == signinConsole {
+		exch, err := buildExchange(exchangeDeps{
+			getenv: getenv, log: log, pool: pool, session: session,
+			appwrite: appwriteNames{endpoint: demoCfg.appwriteURL, project: demoCfg.appwriteProj, apiKey: demoCfg.appwriteKey},
+			orgs:     orgs, staff: staff, knob: dispatchDriverSessionKnob{repo: dispatch.NewRepository(pool)},
+			audit: money.auditSvc,
+		})
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		r.Handle("POST /api/v1/auth/exchange", g.Public(exch))
+		methodsRoute, err := buildMethods(exchangeDeps{getenv: getenv, pool: pool, orgs: orgs})
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		r.Handle("GET /api/v1/auth/methods", g.Public(methodsRoute))
+	}
+
 	// The demo module's mint routes (W2): the tap-a-role sign-in, the
 	// parity ledger's demo pair, pre-auth by design and registered on the
 	// public leg the tenant config uses. The module builds on this file's
@@ -381,18 +488,36 @@ func demoRegisterRoutes(r httpx.Registrar, getenv func(string) string) (*appGrap
 	// recorder the money spine already writes its trail with, and the
 	// closed flow table; the per-address limit arrives by constructor too
 	// and the wiring names none, so the default allowance stands.
-	mint, err := demo.NewMint(demo.MintDeps{Minter: iss, Orgs: orgs, Staff: staff, Audit: money.auditSvc})
-	if err != nil {
-		pool.Close()
-		return nil, err
+	//
+	// Registered in the demo mode only. Under the console mode the old mint
+	// routes are not registered and answer 404: a copy that signs real
+	// sessions has no credential-free mint.
+	var demoMint func(string) (string, error)
+	if demoCfg.signin == signinDemo {
+		mint, err := demo.NewMint(demo.MintDeps{Minter: iss, TenantMinter: iss, Portal: portal, Orgs: orgs, Staff: staff, Audit: money.auditSvc})
+		if err != nil {
+			pool.Close()
+			return nil, err
+		}
+		r.Handle("GET /api/v1/demo/flows", g.Public(http.HandlerFunc(mint.Flows)))
+		r.Handle("POST /api/v1/demo/session", g.Public(http.HandlerFunc(mint.Session)))
+		demoMint = iss.Mint
 	}
-	r.Handle("GET /api/v1/demo/flows", g.Public(http.HandlerFunc(mint.Flows)))
-	r.Handle("POST /api/v1/demo/session", g.Public(http.HandlerFunc(mint.Session)))
 
 	return &appGraph{
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,
-		money: money, ops: ops, tops: tops, smsBelt: belt, demoMint: iss.Mint, listenAddr: demoCfg.listenAddr,
+		money: money, ops: ops, tops: tops, smsBelt: belt, demoMint: demoMint, listenAddr: demoCfg.listenAddr,
+		signin: demoCfg.signin, session: session, members: members,
 	}, nil
+}
+
+// demoConsoleMembership is the seam item 7 fills: under the console mode
+// the demo build's membership is FB Console's behind its cache, and item 7
+// wraps it in the composite that answers the persona subjects from a static
+// source compiled into this build only. Until then it is the console source
+// alone, exactly the default build's.
+func demoConsoleMembership(cfg demoServeConfig) (authz.MembershipSource, error) {
+	return consoleMembership(cfg.appwriteURL, cfg.appwriteProj, cfg.appwriteKey)
 }
 
 // demoRoleConfig is the default's demo path: the decided default document

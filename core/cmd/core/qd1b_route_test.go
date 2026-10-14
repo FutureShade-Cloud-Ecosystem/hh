@@ -15,13 +15,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
@@ -81,6 +84,9 @@ func qd1bCall(t *testing.T, q *qd1bFixture, method, path, sub string, body any) 
 			t.Fatalf("encode %s: %v", path, err)
 		}
 		rdr = bytes.NewReader(raw)
+		if method == http.MethodPost && strings.HasPrefix(path, "/api/v1/sync/") {
+			qd1bSweepLedger(t, q, raw)
+		}
 	}
 	req := httptest.NewRequest(method, path, rdr)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -91,6 +97,57 @@ func qd1bCall(t *testing.T, q *qd1bFixture, method, path, sub string, body any) 
 	rec := httptest.NewRecorder()
 	q.fx.reg.inner.ServeHTTP(rec, req)
 	return rec.Code, rec.Body.String()
+}
+
+// qd1bSweepLedger deletes the engine's key ledger rows of every client id in
+// a pushed body, before the push and again when the test ends. The ledger
+// binds a key to its first body for good, so a leg that pushes a fixed client
+// id on a gate a tagged run has already used (CI's demo job runs the untagged
+// suite and then the demo tag suite on one gate) would meet its own earlier
+// row: replayed as bound with nothing written, or refused as a reused key.
+// The legs sweep the rows they plant; the ledger row is one of them.
+var (
+	qd1bSweptMu sync.Mutex
+	qd1bSwept   = map[string]bool{}
+)
+
+func qd1bSweepLedger(t *testing.T, q *qd1bFixture, raw []byte) {
+	t.Helper()
+	var body struct {
+		Ops []struct {
+			ClientID string `json:"client_id"`
+		} `json:"ops"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return
+	}
+	for _, op := range body.Ops {
+		if _, err := uuid.Parse(op.ClientID); err != nil {
+			continue
+		}
+		id := op.ClientID
+		// Once per leg: a leg that pushes one key twice to see it replay
+		// must keep the row its first push planted.
+		mark := fmt.Sprintf("%p/%s", t, id)
+		qd1bSweptMu.Lock()
+		seen := qd1bSwept[mark]
+		qd1bSwept[mark] = true
+		qd1bSweptMu.Unlock()
+		if seen {
+			continue
+		}
+		sweep := func() {
+			_, _ = q.pool.Exec(context.Background(),
+				`DELETE FROM sync_op_hashes WHERE client_id = $1::uuid`, id)
+		}
+		sweep()
+		t.Cleanup(func() {
+			sweep()
+			qd1bSweptMu.Lock()
+			delete(qd1bSwept, mark)
+			qd1bSweptMu.Unlock()
+		})
+	}
 }
 
 // qd1bUserID reads one planted principal's linked ERP users.id (the

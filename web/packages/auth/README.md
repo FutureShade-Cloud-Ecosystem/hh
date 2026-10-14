@@ -367,13 +367,32 @@ foreign X- header (the only X- header it owns is X-Org).
   and `redirect: "error"`; Google navigates (through an injectable
   `navigate`) to the console's OAuth route with absolute success and failure
   URLs that must be on the page's own origin. The package root never imports
-  the adapter. The Tauri shells forward `exchange` to their Rust
-  `auth_exchange` command instead (`shared/AUTH-SHELL-CONTRACT.md`).
+  the adapter. The Tauri shells use the shell adapter below instead
+  (`shared/AUTH-SHELL-CONTRACT.md`).
   The adapter was first built on the Appwrite web SDK and moved off it
   because that SDK copies a session fallback into local storage
   (`cookieFallback`) whenever FB Console sends `X-Fallback-Cookies`, which
   breaks the custody rule above. Now the adapter never reads that response
   header, never sets it on a request, and touches no storage of any kind.
+- **The shell adapter** is `createTauriAccountSurface({invoke})` from the
+  separate entry `@hardscapehouse/auth/tauri-adapter` (`src/tauri-adapter.ts`).
+  It implements the same `AccountSurface` over the four Rust commands
+  (`auth_sign_in`, `auth_resume`, `auth_exchange`, `auth_sign_out`) through an
+  injected `invoke`, so no `@tauri-apps` module is bundled into a browser
+  build, and the host chooses between this adapter and the browser one:
+  apps do not branch. It holds nothing: the FB Console session secret and
+  every Console JWT stay in Rust, and the webview receives the user and the
+  core's token. A rejection is `{code}`; the adapter's messages carry the
+  code and nothing else. `offline`, `unavailable`, `rate_limited` and
+  `keychain_unavailable` surface as `PlatformUnreachableError` (a resume that
+  meets one keeps the profile and the lock), `no_session` and the rest as a
+  plain error; at the exchange only `unauthorized`, `forbidden` and
+  `no_session` end a session, and `bad_credentials` or a locked keychain read
+  as `unavailable`. Google is not offered in a shell. `onShellSignedOut`
+  subscribes (through an injected `listen`) to the `auth:signed-out` event
+  `auth_sign_out` emits so every window drops its token. Personas are not
+  Console users: the webview calls the core's persona route with `fetch` and
+  holds no keychain entry, so nothing persona shaped passes through here.
 - `CredentialProvider` (src/lock.ts) is the WebAuthn surface: `isAvailable`,
   `create`, `verify`. `webAuthnCredentialProvider()` is the platform adapter
   a shell wires.
@@ -383,7 +402,8 @@ foreign X- header (the only X- header it owns is X-Org).
 ## Public surface
 
 The package declares an exports map: `.` is `src/index.ts`, `./testing`
-is `src/testing.ts` and `./appwrite-adapter` is `src/appwrite-adapter.ts`.
+is `src/testing.ts`, `./appwrite-adapter` is `src/appwrite-adapter.ts` and
+`./tauri-adapter` is `src/tauri-adapter.ts`.
 Nothing else is importable, so no caller deep-imports
 an internal; the test doubles ride the `./testing` subpath and never the
 public entry.
@@ -433,6 +453,12 @@ The gates, as tests:
   a fresh JWT per attempt, the one retry on a core 401, every refusal code,
   the JWT never leaving the adapter, same-origin OAuth redirects, and the
   package root and the adapter free of any SDK.
+
+- `test/tauri-adapter.test.mjs`: a fake `invoke` asserts the exact commands
+  and arguments, every contract code mapped to the package's kinds, no input
+  or token in any message, only the four commands ever invoked, the source
+  free of any `@tauri-apps` import, and the controller signing in and out
+  through the adapter with the token in memory only.
 
 - `test/custody.test.mjs`: the token lives in memory and the mirror carries
   the display profile and nothing else; nothing in storage is

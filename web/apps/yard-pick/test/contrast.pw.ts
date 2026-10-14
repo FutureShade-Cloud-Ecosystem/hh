@@ -124,7 +124,7 @@ test("every word on the walked screens reads at 4.5 to 1 or more, in both themes
     await expect(page.locator("[data-task-status]")).toHaveText("Picking");
     await expectReadable(page, `${theme}: the pick started`);
 
-    await page.locator("[data-line]", { hasText: "Granular A gravel" }).locator(".line-row").click();
+    await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
     for (let i = 0; i < 4; i += 1) await page.getByRole("button", { name: "Add one on" }).click();
     await chooseReason(page, "line", "NOT_IN_YARD");
     await expectReadable(page, `${theme}: the line editor with the reason chosen`);

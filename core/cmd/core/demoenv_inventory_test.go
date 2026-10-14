@@ -152,6 +152,11 @@ func classedEnvironmentName(name string) bool {
 			return true
 		}
 	}
+	for _, allowed := range demoEnvAllowCoreNames {
+		if name == allowed {
+			return true
+		}
+	}
 	for _, prefix := range demoEnvAllowPrefixes {
 		if strings.HasPrefix(name, prefix) {
 			return true

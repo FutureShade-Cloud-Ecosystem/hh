@@ -402,8 +402,84 @@ export const dealerStyles = css`
     gap: var(--hh-s-8);
   }
 
-  /* -- the audit trail ------------------------------------------------------------------ */
+  /* -- the admin-rest surfaces (assist first; the rest land beside it) -- */
 
+  /* The allowance meter: a track and a fill whose width the host sets in
+     code (the position gate binds no style), the original's own two box
+     model on HH's tokens. A person at their limit is not an error: dimmed,
+     never red. */
+  .meter {
+    display: grid;
+    gap: var(--hh-s-4);
+    min-width: 150px;
+  }
+  .meter-track {
+    height: 6px;
+    border-radius: var(--hh-radius-pill);
+    background: var(--hh-widget-raised);
+    border: 1px solid var(--hh-hairline);
+    overflow: hidden;
+  }
+  .meter-fill {
+    height: 100%;
+    width: 0;
+    background: var(--hh-accent);
+  }
+  .meter-spent {
+    background: var(--hh-text-dim);
+  }
+  .edit-row {
+    display: flex;
+    gap: var(--hh-s-8);
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .budget-field {
+    max-width: 140px;
+    min-height: 32px;
+    font-size: 14px;
+  }
+  .toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--hh-s-12);
+    padding: var(--hh-s-12) 0;
+    border-top: 1px solid var(--hh-hairline);
+  }
+  .toggle:first-of-type {
+    border-top: none;
+  }
+  .toggle input {
+    margin-top: 2px;
+    accent-color: var(--hh-accent);
+  }
+  .toggle-text {
+    display: grid;
+    gap: var(--hh-s-2);
+  }
+  .toggle-name {
+    font-size: 14px;
+  }
+  .toggle-why {
+    font-size: 14px;
+    color: var(--hh-text-dim);
+    max-width: 60ch;
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: var(--hh-s-4) var(--hh-s-16);
+    font-size: 14px;
+    margin: var(--hh-s-8) 0 0;
+  }
+  .kv dt {
+    color: var(--hh-text-dim);
+  }
+  .kv dd {
+    margin: 0;
+  }
+
+  /* -- the audit trail ------------------------------------------------------------------ */
   .filters {
     display: flex;
     flex-wrap: wrap;
@@ -446,6 +522,39 @@ export const dealerStyles = css`
     font-size: var(--hh-s-12);
     overflow-x: auto;
     color: var(--hh-text);
+  }
+
+  /* -- the role by surface grid -------------------------------------------------- */
+
+  /* The grid is an eleven column table (the job shapes' own column plus the
+     ten surfaces), so the wrap scrolls rather than squeezing a column into
+     nothing. A cell button keeps its words short: the count by kind, or the
+     registry default. */
+  .cell-btn {
+    white-space: nowrap;
+  }
+  tbody tr th[scope="row"] {
+    font-weight: 400;
+  }
+
+  /* The editor's field rows: the add row's fields and its buttons ride one
+     line while the width holds, and wrap on a narrow card. */
+  .editor-actions {
+    display: flex;
+    align-items: end;
+    gap: var(--hh-s-12);
+    flex-wrap: wrap;
+  }
+  .editor-actions .field {
+    min-width: 140px;
+  }
+  .editor-actions .field-label {
+    display: block;
+  }
+  .section-title {
+    font-size: var(--hh-s-16);
+    font-weight: 650;
+    margin: 0;
   }
 
   /* -- the way in (the demo door) ------------------------------------------------------------------ */

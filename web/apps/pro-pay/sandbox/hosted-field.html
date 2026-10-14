@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Card form</title>
+    <!--
+      THE SANDBOX PROCESSOR STAND-IN. This page plays the part of the payment processor's hosted field: it is the only
+      place in the Pro Pay build that has a card field, it lives outside the app's source on purpose, and the Vite dev
+      server is the only thing that serves it (a production bundle does not carry it). The app mounts it in a frame with
+      sandbox="allow-scripts allow-forms" and no allow-same-origin, so the frame has an opaque origin and the app can
+      read nothing in it. It hands the app a token and nothing else. The sandbox test cards:
+        4000 0000 0000 0002 makes a token the stub declines, 4000 0000 0000 0341 makes a token the stub holds as pending,
+        any other number makes a token the stub accepts. No real card is ever used here and nothing leaves this page
+        but the token.
+    -->
+    <style>
+      body { margin: 0; padding: 8px; font: 16px system-ui, sans-serif; color: #14202e; background: transparent; }
+      label { display: block; font-size: 13px; margin: 8px 0 4px; }
+      input { width: 100%; box-sizing: border-box; min-height: 44px; padding: 0 12px; font: inherit; border: 1px solid #8a94a0; border-radius: 8px; }
+      .row { display: flex; gap: 8px; }
+      .row > div { flex: 1; }
+      button { margin-top: 12px; min-height: 44px; padding: 0 20px; font: inherit; border-radius: 8px; border: 1px solid #14202e; background: #fff; cursor: pointer; }
+      p { font-size: 12px; margin: 8px 0 0; color: #4a5562; }
+    </style>
+  </head>
+  <body>
+    <label for="number">Card</label>
+    <input id="number" inputmode="numeric" autocomplete="off" placeholder="Sandbox test card" />
+    <div class="row">
+      <div><label for="expiry">Expires</label><input id="expiry" autocomplete="off" placeholder="MM/YY" /></div>
+      <div><label for="code">Code</label><input id="code" autocomplete="off" placeholder="Code" /></div>
+    </div>
+    <button id="save" type="button">Use this card</button>
+    <p>Sandbox card form. No money moves.</p>
+    <script>
+      var count = 0;
+      document.getElementById("save").addEventListener("click", function () {
+        var digits = document.getElementById("number").value.replace(/\D/g, "");
+        if (digits.length < 12) { document.querySelector("p").textContent = "Enter a sandbox test card."; return; }
+        count += 1;
+        var kind = digits === "4000000000000002" ? "declined" : digits === "4000000000000341" ? "pending" : "ok-" + count + "-" + Date.now().toString(36);
+        parent.postMessage({ type: "hh-hosted-token", token: "stub-nonce-" + kind }, "*");
+        document.getElementById("number").value = "";
+        document.getElementById("code").value = "";
+      });
+    </script>
+  </body>
+</html>
