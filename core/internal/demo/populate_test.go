@@ -478,6 +478,17 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		t.Errorf("payment config: configured=%v merchant=%q processor=%q currency=%q", configured, merchantID, processor, currency)
 	}
 
+	// The dealer's own currency is written beside the card rail row and agrees with it: the rail
+	// refuses a charge whose row disagrees with the dealer (item 3b slice 2).
+	var dealerCurrency string
+	if err := pool.QueryRow(ctx,
+		`SELECT value #>> '{}' FROM system_settings WHERE key = 'currency'`).Scan(&dealerCurrency); err != nil {
+		t.Fatalf("system_settings currency is missing: %v", err)
+	}
+	if dealerCurrency != "USD" || currency != "USD" {
+		t.Errorf("dealer currency %q and card rail currency %q, want both USD", dealerCurrency, currency)
+	}
+
 	// The demo_box row records the run's moment, and the newest seeded
 	// counter sale falls on the same run's day. The day compare is the
 	// seed's own frame, UTC: the seed dates its world from the UTC instant

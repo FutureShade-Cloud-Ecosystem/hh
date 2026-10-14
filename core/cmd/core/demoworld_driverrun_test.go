@@ -41,7 +41,6 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/customerquote"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 )
 
@@ -196,7 +195,7 @@ func TestDemoWorld_DriverRunOutForDelivery(t *testing.T) {
 	// is completed by the driver who drove it.
 	walkTheDay := func(label string, day time.Time) {
 		t.Helper()
-		date := day.In(houseday.Location()).Format("2006-01-02")
+		date := day.In(seedLocation()).Format("2006-01-02")
 
 		rsp := driver.call("GET", "/api/v1/dispatch/my-runs?date="+date, nil)
 		rsp.ok(t, http.StatusOK)
@@ -320,7 +319,7 @@ func TestDemoWorld_DriverRunPayloadsCarryNoMoney(t *testing.T) {
 
 	// The dispatched run of the day, and its stops: the payloads under test. The precondition
 	// fails loudly on a world without the run, so the leg can never pass vacuously.
-	rsp := driver.call("GET", "/api/v1/dispatch/my-runs?date="+qwClock.In(houseday.Location()).Format("2006-01-02"), nil)
+	rsp := driver.call("GET", "/api/v1/dispatch/my-runs?date="+qwClock.In(seedLocation()).Format("2006-01-02"), nil)
 	rsp.ok(t, http.StatusOK)
 	var list struct {
 		Items []driveRun `json:"items"`

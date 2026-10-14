@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
 )
 
@@ -211,6 +212,41 @@ func TestDemoServeChecksTheDatabaseBeforeTheListener(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "demo database check") {
 		t.Fatalf("refusal %q is not the database guard firing before the listener", err)
+	}
+}
+
+// The testers' copy per-visitor allowance is read once at boot, capped at
+// the maximum so it cannot be unbounded, and falls back to the default when
+// unset or invalid.
+func TestDemoServeVisitorAllowance(t *testing.T) {
+	env := serveEnv(t)
+	env["CORE_SIGNIN_MODE"] = "demo"
+	getenv, _, _ := envFuncs(env)
+
+	cfg, err := loadDemoServeConfig(getenv)
+	if err != nil {
+		t.Fatalf("loadDemoServeConfig: %v", err)
+	}
+	if cfg.visitorAllowance != demo.DefaultBurstAllowance {
+		t.Errorf("unset allowance = %d, want default %d", cfg.visitorAllowance, demo.DefaultBurstAllowance)
+	}
+
+	env["HH_DEMO_MINT_VISITOR_ALLOWANCE"] = "14"
+	cfg, err = loadDemoServeConfig(getenv)
+	if err != nil {
+		t.Fatalf("loadDemoServeConfig with 14: %v", err)
+	}
+	if cfg.visitorAllowance != 14 {
+		t.Errorf("allowance 14 = %d, want 14", cfg.visitorAllowance)
+	}
+
+	env["HH_DEMO_MINT_VISITOR_ALLOWANCE"] = "100"
+	cfg, err = loadDemoServeConfig(getenv)
+	if err != nil {
+		t.Fatalf("loadDemoServeConfig with 100: %v", err)
+	}
+	if cfg.visitorAllowance != 20 {
+		t.Errorf("allowance 100 = %d, want capped 20", cfg.visitorAllowance)
 	}
 }
 

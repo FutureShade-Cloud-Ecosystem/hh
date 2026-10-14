@@ -86,6 +86,19 @@ type Service struct {
 	store      StoreIface
 	hooks      map[string]SurfaceHooks
 	callerFrom func(context.Context) (identity.StaffContext, bool)
+	zone       ZoneSource
+}
+
+// ZoneSource answers the dealer's business day zone (an IANA name). The dealer configuration reader
+// is one; a kit built without one serves no zone and the web keeps its Ontario default.
+type ZoneSource interface {
+	BusinessZone(ctx context.Context) (string, error)
+}
+
+// WithZone serves the dealer's business day zone on every config read. Chainable at wiring time.
+func (s *Service) WithZone(z ZoneSource) *Service {
+	s.zone = z
+	return s
 }
 
 // NewService builds the kit service over a store.
@@ -145,6 +158,10 @@ type SurfaceConfig struct {
 	UserItems    []Item        `json:"user_items"`
 	Workspace    WorkspaceView `json:"workspace"`
 	Policy       any           `json:"policy,omitempty"`
+	// BusinessZone is the dealer's business day zone (an IANA name), so a surface names the dealer's
+	// day and not the browser's or a compiled in one. Absent when the kit has no zone source; the
+	// web then keeps its Ontario default.
+	BusinessZone string `json:"business_zone,omitempty"`
 }
 
 // ConfigOpt narrows a config read. Options rather than a fourth positional argument so the six
@@ -220,6 +237,13 @@ func (s *Service) Config(ctx context.Context, surfaceID, branchID string, opts .
 			return SurfaceConfig{}, perr
 		}
 		cfg.Policy = p
+	}
+	if s.zone != nil {
+		z, zerr := s.zone.BusinessZone(ctx)
+		if zerr != nil {
+			return SurfaceConfig{}, zerr
+		}
+		cfg.BusinessZone = z
 	}
 	return cfg, nil
 }
