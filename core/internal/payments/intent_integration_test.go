@@ -158,15 +158,15 @@ func TestAcceptance_Intent_UnstableRefGateway_CannotDoubleCharge(t *testing.T) {
 	}
 }
 
-// TestAcceptance_Intent_CrashWindowRetry_RefusesRatherThanRecharges is the failure this whole
-// mechanism exists for, reproduced directly: the capture succeeded at the processor and the settle
-// never committed. The invoices are still FINALIZED and fully payable, so every pre-charge check
-// passes and the old code would have charged again.
+// TestAcceptance_Intent_CrashWindowRetry_ResumesTheStampedChargeNeverRecharges is the failure this
+// whole mechanism exists for, reproduced directly: the capture succeeded at the processor, its ref
+// was stamped, and the settle never committed. The invoices are still FINALIZED and fully payable,
+// so every pre-charge check passes and the old code would have charged again.
 //
-// The correct answer is to REFUSE. We cannot tell "the processor never saw it" from "the processor
-// took the money and the ack was lost", and resolving that ambiguity by charging again resolves it
-// with the customer's money.
-func TestAcceptance_Intent_CrashWindowRetry_RefusesRatherThanRecharges(t *testing.T) {
+// A stamped ref exists only after the processor approved, so the money has moved and the retry on
+// the same key settles against that ref: one payment, no second charge. (Before PRO-I this answered
+// ErrPaymentInFlight and left the intent stuck for a human; the unstamped window below still does.)
+func TestAcceptance_Intent_CrashWindowRetry_ResumesTheStampedChargeNeverRecharges(t *testing.T) {
 	ctx := context.Background()
 	gw := newUnstableRefGateway()
 	rig := newPayRig(t, gw)
@@ -189,39 +189,65 @@ func TestAcceptance_Intent_CrashWindowRetry_RefusesRatherThanRecharges(t *testin
 		t.Fatalf("stamp ref: %v", err)
 	}
 
-	// The invoice is untouched and fully payable, this is precisely why the payability check cannot
-	// be the guard.
-	var status string
-	var balance int64
-	if err := rig.pool.QueryRow(ctx, `SELECT status, balance_cents FROM invoices WHERE id = $1::uuid`, rig.invoiceA).
-		Scan(&status, &balance); err != nil {
-		t.Fatalf("read invoice: %v", err)
+	p, err := rig.svc.Pay(ctx, rig.customerID, req)
+	if err != nil {
+		t.Fatalf("a retry on a stamped, approved charge must settle it: %v", err)
 	}
-	if status != "FINALIZED" || balance != 40000 {
-		t.Fatalf("the crash window requires a still-payable invoice, got %s/%d", status, balance)
-	}
-
-	_, err = rig.svc.Pay(ctx, rig.customerID, req)
-	if !errors.Is(err, ErrPaymentInFlight) {
-		t.Fatalf("a retry into the crash window must return ErrPaymentInFlight, got %v", err)
+	if p.GatewayRef != "run_trans_orphan_1" || p.AmountCents != 40000 {
+		t.Fatalf("settled %+v, want the stamped ref for 40000", p)
 	}
 	if n := gw.chargeCount(); n != 0 {
 		t.Fatalf("the retry dispatched %d charge(s), on a live processor that is the second time this card is hit", n)
 	}
 	pays, allocs, txns := settlementCounts(t, rig)
-	if pays != 0 || allocs != 0 || txns != 0 {
-		t.Fatalf("a refused retry wrote settlement rows: %d/%d/%d, want 0/0/0", pays, allocs, txns)
+	if pays != 1 || allocs != 1 || txns != 1 {
+		t.Fatalf("settlement rows = %d/%d/%d, want exactly 1/1/1", pays, allocs, txns)
 	}
-
-	// The orphan ref survives on the intent. That is what an operator reconciles against, and it is
-	// the only reason a stuck row is diagnosable at all.
-	var ref, istatus string
-	if err := rig.pool.QueryRow(ctx, `SELECT gateway_ref, status FROM payment_intents WHERE id = $1::uuid`, intent.ID).
-		Scan(&ref, &istatus); err != nil {
+	var istatus string
+	if err := rig.pool.QueryRow(ctx, `SELECT status FROM payment_intents WHERE id = $1::uuid`, intent.ID).Scan(&istatus); err != nil {
 		t.Fatalf("read intent: %v", err)
 	}
-	if ref != "run_trans_orphan_1" || istatus != IntentCharging {
-		t.Fatalf("intent = %s/%s, want the stamped ref still CHARGING for reconciliation", istatus, ref)
+	if istatus != IntentSettled {
+		t.Fatalf("intent = %s, want SETTLED", istatus)
+	}
+
+	// A further press replays the same payment and writes nothing more.
+	again, err := rig.svc.Pay(ctx, rig.customerID, req)
+	if err != nil || again.ID != p.ID {
+		t.Fatalf("replay = %+v err=%v, want the settled payment %s", again, err, p.ID)
+	}
+	if pays, _, _ := settlementCounts(t, rig); pays != 1 || gw.chargeCount() != 0 {
+		t.Fatalf("replay wrote rows or charged: payments=%d charges=%d", pays, gw.chargeCount())
+	}
+}
+
+// The other crash window: the intent is CHARGING with no ref (the processor's answer never came
+// back). That one cannot be told from "never saw it", so it is refused as in flight and never
+// charged, never settled.
+func TestAcceptance_Intent_CrashWindowRetry_UnstampedRefusesRatherThanRecharges(t *testing.T) {
+	ctx := context.Background()
+	gw := newUnstableRefGateway()
+	rig := newPayRig(t, gw)
+	cleanupIntents(t, rig)
+
+	req := PayRequest{InvoiceIDs: []string{rig.invoiceA}, PaymentMethodID: rig.methodID}
+	repo := NewRepository(rig.pool)
+	if _, claimed, err := repo.ClaimIntent(ctx, IntentClaim{
+		Key: idempotencyKey(rig.customerID, req), CustomerID: rig.customerID, AmountCents: 40000,
+		InvoiceIDs: rig.invoiceA, Gateway: "run-shaped-test",
+	}); err != nil || !claimed {
+		t.Fatalf("seed the crash window: claimed=%v err=%v", claimed, err)
+	}
+
+	_, err := rig.svc.Pay(ctx, rig.customerID, req)
+	if !errors.Is(err, ErrPaymentInFlight) {
+		t.Fatalf("a retry into an unstamped crash window must return ErrPaymentInFlight, got %v", err)
+	}
+	if n := gw.chargeCount(); n != 0 {
+		t.Fatalf("the retry dispatched %d charge(s)", n)
+	}
+	if pays, allocs, txns := settlementCounts(t, rig); pays != 0 || allocs != 0 || txns != 0 {
+		t.Fatalf("a refused retry wrote settlement rows: %d/%d/%d, want 0/0/0", pays, allocs, txns)
 	}
 }
 
