@@ -15,7 +15,9 @@ const demoDir = fileURLToPath(new URL('../demo/', import.meta.url));
 const SHEETS = readdirSync(`${demoDir}sheets`).filter((name) => name.endsWith('.css'));
 
 test('there are element sheets to serve', () => {
-  assert.equal(SHEETS.length, 4, 'one sheet per element');
+  // One sheet per element the page mounts: the header, the rail, the offline
+  // banner, the update prompt, and the conflict card list.
+  assert.equal(SHEETS.length, 5, 'one sheet per element');
 });
 
 test('every committed sheet is served as text/css with the committed bytes', () => {

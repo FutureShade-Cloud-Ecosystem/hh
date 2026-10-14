@@ -87,6 +87,11 @@ export const driveStyles = css`
   .empty-head { font-size: 20px; font-weight: 700; }
 
   /* A stop's detail. */
+  .run-top { display: flex; align-items: center; justify-content: space-between; gap: var(--hh-s-8); }
+  .run-top h1 { margin: 0; }
+  .stall-strip { border-top: 2px solid var(--hh-state-watch); padding: var(--hh-s-8) var(--hh-s-16); }
+  .stall-strip p { margin: 0; font-size: 14px; color: var(--hh-text-dim); }
+  .stall-strip p + p { margin-top: var(--hh-s-4); }
   .back, .link-button {
     display: inline-flex;
     align-items: center;

@@ -38,7 +38,7 @@ test("the history says who and what in words, never an id", () => {
   assert.equal(formatChangeValue("floor_cleared_by", ID, names), "Sales manager (demo)");
   assert.equal(formatChangeValue("floor_cleared_by", "x", () => undefined), "a manager");
   assert.equal(formatChangeValue("line_added", ID, () => undefined), "a product");
-  assert.equal(formatChangeValue("line_added", ID, (id) => (id === ID ? "Holland Stone" : undefined)), "Holland Stone");
+  assert.equal(formatChangeValue("line_added", ID, (id) => (id === ID ? "Charcoal Stone" : undefined)), "Charcoal Stone");
   assert.equal(
     historyHeadline({ field: "line_added", line_no: 2, after: ID, occurred_at: "x" }, () => undefined),
     "Line added, line 2: none → a product",

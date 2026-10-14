@@ -3,7 +3,7 @@ import {
   expect,
   SEEDED,
   TOP_BAR_CLIP,
-  TRENTON_ID,
+  POINT_LOMA_ID,
   apiPicture,
   cad,
   expectedCash,
@@ -37,14 +37,14 @@ test("the way in: the manager's card opens the same till under its own name", as
   // The till has loaded under the manager's name: the drawer open, the
   // identity line, the parked button's count.
   await expect(page.getByTestId("session-dot")).toContainText("Open", { timeout: 15_000 });
-  await expect(page.getByTestId("pagectx")).toContainText("Trenton");
+  await expect(page.getByTestId("pagectx")).toContainText("Point Loma");
   await expect(page.getByRole("button", { name: /^Parked \([1-9]\d*\)/ })).toBeVisible();
   await shot(page, "manager-01-way-in", testInfo);
 });
 
 test("the drawer: the same shared counter drawer the clerk found", async ({ page }, testInfo) => {
   await signIn(page, "Sales manager");
-  await expect(page.getByTestId("pagectx")).toContainText("Trenton");
+  await expect(page.getByTestId("pagectx")).toContainText("Point Loma");
   await expect(page.getByTestId("session-dot")).toContainText("Open");
   // The same drawer the clerk found, and the core's Z report holds its float.
   const bearer = await mint(page, "sales-manager");
@@ -57,13 +57,13 @@ test("a sale: the same engine prices, the manager's margin column, no price fiel
   page,
 }, testInfo) => {
   await signIn(page, "Sales manager");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
-  const holland = lineRow(page, "Holland Paver, Charcoal (demo)");
-  await expect(holland.locator(".lprice")).toHaveText(cad(595));
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
+  const charcoal = lineRow(page, "Interlocking paver 60 mm, charcoal");
+  await expect(charcoal.locator(".lprice")).toHaveText(cad(595));
   // The engine price is the clerk's; the margin column is the manager's: the
   // policy word is MANAGER_UP and the manager holds a tier 2 role, so the
   // till keeps the column the clerk's screen refuses (P3-10).
-  await expect(holland.getByTestId("pos-line-margin")).toContainText("%");
+  await expect(charcoal.getByTestId("pos-line-margin")).toContainText("%");
   await expect(page.getByTestId("pos-lines").getByRole("textbox")).toHaveCount(1);
   await shot(page, "manager-03-sale", testInfo);
 });
@@ -72,11 +72,11 @@ test("a contractor's pavers: the account price the clerk sees, and the margin co
   page,
 }, testInfo) => {
   await signIn(page, "Sales manager");
-  await pickCustomer(page, "Bay Ridge", "Bay Ridge Landscaping (demo)");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
-  const holland = lineRow(page, "Holland Paver, Charcoal (demo)");
-  await expect(holland.locator(".lprice")).toHaveText(cad(524));
-  await expect(holland.getByTestId("pos-line-margin")).toContainText("%");
+  await pickCustomer(page, "Ridgeview", "Ridgeview Outdoor Living");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
+  const charcoal = lineRow(page, "Interlocking paver 60 mm, charcoal");
+  await expect(charcoal.locator(".lprice")).toHaveText(cad(524));
+  await expect(charcoal.getByTestId("pos-line-margin")).toContainText("%");
   await shot(page, "manager-04-contractor-pavers", testInfo);
 });
 
@@ -87,7 +87,7 @@ test("an account that cannot carry the sale on account: the same words to the ma
   // The same no credit account as the clerk's leg (20-sales): the shape
   // refusal and its words do not bend for the manager's role.
   await pickCustomer(page, "DEMO-C07", "DEMO-C07");
-  await searchAndAdd(page, "DEMO-PAV-HOLLAND", "Holland Paver, Charcoal (demo)");
+  await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Charge Account" }).click();
   await page.getByTestId("pos-complete-sale").click();
@@ -102,7 +102,7 @@ test("tender and receipt: a card sale under the manager carries the same simulat
   page,
 }, testInfo) => {
   await signIn(page, "Sales manager");
-  await searchAndAdd(page, "DEMO-PAV-COURTSTONE", "Courtstone, Basalt (demo)");
+  await searchAndAdd(page, "DEMO-PAV-BASALT", "Large format paver, basalt");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Card", exact: true }).click();
   await expect(page.getByText("TEST MODE: simulated terminal")).toBeVisible();
@@ -121,7 +121,7 @@ test("parked sales: a ticket parks and either role picks it up, at the same coun
   // manager picks it up. Each pickup re-prices the ticket through the engine,
   // and the other branch's ticket never shows at any point.
   const park = async () => {
-    await searchAndAdd(page, "DEMO-MULCH-BLACK", "Black Cedar Mulch (demo)");
+    await searchAndAdd(page, "DEMO-MULCH-BLACK", "Black cedar mulch");
     await page.getByRole("button", { name: "Park ticket" }).click();
     await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
   };
@@ -134,7 +134,7 @@ test("parked sales: a ticket parks and either role picks it up, at the same coun
     await expect(page.getByTestId("pos-line-row").locator(".lprice")).toContainText("$");
     await page.getByRole("button", { name: "Park ticket" }).click();
     const again = await openParked(page);
-    await expect(again).not.toContainText(SEEDED.kingstonTicket);
+    await expect(again).not.toContainText(SEEDED.julianTicket);
     await again.getByRole("button", { name: "Close" }).click();
     await expect(again).toHaveCount(0);
   };
@@ -144,7 +144,7 @@ test("parked sales: a ticket parks and either role picks it up, at the same coun
   // before counting what the world left waiting.
   const first = await openParked(page);
   const before = await first.locator(".ticket").count();
-  await expect(first).not.toContainText(SEEDED.kingstonTicket);
+  await expect(first).not.toContainText(SEEDED.julianTicket);
   await first.getByRole("button", { name: "Close" }).click();
   await expect(first).toHaveCount(0);
   await park();
@@ -177,13 +177,13 @@ test("beyond the till: the manager's reach past the counter's walls, and the car
   const clerkDispatch = await staffGet(
     page,
     clerk,
-    `/api/v1/dispatch/trucks?branch_id=${TRENTON_ID}`,
+    `/api/v1/dispatch/trucks?branch_id=${POINT_LOMA_ID}`,
   );
   expect(clerkDispatch.status).toBe(403);
   const managerDispatch = await staffGet(
     page,
     manager,
-    `/api/v1/dispatch/trucks?branch_id=${TRENTON_ID}`,
+    `/api/v1/dispatch/trucks?branch_id=${POINT_LOMA_ID}`,
   );
   expect(managerDispatch.status).toBe(200);
   // A price rule write: refused to the clerk, past the gate for the manager
@@ -193,7 +193,7 @@ test("beyond the till: the manager's reach past the counter's walls, and the car
   expect(clerkWrite.status).toBe(403);
   const managerWrite = await staffPost(page, manager, "/api/v1/pricing/rules", {});
   expect([400, 422]).toContain(managerWrite.status);
-  // Sign out: the entry page with the five coming roles comes back.
+  // Sign out: the entry page with the four coming roles comes back.
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
   await expect(page.getByRole("list", { name: "Coming roles" })).toBeVisible();
@@ -201,6 +201,6 @@ test("beyond the till: the manager's reach past the counter's walls, and the car
   // page, and the dispatch read the manager's bearer reaches, as the browser
   // shows the core's answer (the clerk's is the 403 asserted above).
   const cards = await page.screenshot({ fullPage: true });
-  const dispatch = await apiPicture(page, manager, `/api/v1/dispatch/trucks?branch_id=${TRENTON_ID}`);
+  const dispatch = await apiPicture(page, manager, `/api/v1/dispatch/trucks?branch_id=${POINT_LOMA_ID}`);
   await shotParts(page, "manager-11-beyond", testInfo, [dispatch, cards]);
 });

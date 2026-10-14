@@ -12,32 +12,32 @@ import { join } from "node:path";
 
 export type Role = "Sales" | "Sales manager";
 
-/** The demo branch the till works: Trenton's id, as the seed planted it. */
-export const TRENTON_ID = "5d1b3f6e-0000-4000-9000-000000000001";
+/** The demo branch the till works: Point Loma's id, as the seed planted it. */
+export const POINT_LOMA_ID = "5d1b3f6e-0000-4000-9000-000000000001";
 /** The branch the demo login never reaches, as the seed planted it. */
-export const KINGSTON_ID = "5d1b3f6e-0000-4000-9000-000000000002";
+export const JULIAN_ID = "5d1b3f6e-0000-4000-9000-000000000002";
 
 /** The seeded sale numbers the run's screens act on, as the seed writes them. */
 export const SEEDED = {
-  /** The Kingston card sale: refused at the Trenton counter, by the branch wall. */
-  kingstonSale: "DEMO-KGN-S01",
-  /** Kingston's parked ticket: never on Trenton's parked list. */
-  kingstonTicket: "#PARK-DEMO-01",
-  /** Trenton's seeded walk-in ticket: on the list, resumable by anyone. */
-  trentonTicket: "#PARK-DEMO-02",
-  /** Trenton's seeded card sale: paid by card, carrying no card reference. */
-  trentonCardSale: "DEMO-TRT-S03",
+  /** The Julian card sale: refused at the Point Loma counter, by the branch wall. */
+  julianSale: "DEMO-JUL-S01",
+  /** Julian's parked ticket: never on Point Loma's parked list. */
+  julianTicket: "#PARK-DEMO-01",
+  /** Point Loma's seeded walk-in ticket: on the list, resumable by anyone. */
+  pointLomaTicket: "#PARK-DEMO-02",
+  /** Point Loma's seeded card sale: paid by card, carrying no card reference. */
+  pointLomaCardSale: "DEMO-PLM-S03",
 };
 
 /**
  * Two of the seed's stable ids, fixed by the seed's own id scheme: the
- * Trenton contractor whose bulk rule puts Granular A below the floor, and
+ * Point Loma contractor whose bulk rule puts Class 2 base rock below the floor, and
  * that product. The below floor leg reads the glance for exactly this line
  * through the manager's bearer (the policy word's named reader, row 651)
  * and proves the floor fact; the clerk's screen states no column at all.
  */
 export const SEEDED_IDS = {
-  quinteC03: "02969883-fda1-5281-b306-014ad3a2b655",
+  fieldstoneC03: "02969883-fda1-5281-b306-014ad3a2b655",
   granularA: "b7fd983f-04d3-5d01-9fec-9deaee0714e6",
 };
 
@@ -264,11 +264,11 @@ export async function openDrawer(page: Page, bearer: string): Promise<string> {
   const lookup = await staffGet(
     page,
     bearer,
-    `/api/v1/till/sessions/open?branch_id=${TRENTON_ID}&station=MAIN`,
+    `/api/v1/till/sessions/open?branch_id=${POINT_LOMA_ID}&station=MAIN`,
   );
   if (lookup.body.open === true) return lookup.body.id as string;
   const opened = await staffPost(page, bearer, "/api/v1/till/sessions", {
-    branch_id: TRENTON_ID,
+    branch_id: POINT_LOMA_ID,
     station: "MAIN",
     float_cents: 30000,
     opening_denominations: [],
@@ -290,7 +290,7 @@ export async function expectedCash(page: Page, bearer: string, drawerId: string)
  * carries it, and the first dealer's real trading name appears nowhere on a
  * till screen.
  */
-export const DEMO_DEALER = "Hardscape House (demo)";
+export const DEMO_DEALER = "Gable Landscape Supply";
 
 /** The steps of the linear flow, by the id their head carries. */
 export type Step = "customer" | "items" | "payment" | "summary";
@@ -395,9 +395,9 @@ export async function signIn(page: Page, role: Role): Promise<void> {
   await expect(page.getByTestId("signed-in-role")).toHaveText(role);
   await expect(page.getByTestId("session-dot")).toContainText("Open", { timeout: 15_000 });
   await expect(page.getByTestId("pagectx")).toContainText(DEMO_DEALER);
-  await expect(page.getByTestId("pagectx")).toContainText("Trenton");
+  await expect(page.getByTestId("pagectx")).toContainText("Point Loma");
   // The parked read has landed: the button states 0 until it does, and the
-  // seeded world always holds Trenton's walk-in ticket (a pickup parks a
+  // seeded world always holds Point Loma's walk-in ticket (a pickup parks a
   // ticket back), so a count of one or more is the loaded state.
   await expect(page.getByRole("button", { name: /^Parked \([1-9]\d*\)/ })).toBeVisible();
 }

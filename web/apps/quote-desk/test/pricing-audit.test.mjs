@@ -262,10 +262,10 @@ test("the products a floor confirmation names are found in its text, once each, 
 
 test("a floor confirmation shows product names where they are known and a plain word where not", () => {
   const text = `the editor confirmed a floor warning naming 2 products: ${P1}, ${P2}`;
-  const names = new Map([[P1, "HPV-60 · Holland Stone 60 mm"]]);
+  const names = new Map([[P1, "HPV-60 · Charcoal Stone 60 mm"]]);
   assert.equal(
     floorConfirmationText(text, names),
-    "the editor confirmed a floor warning naming 2 products: HPV-60 · Holland Stone 60 mm, a record",
+    "the editor confirmed a floor warning naming 2 products: HPV-60 · Charcoal Stone 60 mm, a record",
   );
   assert.equal(floorConfirmationText("size changed", names), "size changed");
 });

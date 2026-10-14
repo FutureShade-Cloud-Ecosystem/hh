@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -214,11 +215,14 @@ func syncEnRouteStop(t *testing.T, f *syncFixture, run Run) Stop {
 // mints one collision-free id beyond it for the battery-scale legs.
 func syncKey(n int) string { return fmt.Sprintf("40000000-0000-4000-8000-%012d", n) }
 
-var syncKeyCounter int64
+// syncKeyCounter is atomic because the race legs mint keys from many
+// goroutines: a plain increment can hand two pushes one client id, and
+// the engine then answers the second as a dedup of the first, with the
+// first row's seq.
+var syncKeyCounter atomic.Int64
 
 func syncFreshKey() string {
-	syncKeyCounter++
-	return fmt.Sprintf("41000000-0000-4000-8000-%012d", 1000000+syncKeyCounter)
+	return fmt.Sprintf("41000000-0000-4000-8000-%012d", 1000000+syncKeyCounter.Add(1))
 }
 
 // syncOp builds one push operation; base is the seq the client based

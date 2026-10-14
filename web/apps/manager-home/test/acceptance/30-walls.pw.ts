@@ -6,11 +6,11 @@
 import { test, expect } from "@playwright/test";
 import { mint, staffGet } from "./helpers.js";
 
-const TRENTON = "5d1b3f6e-0000-4000-9000-000000000001";
+const POINT_LOMA = "5d1b3f6e-0000-4000-9000-000000000001";
 
 test("the counter till is refused for the yard manager", async ({ page }) => {
   const bearer = await mint(page, "yard-manager");
-  const parked = await staffGet(page, bearer, `/api/v1/pos/parked?branch_id=${TRENTON}`);
+  const parked = await staffGet(page, bearer, `/api/v1/pos/parked?branch_id=${POINT_LOMA}`);
   expect(parked.status).toBe(403);
 });
 
@@ -29,7 +29,7 @@ test("the approvals the yard manager does not decide are refused in the core's w
 
 test("cost is visible: the receiving difference carries its still-open value", async ({ page }) => {
   const bearer = await mint(page, "yard-manager");
-  const worklist = await staffGet(page, bearer, `/api/v1/purchasing/receiving?branch_id=${TRENTON}`);
+  const worklist = await staffGet(page, bearer, `/api/v1/purchasing/receiving?branch_id=${POINT_LOMA}`);
   expect(worklist.status).toBe(200);
   const items = (worklist.body as { items?: Array<{ status?: string; value_open_cents?: number }> }).items ?? [];
   const difference = items.find((i) => i.status === "PARTIAL");
@@ -38,10 +38,10 @@ test("cost is visible: the receiving difference carries its still-open value", a
   expect(difference?.value_open_cents).toBe(5400);
 });
 
-test("the branch grant reaches Trenton only: the dock lists Trenton's orders", async ({ page }) => {
+test("the branch grant reaches Point Loma only: the dock lists Point Loma's orders", async ({ page }) => {
   const bearer = await mint(page, "yard-manager");
-  const worklist = await staffGet(page, bearer, `/api/v1/purchasing/receiving?branch_id=${TRENTON}`);
+  const worklist = await staffGet(page, bearer, `/api/v1/purchasing/receiving?branch_id=${POINT_LOMA}`);
   expect(worklist.status).toBe(200);
   const items = (worklist.body as { items?: Array<{ branch_id?: string }> }).items ?? [];
-  for (const item of items) expect(item.branch_id).toBe(TRENTON);
+  for (const item of items) expect(item.branch_id).toBe(POINT_LOMA);
 });

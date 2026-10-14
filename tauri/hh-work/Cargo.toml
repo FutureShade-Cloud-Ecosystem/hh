@@ -1,0 +1,32 @@
+[package]
+name = "hh-work"
+version.workspace = true
+description = "HH Work: the Tauri 2 profile for office and counter roles, shipping the desk app bundles inside it."
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "hh_work_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.2", features = [] }
+
+[dependencies]
+hh-shell-core = { path = "../core" }
+tauri = { version = "=2.12.3", features = [] }
+# The Work channel's updater: endpoints and the verify key are configured in
+# tauri.conf.json; the release signing key never enters git or this workspace.
+tauri-plugin-updater = { version = "=2.13.3", default-features = false, features = ["rustls-tls", "zip"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# `shell-proof` is the built shell's role leg proof (item 8c): a gated mode in
+# which the shell drives the host page through its role leg, prints one
+# HH_SHELL_PROOF line and ends the run by itself. Off by default and never in
+# a shipped build; the webview cannot turn it on (it is a compile time gate,
+# and its one command only prints and exits).
+[features]
+default = []
+shell-proof = []

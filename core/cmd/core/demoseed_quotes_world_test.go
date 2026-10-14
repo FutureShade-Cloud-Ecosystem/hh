@@ -183,6 +183,11 @@ func qwApply(t *testing.T) (proposed, created int) {
 
 // qwFingerprint fingerprints every row of the tables, contents and row versions, so an assertion can
 // hold that a run changed nothing at all rather than merely created nothing.
+//
+// The contractor account's documents are left out of the tables that hold them (qwWithoutContractor):
+// the apply that adds the quote world adds the contractor world in the same transaction (the account
+// exists by then), and demoseed_contractor_plan_test.go and internal/demo/world_contractor_test.go
+// hold that world; these fingerprints are about the OTHER worlds not moving.
 func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables []string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -191,12 +196,31 @@ func qwFingerprint(t *testing.T, ctx context.Context, pool *pgxpool.Pool, tables
 		if err := pool.QueryRow(ctx, `
 			SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
 			  FROM (SELECT to_jsonb(r)::text AS line
-			          FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r) s`).Scan(&sum); err != nil {
+			          FROM (SELECT *, xmin::text AS row_version FROM `+table+qwWithoutContractor(table)+`) r) s`).Scan(&sum); err != nil {
 			t.Fatalf("fingerprint %s: %v", table, err)
 		}
 		out[table] = sum
 	}
 	return out
+}
+
+// qwWithoutContractor is the WHERE clause that leaves the contractor account's own rows out of a table
+// (the account is contractorCustomerID; a line table is reached through its document).
+func qwWithoutContractor(table string) string {
+	c := "'" + contractorCustomerID + "'::uuid"
+	switch table {
+	case "orders", "invoices", "payments", "quotes":
+		return " WHERE customer_id <> " + c
+	case "quote_lines":
+		return " WHERE quote_id NOT IN (SELECT id FROM quotes WHERE customer_id = " + c + ")"
+	case "order_lines":
+		return " WHERE order_id NOT IN (SELECT id FROM orders WHERE customer_id = " + c + ")"
+	case "invoice_lines":
+		return " WHERE invoice_id NOT IN (SELECT id FROM invoices WHERE customer_id = " + c + ")"
+	case "payment_allocations":
+		return " WHERE payment_id NOT IN (SELECT id FROM payments WHERE customer_id = " + c + ")"
+	}
+	return ""
 }
 
 // qwDriverDayIDs are the Driver's day-keyed run and stop ids on the pinned clock's day: the rows
@@ -353,7 +377,7 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	}
 	before := fingerprint()
 	proposed, created := qwApply(t)
-	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 + controllerWorldRows // quotes, lines, links, acceptances, audit rows, events, log rows, request, and the controller world the same apply adds
+	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 + controllerWorldRows + contractorWorldRows // quotes, lines, links, acceptances, audit rows, events, log rows, request, and the controller and contractor worlds the same apply adds
 	if created != wantQuoteRows {
 		t.Fatalf("the second apply created %d rows, want exactly the quote world's %d (proposed %d)", created, wantQuoteRows, proposed)
 	}
@@ -382,11 +406,11 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	census := map[string]int{"quotes": 4, "quote_lines": 9, "quote_share_links": 3, "quote_acceptances": 2,
 		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 1 + 2}
 	for table, add := range census {
-		if n := qwCount(t, ctx, pool, `SELECT count(*) FROM `+table); n != baseline[table]+add {
+		if n := qwCount(t, ctx, pool, `SELECT count(*) FROM `+table+qwWithoutContractor(table)); n != baseline[table]+add {
 			t.Errorf("%s holds %d rows, want the baseline %d plus the world's %d", table, n, baseline[table], add)
 		}
 	}
-	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1`, demoMarker); n != 4 {
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM quotes WHERE metadata->>'demo_seed' = $1 AND customer_id <> $2::uuid`, demoMarker, contractorCustomerID); n != 4 {
 		t.Errorf("demo quotes found by the world's marker: %d, want 4", n)
 	}
 	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM permission_approval_requests WHERE policy_type = 'MARGIN_BELOW_MINIMUM'`); n != 1 {
@@ -476,10 +500,10 @@ func TestDemoWorld_Quotes(t *testing.T) {
 		lines             int
 	}
 	wants := map[string]want{
-		"Q1": {"DEMO-TRT-Q1", "DRAFT", qwSalesUserID, 2},
-		"Q2": {"DEMO-TRT-Q2", "SENT", qwManagerUserID, 2},
-		"Q3": {"DEMO-TRT-Q3", "ACCEPTED", qwSalesUserID, 3},
-		"Q4": {"DEMO-TRT-Q4", "ACCEPTED", qwSalesUserID, 2},
+		"Q1": {"DEMO-PLM-Q1", "DRAFT", qwSalesUserID, 2},
+		"Q2": {"DEMO-PLM-Q2", "SENT", qwManagerUserID, 2},
+		"Q3": {"DEMO-PLM-Q3", "ACCEPTED", qwSalesUserID, 3},
+		"Q4": {"DEMO-PLM-Q4", "ACCEPTED", qwSalesUserID, 2},
 	}
 	seeded := map[string]qwQuote{}
 	for key, w := range wants {

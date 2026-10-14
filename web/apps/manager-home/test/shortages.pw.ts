@@ -22,13 +22,13 @@ async function openShortages(page: import("@playwright/test").Page): Promise<voi
 test("the shortages view lists what the yard flagged, oldest facts first, at the caller's branch", async ({ page }) => {
   await openShortages(page);
   const card = page.locator("[data-task]").first();
-  await expect(card.locator(".order")).toHaveText("SO-TRT-1042");
-  await expect(card.locator(".task-head .meta").first()).toHaveText("K. Villeneuve (demo)");
+  await expect(card.locator(".order")).toHaveText("SO-PLM-1042");
+  await expect(card.locator(".task-head .meta").first()).toHaveText("Site foreman");
   await expect(card.locator(".task-head .meta").filter({ hasText: "In progress" })).toHaveCount(1);
   await expect(card.locator(".task-head .meta").filter({ hasText: "IN_PROGRESS" })).toHaveCount(0);
   const open = card.locator(".shortage[data-shortage]");
   await expect(open).toHaveCount(3);
-  await expect(card.locator("[data-shortage] .line").first()).toHaveText("Granular A gravel");
+  await expect(card.locator("[data-shortage] .line").first()).toHaveText("Class 2 base rock gravel");
   await expect(card.locator("[data-shortage] .detail").first()).toContainText("short 4 CYD");
   await expect(card.locator("[data-shortage] .detail").first()).not.toContainText("4.0000");
   await expect(page.locator("[data-test='resolver-words']")).toHaveText(
@@ -50,7 +50,7 @@ test("a shortage resolves end to end and the count drops", async ({ page }) => {
   // reported it with their note quoted, and a consequence line per choice.
   const panel = page.locator("[data-resolving='true']");
   await expect(panel.getByRole("heading", { name: "Resolve shortage" })).toBeVisible();
-  await expect(panel.locator(".panel-line")).toHaveText("SO-TRT-1042 · Granular A gravel");
+  await expect(panel.locator(".panel-line")).toHaveText("SO-PLM-1042 · Class 2 base rock gravel");
   await expect(panel.locator(".panel-qty")).toHaveText("Ordered 12 CYD · Picked 8 CYD · Short 4 CYD");
   await expect(panel.locator(".reported-note")).toHaveText("Only 8 yards left in the bin");
   await expect(panel.locator(".reported-who")).toContainText("Reported by staff");

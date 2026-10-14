@@ -158,7 +158,7 @@ test("the bars render the server's points, and the tile nothing measures is a ti
   await page.goto("/");
   const bars = page.locator("[data-widget='deliveries.branch']");
   await expect(bars.locator(".bar-row")).toHaveCount(2);
-  await expect(bars.locator(".bar-row .label").first()).toHaveText("Trenton");
+  await expect(bars.locator(".bar-row .label").first()).toHaveText("Point Loma");
   await expect(bars.locator(".bar-row .value").first()).toHaveText("10");
   const unread = page.locator("[data-widget='messages.unread']");
   await expect(unread.locator(".card-title")).toHaveText("Unread messages");
@@ -232,7 +232,7 @@ test("a failed mint says so in plain words, never the server's raw word", async 
   await page.goto("/");
   await page.locator("[data-flow='yard-manager']").click();
   const notice = page.locator(".notice-line[role='status']");
-  await expect(notice).toHaveText("Demo sign-in refused. Try again in a moment.");
+  await expect(notice).toHaveText("Sign-in did not go through. Try again in a moment.");
   await expect(notice).not.toContainText("internal");
 });
 
