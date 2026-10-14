@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,7 +83,7 @@ func newSyncFixture(t *testing.T) *syncFixture {
 			testkit.BranchNorthAID, testkit.BranchSouthAID)
 		_, _ = pool.Exec(c, `DELETE FROM scope_sequences WHERE scope IN ('runs','stops','pod')`)
 		_, _ = pool.Exec(c, `DELETE FROM audit_log WHERE entity_type IN ('sync.runs','sync.stops','sync.pod')`)
-		_ = testkit.Cleanup(c, testkit.PgxPool(pool))
+		cleanFixtureWorld(t, c, pool)
 	})
 
 	var driver string
@@ -214,11 +215,14 @@ func syncEnRouteStop(t *testing.T, f *syncFixture, run Run) Stop {
 // mints one collision-free id beyond it for the battery-scale legs.
 func syncKey(n int) string { return fmt.Sprintf("40000000-0000-4000-8000-%012d", n) }
 
-var syncKeyCounter int64
+// syncKeyCounter is atomic because the race legs mint keys from many
+// goroutines: a plain increment can hand two pushes one client id, and
+// the engine then answers the second as a dedup of the first, with the
+// first row's seq.
+var syncKeyCounter atomic.Int64
 
 func syncFreshKey() string {
-	syncKeyCounter++
-	return fmt.Sprintf("41000000-0000-4000-8000-%012d", 1000000+syncKeyCounter)
+	return fmt.Sprintf("41000000-0000-4000-8000-%012d", 1000000+syncKeyCounter.Add(1))
 }
 
 // syncOp builds one push operation; base is the seq the client based
@@ -1159,5 +1163,23 @@ func TestValueEqualWriteKeepsStandingSeq(t *testing.T) {
 		map[string]any{"id": run.ID, "notes": "value equal pin second"}, same.Seq)
 	if *next.Seq <= *same.Seq {
 		t.Fatalf("the second fresh fact drew seq %d after %d; only equal values stand still", *next.Seq, *same.Seq)
+	}
+}
+
+// cleanFixtureWorld removes the kit's fixture world after a leg, and fails the leg when it cannot.
+// The kit's own cleanup does not know the rows a dispatch leg adds beside it (the run number
+// counters, the reschedule history and the drivers of the fixture branches), and their foreign keys to
+// locations then refuse the branch delete. The old swallowed error left the world standing, and
+// every later package on the shared gate found three extra branches and a fixture invoice.
+func cleanFixtureWorld(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	branches := []string{testkit.BranchNorthAID, testkit.BranchNorthBID, testkit.BranchSouthAID}
+	for _, table := range []string{"run_no_sequences", "dispatch_reschedules", "dispatch_drivers"} {
+		if _, err := pool.Exec(ctx, `DELETE FROM `+table+` WHERE branch_id = ANY($1::uuid[])`, branches); err != nil {
+			t.Errorf("fixture cleanup %s: %v", table, err)
+		}
+	}
+	if err := testkit.Cleanup(ctx, testkit.PgxPool(pool)); err != nil {
+		t.Errorf("fixture cleanup: %v", err)
 	}
 }

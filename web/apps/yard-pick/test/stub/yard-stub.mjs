@@ -35,7 +35,7 @@ const FLOWS = [
 const USERS = {
   "yard-team": {
     user_id: "d0200000-0000-4000-9000-000000000002",
-    email: "yard.demo@dibbits.example",
+    email: "yard.demo@hh-demo.invalid",
     display_name: "Yard persona (demo)",
     role_code: "yard_team",
     role_name: "Yard Team",
@@ -145,22 +145,22 @@ function readBody(req) {
 
 // ---- the world ---------------------------------------------------------
 //
-// One branch the yard team reaches (Trenton, the populate's own id), five
+// One branch the yard team reaches (Point Loma, the populate's own id), five
 // pick tasks: two unclaimed, one claimed by the yard persona, one held from
 // picking (the pay before release wall), one in progress with an open
 // shortage and a resolved one.
 
 const YARD_USER = "d0200000-0000-4000-9000-000000000002";
-const TRENTON = "5d1b3f6e-0000-4000-9000-000000000001";
+const POINT_LOMA = "5d1b3f6e-0000-4000-9000-000000000001";
 
-const BRANCH = { id: TRENTON, code: "TRT", name: "Hardscape House (demo), Trenton", address: { line1: "857 Bayly Rd", city: "Trenton", province: "ON", postal: "K8V 1N1", country: "CA" }, is_default: true, is_system_default: false, is_active: true };
+const BRANCH = { id: POINT_LOMA, code: "PLM", name: "Gable Landscape Supply, Point Loma", address: { line1: "857 Bayly Rd", city: "Point Loma", province: "CA", postal: "92106", country: "US" }, is_default: true, is_system_default: false, is_active: true };
 
 const TICKETS = {
   "0b000000-0000-4000-9000-000000000042": {
     order_id: "0b000000-0000-4000-9000-000000000042",
     order_no: "SO-1042",
-    branch_id: TRENTON,
-    customer_name: "Northline Hardscapes Ltd (demo)",
+    branch_id: POINT_LOMA,
+    customer_name: "Summit Ridge Builders",
     fulfillment: "PICKUP",
     mto_class: "STANDARD",
     priority: "URGENT",
@@ -175,8 +175,8 @@ const TICKETS = {
   "0b000000-0000-4000-9000-000000000039": {
     order_id: "0b000000-0000-4000-9000-000000000039",
     order_no: "SO-1039",
-    branch_id: TRENTON,
-    customer_name: "Harbourview Builders (demo)",
+    branch_id: POINT_LOMA,
+    customer_name: "Harbourview Builders",
     fulfillment: "DELIVERY",
     mto_class: "MIXED",
     priority: "HIGH",
@@ -193,8 +193,8 @@ const TICKETS = {
   "0b000000-0000-4000-9000-000000000040": {
     order_id: "0b000000-0000-4000-9000-000000000040",
     order_no: "SO-1040",
-    branch_id: TRENTON,
-    customer_name: "County of Hastings (demo)",
+    branch_id: POINT_LOMA,
+    customer_name: "Valley Municipal Works",
     fulfillment: "DELIVERY",
     mto_class: "STANDARD",
     priority: "NORMAL",
@@ -202,7 +202,7 @@ const TICKETS = {
     requested_at: "2026-10-08T16:00:00Z",
     source: "DISPATCH",
     lines: [
-      { line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Granular A gravel, bulk", qty_ordered: "10.0000", uom: "TONNE", location: "Bulk 1" },
+      { line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Class 2 base rock gravel, bulk", qty_ordered: "10.0000", uom: "TONNE", location: "Bulk 1" },
       { line_no: 2, product_id: "1a000000-0000-4000-9000-0000000000c2", sku: "GRAN-B", description: "Granular B gravel, bulk", qty_ordered: "6.0000", uom: "TONNE", location: "Bulk 1" },
       { line_no: 3, product_id: "1a000000-0000-4000-9000-0000000000c3", sku: "FAB-GEO", description: "Geotextile fabric, 4 by 300 ft", qty_ordered: "2.0000", uom: "ROLL", location: "Rack 2" },
       { line_no: 4, product_id: "1a000000-0000-4000-9000-0000000000c4", sku: "PIPE-CORR-4", description: "Corrugated pipe, 4 in", qty_ordered: "8.0000", uom: "EA", location: "Rack 5" },
@@ -211,7 +211,7 @@ const TICKETS = {
   "0b000000-0000-4000-9000-000000000044": {
     order_id: "0b000000-0000-4000-9000-000000000044",
     order_no: "SO-1044",
-    branch_id: TRENTON,
+    branch_id: POINT_LOMA,
     customer_name: "Bayside Landscaping (demo)",
     fulfillment: "PICKUP",
     mto_class: "STANDARD",
@@ -223,13 +223,13 @@ const TICKETS = {
     hold_words: "Balance due",
     still_owed_cents: 43210,
     lines: [
-      { line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000d1", sku: "PAVER-HOLLAND", description: "Holland paver, sandstone", qty_ordered: "30.0000", uom: "EA", location: "Yard A" },
+      { line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000d1", sku: "PAVER-HOLLAND", description: "Charcoal paver, sandstone", qty_ordered: "30.0000", uom: "EA", location: "Yard A" },
     ],
   },
   "0b000000-0000-4000-9000-000000000041": {
     order_id: "0b000000-0000-4000-9000-000000000041",
     order_no: "SO-1041",
-    branch_id: TRENTON,
+    branch_id: POINT_LOMA,
     customer_name: "Ridgeway Stone (demo)",
     fulfillment: "DELIVERY",
     mto_class: "MTO",
@@ -258,13 +258,33 @@ let log;
 let shortageSeq;
 let repNotices;
 
+const SYNC_SCOPES = ["pick_tasks", "shortages", "receiving", "inventory_lookup", "weights", "attachments"];
+const PULL_ONLY = new Set(["inventory_lookup"]);
+const WRITE_SCOPES = new Set(["pick_tasks", "shortages", "weights", "attachments"]);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const syncSeq = { pick_tasks: 0, shortages: 0, weights: 0, attachments: 0, receiving: 0 };
+const syncRowSeq = { pick_tasks: new Map(), shortages: new Map(), weights: new Map(), attachments: new Map(), receiving: new Map() };
+const appliedKeys = new Map();
+
+function syncTouch(scope, id) {
+  syncSeq[scope] = (syncSeq[scope] ?? 0) + 1;
+  syncRowSeq[scope].set(id, syncSeq[scope]);
+  return syncSeq[scope];
+}
+
+function syncSeqOf(scope, id) {
+  return syncRowSeq[scope].get(id) ?? 0;
+}
+
+
 function buildWorld() {
   const now = Date.now();
   const tasks = TASK_SEED.map((seed) => ({
     id: seed.id,
     task_type: "PICK",
     order_id: TICKETS[seed.ticket].order_id,
-    branch_id: TRENTON,
+    branch_id: POINT_LOMA,
     priority: seed.priority,
     status: seed.status,
     ...(seed.claimed ? { claimed_by: YARD_USER, claimed_at: new Date(now - 30 * 60000).toISOString() } : {}),
@@ -325,6 +345,12 @@ function reset() {
   log = [];
   shortageSeq = 2;
   repNotices = [];
+  appliedKeys.clear();
+  // The seq books are NOT reset: a server's seq never walks backwards, and a
+  // device that kept its store across a stub reset must see the fresh morning
+  // rows as changes, not as rows it already holds.
+  for (const task of world.tasks) syncTouch("pick_tasks", task.id);
+  for (const s of world.shortages) syncTouch("shortages", s.id);
 }
 reset();
 
@@ -435,6 +461,33 @@ async function handle(req, res) {
     scenario = String(body.name ?? "");
     return json(res, { ok: true, scenario });
   }
+  // The server reassigns a ticket out from under the device: the status moves
+  // and the row's seq moves with it, the server wins story the exit test asks
+  // for ("a pick recorded offline against a ticket the server reassigned").
+  // The desk settles a shortage while the device cannot hear it: the row
+  // moves and its seq moves with it, so the device's queued resolution lands
+  // stale, and the manual story plays for real.
+  if (req.method === "POST" && path === "/_stub/desk-resolve") {
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const shortage = world.shortages.find((s) => s.id === String(body.shortage_id ?? ""));
+    if (!shortage) return notFound(res);
+    if (shortage.resolved_at !== undefined && shortage.resolved_at !== "") return refuse(res, 409, "shortage already resolved");
+    shortage.resolved_at = new Date().toISOString();
+    shortage.resolved_by = "desk";
+    shortage.resolution = String(body.resolution ?? "Settled at the counter");
+    syncTouch("shortages", shortage.id);
+    return json(res, { ok: true, seq: syncSeqOf("shortages", shortage.id) });
+  }
+  if (req.method === "POST" && path === "/_stub/reassign") {
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const task = findTask(String(body.task_id ?? ""));
+    if (!task) return notFound(res);
+    task.status = "CANCELLED";
+    task.claimed_by = "dispatch";
+    task.updated_at = new Date().toISOString();
+    syncTouch("pick_tasks", task.id);
+    return json(res, { ok: true, seq: syncSeqOf("pick_tasks", task.id) });
+  }
   if (req.method === "GET" && path === "/_stub/log") return json(res, log);
   // The rep's API read, doubled: the notices the order's rep holds.
   if (req.method === "GET" && path === "/_stub/rep-notices") return json(res, repNotices);
@@ -455,7 +508,7 @@ async function handle(req, res) {
   }
 
   // ---- the routes the yard uses ----
-  const yardRoute = path.startsWith("/api/v1/yard/") || path === "/api/v1/branches" || (path.startsWith("/api/v1/tasks/") && req.method === "POST");
+  const yardRoute = path.startsWith("/api/v1/yard/") || path === "/api/v1/branches" || (path.startsWith("/api/v1/tasks/") && req.method === "POST") || path.startsWith("/api/v1/sync/");
   if (!yardRoute) return notFound(res);
   const authorization = req.headers.authorization ?? "";
   const raw = await readBody(req);
@@ -481,7 +534,7 @@ async function handle(req, res) {
     // reachable branch, and a branch out of reach is refused.
     const branchId = url.searchParams.get("branch_id") ?? "";
     if (branchId === "") return refuse(res, 403, "a branch-scoped caller must name a reachable branch_id");
-    if (branchId !== TRENTON) return refuse(res, 403, "branch out of scope");
+    if (branchId !== POINT_LOMA) return refuse(res, 403, "branch out of scope");
     const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") ?? "50")));
     let tasks = world.tasks.map(taskOut);
     const status = url.searchParams.get("status");
@@ -535,6 +588,8 @@ async function handle(req, res) {
     if (!task) return notFound(res);
     return moveTask(res, task, taskMatch[2]);
   }
+
+  if (path.startsWith("/api/v1/sync/")) return handleSync(req, res, url, body);
   return notFound(res);
 }
 
@@ -564,6 +619,7 @@ function moveTask(res, task, move) {
     task.claimed_by = YARD_USER;
     task.claimed_at = new Date().toISOString();
   }
+  syncTouch("pick_tasks", task.id);
   return json(res, taskOut(task));
 }
 
@@ -576,80 +632,11 @@ function parseQty(raw) {
 }
 
 function recordPick(res, task, input) {
-  const ticket = ticketFor(task);
-  const lines = Array.isArray(input.lines) ? input.lines : [];
-  if (lines.length === 0) {
-    return refuse(res, 400, "say what was picked, an empty record is not the same as a pick of nothing");
-  }
-  const seen = new Set();
-  for (const l of lines) {
-    const lineNo = Number(l.order_line_no ?? 0);
-    if (!(lineNo > 0)) return refuse(res, 400, "every recorded line needs the ticket's own line number");
-    if (seen.has(lineNo)) return refuse(res, 400, `line ${lineNo} was sent twice, one number per line`);
-    seen.add(lineNo);
-    const qty = parseQty(l.qty_picked);
-    if (qty.empty === true) return refuse(res, 400, "say how many were picked, zero is an answer, blank is not");
-    if (qty.error) return refuse(res, 400, qty.error);
-    if (qty.value < 0) return refuse(res, 400, "a picked quantity cannot be negative");
-    if (qty.value > 1e12) return refuse(res, 400, "that picked quantity is implausibly large");
-    const ticketLine = ticket.lines.find((t) => t.line_no === lineNo);
-    const ordered = ticketLine === undefined ? NaN : Number(ticketLine.qty_ordered);
-    const reason = String(l.short_reason ?? "").trim();
-    const note = String(l.short_note ?? "").trim();
-    if (reason !== "" && !SHORT_REASONS.includes(reason)) {
-      return refuse(res, 400, `line ${lineNo}: "${reason}" is not a short pick reason (${SHORT_REASONS.join(", ")})`);
-    }
-    if (note.length > 400) return refuse(res, 400, `line ${lineNo}: the note is too long (max 400)`);
-    // With the order port wired the ORDER LINE decides: the stub holds the
-    // ticket to the same numbers the seeded order carries.
-    if (qty.value > ordered) {
-      return refuse(res, 400, `line ${lineNo}: that is more than was ordered, the yard cannot raise a quantity`);
-    }
-    if (qty.value < ordered) {
-      if (reason === "") return refuse(res, 400, `line ${lineNo} is short, give the reason (${SHORT_REASONS.join(", ")})`);
-      if (reason === "OTHER" && note === "") return refuse(res, 400, `line ${lineNo}: say what happened in the note when the reason is OTHER`);
-    }
-  }
-  // The record: the whole set in one call, replacing what was there.
-  const picked = lines.map((l) => {
-    const lineNo = Number(l.order_line_no);
-    const ticketLine = ticket.lines.find((t) => t.line_no === lineNo) ?? {};
-    const qtyPicked = Number(String(l.qty_picked).trim()).toFixed(4);
-    const ordered = Number(ticketLine.qty_ordered ?? 0);
-    const pickedQty = Number(qtyPicked);
-    const short = pickedQty < ordered;
-    return {
-      id: `2a000000-0000-4000-9000-${String(pickedSeq()).padStart(12, "0")}`,
-      task_id: task.id,
-      order_line_no: lineNo,
-      product_id: String(ticketLine.product_id ?? ""),
-      sku: String(ticketLine.sku ?? ""),
-      description: String(ticketLine.description ?? ""),
-      qty_ordered: ticketLine.qty_ordered ?? "0.0000",
-      qty_picked: qtyPicked,
-      uom: String(ticketLine.uom ?? "EA"),
-      picked_by: YARD_USER,
-      picked_at: new Date().toISOString(),
-      ...(short ? { short_reason: String(l.short_reason ?? "").trim() } : {}),
-      ...(short && String(l.short_note ?? "").trim() !== "" ? { short_note: String(l.short_note ?? "").trim() } : {}),
-    };
-  });
-  world.picked.set(task.id, picked);
-  // The rep hears at once (Phase 0 item 6): every short line, in the core's words.
-  for (const p of picked) {
-    const ordered = Number(p.qty_ordered);
-    const pickedQty = Number(p.qty_picked);
-    if (pickedQty >= ordered) continue;
-    const back = (Number((ordered - pickedQty).toFixed(4))).toFixed(4);
-    repNotices.push({
-      topic: "yard.short_pick",
-      order_no: ticket.order_no,
-      line_no: p.order_line_no,
-      body: shortPickNotice(ticket.order_no, p, p.qty_ordered, p.qty_picked, back, p.short_reason ?? "", p.short_note ?? ""),
-    });
-  }
+  const record = recordPickedLines(task, input.lines);
+  if (record.error) return refuse(res, 400, record.error);
   task.updated_at = new Date().toISOString();
-  return json(res, { items: picked.map(pickedOut) });
+  syncTouch("pick_tasks", task.id);
+  return json(res, { items: record.picked.map(pickedOut) });
 }
 
 let pickedCounter = 0;
@@ -678,6 +665,7 @@ function recordSkids(res, task, input, moneyAllowed = true) {
   const after = count;
   const changed = before !== after;
   world.skids.set(task.id, after);
+  syncTouch("weights", task.id);
   // The skid deposit is the office's money: it rides the core's answer (the
   // contract declares it) for a caller on the cost list alone, byte-absent
   // for every other caller (COST_LIST above); the app's projection drops it
@@ -732,6 +720,7 @@ function stage(res, task, input) {
   task.stage_location = location;
   task.stage_ref = ref !== "" ? ref : `STG-${stableRef(task.id)}`;
   task.updated_at = new Date().toISOString();
+  syncTouch("pick_tasks", task.id);
   return json(res, taskOut(task));
 }
 
@@ -763,6 +752,7 @@ function reportShortage(res, task, input) {
   world.shortages.push(shortage);
   const t = findTask(task.id);
   t.updated_at = new Date().toISOString();
+  syncTouch("shortages", shortage.id);
   return json(res, shortageOut(shortage), 201);
 }
 
@@ -783,7 +773,349 @@ function resolveShortage(res, task, shortageId, input) {
   shortage.resolution = resolution;
   const t = findTask(task.id);
   t.updated_at = new Date().toISOString();
+  syncTouch("shortages", shortage.id);
   return json(res, shortageOut(shortage));
+}
+
+// ---- the sync surface ----------------------------------------------------
+//
+// The demo double of the core's sync surface (core/internal/sync): the same
+// pull page shape and the same push order of decisions, per operation, in
+// push order: shape, then dedup on the client's key, then the operation under
+// the scope's own conflict policy. The projections read the same world the
+// REST routes above serve, and the pushes mutate that world through the same
+// rules, so a device's pulled rows and a desk's screen never disagree.
+
+
+// The stub's world, projected for the sync pull. No money anywhere: the
+// ticket's held figure rides only to a caller on the cost list, the same
+// fence the REST reads run under, and the poison scenario never reaches these
+// rows (the sync projection is the clean shape).
+function projectTaskRow(task, moneyAllowed) {
+  return {
+    id: task.id,
+    seq: syncSeqOf("pick_tasks", task.id),
+    data: {
+      ...taskOut(task),
+      ticket: blankTicketMoney(ticketFor(task), moneyAllowed),
+      picked: world.picked.get(task.id) ?? [],
+    },
+  };
+}
+
+function projectShortageRow(s) {
+  return { id: s.id, seq: syncSeqOf("shortages", s.id), data: shortageOut(s) };
+}
+
+function handleSyncPull(res, scope, url, moneyAllowed) {
+  const since = Number(url.searchParams.get("since") ?? "0");
+  const limit = Math.max(1, Math.min(200, Number(url.searchParams.get("limit") ?? "200")));
+  let rows = [];
+  if (scope === "pick_tasks") rows = scenario === "empty" ? [] : world.tasks.map((t) => projectTaskRow(t, moneyAllowed));
+  else if (scope === "shortages") rows = world.shortages.map(projectShortageRow);
+  // The core's weights feed is the NEED_WEIGHT task feed: the demo world has
+  // no such task (a skid count is a direct door, and money), so it is empty.
+  // receiving and inventory_lookup answer empty pages in the demo: the yard's
+  // receiving story rides the desk, and the lookup is the read seam, not this
+  // slice's.
+  const page = rows.filter((r) => r.seq > since).sort((a, b) => a.seq - b.seq).slice(0, limit);
+  const lastSeq = page.length > 0 ? page[page.length - 1].seq : since;
+  return json(res, {
+    scope,
+    items: page,
+    tombstones: [],
+    last_seq: lastSeq,
+    next_cursor: page.length === limit ? String(lastSeq) : null,
+  });
+}
+
+function syncRejected(op, message) {
+  return { client_id: op.client_id, status: "rejected", error: message };
+}
+
+function syncTaskRowData(task, moneyAllowed) {
+  return projectTaskRow(task, moneyAllowed).data;
+}
+
+function syncApplyTaskUpdate(task, op, moneyAllowed) {
+  const fields = op.payload ?? {};
+  // The engine's order: shape, dedup, load, STALE, then the write. A stale
+  // write never reaches the module's own rules: the policy answers it.
+  const rowSeq = syncSeqOf("pick_tasks", task.id);
+  if (op.base_seq !== undefined && rowSeq > op.base_seq) {
+    return {
+      client_id: op.client_id,
+      status: "conflict",
+      conflict: { client_id: op.client_id, policy: "server_wins", server_state: syncTaskRowData(task, moneyAllowed), applied: false },
+    };
+  }
+  const declared = Object.keys(fields).filter((k) => k !== "id");
+  // The core's writableFields (core/internal/tasks/syncscope.go): picked is the
+  // record door's leg (core/internal/tasks/syncpick.go), its own operation.
+  const allowed = new Set(["status", "picked", "photo_url", "stage_location", "stage_ref"]);
+  for (const key of declared) {
+    if (!allowed.has(key)) return syncRejected(op, `tasks: field "${key}" is not writable through sync`);
+  }
+  if (fields.picked !== undefined) return syncApplyPickRecord(task, op, declared, fields.picked);
+  if (fields.status !== undefined) {
+    const to = String(fields.status);
+    if (!(TRANSITIONS[task.status] ?? []).includes(to)) {
+      return syncRejected(op, "illegal task transition");
+    }
+    task.status = to;
+    if (to === "ACCEPTED") {
+      task.claimed_by = YARD_USER;
+      task.claimed_at = new Date().toISOString();
+    }
+  }
+  if (fields.stage_location !== undefined) {
+    if (task.status !== "STAGED") return syncRejected(op, "illegal task transition");
+    task.stage_location = String(fields.stage_location);
+    task.stage_ref = String(fields.stage_ref ?? task.stage_ref ?? "");
+  }
+  if (fields.photo_url !== undefined) task.photo_url = String(fields.photo_url);
+  task.updated_at = new Date().toISOString();
+  syncTouch("pick_tasks", task.id);
+  return { client_id: op.client_id, status: "applied", seq: syncSeqOf("pick_tasks", task.id) };
+}
+
+// The legs one recorded line may carry through sync (syncpick.go pickedLineLegs): the direct door's
+// body keys. A local row id, task id or picked_at stamp is not on the wire.
+const PICKED_LINE_LEGS = new Set(["order_line_no", "product_id", "sku", "description", "qty_ordered", "qty_picked", "uom", "short_reason", "short_note"]);
+// Every C0 control, DEL and the bidi controls are refused in every text leg; the note and the
+// description keep tab, LF and CR (core/internal/tasks/yard_service.go checkPickText).
+const PICK_TEXT_BAD = /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
+const PICK_TEXT_BAD_MULTILINE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
+
+// The pick record as a sync op, the twin of the direct route: {id, picked: [line, ...]} and nothing
+// else, the same record body, the row draws a fresh seq so the pull carries the recorded lines.
+function syncApplyPickRecord(task, op, declared, lines) {
+  for (const key of declared) {
+    if (key !== "picked") return syncRejected(op, `tasks: field "${key}" cannot travel with picked, a pick record is its own operation`);
+  }
+  if (!Array.isArray(lines)) return syncRejected(op, "tasks: picked must be an array of lines");
+  if (lines.length > 500) return syncRejected(op, "tasks: that is more lines than any one ticket carries (max 500)");
+  for (const [i, l] of lines.entries()) {
+    if (l === null || typeof l !== "object" || Array.isArray(l)) return syncRejected(op, `tasks: picked line ${i + 1} must be an object`);
+    for (const [k, v] of Object.entries(l)) {
+      if (!PICKED_LINE_LEGS.has(k)) return syncRejected(op, `tasks: picked line ${i + 1}: field "${k}" is not writable through sync`);
+      if (k !== "order_line_no" && typeof v !== "string") return syncRejected(op, `tasks: picked line ${i + 1}: ${k} must be a string`);
+      if (typeof v === "string" && (k === "description" || k === "short_note" ? PICK_TEXT_BAD_MULTILINE : PICK_TEXT_BAD).test(v)) {
+        return syncRejected(op, `tasks: line ${Number(l.order_line_no ?? 0)}: the ${k} cannot hold control characters, enter it as plain text`);
+      }
+    }
+  }
+  const recorded = recordPickedLines(task, lines);
+  if (recorded.error) return syncRejected(op, recorded.error);
+  task.updated_at = new Date().toISOString();
+  syncTouch("pick_tasks", task.id);
+  return { client_id: op.client_id, status: "applied", seq: syncSeqOf("pick_tasks", task.id) };
+}
+
+// The record half of the REST route: validate the
+// whole set, replace what was there, tell the rep at once.
+function recordPickedLines(task, lines) {
+  const ticket = ticketFor(task);
+  const list = Array.isArray(lines) ? lines : [];
+  if (list.length === 0) return { error: "say what was picked, an empty record is not the same as a pick of nothing" };
+  const seen = new Set();
+  for (const l of list) {
+    const lineNo = Number(l.order_line_no ?? 0);
+    if (!(lineNo > 0)) return { error: "every recorded line needs the ticket's own line number" };
+    if (seen.has(lineNo)) return { error: `line ${lineNo} was sent twice, one number per line` };
+    seen.add(lineNo);
+    const qty = parseQty(l.qty_picked);
+    if (qty.empty === true) return { error: "say how many were picked, zero is an answer, blank is not" };
+    if (qty.error) return { error: qty.error };
+    if (qty.value < 0) return { error: "a picked quantity cannot be negative" };
+    const ticketLine = ticket.lines.find((t) => t.line_no === lineNo);
+    const ordered = ticketLine === undefined ? NaN : Number(ticketLine.qty_ordered);
+    const reason = String(l.short_reason ?? "").trim();
+    const note = String(l.short_note ?? "").trim();
+    if (reason !== "" && !SHORT_REASONS.includes(reason)) {
+      return { error: `line ${lineNo}: "${reason}" is not a short pick reason (${SHORT_REASONS.join(", ")})` };
+    }
+    if (note.length > 400) return { error: `line ${lineNo}: the note is too long (max 400)` };
+    if (qty.value > ordered) {
+      return { error: `line ${lineNo}: that is more than was ordered, the yard cannot raise a quantity` };
+    }
+    if (qty.value < ordered) {
+      if (reason === "") return { error: `line ${lineNo} is short, give the reason (${SHORT_REASONS.join(", ")})` };
+      if (reason === "OTHER" && note === "") return { error: `line ${lineNo}: say what happened in the note when the reason is OTHER` };
+    }
+  }
+  const picked = list.map((l) => {
+    const lineNo = Number(l.order_line_no);
+    const ticketLine = ticket.lines.find((t) => t.line_no === lineNo) ?? {};
+    const qtyPicked = Number(String(l.qty_picked).trim()).toFixed(4);
+    const ordered = Number(ticketLine.qty_ordered ?? 0);
+    const short = Number(qtyPicked) < ordered;
+    return {
+      id: `2a000000-0000-4000-9000-${String(pickedSeq()).padStart(12, "0")}`,
+      task_id: task.id,
+      order_line_no: lineNo,
+      product_id: String(ticketLine.product_id ?? ""),
+      sku: String(ticketLine.sku ?? ""),
+      description: String(ticketLine.description ?? ""),
+      qty_ordered: ticketLine.qty_ordered ?? "0.0000",
+      qty_picked: qtyPicked,
+      uom: String(ticketLine.uom ?? "EA"),
+      picked_by: YARD_USER,
+      picked_at: new Date().toISOString(),
+      ...(short ? { short_reason: String(l.short_reason ?? "").trim() } : {}),
+      ...(short && String(l.short_note ?? "").trim() !== "" ? { short_note: String(l.short_note ?? "").trim() } : {}),
+    };
+  });
+  world.picked.set(task.id, picked);
+  for (const p of picked) {
+    const ordered = Number(p.qty_ordered);
+    const pickedQty = Number(p.qty_picked);
+    if (pickedQty >= ordered) continue;
+    const back = (Number((ordered - pickedQty).toFixed(4))).toFixed(4);
+    repNotices.push({
+      topic: "yard.short_pick",
+      order_no: ticket.order_no,
+      line_no: p.order_line_no,
+      body: shortPickNotice(ticket.order_no, p, p.qty_ordered, p.qty_picked, back, p.short_reason ?? "", p.short_note ?? ""),
+    });
+  }
+  return { picked };
+}
+
+// The core's shortageWritableCreate (core/internal/tasks/syncshortage.go): the
+// report itself. The resolution legs and the stamps are the server's.
+const SHORTAGE_CREATE_FIELDS = new Set(["id", "task_id", "order_line_no", "product_id", "sku", "description", "qty_short", "uom", "note"]);
+// The core's shortageWritable: the report's correctable legs. The resolution
+// legs are the counter's act and refuse here.
+const SHORTAGE_UPDATE_FIELDS = new Set(["id", "qty_short", "uom", "sku", "description", "note"]);
+const WEIGHT_UPDATE_FIELDS = new Set(["id", "status", "weight_entered", "weight_uom", "photo_url"]);
+
+function syncFieldRefusal(op, allowed) {
+  for (const key of Object.keys(op.payload ?? {})) {
+    if (!allowed.has(key)) return syncRejected(op, `tasks: field "${key}" is not writable through sync`);
+  }
+  return null;
+}
+
+function syncApplyShortageCreate(op) {
+  const refused = syncFieldRefusal(op, SHORTAGE_CREATE_FIELDS);
+  if (refused) return refused;
+  const input = op.payload ?? {};
+  const description = String(input.description ?? "").trim();
+  if (description === "") return syncRejected(op, "description is required");
+  const qtyRaw = String(input.qty_short ?? "").trim();
+  if (qtyRaw === "") return syncRejected(op, "qty_short is required");
+  const qty = Number(qtyRaw);
+  if (!Number.isFinite(qty) || qty <= 0) return syncRejected(op, "qty_short must be greater than zero");
+  const id = typeof input.id === "string" && UUID_RE.test(input.id) ? input.id : `3a000000-0000-4000-9000-${String(++shortageSeq).padStart(12, "0")}`;
+  if (world.shortages.some((s) => s.id === id)) return syncRejected(op, "row exists");
+  const lineNo = input.order_line_no === null || input.order_line_no === undefined ? null : Number(input.order_line_no);
+  const shortage = {
+    id,
+    task_id: String(input.task_id ?? ""),
+    ...(lineNo !== null && lineNo > 0 ? { order_line_no: lineNo } : {}),
+    sku: String(input.sku ?? ""),
+    description,
+    qty_short: qty.toFixed(4),
+    uom: String(input.uom ?? "").trim() === "" ? "EA" : String(input.uom).trim(),
+    ...(String(input.note ?? "").trim() !== "" ? { note: String(input.note).trim() } : {}),
+    reported_by: YARD_USER,
+    reported_at: new Date().toISOString(),
+  };
+  world.shortages.push(shortage);
+  const t = findTask(shortage.task_id);
+  if (t) t.updated_at = new Date().toISOString();
+  syncTouch("shortages", id);
+  return { client_id: op.client_id, status: "applied", seq: syncSeqOf("shortages", id) };
+}
+
+function syncApplyShortageUpdate(op) {
+  const refused = syncFieldRefusal(op, SHORTAGE_UPDATE_FIELDS);
+  if (refused) return refused;
+  const id = String(op.payload?.id ?? "");
+  const shortage = world.shortages.find((s) => s.id === id);
+  if (!shortage) return syncRejected(op, "shortage not found");
+  const rowSeq = syncSeqOf("shortages", id);
+  if (op.base_seq !== undefined && rowSeq > op.base_seq) {
+    // The manual policy: the server row is what stands, and a person reviews.
+    return {
+      client_id: op.client_id,
+      status: "conflict",
+      conflict: { client_id: op.client_id, policy: "manual", server_state: shortageOut(shortage), applied: false },
+    };
+  }
+  for (const key of ["qty_short", "uom", "sku", "description", "note"]) {
+    if (op.payload[key] !== undefined) shortage[key] = String(op.payload[key]);
+  }
+  syncTouch("shortages", id);
+  return { client_id: op.client_id, status: "applied", seq: syncSeqOf("shortages", id) };
+}
+
+// The core's weights feed is the NEED_WEIGHT task feed and the demo world has
+// no such task: the fields are judged first, then the row is not found.
+function syncApplyWeightsUpdate(op) {
+  const refused = syncFieldRefusal(op, WEIGHT_UPDATE_FIELDS);
+  if (refused) return refused;
+  return syncRejected(op, "row not found");
+}
+
+function handleSyncPush(res, scope, body, moneyAllowed) {
+  const ops = Array.isArray(body?.ops) ? body.ops : [];
+  const results = [];
+  for (const op of ops) {
+    if (!UUID_RE.test(String(op.client_id ?? ""))) {
+      results.push(syncRejected(op, "client_id must be a uuid"));
+      continue;
+    }
+    if (!["create", "update", "delete"].includes(String(op.op ?? ""))) {
+      results.push(syncRejected(op, "op must be create, update or delete"));
+      continue;
+    }
+    const payload = op.payload;
+    if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+      results.push(syncRejected(op, "payload is required"));
+      continue;
+    }
+    const done = appliedKeys.get(op.client_id);
+    if (done !== undefined) {
+      results.push({ client_id: op.client_id, status: "applied", seq: done });
+      continue;
+    }
+    let result;
+    if (scope === "pick_tasks") {
+      if (op.op === "create") {
+        result = syncRejected(op, "tasks: creates through sync are not wired in this demo");
+      } else {
+        const task = findTask(String(payload.id ?? ""));
+        if (!task) result = syncRejected(op, "row not found");
+        else result = syncApplyTaskUpdate(task, op, moneyAllowed);
+      }
+    } else if (scope === "shortages") {
+      result = op.op === "create" ? syncApplyShortageCreate(op) : syncApplyShortageUpdate(op);
+    } else if (scope === "weights") {
+      result = op.op === "update" ? syncApplyWeightsUpdate(op) : syncRejected(op, "row not found");
+    } else {
+      result = syncRejected(op, `sync: scope ${scope} is not writable in this demo`);
+    }
+    if (result.status === "applied") appliedKeys.set(op.client_id, result.seq);
+    results.push(result);
+  }
+  return json(res, { results });
+}
+
+async function handleSync(req, res, url, body) {
+  const scope = url.pathname.slice("/api/v1/sync/".length);
+  if (!SYNC_SCOPES.includes(scope)) return refuse(res, 400, "unknown sync scope");
+  const moneyAllowed = COST_LIST.has(callerRole(req));
+  if (req.method === "GET") return handleSyncPull(res, scope, url, moneyAllowed);
+  // The role gate rides the sync surface as it rides every surface: the
+  // shortage resolvers wall refuses the caller the same way, byte for byte.
+  if (scenario === "resolve-walled" && scope === "shortages") return json(res, { error: "Forbidden" }, 403);
+  if (PULL_ONLY.has(scope)) return refuse(res, 400, `sync: scope ${scope} is pull-only`);
+  if (!WRITE_SCOPES.has(scope)) return refuse(res, 501, `sync: scope ${scope} is not wired yet`);
+  // The body is already read and parsed by the shared block above; a second
+  // read of an ended stream would never answer.
+  return handleSyncPush(res, scope, body, moneyAllowed);
 }
 
 const server = createServer((req, res) => {

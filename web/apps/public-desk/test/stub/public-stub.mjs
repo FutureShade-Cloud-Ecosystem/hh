@@ -37,23 +37,23 @@ const dayFromNow = (days) => new Date(Date.now() + days * 24 * 60 * 60 * 1000).t
 const QUOTES = {
   "q-demo-25": {
     quote_no: "Q-25",
-    customer_name: "Quinte Hardscapes Inc",
+    customer_name: "Fieldstone Hardscapes Inc",
     status: "SENT",
     valid_until: dayFromNow(28),
     expired: false,
     lines: [
       {
         line_no: 1,
-        description: "Banas Natural Step",
+        description: "Bluff Natural Step",
         qty_entered: "1.0000",
         uom_entered: "PC",
         unit_price_cents: 2057,
         line_total_cents: 2057,
-        image_ref: "p-banas",
+        image_ref: "p-bluff",
       },
       {
         line_no: 2,
-        description: "Alliance Gator Polymeric Sand",
+        description: "Tidewater Polymeric Sand",
         qty_entered: "1.0000",
         uom_entered: "BAG",
         unit_price_cents: 2208,
@@ -79,14 +79,14 @@ const QUOTES = {
   },
   "q-expired-25": {
     quote_no: "Q-24",
-    customer_name: "Quinte Hardscapes Inc",
+    customer_name: "Fieldstone Hardscapes Inc",
     status: "SENT",
     valid_until: dayFromNow(-7),
     expired: true,
     lines: [
       {
         line_no: 1,
-        description: "Banas Natural Step",
+        description: "Bluff Natural Step",
         qty_entered: "2.0000",
         uom_entered: "PC",
         unit_price_cents: 2057,
@@ -101,7 +101,7 @@ const QUOTES = {
   },
   "q-accepted-26": {
     quote_no: "Q-26",
-    customer_name: "Quinte Hardscapes Inc",
+    customer_name: "Fieldstone Hardscapes Inc",
     status: "ACCEPTED",
     valid_until: dayFromNow(20),
     expired: false,
@@ -123,7 +123,7 @@ const QUOTES = {
   },
   "q-refuse-27": {
     quote_no: "Q-27",
-    customer_name: "Quinte Hardscapes Inc",
+    customer_name: "Fieldstone Hardscapes Inc",
     status: "SENT",
     valid_until: dayFromNow(14),
     expired: false,
@@ -149,23 +149,23 @@ const QUOTES = {
   // on the next).
   "q-mixed-images-29": {
     quote_no: "Q-29",
-    customer_name: "Quinte Hardscapes Inc",
+    customer_name: "Fieldstone Hardscapes Inc",
     status: "SENT",
     valid_until: dayFromNow(28),
     expired: false,
     lines: [
       {
         line_no: 1,
-        description: "Banas Natural Step",
+        description: "Bluff Natural Step",
         qty_entered: "1.0000",
         uom_entered: "PC",
         unit_price_cents: 2057,
         line_total_cents: 2057,
-        image_ref: "p-banas",
+        image_ref: "p-bluff",
       },
       {
         line_no: 2,
-        description: "Granular A",
+        description: "Pit run, mixed",
         qty_entered: "8.0000",
         uom_entered: "T",
         unit_price_cents: 3250,
@@ -184,19 +184,19 @@ const QUOTES = {
   // nothing the tiles know.
   "q-tiles-31": {
     quote_no: "Q-31",
-    customer_name: "Quinte Hardscapes Inc",
+    customer_name: "Fieldstone Hardscapes Inc",
     status: "SENT",
     valid_until: dayFromNow(28),
     expired: false,
     lines: [
       {
         line_no: 1,
-        description: "Banas Natural Step",
+        description: "Bluff Natural Step",
         qty_entered: "1.0000",
         uom_entered: "PC",
         unit_price_cents: 2057,
         line_total_cents: 2057,
-        image_ref: "p-banas",
+        image_ref: "p-bluff",
       },
       {
         line_no: 2,
@@ -330,7 +330,7 @@ QUOTES["q-flip-8"].quote_no = "#Q-7";
 QUOTES["q-conv-8"] = structuredClone(QUOTES["q-flip-8"]);
 QUOTES["q-conv-8"].status = "CONVERTED";
 QUOTES["q-conv-8"].acceptable = false;
-QUOTES["q-conv-8"].order_no = "SO-TRT-17";
+QUOTES["q-conv-8"].order_no = "SO-PLM-17";
 QUOTES["q-conv-bare-8"] = structuredClone(QUOTES["q-conv-8"]);
 delete QUOTES["q-conv-bare-8"].order_no;
 for (const quote of Object.values(QUOTES)) {
@@ -388,7 +388,7 @@ function png1x1(r, g, b) {
 }
 
 const IMAGES = {
-  "p-banas": png1x1(0x3a, 0x7d, 0x56),
+  "p-bluff": png1x1(0x3a, 0x7d, 0x56),
   "p-sand": png1x1(0xde, 0xcd, 0xaa),
   "p-mulch": png1x1(0x2b, 0x28, 0x24),
   "p-wall": png1x1(0x5a, 0x70, 0x86),

@@ -70,8 +70,9 @@ export const glStyles = css`
   .gl-choice-line { font-size: 14px; color: var(--hh-text-dim); }
   .gl-choice-held { background: var(--hh-field); color: var(--hh-text-dim); border-style: dashed; }
   .gl-field { display: grid; gap: var(--hh-s-4); font-size: 14px; color: var(--hh-text-dim); font-weight: 600; margin-bottom: var(--hh-s-12); }
-  .gl-field textarea { font: inherit; font-size: 16px; padding: var(--hh-s-12); background: var(--hh-field); color: var(--hh-text); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); width: 100%; box-sizing: border-box; }
-  .gl-field textarea:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
+  .gl-field textarea, .gl-field input, .gl-field select { font: inherit; font-size: 16px; padding: var(--hh-s-12); background: var(--hh-field); color: var(--hh-text); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); width: 100%; box-sizing: border-box; min-height: 44px; }
+  .gl-field textarea:focus-visible, .gl-field input:focus-visible, .gl-field select:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
+  .gl-field input[inputmode="decimal"] { text-align: end; font-variant-numeric: tabular-nums; }
   .gl-actions { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; margin-bottom: var(--hh-s-12); }
   .gl-note { margin: var(--hh-s-8) 0 0; padding: var(--hh-s-12) var(--hh-s-16); border-radius: var(--hh-radius-control); background: color-mix(in srgb, var(--hh-accent) 18%, var(--hh-card)); color: var(--hh-text); font-size: 14px; }
 
@@ -97,6 +98,23 @@ export const glStyles = css`
   .gl-status-good { color: var(--hh-state-good); border-color: var(--hh-state-good); }
   .gl-status-plain { color: var(--hh-text-dim); }
 
+  /* The books: stacked panels, forms in a grid, and the confirm steps that name what they change. */
+  .gl-stack { display: grid; gap: var(--hh-s-16); min-width: 0; }
+  .gl-panel + .gl-panel, .gl-split + .gl-panel, .gl-actions + .gl-split { margin-top: var(--hh-s-16); }
+  .gl-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--hh-s-12); align-items: end; }
+  .gl-grow { grid-column: span 2; }
+  .gl-line { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr); gap: var(--hh-s-12); align-items: end; margin-top: var(--hh-s-12); padding-top: var(--hh-s-12); border-top: 1px solid var(--hh-line); }
+  .gl-confirm { border-width: 2px; border-inline-start-width: 6px; }
+  .gl-confirm-stop { border-color: var(--hh-state-stop); }
+  .gl-confirm-watch { border-color: var(--hh-state-watch); }
+  .gl-confirm:focus-visible { outline: 2px solid var(--hh-focus-ring); outline-offset: 2px; }
+  .gl-changes { margin: var(--hh-s-8) 0 var(--hh-s-12); padding-inline-start: var(--hh-s-20); display: grid; gap: var(--hh-s-8); }
+  .gl-tiles-three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .gl-tiles-three div:first-child { grid-column: auto; }
+  .gl-card-row { display: flex; align-items: center; justify-content: space-between; gap: var(--hh-s-12); padding: var(--hh-s-12) var(--hh-s-16); border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); }
+  tr.gl-inactive td { color: var(--hh-text-dim); }
+  .gl-visually { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
   @media (max-width: 900px) {
     .gl-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .gl-split { grid-template-columns: minmax(0, 1fr); }
@@ -105,6 +123,13 @@ export const glStyles = css`
   /* A phone shows the figures: the type column steps aside so debit and credit stay in view. */
   @media (max-width: 520px) {
     .gl-tabs, .areas { gap: var(--hh-s-4); }
+    /* Seven tabs would wrap onto three rows: one row that scrolls inside its own strip instead. */
+    .gl-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+    .gl-tab { flex: none; }
+    .gl-line { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .gl-line-account, .gl-line-memo { grid-column: span 2; }
+    .gl-grow { grid-column: auto; }
+    .gl-tiles-three { grid-template-columns: minmax(0, 1fr); }
     .gl-tab { padding: 0 var(--hh-s-12); font-size: 14px; }
     .gl-col-type, .gl-col-name { display: none; }
     .gl-name-narrow { display: block; color: var(--hh-text-dim); font-size: 12px; }

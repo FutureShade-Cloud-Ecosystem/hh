@@ -674,6 +674,7 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		customerquote.EnvKeyID:   "fx-accept-sign-key",
 		customerquote.EnvKey:     hex.EncodeToString(acceptKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.getenv = func(k string) string { return values[k] }
 	rec, _ := registeredSurface(t, env)
 
@@ -696,11 +697,11 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		}
 		return id
 	}
-	holland := product("DEMO-PAV-HOLLAND")
-	brussels := product("DEMO-PAV-BRUSSELS")
-	wallBlock := product("DEMO-WALL-BLOCK")
-	granularA := product("DEMO-AGG-GA")
-	edging := product("DEMO-EDGE-ALU")
+	holland := product(worldWord("DEMO-PAV-HOLLAND"))
+	brussels := product(worldWord("DEMO-PAV-BRUSSELS"))
+	wallBlock := product(worldWord("DEMO-WALL-BLOCK"))
+	granularA := product(worldWord("DEMO-AGG-GA"))
+	edging := product(worldWord("DEMO-EDGE-ALU"))
 	customer := func(key string) string {
 		t.Helper()
 		var id string

@@ -81,7 +81,9 @@ esac
 export DEMO_MODE=true
 export APP_ENV=demo
 
-for name in DATABASE_URL PAYMENT_VAULT_KEY HH_ACCEPTANCE_SIGN_KEY_ID HH_ACCEPTANCE_SIGN_KEY; do
+# CORE_SIGNIN_MODE is a required name with no default: a copy whose
+# configuration omits it must refuse to start, never boot in the demo mode.
+for name in DATABASE_URL PAYMENT_VAULT_KEY HH_ACCEPTANCE_SIGN_KEY_ID HH_ACCEPTANCE_SIGN_KEY CORE_SIGNIN_MODE; do
 	if [ -z "$(printenv "$name")" ]; then
 		fail "$name is not set: the demo core needs it at boot, and the entrypoint refuses to start without it"
 	fi
@@ -90,14 +92,29 @@ done
 export CORE_DATABASE_URL="$DATABASE_URL"
 export CORE_STAFF_AUDIENCE="${CORE_STAFF_AUDIENCE:-hh-staff}"
 export CORE_TENANT_AUDIENCE="${CORE_TENANT_AUDIENCE:-hh-tenant}"
+# The demo dealer's name, on every text, email and export the demo sends. A deploy
+# overrides it by setting DEALER_NAME in the box's environment.
+export DEALER_NAME="${DEALER_NAME:-Gable Landscape Supply}"
+# CORE_SIGNIN_MODE is passed through as the operator set it (checked above);
+# the core itself refuses any value it does not accept.
 
 # The public port is the platform's PORT. The core listens on a loopback
 # port only: it is never reachable except through Caddy, which fronts
 # every page and every mint request.
+# BEGIN internal port
 GATE_PORT="${PORT:-8080}"
 CORE_INTERNAL_PORT="${CORE_INTERNAL_PORT:-9090}"
 export CORE_LISTEN_ADDR="127.0.0.1:${CORE_INTERNAL_PORT}"
 UPSTREAM="127.0.0.1:${CORE_INTERNAL_PORT}"
+# Only this script reads CORE_INTERNAL_PORT (the core is told its address by
+# CORE_LISTEN_ADDR). Un-export it so no child inherits it: the demo
+# environment guard refuses a CORE_ name on no list. Unset drops the export
+# attribute; the plain assignment after it keeps the value in this shell.
+internal_port="$CORE_INTERNAL_PORT"
+unset CORE_INTERNAL_PORT
+CORE_INTERNAL_PORT="$internal_port"
+unset internal_port
+# END internal port
 
 # --------------------------------------------------------------------------
 # Step 1: a bounded wait for the database to accept connections. The

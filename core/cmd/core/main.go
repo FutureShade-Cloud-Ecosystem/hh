@@ -44,9 +44,11 @@ import (
 	staffcontext "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/tenantconfig"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/otelhttp"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
+	syncengine "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
 func main() {
@@ -104,15 +106,19 @@ type serveConfig struct {
 	issuer         string
 	staffAudience  string
 	tenantAudience string
-	jwksURL        string
-	databaseURL    string
-	appwriteURL    string
-	appwriteProj   string
-	appwriteKey    string
-	listenAddr     string
-	jwksCacheTTL   time.Duration
-	refreshFloor   time.Duration
-	clockSkew      time.Duration
+	// jwksURL is the optional remote JWK Set URL. The default build verifies
+	// over the in process session key set and never reads it; it stays so
+	// the remote key path keeps its configuration shape.
+	jwksURL      string
+	signinMode   signinMode
+	databaseURL  string
+	appwriteURL  string
+	appwriteProj string
+	appwriteKey  string
+	listenAddr   string
+	jwksCacheTTL time.Duration
+	refreshFloor time.Duration
+	clockSkew    time.Duration
 	// The load doors switch (ADR-0024, HH-LOAD-1 LD-2): off by default,
 	// on only where the deployment's configuration says so (the dealer's
 	// staging copy for the parallel run, production only for the cut over
@@ -164,7 +170,7 @@ func loadServeConfig(getenv func(string) string) (serveConfig, error) {
 		"CORE_TOKEN_ISSUER":      "token issuer",
 		"CORE_STAFF_AUDIENCE":    "staff audience",
 		"CORE_TENANT_AUDIENCE":   "tenant audience",
-		"CORE_JWKS_URL":          "JWK Set URL",
+		"CORE_SIGNIN_MODE":       "sign in mode",
 		"CORE_DATABASE_URL":      "database URL",
 		"CORE_APPWRITE_ENDPOINT": "Appwrite endpoint",
 		"CORE_APPWRITE_PROJECT":  "Appwrite project",
@@ -182,7 +188,12 @@ func loadServeConfig(getenv func(string) string) (serveConfig, error) {
 	if getenv("CORE_STAFF_AUDIENCE") == getenv("CORE_TENANT_AUDIENCE") {
 		return serveConfig{}, errors.New("staff and tenant audience values must differ")
 	}
+	mode, err := readSigninMode(getenv, false)
+	if err != nil {
+		return serveConfig{}, err
+	}
 	cfg := serveConfig{
+		signinMode:     mode,
 		issuer:         getenv("CORE_TOKEN_ISSUER"),
 		staffAudience:  getenv("CORE_STAFF_AUDIENCE"),
 		tenantAudience: getenv("CORE_TENANT_AUDIENCE"),
@@ -268,6 +279,14 @@ type appGraph struct {
 	// carries nil and mints nothing (test support and the demo session
 	// lane read it, never the default request path).
 	demoMint func(string) (string, error)
+	// signin is the sign in mode this graph was composed under, session the
+	// persistent key composition (the minter, the key set and the exchange
+	// window the exchange route of item 6b mounts on; nil in the demo
+	// build's demo mode), and members the membership source the gate was
+	// built over. The boot tests read them to prove which composition ran.
+	signin  signinMode
+	session *sessionComposition
+	members authz.MembershipSource
 }
 
 // registerRoutes is the one place every production registration lands: the
@@ -299,6 +318,7 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
 	}
+	dealer.Set(cfg.DealerName)
 	log := slog.Default()
 
 	auth, err := loadServeConfig(getenv)
@@ -324,8 +344,17 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 		}
 		machineKeys = src
 	}
+	// The persistent key source (console mode, the default build's only
+	// mode): the deployment's own key signs, and the core verifies its own
+	// tokens through an in process source over the same public keys, with
+	// no HTTP hop. A missing or unparseable key stops the boot here.
+	session, err := loadSessionComposition(getenv, auth.issuer, auth.staffAudience)
+	if err != nil {
+		return nil, err
+	}
+	warnUnusedJWKSURL(log, getenv)
 	verifier, err := identity.NewVerifier(identity.Config{
-		JWKSURL:          auth.jwksURL,
+		KeySource:        session.keys,
 		Issuer:           auth.issuer,
 		StaffAudience:    auth.staffAudience,
 		TenantAudience:   auth.tenantAudience,
@@ -347,12 +376,11 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 		return nil, err
 	}
 
-	appwrite, err := authz.NewAppwriteMembershipSource(auth.appwriteURL, auth.appwriteProj, auth.appwriteKey, nil)
+	members, err := consoleMembership(auth.appwriteURL, auth.appwriteProj, auth.appwriteKey)
 	if err != nil {
 		pool.Close()
 		return nil, err
 	}
-	members := authz.NewCachedMembership(appwrite, 30*time.Second)
 	orgs, err := authz.NewPgxOrgResolver(pool)
 	if err != nil {
 		pool.Close()
@@ -440,6 +468,11 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	// capture.
 	r.Handle("GET /api/v1/tenant/config", g.Public(tenantconfig.New(tenantconfig.Default())))
 
+	// The session JWK Set (state note section 2): public, cacheable, the
+	// public halves of the current, NEXT and PREVIOUS keys. No consumer
+	// relies on it yet; the core verifies through the in process source.
+	r.Handle("GET /.well-known/jwks.json", g.Public(session.keys.JWKSHandler()))
+
 	// The customer-quote surface (HH-3.6 C5, the integration audit
 	// re-point): the service is constructed AFTER the spines below, because
 	// the concrete audit seam rides the carried audit service wireMoney
@@ -503,6 +536,32 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 		panic("sync: scope wiring refused to boot: " + err.Error())
 	}
 
+	// The sign in exchange (item 6b, state note section 3): public leg, no
+	// bearer, mounted here because this wiring runs only in the console
+	// mode. It reads membership from the uncached FB Console source. A
+	// configuration refusal stops the boot.
+	exch, err := buildExchange(exchangeDeps{
+		getenv: getenv, log: log, pool: pool, session: session,
+		appwrite: appwriteNames{endpoint: auth.appwriteURL, project: auth.appwriteProj, apiKey: auth.appwriteKey},
+		orgs:     orgs, staff: staff, knob: dispatchDriverSessionKnob{repo: dispatch.NewRepository(pool)},
+		audit: money.auditSvc,
+	})
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	r.Handle("POST /api/v1/auth/exchange", g.Public(exch))
+
+	// The sign in screen's read of the dealer's allowed sign in methods
+	// (item 6c): public leg, the codes only, the same answer for an unknown
+	// org as for one holding the default set.
+	methodsRoute, err := buildMethods(exchangeDeps{getenv: getenv, pool: pool, orgs: orgs})
+	if err != nil {
+		pool.Close()
+		return nil, err
+	}
+	r.Handle("GET /api/v1/auth/methods", g.Public(methodsRoute))
+
 	// The load doors (HH-LOAD-1 LD-1, ADR-0024) register only where the
 	// deployment switched them on (CORE_LOAD_DOORS, the same switch that
 	// wired the machine gate above); the routes land through the gate
@@ -513,6 +572,7 @@ func registerRoutesWithRoleConfig(r httpx.Registrar, getenv func(string) string,
 	return &appGraph{
 		cfg: cfg, log: log, pool: pool, verify: verifier, link: linkedUserID(pool), g: g,
 		money: money, ops: ops, tops: tops, smsBelt: belt, listenAddr: auth.listenAddr,
+		signin: auth.signinMode, session: session, members: members,
 	}, nil
 }
 
@@ -556,6 +616,12 @@ func serve(getenv func(string) string) error {
 		return err
 	}
 	defer graph.pool.Close()
+	// The sync engine's key ledger holds one connection per push for its
+	// slot lock; a pool of one would hang every keyed push, so refuse to
+	// boot rather than serve a door that wedges.
+	if err := syncengine.RequireLedgerPool(graph.pool); err != nil {
+		return err
+	}
 
 	// healthz: a LIVE database ping, not a startup nil-check, so a deploy
 	// gate fails honestly when the database is down.

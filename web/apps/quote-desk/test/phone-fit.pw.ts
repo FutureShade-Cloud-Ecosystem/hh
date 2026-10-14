@@ -91,7 +91,7 @@ for (const width of WIDTHS) {
 
     test("every Convert step fits, for an account, a Cash On Demand customer, and the done screen", async ({ page }) => {
       for (const customer of ["c-fenwick", "c-walkin", "c-held", "c-pastdue"]) {
-        const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "ACCEPTED", customer_id: customer, lines: [{ p: "p-wall-std", q: 4 }, { p: "p-holland-60", q: 120 }] } });
+        const seeded = await page.request.post("/_stub/seed-quote", { data: { status: "ACCEPTED", customer_id: customer, lines: [{ p: "p-wall-std", q: 4 }, { p: "p-charcoal-60", q: 120 }] } });
         const id = ((await seeded.json()) as { id: string }).id;
         await signIn(page);
         await page.evaluate((quote) => {
@@ -142,7 +142,7 @@ for (const width of WIDTHS) {
     test("the quote detail bar opens without pushing the page sideways, and the preview's Amount column is whole", async ({ page }) => {
       await signIn(page);
       const seeded = await page.request.post("/_stub/seed-quote", {
-        data: { status: "DRAFT", customer_id: "c-fenwick", lines: [{ p: "p-holland-60", q: 120 }, { p: "p-polymer-sand", q: 2 }, { p: "p-edge-8", q: 10 }, { p: "p-wall-std", q: 4 }, { p: "p-clear-stone", q: 3 }] },
+        data: { status: "DRAFT", customer_id: "c-fenwick", lines: [{ p: "p-charcoal-60", q: 120 }, { p: "p-polymer-sand", q: 2 }, { p: "p-edge-8", q: 10 }, { p: "p-wall-std", q: 4 }, { p: "p-clear-stone", q: 3 }] },
       });
       const id = ((await seeded.json()) as { id: string }).id;
       await page.evaluate((quote) => {

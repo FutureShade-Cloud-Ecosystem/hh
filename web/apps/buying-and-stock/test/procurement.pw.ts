@@ -4,72 +4,7 @@
 // words. The stub is held to the core's shapes and sentences by
 // test/stub-contract.test.mjs.
 import type { Page } from "@playwright/test";
-import { test, expect, openHome, resetStub } from "./helpers.js";
-
-/**
- * Every visible text node's contrast against the colour it really sits on (backgrounds composited up the
- * tree, shadow roots crossed). Returns "text: ratio" for each under 4.5 (3 for large text). Disabled controls
- * are exempt, as the standard has it.
- */
-async function lowContrast(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const canvas = document.createElement("canvas");
-    canvas.width = canvas.height = 1;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-    const rgba = (css: string): [number, number, number, number] => {
-      ctx.clearRect(0, 0, 1, 1);
-      ctx.fillStyle = "#000";
-      ctx.fillStyle = css;
-      ctx.fillRect(0, 0, 1, 1);
-      const d = ctx.getImageData(0, 0, 1, 1).data;
-      return [d[0] ?? 0, d[1] ?? 0, d[2] ?? 0, (d[3] ?? 0) / 255];
-    };
-    const over = (top: number[], under: number[]): number[] => {
-      const a = top[3] ?? 1;
-      return [0, 1, 2].map((i) => (top[i] ?? 0) * a + (under[i] ?? 0) * (1 - a)).concat([1]);
-    };
-    const lum = (c: number[]): number => {
-      const f = (v: number): number => {
-        const x = v / 255;
-        return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
-      };
-      return 0.2126 * f(c[0] ?? 0) + 0.7152 * f(c[1] ?? 0) + 0.0722 * f(c[2] ?? 0);
-    };
-    const parentOf = (e: Element): Element | null => e.parentElement ?? ((e.getRootNode() as ShadowRoot).host ?? null);
-    const backdrop = (e: Element): number[] => {
-      const chain: number[][] = [];
-      for (let n: Element | null = e; n !== null; n = parentOf(n)) chain.push(rgba(getComputedStyle(n).backgroundColor));
-      let base = [255, 255, 255, 1];
-      for (let i = chain.length - 1; i >= 0; i -= 1) base = over(chain[i] as number[], base);
-      return base;
-    };
-    const out: string[] = [];
-    const walk = (root: Document | ShadowRoot | Element): void => {
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-        const text = (node.textContent ?? "").trim();
-        const el = node.parentElement;
-        if (text === "" || el === null || el.closest("[disabled]") !== null) continue;
-        if (el.closest("style, script") !== null) continue;
-        const cs = getComputedStyle(el);
-        if (cs.visibility === "hidden" || cs.display === "none") continue;
-        const bg = backdrop(el);
-        const fg = over(rgba(cs.color), bg);
-        const l1 = lum(fg);
-        const l2 = lum(bg);
-        const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
-        const size = parseFloat(cs.fontSize);
-        const large = size >= 24 || (size >= 18.66 && Number(cs.fontWeight) >= 700);
-        if (ratio < (large ? 3 : 4.5)) out.push(`${text.slice(0, 40)}: ${ratio.toFixed(2)}`);
-      }
-      root.querySelectorAll("*").forEach((n) => {
-        if (n.shadowRoot !== null) walk(n.shadowRoot);
-      });
-    };
-    walk(document);
-    return out;
-  });
-}
+import { test, expect, openHome, resetStub, lowContrast } from "./helpers.js";
 
 const gapRow = (page: Page) => page.locator("[data-shortfall-row]", { hasText: "DBS-BRUS-DIM" });
 
@@ -82,8 +17,13 @@ async function draftTheGap(page: Page): Promise<void> {
 test("the way in with no handoff offers this role's own card", async ({ page, request }) => {
   await resetStub(request);
   await page.goto("/");
-  await expect(page.locator("[data-flow]")).toHaveCount(1);
-  await expect(page.locator("[data-flow]")).toContainText("Procurement manager");
+  // The surface's three roles now hold cards here (the inventory and counts
+  // areas brought the yard manager and Payables and Receivables in), and the
+  // procurement manager's card is this app's landing role.
+  await expect(page.locator("[data-flow]")).toHaveCount(3);
+  await expect(page.locator('[data-flow="procurement-manager"]')).toContainText("Procurement manager");
+  await expect(page.locator('[data-flow="yard-manager"]')).toContainText("Yard manager");
+  await expect(page.locator('[data-flow="payables-receivables"]')).toContainText("Payables and Receivables");
 });
 
 test("the header names the role as the reference does, and the theme control is a small button", async ({ page, request }) => {
@@ -177,7 +117,7 @@ test("shortfall to a draft: the vendor, its code, the line at the suggested quan
   const panel = page.locator("[data-draft]");
   await expect(panel).toContainText("New purchase order from the shortfall");
   await expect(panel).toContainText("Alcli (demo)");
-  await expect(panel).toContainText("Trenton yard");
+  await expect(panel).toContainText("Loma yard");
   const line = panel.locator("[data-draft-line]");
   await expect(line).toHaveCount(1);
   await expect(line).toContainText("DBS-BRUS-DIM");
@@ -186,7 +126,7 @@ test("shortfall to a draft: the vendor, its code, the line at the suggested quan
   await expect(line).toContainText("$8.40");
   await expect(line).toContainText("$2,016.00");
   await expect(panel.locator("[data-draft-total]")).toContainText("$2,016.00");
-  await expect(page.locator("[data-po-row]", { hasText: "PO-TRT-142" })).toContainText("Draft");
+  await expect(page.locator("[data-po-row]", { hasText: "PO-PLM-142" })).toContainText("Draft");
   await expect(panel.locator("[data-callout]")).toContainText("Place moves the order to Ordered.");
 });
 
@@ -203,7 +143,7 @@ test("delivery is a three way control, and the choice is saved with the draft", 
   // The date reads as words under the field as it is typed, before anything is saved.
   await expect(page.locator("[data-date-words]")).toContainText("Tuesday 4 March 2031");
   await page.getByRole("button", { name: "Save draft" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Draft PO-TRT-142 saved");
+  await expect(page.locator("[data-notice]")).toContainText("Draft PO-PLM-142 saved");
   await expect(page.locator("[data-draft]")).toHaveCount(0);
   await page.locator("[data-open-draft]").click();
   await expect(page.locator("[data-method='PICKUP']")).toHaveAttribute("aria-pressed", "true");
@@ -313,7 +253,7 @@ test("the existing draft note keeps space under it before the order's facts", as
   });
   await page.getByRole("button", { name: "Draft PO (1)" }).click();
   const existing = page.locator("[data-existing-draft]");
-  await expect(existing).toContainText("A draft was already open: PO-TRT-142.");
+  await expect(existing).toContainText("A draft was already open: PO-PLM-142.");
   // The facts list (Order, Vendor, Ship to) sits below the note with air between, not flush.
   const gapPx = await page.evaluate(() => {
     const root = document.querySelector("buying-and-stock-app")!.shadowRoot!;
@@ -356,12 +296,12 @@ test("a draft made behind the screen's back is named when the press drafts again
   await page.getByRole("button", { name: "Draft PO (1)" }).click();
   const panel = page.locator("[data-draft]");
   await expect(panel).toBeVisible();
-  await expect(panel.locator("[data-po-no]")).toHaveText("PO-TRT-143");
+  await expect(panel.locator("[data-po-no]")).toHaveText("PO-PLM-143");
   const existing = panel.locator("[data-existing-draft]");
-  await expect(existing).toContainText("A draft was already open: PO-TRT-142.");
+  await expect(existing).toContainText("A draft was already open: PO-PLM-142.");
   await expect(existing).toContainText("Drafted, not placed");
   await existing.locator("[data-open-draft]").click();
-  await expect(panel.locator("[data-po-no]")).toHaveText("PO-TRT-142");
+  await expect(panel.locator("[data-po-no]")).toHaveText("PO-PLM-142");
 });
 
 test("a draft does not cover the shortfall: the K08 row stays, reading drafted not placed, with the draft's link", async ({ page, request }) => {
@@ -372,7 +312,7 @@ test("a draft does not cover the shortfall: the K08 row stays, reading drafted n
   const row = gapRow(page);
   await expect(row).toHaveCount(1);
   await expect(row).toContainText("Drafted, not placed");
-  await expect(row.locator("[data-open-draft]")).toHaveText("PO-TRT-142");
+  await expect(row.locator("[data-open-draft]")).toHaveText("PO-PLM-142");
   await expect(row).toHaveAttribute("data-hot", "true");
   await expect(page.locator("[data-tile='below-point']")).toContainText("3");
   // With the draft's words in the row, the worklist and the register still show every column and every pill whole.
@@ -383,10 +323,10 @@ test("a draft does not cover the shortfall: the K08 row stays, reading drafted n
   expect(clipped, "worklist then register: pixels cut off").toEqual([0, 0]);
   // The row's own pick is closed: a second draft for the same gap is not offered.
   await expect(row.getByRole("checkbox")).toBeDisabled();
-  await expect(row.getByRole("checkbox")).toHaveAccessibleName("Drafted, PO-TRT-142");
+  await expect(row.getByRole("checkbox")).toHaveAccessibleName("Drafted, PO-PLM-142");
   // The link opens the draft again.
   await row.locator("[data-open-draft]").click();
-  await expect(page.locator("[data-draft]")).toContainText("PO-TRT-142");
+  await expect(page.locator("[data-draft]")).toContainText("PO-PLM-142");
 });
 
 test("a draft is placed and seen incoming, and only the placed order closes the gap", async ({ page, request }) => {
@@ -395,14 +335,14 @@ test("a draft is placed and seen incoming, and only the placed order closes the 
   await page.locator("[data-field='expected']").fill("2031-03-04");
   await page.getByRole("button", { name: "Place order" }).click();
   const notice = page.locator("[data-notice]");
-  await expect(notice.locator("strong")).toContainText("Placed: PO-TRT-142 to Alcli (demo), 240 Brussels Dimensional, $2,016.00.");
+  await expect(notice.locator("strong")).toContainText("Placed: PO-PLM-142 to Alcli (demo), 240 Brussels Dimensional, $2,016.00.");
   await expect(notice).toContainText("Moved to Ordered, promised 2031-03-04. It shows under Incoming. The yard team receives it in Yard Pick and Receive.");
   await expect(notice).not.toContainText("the core reads");
   await expect(page.locator("[data-draft]")).toHaveCount(0);
-  const register = page.locator("[data-po-row]", { hasText: "PO-TRT-142" });
+  const register = page.locator("[data-po-row]", { hasText: "PO-PLM-142" });
   await expect(register).toContainText("Ordered");
   await expect(register).toContainText("$2,016.00");
-  const incoming = page.locator("[data-incoming-row]", { hasText: "PO-TRT-142" });
+  const incoming = page.locator("[data-incoming-row]", { hasText: "PO-PLM-142" });
   await expect(incoming).toContainText("2031-03-04");
   await expect(incoming).toContainText("Alcli (demo)");
   await expect(gapRow(page)).toHaveCount(0);
@@ -411,12 +351,12 @@ test("a draft is placed and seen incoming, and only the placed order closes the 
 
 test("promised dates read as days from today, and a part received order reads how much landed", async ({ page, request }) => {
   await openHome(page, request);
-  // The tabs read in the reference's order, the ones not yet built dashed between them.
-  await expect(page.locator("nav.tabs")).toHaveText(/Purchase orders\s*Receiving later\s*Incoming\s*Vendors later\s*Vendor bills later/);
-  await expect(page.locator("[data-incoming-row]", { hasText: "PO-TRT-141" })).toContainText("in 2 days");
-  await expect(page.locator("[data-incoming-row]", { hasText: "PO-TRT-136" })).toContainText("in 4 days");
-  await expect(page.locator("[data-po-row]", { hasText: "PO-TRT-67" })).toContainText("6 of 10 pc landed");
-  await expect(page.locator("[data-po-row]", { hasText: "PO-TRT-67" })).toContainText("Partial");
+  // The desk's own tabs: the orders and what is incoming. The other areas ride the area switcher above them.
+  await expect(page.locator("nav.tabs")).toHaveText(/Purchase orders\s*Incoming/);
+  await expect(page.locator("[data-incoming-row]", { hasText: "PO-PLM-141" })).toContainText("in 2 days");
+  await expect(page.locator("[data-incoming-row]", { hasText: "PO-PLM-136" })).toContainText("in 4 days");
+  await expect(page.locator("[data-po-row]", { hasText: "PO-PLM-67" })).toContainText("6 of 10 pc landed");
+  await expect(page.locator("[data-po-row]", { hasText: "PO-PLM-67" })).toContainText("Partial");
   await expect(page.locator("[data-tile='incoming']")).toContainText("arrivals with a promised date");
 });
 
@@ -424,8 +364,8 @@ test("an order placed without a promised date shows no date, never an invented o
   await openHome(page, request);
   await draftTheGap(page);
   await page.getByRole("button", { name: "Place order" }).click();
-  await expect(page.locator("[data-notice]")).toContainText("Placed: PO-TRT-142");
-  await expect(page.locator("[data-incoming-row]", { hasText: "PO-TRT-142" })).toContainText("no date");
+  await expect(page.locator("[data-notice]")).toContainText("Placed: PO-PLM-142");
+  await expect(page.locator("[data-incoming-row]", { hasText: "PO-PLM-142" })).toContainText("no date");
 });
 
 test("a draft with its line removed is refused by the server in its own words, beside the button", async ({ page, request }) => {
@@ -442,7 +382,7 @@ test("Cancel draft cancels the order it drafted and the row is plain again", asy
   await draftTheGap(page);
   await page.getByRole("button", { name: "Cancel draft" }).click();
   await expect(page.locator("[data-draft]")).toHaveCount(0);
-  await expect(page.locator("[data-po-row]", { hasText: "PO-TRT-142" })).toContainText("Cancelled");
+  await expect(page.locator("[data-po-row]", { hasText: "PO-PLM-142" })).toContainText("Cancelled");
   await expect(gapRow(page)).not.toContainText("Drafted, not placed");
   await expect(page.locator("[data-tile='below-point']")).toContainText("3");
 });
@@ -457,21 +397,22 @@ test("a role the gate walls out of ordering is refused in the ruled words, besid
   await expect(page.locator("[data-draft]")).toHaveCount(0);
 });
 
-test("there is no vendor bill control, and the words say who posts a bill", async ({ page, request }) => {
+test("the orders screen has no vendor bill control of its own, the bills live in their area, and the words say who posts a bill", async ({ page, request }) => {
   await openHome(page, request);
-  await expect(page.getByRole("button", { name: /bill/i })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: /bill/i })).toHaveCount(0);
+  // The worklist, the register and incoming carry no bill control; the Vendor bills area is a tab beside them.
+  await expect(page.locator(".home").getByRole("button", { name: /bill/i })).toHaveCount(0);
+  await expect(page.locator("nav.areas").getByRole("button", { name: "Vendor bills" })).toBeVisible();
   await expect(page.locator("[data-bills-note]")).toContainText("Posting a vendor bill is for Payables and Receivables");
 });
 
 test("an order the yard has received reads Received, as an outline word and never a button", async ({ page, request }) => {
   await openHome(page, request);
-  await request.post("/_stub/receive", { data: { po_no: "PO-TRT-141" } });
+  await request.post("/_stub/receive", { data: { po_no: "PO-PLM-141" } });
   await page.getByRole("button", { name: "Refresh" }).first().click();
-  const row = page.locator("[data-po-row]", { hasText: "PO-TRT-141" });
+  const row = page.locator("[data-po-row]", { hasText: "PO-PLM-141" });
   await expect(row).toContainText("Received");
   await expect(row.getByRole("button")).toHaveCount(0);
-  await expect(page.locator("[data-incoming-row]", { hasText: "PO-TRT-141" })).toHaveCount(0);
+  await expect(page.locator("[data-incoming-row]", { hasText: "PO-PLM-141" })).toHaveCount(0);
 });
 
 test.skip("PENDING: the yard team receives the placed order in Yard Pick and Receive (waits for Yard receiving)", async () => {
@@ -508,7 +449,7 @@ test("on a phone every worklist figure is on screen, none hidden behind a sidewa
 test("on a phone the incoming row keeps the PO, the vendor and the expected date, and hides how it is coming and the line count", async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openHome(page, request);
-  const row = page.locator("[data-incoming-row]", { hasText: "PO-TRT-141" });
+  const row = page.locator("[data-incoming-row]", { hasText: "PO-PLM-141" });
   await expect(row).toBeVisible();
   await expect(row).toContainText("Techo Bloc (demo)");
   await expect(row.locator("[data-expected]")).toBeVisible();

@@ -56,7 +56,7 @@ import (
 // is the money-desk login this proof plants beside the world (the quotes proof's HR pattern), a
 // role label as the house rule demands.
 const (
-	codAccountName = "Cash On Demand customer (demo)"
+	codAccountName = "Cash On Demand customer"
 	codAccountNo   = "DEMO-C10"
 	codQuoteKey    = "Q4"
 	codFinSubject  = "hh-demo-cod-financial-controller"
@@ -113,6 +113,7 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 		"CORE_APPWRITE_PROJECT": "fx-appwrite-project", "CORE_APPWRITE_API_KEY": "fx-appwrite-key-placeholder",
 		customerquote.EnvKeyID: "fx-accept-sign-key", customerquote.EnvKey: hex.EncodeToString(acceptKey),
 	}
+	consoleSessionValues(t, env.minter, values)
 	env.getenv = func(k string) string { return values[k] }
 	rec, _ := registeredSurface(t, env)
 	sales := &tillClient{t: t, mux: rec.inner, token: env.minter.StaffToken(t, qwSalesUserID), who: "Sales"}
@@ -304,7 +305,7 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	// deposit order owes on its terms and is NOT held; the Cash On Demand account's is held from
 	// picking, in process because its deposit landed. Then the held one is paid in full at the Pay
 	// balance door and the hold lifts with the last dollar.
-	find := sales.call("GET", "/api/v1/pos/pay-balance?q="+url.QueryEscape("DEMO-TRT-D0"), nil)
+	find := sales.call("GET", "/api/v1/pos/pay-balance?q="+url.QueryEscape("DEMO-PLM-D0"), nil)
 	find.ok(t, http.StatusOK)
 	var found struct {
 		Items []struct {
@@ -325,7 +326,7 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 	}
 	find.decode(t, &found)
 	if len(found.Items) != 2 {
-		t.Fatalf("Pay balance found %d deposit orders for DEMO-TRT-D0, want the two the seed plants", len(found.Items))
+		t.Fatalf("Pay balance found %d deposit orders for DEMO-PLM-D0, want the two the seed plants", len(found.Items))
 	}
 	var heldOrderID string
 	var heldOwed int64
@@ -335,13 +336,13 @@ func TestDemoWorld_CashOnDemand(t *testing.T) {
 				it.OrderNo, it.OrderTotalCents, it.PaidCents, it.StillOwedCents, len(it.Payments))
 		}
 		switch it.OrderNo {
-		case "DEMO-TRT-D01":
+		case "DEMO-PLM-D01":
 			if it.Held || it.Payments[0].Method != "CARD" || it.Job == "" {
-				t.Errorf("DEMO-TRT-D01 (credit) reads held %v by %s job %q, want not held, a card deposit, a job", it.Held, it.Payments[0].Method, it.Job)
+				t.Errorf("DEMO-PLM-D01 (credit) reads held %v by %s job %q, want not held, a card deposit, a job", it.Held, it.Payments[0].Method, it.Job)
 			}
-		case "DEMO-TRT-D02":
+		case "DEMO-PLM-D02":
 			if !it.Held || it.HoldWords != "This order cannot reach picking until the balance is paid." || it.Payments[0].Method != "CASH" {
-				t.Errorf("DEMO-TRT-D02 (Cash On Demand) reads held %v %q by %s, want held with the hold words, a cash deposit", it.Held, it.HoldWords, it.Payments[0].Method)
+				t.Errorf("DEMO-PLM-D02 (Cash On Demand) reads held %v %q by %s, want held with the hold words, a cash deposit", it.Held, it.HoldWords, it.Payments[0].Method)
 			}
 			heldOrderID, heldOwed = it.OrderID, it.StillOwedCents
 		default:

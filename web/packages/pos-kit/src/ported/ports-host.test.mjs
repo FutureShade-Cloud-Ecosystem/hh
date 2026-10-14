@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import {
   api,
   branchName,
+  refusal,
   clearPanelLayoutRaw,
   clearSessionState,
   readPanelLayoutRaw,
@@ -218,4 +219,55 @@ test('a host with a base URL sends every ported call to the core there; without 
     globalThis.fetch = realFetch;
   }
   assert.deepEqual(seen, ['https://core.example.test/api/v1/pos/policy?branch_id=b', '/api/v1/pos/policy?branch_id=b']);
+});
+
+// ── the host's own fetch (the Work shell's no signal guard rides it) ─────────
+
+test('the request door sends through the fetch the host supplies, and a host without one uses the platform fetch', async () => {
+  const seen = [];
+  wirePorts({
+    headers: async () => ({ 'X-Org': 'hh-demo', Authorization: 'Bearer stub-token' }),
+    houseDay: () => HOUSE_DAY,
+    user: () => null,
+    token: () => 'stub-token',
+    fetch: async (url, init) => {
+      seen.push(`${(init && init.method) || 'GET'} ${url}`);
+      return new Response('{"error":"No signal."}', { status: 503 });
+    },
+  });
+  const refused = await api('/api/v1/pos/sales', { method: 'POST', body: '{}' });
+  assert.equal(refused.status, 503);
+  assert.deepEqual(seen, ['POST /api/v1/pos/sales']);
+
+  wire();
+  const realFetch = globalThis.fetch;
+  let platform = 0;
+  globalThis.fetch = async () => {
+    platform += 1;
+    return new Response('{}', { status: 200 });
+  };
+  try {
+    await api('/api/v1/pos/parked');
+    assert.equal(platform, 1);
+    assert.deepEqual(seen, ['POST /api/v1/pos/sales'], 'the earlier host fetch is not used after a re-wire');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+// ── a refusal the host made before anything dialed (the no signal guard) ─────
+
+test('a failed read throws the status as ever, but a refusal the host marked speaks its own words', async () => {
+  wire();
+  const plain = await refusal(new Response('{"error":"nope"}', { status: 503 }), 'resume');
+  assert.equal(plain.message, 'resume 503');
+  const marked = await refusal(
+    new Response(JSON.stringify({ error: 'No signal. This needs the server.' }), { status: 503, headers: { 'X-HH-Host-Refusal': '1' } }),
+    'resume',
+  );
+  assert.equal(marked.message, 'No signal. This needs the server.');
+  const unreadable = await refusal(new Response('not json', { status: 503, headers: { 'X-HH-Host-Refusal': '1' } }), 'park');
+  assert.equal(unreadable.message, 'park 503');
+  const empty = await refusal(new Response('{}', { status: 503, headers: { 'X-HH-Host-Refusal': '1' } }), 'park');
+  assert.equal(empty.message, 'park 503');
 });

@@ -100,18 +100,47 @@ export function journalTone(derivedStatus: string): "stop" | "watch" | "good" | 
 const WHO_DECIDES = "the General Manager, or a Financial Controller who did not file it";
 
 function sentence(text: string): string {
-  const trimmed = text.trim();
+  // The core prefixes its sentences with the module ("gl: "); a person reads the sentence alone.
+  const trimmed = text.trim().replace(/^gl:\s*/, "");
   if (trimmed === "") return "";
   const cap = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
   return /[.!?]$/.test(cap) ? cap : `${cap}.`;
 }
 
+/** What each write is called in a refusal, and who the role gate lets through. */
+const WRITES: Record<string, { what: string; who: string }> = {
+  post: { what: "post a journal", who: "the Financial Controller or the General Manager" },
+  "approve-journal": { what: "approve a journal", who: "the Financial Controller or the General Manager" },
+  void: { what: "void a journal", who: "the Financial Controller or the General Manager" },
+  reverse: { what: "reverse a journal", who: "the Financial Controller or the General Manager" },
+  run: { what: "run a template", who: "the Financial Controller or the General Manager" },
+  account: { what: "add an account", who: "the Financial Controller or the General Manager" },
+  deactivate: { what: "deactivate an account", who: "the Financial Controller or the General Manager" },
+  "close-period": { what: "close a period", who: "the Financial Controller or the General Manager" },
+  reopen: { what: "reopen a period", who: "the Financial Controller" },
+  "close-year": { what: "close the year", who: "the Financial Controller" },
+  bistrack: { what: "read the BisTrack check", who: "the Financial Controller" },
+  export: { what: "take the export", who: "the Financial Controller" },
+};
+
+/** True when nothing says whether the write landed: no answer at all, or the server failed on its own. */
+export function outcomeUnknown(status: number): boolean {
+  return status === 0 || status === 500 || status === 502 || status === 504;
+}
+
+/** The words when a write's answer was lost, naming where to look before pressing again. */
+export function unknownWords(action: string): string {
+  const what = WRITES[action]?.what ?? "make that change";
+  return `The answer to ${what} was lost, so it may or may not have been saved. Reload and look at the register before you press again.`;
+}
+
 /**
  * A refusal in words. The role gate answers a walled route with its shared
- * "Forbidden" body, which tells a person nothing, so the app names who may do
- * it. The core's separation of duties words (the requester never decides their
- * own request) get the way out beside them. Any other refusal keeps the core's
- * own sentence.
+ * "Forbidden" body, which tells a person nothing, so the app names who may
+ * do it. The core's separation of duties words (the requester never decides
+ * their own request) get the way out beside them. A refusal that has a way
+ * out gets it; any other keeps the core's own sentence, without its module
+ * prefix.
  */
 export function refusalWords(action: string, message: string, status: number): string {
   const lower = message.toLowerCase();
@@ -120,9 +149,29 @@ export function refusalWords(action: string, message: string, status: number): s
       return `You filed this request, so you cannot decide it. Another approver decides it: ${WHO_DECIDES}.`;
     }
     if (status === 403) {
-      return "Deciding a request is for the Financial Controller or the General Manager. Sign out and in again as one of them if this was not the role you meant.";
+      return "Deciding a request is for the Financial Controller or the General Manager. Sign out and in again if this was not the role you meant.";
     }
     if (status === 409) return "Someone already decided this request. Reload to see it.";
+  }
+  const write = WRITES[action];
+  if (write !== undefined) {
+    if (outcomeUnknown(status)) return unknownWords(action);
+    if (status === 403 && lower.includes("four-eyes")) {
+      return "You made this journal, so you cannot approve it. Another approver posts it: the General Manager, or a Financial Controller who did not make it.";
+    }
+    if (status === 403) {
+      return `To ${write.what} is for ${write.who}. Sign out and in again if this was not the role you meant.`;
+    }
+    if (lower.includes("unbalanced")) {
+      return "Debits and credits are not equal, so nothing was saved. Match the two sides and post again.";
+    }
+    if (lower.includes("fiscal period is closed")) {
+      return "That month is closed, so nothing was saved. The Financial Controller can reopen it with a reason.";
+    }
+    if (lower.includes("no fiscal period")) {
+      return `${sentence(message)} Add the period before posting into it.`;
+    }
+    if (lower.includes("reason is required")) return "A reason is required. Say why, and try again.";
   }
   if (status === 403) {
     return "That is for the Financial Controller or the General Manager.";
@@ -130,4 +179,121 @@ export function refusalWords(action: string, message: string, status: number): s
   const words = sentence(message);
   if (words === "") return "The ledger did not answer. Reload to try again.";
   return words;
+}
+
+// ---- the chart of accounts ------------------------------------------------------------------------
+
+const TYPE_WORD: Record<string, string> = {
+  ASSET: "Asset",
+  LIABILITY: "Liability",
+  EQUITY: "Equity",
+  REVENUE: "Revenue",
+  EXPENSE: "Expense",
+};
+
+/** ASSET reads "Asset". */
+export function accountTypeWord(type: string): string {
+  return TYPE_WORD[type] ?? type;
+}
+
+/** The normal balance in words: DEBIT reads "Debit". */
+export function sideWord(side: string): string {
+  return side === "DEBIT" ? "Debit" : side === "CREDIT" ? "Credit" : side;
+}
+
+/** The type a new account's normal side follows, as the chart sets it: assets and expenses sit on the debit side. */
+export function suggestedSide(type: string): "DEBIT" | "CREDIT" {
+  return type === "ASSET" || type === "EXPENSE" ? "DEBIT" : "CREDIT";
+}
+
+// ---- the journal composer ------------------------------------------------------------------------
+
+/** One typed line of a new journal, as the form holds it. */
+export interface DraftLine {
+  readonly account: string;
+  readonly debit: string;
+  readonly credit: string;
+  readonly memo: string;
+}
+
+/** A line ready to send: the contract's body, in integer cents. */
+export interface ReadyLine {
+  readonly account_code: string;
+  readonly debit_cents: number;
+  readonly credit_cents: number;
+  readonly memo: string;
+}
+
+/** What a typed account choice ("1000 · Cash") names: the code before the middot. */
+export function accountCodeOf(choice: string): string {
+  const code = choice.split("\u00b7")[0] ?? "";
+  return code.trim();
+}
+
+/**
+ * The form's own checks before anything is sent: a memo, at least two lines, an account on each, and exactly one
+ * side filled on each, as a well formed amount. These are the core's own rules said before the press; the core
+ * still decides, and whether the two sides match is the core's answer, not computed here.
+ */
+export function checkDraft(
+  memo: string,
+  lines: readonly DraftLine[],
+  parse: (text: string) => number | null,
+): { ok: true; lines: ReadyLine[] } | { ok: false; error: string } {
+  if (memo.trim() === "") return { ok: false, error: "Say what the journal is for: add a memo." };
+  if (lines.length < 2) return { ok: false, error: "A journal needs at least two lines." };
+  const ready: ReadyLine[] = [];
+  for (const [i, line] of lines.entries()) {
+    const n = i + 1;
+    const code = accountCodeOf(line.account);
+    if (code === "") return { ok: false, error: `Line ${n}: choose an account.` };
+    const debit = line.debit.trim() === "" ? null : parse(line.debit);
+    const credit = line.credit.trim() === "" ? null : parse(line.credit);
+    if (line.debit.trim() !== "" && debit === null) return { ok: false, error: `Line ${n}: the debit is not an amount. Type dollars, like 1,250.00.` };
+    if (line.credit.trim() !== "" && credit === null) return { ok: false, error: `Line ${n}: the credit is not an amount. Type dollars, like 1,250.00.` };
+    const hasDebit = debit !== null && debit > 0;
+    const hasCredit = credit !== null && credit > 0;
+    if (hasDebit === hasCredit) return { ok: false, error: `Line ${n}: fill exactly one of debit or credit, with an amount above zero.` };
+    ready.push({ account_code: code, debit_cents: hasDebit ? (debit as number) : 0, credit_cents: hasCredit ? (credit as number) : 0, memo: line.memo.trim() });
+  }
+  return { ok: true, lines: ready };
+}
+
+// ---- periods --------------------------------------------------------------------------------------
+
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+/** Month 9 reads "September". */
+export function monthWord(month: number): string {
+  return MONTHS[month - 1] ?? String(month);
+}
+
+/** A period by name: year and month, "September 2026". */
+export function periodName(period: { year: number; month: number }): string {
+  return `${monthWord(period.month)} ${period.year}`;
+}
+
+export function periodTone(status: string): "good" | "plain" {
+  return status === "OPEN" ? "good" : "plain";
+}
+
+export function periodStatusWord(status: string): string {
+  return status === "OPEN" ? "Open" : status === "CLOSED" ? "Closed" : status;
+}
+
+// ---- policy and checks ----------------------------------------------------------------------------
+
+export function costBasisWord(strategy: string): string {
+  return strategy === "WEIGHTED_AVG" ? "Weighted average cost" : strategy === "STANDARD_BUY" ? "Standard buy cost" : strategy;
+}
+
+/** The tie out's verdict in words, beside its colour. */
+export function tieWords(inTie: boolean, ageDays: number): string {
+  if (inTie) return "In tie";
+  return ageDays > 0 ? `Out of tie for ${ageDays} ${ageDays === 1 ? "day" : "days"}` : "Out of tie";
+}
+
+/** The BisTrack line source in words. */
+export function bisSourceWord(source: string): string {
+  return source === "BOTH" ? "In both books" : source === "ERP_ONLY" ? "Only in this ledger" : source === "BISTRACK_ONLY" ? "Only in BisTrack" : source;
 }

@@ -4,4 +4,4 @@
 // the token is the credential and the answer carries nothing about who served
 // it), so there is no server source to read; the name on the header is this
 // constant, and the demo build names the demo dealer.
-export const DEALER_NAME = "Hardscape House (demo)";
+export const DEALER_NAME = "Gable Landscape Supply";

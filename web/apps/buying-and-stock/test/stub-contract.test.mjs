@@ -46,7 +46,7 @@ before(async () => {
   const port = await freePort();
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(appDir, "test", "stub", "buying-stock-stub.mjs")], {
-    env: { ROLE_STUB_PORT: String(port) },
+    env: { ROLE_STUB_PORT: String(port), ...(process.env.TZ === undefined ? {} : { TZ: process.env.TZ }) },
     stdio: "ignore",
   });
   for (let i = 0; i < 100; i += 1) {
@@ -132,8 +132,8 @@ function refused(res, status, fragment, inSource = fragment) {
 
 const later = (days) => {
   const at = new Date();
-  at.setUTCDate(at.getUTCDate() + days);
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
+  at.setDate(at.getDate() + days);
+  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
 };
 
 const BRANCH = "b0000000-0000-4000-8000-000000000001";
@@ -159,7 +159,7 @@ test("the shortfall worklist: the contract's key, and each row in the contract's
 
 test("the shortfall read is fenced to the caller's reach, in the core's words", async () => {
   await reset();
-  // The caller holds one branch (Trenton). A branch named outside that reach is refused in words
+  // The caller holds one branch (Point Loma). A branch named outside that reach is refused in words
   // on both reads that name one (the core's fenceNamedBranch: the worklist and the reorder control).
   const other = "b0000000-0000-4000-8000-000000000002";
   refused(await call("GET", `/api/v1/inventory/shortfall?branch_id=${other}`), 403, "you do not have access to that branch");

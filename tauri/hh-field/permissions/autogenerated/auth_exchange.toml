@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-auth-exchange"
+description = "Enables the auth_exchange command without any pre-configured scope."
+commands.allow = ["auth_exchange"]
+
+[[permission]]
+identifier = "deny-auth-exchange"
+description = "Denies the auth_exchange command without any pre-configured scope."
+commands.deny = ["auth_exchange"]
