@@ -201,7 +201,7 @@ export class ManagerHomeApp extends HHElement {
   // The views' states.
   #shortages: ShortagesModel = {
     phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
-    resolverWords: SHORTAGE_RESOLVER_WORDS,
+    resolverWords: SHORTAGE_RESOLVER_WORDS, nowMs: 0,
   };
   #receiving: ReceivingModel = { phase: "loading", branchName: "", rows: [], error: "", definitionWords: RECEIVING_DIFFERENCE_WORDS };
   #approvals: ApprovalsModel = { phase: "loading", kind: APPROVAL_KINDS[0].kind, rows: [], error: "", refusal: "", busyId: "" };
@@ -602,7 +602,7 @@ export class ManagerHomeApp extends HHElement {
     this.#landing = { phase: "loading", profile: "", source: "", roleLabel: "", widgets: [], data: new Map(), needs: null, error: "", canOpenReporting: false, unsourcedNeeds: [] };
     this.#shortages = {
       phase: "loading", branchName: "", entries: [], resolving: null, error: "", notice: "",
-      resolverWords: SHORTAGE_RESOLVER_WORDS,
+      resolverWords: SHORTAGE_RESOLVER_WORDS, nowMs: 0,
     };
     this.#receiving = { phase: "loading", branchName: "", rows: [], error: "", definitionWords: RECEIVING_DIFFERENCE_WORDS };
     this.#approvals = { phase: "loading", kind: APPROVAL_KINDS[0].kind, rows: [], error: "", refusal: "", busyId: "" };
@@ -1393,7 +1393,7 @@ export class ManagerHomeApp extends HHElement {
     this.requestUpdate();
     const result = await this.#pickQueue();
     if (result.ok) {
-      this.#shortages = { ...this.#shortages, phase: "ready", entries: result.value, error: "" };
+      this.#shortages = { ...this.#shortages, phase: "ready", entries: result.value, error: "", nowMs: Date.now() };
     } else {
       this.#shortages = { ...this.#shortages, phase: "error", error: `The shortage list did not load. ${errorWords(result.error)}` };
     }

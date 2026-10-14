@@ -9,7 +9,8 @@
 // narrowed to the read-only landing this first slice builds.
 import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
 import { needsLink } from "./landing-links.js";
-import type { NeedsRow, ReceivingRow, WidgetDatum, WidgetView } from "./manager-api.js";
+import { sinceWords } from "./drivers-logic.js";
+import type { NeedsRow, ReceivingRow, Shortage, WidgetDatum, WidgetView } from "./manager-api.js";
 
 // -- the words a state carries ----------------------------------------------------------------------
 
@@ -205,6 +206,34 @@ export function resolveRefusalWords(error: string, status: number | undefined): 
     return `You may not resolve this shortage. ${SHORTAGE_RESOLVER_WORDS}`;
   }
   return error !== "" ? error : "That did not go through. Try again in a moment.";
+}
+
+/**
+ * One open shortage as a review card reads (FROM-PRINCIPAL 23): what was short, how much, who
+ * reported it as a role label, when, and the status word. The reporter id the core sends is a
+ * user, never shown; the writers of a shortage are the yard team and the yard manager, so the
+ * label is the team's. A time that does not parse is omitted, never guessed.
+ */
+export interface ShortageCard {
+  readonly what: string;
+  readonly howMuch: string;
+  readonly reporter: string;
+  readonly when: string;
+  readonly status: string;
+  readonly resolved: boolean;
+}
+
+export function shortageCard(s: Shortage, nowMs: number): ShortageCard {
+  const line = s.order_line_no === null ? "" : `line ${s.order_line_no}, `;
+  const resolved = s.resolved_at !== null;
+  return {
+    what: s.description,
+    howMuch: `${line}short ${qtyWords(s.qty_short)} ${s.uom}`,
+    reporter: "Reported by staff",
+    when: sinceWords(s.reported_at, nowMs),
+    status: resolved ? "Resolved" : "Needs review",
+    resolved,
+  };
 }
 
 // -- the words only zone (the round 1 review's P2-3) ------------------------------------------------

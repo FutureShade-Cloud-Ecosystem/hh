@@ -579,6 +579,23 @@ export const homeStyles = css`
     color: var(--hh-text-dim);
     margin-top: var(--hh-s-4);
   }
+  .shortage .status {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--hh-danger);
+    margin-bottom: var(--hh-s-4);
+  }
+  .shortage .status.status-done {
+    color: var(--hh-text-dim);
+  }
+  .shortage .who-when {
+    font-size: 14px;
+    color: var(--hh-text-dim);
+    margin-top: var(--hh-s-4);
+  }
   .resolved-word {
     font-size: 14px;
     color: var(--hh-text-dim);

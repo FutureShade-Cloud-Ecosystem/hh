@@ -24,6 +24,7 @@ import {
   pickedWords,
   qtyWords,
   rangeWord,
+  shortageCard,
   resolutionText,
   resolveRefusalWords,
   severityWord,
@@ -224,4 +225,34 @@ test("the Branch Manager decides no approval kind, so no kind's words name a bra
     APPROVAL_DECIDER_WORDS.MARGIN_BELOW_MINIMUM,
     "Margin approvals are decided by the financial controller, the general manager, and a sales manager in their own branch.",
   );
+});
+
+test("a shortage review card says what was short, how much, who reported it by role, when, and the status word", () => {
+  const now = Date.parse("2030-01-02T12:00:00Z");
+  const open = {
+    id: "s1", task_id: "t1", order_line_no: 2, sku: "G", description: "Granular A gravel", qty_short: "4.0000",
+    uom: "CYD", note: "Only 8 yards left", reported_by: "11111111-1111-4111-8111-111111111111",
+    reported_at: "2030-01-02T10:30:00Z", resolved_at: null, resolution: "",
+  };
+  const card = shortageCard(open, now);
+  assert.equal(card.what, "Granular A gravel");
+  assert.equal(card.howMuch, "line 2, short 4 CYD");
+  assert.equal(card.reporter, "Reported by staff");
+  assert.equal(card.when, "1h ago");
+  assert.equal(card.status, "Needs review");
+  assert.equal(card.resolved, false);
+  assert.doesNotMatch(JSON.stringify(card), /1111/);
+});
+
+test("a resolved shortage card reads Resolved with the core's resolution, and a bad time is omitted", () => {
+  const now = Date.parse("2030-01-02T12:00:00Z");
+  const done = {
+    id: "s2", task_id: "t1", order_line_no: null, sku: "", description: "Paver", qty_short: "40", uom: "PC",
+    note: "", reported_by: "", reported_at: "nonsense", resolved_at: "2030-01-02T11:00:00Z", resolution: "Substituted.",
+  };
+  const card = shortageCard(done, now);
+  assert.equal(card.status, "Resolved");
+  assert.equal(card.howMuch, "short 40 PC");
+  assert.equal(card.when, "");
+  assert.equal(card.resolved, true);
 });
