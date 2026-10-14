@@ -21,6 +21,20 @@ export { css } from 'lit';
 export { HHElement, defineElement, HHRenderError } from './base.js';
 export { hhAddress } from './address.js';
 export {
+  CHROME_ACTION_MESSAGE,
+  CHROME_CONTROLS_MESSAGE,
+  FRAMED_BY_WORK_SHELL,
+  FRAMED_PARAM,
+  acceptChromeControls,
+  announceChromeControls,
+  chromeActionFrom,
+  framedAddress,
+  framedByShell,
+  framedFlagFromSearch,
+  readFramedByShell,
+} from './framed.js';
+export type { ChromeAction, FramedWindow } from './framed.js';
+export {
   KIT_STATES,
   STATE_META,
   stateIndicator,

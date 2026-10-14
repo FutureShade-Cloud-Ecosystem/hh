@@ -57,7 +57,8 @@ for (const [label, role] of [
         void app;
         return host?.querySelector<HTMLIFrameElement>('iframe[data-testid="app-frame"]')?.getAttribute("src") ?? "";
       }, id);
-      const frame = await frameAt(page, path);
+      // the frame's address carries the framed flag (item 8d); the page is judged by its path
+      const frame = await frameAt(page, path.split("?")[0] ?? path);
       await expect
         .poll(async () =>
           frame.evaluate(() => {

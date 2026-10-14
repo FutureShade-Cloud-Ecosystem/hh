@@ -38,6 +38,8 @@ export interface QuoteViewRef {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  /** The name of the dealer's tax ("HST", "Sales tax"), the server's own word. */
+  taxLabel: string;
   asOf: string;
   acceptable: boolean;
   /** True only on the staff preview of this page: nothing has been sent, and nothing can be accepted. */
@@ -64,6 +66,8 @@ export interface AcceptanceRef {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  /** The name of the dealer's tax ("HST", "Sales tax"), the server's own word. */
+  taxLabel: string;
   /** The server's echo that the quantities were confirmed; false when it did not say. */
   quantitiesConfirmed: boolean;
 }
@@ -154,6 +158,7 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
   const subtotalCents = integerAt(record, "subtotal_cents");
   const taxCents = integerAt(record, "tax_cents");
   const totalCents = integerAt(record, "total_cents");
+  const taxLabel = stringAt(record, "tax_label");
   const asOf = stringAt(record, "as_of");
   const acceptable = booleanAt(record, "acceptable");
   if (
@@ -165,6 +170,7 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
     subtotalCents === null ||
     taxCents === null ||
     totalCents === null ||
+    taxLabel === null ||
     asOf === null ||
     acceptable === null
   ) {
@@ -214,6 +220,7 @@ export function validateQuoteView(value: unknown): QuoteViewRef | null {
     subtotalCents,
     taxCents,
     totalCents,
+    taxLabel,
     asOf,
     acceptable,
     preview: booleanAt(record, "preview") === true,
@@ -245,10 +252,11 @@ export function validateAcceptance(value: unknown): AcceptanceRef | null {
   const subtotalCents = integerAt(record, "subtotal_cents");
   const taxCents = integerAt(record, "tax_cents");
   const totalCents = integerAt(record, "total_cents");
-  if (quoteNo === null || typedName === null || acceptedAt === null || subtotalCents === null || taxCents === null || totalCents === null) {
+  const taxLabel = stringAt(record, "tax_label");
+  if (quoteNo === null || typedName === null || acceptedAt === null || subtotalCents === null || taxCents === null || totalCents === null || taxLabel === null) {
     return null;
   }
-  return { quoteNo, typedName, acceptedAt, subtotalCents, taxCents, totalCents, quantitiesConfirmed: booleanAt(record, "quantities_confirmed") === true };
+  return { quoteNo, typedName, acceptedAt, subtotalCents, taxCents, totalCents, taxLabel, quantitiesConfirmed: booleanAt(record, "quantities_confirmed") === true };
 }
 
 const QUANTITIES_REFUSAL_WORDS = /reviewed the quantities on this quote/;

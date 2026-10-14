@@ -59,6 +59,10 @@ var (
 	// derives (auto_scope BRANCH), a target who reaches neither the room's
 	// branch nor every branch cannot be seated in it.
 	ErrTargetNotInBranch = errors.New("messaging: that staff member does not reach this branch")
+	// ErrTargetNotInRoom: on a money room (a room carrying a member_roles
+	// list) a target whose roles the list does not name cannot be seated,
+	// whoever asks. Who may read the day's payments is the core's decision.
+	ErrTargetNotInRoom = errors.New("messaging: that staff member's role may not be seated in this room")
 	// ErrLastOwner: a removal may never drop a channel's last OWNER row; a
 	// room without an owner is nobody's to manage.
 	ErrLastOwner = errors.New("messaging: a channel keeps its owner")
@@ -203,6 +207,15 @@ func (s *Service) AddMember(ctx context.Context, c Caller, channelID, userID str
 		}
 		if !reaches {
 			return ChannelMember{}, ErrTargetNotInBranch
+		}
+	}
+	if len(facts.MemberRoles) > 0 {
+		holds, err := s.repo.userHoldsAnyRole(ctx, userID, facts.MemberRoles)
+		if err != nil {
+			return ChannelMember{}, err
+		}
+		if !holds {
+			return ChannelMember{}, ErrTargetNotInRoom
 		}
 	}
 	return s.repo.AddChannelMember(ctx, channelID, userID)

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -103,20 +104,21 @@ func (r *Repository) UpsertQuotePolicy(ctx context.Context, p QuotePolicy) error
 	return err
 }
 
-// ReadHSTRateBps reads the dealer's flat HST rate from system_settings (fallback 1300, the
-// billing/pos FlatHSTAssessor constant).
+// ReadHSTRateBps reads the dealer's flat HST rate from system_settings (fallback
+// settings.DefaultHSTRateBps, the Ontario figure a dealer with no row has always had). The tax engine's
+// standard rate overrides it when wired (StaffService.WithStandardRate).
 func (r *Repository) ReadHSTRateBps(ctx context.Context) int64 {
 	if r.pool == nil {
-		return 1300
+		return settings.DefaultHSTRateBps
 	}
 	var raw string
 	if err := r.pool.QueryRow(ctx,
 		`SELECT value::text FROM system_settings WHERE key = 'hst_rate_bps'`).Scan(&raw); err != nil {
-		return 1300
+		return settings.DefaultHSTRateBps
 	}
 	n, err := strconv.ParseInt(strings.Trim(raw, `"`), 10, 64)
 	if err != nil || n < 0 || n > 10000 {
-		return 1300
+		return settings.DefaultHSTRateBps
 	}
 	return n
 }

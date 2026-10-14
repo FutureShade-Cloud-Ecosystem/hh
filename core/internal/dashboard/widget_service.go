@@ -553,9 +553,7 @@ func (s *Service) needsPolicy(ctx context.Context, profile string) []NeedsPolicy
 // a read path degrades downward, a caller cannot accidentally propagate a failure that does not
 // exist.
 func (s *Service) NeedsFor(ctx context.Context, scope Scope) NeedsQueue {
-	if scope.Now.IsZero() {
-		scope.Now = s.now()
-	}
+	s.stampScope(ctx, &scope)
 	if scope.Profile == "" {
 		scope.Profile = s.ProfileFor(ctx, scope.RoleCode)
 	}

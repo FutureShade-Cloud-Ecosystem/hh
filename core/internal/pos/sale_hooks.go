@@ -36,6 +36,13 @@ type QuoteResult struct {
 	TaxCents      int64
 	RateBps       int
 	OnCreditCents int64
+	// ReasonCode is the reason the assessor bound (the dealer's own standard reason for a standard
+	// sale), Jurisdiction the dealer's tax jurisdiction and StandardRateBps the standard rate of that
+	// jurisdiction on the sale date. An assessor that answers none of the three is the Ontario dealer:
+	// STD_ON_HST_13, ON and 1300.
+	ReasonCode      string
+	Jurisdiction    string
+	StandardRateBps int
 }
 
 // FlatHSTAssessor is the behavior-preserving default: flat 13% HST, RateBps 1300, identical to flatHST13. It
@@ -44,7 +51,7 @@ type FlatHSTAssessor struct{}
 
 // AssessSale returns the flat-13% tax + the 1300 bps rate (bit-identical to the removed flatHST13 call sites).
 func (FlatHSTAssessor) AssessSale(_ context.Context, in TaxQuoteInput) (QuoteResult, error) {
-	return QuoteResult{TaxCents: flatHST13(in.SubtotalCents), RateBps: flatHSTRateBps}, nil
+	return QuoteResult{TaxCents: flatHST13(in.SubtotalCents), RateBps: flatHSTRateBps}, nil // Ontario by omission
 }
 
 // -- stock decrement seam ------------------------------------------------------

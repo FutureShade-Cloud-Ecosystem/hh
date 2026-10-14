@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -48,10 +49,18 @@ func (p SMSPrefs) QuietHours() QuietHours {
 
 // PrefsStore reads and writes customer_sms_prefs. A nil pool is tolerated (scaffold/offline mode):
 // every read reports "no consent on file", which is the safe answer.
-type PrefsStore struct{ pool *pgxpool.Pool }
+type PrefsStore struct {
+	pool *pgxpool.Pool
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. A customer's quiet
+	// hours recorded with no zone of their own are read in the dealer's.
+	zone houseday.Source
+}
 
 // NewPrefsStore builds the store; pass a nil pool in scaffold mode.
 func NewPrefsStore(pool *pgxpool.Pool) *PrefsStore { return &PrefsStore{pool: pool} }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (s *PrefsStore) WithZone(src houseday.Source) *PrefsStore { s.zone = src; return s }
 
 const prefsCols = `customer_id::text, phone_e164, sms_verified, opted_out, opt_out_reason,
                    quiet_start_min, quiet_end_min, time_zone`
@@ -162,7 +171,11 @@ func (s *PrefsStore) SetQuietHours(ctx context.Context, customerID string, start
 		return fmt.Errorf("messagingprovider: quiet hours %d-%d are not a usable window", startMin, endMin)
 	}
 	if zone == "" {
-		zone = DefaultZone
+		z, zerr := houseday.Resolve(ctx, s.zone)
+		if zerr != nil {
+			return fmt.Errorf("messagingprovider: quiet hours: %w", zerr)
+		}
+		zone = z.Name()
 	}
 	if _, err := LoadZone(zone); err != nil {
 		return fmt.Errorf("messagingprovider: quiet hours: %w", err)

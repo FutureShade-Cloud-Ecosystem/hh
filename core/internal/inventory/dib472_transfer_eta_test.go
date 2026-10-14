@@ -29,6 +29,7 @@ import (
 	"errors"
 	auth "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/testkit"
 	"io"
 	"log/slog"
@@ -323,5 +324,28 @@ func TestTransitDays_EmptyDeploymentAnswersAListNotNull(t *testing.T) {
 	}
 	if _, ok := body["error"]; !ok {
 		t.Fatalf("a 503 must carry an error sentence: %s", rec.Body.String())
+	}
+}
+
+// The promised arrival is counted in the dealer's own calendar (item 3b slice 3): a truck shipped at
+// 05:00 UTC on the 27th leaves on the 27th for a Toronto dealer and on the 26th for a Los Angeles one,
+// so a two day transit lands on the 29th or the 28th. The zero Zone is Toronto exactly.
+func TestETA_FollowsTheDealersZone(t *testing.T) {
+	la, err := houseday.NewZone("America/Los_Angeles")
+	if err != nil {
+		t.Skipf("no tzdata: %v", err)
+	}
+	shipped := time.Date(2026, time.August, 27, 5, 0, 0, 0, time.UTC)
+	if got := defaultETAIn(la, shipped, 2); got != "2026-08-28" {
+		t.Fatalf("Los Angeles = %s, want 2026-08-28", got)
+	}
+	if got := defaultETAIn(houseday.DefaultZone(), shipped, 2); got != "2026-08-29" {
+		t.Fatalf("Toronto = %s, want 2026-08-29", got)
+	}
+	if got := defaultETA(shipped, 2); got != "2026-08-29" {
+		t.Fatalf("the default moved: %s", got)
+	}
+	if got, err := gradeETAIn(la, " 2026-08-20 "); err != nil || got != "2026-08-20" {
+		t.Fatalf("gradeETAIn = %q, %v", got, err)
 	}
 }
