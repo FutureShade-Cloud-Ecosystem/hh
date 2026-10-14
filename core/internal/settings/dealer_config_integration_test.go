@@ -20,7 +20,7 @@ func restoreDealerConfig(t *testing.T, r *DealerConfigReader) {
 		has bool
 	}
 	var before []row
-	for _, k := range []string{KeyCurrency, KeyTaxRegion, KeyBusinessZone, KeyHSTRateBps} {
+	for _, k := range []string{KeyCurrency, KeyTaxRegion, KeyBusinessZone, KeyHSTRateBps, KeyCountry} {
 		var v []byte
 		err := r.pool.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = $1`, k).Scan(&v)
 		before = append(before, row{key: k, val: v, has: err == nil})
@@ -52,11 +52,11 @@ func TestIntegration_DealerConfig_SeededDealerIsOntarioAndAWriteIsLive(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.TaxRegion != "ON" || got.Currency != "CAD" || got.BusinessZone != "America/Toronto" || got.HSTRateBps != 1300 {
+	if got.TaxRegion != "ON" || got.Currency != "CAD" || got.BusinessZone != "America/Toronto" || got.HSTRateBps != 1300 || got.Country != "CA" {
 		t.Fatalf("seeded dealer: %+v", got)
 	}
 
-	want := DealerConfig{Currency: "USD", TaxRegion: "CA", BusinessZone: "America/Los_Angeles", HSTRateBps: 775}
+	want := DealerConfig{Currency: "USD", TaxRegion: "CA", BusinessZone: "America/Los_Angeles", HSTRateBps: 775, Country: "US"}
 	if err := r.WriteDealerConfig(ctx, want); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestIntegration_DealerCurrencyTx_ReadsOnTheCallersTransaction(t *testing.T)
 	r := NewDealerConfigReader(intPool(t))
 	restoreDealerConfig(t, r)
 	ctx := context.Background()
-	want := DealerConfig{Currency: "USD", TaxRegion: "CA", BusinessZone: "America/Los_Angeles", HSTRateBps: 775}
+	want := DealerConfig{Currency: "USD", TaxRegion: "CA", BusinessZone: "America/Los_Angeles", HSTRateBps: 775, Country: "US"}
 	if err := r.WriteDealerConfig(ctx, want); err != nil {
 		t.Fatal(err)
 	}

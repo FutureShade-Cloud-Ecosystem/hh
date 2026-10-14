@@ -61,6 +61,7 @@ var glsDealerConfig = settings.DealerConfig{
 	TaxRegion:    "CA",
 	BusinessZone: "America/Los_Angeles",
 	HSTRateBps:   glsSalesTaxBps,
+	Country:      "US",
 }
 
 // glsDealerRates are the demo dealer's rate rows, on its own jurisdiction and reason codes.

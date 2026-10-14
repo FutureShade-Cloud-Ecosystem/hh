@@ -28,12 +28,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The four system_settings keys the dealer's configuration reads.
+// The five system_settings keys the dealer's configuration reads.
 const (
 	KeyCurrency     = "currency"
 	KeyTaxRegion    = "tax_region"
 	KeyBusinessZone = "business_zone"
 	KeyHSTRateBps   = "hst_rate_bps"
+	KeyCountry      = "country"
 )
 
 // The Ontario defaults an absent key answers.
@@ -42,6 +43,7 @@ const (
 	DefaultTaxRegion    = "ON"
 	DefaultBusinessZone = "America/Toronto"
 	DefaultHSTRateBps   = 1300
+	DefaultCountry      = "CA"
 )
 
 // DealerConfig is the dealer's own configuration. TaxRegion is the jurisdiction code the tax engine
@@ -53,6 +55,9 @@ type DealerConfig struct {
 	TaxRegion    string
 	BusinessZone string
 	HSTRateBps   int
+	// Country is the ISO 3166-1 alpha-2 country of the dealer's addresses ("CA" or "US"): the
+	// address rules and the words that fit it. TaxRegion is the tax jurisdiction inside it.
+	Country string
 }
 
 // DefaultDealerConfig is the Ontario dealer: what a dealer with no configuration rows is.
@@ -62,12 +67,14 @@ func DefaultDealerConfig() DealerConfig {
 		TaxRegion:    DefaultTaxRegion,
 		BusinessZone: DefaultBusinessZone,
 		HSTRateBps:   DefaultHSTRateBps,
+		Country:      DefaultCountry,
 	}
 }
 
 var (
 	currencyShape = regexp.MustCompile(`^[A-Z]{3}$`)
 	regionShape   = regexp.MustCompile(`^[A-Z][A-Z0-9_-]{0,15}$`)
+	countryShape  = regexp.MustCompile(`^[A-Z]{2}$`)
 )
 
 // Validate refuses a malformed configuration in words, before any write could reach the table. A
@@ -78,6 +85,9 @@ func (c DealerConfig) Validate() error {
 	}
 	if !regionShape.MatchString(c.TaxRegion) {
 		return fmt.Errorf("settings: tax region must be an uppercase jurisdiction code of up to 16 letters, digits, dashes or underscores")
+	}
+	if !countryShape.MatchString(c.Country) {
+		return fmt.Errorf("settings: country must be a two letter uppercase ISO 3166-1 code")
 	}
 	if _, err := time.LoadLocation(c.BusinessZone); err != nil || c.BusinessZone == "" || c.BusinessZone == "Local" {
 		return fmt.Errorf("settings: business zone must be an IANA zone name such as America/Toronto")
@@ -124,6 +134,13 @@ func parseDealerConfig(rows map[string]json.RawMessage, bad func(key string)) De
 			flag(KeyTaxRegion)
 		}
 	}
+	if s, ok := str(KeyCountry); ok {
+		if countryShape.MatchString(s) {
+			cfg.Country = s
+		} else {
+			flag(KeyCountry)
+		}
+	}
 	if s, ok := str(KeyBusinessZone); ok {
 		if _, err := time.LoadLocation(s); err == nil && s != "" && s != "Local" {
 			cfg.BusinessZone = s
@@ -161,7 +178,7 @@ type DealerConfigQuerier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// DealerConfig reads the four keys in one query, uncached. A malformed stored value falls back to
+// DealerConfig reads the five keys in one query, uncached. A malformed stored value falls back to
 // its key's default and is logged by key, never by value.
 func (r *DealerConfigReader) DealerConfig(ctx context.Context) (DealerConfig, error) {
 	if r == nil || r.pool == nil {
@@ -194,7 +211,7 @@ func (r *DealerConfigReader) BusinessZone(ctx context.Context) (string, error) {
 
 func (r *DealerConfigReader) read(ctx context.Context, q DealerConfigQuerier) (DealerConfig, error) {
 	rows, err := q.Query(ctx,
-		`SELECT key::text, value FROM system_settings WHERE key IN ('currency','tax_region','business_zone','hst_rate_bps')`)
+		`SELECT key::text, value FROM system_settings WHERE key IN ('currency','tax_region','business_zone','hst_rate_bps','country')`)
 	if err != nil {
 		return DealerConfig{}, err
 	}
@@ -245,7 +262,7 @@ type DealerConfigExecer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// WriteDealerConfigTx validates and upserts the four keys on the caller's transaction, the seam the
+// WriteDealerConfigTx validates and upserts the five keys on the caller's transaction, the seam the
 // demo build's first build writes the dealer through so the configuration commits or rolls back with
 // the rest of the build.
 func WriteDealerConfigTx(ctx context.Context, tx DealerConfigExecer, c DealerConfig) error {
@@ -260,6 +277,7 @@ func WriteDealerConfigTx(ctx context.Context, tx DealerConfigExecer, c DealerCon
 		{KeyTaxRegion, c.TaxRegion},
 		{KeyBusinessZone, c.BusinessZone},
 		{KeyHSTRateBps, c.HSTRateBps},
+		{KeyCountry, c.Country},
 	} {
 		b, err := json.Marshal(kv.val)
 		if err != nil {
@@ -294,7 +312,7 @@ func WriteDealerCurrencyTx(ctx context.Context, tx DealerConfigExecer, currency 
 	return err
 }
 
-// WriteDealerConfig validates and upserts the four keys in one transaction: the seam a dealer admin
+// WriteDealerConfig validates and upserts the five keys in one transaction: the seam a dealer admin
 // surface writes through.
 func (r *DealerConfigReader) WriteDealerConfig(ctx context.Context, c DealerConfig) error {
 	if err := c.Validate(); err != nil {

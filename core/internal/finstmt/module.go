@@ -10,6 +10,7 @@ package finstmt
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"log/slog"
 	"time"
 
@@ -162,6 +163,8 @@ type Handler struct {
 	// zone is the dealer's business day zone source; nil = the Ontario dealer's. The receivables
 	// register judges "past" and "due" on the dealer's own calendar day.
 	zone houseday.Source
+	// registerTaxWords is the dealer's tax word for the register's printed invoice (nil: "HST").
+	registerTaxWords taxwords.Source
 }
 
 // WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.

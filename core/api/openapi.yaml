@@ -42278,6 +42278,7 @@ components:
         - automated
         - requires_evidence
         - evidence_satisfied
+        - tax_label
       properties:
         purchaser_type:
           type: string
@@ -42312,6 +42313,9 @@ components:
           type: boolean
         evidence_satisfied:
           type: boolean
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
     PosSignatureCapture:
       type: object
       required:
@@ -42750,6 +42754,7 @@ components:
         - reason_code
         - rate_bps
         - round_mode
+        - tax_label
       properties:
         jurisdiction:
           type: string
@@ -42766,6 +42771,9 @@ components:
           format: int32
           description: Basis points
           1300 is 13 percent: null
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         round_mode:
           type: string
           enum:
@@ -49941,6 +49949,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - tax_label
         - lines
       properties:
         quote_id:
@@ -49987,6 +49996,9 @@ components:
         tax_cents:
           type: integer
           format: int64
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         total_cents:
           type: integer
           format: int64
@@ -50197,6 +50209,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - tax_label
         - as_of
         - acceptable
         - quantity_notice
@@ -50232,6 +50245,9 @@ components:
         tax_cents:
           type: integer
           format: int64
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         total_cents:
           type: integer
           format: int64
@@ -50332,6 +50348,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - tax_label
         - quantities_confirmed
       properties:
         quote_no:
@@ -50350,6 +50367,9 @@ components:
         tax_cents:
           type: integer
           format: int64
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         total_cents:
           type: integer
           format: int64

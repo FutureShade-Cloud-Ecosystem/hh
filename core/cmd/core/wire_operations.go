@@ -568,7 +568,7 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 	// SWARM-W1A-B: the printing module, print_queue's first consumer.
 	printRepo := printing.NewRepository(pool)
 	printQueue := printing.NewQueueService(printRepo)
-	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc).WithStandardRate(newTaxEngine(pool)).WithZone(newDealerZone(pool))
+	receiptSvc := printing.NewReceiptService(printRepo, printQueue).WithAudit(auditSvc).WithStandardRate(newTaxEngine(pool)).WithZone(newDealerZone(pool)).WithTaxLabel(newTaxWords(pool))
 	printing.NewHandler(receiptSvc, printQueue, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// SWARM-W2-A: dispatch, the physical leg. The signature-capture seam
