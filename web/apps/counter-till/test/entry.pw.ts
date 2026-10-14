@@ -1,7 +1,7 @@
 // The Counter Till's exit test, run against the stubbed harness (the stub
 // serves the demo routes' contract shapes; the vite dev server proxies /api
 // to it). This is W6's slice of the plan's screen 1: two cards, a tapped card
-// lands on the till with the Demo banner and the role's name, the five coming
+// lands on the till with the Demo banner and the role's name, the four coming
 // roles show as coming and cannot be tapped, sign out returns to the cards,
 // and against a flows route that answers there are no cards at all. The yard
 // manager's, the Yard Team's and the Driver's flows are in the stub's flows
@@ -19,7 +19,6 @@ import { expect, test, type Page, type Response } from "@playwright/test";
 // carried the list from the app would pass on an app that forgot a role.
 const COMING_ROLES = [
   "Outside Sales",
-  "Logistics Manager",
   "Branch Manager",
   "General Manager",
   "HR",
@@ -29,7 +28,7 @@ function flowsCall(page: Page): Promise<Response> {
   return page.waitForResponse((response) => response.url().endsWith("/api/v1/demo/flows"));
 }
 
-test("the entry page shows the two till role cards and the five coming roles, with no yard manager, yard team, driver or financial controller card", async ({
+test("the entry page shows the two till role cards and the four coming roles, with no yard manager, yard team, driver or financial controller card", async ({
   page,
 }) => {
   const flows = flowsCall(page);
@@ -49,10 +48,10 @@ test("the entry page shows the two till role cards and the five coming roles, wi
   const yardManager = page.getByRole("button", { name: "Yard manager", exact: true });
   await expect(yardManager).toHaveCount(0);
 
-  // The stub's table, like the core's, mints the full closed set of eight
+  // The stub's table, like the core's, mints the full closed set of nine
   // logins (sales, sales manager, the yard manager, the Yard Team, the
   // Driver, Payables and Receivables, the Procurement Manager, the Financial
-  // Controller); the till offers a card for its own pair alone (any other
+  // Controller, the Logistics Manager); the till offers a card for its own pair alone (any other
   // card would lead into a surface the server refuses). The yard manager
   // (Manager Home is its app), the Yard Team, the Driver, Payables and
   // Receivables, the Procurement Manager and the Financial Controller (the
@@ -69,6 +68,7 @@ test("the entry page shows the two till role cards and the five coming roles, wi
     "payables-receivables",
     "procurement-manager",
     "financial-controller",
+    "logistics-manager",
   ]);
   await expect(page.getByRole("button", { name: "Yard Team", exact: true })).toHaveCount(0);
   // The till's coming list no longer carries the Driver row: the driver
@@ -78,10 +78,11 @@ test("the entry page shows the two till role cards and the five coming roles, wi
   await expect(page.getByRole("button", { name: "Payables and Receivables", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Procurement manager/i })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Financial Controller", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Logistics Manager", exact: true })).toHaveCount(0);
 
   const coming = page.getByRole("list", { name: "Coming roles" });
   await expect(coming).toBeVisible();
-  await expect(coming.getByRole("listitem")).toHaveCount(5);
+  await expect(coming.getByRole("listitem")).toHaveCount(4);
   for (const role of COMING_ROLES) {
     const control = coming.getByRole("button", { name: role, exact: true });
     await expect(control).toBeVisible();

@@ -320,7 +320,7 @@ func TestApplyReceived_AReplayIsNotABearerOfTheAnswer(t *testing.T) {
 // unchanged, the same not found words for a missing row, another account's and an out of reach one.
 func TestApplyReceived_AFencedCallerDoesNotWaitOnARowItMayNotSee(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
+		name    string
 		foreign bool // the row is another account's, else this account's but out of reach
 	}{
 		{"another account's invoice", true},

@@ -111,6 +111,26 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE) RETURNING id::text`,
 	return id, err
 }
 
+// UpdateTruck rewrites one truck's registry facts (everything but its id and branch) and returns the
+// stored row. An absolute SET, never a delta: the same body twice leaves the same row, so a retry is
+// never a conflict. The (branch_id, code) unique violation surfaces exactly as InsertTruck's does.
+func (r *Repository) UpdateTruck(ctx context.Context, id string, t Truck) (Truck, error) {
+	pool, err := r.db()
+	if err != nil {
+		return Truck{}, err
+	}
+	updated, err := scanTruck(pool.QueryRow(ctx, `
+UPDATE dispatch_trucks
+   SET code = $2, name = $3, truck_type = $4, capacity_kg = $5, capacity_m3 = $6,
+       pallet_positions = $7, is_active = $8, updated_at = now()
+ WHERE id = $1
+RETURNING `+truckCols, id, t.Code, t.Name, t.TruckType, t.CapacityKg, t.CapacityM3, t.PalletPositions, t.IsActive))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Truck{}, ErrNotFound
+	}
+	return updated, err
+}
+
 const driverCols = `id::text, branch_id::text, COALESCE(user_id::text,''), name, phone, licence_class, is_active`
 
 func scanDriver(row pgx.Row) (Driver, error) {
@@ -193,6 +213,25 @@ INSERT INTO dispatch_drivers (branch_id, user_id, name, phone, licence_class, is
 VALUES ($1, NULLIF($2,'')::uuid, $3, $4, $5, TRUE) RETURNING id::text`,
 		d.BranchID, d.UserID, d.Name, d.Phone, d.LicenceClass).Scan(&id)
 	return id, err
+}
+
+// UpdateDriver rewrites one driver's registry facts (everything but its id and branch) and returns
+// the stored row, the driver twin of UpdateTruck: an absolute SET, idempotent under a retry.
+func (r *Repository) UpdateDriver(ctx context.Context, id string, d Driver) (Driver, error) {
+	pool, err := r.db()
+	if err != nil {
+		return Driver{}, err
+	}
+	updated, err := scanDriver(pool.QueryRow(ctx, `
+UPDATE dispatch_drivers
+   SET user_id = NULLIF($2,'')::uuid, name = $3, phone = $4, licence_class = $5,
+       is_active = $6, updated_at = now()
+ WHERE id = $1
+RETURNING `+driverCols, id, d.UserID, d.Name, d.Phone, d.LicenceClass, d.IsActive))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Driver{}, ErrNotFound
+	}
+	return updated, err
 }
 
 // - runs -
@@ -611,7 +650,7 @@ UPDATE delivery_stops
 // first and the status second would leave a window where a crash produces a stop with proof and no
 // delivery; writing status first is simply refused by the CHECK. Doing both together means the
 // constraint and the write agree by construction, and a partial POD is not a state that exists.
-func (r *Repository) SetPOD(ctx context.Context, stopID, from, sigRef, receivedBy, podBy string, at time.Time) (updated bool, err error) {
+func (r *Repository) SetPOD(ctx context.Context, stopID, from, sigRef, receivedBy, podBy, idemKey string, at time.Time) (updated bool, err error) {
 	pool, err := r.db()
 	if err != nil {
 		return false, err
@@ -620,8 +659,9 @@ func (r *Repository) SetPOD(ctx context.Context, stopID, from, sigRef, receivedB
 UPDATE delivery_stops
    SET pod_signature_ref = $3, pod_received_by = $4, pod_at = $6, pod_by = NULLIF($5,'')::uuid,
        status = 'DELIVERED', delivered_at = $6, updated_at = now(),
+       idempotency_key = COALESCE(NULLIF($7,'')::uuid, idempotency_key),
        seq = (SELECT next_value FROM seq)
- WHERE id = $1 AND status = $2`, stopID, from, sigRef, receivedBy, podBy, at)
+ WHERE id = $1 AND status = $2`, stopID, from, sigRef, receivedBy, podBy, at, idemKey)
 	if err != nil {
 		return false, err
 	}

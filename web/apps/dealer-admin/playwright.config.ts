@@ -6,15 +6,33 @@
 // The browser is the system Chrome through the chrome channel: no browser
 // download rides the npm install.
 //
-// The ports are the app's own pair in the mod-c lane's range (stub 56610,
-// app 56611), overridable by DA_APP_PORT and DA_STUB_PORT so a second tree
-// or the demo round can move the run without an edit.
+// The stub and app ports are free ones taken once at config load (never a
+// fixed pair, which an overlapping suite's client sockets can hold),
+// overridable inline with DA_APP_PORT and DA_STUB_PORT.
 import { defineConfig } from "@playwright/test";
+import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 
+// Two distinct free ports: both listeners stay open until both are known.
+async function freePorts(count: number): Promise<string[]> {
+  const servers = await Promise.all(
+    Array.from({ length: count }, () => new Promise<ReturnType<typeof createServer>>((resolve, reject) => {
+      const s = createServer();
+      s.once("error", reject);
+      s.listen(0, "127.0.0.1", () => resolve(s));
+    })),
+  );
+  const ports = servers.map((s) => String((s.address() as { port: number }).port));
+  await Promise.all(servers.map((s) => new Promise<void>((done) => s.close(() => done()))));
+  return ports;
+}
+
 const appDir = fileURLToPath(new URL(".", import.meta.url));
-const appPort = process.env.DA_APP_PORT ?? "56611";
-const stubPort = process.env.DA_STUB_PORT ?? "56610";
+const [freeApp, freeStub] = await freePorts(2);
+process.env.DA_APP_PORT ??= freeApp;
+process.env.DA_STUB_PORT ??= freeStub;
+const appPort = process.env.DA_APP_PORT;
+const stubPort = process.env.DA_STUB_PORT;
 
 export default defineConfig({
   testDir: "./test",
@@ -41,7 +59,7 @@ export default defineConfig({
       url: `http://127.0.0.1:${appPort}/`,
       reuseExistingServer: false,
       cwd: appDir,
-      env: { DA_STUB_PORT: stubPort, DA_APP_PORT: appPort },
+      env: { DA_STUB_PORT: stubPort, DA_APP_PORT: appPort, DA_NO_WATCH: "1" },
     },
   ],
 });

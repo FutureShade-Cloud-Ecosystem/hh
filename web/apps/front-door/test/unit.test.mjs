@@ -1,7 +1,7 @@
 // The front door's node suite: the mint validation, the session custody's two
 // keys and refusals of every unusable input, and the catalog's shape against
-// the rule the D2 brief fixes (the eight live roles with the contract's
-// labels and the flows they mint; five coming roles, each carrying the modules
+// the rule the D2 brief fixes (the nine live roles with the contract's
+// labels and the flows they mint; four coming roles, each carrying the modules
 // the matrix gives it at work, manage or admin level). A test that read the
 // catalog from the app would pass on an app that forgot a role, so the
 // counts and the labels are written here the way the till's entry test
@@ -14,7 +14,7 @@ import {
   FrontDoorSessionStore,
   validateMint,
 } from "../src/session.js";
-import { COMING_ROLES, LIVE_ROLES } from "../src/roles.js";
+import { COMING_ROLES, LIVE_ROLES, CONTRACTOR_ROLES, contractorEntries } from "../src/roles.js";
 
 /** A storage double with the map's own semantics, probed like the real thing. */
 function fakeStorage() {
@@ -136,9 +136,9 @@ test("a hostile storage accessor degrades to memory and nothing throws", () => {
   assert.equal(store.current(), null);
 });
 
-test("the catalog holds the eight live roles with the contract's labels and the flows they mint", () => {
-  assert.equal(LIVE_ROLES.length, 8);
-  const [sales, manager, yardManager, yardTeam, payRec, buyer, driver, controller] = LIVE_ROLES;
+test("the catalog holds the nine live roles with the contract's labels and the flows they mint", () => {
+  assert.equal(LIVE_ROLES.length, 9);
+  const [sales, manager, yardManager, yardTeam, payRec, buyer, driver, controller, logistics] = LIVE_ROLES;
   assert.equal(sales.label, "Sales");
   assert.equal(sales.flow, "sales");
   assert.deepEqual(sales.tiles.map((tile) => tile.name), ["Counter Till", "Quote Desk"]);
@@ -160,7 +160,7 @@ test("the catalog holds the eight live roles with the contract's labels and the 
   );
   assert.deepEqual(
     yardManager.tiles.map((tile) => tile.href),
-    ["/home/", "/yard/", null, "/buying-and-stock/", null],
+    ["/home/", "/yard/", "/dispatch/", "/buying-and-stock/", null],
   );
   // The Yard Team's label is the flows row's own ("Yard Team"), and its one
   // live module is the Yard Pick app under /yard/; House Messages is not on
@@ -182,7 +182,7 @@ test("the catalog holds the eight live roles with the contract's labels and the 
   );
   assert.deepEqual(
     manager.tiles.map((tile) => tile.href),
-    ["/till/", "/quote/", "/home/", null, null],
+    ["/till/", "/quote/", "/home/", "/dealer-admin/", null],
   );
   assert.deepEqual(
     buyer.tiles.map((tile) => tile.href),
@@ -204,15 +204,27 @@ test("the catalog holds the eight live roles with the contract's labels and the 
   assert.equal(controller.id, "financial_controller");
   assert.equal(controller.label, "Financial Controller");
   assert.equal(controller.flow, "financial-controller");
-  assert.deepEqual(controller.tiles.map((tile) => tile.name), ["Money Desk", "Manager Home", "House Messages"]);
-  assert.deepEqual(controller.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", null]);
+  // Dealer Admin opens at /dealer-admin/ for the two live roles whose catalog lists it.
+  assert.deepEqual(
+    controller.tiles.map((tile) => tile.name),
+    ["Money Desk", "Manager Home", "Dealer Admin", "House Messages"],
+  );
+  assert.deepEqual(controller.tiles.map((tile) => tile.href), ["/money-desk/", "/home/", "/dealer-admin/", null]);
+  assert.equal(controller.tiles[2], manager.tiles[3], "both roles open the one Dealer Admin tile");
   assert.equal(controller.tiles[0], payRec.tiles[0], "both roles open the one Money Desk tile");
+  // The Logistics Manager: the dispatch board is its landing, under /dispatch/, and the yard manager
+  // opens the very same tile; Manager Home opens at /home/ and House Messages is not on the box yet.
+  assert.equal(logistics.id, "logistics_manager");
+  assert.equal(logistics.label, "Logistics Manager");
+  assert.equal(logistics.flow, "logistics-manager");
+  assert.deepEqual(logistics.tiles.map((tile) => tile.name), ["Dispatch and Load Building", "Manager Home", "House Messages"]);
+  assert.deepEqual(logistics.tiles.map((tile) => tile.href), ["/dispatch/", "/home/", null]);
+  assert.equal(logistics.tiles[0], yardManager.tiles[2], "both roles open the one dispatch tile");
 });
 
-test("the catalog holds the five coming roles, each with its matrix modules", () => {
+test("the catalog holds the four coming roles, each with its matrix modules", () => {
   const labels = [
     "Outside Sales",
-    "Logistics Manager",
     "Branch Manager",
     "General Manager",
     "HR",
@@ -286,4 +298,49 @@ test("an unreadable answer, a bad row, a failed page or a repeated cursor yields
     null,
   );
   assert.equal(readApprovalsPage({ items: [], next_cursor: 5 }), null);
+});
+
+// The contractor entry: the flows listing carries each row's class, and a contractor persona
+// (class tenant) is routed to the Pro app for its role.
+const LISTING = [
+  { flow: "sales", role_code: "inside_sales", label: "Sales", class: "staff" },
+  { flow: "contractor-field-crew", role_code: "field_crew", label: "Contractor field crew", class: "tenant" },
+  { flow: "contractor-account-admin", role_code: "account_admin", label: "Contractor owner", class: "tenant" },
+  { flow: "contractor-ap-finance", role_code: "ap_finance", label: "Contractor AP", class: "tenant" },
+  { flow: "contractor-buyer", role_code: "buyer", label: "Contractor buyer", class: "tenant" },
+  { flow: "contractor-buyer-no-pay", role_code: "buyer_no_pay", label: "Contractor buyer (no pay)", class: "tenant" },
+];
+
+test("the five contractor roles route to the Pro app for their role, in the table's own order", () => {
+  assert.deepEqual(CONTRACTOR_ROLES.map((r) => r.roleCode), ["account_admin", "buyer", "buyer_no_pay", "ap_finance", "field_crew"]);
+  assert.deepEqual(CONTRACTOR_ROLES.map((r) => r.label), ["Owner", "Buyer", "Project manager", "Accounts payable", "Field crew"]);
+  const entries = contractorEntries(LISTING);
+  assert.deepEqual(entries.map((e) => e.label), ["Owner", "Buyer", "Project manager", "Accounts payable", "Field crew"]);
+  assert.deepEqual(entries.map((e) => e.href), [
+    "/pro-procurement/?as=account_admin",
+    "/pro-procurement/?as=buyer",
+    "/pro-procurement/?as=buyer_no_pay",
+    "/pro-pay/?as=ap_finance",
+    "/pro-field/?as=field_crew",
+  ]);
+});
+
+test("only a tenant class row with a known role becomes an entry; a staff row never does", () => {
+  assert.deepEqual(contractorEntries([{ flow: "sales", role_code: "inside_sales", label: "Sales", class: "staff" }]), []);
+  // A staff row that borrows a contractor role code is still staff.
+  assert.deepEqual(contractorEntries([{ flow: "x", role_code: "buyer", label: "x", class: "staff" }]), []);
+  // A tenant row with a role the table does not know is not offered, and no class at all reads as staff.
+  assert.deepEqual(contractorEntries([{ flow: "x", role_code: "janitor", label: "x", class: "tenant" }]), []);
+  assert.deepEqual(contractorEntries([{ flow: "x", role_code: "buyer", label: "x" }]), []);
+  assert.deepEqual(contractorEntries(undefined), []);
+  assert.deepEqual(contractorEntries("nonsense"), []);
+});
+
+test("every contractor card has a line and names the app it opens, in plain words", () => {
+  for (const role of CONTRACTOR_ROLES) {
+    assert.ok(role.line.length > 10, role.label);
+    assert.match(role.app, /^Pro (Procurement|Pay|Field)$/);
+    assert.match(role.prefix, /^\/pro-(procurement|pay|field)\/$/);
+    assert.doesNotMatch(role.line, /[\u2013\u2014!]|console|core|token|session/i);
+  }
 });

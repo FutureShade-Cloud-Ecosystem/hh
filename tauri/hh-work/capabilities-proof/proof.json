@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "proof",
+  "description": "Loaded only by a build with the shell-proof cargo feature (see build.rs): the one command the proof mode reports through, for the main window, bundled local origin only. It prints one line and ends the run; it reads and writes nothing.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "allow-proof-report"
+  ]
+}

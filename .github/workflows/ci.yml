@@ -21,6 +21,13 @@ permissions:
   contents: read
   id-token: write
 
+# A newer push to the same pull request cancels the older run, so superseded
+# runs stop holding the organisation's concurrent job slots. Runs on main and
+# on the qa, till and quote branches are never cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   ci:
     name: ci
@@ -151,6 +158,19 @@ jobs:
         run: |
           go build ./...
           go vet ./...
+      - name: Format check (gofmt)
+        working-directory: core
+        # gofmt reads build tagged files whatever the tags, so drift in the
+        # demo and integration tagged files shows here too. Lists the files
+        # that differ and fails when there are any.
+        run: |
+          set -euo pipefail
+          drift="$(gofmt -l .)"
+          if [ -n "$drift" ]; then
+            echo "gofmt drift in:" >&2
+            echo "$drift" >&2
+            exit 1
+          fi
       - name: Vulnerability scan (govulncheck)
         working-directory: core
         # Reachable vulnerabilities in the standard library at the pinned
@@ -274,13 +294,14 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        # The official image, pulled through Amazon ECR Public's mirror of
-        # the Docker official images so the hosted runners do not hit
-        # Docker Hub's anonymous pull rate limit (PRs 290 and 291 failed at
-        # "Initialize containers" with toomanyrequests before any code ran).
-        # Same Postgres major and same alpine variant as the source image
-        # (16.15 on alpine 3.24); the index digest matches docker.io's.
-        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        # The official image, pulled through Google's mirror of the Docker
+        # official images (mirror.gcr.io) so the hosted runners hit neither
+        # Docker Hub's anonymous pull limit (PRs 290 and 291) nor Amazon ECR
+        # Public's data limit (PRs 312, 315 and 316 failed at "Initialize
+        # containers" with toomanyrequests before any code ran). The pin is
+        # the index digest docker.io serves for 16-alpine (16.15 on alpine
+        # 3.24), so the bytes are the ones every earlier run used.
+        image: mirror.gcr.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: till_base
@@ -323,15 +344,11 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_base?sslmode=disable
           HH_CORE_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_core_gate?sslmode=disable
           HH_B3_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_b3_gate?sslmode=disable
-          # HH_B4_TEST_DATABASE_URL stays unset here, on purpose (the demo
-          # job's first run proved it): the B4 population proofs assert
-          # exact world counts, and a plainly migrated database carries the
-          # migrations' planted users, so every count is off by the planted
-          # set (stamped 27 against a want of 17). Those proofs want a
-          # hand-prepared scratch shape this job cannot honestly provide;
-          # their legs skip politely without the variable, the posture they
-          # held before this job existed, and till_b4_gate stays migrated
-          # above for the lane that adapts the fixture.
+          # The B4 population proofs run on till_b4_gate, a database of their
+          # own migrated above. They assert exact world counts, so the legs
+          # set the migrations' planted users, roles, grants, portal row and
+          # registry drivers aside for each run and put them back after.
+          HH_B4_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5599/till_b4_gate?sslmode=disable
         # -timeout 30m as on every go test step here: Go's default is
         # ten minutes a package and the slowest packages sit close under
         # it; the default ok lines keep every package's elapsed time in
@@ -383,6 +400,26 @@ jobs:
               exit 1
             fi
           done
+      # The demo image build, no push and no secrets. Nothing built the image
+      # in CI, so a Dockerfile, .dockerignore or web import break (the drive
+      # app importing a statechart the context excluded) went unseen until a
+      # hand build. The step runs on every run of this job, so a change to
+      # anything the image reads is caught without a path filter. The four
+      # base images come through Google's mirror of the Docker official
+      # images, as the postgres service above does, and are tagged to the
+      # names the Dockerfile uses, so the build pulls nothing from Docker Hub
+      # (keep the list in step with the FROM lines of deploy/demo/Dockerfile).
+      - name: Pull the demo image's base images through the mirror
+        run: |
+          set -euo pipefail
+          docker pull mirror.gcr.io/library/golang@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa
+          docker tag mirror.gcr.io/library/golang@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa golang:1.27-alpine
+          for img in node:22-alpine caddy:2.10.2 alpine:3.20; do
+            docker pull "mirror.gcr.io/library/$img"
+            docker tag "mirror.gcr.io/library/$img" "$img"
+          done
+      - name: Build the demo image, no push
+        run: docker build -f deploy/demo/Dockerfile -t hh-demo-ci-build .
       # The integration tag suite runs in its own job beside this one
       # (HH-191): the composition fixture's migration glob, the break
       # that kept the suite out of this job, is fixed there, along with
@@ -417,13 +454,14 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        # The official image, pulled through Amazon ECR Public's mirror of
-        # the Docker official images so the hosted runners do not hit
-        # Docker Hub's anonymous pull rate limit (PRs 290 and 291 failed at
-        # "Initialize containers" with toomanyrequests before any code ran).
-        # Same Postgres major and same alpine variant as the source image
-        # (16.15 on alpine 3.24); the index digest matches docker.io's.
-        image: public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        # The official image, pulled through Google's mirror of the Docker
+        # official images (mirror.gcr.io) so the hosted runners hit neither
+        # Docker Hub's anonymous pull limit (PRs 290 and 291) nor Amazon ECR
+        # Public's data limit (PRs 312, 315 and 316 failed at "Initialize
+        # containers" with toomanyrequests before any code ran). The pin is
+        # the index digest docker.io serves for 16-alpine (16.15 on alpine
+        # 3.24), so the bytes are the ones every earlier run used.
+        image: mirror.gcr.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -474,30 +512,16 @@ jobs:
           # demo world proof gates on its own throwaway Postgres and its
           # legs skip politely without it.
           # HH_B3_TEST_DATABASE_URL stays unset because the demo job sets
-          # it for untagged legs this job does not repeat; HH_B4_ stays
-          # unset for the reason the demo job explains at length. KIT_
+          # it for untagged legs this job does not repeat, and HH_B4_ is set
+          # there for the same reason (its legs are untagged). KIT_
           # variables are set by no job at all, so the kit's one
           # database-backed proof skips everywhere (its untagged file
           # runs in the ci and demo jobs; only that proof gates on
           # KIT_TEST_DATABASE_URL).
         run: |
           set -euo pipefail
-          # The suite's recorded-red packages stay out of this run, each
-          # with its verified failure and its owning lane to find in
-          # docs/BLOCKERS.md (the HH-191 entry, its round 2 correction
-          # and the round 3 correction after it): nothing in the list is
-          # this job's regression, every one of them is red on main
-          # against the same databases this job builds. Read the
-          # corrections before working from the entry: the dispatch
-          # package has a 403 class beside the bearer 401s; and the sync package is
-          # green only on a gate sync alone has used (on the job's own
-          # gate after a green run it is red with the same 23-row
-          # failure it is excluded for), so reproduce it on a fresh gate
-          # or inside a full run, never on the job's spent gate. A
-          # package rejoins the run when its lane lands the fix and
-          # drops its line here; the vet step above keeps every excluded
-          # package compiling under the tag in the meantime.
-          red='internal/(dispatch)$'
+          # No package is left out: every recorded-red package has landed its
+          # fix and rejoined the run (docs/BLOCKERS.md keeps the history).
           # -p 1 for the same reason the ci job's untagged run carries
           # it: the module packages share the gate database, and
           # serialized packages cannot race one another's fixture
@@ -510,7 +534,7 @@ jobs:
           # every package's elapsed time, so growth shows in this log
           # before it bites.
           go test -tags integration -p 1 -count=1 -timeout 30m \
-            $(go list ./... | grep -Ev "/$red")
+            $(go list ./...)
       - name: Evening guard, the date sensitive integration packages
         # The integration half of item 55's guard: the same date sensitive packages as the ci
         # job's guard step, under the integration tag, rerun against a database whose own
@@ -543,14 +567,14 @@ jobs:
           # to the most recent half past midnight instead of the current UTC day's.
           target=$(( (target - 1800) / 86400 * 86400 + 1800 ))
           pin="$(date -u -d "@$target" '+%Y-%m-%d %H:%M:%S')"
-          # The same digest pinned mirror the services above use (Docker Hub's anonymous rate
-          # limit refuses the runners), so the guard pulls what the jobs already pull; the
+          # The same digest pinned mirror the services above use (the registries with pull
+          # limits refuse the runners), so the guard pulls what the jobs already pull; the
           # faketime package is version pinned to the Alpine release this digest ships.
           docker run -d --name hh-evening-guard-pg -p 127.0.0.1:5601:5432 \
             -e POSTGRES_PASSWORD=postgres -e TZ=UTC \
             -e LD_PRELOAD=/usr/lib/faketime/libfaketime.so.1 \
             -e FAKETIME="@$pin" -e FAKETIME_NO_CACHE=1 \
-            public.ecr.aws/docker/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea \
+            mirror.gcr.io/library/postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea \
             sh -c 'apk update >/dev/null && apk add --no-cache "libfaketime=0.9.13-r0" >/dev/null && exec docker-entrypoint.sh postgres' >/dev/null
           shift_s="$(../scripts/evening-guard/shift.sh "$GUARD/postgres?sslmode=disable")"
           psql "$GUARD/postgres?sslmode=disable" -v ON_ERROR_STOP=1 \

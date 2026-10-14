@@ -88,7 +88,7 @@ for (const [width, height] of SIZES) {
     await page.setViewportSize({ width, height });
     await signIn(page);
     await pickLayout(page, "panels");
-    await addLine(page, "holland", "Holland Stone 60 mm");
+    await addLine(page, "charcoal", "Charcoal Stone 60 mm");
     expect(await feedbackMeets(page)).toEqual([]);
     await page.getByTestId("swap-panes").click();
     await expect(page.getByTestId("swap-panes")).toHaveAttribute("aria-pressed", "true");
@@ -105,7 +105,7 @@ for (const [width, height] of SIZES) {
     await page.setViewportSize({ width, height });
     await signIn(page);
     await pickLayout(page, "panels");
-    await addLine(page, "holland", "Holland Stone 60 mm");
+    await addLine(page, "charcoal", "Charcoal Stone 60 mm");
     const g = await page.evaluate(() => ({
       scrollHeight: document.documentElement.scrollHeight,
       innerHeight: window.innerHeight,
@@ -132,7 +132,7 @@ test("the Paid card of a split sale says each leg with its amount", async ({ pag
   await signIn(page);
   await pickLayout(page, "panels");
   await ensureSession(page);
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await page.locator("hos-pos-flow-steps").first().getByRole("button", { name: /Payment/ }).click();
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
@@ -160,7 +160,7 @@ test("light theme: panes and cards have an edge that reads, and every input shar
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);
   await pickLayout(page, "panels");
-  await addLine(page, "holland", "Holland Stone 60 mm");
+  await addLine(page, "charcoal", "Charcoal Stone 60 mm");
   await pickTheme(page, "Light");
   const read = await page.evaluate(() => {
     const walk = (root: ParentNode, out: Element[]): Element[] => {

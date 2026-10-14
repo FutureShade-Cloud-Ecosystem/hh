@@ -53,3 +53,30 @@ export async function signInByCard(page: Page, flow: string): Promise<void> {
   await card.click();
   await page.locator("[data-flow]").first().waitFor({ state: "detached" });
 }
+
+/**
+ * The front door's record for a front-line role (tier three): the same minted
+ * session shape, a role the core's guard keeps out of the reporting runs and
+ * the commission register. The landing's reporting link must not draw for it.
+ */
+export function frontLineHandoff(): void {
+  const salesId = "de110000-0000-4000-9000-000000000001";
+  const part = (value: unknown): string =>
+    btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const exp = Math.floor(Date.now() / 1000) + 3600;
+  const token = `${part({ alg: "ES256", typ: "JWT" })}.${part({ sub: salesId, exp })}.c2ln`;
+  const record = {
+    token,
+    tokenExpiresAtMs: Date.now() + 3_600_000,
+    flow: "sales",
+    roleLabel: "Sales",
+    user: { userId: salesId, email: "sales@hh-demo.invalid", name: "Sales (demo)" },
+    roleCode: "inside_sales",
+    roleName: "Sales",
+    tier: 3,
+    scope: "BRANCH",
+  };
+  if (window.sessionStorage.getItem("hh-demo.front-door.session.v1") === null) {
+    window.sessionStorage.setItem("hh-demo.front-door.session.v1", JSON.stringify(record));
+  }
+}

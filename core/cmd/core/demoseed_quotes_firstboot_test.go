@@ -21,7 +21,7 @@ package main
 //	                        world's owners exist only once the populate has run, and the seed is
 //	                        idempotent, so the boot applies the seed once more)
 //
-// Then it asks the database for DEMO-TRT-Q1 to Q4. A second boot, the entrypoint's built path
+// Then it asks the database for DEMO-PLM-Q1 to Q4. A second boot, the entrypoint's built path
 // (demo-check, migrate, apply, populate, apply), must change nothing at all: the seed stays
 // idempotent and the populate's writes are guarded.
 //
@@ -94,14 +94,14 @@ func TestDemoWorld_FirstBootSeedsQuotes(t *testing.T) {
 	// core demoseed -apply, again: the quote world's owners are the populate's two role logins,
 	// so the quotes can only be added once they exist, and the seed is idempotent.
 	_, created := qwApply(t)
-	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 + controllerWorldRows // the quote world's census, the world proof's own
+	const wantQuoteRows = 4 + 9 + 3 + 2 + 2 + 2 + 4 + 1 + controllerWorldRows + contractorWorldRows // the quote world's census, the world proof's own, and the contractor world the same apply adds
 	if created != wantQuoteRows {
 		t.Fatalf("the apply after the populate created %d rows, want exactly the quote world's %d", created, wantQuoteRows)
 	}
 
 	// --- the boot is over: the four demo quotes must be on the database ------------------------
 	for key, no := range map[string]string{
-		"Q1": "DEMO-TRT-Q1", "Q2": "DEMO-TRT-Q2", "Q3": "DEMO-TRT-Q3", "Q4": "DEMO-TRT-Q4",
+		"Q1": "DEMO-PLM-Q1", "Q2": "DEMO-PLM-Q2", "Q3": "DEMO-PLM-Q3", "Q4": "DEMO-PLM-Q4",
 	} {
 		if n := qwCount(t, ctx, pool,
 			`SELECT count(*) FROM quotes WHERE quote_no = $1 AND metadata->>'demo_seed' = $2`, no, demoMarker); n != 1 {
@@ -110,7 +110,7 @@ func TestDemoWorld_FirstBootSeedsQuotes(t *testing.T) {
 	}
 	if n := qwCount(t, ctx, pool, `
 		SELECT count(*) FROM quotes q JOIN users u ON u.id = q.created_by
-		 WHERE q.quote_no LIKE 'DEMO-TRT-%'`); n != 4 {
+		 WHERE q.quote_no LIKE 'DEMO-PLM-%'`); n != 4 {
 		t.Errorf("%d demo quotes resolve an owner, want 4: the world's quotes are owned by the two demo logins", n)
 	}
 

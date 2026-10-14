@@ -168,9 +168,9 @@ case "$page" in
 esac
 KGN_LINE="$(docker exec "$PG_NAME" psql -U postgres -d w9_exit -tAc \
 	"SELECT ol.id::text FROM order_lines ol JOIN orders o ON o.id = ol.order_id
-	  WHERE o.order_no = 'DEMO-KGN-S01' LIMIT 1" | tr -d '[:space:]')"
-[ -n "$KGN_LINE" ] || { fail "the harness could not read the Kingston sale's line id"; exit 1; }
-pass "the harness holds the Kingston sale's line id for the three-rail leg"
+	  WHERE o.order_no = 'DEMO-JUL-S01' LIMIT 1" | tr -d '[:space:]')"
+[ -n "$KGN_LINE" ] || { fail "the harness could not read the Julian sale's line id"; exit 1; }
+pass "the harness holds the Julian sale's line id for the three-rail leg"
 flows="$(curl -s -u "demo:$PHRASE" "$BASE/api/v1/demo/flows")"
 case "$flows" in
 	*'"flow":"sales"'*'"flow":"sales-manager"'*'"flow":"payables-receivables"'*'"flow":"procurement-manager"'*'"flow":"financial-controller"'*) pass "the flows table answers its five rows" ;;

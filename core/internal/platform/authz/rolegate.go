@@ -132,6 +132,11 @@ var listReaders = map[string]func(*roleconfig.Config) []string{
 	// the surface at work, so the default's answer is the route's old answer
 	// and a dealer's widening or narrowing is the list's to decide.
 	roleconfig.SettingShortageResolvers: func(c *roleconfig.Config) []string { return c.ShortageResolvers() },
+	// The dispatch policy write names its setters (X13): the decided default
+	// lists the logistics and branch managers, the dispatch board's own manage
+	// row, so the default's behaviour is the unlisted gate's; a dealer moving
+	// a cell without moving the list meets the wall.
+	roleconfig.SettingDispatchPolicySetters: func(c *roleconfig.Config) []string { return c.DispatchPolicySetters() },
 	// The low margin report names a list derived from the floor lists and the cost list together
 	// (roleconfig.LowMarginReportReaders): a role that clears or decides a floor, or sits above one,
 	// and may see cost. Not a stored setting, so the name is the route's own.
@@ -142,6 +147,12 @@ var listReaders = map[string]func(*roleconfig.Config) []string{
 	ListPOWriters: func(c *roleconfig.Config) []string {
 		return append(c.PurchaseOrderWriters(), PlatformRoleSuperAdmin)
 	},
+	// The special order cancel names the Sales Manager, the Branch Manager and the General Manager,
+	// and the super admin beside them, for the same reason as above: the platform pass covers the
+	// level check alone, and the super admin could cancel before the list existed.
+	ListOrderCancellers: func(c *roleconfig.Config) []string {
+		return append(c.OrderCancellers(), PlatformRoleSuperAdmin)
+	},
 }
 
 // ListLowMarginReport is the x-access list name of the low margin report route.
@@ -150,6 +161,11 @@ const ListLowMarginReport = "low_margin_report"
 // ListPOWriters is the x-access list name of the purchase order write routes (draft, edit, place,
 // cancel, send), roleconfig.PurchaseOrderWriters and the super admin.
 const ListPOWriters = "po_writers"
+
+// ListOrderCancellers is the x-access list name of the order cancel route (a special order's
+// cancel, with the supplier deposit kept or credited back), roleconfig.OrderCancellers and the
+// super admin.
+const ListOrderCancellers = "order_cancellers"
 
 // valid checks the annotation against roleconfig's vocabulary. An empty
 // surface list, an unknown surface, an unknown level, none as the level (a

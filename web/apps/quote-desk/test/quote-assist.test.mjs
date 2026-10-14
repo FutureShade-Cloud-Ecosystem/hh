@@ -58,10 +58,10 @@ const code = (p) =>
 
 const complete = (over = {}) => ({
   ref: 'p1',
-  source_text: 'Need 480 sq ft of Techo-Bloc Blu 60 for the back patio',
+  source_text: 'Need 480 sq ft of Stonecrest 60 mm slab for the back patio',
   product_id: 'prod-blu60',
   sku: 'DBS-TB-BLU60',
-  name: 'Techo-Bloc Blu 60 Slab',
+  name: 'Stonecrest 60 mm Slab',
   base_uom: 'PC',
   sell_uom: '',
   qty_entered: '480',
@@ -69,7 +69,7 @@ const complete = (over = {}) => ({
   unit_note: '',
   confidence: CONFIDENCE_MEDIUM,
   match_reason: 'NAME_PREFIX',
-  why: ['matched the product name “Techo-Bloc Blu 60 Slab”', 'read the quantity 480 from your text'],
+  why: ['matched the product name “Stonecrest 60 mm Slab”', 'read the quantity 480 from your text'],
   needs_qty: false,
   needs_uom: false,
   alternates: [],
@@ -93,10 +93,10 @@ const needsQty = (over = {}) =>
 const needsUOM = (over = {}) =>
   complete({
     ref: 'p3',
-    source_text: '40 linear feet of Banas coping',
+    source_text: '40 linear feet of Bluff coping',
     product_id: 'prod-coping',
-    sku: 'DBS-BANAS-COPING',
-    name: 'Banas Sandstone Coping',
+    sku: 'GLS-BLUFF-COPING',
+    name: 'Bluff Sandstone Coping',
     qty_entered: '40',
     uom_entered: '',
     needs_uom: true,
@@ -116,7 +116,7 @@ const finding = (over = {}) => ({
   rule_code: 'SURFACE_NEEDS_JOINTING',
   title: 'Jointing sand for the paved area',
   advice: 'A paved area is quoted with no jointing sand. Joints left unfilled wash out in the first heavy rain.',
-  triggered_by: [{ line_no: 1, name: 'Techo-Bloc Blu 60 Slab' }],
+  triggered_by: [{ line_no: 1, name: 'Stonecrest 60 mm Slab' }],
   missing: ['JOINTING'],
   suggest_query: 'polymeric sand',
   ...over,
@@ -143,10 +143,10 @@ test('a fresh extraction has NOTHING selected, the review list never pre-ticks i
 });
 
 test('only rows the rep TICKED are sent', () => {
-  const ex = extraction([complete(), complete({ ref: 'p9', product_id: 'prod-gator', sku: 'DBS-GATOR-SAND', name: 'Alliance Gator Polymeric Sand', qty_entered: '6', uom_entered: 'BAG' })]);
+  const ex = extraction([complete(), complete({ ref: 'p9', product_id: 'prod-polysand', sku: 'GLS-POLYSAND', name: 'Tidewater Polymeric Sand', qty_entered: '6', uom_entered: 'BAG' })]);
   const payloads = addPayloads(ex, ['p9']);
   assert.equal(payloads.length, 1, 'one tick, one payload');
-  assert.equal(payloads[0].product_id, 'prod-gator');
+  assert.equal(payloads[0].product_id, 'prod-polysand');
   assert.equal(payloads[0].ref, 'p9');
 });
 
@@ -167,10 +167,10 @@ test('a stale tick from a previous paste cannot resurrect a row', () => {
 });
 
 test('the payload description is the CATALOGUE name, not the rep’s phrase', () => {
-  // A quote is a document a customer reads. "Need 480 sq ft of Blu 60 for the back patio" is not a
+  // A quote is a document a customer reads. "Need 480 sq ft of 60 mm slab for the back patio" is not a
   // line description.
   const payloads = addPayloads(extraction([complete()]), ['p1']);
-  assert.equal(payloads[0].description, 'Techo-Bloc Blu 60 Slab');
+  assert.equal(payloads[0].description, 'Stonecrest 60 mm Slab');
   assert.ok(!payloads[0].description.includes('back patio'));
 });
 
@@ -226,7 +226,7 @@ test('confidence labels are plain words, and an unknown band is not a blank chip
 test('swapping to an alternate keeps the quantity and re-asks the unit', () => {
   const withAlts = complete({
     alternates: [
-      { product_id: 'prod-step', sku: 'DBS-TB-BOREALIS', name: 'Techo-Bloc Borealis Step', match_reason: 'NAME', base_uom: 'PC' },
+      { product_id: 'prod-step', sku: 'DBS-TB-BOREALIS', name: 'Stonecrest Slab Company Borealis Step', match_reason: 'NAME', base_uom: 'PC' },
     ],
   });
   const [swapped] = withAlternate([withAlts], 'p1', 'prod-step');
@@ -289,10 +289,10 @@ test('the confirm button never overstates what it will add', () => {
 test('a partial add names the lines that failed', () => {
   assert.equal(addResultText(3, []), 'Added 3 lines.');
   assert.equal(addResultText(1, []), 'Added 1 line.');
-  const partial = addResultText(3, [{ ref: 'p4', message: 'Banas Sandstone Coping: refused (409).' }]);
+  const partial = addResultText(3, [{ ref: 'p4', message: 'Bluff Sandstone Coping: refused (409).' }]);
   // A single boolean would lose this case, and a rep who re-ran the batch would duplicate three lines.
   assert.match(partial, /Added 3 lines/);
-  assert.match(partial, /Banas Sandstone Coping/);
+  assert.match(partial, /Bluff Sandstone Coping/);
   assert.match(addResultText(0, [{ ref: 'p1', message: 'x' }]), /No lines were added/);
 });
 
@@ -347,7 +347,7 @@ test('a finding carries the rule’s own words and the lines that triggered it',
   const [f] = visibleFindings(gaps([finding()]), []);
   // The advice is the ROW's, verbatim, the admin listing would otherwise be a lie about what reps see.
   assert.match(f.advice, /wash out in the first heavy rain/);
-  assert.deepEqual(f.triggered_by, [{ line_no: 1, name: 'Techo-Bloc Blu 60 Slab' }]);
+  assert.deepEqual(f.triggered_by, [{ line_no: 1, name: 'Stonecrest 60 mm Slab' }]);
   assert.equal(f.suggest_query, 'polymeric sand');
 });
 
