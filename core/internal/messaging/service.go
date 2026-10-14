@@ -62,6 +62,7 @@ type store interface {
 	// The membership walls' reads: the room's kind/branch/auto_scope, the
 	// caller's row role, and the add-target's branch reach.
 	channelFacts(ctx context.Context, channelID string) (channelFactsRow, error)
+	userHoldsAnyRole(ctx context.Context, userID string, codes []string) (bool, error)
 	memberRole(ctx context.Context, channelID, userID string) (string, error)
 	userReachesBranch(ctx context.Context, userID, branchID string) (bool, error)
 }
