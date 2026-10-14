@@ -438,7 +438,7 @@ export class DriveRunApp extends HHElement {
       // The store answers at once on the last served zone (the default until one is served);
       // the zone is refreshed on the side and never holds the run sheet.
       const day = houseDay();
-      void this.#drive.dealersDay();
+      const zoneDay = this.#drive.dealersDay();
       // The run sheet reads answer from the store, with the scope's staleness.
       const answer: RunsAnswer = await this.#driveOffline.runs(day);
       if (answer.ok) {
@@ -454,6 +454,7 @@ export class DriveRunApp extends HHElement {
         });
       }
       this.requestUpdate();
+      void zoneDay.then((served) => this.#rereadOnZone(day, served));
       return;
     }
     const result = await this.#drive.myRuns(await this.#drive.dealersDay());
@@ -638,14 +639,30 @@ export class DriveRunApp extends HHElement {
     await this.#refreshRuns();
   }
 
+  // The store was read on the zone held at the time. When the zone read then serves a different
+  // day (the dealer's zone arrives after the first read), read the store again on that day; an
+  // unchanged day (an Ontario dealer, zone absent) reads nothing more.
+  async #rereadOnZone(readDay: string, servedDay: string): Promise<void> {
+    if (servedDay === readDay || this.#driveOffline === null) return;
+    const answer = await this.#driveOffline.runs(servedDay);
+    if (!answer.ok) return;
+    this.#runs = answer.value.runs;
+    this.#runStaleness = answer.staleness;
+    this.#phase = "ready";
+    this.#error = "";
+    this.requestUpdate();
+  }
+
   // Re-read the day without blanking the screen: the server's order and
   // statuses win, and a failed re-read keeps what is on the glass.
   async #refreshRuns(): Promise<void> {
     if (this.#driveOffline !== null) {
-      void this.#drive.dealersDay();
-      const answer = await this.#driveOffline.runs(houseDay());
+      const day = houseDay();
+      const zoneDay = this.#drive.dealersDay();
+      const answer = await this.#driveOffline.runs(day);
       if (answer.ok) this.#runs = answer.value.runs;
       await this.#refreshOfflineChrome();
+      void zoneDay.then((served) => this.#rereadOnZone(day, served));
       return;
     }
     const result = await this.#drive.myRuns(await this.#drive.dealersDay());
