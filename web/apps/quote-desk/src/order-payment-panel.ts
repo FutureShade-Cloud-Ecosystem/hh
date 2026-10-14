@@ -78,6 +78,7 @@ import { convertRoute, routeHash } from "./quote-router.js";
 import { SIGN_OUT_EVENT, UNSENT_WAIT_MS, waitUpTo, type SignOutDetail } from "./quote-context.js";
 import type { QuoteContext } from "./quote-context.js";
 import type { Result } from "@hardscapehouse/api-client";
+import { isNoSignal } from "@hardscapehouse/work-offline";
 import { spokenRefusal } from "./_quote-workarea.js";
 
 /** Said on return when a payment was taken on this quote while the person was away: its receipt is below, with the figures the server answered. */
@@ -641,6 +642,9 @@ export class QdOrderPayment extends PanelBase {
     }
     const words = paymentRefusalWords(result.status, result.error);
     this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? "held" : "kept", words);
+    // With no signal nothing was sent: the server's state has not moved, there is nothing to read again, and a read
+    // now would only fail and replace the payment box (and the refusal in it) with a read error.
+    if (isNoSignal(result)) return;
     // A definite refusal is evidence the server's state moved under the desk (a payment or a
     // credit landed elsewhere, a balance changed): the family is read again, so the figures say
     // what the server said at the latest read, and an invoice that is no longer owed leaves the

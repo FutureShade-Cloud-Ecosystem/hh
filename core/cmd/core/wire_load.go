@@ -35,6 +35,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/pricing"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/purchasing"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -80,7 +81,7 @@ func wireLoad(r httpx.Registrar, pool *pgxpool.Pool, log *slog.Logger, doors boo
 			}, auditSvc),
 		// LD-6's three customer doors.
 		"PUT /api/v1/load/customers": newLoadDoor(store, load.KindCustomer,
-			customer.CustomerLoadWriter{}, auditSvc),
+			customer.CustomerLoadWriter{Country: dealerCountryAdapter{r: settings.NewDealerConfigReader(pool)}}, auditSvc),
 		"PUT /api/v1/load/contacts": newLoadDoor(store, load.KindContact,
 			customer.ContactLoadWriter{}, auditSvc),
 		"PUT /api/v1/load/jobs": newLoadDoor(store, load.KindJob,

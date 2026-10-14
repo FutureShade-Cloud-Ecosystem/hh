@@ -876,7 +876,7 @@ export class QuotePublicPage extends HHElement {
   /**
    * The ONE place the totals block is drawn. Both the quote itself and the
    * acceptance echo render through here, from the same pure decision, so the
-   * two surfaces cannot drift apart on the question of whether HST is already
+   * two surfaces cannot drift apart on the question of whether the tax is already
    * in the number.
    */
   private renderTotals(m: QuoteMoney): TemplateResult {

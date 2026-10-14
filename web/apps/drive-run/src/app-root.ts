@@ -20,13 +20,13 @@ import "@hardscapehouse/design-system/src/header.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 // The offline strip and the conflict cards ride the shell chrome package,
 // wired here through their properties (the injected seams): this app maps the
 // runner's state, the backend's ownership and the store's cards onto them.
 import "@hardscapehouse/shell-chrome";
 import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
-import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
 import { DriveOffline, bannerMode, openDriveOfflineOpfs, type RunsAnswer } from "./drive-offline.js";
 import { HANDBACK_TITLE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
@@ -110,6 +110,9 @@ export class DriveRunApp extends HHElement {
   #podBusy = false;
   #podPrefill: string | null = null;
   #photoBusy = false;
+  // Pictures chosen while one is still going up wait here, in order, each with
+  // the stop it was taken for; none is ever dropped.
+  readonly #photoQueue: Array<{ file: File; stopId: string; late: boolean }> = [];
   // The pictures taken in this visit, by stop, kept in memory for the
   // thumbnails: the core's photo route needs the bearer, so a picture cannot
   // load as an image address, and one taken before this visit shows as a tile.
@@ -431,8 +434,11 @@ export class DriveRunApp extends HHElement {
     this.#phase = "loading";
     this.requestUpdate();
     await this.#bootOffline();
-    const day = houseDayInZone(HOUSE_ZONE);
     if (this.#driveOffline !== null) {
+      // The store answers at once on the last served zone (the default until one is served);
+      // the zone is refreshed on the side and never holds the run sheet.
+      const day = houseDay();
+      const zoneDay = this.#drive.dealersDay();
       // The run sheet reads answer from the store, with the scope's staleness.
       const answer: RunsAnswer = await this.#driveOffline.runs(day);
       if (answer.ok) {
@@ -448,9 +454,10 @@ export class DriveRunApp extends HHElement {
         });
       }
       this.requestUpdate();
+      void zoneDay.then((served) => this.#rereadOnZone(day, served));
       return;
     }
-    const result = await this.#drive.myRuns(day);
+    const result = await this.#drive.myRuns(await this.#drive.dealersDay());
     if (result.ok) {
       this.#runs = result.value;
       this.#phase = "ready";
@@ -582,40 +589,67 @@ export class DriveRunApp extends HHElement {
   // it is a late photo and is folded into the proof once it is up. A failure
   // never touches the signature.
   async #sendPhoto(file: File): Promise<void> {
-    if (this.#view.kind === "run" || this.#view.kind === "close" || this.#view.kind === "fail" || this.#view.kind === "conflicts" || this.#photoBusy) {
+    if (this.#view.kind === "run" || this.#view.kind === "close" || this.#view.kind === "fail" || this.#view.kind === "conflicts") {
       return;
     }
-    const stopId = this.#view.id;
-    const late = this.#view.kind === "stop";
+    this.#photoQueue.push({ file, stopId: this.#view.id, late: this.#view.kind === "stop" });
+    if (this.#photoBusy) return;
     this.#photoBusy = true;
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
+    try {
+      for (let next = this.#photoQueue.shift(); next !== undefined; next = this.#photoQueue.shift()) {
+        try {
+          await this.#sendOnePhoto(next.file, next.stopId, next.late);
+        } catch {
+          this.#error = "The photo did not send. Take it again and try once more.";
+        }
+      }
+    } finally {
+      this.#photoBusy = false;
+      this.requestUpdate();
+    }
+  }
+
+  async #sendOnePhoto(file: File, stopId: string, late: boolean): Promise<void> {
     const ready = await readyPhoto(file);
     if (!ready.ok) {
       this.#error = ready.error;
-    } else {
-      const sent = await this.#drive.uploadPhoto(stopId, ready.bytes, ready.type);
-      if (sent.ok) {
-        const made = URL.createObjectURL(new Blob([ready.bytes as BlobPart], { type: ready.type }));
-        this.#thumbs.set(stopId, [...(this.#thumbs.get(stopId) ?? []), made]);
-      }
-      if (!sent.ok) {
-        this.#error = roadsideError(sent.error, sent.status, "The photo did not send. Check your signal and add it again.");
-      } else {
-        if (late) {
-          const folded = await this.#drive.attachPhotos(stopId);
-          if (!folded.ok) {
-            this.#error = roadsideError(folded.error, folded.status, "The photo is up but is not on the proof yet. Add it again in a moment.");
-          }
-        }
-        // The photo door is direct, so the count it moved lands in the store
-        // only through the next pull; wait for it, then read.
-        if (this.#driveOffline !== null) await this.#driveOffline.syncNow();
-        await this.#refreshRuns();
+      return;
+    }
+    const sent = await this.#drive.uploadPhoto(stopId, ready.bytes, ready.type);
+    if (!sent.ok) {
+      this.#error = roadsideError(sent.error, sent.status, "The photo did not send. Check your signal and add it again.");
+      return;
+    }
+    const made = URL.createObjectURL(new Blob([ready.bytes as BlobPart], { type: ready.type }));
+    this.#thumbs.set(stopId, [...(this.#thumbs.get(stopId) ?? []), made]);
+    // Decided at send time: a photo picked on the proof screen is late once the
+    // signature has landed before it went up. Attaching twice is harmless.
+    if (late || (this.#findStop(stopId)?.stop.pod_received_by ?? "") !== "") {
+      const folded = await this.#drive.attachPhotos(stopId);
+      if (!folded.ok) {
+        this.#error = roadsideError(folded.error, folded.status, "The photo is up but is not on the proof yet. Add it again in a moment.");
       }
     }
-    this.#photoBusy = false;
+    // The photo door is direct, so the count it moved lands in the store
+    // only through the next pull; wait for it, then read.
+    if (this.#driveOffline !== null) await this.#driveOffline.syncNow();
+    await this.#refreshRuns();
+  }
+
+  // The store was read on the zone held at the time. When the zone read then serves a different
+  // day (the dealer's zone arrives after the first read), read the store again on that day; an
+  // unchanged day (an Ontario dealer, zone absent) reads nothing more.
+  async #rereadOnZone(readDay: string, servedDay: string): Promise<void> {
+    if (servedDay === readDay || this.#driveOffline === null) return;
+    const answer = await this.#driveOffline.runs(servedDay);
+    if (!answer.ok) return;
+    this.#runs = answer.value.runs;
+    this.#runStaleness = answer.staleness;
+    this.#phase = "ready";
+    this.#error = "";
     this.requestUpdate();
   }
 
@@ -623,12 +657,15 @@ export class DriveRunApp extends HHElement {
   // statuses win, and a failed re-read keeps what is on the glass.
   async #refreshRuns(): Promise<void> {
     if (this.#driveOffline !== null) {
-      const answer = await this.#driveOffline.runs(houseDayInZone(HOUSE_ZONE));
+      const day = houseDay();
+      const zoneDay = this.#drive.dealersDay();
+      const answer = await this.#driveOffline.runs(day);
       if (answer.ok) this.#runs = answer.value.runs;
       await this.#refreshOfflineChrome();
+      void zoneDay.then((served) => this.#rereadOnZone(day, served));
       return;
     }
-    const result = await this.#drive.myRuns(houseDayInZone(HOUSE_ZONE));
+    const result = await this.#drive.myRuns(await this.#drive.dealersDay());
     if (result.ok) this.#runs = result.value;
   }
 
