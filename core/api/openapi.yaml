@@ -2357,7 +2357,7 @@ paths:
       tags:
         - staff-billing
       summary: List the card charge attempts that need a person
-      description: "The list a person reconciling a Run settlement report reads: every trans_id with no sale behind it, and why. With state=open it answers every attempt that needs a person (UNKNOWN, VOID_UNKNOWN, VOID_DECLINED), whatever its date; from and to (RFC3339) bound the second arm, every attempt in the range that carries a charge ref and is not BOUND. A missing from and to default from to the seven day window, so the range arm is bounded whatever the caller sends. Newest first, bounded at 500 rows."
+      description: "The list a person reconciling a Run settlement report reads: every trans_id with no sale behind it, and why. With state=open it answers every attempt that needs a person (UNKNOWN, VOID_UNKNOWN, VOID_DECLINED), whatever its date; from and to (RFC3339) bound the second arm, every attempt in the range that carries a charge ref and is not BOUND. A missing from and to default from to the seven day window, so the range arm is bounded whatever the caller sends. Newest first, bounded at 500 rows. The list is fenced by the caller's branch reach: a global role reads every branch, a branch scoped caller reads only the attempts of its granted branches, and an attempt of a branch the caller does not reach is simply absent (the bound counts reachable rows only)."
       x-role: requireManager
       x-access:
         surfaces:
@@ -5287,6 +5287,51 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/dispatch/trucks/{id}:
+    put:
+      operationId: dispatchUpdateTruck
+      tags:
+        - staff-dispatch
+      summary: Update a truck's registry facts, including active or not
+      description: "An absolute PUT of the row the caller read: the fields the create takes plus is_active. The same body twice leaves the same row, so a retry is never a conflict; only a different code colliding with another truck at the branch answers 409. A branch_id naming another yard is refused in words, a truck's runs and crew hang off the yard it lives at. Branch-walled on the row's own branch."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dispatch-board
+        level: manage
+      x-guards:
+        - requireBranch
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchTruck"
+      responses:
+        "200":
+          description: The stored truck
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchTruck"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/dispatch/drivers:
     get:
       operationId: dispatchListDrivers
@@ -5360,6 +5405,49 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/dispatch/drivers/{id}:
+    put:
+      operationId: dispatchUpdateDriver
+      tags:
+        - staff-dispatch
+      summary: Update a driver's registry facts, including active or not
+      description: "An absolute PUT of the row the caller read: the fields the create takes (including the login link user_id) plus is_active. Idempotent under an identical retry; a branch_id naming another yard is refused in words, the truck update's own rule. Branch-walled on the row's own branch."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dispatch-board
+        level: manage
+      x-guards:
+        - requireBranch
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchDriver"
+      responses:
+        "200":
+          description: The stored driver
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchDriver"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/dispatch/board:
     get:
       operationId: dispatchGetBoard
@@ -6289,12 +6377,13 @@ paths:
       tags:
         - staff-dispatch
       summary: Save the dispatch policy for a branch
-      description: Malformed values are refused in words before any database CHECK can fire; omitted knobs normalise to the column defaults rather than to zero.
+      description: "Malformed values are refused in words before any database CHECK can fire; omitted knobs normalise to the column defaults rather than to zero. Beside the level, the route names the configuration's dispatch_policy_setters list (X13): a role off the list is refused the write whatever its cells say, the pricing_editors precedent."
       x-role: requireManager
       x-access:
         surfaces:
           - dispatch-board
         level: manage
+        list: dispatch_policy_setters
       x-guards:
         - requireBranch
       parameters:
@@ -13157,13 +13246,15 @@ paths:
       operationId: orderCancel
       tags:
         - staff-order
-      summary: Cancel an open order (manager only, reason required)
-      description: "Applies the CANCELLED transition from DRAFT, CONFIRMED, PICKING or READY. The service proves no money the cancel has no exit for is attached, under the order row lock: a finalized invoice other than a supplier deposit document, or a committed counter sale, answers 409 and belongs to the POS returns flow. An order whose only money is its supplier deposit document cancels: the deposit settles on the same transaction, credited back to the customer's account by the dealer's default or kept when keep_deposit is true (a manager's override, the mandatory reason is its audited reason). Kept means the dealer keeps only what the customer paid of the deposit; the unpaid rest is closed so nothing more is owed on the cancelled order."
+      summary: Cancel an open order (Sales, Branch or General Manager, reason required)
+      description: "Applies the CANCELLED transition from DRAFT, CONFIRMED, PICKING or READY. The service proves no money the cancel has no exit for is attached, under the order row lock: a finalized invoice other than a supplier deposit document, or a committed counter sale, answers 409 and belongs to the POS returns flow. An order whose only money is its supplier deposit document cancels: the deposit settles on the same transaction, credited back to the customer's account by the dealer's default or kept when keep_deposit is true (a manager's override, the mandatory reason is its audited reason). Kept means the dealer keeps only what the customer paid of the deposit; the unpaid rest is closed so nothing more is owed on the cancelled order. Walled to the order_cancellers list: the Sales Manager, the Branch Manager and the General Manager, each giving a reason (and the super admin); every other role is refused with the shared forbidden body. A branch scoped manager reaches only the orders of their own branches."
       x-role: requireManager
       x-access:
         surfaces:
           - quote-desk
-        level: manage
+        level: read
+        list: order_cancellers
+        reason: "The order_cancellers list is the wall, not the level: the General Manager reads the quote desk and the Branch Manager works it, and both may still cancel an order, which a manage level cannot say without leaving them out."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -27685,6 +27776,12 @@ components:
           additionalProperties: true
         flow:
           type: string
+        class:
+          type: string
+          enum:
+            - staff
+            - tenant
+          description: "The bearer class of the token: a tenant flow (a contractor persona of the demo account) carries a tenant token and a user block with no tier and no scope, and the front door routes it to the Pro apps"
         chapter_key:
           type: string
     DemoFlow:
@@ -27696,6 +27793,12 @@ components:
           type: string
         label:
           type: string
+        class:
+          type: string
+          enum:
+            - staff
+            - tenant
+          description: The bearer class the flow mints, so the front door can route a contractor to the Pro apps
     DemoFlowList:
       type: object
       required:

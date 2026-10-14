@@ -35,6 +35,20 @@ dealer-admin in any file ("No built app, no boards in any file").
 | The drawer's generation guard: opening a second row, filtering or closing voids the answer still in flight | `app/src/audit-log.ts` (`detailGen`, `openDetail`, `cancelDetail`) | `#auditDetailGen`, `#openAuditEntry`, `#closeAuditDetail` in `src/app-root.ts` | The counter carried over; the abort half is not, because the calls go through the generated client (a Result, no res.json() window); the drawer's three self describing attributes kept |
 | The actor cell | `app/src/audit-log.ts` with `app/src/_audit-actor.ts` (`renderActorCell`) | `actorWords` in `src/audit-logic.ts` | The honest change: the HH core's audit projection carries no resolved name and production reads the role word empty (the core attributes by the linked users id), so the cell shows the role's words when a row carries one, else the id's own block, never a blank |
 | The drilldown to one entity's whole trail | `app/src/audit-log.ts` with `app/src/_audit-drilldown.ts` | the trail card in `src/views-audit.ts`, `#openAuditTrail` in `src/app-root.ts` | The original's kind aware viewer became the one generic question the transaction route answers: this entity's rows |
+| The assist admin's three panels in their order (spend, budgets by role, settings) | `app/src/assist-admin.ts` | `src/admin-assist.ts`, the Assist case in `src/admin-work.ts`, `assistSpend`/`assistLimits`/`assistSettings` and the writes in `src/admin-api.ts` | Rebuilt on HH's sheet over the generated client; the same three reads answered together and the same write-then-re-read discipline |
+| The spend words: exchanges first, tokens second, a zero row as a fact | `app/src/assist-model.ts` (`spendSummary`, `spendTotal`, `formatTokens`) | `src/admin-logic.ts` | Kept in meaning; the budget sentence's em dashes became commas (the house dash rule, the hotkeys port's precedent) |
+| The budget source printed, never inferred; the boundary `spent >= budget`; a zero budget reads full | `app/src/assist-model.ts` (`budgetSentence`, `overBudget`, `usedFraction`) | `src/admin-logic.ts` | The source still comes from the server's own `budget.source`, never by comparing to the role default; the operator matches the core's OverBudget exactly |
+| The allowance meter, dimmed not red at the limit | `app/src/assist-admin.ts` (`.track`, `.fill.spent`) | the meter in `src/admin-assist.ts`, the mirror in `src/admin-work.ts` | The width is set in code through a data- attribute (the position gate binds no style); the at-limit dimming kept |
+| The settings block: the four keys, the key variable's NAME and a yes/no, never a credential | `app/src/assist-admin.ts` (`renderSettings`, SOP-1) | `renderSettings` in `src/admin-assist.ts`, `assistSettings`/`putSetting` in `src/admin-api.ts` | The two toggles unrolled as static blocks (the position gate takes bound id and for attributes off the table) |
+| The product editor's description fields and the changed-only save | `app/src/product-edit.ts` (the attribute form, `save`) | `src/admin-catalog.ts`, `PRODUCT_TEXT_FIELDS`/`productDraftFrom`/`productChangedPatch` in `src/admin-logic.ts`, `productUpdate` in `src/admin-api.ts` | The description allowlist the contract names; the body is the partial map (only changed fields ride the wire), which the original sent whole |
+| The picture: set through the product's own image route, remove beside it | `app/src/product-edit.ts` (the image controls) | `renderPicture` in `src/admin-catalog.ts`, `productPutImage`/`productDeleteImage` in `src/admin-api.ts` | The contract's image route carries the bytes itself, so the attachments routes have nothing to add and are not called |
+| The list price absent is not zero | `app/src/product-edit.ts` with `app/src/_quickview.ts` (DIB-404) | `listPriceWords` in `src/admin-logic.ts` | Through the shared `formatDollars` (pos-kit), no currency literal; an absent anchor reads as words |
+| The curation editor's shape: the kind and id of a row, the whole set saved in one PUT, the reset per kind as a DELETE | `app/src/quote-surface-settings.ts` (the items half, DIB-507's screen settings page) | `src/views-config.ts` (the dealer's curation draft), `src/config-api.ts`, `src/config-logic.ts` | Rebuilt on HH's generated client (`settingsPutRoleItems`, `settingsDeleteRoleItems`); the original edited one surface's registry from inside that surface, this editor edits the stored rows of every surface from the dealer's administration, because apps do not import apps and item ids stay each surface's own registry's |
+| The counter policy's knobs and their words (cash on demand, the restocking fee in basis points, lines and lookup presentation, the till's split and which side leads, cost and past due visibility, the curated chips) | `app/src/pos-counter-settings.ts` (the policy half, the same knobs) | the counter policy section in `src/views-settings.ts`, `src/settings-api.ts`, `src/settings-logic.ts` | Rebuilt on HH's generated client (`posGetPolicy`, `posPutPolicy`, `posPolicyHistory`); the knobs keep the core's bounds and its 422 words; no card data and no secret rides the screen, and a policy write goes to the server and never queues |
+| The card rail's status and the test mode badge | the payment handler's own status half (core/internal/payment/handler.go: the status never echoes a credential) | the payments configuration section in `src/views-settings.ts`, `paymentsConfig` in `src/settings-api.ts` | Read only on purpose: the core's configure write is a whole replace that would retire the stored credentials, so the screen names the implementation as where the rail is set and offers no form and no save; a patch route is a core change for the PRR backlog |
+| The thirteen profiles and their words (five base shapes, eight manager refinements) | `app/src/quote-surface-settings.ts` (`PROFILES`), the settings kit's own `validProfiles` (core/internal/settings/settings.go) and migration 0381 | `JOB_SHAPES` in `src/config-logic.ts` | The kit's thirteen, because the kit resolves every surface's profile through the role table and reads role items for exactly that profile; the core's 422 sentence still names five, a stale message |
+| The item set's shape checks and their words (kind enum, id alphabet, positions, duplicates, the 128 bound, empty means DELETE) | the settings kit's own validators (core/internal/settings/settings.go `ValidateItems`) mirrored client side | `itemRowError`, `itemSetError`, `canSaveItems` in `src/config-logic.ts` | The server's checks restated in the server's words so a row that cannot pass spares the round trip; the server's 422 stays the last word |
+| The role to shape catalog (which staff roles hold which job shape) | the seed of record (core/db/migrations/0140_dashboard_layouts.sql, the `dashboard_role_profiles` rows, as amended by 0381_manager_home_role_profiles.sql) and the kit's ProfileFallback | `SHAPE_ROLE_CODES`, `profileForRoleCode`, `rolesForShape` in `src/config-logic.ts`, the catalog card in `src/views-config.ts` | Presented as words beside the grid, from the core's own seed; the server resolves each person's real shape and a role with no row answers to the counter shape, the kit's own fallback |
 | The Pricing surface: one console of sub screens, twelve tabs | `app/src/pricing-admin.ts` (the sub nav and its tab order) | the registry row in `src/surfaces.ts`, `src/views-pricing.ts` (the strip and the router), `src/pricing-controller.ts`, `src/pricing-api.ts` | The original's fourteen sub tabs regrouped into the item's twelve (promotions and clearance share a tab; imports and the price file each kept their own; the cost compare screen is not carried, see the note below) |
 | The enum to word maps (scope, calc, audit action, price source, batch status, derivation, customer type, UoM source) | `app/src/pricing-words-logic.ts` and `app/src/pricing-shared.ts` (`SCOPE_LABELS`, `ENTITY_LABELS`) | `src/pricing-logic.ts` | Kept verbatim where the original had ratified a word; the honest degrade arm (lowercased, separators opened out) kept; the category id table (`CATEGORY_NAMES`) is NOT carried: HH asks the catalog read the contract serves the pricing screens, so one tenant's seed ids never wear another tenant's screen |
 | The money and percent formats (cents to text, a typed percent to bps) | `app/src/pricing-shared.ts` (`formatMoney`, `formatPct`, `pctToBps`) | `src/pricing-logic.ts` (`moneyWords`, `pctWords`, `bpsFromPctInput`, `centsFromMoneyInput`) | The encoders refuse negatives and non numbers at the form; no figure is ever summed or derived client side (the money rule) |
@@ -96,3 +110,50 @@ reference:
 - The demo door's own cards and marks: the template's entry, drawn with this
   app's flows (the stub's two; the demo image's closed flow table is the
   lead's wiring).
+- The Print jobs surface (`src/admin-print.ts`, `printingListJobs`): the
+  original app never called the print queue's list, so the screen is new.
+  Visual reference: this app's own filter form and table (the audit trail's),
+  on HH's tokens.
+- The Exports surface (`src/admin-exports.ts`, `exportAuditXlsx` and
+  `messagingExport`): one call, one file, no queue. The workbook's filters
+  are the audit trail's own four; the messages card carries the server's
+  masking rule as its own words. No original screen; same visual reference.
+- The Platform keys surface (`src/admin-keys.ts`, `listPlatformKeys`): the
+  contract marks the read for this surface (staff wide) and the write is the
+  operator's alone, so the screen renders no write. The 404 the unregistered
+  route answers is the waits state's input, the staff register's own
+  precedent. No original screen; same visual reference.
+- The catalog's finder and the units and categories cards: the original
+  opened its editor from a catalogue list this app does not carry, so the
+  finder (the catalogue's own list read, narrowed) and the two staff reads
+  are new. The editor is the port, see the table above.
+- The admin-rest controller (`src/admin-work.ts`) and the door
+  (`src/admin-api.ts`): the Money Desk's receivables desk pattern (a
+  controller the root element owns), so the root's own file stays small and
+  the registry's surfaces land one file at a time.
+- The role by surface grid, the editor for one cell, the caller's own view
+  and workspace cards, and the job shape catalog (`src/views-config.ts`):
+  there is no original screen for a per dealer role configuration. The
+  visual references are this app's own staff surface (the card and table
+  style, the refusal and empty states) and Manager Home's matrix words;
+  the editor's row shape follows the original's DIB-507 items half above.
+  The grid's caption is the settings kit's own sentence about what
+  curation is and is not (core/internal/settings/settings.go, the package
+  header), spoken on the glass.
+- The caller's own override and workspace cards (the `my-items` and
+  `my-workspace` halves): the kit's own two levels, whole or absent,
+  reset IS a DELETE, the workspace save carrying the settings write
+  idempotency key (core/internal/settings/service.go). No original screen.
+- The role by surface grid's catalog card, the deployment settings as one
+  surface of four sections, the walkthrough's chapter list and step copy
+  editor, and the policy history table: each from its named reference above
+  (the manager-home matrix words, the original's counter settings screen)
+  or new here with the app's own card style for its reference, because no
+  original screen gathered them.
+- The brand section's waits state (`BRAND_WAITS_WORDS`): the parity
+  ledger's own fact (the tenant brand pair is registered in the contract
+  and held, unregistered in the core), stated on the glass with the form
+  whole and disabled, the staff family's waits posture carried over.
+- The walkthrough's platform gate words: the tour package's own refusal
+  sentence, kept whole on the glass, and the calm read only line for a
+  caller the server's `can_edit` refuses.

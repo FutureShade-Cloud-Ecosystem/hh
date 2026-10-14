@@ -28,7 +28,7 @@ test("the landing draws the reporting link for a manager role, and the catalogue
   // The generated form: dates default to the month to date, the branch is a
   // select of the caller's own branches, never a uuid box.
   await expect(page.locator("input[data-param='from_date']")).not.toHaveValue("");
-  await expect(page.locator("select[data-param='branch_id'] option")).toHaveText(["All branches", "Dibbits Landscape Supply · Trenton"]);
+  await expect(page.locator("select[data-param='branch_id'] option")).toHaveText(["All branches", "Gable Landscape Supply · Point Loma"]);
 });
 
 test("a front-line role's landing draws no reporting link", async ({ page }) => {
@@ -66,7 +66,7 @@ test("print queues the job, opens the document at the paper, and the run lands i
   await expect(page.locator("[data-test='reporting-error']")).toHaveText(
     "this report covers every branch, name the branch to print it at",
   );
-  await page.locator("[data-field='print-at']").selectOption({ label: "Dibbits Landscape Supply · Trenton" });
+  await page.locator("[data-field='print-at']").selectOption({ label: "Gable Landscape Supply · Point Loma" });
   const popupPromise = page.waitForEvent("popup");
   await page.getByRole("button", { name: "Print" }).click();
   const popup = await popupPromise;
@@ -158,7 +158,7 @@ test("a stored commission run prints at the commission pane's own branch, never 
   await openReporting(page);
   // The Templates pane has a print-at branch picked.
   await page.getByRole("button", { name: "Print" }).click();
-  await page.locator("[data-field='print-at']").selectOption({ label: "Dibbits Landscape Supply · Trenton" });
+  await page.locator("[data-field='print-at']").selectOption({ label: "Gable Landscape Supply · Point Loma" });
   await page.locator(".kind-tab", { hasText: "Accruals" }).click();
   await page.getByRole("button", { name: "Preview period" }).click();
   await expect(page.locator("[data-test='reporting-periods']")).toBeVisible();

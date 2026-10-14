@@ -35,6 +35,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/dealer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -273,7 +274,7 @@ func (s *StatementService) GenerateRun(ctx context.Context, mode, branchID strin
 	if err != nil {
 		// A missing letterhead must not fail a month end. The statement renders with a plain header,
 		// which is worse-looking and entirely correct.
-		header = StatementHeader{BranchName: "Dibbits"}
+		header = StatementHeader{BranchName: dealer.Or("Your dealer")}
 	}
 
 	var generated, queued int

@@ -17,7 +17,7 @@ async function readyToStage(page: import("@playwright/test").Page): Promise<void
   await page.locator("[data-pick-card]", { hasText: "SO-1040" }).getByRole("button", { name: "Open" }).click();
   await expect(page.locator("[data-pick-order]")).toHaveText("SO-1040");
   await page.getByRole("button", { name: "Start picking" }).click();
-  await page.locator("[data-line]", { hasText: "Granular A gravel" }).locator(".line-row").click();
+  await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
   await page.getByRole("button", { name: /^All \d+/ }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("pulled in full");

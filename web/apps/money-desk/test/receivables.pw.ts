@@ -909,7 +909,7 @@ test("credit holds: the sweep's holds are listed, lifting is held for this role 
   const place = page.getByRole("button", { name: /Place a hold/ });
   await expect(place).toHaveAttribute("aria-disabled", "true");
   await place.click({ force: true });
-  await expect(page.locator("[data-hold-panel]")).toContainText("no route for it yet");
+  await expect(page.locator("[data-hold-panel]")).toContainText("there is no path for it yet");
   await expect(page.locator("[data-hold-panel] fieldset[disabled]")).toBeVisible();
   await page.getByRole("button", { name: "Run the sweep" }).click({ force: true });
   await expect(page.locator("[data-error]")).toContainText("Running the sweep is the Financial Controller's");
@@ -975,8 +975,7 @@ test("on a phone no screen scrolls the page sideways", async ({ page, request })
   await page.getByRole("button", { name: "Credit holds", exact: true }).click();
   await expect(page.locator("[data-hold-row]")).toHaveCount(3);
   expect(await wide()).toBeLessThanOrEqual(0);
-  // Payables and Receivables also holds the area switch, whose Receivables button comes first.
-  await page.getByRole("button", { name: "Receivables", exact: true }).last().click();
+  await page.getByRole("navigation", { name: "Money Desk views" }).getByRole("button", { name: "Receivables", exact: true }).click();
   await openAccount(page, "Granite Edge Landscaping (demo)");
   expect(await wide()).toBeLessThanOrEqual(0);
   await page.getByRole("button", { name: "Statement", exact: true }).click();

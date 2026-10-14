@@ -190,3 +190,51 @@ func TestIntegration_HH182_GlobalCallerTransitionsAnyBranch(t *testing.T) {
 		t.Fatalf("group is %s after the global caller's legal move, want PICKING", status)
 	}
 }
+
+// hh182LogisticsManagerAt builds the Logistics Manager's staff context, the role the roadmap's
+// first Dispatch increment signs in (2.4): the fence reads the branch grants, and the role code
+// names WHO this leg is about, the persona whose login the demo world mints.
+func hh182LogisticsManagerAt(branch string) identity.StaffContext {
+	return identity.StaffContext{
+		UserID: w5aUser, RoleCode: "LOGISTICS_MANAGER", Tier: identity.TierManager,
+		Status: identity.StatusActive, Scope: identity.ScopeBranch, Branches: map[string]bool{branch: true},
+	}
+}
+
+// TestIntegration_HH182_LogisticsManagerReadsOnlyItsOwnBranchShipments, the READ half of the fence
+// the transition legs above prove on writes: the logistics manager's own increment reads shipment
+// groups through GetShipmentPlan, and another branch's groups must be unreadable there, by id and
+// by number (the roadmap's 2.4 acceptance leg, named for the role that walks it). By UUID the
+// refusal is the branch fence itself; by number a cross-branch order resolves to the same not-found
+// a missing one does (ResolveOrderID's B2-4 rule), never an existence oracle.
+func TestIntegration_HH182_LogisticsManagerReadsOnlyItsOwnBranchShipments(t *testing.T) {
+	pool := intPool(t)
+	_, ord := hh182SeedOrderAtBranch(t, pool, kingstonBranch)
+	svc := w5aService(t, pool)
+	w5aPlanWholeOrder(t, pool, ord)
+
+	var orderNo string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT order_no FROM orders WHERE id = $1`, ord).Scan(&orderNo); err != nil {
+		t.Fatalf("read the order number back: %v", err)
+	}
+
+	outside := identity.ContextWithStaff(context.Background(), hh182LogisticsManagerAt(trentonBranch))
+	if _, err := svc.GetShipmentPlan(outside, ord); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("a Trenton logistics manager reading the Kingston order's groups by id = %v, want ErrForbidden", err)
+	}
+	if _, err := svc.GetShipmentPlan(outside, orderNo); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("a Trenton logistics manager reading the Kingston order's groups by number = %v, want the not-found a missing number answers", err)
+	}
+
+	// The same role INSIDE the branch reads the plan, so the refusals above are the fence and not
+	// the role: the acceptance story (build a load from what the plan says) has a reader.
+	inside := identity.ContextWithStaff(context.Background(), hh182LogisticsManagerAt(kingstonBranch))
+	plan, err := svc.GetShipmentPlan(inside, ord)
+	if err != nil {
+		t.Fatalf("the Kingston logistics manager's own read: %v", err)
+	}
+	if len(plan.Groups) != 1 {
+		t.Fatalf("the in-branch plan holds %d groups, want the seeded one", len(plan.Groups))
+	}
+}

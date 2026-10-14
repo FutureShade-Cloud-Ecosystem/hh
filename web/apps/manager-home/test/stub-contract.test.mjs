@@ -159,8 +159,50 @@ test("the demo way in answers the contract's shapes for the flows this app's doo
   holds("DemoFlowList", flows);
   assert.deepEqual(
     flows.flows.map((f) => f.flow),
-    ["sales", "sales-manager", "yard-manager"],
+    ["sales", "sales-manager", "yard-manager", "financial-controller"],
   );
+});
+
+test("the builder's reads fit the dashboard contract, field by field", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+
+  const home = await call("GET", "/api/v1/dashboard", { token });
+  assert.equal(home.status, 200);
+  holds("DashboardLayout", home.json);
+  assert.equal(home.json.profile, "manager.yard");
+  for (const tile of home.json.tiles) holds("DashboardTile", tile);
+  holds("DashboardTabStrip", home.json.tabs);
+  assert.ok(Array.isArray(home.json.hotkeys));
+
+  const catalog = await call("GET", "/api/v1/dashboard/catalog", { token });
+  assert.equal(catalog.status, 200);
+  holds("DashboardCatalogView", catalog.json);
+  for (const entry of catalog.json.tiles) {
+    assert.ok(typeof entry.wired === "boolean", "a catalog entry carries its wiring state");
+  }
+
+  const widgetCatalog = await call("GET", "/api/v1/dashboard/widgets/catalog", { token });
+  assert.equal(widgetCatalog.status, 200);
+  holds("DashboardWidgetCatalog", widgetCatalog.json);
+  for (const m of widgetCatalog.json.measures) holds("DashboardMetricMeta", m);
+
+  const gallery = await call("GET", "/api/v1/dashboard/widgets/gallery", { token });
+  assert.equal(gallery.status, 200);
+  holds("DashboardGallery", gallery.json);
+  for (const entry of gallery.json.entries) {
+    assert.ok(typeof entry.label === "string" && entry.label !== "", "a gallery card arrives resolved: its words ride on it");
+  }
+
+  const metrics = await call("GET", "/api/v1/dashboard/metrics", { token });
+  assert.equal(metrics.status, 200);
+  holds("DashboardMetricCatalogView", metrics.json);
+
+  const viz = await call("GET", "/api/v1/dashboard/viz?tile=viz.picks.queue-status-bar", { token });
+  assert.equal(viz.status, 200);
+  holds("DashboardVizResponse", viz.json);
+  assert.equal(viz.json.tiles.length, 1);
+  assert.equal(viz.json.tiles[0].state, "ok");
 });
 
 test("the landing's reads fit the dashboard contract, field by field", async () => {
@@ -269,6 +311,43 @@ test("the receiving dock fits the purchasing contract", async () => {
   assert.ok(list.json.items.some((i) => i.status === "PARTIAL"), "the stub's dock holds the difference the needs row counts");
 });
 
+test("the drivers board and its registries fit the dispatch contract", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+  const board = await call("GET", "/api/v1/dispatch/board?branch_id=5d1b3f6e-0000-4000-9000-000000000001", { token });
+  assert.equal(board.status, 200);
+  holds("DispatchBoard", board.json);
+  assert.ok(board.json.runs.length > 0, "the world holds runs for the board's groups");
+  for (const run of board.json.runs) {
+    assert.ok(["PLANNED", "DISPATCHED", "COMPLETED", "CANCELLED"].includes(run.status), `run status ${run.status} outside the closed set`);
+  }
+  for (const stop of board.json.stops) {
+    assert.ok(["READY", "LOADED", "EN_ROUTE", "DELIVERED", "FAILED", "CANCELLED"].includes(stop.status), `stop status ${stop.status} outside the closed set`);
+  }
+
+  const drivers = await call("GET", "/api/v1/dispatch/drivers?branch_id=5d1b3f6e-0000-4000-9000-000000000001&limit=100", { token });
+  assert.equal(drivers.status, 200);
+  holds("DispatchDriverPage", drivers.json);
+
+  const trucks = await call("GET", "/api/v1/dispatch/trucks?branch_id=5d1b3f6e-0000-4000-9000-000000000001&limit=100", { token });
+  assert.equal(trucks.status, 200);
+  holds("DispatchTruckPage", trucks.json);
+
+  // The empty day, the same shape with nothing on it.
+  await scenario("no-runs");
+  const empty = await call("GET", "/api/v1/dispatch/board?branch_id=5d1b3f6e-0000-4000-9000-000000000001", { token });
+  assert.equal(empty.status, 200);
+  holds("DispatchBoard", empty.json);
+  assert.equal(empty.json.runs.length, 0);
+
+  // The wall: the role gate's shared Forbidden body, the one word, exactly as
+  // the middleware writes it, the same answer every staff surface gives.
+  await scenario("drivers-refused");
+  const refused = await call("GET", "/api/v1/dispatch/board?branch_id=5d1b3f6e-0000-4000-9000-000000000001", { token });
+  assert.equal(refused.status, 403);
+  assert.deepEqual(refused.json, { error: "Forbidden" });
+});
+
 test("the approvals list fits the identity contract, and the refusals are the core's own words", async () => {
   await reset();
   const yard = await mint("yard-manager");
@@ -303,6 +382,131 @@ test("the approvals list fits the identity contract, and the refusals are the co
     token: yard,
   });
   refused(yardDecide, 403, "you do not decide MARGIN_BELOW_MINIMUM approvals", "you do not decide %s approvals");
+});
+
+test("the builder's writes fit the dashboard contract and answer what the write stored", async () => {
+  await reset();
+  const token = await mint("yard-manager");
+
+  const saved = await call("PUT", "/api/v1/dashboard/widgets", {
+    body: {
+      widgets: [
+        { widget_key: "needs.you", shape: "list", measure: "needs.you", split: "none", range: "open", size: "L", title: "Needs you", position: 0, visible: true },
+        { widget_key: "orders.open", shape: "stat", measure: "orders.open", split: "none", range: "open", size: "S", title: "", position: 1, visible: true },
+      ],
+    },
+    token,
+  });
+  assert.equal(saved.status, 200);
+  holds("DashboardWidgetsBody", saved.json);
+
+  const resetWidgets = await call("DELETE", "/api/v1/dashboard/widgets", { token });
+  assert.equal(resetWidgets.status, 200);
+  holds("DashboardWidgetsReset", resetWidgets.json);
+  assert.ok(resetWidgets.json.layout.widgets.length > 0, "the reset answers the layout it landed on, never an empty shell");
+
+  const tabs = await call("PUT", "/api/v1/dashboard/tabs", {
+    body: { pins: [{ tab_key: "yard", position: 0, visible: true }, { tab_key: "sales", position: 1, visible: false }] },
+    token,
+  });
+  assert.equal(tabs.status, 200);
+  holds("DashboardTabStrip", tabs.json);
+
+  const tabsReset = await call("DELETE", "/api/v1/dashboard/tabs", { token });
+  assert.equal(tabsReset.status, 200);
+  holds("DashboardTabsReset", tabsReset.json);
+
+  const tiles = await call("PUT", "/api/v1/dashboard/layout", {
+    body: { tiles: [{ tile_id: "orders.open", position: 0, visible: true }] },
+    token,
+  });
+  assert.equal(tiles.status, 200);
+  holds("DashboardLayoutBody", tiles.json);
+
+  const tilesReset = await call("DELETE", "/api/v1/dashboard/layout", { token });
+  assert.equal(tilesReset.status, 200);
+  holds("DashboardLayoutReset", tilesReset.json);
+});
+
+test("the role defaults refuse a caller who is not an admin, in the core's own word, and answer an admin whole", async () => {
+  await reset();
+  const yard = await mint("yard-manager");
+  const admin = await mint("financial-controller");
+
+  const refusedProfiles = await call("GET", "/api/v1/dashboard/profiles", { token: yard });
+  assert.equal(refusedProfiles.status, 403);
+  assert.deepEqual(refusedProfiles.json, { error: "Forbidden" });
+
+  const refusedDetail = await call("GET", "/api/v1/dashboard/profiles/manager.yard", { token: yard });
+  assert.equal(refusedDetail.status, 403);
+
+  const profiles = await call("GET", "/api/v1/dashboard/profiles", { token: admin });
+  assert.equal(profiles.status, 200);
+  holds("DashboardProfilesView", profiles.json);
+
+  const detail = await call("GET", "/api/v1/dashboard/profiles/manager.yard", { token: admin });
+  assert.equal(detail.status, 200);
+  holds("DashboardProfileDetail", detail.json);
+
+  const unknown = await call("GET", "/api/v1/dashboard/profiles/nowhere", { token: admin });
+  refused(unknown, 404, "unknown dashboard profile");
+
+  const widgets = await call("GET", "/api/v1/dashboard/profiles/manager.yard/widgets", { token: admin });
+  assert.equal(widgets.status, 200);
+  holds("DashboardProfileWidgets", widgets.json);
+
+  const savedWidgets = await call("PUT", "/api/v1/dashboard/profiles/manager.yard/widgets", {
+    body: {
+      widgets: [
+        { widget_key: "needs.you", shape: "list", measure: "needs.you", split: "none", range: "open", size: "L", title: "Needs you", position: 0, visible: true },
+      ],
+    },
+    token: admin,
+  });
+  assert.equal(savedWidgets.status, 200);
+  holds("DashboardProfileWidgets", savedWidgets.json);
+
+  const tabs = await call("GET", "/api/v1/dashboard/profiles/manager.yard/tabs", { token: admin });
+  assert.equal(tabs.status, 200);
+  holds("DashboardProfileTabs", tabs.json);
+
+  const savedTabs = await call("PUT", "/api/v1/dashboard/profiles/manager.yard/tabs", {
+    body: { pins: [{ tab_key: "yard", position: 0, visible: true }] },
+    token: admin,
+  });
+  assert.equal(savedTabs.status, 200);
+  holds("DashboardProfileTabs", savedTabs.json);
+
+  const gallery = await call("GET", "/api/v1/dashboard/profiles/manager.yard/gallery", { token: admin });
+  assert.equal(gallery.status, 200);
+  holds("DashboardProfileGallery", gallery.json);
+
+  const savedGallery = await call("PUT", "/api/v1/dashboard/profiles/manager.yard/gallery", {
+    body: { entries: [{ entry_key: "deliveries-today", shape: "stat", measure: "deliveries.today", split: "none", range: "today", size: "M", title: "Deliveries today", blurb: "B", position: 0, visible: true }] },
+    token: admin,
+  });
+  assert.equal(savedGallery.status, 200);
+  holds("DashboardProfileGallery", savedGallery.json);
+
+  const savedTiles = await call("PUT", "/api/v1/dashboard/profiles/manager.yard", {
+    body: { tiles: [{ tile_id: "orders.open", position: 0, visible: true }] },
+    token: admin,
+  });
+  assert.equal(savedTiles.status, 200);
+  holds("DashboardLayoutBody", savedTiles.json);
+
+  const savedHome = await call("PUT", "/api/v1/dashboard/profiles/manager.yard/home", {
+    body: { profile: "manager.yard", takeover: true, landing_unit: "yard", mobile_only: true },
+    token: admin,
+  });
+  assert.equal(savedHome.status, 200);
+  holds("DashboardHomeConfig", savedHome.json);
+
+  const takeoverWithoutUnit = await call("PUT", "/api/v1/dashboard/profiles/manager.yard/home", {
+    body: { profile: "manager.yard", takeover: true, mobile_only: false },
+    token: admin,
+  });
+  refused(takeoverWithoutUnit, 400, "a takeover must name a landing unit");
 });
 
 test("a caller without a bearer is refused before any route answers", async () => {

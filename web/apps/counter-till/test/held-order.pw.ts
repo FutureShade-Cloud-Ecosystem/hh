@@ -32,8 +32,8 @@ async function ringCodDeposit(page: Page): Promise<void> {
   await page.getByPlaceholder("Search name or account #…").fill("C10");
   await page.locator("button.row").filter({ hasText: "Cash On Demand Landscaping" }).first().click();
   await openStep(page, "items");
-  await page.getByTestId("pos-scan-input").fill("holland");
-  await page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first().click();
+  await page.getByTestId("pos-scan-input").fill("charcoal");
+  await page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first().click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
   await page.getByRole("button", { name: "Will-call" }).click();
   await openStep(page, "payment");
@@ -66,7 +66,7 @@ test("the Summary after a pay before release ring reads the held card, board 03"
   await expect(held).toContainText("Balance due");
   await expect(held).toContainText("$3.52");
   await expect(held).toContainText("On the order");
-  await expect(held).toContainText("Holland Stone 60 mm");
+  await expect(held).toContainText("Charcoal Stone 60 mm");
   await expect(held.getByTestId("held-pay-balance")).toHaveText("Pay balance");
   await expect(held.getByTestId("held-print-slip")).toHaveText("Print hold slip");
 });
@@ -77,8 +77,8 @@ test("a credit deposit sale is not held, so no held card shows", async ({ page }
   await page.getByPlaceholder("Search name or account #…").fill("C02");
   await page.locator("button.row").filter({ hasText: "Fenwick Builders Ltd" }).first().click();
   await openStep(page, "items");
-  await page.getByTestId("pos-scan-input").fill("holland");
-  await page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first().click();
+  await page.getByTestId("pos-scan-input").fill("charcoal");
+  await page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first().click();
   await page.getByRole("button", { name: "Will-call" }).click();
   await openStep(page, "payment");
   await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_ON_ACCOUNT").click();
@@ -115,16 +115,16 @@ test("the Pay balance order card reads the held chips for a held order, and none
 }) => {
   await signIn(page);
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
   await page.getByTestId("pay-balance-find").click();
   const held = page.getByTestId("held-order");
   await expect(held.getByTestId("held-chip-process")).toHaveText("In process: deposit taken");
   await expect(held.getByTestId("held-chip-hold")).toHaveText("Held from picking");
   await expect(held.getByTestId("held-title")).toHaveText(HOLD_TITLE);
   await expect(held.getByTestId("held-print-slip")).toBeVisible();
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D01");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D01");
   await page.getByTestId("pay-balance-find").click();
-  await expect(page.getByTestId("pay-balance-order")).toContainText(/DEMO-TRT-D01/);
+  await expect(page.getByTestId("pay-balance-order")).toContainText(/DEMO-PLM-D01/);
   await expect(page.getByTestId("held-order")).toHaveCount(0);
 });
 
@@ -133,7 +133,7 @@ test("the Pay balance order card reads the held chips for a held order, and none
 test("the held card leaves a gap above the order's rows on the Pay balance card", async ({ page }) => {
   await signIn(page);
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
   await page.getByTestId("pay-balance-find").click();
   const held = page.getByTestId("held-order");
   await expect(held).toBeVisible();
@@ -150,8 +150,8 @@ test("the held card leaves a gap above the order's rows on the Pay balance card"
 test("a walk-in pay before release ring holds, and its card claims no account", async ({ page }) => {
   await signIn(page);
   await openStep(page, "items");
-  await page.getByTestId("pos-scan-input").fill("holland");
-  await page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first().click();
+  await page.getByTestId("pos-scan-input").fill("charcoal");
+  await page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first().click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
   await page.getByRole("button", { name: "Will-call" }).click();
   await openStep(page, "payment");
@@ -169,7 +169,7 @@ test("at 390 the held card does not scroll sideways", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
   await page.getByTestId("till-pay-balance-entry").click();
-  await page.getByTestId("pay-balance-term").fill("DEMO-TRT-D02");
+  await page.getByTestId("pay-balance-term").fill("DEMO-PLM-D02");
   await page.getByTestId("pay-balance-find").click();
   await expect(page.getByTestId("held-order")).toBeVisible();
   const read = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, view: window.innerWidth }));

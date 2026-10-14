@@ -68,6 +68,23 @@ export async function dispatchCreateDriver(
   });
 }
 
+export async function dispatchUpdateDriver(
+  client: ApiClient,
+  id: string | number,
+  body: DispatchDriver,
+  call?: ApiCallOptions
+): Promise<Result<DispatchDriver>> {
+  return client.request<DispatchDriver>({
+    method: "PUT",
+    path: "/api/v1/dispatch/drivers/{id}",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "dispatchUpdateDriver",
+  });
+}
+
 export async function dispatchGetFreightRaise(
   client: ApiClient,
   id: string | number,
@@ -784,6 +801,23 @@ export async function dispatchCreateTruck(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "dispatchCreateTruck",
+  });
+}
+
+export async function dispatchUpdateTruck(
+  client: ApiClient,
+  id: string | number,
+  body: DispatchTruck,
+  call?: ApiCallOptions
+): Promise<Result<DispatchTruck>> {
+  return client.request<DispatchTruck>({
+    method: "PUT",
+    path: "/api/v1/dispatch/trucks/{id}",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "dispatchUpdateTruck",
   });
 }
 

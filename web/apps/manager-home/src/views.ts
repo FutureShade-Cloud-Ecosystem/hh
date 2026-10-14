@@ -80,6 +80,9 @@ export function renderLanding(model: LandingModel): TemplateResult {
     <header class="page-head">
       <h1>${welcomeLine(model.roleLabel)}</h1>
       <p class="page-sub">Your day at a glance.</p>
+      <div class="head-actions">
+        <button type="button" class="btn btn-secondary edit-open" data-action="open-view" data-view="builder">Arrange home</button>
+      </div>
     </header>
     <p class="eyebrow">Today</p>
     <div class="bento">
@@ -91,7 +94,7 @@ export function renderLanding(model: LandingModel): TemplateResult {
     </div>
     <nav class="view-links" aria-label="Views">
       <span class="nav-label">Open a view</span>
-      ${(["shortages", "receiving", "approvals", "warranty"] as const).map((v) => html`
+      ${(["shortages", "receiving", "approvals", "drivers", "warranty"] as const).map((v) => html`
         <button type="button" class="view-link" data-action="open-view" data-view=${v}>${VIEW_TITLE[v]}<span class="chev" aria-hidden="true">›</span></button>
       `)}
       ${model.canOpenReporting ? html`
@@ -243,7 +246,7 @@ function renderNeedsRow(row: NeedsRow): TemplateResult {
 
 // -- the views' shared header ----------------------------------------------------------------------------
 
-export function viewHeader(view: "shortages" | "receiving" | "approvals", where: string, sub: string): TemplateResult {
+export function viewHeader(view: "shortages" | "receiving" | "approvals" | "drivers", where: string, sub: string): TemplateResult {
   return html`
     <div class="view-head">
       <button type="button" class="btn btn-secondary back" data-action="back"><span class="chev" aria-hidden="true">‹</span>Back to Home</button>
