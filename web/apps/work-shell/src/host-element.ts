@@ -49,7 +49,8 @@ import "@hardscapehouse/shell-chrome/src/shell-banner.js";
 import { bannerFor, chipInputFor, pinStorageFrom } from "./chrome-feed.js";
 import { createConsoleSession, type ConsoleSession } from "./console-session.js";
 import { DEMO_ORG_NAME, DEMO_ORG_SLUG, DOOR_PATH, LAUNCH_FILE, PROFILE_FILE } from "./config.js";
-import { acceptSwitchRole } from "./frames.js";
+import { acceptChromeControls, framedAddress, type ChromeAction } from "@hardscapehouse/design-system/src/framed.js";
+import { acceptSwitchRole, announceChromeAction } from "./frames.js";
 import { readDoorSession, writeHandoff } from "./handoff.js";
 import { endSession } from "./switch-role.js";
 import {
@@ -186,6 +187,8 @@ export class WorkShellHost extends HHElement {
   /** What the shell's own sign in answered at boot: no invoke (a browser), unavailable (no Console configured), or a resumed session. */
   #consoleState: "pending" | "no-invoke" | "unavailable" | "resumed" = "pending";
   #doorPoll: ReturnType<typeof setInterval> | null = null;
+  /** The shell controls (Theme, Feedback) the framed app said it can act on; reset whenever the frame changes. */
+  #frameControls: readonly ChromeAction[] = [];
 
   constructor() {
     super();
@@ -297,6 +300,7 @@ export class WorkShellHost extends HHElement {
     this.#state = next;
     this.#menuOpen = false;
     this.#notice = "";
+    this.#frameControls = [];
     this.#handOff();
     this.requestUpdate();
   }
@@ -315,6 +319,7 @@ export class WorkShellHost extends HHElement {
     this.#state = next;
     this.#menuOpen = false;
     this.#notice = "";
+    this.#frameControls = [];
     this.#handOff();
     this.requestUpdate();
   }
@@ -336,8 +341,18 @@ export class WorkShellHost extends HHElement {
       .composedPath()
       .find((node): node is Element => node instanceof Element && node.hasAttribute("data-action"));
     if (control === undefined) return;
-    if (control.getAttribute("data-action") === "switch-role") this.#switchRole();
+    const action = control.getAttribute("data-action");
+    if (action === "switch-role") this.#switchRole();
+    if (action === "theme" || action === "feedback") this.#pressFrameControl(action);
   };
+
+  /** Theme and Feedback belong to the framed app (it holds the choice and the sender): ask its frame to press its own. */
+  #pressFrameControl(action: ChromeAction): void {
+    const frame = this.renderRoot.querySelector<HTMLIFrameElement>('iframe[data-testid="app-frame"]');
+    announceChromeAction(frame?.contentWindow ?? null, window.location.origin, action);
+    this.#menuOpen = false;
+    this.requestUpdate();
+  }
 
   readonly #onSurfaceOpen = (event: CustomEvent<{ appId: string }>): void => this.#open(event.detail.appId);
   readonly #onRailSelect = (event: CustomEvent<{ key: string }>): void => this.#open(event.detail.key);
@@ -382,7 +397,13 @@ export class WorkShellHost extends HHElement {
   readonly #onMessage = (event: MessageEvent): void => {
     const frame = this.renderRoot.querySelector<HTMLIFrameElement>('iframe[data-testid="app-frame"]');
     if (frame === null) return;
-    if (acceptSwitchRole(event, { origin: window.location.origin, contentWindow: frame.contentWindow })) this.#switchRole();
+    const host = { origin: window.location.origin, contentWindow: frame.contentWindow };
+    if (acceptSwitchRole(event, host)) this.#switchRole();
+    const controls = acceptChromeControls(event, host);
+    if (controls !== null) {
+      this.#frameControls = controls;
+      this.requestUpdate();
+    }
   };
 
   readonly #onConnection = (): void => {
@@ -429,6 +450,8 @@ export class WorkShellHost extends HHElement {
 
   #desk(state: Extract<HostState, { phase: "desk" }>): TemplateResult {
     const current = state.apps.find((a) => a.id === state.currentAppId);
+    // The app's address carries the framed flag (one band: the app shows none of its own); hhAddress checks the whole.
+    const appAddress = current === undefined ? "" : framedAddress(current.path);
     return html`
       <div class="top">
         <hh-shell-header></hh-shell-header>
@@ -436,6 +459,8 @@ export class WorkShellHost extends HHElement {
           ? html`
               <div class="menu" data-testid="account-menu" role="group" aria-label="Account">
                 <p>Signed in as <strong>${state.session.roleLabel}</strong></p>
+                ${this.#frameControls.includes("theme") ? html`<button type="button" class="btn-secondary" data-action="theme">Theme</button>` : nothing}
+                ${this.#frameControls.includes("feedback") ? html`<button type="button" class="btn-secondary" data-action="feedback">Feedback</button>` : nothing}
                 <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
               </div>
             `
@@ -454,7 +479,7 @@ export class WorkShellHost extends HHElement {
                   <button type="button" class="btn-secondary" data-action="switch-role">Switch role</button>
                 </div>
               `
-            : keyed(current.id, html`<iframe data-testid="app-frame" data-title=${current.name} src=${hhAddress(current.path)}></iframe>`)}
+            : keyed(current.id, html`<iframe data-testid="app-frame" data-title=${current.name} src=${hhAddress(appAddress)}></iframe>`)}
         </main>
       </div>
     `;
@@ -480,6 +505,7 @@ export class WorkShellHost extends HHElement {
     const held = new Set(apps.map((a) => a.id));
     if (header !== null) {
       header.org = DEMO_ORG_NAME;
+      header.demo = true;
       header.user = state.session.roleLabel;
       header.groups = switcherGroups({ frontends: apps, roles: [state.session.roleCode], surfaces: NO_SURFACES });
       header.breadcrumb = currentBreadcrumb({
