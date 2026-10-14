@@ -392,22 +392,22 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	// nothing else. A surname token or an unreplaced placeholder on any row
 	// fails the allowlist, without the test itself naming a token.
 	allowedNames := map[string]bool{
-		salesDisplayName:                true,
-		managerDisplayName:              true,
-		yardMgrDisplayName:              true,
-		payRecDisplayName:               true,
-		controllerDisplayName:           true,
-		"Platform admin (demo)":         true,
-		"Demo teammate (demo)":          true,
-		"Homework account one (demo)":   true,
-		"Homework account two (demo)":   true,
-		"Homework account three (demo)": true,
-		"Homework account four (demo)":  true,
-		"Counter UAT account (demo)":    true,
-		"Dispatch persona (demo)":       true,
-		"Yard persona (demo)":           true,
-		"Driver persona (demo)":         true,
-		"Procurement manager (demo)":    true,
+		salesDisplayName:             true,
+		managerDisplayName:           true,
+		yardMgrDisplayName:           true,
+		payRecDisplayName:            true,
+		controllerDisplayName:        true,
+		"Platform admin (demo)":      true,
+		"Demo teammate (demo)":       true,
+		"General Manager (demo)":     true,
+		"Inside Sales (demo)":        true,
+		"Counter Sales (demo)":       true,
+		"Branch Manager (demo)":      true,
+		"UAT Inside Sales (demo)":    true,
+		"Dispatch persona (demo)":    true,
+		"Yard persona (demo)":        true,
+		"Driver persona (demo)":      true,
+		"Procurement manager (demo)": true,
 	}
 	nameRows, err := pool.Query(ctx, `SELECT display_name FROM users`)
 	if err != nil {
