@@ -132,3 +132,15 @@ test("pick_tasks update: picked is its own operation, the line legs are the dire
   const ok = await push("pick_tasks", "update", { id, picked: [{ ...line, qty_picked: "0", short_reason: "NOT_IN_YARD", short_note: "two\nlines\tand\r\nmore" }] });
   assert.equal(ok.status, "applied", JSON.stringify(ok));
 });
+
+// A cancelled pick takes no record through sync either (core/internal/tasks/syncpick.go): that op's
+// rejection in the core's words, and the stub records nothing.
+test("pick_tasks update: picked onto a cancelled pick is refused in the core's words", async () => {
+  const id = (await pullIds("pick_tasks"))[0];
+  const reassign = await fetch(`${base}/_stub/reassign`, { method: "POST", headers, body: JSON.stringify({ task_id: id }) });
+  assert.equal(reassign.status, 200);
+  const line = { order_line_no: 1, product_id: "", sku: "", description: "", qty_ordered: "1", qty_picked: "0", uom: "EA", short_reason: "NOT_IN_YARD", short_note: "" };
+  const res = await push("pick_tasks", "update", { id, picked: [line] });
+  assert.equal(res.status, "rejected");
+  assert.match(res.error, /this pick was cancelled, its record cannot change/);
+});
