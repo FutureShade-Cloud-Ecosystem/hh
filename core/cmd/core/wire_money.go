@@ -104,6 +104,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// legs answer their not-configured errors, never a silent skip.
 	glSvc := gl.NewService(gl.NewRepository(pool)).
 		WithStandardRate(newTaxEngine(pool)). // the NSF fee backout reads the dealer's standard rate
+		WithTaxLabel(newTaxWords(pool)).      // the tax legs' memos name the dealer's tax
 		WithDeadRequeuer(outboxStore).
 		WithAudit(auditSvc).
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
@@ -199,6 +200,7 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	messaging.PublishRoleConfig(roleCfg)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
 		WithStandardRate(newTaxEngine(pool)). // the terms write stamps the dealer's standard rate
+		WithTaxLabel(newTaxWords(pool)).      // the totals rows and customer page name the dealer's tax
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithPricing(pricingSvc).

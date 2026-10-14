@@ -76,46 +76,24 @@ type Address struct {
 
 // NormalizeAddress validates the province + postal of a Canadian address and returns a copy
 // with both normalized (province uppercased ISO code, postal "A1A 1A1"). Country defaults to
-// "CA" when blank and must be CA (the validation layer is Canada-only, per M5). Any invalid
-// field is a 400. line1/city are passed through unchanged (free text).
-func NormalizeAddress(a Address) (Address, error) {
-	out := a
-	country := strings.ToUpper(strings.TrimSpace(a.Country))
-	if country == "" {
-		country = "CA"
-	}
-	if country != "CA" {
-		return Address{}, httpx.BadRequestf("only Canadian (CA) addresses are supported, got country %q", a.Country)
-	}
-	out.Country = country
-
-	prov, err := ValidateProvince(a.Province)
-	if err != nil {
-		return Address{}, err
-	}
-	out.Province = prov
-
-	postal, err := NormalizePostal(a.Postal)
-	if err != nil {
-		return Address{}, err
-	}
-	out.Postal = postal
-	return out, nil
-}
+// "CA" when blank and must be CA. It is NormalizeAddressFor for the Canadian dealer, the
+// default a dealer with no country setting gets. Any invalid field is a 400. line1/city are
+// passed through unchanged (free text).
+func NormalizeAddress(a Address) (Address, error) { return NormalizeAddressFor(CountryCA, a) }
 
 // normalizeMapAddress validates+normalizes an address carried as a decoded JSON object
 // (map[string]any, the shape a customers.billing_address JSONB round-trips as). Only the
 // province/postal/country keys are validated; other keys pass through untouched. Returns a
 // new map so the caller's input is not mutated. A missing province/postal is a 400 (an
 // address on the write path must carry both to be validatable).
-func normalizeMapAddress(m map[string]any) (map[string]any, error) {
+func normalizeMapAddress(country string, m map[string]any) (map[string]any, error) {
 	get := func(k string) string {
 		if v, ok := m[k].(string); ok {
 			return v
 		}
 		return ""
 	}
-	norm, err := NormalizeAddress(Address{
+	norm, err := NormalizeAddressFor(country, Address{
 		Line1:    get("line1"),
 		City:     get("city"),
 		Province: get("province"),
@@ -140,6 +118,13 @@ func normalizeMapAddress(m map[string]any) (map[string]any, error) {
 // province/postal correctness when an address is actually supplied (billing_address is
 // nullable/defaulted at the schema level). A supplied-but-invalid address is a 400.
 func NormalizeBillingAddress(m map[string]any) (map[string]any, error) {
+	return NormalizeBillingAddressFor(CountryCA, m)
+}
+
+// NormalizeBillingAddressFor is NormalizeBillingAddress for the dealer's own country: Canadian
+// rules for CA (or blank), US rules for US. The stored keys stay province and postal for both
+// countries; only the rules and the words change.
+func NormalizeBillingAddressFor(country string, m map[string]any) (map[string]any, error) {
 	if len(m) == 0 {
 		return m, nil
 	}
@@ -151,5 +136,5 @@ func NormalizeBillingAddress(m map[string]any) (map[string]any, error) {
 	if !hasProv && !hasPostal {
 		return m, nil
 	}
-	return normalizeMapAddress(m)
+	return normalizeMapAddress(country, m)
 }

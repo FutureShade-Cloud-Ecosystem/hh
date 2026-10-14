@@ -28,7 +28,7 @@ func TestDemoWorld_SalesTaxIsSanDiegoCounty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the dealer configuration: %v", err)
 	}
-	want := settings.DealerConfig{Currency: "USD", TaxRegion: "CA", BusinessZone: "America/Los_Angeles", HSTRateBps: 775}
+	want := settings.DealerConfig{Currency: "USD", TaxRegion: "CA", BusinessZone: "America/Los_Angeles", HSTRateBps: 775, Country: "US"}
 	if cfg != want {
 		t.Errorf("the dealer configuration reads %+v, want %+v", cfg, want)
 	}

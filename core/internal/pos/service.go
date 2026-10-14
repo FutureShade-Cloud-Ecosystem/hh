@@ -3,6 +3,7 @@ package pos
 import (
 	"context"
 	"errors"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"net/http"
 	"sort"
 	"strings"
@@ -1775,6 +1776,7 @@ func (s *Service) AssessRelief(ctx context.Context, in ReliefAssessInput) (Relie
 		MaskedIdentifier: prof.MaskedIdentifier,
 		Automated:        false, // M5 flips this true
 		FullHSTCents:     fallback.TaxCents,
+		TaxLabel:         taxwords.For(fallback.Jurisdiction),
 	}
 	eligible := !prof.Expired && (prof.OntarioEligibility == "ON_RESIDENT" || prof.OntarioEligibility == "AKWESASNE")
 

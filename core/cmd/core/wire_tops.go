@@ -52,6 +52,7 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/quoteassist"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/reporting"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/roleconfig"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tax"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/till"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/tour"
@@ -196,11 +197,12 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	bistrackSvc := bistrack.NewService(bistrack.NewRepository(pool)).WithConfigured(cfg.BisTrackConfigured())
 	bistrack.NewHandler(bistrackSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
-	// CP-07 customer surface: the write path validates Canadian addresses
-	// through localization; the variadic write guard's manager mapping is
+	// CP-07 customer surface: the write path validates addresses for the
+	// dealer's country through localization; the variadic write guard's manager mapping is
 	// named at the registrar.
 	customerRepo := customer.NewRepository(pool)
-	customerSvc := customer.NewService(customerRepo).WithWriter(customerRepo)
+	customerSvc := customer.NewService(customerRepo).WithWriter(customerRepo).
+		WithCountry(dealerCountryAdapter{r: settings.NewDealerConfigReader(pool)})
 	customer.NewHandler(customerSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// A-1 branches: the read the ledger claimed VERIFIED and the dashboard's
@@ -403,7 +405,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	// receivables register mounts from here (billing's register handler,
 	// registered under the Finance unit's gates exactly as the pin did).
 	finstmtSvc := finstmt.NewService(finstmt.NewRepository(pool)).WithAudit(auditSvc)
-	finstmt.NewHandler(finstmtSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).RegisterRoutes(r, g)
+	finstmt.NewHandler(finstmtSvc, log).WithUserLinker(link).WithPaymentTrail(spine.paymentTrail).WithRegisterTaxLabel(newTaxWords(pool)).RegisterRoutes(r, g)
 
 	// M5 tax engine, then the W6 scaffold-owner rewire: the POS Sale leaves
 	// its stubs for the real engines (tax, stock, restock, the card
@@ -663,7 +665,7 @@ func wireTops(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slog
 	w6cInvoiceWriter := billing.NewInvoiceWriter(pool).
 		WithTaxAssessor(w6cInvoiceTaxAdapter{svc: taxSvc}).
 		WithOrderSource(w6cOrderInvoiceSource{svc: orderSvc}).
-		WithCreditMemoPoster(w6cCreditMemoPoster{svc: spine.glSvc, rules: gl.NewRepository(pool)})
+		WithCreditMemoPoster(w6cCreditMemoPoster{svc: spine.glSvc, rules: gl.NewRepository(pool), words: newTaxWords(pool)})
 	orderSvc.WithMultiShipInvoicer(w6cMultiShipInvoicer{w: w6cInvoiceWriter})
 	ops.warrantySvc.WithCustomerCredit(w6cWarrantyCreditIssuer{w: w6cInvoiceWriter})
 

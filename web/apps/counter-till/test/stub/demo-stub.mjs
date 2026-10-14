@@ -3834,6 +3834,7 @@ const server = createServer(async (request, response) => {
         automated: true,
         requires_evidence: false,
         evidence_satisfied: false,
+        tax_label: "HST",
       });
     });
     return;
