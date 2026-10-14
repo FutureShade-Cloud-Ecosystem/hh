@@ -17,6 +17,7 @@ import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 import "@hardscapehouse/design-system/src/header.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
+import { framedByShell } from "@hardscapehouse/design-system/src/framed.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { entryStyles, renderEntry, type EntryView, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
@@ -249,12 +250,15 @@ export class DispatchBoardApp extends HHElement {
   // The theme and feedback controls ride the header's named slot; the theme word names the theme a
   // tap moves to.
   private renderThemeControl(): TemplateResult {
-    if (this.#narrow) return html``;
+    // Framed by the Work shell the band is hidden and the shell carries both controls, pressing these two in the app,
+    // so they stay in the header's light DOM at every width and the in-page pair below is not shown.
+    if (this.#narrow && !framedByShell()) return html``;
     const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
     return html`<button slot="theme" type="button" class="theme-btn" data-action="feedback">Feedback</button><button slot="theme" type="button" class="theme-btn" data-action="theme">${label}</button>`;
   }
 
   #mobileTools(): TemplateResult {
+    if (framedByShell()) return html``;
     const label = this.#theme === "light" ? "Theme: Light" : "Theme: Brand";
     return html`<div class="mob-tools"><button type="button" class="theme-btn" data-action="feedback">Feedback</button><button type="button" class="theme-btn" data-action="theme">${label}</button></div>`;
   }

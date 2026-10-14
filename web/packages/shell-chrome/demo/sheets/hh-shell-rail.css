@@ -275,11 +275,13 @@
     width: 44px;
     height: 44px;
     flex: none;
+    /* The sheet's button padding would squeeze the glyph out of a 44 px box: the glyph is the content, centred. */
+    padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     background: transparent;
-    color: var(--hh-text-dim);
+    color: var(--hh-text);
     border: 1px solid var(--hh-line);
     border-radius: 8px;
     cursor: pointer;
@@ -299,8 +301,8 @@
   }
   .toggle svg {
     display: block;
-    width: 14px;
-    height: 14px;
+    width: 22px;
+    height: 22px;
   }
   .row {
     position: relative;
