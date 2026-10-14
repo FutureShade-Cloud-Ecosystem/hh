@@ -440,8 +440,8 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	// planted demo teammates, and the roadmap personas (Payables and
 	// Receivables and the Procurement Manager and the Financial Controller),
 	// each one invented name.
-	if len(saw) != len(allowedNames) || len(saw) != 21 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 21 invented ones (saw: %v)", len(saw), saw)
+	if len(saw) != len(allowedNames) || len(saw) != 20 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 20 invented ones (saw: %v)", len(saw), saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the

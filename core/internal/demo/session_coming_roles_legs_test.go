@@ -36,10 +36,10 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 	client := &http.Client{Timeout: 20 * time.Second}
 
 	var trentonID, kingstonID string
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'TRT'`).Scan(&trentonID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'PLM'`).Scan(&trentonID); err != nil {
 		t.Fatalf("the Trenton branch: %v", err)
 	}
-	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'KGN'`).Scan(&kingstonID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id::text FROM locations WHERE code = 'JUL'`).Scan(&kingstonID); err != nil {
 		t.Fatalf("the Kingston branch: %v", err)
 	}
 
@@ -173,7 +173,7 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 	// matrix answers per role (the list, then the policy word, both must allow).
 	marginGlance := func(t *testing.T, m minted) (int, string) {
 		t.Helper()
-		status, raw := get(t, "/api/v1/products/counter-search?q=DEMO-PAV-HOLLAND", m)
+		status, raw := get(t, "/api/v1/products/counter-search?q=DEMO-PAV-CHARCOAL", m)
 		if status != http.StatusOK {
 			return status, raw
 		}
@@ -238,7 +238,7 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		// (Manager Home above; the till's policy is a read cell).
 		wantOK(t, "the till's policy (counter-till, read)", "/api/v1/pos/policy", gm)
 		// L-branch: a global role reaches every branch.
-		if codes := branchCodes(t, gm); !sameSet(codes, []string{"TRT", "KGN"}) {
+		if codes := branchCodes(t, gm); !sameSet(codes, []string{"PLM", "JUL"}) {
 			t.Errorf("the General Manager reaches %v, want both branches", codes)
 		}
 		wantOK(t, "the Money Desk's credit holds (money-desk, manage)", "/api/v1/ar/credit-holds", gm)
@@ -313,7 +313,7 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		wantOK(t, "Dealer Admin (admin): the pricing rules read", "/api/v1/pricing/rules", hr)
 		wantOK(t, "House Messages (work): the channel list", "/api/v1/messaging/channels", hr)
 		// L-branch: a global role reaches every branch.
-		if codes := branchCodes(t, hr); !sameSet(codes, []string{"TRT", "KGN"}) {
+		if codes := branchCodes(t, hr); !sameSet(codes, []string{"PLM", "JUL"}) {
 			t.Errorf("HR reaches %v, want both branches", codes)
 		}
 		// L-wall: every other surface sits at None for the role, Manager Home
@@ -391,7 +391,7 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		wantOK(t, "the Quote Desk's quotes (quote-desk, work)", "/api/v1/quotes", bm)
 		// L-branch: the role's own branch only. The branch list leaves Kingston
 		// out and the server fences a read named at it.
-		if codes := branchCodes(t, bm); !sameSet(codes, []string{"TRT"}) {
+		if codes := branchCodes(t, bm); !sameSet(codes, []string{"PLM"}) {
 			t.Errorf("the Branch Manager reaches %v, want Trenton alone", codes)
 		}
 		wantOK(t, "the dispatch board at Trenton", "/api/v1/dispatch/trucks?branch_id="+trentonID, bm)
@@ -498,7 +498,7 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		wantOK(t, "the dispatch board at Trenton (dispatch-board, manage)", "/api/v1/dispatch/trucks?branch_id="+trentonID, lm)
 		wantOK(t, "House Messages (work): the channel list", "/api/v1/messaging/channels", lm)
 		// L-branch: the role's own branch only.
-		if codes := branchCodes(t, lm); !sameSet(codes, []string{"TRT"}) {
+		if codes := branchCodes(t, lm); !sameSet(codes, []string{"PLM"}) {
 			t.Errorf("the Logistics Manager reaches %v, want Trenton alone", codes)
 		}
 		if status, raw := get(t, "/api/v1/dispatch/trucks?branch_id="+kingstonID, lm); status != http.StatusForbidden {
@@ -547,7 +547,7 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		wantOK(t, "House Messages (work): the channel list", "/api/v1/messaging/channels", os)
 		wantOK(t, "the dispatch board at Trenton (dispatch-board, read)", "/api/v1/dispatch/trucks?branch_id="+trentonID, os)
 		// L-branch: the role's own branch only.
-		if codes := branchCodes(t, os); !sameSet(codes, []string{"TRT"}) {
+		if codes := branchCodes(t, os); !sameSet(codes, []string{"PLM"}) {
 			t.Errorf("Outside Sales reaches %v, want Trenton alone", codes)
 		}
 		if status, raw := get(t, "/api/v1/dispatch/trucks?branch_id="+kingstonID, os); status != http.StatusForbidden {
@@ -582,7 +582,7 @@ func TestDemoModule_ComingRolesLegs(t *testing.T) {
 		if err := pool.QueryRow(context.Background(), `SELECT id::text FROM customers WHERE account_no = 'DEMO-C02'`).Scan(&custID); err != nil {
 			t.Fatalf("the demo contractor: %v", err)
 		}
-		if err := pool.QueryRow(context.Background(), `SELECT id::text FROM products WHERE sku = 'DEMO-PAV-HOLLAND'`).Scan(&productID); err != nil {
+		if err := pool.QueryRow(context.Background(), `SELECT id::text FROM products WHERE sku = 'DEMO-PAV-CHARCOAL'`).Scan(&productID); err != nil {
 			t.Fatalf("the demo paver: %v", err)
 		}
 		status, raw := do(t, http.MethodPost, "/api/v1/quotes", os.headers, `{"customer_id":"`+custID+`","branch_id":"`+trentonID+`"}`)
