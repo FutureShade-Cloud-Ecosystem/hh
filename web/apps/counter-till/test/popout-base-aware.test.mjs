@@ -12,12 +12,16 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
-const scratchDir = join(appDir, "test", ".popout-base-build");
+// The scratch build lives in a fresh directory under the OS temp dir, never under the package: the kits'
+// raw markup guard walks every dependent's test/ folder, and a built bundle sitting there while it
+// walks failed the drift gate (a race between this test's build and the guard).
+const scratchDir = mkdtempSync(join(tmpdir(), "hh-popout-base-"));
 
 function* files(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -32,7 +36,7 @@ function buildWithBaseTill() {
   const outDir = join(scratchDir, "base-till");
   const run = spawnSync(
     "npx",
-    ["--no-install", "vite", "build", "--outDir", outDir, "--base", "/till/"],
+    ["--no-install", "vite", "build", "--outDir", outDir, "--emptyOutDir", "--base", "/till/"],
     { cwd: appDir, encoding: "utf8", timeout: 300_000 },
   );
   assert.equal(run.status, 0, `the --base=/till/ build failed:\n${run.stdout}\n${run.stderr}`);
