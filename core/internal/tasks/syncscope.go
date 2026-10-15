@@ -272,22 +272,24 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 	if err := s.attachPicked(ctx, s.pool, &r); err != nil {
 		return sync.RowState{}, false, err
 	}
+	// No ticket here: only the row's seq leaves an applied replay (see DecorateServerState).
 	rs, err := rowStateOf(r)
-	if err == nil {
-		s.attachTicket(ctx, s.ticketReach(ctx, f), &rs)
-	}
 	return rs, true, err
 }
 
 // Load reads one row by id under the org predicate; a row outside the
 // caller's org is the same as an absent one (existence never leaks).
 func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	rs, ok, err := s.load(ctx, s.pool, f, id)
-	if err != nil || !ok {
-		return rs, ok, err
-	}
-	s.attachTicket(ctx, s.ticketReach(ctx, f), &rs)
-	return rs, true, nil
+	// No ticket here: Load serves the update and delete paths and the replay, which use the seq and the
+	// task fields. The ticket rides where the row leaves, the conflict envelope (DecorateServerState).
+	return s.load(ctx, s.pool, f, id)
+}
+
+// DecorateServerState attaches the ticket to the row a conflict envelope shows the device, under the
+// caller's branch reach and with a source fault leaving the envelope without it (an envelope is a
+// reply to a write, not a cursor feed, so it degrades and logs). It is the engine's one call for it.
+func (s *SyncStore) DecorateServerState(ctx context.Context, f sync.ScopeFilter, row *sync.RowState) {
+	s.attachTicket(ctx, s.ticketReach(ctx, f), row)
 }
 
 // pickQuerier is the read surface a pool and a transaction share, so one

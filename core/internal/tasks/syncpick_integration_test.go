@@ -532,9 +532,15 @@ func TestPickDoor_PullCarriesTheTicketAndThePickedLines(t *testing.T) {
 	if picked, _ := data["picked"].([]any); len(picked) != 1 {
 		t.Fatalf("picked = %v, want the one recorded line", data["picked"])
 	}
-	// The conflict and replay reads carry it too.
-	if rs, found, err := d.store.Load(context.Background(), d.f, row.ID); err != nil || !found || rs.Data["ticket"] == nil {
-		t.Fatalf("Load carries no ticket: %v %v %v", rs.Data, found, err)
+	// A plain Load (the update and delete paths, the replay) pays for no ticket; the conflict envelope's
+	// decoration carries it.
+	rs, found, err := d.store.Load(context.Background(), d.f, row.ID)
+	if err != nil || !found || rs.Data["ticket"] != nil {
+		t.Fatalf("Load must carry no ticket: %v %v %v", rs.Data, found, err)
+	}
+	d.store.DecorateServerState(context.Background(), d.f, &rs)
+	if rs.Data["ticket"] == nil {
+		t.Fatalf("the conflict envelope's row carries no ticket: %v", rs.Data)
 	}
 	// Another org sees nothing, so no ticket leaves with it.
 	foreign := hhsync.ScopeFilter{OrgID: d.other, Actor: "pick-door-actor"}
@@ -591,11 +597,19 @@ func TestPickDoor_TicketFollowsTheCallersBranchReach(t *testing.T) {
 	if p, tk := has(items, inB); !p || tk {
 		t.Fatalf("other branch row: present=%v ticket=%v, want the row without a ticket", p, tk)
 	}
-	if rs, ok, err := d.store.Load(ctx, d.f, inB); err != nil || !ok || rs.Data["ticket"] != nil {
-		t.Fatalf("Load of the other branch carried a ticket: %v %v %v", rs.Data["ticket"], ok, err)
+	decorated := func(id string) map[string]any {
+		rs, ok, err := d.store.Load(ctx, d.f, id)
+		if err != nil || !ok {
+			t.Fatalf("load %s: %v %v", id, ok, err)
+		}
+		d.store.DecorateServerState(ctx, d.f, &rs)
+		return rs.Data
 	}
-	if rs, ok, err := d.store.Load(ctx, d.f, inA); err != nil || !ok || rs.Data["ticket"] == nil {
-		t.Fatalf("Load of the own branch lost its ticket: %v %v", ok, err)
+	if decorated(inB)["ticket"] != nil {
+		t.Fatal("the conflict envelope of the other branch's row carried a ticket")
+	}
+	if decorated(inA)["ticket"] == nil {
+		t.Fatal("the conflict envelope of the own branch's row lost its ticket")
 	}
 
 	// GLOBAL reaches both.

@@ -705,3 +705,58 @@ func (a *auditRecorderDouble) snapshot() []AuditEntry {
 	defer a.mu.Unlock()
 	return append([]AuditEntry(nil), a.entries...)
 }
+
+// decoratingStore is a fakeStore that also decorates the row an envelope shows: the one place a store
+// builds something expensive (a ticket) that ordinary reads must not pay for.
+type decoratingStore struct {
+	*fakeStore
+	decorated int
+}
+
+func (d *decoratingStore) DecorateServerState(_ context.Context, _ ScopeFilter, row *RowState) {
+	d.decorated++
+	if row.Data != nil {
+		row.Data["ticket"] = "built"
+	}
+}
+
+// The optional decoration runs only where the row leaves in a conflict envelope, never on a plain
+// update, a replay or a load.
+func TestEngineDecoratesOnlyTheConflictEnvelope(t *testing.T) {
+	fs := &fakeStore{}
+	store := &decoratingStore{fakeStore: fs}
+	e := NewEngine()
+	info, ok := Lookup("pick_tasks")
+	if !ok {
+		t.Skip("pick_tasks not in the registry")
+	}
+	if err := e.RegisterScope("pick_tasks", store); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if info.Policy != PolicyServerWins {
+		t.Skip("pick_tasks policy is not server_wins")
+	}
+	push(t, e, info, apigen.SyncPushOperation{ClientId: key(1), Op: "create", Payload: map[string]any{"id": rowID(1), "v": "server"}})
+	row, _, _ := store.Load(context.Background(), testFilter, rowID(1))
+	if store.decorated != 0 {
+		t.Fatalf("a create and a load decorated %d times", store.decorated)
+	}
+	okSeq := row.Seq
+	if res := push(t, e, info, apigen.SyncPushOperation{ClientId: key(2), Op: "update", Payload: map[string]any{"id": rowID(1), "v": "again"}, BaseSeq: &okSeq}); res[0].Status != "applied" {
+		t.Fatalf("fresh update: %+v", res[0])
+	}
+	if store.decorated != 0 {
+		t.Fatalf("an applied update decorated %d times", store.decorated)
+	}
+	if err := fs.deskEdit(testFilter, rowID(1), map[string]any{"desk": "moved"}); err != nil {
+		t.Fatalf("desk edit: %v", err)
+	}
+	stale := okSeq
+	res := push(t, e, info, apigen.SyncPushOperation{ClientId: key(3), Op: "update", Payload: map[string]any{"id": rowID(1), "v": "late"}, BaseSeq: &stale})
+	if res[0].Status != "conflict" || res[0].Conflict.ServerState["ticket"] != "built" {
+		t.Fatalf("the envelope must carry the decorated row: %+v", res[0])
+	}
+	if store.decorated != 1 {
+		t.Fatalf("decorated %d times, want once for the one envelope", store.decorated)
+	}
+}

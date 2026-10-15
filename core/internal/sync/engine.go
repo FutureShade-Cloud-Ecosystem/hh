@@ -317,6 +317,9 @@ func (e *Engine) classified(ctx context.Context, info ScopeInfo, f ScopeFilter, 
 // the contract's own shape; the request itself is never failed for a
 // conflict.
 func (e *Engine) resolveStale(ctx context.Context, store Store, info ScopeInfo, f ScopeFilter, op apigen.SyncPushOperation, row RowState, id, hash string) (apigen.SyncPushResult, error) {
+	if d, ok := store.(ServerStateDecorator); ok {
+		d.DecorateServerState(ctx, f, &row)
+	}
 	out := resolveConflict(info.Policy, row, op.Payload)
 	if out.ReviewMarker {
 		// The manual policy's review marker: the server-side record that
