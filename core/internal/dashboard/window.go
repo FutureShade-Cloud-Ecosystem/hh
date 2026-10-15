@@ -1,6 +1,10 @@
 package dashboard
 
-import "time"
+import (
+	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
+)
 
 // window.go, WHICH DAYS A WIDGET'S NUMBER COVERS.
 //
@@ -92,7 +96,13 @@ func (w Window) IsZero() bool { return w.Since.IsZero() && w.Until.IsZero() }
 // than adding 24h, so a window spanning a transition is still N days and not N days ± an hour. That
 // is the same argument inventory/transfer_eta.go makes for the same reason.
 func ResolveWindow(named string, now time.Time) Window {
-	loc := houseLocation()
+	return ResolveWindowIn(houseday.DefaultZone(), named, now)
+}
+
+// ResolveWindowIn is ResolveWindow in a named dealer's zone (item 3b slice 3): "today" is the dealer's
+// own calendar day. The zero Zone is the Ontario dealer's, so ResolveWindow is exactly the old answer.
+func ResolveWindowIn(zone houseday.Zone, named string, now time.Time) Window {
+	loc := zone.Location()
 	if now.IsZero() {
 		return Window{}
 	}
@@ -134,9 +144,12 @@ func ResolveWindow(named string, now time.Time) Window {
 
 // HouseDay is the calendar day an instant falls on in the house zone, as the date literal a query
 // compares against. It replaces formatting the raw instant, which read the process's timezone.
-func HouseDay(at time.Time) string {
+func HouseDay(at time.Time) string { return HouseDayIn(houseday.DefaultZone(), at) }
+
+// HouseDayIn is HouseDay in a named dealer's zone.
+func HouseDayIn(zone houseday.Zone, at time.Time) string {
 	if at.IsZero() {
 		return ""
 	}
-	return at.In(houseLocation()).Format("2006-01-02")
+	return at.In(zone.Location()).Format("2006-01-02")
 }

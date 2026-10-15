@@ -202,18 +202,49 @@ export function normalizeName(name: string): string {
   return name.trim();
 }
 
+/** The core's bound on a typed name, in bytes (dispatch.maxTypedNameBytes); a test reads the Go constant. */
+export const MAX_NAME_BYTES = 200;
+
+/**
+ * What the core's attestation door would refuse in the typed name, said before
+ * the signature is queued (the poison op lesson): a name over the bound in
+ * bytes, or one carrying a control character (C0, DEL) or a bidi control
+ * (U+202A to U+202E, U+2066 to U+2069). A queued signature the door refuses
+ * only comes back as a card after the driver has left the stop. Empty when the
+ * name is fine; a blank name is the form's own prompt, not this check.
+ */
+export function nameProblem(name: string): string {
+  const typed = normalizeName(name);
+  if (new TextEncoder().encode(typed).length > MAX_NAME_BYTES) return `That name is too long, type the full name in at most ${MAX_NAME_BYTES} bytes.`;
+  for (const ch of typed) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (c < 0x20 || c === 0x7f || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069)) {
+      return "The name cannot hold control characters, type the full name as plain text.";
+    }
+  }
+  return "";
+}
+
 /** Both facts are required and neither is inferred: a typed name, and the recipient's own tick. */
 export function canSign(d: PodDraft): boolean {
-  return normalizeName(d.receivedBy).length > 0 && d.affirmed && !d.busy;
+  return normalizeName(d.receivedBy).length > 0 && nameProblem(d.receivedBy) === "" && d.affirmed && !d.busy;
 }
 
 /** Why the sign control is not ready, in the order the driver acts; empty when it is ready. */
 export function signBlockedReason(d: PodDraft): string {
   if (d.busy) return "Signing.";
   if (normalizeName(d.receivedBy).length === 0) return "Type the name of the person receiving.";
+  const problem = nameProblem(d.receivedBy);
+  if (problem !== "") return problem;
   if (!d.affirmed) return "Tick the confirmation to sign.";
   return "";
 }
+
+/** What the stop says when its signature is saved on the device and not yet sent. */
+export const PROOF_WAITING_WORDS = "Waiting to send: the signature goes as soon as you have signal.";
+
+/** The notice after a signature that could not go yet (no signal): nobody has been told the stop is delivered. */
+export const PROOF_QUEUED_NOTICE = "Signature saved on this device. It sends when you have signal.";
 
 export type PhotoType = "image/jpeg" | "image/png" | "image/webp";
 

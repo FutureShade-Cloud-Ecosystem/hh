@@ -129,6 +129,8 @@ type PublicQuoteView struct {
 	SubtotalCents int64             `json:"subtotal_cents"`
 	TaxCents      int64             `json:"tax_cents"`
 	TotalCents    int64             `json:"total_cents"`
+	// TaxLabel is the name of the dealer's tax the page prints beside the figure ("HST", "Sales tax").
+	TaxLabel string `json:"tax_label"`
 	// AsOf is the quote's updated_at. The public page states "as of <AsOf>" so a customer looking at a
 	// link they opened yesterday knows whether they are reading current numbers (C2). Links are NOT
 	// auto-revoked when a quote is edited, an edit is normal, and killing the customer's link every
@@ -198,6 +200,8 @@ type AcceptanceResult struct {
 	SubtotalCents int64     `json:"subtotal_cents"`
 	TaxCents      int64     `json:"tax_cents"`
 	TotalCents    int64     `json:"total_cents"`
+	// TaxLabel is the name of the dealer's tax the confirmation prints ("HST", "Sales tax").
+	TaxLabel string `json:"tax_label"`
 	// QuantitiesConfirmed echoes that the customer confirmed the quantities before accepting. Always
 	// true on a fresh acceptance (the accept is refused without it); a replay reads it back from the
 	// stored record.
@@ -418,6 +422,7 @@ func (s *StaffService) customerView(ctx context.Context, quoteID string) (Public
 	if err != nil {
 		return PublicQuoteView{}, err
 	}
+	view.TaxLabel = s.taxLabel(ctx)
 	view.Expired = rowExpired(view.ValidUntil, s.now())
 	// Acceptable only when the quote is genuinely awaiting acceptance and still inside its window -
 	// OR (DIB-491) when the dealer allows repeat acceptance and the quote has already been accepted.
@@ -458,6 +463,14 @@ func (s *StaffService) AcceptByToken(ctx context.Context, rawToken, typedName st
 
 // AcceptByTokenKeyed is AcceptByToken carrying the optional Idempotency-Key (see share_idempotency.go).
 func (s *StaffService) AcceptByTokenKeyed(ctx context.Context, rawToken, typedName string, affirmed, quantitiesConfirmed bool, idemKey string) (AcceptanceResult, error) {
+	res, err := s.acceptByTokenKeyed(ctx, rawToken, typedName, affirmed, quantitiesConfirmed, idemKey)
+	if err == nil {
+		res.TaxLabel = s.taxLabel(ctx)
+	}
+	return res, err
+}
+
+func (s *StaffService) acceptByTokenKeyed(ctx context.Context, rawToken, typedName string, affirmed, quantitiesConfirmed bool, idemKey string) (AcceptanceResult, error) {
 	idemKey, kerr := normalizeIdempotencyKey(idemKey)
 	if kerr != nil {
 		return AcceptanceResult{}, kerr

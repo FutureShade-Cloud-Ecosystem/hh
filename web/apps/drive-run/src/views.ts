@@ -10,13 +10,14 @@
 // system under row 563 (take the existing and improve it).
 import { html, nothing, type TemplateResult } from "lit";
 import { hhAddress } from "@hardscapehouse/design-system/src/address.js";
-import { HOUSE_ZONE } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { houseZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import type { DriverLine, DriverRun, DriverStop } from "./drive-api.js";
 import {
   ATTESTATION,
   HANDBACK_BODY,
   HANDBACK_PROMPT,
+  PROOF_WAITING_WORDS,
   STOP_LABEL,
   addressLine,
   canRecordFailure,
@@ -209,11 +210,12 @@ export function renderStopDetail(model: StopDetailModel): TemplateResult {
           </div>`
         : nothing}
       ${stop.pod_received_by !== ""
-        ? html`<p class="signed">Signed by ${stop.pod_received_by}${stop.pod_at !== "" ? ` at ${formatTime(stop.pod_at, HOUSE_ZONE)}` : ""}${stop.photo_count > 0 ? ` · ${stop.photo_count} ${stop.photo_count === 1 ? "photo" : "photos"} on the proof` : ""}</p>`
+        ? html`<p class="signed">Signed by ${stop.pod_received_by}${stop.pod_at !== "" ? ` at ${formatTime(stop.pod_at, houseZone())}` : ""}${stop.photo_count > 0 ? ` · ${stop.photo_count} ${stop.photo_count === 1 ? "photo" : "photos"} on the proof` : ""}</p>`
         : nothing}
+      ${stop.proof_waiting ? html`<p class="dim" data-proof-waiting role="status">${PROOF_WAITING_WORDS}</p>` : nothing}
     </section>
     ${linesBlock(stop, run.lines[stop.id])}
-    ${stop.status === "DELIVERED" ? renderLatePhoto(stop, model.photoBusy) : nothing}
+    ${stop.status === "DELIVERED" && !stop.proof_waiting ? renderLatePhoto(stop, model.photoBusy) : nothing}
     ${actions.length > 0
       ? html`<div class="actions">
           ${actions.map(
@@ -250,7 +252,7 @@ function photoAdd(label: string, busy: boolean): TemplateResult {
   // The picker is a real file input behind a large tile: the camera or the
   // library, as the phone offers. It stays focusable for a keyboard.
   return html`<label class="photo-add" data-tap>
-    <input type="file" accept="image/jpeg,image/png,image/webp" class="visually-hidden" data-field="photo" ?disabled=${busy} />
+    <input type="file" accept="image/jpeg,image/png,image/webp" class="visually-hidden" data-field="photo" />
     <span class="photo-plus" aria-hidden="true">+</span>
     <span>${busy ? "Sending the photo" : label}</span>
   </label>`;

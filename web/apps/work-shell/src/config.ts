@@ -12,3 +12,13 @@ export const DOOR_PATH = "/door/";
 /** The two files the assembly script ships beside the host. */
 export const PROFILE_FILE = "/profile.json";
 export const LAUNCH_FILE = "/launch.json";
+
+/**
+ * The longest Switch role waits for the framed app to say its own sign out has
+ * run. It must outlast the slowest app's own bound (the Quote Desk waits up to
+ * UNSENT_WAIT_MS, 3000, for unsent work before it ends its session) plus room
+ * for its sign out and offline close, or a framed Switch role would cut that
+ * guard. test/sign-out.test.mjs holds the two together. After this wait the
+ * host revokes what it can reach without the answer.
+ */
+export const SIGN_OUT_WAIT_MS = 4500;

@@ -1,8 +1,10 @@
 package export
 
 import (
+	coreid "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/product"
 	"log/slog"
@@ -81,13 +83,16 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	}
 	r.Handle("GET /api/v1/exports/catalogue.xlsx", g.RequireStaff(h.staff(h.catalogueXLSX)))
 	if h.statements != nil {
-		r.Handle("GET /api/v1/exports/statement.xlsx", g.RequireStaff(h.staff(h.statementXLSX)))
+		// Each export carries exactly the gate of the route it mirrors (statements and transactions
+		// are the finstmt reads, RequireManager; the audit trail is GET /api/v1/audit, RequireAdmin),
+		// and the handler fences the caller's branch reach on top, see reachBranch.
+		r.Handle("GET /api/v1/exports/statement.xlsx", g.RequireManager(h.staff(h.statementXLSX)))
 	}
 	if h.transactions != nil {
-		r.Handle("GET /api/v1/exports/transactions.xlsx", g.RequireStaff(h.staff(h.transactionsXLSX)))
+		r.Handle("GET /api/v1/exports/transactions.xlsx", g.RequireManager(h.staff(h.transactionsXLSX)))
 	}
 	if h.audit != nil {
-		r.Handle("GET /api/v1/exports/audit.xlsx", g.RequireStaff(h.staff(h.auditXLSX)))
+		r.Handle("GET /api/v1/exports/audit.xlsx", g.RequireAdmin(h.staff(h.auditXLSX)))
 	}
 }
 
@@ -116,6 +121,15 @@ func (h *Handler) statementXLSX(w http.ResponseWriter, r *http.Request, caller g
 	}
 	if month > 12 {
 		httpx.Error(w, http.StatusBadRequest, "month must be 1-12, or absent for the whole year")
+		return
+	}
+	// The trial balance has no branch dimension (org wide by construction), so only a global
+	// caller may run it, whatever branch_id says; every other report is fenced on the branch asked.
+	reach := strings.TrimSpace(q.Get("branch_id"))
+	if report == ReportTrialBalance {
+		reach = ""
+	}
+	if !reachBranch(w, caller, reach) {
 		return
 	}
 	wb, err := h.statements.StatementWorkbook(r.Context(), StatementQuery{
@@ -147,6 +161,9 @@ func (h *Handler) transactionsXLSX(w http.ResponseWriter, r *http.Request, calle
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !reachBranch(w, caller, strings.TrimSpace(q.Get("branch_id"))) {
+		return
+	}
 	wb, err := h.transactions.TransactionWorkbook(r.Context(), TransactionQuery{
 		Year: year, Month: month,
 		AccountCode: strings.TrimSpace(q.Get("account_code")),
@@ -167,12 +184,33 @@ func (h *Handler) auditXLSX(w http.ResponseWriter, r *http.Request, caller guard
 		httpx.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// The audit read names no branch; a branch_id on the request is still held to the caller's reach
+	// so no export door answers for a branch the caller cannot read.
+	if b := strings.TrimSpace(r.URL.Query().Get("branch_id")); b != "" && !reachBranch(w, caller, b) {
+		return
+	}
 	wb, err := h.audit.Workbook(r.Context(), AuditQuery{Filter: f, FilterSummary: AuditFilterSummary(f)})
 	if err != nil {
 		h.writeErr(w, r, "audit", err)
 		return
 	}
 	h.download(w, r, AuditFilename(h.now()), wb)
+}
+
+// reachBranch is the finstmt branch fence (finstmt.Service.authorizeBranch) applied at the export
+// door, so the file is refused before any read runs: a global caller reads any branch and the
+// consolidated books; a scoped caller must name a branch they hold a grant on. A refusal is the
+// shared 403, never an empty file.
+func reachBranch(w http.ResponseWriter, caller guards.StaffCaller, branchID string) bool {
+	if branchID == "" {
+		if caller.Scope == coreid.ScopeGlobal {
+			return true
+		}
+	} else if caller.CanAccessBranch(branchID) {
+		return true
+	}
+	authz.RefuseForbidden(w)
+	return false
 }
 
 // download encodes and streams, in ONE place for every export route.

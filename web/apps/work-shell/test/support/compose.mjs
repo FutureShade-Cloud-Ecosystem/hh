@@ -44,6 +44,20 @@ const FIXTURE_APP = `<!doctype html>
   }
   document.querySelector("[data-testid=fixture]").textContent = "fixture:" + location.pathname + ":" + role;
   document.querySelector("button").addEventListener("click", function () { location.assign("/"); });
+  // The sign out protocol of item 8e, as the real apps speak it (design-system framed.js, listenForHostSignOut):
+  // a request from the parent at this origin runs the app's own sign out (here: the custody mirror goes), then
+  // the acknowledgement carries the same nonce. A page of the legs can make this frame silent or slow.
+  window.addEventListener("message", function (event) {
+    var data = event.data;
+    if (event.source !== window.parent || event.origin !== location.origin) return;
+    if (!data || data.type !== "hh-work-shell:sign-out" || typeof data.nonce !== "string") return;
+    var top = window.parent;
+    top.__fixtureNonce = data.nonce;
+    if (top.__fixtureSilent) return;
+    sessionStorage.removeItem("hh-auth.session.v2");
+    top.__fixtureSignedOut = (top.__fixtureSignedOut || 0) + 1;
+    window.parent.postMessage({ type: "hh-work-shell:signed-out", nonce: data.nonce }, location.origin);
+  });
 </script>
 </body></html>
 `;

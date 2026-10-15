@@ -114,7 +114,7 @@ func init() {
 // being treated as a token.
 var glsExact = map[string]string{
 	// -- customers, the plan's ten and the migrations' accounts --
-	"Northline Hardscapes Ltd (demo)":      "Summit Ridge Builders",
+	"Northline Hardscapes Ltd (demo)":      "Bluffside Builders",
 	"Bay Ridge Landscaping (demo)":         "Ridgeview Outdoor Living",
 	"Quinte Paving & Design (demo)":        "Fieldstone Pools and Patios",
 	"Harbourview Builders (demo)":          "Harbourview Builders",
@@ -201,7 +201,7 @@ var glsTokens = [][2]string{
 	{"Hardscape House (demo), Kingston", "Gable Landscape Supply, Julian"},
 	{"Hardscape House (demo)", "Gable Landscape Supply"},
 	{"Quinte Paving & Design (demo)", "Fieldstone Pools and Patios"},
-	{"Northline Hardscapes Ltd (demo)", "Summit Ridge Builders"},
+	{"Northline Hardscapes Ltd (demo)", "Bluffside Builders"},
 	{"Techo-Bloc Blu 60 Slab", "Stonecrest 60 mm Slab"},
 	{"Permacon Melville Slab", "Cascade Masonry Slab"},
 	{"Oaks Vintage Paver", "Tidewater Tumbled Paver"},
@@ -442,7 +442,9 @@ func glsRenamePlanted(ctx context.Context, tx glsTx, now time.Time) (int, error)
 	if err != nil {
 		return changed, fmt.Errorf("demoseed: moving the dealer's phone: %w", err)
 	}
-	return changed + int(tag.RowsAffected()), nil
+	changed += int(tag.RowsAffected())
+	taxed, err := glsConvergeSalesTax(ctx, tx, now)
+	return changed + taxed, err
 }
 
 func glsRenameColumn(ctx context.Context, tx glsTx, p glsPlanted, now time.Time) (int, error) {

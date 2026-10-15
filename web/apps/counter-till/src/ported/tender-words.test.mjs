@@ -18,7 +18,7 @@ import { PAYMENT_STATUS_LABEL, TENDER_METHOD_LABEL, paymentStatusWord, tenderMet
 // the warranty-api.ts precedent. pos-lookup.ts and pos-assess-relief.ts import from those rather than
 // keeping a second copy of the same fact.
 import { orderStatusWord } from './order-logic.ts';
-import { taxReasonWord } from './tax-api.ts';
+import { ratePercent, taxReasonWord } from './tax-api.ts';
 
 // ── the tender method: payments.method (0010) ∪ till_tender_totals.method (0028) ∪
 // pos_sale.tender (0029) ∪ pos_sale_tenders.method (0100) ────────────────────────────────────
@@ -83,4 +83,18 @@ test('no word map hides an unmapped value behind an empty string, in any of the 
   for (const fn of [tenderMethodWord, paymentStatusWord, orderStatusWord, taxReasonWord]) {
     assert.equal(fn('SOME_NEW_STATE'), 'some new state');
   }
+});
+
+// ── the tax words follow the dealer's jurisdiction ────────────────────────────────────────────────
+
+test('the standard reason of a non Ontario dealer has a word, and the Ontario word is unchanged', () => {
+  assert.equal(taxReasonWord('STD_SALES_TAX'), 'Standard sales tax');
+  assert.equal(taxReasonWord('STD_ON_HST_13'), 'Standard HST');
+});
+
+test('a rate in basis points reads as the plain percentage', () => {
+  assert.equal(ratePercent(1300), '13%');
+  assert.equal(ratePercent(775), '7.75%');
+  assert.equal(ratePercent(850), '8.5%');
+  assert.equal(ratePercent(0), '0%');
 });
