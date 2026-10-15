@@ -539,3 +539,4 @@ test("a cancelled or done pick takes no record, in the core's words and class", 
   const reassigned = await call("POST", "/_stub/reassign", { body: { task_id: id } });
   assert.equal(reassigned.status, 200);
   refused(await record(), 409, "this pick was cancelled, its record cannot change");
+});
