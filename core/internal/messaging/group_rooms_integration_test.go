@@ -161,7 +161,8 @@ func TestIntegration_Group_AnyMemberAdds_AcrossBranches_SystemLine(t *testing.T)
 	samMux, samBearer := groupRoutesAs(t, uSamRivera, groupFrontline)
 	caseyMux, caseyBearer := groupRoutesAs(t, uCaseyDoyle, groupFrontline)
 
-	ch, failed := groupCreate(t, samMux, samBearer, `{"name":"Patio crew"}`)
+	ch, failed := groupCreate(t, samMux, samBearer,
+		`{"name":"Patio crew","member_ids":["`+uCaseyDoyle+`"]}`)
 	if failed != nil {
 		t.Fatalf("create group: %d (the group route is not served)", *failed)
 	}
@@ -318,7 +319,7 @@ func TestIntegration_Group_Walls_NonMember_DMFixed_Inactive_NonStaffer(t *testin
 	}
 }
 
-// insertInactiveStaffer plants one INACTIVE staffer row of the test's own and
+// insertInactiveStaffer plants one suspended staffer row of the test's own and
 // names it (the seats' active-staff wall is what the leg proves; the row is
 // the test's own, removed with the test).
 func insertInactiveStaffer(t *testing.T) string {
@@ -326,8 +327,8 @@ func insertInactiveStaffer(t *testing.T) string {
 	id := "d7000000-0000-4000-9000-00000000f1a1"
 	_, err := intPool(t).Exec(context.Background(),
 		`INSERT INTO users (id, email, display_name, status, password_hash)
-		 VALUES ($1, 'group-inactive-test@example.invalid', 'Inactive Test Hand', 'INACTIVE', 'x')
-		 ON CONFLICT (id) DO UPDATE SET status = 'INACTIVE'`, id)
+		 VALUES ($1, 'group-inactive-test@example.invalid', 'Inactive Test Hand', 'SUSPENDED', 'x')
+		 ON CONFLICT (id) DO UPDATE SET status = 'SUSPENDED'`, id)
 	if err != nil {
 		t.Fatalf("plant the inactive staffer: %v", err)
 	}

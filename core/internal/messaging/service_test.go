@@ -3,6 +3,7 @@ package messaging
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,8 @@ type fakeStore struct {
 	eventRefs     []EventRef      // refs captured parallel to events (Feature 2 ref assertions)
 	eventDup      map[string]bool // (channelID|eventKey) already inserted
 	markCalls     []string        // "channelID|userID"
+	// The group rooms the fake minted (CreateGroup's own double).
+	createdGroups []Channel
 	// Feature A / B doubles:
 	prefs      map[string]NotificationPrefs // "channelID|userID" -> stored prefs
 	tiers      map[string]string            // channelID -> tier (default STANDARD)
@@ -298,6 +301,46 @@ func (f *fakeStore) RemoveChannelMember(_ context.Context, channelID, userID str
 	}
 	return nil
 }
+
+// The group room doubles (walk change 7, slice S2): the fake mints rooms the
+// way the repository does (facts recorded, the caller OWNER, the set MEMBER),
+// seats with the created fact, and renames the minted room.
+func (f *fakeStore) CreateGroup(_ context.Context, ownerUserID, name string, memberIDs []string) (Channel, error) {
+	c := Channel{ID: fmt.Sprintf("e2000000-0000-4000-9000-%012d", len(f.createdGroups)+1), Kind: KindGroup, Name: name, Tier: TierStandard}
+	f.createdGroups = append(f.createdGroups, c)
+	f.exists[c.ID] = true
+	f.facts[c.ID] = channelFactsRow{Kind: KindGroup}
+	f.setMember(c.ID, ownerUserID)
+	f.memberRoles[c.ID+"|"+ownerUserID] = "OWNER"
+	f.memberSources[c.ID+"|"+ownerUserID] = SourceExplicit
+	for _, id := range memberIDs {
+		f.setMember(c.ID, id)
+		f.memberRoles[c.ID+"|"+id] = "MEMBER"
+		f.memberSources[c.ID+"|"+id] = SourceExplicit
+	}
+	return c, nil
+}
+
+func (f *fakeStore) SeatGroupMember(_ context.Context, channelID, userID, _, _ string) (ChannelMember, bool, error) {
+	if src, ok := f.memberSources[channelID+"|"+userID]; ok {
+		return ChannelMember{ChannelID: channelID, UserID: userID, Role: "MEMBER", Source: src}, false, nil
+	}
+	f.setMember(channelID, userID)
+	f.memberSources[channelID+"|"+userID] = SourceExplicit
+	return ChannelMember{ChannelID: channelID, UserID: userID, Role: "MEMBER", Source: SourceExplicit}, true, nil
+}
+
+func (f *fakeStore) RenameGroup(_ context.Context, channelID, name, _ string) (Channel, error) {
+	for i := range f.createdGroups {
+		if f.createdGroups[i].ID == channelID {
+			f.createdGroups[i].Name = name
+			return f.createdGroups[i], nil
+		}
+	}
+	return Channel{}, errNotFound
+}
+
+func (f *fakeStore) userActive(_ context.Context, _ string) error { return nil }
 
 func (f *fakeStore) channelFacts(_ context.Context, channelID string) (channelFactsRow, error) {
 	if facts, ok := f.facts[channelID]; ok {
