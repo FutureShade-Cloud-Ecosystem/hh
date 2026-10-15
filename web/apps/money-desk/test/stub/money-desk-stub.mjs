@@ -11,12 +11,15 @@
 import { createServer } from "node:http";
 import { createGlWorld } from "./gl-world.mjs";
 import { createOfficeWorld } from "./ar-office-world.mjs";
+import { createFinstmtWorld } from "./finstmt-world.mjs";
 import { createBankrecWorld } from "./bankrec-world.mjs";
 import { createTaxWorld } from "./tax-world.mjs";
 import { createLienWorld } from "./lien-world.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
+// The statements slice's world (periods, the five statements, aging, saved packs), answered by its own module.
+const finstmtWorld = createFinstmtWorld();
 // The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own module.
 const bankrecWorld = createBankrecWorld();
 // The tax administration slice's world (rates, profiles, config, evidence, recompute, recon), answered by its own module.
@@ -532,6 +535,14 @@ function send(res, status, data) {
 }
 const refuse = (res, status, error) => send(res, status, { error });
 
+function readRaw(req) {
+  return new Promise((resolve) => {
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    req.on("end", () => resolve(raw));
+  });
+}
+
 function readBody(req) {
   return new Promise((resolve) => {
     let raw = "";
@@ -556,11 +567,13 @@ async function handle(req, res) {
   if (method === "POST" && path === "/_stub/reset") {
     reset();
     glWorld.reset();
+    finstmtWorld.reset();
     bankrecWorld.reset();
     taxWorld.reset();
     lienWorld.reset();
     return send(res, 200, { ok: true });
   }
+  if (method === "GET" && path === "/_stub/finstmt-calls") return send(res, 200, { calls: finstmtWorld.calls(), exports: finstmtWorld.exports(), year: finstmtWorld.fiscalYear });
   if (method === "POST" && path === "/_stub/scenario") {
     const body = await readBody(req);
     reset(["empty", "wide", "pro", "unwired"].includes(body?.name) ? body.name : "full");
@@ -579,6 +592,23 @@ async function handle(req, res) {
     return send(res, 200, { token: mintToken(account.user_id), user: account, flow: body.flow });
   }
   if (method === "GET" && path === "/api/v1/branches") return send(res, 200, BRANCHES);
+  // The statements slice reads the books' periods paged (any page size but 100, two fiscal years); the ledger
+  // slice reads a page of 100 (one year, closed and reopened by its own presses), so the two worlds share the route by that line.
+  if (path.startsWith("/api/v1/finstmt/") || (path === "/api/v1/gl/periods" && method === "GET" && url.searchParams.has("limit") && url.searchParams.get("limit") !== "100")) {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const raw = method === "POST" || method === "PUT" ? await readRaw(req) : "";
+    const answer = finstmtWorld.handle(req, url, raw);
+    if (answer === null) return refuse(res, 404, "not found");
+    if (typeof answer.csv === "string") {
+      res.writeHead(answer.status, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="export.csv"' });
+      return res.end(answer.csv);
+    }
+    if (answer.status === 204) {
+      res.writeHead(204);
+      return res.end();
+    }
+    return send(res, answer.status, answer.body);
+  }
   if (path.startsWith("/api/v1/staff/approvals") || path.startsWith("/api/v1/gl/")) {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const body = method === "POST" ? await readBody(req) : null;
