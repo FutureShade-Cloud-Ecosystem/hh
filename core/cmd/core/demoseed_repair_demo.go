@@ -51,8 +51,61 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 	if err != nil {
 		return 0, err
 	}
+	tasks, err := repairDemoTaskSync(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
 	n, err := repairNorthlineHome(ctx, tx, now, branches)
-	return fixed + stamped + n, err
+	return fixed + stamped + tasks + n, err
+}
+
+// taskSyncRepairSQL gives the demo tasks of one type their org stamp and their place in the type's
+// sync feed. The pick_tasks and weights pulls both read `org_id = caller's org AND seq IS NOT NULL
+// AND seq > cursor` (core/internal/tasks/syncscope.go, syncweights.go), so a task the seed wrote
+// with neither is invisible to every device: the Yard Pick board runs on that feed and showed the
+// yard team an empty queue over a full table. Each unstamped task draws the next number of the
+// type's own counter, in creation order, in this one statement (the counter's rule is the live
+// allocator's: next_value holds the last number issued, so the live draw continues after the
+// block). The guards hold it to its case: the id is a demo task's fixed id, the seq is still NULL
+// (a second run matches nothing), and the org row exists (the first apply of a fresh box runs
+// before the populate provisions it, the second apply stamps).
+const taskSyncRepairSQL = `
+WITH todo AS (
+	SELECT id, row_number() OVER (ORDER BY created_at, id) AS n
+	  FROM tasks
+	 WHERE id = ANY($1::uuid[]) AND task_type = $2 AND seq IS NULL
+	   AND EXISTS (SELECT 1 FROM org WHERE slug = $4::citext)
+), base AS (
+	SELECT COALESCE((SELECT next_value FROM scope_sequences WHERE scope = $3), 0) AS b
+), bump AS (
+	INSERT INTO scope_sequences (scope, next_value)
+	SELECT $3, base.b + (SELECT count(*) FROM todo) FROM base
+	 WHERE EXISTS (SELECT 1 FROM todo)
+	ON CONFLICT (scope) DO UPDATE SET next_value = EXCLUDED.next_value
+	RETURNING 1
+)
+UPDATE tasks t
+   SET seq = base.b + todo.n,
+       org_id = COALESCE(t.org_id, (SELECT id FROM org WHERE slug = $4::citext))
+  FROM todo, base
+ WHERE t.id = todo.id`
+
+// repairDemoTaskSync stamps the demo tasks into their sync feeds: the PICK tasks into pick_tasks and
+// the NEED_WEIGHT tasks into weights (the counters the core's own allocators draw from).
+func repairDemoTaskSync(ctx context.Context, tx txExec) (int, error) {
+	ids := map[string][]string{}
+	for _, t := range demoTasks {
+		ids[t.Type] = append(ids[t.Type], demoID("task:"+t.Key))
+	}
+	total := 0
+	for _, f := range []struct{ taskType, scope string }{{"PICK", "pick_tasks"}, {"NEED_WEIGHT", "weights"}} {
+		tag, err := tx.Exec(ctx, taskSyncRepairSQL, ids[f.taskType], f.taskType, f.scope, demoOrgSlug)
+		if err != nil {
+			return 0, fmt.Errorf("demoseed: stamping the demo %s tasks into the %s sync feed: %w", f.taskType, f.scope, err)
+		}
+		total += int(tag.RowsAffected())
+	}
+	return total, nil
 }
 
 // repairDemoProductApplications fills the application of every demo product an older seed left

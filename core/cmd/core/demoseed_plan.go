@@ -282,7 +282,7 @@ var demoOrders = []orderSpec{
 	{"O02", 0, "C04", "CONFIRMED", "DELIVERY", 2, 1, []lineSpec{ln("P04", "180.0000", 180)}},
 	{"O03", 1, "C03", "CONFIRMED", "DELIVERY", 2, 1, []lineSpec{ln("P07", "18.0000", 18), ln("P08", "6.0000", 6)}},
 	{"O04", 1, "C02", "CONFIRMED", "PICKUP", 1, 0, []lineSpec{ln("P02", "220.0000", 220)}},
-	{"O05", 0, "C08", "CONFIRMED", "DELIVERY", 5, 2, []lineSpec{ln("P03", "410.0000", 410)}},
+	{"O05", 1, "C08", "CONFIRMED", "DELIVERY", 5, 2, []lineSpec{ln("P03", "410.0000", 410)}},
 	// The Logistics Manager's load board material (roadmap 2.4): two open delivery orders with
 	// requested dates and NO stop, so the first Dispatch increment's walk builds its own load
 	// rather than inheriting one. Every other open delivery order above sits on a stop already;
@@ -291,8 +291,8 @@ var demoOrders = []orderSpec{
 	// renames it, the Point Loma main yard), the yard the demo populate converges the persona onto.
 	{"O29", 1, "C03", "CONFIRMED", "DELIVERY", 0, 0, []lineSpec{ln("P04", "120.0000", 120)}},
 	{"O30", 1, "C05", "CONFIRMED", "DELIVERY", 0, 1, []lineSpec{ln("P01", "480.0000", 480), ln("P06", "6.0000", 6)}},
-	{"O06", 0, "C01", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "320.0000", 320), ln("P10", "24.0000", 24)}},
-	{"O07", 0, "C04", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "2400.0000", 2400)}},
+	{"O06", 1, "C01", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "320.0000", 320), ln("P10", "24.0000", 24)}},
+	{"O07", 1, "C04", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "2400.0000", 2400)}},
 	{"O08", 1, "C05", "PICKING", "WILL_CALL", 1, 0, []lineSpec{ln("P09", "12.0000", 12)}},
 	{"O09", 0, "C01", "READY", "DELIVERY", 2, 0, []lineSpec{ln("P02", "150.0000", 150)}},
 	{"O10", 0, "C06", "READY", "WILL_CALL", 1, 0, []lineSpec{ln("P10", "6.0000", 6)}},
@@ -609,11 +609,16 @@ type taskSpec struct {
 	Weight   string
 }
 
+// The open PICK tasks (QUEUED, PUSHED) sit where the yard team can reach them: branch 1, the Point
+// Loma main yard the demo populate converges the yard persona onto, with their orders (O05, O06,
+// O07), because a task's branch is its order's branch. K03 (O01) stays at branch 0 so the other
+// branch's view still holds an open pick. The stops, runs and scans of O05 to O07 stay where they
+// were: dispatch reads an order through a LEFT JOIN with no branch fence.
 var demoTasks = []taskSpec{
-	{"K01", "O06", 0, "PICK", "QUEUED", "NORMAL", 2, 0, "", "", 0, ""},
-	{"K02", "O07", 0, "PICK", "QUEUED", "HIGH", 5, 0, "", "", 0, ""},
+	{"K01", "O06", 1, "PICK", "QUEUED", "NORMAL", 2, 0, "", "", 0, ""},
+	{"K02", "O07", 1, "PICK", "QUEUED", "HIGH", 5, 0, "", "", 0, ""},
 	{"K03", "O01", 0, "PICK", "PUSHED", "URGENT", 9, 0, "", "", 4, ""},
-	{"K04", "O05", 0, "PICK", "PUSHED", "NORMAL", 26, 0, "", "", 20, ""},
+	{"K04", "O05", 1, "PICK", "PUSHED", "NORMAL", 26, 0, "", "", 20, ""},
 	{"K05", "O02", 0, "PICK", "ACCEPTED", "NORMAL", 3, 0, "", "", 0, ""},
 	{"K06", "O03", 1, "PICK", "ACCEPTED", "LOW", 4, 0, "", "", 0, ""},
 	{"K07", "O08", 1, "PICK", "IN_PROGRESS", "NORMAL", 1, 0, "", "", 0, ""},
