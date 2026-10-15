@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -66,6 +67,7 @@ type SyncStore struct {
 	// tickets is the REST door's own ticket feed (the Service's PickSource), so a pulled row carries
 	// the ticket exactly as GET /yard/picks/{id} builds it; nil pulls rows without one.
 	tickets PickSource
+	log     *slog.Logger
 }
 
 // NewSyncStore wires the adapter; nil seams are legal only where the
@@ -231,7 +233,13 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 		if err != nil {
 			return nil, nil, err
 		}
-		s.attachTicketData(ctx, reach, r.task.BranchID, r.task.OrderID, data)
+		// A transient source fault fails the page: the engine answers 503 and the device retries this
+		// cursor, where a ticket-less row would be cached until the task next moves (its seq is the
+		// only thing that re-sends it).
+		if err := s.attachTicketData(ctx, reach, r.task.BranchID, r.task.OrderID, data); err != nil {
+			s.logger().Error("tasks: sync pull ticket read failed", "task", r.task.ID, "order", r.task.OrderID, "err", err)
+			return nil, nil, fmt.Errorf("tasks: sync pull ticket: %w", err)
+		}
 		items = append(items, sync.Entity{ID: r.task.ID, Seq: r.seq, Data: data})
 	}
 	return items, tombstones, nil
@@ -627,35 +635,50 @@ func (s *SyncStore) attachTicket(ctx context.Context, reach func(string) bool, r
 	}
 	orderID, _ := rs.Data["order_id"].(string)
 	branch, _ := rs.Data["branch_id"].(string)
-	s.attachTicketData(ctx, reach, branch, orderID, rs.Data)
+	// A one row read (a conflict envelope, a replay) degrades to the row without its ticket and logs,
+	// as the REST decorate does; only the cursor feed has to fail so a device retries.
+	if err := s.attachTicketData(ctx, reach, branch, orderID, rs.Data); err != nil {
+		s.logger().Warn("tasks: sync row ticket read failed", "task", rs.ID, "order", orderID, "err", err)
+	}
+}
+
+func (s *SyncStore) logger() *slog.Logger {
+	if s.log != nil {
+		return s.log
+	}
+	return slog.Default()
 }
 
 // attachTicketData sets data["ticket"] to the order's pick ticket, the leg the device's pick screen
 // composes from, and only when the caller's authority reaches the row's branch (reach, from
 // ticketReach; nil attaches nothing). The pull is org scoped and the sync filter carries no branch, so
-// this is the fence the REST enumeration doors have ("branch out of scope"). The read is best effort
-// exactly as the REST board's is (a source that does not know the order, or fails, leaves the row
-// without a ticket rather than failing the page). The sync core's filter carries no role, so the cost
+// this is the fence the REST enumeration doors have ("branch out of scope"). A source that does not
+// know the order (ErrUnknownOrder) leaves the row without a ticket; any other fault is returned, and
+// the Pull fails its page on it. The sync core's filter carries no role, so the cost
 // gate fails closed here: the one money figure of a ticket (still owed) is held out for every caller,
 // as blankTicketMoney does for a role the rule refuses; the hold mark and its words stay. It runs only
 // on the pool reads (Pull, Load, FindApplied), never inside a write transaction, so it never asks the
 // pool for a second connection while holding one.
-func (s *SyncStore) attachTicketData(ctx context.Context, reach func(string) bool, branch, orderID string, data map[string]any) {
+func (s *SyncStore) attachTicketData(ctx context.Context, reach func(string) bool, branch, orderID string, data map[string]any) error {
 	if s.tickets == nil || reach == nil || orderID == "" || data == nil || !reach(branch) {
-		return
+		return nil
 	}
 	t, err := s.tickets.PickTicket(ctx, orderID)
+	if errors.Is(err, ErrUnknownOrder) {
+		return nil
+	}
 	if err != nil {
-		return
+		return err
 	}
 	t.StillOwedCents = 0
 	raw, err := json.Marshal(t)
 	if err != nil {
-		return
+		return err
 	}
 	var v map[string]any
 	if err := json.Unmarshal(raw, &v); err != nil {
-		return
+		return err
 	}
 	data["ticket"] = v
+	return nil
 }

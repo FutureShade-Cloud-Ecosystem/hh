@@ -627,3 +627,48 @@ func TestPickDoor_TicketFollowsTheCallersBranchReach(t *testing.T) {
 		}
 	}
 }
+
+// errPickSource answers every ticket read with one fixed error.
+type errPickSource struct{ err error }
+
+func (e errPickSource) PickTicket(context.Context, string) (PickTicket, error) {
+	return PickTicket{}, e.err
+}
+func (e errPickSource) PendingTickets(context.Context, string, int, int) ([]PickTicket, int, error) {
+	return nil, 0, e.err
+}
+
+// A transient source fault fails the pull page (the engine answers 503 and the device retries the same
+// cursor) rather than shipping a ticket-less row the device would keep until the task next moves; an
+// order the source does not know, and a task with no order id, are the quiet skips.
+func TestPickDoor_PullFailsThePageOnATransientTicketFault(t *testing.T) {
+	d := newPickDoor(t)
+	ctx := context.Background()
+	row, err := d.store.Create(ctx, d.f, uuid.NewString(), map[string]any{"order_id": uuid.NewString()})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	d.store.WithPickSource(errPickSource{err: errors.New("hold read: connection reset")})
+	if items, _, err := d.store.Pull(ctx, d.f, 0, 50); err == nil {
+		t.Fatalf("a transient source fault must fail the page, got %d items", len(items))
+	}
+
+	d.store.WithPickSource(errPickSource{err: fmt.Errorf("read: %w", ErrUnknownOrder)})
+	items, _, err := d.store.Pull(ctx, d.f, 0, 50)
+	if err != nil {
+		t.Fatalf("an unknown order is a quiet skip: %v", err)
+	}
+	var seen bool
+	for _, it := range items {
+		if it.ID == row.ID {
+			seen = true
+			if _, has := it.Data["ticket"]; has {
+				t.Fatal("an unknown order carries no ticket")
+			}
+		}
+	}
+	if !seen {
+		t.Fatal("the row must still come through")
+	}
+}
