@@ -137,7 +137,7 @@ paths:
         claim rather than shrinkage.
       x-role: requireStaff
       x-access:
-        surfaces: [manager-home]
+        surfaces: [manager-home, counter-till, dealer-admin]
         level: read
       parameters:
         - $ref: "#/components/parameters/XOrg"
