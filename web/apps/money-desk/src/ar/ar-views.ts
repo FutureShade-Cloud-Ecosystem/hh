@@ -485,7 +485,7 @@ function holdsPanel(model: DeskModel): TemplateResult {
     return html`
       <section class="panel side" aria-label="Place a hold" data-hold-panel>
         <div class="panel-head"><h2>Place a hold</h2><span class="later">later</span></div>
-        <p class="note" data-later-words>Placing a hold by hand is later: the core has no route for it yet. The sweep places the Aged AR, Over limit and Pay before release holds, and a returned payment places its own.</p>
+        <p class="note" data-later-words>Placing a hold by hand arrives later: there is no path for it yet. The sweep places the Aged AR, Over limit and Pay-before-release holds, and a returned payment places its own.</p>
         <fieldset class="held-form" disabled>
           <label>Account<select><option>Pick an account</option></select></label>
           <label>Kind<input type="text" value="Manual" readonly /></label>
@@ -558,7 +558,7 @@ export function renderHolds(model: DeskModel): TemplateResult {
         <div class="panel-head">
           <h3>Credit holds</h3>
           <div class="tools">
-            ${segmented("Hold scope", [{ id: "active", word: "Active" }, { id: "all", word: "All" }], model.holdScope, "hold-scope")}
+            ${segmented("Show holds", [{ id: "active", word: "Active" }, { id: "all", word: "All" }], model.holdScope, "hold-scope")}
             <button type="button" class="btn btn-secondary small-btn ${model.canLift ? "" : "held"}" data-action="run-sweep" aria-disabled="${model.canLift ? "false" : "true"}">Run the sweep</button>
           </div>
         </div>

@@ -43,6 +43,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/settings"
 )
 
@@ -414,7 +415,11 @@ type ARReminderService struct {
 	sender  ReminderSender
 	baseURL string
 	now     func() time.Time
+	zone    houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (s *ARReminderService) WithZone(src houseday.Source) *ARReminderService { s.zone = src; return s }
 
 // NewARReminderService wires the machinery. A nil sender means UnwiredSender, which is the default
 // this program ships on, an unwired transport is visibly inert, never quietly half-running: the row
@@ -491,8 +496,12 @@ func (s *ARReminderService) Send(ctx context.Context, in SendReminderInput, acto
 	if err != nil {
 		return ReminderSend{}, err
 	}
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return ReminderSend{}, err
+	}
 	now := s.now()
-	days := DaysPastDue(rc.DueDate, now)
+	days := DaysPastDueIn(zone, rc.DueDate, now)
 	bucket := BucketFor(days, p)
 	watermark := WatermarkFor(days, in.Resend)
 

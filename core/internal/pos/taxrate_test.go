@@ -41,7 +41,7 @@ func TestTaxRate_DefaultWiringAnswers1300AndInvoiceTotal(t *testing.T) {
 	if out.RoundMode != "INVOICE_TOTAL" {
 		t.Fatalf("an unwired rule source answers INVOICE_TOTAL: got %q", out.RoundMode)
 	}
-	if out.Jurisdiction != "ON" || out.ReasonCode != "STD_ON_HST_13" {
+	if out.Jurisdiction != "ON" || out.ReasonCode != "STD_ON_HST_13" || out.TaxLabel != "HST" {
 		t.Fatalf("the standard ON facts ride the answer: %+v", out)
 	}
 }

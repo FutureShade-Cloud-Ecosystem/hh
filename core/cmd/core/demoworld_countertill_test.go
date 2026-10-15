@@ -351,7 +351,9 @@ func demoWorldRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (orgID
 
 // demoPaymentConfig plants the one active payment configuration the card rail needs before even
 // the simulator will charge: an invented merchant id, an invented credential that is not a key,
-// sealed under the test's own vault key, no host.
+// sealed under the test's own vault key, no host. The rail's currency is the demo dealer's own, US
+// dollars, as the populate writes it: a rail row that disagrees with the dealer's currency refuses
+// every charge (item 3b slice 2).
 func demoPaymentConfig(t *testing.T, ctx context.Context, pool *pgxpool.Pool, vaultKeyHex string) {
 	t.Helper()
 	vault, err := payment.NewVault(vaultKeyHex)
@@ -366,11 +368,18 @@ func demoPaymentConfig(t *testing.T, ctx context.Context, pool *pgxpool.Pool, va
 	if err != nil {
 		t.Fatalf("seal creds: %v", err)
 	}
+	// The rail trades in the dealer's own currency, which the card rail checks at every charge: US
+	// dollars in the demo build (the seed writes the dealer's configuration), the Ontario default in a
+	// default build that runs this leg with the demo database variable set.
+	var dealerCurrency string
+	if err := pool.QueryRow(ctx, `SELECT COALESCE((SELECT value #>> '{}' FROM system_settings WHERE key = 'currency'), 'CAD')`).Scan(&dealerCurrency); err != nil {
+		t.Fatalf("the dealer's currency: %v", err)
+	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO payment_config (processor, merchant_id, currency, credentials_ciphertext,
 			key_version, base_url, mdr_bps, surcharge_enabled, status)
-		VALUES ('run_payments', $1, 'CAD', $2, $3, '', 0, FALSE, 'active')`,
-		demoMerchantID, ct, kv); err != nil {
+		VALUES ('run_payments', $1, $4, $2, $3, '', 0, FALSE, 'active')`,
+		demoMerchantID, ct, kv, dealerCurrency); err != nil {
 		t.Fatalf("insert payment config: %v", err)
 	}
 }
@@ -580,6 +589,15 @@ func demoHST(subtotalCents int64, rateBps int) int64 {
 // table or its wiring fails here rather than passing on a figure the test supplied itself.
 func engineRate(t *testing.T, c *tillClient, day time.Time) int {
 	t.Helper()
+	// The dealer's own jurisdiction and standard reason come from the counter's read; the RATE still
+	// comes only from the engine's rate table below, so the proof does not read the ring's answer.
+	facts := c.call("GET", "/api/v1/pos/tax-rate", nil)
+	facts.ok(t, http.StatusOK)
+	var dealer struct {
+		Jurisdiction string `json:"jurisdiction"`
+		ReasonCode   string `json:"reason_code"`
+	}
+	facts.decode(t, &dealer)
 	rsp := c.call("GET", "/api/v1/tax/rates", nil)
 	rsp.ok(t, http.StatusOK)
 	var ratesView struct {
@@ -596,7 +614,7 @@ func engineRate(t *testing.T, c *tillClient, day time.Time) int {
 	dayStr := day.Format("2006-01-02")
 	best, bestFrom := -1, ""
 	for _, r := range rates {
-		if r.Jurisdiction != "ON" || r.ReasonCode != "STD_ON_HST_13" {
+		if r.Jurisdiction != dealer.Jurisdiction || r.ReasonCode != dealer.ReasonCode {
 			continue
 		}
 		if r.EffectiveFrom > dayStr {
@@ -697,11 +715,11 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		}
 		return id
 	}
-	holland := product("DEMO-PAV-HOLLAND")
-	brussels := product("DEMO-PAV-BRUSSELS")
-	wallBlock := product("DEMO-WALL-BLOCK")
-	granularA := product("DEMO-AGG-GA")
-	edging := product("DEMO-EDGE-ALU")
+	holland := product(worldWord("DEMO-PAV-HOLLAND"))
+	brussels := product(worldWord("DEMO-PAV-BRUSSELS"))
+	wallBlock := product(worldWord("DEMO-WALL-BLOCK"))
+	granularA := product(worldWord("DEMO-AGG-GA"))
+	edging := product(worldWord("DEMO-EDGE-ALU"))
 	customer := func(key string) string {
 		t.Helper()
 		var id string
@@ -896,8 +914,23 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	// 11b. The rounding proof: one sale whose subtotal lands exactly on a half cent at the
 	// engine's rate, so half up passes and half down and half even both fail. C01's wall block
 	// rule price is exact in every rounding mode (the list 1250 less its 1800 bps, 225, with no
-	// remainder), so two units price 2050, and 2050 at 1300 bps is exactly 266.5: half up
-	// answers 267, half down and half even answer 266.
+	// remainder), a unit is 1025 cents. The quantity is the smallest whose subtotal lands exactly
+	// on a half cent at the engine's rate: two units (2050, exactly 266.5 at 1300 bps) in a default
+	// build, eight (8200, exactly 635.5 at the demo dealer's 775 bps) in the demo build. Half up
+	// answers the rounded-up cent, half down and half even the one below.
+	const wallBlockUnitCents = 1025
+	halfQty := 0
+	for q := 1; q <= 40; q++ {
+		if (int64(q)*wallBlockUnitCents*int64(rateBps))%10000 == 5000 {
+			halfQty = q
+			break
+		}
+	}
+	if halfQty == 0 {
+		t.Fatalf("no wall block quantity lands on a half cent at the engine's %d bps", rateBps)
+	}
+	halfSubtotal := int64(halfQty) * wallBlockUnitCents
+	halfTax := (halfSubtotal*int64(rateBps) + 5000) / 10000 // half up, the committed answer
 	halfRingRsp := sales.call("POST", "/api/v1/pos/sales", demoSaleBody{
 		IdempotencyKey: uuid.NewString(),
 		BranchID:       trentonBranchID,
@@ -905,24 +938,24 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 		CustomerID:     c01,
 		Tender:         "ACCOUNT",
 		Lines: []demoSaleLine{
-			{ProductID: wallBlock, QtyEntered: 2, UOMEntered: "PC"},
+			{ProductID: wallBlock, QtyEntered: float64(halfQty), UOMEntered: "PC"},
 		},
 	})
 	halfRingRsp.ok(t, http.StatusCreated)
 	var halfRing saleRing
 	halfRingRsp.decode(t, &halfRing)
-	if halfRing.SubtotalCents != 2050 {
-		t.Fatalf("the half-cent sale's subtotal is %d, want the rule's exact 2050, the figure the rounding assertion hangs off", halfRing.SubtotalCents)
+	if halfRing.SubtotalCents != halfSubtotal {
+		t.Fatalf("the half-cent sale's subtotal is %d, want the rule's exact %d, the figure the rounding assertion hangs off", halfRing.SubtotalCents, halfSubtotal)
 	}
 	if remainder := halfRing.SubtotalCents * int64(rateBps) % 10000; remainder != 5000 {
 		t.Fatalf("the half-cent sale's subtotal no longer lands on a half cent at the engine's %d bps (remainder %d), the rounding assertion would not bite", rateBps, remainder)
 	}
-	if formula := demoHST(halfRing.SubtotalCents, rateBps); halfRing.TaxCents != 267 || halfRing.TaxCents != formula {
-		t.Fatalf("the half-cent sale's rounding: the sale answered %d cents of tax, the half-up formula answers %d and the committed answer is 267; 2050 at the engine's %d bps is exactly 266.5, so half down or half even would answer 266",
-			halfRing.TaxCents, formula, rateBps)
+	if formula := demoHST(halfRing.SubtotalCents, rateBps); halfRing.TaxCents != halfTax || halfRing.TaxCents != formula {
+		t.Fatalf("the half-cent sale's rounding: the sale answered %d cents of tax, the half-up formula answers %d and the committed answer is %d; %d at the engine's %d bps is exactly %d.5, so half down or half even would answer %d",
+			halfRing.TaxCents, formula, halfTax, halfSubtotal, rateBps, halfTax-1, halfTax-1)
 	}
-	t.Logf("the half-cent sale %s: subtotal 2050 at %d bps lands on exactly 266.5, the tax is 267, half up once",
-		halfRing.OrderNo, rateBps)
+	t.Logf("the half-cent sale %s: subtotal %d at %d bps lands on exactly %d.5, the tax is %d, half up once",
+		halfRing.OrderNo, halfSubtotal, rateBps, halfTax-1, halfTax)
 
 	// 12. a parked ticket, parked by Sales, resumed by the Sales manager.
 	parkRsp := sales.call("POST", "/api/v1/pos/parked", map[string]any{
@@ -1089,8 +1122,12 @@ func TestDemoWorld_CounterTill(t *testing.T) {
 	if cfg.MerchantID != demoMerchantID {
 		t.Fatalf("the payments status names merchant %q, want the demo configuration's %q", cfg.MerchantID, demoMerchantID)
 	}
-	if cfg.Processor != "run_payments" || cfg.Currency != "CAD" {
-		t.Fatalf("the payments status names processor %q currency %q, want run_payments and CAD", cfg.Processor, cfg.Currency)
+	var wantCurrency string
+	if err := pool.QueryRow(ctx, `SELECT COALESCE((SELECT value #>> '{}' FROM system_settings WHERE key = 'currency'), 'CAD')`).Scan(&wantCurrency); err != nil {
+		t.Fatalf("the dealer's currency: %v", err)
+	}
+	if cfg.Processor != "run_payments" || cfg.Currency != wantCurrency {
+		t.Fatalf("the payments status names processor %q currency %q, want run_payments and the dealer's %s", cfg.Processor, cfg.Currency, wantCurrency)
 	}
 	t.Logf("RECORDED (PX changes it): the status route answers simulated: %v", cfg.Simulated)
 

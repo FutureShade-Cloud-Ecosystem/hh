@@ -12,12 +12,15 @@ import { createServer } from "node:http";
 import { createGlWorld } from "./gl-world.mjs";
 import { createOfficeWorld } from "./ar-office-world.mjs";
 import { createBankrecWorld } from "./bankrec-world.mjs";
+import { createTaxWorld } from "./tax-world.mjs";
 import { createLienWorld } from "./lien-world.mjs";
 
 // The ledger slice's world (approvals, journals, trial balance), answered by its own module.
 const glWorld = createGlWorld();
 // The bank reconciliation slice's world (accounts, statement lines, matches, rules, months), answered by its own module.
 const bankrecWorld = createBankrecWorld();
+// The tax administration slice's world (rates, profiles, config, evidence, recompute, recon), answered by its own module.
+const taxWorld = createTaxWorld();
 // The liens and compliance slice's world (jobs, the holdback ledger, documents, the calendar, the roster), answered by its own module.
 const lienWorld = createLienWorld();
 
@@ -43,8 +46,8 @@ const FLOWS = [
 ];
 
 const BRANCHES = [
-  { id: "b0000000-0000-4000-8000-000000000001", code: "TRT", name: "Trenton (demo)", address: { line1: "1 Demo Road", city: "Trenton", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: true, is_system_default: false, is_active: true },
-  { id: "b0000000-0000-4000-8000-000000000002", code: "KGN", name: "Kingston (demo)", address: { line1: "2 Demo Road", city: "Kingston", province: "ON", postal: "K0K 0K0", country: "CA" }, is_default: false, is_system_default: false, is_active: true },
+  { id: "b0000000-0000-4000-8000-000000000001", code: "PLM", name: "Point Loma (demo)", address: { line1: "1 Demo Road", city: "Point Loma", province: "CA", postal: "92106", country: "US" }, is_default: true, is_system_default: false, is_active: true },
+  { id: "b0000000-0000-4000-8000-000000000002", code: "JUL", name: "Julian (demo)", address: { line1: "2 Demo Road", city: "Julian", province: "CA", postal: "92036", country: "US" }, is_default: false, is_system_default: false, is_active: true },
 ];
 const branchOf = (n) => (n <= 3 ? BRANCHES[0].id : BRANCHES[1].id);
 
@@ -554,6 +557,7 @@ async function handle(req, res) {
     reset();
     glWorld.reset();
     bankrecWorld.reset();
+    taxWorld.reset();
     lienWorld.reset();
     return send(res, 200, { ok: true });
   }
@@ -579,6 +583,12 @@ async function handle(req, res) {
     if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
     const body = method === "POST" ? await readBody(req) : null;
     const answer = glWorld.handle(req, url, JSON.stringify(body ?? {}));
+    return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
+  }
+  if (path.startsWith("/api/v1/tax/")) {
+    if ((req.headers.authorization ?? "") === "") return refuse(res, 401, "Unauthorized");
+    const body = method === "POST" ? await readBody(req) : null;
+    const answer = taxWorld.handle(req, url, JSON.stringify(body ?? {}));
     return answer === null ? refuse(res, 404, "not found") : send(res, answer.status, answer.body);
   }
   if (path.startsWith("/api/v1/bankrec/")) {

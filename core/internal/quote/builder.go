@@ -25,13 +25,15 @@ package quote
 //   TAX ON THE TERMS WRITE      the one deliberate extension of quote money: the terms write
 //                               stamps tax_cents = flat HST over (subtotal + delivery fee), the
 //                               SAME arithmetic as billing/pos FlatHSTAssessor ((amt*bps+5000)/
-//                               10000, half-up once at the header), rate from system_settings
-//                               hst_rate_bps (fallback 1300). The shipped line-write recompute
+//                               10000, half-up once at the header), rate from the tax engine's
+//                               standard rate when wired, else system_settings hst_rate_bps
+//                               (fallback settings.DefaultHSTRateBps, 1300). The shipped line-write recompute
 //                               still never writes tax; the work area refreshes terms after cart
 //                               changes so the stamped tax tracks the lines. Stated in NOTES.
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"net/http"
 	"strings"
 	"time"
@@ -310,25 +312,28 @@ func (s *StaffService) MarginGlance(ctx context.Context, quoteID string) (QuoteM
 // QuoteTerms is the terms + summary read: everything the right panel edits, plus per-line extras
 // the concept's line table renders (disc %, gross totals, thumbnails).
 type QuoteTerms struct {
-	QuoteID          string      `json:"quote_id"`
-	DepositRequired  bool        `json:"deposit_required"`
-	DepositPct       int         `json:"deposit_pct"`
-	IncludeImages    bool        `json:"include_images"`
-	CustomerNotes    string      `json:"customer_notes"`
-	ContactName      string      `json:"contact_name"`
-	ProjectJob       string      `json:"project_job"`
-	CustomerPO       string      `json:"customer_po"`
-	SalespersonID    string      `json:"salesperson_id,omitempty"`
-	SalespersonName  string      `json:"salesperson_name,omitempty"`
-	Fulfillment      string      `json:"fulfillment"`
-	DeliveryAddress  string      `json:"delivery_address"`
-	RequestedDate    string      `json:"requested_date,omitempty"`
-	DeliveryFeeCents int64       `json:"delivery_fee_cents"`
-	DepositCents     int64       `json:"deposit_cents"`
-	SubtotalCents    int64       `json:"subtotal_cents"`
-	TaxCents         int64       `json:"tax_cents"`
-	TotalCents       int64       `json:"total_cents"`
-	Lines            []TermsLine `json:"lines"`
+	QuoteID          string `json:"quote_id"`
+	DepositRequired  bool   `json:"deposit_required"`
+	DepositPct       int    `json:"deposit_pct"`
+	IncludeImages    bool   `json:"include_images"`
+	CustomerNotes    string `json:"customer_notes"`
+	ContactName      string `json:"contact_name"`
+	ProjectJob       string `json:"project_job"`
+	CustomerPO       string `json:"customer_po"`
+	SalespersonID    string `json:"salesperson_id,omitempty"`
+	SalespersonName  string `json:"salesperson_name,omitempty"`
+	Fulfillment      string `json:"fulfillment"`
+	DeliveryAddress  string `json:"delivery_address"`
+	RequestedDate    string `json:"requested_date,omitempty"`
+	DeliveryFeeCents int64  `json:"delivery_fee_cents"`
+	DepositCents     int64  `json:"deposit_cents"`
+	SubtotalCents    int64  `json:"subtotal_cents"`
+	TaxCents         int64  `json:"tax_cents"`
+	TotalCents       int64  `json:"total_cents"`
+	// TaxLabel is the name of the dealer's tax ("HST", "Sales tax") the totals row prints; the screen
+	// renders it and never guesses it.
+	TaxLabel string      `json:"tax_label"`
+	Lines    []TermsLine `json:"lines"`
 }
 
 // TermsLine is one line's builder extras, keyed by line_no.
@@ -432,7 +437,12 @@ func (s *StaffService) Terms(ctx context.Context, quoteID string) (QuoteTerms, e
 	if !caller.CanAccessBranch(branchID) {
 		return QuoteTerms{}, ErrForbidden
 	}
-	return b.ReadQuoteTerms(ctx, quoteID)
+	t, err := b.ReadQuoteTerms(ctx, quoteID)
+	if err != nil {
+		return QuoteTerms{}, err
+	}
+	t.TaxLabel = s.taxLabel(ctx)
+	return t, nil
 }
 
 // UpdateTerms writes the terms strip under the quote row lock. Authorization rides the ratified
@@ -451,7 +461,48 @@ func (s *StaffService) UpdateTerms(ctx context.Context, quoteID string, in Terms
 	if err != nil {
 		return QuoteTerms{}, err
 	}
-	return b.UpdateTermsGuarded(ctx, quoteID, in, rule.fromList(), caller.UserID, b.ReadHSTRateBps(ctx))
+	rate := b.ReadHSTRateBps(ctx)
+	if s.standardRate != nil {
+		// The engine's standard rate is the authority when wired, so the quote and the ring it becomes
+		// stamp one rate. A failed read refuses the write; it never stamps a rate the dealer does not charge.
+		bps, err := s.standardRate.StandardRateBps(ctx, "")
+		if err != nil {
+			return QuoteTerms{}, err
+		}
+		rate = int64(bps)
+	}
+	t, err := b.UpdateTermsGuarded(ctx, quoteID, in, rule.fromList(), caller.UserID, rate)
+	if err != nil {
+		return QuoteTerms{}, err
+	}
+	t.TaxLabel = s.taxLabel(ctx)
+	return t, nil
+}
+
+// StandardRateReader answers the dealer's standard tax rate in basis points on a date ("" is today). The
+// composition root binds an adapter over the tax engine.
+type StandardRateReader interface {
+	StandardRateBps(ctx context.Context, asOf string) (int, error)
+}
+
+// WithStandardRate injects the dealer's standard rate seam.
+func (s *StaffService) WithStandardRate(r StandardRateReader) *StaffService {
+	s.standardRate = r
+	return s
+}
+
+// WithTaxLabel injects the dealer's tax word seam (platform/taxwords): the name every totals row and
+// customer page of a quote prints. Unwired is the Ontario dealer's "HST".
+func (s *StaffService) WithTaxLabel(src taxwords.Source) *StaffService {
+	s.taxWords = src
+	return s
+}
+
+// taxLabel reads the dealer's tax word. A read-only display degrades to the neutral word on a failed
+// read; the figures beside it are the quote's own stored ones.
+func (s *StaffService) taxLabel(ctx context.Context) string {
+	w, _ := taxwords.Resolve(ctx, s.taxWords)
+	return w
 }
 
 // - per-line discount -
@@ -557,7 +608,9 @@ func (s *StaffService) settingsKitService() *settings.Service {
 	if !ok || r.pool == nil {
 		return nil
 	}
-	return settings.NewService(settings.NewStore(r.pool)).WithSurface("quotes.builder", s.SurfaceHooks())
+	return settings.NewService(settings.NewStore(r.pool)).
+		WithZone(settings.NewDealerConfigReader(r.pool)).
+		WithSurface("quotes.builder", s.SurfaceHooks())
 }
 
 // identityCallerOK is referenced by tests to prove the gate consults the identity caller, kept

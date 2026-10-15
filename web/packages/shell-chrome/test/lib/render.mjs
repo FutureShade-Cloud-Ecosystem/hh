@@ -6,9 +6,11 @@
 // value throws here, synchronously, to the caller.
 //
 // Import order matters and is a contract: the DOM shim must be on globalThis
-// before any LitElement subclass is defined, so anything that renders element
+// before any LitElement subclass is defined (./dom.mjs fills the names in when
+// another file's stub window made the shim a no-op), so anything that renders element
 // classes in Node imports this module BEFORE importing from ../src/.
 
+import './dom.mjs';
 import '@lit-labs/ssr/lib/install-global-dom-shim.js';
 import { render } from '@lit-labs/ssr';
 import { collectResultSync } from '@lit-labs/ssr/lib/render-result.js';

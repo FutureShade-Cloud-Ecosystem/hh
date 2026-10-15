@@ -22,10 +22,13 @@ import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
+import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient } from "@hardscapehouse/api-client";
+import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import type { DemoFlow } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { drawIcon, iconForId } from "@hardscapehouse/pos-kit/src/ported/_icon-consumer.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DealerApi, type BranchRow, type ResetLink } from "./dealer-api.js";
@@ -90,6 +93,8 @@ import {
   type TourSection,
 } from "./views-settings.js";
 import { EMPTY_FILTERS, auditRefusalWords, sinceWire, type AuditFilters } from "./audit-logic.js";
+import { AdminApi } from "./admin-api.js";
+import { AdminWork, isAdminWorkSurface } from "./admin-work.js";
 import { PricingApi } from "./pricing-api.js";
 import { pricingAttrs, PricingController } from "./pricing-controller.js";
 import { renderPricing } from "./views-pricing.js";
@@ -219,15 +224,8 @@ const emptySettingsModel = (): SettingsModel => ({
 export class DealerAdminApp extends HHElement {
   static styles = [baseStyles, dealerStyles, pricingStyles];
 
-  // The demo account surface: listFlows() and chooseFlow() over the core's
-  // demo routes. It is the injected AccountSurface for the auth package.
-  readonly #demoAccount: AccountSurface;
-
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();
-
-  // The auth controller: owns sign-in, sign-out, and adoption.
-  readonly #auth: AuthController;
 
   // The demo client: no bearer token (demo routes are pre-auth by design).
   readonly #demoClient = new ApiClient({
@@ -235,15 +233,56 @@ export class DealerAdminApp extends HHElement {
     headers: async () => ({ "X-Org": DEMO_ORG }),
   });
 
+  // The demo account surface: listFlows() and chooseFlow() over the core's
+  // demo routes. It is the injected AccountSurface for the auth package.
+  readonly #demoAccount: AccountSurface = new DemoAccount({ client: this.#demoClient });
+
+  // The custody the served config chose: in demo mode the auth controller over the demo account, as
+  // always; in console mode this page recovers its own session on load (boot-custody.ts).
+  readonly #custody = bootCustody(servedConsoleConfig(), { sessions: this.#sessions, demoAccount: this.#demoAccount, demoOrg: DEMO_ORG });
+
+  // The auth controller: owns sign-in, sign-out, and adoption.
+  readonly #auth: AuthController = this.#custody.controller;
+
   // The staff client: carries the mint's bearer after adoption.
   readonly #staffClient = new ApiClient({
-    baseUrl: "",
-    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
+    baseUrl: this.#custody.coreBaseUrl,
+    // The Work shell's rule: money never queues. With no signal a write is refused before it dials, with one honest state.
+    fetch: noSignalFetch(undefined, browserSignal()),
+    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => this.#custody.org }),
   });
 
   // The dealer's calls, over the staff client.
   readonly #api = new DealerApi(this.#staffClient);
 
+  // The admin-rest surfaces' door and controller: the assistant's month, and
+  // the rest of the registry as it lands. The controller owns their state and
+  // writes; app-root hands it the ways to the page and asks it for templates.
+  readonly #adminApi = new AdminApi(this.#staffClient);
+  readonly #admin = new AdminWork(this.#adminApi, {
+    repaint: () => this.requestUpdate(),
+    field: (name) => this.renderRoot.querySelector<HTMLInputElement>(`[data-field="${name}"]`)?.value ?? "",
+    setField: (name, value) => {
+      const el = this.renderRoot.querySelector<HTMLInputElement>(`[data-field="${name}"]`);
+      if (el !== null && el.value !== value) el.value = value;
+    },
+    setChecked: (name, value) => {
+      const el = this.renderRoot.querySelector<HTMLInputElement>(`[data-key][id="${name}"]`);
+      if (el !== null) el.checked = value;
+    },
+    meter: (name, fraction) => {
+      const el = this.renderRoot.querySelector<HTMLElement>(`[data-meter="${name}"]`);
+      if (el !== null) el.style.width = `${Math.round(fraction * 100)}%`;
+    },
+    download: (bytes, filename, type) => {
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    },
+  });
   // The role configuration's calls, over the staff client.
   readonly #configApi = new ConfigApi(this.#staffClient);
 
@@ -291,12 +330,6 @@ export class DealerAdminApp extends HHElement {
   // The copied mark's timer, cleared on disconnect and sign out.
   #copiedTimer = 0;
 
-  constructor() {
-    super();
-    this.#demoAccount = new DemoAccount({ client: this.#demoClient });
-    this.#auth = new AuthController({ account: this.#demoAccount, sessions: this.#sessions });
-  }
-
   // Every control rides data-action names; one host listener reads them, as
   // the till's and Manager Home's do.
   readonly #onHostClick = (event: MouseEvent): void => {
@@ -304,6 +337,7 @@ export class DealerAdminApp extends HHElement {
       .composedPath()
       .find((node): node is Element => node instanceof Element && node.hasAttribute("data-action"));
     const action = control?.getAttribute("data-action");
+    if (action !== null && action !== undefined && action !== "" && this.#admin.click(action, control)) return;
     if (action === "switch-role" || action === "sign-out") {
       this.#onSignOut();
       return;
@@ -320,6 +354,7 @@ export class DealerAdminApp extends HHElement {
         // A surface loads its own reads the first time it is opened.
         if (surface === "hotkeys" && this.#hotkeys.phase === "loading") void this.#loadHotkeys();
         if (surface === "audit" && this.#audit.phase === "loading") void this.#loadAudit();
+        if (isAdminWorkSurface(surface)) this.#admin.open(surface);
         if (surface === "role-config" && this.#roleConfig.phase === "loading") void this.#loadRoleConfig();
         if (surface === "deployment" && this.#settings.brand.phase === "loading") void this.#loadSettings();
         if (surface === "pricing") void this.#pricing.open();
@@ -505,6 +540,10 @@ export class DealerAdminApp extends HHElement {
   readonly #onHostChange = (event: Event): void => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    if (this.#admin.change(target)) {
+      this.requestUpdate();
+      return;
+    }
     const field = target.getAttribute("data-field") ?? "";
     if (field.startsWith("pr-")) {
       // A file input's answer is the chosen file read whole: the text hands
@@ -574,8 +613,8 @@ export class DealerAdminApp extends HHElement {
     }
   };
 
-  // The audit filters', the pricing editors' and the role configuration's and
-  // deployment settings' text and number fields mirror from input events,
+  // The audit filters', the admin-rest surfaces', the pricing editors' and the
+  // role configuration's and deployment settings' text and number fields mirror from input events,
   // never bound.
   readonly #onHostInput = (event: Event): void => {
     const target = event.target;
@@ -588,6 +627,13 @@ export class DealerAdminApp extends HHElement {
       if (field === "audit-action") this.#audit = { ...this.#audit, filters: { ...filters, action: value } };
       if (field === "audit-actor-id") this.#audit = { ...this.#audit, filters: { ...filters, actor_id: value } };
       if (field === "audit-since") this.#audit = { ...this.#audit, filters: { ...filters, since: value } };
+      return;
+    }
+    if (
+      field !== "" &&
+      this.#admin.input(field, target instanceof HTMLInputElement || target instanceof HTMLSelectElement ? target.value : "")
+    ) {
+      this.requestUpdate();
       return;
     }
     if (field.startsWith("pr-")) {
@@ -644,14 +690,22 @@ export class DealerAdminApp extends HHElement {
     }
   };
 
+  /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
+  #stopHostSignOut: (() => void) | null = null;
+
   connectedCallback(): void {
     super.connectedCallback();
+    this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     // change, input and keydown do not leave this element's own shadow root,
     // so their listeners sit on the root itself.
     this.renderRoot.addEventListener("change", this.#onHostChange);
     this.renderRoot.addEventListener("input", this.#onHostInput);
     this.renderRoot.addEventListener("keydown", this.#onHostKeydown);
+    if (this.#custody.mode === "console") {
+      this.#custody.begin("dealer-admin", (outcome) => this.#onRecovered(outcome));
+      return;
+    }
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -674,7 +728,27 @@ export class DealerAdminApp extends HHElement {
     }
   }
 
+  // Console mode: this page recovered its own session, or could not. A role the matrix gives this
+  // app lands on its screen; an unavailable page keeps the unavailable entry while the custody retries;
+  // a session the front door must settle goes back there.
+  #onRecovered(outcome: AppStart): void {
+    if (outcome.kind === "ready") {
+      this.#roleLabel = outcome.entry.roleLabel;
+      this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
+      void this.#start();
+    } else if (outcome.kind === "front-door" && outcome.why === "ended") {
+      this.#onSignOut();
+      return;
+    } else {
+      this.#entryView = entryUnavailable();
+      if (outcome.kind === "front-door") this.#custody.toFrontDoor();
+    }
+    this.requestUpdate();
+  }
+
   disconnectedCallback(): void {
+    this.#stopHostSignOut?.();
+    this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("change", this.#onHostChange);
     this.renderRoot.removeEventListener("input", this.#onHostInput);
@@ -713,6 +787,9 @@ export class DealerAdminApp extends HHElement {
       const el = this.renderRoot.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${field}"]`);
       if (el !== null && el.value !== value) el.value = value;
     }
+    // The admin-rest surfaces' fields, toggles and meters mirror the same way:
+    // a refused write snaps back and a fresh read lands as the server says.
+    this.#admin.mirror();
     // The role configuration editor's fields mirror the model the same way:
     // a fresh editor, a reload after a save, or a cleared add row empties
     // what is on the glass.
@@ -1689,10 +1766,10 @@ export class DealerAdminApp extends HHElement {
         this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
         await this.#start();
       } else {
-        this.#entryView = { ...this.#entryView, busy: false, message: "Demo sign-in refused: the mint's session was not usable." };
+        this.#entryView = { ...this.#entryView, busy: false, message: "Sign-in did not go through. Try the role again." };
       }
     } else {
-      this.#entryView = { ...this.#entryView, busy: false, message: `Demo sign-in refused. ${errorWords(result.error)}` };
+      this.#entryView = { ...this.#entryView, busy: false, message: `Sign-in did not go through. ${errorWords(result.error)}` };
     }
     this.requestUpdate();
   }
@@ -1707,8 +1784,15 @@ export class DealerAdminApp extends HHElement {
     this.#roleConfig = emptyRoleConfigModel();
     this.#settings = emptySettingsModel();
     this.#auditDetailGen += 1;
+    this.#admin.signOut();
     this.#pricing.reset();
     clearFrontDoorHandoff();
+    if (this.#custody.mode === "console") {
+      this.#entryView = entryUnavailable();
+      this.requestUpdate();
+      void this.#custody.leave();
+      return;
+    }
     void this.loadFlows();
   }
 
@@ -1744,6 +1828,10 @@ export class DealerAdminApp extends HHElement {
   private renderWork(): TemplateResult {
     // The router line: one case per registry surface. The next coder adds
     // theirs beside this one; nothing else in this file changes.
+    if (isAdminWorkSurface(this.#surface)) {
+      const view = this.#admin.view(this.#surface);
+      if (view !== null) return view;
+    }
     if (this.#surface === "hotkeys") return renderHotkeys(this.#hotkeys);
     if (this.#surface === "audit") return renderAudit(this.#audit);
     if (this.#surface === "role-config") return renderRoleConfig(this.#roleConfig);
@@ -1799,7 +1887,7 @@ export class DealerAdminApp extends HHElement {
               <span class="mark">${drawIcon(iconForId(DealerAdminApp.FLOW_ICONS[flow.flow ?? ""] ?? "lucide:circle-user"), 29)}</span>
               <span class="words">
                 <span class="role">${flow.label ?? flow.flow}</span>
-                <span class="what">Staff, the role configuration, the deployment's settings, and the audit trail.</span>
+                <span class="what">Staff, pricing, the settings, the assistant, print, exports, the catalog and the audit trail.</span>
               </span>
             </button>
           `)}

@@ -12,8 +12,8 @@ import { describeHits, scanPayload } from "../_lib/fence.mjs";
 
 export const BASE = process.env.YARD_IMAGE_URL ?? "http://127.0.0.1:5801";
 
-/** Trenton, the populate's own id: the branch the yard team's grant reaches. */
-export const TRENTON = "5d1b3f6e-0000-4000-9000-000000000001";
+/** Point Loma, the populate's own id: the branch the yard team's grant reaches. */
+export const POINT_LOMA = "5d1b3f6e-0000-4000-9000-000000000001";
 
 // ---- the demo mint, paced to a human ----
 //
@@ -103,7 +103,7 @@ export async function staff(
 }
 
 /** The yard's own queue at a branch, as the core answers it. */
-export async function queue(page: Page, branchId = TRENTON): Promise<any> {
+export async function queue(page: Page, branchId = POINT_LOMA): Promise<any> {
   const answer = await staff(page, "GET", `/api/v1/yard/pick-queue?branch_id=${branchId}`);
   return answer;
 }

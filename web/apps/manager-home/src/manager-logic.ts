@@ -8,7 +8,9 @@
 // home bento (repository hardscapeos_dibbits, read only; see PROVENANCE.md),
 // narrowed to the read-only landing this first slice builds.
 import { formatDollars } from "@hardscapehouse/pos-kit/src/ported/_money-format.js";
-import type { NeedsRow, ReceivingRow, WidgetDatum, WidgetView } from "./manager-api.js";
+import { needsLink } from "./landing-links.js";
+import { sinceWords } from "./drivers-logic.js";
+import type { NeedsRow, ReceivingRow, Shortage, WidgetDatum, WidgetView } from "./manager-api.js";
 
 // -- the words a state carries ----------------------------------------------------------------------
 
@@ -95,41 +97,51 @@ export function shareNote(part: number, total: number): string {
 // -- the landing's views ---------------------------------------------------------------------------
 
 /** The views this app owns. The needs links name them with these words. */
-export type ViewKind = "home" | "shortages" | "receiving" | "approvals" | "builder" | "reporting" | "warranty";
+export type ViewKind = "home" | "shortages" | "receiving" | "approvals" | "drivers" | "builder" | "reporting" | "warranty" | "quick-actions";
 
 export const VIEW_TITLE: Readonly<Record<ViewKind, string>> = Object.freeze({
   home: "Home",
   shortages: "Shortages · open",
   receiving: "Receiving · short",
   approvals: "Approvals",
+  drivers: "Drivers",
   builder: "Arrange home",
   reporting: "Reporting",
   warranty: "Warranty",
+  "quick-actions": "Quick actions",
 });
 
 /**
- * Where one needs row goes. The two yard manager rows name views nothing else serves
- * (MANAGER-HOME-UI-NOTES): Shortages · open and Receiving · short are THIS app's views, and
- * receiving differences open Receiving, not Yard Pick. Approvals waiting opens this app's
- * approvals view. Any other row names a surface this box does not serve yet: the row shows its
- * count and its words, and goes nowhere, said plainly rather than linked to nothing.
+ * Where one needs row goes. The three yard manager rows and Approvals waiting name views THIS
+ * app serves (MANAGER-HOME-UI-NOTES): receiving differences open Receiving, not Yard Pick. A row
+ * whose source a live app owns (landing-links.ts) names that app. Any other row names a surface
+ * this box does not serve yet: the row shows its count and its words, and goes nowhere, said
+ * plainly rather than linked to nothing.
  */
-export function needsRowTarget(row: NeedsRow): { view: ViewKind } | { view: null; screen: string } {
+export type NeedsTarget =
+  | { view: ViewKind }
+  | { view: null; app: string; href: string }
+  | { view: null; screen: string };
+
+export function needsRowTarget(row: NeedsRow, profile?: string): NeedsTarget {
   if (row.source_key === "tasks.open_shortages") return { view: "shortages" };
   if (row.source_key === "purchasing.receiving_differences") return { view: "receiving" };
   if (row.source_key === "approvals.waiting") return { view: "approvals" };
+  const link = needsLink(row.source_key, profile);
+  if (link !== null) return { view: null, app: link.app, href: link.href };
   return { view: null, screen: row.view !== "" ? row.view : row.screen };
 }
 
 // -- the rows the board drew that nothing measures ---------------------------------------------------
 
 /**
- * The board's needs rows with no wired source. Said plainly, never faked: each renders its words
- * and an explicit no-source sentence, never a number (the 0201 catalog has no measure behind
- * them; MANAGER-HOME-UI-NOTES names Weights pending).
+ * The board's needs rows the core could not measure. Said plainly, never faked: each renders its
+ * words and an explicit not-counted sentence, never a number. Weights pending is measured by the
+ * weight.pending tile now (weights-logic.ts joins the count); this row is what a tile that cannot
+ * answer, or a home that did not load, leaves in its place on the yard shaped homes.
  */
 export const UNSOURCED_NEEDS: readonly { readonly key: string; readonly what: string; readonly words: string }[] = Object.freeze([
-  { key: "weights.pending", what: "Weights pending", words: "No source is wired for this row yet, so it is not counted here." },
+  { key: "weights.pending", what: "Weights pending", words: "The weights count is not measured right now, so it is not counted here." },
 ]);
 
 /** The board's widget tiles with no measure in the widget catalog. Same rule, said plainly. */
@@ -194,6 +206,34 @@ export function resolveRefusalWords(error: string, status: number | undefined): 
     return `You may not resolve this shortage. ${SHORTAGE_RESOLVER_WORDS}`;
   }
   return error !== "" ? error : "That did not go through. Try again in a moment.";
+}
+
+/**
+ * One open shortage as a review card reads (FROM-PRINCIPAL 23): what was short, how much, who
+ * reported it as a role label, when, and the status word. The reporter id the core sends is a
+ * user, never shown; the writers of a shortage are the yard team and the yard manager, so the
+ * label is the team's. A time that does not parse is omitted, never guessed.
+ */
+export interface ShortageCard {
+  readonly what: string;
+  readonly howMuch: string;
+  readonly reporter: string;
+  readonly when: string;
+  readonly status: string;
+  readonly resolved: boolean;
+}
+
+export function shortageCard(s: Shortage, nowMs: number): ShortageCard {
+  const line = s.order_line_no === null ? "" : `line ${s.order_line_no}, `;
+  const resolved = s.resolved_at !== null;
+  return {
+    what: s.description,
+    howMuch: `${line}short ${qtyWords(s.qty_short)} ${s.uom}`,
+    reporter: "Reported by staff",
+    when: sinceWords(s.reported_at, nowMs),
+    status: resolved ? "Resolved" : "Needs review",
+    resolved,
+  };
 }
 
 // -- the words only zone (the round 1 review's P2-3) ------------------------------------------------
@@ -285,12 +325,13 @@ export function kindWord(kind: string): string {
 
 /**
  * Who decides each kind of approval, as the matrix names the lists (exception_approvers, with
- * the own-branch floor clearers on margin). The words the approvals view carries when the core
+ * the own-branch sales manager on margin; the branch manager decides no kind, the core's
+ * DecidesKind refuses it every one). The words the approvals view carries when the core
  * refuses a kind this caller does not decide.
  */
 export const APPROVAL_DECIDER_WORDS: Readonly<Record<string, string>> = Object.freeze({
   MARGIN_BELOW_MINIMUM:
-    "Margin approvals are decided by the financial controller, the general manager, and a sales manager or branch manager in their own branch.",
+    "Margin approvals are decided by the financial controller, the general manager, and a sales manager in their own branch.",
   CREDIT_LIMIT_EXCEEDED: "Credit approvals are decided by the financial controller and the general manager.",
   COD_CONSTRAINT: "Cash On Demand approvals are decided by the financial controller and the general manager.",
   JE_OVER_THRESHOLD: "Journal entry approvals are decided by the financial controller and the general manager.",

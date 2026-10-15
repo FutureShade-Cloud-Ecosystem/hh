@@ -8,7 +8,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  INVOICE_TAX_NOTE,
+  invoiceTaxNote,
+  midSentence,
   acceptanceAmountPhrase,
   acceptanceRefusal,
   acceptReady,
@@ -22,8 +23,10 @@ import { createHash } from "node:crypto";
 import { createAcceptKeys, deriveAcceptKey } from "../src/accept-key.js";
 import { isKeyReuseRefusal, validateAcceptance, validateQuoteView } from "../src/quote-client.js";
 
-const TAXED = { subtotalCents: 9665, taxCents: 1257, totalCents: 10922 };
-const UNTAXED = { subtotalCents: 9665, taxCents: 0, totalCents: 9665 };
+const TAXED = { subtotalCents: 9665, taxCents: 1257, totalCents: 10922, taxLabel: "HST" };
+const UNTAXED = { subtotalCents: 9665, taxCents: 0, totalCents: 9665, taxLabel: "HST" };
+const CA_TAXED = { subtotalCents: 9665, taxCents: 749, totalCents: 10414, taxLabel: "Sales tax" };
+const CA_UNTAXED = { subtotalCents: 9665, taxCents: 0, totalCents: 9665, taxLabel: "Sales tax" };
 
 test("carriesTax is a claim about the data, defensible on both sides", () => {
   assert.equal(carriesTax(TAXED), true);
@@ -65,13 +68,49 @@ test("an untaxed quote keeps the before-HST framing, note and all", () => {
     block.rows.map((row) => row.grand),
     [false, true],
   );
-  assert.equal(block.note, INVOICE_TAX_NOTE);
+  assert.equal(block.note, invoiceTaxNote("HST"));
+  assert.equal(block.note, "HST is applied when this quote is invoiced.");
   assert.equal(block.preTax, true);
 });
 
 test("the acceptance amount phrase names the HST inside a taxed total", () => {
   assert.equal(acceptanceAmountPhrase(TAXED), "$109.22, including $12.57 HST,");
   assert.equal(acceptanceAmountPhrase(UNTAXED), "$96.65 before HST");
+});
+
+test("a California dealer's quote speaks Sales tax in every place the claim is made", () => {
+  assert.deepEqual(
+    totalsBlock(CA_TAXED).rows.map((row) => row.label),
+    ["Subtotal $96.65", "Sales tax $7.49", "Total $104.14"],
+  );
+  assert.equal(totalsBlock(CA_TAXED).note, null);
+  const pre = totalsBlock(CA_UNTAXED);
+  assert.deepEqual(
+    pre.rows.map((row) => row.label),
+    ["Subtotal (before sales tax) $96.65", "Amount before sales tax $96.65"],
+  );
+  assert.equal(pre.note, "Sales tax is applied when this quote is invoiced.");
+  assert.equal(acceptanceAmountPhrase(CA_TAXED), "$104.14, including $7.49 Sales tax,");
+  assert.equal(acceptanceAmountPhrase(CA_UNTAXED), "$96.65 before sales tax");
+  for (const row of [...totalsBlock(CA_TAXED).rows, ...pre.rows]) assert.ok(!row.label.includes("HST"), row.label);
+});
+
+test("an acronym keeps its capitals mid sentence and a phrase drops its capital", () => {
+  assert.equal(midSentence("HST"), "HST");
+  assert.equal(midSentence("GST"), "GST");
+  assert.equal(midSentence("Sales tax"), "sales tax");
+});
+
+test("a quote or acceptance without the server's tax word is refused as data, never guessed", () => {
+  const base = {
+    quote_no: "Q-1", customer_name: "X", status: "SENT", expired: false, lines: [],
+    subtotal_cents: 100, tax_cents: 8, total_cents: 108, as_of: "2026-01-01T00:00:00Z", acceptable: true,
+  };
+  assert.equal(validateQuoteView(base), null);
+  assert.equal(validateQuoteView({ ...base, tax_label: "Sales tax" })?.taxLabel, "Sales tax");
+  const acc = { quote_no: "Q-1", typed_name: "A", accepted_at: "x", subtotal_cents: 100, tax_cents: 8, total_cents: 108 };
+  assert.equal(validateAcceptance(acc), null);
+  assert.equal(validateAcceptance({ ...acc, tax_label: "HST" })?.taxLabel, "HST");
 });
 
 test("the accept gate refuses unreviewed quantities, a blank name and an unticked attestation, and passes the honest form", () => {
@@ -96,7 +135,7 @@ test("the accept button is ready only with the quantities box, a name and the co
 });
 
 test("thumbnails render only when the dealer chose images and a line carries one", () => {
-  const line = { imageRef: "p-banas" };
+  const line = { imageRef: "p-bluff" };
   const bare = {};
   assert.equal(showsImages({ includeImages: true, lines: [line] }), true);
   assert.equal(showsImages({ includeImages: false, lines: [line] }), false);
@@ -150,24 +189,25 @@ test("money renders from integer cents, and the unknown renders as a placeholder
 
 const FULL_VIEW = {
   quote_no: "Q-25",
-  customer_name: "Quinte Hardscapes Inc",
+  customer_name: "Fieldstone Hardscapes Inc",
   status: "SENT",
   valid_until: "the-valid-until-marker",
   expired: false,
   lines: [
     {
       line_no: 1,
-      description: "Banas Natural Step",
+      description: "Bluff Natural Step",
       qty_entered: "1.0000",
       uom_entered: "PC",
       unit_price_cents: 2057,
       line_total_cents: 2057,
-      image_ref: "p-banas",
+      image_ref: "p-bluff",
     },
   ],
   subtotal_cents: 2057,
   tax_cents: 267,
   total_cents: 2324,
+  tax_label: "HST",
   as_of: "the-as-of-marker",
   acceptable: true,
 };
@@ -176,12 +216,12 @@ test("a complete quote view parses field by field", () => {
   const view = validateQuoteView(FULL_VIEW);
   assert.notEqual(view, null);
   assert.equal(view.quoteNo, "Q-25");
-  assert.equal(view.customerName, "Quinte Hardscapes Inc");
+  assert.equal(view.customerName, "Fieldstone Hardscapes Inc");
   assert.equal(view.status, "SENT");
   assert.equal(view.validUntil, "the-valid-until-marker");
   assert.equal(view.expired, false);
   assert.equal(view.lines.length, 1);
-  assert.equal(view.lines[0].imageRef, "p-banas");
+  assert.equal(view.lines[0].imageRef, "p-bluff");
   assert.equal(view.subtotalCents, 2057);
   assert.equal(view.acceptable, true);
 });
@@ -195,8 +235,8 @@ test("the dealer's quantity notice is read as sent, and absent is honest, never 
 });
 
 test("the order number is read only on a CONVERTED quote, as sent, and absent is honest", () => {
-  const converted = { ...FULL_VIEW, status: "CONVERTED", acceptable: false, order_no: "SO-TRT-17" };
-  assert.equal(validateQuoteView(converted).orderNo, "SO-TRT-17");
+  const converted = { ...FULL_VIEW, status: "CONVERTED", acceptable: false, order_no: "SO-PLM-17" };
+  assert.equal(validateQuoteView(converted).orderNo, "SO-PLM-17");
   // The fence is the view's own: a number on any other status is not honoured, whatever sent it.
   for (const status of ["DRAFT", "SENT", "ACCEPTED", "EXPIRED", "LOST"]) {
     assert.equal(validateQuoteView({ ...converted, status }).orderNo, null, `${status} carries no order number`);
@@ -252,6 +292,7 @@ test("the acceptance result parses, and an answer without its timestamp is refus
     subtotal_cents: 9665,
     tax_cents: 1257,
     total_cents: 10922,
+    tax_label: "HST",
   });
   assert.notEqual(ok, null);
   assert.equal(ok.typedName, "Sample Customer");
@@ -265,6 +306,7 @@ test("the acceptance result parses, and an answer without its timestamp is refus
     subtotal_cents: 9665,
     tax_cents: 1257,
     total_cents: 10922,
+    tax_label: "HST",
     quantities_confirmed: true,
   });
   assert.equal(confirmed.quantitiesConfirmed, true);
@@ -275,6 +317,7 @@ test("the acceptance result parses, and an answer without its timestamp is refus
     subtotal_cents: 9665,
     tax_cents: 1257,
     total_cents: 10922,
+    tax_label: "HST",
   };
   assert.equal(validateAcceptance(noTime), null);
   assert.equal(validateAcceptance(null), null);

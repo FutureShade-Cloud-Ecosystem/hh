@@ -79,6 +79,9 @@ type planInput struct {
 	// that product uncategorised rather than inventing a taxonomy on a live system.
 	Categories map[string]string
 	Seal       sealer
+	// Contractor is what the contractor world needs from the database (demoseed_contractor.go): that
+	// the populate has made the account, its branch and its portal users. Zero value: no world.
+	Contractor contractorFacts
 }
 
 // planSummary is what the command prints. It is the human-readable half of the same arithmetic the
@@ -116,6 +119,10 @@ type planSummary struct {
 	// every row the section wrote.
 	ProcurementLines  []string
 	ProcurementRowIDs []string
+	// The contractor world (demoseed_contractor.go): one line per document, and the id of every row
+	// the section wrote.
+	ContractorLines  []string
+	ContractorRowIDs []string
 }
 
 // -- the catalogue of demo entities, as tables ----------------------------------------------------
@@ -276,6 +283,14 @@ var demoOrders = []orderSpec{
 	{"O03", 1, "C03", "CONFIRMED", "DELIVERY", 2, 1, []lineSpec{ln("P07", "18.0000", 18), ln("P08", "6.0000", 6)}},
 	{"O04", 1, "C02", "CONFIRMED", "PICKUP", 1, 0, []lineSpec{ln("P02", "220.0000", 220)}},
 	{"O05", 0, "C08", "CONFIRMED", "DELIVERY", 5, 2, []lineSpec{ln("P03", "410.0000", 410)}},
+	// The Logistics Manager's load board material (roadmap 2.4): two open delivery orders with
+	// requested dates and NO stop, so the first Dispatch increment's walk builds its own load
+	// rather than inheriting one. Every other open delivery order above sits on a stop already;
+	// these two are the board's own work, requested today and tomorrow so they land inside the
+	// commit-prompt window the persona signs in under. At branch 1 (Trenton before the demo world
+	// renames it, the Point Loma main yard), the yard the demo populate converges the persona onto.
+	{"O29", 1, "C03", "CONFIRMED", "DELIVERY", 0, 0, []lineSpec{ln("P04", "120.0000", 120)}},
+	{"O30", 1, "C05", "CONFIRMED", "DELIVERY", 0, 1, []lineSpec{ln("P01", "480.0000", 480), ln("P06", "6.0000", 6)}},
 	{"O06", 0, "C01", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "320.0000", 320), ln("P10", "24.0000", 24)}},
 	{"O07", 0, "C04", "PICKING", "DELIVERY", 1, 0, []lineSpec{ln("P01", "2400.0000", 2400)}},
 	{"O08", 1, "C05", "PICKING", "WILL_CALL", 1, 0, []lineSpec{ln("P09", "12.0000", 12)}},
@@ -658,12 +673,13 @@ var demoScans = []scanSpec{
 
 // -- §12b the yard manager's receiving difference (Needs-you · purchasing.receiving_differences) ----
 //
-// ONE PARTIAL PURCHASE ORDER AT TRENTON, with one line still short: the board the yard manager's
-// landing draws carries exactly this row (a PO that landed part of what was ordered), and without
-// it the receiving difference source counts zero everywhere (no other seed writes purchasing_pos),
+// ONE PARTIAL PURCHASE ORDER PER BRANCH, each with one line still short: the board the yard manager's
+// landing draws carries exactly these rows (a PO that landed part of what was ordered), and without
+// them the receiving difference source counts zero everywhere (no other seed writes purchasing_pos),
 // the "Receiving · short" view lands empty on the demo box, and the open value the cost gate lets
-// a yard manager read has no row to ride. The vendor is an invented demo vendor; the numbers are
-// the seed's own (20 ordered, 18 landed: 2 CYD of mulch short at $27.00, $54.00 still open).
+// a yard manager read has no row to ride. The vendors are invented demo vendors; the numbers are
+// the seed's own (PB0: 100 ordered, 90 landed: 10 PC of pavers short at $3.95, $39.50 still open;
+// PB1: 20 ordered, 18 landed: 2 CYD of mulch short at $27.00, $54.00 still open).
 type poSpec struct {
 	Key        string
 	Branch     int
@@ -686,6 +702,15 @@ type poLineSpec struct {
 }
 
 var demoPurchaseOrders = []poSpec{
+	{
+		Key: "PB0", Branch: 0, VendorKey: "V2", VendorNo: demoPrefix + "V-00",
+		VendorName: "Kingston Hardscape Supply (demo)", PONo: demoPrefix + "PO-76", Status: "PARTIAL",
+		Lines: []poLineSpec{
+			{Prod: "P01", Qty: "100.0000", Received: "90.0000", UnitCost: 395},
+			{Prod: "P06", Qty: "20.0000", Received: "20.0000", UnitCost: 3560},
+		},
+		AgeHours: 5, ExpectedIn: 2,
+	},
 	{
 		Key: "PB1", Branch: 1, VendorKey: "V1", VendorNo: demoPrefix + "V-01",
 		VendorName: "Northland Stone Supply (demo)", PONo: demoPrefix + "PO-77", Status: "PARTIAL",

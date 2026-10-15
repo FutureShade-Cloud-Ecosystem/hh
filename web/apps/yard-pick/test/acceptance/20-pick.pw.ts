@@ -3,14 +3,14 @@
 // (PR 274's mint row and the yard routes on main) and proved on the demo
 // image; this machine cannot build the image.
 import { expect, test } from "./helpers.js";
-import { TRENTON, arriveFromFrontDoor, queue, shot, staff } from "./helpers.js";
+import { POINT_LOMA, arriveFromFrontDoor, queue, shot, staff } from "./helpers.js";
 
-/** One open pick at Trenton, claimed by nobody yet. */
+/** One open pick at Point Loma, claimed by nobody yet. */
 async function anUnclaimedPick(page: import("@playwright/test").Page): Promise<any> {
   const answer = await queue(page);
   expect(answer.status).toBe(200);
   const open = (answer.body.items as any[]).filter((e) => e.task.status === "QUEUED" || e.task.status === "PUSHED");
-  expect(open.length, "the demo seed has open picks at Trenton").toBeGreaterThan(0);
+  expect(open.length, "the demo seed has open picks at Point Loma").toBeGreaterThan(0);
   return open[0];
 }
 
@@ -87,7 +87,7 @@ test("the screen walks the same story", async ({ page }, testInfo) => {
   await shot(page, "pick-walked", testInfo);
 });
 
-test("Trenton is the only branch the board names", async ({ page }) => {
+test("Point Loma is the only branch the board names", async ({ page }) => {
   await arriveFromFrontDoor(page);
-  await expect(page.locator("[data-branch]")).toHaveText(/Trenton/);
+  await expect(page.locator("[data-branch]")).toHaveText(/Point Loma/);
 });

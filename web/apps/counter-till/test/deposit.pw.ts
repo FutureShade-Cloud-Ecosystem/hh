@@ -32,10 +32,10 @@ async function pickAccount(page: Page, search: string, name: string): Promise<vo
   await row.click();
 }
 
-async function addHolland(page: Page): Promise<void> {
+async function addCharcoal(page: Page): Promise<void> {
   await openStep(page, "items");
-  await page.getByTestId("pos-scan-input").fill("holland");
-  const row = page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first();
+  await page.getByTestId("pos-scan-input").fill("charcoal");
+  const row = page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first();
   await expect(row).toBeVisible();
   await row.click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
@@ -49,7 +49,7 @@ async function chooseWillCall(page: Page): Promise<void> {
 test("a credit customer's payment step offers the deposit, and the ring carries it on account", async ({ page }) => {
   await signIn(page);
   await pickAccount(page, "C02", "Fenwick Builders Ltd");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
 
@@ -93,7 +93,7 @@ test("the Cash On Demand customer's step says the balance is due later, and the 
 }) => {
   await signIn(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
 
@@ -121,7 +121,7 @@ test("the Cash On Demand customer's step says the balance is due later, and the 
 test("a card deposit rides a card token and the card type shows", async ({ page }) => {
   await signIn(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
   await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER").click();
@@ -140,7 +140,7 @@ test("a card deposit rides a card token and the card type shows", async ({ page 
 test("collect now offers no deposit, and the server's refusal shows in its words", async ({ page }) => {
   await signIn(page);
   await pickAccount(page, "C02", "Fenwick Builders Ltd");
-  await addHolland(page);
+  await addCharcoal(page);
   await openStep(page, "payment");
   await expect(page.getByTestId("pay-shape-PAY_IN_FULL_NOW")).toHaveCount(0);
   await expect(page.getByTestId("pay-shape-DEPOSIT_NOW_REST_ON_ACCOUNT")).toHaveCount(0);
@@ -167,7 +167,7 @@ test("collect now offers no deposit, and the server's refusal shows in its words
 
 test("split tender stays reachable, quiet and secondary, with its behaviour unchanged", async ({ page }) => {
   await signIn(page);
-  await addHolland(page);
+  await addCharcoal(page);
   await openStep(page, "payment");
   const split = page.getByTestId("tender-split");
   await expect(split).toHaveText("Split between two tenders");
@@ -181,7 +181,7 @@ test("split tender stays reachable, quiet and secondary, with its behaviour unch
 test("the split link shows under a deposit shape too, and choosing it falls back to pay in full", async ({ page }) => {
   await signIn(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
   await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER").click();
@@ -198,7 +198,7 @@ test("at 390 the deposit step does not scroll sideways and no label clips", asyn
   await page.setViewportSize({ width: 390, height: 844 });
   await signIn(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
   await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER").click();
@@ -225,7 +225,7 @@ test("at 390 the deposit step does not scroll sideways and no label clips", asyn
 test("a deposit at or over the total rings, and the server's refusal speaks in words", async ({ page }) => {
   await signIn(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
   await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER").click();
@@ -248,7 +248,7 @@ test("a deposit at or over the total rings, and the server's refusal speaks in w
 test("a credit customer's supplier deposit is billed to the account", async ({ page }) => {
   await signIn(page);
   await pickAccount(page, "C02", "Fenwick Builders Ltd");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
 
@@ -283,7 +283,7 @@ test("a credit customer's supplier deposit is billed to the account", async ({ p
 test("the Cash On Demand customer sees no supplier deposit control", async ({ page }) => {
   await signIn(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Charge Account" }).click().catch(() => undefined);
@@ -296,7 +296,7 @@ test("the Cash On Demand customer sees no supplier deposit control", async ({ pa
 test("a deposit at or over the total says the sale is covered, never not priced", async ({ page }) => {
   await signIn(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  await addHolland(page);
+  await addCharcoal(page);
   await chooseWillCall(page);
   await openStep(page, "payment");
   await page.getByTestId("pay-shape-DEPOSIT_NOW_REST_DUE_LATER").click();

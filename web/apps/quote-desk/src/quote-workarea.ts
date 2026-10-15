@@ -3409,7 +3409,7 @@ export class QdQuoteWorkarea extends LitElement {
         <div class="cmeta">
           ${c != null ? html`${c.account_no} · ${customerTypeTag(c.customer_type)}` : nothing}
         </div>
-        ${c != null ? html`<div class="credit" data-testid="qb-identity-credit">${creditLine(c, money)}</div>` : nothing}
+        ${c != null && Number.isFinite(c.credit_limit_cents) && Number.isFinite(c.open_balance_cents) ? html`<div class="credit" data-testid="qb-identity-credit">${creditLine(c, money)}</div>` : nothing}
       </div>
       <span class="chg">
         <button
@@ -3555,7 +3555,7 @@ export class QdQuoteWorkarea extends LitElement {
       ${b.deliveryFeeCents > 0
         ? html`<div class="trow"><span>Delivery</span><span class="num">${money(b.deliveryFeeCents)}</span></div>`
         : nothing}
-      <div class="trow"><span>HST</span><span class="num">${money(b.taxCents)}</span></div>
+      <div class="trow"><span>${b.taxLabel}</span><span class="num">${money(b.taxCents)}</span></div>
       <div class="grand">
         <span class="lbl">Quote total</span>
         ${showMargin

@@ -18,9 +18,18 @@ var errNoDB = errors.New("tasks: database not configured")
 type Repository struct {
 	pool        *pgxpool.Pool // nil in scaffold/tests
 	stageOutbox StageOutbox   // W2: out-of-band staged-notice seam (yard_repository.go); nil = skipped
+	// recordSlots bounds the pick records holding the task row's transaction across the order call
+	// (RecordPickLocked); nil on a pool too small for one (ErrRecordPoolTooSmall).
+	recordSlots chan struct{}
 }
 
-func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
+func NewRepository(pool *pgxpool.Pool) *Repository {
+	r := &Repository{pool: pool}
+	if pool != nil && pool.Config().MaxConns >= 3 {
+		r.recordSlots = make(chan struct{}, recordSlotsFor(pool.Config().MaxConns))
+	}
+	return r
+}
 
 // taskColumns is the 0073 base tasks SELECT/RETURNING list. Nullable uuid/text/numeric columns are
 // COALESCE'd to "" and the nullable ints/timestamps are read into pointers.

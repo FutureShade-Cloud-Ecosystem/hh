@@ -839,3 +839,56 @@ func VerifyPopulation(ctx context.Context, db DBTX, orgID string) (PopulationCou
 	}
 	return c, nil
 }
+
+// PortalUserSeed is one contractor portal user written by a provisioning
+// program under a caller chosen id, already linked to its platform identity
+// and stamped with its tenant (the contractor account, which is the
+// customer). The row carries no usable password: the core has no password
+// route and the sign in is the platform's.
+type PortalUserSeed struct {
+	ID             string
+	CustomerID     string
+	Email          string
+	Name           string
+	Role           string
+	PlatformUserID string
+}
+
+// portalNoPassword is the marker stored in password_hash for a seeded user:
+// not a hash of anything, so no password verifies against it.
+const portalNoPassword = "seeded-no-password"
+
+// ProvisionPortalUsers writes the contractor portal users once: a row
+// already holding an id is left as it is, so a re-run counts zero. A role
+// outside the canonical set (PortalRoleAccountAdmin and its four siblings)
+// is refused before any row is written, the canonical set being the
+// portal_users CHECK of migration 0160. Rows land active, tenant_id equal
+// to customer_id, platform_user_id set (the 0215 linkage), so the portal
+// role resolver finds them with no further population step.
+func ProvisionPortalUsers(ctx context.Context, db DBTX, users []PortalUserSeed) (created int, err error) {
+	if db == nil {
+		return 0, errors.New("identity: portal provisioning requires a database handle")
+	}
+	for _, u := range users {
+		if u.ID == "" || u.CustomerID == "" || u.Email == "" || u.PlatformUserID == "" {
+			return created, errors.New("identity: a portal user seed needs an id, a customer, an email and a platform user id")
+		}
+		switch u.Role {
+		case PortalRoleAccountAdmin, PortalRoleBuyer, PortalRoleBuyerNoPay, PortalRoleAPFinance, PortalRoleFieldCrew:
+		default:
+			return created, fmt.Errorf("identity: portal user seed role %q is outside the canonical set", u.Role)
+		}
+	}
+	for _, u := range users {
+		tag, err := db.Exec(ctx, `
+			INSERT INTO portal_users (id, customer_id, email, name, password_hash, role, status, platform_user_id, tenant_id)
+			VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $2::uuid)
+			ON CONFLICT (id) DO NOTHING`,
+			u.ID, u.CustomerID, u.Email, u.Name, portalNoPassword, u.Role, PortalStatusActive, u.PlatformUserID)
+		if err != nil {
+			return created, fmt.Errorf("identity: portal user write failed: %w", err)
+		}
+		created += int(tag.RowsAffected())
+	}
+	return created, nil
+}

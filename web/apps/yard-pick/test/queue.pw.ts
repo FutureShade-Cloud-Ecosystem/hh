@@ -1,4 +1,4 @@
-// Yard Pick, sub item 2: the pick queue as the landing, the Trenton
+// Yard Pick, sub item 2: the pick queue as the landing, the Point Loma
 // branch's open picks in their two halves (unclaimed and claimed), and
 // claiming a pick.
 import { test, expect } from "@playwright/test";
@@ -11,9 +11,9 @@ test.beforeEach(async ({ request, page }) => {
   await page.addInitScript(yardHandoff);
 });
 
-test("the board lands on the Trenton queue, in its two halves", async ({ page }) => {
+test("the board lands on the Point Loma queue, in its two halves", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator("[data-branch]")).toHaveText("Hardscape House (demo), Trenton");
+  await expect(page.locator("[data-branch]")).toHaveText("Gable Landscape Supply, Point Loma");
   await expect(page.getByRole("heading", { name: "Pick queue" })).toBeVisible();
   await expect(page.locator("[data-unclaimed]")).toHaveText("3 unclaimed");
   await expect(page.locator("[data-claimed]")).toHaveText("2 claimed");
@@ -24,7 +24,7 @@ test("a card carries the order, the customer, the lines, the priority and the st
   await page.goto("/");
   const card = page.locator("[data-pick-card]", { hasText: "SO-1042" });
   await expect(card.locator("[data-order-no]")).toHaveText("SO-1042");
-  await expect(card).toContainText("Northline Hardscapes Ltd (demo)");
+  await expect(card).toContainText("Bluffside Builders");
   await expect(card).toContainText("2 lines");
   await expect(card).toContainText("Wanted today");
   await expect(card.locator("[data-task-status]")).toHaveText("Queued");

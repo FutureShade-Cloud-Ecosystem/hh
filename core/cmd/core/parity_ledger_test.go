@@ -40,6 +40,7 @@ var notYetRegistered = map[string]string{
 	"getAttachment":                 "D10 attachment surface; no implementation lane assigned",
 	"getOperatorUsage":              "operator launcher surface (D4); no implementation lane assigned",
 	"getTenantBrand":                "held for the tenant brand gap (ADR 0021 annex records the hold)",
+	"identityPersona":               "the demo build's tap-a-role entry under the real sign in; registered only in the demo build's console mode, never in the default build",
 	"identityAssignRole":            "no implementation lane assigned for the staff identity admin surface",
 	"identityChangePassword":        "no implementation lane assigned for the staff identity admin surface",
 	"identityConfirmPasswordReset":  "the D38 sign-in-methods leave-behind: the staff sign-in surface stays unregistered until HH-4.2 lands one",

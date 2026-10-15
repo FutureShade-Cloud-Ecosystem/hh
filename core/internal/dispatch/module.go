@@ -201,10 +201,17 @@ type PrintEnqueuer interface {
 // site rather than buried in a path prefix.
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// fleet registry
+	//
+	// The UPDATE pair rides RequireManager with its create, and both writes name the same authority:
+	// a registry row outlives every run on it, and its active flag decides whether tomorrow's crew
+	// picker offers it. The branch wall lives in the service (UpdateTruck/UpdateDriver), on the row's
+	// own branch.
 	r.Handle("GET /api/v1/dispatch/trucks", g.RequireStaff(h.staff(h.listTrucks)))
 	r.Handle("POST /api/v1/dispatch/trucks", g.RequireManager(h.staff(h.createTruck)))
+	r.Handle("PUT /api/v1/dispatch/trucks/{id}", g.RequireManager(h.staff(h.updateTruck)))
 	r.Handle("GET /api/v1/dispatch/drivers", g.RequireStaff(h.staff(h.listDrivers)))
 	r.Handle("POST /api/v1/dispatch/drivers", g.RequireManager(h.staff(h.createDriver)))
+	r.Handle("PUT /api/v1/dispatch/drivers/{id}", g.RequireManager(h.staff(h.updateDriver)))
 
 	// the board + scheduling
 	r.Handle("GET /api/v1/dispatch/board", g.RequireStaff(h.staff(h.board)))

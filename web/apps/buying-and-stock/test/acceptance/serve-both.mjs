@@ -56,6 +56,12 @@ function proxy(req, res) {
 async function serve(req, res) {
   const url = new URL(req.url ?? "/", "http://127.0.0.1");
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/_stub/") || url.pathname === "/healthz") return proxy(req, res);
+  // The image writes {"mode":"demo"} at /config.json (deploy/demo/Dockerfile); without this the index.html
+  // fallback answers HTML, the front door reads it as a damaged config and draws no role card.
+  if (url.pathname === "/config.json") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    return res.end('{"mode":"demo"}');
+  }
   const buying = url.pathname.startsWith("/buying-and-stock/");
   const root = join(out, buying ? "buying-and-stock" : "root");
   const rel = normalize(buying ? url.pathname.slice("/buying-and-stock".length) : url.pathname).replace(/^(\.\.[/\\])+/, "");

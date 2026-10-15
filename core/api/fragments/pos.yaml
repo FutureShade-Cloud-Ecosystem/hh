@@ -659,7 +659,8 @@ paths:
         MANUAL_TAX_REVIEW resolves its own ungated row, equal to the standard
         today and separately editable, and an effective-dated rate row change
         between the read and the ring moves the ring's rate. jurisdiction and
-        reason_code are the standard-rated Ontario facts the read answers.
+        reason_code are the dealer's own standard-rated facts the read answers
+        (Ontario's for an Ontario dealer).
         The header tax today rounds half-up once at the invoice total;
         round_mode PER_LINE is stored but not yet applied at ring, so the
         word says what is configured, not what the ring does yet.
@@ -2328,7 +2329,7 @@ components:
         supplier_deposit_invoice_no: { type: string }
         tax_reason_code:
           type: string
-          enum: [STD_ON_HST_13, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
+          enum: [STD_ON_HST_13, STD_SALES_TAX, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
         status: { type: string, enum: [COMMITTED, VOIDED] }
         replayed: { type: boolean }
         po_job_ref: { type: string }
@@ -2396,7 +2397,7 @@ components:
           $ref: "#/components/schemas/PosSupplierDepositOption"
         tax_reason_code:
           type: string
-          enum: [STD_ON_HST_13, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
+          enum: [STD_ON_HST_13, STD_SALES_TAX, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
         discount_cents: { type: integer, format: int64, description: Every manual discount together; absent when there is none }
         sale_discount_cents: { type: integer, format: int64, description: The ticket discount's own cents }
         ticket_base_cents: { type: integer, format: int64, description: "The subtotal after the line discounts, before any ticket discount: what a ticket discount is approved against" }
@@ -2489,7 +2490,7 @@ components:
         total_cents: { type: integer, format: int64 }
         tax_reason_code:
           type: string
-          enum: [STD_ON_HST_13, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
+          enum: [STD_ON_HST_13, STD_SALES_TAX, ON_FN_POS_8, FED_S87_VENDOR_DELIVERY, MANUAL_TAX_REVIEW, RELIEF_DECLINED_EVIDENCE]
         invoice_id: { type: string, format: uuid }
         invoice_no: { type: string }
         payment_id: { type: string, format: uuid }
@@ -2663,7 +2664,7 @@ components:
     PosReliefOutcome:
       type: object
       description: Masked-only assessment answer with the displayed outcome and the snapshot fields
-      required: [purchaser_type, masked_identifier, outcome, reason_code, rate_bps, full_hst_cents, on_credit_cents, net_collected_cents, automated, requires_evidence, evidence_satisfied]
+      required: [purchaser_type, masked_identifier, outcome, reason_code, rate_bps, full_hst_cents, on_credit_cents, net_collected_cents, automated, requires_evidence, evidence_satisfied, tax_label]
       properties:
         purchaser_type: { type: string }
         masked_identifier: { type: string, description: The only identifier a cashier ever sees }
@@ -2676,6 +2677,7 @@ components:
         automated: { type: boolean }
         requires_evidence: { type: boolean }
         evidence_satisfied: { type: boolean }
+        tax_label: { type: string, description: "The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it" }
 
     # ── POS: signatures ──────────────────────────────────────────────────────
     PosSignatureCapture:
@@ -2918,11 +2920,15 @@ components:
       description: >-
         The counter-readable tax facts: the rate the ring binds (read through
         the ring's own assessor) and the configured rounding rule.
-      required: [jurisdiction, reason_code, rate_bps, round_mode]
+      required: [jurisdiction, reason_code, rate_bps, round_mode, tax_label]
       properties:
-        jurisdiction: { type: string, enum: [ON] }
-        reason_code: { type: string, enum: [STD_ON_HST_13] }
+        jurisdiction: { type: string, description: The dealer's own tax jurisdiction code, ON for an Ontario dealer }
+        reason_code:
+          type: string
+          enum: [STD_ON_HST_13, STD_SALES_TAX]
+          description: The standard reason of the dealer's jurisdiction, STD_ON_HST_13 for an Ontario dealer and STD_SALES_TAX for every other
         rate_bps: { type: integer, format: int32, description: Basis points, 1300 is 13 percent }
+        tax_label: { type: string, description: "The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it" }
         round_mode:
           type: string
           enum: [INVOICE_TOTAL, PER_LINE]

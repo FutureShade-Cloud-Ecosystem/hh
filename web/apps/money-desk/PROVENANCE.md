@@ -124,3 +124,24 @@ against the Money Desk references (`hh-sup/design-refs/money-desk/`, trial-balan
 Not ported on purpose: excluding and restoring a line (the core has no route for either), adjusting entries (none on the
 bank routes: a fee or interest is booked as a journal and the line matched to it), the bank feed, and file upload to FB
 Console Storage (the contract has no storage seam on the import route: the rows ride the JSON body).
+
+## Tax administration (`src/tax/`)
+
+The tax slice ports the original app's tax administration (`app/src/tax-admin.ts`, `tax-admin-logic.ts`,
+`tax-api.ts`, `tax-evidence.ts`, same repository, read only) onto the generated client's fourteen `staff-tax` routes.
+
+| What | Source path in the original app | Lands in | What changed |
+| --- | --- | --- | --- |
+| Rate table, effective dated rows, hot add | `app/src/tax-admin.ts` (Rates tab), `tax-api.ts` `listRates`, `createRate` | `src/tax/tax-views.ts` `ratesView`, `src/tax/tax-desk.ts` `#askRate` | The rate is typed as a percent and parsed through its decimal string to basis points; the add asks first, naming the reason, rate and days; new rows join the tax area of the standard rate in force |
+| Reason words | `app/src/tax-api.ts` `taxReasonWord` | `reasonWord`, `reasonLine` in `src/tax/tax-logic.ts` | California trade words (standard sales tax, exempt delivery with proof, reduced rate with a certificate); no Canadian tax word on any screen |
+| Exemption profiles and the review queue | `app/src/tax-admin.ts` (Profiles, Review Queue), `tax-admin-logic.ts` `forcedEvidence` | `profilesView`, `queuePanel`, `forcedEvidence` | One screen, queue first; Put in force and Edit load the form and ask before the upsert; the three required items read as one sentence |
+| Certificates, masked only, view, download, validate | `app/src/tax-evidence.ts`, `tax-api.ts` | `certificatesView`, `evidenceDetail`, `captureForm` | Capture form added; the number is read at the press, sent once and cleared; a record is checked as of a day; download shows the photo's place and the file fetch is marked later |
+| Tax configuration | `app/src/tax-admin.ts` (Certificates tab config card) | `settingsView`, `#askConfig` | Company wide row; the two dormant switches are shown off and marked later and always sent off |
+| Recompute and reconciliation | `app/src/tax-admin.ts` (snapshot recompute, HST recon cards) | `checksView`, `#askRecompute`, `#runRecon` | Recompute asks first and says it adds audit rows only; the reconciliation names the ledger account and reads the variance in words |
+| Money format | `app/src/tax-api.ts` `fmtCents`, `fmtBps` | `src/tax/tax-money.ts` | No locale call; US dollars; a rate is whole hundredths of a percent |
+| Visual references | Money Desk boards (`hh-sup/design-refs/money-desk/`), original tax admin screens | the screens | Panels and pills as the ledger and bank reconciliation slices; cards border first, no shadow, HH tokens |
+
+Not ported on purpose: the separate Certificates and Review Queue tabs (merged into Exemption profiles and
+Certificates), per-branch config overrides, and any change to the core's Ontario reason codes or its Ontario
+jurisdiction default (the modules cycle's).
+

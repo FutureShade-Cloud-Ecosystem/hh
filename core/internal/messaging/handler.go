@@ -772,6 +772,8 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusForbidden, "only the channel's owner or a house messages admin may manage members")
 	case errors.Is(err, ErrTargetNotInBranch):
 		httpx.Error(w, http.StatusForbidden, "that staff member does not reach this branch")
+	case errors.Is(err, ErrTargetNotInRoom):
+		httpx.Error(w, http.StatusForbidden, "that staff member's role may not be seated in this room")
 	case errors.Is(err, ErrLastOwner):
 		httpx.Error(w, http.StatusConflict, "a channel must keep its owner")
 	case errors.Is(err, ErrNotInBranch):

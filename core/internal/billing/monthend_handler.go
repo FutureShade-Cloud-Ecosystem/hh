@@ -10,6 +10,7 @@ package billing
 // is the level till's existing release already requires.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
@@ -29,7 +30,12 @@ type MonthEndHandler struct {
 	credit     *CreditService
 	statements *StatementService
 	log        *slog.Logger
+	zone       houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 }
+
+// WithZone binds the dealer's business day zone source: a named or defaulted as-of day is the
+// dealer's own calendar day. Nil keeps the Ontario dealer's.
+func (h *MonthEndHandler) WithZone(src houseday.Source) *MonthEndHandler { h.zone = src; return h }
 
 // NewMonthEndHandler wires the services.
 func NewMonthEndHandler(credit *CreditService, statements *StatementService, log *slog.Logger) *MonthEndHandler {
@@ -64,7 +70,7 @@ func (h *MonthEndHandler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 
 // aging returns the AR aging worklist. ?branch_id= scopes it; ?as_of=YYYY-MM-DD backdates it.
 func (h *MonthEndHandler) aging(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
-	asOf, err := parseAsOf(r.URL.Query().Get("as_of"))
+	asOf, err := parseAsOfFor(r.Context(), h.zone, r.URL.Query().Get("as_of"))
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -236,7 +242,7 @@ func (h *MonthEndHandler) statementRun(w http.ResponseWriter, r *http.Request, _
 		h.writeErr(w, r, err)
 		return
 	}
-	asOf, err := parseAsOf(req.AsOf)
+	asOf, err := parseAsOfFor(r.Context(), h.zone, req.AsOf)
 	if err != nil {
 		h.writeErr(w, r, err)
 		return
@@ -317,15 +323,28 @@ func callerBranch(c identity.StaffContext) string {
 // parseAsOf reads a YYYY-MM-DD date, defaulting to now. The answer is an instant read in the house
 // zone: now itself, or noon of the named house day (noon so that every reader of the day, a SQL date
 // parameter or the house day of the clock, names the day that was asked for and not its neighbour).
-func parseAsOf(s string) (time.Time, error) {
+func parseAsOf(s string) (time.Time, error) { return parseAsOfIn(houseday.DefaultZone(), s) }
+
+// parseAsOfIn is parseAsOf in a named dealer's zone: the instant is read in the dealer's calendar.
+func parseAsOfIn(zone houseday.Zone, s string) (time.Time, error) {
 	if s == "" {
-		return houseClock(time.Now()), nil
+		return houseClockIn(zone, time.Now()), nil
 	}
-	t, err := houseday.ParseDay(s)
+	t, err := zone.ParseDay(s)
 	if err != nil {
 		return time.Time{}, httpx.BadRequestf("as_of must be YYYY-MM-DD")
 	}
 	return t.Add(12 * time.Hour), nil
+}
+
+// parseAsOfFor resolves the dealer's zone for one request, then reads the as-of in it. A failed zone
+// read refuses the request rather than guessing a calendar.
+func parseAsOfFor(ctx context.Context, src houseday.Source, s string) (time.Time, error) {
+	zone, err := houseday.Resolve(ctx, src)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parseAsOfIn(zone, s)
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {

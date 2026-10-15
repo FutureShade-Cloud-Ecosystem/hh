@@ -349,6 +349,20 @@ export const homeStyles = css`
   .view-link:hover {
     border-color: var(--hh-accent-text);
   }
+  .foot-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 36px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--hh-accent-text);
+    font: inherit;
+    cursor: pointer;
+  }
+  .foot-link:hover {
+    text-decoration: underline;
+  }
   .not-here {
     flex: none;
     max-width: 7.5em;
@@ -454,6 +468,49 @@ export const homeStyles = css`
     color: var(--hh-text-dim);
   }
 
+  /* -- trend and gauge ------------------------------------------------------------------ */
+
+  .meter {
+    display: flex;
+    gap: var(--hh-s-2);
+    height: 12px;
+    margin-top: var(--hh-s-8);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--hh-track);
+  }
+  .seg {
+    display: block;
+    height: 100%;
+  }
+  .tone-none { background: var(--hh-success-fill); }
+  .tone-good { background: var(--hh-state-good); }
+  .tone-watch { background: var(--hh-state-watch); }
+  .tone-stop { background: var(--hh-state-stop); }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--hh-s-4) var(--hh-s-16);
+    margin: var(--hh-s-8) 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .legend-row {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--hh-s-8);
+    font-size: 14px;
+  }
+  .legend-row .value {
+    font-weight: 650;
+  }
+  .swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+  }
+
   /* -- the views' links ------------------------------------------------------------------ */
 
   /* The landing's own way into its three views: small chips with chevrons. The needs rows link
@@ -518,6 +575,23 @@ export const homeStyles = css`
     font-weight: 600;
   }
   .shortage .detail {
+    font-size: 14px;
+    color: var(--hh-text-dim);
+    margin-top: var(--hh-s-4);
+  }
+  .shortage .status {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--hh-danger);
+    margin-bottom: var(--hh-s-4);
+  }
+  .shortage .status.status-done {
+    color: var(--hh-text-dim);
+  }
+  .shortage .who-when {
     font-size: 14px;
     color: var(--hh-text-dim);
     margin-top: var(--hh-s-4);
@@ -737,5 +811,87 @@ export const homeStyles = css`
   .count-line {
     font-size: 14px;
     color: var(--hh-text-dim);
+  }
+
+  /* -- the Drivers board ------------------------------------------------------------------ */
+
+  /* The bar above the groups: the day's count and the one control, refresh. */
+  .board-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--hh-s-12);
+    flex-wrap: wrap;
+  }
+
+  .driver-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--hh-s-8);
+  }
+  .driver-group .eyebrow {
+    margin: var(--hh-s-8) 0 0;
+  }
+
+  /* One driver row: the state bar, the driver and its run, the day's place,
+     and the change line at the right. The words carry the state; the bar
+     never travels alone. */
+  .driver-row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--hh-s-16);
+    flex-wrap: wrap;
+    padding: var(--hh-s-12) var(--hh-s-16);
+    border: 1px solid var(--hh-hairline);
+    border-radius: var(--hh-radius-control);
+    background: var(--hh-widget-raised);
+    overflow: hidden;
+  }
+  .driver-row .sev {
+    flex: none;
+    align-self: stretch;
+    width: 4px;
+    margin: calc(var(--hh-s-12) * -1) 0 calc(var(--hh-s-12) * -1) calc(var(--hh-s-16) * -1);
+    background: var(--hh-text-dim);
+  }
+  .driver-row.trouble .sev {
+    background: var(--hh-state-stop);
+  }
+  .driver-row .who {
+    flex: 1 1 12em;
+    min-width: 0;
+  }
+  .driver-row .driver {
+    font-size: var(--hh-s-16);
+    font-weight: 650;
+  }
+  .driver-row .detail {
+    font-size: 14px;
+    color: var(--hh-text-dim);
+    margin-top: var(--hh-s-2);
+  }
+  .driver-row .place {
+    flex: 1 1 14em;
+    min-width: 0;
+  }
+  .driver-row .state-word {
+    font-size: var(--hh-s-16);
+    font-weight: 600;
+  }
+  .driver-row .place .detail {
+    display: flex;
+    gap: var(--hh-s-12);
+    flex-wrap: wrap;
+  }
+  .driver-row .did-not-go {
+    color: var(--hh-danger);
+  }
+  .driver-row .since {
+    flex: none;
+    margin-inline-start: auto;
+    font-size: 14px;
+    color: var(--hh-text-dim);
+    white-space: nowrap;
   }
 `;

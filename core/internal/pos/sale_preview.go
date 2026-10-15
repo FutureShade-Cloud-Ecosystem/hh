@@ -42,6 +42,10 @@ type saleMoney struct {
 	total         int64
 	rateBps       int
 	onCreditCents int64
+	// reasonCode is the reason the assessor bound (the dealer's own standard reason for a standard
+	// sale) and standardRateBps the standard rate the full-tax figures are computed at.
+	reasonCode      string
+	standardRateBps int
 	// The manual discounts (discount.go): what the ring stores, logs and reports, and what the
 	// preview answers. Every line total above is already net of them.
 	discounts    []appliedDiscount
@@ -122,15 +126,22 @@ func (s *Service) priceAndAssess(ctx context.Context, in saleMoneyInput) (saleMo
 		return saleMoney{}, err
 	}
 	tax := quote.TaxCents
+	// The reason the assessor bound; an assessor that names none bound the one the caller asked for.
+	reason := quote.ReasonCode
+	if reason == "" {
+		reason = in.taxReason
+	}
 	return saleMoney{
-		lines:         lines,
-		subtotal:      subtotal,
-		tax:           tax,
-		total:         subtotal + tax,
-		rateBps:       quote.RateBps,
-		onCreditCents: quote.OnCreditCents,
-		discounts:     applied,
-		saleDiscount:  saleRow,
+		reasonCode:      reason,
+		standardRateBps: standardRateOrFlat(quote),
+		lines:           lines,
+		subtotal:        subtotal,
+		tax:             tax,
+		total:           subtotal + tax,
+		rateBps:         quote.RateBps,
+		onCreditCents:   quote.OnCreditCents,
+		discounts:       applied,
+		saleDiscount:    saleRow,
 	}, nil
 }
 
@@ -260,7 +271,7 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 		TaxCents:      priced.tax,
 		TaxLines:      []SalePreviewTaxLine{},
 		TotalCents:    priced.total,
-		TaxReasonCode: taxReason,
+		TaxReasonCode: priced.reasonCode,
 		// Item 9.1: the account's own shapes, read off the same customer the
 		// pricing already resolved (the walk in resolution included), and
 		// gated by the branch's COD switch (item 9 Opus P2-3).
@@ -288,7 +299,7 @@ func (s *Service) SalePreview(ctx context.Context, in SalePreviewInput) (SalePre
 	}
 	if priced.tax != 0 {
 		out.TaxLines = append(out.TaxLines, SalePreviewTaxLine{
-			ReasonCode: taxReason,
+			ReasonCode: priced.reasonCode,
 			RateBps:    priced.rateBps,
 			TaxCents:   priced.tax,
 		})

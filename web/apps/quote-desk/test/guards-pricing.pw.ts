@@ -64,7 +64,10 @@ test("P3-1 a pricing tab that has left the page reads nothing when it is asked t
       await expect(page.getByTestId("pc-system")).toBeVisible();
     }
     await quiet(page);
-    const seen = countRequests(page, /\/api\//);
+    // The offline layer's sync pull ticks about once a second (four reads of /api/v1/sync/*) whatever the
+    // panel does; it is the app's own poll, not a read of the dead panel, and it landing inside this window
+    // failed the leg on a slow runner. The panel's own reads (pricing, products, customers) are all counted.
+    const seen = countRequests(page, /\/api\/(?!v1\/sync\/)/);
     const before = seen();
     await reloadRemovedPanel(page);
     await settle(page);

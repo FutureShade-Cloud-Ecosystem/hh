@@ -130,9 +130,7 @@ type WidgetDatum struct {
 // takes, because a widget that cannot be measured is a gap on a Home and a 500 is a Home that is not
 // there at all.
 func (s *Service) WidgetDataFor(ctx context.Context, scope Scope, keys []string) []WidgetDatum {
-	if scope.Now.IsZero() {
-		scope.Now = s.now()
-	}
+	s.stampScope(ctx, &scope)
 	layout := s.WidgetsFor(ctx, scope)
 	byKey := make(map[string]WidgetView, len(layout.Widgets))
 	for _, w := range layout.Widgets {
@@ -189,7 +187,7 @@ func (s *Service) WidgetDataFor(ctx context.Context, scope Scope, keys []string)
 			// one measure asking for different windows now get different queries, which is the
 			// defect the composed id could not express.
 			sc, _ := narrowToBranch(scope, w.BranchID)
-			sc.Window = ResolveWindow(w.Range, scope.Now)
+			sc.Window = ResolveWindowIn(scope.Zone, w.Range, scope.Now)
 			pts, err := s.measureSeries(ctx, p, sc, seriesDimension(meta[idx], w.Split))
 			d := &out[idx]
 			if err != nil {

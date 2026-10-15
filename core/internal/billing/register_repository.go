@@ -239,7 +239,11 @@ func (r *Repository) RegisterRows(ctx context.Context, asOf time.Time, dueSoonDa
 	if r.pool == nil {
 		return nil, 0, errNoDB
 	}
-	args := []any{houseClock(asOf), dueSoonDays}
+	zone, err := r.zoneFor(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	args := []any{houseClockIn(zone, asOf), dueSoonDays}
 	where, args := registerWhere(f, args)
 	if pred, ok := chipPredicates[f.Chip]; ok {
 		where += " AND (" + pred + ")"
@@ -295,7 +299,7 @@ func (r *Repository) RegisterRows(ctx context.Context, asOf time.Time, dueSoonDa
 			v.Opened = &opened
 		}
 		v.AccountStatus = accountStatusFor(onHold, accountDisputed, v.BalanceCents)
-		v.Status, v.DaysOverdue = registerStatus(v, asOf, dueSoonDays)
+		v.Status, v.DaysOverdue = registerStatusIn(zone, v, asOf, dueSoonDays)
 		out = append(out, v)
 	}
 	return out, total, rows.Err()
@@ -312,7 +316,11 @@ func (r *Repository) RegisterCountsFor(ctx context.Context, asOf time.Time, dueS
 	// counted (the toggle governs the LIST, not the count that tells you the toggle is worth using).
 	f.Chip = ""
 	f.ShowCredits = true
-	args := []any{houseClock(asOf), dueSoonDays}
+	day, err := r.clockAt(ctx, asOf)
+	if err != nil {
+		return RegisterCounts{}, err
+	}
+	args := []any{day, dueSoonDays}
 	where, args := registerWhere(f, args)
 
 	var c RegisterCounts

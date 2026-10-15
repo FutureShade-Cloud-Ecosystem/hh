@@ -233,12 +233,14 @@ export type DemoSessionResponse = {
   token?: string;
   user?: { [key: string]: unknown };
   flow?: string;
+  class?: "staff" | "tenant";
   chapter_key?: string;
 };
 export type DemoFlow = {
   flow?: string;
   role_code?: string;
   label?: string;
+  class?: "staff" | "tenant";
 };
 export type DemoFlowList = {
   flows: DemoFlow[];
@@ -1521,6 +1523,7 @@ export type SettingsSurfaceConfig = {
   user_items: SettingsItem[];
   workspace: SettingsWorkspaceView;
   policy?: { [key: string]: unknown };
+  business_zone?: string;
 };
 export type SettingsRoleItemsBody = {
   profile: DashboardProfile;
@@ -2497,6 +2500,9 @@ export type IdentityExchangeRequest = {
   jwt: string;
   org: string;
 };
+export type IdentityPersonaRequest = {
+  persona: string;
+};
 export type IdentityExchangeResponse = {
   token: string;
   expiresAtMs: number;
@@ -2606,7 +2612,7 @@ export type IdentityApprovalDecideRequest = {
   approve: boolean;
   reason: string;
 };
-export type TaxReasonCode = "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "FNGST_5" | "MANUAL_TAX_REVIEW";
+export type TaxReasonCode = "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "FNGST_5" | "MANUAL_TAX_REVIEW";
 export type TaxRate = {
   id: string;
   jurisdiction: string;
@@ -4118,7 +4124,7 @@ export type PosSale = {
   supplier_deposit_cents?: number;
   supplier_deposit_invoice_id?: string;
   supplier_deposit_invoice_no?: string;
-  tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+  tax_reason_code: "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   status: "COMMITTED" | "VOIDED";
   replayed: boolean;
   po_job_ref?: string;
@@ -4149,7 +4155,7 @@ export type PosSalePreview = {
   total_cents: number;
   payment_options: PosPaymentOption[];
   supplier_deposit: PosSupplierDepositOption;
-  tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+  tax_reason_code: "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   discount_cents?: number;
   sale_discount_cents?: number;
   ticket_base_cents?: number;
@@ -4188,7 +4194,7 @@ export type PosSaleView = {
   subtotal_cents: number;
   tax_cents: number;
   total_cents: number;
-  tax_reason_code: "STD_ON_HST_13" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
+  tax_reason_code: "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "MANUAL_TAX_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
   invoice_id: string;
   invoice_no: string;
   payment_id?: string;
@@ -4302,6 +4308,7 @@ export type PosReliefOutcome = {
   automated: boolean;
   requires_evidence: boolean;
   evidence_satisfied: boolean;
+  tax_label: string;
 };
 export type PosSignatureCapture = {
   purpose: "TAX_ATTESTATION" | "PROOF_OF_DELIVERY" | "CARD_PRESENT" | "ORDER_SIGNOFF";
@@ -4434,9 +4441,10 @@ export type PosAddonSuggestions = {
   suggestions: PosAddonSuggestion[];
 };
 export type PosTaxRate = {
-  jurisdiction: "ON";
-  reason_code: "STD_ON_HST_13";
+  jurisdiction: string;
+  reason_code: "STD_ON_HST_13" | "STD_SALES_TAX";
   rate_bps: number;
+  tax_label: string;
   round_mode: "INVOICE_TOTAL" | "PER_LINE";
 };
 export type PosPolicy = {
@@ -6417,6 +6425,7 @@ export type QuoteTerms = {
   deposit_cents: number;
   subtotal_cents: number;
   tax_cents: number;
+  tax_label: string;
   total_cents: number;
   lines: QuoteTermsLine[];
 };
@@ -6488,6 +6497,7 @@ export type QuotePublicView = {
   lines: QuotePublicLine[];
   subtotal_cents: number;
   tax_cents: number;
+  tax_label: string;
   total_cents: number;
   as_of: string;
   acceptable: boolean;
@@ -6526,6 +6536,7 @@ export type QuoteAcceptanceResult = {
   accepted_at: string;
   subtotal_cents: number;
   tax_cents: number;
+  tax_label: string;
   total_cents: number;
   repeat_acceptance?: boolean;
 };

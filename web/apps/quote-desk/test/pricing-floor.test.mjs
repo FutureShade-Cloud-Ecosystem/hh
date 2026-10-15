@@ -22,7 +22,7 @@ const CUST = "c0000000-0000-4000-9000-000000000001";
 const PROD = "a7000000-0000-4000-9000-000000000001";
 
 const item = (over = {}) => ({
-  productId: PROD, sku: "HPV-60", name: "Holland Stone 60 mm", customerType: "CONTRACTOR", branchId: "", branchCode: "", branchName: "",
+  productId: PROD, sku: "HPV-60", name: "Charcoal Stone 60 mm", customerType: "CONTRACTOR", branchId: "", branchCode: "", branchName: "",
   finalCents: 300, marginBps: 800, floorBps: 2500, priceUom: "sf", previousFinalCents: 400, previousMarginBps: 3100,
   alreadyUnderFloor: false, ...over,
 });
@@ -102,13 +102,13 @@ test("the headline says how many products, in the singular and the plural", () =
 test("a product's line gives the figures the server graded, in words", () => {
   assert.equal(
     itemLine(item()),
-    "HPV-60, Holland Stone 60 mm: margin 8.00% against a floor of 25.00% for Contractor, price $3.00 per sf (was $4.00)",
+    "HPV-60, Charcoal Stone 60 mm: margin 8.00% against a floor of 25.00% for Contractor, price $3.00 per sf (was $4.00)",
   );
   assert.equal(itemLine(item({ customerType: "" })).includes("for "), false);
   // A margin policy change moves the floor, not the price: the line says the price is unchanged.
   assert.equal(
     itemLine(item({ customerType: "RETAIL", finalCents: 400, previousFinalCents: 400, marginBps: 3100, floorBps: 4000 })),
-    "HPV-60, Holland Stone 60 mm: margin 31.00% against a floor of 40.00% for Retail, price $4.00 per sf, unchanged",
+    "HPV-60, Charcoal Stone 60 mm: margin 31.00% against a floor of 40.00% for Retail, price $4.00 per sf, unchanged",
   );
   assert.match(itemLine(item({ customerType: "RETAIL" })), /for Retail/);
 });
@@ -118,13 +118,13 @@ test("a line names the branch the worst grading happened at when the server name
   // which yard breaches, or a breach at one yard reads like every yard's problem. The code
   // keeps the line short (the seeded names run long); the full name rides in the item's title.
   assert.equal(
-    itemLine(item({ branchId: "b0000000-0000-4000-9000-000000000002", branchCode: "KGN", branchName: "Dibbits Landscape Supply, Kingston" })),
-    "HPV-60, Holland Stone 60 mm: margin 8.00% against a floor of 25.00% for Contractor at KGN, price $3.00 per sf (was $4.00)",
+    itemLine(item({ branchId: "b0000000-0000-4000-9000-000000000002", branchCode: "JUL", branchName: "Gable Landscape Supply Landscape Supply, Julian" })),
+    "HPV-60, Charcoal Stone 60 mm: margin 8.00% against a floor of 25.00% for Contractor at JUL, price $3.00 per sf (was $4.00)",
   );
   // No code from the server: the name still says the yard.
   assert.equal(
-    itemLine(item({ branchId: "b0000000-0000-4000-9000-000000000002", branchName: "Kingston" })),
-    "HPV-60, Holland Stone 60 mm: margin 8.00% against a floor of 25.00% for Contractor at Kingston, price $3.00 per sf (was $4.00)",
+    itemLine(item({ branchId: "b0000000-0000-4000-9000-000000000002", branchName: "Julian" })),
+    "HPV-60, Charcoal Stone 60 mm: margin 8.00% against a floor of 25.00% for Contractor at Julian, price $3.00 per sf (was $4.00)",
   );
   // A change that named its branch already told the editor which yard: no name, no suffix.
   assert.equal(itemLine(item({ branchId: "b0000000-0000-4000-9000-000000000002" })).includes(" at "), false);
@@ -154,12 +154,12 @@ test("the notes say what the grading did not cover", () => {
 // the branches that carry one; the notice says which yard and for how many products, without
 // ever holding the save back (needsConfirm stays closed by it).
 test("a branch with no cost on file is said with its name and count, and never holds the save back", () => {
-  const noCostAt = { branchId: "b0000000-0000-4000-9000-000000000002", branchCode: "KGN", branchName: "Kingston", products: 9 };
+  const noCostAt = { branchId: "b0000000-0000-4000-9000-000000000002", branchCode: "JUL", branchName: "Julian", products: 9 };
   assert.deepEqual(warningNotes(preview([], { noCostBranches: [noCostAt] })), [
-    "No cost on file at Kingston for 9 products, so that yard was not graded.",
+    "No cost on file at Julian for 9 products, so that yard was not graded.",
   ]);
   assert.deepEqual(warningNotes(preview([], { noCostBranches: [{ ...noCostAt, products: 1 }] })), [
-    "No cost on file at Kingston for 1 product, so that yard was not graded.",
+    "No cost on file at Julian for 1 product, so that yard was not graded.",
   ]);
   // A yard the answer could not name falls back to its id.
   assert.deepEqual(warningNotes(preview([], { noCostBranches: [{ ...noCostAt, branchName: "" }] })), [
