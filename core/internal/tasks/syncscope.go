@@ -63,6 +63,9 @@ type SyncStore struct {
 	// recorder and staff are the pick record door's seams (syncpick.go).
 	recorder PickRecorder
 	staff    identity.SyncStaffResolver
+	// tickets is the REST door's own ticket feed (the Service's PickSource), so a pulled row carries
+	// the ticket exactly as GET /yard/picks/{id} builds it; nil pulls rows without one.
+	tickets PickSource
 }
 
 // NewSyncStore wires the adapter; nil seams are legal only where the
@@ -227,6 +230,7 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 		if err != nil {
 			return nil, nil, err
 		}
+		s.attachTicketData(ctx, r.task.OrderID, data)
 		items = append(items, sync.Entity{ID: r.task.ID, Seq: r.seq, Data: data})
 	}
 	return items, tombstones, nil
@@ -260,13 +264,21 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 		return sync.RowState{}, false, err
 	}
 	rs, err := rowStateOf(r)
+	if err == nil {
+		s.attachTicket(ctx, &rs)
+	}
 	return rs, true, err
 }
 
 // Load reads one row by id under the org predicate; a row outside the
 // caller's org is the same as an absent one (existence never leaks).
 func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sync.RowState, bool, error) {
-	return s.load(ctx, s.pool, f, id)
+	rs, ok, err := s.load(ctx, s.pool, f, id)
+	if err != nil || !ok {
+		return rs, ok, err
+	}
+	s.attachTicket(ctx, &rs)
+	return rs, true, nil
 }
 
 // pickQuerier is the read surface a pool and a transaction share, so one
@@ -582,4 +594,47 @@ func (s *SyncStore) Delete(ctx context.Context, f sync.ScopeFilter, id, key stri
 	}
 	rs.Deleted = true
 	return rs, nil
+}
+
+// WithPickSource wires the ticket feed the pull attaches. It is the same PickSource the REST door
+// reads, so there is one builder of a ticket and the two doors cannot drift.
+func (s *SyncStore) WithPickSource(p PickSource) *SyncStore {
+	s.tickets = p
+	return s
+}
+
+// attachTicket sets the ticket on a read row's projection (see attachTicketData).
+func (s *SyncStore) attachTicket(ctx context.Context, rs *sync.RowState) {
+	if rs.Deleted || rs.Data == nil {
+		return
+	}
+	orderID, _ := rs.Data["order_id"].(string)
+	s.attachTicketData(ctx, orderID, rs.Data)
+}
+
+// attachTicketData sets data["ticket"] to the order's pick ticket, the leg the device's pick screen
+// composes from. The read is best effort exactly as the REST board's is (a source that does not know
+// the order, or fails, leaves the row without a ticket rather than failing the page). The sync
+// core's filter carries no role, so the cost gate fails closed here: the one money figure of a ticket
+// (still owed) is held out for every caller, as blankTicketMoney does for a role the rule refuses; the
+// hold mark and its words stay. It runs only on the pool reads (Pull, Load, FindApplied), never inside
+// a write transaction, so it never asks the pool for a second connection while holding one.
+func (s *SyncStore) attachTicketData(ctx context.Context, orderID string, data map[string]any) {
+	if s.tickets == nil || orderID == "" || data == nil {
+		return
+	}
+	t, err := s.tickets.PickTicket(ctx, orderID)
+	if err != nil {
+		return
+	}
+	t.StillOwedCents = 0
+	raw, err := json.Marshal(t)
+	if err != nil {
+		return
+	}
+	var v map[string]any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return
+	}
+	data["ticket"] = v
 }

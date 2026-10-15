@@ -483,3 +483,61 @@ func TestPickDoor_DirectDoorRecordMovesTheSeqSoServerWinsHoldsAcrossDoors(t *tes
 		t.Fatalf("the newer record stands: %+v", rows)
 	}
 }
+
+// The pull carries the ticket (the REST door's builder, so one shape) and the recorded lines, holds the
+// still owed figure out, and stays inside the org.
+func TestPickDoor_PullCarriesTheTicketAndThePickedLines(t *testing.T) {
+	d := newPickDoor(t)
+	orderID := uuid.NewString()
+	row, err := d.store.Create(context.Background(), d.f, uuid.NewString(), map[string]any{"order_id": orderID})
+	if err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	src := NewStubPickSource().Seed(PickTicket{
+		OrderID: orderID, OrderNo: "SO-1", Source: "DISPATCH", HeldFromPicking: true, HoldWords: "Balance due", StillOwedCents: 12345,
+		Lines: []PickLine{{LineNo: 1, Description: "Paver", QtyOrdered: "10", UOM: "EA"}, {LineNo: 2, Description: "Sand", QtyOrdered: "4", UOM: "EA"}},
+	})
+	d.store.WithPickSource(src)
+	if res := d.push(recordOp(uuid.NewString(), row.ID, pickLine(1))); res[0].Status != "applied" {
+		t.Fatalf("record: %+v %v", res[0], res[0].Error)
+	}
+
+	items, _, err := d.store.Pull(context.Background(), d.f, 0, 50)
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	var data map[string]any
+	for _, it := range items {
+		if it.ID == row.ID {
+			data = it.Data
+		}
+	}
+	if data == nil {
+		t.Fatal("the task did not come through the pull")
+	}
+	ticket, ok := data["ticket"].(map[string]any)
+	if !ok {
+		t.Fatalf("pulled row carries no ticket: %v", data)
+	}
+	if lines, _ := ticket["lines"].([]any); len(lines) != 2 {
+		t.Fatalf("ticket lines = %v, want 2", ticket["lines"])
+	}
+	if ticket["held_from_picking"] != true || ticket["hold_words"] != "Balance due" {
+		t.Fatalf("the hold mark must stay: %v", ticket)
+	}
+	if _, has := ticket["still_owed_cents"]; has {
+		t.Fatalf("the figure must be held out of the pull: %v", ticket)
+	}
+	if picked, _ := data["picked"].([]any); len(picked) != 1 {
+		t.Fatalf("picked = %v, want the one recorded line", data["picked"])
+	}
+	// The conflict and replay reads carry it too.
+	if rs, found, err := d.store.Load(context.Background(), d.f, row.ID); err != nil || !found || rs.Data["ticket"] == nil {
+		t.Fatalf("Load carries no ticket: %v %v %v", rs.Data, found, err)
+	}
+	// Another org sees nothing, so no ticket leaves with it.
+	foreign := hhsync.ScopeFilter{OrgID: d.other, Actor: "pick-door-actor"}
+	if items, _, err := d.store.Pull(context.Background(), foreign, 0, 50); err != nil || len(items) != 0 {
+		t.Fatalf("another org's pull must be empty: %v %v", items, err)
+	}
+}
