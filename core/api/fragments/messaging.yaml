@@ -130,8 +130,11 @@ paths:
         or cost field and no tier. The caller is on the list, flagged
         is_me. The wall follows the direct message rule: a direct message
         names no branch, so the picker reaches every branch's staff of the
-        org, exactly the people a direct message may be opened with.
-        Ordered by display name then id; cursor paginated.
+        org, exactly the people a direct message may be opened with, less
+        the holders of the platform SUPER_ADMIN role, who are no dealer's
+        staffer and are never listed (the direct message route itself
+        still opens one by id). Ordered by display name then id; cursor
+        paginated.
       x-role: requireStaff
       x-access:
         surfaces: [house-messages]
