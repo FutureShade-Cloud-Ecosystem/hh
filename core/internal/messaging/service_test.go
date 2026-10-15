@@ -50,6 +50,7 @@ type fakeStore struct {
 	stamped          map[string]string // approvalID -> last status stamped
 	stampCalls       int               // StampApprovalStatus invocation count
 	displayNames     map[string]string // userID -> display name (decider name resolution)
+	roster           map[string][]StaffRosterRow
 }
 
 func newFakeStore() *fakeStore {
@@ -73,6 +74,7 @@ func newFakeStore() *fakeStore {
 		tiers:         map[string]string{},
 		acks:          map[string]Ack{},
 		unacked:       map[string][]Message{},
+		roster:        map[string][]StaffRosterRow{},
 	}
 }
 
@@ -138,6 +140,11 @@ func (f *fakeStore) BranchYardSlug(_ context.Context, branchID string) (string, 
 		return "", errNotFound
 	}
 	return s, nil
+}
+
+// Slice S1 double: the roster the service pages, keyed by org id.
+func (f *fakeStore) StaffRoster(_ context.Context, orgID string) ([]StaffRosterRow, error) {
+	return f.roster[orgID], nil
 }
 
 // Feature A / B store doubles.
