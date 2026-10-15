@@ -30,7 +30,7 @@ import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
 import { DriveOffline, bannerMode, openDriveOfflineOpfs, type RunsAnswer } from "./drive-offline.js";
-import { HANDBACK_TITLE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
+import { HANDBACK_TITLE, PROOF_QUEUED_NOTICE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
 import { driveStyles } from "./styles.js";
 import { readyPhoto } from "./photo.js";
 import {
@@ -594,13 +594,21 @@ export class DriveRunApp extends HHElement {
     this.#error = "";
     this.requestUpdate();
     const result = await this.#door().pod(stopId, normalizeName(this.#podName));
+    // Connected: send now, so the driver reads the server's answer (its
+    // refusal in its own words) as they always have. No signal: the
+    // signature waits in the outbox and the notice says so.
+    const layer = this.#driveOffline;
+    let refused = "";
+    if (result.ok && layer !== null && layer.runner.state !== "offline") refused = await layer.sendProofNow(stopId);
     this.#podBusy = false;
-    if (result.ok) {
+    if (result.ok && refused === "") {
       await this.#refreshRuns();
       this.#view = { kind: "stop", id: stopId };
-      this.#notice = `Delivery to ${found?.stop.customer_name || "this stop"} is signed for.`;
+      const waiting = this.#findStop(stopId)?.stop.proof_waiting === true;
+      this.#notice = waiting ? PROOF_QUEUED_NOTICE : `Delivery to ${found?.stop.customer_name || "this stop"} is signed for.`;
     } else {
-      this.#error = roadsideError(result.error, result.status, "The signature did not go through. Check your signal and try again.");
+      this.#error = roadsideError(result.ok ? refused : result.error, result.ok ? 400 : result.status, "The signature did not go through. Check your signal and try again.");
+      await this.#refreshRuns();
     }
     this.requestUpdate();
   }
@@ -613,7 +621,16 @@ export class DriveRunApp extends HHElement {
     if (this.#view.kind === "run" || this.#view.kind === "close" || this.#view.kind === "fail" || this.#view.kind === "conflicts") {
       return;
     }
-    this.#photoQueue.push({ file, stopId: this.#view.id, late: this.#view.kind === "stop" });
+    const stopId = this.#view.id;
+    const late = this.#view.kind === "stop";
+    // The photo is a direct door and the server does not hold the delivery
+    // yet: it waits for the signature, in words, rather than failing at the core.
+    if (this.#findStop(stopId)?.stop.proof_waiting === true) {
+      this.#error = "The signature is still waiting to send. Add the photo once it has gone through.";
+      this.requestUpdate();
+      return;
+    }
+    this.#photoQueue.push({ file, stopId, late });
     if (this.#photoBusy) return;
     this.#photoBusy = true;
     this.#error = "";

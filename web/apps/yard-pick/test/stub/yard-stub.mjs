@@ -488,6 +488,17 @@ async function handle(req, res) {
     syncTouch("pick_tasks", task.id);
     return json(res, { ok: true, seq: syncSeqOf("pick_tasks", task.id) });
   }
+  // The desk changes an OPEN ticket (its grade): the row's seq moves and the task stays open, so a record
+  // based on the older seq is superseded (the engine's stale decision) rather than refused as closed.
+  if (req.method === "POST" && path === "/_stub/touch") {
+    const body = JSON.parse((await readBody(req)).toString("utf8"));
+    const task = findTask(String(body.task_id ?? ""));
+    if (!task) return notFound(res);
+    task.priority = task.priority === "HIGH" ? "NORMAL" : "HIGH";
+    task.updated_at = new Date().toISOString();
+    syncTouch("pick_tasks", task.id);
+    return json(res, { ok: true, seq: syncSeqOf("pick_tasks", task.id) });
+  }
   if (req.method === "GET" && path === "/_stub/log") return json(res, log);
   // The rep's API read, doubled: the notices the order's rep holds.
   if (req.method === "GET" && path === "/_stub/rep-notices") return json(res, repNotices);
@@ -850,13 +861,14 @@ function syncApplyTaskUpdate(task, op, moneyAllowed) {
     };
   }
   const declared = Object.keys(fields).filter((k) => k !== "id");
-  // The core's writableFields (core/internal/tasks/syncscope.go): picked is the
-  // record door's leg (core/internal/tasks/syncpick.go), its own operation.
+  // The core's writableFields (core/internal/tasks/syncscope.go): the status,
+  // the pick record (`picked`), the photo, the stage legs. test/stub-sync-
+  // contract.test.mjs reads the Go map and holds this set to it.
   const allowed = new Set(["status", "picked", "photo_url", "stage_location", "stage_ref"]);
   for (const key of declared) {
     if (!allowed.has(key)) return syncRejected(op, `tasks: field "${key}" is not writable through sync`);
   }
-  if (fields.picked !== undefined) return syncApplyPickRecord(task, op, declared, fields.picked);
+  if (fields.picked !== undefined) return syncApplyPicked(task, op);
   if (fields.status !== undefined) {
     const to = String(fields.status);
     if (!(TRANSITIONS[task.status] ?? []).includes(to)) {
@@ -888,39 +900,64 @@ function closedPickWords(task) {
   return "";
 }
 
-// The legs one recorded line may carry through sync (syncpick.go pickedLineLegs): the direct door's
-// body keys. A local row id, task id or picked_at stamp is not on the wire.
+// The core's pickedLineLegs (core/internal/tasks/syncpick.go): the direct door's
+// body keys, one for one. The client's local row id, task id and picked_at do
+// not go on the wire.
 const PICKED_LINE_LEGS = new Set(["order_line_no", "product_id", "sku", "description", "qty_ordered", "qty_picked", "uom", "short_reason", "short_note"]);
-// Every C0 control, DEL and the bidi controls are refused in every text leg; the note and the
-// description keep tab, LF and CR (core/internal/tasks/yard_service.go checkPickText).
-const PICK_TEXT_BAD = /[\u0000-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
-const PICK_TEXT_BAD_MULTILINE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u202a-\u202e\u2066-\u2069]/;
+const PICKED_MAX_LINES = 500;
 
-// The pick record as a sync op, the twin of the direct route: {id, picked: [line, ...]} and nothing
-// else, the same record body, the row draws a fresh seq so the pull carries the recorded lines.
-function syncApplyPickRecord(task, op, declared, lines) {
-  for (const key of declared) {
-    if (key !== "picked") return syncRejected(op, `tasks: field "${key}" cannot travel with picked, a pick record is its own operation`);
+// The pick record door (syncpick.go writePicked): its own operation, the lines
+// parsed for shape, then the service body's rules (recordPickedLines, the
+// direct door's), then the stamp that re-appears the task in the pull.
+function syncApplyPicked(task, op) {
+  const fields = op.payload ?? {};
+  for (const key of Object.keys(fields)) {
+    if (key !== "id" && key !== "picked") return syncRejected(op, `tasks: field "${key}" cannot travel with picked, a pick record is its own operation`);
   }
   const closed = closedPickWords(task);
   if (closed !== "") return syncRejected(op, closed);
-  if (!Array.isArray(lines)) return syncRejected(op, "tasks: picked must be an array of lines");
-  if (lines.length > 500) return syncRejected(op, "tasks: that is more lines than any one ticket carries (max 500)");
-  for (const [i, l] of lines.entries()) {
-    if (l === null || typeof l !== "object" || Array.isArray(l)) return syncRejected(op, `tasks: picked line ${i + 1} must be an object`);
-    for (const [k, v] of Object.entries(l)) {
-      if (!PICKED_LINE_LEGS.has(k)) return syncRejected(op, `tasks: picked line ${i + 1}: field "${k}" is not writable through sync`);
-      if (k !== "order_line_no" && typeof v !== "string") return syncRejected(op, `tasks: picked line ${i + 1}: ${k} must be a string`);
-      if (typeof v === "string" && (k === "description" || k === "short_note" ? PICK_TEXT_BAD_MULTILINE : PICK_TEXT_BAD).test(v)) {
-        return syncRejected(op, `tasks: line ${Number(l.order_line_no ?? 0)}: the ${k} cannot hold control characters, enter it as plain text`);
+  const raw = fields.picked;
+  if (!Array.isArray(raw)) return syncRejected(op, "tasks: picked must be an array of lines");
+  if (raw.length === 0) return syncRejected(op, "tasks: say what was picked, an empty record is not the same as a pick of nothing");
+  if (raw.length > PICKED_MAX_LINES) return syncRejected(op, `tasks: that is more lines than any one ticket carries (max ${PICKED_MAX_LINES})`);
+  for (let i = 0; i < raw.length; i += 1) {
+    const line = raw[i];
+    if (line === null || typeof line !== "object" || Array.isArray(line)) return syncRejected(op, `tasks: picked line ${i + 1} must be an object`);
+    for (const [key, value] of Object.entries(line)) {
+      if (!PICKED_LINE_LEGS.has(key)) return syncRejected(op, `tasks: picked line ${i + 1}: field "${key}" is not writable through sync`);
+      if (key === "order_line_no") {
+        if (typeof value !== "number" || !Number.isInteger(value)) return syncRejected(op, `tasks: picked line ${i + 1}: order_line_no must be an integer`);
+      } else if (typeof value !== "string") {
+        return syncRejected(op, `tasks: picked line ${i + 1}: ${key} must be a string`);
       }
     }
   }
-  const recorded = recordPickedLines(task, lines);
-  if (recorded.error) return syncRejected(op, recorded.error);
+  const record = recordPickedLines(task, raw);
+  if (record.error) return syncRejected(op, record.error);
   task.updated_at = new Date().toISOString();
   syncTouch("pick_tasks", task.id);
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("pick_tasks", task.id) };
+}
+
+// The service body's text rule (tasks.checkPickText): every C0 control, DEL and
+// the bidi controls are refused in every text leg; the note and the
+// description keep tab, LF and CR.
+const PICK_TEXT_LEGS = [
+  ["product_id", "product id", false], ["sku", "sku", false], ["description", "description", true],
+  ["qty_ordered", "ordered quantity", false], ["qty_picked", "picked quantity", false], ["uom", "unit", false],
+  ["short_reason", "short reason", false], ["short_note", "note", true],
+];
+
+function pickTextRefusal(line) {
+  for (const [key, name, multiline] of PICK_TEXT_LEGS) {
+    for (const ch of String(line[key] ?? "")) {
+      const c = ch.codePointAt(0);
+      if ((c < 0x20 && !(multiline && (c === 9 || c === 10 || c === 13))) || c === 0x7f || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069)) {
+        return `line ${Number(line.order_line_no ?? 0)}: the ${name} cannot hold control characters, enter it as plain text`;
+      }
+    }
+  }
+  return "";
 }
 
 // The record half of the REST route: validate the
@@ -931,6 +968,8 @@ function recordPickedLines(task, lines) {
   if (list.length === 0) return { error: "say what was picked, an empty record is not the same as a pick of nothing" };
   const seen = new Set();
   for (const l of list) {
+    const text = pickTextRefusal(l);
+    if (text !== "") return { error: text };
     const lineNo = Number(l.order_line_no ?? 0);
     if (!(lineNo > 0)) return { error: "every recorded line needs the ticket's own line number" };
     if (seen.has(lineNo)) return { error: `line ${lineNo} was sent twice, one number per line` };
@@ -1037,7 +1076,12 @@ function syncApplyShortageCreate(op) {
   };
   world.shortages.push(shortage);
   const t = findTask(shortage.task_id);
-  if (t) t.updated_at = new Date().toISOString();
+  if (t) {
+    // The core's create bumps the parent task's pick seq (the task projection
+    // carries the shortage counts), so the task row re-appears in the pull.
+    t.updated_at = new Date().toISOString();
+    syncTouch("pick_tasks", t.id);
+  }
   syncTouch("shortages", id);
   return { client_id: op.client_id, status: "applied", seq: syncSeqOf("shortages", id) };
 }

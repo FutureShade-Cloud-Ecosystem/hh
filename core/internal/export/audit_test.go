@@ -26,10 +26,12 @@ type fakeAuditLister struct {
 	rows []audit.Entry
 	err  error
 	got  audit.Filter
+	n    int
 }
 
 func (f *fakeAuditLister) List(_ context.Context, flt audit.Filter) ([]audit.Entry, error) {
 	f.got = flt
+	f.n++
 	return f.rows, f.err
 }
 
@@ -284,7 +286,7 @@ func (b bearerMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func exportMux(t *testing.T, h *Handler) bearerMux {
 	sg := testkit.NewStaffGuards(t)
-	sg.SetAuthority(identity.StaffAuthority{RoleID: "inside_sales", Tier: 3, Scope: "global"})
+	sg.SetAuthority(identity.StaffAuthority{RoleID: "owner", Tier: 1, Scope: "global"})
 	mux := http.NewServeMux()
 	h.RegisterRoutes(mux, sg.Guards)
 	return bearerMux{mux: mux, sg: sg, bearer: sg.Bearer(t)}

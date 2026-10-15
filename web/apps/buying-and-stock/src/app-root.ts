@@ -17,6 +17,7 @@ import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
+import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
@@ -208,8 +209,12 @@ export class BuyingAndStockApp extends HHElement {
     }
   };
 
+  /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
+  #stopHostSignOut: (() => void) | null = null;
+
   connectedCallback(): void {
     super.connectedCallback();
+    this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     this.addEventListener("input", this.#onHostInput);
     if (this.#custody.mode === "console") {
@@ -259,6 +264,8 @@ export class BuyingAndStockApp extends HHElement {
   }
 
   disconnectedCallback(): void {
+    this.#stopHostSignOut?.();
+    this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
     this.removeEventListener("input", this.#onHostInput);
     super.disconnectedCallback();

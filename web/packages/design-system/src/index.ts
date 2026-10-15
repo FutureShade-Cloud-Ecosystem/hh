@@ -25,15 +25,23 @@ export {
   CHROME_CONTROLS_MESSAGE,
   FRAMED_BY_WORK_SHELL,
   FRAMED_PARAM,
+  MAX_SIGN_OUT_NONCE_LENGTH,
+  SIGNED_OUT_MESSAGE,
+  SIGN_OUT_REQUEST_MESSAGE,
   acceptChromeControls,
   announceChromeControls,
+  announceSignOut,
+  announceSignedOut,
   chromeActionFrom,
   framedAddress,
   framedByShell,
   framedFlagFromSearch,
+  listenForHostSignOut,
   readFramedByShell,
+  signOutRequestFrom,
+  signedOutFrom,
 } from './framed.js';
-export type { ChromeAction, FramedWindow } from './framed.js';
+export type { ChromeAction, FramedListenWindow, FramedWindow } from './framed.js';
 export {
   KIT_STATES,
   STATE_META,

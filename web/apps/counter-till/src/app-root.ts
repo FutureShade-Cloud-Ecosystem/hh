@@ -34,7 +34,7 @@ import {
   HHFeedback,
   type FeedbackSender,
 } from "@hardscapehouse/design-system/src/feedback.js";
-import { announceChromeControls, chromeActionFrom, framedByShell } from "@hardscapehouse/design-system/src/framed.js";
+import { announceChromeControls, chromeActionFrom, framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
@@ -583,8 +583,12 @@ export class CounterTillApp extends HHElement {
     });
   }
 
+  /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
+  #stopHostSignOut: (() => void) | null = null;
+
   connectedCallback(): void {
     super.connectedCallback();
+    this.#stopHostSignOut = listenForHostSignOut(() => this.#signOut());
     this.#route = this.#readRoute();
     window.addEventListener("hashchange", this.#onHashChange);
     if (this.#framed) {
@@ -760,6 +764,8 @@ export class CounterTillApp extends HHElement {
   }
 
   disconnectedCallback(): void {
+    this.#stopHostSignOut?.();
+    this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
     this.removeEventListener("pos-counter-layout", this.#onCounterLayout as EventListener);
     this.removeEventListener("input", this.#onHostInput);
