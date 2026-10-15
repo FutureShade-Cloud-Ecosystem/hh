@@ -557,7 +557,7 @@ export class YardPickApp extends HHElement {
         this.#queueStaleness = answer.staleness;
         this.requestUpdate();
         // The device's held word is not the last word: re-read each held card from the server, so a
-        // balance paid since the pull releases the card (see rereadHeldPicks).
+        // hold cleared since the pull releases the card (see rereadHeldPicks).
         const base = this.#picks;
         const fresh = await rereadHeldPicks(base, (id) => this.#yard.pick(id));
         if (this.#picks === base && fresh.some((p, i) => p !== base[i])) this.#picks = fresh;
