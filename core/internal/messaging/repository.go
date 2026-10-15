@@ -1546,14 +1546,18 @@ type StaffRosterRow struct {
 // StaffRoster answers every active staffer of one org, the people a direct
 // message may be opened with (the DM rule admits exactly the ACTIVE staff,
 // whatever branch they sit at: a DM names no branch, so the branch wall that
-// governs rooms founded naming one has nothing to bite on here). The identity
-// tables are the ones this file's allowlist entry already carries; the org
-// wall is the additive 0213 anchor read the same shape the load doors use
-// (a row anchored to another org is nobody else's staffer, an unanchored row
-// is the carried single org world's). The winning role is the lowest tier's,
-// ties by role id, the same priority the authority resolver applies; the
-// order of the answer is the service's to fix (it sorts bytewise for the
-// cursor), so the query orders by nothing.
+// governs rooms founded naming one has nothing to bite on here), one
+// exception the DM rule itself does not make: a holder of the carried
+// platform SUPER_ADMIN role is no dealer's staffer (0043 plants the platform
+// owner, the UAT migrations plant platform testers, and the demo populate
+// stamps them into the org), so such a row never answers the picker. The
+// identity tables are the ones this file's allowlist entry already carries;
+// the org wall is the additive 0213 anchor read the same shape the load
+// doors use (a row anchored to another org is nobody else's staffer, an
+// unanchored row is the carried single org world's). The winning role is the
+// lowest tier's, ties by role id, the same priority the authority resolver
+// applies; the order of the answer is the service's to fix (it sorts bytewise
+// for the cursor), so the query orders by nothing.
 func (r *Repository) StaffRoster(ctx context.Context, orgID string) ([]StaffRosterRow, error) {
 	if r.pool == nil {
 		return nil, errNoDB
@@ -1582,7 +1586,12 @@ func (r *Repository) StaffRoster(ctx context.Context, orgID string) ([]StaffRost
 		) brs ON TRUE
 		WHERE u.status = 'ACTIVE'
 		  AND u.deleted_at IS NULL
-		  AND (u.org_id IS NULL OR u.org_id = $1::uuid)`, orgID)
+		  AND (u.org_id IS NULL OR u.org_id = $1::uuid)
+		  AND NOT EXISTS (
+			SELECT 1 FROM user_roles ur
+			JOIN roles ro ON ro.id = ur.role_id
+			WHERE ur.user_id = u.id AND ur.deleted_at IS NULL AND ro.code = 'SUPER_ADMIN'
+		  )`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("staff roster: %w", err)
 	}

@@ -37,6 +37,7 @@ const (
 	rosterGoneID    = "d7000000-0000-4000-9000-0000000001e4"
 	rosterMissID    = "d7000000-0000-4000-9000-0000000001e5"
 	rosterForeignID = "d7000000-0000-4000-9000-0000000001e6"
+	rosterSuperID   = "d7000000-0000-4000-9000-0000000001e7"
 
 	rosterForeignOrg = "eeeeeeee-0000-4000-8000-000000000001"
 
@@ -46,6 +47,10 @@ const (
 	// rYardTeam is the seeded YARD_TEAM role (0015): display name never
 	// scrubbed, so the role label assertion reads stable words.
 	rYardTeam = "e7000000-0000-4000-9000-000000000012"
+
+	// rSuperAdmin is the seeded platform role (0043): the holder is no
+	// dealer's staffer and must never answer the picker.
+	rSuperAdmin = "e7000000-0000-4000-9000-000000000014"
 
 	// branchTrenton is the integration suite's seeded Trenton branch root
 	// (0003), declared in integration_test.go.
@@ -62,19 +67,21 @@ func seedRosterProbes(t *testing.T, pool *pgxpool.Pool) {
 		  ($3, 's1roster.beta@test.invalid',   $8,               'ACTIVE'),
 		  ($4, 's1roster.gone@test.invalid',   'Zzprobe Gone',   'SUSPENDED'),
 		  ($5, 's1roster.miss@test.invalid',   'Zzprobe Miss',   'DEACTIVATED'),
-		  ($6, 's1roster.foreign@test.invalid','Zzprobe Foreign','ACTIVE')
+		  ($6, 's1roster.foreign@test.invalid','Zzprobe Foreign','ACTIVE'),
+		  ($9, 's1roster.super@test.invalid',  'Platform Operator Probe', 'ACTIVE')
 		ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, display_name = EXCLUDED.display_name`,
 		rosterCallerID, rosterAlphaID, rosterBetaID, rosterGoneID, rosterMissID, rosterForeignID,
-		rosterAlphaName, rosterBetaName)
+		rosterAlphaName, rosterBetaName, rosterSuperID)
 	if err != nil {
 		t.Fatalf("seed probe users: %v", err)
 	}
 	// Alpha holds the Yard Team role and the Trenton grant, so the labels
-	// have words to read; Beta holds none, so the labels are empty.
+	// have words to read; Beta holds none, so the labels are empty. The
+	// platform operator holds the SUPER_ADMIN role and must never answer.
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)
-		ON CONFLICT DO NOTHING`, rosterAlphaID, rYardTeam); err != nil {
-		t.Fatalf("seed probe role: %v", err)
+		INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2), ($3, $4)
+		ON CONFLICT DO NOTHING`, rosterAlphaID, rYardTeam, rosterSuperID, rSuperAdmin); err != nil {
+		t.Fatalf("seed probe roles: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO user_branch_grants (user_id, branch_id) VALUES ($1, $2)
@@ -88,7 +95,7 @@ func seedRosterProbes(t *testing.T, pool *pgxpool.Pool) {
 	}
 	t.Cleanup(func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM users WHERE id = ANY($1)`,
-			[]string{rosterCallerID, rosterAlphaID, rosterBetaID, rosterGoneID, rosterMissID, rosterForeignID})
+			[]string{rosterCallerID, rosterAlphaID, rosterBetaID, rosterGoneID, rosterMissID, rosterForeignID, rosterSuperID})
 	})
 }
 
@@ -181,6 +188,9 @@ func TestIntegrationRoster_ActiveStaffOfTheOrgOnly(t *testing.T) {
 	}
 	if rosterFind(page, rosterForeignID) != nil {
 		t.Error("a staffer anchored to another org must not be on the roster")
+	}
+	if rosterFind(page, rosterSuperID) != nil {
+		t.Error("the platform operator (a SUPER_ADMIN holder) must not be on the roster")
 	}
 	if alpha["role_label"] != "Yard Team" {
 		t.Errorf("role_label = %v, want the role catalog's display name", alpha["role_label"])
