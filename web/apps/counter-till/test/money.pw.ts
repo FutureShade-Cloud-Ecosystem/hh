@@ -6,7 +6,7 @@
 // the refused forms the first review found the parser accepting.
 import { expect, test } from "@playwright/test";
 import { formatMargin, formatMoney, parseAmountToCents } from "../src/money.js";
-import { HOUSE_ZONE, houseDayInZone } from "../src/till-client.js";
+import { DEFAULT_HOUSE_ZONE, houseDayInZone } from "../src/till-client.js";
 
 test("the tendered parser accepts what a till is handed", () => {
   expect(parseAmountToCents("50")).toBe(5000);
@@ -64,12 +64,12 @@ test("the sale's requested date is the house zone's day, never the browser's UTC
   // suite runs.
   const eveningHouseTime = new Date("2026-01-31T21:30:00-05:00"); // 2026-02-01T02:30Z
   expect(houseDayInZone("UTC", eveningHouseTime)).toBe("2026-02-01");
-  expect(houseDayInZone(HOUSE_ZONE, eveningHouseTime)).toBe("2026-01-31");
+  expect(houseDayInZone(DEFAULT_HOUSE_ZONE, eveningHouseTime)).toBe("2026-01-31");
   // The morning edge: half past midnight in Toronto is still yesterday on the
   // UTC clock.
   const earlyHouseTime = new Date("2026-03-01T00:30:00-05:00"); // 2026-03-01T05:30Z
-  expect(houseDayInZone(HOUSE_ZONE, earlyHouseTime)).toBe("2026-03-01");
+  expect(houseDayInZone(DEFAULT_HOUSE_ZONE, earlyHouseTime)).toBe("2026-03-01");
   expect(houseDayInZone("UTC", earlyHouseTime)).toBe("2026-03-01");
   // The default read is now, and answers a date-shaped string.
-  expect(houseDayInZone(HOUSE_ZONE)).toMatch(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/);
+  expect(houseDayInZone(DEFAULT_HOUSE_ZONE)).toMatch(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/);
 });

@@ -12,7 +12,8 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GO_SETS, PROBE_EXTRAS } from "./_lib/gosets.mjs";
+import { readFileSync } from "node:fs";
+import { GO_SETS, PROBE_EXTRAS, goTypedNameBytes } from "./_lib/gosets.mjs";
 
 const appDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 let child;
@@ -80,10 +81,11 @@ const UNIVERSE = () => {
   return [...all].sort();
 };
 
-async function probe(scope, op, setName, id) {
+async function probe(scope, op, setName, id, { base: fixed = {}, skip = [] } = {}) {
   const set = GO_SETS[setName]();
   for (const field of UNIVERSE()) {
-    const answer = await push(scope, op, { id, [field]: "x" });
+    if (skip.includes(field) || field in fixed) continue;
+    const answer = await push(scope, op, { id, ...fixed, [field]: "x" });
     const refused = answer.status === "rejected" && NOT_WRITABLE.test(String(answer.error ?? ""));
     assert.equal(refused, !set.has(field), `${setName}: field ${field} should be ${set.has(field) ? "admitted" : "refused"} by the stub exactly as the core does (answer: ${JSON.stringify(answer)})`);
   }
@@ -93,7 +95,115 @@ test("stops update: the stub admits exactly the core's writable fields", async (
   await probe("stops", "update", "stops update", (await pullIds("stops"))[0]);
 });
 
-test("pod create: the stub admits exactly the core's writable fields", async () => {
-  await probe("pod", "create", "pod create", "7b000000-0000-4000-9000-0000000fffff");
+// received_by and affirmed flip a pod create into the attestation form, so the
+// photo form's probe leaves them to the attestation form's own probe below.
+test("pod create (the photo form): the stub admits exactly the core's writable fields", async () => {
+  await probe("pod", "create", "pod create", "7b000000-0000-4000-9000-0000000fffff", { skip: ["received_by", "affirmed"] });
 });
 
+test("pod create (the typed name attestation form): the stub admits exactly the core's writable fields", async () => {
+  await probe("pod", "create", "pod attest create", "7b000000-0000-4000-9000-0000000fffff", { base: { received_by: "Probe Name" } });
+});
+
+// ---- the attestation door (pod create, {id?, stop_id, received_by, affirmed}) ----
+//
+// The core's door (core/internal/dispatch/syncscope_pod_attest.go) runs the one
+// body both doors share, CapturePOD. These legs hold the stub to it: the stop
+// is delivered by the create, the answer is the stop's id and seq, the name
+// rule is the core's (read from the Go source), a replay applies nothing twice,
+// and every sentence is one the Go source holds.
+
+const coreDispatchSource = ["syncscope_pod_attest.go", "syncscope.go", "service.go", "model.go"]
+  .map((f) => readFileSync(new URL(`../../../../core/internal/dispatch/${f}`, import.meta.url), "utf8"))
+  .join("\n");
+
+function assertCoreWords(answer, template) {
+  assert.equal(answer.status, "rejected", JSON.stringify(answer));
+  assert.ok(coreDispatchSource.includes(template), `the core's source does not hold "${template}": the stub invented it`);
+  const body = template.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%d/g, "\\d+").replace(/%s/g, ".+?").replace(/%q/g, '"[^"]*"');
+  assert.match(String(answer.error), new RegExp(`^(dispatch: )?${body}$`));
+}
+
+async function resetStub() {
+  await fetch(`${base}/_stub/reset`, { method: "POST", headers, body: "{}" });
+}
+
+async function stopRows() {
+  const res = await fetch(`${base}/api/v1/sync/stops?since=0&limit=200`, { headers });
+  return (await res.json()).items ?? [];
+}
+
+/** A stop on the road: loaded, then en route, through the stops door. */
+async function enRouteStop() {
+  const [row] = await stopRows();
+  assert.equal((await push("stops", "update", { id: row.id, status: "LOADED" })).status, "applied");
+  assert.equal((await push("stops", "update", { id: row.id, status: "EN_ROUTE" })).status, "applied");
+  return row.id;
+}
+
+const KEY = "00000000-0000-4000-8000-0000000fb001";
+
+async function pushKeyed(client_id, payload) {
+  const res = await fetch(`${base}/api/v1/sync/pod`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ ops: [{ client_id, op: "create", payload }] }),
+  });
+  return (await res.json()).results[0];
+}
+
+test("attestation: it delivers the stop, answers the stop's id and seq, and a replay applies nothing twice", async () => {
+  await resetStub();
+  const stopId = await enRouteStop();
+  const first = await pushKeyed(KEY, { id: "7b000000-0000-4000-9000-0000000fb001", stop_id: stopId, received_by: "  Site Foreman  ", affirmed: true });
+  assert.equal(first.status, "applied", JSON.stringify(first));
+  const row = (await stopRows()).find((r) => r.id === stopId);
+  assert.equal(row.data.status, "DELIVERED");
+  assert.equal(row.data.pod_received_by, "Site Foreman");
+  assert.ok(row.data.pod_at, "the server stamps pod_at");
+  assert.equal(first.seq, row.seq, "the result's seq is the stop's seq");
+  const again = await pushKeyed(KEY, { id: "7b000000-0000-4000-9000-0000000fb001", stop_id: stopId, received_by: "Someone Else", affirmed: true });
+  assert.equal(again.status, "applied");
+  assert.equal(again.seq, first.seq);
+  assert.equal((await stopRows()).find((r) => r.id === stopId).data.pod_received_by, "Site Foreman", "the replay changed nothing");
+  const second = await push("pod", "create", { stop_id: stopId, received_by: "Another", affirmed: true });
+  assertCoreWords({ ...second, status: second.status }, "illegal status transition");
+});
+
+test("attestation: the name rule is the core's bound, read from the Go source", async () => {
+  await resetStub();
+  const stopId = await enRouteStop();
+  const bound = goTypedNameBytes();
+  assert.equal(bound, 200);
+  const long = await push("pod", "create", { stop_id: stopId, received_by: "e".repeat(bound + 1), affirmed: true });
+  assertCoreWords(long, "that name is too long, type the full name in at most %d bytes");
+  for (const bad of ["Clerk\u0000", "Cl\terk", "Cl\nerk", "Clerk\u007f", "Clerk\u202e", "Clerk\u2067"]) {
+    assertCoreWords(await push("pod", "create", { stop_id: stopId, received_by: bad, affirmed: true }), "the name cannot hold control characters, type the full name as plain text");
+  }
+  assertCoreWords(await push("pod", "create", { stop_id: stopId, received_by: "   ", affirmed: true }), "type the full name of the person receiving this delivery");
+  assertCoreWords(await push("pod", "create", { stop_id: stopId, received_by: "Clerk", affirmed: false }), "the recipient must confirm the delivery before it can be signed");
+  // Multibyte: 100 two byte characters is exactly the bound and lands.
+  const exact = await push("pod", "create", { stop_id: stopId, received_by: "\u00e9".repeat(bound / 2), affirmed: true });
+  assert.equal(exact.status, "applied", JSON.stringify(exact));
+});
+
+test("attestation: the shape refusals, in the core's words", async () => {
+  await resetStub();
+  const stopId = await enRouteStop();
+  assertCoreWords(await push("pod", "create", { stop_id: "x", received_by: "Clerk", affirmed: true }), "stop_id must be a uuid");
+  assertCoreWords(await push("pod", "create", { id: "x", stop_id: stopId, received_by: "Clerk", affirmed: true }), "payload id must be a uuid");
+  assertCoreWords(await push("pod", "create", { stop_id: stopId, received_by: 7, affirmed: true }), "received_by must be text");
+  assertCoreWords(await push("pod", "create", { stop_id: stopId, received_by: "Clerk", affirmed: "yes" }), "affirmed must be true or false");
+  const unknown = await push("pod", "create", { stop_id: "7b000000-0000-4000-9000-0000000fffff", received_by: "Clerk", affirmed: true });
+  assert.equal(unknown.status, "rejected");
+  assert.match(String(unknown.error), /not found/);
+  // The two forms do not mix: a photo leg beside the name refuses.
+  assertCoreWords(await push("pod", "create", { stop_id: stopId, received_by: "Clerk", affirmed: true, caption: "x" }), "field %q is not writable through sync");
+  assertCoreWords(await push("pod", "create", { stop_id: stopId, received_by: "Clerk", affirmed: true, created_at: "x" }), "field %q is not writable through sync");
+});
+
+test("attestation: a stop that cannot move to DELIVERED refuses in the direct door's words", async () => {
+  await resetStub();
+  const [row] = await stopRows();
+  assertCoreWords(await push("pod", "create", { stop_id: row.id, received_by: "Clerk", affirmed: true }), "illegal status transition");
+});

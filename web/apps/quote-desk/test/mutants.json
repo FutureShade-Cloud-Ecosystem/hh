@@ -353,8 +353,8 @@
   {
     "id": "wa-cart-after-read",
     "file": "src/quote-workarea.ts",
-    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
-    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // \u2500\u2500 the workspace",
+    "find": "    await this.loadAll();\n    if (ctx.stale) return;\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
+    "replace": "    await this.loadAll();\n    this.quoteChanged();\n  }\n\n  // ── the workspace",
     "test": "guard cart change after read:"
   },
   {
@@ -1722,8 +1722,8 @@
   {
     "id": "op-stale-balance",
     "file": "src/order-payment-panel.ts",
-    "find": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);\n    // A definite refusal is evidence the server's state moved under the desk (a payment or a\n    // credit landed elsewhere, a balance changed): the family is read again, so the figures say\n    // what the server said at the latest read, and an invoice that is no longer owed leaves the\n    // form. The read is the panel's guarded one (its own row), never applied to another quote, and\n    // it begins its own share cycle at the read site, so the re-read never joins the cycle's cached\n    // family answer (the pre refusal truth the refusal itself says has moved).\n    void this.load(\"take-refusal\");",
-    "replace": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);",
+    "find": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);\n    // With no signal nothing was sent: the server's state has not moved, there is nothing to read again, and a read\n    // now would only fail and replace the payment box (and the refusal in it) with a read error.\n    if (isNoSignal(result)) return;\n    // A definite refusal is evidence the server's state moved under the desk (a payment or a\n    // credit landed elsewhere, a balance changed): the family is read again, so the figures say\n    // what the server said at the latest read, and an invoice that is no longer owed leaves the\n    // form. The read is the panel's guarded one (its own row), never applied to another quote, and\n    // it begins its own share cycle at the read site, so the re-read never joins the cycle's cached\n    // family answer (the pre refusal truth the refusal itself says has moved).\n    void this.load(\"take-refusal\");",
+    "replace": "    this.marked(ctx.id, isDifferentPaymentRefusal(result.error) ? \"held\" : \"kept\", words);\n    // With no signal nothing was sent: the server's state has not moved, there is nothing to read again, and a read\n    // now would only fail and replace the payment box (and the refusal in it) with a read error.\n    if (isNoSignal(result)) return;",
     "test": "a credit that moved the order to Paid while the desk held the old Part paid balance is caught: a refusal re-reads and the panel shows Paid"
   },
   {
@@ -2199,5 +2199,26 @@
     "test": "readPolicy reads the very body the core answered",
     "runner": "node",
     "testFile": "test/panels.test.mjs"
+  },
+  {
+    "id": "op-nosignal-keeps-open-phase",
+    "file": "src/order-payment-panel.ts",
+    "find": "    if (reopened !== undefined && isNoSignal(result)) {\n      this.reopen(ctx.id, reopened, words);\n      return;\n    }\n",
+    "replace": "",
+    "test": "a no signal retry of a payment whose outcome is not known keeps the note and the locked fields, and sends nothing"
+  },
+  {
+    "id": "op-nosignal-late-record-only",
+    "file": "src/order-payment-panel.ts",
+    "find": "      rec.refusal = paymentRefusalWords(late.status, late.error ?? \"\");\n    } else if (late.ok) {",
+    "replace": "      rec.refusal = paymentRefusalWords(late.status, late.error ?? \"\");\n      this.attempt = rec.attempt;\n      this.error = rec.refusal;\n    } else if (late.ok) {",
+    "test": "a no signal answer that lands late for a quote the person has left changes that quote's record only, never the screen of the quote now open"
+  },
+  {
+    "id": "op-nosignal-peek-not-consume",
+    "file": "src/order-payment-panel.ts",
+    "find": "    const reopened = this.reopenedFrom.get(quoteId);\n    if (reopened !== undefined && isNoSignal(answer)) {",
+    "replace": "    const reopened = this.reopenedFrom.get(quoteId);\n    this.reopenedFrom.delete(quoteId);\n    if (reopened !== undefined && isNoSignal(answer)) {",
+    "test": "the sign out wait and a late answer both meeting one no signal answer, in either order, keep the open attempt unsettled"
   }
 ]

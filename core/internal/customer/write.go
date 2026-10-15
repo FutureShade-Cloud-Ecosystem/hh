@@ -47,8 +47,8 @@ func validCustomerType(t string) bool {
 }
 
 // CreateCustomer validates the input (required fields, customer_type, and, the M5 point -
-// the Canadian billing address) and inserts the customer. A US ZIP / garbage postal or a
-// non-Canadian province is a 400; a valid address is normalized (k8v5p7 → K8V 5P7) on the way
+// the billing address in the dealer's country) and inserts the customer. A postal code or
+// province of another country, or garbage, is a 400; a valid address is normalized (k8v5p7 → K8V 5P7) on the way
 // in, so the stored address is always canonical.
 func (s *Service) CreateCustomer(ctx context.Context, in CreateInput) (Account, error) {
 	if s.writer == nil {
@@ -72,7 +72,11 @@ func (s *Service) CreateCustomer(ctx context.Context, in CreateInput) (Account, 
 	if in.CreditLimitCents < 0 {
 		return Account{}, httpx.BadRequestf("credit_limit_cents must be >= 0")
 	}
-	addr, err := localization.NormalizeBillingAddress(in.BillingAddress)
+	country, err := dealerCountry(ctx, s.country)
+	if err != nil {
+		return Account{}, err
+	}
+	addr, err := localization.NormalizeBillingAddressFor(country, in.BillingAddress)
 	if err != nil {
 		return Account{}, err // already an httpx.BadRequestError from the validator
 	}
@@ -89,7 +93,11 @@ func (s *Service) UpdateBillingAddress(ctx context.Context, customerID string, a
 	if customerID == "" {
 		return Account{}, httpx.BadRequestf("customer id is required")
 	}
-	norm, err := localization.NormalizeBillingAddress(addr)
+	country, err := dealerCountry(ctx, s.country)
+	if err != nil {
+		return Account{}, err
+	}
+	norm, err := localization.NormalizeBillingAddressFor(country, addr)
 	if err != nil {
 		return Account{}, err
 	}

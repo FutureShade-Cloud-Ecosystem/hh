@@ -5,11 +5,22 @@
 // with one message, scoped to its own origin, and the parent accepts it only
 // from its own content frame.
 
+import { CHROME_ACTION_MESSAGE, type ChromeAction } from "@hardscapehouse/design-system/src/framed.js";
+
 /** The one message type a framed host sends its parent. */
 export const SWITCH_ROLE_MESSAGE = "hh-work-shell:switch-role";
 
 interface WindowLike {
   parent: unknown;
+}
+
+/** Ask the content frame to press one of the controls the shell carries for it (Theme, Feedback); scoped to the host's origin. */
+export function announceChromeAction(
+  frame: { postMessage(message: unknown, targetOrigin: string): void } | null,
+  origin: string,
+  action: ChromeAction,
+): void {
+  frame?.postMessage({ type: CHROME_ACTION_MESSAGE, action }, origin);
 }
 
 /** True when this window sits inside another window. */

@@ -13,11 +13,14 @@ import (
 )
 
 func TestAgingColumns_DeriveTheDayFromTheNamedHouseZone(t *testing.T) {
-	if !strings.Contains(agingColumns, "AT TIME ZONE '"+arAgingZone+"'") {
-		t.Fatalf("the aging projection must derive its day from the house zone expression, the one " +
-			"choice the 0376 migration names, never from the session's now()::date")
+	if !strings.Contains(agingColumnsAt("$4"), "AT TIME ZONE $4::text") {
+		t.Fatalf("the aging projection must derive its day from the dealer's zone bound as a parameter, " +
+			"the one choice the 0376 migration names, never from the session's now()::date")
 	}
-	if strings.Contains(strings.ToLower(agingColumns), "now()::date") {
+	if strings.Contains(agingColumnsAt("$4"), arAgingZone) {
+		t.Fatalf("the aging projection must not spell a zone in its text: the dealer's zone is a bind parameter")
+	}
+	if strings.Contains(strings.ToLower(agingColumnsAt("$4")), "now()::date") {
 		t.Fatalf("the aging projection must not read now()::date, it is the session zone's day and " +
 			"ages every open item one day early through the Ontario evening")
 	}

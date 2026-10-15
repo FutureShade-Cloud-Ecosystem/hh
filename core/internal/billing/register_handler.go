@@ -37,6 +37,7 @@ import (
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payments"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -54,6 +55,14 @@ type RegisterHandler struct {
 	log      *slog.Logger
 	branch   func(id string) string
 	trail    PaymentTrailReader
+	// taxWords is the dealer's tax word for the printed invoice's tax row. Nil is the Ontario dealer's "HST".
+	taxWords taxwords.Source
+}
+
+// WithTaxLabel binds the dealer's tax word seam (platform/taxwords) for the printed invoice.
+func (h *RegisterHandler) WithTaxLabel(src taxwords.Source) *RegisterHandler {
+	h.taxWords = src
+	return h
 }
 
 // NewRegisterHandler wires the handler. repo is used only for the two reads the handler itself needs
@@ -212,7 +221,9 @@ func (h *RegisterHandler) document(w http.ResponseWriter, r *http.Request, calle
 	// Never cached: an invoice document whose balance is a week old is a document that will be waved
 	// at somebody in an argument.
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write([]byte(renderInvoiceHTML(d, name)))
+	// A failed read of the dealer's word prints the neutral "Tax": true for every dealer.
+	word, _ := taxwords.Resolve(r.Context(), h.taxWords)
+	_, _ = w.Write([]byte(renderInvoiceHTMLWithTax(d, name, word)))
 }
 
 // export writes the CURRENT VIEW as CSV, the same filter, the same order, the same figures.

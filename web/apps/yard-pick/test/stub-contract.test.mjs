@@ -399,3 +399,13 @@ test("the shortage resolvers list wall answers the role gate's shared body", asy
   assert.deepEqual(res.json, { error: "Forbidden" });
   assert.ok(coreSource.includes('BodyForbidden    = []byte(`{"error":"Forbidden"}`)'), "the core's Forbidden body changed: the stub must follow it");
 });
+
+test("a cancelled or done pick takes no record, in the core's words and class", async () => {
+  await reset();
+  const id = "0a000000-0000-4000-9000-000000000040";
+  const record = () => call("PUT", `/api/v1/yard/picks/${id}/lines`, { body: { lines: FULL_LINES() } });
+  assert.equal((await record()).status, 200);
+  const reassigned = await call("POST", "/_stub/reassign", { body: { task_id: id } });
+  assert.equal(reassigned.status, 200);
+  refused(await record(), 409, "this pick was cancelled, its record cannot change");
+});

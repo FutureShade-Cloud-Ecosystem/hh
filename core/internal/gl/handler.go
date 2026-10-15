@@ -388,7 +388,12 @@ func (h *Handler) tieOut(w http.ResponseWriter, r *http.Request, _ guards.StaffC
 		// An explicit day is the dealer's day, cut at its last instant: the AR arm reads the house day
 		// of this instant and the GL arm cuts posted_at at it, so both sides close the same day. A
 		// bare time.Parse (midnight at Greenwich) is the previous evening to the AR arm.
-		if t, err := houseday.EndOfDay(v); err == nil {
+		zone, zerr := houseday.Resolve(r.Context(), h.zone)
+		if zerr != nil {
+			h.writeErr(w, r, zerr)
+			return
+		}
+		if t, err := zone.EndOfDay(v); err == nil {
 			asOf = t
 		}
 	}

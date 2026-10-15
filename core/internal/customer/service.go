@@ -50,9 +50,29 @@ const (
 // writer seam (M5 / A-5) adds the staff create/update-address write path with Canadian
 // postal/province validation; a nil writer keeps the module read-only (unchanged behavior).
 type Service struct {
-	store  accountStore
-	writer customerWriter
+	store   accountStore
+	writer  customerWriter
+	country CountrySource
 }
+
+// CountrySource answers the dealer's country, the ISO 3166-1 alpha-2 code the address rules follow
+// ("CA" or "US"). The composition root hands in an adapter over the settings module's dealer
+// configuration; this module reads no settings table itself. A nil source is the Canadian dealer.
+type CountrySource interface {
+	DealerCountry(ctx context.Context) (string, error)
+}
+
+// dealerCountry reads the source; nil answers Canada, a failed read is an error, never a guess.
+func dealerCountry(ctx context.Context, src CountrySource) (string, error) {
+	if src == nil {
+		return "CA", nil
+	}
+	return src.DealerCountry(ctx)
+}
+
+// WithCountry injects the dealer's country source so address validation follows it. Returns the
+// Service for chaining.
+func (s *Service) WithCountry(c CountrySource) *Service { s.country = c; return s }
 
 func NewService(store accountStore) *Service { return &Service{store: store} }
 

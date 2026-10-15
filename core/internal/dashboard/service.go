@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // providerTimeout bounds ONE provider. Ten tiles behind one home screen means ten chances for a
@@ -58,6 +60,7 @@ type Store interface {
 type Service struct {
 	store Store
 	log   *slog.Logger
+	zone  houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 
 	mu        sync.RWMutex
 	providers map[string]MetricProvider
@@ -111,6 +114,25 @@ func NewService(store Store, log *slog.Logger) *Service {
 
 // WithClock pins the clock (tests).
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
+
+// WithZone binds the dealer's business day zone source: every window and day literal a widget is
+// measured over is the dealer's own calendar day. Nil keeps the Ontario dealer's.
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
+
+// stampScope fills the clock and the dealer's zone on a scope that arrives without them. A dashboard
+// is a read, and a measurement never fails the page, so a zone that cannot be read degrades to the
+// Ontario default with a warning rather than refusing the Home.
+func (s *Service) stampScope(ctx context.Context, scope *Scope) {
+	if scope.Now.IsZero() {
+		scope.Now = s.now()
+	}
+	z, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		s.warn("dashboard: the dealer's business zone could not be read; using the default day", "err", err)
+		return
+	}
+	scope.Zone = z
+}
 
 // WithTimeout overrides the per-provider budget (tests).
 func (s *Service) WithTimeout(d time.Duration) *Service { s.timeout = d; return s }
@@ -189,9 +211,7 @@ func (s *Service) ProfileFor(ctx context.Context, roleCode string) string {
 // Hidden tiles are still returned (the editor needs them) but are never measured, a tile nobody
 // is looking at must not cost a query.
 func (s *Service) Resolve(ctx context.Context, scope Scope) (Layout, error) {
-	if scope.Now.IsZero() {
-		scope.Now = s.now()
-	}
+	s.stampScope(ctx, &scope)
 	if scope.Profile == "" {
 		scope.Profile = s.ProfileFor(ctx, scope.RoleCode)
 	}

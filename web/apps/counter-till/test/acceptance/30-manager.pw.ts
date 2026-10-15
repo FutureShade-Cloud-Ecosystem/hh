@@ -9,6 +9,7 @@ import {
   expectedCash,
   lineRow,
   mint,
+  openCounterTill,
   openDrawer,
   openParked,
   openStep,
@@ -31,8 +32,10 @@ test("the way in: the manager's card opens the same till under its own name", as
   page,
 }, testInfo) => {
   await page.goto("/");
-  // The same entry page move every sign-in holds, belt included.
+  // The same entry move every sign-in holds, belt included: the card tap
+  // lands on the role home, the Counter Till tile opens the till.
   await tapRoleCard(page, "Sales manager");
+  await openCounterTill(page);
   await expect(page.getByTestId("signed-in-role")).toHaveText("Sales manager");
   // The till has loaded under the manager's name: the drawer open, the
   // identity line, the parked button's count.
@@ -85,14 +88,16 @@ test("an account that cannot carry the sale on account: the same words to the ma
 }, testInfo) => {
   await signIn(page, "Sales manager");
   // The same no credit account as the clerk's leg (20-sales): the shape
-  // refusal and its words do not bend for the manager's role.
+  // refusal and its words do not bend for the manager's role, and the words
+  // name the same figure the preview card states, the server's own answer.
   await pickCustomer(page, "DEMO-C07", "DEMO-C07");
   await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
   await openStep(page, "payment");
+  const previewTotal = (await page.getByTestId("pos-preview-total").innerText()).replace(/^Total\s*/, "").trim();
   await page.getByRole("button", { name: "Charge Account" }).click();
   await page.getByTestId("pos-complete-sale").click();
   const refusal = page.getByRole("alert").filter({ hasText: "cannot carry" });
-  await expect(refusal).toContainText("This account cannot carry $6.72 on account.");
+  await expect(refusal).toContainText(`This account cannot carry ${previewTotal} on account.`);
   await expect(refusal).toContainText("Pay in full now, or take a deposit with the balance due later.");
   await expect(page.getByTestId("sold-panel")).toHaveCount(0);
   await shot(page, "manager-05-credit-refused", testInfo);
@@ -193,9 +198,11 @@ test("beyond the till: the manager's reach past the counter's walls, and the car
   expect(clerkWrite.status).toBe(403);
   const managerWrite = await staffPost(page, manager, "/api/v1/pricing/rules", {});
   expect([400, 422]).toContain(managerWrite.status);
-  // Sign out: the entry page with the four coming roles comes back.
+  // Sign out: the front door picker comes back, the manager's card on it
+  // and the four coming roles inside their disclosure.
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
+  await page.getByTestId("coming-disclosure").getByText("Four more roles are coming").click();
   await expect(page.getByRole("list", { name: "Coming roles" })).toBeVisible();
   // The picture holds both halves of the claim: the cards back on the entry
   // page, and the dispatch read the manager's bearer reaches, as the browser

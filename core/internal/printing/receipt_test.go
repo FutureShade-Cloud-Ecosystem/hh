@@ -212,8 +212,8 @@ func TestHSTLabel_ReadsTheConfiguredRate(t *testing.T) {
 	}{
 		{1300, "HST (13%)"}, {1500, "HST (15%)"}, {1275, "HST (12.75%)"}, {0, "HST"},
 	} {
-		if got := hstLabel(tc.bps); got != tc.want {
-			t.Errorf("hstLabel(%d) = %q, want %q", tc.bps, got, tc.want)
+		if got := taxLabel("HST", tc.bps); got != tc.want {
+			t.Errorf("taxLabel(%d) = %q, want %q", tc.bps, got, tc.want)
 		}
 	}
 }
