@@ -5,7 +5,7 @@
 // through the core's own close flow, signs in on the closed drawer (what a
 // clean box holds), and presses the button: the request it sends carries the
 // reference's own float, and the till then shows the session open.
-import { POINT_LOMA_ID, expect, expectedCash, mint, staffGet, staffPost, tapRoleCard, test } from "./helpers.js";
+import { POINT_LOMA_ID, expect, expectedCash, mint, openCounterTill, staffGet, staffPost, tapRoleCard, test } from "./helpers.js";
 
 const OPEN_PATH = `/api/v1/till/sessions/open?branch_id=${POINT_LOMA_ID}&station=MAIN`;
 
@@ -32,11 +32,14 @@ test("the closed drawer: the till's own Open Session button opens MAIN with the 
   expect(closed.status).toBe(200);
   expect(closed.body.open).toBe(false);
 
-  // A fresh sign in on the closed drawer: the surface shows its Open Session
-  // button and no session dot (the hydrate read answers no open session).
+  // A fresh sign in on the closed drawer: the front door's card tap lands on
+  // the role home, the Counter Till tile opens the till, and the surface
+  // shows its Open Session button and no session dot (the hydrate read
+  // answers no open session).
   await page.goto("/");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await tapRoleCard(page, "Sales");
+  await openCounterTill(page);
   await expect(page.getByRole("button", { name: "Open Session" })).toBeVisible();
   await expect(page.getByTestId("session-dot")).toHaveCount(0);
 

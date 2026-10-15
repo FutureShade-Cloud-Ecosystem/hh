@@ -46,7 +46,7 @@ const TEN_NAMES: Record<string, string> = {
   "DEMO-STEP-SLAB": "Step slab 24x48, natural",
   "DEMO-AGG-BEDDING": "Paver bedding stone",
   "DEMO-AGG-BASE": "Class 2 base rock",
-  "DEMO-AGG-SAND": "Concrete Sand",
+  "DEMO-AGG-SAND": "Concrete sand",
   "DEMO-MULCH-BLACK": "Black cedar mulch",
   "DEMO-EDGE-ALU": "Aluminum edging 8 ft",
 };
