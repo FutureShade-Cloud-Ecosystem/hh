@@ -12091,6 +12091,41 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/people:
+    get:
+      operationId: messagingListPeople
+      tags:
+        - staff-messaging
+      summary: List the org's active staff for the New message picker
+      description: "The staffer readable roster the New message picker lists: every active staffer of the caller's org, each with a display name, a role label (the role catalog's display name, never the code) and a branch label. The shape carries no email, no phone, no permission or cost field and no tier. The caller is on the list, flagged is_me. The wall follows the direct message rule: a direct message names no branch, so the picker reaches every branch's staff of the org, exactly the people a direct message may be opened with. Ordered by display name then id; cursor paginated."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: q
+          in: query
+          required: false
+          description: Case insensitive contains match on display name
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: The page of people
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingPersonPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/messaging/channels/{id}/members:
     post:
       operationId: messagingAddChannelMember
@@ -38650,6 +38685,44 @@ components:
         joined_at:
           type: string
           format: date-time
+    MessagingPerson:
+      type: object
+      description: One staffer of the caller's org on the New message picker's roster. The shape carries no email, no phone, no permission or cost field and no tier. role_label is the role catalog's display name and branch_label the person's granted branches' display names joined with a comma and a space; either is empty when the person holds none. is_me flags the caller's own row.
+      required:
+        - user_id
+        - display_name
+        - role_label
+        - branch_label
+        - is_me
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        role_label:
+          type: string
+        branch_label:
+          type: string
+        is_me:
+          type: boolean
+    MessagingPersonPage:
+      type: object
+      description: The roster page envelope, the contract's shared page shape
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingPerson"
+        next_cursor:
+          type:
+            - string
+            - "null"
+        limit:
+          type: integer
+          format: int32
     MessagingMessage:
       type: object
       description: "One post. author_id is empty for a system EVENT message. ref carries the structured MessagingEventRef for EVENT messages and MessagingApprovalRef for APPROVAL cards. thread_root_id is empty for a top-level message. superseded_by non-empty means a newer fact about the same record auto-resolved this message (last write wins): it renders as superseded and never requires an ack."

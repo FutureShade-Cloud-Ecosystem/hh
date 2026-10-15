@@ -158,3 +158,5 @@ additions:
     reason: "The truck registry update, the fields the create takes plus active or not (the roles roadmap's Dispatch core): the ERP registered trucks but never edited one; no ERP source route."
   - route: "PUT /api/v1/dispatch/drivers/{id}"
     reason: "The driver registry update, the truck update's twin (the login link included): the ERP registered drivers but never edited one; no ERP source route."
+  - route: "GET /api/v1/messaging/people"
+    reason: "House Messages change 7, slice S1: the staffer readable roster the New message picker lists (id, display name, role label, branch label, is_me), every active staffer of the caller's org; the ERP's staff roster was manager only and the ERP had no picker."
