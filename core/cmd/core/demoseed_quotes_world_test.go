@@ -239,18 +239,34 @@ func qwDriverDayIDs() []string {
 // sets, the updated_at it bumps, and the row version (xmin) any update changes.
 var qwDriverStampColumns = []string{"org_id", "updated_at", "row_version"}
 
+// qwTaskRepairColumns are the only columns the task sync repair (repairDemoTaskSync) moves on a
+// demo task row: the org it stamps, the seq it draws from the type's counter, and the row version
+// (xmin) any update changes. The repair needs the org row, which the populate provisions after the
+// first apply, so like the Driver's stamp it can only land on the first apply after the populate,
+// which is the apply that adds the quotes.
+var qwTaskRepairColumns = []string{"org_id", "seq", "row_version"}
+
+// qwDemoTaskIDs are the plan's own task ids, the rows the task sync repair addresses.
+func qwDemoTaskIDs() []string {
+	ids := make([]string, 0, len(demoTasks))
+	for _, tk := range demoTasks {
+		ids = append(ids, demoID("task:"+tk.Key))
+	}
+	return ids
+}
+
 // qwFingerprintStamped fingerprints one delivery table with the day-keyed Driver rows named by
 // except kept in, but with qwDriverStampColumns removed from those rows alone. Every other column of
 // those rows, and every column of every other row, still counts, so a status, a date or a driver id
 // moving on them is seen.
-func qwFingerprintStamped(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string, except []string) string {
+func qwFingerprintStamped(t *testing.T, ctx context.Context, pool *pgxpool.Pool, table string, except, cols []string) string {
 	t.Helper()
 	var sum string
 	if err := pool.QueryRow(ctx, `
 		SELECT md5(coalesce(string_agg(line, E'\n' ORDER BY line), 'empty'))
 		  FROM (SELECT CASE WHEN id::text = ANY($1::text[]) THEN to_jsonb(r) - $2::text[] ELSE to_jsonb(r) END::text AS line
 		          FROM (SELECT *, xmin::text AS row_version FROM `+table+`) r) s`,
-		except, qwDriverStampColumns).Scan(&sum); err != nil {
+		except, cols).Scan(&sum); err != nil {
 		t.Fatalf("fingerprint %s: %v", table, err)
 	}
 	return sum
@@ -363,11 +379,22 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	// intended movement beside the quote world, checked by name below instead of hiding inside
 	// "nothing else moved".
 	driverDayIDs := qwDriverDayIDs()
+	taskIDs := qwDemoTaskIDs()
+	// The task sync repair is the other named mover on this apply: every demo task enters it
+	// unstamped (no seq, so on no sync feed) and leaves it stamped, with only qwTaskRepairColumns
+	// moved (the fingerprint below keeps every other column of these rows in).
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM tasks WHERE id = ANY($1::uuid[]) AND seq IS NULL`, taskIDs); n != len(taskIDs) {
+		t.Fatalf("%d of %d demo tasks enter the second apply unstamped, want all of them", n, len(taskIDs))
+	}
 	fingerprint := func() map[string]string {
 		out := map[string]string{}
 		for _, table := range qwOtherWorldTables {
 			if table == "delivery_runs" || table == "delivery_stops" {
-				out[table] = qwFingerprintStamped(t, ctx, pool, table, driverDayIDs)
+				out[table] = qwFingerprintStamped(t, ctx, pool, table, driverDayIDs, qwDriverStampColumns)
+				continue
+			}
+			if table == "tasks" {
+				out[table] = qwFingerprintStamped(t, ctx, pool, table, taskIDs, qwTaskRepairColumns)
 				continue
 			}
 			out[table] = qwFingerprint(t, ctx, pool, []string{table})[table]
@@ -401,6 +428,10 @@ func TestDemoWorld_Quotes(t *testing.T) {
 	if runsStamped != 1 || stopsStamped != len(driverDayIDs)-1 {
 		t.Errorf("the org stamp left %d of 1 run and %d of %d stops stamped, want the day's whole Driver set",
 			runsStamped, stopsStamped, len(driverDayIDs)-1)
+	}
+	if n := qwCount(t, ctx, pool, `SELECT count(*) FROM tasks WHERE id = ANY($1::uuid[]) AND seq IS NOT NULL
+		AND org_id = (SELECT id FROM org WHERE slug = $2)`, taskIDs, demoOrgSlug); n != len(taskIDs) {
+		t.Errorf("the task sync repair left %d of %d demo tasks on their feed, want all of them", n, len(taskIDs))
 	}
 	census := map[string]int{"quotes": 5, "quote_lines": 10, "quote_share_links": 3, "quote_acceptances": 2,
 		"quote_share_link_events": 2, "pricing_audit_log": 4, "permission_approval_requests": 2 + 2}

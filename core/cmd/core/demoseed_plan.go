@@ -159,15 +159,22 @@ type custSpec struct {
 // Trenton, beside its quotes. Its older order book stays where it always was, on the other
 // branch's dashboards, which read orders.branch_id and never the customer's home; the repair for
 // databases seeded before this ruling sits in the demoseed_repair pair.
+//
+// THE SAME RULING HOLDS C04 AND C08. Orders O05 and O07 sit at the branch the demo logins work
+// (the yard's open picks live there), and their accounts, Harbourview Builders and the County, were
+// homed at the other branch, so both held documents at Trenton and were unfindable by name in the
+// staff search there (TestDemoWorld_CustomerSearch walks every customer with a document at that
+// branch). They are homed there now; their older book and invoices stay on the other branch's
+// dashboards, which read orders.branch_id and never the customer's home.
 var demoCustomers = []custSpec{
 	{"C01", "Northline Hardscapes Ltd (demo)", "CONTRACTOR", 30, 5_000_000, 1, false},
 	{"C02", "Bay Ridge Landscaping (demo)", "CONTRACTOR", 30, 2_500_000, 1, false},
 	{"C03", "Quinte Paving & Design (demo)", "CONTRACTOR", 45, 7_500_000, 1, false},
-	{"C04", "Harbourview Builders (demo)", "BUILDER", 60, 12_000_000, 0, false},
+	{"C04", "Harbourview Builders (demo)", "BUILDER", 60, 12_000_000, 1, false},
 	{"C05", "Cedar Hollow Homes (demo)", "BUILDER", 30, 4_000_000, 1, false},
 	{"C06", "M. Okafor (demo retail)", "RETAIL", 0, 0, 0, false},
 	{"C07", "D. Lachance (demo retail)", "RETAIL", 0, 0, 1, false},
-	{"C08", "County of Hastings (demo)", "GOVERNMENT", 60, 20_000_000, 0, false},
+	{"C08", "County of Hastings (demo)", "GOVERNMENT", 60, 20_000_000, 1, false},
 	{"C09", "Stonebrook Contracting (demo)", "CONTRACTOR", 30, 1_500_000, 0, true},
 	{"C10", "Cash On Demand customer (demo)", "CONTRACTOR", 0, 500_000, 1, false},
 }
