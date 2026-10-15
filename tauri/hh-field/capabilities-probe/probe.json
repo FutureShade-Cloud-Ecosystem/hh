@@ -9,6 +9,8 @@
     "sql:default",
     "sql:allow-execute",
     "allow-probe-report",
+    "allow-keychain-set",
+    "allow-keychain-get",
     "allow-keychain-delete"
   ]
 }

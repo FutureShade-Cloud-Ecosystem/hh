@@ -89,6 +89,81 @@ paths:
         "503":
           description: A dependency of the exchange could not answer; nothing was minted
 
+  /api/v1/auth/persona:
+    post:
+      operationId: identityPersona
+      tags: [staff-identity]
+      summary: Enter the demo as one persona of the fixed list
+      description: >-
+        Mounted only in the demo build under the console sign in mode, and
+        absent from the default build and from the demo mode. A persona is
+        not an FB Console user: the core mints the persona's session itself
+        with the deployment's own signing key. The subject of the token is
+        persona:<id>. On the testers' copy the caller sends the core bearer
+        of a real partner exchange and the partner must be on the pinned
+        list; a persona token cannot call it. On the public copy no bearer
+        is sent and the route is limited per address and per address and
+        persona. The token window is the persona role's session ceiling,
+        with no refresh. An id outside the fixed list and the contractor
+        personas answer the shared Forbidden body, and no refusal says which
+        check failed.
+      x-addition: "the demo build's tap-a-role entry under the real sign in (state note HH-S4-AUTH, section 5); the ERP minted demo sessions from a flow table"
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityPersonaRequest"
+      responses:
+        "200":
+          description: The persona's core session token, its expiry and its staff identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityExchangeResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503":
+          description: A dependency of the entry could not answer; nothing was minted
+  /api/v1/auth/methods:
+    get:
+      operationId: identityAuthMethods
+      tags: [staff-identity]
+      summary: Read the sign in methods a dealer allows
+      description: >-
+        Public leg, no bearer, mounted only where the sign in mode is
+        console. The sign in screen asks which methods to offer for the
+        org slug it was opened for and gets the method codes only. It is no
+        directory oracle: a malformed slug, an unknown org and an org that
+        holds the default set (email_password and google) all answer the
+        same bytes with a 200, and the slug shape is checked before any
+        lookup, so no shape is answered 400. Rate limited per client
+        address. The core enforces the same set at the exchange.
+      x-addition: "the dealer's own allowed sign in methods (state note HH-S4-AUTH, section 5b); the ERP offered one password sign in to every dealer"
+      x-role: public
+      security: []
+      parameters:
+        - name: org
+          in: query
+          required: false
+          description: The org slug the sign in screen was opened for
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The allowed method codes, in the closed vocabulary's order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityAuthMethodsResponse"
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "503":
+          description: A dependency could not answer; no methods are named
+
   /api/v1/auth/login:
     post:
       operationId: identityLogin
@@ -1038,6 +1113,15 @@ components:
           type: string
           description: The org slug whose Team the person belongs to
 
+    IdentityPersonaRequest:
+      type: object
+      required: [persona]
+      additionalProperties: false
+      properties:
+        persona:
+          type: string
+          description: One id of the build's fixed persona list
+
     IdentityExchangeResponse:
       type: object
       required: [token, expiresAtMs, user]
@@ -1050,6 +1134,17 @@ components:
           format: int64
         user:
           $ref: "#/components/schemas/IdentityUser"
+
+    IdentityAuthMethodsResponse:
+      type: object
+      required: [methods]
+      properties:
+        methods:
+          type: array
+          description: The method codes the dealer allows
+          items:
+            type: string
+            enum: [email_password, google, microsoft, magic_link]
 
     IdentityChangePasswordRequest:
       type: object
@@ -1274,6 +1369,7 @@ components:
       description: The tax decision reason vocabulary (the tax_decision_snapshot CHECK)
       enum:
         - STD_ON_HST_13
+        - STD_SALES_TAX
         - ON_FN_POS_8
         - FED_S87_VENDOR_DELIVERY
         - FNGST_5

@@ -62,6 +62,10 @@ type taskStore interface {
 	// rather than insert because a picker corrects themselves and a line has exactly one live
 	// number; the correction history is task_events', as it is for every other change here.
 	UpsertPickedLines(ctx context.Context, taskID, actorID string, lines []PickedLineInput) ([]PickedLine, error)
+	// RecordPickLocked is the record the service runs: the task row locked across apply (the order
+	// call, handing back the lines to store), a CANCELLED or DONE task refused, the lines and the
+	// task's fresh seq written in the same transaction.
+	RecordPickLocked(ctx context.Context, taskID, actorID string, apply func(context.Context, Task) ([]PickedLineInput, error)) ([]PickedLine, error)
 	// ListPickedLines reads a task's recorded pick in ticket order.
 	ListPickedLines(ctx context.Context, taskID string) ([]PickedLine, error)
 

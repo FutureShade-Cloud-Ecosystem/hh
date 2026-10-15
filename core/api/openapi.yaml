@@ -2357,7 +2357,7 @@ paths:
       tags:
         - staff-billing
       summary: List the card charge attempts that need a person
-      description: "The list a person reconciling a Run settlement report reads: every trans_id with no sale behind it, and why. With state=open it answers every attempt that needs a person (UNKNOWN, VOID_UNKNOWN, VOID_DECLINED), whatever its date; from and to (RFC3339) bound the second arm, every attempt in the range that carries a charge ref and is not BOUND. A missing from and to default from to the seven day window, so the range arm is bounded whatever the caller sends. Newest first, bounded at 500 rows."
+      description: "The list a person reconciling a Run settlement report reads: every trans_id with no sale behind it, and why. With state=open it answers every attempt that needs a person (UNKNOWN, VOID_UNKNOWN, VOID_DECLINED), whatever its date; from and to (RFC3339) bound the second arm, every attempt in the range that carries a charge ref and is not BOUND. A missing from and to default from to the seven day window, so the range arm is bounded whatever the caller sends. Newest first, bounded at 500 rows. The list is fenced by the caller's branch reach: a global role reads every branch, a branch scoped caller reads only the attempts of its granted branches, and an attempt of a branch the caller does not reach is simply absent (the bound counts reachable rows only)."
       x-role: requireManager
       x-access:
         surfaces:
@@ -5287,6 +5287,51 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/dispatch/trucks/{id}:
+    put:
+      operationId: dispatchUpdateTruck
+      tags:
+        - staff-dispatch
+      summary: Update a truck's registry facts, including active or not
+      description: "An absolute PUT of the row the caller read: the fields the create takes plus is_active. The same body twice leaves the same row, so a retry is never a conflict; only a different code colliding with another truck at the branch answers 409. A branch_id naming another yard is refused in words, a truck's runs and crew hang off the yard it lives at. Branch-walled on the row's own branch."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dispatch-board
+        level: manage
+      x-guards:
+        - requireBranch
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchTruck"
+      responses:
+        "200":
+          description: The stored truck
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchTruck"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /api/v1/dispatch/drivers:
     get:
       operationId: dispatchListDrivers
@@ -5360,6 +5405,49 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/dispatch/drivers/{id}:
+    put:
+      operationId: dispatchUpdateDriver
+      tags:
+        - staff-dispatch
+      summary: Update a driver's registry facts, including active or not
+      description: "An absolute PUT of the row the caller read: the fields the create takes (including the login link user_id) plus is_active. Idempotent under an identical retry; a branch_id naming another yard is refused in words, the truck update's own rule. Branch-walled on the row's own branch."
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - dispatch-board
+        level: manage
+      x-guards:
+        - requireBranch
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DispatchDriver"
+      responses:
+        "200":
+          description: The stored driver
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DispatchDriver"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/dispatch/board:
     get:
       operationId: dispatchGetBoard
@@ -6289,12 +6377,13 @@ paths:
       tags:
         - staff-dispatch
       summary: Save the dispatch policy for a branch
-      description: Malformed values are refused in words before any database CHECK can fire; omitted knobs normalise to the column defaults rather than to zero.
+      description: "Malformed values are refused in words before any database CHECK can fire; omitted knobs normalise to the column defaults rather than to zero. Beside the level, the route names the configuration's dispatch_policy_setters list (X13): a role off the list is refused the write whatever its cells say, the pricing_editors precedent."
       x-role: requireManager
       x-access:
         surfaces:
           - dispatch-board
         level: manage
+        list: dispatch_policy_setters
       x-guards:
         - requireBranch
       parameters:
@@ -8809,6 +8898,67 @@ paths:
           $ref: "#/components/responses/TooManyRequests"
         "503":
           description: A dependency of the exchange could not answer; nothing was minted
+  /api/v1/auth/persona:
+    post:
+      operationId: identityPersona
+      tags:
+        - staff-identity
+      summary: Enter the demo as one persona of the fixed list
+      description: "Mounted only in the demo build under the console sign in mode, and absent from the default build and from the demo mode. A persona is not an FB Console user: the core mints the persona's session itself with the deployment's own signing key. The subject of the token is persona:<id>. On the testers' copy the caller sends the core bearer of a real partner exchange and the partner must be on the pinned list; a persona token cannot call it. On the public copy no bearer is sent and the route is limited per address and per address and persona. The token window is the persona role's session ceiling, with no refresh. An id outside the fixed list and the contractor personas answer the shared Forbidden body, and no refusal says which check failed."
+      x-addition: the demo build's tap-a-role entry under the real sign in (state note HH-S4-AUTH, section 5); the ERP minted demo sessions from a flow table
+      x-role: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityPersonaRequest"
+      responses:
+        "200":
+          description: The persona's core session token, its expiry and its staff identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityExchangeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: A dependency of the entry could not answer; nothing was minted
+  /api/v1/auth/methods:
+    get:
+      operationId: identityAuthMethods
+      tags:
+        - staff-identity
+      summary: Read the sign in methods a dealer allows
+      description: "Public leg, no bearer, mounted only where the sign in mode is console. The sign in screen asks which methods to offer for the org slug it was opened for and gets the method codes only. It is no directory oracle: a malformed slug, an unknown org and an org that holds the default set (email_password and google) all answer the same bytes with a 200, and the slug shape is checked before any lookup, so no shape is answered 400. Rate limited per client address. The core enforces the same set at the exchange."
+      x-addition: the dealer's own allowed sign in methods (state note HH-S4-AUTH, section 5b); the ERP offered one password sign in to every dealer
+      x-role: public
+      security: []
+      parameters:
+        - name: org
+          in: query
+          required: false
+          description: The org slug the sign in screen was opened for
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The allowed method codes, in the closed vocabulary's order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityAuthMethodsResponse"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          description: A dependency could not answer; no methods are named
   /api/v1/auth/login:
     post:
       operationId: identityLogin
@@ -13129,13 +13279,15 @@ paths:
       operationId: orderCancel
       tags:
         - staff-order
-      summary: Cancel an open order (manager only, reason required)
-      description: "Applies the CANCELLED transition from DRAFT, CONFIRMED, PICKING or READY. The service proves no money the cancel has no exit for is attached, under the order row lock: a finalized invoice other than a supplier deposit document, or a committed counter sale, answers 409 and belongs to the POS returns flow. An order whose only money is its supplier deposit document cancels: the deposit settles on the same transaction, credited back to the customer's account by the dealer's default or kept when keep_deposit is true (a manager's override, the mandatory reason is its audited reason). Kept means the dealer keeps only what the customer paid of the deposit; the unpaid rest is closed so nothing more is owed on the cancelled order."
+      summary: Cancel an open order (Sales, Branch or General Manager, reason required)
+      description: "Applies the CANCELLED transition from DRAFT, CONFIRMED, PICKING or READY. The service proves no money the cancel has no exit for is attached, under the order row lock: a finalized invoice other than a supplier deposit document, or a committed counter sale, answers 409 and belongs to the POS returns flow. An order whose only money is its supplier deposit document cancels: the deposit settles on the same transaction, credited back to the customer's account by the dealer's default or kept when keep_deposit is true (a manager's override, the mandatory reason is its audited reason). Kept means the dealer keeps only what the customer paid of the deposit; the unpaid rest is closed so nothing more is owed on the cancelled order. Walled to the order_cancellers list: the Sales Manager, the Branch Manager and the General Manager, each giving a reason (and the super admin); every other role is refused with the shared forbidden body. A branch scoped manager reaches only the orders of their own branches."
       x-role: requireManager
       x-access:
         surfaces:
           - quote-desk
-        level: manage
+        level: read
+        list: order_cancellers
+        reason: "The order_cancellers list is the wall, not the level: the General Manager reads the quote desk and the Branch Manager works it, and both may still cancel an order, which a manage level cannot say without leaving them out."
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id
@@ -15553,7 +15705,7 @@ paths:
       tags:
         - staff-pos
       summary: Read the tax rate the ring binds and its rounding rule
-      description: "The rate the ring binds, read through the same assessor the ring assesses with, so at the moment of the read the counter's display and the ring's math agree. Through the wired seam this holds for every ticket the counter can ring today, a relief ticket too: the relief reasons are evidence-gated and the seam carries no evidence, so the relief reason rides the ticket while this rate binds. MANUAL_TAX_REVIEW resolves its own ungated row, equal to the standard today and separately editable, and an effective-dated rate row change between the read and the ring moves the ring's rate. jurisdiction and reason_code are the standard-rated Ontario facts the read answers. The header tax today rounds half-up once at the invoice total; round_mode PER_LINE is stored but not yet applied at ring, so the word says what is configured, not what the ring does yet."
+      description: "The rate the ring binds, read through the same assessor the ring assesses with, so at the moment of the read the counter's display and the ring's math agree. Through the wired seam this holds for every ticket the counter can ring today, a relief ticket too: the relief reasons are evidence-gated and the seam carries no evidence, so the relief reason rides the ticket while this rate binds. MANUAL_TAX_REVIEW resolves its own ungated row, equal to the standard today and separately editable, and an effective-dated rate row change between the read and the ring moves the ring's rate. jurisdiction and reason_code are the dealer's own standard-rated facts the read answers (Ontario's for an Ontario dealer). The header tax today rounds half-up once at the invoice total; round_mode PER_LINE is stored but not yet applied at ring, so the word says what is configured, not what the ring does yet."
       x-addition: the counter-readable tax rate (row 661); no ERP source route
       x-role: requireStaff
       x-access:
@@ -23374,8 +23526,8 @@ paths:
       tags:
         - staff-export
       summary: Download a financial statement as a native workbook
-      description: The same builder backs the finance module's own format=xlsx route, so the two doors cannot drift. The body is a binary workbook, not JSON.
-      x-role: requireStaff
+      description: "The same builder backs the finance module's own format=xlsx route, so the two doors cannot drift. Gated as the finance reads it mirrors: a manager, and a branch outside the caller's reach (or no branch from a branch scoped caller) is the shared 403. The body is a binary workbook, not JSON."
+      x-role: requireManager
       x-access:
         surfaces:
           - money-desk
@@ -23443,7 +23595,7 @@ paths:
         - staff-export
       summary: Download the general-ledger transaction export as a native workbook
       description: The body is a binary workbook, not JSON.
-      x-role: requireStaff
+      x-role: requireManager
       x-access:
         surfaces:
           - money-desk
@@ -23504,7 +23656,7 @@ paths:
         - staff-export
       summary: Download the audit trail as a native workbook
       description: Reads the same service and filter as the audit list, so the file is the screen's rows. The body is a binary workbook, not JSON.
-      x-role: requireStaff
+      x-role: requireAdmin
       x-access:
         surfaces:
           - dealer-admin
@@ -27700,6 +27852,12 @@ components:
           additionalProperties: true
         flow:
           type: string
+        class:
+          type: string
+          enum:
+            - staff
+            - tenant
+          description: "The bearer class of the token: a tenant flow (a contractor persona of the demo account) carries a tenant token and a user block with no tier and no scope, and the front door routes it to the Pro apps"
         chapter_key:
           type: string
     DemoFlow:
@@ -27711,6 +27869,12 @@ components:
           type: string
         label:
           type: string
+        class:
+          type: string
+          enum:
+            - staff
+            - tenant
+          description: The bearer class the flow mints, so the front door can route a contractor to the Pro apps
     DemoFlowList:
       type: object
       required:
@@ -32336,6 +32500,9 @@ components:
           type: object
           additionalProperties: true
           description: The module's policy knobs via the surface hook; fields a caller may not see are byte-absent
+        business_zone:
+          type: string
+          description: The dealer's business day zone, an IANA name such as America/Los_Angeles. The apps name the dealer's day in it (the till's requested date, the quote desk's days left, the driver's runs) instead of compiling a zone in. Absent from an older core; the apps then read the Ontario dealer's America/Toronto.
     SettingsRoleItemsBody:
       type: object
       required:
@@ -35894,6 +36061,15 @@ components:
         org:
           type: string
           description: The org slug whose Team the person belongs to
+    IdentityPersonaRequest:
+      type: object
+      required:
+        - persona
+      additionalProperties: false
+      properties:
+        persona:
+          type: string
+          description: One id of the build's fixed persona list
     IdentityExchangeResponse:
       type: object
       required:
@@ -35909,6 +36085,21 @@ components:
           format: int64
         user:
           $ref: "#/components/schemas/IdentityUser"
+    IdentityAuthMethodsResponse:
+      type: object
+      required:
+        - methods
+      properties:
+        methods:
+          type: array
+          description: The method codes the dealer allows
+          items:
+            type: string
+            enum:
+              - email_password
+              - google
+              - microsoft
+              - magic_link
     IdentityChangePasswordRequest:
       type: object
       required:
@@ -36231,6 +36422,7 @@ components:
       description: The tax decision reason vocabulary (the tax_decision_snapshot CHECK)
       enum:
         - STD_ON_HST_13
+        - STD_SALES_TAX
         - ON_FN_POS_8
         - FED_S87_VENDOR_DELIVERY
         - FNGST_5
@@ -41563,6 +41755,7 @@ components:
           type: string
           enum:
             - STD_ON_HST_13
+            - STD_SALES_TAX
             - ON_FN_POS_8
             - FED_S87_VENDOR_DELIVERY
             - MANUAL_TAX_REVIEW
@@ -41679,6 +41872,7 @@ components:
           type: string
           enum:
             - STD_ON_HST_13
+            - STD_SALES_TAX
             - ON_FN_POS_8
             - FED_S87_VENDOR_DELIVERY
             - MANUAL_TAX_REVIEW
@@ -41845,6 +42039,7 @@ components:
           type: string
           enum:
             - STD_ON_HST_13
+            - STD_SALES_TAX
             - ON_FN_POS_8
             - FED_S87_VENDOR_DELIVERY
             - MANUAL_TAX_REVIEW
@@ -42255,6 +42450,7 @@ components:
         - automated
         - requires_evidence
         - evidence_satisfied
+        - tax_label
       properties:
         purchaser_type:
           type: string
@@ -42289,6 +42485,9 @@ components:
           type: boolean
         evidence_satisfied:
           type: boolean
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
     PosSignatureCapture:
       type: object
       required:
@@ -42727,20 +42926,26 @@ components:
         - reason_code
         - rate_bps
         - round_mode
+        - tax_label
       properties:
         jurisdiction:
           type: string
-          enum:
-            - ON
+          description: The dealer's own tax jurisdiction code
+          ON for an Ontario dealer: null
         reason_code:
           type: string
           enum:
             - STD_ON_HST_13
+            - STD_SALES_TAX
+          description: The standard reason of the dealer's jurisdiction, STD_ON_HST_13 for an Ontario dealer and STD_SALES_TAX for every other
         rate_bps:
           type: integer
           format: int32
           description: Basis points
           1300 is 13 percent: null
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         round_mode:
           type: string
           enum:
@@ -49916,6 +50121,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - tax_label
         - lines
       properties:
         quote_id:
@@ -49962,6 +50168,9 @@ components:
         tax_cents:
           type: integer
           format: int64
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         total_cents:
           type: integer
           format: int64
@@ -50172,6 +50381,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - tax_label
         - as_of
         - acceptable
         - quantity_notice
@@ -50207,6 +50417,9 @@ components:
         tax_cents:
           type: integer
           format: int64
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         total_cents:
           type: integer
           format: int64
@@ -50307,6 +50520,7 @@ components:
         - subtotal_cents
         - tax_cents
         - total_cents
+        - tax_label
         - quantities_confirmed
       properties:
         quote_no:
@@ -50325,6 +50539,9 @@ components:
         tax_cents:
           type: integer
           format: int64
+        tax_label:
+          type: string
+          description: The name of the dealer's own tax, HST for an Ontario dealer and Sales tax for every other jurisdiction; screens render it and never guess it
         total_cents:
           type: integer
           format: int64

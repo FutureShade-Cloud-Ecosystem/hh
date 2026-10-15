@@ -4,7 +4,7 @@
 // pre restart bearer (CT_PRIOR_TOKEN, minted by the exit script before the
 // restart) is dead, the till is nobody's, and a fresh sign in works. This is
 // the proof behind the testers' page's "a restart signs everyone out".
-import { TRENTON_ID, apiPicture, expect, shotParts, signIn, staffGet, test } from "./helpers.js";
+import { POINT_LOMA_ID, apiPicture, expect, shotParts, signIn, staffGet, test } from "./helpers.js";
 
 test("the pre restart bearer is refused, and a fresh sign in works", async ({ page }, testInfo) => {
   const prior = process.env.CT_PRIOR_TOKEN ?? "";
@@ -12,12 +12,14 @@ test("the pre restart bearer is refused, and a fresh sign in works", async ({ pa
   const dead = await staffGet(
     page,
     prior,
-    `/api/v1/pos/parked?branch_id=${TRENTON_ID}`,
+    `/api/v1/pos/parked?branch_id=${POINT_LOMA_ID}`,
   );
   expect(dead.status).toBe(401);
 
-  // The till itself is fresh: nobody is signed in, and the cards answer.
+  // The front door is fresh: the picker is up (the restart consumed every
+  // session), and no till is signed in.
   await page.goto("/");
+  await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
   await signIn(page, "Sales");
@@ -25,7 +27,7 @@ test("the pre restart bearer is refused, and a fresh sign in works", async ({ pa
   // The picture holds both halves of the claim: the core's refusal of the
   // pre restart bearer, as the browser shows it, and the till signed back in,
   // loaded, as a fresh sign in leaves it.
-  const refusal = await apiPicture(page, prior, `/api/v1/pos/parked?branch_id=${TRENTON_ID}`);
+  const refusal = await apiPicture(page, prior, `/api/v1/pos/parked?branch_id=${POINT_LOMA_ID}`);
   const till = await page.screenshot({ fullPage: true });
   await shotParts(page, "90-restart-signed-back-in", testInfo, [refusal, till]);
 });

@@ -14,6 +14,8 @@
 // the work area parses it through floor-refusal.ts, which validates it field
 // by field like every other read.
 import { err, ok, type ApiClient, type Result } from "@hardscapehouse/api-client";
+import { serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { isNoSignal } from "@hardscapehouse/work-offline";
 import type {
   IdentityApproval,
   IdentityPolicyCheckResponse,
@@ -119,6 +121,8 @@ export interface TermsRef {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  /** The name of the dealer's tax ("HST", "Sales tax"), the server's own word for the totals row. */
+  taxLabel: string;
   lines: Array<{ lineNo: number; discPct: number; preDiscountTotalCents: number; hasImage: boolean; sku: string | null }>;
 }
 
@@ -329,8 +333,9 @@ export function validateTerms(value: unknown): TermsRef | null {
   const totalCents = integerAt(value, "total_cents");
   const depositCents = integerAt(value, "deposit_cents");
   const deliveryFeeCents = integerAt(value, "delivery_fee_cents");
+  const taxLabel = stringAt(value, "tax_label");
   if (
-    quoteId === null || depositRequired === null || depositPct === null || includeImages === null ||
+    quoteId === null || taxLabel === null || taxLabel === "" || depositRequired === null || depositPct === null || includeImages === null ||
     fulfillmentRaw === null || (fulfillmentRaw !== "PICKUP" && fulfillmentRaw !== "DELIVERY") ||
     deliveryFeeCents === null || depositCents === null ||
     subtotalCents === null || taxCents === null || totalCents === null
@@ -356,6 +361,7 @@ export function validateTerms(value: unknown): TermsRef | null {
     subtotalCents,
     taxCents,
     totalCents,
+    taxLabel,
     lines,
   };
 }
@@ -570,9 +576,33 @@ export interface AccountStandingRead {
   oldestBucket: string | null;
 }
 
+/**
+ * What the Work shell keeps on the device for the two writes the core admits
+ * through sync on a quote: a new quote (its customer and branch, and an
+ * expiry date) and a change of a quote's expiry date. Nothing else is ever
+ * offered to it: a line, a discount, a send, an approval and every other
+ * write is refused with no signal, and money never queues.
+ */
+export interface DraftKeeper {
+  keep(customerId: string, validUntil: string): Promise<Result<unknown>>;
+  keepValidUntil(quoteId: string, validUntil: string): Promise<Result<unknown>>;
+}
+
+/** The words after a new quote was kept on the device. It is not a quote on the server yet, and says so. */
+export const KEPT_DRAFT_WORDS = "No signal. This draft is saved on this device and goes to the server when you are back online. Add its lines then.";
+
+/** The words after an expiry change was kept on the device. */
+export const KEPT_VALIDITY_WORDS = "No signal. The new valid until date is saved on this device and goes to the server when you are back online.";
+
 export class QdClient {
   readonly #client: ApiClient;
   readonly #callerId: () => string;
+  #keeper: DraftKeeper | null = null;
+
+  /** The Work shell's offline layer hands the client its keeper once the store is open; null takes it away. */
+  setDraftKeeper(keeper: DraftKeeper | null): void {
+    this.#keeper = keeper;
+  }
 
   /** callerId reads the signed in person's own user id from the session, "" when none is carried. */
   constructor(client: ApiClient, callerId: () => string = () => "") {
@@ -675,7 +705,14 @@ export class QdClient {
       branch_id: branchId,
       ...(validUntil === "" ? {} : { valid_until: validUntil }),
     });
-    if (!result.ok) return result;
+    if (!result.ok) {
+      // With no signal, and only then, the draft's header is kept on the device (never a server's refusal).
+      if (this.#keeper !== null && isNoSignal(result)) {
+        const kept = await this.#keeper.keep(customerId, validUntil);
+        return err(kept.ok ? KEPT_DRAFT_WORDS : kept.error);
+      }
+      return result;
+    }
     const view = validateView(result.value);
     if (view === null) return err("the created quote is not readable");
     return ok(view.id);
@@ -755,7 +792,13 @@ export class QdClient {
     const result = await staffQuote.quoteSetValidUntil(this.#client, quoteId, {
       ...(validUntil === "" ? {} : { valid_until: validUntil }),
     });
-    if (!result.ok) return result;
+    if (!result.ok) {
+      if (this.#keeper !== null && isNoSignal(result)) {
+        const kept = await this.#keeper.keepValidUntil(quoteId, validUntil);
+        return err(kept.ok ? KEPT_VALIDITY_WORDS : kept.error);
+      }
+      return result;
+    }
     const outcome = validateEditOutcome(result.value);
     return outcome === null ? err("the expiry write's answer is not readable") : ok(outcome);
   }
@@ -848,9 +891,9 @@ export class QdClient {
     const result = await staffQuote.quoteMintShareLink(this.#client, quoteId, {});
     if (!result.ok) return result;
     const record = result.value as unknown;
-    if (!isRecord(record)) return err("the minted link is not readable");
+    if (!isRecord(record)) return err("the share link could not be read");
     const token = stringAt(record, "token");
-    return token === null ? err("the minted link carried no token") : ok(token);
+    return token === null ? err("the share link did not carry its code") : ok(token);
   }
 
   /**
@@ -1025,6 +1068,8 @@ export class QdClient {
       ...(profile === undefined ? {} : { profile }),
     });
     if (!result.ok) return result;
+    // The dealer's business day zone rides on this read; the desk's day counts follow it.
+    serveHouseZoneFrom(result.value);
     const config = validateConfig(result.value);
     return config === null ? err("the surface config is not readable") : ok(config);
   }

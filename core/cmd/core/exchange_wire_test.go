@@ -55,13 +55,3 @@ func TestExchangeConfigRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-func TestDefaultSignInMethodsSeamAdmitsOnlyTheHouseProvider(t *testing.T) {
-	var s defaultSignInMethods
-	for provider, want := range map[string]bool{"email": true, "google": false, "": false, "anonymous": false} {
-		got, err := s.SignInMethodAllowed(nil, "org", provider)
-		if err != nil || got != want {
-			t.Errorf("%q: %v %v", provider, got, err)
-		}
-	}
-}

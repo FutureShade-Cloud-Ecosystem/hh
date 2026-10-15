@@ -357,9 +357,13 @@ func (r *Repository) insertJournalIn(ctx context.Context, tx pgx.Tx, d journalDr
 	// that files a 9pm Ontario sale into tomorrow, and a 9pm sale on the 31st into next month's
 	// books. See businessday.go for the full argument and for the three places this product had
 	// already answered the same question the same way.
-	y, m := fiscalYearMonth(d.OccurredAt)
+	zone, err := r.journalZone(ctx, tx)
+	if err != nil {
+		return "", false, err
+	}
+	y, m := fiscalYearMonthIn(zone, d.OccurredAt)
 	var periodID, pstatus string
-	err := tx.QueryRow(ctx, `SELECT id::text, status FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus)
+	err = tx.QueryRow(ctx, `SELECT id::text, status FROM fiscal_periods WHERE year = $1 AND month = $2`, y, m).Scan(&periodID, &pstatus)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", false, clientErr(422, "gl: no fiscal period for %04d-%02d", y, m)
 	}

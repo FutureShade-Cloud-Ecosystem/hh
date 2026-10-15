@@ -34,7 +34,7 @@ test("the receiving difference definition is said in words, and only the differe
   await expect(note).toContainText("leaves this list when the rest lands or the order is closed short");
   const cards = page.locator("[data-po]");
   await expect(cards).toHaveCount(1);
-  await expect(cards.first().locator(".order")).toHaveText("PO-TRT-77");
+  await expect(cards.first().locator(".order")).toHaveText("PO-PLM-77");
   await expect(cards.first().locator(".chip")).toContainText("Partial");
   await expect(cards.first().locator(".detail").first()).toContainText("1 line still short");
   // Cost, visible: the order's still-open value, the core's integer cents formatted for a person.
@@ -64,13 +64,14 @@ test("the needs links' words are the core's own view strings, never reworded", a
   await expect(page.locator("[data-needs='purchasing.receiving_differences'] .view-words")).toHaveText("Receiving · short");
 });
 
-test("the rows nothing measures carry their no-source sentence and no number", async ({ page }) => {
+test("a row the core cannot measure carries its not-counted sentence and no number, and the unread tile stays honest", async ({ request, page }) => {
+  await useScenario(request, "weights-unwired");
   await page.addInitScript(managerHandoff);
   await page.goto("/");
   const unsourced = page.locator("[data-unsourced='weights.pending']");
   await expect(unsourced).toHaveCount(1);
   await expect(unsourced.locator(".what")).toHaveText("Weights pending");
-  await expect(unsourced.locator(".words")).toContainText("No source is wired for this row yet");
+  await expect(unsourced.locator(".words")).toContainText("not counted here");
   await expect(unsourced.locator(".needs-count")).toHaveCount(0);
   await expect(unsourced.getByRole("button")).toHaveCount(0);
   const tile = page.locator("[data-widget='messages.unread']");

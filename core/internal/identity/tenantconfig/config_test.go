@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/apigen"
@@ -28,11 +29,11 @@ func TestServesPublicShape(t *testing.T) {
 		t.Fatalf("body is not a JSON object: %v", err)
 	}
 	want := map[string]string{
-		"id":            "dibbits",
-		"dealer_name":   "Dibbits Landscape Supply",
+		"id":            "default",
+		"dealer_name":   "",
 		"logo_url":      "",
-		"primary_color": "#E8A74E",
-		"support_email": "support@dibbits.example",
+		"primary_color": "",
+		"support_email": "",
 		"support_phone": "",
 	}
 	if len(raw) != len(want) {
@@ -61,10 +62,28 @@ func TestServesPublicShape(t *testing.T) {
 	}
 }
 
-// The handler serves the same meaning as the recorded capture for this
-// route (core/api/fixtures-live/config.json, vendored under D22): the
-// carry stub is the ERP antecedent's own answer, key for key.
-func TestMatchesRecordedCapture(t *testing.T) {
+// The default is no dealer's: it carries no dealer name, brand, colour or
+// support line, and names no dealer in any field (decision log row 1592).
+// A dealer's name and brand reach the route through New(config) from the
+// dealer's own configuration, the demo's from the demo seed.
+func TestDefaultCarriesNoDealer(t *testing.T) {
+	d := Default()
+	if d.DealerName != "" || d.LogoUrl != "" || d.PrimaryColor != "" || d.SupportEmail != "" || d.SupportPhone != "" {
+		t.Fatalf("the default carries dealer facts: %+v", d)
+	}
+	for _, v := range []string{d.Id, d.DealerName, d.LogoUrl, d.PrimaryColor, d.SupportEmail, d.SupportPhone} {
+		if strings.Contains(strings.ToLower(v), "dibbits") {
+			t.Fatalf("the default names a dealer: %+v", d)
+		}
+	}
+}
+
+// The default keeps the recorded capture's shape (core/api/fixtures-live/
+// config.json, vendored under D22): the same six keys, so the contract's
+// fixture and the route agree on the wire form. The capture's values are
+// the ERP antecedent's own dealer and are history; the route no longer
+// serves them.
+func TestKeepsTheRecordedCaptureShape(t *testing.T) {
 	capture, err := os.ReadFile("../../../api/fixtures-live/config.json")
 	if err != nil {
 		t.Fatalf("read recorded capture: %v", err)
@@ -81,9 +100,9 @@ func TestMatchesRecordedCapture(t *testing.T) {
 	if len(served) != len(recorded) {
 		t.Fatalf("served %d keys, capture has %d", len(served), len(recorded))
 	}
-	for k, v := range recorded {
-		if served[k] != v {
-			t.Fatalf("key %q: served %v, capture has %v", k, served[k], v)
+	for k := range recorded {
+		if _, ok := served[k]; !ok {
+			t.Fatalf("key %q is in the capture and not served", k)
 		}
 	}
 }

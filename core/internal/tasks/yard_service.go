@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
@@ -101,6 +102,29 @@ func (s *Service) FlagShortage(ctx context.Context, in ShortageInput) (Shortage,
 	return sh, nil
 }
 
+// NoticeShortage posts the counter's chat event for a shortage that is already stored: the sync create's
+// twin of the post FlagShortage makes after its insert. Best effort like every yard notice: a shortage
+// or task that cannot be read posts nothing.
+func (s *Service) NoticeShortage(ctx context.Context, taskID, shortageID string) {
+	if s.notifier == nil {
+		return
+	}
+	t, err := s.store.GetTask(ctx, taskID)
+	if err != nil {
+		return
+	}
+	rows, err := s.store.ListShortages(ctx, taskID, false)
+	if err != nil {
+		return
+	}
+	for _, sh := range rows {
+		if sh.ID == shortageID {
+			s.postShortageEvent(ctx, t, sh)
+			return
+		}
+	}
+}
+
 // RecordPick writes what the yard actually pulled, line by line (0187).
 //
 // EVERY LINE THE PICKER TOUCHED, IN ONE CALL, and the whole set is what a "record pick" gesture
@@ -131,6 +155,9 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 	seen := make(map[int]bool, len(lines))
 	clean := make([]PickedLineInput, 0, len(lines))
 	for _, l := range lines {
+		if err := checkPickText(l); err != nil {
+			return nil, err
+		}
 		if l.OrderLineNo <= 0 {
 			return nil, httpx.BadRequestf("every recorded line needs the ticket's own line number")
 		}
@@ -156,7 +183,12 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 		}
 		l.Description = strings.TrimSpace(l.Description)
 		if len(l.Description) > 400 {
-			l.Description = l.Description[:400]
+			// On a character boundary: a cut inside a multibyte character is invalid UTF-8 and fails the write.
+			cut := 400
+			for cut > 0 && !utf8.RuneStart(l.Description[cut]) {
+				cut--
+			}
+			l.Description = l.Description[:cut]
 		}
 		if l.ProductID != "" && !looksLikeUUID(l.ProductID) {
 			return nil, httpx.BadRequestf("product_id must be a uuid")
@@ -166,25 +198,33 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 		}
 		clean = append(clean, l)
 	}
+	// One transaction holds the task row across the order call (RecordPickLocked): a closed pick takes no
+	// record and the order is not told, and a cancel or complete that arrives during the order call waits
+	// and lands after the record instead of leaving the order moved with no lines behind it.
+	//
 	// The order first: it refuses a pick above what the order line holds, and a refused pick must
 	// not be recorded. The order's effect sets absolute quantities, so a retry after a failed
 	// record converges rather than doubling.
-	res, err := s.applyToOrder(ctx, taskID, actorID, clean)
-	if err != nil {
-		return nil, err
-	}
-	// What is stored is what the order holds: its own ordered quantity (not the ticket's) and the
-	// reason and note it keeps, so a re-save with none never blanks them.
-	byLine := make(map[int]YardLineEffect, len(res.Lines))
-	for _, e := range res.Lines {
-		byLine[e.LineNo] = e
-	}
-	for i := range clean {
-		if e, ok := byLine[clean[i].OrderLineNo]; ok {
-			clean[i].QtyOrdered, clean[i].ShortReason, clean[i].ShortNote = e.QtyOrdered, e.Reason, e.Note
+	var res YardPickResult
+	picked, err := s.store.RecordPickLocked(ctx, taskID, actorID, func(ctx context.Context, task Task) ([]PickedLineInput, error) {
+		r, err := s.applyToOrder(ctx, task, actorID, clean)
+		if err != nil {
+			return nil, err
 		}
-	}
-	picked, err := s.store.UpsertPickedLines(ctx, taskID, actorID, clean)
+		res = r
+		// What is stored is what the order holds: its own ordered quantity (not the ticket's) and the
+		// reason and note it keeps, so a re-save with none never blanks them.
+		byLine := make(map[int]YardLineEffect, len(res.Lines))
+		for _, e := range res.Lines {
+			byLine[e.LineNo] = e
+		}
+		for i := range clean {
+			if e, ok := byLine[clean[i].OrderLineNo]; ok {
+				clean[i].QtyOrdered, clean[i].ShortReason, clean[i].ShortNote = e.QtyOrdered, e.Reason, e.Note
+			}
+		}
+		return clean, nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -193,14 +233,34 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 	return picked, nil
 }
 
+// checkPickText refuses text a record could not hold or show safely, before the order is told anything
+// (a NUL fails the write after ApplyPicks has already moved the order). Every C0 control, DEL and the
+// bidi controls (U+202A to U+202E, U+2066 to U+2069) are refused in every text leg; the note and the
+// description, which a picker types or copies on several lines, keep tab, LF and CR. Both doors reach
+// this through RecordPick, so a record queued offline is refused as that op's rejection, never a fault.
+func checkPickText(l PickedLineInput) error {
+	for _, f := range []struct {
+		name, val string
+		multiline bool
+	}{
+		{"product id", l.ProductID, false}, {"sku", l.SKU, false}, {"description", l.Description, true},
+		{"ordered quantity", l.QtyOrdered, false}, {"picked quantity", l.QtyPicked, false}, {"unit", l.UOM, false},
+		{"short reason", l.ShortReason, false}, {"note", l.ShortNote, true},
+	} {
+		for _, r := range f.val {
+			if (r < 0x20 && !(f.multiline && (r == '\t' || r == '\n' || r == '\r'))) || r == 0x7f ||
+				(r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) {
+				return httpx.BadRequestf("line %d: the %s cannot hold control characters, enter it as plain text", l.OrderLineNo, f.name)
+			}
+		}
+	}
+	return nil
+}
+
 // applyToOrder hands a recorded pick to the order module, when the port is wired.
-func (s *Service) applyToOrder(ctx context.Context, taskID, actorID string, lines []PickedLineInput) (YardPickResult, error) {
+func (s *Service) applyToOrder(ctx context.Context, task Task, actorID string, lines []PickedLineInput) (YardPickResult, error) {
 	if s.yardOrders == nil {
 		return YardPickResult{}, nil
-	}
-	task, err := s.store.GetTask(ctx, taskID)
-	if err != nil {
-		return YardPickResult{}, err
 	}
 	in := YardPickChange{OrderID: task.OrderID, ActorID: actorID}
 	for _, l := range lines {

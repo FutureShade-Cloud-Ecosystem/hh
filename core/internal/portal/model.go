@@ -49,14 +49,14 @@ type Config struct {
 	SupportPhone string `json:"support_phone"`
 }
 
-// defaultConfig is the Dibbits branding stub (real config service is a later CP mission).
+// defaultConfig is the config of no dealer: the antecedent's stub served its
+// first dealer's identity here, and the shared default must never show one
+// dealer's name on another's box (decision log row 1592). A dealer's name
+// and brand come from its own configuration through Service.WithConfig;
+// the demo's from the demo seed. The id is the neutral key "default",
+// the same as the public tenant config's default.
 func defaultConfig() Config {
-	return Config{
-		ID:           "dibbits",
-		DealerName:   "Dibbits Landscape Supply",
-		PrimaryColor: "#E8A74E",
-		SupportEmail: "support@dibbits.example",
-	}
+	return Config{ID: "default"}
 }
 
 // NewPortalContact is the CRM signal emitted to the events outbox on activation

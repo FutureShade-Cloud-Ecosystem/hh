@@ -163,7 +163,7 @@ paths:
     post:
       operationId: orderCancel
       tags: [staff-order]
-      summary: Cancel an open order (manager only, reason required)
+      summary: Cancel an open order (Sales, Branch or General Manager, reason required)
       description: >-
         Applies the CANCELLED transition from DRAFT, CONFIRMED, PICKING or
         READY. The service proves no money the cancel has no exit for is
@@ -176,10 +176,19 @@ paths:
         mandatory reason is its audited reason). Kept means the dealer keeps
         only what the customer paid of the deposit; the unpaid rest is closed
         so nothing more is owed on the cancelled order.
+        Walled to the order_cancellers list: the Sales Manager, the Branch
+        Manager and the General Manager, each giving a reason (and the super
+        admin); every other role is refused with the shared forbidden body. A
+        branch scoped manager reaches only the orders of their own branches.
       x-role: requireManager
       x-access:
         surfaces: [quote-desk]
-        level: manage
+        level: read
+        list: order_cancellers
+        reason: >-
+          The order_cancellers list is the wall, not the level: the General Manager reads the
+          quote desk and the Branch Manager works it, and both may still cancel an order, which a
+          manage level cannot say without leaving them out.
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - name: id

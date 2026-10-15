@@ -49,6 +49,7 @@ export interface Rate {
  */
 export const TAX_REASON_LABEL: Record<string, string> = {
   STD_ON_HST_13: 'Standard HST',
+  STD_SALES_TAX: 'Standard sales tax',
   ON_FN_POS_8: 'Point-of-sale relief',
   FED_S87_GOODS_ON_RES: 'Goods on reserve',
   FED_S87_VENDOR_DELIVERY: 'Delivery to reserve',
@@ -60,6 +61,17 @@ export const TAX_REASON_LABEL: Record<string, string> = {
   MANUAL_TAX_REVIEW: 'Manual review',
   RELIEF_DECLINED_EVIDENCE: 'Relief declined',
 };
+
+/**
+ * ratePercent renders a rate in basis points as the plain percentage a person reads: 1300 is "13%",
+ * 775 is "7.75%", 850 is "8.5%". Whole basis points only, so the string is exact.
+ */
+export function ratePercent(bps: number): string {
+  const whole = Math.trunc(bps / 100);
+  const frac = Math.abs(bps % 100);
+  if (frac === 0) return `${whole}%`;
+  return frac % 10 === 0 ? `${whole}.${frac / 10}%` : `${whole}.${String(frac).padStart(2, '0')}%`;
+}
 
 /** taxReasonWord renders why a rate applies; an unmapped or operator-typed code comes back as itself. */
 export function taxReasonWord(code: string): string {

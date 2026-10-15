@@ -15,7 +15,7 @@ import {
 } from "../src/_quote-availability.js";
 
 const branch = (over = {}) => ({
-  product_id: "p", branch_id: "b1", branch_code: "TRE", branch_name: "Trenton",
+  product_id: "p", branch_id: "b1", branch_code: "PLM", branch_name: "Point Loma",
   on_hand_base: 0, reserved_base: 0, in_transit_base: 0, available_base: 0, soft_held_base: 0, ...over,
 });
 const line = (grade, available, qty, over = {}) => ({ line_no: 1, product_id: "p", qty_base: qty, grade, branch: branch({ available_base: available, ...over }) });
@@ -51,9 +51,9 @@ test("the peek is offered only behind a short line with a product", () => {
 });
 
 test("a branch row says its code, what is available and what is inbound", () => {
-  assert.equal(branchRowLabel(branch({ branch_code: "BEL", available_base: 60 }), "other"), "BEL: 60 available");
-  assert.equal(branchRowLabel(branch({ branch_code: "BEL", available_base: 60, in_transit_base: 10 }), "other"), "BEL: 60 available (+10 inbound)");
-  assert.equal(branchRowLabel(branch({ available_base: 0 }), "other"), "TRE: none available");
+  assert.equal(branchRowLabel(branch({ branch_code: "JUL", available_base: 60 }), "other"), "JUL: 60 available");
+  assert.equal(branchRowLabel(branch({ branch_code: "JUL", available_base: 60, in_transit_base: 10 }), "other"), "JUL: 60 available (+10 inbound)");
+  assert.equal(branchRowLabel(branch({ available_base: 0 }), "other"), "PLM: none available");
 });
 
 test("this branch's own row is marked", () => {

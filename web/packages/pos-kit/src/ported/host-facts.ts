@@ -6,15 +6,48 @@
 // wording below is theirs.
 
 /**
- * The demo dealer's house zone: the same constant the core itself compiles
- * (core/internal/dashboard/window.go, core/internal/gl/businessday.go). No
- * route serves an organization's zone yet, and the ring's requested_date is
- * contract-required, so the till names a day in THIS zone and never in the
- * browser's UTC. The stub validates the day against the same zone, and the
- * review records for a later item the served zone that should replace this
- * constant when the core offers one.
+ * The zone a dealer that serves none is read in: the Ontario dealer's, and what an older core (one
+ * that carries no business_zone on its surface config) means. It is a default, never the dealer's
+ * zone: the dealer's own zone is SERVED on the surface config read (business_zone) and held below.
  */
-export const HOUSE_ZONE = "America/Toronto";
+export const DEFAULT_HOUSE_ZONE = "America/Toronto";
+
+let servedZone: string = DEFAULT_HOUSE_ZONE;
+
+function isKnownZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-CA", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Hold the zone a surface config read served. Every app calls this with the body of the config
+ * read it already makes; an absent, empty, non string or unknown zone keeps the default, so an
+ * older core and an Ontario dealer see no change, and a later read replaces the zone (a change of
+ * zone is live at the next read).
+ */
+export function serveHouseZoneFrom(config: unknown): void {
+  const raw = typeof config === "object" && config !== null ? (config as Record<string, unknown>)["business_zone"] : undefined;
+  servedZone = typeof raw === "string" && raw !== "" && isKnownZone(raw) ? raw : DEFAULT_HOUSE_ZONE;
+}
+
+/** The dealer's business day zone as last served, or the Ontario default when none has been. */
+export function houseZone(): string {
+  return servedZone;
+}
+
+/** Forget the served zone (tests, and a session that ends). */
+export function resetHouseZone(): void {
+  servedZone = DEFAULT_HOUSE_ZONE;
+}
+
+/** The calendar day an instant falls on in the dealer's served zone (the default when none is). */
+export function houseDay(now: Date = new Date()): string {
+  return houseDayInZone(servedZone, now);
+}
 
 /**
  * The calendar day an instant falls on in the given zone, as the date literal

@@ -82,14 +82,14 @@ async function searchAndAdd(page: Page, query: string, hitName: string): Promise
   await expect(page.getByTestId("pos-line-row").filter({ hasText: hitName })).toHaveCount(1);
 }
 
-/** Ring one cash walk-in sale of Holland Stone and return the committed sale's order id. */
-async function ringHollandSale(page: Page): Promise<{ orderId: string; orderNo: string }> {
+/** Ring one cash walk-in sale of Charcoal Stone and return the committed sale's order id. */
+async function ringCharcoalSale(page: Page): Promise<{ orderId: string; orderNo: string }> {
   await ensureSession(page);
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  const qty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
+  const qty = page.getByRole("textbox", { name: "Quantity: Charcoal Stone 60 mm" });
   await qty.fill("3");
   await qty.blur();
-  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot")).toHaveText(
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" }).locator(".ltot")).toHaveText(
     "$12.00",
   );
   await openStep(page, "payment");
@@ -120,7 +120,7 @@ test("before the pick, the Change order action opens the line edit, and the trai
   page,
 }) => {
   await signIn(page, "Sales manager");
-  await ringHollandSale(page);
+  await ringCharcoalSale(page);
   await openChangeAction(page);
 
   // The one action opened the pre pick flow: the mode note says why.
@@ -150,7 +150,7 @@ test("before the pick, the Change order action opens the line edit, and the trai
 
 test("before the pick, the clerk's Change order action offers no line controls", async ({ page }) => {
   await signIn(page, "Sales");
-  await ringHollandSale(page);
+  await ringCharcoalSale(page);
   await openChangeAction(page);
   await expect(page.getByTestId("change-mode-note")).toContainText("the pick has not started");
   // inside_sales holds no manage cell: editable_fields carries the date alone,
@@ -165,7 +165,7 @@ test("after the pick, a raised change shows its server-priced delta, its state a
   page,
 }) => {
   await signIn(page, "Sales manager");
-  const sale = await ringHollandSale(page);
+  const sale = await ringCharcoalSale(page);
 
   // The raise on an order whose pick has not started is refused in the
   // core's own words, naming the line-edit path (the API leg: the surface
@@ -200,7 +200,7 @@ test("after the pick, a raised change shows its server-priced delta, its state a
   await expect(card.locator("[data-finance-required]")).toHaveCount(0);
   await expect(card.locator("[data-change-stage]")).toContainText("Waiting on the yard.");
   await expect(card).toContainText("\"Customer wants two more\"");
-  await expect(card.locator("td").first()).toContainText("Line 1 Holland Stone 60 mm: 3 to 5");
+  await expect(card.locator("td").first()).toContainText("Line 1 Charcoal Stone 60 mm: 3 to 5");
   // The buttons are the server's next_actions for this caller, nothing else.
   await expect(card.locator("button[data-change-action=yard_ack]")).toBeVisible();
   await expect(card.locator("button[data-change-action=reject]")).toBeVisible();
@@ -210,7 +210,7 @@ test("after the pick, a raised change shows its server-priced delta, its state a
 
 test("the yard's acknowledgement is walled on the till, and the refusal names who may act", async ({ page }) => {
   await signIn(page, "Sales manager");
-  const sale = await ringHollandSale(page);
+  const sale = await ringCharcoalSale(page);
   const manager = await bearer(page, "sales-manager");
   const picking = await page.request.post(`/api/v1/orders/${sale.orderId}/picking`, {
     headers: { Authorization: `Bearer ${manager}`, "X-Org": "hh-demo" },
@@ -234,7 +234,7 @@ test("the yard's acknowledgement is walled on the till, and the refusal names wh
 
 test("the requester withdraws a raised change, and the state says withdrawn", async ({ page }) => {
   await signIn(page, "Sales manager");
-  const sale = await ringHollandSale(page);
+  const sale = await ringCharcoalSale(page);
   const manager = await bearer(page, "sales-manager");
   await page.request.post(`/api/v1/orders/${sale.orderId}/picking`, {
     headers: { Authorization: `Bearer ${manager}`, "X-Org": "hh-demo" },
@@ -262,7 +262,7 @@ async function reopenChange(page: Page): Promise<void> {
 
 test("an approved change applies once from the till, and a second apply is refused", async ({ page }) => {
   await signIn(page, "Sales manager");
-  const sale = await ringHollandSale(page);
+  const sale = await ringCharcoalSale(page);
   const manager = await bearer(page, "sales-manager");
   await page.request.post(`/api/v1/orders/${sale.orderId}/picking`, {
     headers: { Authorization: `Bearer ${manager}`, "X-Org": "hh-demo" },
@@ -312,7 +312,7 @@ test("an approved change applies once from the till, and a second apply is refus
 
 test("the acceptance walk: a $600 change waits for the manager, a $40 change does not", async ({ page }) => {
   await signIn(page, "Sales manager");
-  const sale = await ringHollandSale(page);
+  const sale = await ringCharcoalSale(page);
   const manager = await bearer(page, "sales-manager");
   const auth = { Authorization: `Bearer ${manager}`, "X-Org": "hh-demo" };
   await page.request.post(`/api/v1/orders/${sale.orderId}/picking`, { headers: auth });
@@ -389,7 +389,7 @@ test.describe("review screens", () => {
         await page.setViewportSize({ width: viewport, height: viewport === 1440 ? 900 : 844 });
         await signIn(page, "Sales manager");
         if (theme === "brand") await page.getByTestId("theme-control").click();
-        const sale = await ringHollandSale(page);
+        const sale = await ringCharcoalSale(page);
         const manager = await bearer(page, "sales-manager");
         const auth = { Authorization: `Bearer ${manager}`, "X-Org": "hh-demo" };
 

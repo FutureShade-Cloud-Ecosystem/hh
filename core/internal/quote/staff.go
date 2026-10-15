@@ -15,6 +15,7 @@ package quote
 
 import (
 	"context"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
@@ -113,6 +114,12 @@ type StaffService struct {
 	// decides it, and consumes it on the quote's own transaction). Nil
 	// fails closed: no request is filed and no approval is consumed.
 	floorRail FloorApprovalRail
+
+	// standardRate is the dealer's standard tax rate (builder.go's terms write stamps the tax at
+	// it). Nil keeps the system_settings figure the terms write has always read.
+	standardRate StandardRateReader
+	// taxWords is the dealer's tax word (platform/taxwords); nil is the Ontario dealer's "HST".
+	taxWords taxwords.Source
 
 	// invoicer and payer are the QD-5 money door's seams (order_payment.go); nil fails the door closed.
 	invoicer OrderInvoicer

@@ -354,4 +354,10 @@ export const yardStyles = css`
   .change-card { padding: 0; }
   .change-card .line-row { width: 100%; border: 0; background: transparent; }
   .change-card .line-sub { overflow-wrap: anywhere; }
+
+  /* The stall strip: the outbox health's own words, under the offline banner.
+     Colour never carries it alone; the words are the store's. */
+  .stall-strip { border-top: 2px solid var(--hh-state-watch); padding: var(--hh-s-8) var(--hh-s-16); }
+  .stall-strip p { margin: 0; font-size: 14px; color: var(--hh-text-dim); }
+  .stall-strip p + p { margin-top: var(--hh-s-4); }
 `;

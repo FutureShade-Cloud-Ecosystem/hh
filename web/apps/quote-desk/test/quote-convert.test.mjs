@@ -36,13 +36,13 @@ test("the steps walk forward and back and stop at the ends", () => {
 });
 
 test("a short line warns that the order waits; an unreported grade is never none", () => {
-  assert.equal(stockWords({ grade: "GREEN", qtyBase: 3, availableBase: 9 }, "Trenton").kind, "ok");
-  const thin = stockWords({ grade: "THIN", qtyBase: 3, availableBase: 2 }, "Trenton");
+  assert.equal(stockWords({ grade: "GREEN", qtyBase: 3, availableBase: 9 }, "Point Loma").kind, "ok");
+  const thin = stockWords({ grade: "THIN", qtyBase: 3, availableBase: 2 }, "Point Loma");
   assert.equal(thin.kind, "short");
   assert.match(thin.text, /wait on stock/);
   assert.equal(stockWords({ grade: "NONE", qtyBase: 3, availableBase: 0 }, "").kind, "short");
-  assert.equal(stockWords({ grade: "UNKNOWN", qtyBase: 3, availableBase: 0 }, "Trenton").kind, "unknown");
-  assert.equal(stockWords(null, "Trenton").kind, "unknown");
+  assert.equal(stockWords({ grade: "UNKNOWN", qtyBase: 3, availableBase: 0 }, "Point Loma").kind, "unknown");
+  assert.equal(stockWords(null, "Point Loma").kind, "unknown");
 });
 
 test("the standing states the server's facts and does no arithmetic of its own", () => {

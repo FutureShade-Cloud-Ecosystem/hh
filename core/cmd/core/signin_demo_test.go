@@ -15,7 +15,6 @@ import (
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/issuer"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/membership"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/authz"
 )
 
 // The demo build, demo mode: today's composition exactly. The in memory
@@ -52,6 +51,9 @@ func TestBootDemoBuildDemoCell(t *testing.T) {
 	if c := serveOnce(rec.inner, http.MethodPost, "/api/v1/auth/exchange").Code; c != http.StatusNotFound {
 		t.Fatalf("demo mode serves the exchange: %d", c)
 	}
+	if c := serveOnce(rec.inner, http.MethodGet, "/api/v1/auth/methods").Code; c != http.StatusNotFound {
+		t.Fatalf("demo mode serves the methods route: %d", c)
+	}
 }
 
 // The demo build, console mode: the persistent key source and issuer, FB
@@ -68,6 +70,7 @@ func TestBootDemoBuildConsoleCell(t *testing.T) {
 		"CORE_APPWRITE_PROJECT":         "fx-appwrite-project",
 		"CORE_APPWRITE_API_KEY":         "fx-appwrite-key-placeholder",
 		"CORE_SESSION_SIGNING_KEY_FILE": keyFile,
+		"CORE_PERSONA_CALLER":           "open",
 	})
 	if graph.signin != signinConsole {
 		t.Fatalf("signin = %q", graph.signin)
@@ -78,8 +81,8 @@ func TestBootDemoBuildConsoleCell(t *testing.T) {
 	if graph.demoMint != nil {
 		t.Fatal("console mode carries the in memory mint")
 	}
-	if _, ok := graph.members.(*authz.CachedMembership); !ok {
-		t.Fatalf("membership source is %T, want the cached FB Console source", graph.members)
+	if _, ok := graph.members.(*membership.Composite); !ok {
+		t.Fatalf("membership source is %T, want the composite (static personas, FB Console for the rest)", graph.members)
 	}
 	// The outer type alone would pass a flow table source wrapped in the
 	// cache. Behaviour decides: a flow table account in the demo org is a
@@ -94,6 +97,18 @@ func TestBootDemoBuildConsoleCell(t *testing.T) {
 	if ok, err := graph.members.OrgMember(context.Background(), "console-user-2", flows.OrgSlug); err != nil || !ok {
 		t.Fatalf("a Console team member is refused (ok=%v err=%v)", ok, err)
 	}
+	// The composite answers a persona subject from the static source, and a
+	// subject with a colon that is not on the list is no member; neither
+	// reaches FB Console (its fake holds no team for either).
+	if ok, err := graph.members.OrgMember(context.Background(), "persona:sales", flows.OrgSlug); err != nil || !ok {
+		t.Fatalf("persona:sales is not a member of the demo org (ok=%v err=%v)", ok, err)
+	}
+	for _, sub := range []string{"persona:nobody", "persona:contractor-owner", "console-user-2:x"} {
+		appwrite.setTeam(sub, "org-"+flows.OrgSlug)
+		if ok, err := graph.members.OrgMember(context.Background(), sub, flows.OrgSlug); err != nil || ok {
+			t.Fatalf("%q is a member (ok=%v err=%v)", sub, ok, err)
+		}
+	}
 	tok, err := graph.session.minter.Mint("console-user-1", graph.session.exchangeTTL)
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +122,10 @@ func TestBootDemoBuildConsoleCell(t *testing.T) {
 	// The console mode mounts the exchange: an empty body is the gate 1 400.
 	if c := serveOnce(rec.inner, http.MethodPost, "/api/v1/auth/exchange").Code; c != http.StatusBadRequest {
 		t.Fatalf("console mode exchange answered %d, want 400", c)
+	}
+	// And the public methods route: no org is the default body, not a 400.
+	if c := serveOnce(rec.inner, http.MethodGet, "/api/v1/auth/methods").Code; c != http.StatusOK {
+		t.Fatalf("console mode methods route answered %d, want 200", c)
 	}
 	for _, c := range []struct{ m, p string }{{http.MethodGet, "/api/v1/demo/flows"}, {http.MethodPost, "/api/v1/demo/session"}} {
 		if code := serveOnce(rec.inner, c.m, c.p).Code; code != http.StatusNotFound {
@@ -171,6 +190,7 @@ func TestDemoBuildConsoleBootRefusals(t *testing.T) {
 			"CORE_APPWRITE_ENDPOINT": appwrite.server.URL,
 			"CORE_APPWRITE_PROJECT":  "fx-appwrite-project",
 			"CORE_APPWRITE_API_KEY":  "fx-appwrite-key-placeholder",
+			"CORE_PERSONA_CALLER":    "open",
 		}
 		for k, v := range extra {
 			m[k] = v

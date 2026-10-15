@@ -30,26 +30,26 @@ const CAT = {
 };
 
 // The stub's catalogue: list and cost per base unit, in integer cents. The cost is
-// Trenton's; Kingston's own cost sits beside it (dearer on the pavers), because a change
+// Point Loma's; Julian's own cost sits beside it (dearer on the pavers), because a change
 // that names no branch is graded at every yard at its own cost, and the worst branch must
 // be a real choice rather than the same yard every time.
-const KINGSTON_ID = "6f1c2b3a-0000-4000-8000-000000000002";
+const JULIAN_ID = "6f1c2b3a-0000-4000-8000-000000000002";
 const YARDS = [
-  { id: "6f1c2b3a-0000-4000-8000-000000000001", code: "TRT", name: "Trenton" },
-  { id: KINGSTON_ID, code: "KGN", name: "Kingston" },
+  { id: "6f1c2b3a-0000-4000-8000-000000000001", code: "PLM", name: "Point Loma" },
+  { id: JULIAN_ID, code: "JUL", name: "Julian" },
 ];
-const KINGSTON_COST = new Map([
-  ["a7000000-0000-4000-9000-000000000001", 300], // HPV-60: 276 at Trenton
-  ["a7000000-0000-4000-9000-000000000002", 395], // HPV-80: 360 at Trenton
+const JULIAN_COST = new Map([
+  ["a7000000-0000-4000-9000-000000000001", 300], // HPV-60: 276 at Point Loma
+  ["a7000000-0000-4000-9000-000000000002", 395], // HPV-80: 360 at Point Loma
 ]);
-const yardCost = (product, yard) => (yard.id === KINGSTON_ID ? KINGSTON_COST.get(product.id) ?? product.cost : product.cost);
+const yardCost = (product, yard) => (yard.id === JULIAN_ID ? JULIAN_COST.get(product.id) ?? product.cost : product.cost);
 const PRODUCTS = [
-  { id: "a7000000-0000-4000-9000-000000000001", sku: "HPV-60", name: "Holland Stone 60 mm", category: CAT.pavers, uom: "SF", list: 400, cost: 276 },
-  { id: "a7000000-0000-4000-9000-000000000002", sku: "HPV-80", name: "Holland Stone 80 mm", category: CAT.pavers, uom: "SF", list: 520, cost: 360 },
+  { id: "a7000000-0000-4000-9000-000000000001", sku: "HPV-60", name: "Charcoal Stone 60 mm", category: CAT.pavers, uom: "SF", list: 400, cost: 276 },
+  { id: "a7000000-0000-4000-9000-000000000002", sku: "HPV-80", name: "Charcoal Stone 80 mm", category: CAT.pavers, uom: "SF", list: 520, cost: 360 },
   { id: "a7000000-0000-4000-9000-000000000003", sku: "WALL-12", name: "Retaining wall block", category: CAT.walls, uom: "EA", list: 900, cost: 610 },
   { id: "a7000000-0000-4000-9000-000000000004", sku: "POLY-SAND", name: "Polymeric sand", category: CAT.accessories, uom: "EA", list: 4200, cost: 2800 },
   { id: "a7000000-0000-4000-9000-000000000005", sku: "BASE-T", name: "Base gravel", category: CAT.aggregates, uom: "T", list: 3800, cost: 2500 },
-  { id: "a7000000-0000-4000-9000-000000000006", sku: "DBS-BANAS-STEP", name: "Banas Natural Step", category: CAT.slabs, uom: "KG", list: 120, cost: 70 },
+  { id: "a7000000-0000-4000-9000-000000000006", sku: "GLS-BLUFF-STEP", name: "Bluff Natural Step", category: CAT.slabs, uom: "KG", list: 120, cost: 70 },
 ];
 const productById = new Map(PRODUCTS.map((p) => [p.id, p]));
 
@@ -442,7 +442,8 @@ export function handlePricing({ request, response, path, url, callerOf, readBody
 
   if (path === "/api/v1/staff" && request.method === "GET") {
     if (!reader) return forbidden(respondJson, response), true;
-    respondJson(response, 200, [{ user_id: "demo-account-sales-manager", display_name: "Sales manager (demo)", email: "x@demo.invalid", role_code: "sales_manager", role_name: "Sales Manager", tier: 2, scope: "BRANCH", branch_ids: [] }]);
+    // The core's IdentityStaffMemberPage (identity staffcontext, StaffRosterHandler): a manager tier read, role codes in the ERP's words.
+    respondJson(response, 200, { items: [{ user_id: "demo-account-sales-manager", display_name: "Sales manager (demo)", email: "x@demo.invalid", role_code: "SALES_MANAGER", role_name: "Sales Manager", tier: 2, scope: "BRANCH", branch_ids: [] }], next_cursor: null, limit: 50 });
     return true;
   }
   if (product !== null) {

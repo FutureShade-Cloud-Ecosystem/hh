@@ -8,7 +8,7 @@
 // word on the tender and on the confirmation exactly when the rail answers
 // simulated true (and none when it answers false), an account sale rings on
 // the account with its facts beside the name, an account on hold is refused
-// in the reviewed words, a contractor's Holland pavers ring at the account's
+// in the reviewed words, a contractor's Charcoal pavers ring at the account's
 // rule price with the margin column refused (the stub's policy word is
 // MANAGER_UP, so the Sales till shows none of the margin surface and a
 // Sales-manager story holds the allowed side), a ticket parks and resumes with
@@ -158,15 +158,15 @@ test("a walk-in cash sale of three lines rings, and the sale read equals every f
   await signIn(page, "Sales");
 
   // Three lines, one quantity typed: the line reprices through the engine.
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
   await searchAndAdd(page, "clear", "Clear Stone");
   const lines = page.getByTestId("pos-line-row");
   await expect(lines).toHaveCount(3);
-  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
-  await hollandQty.fill("3");
-  await hollandQty.blur();
-  await expect(lines.filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot")).toHaveText("$12.00");
+  const charcoalQty = page.getByRole("textbox", { name: "Quantity: Charcoal Stone 60 mm" });
+  await charcoalQty.fill("3");
+  await charcoalQty.blur();
+  await expect(lines.filter({ hasText: "Charcoal Stone 60 mm" }).locator(".ltot")).toHaveText("$12.00");
 
   // The walk-in's retail on every line. The margin surface is not part of
   // what this caller's till shows: the policy answers MANAGER_UP and Sales is
@@ -316,11 +316,11 @@ test("the quantity rung is the quantity on the screen, and the requested date is
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
-  await hollandQty.fill("10");
-  await hollandQty.blur();
-  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot")).toHaveText(
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
+  const charcoalQty = page.getByRole("textbox", { name: "Quantity: Charcoal Stone 60 mm" });
+  await charcoalQty.fill("10");
+  await charcoalQty.blur();
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" }).locator(".ltot")).toHaveText(
     "$40.00",
   );
 
@@ -372,7 +372,7 @@ for (const [label, instant, differs] of [
     const pinned = await request.post("/_stub/clock", { data: { now: instant } });
     expect(pinned.ok()).toBe(true);
     await signIn(page, "Sales");
-    await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+    await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
     await openStep(page, "payment");
     const ringPost = page.waitForResponse(
       (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",
@@ -394,7 +394,7 @@ test("a card sale shows the simulated word on the tender and on the confirmation
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
 
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Card" }).click();
@@ -472,13 +472,13 @@ test("an account sale for C02 rings on the account, with its facts beside the na
   await expect(page.getByTestId("cust-past-due")).toContainText(dollars(41500));
   await expect(page.getByTestId("cust-on-hold")).toHaveCount(0);
 
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
-  await hollandQty.fill("10");
-  await hollandQty.blur();
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
+  const charcoalQty = page.getByRole("textbox", { name: "Quantity: Charcoal Stone 60 mm" });
+  await charcoalQty.fill("10");
+  await charcoalQty.blur();
   // The account's own rule price, ten percent off retail.
   await expect(
-    page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".lprice"),
+    page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" }).locator(".lprice"),
   ).toHaveText("$3.60");
 
   // The account's open balance as the core holds it before the ring.
@@ -540,7 +540,7 @@ test("an account on hold is refused in the reviewed words, and nothing commits",
   // The hold is the first thing the counter shows, before any money moves.
   await expect(page.getByTestId("cust-on-hold")).toHaveText("Credit hold");
 
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Charge Account" }).click();
   await page.getByTestId("pos-complete-sale").click();
@@ -557,7 +557,7 @@ test("an account on hold is refused in the reviewed words, and nothing commits",
 
 test("the collapsed Items summary carries the priced lines' subtotal before the ring", async ({ page }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   // Another step open: the Items card collapses and its summary speaks. The
   // figure is the priced lines' own subtotal (the only figure the till
   // assembles), unmarked: there is no estimate on the sale surface to mark.
@@ -570,7 +570,7 @@ test("the read-back states the server's tax and total, and the confirmation read
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
   // The read-back, pre-ring: the priced lines' subtotal ($18.00), the server's
   // stated tax and total (row 985), and no estimate mark anywhere on it.
@@ -632,7 +632,7 @@ test("the account's available credit says it is a derived figure, in the picker 
 test("a deposit sale's confirmation labels the balance due a derived figure", async ({ page }) => {
   await signIn(page, "Sales");
   await pickAccount(page, "C02", "Fenwick Builders Ltd");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   // Item 9.6: the deposit is line one of the payment step on a fulfilment that waits; the
   // credit account's line two is the rest on account.
   await openStep(page, "items");
@@ -659,16 +659,16 @@ test("a deposit sale's confirmation labels the balance due a derived figure", as
   await expect(sold).toContainText("$1.00");
 });
 
-test("a C01 Holland paver line rings at its rule price, and the margin column refuses the Sales till", async ({
+test("a C01 Charcoal paver line rings at its rule price, and the margin column refuses the Sales till", async ({
   page,
 }) => {
   await signIn(page, "Sales");
   await pickAccount(page, "C01", "Maple Ridge Contracting");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   // The account's rule: eighteen percent off the $4.00 retail, rung as the
   // engine answered it.
-  const holland = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
-  await expect(holland.locator(".lprice")).toHaveText("$3.28");
+  const charcoal = page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" });
+  await expect(charcoal.locator(".lprice")).toHaveText("$3.28");
   // The margin word beside the price does not render for this caller: the
   // policy's word is MANAGER_UP and Sales is tier 3, so no margin cell shows,
   // not even the explicit unknown for the line whose cost this branch does
@@ -682,15 +682,15 @@ test("a C01 Holland paver line rings at its rule price, and the margin column re
 test("a ticket parks and resumes with its customer, at the account's price", async ({ page }) => {
   await signIn(page, "Sales");
   await pickAccount(page, "C01", "Maple Ridge Contracting");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  const holland = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
-  await expect(holland.locator(".lprice")).toHaveText("$3.28");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
+  const charcoal = page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" });
+  await expect(charcoal.locator(".lprice")).toHaveText("$3.28");
 
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
 
   // The branch's parked list: open it, find the ticket, resume it. The fence
-  // is the server's; the stub's world holds a Kingston ticket and it never
+  // is the server's; the stub's world holds a Julian ticket and it never
   // shows here.
   await page.getByRole("button", { name: /^Parked \(/ }).click();
   // The dialog renders into the element's shadow root; its card is the rail.
@@ -709,7 +709,7 @@ test("a ticket parks and resumes with its customer, at the account's price", asy
   await openStep(page, "customer");
   await expect(page.getByTestId("customer-card")).toContainText("Maple Ridge Contracting");
   await openStep(page, "items");
-  await expect(holland.locator(".lprice")).toHaveText("$3.28");
+  await expect(charcoal.locator(".lprice")).toHaveText("$3.28");
 });
 
 test("a second press on Complete while the ring is in flight commits exactly one sale", async ({ page }) => {
@@ -721,9 +721,9 @@ test("a second press on Complete while the ring is in flight commits exactly one
   });
 
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await expect(
-    page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot"),
+    page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" }).locator(".ltot"),
   ).toHaveText("$4.00");
   await openStep(page, "payment");
   // The drawer first, so the presses below race the RING and only the ring:
@@ -816,7 +816,7 @@ test("the pop-out opens the till on a second window, signed in as the same role"
   // register, the same role. The branch's drawer is server-side, so the
   // second window's own session open finds or opens the same one.
   await expect(second.getByTestId("pos-page-title")).toHaveText("New Counter Sale");
-  await expect(second.getByTestId("pagectx")).toContainText("Trenton Yard");
+  await expect(second.getByTestId("pagectx")).toContainText("Point Loma Yard");
   await expect(second.getByTestId("signed-in-role")).toHaveText("Sales");
   await second.close();
 });
@@ -839,7 +839,7 @@ test("a line the account's price cannot answer reads price pending through ordin
   });
 
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
   const polymeric = page.getByTestId("pos-line-row").filter({ hasText: "Polymeric Locking Sand" });
   await expect(polymeric.locator(".lprice")).toHaveText("price pending");
@@ -848,11 +848,11 @@ test("a line the account's price cannot answer reads price pending through ordin
 
   // An ordinary act on the OTHER line reprices that line and leaves the
   // unanswered one saying so.
-  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
-  await hollandQty.fill("3");
-  await hollandQty.blur();
+  const charcoalQty = page.getByRole("textbox", { name: "Quantity: Charcoal Stone 60 mm" });
+  await charcoalQty.fill("3");
+  await charcoalQty.blur();
   await expect(
-    page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".ltot"),
+    page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" }).locator(".ltot"),
   ).toHaveText("$12.00");
   await expect(polymeric.locator(".lprice")).toHaveText("price pending");
   // A pending line beside a priced one keeps the whole summary on the marker:
@@ -936,7 +936,7 @@ test("a pricing answer that arrives for a stale line state is dropped: the newes
   let heldOne = true;
   await page.route("**/api/v1/pricing/resolve", async (route) => {
     const body = route.request().postDataJSON() as { product_id?: string };
-    if (heldOne && body.product_id === "p-holland-60") {
+    if (heldOne && body.product_id === "p-charcoal-60") {
       heldOne = false;
       await new Promise<void>((resolve) => {
         releaseFirst = resolve;
@@ -946,19 +946,19 @@ test("a pricing answer that arrives for a stale line state is dropped: the newes
   });
 
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
-  const holland = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
-  const hollandQty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
-  await hollandQty.fill("3");
-  await hollandQty.blur();
-  await expect(holland.locator(".ltot")).toHaveText("$12.00");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
+  const charcoal = page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" });
+  const charcoalQty = page.getByRole("textbox", { name: "Quantity: Charcoal Stone 60 mm" });
+  await charcoalQty.fill("3");
+  await charcoalQty.blur();
+  await expect(charcoal.locator(".ltot")).toHaveText("$12.00");
 
   releaseFirst?.();
   // The stale answer (priced for one unit) landed on nothing: the line still
   // carries the newest answer's figures.
   await page.waitForTimeout(600);
-  await expect(holland.locator(".lprice")).toHaveText("$4.00");
-  await expect(holland.locator(".ltot")).toHaveText("$12.00");
+  await expect(charcoal.locator(".lprice")).toHaveText("$4.00");
+  await expect(charcoal.locator(".ltot")).toHaveText("$12.00");
 });
 
 test("a parked ticket survives the hand-over: the next login at the branch sees it and resumes it, priced fresh", async ({
@@ -967,7 +967,7 @@ test("a parked ticket survives the hand-over: the next login at the branch sees 
   // The first counter person parks C01's pavers and leaves.
   await signIn(page, "Sales");
   await pickAccount(page, "C01", "Maple Ridge Contracting");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
 
@@ -986,9 +986,9 @@ test("a parked ticket survives the hand-over: the next login at the branch sees 
   // The resumed ticket lands on the customer step (the cold cache resumed it
   // for the walk-in); the line is the Items step's.
   await openStep(page, "items");
-  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" })).toHaveCount(1);
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" })).toHaveCount(1);
   await expect(
-    page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" }).locator(".lprice"),
+    page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" }).locator(".lprice"),
   ).toHaveText("$4.00");
   await expect(parkedDialog).toHaveCount(0);
 });
@@ -997,7 +997,7 @@ test("a resume over lines on the counter asks first: declining leaves everything
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   // Park a second ticket, so the rail holds something to resume.
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
@@ -1015,12 +1015,12 @@ test("a resume over lines on the counter asks first: declining leaves everything
   await expect(parkedDialog).toBeVisible();
   await expect(parkedDialog.getByRole("button", { name: "Resume" }).first()).toBeEnabled();
   // The acceptance: the ask said what accepting means (the counter's lines go
-  // with it), so the parked ticket replaces them knowingly: the Holland line
+  // with it), so the parked ticket replaces them knowingly: the Charcoal line
   // is back, the polymeric one went with the counter's draft.
   page.once("dialog", (dialog) => dialog.accept());
   await parkedDialog.getByRole("button", { name: "Resume" }).first().click();
   await openStep(page, "items");
-  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" })).toHaveCount(1);
+  await expect(page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" })).toHaveCount(1);
   await expect(page.getByTestId("pos-line-row").filter({ hasText: "Polymeric Locking Sand" })).toHaveCount(0);
 });
 
@@ -1031,7 +1031,7 @@ for (const scheme of ["dark", "light"] as const) {
   test(`the till's own inputs keep the control boundary at 3:1 (${scheme})`, async ({ page }) => {
     await page.emulateMedia({ colorScheme: scheme });
     await signIn(page, "Sales");
-    await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+    await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
     await openStep(page, "payment");
     const input = page.getByTestId("cash-tendered");
     await expect(input).toBeVisible();
@@ -1072,7 +1072,7 @@ for (const scheme of ["dark", "light"] as const) {
 test("the split state is a status band, not a disabled button", async ({ page }) => {
   await signIn(page, "Sales");
   await ensureSession(page);
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
   const band = page.getByTestId("cta-split-state");
@@ -1091,7 +1091,7 @@ test("the split state is a status band, not a disabled button", async ({ page })
 test("a fresh line before its price answers: the split works from the server's stated total and rings", async ({
   page,
 }) => {
-  // The resolve answer for the Holland line is held until released: the line is on the ticket,
+  // The resolve answer for the Charcoal line is held until released: the line is on the ticket,
   // priced by no one yet (ui2c P3-2's fresh pending line). The server's sale-preview prices the
   // line itself, so the panel states the total, fills the last leg, and arms the ring when the
   // legs equal it.
@@ -1106,7 +1106,7 @@ test("a fresh line before its price answers: the split works from the server's s
   });
   await signIn(page, "Sales");
   await ensureSession(page);
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
@@ -1135,10 +1135,10 @@ test("a split with a card leg carries the simulated word on the confirmation and
 }) => {
   await signIn(page, "Sales");
   await ensureSession(page);
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
-  // Two legs: cash for part, a card leg for the rest. The Holland line at
+  // Two legs: cash for part, a card leg for the rest. The Charcoal line at
   // retail with tax comes to $4.52 at the ring: $4.00 cash and the $0.52
   // card leg settle it.
   const leg0 = page.getByTestId("split-amount-0");
@@ -1182,7 +1182,7 @@ test("a split with a card leg carries the simulated word on the confirmation and
 
 test("the split panel states the total to split and what is left to assign", async ({ page }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
@@ -1203,7 +1203,7 @@ test("a short typed cash amount rides the ring and the server refuses it: nothin
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
   // $1.00 against a line that will ring at $4.52: the till computes no
   // total, so it cannot judge the entry short, and the typed amount rides the
@@ -1243,7 +1243,7 @@ test("a split the server refuses reads its split_total_mismatch in dollars: noth
   });
   await signIn(page, "Sales");
   await ensureSession(page);
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
   const panel = page.getByTestId("pos-split-panel");
@@ -1281,7 +1281,7 @@ test("an empty draft shows the blank marker, never a confident zero, in the line
   await expect(cta).not.toContainText("$0.00");
   // A priced line returns the figures.
   await openStep(page, "items");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
   await expect(totals).toContainText("$4.00");
   await expect(totals).not.toContainText("(not priced)");
@@ -1339,10 +1339,10 @@ test("the split panel's ring wears the disabled rule's shape until the legs meet
   page,
 }) => {
   await signIn(page, "Sales");
-  // The stub's own Holland line: this suite runs against the stub's world,
+  // The stub's own Charcoal line: this suite runs against the stub's world,
   // whose catalogue names it differently from the demo image's (the demo
-  // image's DEMO-PAV-HOLLAND name belongs to the acceptance run).
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  // image's DEMO-PAV-CHARCOAL name belongs to the acceptance run).
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
   await page.getByRole("button", { name: "Split" }).click();
   const ring = page.getByTestId("split-ring");
@@ -1483,8 +1483,8 @@ test("the search drop rows carry the branch's stock beside the SKU", async ({ pa
   await signIn(page, "Sales");
   await openStep(page, "items");
   const field = page.getByTestId("pos-scan-input");
-  await field.fill("holland");
-  const row = page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first();
+  await field.fill("charcoal");
+  const row = page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first();
   await expect(row).toBeVisible();
   // The reference's row words: the stock after the SKU, the counter's own
   // branch (the fence), never guessed.
@@ -1500,7 +1500,7 @@ test("the manager-up till keeps the margin column, the segments and the eye, and
   // the margin and profit segments, and the eye rides with them.
   await signIn(page, "Sales manager");
   await ensureSession(page);
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   const margins = page.getByTestId("pos-line-margin");
   await expect(margins).toHaveCount(1);
   await expect(margins.first()).toContainText("%");
@@ -1550,7 +1550,7 @@ test("with Cash On Demand off at the branch, the server's menu drops the pay bef
   await signIn(page, "Sales");
   await ensureSession(page);
   await pickAccount(page, "C10", "Cash On Demand Landscaping");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
   // Pay in full now is all the server offered, so no menu stands at all and the tender
   // tiles carry the step alone: the terminal never promises a shape the ring would refuse.
@@ -1602,7 +1602,7 @@ test("a ticket parked with a line price pending lists no total", async ({ page }
 
 test("the parked list shows a ticket's park-time subtotal", async ({ page }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
   await page.getByRole("button", { name: /^Parked \(/ }).click();
@@ -1622,7 +1622,7 @@ test("a parked ticket this window holds no price memory for lists the same marke
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
   // A new window: the park-time snapshot lives in the first window's memory only.
@@ -1648,7 +1648,7 @@ test("a pickup whose prices never answer reads the pending markers, never a figu
     });
   });
   await signIn(page, "Sales manager");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await searchAndAdd(page, "polymeric", "Polymeric Locking Sand");
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
@@ -1707,7 +1707,7 @@ test("the pickup line says the prices are being re-derived while any line is sti
     });
   });
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
   await signIn(page, "Sales");
@@ -1745,7 +1745,7 @@ test("a price that answers after the pickup line was set flips the line to price
     await route.fallback();
   });
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
   await signIn(page, "Sales");
@@ -1759,10 +1759,10 @@ test("a price that answers after the pickup line was set flips the line to price
   const message = page.locator("#till-message");
   await expect(message).toContainText(/Resumed PARK-\d+: re-deriving prices\./);
   await openStep(page, "items");
-  const row = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  const row = page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" });
   await expect(row).toHaveCount(1);
   refusePrices = false;
-  const qty = page.getByRole("textbox", { name: "Quantity: Holland Stone 60 mm" });
+  const qty = page.getByRole("textbox", { name: "Quantity: Charcoal Stone 60 mm" });
   await qty.fill("2");
   await qty.blur();
   await expect(row.locator(".ltot")).toHaveText("$8.00");
@@ -1785,7 +1785,7 @@ test("a resumed ticket reads the pending markers from the moment it lands, befor
     held.push(route); // held in flight: answered only when the test releases it
   });
   await signIn(page, "Sales manager");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await page.getByRole("button", { name: "Park ticket" }).click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(0);
   await signIn(page, "Sales manager");
@@ -1798,7 +1798,7 @@ test("a resumed ticket reads the pending markers from the moment it lands, befor
   await parkedDialog.getByRole("button", { name: "Resume" }).last().click();
   await expect(parkedDialog).not.toBeVisible();
   await openStep(page, "items");
-  const row = page.getByTestId("pos-line-row").filter({ hasText: "Holland Stone 60 mm" });
+  const row = page.getByTestId("pos-line-row").filter({ hasText: "Charcoal Stone 60 mm" });
   await expect(row).toHaveCount(1);
   // Before any answer: the pending marker on the cell.
   await expect(row.locator(".ltot")).toHaveText("(not priced)");
@@ -1828,7 +1828,7 @@ test("a park landing while the parked dialog is open converges the open dialog's
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
 
   // The branch's parked count as the world holds it right now, read through
   // the contract's own read (the demo bearer and org header; the fence to the
@@ -1887,7 +1887,7 @@ test("a stale parked-list read that answers last writes nothing: the open dialog
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
 
   // Hold the park POST (the park commits only when released), and take the
   // dialog's first list read without answering it: its response is fetched
@@ -1944,7 +1944,7 @@ test("a discard inside the open parked dialog moves the button's count while the
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
 
   // The branch's parked count before this story parks anything, read through
   // the contract's own read.
@@ -1981,7 +1981,7 @@ test("a discard inside the open parked dialog moves the button's count while the
 
 test("a failed reload's error banner does not outlive the next good reload", async ({ page }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   // Park once with the dialog closed, then put one line back on the counter:
   // the second park lands under the open dialog (F9 parks through the rail),
   // and the third needs its own line, scanned straight onto the counter while
@@ -2085,7 +2085,7 @@ test("the sold-actions buttons drop their fill while a receipt loads, in the col
   page,
 }) => {
   await signIn(page, "Sales");
-  await searchAndAdd(page, "holland", "Holland Stone 60 mm");
+  await searchAndAdd(page, "charcoal", "Charcoal Stone 60 mm");
   await openStep(page, "payment");
   const ringPost = page.waitForResponse(
     (response) => response.url().endsWith("/api/v1/pos/sales") && response.request().method() === "POST",

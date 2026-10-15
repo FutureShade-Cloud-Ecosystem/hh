@@ -14,7 +14,7 @@ const line = (n) => ({
   shelf_state: "FULFILLED",
 });
 const order = (n) => ({
-  order_id: uuid(n), order_no: `SO-${n}`, branch_id: uuid(9000), branch_name: "Trenton", created_at: "2026-10-01T10:00:00Z",
+  order_id: uuid(n), order_no: `SO-${n}`, branch_id: uuid(9000), branch_name: "Point Loma", created_at: "2026-10-01T10:00:00Z",
   job_label: "", source: "TILL", sale_type: "COLLECT_NOW", tender: "CASH", fulfilment_state: "FULFILLED", invoice_id: uuid(n + 100),
   card_refundable: false, returnable: true, not_returnable_reason: "", lines: [line(n * 10 + 1)],
 });
