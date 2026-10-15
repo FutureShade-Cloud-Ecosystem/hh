@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -24,6 +26,27 @@ type Repository struct {
 	// root.
 	holdOrders    PickHoldOrders
 	holdCustomers PickHoldCustomers
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. Every date parameter
+	// the aging, register and statement reads bind is the dealer's own calendar day.
+	zone houseday.Source
+}
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (r *Repository) WithZone(src houseday.Source) *Repository { r.zone = src; return r }
+
+// zoneFor answers the dealer's zone for one read (the Ontario dealer's with no source wired).
+func (r *Repository) zoneFor(ctx context.Context) (houseday.Zone, error) {
+	return houseday.Resolve(ctx, r.zone)
+}
+
+// clockAt is an instant read in the dealer's zone, the date parameter every register, aging and
+// statement read binds: houseClock for the dealer the repository serves.
+func (r *Repository) clockAt(ctx context.Context, at time.Time) (time.Time, error) {
+	z, err := r.zoneFor(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return houseClockIn(z, at), nil
 }
 
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }

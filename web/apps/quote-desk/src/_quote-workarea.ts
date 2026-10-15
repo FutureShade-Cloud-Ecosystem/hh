@@ -11,7 +11,7 @@
 // (@hardscapehouse/pos-kit's _pos-workspace), reused, not forked.
 
 import type { FlowStep, FlowStepId } from "@hardscapehouse/pos-kit/src/ported/_pos-flow.js";
-import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { clampSplit, splitFromPointer, type Arrangement } from "@hardscapehouse/pos-kit/src/ported/_pos-workspace.js";
 
 // ── the tracked (never gated) stepper: Customer, Products, Review and Send ────
@@ -129,8 +129,8 @@ export const VALIDITY_CHOICES = [7, 14, 30, 60, 90] as const;
 
 /** The YYYY-MM-DD date `days` from an injected now (the injected clock rule). */
 export function validUntilFromDays(days: number, now: Date): string {
-  // The dealer's own day (the kit's house day), never the UTC clock: after eight in the evening in Toronto UTC has rolled over.
-  const today = Date.parse(`${houseDayInZone(HOUSE_ZONE, now)}T00:00:00Z`);
+  // The dealer's own day (the kit's house day), never the UTC clock: after eight in the evening in the dealer's zone UTC has rolled over.
+  const today = Date.parse(`${houseDay(now)}T00:00:00Z`);
   return new Date(today + days * 86400000).toISOString().slice(0, 10);
 }
 
@@ -142,7 +142,7 @@ export function validityDaysOf(validUntil: string | undefined, now: Date): numbe
   if (!validUntil) return null;
   const target = Date.parse(`${validUntil}T00:00:00Z`);
   if (!Number.isFinite(target)) return null;
-  const today = Date.parse(`${houseDayInZone(HOUSE_ZONE, now)}T00:00:00Z`);
+  const today = Date.parse(`${houseDay(now)}T00:00:00Z`);
   return Math.round((target - today) / 86400000);
 }
 

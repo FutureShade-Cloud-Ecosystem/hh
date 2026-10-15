@@ -24,9 +24,16 @@ var (
 	ErrChargePending = errors.New("payments: charge pending, retry")
 )
 
-// chargeCurrency is the settlement currency for portal charges (sec. 4.2; CAD settlement on
-// Run is unconfirmed, tracked as an open question - the stub is currency-agnostic).
+// chargeCurrency is the settlement currency of a dealer with no currency source wired: the Ontario
+// dealer (sec. 4.2; CAD settlement on Run is unconfirmed, tracked as an open question - the stub is
+// currency-agnostic). A wired source (WithCurrency) answers the dealer's own currency instead.
 const chargeCurrency = "CAD"
+
+// CurrencySource is the dealer's own currency, read through a seam the composition root adapts from
+// the settings module's dealer configuration. Uncached: a change is live at the next charge.
+type CurrencySource interface {
+	DealerCurrency(ctx context.Context) (string, error)
+}
 
 // paymentStore is the persistence the Service needs. Real impl: Repository (pgx); tests
 // use a fake. Every operation is tenant-scoped by customerID.
@@ -98,6 +105,32 @@ type Service struct {
 	// a payment path with no double-charge guard is not a degraded mode, it is the bug DIB-415 exists
 	// to close, and it must not be reachable by forgetting to implement an interface.
 	intents intentStore
+	// currency is nil for a service built without a dealer currency (the scaffold and the test
+	// fakes); a charge is then CAD, the Ontario dealer.
+	currency CurrencySource
+}
+
+// WithCurrency wires the dealer's currency source. The charge currency is read once per charge,
+// after the invoices validate and before the intent is claimed, so a failed read refuses with no
+// intent held and no money moved.
+func (s *Service) WithCurrency(src CurrencySource) *Service {
+	s.currency = src
+	return s
+}
+
+// chargeCurrencyFor answers the currency a charge is made in: the dealer's, or CAD with no source.
+func (s *Service) chargeCurrencyFor(ctx context.Context) (string, error) {
+	if s.currency == nil {
+		return chargeCurrency, nil
+	}
+	c, err := s.currency.DealerCurrency(ctx)
+	if err != nil {
+		return "", fmt.Errorf("payments: the dealer's currency could not be read, nothing was charged: %w", err)
+	}
+	if c == "" {
+		return "", errors.New("payments: the dealer's currency is blank, nothing was charged")
+	}
+	return c, nil
 }
 
 func NewService(store paymentStore, gateway PaymentGateway) *Service {
@@ -319,6 +352,13 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 		sum += a.AmountCents
 	}
 
+	// The dealer's currency, read before the intent is claimed: a failed read holds no intent and moves
+	// no money. A replay never reaches here (it answered above, from the stored intent).
+	currency, err := s.chargeCurrencyFor(ctx)
+	if err != nil {
+		return Payment{}, err
+	}
+
 	// - DIB-415: claim the durable intent BEFORE the irreversible act -
 	// This row is committed before a single byte reaches the processor. Everything after it is
 	// recoverable; nothing before it has spent anyone's money.
@@ -340,7 +380,7 @@ func (s *Service) pay(ctx context.Context, customerID string, req PayRequest, st
 	res, err := s.gateway.Charge(ctx, ChargeRequest{
 		CustomerID:     customerID,
 		AmountCents:    sum,
-		Currency:       chargeCurrency,
+		Currency:       currency,
 		MethodToken:    methodToken,
 		Nonce:          nonce,
 		IdempotencyKey: idemKey,

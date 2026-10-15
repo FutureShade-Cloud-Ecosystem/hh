@@ -158,10 +158,10 @@ else
 	docker logs "$BOX_NAME" 2>&1 | tail -20
 	exit 1
 fi
-code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/testers.html")"
+code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/till/testers.html")"
 [ "$code" = "401" ] && pass "the testers' page sits behind the phrase gate" \
 	|| fail "the testers' page answered $code without the phrase, want 401"
-page="$(curl -s -u "demo:$PHRASE" "$BASE/testers.html")"
+page="$(curl -s -u "demo:$PHRASE" "$BASE/till/testers.html")"
 case "$page" in
 	*"testers' brief"*) pass "the app serves the testers' page" ;;
 	*) fail "the testers' page did not serve" ;;

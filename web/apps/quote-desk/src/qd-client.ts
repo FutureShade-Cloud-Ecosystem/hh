@@ -14,6 +14,7 @@
 // the work area parses it through floor-refusal.ts, which validates it field
 // by field like every other read.
 import { err, ok, type ApiClient, type Result } from "@hardscapehouse/api-client";
+import { serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { isNoSignal } from "@hardscapehouse/work-offline";
 import type {
   IdentityApproval,
@@ -120,6 +121,8 @@ export interface TermsRef {
   subtotalCents: number;
   taxCents: number;
   totalCents: number;
+  /** The name of the dealer's tax ("HST", "Sales tax"), the server's own word for the totals row. */
+  taxLabel: string;
   lines: Array<{ lineNo: number; discPct: number; preDiscountTotalCents: number; hasImage: boolean; sku: string | null }>;
 }
 
@@ -330,8 +333,9 @@ export function validateTerms(value: unknown): TermsRef | null {
   const totalCents = integerAt(value, "total_cents");
   const depositCents = integerAt(value, "deposit_cents");
   const deliveryFeeCents = integerAt(value, "delivery_fee_cents");
+  const taxLabel = stringAt(value, "tax_label");
   if (
-    quoteId === null || depositRequired === null || depositPct === null || includeImages === null ||
+    quoteId === null || taxLabel === null || taxLabel === "" || depositRequired === null || depositPct === null || includeImages === null ||
     fulfillmentRaw === null || (fulfillmentRaw !== "PICKUP" && fulfillmentRaw !== "DELIVERY") ||
     deliveryFeeCents === null || depositCents === null ||
     subtotalCents === null || taxCents === null || totalCents === null
@@ -357,6 +361,7 @@ export function validateTerms(value: unknown): TermsRef | null {
     subtotalCents,
     taxCents,
     totalCents,
+    taxLabel,
     lines,
   };
 }
@@ -1063,6 +1068,8 @@ export class QdClient {
       ...(profile === undefined ? {} : { profile }),
     });
     if (!result.ok) return result;
+    // The dealer's business day zone rides on this read; the desk's day counts follow it.
+    serveHouseZoneFrom(result.value);
     const config = validateConfig(result.value);
     return config === null ? err("the surface config is not readable") : ok(config);
   }

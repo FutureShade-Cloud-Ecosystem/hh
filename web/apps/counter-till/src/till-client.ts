@@ -20,14 +20,14 @@ import {
 export const DRAWER_STATION = "MAIN";
 
 /**
- * The demo dealer's house zone, the house day conversion and the demo card
+ * The house day (in the dealer's served zone), its conversion and the demo card
  * token live in @hardscapehouse/pos-kit (src/ported/host-facts.ts), which
  * carried them out of this file when the shared pieces moved into that
  * package: the kit's seam file reads them and must not import the app. This
  * module re-exports the same three names, so this file's own callers are
  * unchanged, and the wording of their comments moved with them.
  */
-export { HOUSE_ZONE, houseDayInZone, DEMO_CARD_TOKEN } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+export { DEFAULT_HOUSE_ZONE, houseDay, houseDayInZone, houseZone, serveHouseZoneFrom, DEMO_CARD_TOKEN } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 // This module's own ring path still swaps the card token onto the demo
 // constant, so the value rides in beside the re-export above.
 import { DEMO_CARD_TOKEN } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";

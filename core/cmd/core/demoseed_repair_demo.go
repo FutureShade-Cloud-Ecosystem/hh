@@ -31,8 +31,6 @@ import (
 	"fmt"
 	"os"
 	"time"
-
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // productApplicationRepairSQL fills one demo product's application where it is NULL or empty. The
@@ -123,7 +121,7 @@ const driverStopOrgRepairSQL = `UPDATE delivery_stops
 // side); a box upgraded from a seed that stamped nothing keeps its old days unstamped, and those
 // rows carry no seq either (nothing walks a past day), so no scope ever answered them.
 func repairDriverDayOrg(ctx context.Context, tx txExec, now time.Time) (int, error) {
-	stamp := now.In(houseday.Location()).Format("20060102")
+	stamp := now.In(seedLocation()).Format("20060102")
 	total := 0
 	tag, err := tx.Exec(ctx, driverOrgRepairSQL, demoOrgSlug, now, demoID(dayKey(stamp, "driver-run")))
 	if err != nil {
@@ -163,7 +161,7 @@ func repairDemoWorldPlan(ctx context.Context, out *os.File, rows rowQuery, branc
 	}
 	// The org repair says its line only when it will stamp: the org row exists and this day's Driver
 	// rows are still unstamped (the boot day's first apply ran before the populate did).
-	stamp := now.In(houseday.Location()).Format("20060102")
+	stamp := now.In(seedLocation()).Format("20060102")
 	var unstamped int
 	if err := rows.QueryRow(ctx, `
 		SELECT count(*) FROM delivery_runs

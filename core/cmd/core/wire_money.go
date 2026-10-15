@@ -102,16 +102,18 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// A-01 (W5): GL, with the rail filer bound. The invoice/tax/payment
 	// readers (billing, pos, till) land in B6 and B7; unwired, the posting
 	// legs answer their not-configured errors, never a silent skip.
-	glSvc := gl.NewService(gl.NewRepository(pool)).
+	glSvc := gl.NewService(gl.NewRepository(pool).WithZone(newDealerZone(pool))).
+		WithStandardRate(newTaxEngine(pool)). // the NSF fee backout reads the dealer's standard rate
+		WithTaxLabel(newTaxWords(pool)).      // the tax legs' memos name the dealer's tax
 		WithDeadRequeuer(outboxStore).
 		WithAudit(auditSvc).
 		WithApprovalFiler(jeApprovalFilerAdapter{svc: approvals}).
 		WithApprovalStateChecker(jeStateAdapter{svc: approvals})
-	gl.NewHandler(glSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
+	gl.NewHandler(glSvc, log).WithZone(newDealerZone(pool)).WithUserLinker(link).RegisterRoutes(r, g)
 	approvals.WithJEDecider(jeDeciderAdapter{svc: glSvc})
 
 	// W6: inventory over GL (poster + rule resolver, both in-batch).
-	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithAudit(auditSvc)
+	inventorySvc := inventory.NewService(inventory.NewRepository(pool)).WithZone(newDealerZone(pool)).WithAudit(auditSvc)
 	inventorySvc.WithGLPoster(invGLPoster{svc: glSvc}).WithRuleResolver(glRuleAdapter{svc: glSvc})
 	pricingSvc.WithCandidateSource(pricingFloorCandidates{products: productSvc, inventory: inventorySvc})
 	productSvc.WithStock(productStockReader{svc: inventorySvc}).WithBranchStock(inventorySvc).WithListPrices(pricingSvc)
@@ -197,6 +199,8 @@ func wireMoney(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log *slo
 	// admin and fails closed to owner-only.
 	messaging.PublishRoleConfig(roleCfg)
 	quoteStaffSvc := quote.NewStaffService(quoteRepo).
+		WithStandardRate(newTaxEngine(pool)). // the terms write stamps the dealer's standard rate
+		WithTaxLabel(newTaxWords(pool)).      // the totals rows and customer page name the dealer's tax
 		WithAudit(auditSvc).
 		WithAuditTrail(auditSvc).
 		WithPricing(pricingSvc).
@@ -678,7 +682,7 @@ func (a w5cOverrideAuthority) MarginOverrideAuthority(ctx context.Context, userI
 // order source that also answers the agreed facts; the group invoicer of an order that later gains a
 // shipment plan is the money tail's writer, which looks for this document first.
 func quoteMoneyDoor(pool *pgxpool.Pool, orderSvc *order.Service) (quote.OrderInvoicer, quote.CounterPayer) {
-	w := billing.NewInvoiceWriter(pool).WithOrderSource(quoteAgreedOrderSource{
+	w := newInvoiceWriter(pool).WithTaxAssessor(w6cInvoiceTaxAdapter{svc: newTaxEngine(pool)}).WithOrderSource(quoteAgreedOrderSource{
 		w6cOrderInvoiceSource: w6cOrderInvoiceSource{svc: orderSvc}, svc: orderSvc,
 	})
 	return quoteOrderInvoicer{w: w}, quoteCounterPayer{repo: payments.NewRepository(pool)}

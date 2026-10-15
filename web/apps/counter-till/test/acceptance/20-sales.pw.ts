@@ -47,26 +47,37 @@ async function readSale(page: Page, bearer: string, orderId: string) {
   return answer.body;
 }
 
-test("the way in: two cards, every other live role starts at the front door, and the banner", async ({
+test("the way in: the picker with all thirteen live role cards and no coming list, and the banner", async ({
   page,
 }, testInfo) => {
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sales manager", exact: true })).toBeVisible();
-  // The yard manager, the Yard Team and the Driver are flows the demo mints
-  // (the front door shows the cards), but the till's entry serves the
-  // matrix's Counter Till roles only; they sign in at the front door, so no
-  // card of theirs renders here.
-  await expect(page.getByRole("button", { name: "Yard manager", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Yard Team", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Driver", exact: true })).toHaveCount(0);
-  // No role is coming: every role of the matrix signs in at the front door, so
-  // the till draws no coming list.
+  // The multi app image serves the front door at /: the picker names its own
+  // word and carries the thirteen live role cards, the till's two roles among
+  // them, and the demo badge states the box.
+  await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
+  for (const role of [
+    "Sales",
+    "Sales manager",
+    "Yard manager",
+    "Yard Team",
+    "Driver",
+    "Payables and Receivables",
+    "Procurement manager",
+    "Financial Controller",
+    "Logistics Manager",
+    "General Manager",
+    "HR",
+    "Branch Manager",
+    "Outside Sales",
+  ]) {
+    await expect(page.getByRole("button", { name: role, exact: true })).toBeVisible();
+  }
+  const badge = page.getByRole("note");
+  await expect(badge).toContainText("Demo");
+  // No role is coming: every role of the matrix signs in at the front door,
+  // so the picker draws no coming disclosure and no coming list.
+  await expect(page.getByTestId("coming-disclosure")).toHaveCount(0);
   await expect(page.getByRole("list", { name: "Coming roles" })).toHaveCount(0);
-  // The yard manager, the Yard Team, Payables and Receivables and the
-  // Financial Controller have live cards on the front door, so the till's
-  // list drops them, as it dropped the Driver: its coming list is the front
-  // door's coming rows.
   for (const role of ["Yard manager", "Yard Team", "Payables and Receivables", "Financial Controller", "Logistics Manager", "General Manager", "HR", "Branch Manager", "Outside Sales"]) {
     await expect(page.getByRole("list", { name: "Coming roles" }).getByRole("button", { name: role })).toHaveCount(0);
   }
@@ -168,15 +179,17 @@ test("an account that cannot carry the sale on account: refused in words, nothin
   await signIn(page, "Sales");
   // DEMO-C07 is a no credit account (zero day terms, no credit line): item
   // 9's ring refuses the on account shape itself, before the credit gate
-  // runs, and the till shows the server's own words for the $6.72 the sale
-  // would have booked on the account.
+  // runs, and the till shows the server's own words, naming the figure the
+  // sale would have booked on the account: the preview card's own total, the
+  // same server answer the refusal must carry.
   await pickCustomer(page, "DEMO-C07", "DEMO-C07");
   await searchAndAdd(page, "DEMO-PAV-CHARCOAL", "Interlocking paver 60 mm, charcoal");
   await openStep(page, "payment");
+  const previewTotal = (await page.getByTestId("pos-preview-total").innerText()).replace(/^Total\s*/, "").trim();
   await page.getByRole("button", { name: "Charge Account" }).click();
   await page.getByTestId("pos-complete-sale").click();
   const refusal = page.getByRole("alert").filter({ hasText: "cannot carry" });
-  await expect(refusal).toContainText("This account cannot carry $6.72 on account.");
+  await expect(refusal).toContainText(`This account cannot carry ${previewTotal} on account.`);
   await expect(refusal).toContainText("Pay in full now, or take a deposit with the balance due later.");
   await expect(page.getByTestId("sold-panel")).toHaveCount(0);
   await shot(page, "sales-05-credit-refused", testInfo);
@@ -254,7 +267,14 @@ test("tender and receipt: cash with change due, held against the core's own read
   // counter's own word beside the walk-in account.
   expect(printedText).toContain("Customer: Walk-in");
   expect(printedText).toContain("Gable Landscape Supply");
-  expect(printedText).toContain("12 Yard Gate Road");
+  // The letterhead carries the demo branch's own address, as the core's
+  // branch read states it: the world moved to San Diego and the street
+  // re-seeded, so the leg reads the address off the branch row instead of
+  // pinning a street that can move again.
+  const branches = await staffGet(page, bearer, "/api/v1/branches");
+  const branch = (branches.body as unknown as Array<Record<string, unknown>>)[0];
+  const address = branch.address as { line1?: string };
+  expect(printedText).toContain(address.line1 as string);
   // The letterhead's honesty pin: the first dealer's real trading name never
   // prints. The name rides encoded (the name sweep's own discipline), so the
   // assertion ships without the name anywhere in the tree.
@@ -330,10 +350,12 @@ test("tender and receipt: an account sale bills the account, invoice and fresh b
   await signIn(page, "Sales");
   const bearer = await mint(page, "sales");
   const balanceOf = async (): Promise<number> => {
+    // C02 answers the Ridgeview name the demo world's own dictionary gave
+    // it; the search reads the same word the picker types.
     const read = await staffGet(
       page,
       bearer,
-      `/api/v1/customers/search?q=Bay%20Ridge&branch_id=${POINT_LOMA_ID}`,
+      `/api/v1/customers/search?q=Ridgeview&branch_id=${POINT_LOMA_ID}`,
     );
     const rows = read.body as unknown as Array<Record<string, unknown>>;
     return rows[0].open_balance_cents as number;
@@ -487,10 +509,14 @@ test("a swap: the credit pays a new order, the leftover goes back by cash, both 
   await page.getByRole("button", { name: /Ridgeview Outdoor Living/ }).click();
   const order = page.getByTestId("returns-order").filter({ hasText: rung.order_no });
   await expect(order).toHaveCount(1);
+  // The disposition on an unpicked line picks one unit of it (the draft's
+  // own rule); this story returns the whole line of 40, so the quantity is
+  // typed first, the way a person walks the stepper's input.
+  await order.getByLabel(/Return quantity: Interlocking paver/).fill("40");
   await order.getByRole("button", { name: "Return to stock" }).first().click();
   await page.getByRole("button", { name: "Continue to the refund" }).click();
   await page.getByLabel("Search replacement goods").fill("Aluminum");
-  await page.getByTestId("returns-products").getByRole("button", { name: /Aluminum Edging 8ft/ }).first().click();
+  await page.getByTestId("returns-products").getByRole("button", { name: /Aluminum edging 8 ft/ }).first().click();
   const swap = page.getByTestId("returns-swap");
   await expect(swap.getByTestId("swap-new-total")).toBeVisible();
   const centsOf = (text: string): number => {
@@ -549,28 +575,30 @@ test("a walk in return: found by its receipt number, cash or card only, and the 
   await shot(page, "sales-12-walk-in-return-done", testInfo);
 });
 
-test("beyond the till: sign out, a reload, and a fresh page each leave the till nobody's", async ({
+test("beyond the till: the reload keeps the session, sign out ends it, and a fresh page starts at the front door", async ({
   page,
 }, testInfo) => {
   await signIn(page, "Sales");
-  // The page tells the tester a reload ends the session, and the box works
-  // exactly that way: the mint lives in the tab alone, so a signed in reload
-  // returns the cards, not the till.
+  // The testers' page states the box's own contract: reloading in the same
+  // tab keeps the session until sign out (the till's custody mirror holds
+  // it), and a new tab starts at the front door. The box works exactly that
+  // way.
   const signedIn = await page.screenshot({ fullPage: true });
   await page.reload();
-  await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
+  await expect(page.getByTestId("signed-in-role")).toHaveText("Sales");
   await settle(page);
-  // The picture holds the claim's two halves: the till as it stood signed in,
-  // and the page the reload left, the cards and nobody's till.
+  // The picture holds the claim's two halves: the till as it stood signed
+  // in, and the till the reload left, still signed in under the same role.
   const afterReload = await page.screenshot({ fullPage: true });
   await shotParts(page, "sales-11-beyond", testInfo, [signedIn, afterReload]);
-  // Sign out lands on the same place, deliberately.
-  await signIn(page, "Sales");
+  // Signing out ends the session, deliberately: the till returns to its
+  // entry cards.
   await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
-  // And a fresh page is nobody's till either.
+  // A fresh page starts at the front door, and the till is nobody's either.
   await page.goto("/");
+  await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
 });

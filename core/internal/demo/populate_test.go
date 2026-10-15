@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/demo/flows"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/payment"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/printing"
@@ -300,11 +301,17 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 		counts.UserBranchGrantsUnstampedOrg != 0 || counts.PortalUsersUnstampedTenant != 0 {
 		t.Errorf("the org scope did not stamp clean: %+v", counts)
 	}
-	if counts.UsersLinked != 13 || counts.UsersUnlinked != 7 {
-		t.Errorf("linked %d / unlinked %d users, want the 13 demo role accounts (sales, manager, yard-manager, payables-receivables, buyer, controller, general manager, HR, branch manager, outside sales, yard, driver, dispatch) linked and the 7 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
+	// 27 linked: the 13 demo role accounts (sales, manager, yard-manager,
+	// payables-receivables, buyer, controller, general manager, HR, branch
+	// manager, outside sales, yard, driver, dispatch) and the 14 enterable
+	// sign in personas, linked to their namespaced subjects.
+	if counts.UsersLinked != 27 || counts.UsersUnlinked != 7 {
+		t.Errorf("linked %d / unlinked %d users, want the 13 demo role accounts and the 14 sign in personas linked and the 7 planted rows unlinked", counts.UsersLinked, counts.UsersUnlinked)
 	}
-	if counts.StaffGrants != 13 || counts.StaffGrantsBranch != 9 || counts.StaffGrantsGlobal != 4 {
-		t.Errorf("staff grants %d (branch %d, global %d), want the nine branch-scoped linked accounts' one-branch grants (sales, manager, yard manager, buyer, branch manager, outside sales, yard, driver, dispatch) and the four global grants (Payables and Receivables, Financial Controller, General Manager, HR)", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
+	// 28 grants: the 13 of the role accounts (nine branch scoped, four
+	// global) and 15 of the personas (ten branch scoped, five global).
+	if counts.StaffGrants != 28 || counts.StaffGrantsBranch != 19 || counts.StaffGrantsGlobal != 9 {
+		t.Errorf("staff grants %d (branch %d, global %d), want the role accounts' 13 and the personas' 15", counts.StaffGrants, counts.StaffGrantsBranch, counts.StaffGrantsGlobal)
 	}
 	if counts.StaffGrantShapeViolations != 0 || counts.StaffGrantsUnlinked != 0 {
 		t.Errorf("grant shape or linkage defects: %+v", counts)
@@ -396,26 +403,31 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	// nothing else. A surname token or an unreplaced placeholder on any row
 	// fails the allowlist, without the test itself naming a token.
 	allowedNames := map[string]bool{
-		salesDisplayName:                true,
-		managerDisplayName:              true,
-		yardMgrDisplayName:              true,
-		payRecDisplayName:               true,
-		controllerDisplayName:           true,
-		gmDisplayName:                   true,
-		hrDisplayName:                   true,
-		bmDisplayName:                   true,
-		osDisplayName:                   true,
-		"Platform admin (demo)":         true,
-		"Demo teammate (demo)":          true,
-		"Homework account one (demo)":   true,
-		"Homework account two (demo)":   true,
-		"Homework account three (demo)": true,
-		"Homework account four (demo)":  true,
-		"Counter UAT account (demo)":    true,
-		"Dispatch persona (demo)":       true,
-		"Yard persona (demo)":           true,
-		"Driver persona (demo)":         true,
-		"Procurement manager (demo)":    true,
+		salesDisplayName:             true,
+		managerDisplayName:           true,
+		yardMgrDisplayName:           true,
+		payRecDisplayName:            true,
+		controllerDisplayName:        true,
+		gmDisplayName:                true,
+		hrDisplayName:                true,
+		bmDisplayName:                true,
+		osDisplayName:                true,
+		"Platform admin (demo)":      true,
+		"Demo teammate (demo)":       true,
+		"General Manager (demo)":     true,
+		"Inside Sales (demo)":        true,
+		"Counter Sales (demo)":       true,
+		"Branch Manager (demo)":      true,
+		"UAT Inside Sales (demo)":    true,
+		"Dispatch persona (demo)":    true,
+		"Yard persona (demo)":        true,
+		"Driver persona (demo)":      true,
+		"Procurement manager (demo)": true,
+	}
+	for _, p := range flows.Personas() {
+		if !p.Contractor {
+			allowedNames[p.DisplayName()] = true
+		}
 	}
 	nameRows, err := pool.Query(ctx, `SELECT display_name FROM users`)
 	if err != nil {
@@ -440,8 +452,9 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	// planted demo teammates, and the roadmap personas (Payables and
 	// Receivables and the Procurement Manager and the Financial Controller),
 	// each one invented name.
-	if len(saw) != len(allowedNames) || len(saw) != 20 {
-		t.Errorf("the users rows render %d distinct display names, want exactly the 20 invented ones (saw: %v)", len(saw), saw)
+	// Plus the 14 sign in personas' role label names.
+	if len(saw) != len(allowedNames) || len(saw) != 34 {
+		t.Errorf("the users rows render %d distinct display names, want exactly the 34 invented ones (saw: %v)", len(saw), saw)
 	}
 
 	// The receipt's letterhead row: system_settings org_name carries the
@@ -484,6 +497,17 @@ func TestPopulate_BuildsTheDemoWorldAndRunsTwiceCreatingNothing(t *testing.T) {
 	}
 	if !configured || merchantID != demoMerchantID || processor != demoProcessor || currency != demoCurrency {
 		t.Errorf("payment config: configured=%v merchant=%q processor=%q currency=%q", configured, merchantID, processor, currency)
+	}
+
+	// The dealer's own currency is written beside the card rail row and agrees with it: the rail
+	// refuses a charge whose row disagrees with the dealer (item 3b slice 2).
+	var dealerCurrency string
+	if err := pool.QueryRow(ctx,
+		`SELECT value #>> '{}' FROM system_settings WHERE key = 'currency'`).Scan(&dealerCurrency); err != nil {
+		t.Fatalf("system_settings currency is missing: %v", err)
+	}
+	if dealerCurrency != "USD" || currency != "USD" {
+		t.Errorf("dealer currency %q and card rail currency %q, want both USD", dealerCurrency, currency)
 	}
 
 	// The demo_box row records the run's moment, and the newest seeded
