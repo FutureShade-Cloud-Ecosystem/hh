@@ -354,7 +354,7 @@ export class BuyingAndStockApp extends HHElement {
 
   private renderSignedIn(): TemplateResult {
     return html`
-      <hos-app-header signed-in demo compact product-name="Yard">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header signed-in demo compact product-name="Buying and Stock">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         ${this.renderAreas()}
         ${this.#desk.render()}
@@ -367,7 +367,7 @@ export class BuyingAndStockApp extends HHElement {
     const session = this.#sessions.current;
     if (session !== null) return this.renderSignedIn();
     return html`
-      <hos-app-header demo compact product-name="Yard">${this.renderThemeControl()}</hos-app-header>
+      <hos-app-header demo compact product-name="Buying and Stock">${this.renderThemeControl()}</hos-app-header>
       <main class="desk">
         <h1>Buying and Stock</h1>
         <p class="dim">Purchase orders and the reorder worklist for the procurement manager. Demo data only.</p>
