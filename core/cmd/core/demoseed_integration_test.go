@@ -655,12 +655,12 @@ func TestIntegration_TheNeedsQueueHasSomethingToCount(t *testing.T) {
 
 // -- Promise 6 · the yard manager's Needs-you counts match the seed -------------------------------
 
-// TestIntegration_TheYardManagersNeedsCountsMatchTheSeed reads the three sources of the yard
-// manager's landing (0381) through the adapters the composition root registers, over the seeded
-// demo world, and compares each to the plan: the open shortages (SH1 and SH2 open, SH3 resolved),
-// the stale picks (the PUSHED picks past their accept deadline), and the receiving differences (the
-// PARTIAL purchase orders with a short line), counted from demoShortages, demoTasks and
-// demoPurchaseOrders rather than typed.
+// TestIntegration_TheYardManagersNeedsCountsMatchTheSeed reads the three seed-counted sources of
+// the yard manager's Needs-you (0381) through the adapters the composition root registers, over the
+// seeded demo world, and compares each to the plan: the open shortages (SH1 and SH2 open, SH3
+// resolved), the stale picks (the PUSHED picks past their accept deadline), and the receiving
+// differences (the PARTIAL purchase orders with a short line), counted from demoShortages,
+// demoTasks and demoPurchaseOrders rather than typed.
 func TestIntegration_TheYardManagersNeedsCountsMatchTheSeed(t *testing.T) {
 	ctx := context.Background()
 	pool := freshMigratedDB(t, "yardneeds")

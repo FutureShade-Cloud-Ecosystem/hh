@@ -209,11 +209,11 @@ func TestIntegration_0381_TheOtherManagersKeepTheirShape(t *testing.T) {
 	}
 }
 
-// TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared pins the three sources the roadmap
-// names for the yard manager's Needs-you (open shortages raised by the yard team, stale picks,
-// receiving differences). The rows are policy; the adapters that count them land with the sources
-// themselves, and a source nobody has wired renders nothing (0201's posture), so this asserts the
-// DECLARATION, not the count.
+// TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared pins the sources the roadmap names
+// for the yard manager's Needs-you, 0381's three (open shortages raised by the yard team, stale
+// picks, receiving differences) with 0395's dispatch.due_to_commit leading them. The rows are
+// policy; the adapters that count them land with the sources themselves, and a source nobody has
+// wired renders nothing (0201's posture), so this asserts the DECLARATION, not the count.
 func TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared(t *testing.T) {
 	pool := testPool(t)
 	ctx := context.Background()
@@ -236,7 +236,7 @@ func TestIntegration_0381_TheYardManagersNeedsSourcesAreDeclared(t *testing.T) {
 	}
 	want := []string{NeedsDueToCommit, NeedsOpenShortages, NeedsStalePicks, NeedsReceivingDifferences}
 	if len(got) != len(want) {
-		t.Fatalf("the yard manager declares %d needs sources (%v), want the three the roadmap names (%v)",
+		t.Fatalf("the yard manager declares %d needs sources (%v), want the four 0395 files (%v)",
 			len(got), got, want)
 	}
 	for i := range want {

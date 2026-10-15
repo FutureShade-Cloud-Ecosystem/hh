@@ -99,7 +99,7 @@ func TestProfileForAnswersTheManagersOwnProfile(t *testing.T) {
 
 // TestManagerProfilesFallBackToTheirBaseShapesDefaults pins the unreadable-table posture for the
 // refinements: a build that cannot read dashboard_needs_sources serves each manager the policy its
-// profile was born with, the yard manager's own three sources included, and never an empty queue.
+// profile was born with, the yard manager's own sources included, and never an empty queue.
 func TestManagerProfilesFallBackToTheirBaseShapesDefaults(t *testing.T) {
 	for _, p := range managerProfiles {
 		if len(defaultNeedsFor(p)) == 0 {
