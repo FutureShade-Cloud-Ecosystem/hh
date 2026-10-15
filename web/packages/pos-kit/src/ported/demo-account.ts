@@ -66,12 +66,14 @@ export class DemoAccount implements AccountSurface {
   /**
    * The role cards: the flows route's rows, or the refusal. An error here is
    * the no-demo page's whole story: a default-build core or a non-demo box
-   * answers nothing, so there are no cards.
+   * answers nothing, so there are no cards. Staff rows only: the contractor
+   * flows (class "tenant") belong to the Pro apps' front door, and a row with
+   * no class is a staff row.
    */
   async listFlows(): Promise<Result<DemoFlow[]>> {
     const result = await staffDemo.demoListFlows(this.#client);
     if (!result.ok) return result;
-    return ok(result.value.flows);
+    return ok(result.value.flows.filter((row) => row.class !== "tenant"));
   }
 
   /** Mint a session for one flow name from the cards. */
@@ -80,7 +82,7 @@ export class DemoAccount implements AccountSurface {
     if (!result.ok) return result;
     const minted = validateMint(result.value, Date.now());
     if (minted === null) {
-      return err("the mint's answer is not a usable session: no token, no usable user block, or no readable expiry in the token");
+      return err("the sign-in did not return what the screen needs; pick the role again");
     }
     this.#mint = minted;
     return ok({ ...minted });
@@ -98,7 +100,7 @@ export class DemoAccount implements AccountSurface {
     if (!result.ok) return result;
     const minted = validateMint(result.value, Date.now());
     if (minted === null) {
-      return err("the approver mint's answer is not a usable session: no token, no usable user block, or no readable expiry in the token");
+      return err("the approver's sign-in did not return what the screen needs; try again");
     }
     return ok({ token: minted.token, approverName: minted.user.name, expiresAtMs: minted.tokenExpiresAtMs });
   }
@@ -117,7 +119,7 @@ export class DemoAccount implements AccountSurface {
   async getSession(): Promise<AccountUser> {
     const mint = this.#mint;
     if (mint === null) {
-      throw new Error("no demo session to resume: the mint lives only in this tab's memory, tap a role again");
+      throw new Error("no demo is held in this tab; tap a role again");
     }
     return { ...mint.user };
   }

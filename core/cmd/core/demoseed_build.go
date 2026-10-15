@@ -17,11 +17,12 @@ import (
 	"sort"
 	"strconv"
 	"time"
-
-	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
-const hstBps = 1300 // 13% HST, the rate the demo world prices at
+// hstBps is the rate the seed prices its documents at: 13 percent in a default build. The demo
+// build's world seam (demoseed_glsworld_tax_demo.go) sets it to the demo dealer's rate before any
+// plan is built; nothing else assigns it.
+var hstBps = 1300
 
 // taxOn is the money rule, done in integer cents with half-up rounding. The server is the
 // arithmetic authority everywhere else in this system; here the seed is writing the rows the server
@@ -61,7 +62,7 @@ func (b *builder) add(r row) { b.rows = append(b.rows, r) }
 // system already obeys (the sales.today window, the rollup day, the ledger's period, the tax
 // assessor's today).
 func (b *builder) day(off int) time.Time {
-	y, m, d := b.in.Now.In(houseday.Location()).Date()
+	y, m, d := b.in.Now.In(seedLocation()).Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC).AddDate(0, 0, off)
 }
 
@@ -191,6 +192,9 @@ func buildPlan(in planInput) ([]row, planSummary, error) {
 	b.freightApprovals()
 	// The quote world, after the customers and products it prices and before the day-keyed rows.
 	b.quoteWorld()
+	// The contractor world, after the products and customers' neighbours it reads (it builds nothing
+	// until the populate has made the account).
+	b.contractorWorld()
 	// The Financial Controller's parked journals, after the quote world's makers it shares.
 	b.controllerWorld()
 	// The CP-03 island's missing lines, beside the quote world because they are documents too, and
@@ -765,6 +769,9 @@ func (b *builder) fleet() {
 	depots := map[string][2]float64{
 		"KGN": {44.2312, -76.4860},
 		"TRT": {44.1001, -77.5766},
+		// The demo dealer's two yards (the demo build moves the branch codes to these).
+		"JUL": {33.0786, -116.6020},
+		"PLM": {32.7370, -117.2370},
 	}
 	for _, br := range b.in.Branches {
 		c, ok := depots[br.Code]

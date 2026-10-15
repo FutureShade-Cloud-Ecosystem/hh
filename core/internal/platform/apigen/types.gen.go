@@ -288,6 +288,7 @@ type DemoSessionResponse struct {
 	Token      *string         `json:"token,omitempty"`
 	User       *map[string]any `json:"user,omitempty"`
 	Flow       *string         `json:"flow,omitempty"`
+	Class      *string         `json:"class,omitempty"`
 	ChapterKey *string         `json:"chapter_key,omitempty"`
 }
 
@@ -295,6 +296,7 @@ type DemoFlow struct {
 	Flow     *string `json:"flow,omitempty"`
 	RoleCode *string `json:"role_code,omitempty"`
 	Label    *string `json:"label,omitempty"`
+	Class    *string `json:"class,omitempty"`
 }
 
 type DemoFlowList struct {
@@ -1838,6 +1840,7 @@ type SettingsSurfaceConfig struct {
 	UserItems    []SettingsItem        `json:"user_items"`
 	Workspace    SettingsWorkspaceView `json:"workspace"`
 	Policy       *map[string]any       `json:"policy,omitempty"`
+	BusinessZone *string               `json:"business_zone,omitempty"`
 }
 
 type SettingsRoleItemsBody struct {
@@ -2963,6 +2966,10 @@ type IdentityExchangeRequest struct {
 	Org string `json:"org"`
 }
 
+type IdentityPersonaRequest struct {
+	Persona string `json:"persona"`
+}
+
 type IdentityExchangeResponse struct {
 	Token       string       `json:"token"`
 	ExpiresAtMs int64        `json:"expiresAtMs"`
@@ -3097,7 +3104,7 @@ type IdentityApprovalDecideRequest struct {
 	Reason  string `json:"reason"`
 }
 
-// TaxReasonCode is the document's enum: "STD_ON_HST_13", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW", "FED_S87_GOODS_ON_RES", "FED_S87_SERVICE_RESERVE", "FED_BAND_MANAGEMENT", "FNT_PRODUCT", "TREATY_OR_SELF_GOV_REVIEW", "RELIEF_DECLINED_EVIDENCE".
+// TaxReasonCode is the document's enum: "STD_ON_HST_13", "STD_SALES_TAX", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW", "FED_S87_GOODS_ON_RES", "FED_S87_SERVICE_RESERVE", "FED_BAND_MANAGEMENT", "FNT_PRODUCT", "TREATY_OR_SELF_GOV_REVIEW", "RELIEF_DECLINED_EVIDENCE".
 type TaxReasonCode string
 
 type TaxRate struct {
@@ -5003,6 +5010,7 @@ type PosReliefOutcome struct {
 	Automated         bool   `json:"automated"`
 	RequiresEvidence  bool   `json:"requires_evidence"`
 	EvidenceSatisfied bool   `json:"evidence_satisfied"`
+	TaxLabel          string `json:"tax_label"`
 }
 
 type PosSignatureCapture struct {
@@ -5161,6 +5169,7 @@ type PosTaxRate struct {
 	Jurisdiction string `json:"jurisdiction"`
 	ReasonCode   string `json:"reason_code"`
 	RateBps      int32  `json:"rate_bps"`
+	TaxLabel     string `json:"tax_label"`
 	RoundMode    string `json:"round_mode"`
 }
 
@@ -7406,6 +7415,7 @@ type QuoteTerms struct {
 	DepositCents     int64            `json:"deposit_cents"`
 	SubtotalCents    int64            `json:"subtotal_cents"`
 	TaxCents         int64            `json:"tax_cents"`
+	TaxLabel         string           `json:"tax_label"`
 	TotalCents       int64            `json:"total_cents"`
 	Lines            []QuoteTermsLine `json:"lines"`
 }
@@ -7486,6 +7496,7 @@ type QuotePublicView struct {
 	Lines            []QuotePublicLine `json:"lines"`
 	SubtotalCents    int64             `json:"subtotal_cents"`
 	TaxCents         int64             `json:"tax_cents"`
+	TaxLabel         string            `json:"tax_label"`
 	TotalCents       int64             `json:"total_cents"`
 	AsOf             time.Time         `json:"as_of"`
 	Acceptable       bool              `json:"acceptable"`
@@ -7527,6 +7538,7 @@ type QuoteAcceptanceResult struct {
 	AcceptedAt          time.Time `json:"accepted_at"`
 	SubtotalCents       int64     `json:"subtotal_cents"`
 	TaxCents            int64     `json:"tax_cents"`
+	TaxLabel            string    `json:"tax_label"`
 	TotalCents          int64     `json:"total_cents"`
 	RepeatAcceptance    *bool     `json:"repeat_acceptance,omitempty"`
 }

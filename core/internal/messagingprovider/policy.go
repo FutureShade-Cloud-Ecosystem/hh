@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 )
 
 // policy.go, WHEN a text may go out, and HOW FAST.
@@ -89,6 +91,7 @@ func PolicyFromEnv() *SendPolicy {
 		WithWindow(win).
 		WithRate(intEnv("SMS_RATE_PER_MIN", DefaultRatePerMinute, 1, r))
 	p.zoneErr = zerr
+	p.zoneFromEnv = env("SMS_WINDOW_ZONE", "") != ""
 	sort.Slice(r.fbs, func(i, j int) bool { return r.fbs[i].Var < r.fbs[j].Var })
 	p.fallbacks = r.fbs
 	return p
@@ -276,6 +279,9 @@ type SendPolicy struct {
 	tokens  float64
 	last    time.Time
 	zoneErr error
+	// zoneFromEnv records that SMS_WINDOW_ZONE named the window's zone, so a dealer zone never
+	// overrides an operator's explicit choice.
+	zoneFromEnv bool
 
 	fallbacks []PolicyFallback
 }
@@ -289,6 +295,20 @@ func NewSendPolicy() *SendPolicy {
 		now:    time.Now,
 		tokens: float64(DefaultRatePerMinute),
 	}
+}
+
+// WithDealerZone makes the dealer's business day zone the zone the send window is read in, unless
+// SMS_WINDOW_ZONE named one (an operator's explicit choice stands). The window keeps its hours; only
+// the zone it is read in moves. It is applied once, when the policy is built at boot, like the
+// SMS_WINDOW_* variables it sits beside, so a change of the dealer's zone takes a restart here.
+func (p *SendPolicy) WithDealerZone(z houseday.Zone) *SendPolicy {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.zoneFromEnv {
+		return p
+	}
+	p.window = NewQuietHours(p.window.StartMin, p.window.EndMin, z.Location())
+	return p
 }
 
 // WithClock injects the clock. This is the seam every test in this package uses; production never

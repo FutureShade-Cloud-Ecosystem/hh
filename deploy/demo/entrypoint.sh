@@ -92,8 +92,18 @@ done
 export CORE_DATABASE_URL="$DATABASE_URL"
 export CORE_STAFF_AUDIENCE="${CORE_STAFF_AUDIENCE:-hh-staff}"
 export CORE_TENANT_AUDIENCE="${CORE_TENANT_AUDIENCE:-hh-tenant}"
+# The demo dealer's name, on every text, email and export the demo sends. A deploy
+# overrides it by setting DEALER_NAME in the box's environment.
+export DEALER_NAME="${DEALER_NAME:-Gable Landscape Supply}"
 # CORE_SIGNIN_MODE is passed through as the operator set it (checked above);
 # the core itself refuses any value it does not accept.
+
+# The web runtime config (/srv/app/config.json): the image bakes the demo
+# mode, and a console copy serves its own from HH_WEB_* names, validated here
+# before anything writes. Unset or demo leaves the baked file untouched.
+# shellcheck source=write-web-config.sh
+. "$(dirname "$0")/write-web-config.sh"
+write_web_config /srv/app/config.json || exit 1
 
 # The public port is the platform's PORT. The core listens on a loopback
 # port only: it is never reachable except through Caddy, which fronts
@@ -190,7 +200,7 @@ resume_refusals() {
 	if has_table users; then
 		foreign_users="$(psql "$DATABASE_URL" -tAqc "
 			SELECT count(*) FROM users
-			 WHERE lower(email::text) <> 'scrubbed-0009@example.invalid'
+			 WHERE lower(email::text) NOT IN ('scrubbed-0009@example.invalid', 'uat.inside.sales@gablelandscape.example')
 			   AND id::text NOT IN (
 			     'd7000000-0000-4000-9000-000000000010',
 			     'd7000000-0000-4000-9000-0000000000da',

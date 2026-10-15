@@ -54,6 +54,16 @@ test('offline with an empty outbox says the truth about writes instead of a coun
   assert.ok(/writes wait/i.test(markup), 'the writes wait words');
 });
 
+test('a read cache only app never promises that writes wait or send later', () => {
+  for (const mode of ['offline', 'unreachable']) {
+    const markup = visible(renderKit(ShellBanner, { mode, waiting: 0, cacheOnly: true }));
+    assert.ok(markup.includes('role="status"'), `${mode}: still a live region`);
+    assert.ok(/offline|can't be reached/i.test(markup), `${mode}: still names the state`);
+    assert.ok(!/wait|send|outbox|safe/i.test(markup), `${mode}: no word about writes kept for later`);
+    assert.ok(/copy on this device/i.test(markup), `${mode}: says what the screen is showing`);
+  }
+});
+
 test('unreachable is its own state with its own words', () => {
   const markup = visible(renderKit(ShellBanner, { mode: 'unreachable', waiting: 2 }));
   assert.ok(/can't be reached/i.test(markup), 'the unreachable words');

@@ -5,6 +5,7 @@
 // file. The phrase gate in front of the real demo box is the image's Caddy;
 // this stub checks no credential, like the core's own public demo routes.
 //
+//   GET  /api/v1/demo/flows   -> the closed table with each row's class (staff rows, then the five contractor rows)
 //   POST /api/v1/demo/session -> DemoSessionResponse, or the armed refusal
 //   POST /api/v1/feedback     -> 201 { issue_id, issue_number: HH-42 }, or the
 //                                armed board refusal; the last submission's
@@ -19,6 +20,19 @@
 //   POST /_stub/feedback-numberless -> the next feedback answers carry no
 //                                issue_number, until the next reset
 //   POST /_stub/reset         -> clear the armed refusals and the ledgers
+//
+// The console mode's doubles (item 7b), one world behind the same port:
+//   GET  /config.json         -> the served runtime configuration; demo mode
+//                                until a leg posts another to /_stub/config
+//   POST /_stub/config        -> { config } the file to serve from now on
+//   POST /_stub/console       -> arm the console world: { signin, exchange,
+//                                methods, persona, windowSeconds, role,
+//                                delayMs } (see CONSOLE below)
+//   /console/v1/account...    -> a fake FB Console: email session create (sets
+//                                an httpOnly cookie), account read, JWT mint,
+//                                session delete, the Google route
+//   POST /api/v1/auth/exchange, GET /api/v1/auth/methods,
+//   POST /api/v1/auth/persona -> the core's three new public routes
 //
 // The mint answers a JWT-shaped token so the app's expiry read (the token's
 // exp claim) sees the same shape the real mint issues: three segments, a
@@ -47,6 +61,17 @@ const FLOWS = [
   { flow: "payables-receivables", role_code: "payables_receivables", label: "Payables and Receivables" },
   { flow: "procurement-manager", role_code: "procurement_manager", label: "Procurement manager" },
   { flow: "financial-controller", role_code: "financial_controller", label: "Financial Controller" },
+  { flow: "logistics-manager", role_code: "logistics_manager", label: "Logistics Manager" },
+];
+
+// Summit Ridge Builders' contractor personas, as the core's listing carries them (class "tenant"). The front
+// door offers a card for each and opens the Pro app for the role; it never mints them, so USERS holds none.
+const CONTRACTOR_FLOWS = [
+  { flow: "contractor-account-admin", role_code: "account_admin", label: "Contractor owner", class: "tenant" },
+  { flow: "contractor-buyer", role_code: "buyer", label: "Contractor buyer", class: "tenant" },
+  { flow: "contractor-buyer-no-pay", role_code: "buyer_no_pay", label: "Contractor buyer (no pay)", class: "tenant" },
+  { flow: "contractor-ap-finance", role_code: "ap_finance", label: "Contractor AP", class: "tenant" },
+  { flow: "contractor-field-crew", role_code: "field_crew", label: "Contractor field crew", class: "tenant" },
 ];
 
 const USERS = {
@@ -113,6 +138,15 @@ const USERS = {
     tier: 1,
     scope: "GLOBAL",
   },
+  "logistics-manager": {
+    user_id: "demo-account-logistics-manager",
+    email: "logistics-manager@demo.invalid",
+    display_name: "Dispatch persona (demo)",
+    role_code: "logistics_manager",
+    role_name: "Logistics Manager",
+    tier: 2,
+    scope: "BRANCH",
+  },
   driver: {
     user_id: "demo-account-driver",
     email: "driver@demo.invalid",
@@ -128,6 +162,8 @@ const USERS = {
 // mint's 429 limit, a 503 for an account the box cannot resolve) and the next
 // mint for one of the named flows answers it, once per arming.
 let refusal = null;
+// The flows listing answers 503 while armed (the contractor cards then show nothing; the staff cards still work).
+let listingFails = false;
 let lastOrg = "";
 let mints = 0;
 let pendingApprovalCount = 3;
@@ -180,6 +216,205 @@ function sendJson(response, status, body) {
   response.end(raw);
 }
 
+// ── CONSOLE: the fake FB Console and the core's auth routes ──────────────────
+// Every value is fake. The fake console issues an httpOnly cookie on a good
+// sign in, so the page's credentialed fetches behave as they do against the
+// real one, and the core's exchange trades a minted "JWT" for a token whose
+// life is windowSeconds. Refusals use the shared bodies (the core never
+// explains).
+const CONSOLE_EMAIL = "partner.one@hh-demo.invalid";
+const CONSOLE_PASSWORD = "correct horse battery";
+const CONSOLE_USER = { $id: "console-user-1", email: CONSOLE_EMAIL, name: "Partner One" };
+const SHARED_BODIES = {
+  400: { error: "Bad Request" },
+  401: { error: "Unauthorized" },
+  403: { error: "Forbidden" },
+  429: { error: "Too Many Requests" },
+  503: { error: "Service Unavailable" },
+};
+let servedConfig = { mode: "demo" };
+let consoleCookie = false;
+let consoleArms = {};
+let consoleLedger = { signins: [], exchanges: 0, jwts: 0, personas: [], methodsAsked: [] };
+
+function resetConsole() {
+  servedConfig = { mode: "demo" };
+  consoleCookie = false;
+  consoleArms = {};
+  consoleLedger = { signins: [], exchanges: 0, jwts: 0, personas: [], methodsAsked: [] };
+}
+
+function sharedBody(status) {
+  return SHARED_BODIES[status] ?? { error: "Error" };
+}
+
+async function pause(ms) {
+  if (typeof ms === "number" && ms > 0) await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function consoleUserBlock() {
+  const role = consoleArms.role ?? { role_code: "sales_manager", role_name: "Sales Manager" };
+  return {
+    user_id: role.user_id ?? CONSOLE_USER.$id,
+    email: CONSOLE_USER.email,
+    display_name: CONSOLE_USER.name,
+    role_code: role.role_code,
+    role_name: role.role_name,
+    tier: 2,
+    scope: "BRANCH",
+  };
+}
+
+function coreToken(userId, seconds) {
+  const header = base64Url({ alg: "ES256", typ: "JWT" });
+  const payload = base64Url({ sub: userId, exp: Math.floor(Date.now() / 1000) + seconds });
+  return `${header}.${payload}.${base64Url({ stub: "signature-bytes" })}`;
+}
+
+/** Answer an armed status once if one is set for the route; true when it answered. */
+function answerArmed(response, key) {
+  const armed = consoleArms[key];
+  if (armed === undefined || armed === null || typeof armed.status !== "number") return false;
+  if (typeof armed.times === "number") {
+    armed.times -= 1;
+    if (armed.times <= 0) delete consoleArms[key];
+  }
+  sendJson(response, armed.status, sharedBody(armed.status));
+  return true;
+}
+
+async function handleConsole(request, response, url) {
+  const path = url.pathname;
+  const sub = path.startsWith("/console/v1") ? path.slice("/console/v1".length) : null;
+
+  if (path === "/config.json") {
+    sendJson(response, 200, servedConfig);
+    return true;
+  }
+  if (path === "/_stub/config" && request.method === "POST") {
+    const body = await readBody(request);
+    servedConfig = body !== null && typeof body === "object" && "config" in body ? body.config : { mode: "demo" };
+    sendJson(response, 200, { served: true });
+    return true;
+  }
+  if (path === "/_stub/console" && request.method === "POST") {
+    const body = await readBody(request);
+    consoleArms = { ...consoleArms, ...(body ?? {}) };
+    sendJson(response, 200, { armed: true });
+    return true;
+  }
+  if (path === "/_stub/console-peek") {
+    sendJson(response, 200, { ...consoleLedger, cookie: consoleCookie });
+    return true;
+  }
+
+  if (sub === "/account/sessions/email" && request.method === "POST") {
+    const body = await readBody(request);
+    await pause(consoleArms.delayMs?.signin);
+    consoleLedger.signins.push({ email: body?.email ?? "", passwordLength: String(body?.password ?? "").length });
+    if (answerArmed(response, "signin")) return true;
+    if (body?.email !== CONSOLE_EMAIL || body?.password !== CONSOLE_PASSWORD) {
+      sendJson(response, 401, { message: "Invalid credentials", code: 401, type: "user_invalid_credentials" });
+      return true;
+    }
+    consoleCookie = true;
+    const raw = JSON.stringify({ $id: "sess-1", userId: CONSOLE_USER.$id, provider: "email" });
+    response.writeHead(201, {
+      "content-type": "application/json",
+      "content-length": Buffer.byteLength(raw),
+      "set-cookie": "a_session_stub=1; Path=/; HttpOnly; SameSite=Lax",
+    });
+    response.end(raw);
+    return true;
+  }
+  if (sub === "/account" && request.method === "GET") {
+    const cookie = String(request.headers.cookie ?? "").includes("a_session_stub=1");
+    if (!cookie || !consoleCookie) {
+      sendJson(response, 401, { message: "No session", code: 401, type: "general_unauthorized_scope" });
+      return true;
+    }
+    sendJson(response, 200, CONSOLE_USER);
+    return true;
+  }
+  if (sub === "/account/jwts" && request.method === "POST") {
+    const cookie = String(request.headers.cookie ?? "").includes("a_session_stub=1");
+    if (!cookie || !consoleCookie) {
+      sendJson(response, 401, { message: "No session", code: 401 });
+      return true;
+    }
+    consoleLedger.jwts += 1;
+    sendJson(response, 201, { jwt: `stub.jwt.${consoleLedger.jwts}` });
+    return true;
+  }
+  if (sub === "/account/sessions/current" && request.method === "DELETE") {
+    consoleCookie = false;
+    response.writeHead(204, { "set-cookie": "a_session_stub=; Path=/; HttpOnly; Max-Age=0" });
+    response.end();
+    return true;
+  }
+  if (sub === "/account/sessions/oauth2/google" && request.method === "GET") {
+    const failed = consoleArms.google === "fail";
+    const target = failed ? url.searchParams.get("failure") : url.searchParams.get("success");
+    if (!failed) consoleCookie = true;
+    response.writeHead(302, {
+      location: target ?? "/",
+      ...(failed ? {} : { "set-cookie": "a_session_stub=1; Path=/; HttpOnly; SameSite=Lax" }),
+    });
+    response.end();
+    return true;
+  }
+
+  if (path === "/api/v1/auth/exchange" && request.method === "POST") {
+    await pause(consoleArms.delayMs?.exchange);
+    consoleLedger.exchanges += 1;
+    const body = await readBody(request);
+    if (body === null || typeof body.jwt !== "string" || typeof body.org !== "string") {
+      sendJson(response, 400, sharedBody(400));
+      return true;
+    }
+    if (answerArmed(response, "exchange")) return true;
+    const seconds = typeof consoleArms.windowSeconds === "number" ? consoleArms.windowSeconds : 900;
+    const user = consoleUserBlock();
+    sendJson(response, 200, {
+      token: coreToken(user.user_id, seconds),
+      expiresAtMs: Date.now() + seconds * 1000,
+      user,
+    });
+    return true;
+  }
+  if (path === "/api/v1/auth/methods" && request.method === "GET") {
+    consoleLedger.methodsAsked.push(url.searchParams.get("org") ?? "");
+    await pause(consoleArms.delayMs?.methods);
+    if (answerArmed(response, "methodsStatus")) return true;
+    sendJson(response, 200, { methods: consoleArms.methods ?? ["email_password", "google"] });
+    return true;
+  }
+  if (path === "/api/v1/auth/persona" && request.method === "POST") {
+    const body = await readBody(request);
+    const persona = typeof body?.persona === "string" ? body.persona : "";
+    consoleLedger.personas.push({ persona, authorized: String(request.headers.authorization ?? "") !== "" });
+    await pause(consoleArms.delayMs?.persona);
+    const perPersona = consoleArms.personaStatus?.[persona];
+    if (typeof perPersona === "number") {
+      sendJson(response, perPersona, sharedBody(perPersona));
+      return true;
+    }
+    if (answerArmed(response, "persona")) return true;
+    const seconds = typeof consoleArms.personaWindowSeconds === "number" ? consoleArms.personaWindowSeconds : 600;
+    // Keyed by the core's persona id, which is the flow id (sales-manager), not the role code.
+    const row = FLOWS.find((candidate) => candidate.flow === persona);
+    const user = row === undefined ? undefined : USERS[row.flow];
+    if (user === undefined) {
+      sendJson(response, 400, sharedBody(400));
+      return true;
+    }
+    const block = { ...user, user_id: `persona:${persona}`, email: `${row.role_code}@hh-demo.invalid`, display_name: user.role_name };
+    sendJson(response, 200, { token: coreToken(block.user_id, seconds), expiresAtMs: Date.now() + seconds * 1000, user: block });
+    return true;
+  }
+  return false;
+}
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
   const path = url.pathname;
@@ -188,6 +423,8 @@ const server = createServer(async (request, response) => {
     sendJson(response, 200, { ok: true });
     return;
   }
+
+  if (await handleConsole(request, response, url)) return;
 
   if (path === "/_stub/peek") {
     sendJson(response, 200, {
@@ -234,8 +471,15 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (path === "/_stub/listing-fails" && request.method === "POST") {
+    listingFails = true;
+    sendJson(response, 200, { armed: true });
+    return;
+  }
+
   if (path === "/_stub/reset" && request.method === "POST") {
     refusal = null;
+    listingFails = false;
     feedbackRefusal = null;
     feedbackNumberless = false;
     lastFeedback = null;
@@ -244,6 +488,7 @@ const server = createServer(async (request, response) => {
     pendingApprovalCount = 3;
     extraApprovals = 0;
     approvalsDelayMs = 0;
+    resetConsole();
     sendJson(response, 200, { reset: true });
     return;
   }
@@ -319,6 +564,15 @@ const server = createServer(async (request, response) => {
     } else {
       sendJson(response, 200, { items, next_cursor: null, limit: 20 });
     }
+    return;
+  }
+
+  if (path === "/api/v1/demo/flows" && request.method === "GET") {
+    if (listingFails) {
+      sendJson(response, 503, { error: "the listing is not answering" });
+      return;
+    }
+    sendJson(response, 200, { flows: [...FLOWS.map((row) => ({ ...row, class: "staff" })), ...CONTRACTOR_FLOWS] });
     return;
   }
 

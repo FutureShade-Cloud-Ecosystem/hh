@@ -27,7 +27,7 @@ test("the schedules list with their tiers, and the product one is named", async 
   await openBreaks(page);
   await expect(page.getByTestId("pb-count")).toHaveText("2 schedules");
   const natstone = page.getByTestId("pb-schedule").filter({ hasText: "NATSTONE-PARTIAL-SKID" });
-  await expect(natstone).toContainText("product · DBS-BANAS-STEP · Banas Natural Step · per KG");
+  await expect(natstone).toContainText("product · GLS-BLUFF-STEP · Bluff Natural Step · per KG");
   await expect(natstone.getByTestId("pb-tier")).toContainText("0 KG");
   await expect(natstone.getByTestId("pb-tier")).toContainText("2000 KG");
   await expect(natstone.getByTestId("pb-tier")).toContainText("+10.00%");

@@ -76,14 +76,16 @@ test("the rule spec declares every field the matcher reads", () => {
   assert.deepEqual(props, [...read].sort());
 });
 
-test("the tax reason vocabulary is the eleven the snapshot CHECK carries and the core accepts", () => {
+test("the tax reason vocabulary is the twelve the snapshot CHECK carries and the core accepts", () => {
   const declared = SCHEMA_DESCRIPTORS.TaxRate.props.reason_code;
   const enumDescriptor = declared.k === "ref" ? SCHEMA_DESCRIPTORS[declared.name] : declared;
   const model = [...source("tax/model.go").matchAll(/\bReason\w+\s*=\s*"([A-Z0-9_]+)"/g)].map((m) => m[1]);
-  const migration = readFileSync(join(core, "db", "migrations", "0029_pos_counter_sales.sql"), "utf8");
-  const check = migration.slice(migration.indexOf("tax_reason_code     TEXT NOT NULL CHECK"));
+  // 0029 defined the CHECK; 0391 dropped and widened it (STD_SALES_TAX, the neutral standard rate),
+  // so 0391's ADD CONSTRAINT is the live universe the migration lawfully carries.
+  const migration = readFileSync(join(core, "db", "migrations", "0391_tax_neutral_standard_reason.sql"), "utf8");
+  const check = migration.slice(migration.indexOf("CHECK (tax_reason_code IN ("));
   const checked = [...check.slice(0, check.indexOf("))")).matchAll(/'([A-Z0-9_]+)'/g)].map((m) => m[1]);
-  assert.equal(model.length, 11);
+  assert.equal(model.length, 12);
   assert.deepEqual([...enumDescriptor.v].sort(), [...model].sort());
   assert.deepEqual([...enumDescriptor.v].sort(), [...checked].sort());
 });

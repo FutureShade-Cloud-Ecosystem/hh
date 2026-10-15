@@ -186,11 +186,11 @@ test("guard customer search: the account facts found for the quote just left nev
 test("guard add-ons: the suggestions read for the quote just left never show on the quote now open", async ({ page }) => {
   await seed(page, { customer_id: "c-fenwick" });
   await signIn(page);
-  const held = await hold(page, /\/pos\/addon-suggestions/, { method: "GET", match: (request) => request.url().includes("p-holland-60") });
+  const held = await hold(page, /\/pos\/addon-suggestions/, { method: "GET", match: (request) => request.url().includes("p-charcoal-60") });
   await showList(page);
   await row(page, "Q-1001").click();
   await held.asked;
-  const own = page.waitForResponse((r) => r.url().includes("/pos/addon-suggestions") && !r.url().includes("p-holland-60"));
+  const own = page.waitForResponse((r) => r.url().includes("/pos/addon-suggestions") && !r.url().includes("p-charcoal-60"));
   await open(page, "Q-1004");
   await expect(page.getByTestId("qb-line")).toHaveCount(1);
   await own;
@@ -539,11 +539,11 @@ test("guard customer search error: a failed account search for the quote left do
 });
 
 test("guard add-ons error: a failed suggestions read for the quote left does not hide the strip of the quote open", async ({ page }) => {
-  await seed(page, { customer_id: "c-fenwick", lines: [{ p: "p-holland-60", q: 5 }] });
+  await seed(page, { customer_id: "c-fenwick", lines: [{ p: "p-charcoal-60", q: 5 }] });
   await signIn(page);
   const held = await hold(page, /\/pos\/addon-suggestions/, {
     method: "GET",
-    match: (request) => request.url().endsWith("product_ids=p-holland-60"),
+    match: (request) => request.url().endsWith("product_ids=p-charcoal-60"),
     refuse: { status: 500, error: "pos: the suggestions are down" },
   });
   await showList(page);

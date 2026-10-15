@@ -110,10 +110,10 @@ test("a mapping the core would refuse is refused in the core's words and order",
 
 test("the echoed reference finds an order however the vendor wrote it", async () => {
   await stub.reset();
-  const found = await stub.call("GET", `/api/v1/purchasing/vendor-ref?ref=${encodeURIComponent("#po trt 66")}`);
+  const found = await stub.call("GET", `/api/v1/purchasing/vendor-ref?ref=${encodeURIComponent("#po plm 66")}`);
   assert.equal(found.status, 200);
   holds("PurchasingPO", found.json);
-  assert.equal(found.json.po_no, "PO-TRT-66");
+  assert.equal(found.json.po_no, "PO-PLM-66");
   refused(await stub.call("GET", "/api/v1/purchasing/vendor-ref?ref=%20"), 400, "type the order number the vendor quoted");
   refused(await stub.call("GET", "/api/v1/purchasing/vendor-ref?ref=nothing"), 404, "not found");
 });

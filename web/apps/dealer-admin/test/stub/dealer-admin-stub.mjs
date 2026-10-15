@@ -198,11 +198,361 @@ function readBody(req) {
   });
 }
 
+// The configurable surfaces kit's world: the dealer's curation keyed
+// surface|profile (empty everywhere, every cell answers registry default
+// until a save), and each caller's own override and workspace row keyed by
+// user id. Both start empty, which is the demo's real state.
+const PROFILE_KINDS = ["panel", "column", "chip", "action"];
+const PROFILES = [
+  "counter", "yard", "driver", "manager", "admin",
+  "manager.branch", "manager.sales", "manager.yard", "manager.logistics",
+  "manager.procurement", "manager.payables", "manager.controller", "manager.general",
+];
+const SETTINGS_ADMIN_WORDS =
+  "settings: changing dealer screen settings is limited to administrators";
+
+let surfaces;
+let mine;
+
+function buildSurfaces() {
+  return new Map();
+}
+
+function buildMine() {
+  return new Map();
+}
+
+function itemsOf(map, surface, profile) {
+  return (map.get(surface + "|" + profile) ?? []).slice();
+}
+
+function myWorld(userId) {
+  let world = mine.get(userId);
+  if (world === undefined) {
+    world = { items: new Map(), workspace: new Map() };
+    mine.set(userId, world);
+  }
+  return world;
+}
+
+// The kit's validators, in the core's own words, so a refused shape reads
+// the same on the stub as it does on the real core.
+function validateItems(items) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return "settings: the item set is empty, to reset, use DELETE";
+  }
+  if (items.length > 128) {
+    return "settings: at most 128 items per write";
+  }
+  const seen = new Set();
+  for (const it of items) {
+    if (!PROFILE_KINDS.includes(it?.kind)) {
+      return "settings: item kind must be panel, column, chip or action";
+    }
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(String(it?.id ?? ""))) {
+      return `settings: item id ${JSON.stringify(String(it?.id ?? ""))} must be 1-64 lowercase letters, digits, dots, dashes or underscores`;
+    }
+    if (!Number.isInteger(it?.position) || it.position < 0) {
+      return "settings: item positions cannot be negative";
+    }
+    const key = it.kind + "\u0000" + it.id;
+    if (seen.has(key)) {
+      return `settings: item ${it.kind}/${it.id} appears twice`;
+    }
+    seen.add(key);
+  }
+  return "";
+}
+
 let staff;
 let hotkeys;
 let audit;
 let scenario;
 let log;
+let assist;
+let printJobs;
+let products;
+
+// The catalog world: two invented Gable products, the unit catalogue and the
+// categories. The writes carry the core's own gates and refusals: the
+// attribute PUT and the picture routes are the manager gate (tier 1 to 2), an
+// unknown attribute key is named by the column, and the picture's content
+// type must be one the contract declares.
+const PRODUCT_TEXT_KEYS = new Set([
+  "name",
+  "description",
+  "manufacturer",
+  "collection",
+  "color",
+  "finish",
+  "application",
+  "color_family",
+  "texture",
+  "product_size",
+  "sold_by",
+  "dimensions_lwh",
+  "is_featured",
+  "is_special_order",
+  "contractor_pricing_event_discount",
+  "full_skid_quantity",
+  "layer_quantity",
+  "pallet_count",
+  "minimum_order_qty",
+  "metadata",
+]);
+
+function buildProducts() {
+  return [
+    {
+      id: "3a000000-0000-4000-9000-000000000001",
+      sku: "PAV-60-CH",
+      name: "Charcoal 60 paver",
+      description: "A 60 mm paver in charcoal.",
+      manufacturer: "Techo-Bloc",
+      collection: "Blu",
+      color: "Charcoal",
+      color_family: "Grey",
+      finish: "smooth",
+      application: "patios and walkways",
+      texture: "",
+      product_size: "60 mm",
+      sold_by: "SF",
+      base_uom: "SF",
+      dimensions_lwh: "",
+      is_featured: false,
+      is_special_order: false,
+      contractor_pricing_event_discount: false,
+      full_skid_quantity: null,
+      layer_quantity: null,
+      pallet_count: null,
+      minimum_order_qty: "120",
+      is_active: true,
+      metadata: {},
+      list_price_cents: 488,
+      list_price_uom: "SF",
+    },
+    {
+      id: "3a000000-0000-4000-9000-000000000002",
+      sku: "WALL-SEM-BR",
+      name: "Seminole wall block",
+      description: "A split face wall block for garden walls.",
+      manufacturer: "Risi",
+      collection: "Seminole",
+      color: "Brown",
+      color_family: "Brown",
+      finish: "split",
+      application: "garden walls",
+      texture: "",
+      product_size: "8 inch",
+      sold_by: "EA",
+      base_uom: "EA",
+      dimensions_lwh: "",
+      is_featured: false,
+      is_special_order: false,
+      contractor_pricing_event_discount: false,
+      full_skid_quantity: 144,
+      layer_quantity: 36,
+      pallet_count: 4,
+      minimum_order_qty: null,
+      is_active: true,
+      metadata: {},
+      list_price_cents: null,
+      list_price_uom: "",
+    },
+  ];
+}
+
+// The categories read is the pricing world's (its three categories, below); the
+// catalog's finder and cards read the same route.
+const UOMS = [
+  { code: "SF", name: "square feet", dimension: "area", is_active: true },
+  { code: "CYD", name: "cubic yards", dimension: "volume", is_active: true },
+  { code: "EA", name: "each", dimension: "count", is_active: true },
+  { code: "TON", name: "tons", dimension: "weight", is_active: true },
+];
+
+// The print queue: one sale's receipt history, a first print and a reprint,
+// and one label nobody has printed. The reference is the stub sale's own id,
+// the same document the audit world's trail spans.
+function buildPrintJobs() {
+  const ago = (minutes) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+  return [
+    {
+      id: "9a000000-0000-4000-9000-000000000001",
+      doc_type: "RECEIPT",
+      ref_id: SALE_REF,
+      branch_id: BRANCHES[0].id,
+      render_target: "BROWSER",
+      status: "PRINTED",
+      requested_by: USERS["dealer-admin"].user_id,
+      requested_at: ago(40),
+      printed_at: ago(39),
+    },
+    {
+      id: "9a000000-0000-4000-9000-000000000002",
+      doc_type: "RECEIPT",
+      ref_id: SALE_REF,
+      branch_id: BRANCHES[0].id,
+      render_target: "BROWSER",
+      status: "QUEUED",
+      requested_by: USERS["dealer-admin"].user_id,
+      requested_at: ago(5),
+    },
+    {
+      id: "9a000000-0000-4000-9000-000000000003",
+      doc_type: "LABEL_ZPL",
+      ref_id: "0f000000-0000-4000-9000-0000000000s2",
+      branch_id: BRANCHES[1].id,
+      render_target: "ZPL",
+      status: "FAILED",
+      failure_reason: "the label printer was not reachable",
+      requested_at: ago(30),
+    },
+  ];
+}
+
+const SALE_REF = "0f000000-0000-4000-9000-000000000001";
+const DOC_TYPES = new Set(["RECEIPT", "LABEL_ZPL", "DELIVERY_DOC"]);
+
+// The assist admin world, the core's own shapes: the spend report zero filled
+// from the staff list (every active person appears, the ones who never opened
+// the assistant included), the budgets with one role default and one person's
+// override, and the four settings keys with the key's NAME and a no.
+function buildAssist() {
+  return {
+    role_budgets: { GENERAL_MANAGER: 500000 },
+    user_overrides: { [USERS["inside-sales"].user_id]: 0 },
+    default_budget: 60000,
+    exchanges: {
+      [USERS["dealer-admin"].user_id]: { exchanges: 4, tokens_in: 300, tokens_out: 200 },
+    },
+    settings: {
+      settings: { provider: "stub", model: "hos-stub-1", chat_enabled: true, spend_visible_to_non_admin: false },
+      key_env_var: "HH_ASSIST_API_KEY",
+      key_present: false,
+    },
+  };
+}
+let payments;
+let posPolicy;
+let policyHistory;
+
+// The counter's org wide policy, the demo's real defaults (credit at the
+// till is on, the restocking fee is the seeded 250 basis points, the
+// workspace split is the kit's default 58).
+function buildPayments() {
+  return { processor: "run_payments", merchant_id: "gls-demo-rail", currency: "usd" };
+}
+
+function buildPosPolicy() {
+  return {
+    branch_id: "",
+    cod_enabled: true,
+    restocking_fee_bps: 250,
+    notes: "",
+    line_presentation: "LINES",
+    quick_chips_enabled: true,
+    workspace_split_pct: 58,
+    workspace_arrangement: "LOOKUP_LEFT",
+    lookup_presentation: "CARDS",
+    margin_visibility: "MANAGER_UP",
+    balance_visibility: "ALL_STAFF",
+    quick_chip_set: [],
+  };
+}
+
+// The validators the pos policy write carries, in the core's own words.
+function validatePosPolicy(b) {
+  const line = String(b.line_presentation ?? "LINES");
+  if (line !== "" && line !== "LINES" && line !== "CARDS") {
+    return "pos: line_presentation must be LINES or CARDS";
+  }
+  const split = Number(b.workspace_split_pct ?? 58);
+  if (split !== 0 && (split < 20 || split > 80)) {
+    return "pos: workspace split_pct must be between 20 and 80";
+  }
+  const arrangement = String(b.workspace_arrangement ?? "LOOKUP_LEFT");
+  if (arrangement !== "" && arrangement !== "LOOKUP_LEFT" && arrangement !== "SALE_LEFT") {
+    return "pos: workspace arrangement must be LOOKUP_LEFT or SALE_LEFT";
+  }
+  const lookup = String(b.lookup_presentation ?? "CARDS");
+  if (lookup !== "" && lookup !== "CARDS" && lookup !== "ROWS") {
+    return "pos: lookup_presentation must be CARDS or ROWS";
+  }
+  const margin = String(b.margin_visibility ?? "MANAGER_UP");
+  if (margin !== "" && margin !== "MANAGER_UP" && margin !== "ALL_STAFF" && margin !== "HIDDEN") {
+    return "pos: margin_visibility must be MANAGER_UP, ALL_STAFF or HIDDEN";
+  }
+  const balance = String(b.balance_visibility ?? "ALL_STAFF");
+  if (balance !== "" && balance !== "ALL_STAFF" && balance !== "MANAGER_UP" && balance !== "HIDDEN") {
+    return "pos: balance_visibility must be ALL_STAFF, MANAGER_UP or HIDDEN";
+  }
+  const chips = Array.isArray(b.quick_chip_set) ? b.quick_chip_set : [];
+  if (chips.length > 8) {
+    return "pos: quick_chip_set holds at most 8 categories";
+  }
+  return "";
+}
+
+function normalizePosPolicy(b) {
+  const split = Number(b.workspace_split_pct ?? 58);
+  return {
+    cod_enabled: b.cod_enabled === true,
+    restocking_fee_bps: Number(b.restocking_fee_bps ?? 0),
+    notes: String(b.notes ?? ""),
+    line_presentation: String(b.line_presentation ?? "") === "" ? "LINES" : String(b.line_presentation),
+    quick_chips_enabled: b.quick_chips_enabled === true,
+    workspace_split_pct: split === 0 ? 58 : split,
+    workspace_arrangement: String(b.workspace_arrangement ?? "") === "" ? "LOOKUP_LEFT" : String(b.workspace_arrangement),
+    lookup_presentation: String(b.lookup_presentation ?? "") === "" ? "CARDS" : String(b.lookup_presentation),
+    margin_visibility: String(b.margin_visibility ?? "") === "" ? "MANAGER_UP" : String(b.margin_visibility),
+    balance_visibility: String(b.balance_visibility ?? "") === "" ? "ALL_STAFF" : String(b.balance_visibility),
+    quick_chip_set: Array.isArray(b.quick_chip_set) ? b.quick_chip_set : [],
+  };
+}
+
+// The walkthrough's two chapters for the live scenarios: the counter's and
+// the yard's, each with two steps, the shape the tour read serves.
+function buildTourChapters() {
+  return [
+    {
+      chapter_key: "counter.first-sale",
+      position: 0,
+      title: "Your first sale at the counter",
+      promise: "Ring a sale, take a tender, hand over the receipt.",
+      role: "counter",
+      route: "#sales/pos",
+      steps: [
+        { step_key: "browse", position: 0, route: "#sales/pos", anchor: "testid:pos-browse", line: "Find the pavers the customer wants.", advance: "CLICK" },
+        { step_key: "tender", position: 1, route: "#sales/pos", anchor: "testid:pos-tender", line: "Take the tender and finish the sale.", advance: "NEXT" },
+      ],
+    },
+    {
+      chapter_key: "yard.pick-queue",
+      position: 1,
+      title: "Working the pick queue",
+      promise: "Pick, stage and load without a paper ticket.",
+      role: "yard",
+      route: "#yard",
+      steps: [
+        { step_key: "queue", position: 0, route: "#yard", anchor: "testid:yard-queue", line: "The queue is yours: take the top pick.", advance: "CLICK" },
+        { step_key: "short", position: 1, route: "#yard", anchor: "testid:yard-short", line: "Short on stock? Flag it and move on.", advance: "NEXT" },
+      ],
+    },
+  ];
+}
+
+function buildPolicyHistory() {
+  return [
+    {
+      field: "restocking_fee_bps",
+      before: "0",
+      after: "250",
+      who: "da110000-0000-4000-9000-000000000001",
+      when: new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString(),
+    },
+  ];
+}
 let policies;
 
 // The pricing world: the categories the pricing screens name (the catalog
@@ -464,6 +814,14 @@ function reset() {
   staff = buildStaff();
   hotkeys = buildHotkeys();
   audit = buildAudit();
+  assist = buildAssist();
+  printJobs = buildPrintJobs();
+  products = buildProducts();
+  surfaces = buildSurfaces();
+  mine = buildMine();
+  payments = buildPayments();
+  posPolicy = buildPosPolicy();
+  policyHistory = buildPolicyHistory();
   policies = buildPolicies();
   rules = structuredClone(RULES_WORLD);
   overrides = structuredClone(OVERRIDES_WORLD);
@@ -1567,7 +1925,465 @@ async function handle(req, res) {
     return json(res, { items, next_cursor: null, limit: 200 });
   }
 
+  // ---- the assist admin (the core's RequireAdmin: tier 1 global) ----
+
+  const assistSpendReport = () => {
+    // The core zero fills the report from the staff list, biggest spender
+    // first: the exchange count is the answer, the tokens the next question.
+    const rows = staff.map((m) => {
+      const used = assist.exchanges[m.user_id] ?? { exchanges: 0, tokens_in: 0, tokens_out: 0 };
+      const override = assist.user_overrides[m.user_id];
+      const roleBudget = assist.role_budgets[m.role_code];
+      const budget =
+        override !== undefined
+          ? { tokens: override, source: "user" }
+          : roleBudget !== undefined
+            ? { tokens: roleBudget, source: "role" }
+            : { tokens: assist.default_budget, source: "default" };
+      return {
+        user_id: m.user_id,
+        display_name: m.display_name,
+        email: m.email,
+        role_code: m.role_code,
+        exchanges: used.exchanges,
+        tokens_in: used.tokens_in,
+        tokens_out: used.tokens_out,
+        budget,
+      };
+    });
+    rows.sort((a, b) => b.tokens_in + b.tokens_out - (a.tokens_in + a.tokens_out) || b.exchanges - a.exchanges);
+    return { month: "2026-10", users: rows };
+  };
+
+  if (req.method === "GET" && path === "/api/v1/assist/admin/spend") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    return json(res, assistSpendReport());
+  }
+
+  if (req.method === "GET" && path === "/api/v1/assist/admin/limits") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    return json(res, {
+      role_budgets: assist.role_budgets,
+      user_overrides: assist.user_overrides,
+      default_budget: assist.default_budget,
+    });
+  }
+
+  const roleLimitMatch = path.match(/^\/api\/v1\/assist\/admin\/limits\/role\/([^/]+)$/);
+  if (req.method === "PUT" && roleLimitMatch) {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const role = decodeURIComponent(roleLimitMatch[1]);
+    const tokens = Number(body?.tokens);
+    if (!Number.isInteger(tokens) || tokens < 0) {
+      return refuse(res, 400, "A budget can't be negative. Use 0 to switch the assistant off for this role.");
+    }
+    assist.role_budgets[role] = tokens;
+    return json(res, { role_code: role, tokens });
+  }
+
+  const userLimitMatch = path.match(/^\/api\/v1\/assist\/admin\/limits\/user\/([^/]+)$/);
+  if (req.method === "PUT" && userLimitMatch) {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const user = decodeURIComponent(userLimitMatch[1]);
+    const tokens = Number(body?.tokens);
+    if (!Number.isInteger(tokens) || tokens < 0) {
+      return refuse(res, 400, "A budget can't be negative. Use 0 to switch the assistant off for this person.");
+    }
+    assist.user_overrides[user] = tokens;
+    return json(res, { user_id: user, tokens, source: "user" });
+  }
+
+  if (req.method === "DELETE" && userLimitMatch) {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    // Reset to role is idempotent: resetting a person with no override succeeds.
+    delete assist.user_overrides[decodeURIComponent(userLimitMatch[1])];
+    return json(res, { user_id: decodeURIComponent(userLimitMatch[1]), source: "role" });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/assist/admin/settings") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    return json(res, assist.settings);
+  }
+
+  if (req.method === "PUT" && path === "/api/v1/assist/admin/settings") {
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const key = String(body?.key ?? "");
+    const value = String(body?.value ?? "");
+    const yesNo = key === "chat_enabled" || key === "spend_visible_to_non_admin";
+    if (!yesNo) return refuse(res, 400, `"${key}" isn't an assistant setting.`);
+    if (value !== "true" && value !== "false") {
+      return refuse(res, 400, `${key} is a yes/no setting, use true or false.`);
+    }
+    assist.settings.settings[key] = value === "true";
+    return json(res, { key, value });
+  }
+
+  // ---- the print queue (the core's RequireStaff: any signed in caller) ----
+
+  if (req.method === "GET" && path === "/api/v1/printing/jobs") {
+    const docType = url.searchParams.get("doc_type") ?? "";
+    const refId = url.searchParams.get("ref_id") ?? "";
+    // The core's own refusals, in its own words and in its own order: the
+    // paper first, then the reference.
+    if (!DOC_TYPES.has(docType)) return refuse(res, 400, `unknown print doc_type "${docType}"`);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(refId)) {
+      return refuse(res, 404, "not found");
+    }
+    const jobs = printJobs.filter((j) => j.doc_type === docType && j.ref_id === refId);
+    return json(res, { jobs });
+  }
+
+  // ---- the exports (the audit workbook is RequireAdmin like the trail it mirrors; the messages export is RequireAdmin) ----
+
+  if (req.method === "GET" && path === "/api/v1/exports/audit.xlsx") {
+    // Same gate as the audit read it mirrors, with the shared Forbidden body.
+    if (!isManager(flow) || scenario === "refused-audit") return refuse(res, 403, "Forbidden");
+    // A double's workbook: the xlsx magic followed by filler. The route's
+    // contract is the raw bytes, and the app never parses them.
+    const body = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(1020, 7)]);
+    res.writeHead(200, {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Length": body.byteLength,
+    });
+    res.end(body);
+    return;
+  }
+
+  if (req.method === "GET" && path === "/api/v1/messaging/export") {
+    // The core's RequireAdmin: a frontline caller is refused the export.
+    if (!isManager(flow) || scenario === "refused-assist") return refuse(res, 403, "Forbidden");
+    const since = url.searchParams.get("since") ?? "";
+    const until = url.searchParams.get("until") ?? "";
+    if (since !== "" && Number.isNaN(new Date(since).getTime())) {
+      return refuse(res, 400, "since must be an RFC3339 timestamp");
+    }
+    if (until !== "" && Number.isNaN(new Date(until).getTime())) {
+      return refuse(res, 400, "until must be an RFC3339 timestamp");
+    }
+    const channelId = url.searchParams.get("channel_id") ?? "";
+    const rows = buildMessageExport().filter((m) => channelId === "" || m.channel_id === channelId);
+    return json(res, { messages: rows });
+  }
+
+  // ---- the catalog (the reads are the public catalogue; the writes are the manager gate) ----
+
+  if (req.method === "GET" && path === "/api/v1/products") {
+    const q = (url.searchParams.get("q") ?? "").toLowerCase();
+    const items = q === "" ? products : products.filter((p) => `${p.name} ${p.sku} ${p.collection}`.toLowerCase().includes(q));
+    return json(res, { items, next_cursor: null, limit: 20 });
+  }
+
+  const productMatch = path.match(/^\/api\/v1\/products\/([^/]+)$/);
+  if (req.method === "GET" && productMatch) {
+    const p = products.find((x) => x.id === productMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    return json(res, p);
+  }
+
+  if (req.method === "PUT" && productMatch) {
+    // The core's RequireManager: a frontline caller is refused the write.
+    if (!isManager(flow) || scenario === "refused-product") return refuse(res, 403, "Forbidden");
+    const p = products.find((x) => x.id === productMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    for (const [key, value] of Object.entries(body ?? {})) {
+      if (!PRODUCT_TEXT_KEYS.has(key)) return refuse(res, 400, `update product: column "${key}" is not editable`);
+      p[key] = value;
+    }
+    return json(res, p);
+  }
+
+  const imageMatch = path.match(/^\/api\/v1\/products\/([^/]+)\/image$/);
+  if (req.method === "PUT" && imageMatch) {
+    if (!isManager(flow) || scenario === "refused-product") return refuse(res, 403, "Forbidden");
+    const p = products.find((x) => x.id === imageMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    return json(res, { product_id: p.id, byte_size: raw.byteLength });
+  }
+
+  if (req.method === "DELETE" && imageMatch) {
+    if (!isManager(flow) || scenario === "refused-product") return refuse(res, 403, "Forbidden");
+    const p = products.find((x) => x.id === imageMatch[1]);
+    if (p === undefined) return refuse(res, 404, "not found");
+    return json(res, { status: "DELETED" });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/uoms") {
+    return json(res, { items: UOMS, next_cursor: null, limit: 100 });
+  }
+
+  // ---- the platform keys (staff wide read; the core does not serve it yet, the parity fact the waits state names) ----
+
+  if (req.method === "GET" && path === "/api/v1/operator/platform-keys") {
+    if (scenario === "unregistered-keys") {
+      // The real mux answers the unregistered route with a bare 404.
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      return res.end("404 page not found\n");
+    }
+    return json(res, {
+      items: [
+        {
+          key: "launcher.tiles",
+          platform_floor: { launcher: true, order: ["sales", "stock", "money"] },
+          dealer_override: { launcher: true, order: ["money", "sales", "stock"] },
+          credential_configured: false,
+          updated_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+          updated_by: "platform operator",
+        },
+        {
+          key: "providers.card",
+          platform_floor: { mode: "hosted" },
+          dealer_override: null,
+          credential_configured: true,
+          updated_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+          updated_by: "platform operator",
+        },
+      ],
+      next_cursor: null,
+    });
+  }
+
+  // ---- the configurable surfaces (the settings kit) ----
+  // The curation writes are admin gated in the kit's service, so the refusal
+  // is the service's own sentence, not the shared Forbidden body.
+
+  const configMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/config$/);
+  if (req.method === "GET" && configMatch) {
+    if (!isManager(flow)) return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+    const profile = url.searchParams.get("profile") ?? "";
+    if (!PROFILES.includes(profile)) {
+      return refuse(res, 422, "settings: profile must be counter, yard, driver, manager or admin");
+    }
+    const surface = decodeURIComponent(configMatch[1]);
+    const userId = USERS[flow].user_id;
+    const world = myWorld(userId);
+    const wsRow = world.workspace.get(surface);
+    return json(res, {
+      surface_id: surface,
+      profile,
+      items_profile: profile,
+      role_items: itemsOf(surfaces, surface, profile),
+      user_items: world.items.get(surface) ?? [],
+      workspace: wsRow ?? {
+        split_pct: 58,
+        arrangement: "PRIMARY_LEFT",
+        primary_collapsed: false,
+        secondary_collapsed: false,
+        cost_hidden: false,
+        source: "dealer",
+      },
+    });
+  }
+
+  const itemsMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/items$/);
+  if (req.method === "PUT" && itemsMatch) {
+    if (!isManager(flow) || scenario === "refused-role-config") {
+      return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+    }
+    const profile = String(body?.profile ?? "");
+    if (!PROFILES.includes(profile)) {
+      return refuse(res, 422, "settings: profile must be counter, yard, driver, manager or admin");
+    }
+    const fault = validateItems(body?.items);
+    if (fault !== "") return refuse(res, 422, fault);
+    surfaces.set(decodeURIComponent(itemsMatch[1]) + "|" + profile, body.items);
+    return json(res, { saved: true });
+  }
+  if (req.method === "DELETE" && itemsMatch) {
+    if (!isManager(flow) || scenario === "refused-role-config") {
+      return refuse(res, 403, `${SETTINGS_ADMIN_WORDS}, ${USERS[flow].role_code} cannot do it; ask a tech admin`);
+    }
+    const profile = url.searchParams.get("profile") ?? "";
+    if (!PROFILES.includes(profile)) {
+      return refuse(res, 422, "settings: profile must be counter, yard, driver, manager or admin");
+    }
+    const kind = url.searchParams.get("kind") ?? "";
+    if (!PROFILE_KINDS.includes(kind)) {
+      return refuse(res, 422, "settings: item kind must be panel, column, chip or action");
+    }
+    const key = decodeURIComponent(itemsMatch[1]) + "|" + profile;
+    surfaces.set(key, itemsOf(surfaces, decodeURIComponent(itemsMatch[1]), profile).filter((it) => it.kind !== kind));
+    return json(res, { reset: true });
+  }
+
+  const myItemsMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/my-items$/);
+  if (req.method === "PUT" && myItemsMatch) {
+    const fault = validateItems(body?.items);
+    if (fault !== "") return refuse(res, 422, fault);
+    myWorld(USERS[flow].user_id).items.set(decodeURIComponent(myItemsMatch[1]), body.items);
+    return json(res, { saved: true });
+  }
+  if (req.method === "DELETE" && myItemsMatch) {
+    myWorld(USERS[flow].user_id).items.delete(decodeURIComponent(myItemsMatch[1]));
+    return json(res, { reset: true });
+  }
+
+  const myWorkspaceMatch = path.match(/^\/api\/v1\/surfaces\/([^/]+)\/my-workspace$/);
+  if (req.method === "PUT" && myWorkspaceMatch) {
+    const surface = decodeURIComponent(myWorkspaceMatch[1]);
+    const world = myWorld(USERS[flow].user_id);
+    const key = String(body?.idempotency_key ?? "");
+    if (key === "") {
+      return refuse(res, 422, "settings: idempotency_key is required on a workspace write");
+    }
+    const prev = world.workspace.get(surface);
+    if (prev !== undefined && prev.write_key === key) {
+      const { write_key: _drop, ...row } = prev;
+      return json(res, { ...row, replayed: true });
+    }
+    let split = Number(body?.split_pct ?? 0);
+    if (split === 0) split = 58;
+    if (split < 20 || split > 80) {
+      return refuse(res, 422, "settings: workspace split_pct must be between 20 and 80");
+    }
+    const arrangement = body?.arrangement === "PRIMARY_RIGHT" ? "PRIMARY_RIGHT" : "PRIMARY_LEFT";
+    const row = {
+      split_pct: split,
+      arrangement,
+      primary_collapsed: body?.primary_collapsed === true,
+      secondary_collapsed: body?.secondary_collapsed === true,
+      cost_hidden: body?.cost_hidden === true,
+      source: "user",
+      write_key: key,
+    };
+    world.workspace.set(surface, row);
+    const { write_key: _drop, ...answer } = row;
+    return json(res, answer);
+  }
+  if (req.method === "DELETE" && myWorkspaceMatch) {
+    myWorld(USERS[flow].user_id).workspace.delete(decodeURIComponent(myWorkspaceMatch[1]));
+    return json(res, { reset: true });
+  }
+
+  // ---- deployment settings: the brand (held), the card rail, the counter's policy, the walkthrough ----
+  // The brand pair is registered in the contract and not yet served by the
+  // real core (the parity ledger's own hold), so the stub answers the mux's
+  // bare 404 unless the brand-live scenario flips it, mirroring reality.
+
+  const brandMatch = path.match(/^\/api\/v1\/tenants\/([^/]+)\/brand$/);
+  if (brandMatch && (req.method === "GET" || req.method === "PUT")) {
+    if (scenario !== "brand-live") {
+      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+      return res.end("404 page not found\n");
+    }
+    if (req.method === "PUT") {
+      brand = {
+        tenant_id: decodeURIComponent(brandMatch[1]),
+        display_name: String(body?.display_name ?? ""),
+        logo_attachment_id: body?.logo_attachment_id ?? null,
+        primary_color: body?.primary_color ?? null,
+        footer_text: String(body?.footer_text ?? ""),
+      };
+      return json(res, brand);
+    }
+    return json(res, brand ?? {
+      tenant_id: decodeURIComponent(brandMatch[1]),
+      display_name: "Gable Landscape Supply",
+      logo_attachment_id: null,
+      primary_color: null,
+      footer_text: "Thank you for growing with us",
+    });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/payments/config") {
+    return json(res, { configured: true, merchant_id: payments.merchant_id, processor: payments.processor, currency: payments.currency, simulated: true });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/pos/policy") {
+    return json(res, posPolicy);
+  }
+  if (req.method === "PUT" && path === "/api/v1/pos/policy") {
+    if (!isManager(flow) || scenario === "refused-policy") return refuse(res, 403, "Forbidden");
+    const fault = validatePosPolicy(body ?? {});
+    if (fault !== "") return refuse(res, 422, fault);
+    const before = posPolicy;
+    posPolicy = { ...before, ...normalizePosPolicy(body) };
+    for (const key of Object.keys(normalizePosPolicy(body))) {
+      const beforeValue = JSON.stringify(before[key] ?? "");
+      const afterValue = JSON.stringify(posPolicy[key]);
+      if (beforeValue !== afterValue) {
+        policyHistory.unshift({
+          field: key,
+          before: before[key] === undefined ? "" : String(before[key]),
+          after: String(posPolicy[key]),
+          who: USERS[flow].user_id,
+          when: new Date().toISOString(),
+        });
+      }
+    }
+    return json(res, posPolicy);
+  }
+  if (req.method === "GET" && path === "/api/v1/pos/policy/history") {
+    if (!isManager(flow) || scenario === "refused-policy") return refuse(res, 403, "Forbidden");
+    return json(res, { items: policyHistory, next_cursor: null, limit: 50 });
+  }
+
+  if (req.method === "GET" && path === "/api/v1/tour") {
+    if (scenario === "tour-live") {
+      return json(res, { chapters: buildTourChapters(), can_edit: false });
+    }
+    // The refused scenario mirrors a stale can_edit: the read said editor,
+    // the write answers the platform gate's own sentence, the way a real
+    // core would answer a dealer role whose read had lied to it.
+    if (scenario === "tour-platform" || scenario === "tour-refused") {
+      return json(res, { chapters: buildTourChapters(), can_edit: true });
+    }
+    return json(res, {});
+  }
+  if (req.method === "PUT" && path === "/api/v1/platform/tour/policy") {
+    if (!isManager(flow)) return refuse(res, 403, "Forbidden");
+    if (scenario === "tour-refused") {
+      return refuse(res, 403, `tour: the walkthrough is the platform administrator's to set up, ${USERS[flow].role_code} cannot change its copy or its demo switch`);
+    }
+    return json(res, { saved: true });
+  }
+  if (req.method === "PUT" && path === "/api/v1/platform/tour/steps") {
+    if (!isManager(flow)) return refuse(res, 403, "Forbidden");
+    if (scenario === "tour-refused") {
+      return refuse(res, 403, `tour: the walkthrough is the platform administrator's to set up, ${USERS[flow].role_code} cannot change its copy or its demo switch`);
+    }
+    const line = String(body?.line ?? "");
+    if (line === "") return refuse(res, 422, "tour: line is what the step says, a step with nothing to say is a step to delete");
+    if ([...line].length > 72) {
+      return refuse(res, 422, `tour: line is ${[...line].length} characters, a step says one line and the limit is 72, because a walkthrough speaks in headlines`);
+    }
+    return json(res, { saved: true });
+  }
+
   return notFound(res);
+}
+
+// The masked messages export: a text row with an author, an event row, and a
+// deleted row the server has tombstoned. The masking is the server's own rule
+// stated in the schema; the double carries its shape.
+function buildMessageExport() {
+  const at = (minutes) => new Date(Date.now() - minutes * 60 * 1000).toISOString();
+  return [
+    {
+      id: "aa000000-0000-4000-9000-000000000001",
+      channel_id: "bb000000-0000-4000-9000-000000000001",
+      kind: "TEXT",
+      author_name: "Dealer admin (demo)",
+      body: "Yard two, the point loma truck is back with the pallet racking.",
+      created_at: at(50),
+      deleted_at: null,
+    },
+    {
+      id: "aa000000-0000-4000-9000-000000000002",
+      channel_id: "bb000000-0000-4000-9000-000000000001",
+      kind: "EVENT",
+      body: "order 4f000000-0000-4000-9000-000000000001 moved to PICKED",
+      created_at: at(40),
+      deleted_at: null,
+    },
+    {
+      id: "aa000000-0000-4000-9000-000000000003",
+      channel_id: "bb000000-0000-4000-9000-000000000002",
+      kind: "APPROVAL",
+      body: "payment of $196.80 approved against order 4f000000-0000-4000-9000-000000000002",
+      created_at: at(30),
+      deleted_at: at(10),
+    },
+  ];
 }
 
 const server = createServer((req, res) => {

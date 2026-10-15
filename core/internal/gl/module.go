@@ -27,7 +27,9 @@ package gl
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/guards"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/taxwords"
 	"log/slog"
 	"time"
 
@@ -37,6 +39,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -179,10 +182,37 @@ type ExternalLine struct {
 // additions) and the 0034 balance views. A nil pool is tolerated (scaffold/offline mode).
 type Repository struct {
 	pool *pgxpool.Pool
+	// zone is the dealer's business day zone, read ON the posting transaction; nil = the Ontario
+	// dealer's. It decides which fiscal period a posting's instant belongs to.
+	zone ZoneTxSource
+}
+
+// ZoneTxSource is the dealer's business day zone read on a caller's open transaction. A journal is
+// filed to its period inside the posting transaction, so the zone is read on that transaction and
+// never through the pool: a pool read there makes the holder wait on a second connection, which a full
+// pool of such holders never frees. The composition root adapts the settings module's dealer
+// configuration into one.
+type ZoneTxSource interface {
+	BusinessZoneTx(ctx context.Context, tx pgx.Tx) (houseday.Zone, error)
 }
 
 // NewRepository wraps a pool (may be nil in scaffold mode).
 func NewRepository(pool *pgxpool.Pool) *Repository { return &Repository{pool: pool} }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (r *Repository) WithZone(src ZoneTxSource) *Repository { r.zone = src; return r }
+
+// journalZone answers the zone a posting's period is read in, on the posting transaction.
+func (r *Repository) journalZone(ctx context.Context, tx pgx.Tx) (houseday.Zone, error) {
+	if r.zone == nil {
+		return houseday.DefaultZone(), nil
+	}
+	z, err := r.zone.BusinessZoneTx(ctx, tx)
+	if err != nil {
+		return houseday.Zone{}, fmt.Errorf("gl: the dealer's business zone could not be read, nothing was posted: %w", err)
+	}
+	return z, nil
+}
 
 // - service -
 
@@ -199,6 +229,8 @@ type Service struct {
 	dead            DeadRequeuer
 	audit           audit.Recorder
 	approvalFiler   ApprovalFiler        // 0075: nil-able JE park → approvals-rail filing seam
+	standardRate    StandardRateReader   // the dealer's standard tax rate; nil is the Ontario 13 percent
+	taxWords        taxwords.Source      // the name of the dealer's tax in journal memos; nil is "HST"
 	approvalChecker ApprovalStateChecker // the approve route posts a journal over the threshold only on an approved request; unwired, it refuses every journal
 	log             *slog.Logger
 	now             func() time.Time
@@ -271,6 +303,27 @@ func (s *Service) clock() time.Time {
 		return time.Now()
 	}
 	return s.now()
+}
+
+// StandardRateReader answers the dealer's standard tax rate in basis points on a date ("" is today). The
+// composition root binds an adapter over the tax engine; gl reads it to back the tax out of a tax-inclusive
+// NSF fee, so it never carries a rate of its own. Unwired, the Ontario 13 percent stands.
+type StandardRateReader interface {
+	StandardRateBps(ctx context.Context, asOf string) (int, error)
+}
+
+// WithStandardRate injects the dealer's standard rate seam.
+func (s *Service) WithStandardRate(r StandardRateReader) *Service { s.standardRate = r; return s }
+
+// WithTaxLabel injects the dealer's tax word seam (platform/taxwords): the word the tax legs' memos
+// carry. Unwired is the Ontario dealer's "HST".
+func (s *Service) WithTaxLabel(src taxwords.Source) *Service { s.taxWords = src; return s }
+
+// taxWord reads the word a journal memo names the tax by. A posting never fails for a word: a failed
+// read memos the neutral "Tax", true for every dealer.
+func (s *Service) taxWord(ctx context.Context) string {
+	w, _ := taxwords.Resolve(ctx, s.taxWords)
+	return w
 }
 
 // WithInvoiceReader injects the billing invoice-facts seam.
@@ -391,7 +444,13 @@ type Handler struct {
 	userLink identity.UserIDLinker
 	svc      *Service
 	log      *slog.Logger
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. An explicit tie-out
+	// day is cut at the last instant of the dealer's own day.
+	zone houseday.Source
 }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (h *Handler) WithZone(src houseday.Source) *Handler { h.zone = src; return h }
 
 // NewHandler wires the service.
 func NewHandler(svc *Service, log *slog.Logger) *Handler {

@@ -17,7 +17,7 @@ test("the end of the run is one tap from the run sheet and, with stops open, nam
   const card = page.locator("[data-close-run]");
   await expect(card).toContainText("3 stops left · 0 delivered");
   await expect(card.locator("[data-close-blocked]")).toContainText(
-    "Stop 1 · Northline Hardscapes Ltd (demo) is not loaded yet. Every stop has to be delivered or marked not delivered before the run can be closed.",
+    "Stop 1 · Bluffside Builders is not loaded yet. Every stop has to be delivered or marked not delivered before the run can be closed.",
   );
   await expect(page.getByRole("button", { name: "Complete run" })).toHaveCount(0);
 });
@@ -49,7 +49,7 @@ test("a stop dispatch cancelled blocks a driver's close and says who closes it",
   await deliverStop(page, 2);
   await page.getByRole("button", { name: "End of run" }).click();
   await expect(page.locator("[data-close-blocked]")).toContainText(
-    "Stop 3 · County of Hastings (demo) is cancelled, and that is not an outcome a driver records. Ask dispatch to close this run.",
+    "Stop 3 · Valley Municipal Works is cancelled, and that is not an outcome a driver records. Ask dispatch to close this run.",
   );
   await expect(page.getByRole("button", { name: "Complete run" })).toHaveCount(0);
 });

@@ -6,8 +6,8 @@
 // EXACT test title inside it, and every named title is asserted to exist in
 // that file, so a proof cannot drift away from the assertion it names. The
 // page is served by the image's app (the built testers page), behind the same
-// phrase gate as the till, so this spec fetches it the way a tester's browser
-// does.
+// phrase gate as the till, and the multi app image serves it under the till's
+// own prefix, so this spec fetches it the way a tester's browser does.
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -27,7 +27,7 @@ function titlesIn(dir: string, file: string): Set<string> {
 test("every claim on the served testers' page is covered by the run, and every covered claim is on the page", async ({
   page,
 }, testInfo) => {
-  const answer = await page.goto("/testers.html");
+  const answer = await page.goto("/till/testers.html");
   expect(answer?.status()).toBe(200);
   const served = await page.content();
   const claims = new Set(

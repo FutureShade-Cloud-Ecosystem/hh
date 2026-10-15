@@ -1,9 +1,9 @@
 # One Tauri 2 workspace, three thin profiles over one shared Rust core
-# (decision log row 1519). Field is real; Work and Pro stay skeletons
-# (their READMEs only) until their own items.
+# (decision log row 1519). Field and Work are real; Pro stays a skeleton
+# (its README only) until its own item.
 [workspace]
 resolver = "2"
-members = ["core", "hh-field"]
+members = ["core", "hh-field", "hh-work"]
 
 [workspace.package]
 # One source of the version for every crate and the Tauri config (Android

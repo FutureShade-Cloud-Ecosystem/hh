@@ -21,27 +21,40 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/sync"
 )
 
-// arAgingZone names the house zone inside the aging SQL: the SQL twin of platform/houseday's
-// zone, spelled here because a SQL literal cannot read a Go constant. The backend-wide zone
-// census (dashboard's TestHouseZone_EveryCopyInTheBackendNamesTheSameZone) enumerates the copies,
-// this one included.
+// arAgingZone is the Ontario default zone the aging SQL falls back to when no dealer zone is wired
+// (the SQL twin of platform/houseday's default, spelled here because the aging store keeps its own
+// copy of the name). The zone the SQL actually reads is the dealer's, bound as a parameter, never a
+// literal in the text; the backend-wide zone census (dashboard's
+// TestHouseZone_EveryCopyInTheBackendNamesTheSameZone) still enumerates this constant as a default.
 const arAgingZone = "America/Toronto"
 
-// houseDaySQL is the ONE expression every SQL-side aging computation derives the dealer's day
-// from, the choice the 0376 migration names in its comment: the session clock converted to the
-// house zone. CURRENT_DATE and now()::date name the session zone's day instead, which is the UTC
-// day here, and age every open item one day early through the Ontario evening.
+// houseDaySQL is the Ontario day expression, kept for tests that seed relative to the Ontario day. The
+// v_ar_aging view no longer carries it: migration 0394 reads the dealer's zone through settings'
+// settings_business_zone(), so finstmt's and reporting's AR aging name the same day as everything billing
+// reads itself, which takes the dealer's zone as a bind parameter (houseDaySQLAt).
 const houseDaySQL = `(now() AT TIME ZONE '` + arAgingZone + `')::date`
 
-// agingColumns is the projection: the invoice legs the payer reads plus
-// the computed aging legs and the sync legs.
-const agingColumns = `i.id::text, i.invoice_no::text, i.status, i.issue_date, i.due_date,
+// houseDaySQLAt is the ONE expression every SQL-side aging computation derives the dealer's day
+// from, the choice the 0376 migration names in its comment: the session clock converted to the
+// dealer's zone, which arrives as the bind parameter zoneParam (for example "$4"). CURRENT_DATE and
+// now()::date name the session zone's day instead, which is the UTC day here, and age every open item
+// one day early through the evening window.
+func houseDaySQLAt(zoneParam string) string {
+	return `(now() AT TIME ZONE ` + zoneParam + `::text)::date`
+}
+
+// agingColumnsAt is the projection: the invoice legs the payer reads plus the computed aging legs and
+// the sync legs. zoneParam is the bind parameter carrying the dealer's zone name.
+func agingColumnsAt(zoneParam string) string {
+	return `i.id::text, i.invoice_no::text, i.status, i.issue_date, i.due_date,
 	i.total_cents, i.balance_cents,
-	(` + houseDaySQL + ` - i.due_date)::bigint,
+	(` + houseDaySQLAt(zoneParam) + ` - i.due_date)::bigint,
 	i.seq, (i.deleted_at IS NOT NULL) AS deleted`
+}
 
 // AgingStore is the aging pull-only Store.
 type AgingStore struct {
@@ -50,7 +63,13 @@ type AgingStore struct {
 	// means. nil answers UTC, the recorded fallback while org config
 	// carries no zone column in the frozen schema.
 	tz *time.Location
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. The past-due count is
+	// the dealer's own calendar days.
+	zone houseday.Source
 }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (s *AgingStore) WithZone(src houseday.Source) *AgingStore { s.zone = src; return s }
 
 // NewAgingStore wires the adapter.
 func NewAgingStore(pool *pgxpool.Pool, tz *time.Location) *AgingStore {
@@ -134,10 +153,14 @@ func (s *AgingStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, 
 	if !f.Tenant || f.TenantID == "" {
 		return []sync.Entity{}, []sync.Tombstone{}, nil
 	}
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return nil, nil, err
+	}
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(
 		`SELECT %s FROM invoices i
 		 WHERE i.customer_id = $1::uuid AND i.seq IS NOT NULL AND i.seq > $2
-		 ORDER BY i.seq ASC LIMIT $3`, agingColumns), f.TenantID, since, limit)
+		 ORDER BY i.seq ASC LIMIT $3`, agingColumnsAt("$4")), f.TenantID, since, limit, zone.Name())
 	if err != nil {
 		return nil, nil, fmt.Errorf("billing: aging pull: %w", err)
 	}
@@ -175,9 +198,13 @@ func (s *AgingStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (s
 	if !f.Tenant || f.TenantID == "" {
 		return sync.RowState{}, false, nil
 	}
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return sync.RowState{}, false, err
+	}
 	r, err := s.scanAging(s.pool.QueryRow(ctx, fmt.Sprintf(
 		`SELECT %s FROM invoices i WHERE i.customer_id = $1::uuid AND i.id = $2::uuid`,
-		agingColumns), f.TenantID, id))
+		agingColumnsAt("$3")), f.TenantID, id, zone.Name()))
 	if err == pgx.ErrNoRows {
 		return sync.RowState{}, false, nil
 	}

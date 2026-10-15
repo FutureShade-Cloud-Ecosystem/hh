@@ -33,8 +33,8 @@ test("Returns opens as its own surface at #/returns, the sale waits unharmed, an
   await signIn(page);
   const head = page.getByTestId("step-head-items");
   if ((await head.getAttribute("aria-expanded")) !== "true") await head.click();
-  await page.getByTestId("pos-scan-input").fill("holland");
-  await page.getByTestId("drop-row").filter({ hasText: "Holland Stone 60 mm" }).first().click();
+  await page.getByTestId("pos-scan-input").fill("charcoal");
+  await page.getByTestId("drop-row").filter({ hasText: "Charcoal Stone 60 mm" }).first().click();
   await expect(page.getByTestId("pos-line-row")).toHaveCount(1);
 
   await page.getByTestId("till-returns-entry").click();
