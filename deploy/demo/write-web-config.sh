@@ -93,6 +93,7 @@ write_web_config() {
 		fi
 	done
 
+	wc_plain HH_WEB_ORG "$wc_org" || return 1
 	printf '%s' "$wc_org" | grep -Eq '^[a-z0-9][a-z0-9-]{0,62}$' || { wc_refuse HH_WEB_ORG "is not an org slug (lowercase letters, digits and dashes, starting with a letter or digit)"; return 1; }
 	wc_url HH_WEB_CONSOLE_ENDPOINT "$wc_endpoint" || return 1
 	wc_plain HH_WEB_CONSOLE_PROJECT_ID "$wc_project" || return 1

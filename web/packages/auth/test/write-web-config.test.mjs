@@ -116,6 +116,8 @@ test("refusals name the variable and never repeat its value", () => {
   refused({ ...CONSOLE_ENV, HH_WEB_CONSOLE_ENDPOINT: phrase }, "HH_WEB_CONSOLE_ENDPOINT", phrase);
   refused({ ...CONSOLE_ENV, HH_WEB_CONSOLE_ENDPOINT: "http://console.example.test/v1" }, "HH_WEB_CONSOLE_ENDPOINT", "console.example.test");
   refused({ ...CONSOLE_ENV, HH_WEB_ORG: "Bad Org!" }, "HH_WEB_ORG", "Bad Org!");
+  refused({ ...CONSOLE_ENV, HH_WEB_ORG: "hh-demo\nBAD ORG" }, "HH_WEB_ORG", "BAD ORG");
+  refused({ ...CONSOLE_ENV, HH_WEB_ORG: "Bad!\nhh-demo" }, "HH_WEB_ORG", "Bad!");
   refused({ ...CONSOLE_ENV, HH_WEB_CORE_BASE_URL: "ftp://core.example.test" }, "HH_WEB_CORE_BASE_URL", "ftp://core.example.test");
   refused({ ...CONSOLE_ENV, HH_WEB_PERSONAS: "yes" }, "HH_WEB_PERSONAS", "yes");
   refused({ ...CONSOLE_ENV, HH_WEB_PERSONAS_OPEN: "1" }, "HH_WEB_PERSONAS_OPEN");
