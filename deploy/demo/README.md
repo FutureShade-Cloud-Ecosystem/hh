@@ -109,6 +109,10 @@ forged chain is never the answer.
 | `CORE_SESSION_KEY_NEXT_FILE`, `CORE_SESSION_KEY_PREVIOUS_FILE` | console mode, optional: PEM public halves only, any mode, one PEM block each |
 | `CORE_TOKEN_ISSUER`, `CORE_APPWRITE_ENDPOINT`, `CORE_APPWRITE_PROJECT`, `CORE_APPWRITE_API_KEY` | console mode: the deployment's issuer (never `hh-demo`) and the FB Console values |
 | `CORE_EXCHANGE_TOKEN_TTL` | console mode, optional: the exchange token window, one second to one hour |
+| `HH_WEB_MODE` | the web runtime config the box serves at `/config.json`: `demo` or `console`. Unset or `demo` keeps the file the image baked (`{"mode":"demo"}`); `console` writes it at boot from the names below and the entrypoint refuses to start, naming the variable and never its value, if one is wrong. Public facts only: never a key |
+| `HH_WEB_ORG`, `HH_WEB_CONSOLE_ENDPOINT`, `HH_WEB_CONSOLE_PROJECT_ID`, `HH_WEB_DEALER_NAME` | console web config, required: the org slug (`hh-demo` on the console copies), FB Console's endpoint (https, or http on localhost), the HH project id, the dealer's name |
+| `HH_WEB_CORE_BASE_URL`, `HH_WEB_DEALER_MARK` | console web config, optional: the core's base URL (empty means the page's own origin), a built in mark code |
+| `HH_WEB_PERSONAS`, `HH_WEB_PERSONAS_OPEN`, `HH_WEB_PERSONA_CALLER` | console web config, optional: `true` or `false` for the first two (the public copy sets both), and `public` or `partner` for the caller, which must agree with `HH_WEB_PERSONAS_OPEN` as the browser's parser demands |
 
 ## The console sign in mode (the testers' copy and the public copy)
 

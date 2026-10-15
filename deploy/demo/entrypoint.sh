@@ -98,6 +98,13 @@ export DEALER_NAME="${DEALER_NAME:-Gable Landscape Supply}"
 # CORE_SIGNIN_MODE is passed through as the operator set it (checked above);
 # the core itself refuses any value it does not accept.
 
+# The web runtime config (/srv/app/config.json): the image bakes the demo
+# mode, and a console copy serves its own from HH_WEB_* names, validated here
+# before anything writes. Unset or demo leaves the baked file untouched.
+# shellcheck source=write-web-config.sh
+. "$(dirname "$0")/write-web-config.sh"
+write_web_config /srv/app/config.json || exit 1
+
 # The public port is the platform's PORT. The core listens on a loopback
 # port only: it is never reachable except through Caddy, which fronts
 # every page and every mint request.

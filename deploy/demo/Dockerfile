@@ -135,6 +135,7 @@ COPY --from=web-build /out/pro-field /srv/app/pro-field
 COPY core/db/migrations /srv/core/db/migrations
 COPY deploy/demo/Caddyfile.template /srv/templates/Caddyfile.template
 COPY deploy/demo/entrypoint.sh /usr/local/bin/entrypoint
+COPY deploy/demo/write-web-config.sh /usr/local/bin/write-web-config.sh
 RUN chmod 0755 /usr/local/bin/entrypoint
 
 # The migrate role reads db/migrations relative to the working directory
