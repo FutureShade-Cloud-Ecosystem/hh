@@ -8,9 +8,7 @@
 // and nowhere else, a 429 means "wait", a 503 means "try again". The voice is
 // the dealer kit's: sentence case, the decision first, no exclamation marks,
 // no status codes, no dashes.
-import type { AccountSurface, ExchangeResult, ExchangeUser, SignInFailureReason } from "@hardscapehouse/auth";
-import { readExchangeAnswer } from "@hardscapehouse/auth/appwrite-adapter";
-import type { ExchangeAnswer } from "@hardscapehouse/auth";
+import type { SignInFailureReason } from "@hardscapehouse/auth";
 import type { RuntimeConfigFailure } from "@hardscapehouse/auth/runtime-config";
 import { LIVE_ROLES, type LiveRole } from "./roles.js";
 
@@ -122,75 +120,6 @@ export async function fetchMethods(
   const methods = body !== null && typeof body === "object" ? (body as Record<string, unknown>)["methods"] : undefined;
   if (!Array.isArray(methods)) return { ok: false, reason: "unavailable" };
   return { ok: true, methods: methodsFor(methods) };
-}
-
-export type PersonaRefusal = "unauthorized" | "forbidden" | "rate_limited" | "bad_request" | "unavailable" | "offline";
-
-/**
- * POST /api/v1/auth/persona {persona}: the answer is the exchange's shape. The
- * caller's core bearer rides only when there is one (the testers' copy); the
- * public copy sends none. Nothing is stored here.
- */
-export async function enterPersona(
-  fetchFn: typeof fetch,
-  coreBaseUrl: string,
-  org: string,
-  persona: string,
-  bearer: string | null,
-): Promise<{ ok: true; answer: ExchangeAnswer } | { ok: false; reason: PersonaRefusal }> {
-  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json", "X-Org": org };
-  if (bearer !== null) headers["Authorization"] = `Bearer ${bearer}`;
-  let response: Response;
-  try {
-    response = await fetchFn(`${base(coreBaseUrl)}/api/v1/auth/persona`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ persona }),
-      credentials: "omit",
-      redirect: "error",
-    });
-  } catch {
-    return { ok: false, reason: "offline" };
-  }
-  if (response.status === 401) return { ok: false, reason: "unauthorized" };
-  if (response.status === 403) return { ok: false, reason: "forbidden" };
-  if (response.status === 429) return { ok: false, reason: "rate_limited" };
-  if (response.status === 400) return { ok: false, reason: "bad_request" };
-  if (response.status !== 200) return { ok: false, reason: "unavailable" };
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    return { ok: false, reason: "unavailable" };
-  }
-  const answer = readExchangeAnswer(body);
-  return answer === null ? { ok: false, reason: "unavailable" } : { ok: true, answer };
-}
-
-/**
- * The auth package keeps no role state on purpose, but the front door must
- * know the person's own role to say "Continue as" and to land them. This
- * decorator remembers the user block of the last exchange that was accepted
- * and forwards every call untouched.
- */
-export function tapIdentity(surface: AccountSurface): {
-  surface: AccountSurface;
-  identity: () => ExchangeUser | null;
-  forget: () => void;
-} {
-  let last: ExchangeUser | null = null;
-  const tapped: AccountSurface = {
-    createEmailPasswordSession: (email, password) => surface.createEmailPasswordSession(email, password),
-    createOAuth2Session: (provider, redirectTo) => surface.createOAuth2Session(provider, redirectTo),
-    getSession: () => surface.getSession(),
-    exchange: async (org): Promise<ExchangeResult> => {
-      const result = await surface.exchange(org);
-      if (result.ok) last = { ...result.answer.user };
-      return result;
-    },
-    deleteSession: () => surface.deleteSession(),
-  };
-  return { surface: tapped, identity: () => last, forget: () => { last = null; } };
 }
 
 /** The live role a role code lands on, or null when this site has no screens for it yet. */
