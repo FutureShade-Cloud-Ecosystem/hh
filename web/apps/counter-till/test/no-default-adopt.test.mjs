@@ -93,6 +93,26 @@ test("the adopt call rides only inside the demo build mode gate, at source", () 
   assert.ok(gated, "the adopt's one call site must sit inside the demo build mode gate");
 });
 
+// What the seam rule allows in a default build once the app can recover its own session in console mode
+// (item 7d). The rule is about a FOREIGN MINT: the front door's demo record and the adopt that reads it. A
+// console recovery is not that. It asks FB Console for its own first party session (resume) and the core for
+// a token in exchange, over the REST adapter, and it never reads a bearer from storage; the one thing it may
+// read across pages is a persona id (a role name, not bearer capable). So the default build MAY carry the
+// exchange route, the console session routes and the persona memo's key, and MUST still carry none of the
+// front door's key, the carried theme's key or the demo adopt (the tests above hold those lines, unchanged).
+const CONSOLE_MARKERS = ["/api/v1/auth/exchange", "/account/jwts", "hh-auth.persona.v1"];
+
+test("a default build of the till carries the console recovery and still no foreign mint", () => {
+  const built = build("default-console", []);
+  for (const marker of CONSOLE_MARKERS) {
+    assert.ok(built.some((file) => file.text.includes(marker)), `the default build carries ${marker} nowhere`);
+  }
+  for (const file of built) {
+    assert.ok(!file.text.includes(FRONT_DOOR_KEY), `${file.name} carries the front door's key name`);
+    assert.ok(!file.text.includes(ADOPT_NAME), `${file.name} carries the adopt's name`);
+  }
+});
+
 after(() => {
   rmSync(scratchDir, { recursive: true, force: true });
 });

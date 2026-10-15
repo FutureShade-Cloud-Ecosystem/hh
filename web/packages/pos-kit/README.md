@@ -26,6 +26,16 @@ The pieces the plan grants, each with the ported name it carries:
   demo-account.ts (the demo adapter behind the auth package's AccountSurface
   seam)
 
+- the apps' session custody: boot-custody.ts (`bootCustody`, item 7d). The served runtime config
+  (`/config.json`, read by `loadAppRuntime` before the app's element exists) picks demo mode, which is
+  the controller over the demo account exactly as before, or console mode, where the page recovers its
+  own session on load (`resume()`, or a persona id the front door left in session storage), retries
+  while the console or the core is unavailable, and goes back to the front door when the session ends.
+  `entryFor` is the one place a role code becomes what an app needs (its label, its flow, its tier);
+  `APP_ROLES` is the role matrix per app and a front door test holds it to the role catalog's tiles.
+  An app's `main.ts` must load its root with a dynamic import after `loadAppRuntime()`, never a static
+  one; each app's console boot test holds that line.
+
 and the closed dependencies those pieces cannot run without:
 
 - ports.ts, the ported surface's host seam file (CLOSURE.md in the till's

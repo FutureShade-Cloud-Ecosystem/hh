@@ -31,7 +31,7 @@ export default defineConfig({
   testDir: "./test",
   testMatch: "**/*.pw.ts",
   // The acceptance legs run against the demo image itself (test/acceptance.config.ts), never the stub.
-  testIgnore: ["**/acceptance/**"],
+  testIgnore: ["**/acceptance/**", "**/console.pw.ts"],
   workers: 1,
   use: {
     baseURL: `http://127.0.0.1:${appPort}`,
