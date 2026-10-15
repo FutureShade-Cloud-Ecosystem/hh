@@ -101,7 +101,7 @@ test("every persona refusal reason the auth package reports has its own words", 
 
 test("landing: a role code finds its live role and anything else finds none", () => {
   for (const role of LIVE_ROLES) assert.equal(landingFor(role.id), role);
-  assert.equal(landingFor("outside_sales"), null);
+  assert.equal(landingFor("contractor_buyer"), null);
   assert.equal(landingFor("platform_admin"), null);
   assert.equal(landingFor(""), null);
 });

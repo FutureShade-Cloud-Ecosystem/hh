@@ -257,7 +257,7 @@ test.describe("after sign in", () => {
   });
 
   test("a role this site has no screens for says so and offers no way in", async ({ page, baseURL }) => {
-    await serve(page, baseURL!, {}, { role: { role_code: "outside_sales", role_name: "Outside Sales" } });
+    await serve(page, baseURL!, {}, { role: { role_code: "platform_admin", role_name: "Platform admin" } });
     await page.goto("/");
     await signInAsPartner(page);
     await expect(page.getByTestId("entry-no-screens")).toBeVisible();
