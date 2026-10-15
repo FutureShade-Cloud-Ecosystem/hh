@@ -59,6 +59,19 @@ type PolicyInput struct {
 	ClaimThresholdCents int64  `json:"claim_threshold_cents"`
 }
 
+// CostOverClaimThreshold answers the one question the walk change 6 defect classification asks: does
+// this defect's cost reach the claim threshold? The cost is the LINE TOTAL (qty x unit cost of the
+// damaged line, integer cents, captured once and never recomputed), never a per unit figure.
+//
+// THE RULE IS OVER OR EQUAL: a cost at exactly the threshold is a warranty claim, only a cost
+// strictly under it is logged as shrinkage. This function is the one place that rule lives; the
+// defect classification calls it, and nothing else in the program compares a cost to the threshold,
+// so the tie cannot come to mean two things. Money is integer cents end to end (BIGINT in the
+// database, int64 here, cents on the wire), so the edges are exact where a float would round.
+func CostOverClaimThreshold(costCents, thresholdCents int64) bool {
+	return costCents >= thresholdCents
+}
+
 // Policy returns the effective policy for a branch (the branch row when present, else the org
 // default, seeded by 0396).
 func (s *Service) Policy(ctx context.Context, branchID string) (WarrantyPolicy, error) {
