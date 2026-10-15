@@ -12,6 +12,7 @@ package tasks
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -539,5 +540,90 @@ func TestPickDoor_PullCarriesTheTicketAndThePickedLines(t *testing.T) {
 	foreign := hhsync.ScopeFilter{OrgID: d.other, Actor: "pick-door-actor"}
 	if items, _, err := d.store.Pull(context.Background(), foreign, 0, 50); err != nil || len(items) != 0 {
 		t.Fatalf("another org's pull must be empty: %v %v", items, err)
+	}
+}
+
+// The ticket leaves only to a caller whose staff authority reaches the row's branch: a branch narrowed
+// actor pulls the other branch's row with its task fields and no ticket, GLOBAL reaches both, and an
+// authority that cannot be resolved attaches nothing (fail closed). Load and FindApplied follow the
+// same rule.
+func TestPickDoor_TicketFollowsTheCallersBranchReach(t *testing.T) {
+	d := newPickDoor(t)
+	ctx := context.Background()
+	src := NewStubPickSource()
+	d.store.WithPickSource(src)
+	mk := func(branch string) (taskID, orderID string) {
+		orderID = uuid.NewString()
+		src.Seed(PickTicket{OrderID: orderID, OrderNo: "SO-" + branch[:4], CustomerName: "Walk In",
+			Lines: []PickLine{{LineNo: 1, Description: "Paver", QtyOrdered: "2", UOM: "EA"}}})
+		s := NewSyncStore(d.pool, pickDoorOrders{branch: branch}, nil)
+		row, err := s.Create(ctx, d.f, uuid.NewString(), map[string]any{"order_id": orderID})
+		if err != nil {
+			t.Fatalf("create task: %v", err)
+		}
+		return row.ID, orderID
+	}
+	inA, _ := mk(d.branchA)
+	inB, _ := mk(d.branchB)
+
+	has := func(items []hhsync.Entity, id string) (present, ticket bool) {
+		for _, it := range items {
+			if it.ID == id {
+				_, ticket = it.Data["ticket"]
+				return true, ticket
+			}
+		}
+		return false, false
+	}
+	narrowed := func() (identity.StaffContext, bool, error) {
+		return identity.StaffContext{Scope: identity.ScopeBranch, Status: identity.StatusActive, UserID: d.user,
+			Branches: map[string]bool{d.branchA: true}}, true, nil
+	}
+
+	d.authority = narrowed
+	items, _, err := d.store.Pull(ctx, d.f, 0, 50)
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if p, tk := has(items, inA); !p || !tk {
+		t.Fatalf("own branch row: present=%v ticket=%v, want both", p, tk)
+	}
+	if p, tk := has(items, inB); !p || tk {
+		t.Fatalf("other branch row: present=%v ticket=%v, want the row without a ticket", p, tk)
+	}
+	if rs, ok, err := d.store.Load(ctx, d.f, inB); err != nil || !ok || rs.Data["ticket"] != nil {
+		t.Fatalf("Load of the other branch carried a ticket: %v %v %v", rs.Data["ticket"], ok, err)
+	}
+	if rs, ok, err := d.store.Load(ctx, d.f, inA); err != nil || !ok || rs.Data["ticket"] == nil {
+		t.Fatalf("Load of the own branch lost its ticket: %v %v", ok, err)
+	}
+
+	// GLOBAL reaches both.
+	d.authority = func() (identity.StaffContext, bool, error) {
+		return identity.StaffContext{Scope: identity.ScopeGlobal, Status: identity.StatusActive, UserID: d.user}, true, nil
+	}
+	items, _, _ = d.store.Pull(ctx, d.f, 0, 50)
+	if _, tk := has(items, inB); !tk {
+		t.Fatal("a GLOBAL caller must receive the other branch's ticket")
+	}
+
+	// Unresolvable authority: rows still come, no ticket anywhere.
+	for name, auth := range map[string]func() (identity.StaffContext, bool, error){
+		"error":   func() (identity.StaffContext, bool, error) { return identity.StaffContext{}, false, errors.New("down") },
+		"unknown": func() (identity.StaffContext, bool, error) { return identity.StaffContext{}, false, nil },
+		"inactive": func() (identity.StaffContext, bool, error) {
+			return identity.StaffContext{Scope: identity.ScopeGlobal, Status: "SUSPENDED", UserID: d.user}, true, nil
+		},
+	} {
+		d.authority = auth
+		items, _, err := d.store.Pull(ctx, d.f, 0, 50)
+		if err != nil {
+			t.Fatalf("%s: pull must not fail: %v", name, err)
+		}
+		for _, id := range []string{inA, inB} {
+			if p, tk := has(items, id); !p || tk {
+				t.Fatalf("%s: row %s present=%v ticket=%v, want the row and no ticket", name, id, p, tk)
+			}
+		}
 	}
 }

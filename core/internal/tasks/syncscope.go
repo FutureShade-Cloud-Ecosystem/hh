@@ -219,6 +219,7 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 	if err := s.attachPicked(ctx, s.pool, ptrs...); err != nil {
 		return nil, nil, err
 	}
+	reach := s.ticketReach(ctx, f)
 	items := []sync.Entity{}
 	tombstones := []sync.Tombstone{}
 	for _, r := range page {
@@ -230,7 +231,7 @@ func (s *SyncStore) Pull(ctx context.Context, f sync.ScopeFilter, since int64, l
 		if err != nil {
 			return nil, nil, err
 		}
-		s.attachTicketData(ctx, r.task.OrderID, data)
+		s.attachTicketData(ctx, reach, r.task.BranchID, r.task.OrderID, data)
 		items = append(items, sync.Entity{ID: r.task.ID, Seq: r.seq, Data: data})
 	}
 	return items, tombstones, nil
@@ -265,7 +266,7 @@ func (s *SyncStore) FindApplied(ctx context.Context, f sync.ScopeFilter, key str
 	}
 	rs, err := rowStateOf(r)
 	if err == nil {
-		s.attachTicket(ctx, &rs)
+		s.attachTicket(ctx, s.ticketReach(ctx, f), &rs)
 	}
 	return rs, true, err
 }
@@ -277,7 +278,7 @@ func (s *SyncStore) Load(ctx context.Context, f sync.ScopeFilter, id string) (sy
 	if err != nil || !ok {
 		return rs, ok, err
 	}
-	s.attachTicket(ctx, &rs)
+	s.attachTicket(ctx, s.ticketReach(ctx, f), &rs)
 	return rs, true, nil
 }
 
@@ -603,24 +604,44 @@ func (s *SyncStore) WithPickSource(p PickSource) *SyncStore {
 	return s
 }
 
+// ticketReach resolves the caller's staff authority once and returns the branch test the ticket
+// attach applies to every row of a read: the same authority the record door and the REST doors
+// fence on (CanAccessBranch; GLOBAL reaches all). An authority that cannot be resolved, a caller with
+// no active staff standing, or an unwired resolver returns nil, and nil attaches nothing: the row
+// still ships with its task fields, the ticket (customer, order number, lines) does not.
+func (s *SyncStore) ticketReach(ctx context.Context, f sync.ScopeFilter) func(branch string) bool {
+	if s.tickets == nil || s.staff == nil {
+		return nil
+	}
+	sc, has, err := s.staff(ctx, f.Actor, f.OrgID)
+	if err != nil || !has || (sc.Status != "" && sc.Status != identity.StatusActive) {
+		return nil
+	}
+	return sc.CanAccessBranch
+}
+
 // attachTicket sets the ticket on a read row's projection (see attachTicketData).
-func (s *SyncStore) attachTicket(ctx context.Context, rs *sync.RowState) {
+func (s *SyncStore) attachTicket(ctx context.Context, reach func(string) bool, rs *sync.RowState) {
 	if rs.Deleted || rs.Data == nil {
 		return
 	}
 	orderID, _ := rs.Data["order_id"].(string)
-	s.attachTicketData(ctx, orderID, rs.Data)
+	branch, _ := rs.Data["branch_id"].(string)
+	s.attachTicketData(ctx, reach, branch, orderID, rs.Data)
 }
 
 // attachTicketData sets data["ticket"] to the order's pick ticket, the leg the device's pick screen
-// composes from. The read is best effort exactly as the REST board's is (a source that does not know
-// the order, or fails, leaves the row without a ticket rather than failing the page). The sync
-// core's filter carries no role, so the cost gate fails closed here: the one money figure of a ticket
-// (still owed) is held out for every caller, as blankTicketMoney does for a role the rule refuses; the
-// hold mark and its words stay. It runs only on the pool reads (Pull, Load, FindApplied), never inside
-// a write transaction, so it never asks the pool for a second connection while holding one.
-func (s *SyncStore) attachTicketData(ctx context.Context, orderID string, data map[string]any) {
-	if s.tickets == nil || orderID == "" || data == nil {
+// composes from, and only when the caller's authority reaches the row's branch (reach, from
+// ticketReach; nil attaches nothing). The pull is org scoped and the sync filter carries no branch, so
+// this is the fence the REST enumeration doors have ("branch out of scope"). The read is best effort
+// exactly as the REST board's is (a source that does not know the order, or fails, leaves the row
+// without a ticket rather than failing the page). The sync core's filter carries no role, so the cost
+// gate fails closed here: the one money figure of a ticket (still owed) is held out for every caller,
+// as blankTicketMoney does for a role the rule refuses; the hold mark and its words stay. It runs only
+// on the pool reads (Pull, Load, FindApplied), never inside a write transaction, so it never asks the
+// pool for a second connection while holding one.
+func (s *SyncStore) attachTicketData(ctx context.Context, reach func(string) bool, branch, orderID string, data map[string]any) {
+	if s.tickets == nil || reach == nil || orderID == "" || data == nil || !reach(branch) {
 		return
 	}
 	t, err := s.tickets.PickTicket(ctx, orderID)
