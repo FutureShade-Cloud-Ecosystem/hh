@@ -16,8 +16,10 @@ test("the pre restart bearer is refused, and a fresh sign in works", async ({ pa
   );
   expect(dead.status).toBe(401);
 
-  // The till itself is fresh: nobody is signed in, and the cards answer.
+  // The front door is fresh: the picker is up (the restart consumed every
+  // session), and no till is signed in.
   await page.goto("/");
+  await expect(page.getByTestId("header-word")).toHaveText("Pick a role");
   await expect(page.getByRole("button", { name: "Sales", exact: true })).toBeVisible();
   await expect(page.getByTestId("signed-in-role")).toHaveCount(0);
   await signIn(page, "Sales");
