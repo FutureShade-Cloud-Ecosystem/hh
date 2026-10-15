@@ -24,6 +24,15 @@ Do the steps in order, and keep one signed off commit per step.
 5. Add the app to `manifest.yaml` the way `counter-till` is (line 52), if the manifest
    names it as a frontend.
 
+## 0. Console mode: the copy already recovers its session
+
+The template's `app-root.ts` builds its controller through `bootCustody` (pos-kit) and starts with
+`begin("role-template", ...)`, and its `main.ts` loads the root after the served runtime config is read.
+Keep both when you copy it. In `web/packages/pos-kit/src/ported/boot-custody.ts` add the new app's id to
+`APP_IDS` and its role codes to `APP_ROLES` (the template's own row admits every live role; narrow it to
+the role the matrix gives the app), and use the new id in the copy's `begin(...)`. The app's
+`test/console-boot.test.mjs` (copied with the template) holds the wiring.
+
 ## 1. The demo flow row (core)
 
 `core/internal/demo/flows/flows.go`:
