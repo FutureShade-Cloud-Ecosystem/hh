@@ -76,6 +76,19 @@ var demoEnvAllowNames = []string{
 	"ERP_BASE_URL",
 	"HH_CORE_TEST_DATABASE_URL",
 	"HH_DEMO_MINT_VISITOR_ALLOWANCE",
+	// The HH_WEB_ names are the web runtime config's public facts, read by
+	// the image's entrypoint (deploy/demo/write-web-config.sh) and never by
+	// the core, so they are allowed here and are not in the inventory below.
+	"HH_WEB_CONSOLE_ENDPOINT",
+	"HH_WEB_CONSOLE_PROJECT_ID",
+	"HH_WEB_CORE_BASE_URL",
+	"HH_WEB_DEALER_MARK",
+	"HH_WEB_DEALER_NAME",
+	"HH_WEB_MODE",
+	"HH_WEB_ORG",
+	"HH_WEB_PERSONAS",
+	"HH_WEB_PERSONAS_OPEN",
+	"HH_WEB_PERSONA_CALLER",
 	"JWKS_URL",
 	"PAYMENT_VAULT_KEY",
 	"PLANE_FEEDBACK_MODULE",
