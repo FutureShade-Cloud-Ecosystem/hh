@@ -142,6 +142,10 @@ export function defineConsoleLegs(legs: ConsoleLegs): void {
     await page.goto(`${frontDoor()}/`);
     await page.getByTestId("persona-cards").getByRole("button", { name: legs.personaCard, exact: true }).click();
     await expect.poll(async () => (await peek(request)).personas.map((call) => call.persona)).toEqual([legs.persona]);
+    // The front door writes the persona id after the core's answer is adopted, a beat after the stub saw the call.
+    await expect
+      .poll(async () => JSON.parse((await storages(page)).session[PERSONA_KEY] ?? "null"))
+      .toBe(legs.persona);
     const onFrontDoor = await storages(page);
     expect(onFrontDoor.local).toEqual({});
     expect(JSON.parse(onFrontDoor.session[PERSONA_KEY] ?? "null")).toBe(legs.persona);
