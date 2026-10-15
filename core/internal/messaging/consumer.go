@@ -3,6 +3,7 @@ package messaging
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -319,16 +320,48 @@ func (c *Consumer) route(ctx context.Context, topic string, p eventPayload) erro
 		// The class is read per event rather than cached at boot, because it is admin-tunable config
 		// and an operator who turns payments back into per-event messages must see it take effect
 		// without a deploy.
+		var err error
 		if c.svc.ClassOf(ctx, topic) == ClassRoutine {
-			return c.routeRoutine(ctx, topic, eventKey, body, ref, p)
+			err = c.routeRoutine(ctx, topic, eventKey, body, ref, p)
+		} else {
+			// Money events route to the #finance team channel.
+			err = c.post(ctx, financeSlug, eventKey, body, ref, topic, p)
 		}
-		// Money events route to the #finance team channel.
-		return c.post(ctx, financeSlug, eventKey, body, ref, topic, p)
+		if err != nil || topic != TopicCreditHold {
+			return err
+		}
+		// A credit hold is also a notice for sales, in the rooms sales holds, with no amounts: the
+		// money rooms seat the money desk only (0390). Idempotent, so the retry an error here causes
+		// re-runs the posts above harmlessly.
+		return c.creditHoldNotice(ctx, eventKey, p)
 
 	default:
 		// Registered only for MessagingTopics + the mapped raw topics, so this is unreachable.
 		return fmt.Errorf("messaging: no route for topic %q", topic)
 	}
+}
+
+// creditHoldNotice delivers the no amount credit hold notice to the customer's sales owner and the
+// branch's house room. A service built without the rep store (the DB free scaffold) skips it.
+func (c *Consumer) creditHoldNotice(ctx context.Context, eventKey string, p eventPayload) error {
+	if p.CustomerID == "" && p.Customer == "" {
+		c.log.Warn("messaging: credit hold with no customer, no sales notice", "event", eventKey)
+		return nil
+	}
+	_, err := c.svc.PostCreditHoldNotice(ctx, CreditHoldNotice{
+		CustomerID: p.CustomerID, CustomerName: p.Customer, BranchID: p.BranchID,
+		EventKey: eventKey, DeepLink: p.DeepLink,
+	})
+	if errors.Is(err, errNoDB) {
+		return nil
+	}
+	if errors.Is(err, errNotFound) {
+		// The money post already landed; a box without the house rooms seeded loses only the
+		// sales notice, and retrying cannot seed them.
+		c.log.Warn("messaging: credit hold sales notice has no room to land in", "event", eventKey, "err", err)
+		return nil
+	}
+	return err
 }
 
 // routeRoutine posts a ROUTINE event into the day's rollup instead of as its own message (DIB-449).

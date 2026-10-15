@@ -4,13 +4,16 @@
 // delivery is captured, the device comes back, the outbox drains in order,
 // and the server wins card shows when the test moved a stop first.
 //
+// The proof is the typed name attestation, queued on the pod scope; the photo
+// is a direct door and says no signal offline.
+//
 // The banner is the chrome package's, fed through its properties; the cards
 // are the chrome package's conflict cards; the reads answer from the store.
 // This leg runs on the wall clock, like the yard's own offline leg: the
 // offline proof wants the real connectivity emulation, and the day question
 // (the pinned fixture's job) is held by the run sheet legs beside this one.
 import { test, expect } from "@playwright/test";
-import { driverHandoff, resetStub, type LoggedCall } from "./helpers.js";
+import { TINY_PNG, driverHandoff, resetStub, type LoggedCall } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 // The boot opens the store's worker, migrates and pulls every scope; a leg
@@ -74,12 +77,8 @@ function payloadOf(op: unknown): Record<string, unknown> {
   return ((op as { payload?: unknown })?.payload ?? {}) as Record<string, unknown>;
 }
 
-test("offline, the stop moves wait in the outbox and the proof says no signal, then the moves drain in order and the proof goes", async ({ page, request }) => {
-  // The world is pulled and the runner rests before the word goes offline: a
-  // boot still in flight would hear the word and then hear its own boot's
-  // online, and the glass would show online while the radio was cut.
-  await loadRunSheet(page);
-  // The banner says the truth about the connection, with the outbox's depth.
+/** The stop one drive offline: loaded, en route, then the proof screen open. */
+async function toTheProofScreenOffline(page: import("@playwright/test").Page): Promise<void> {
   await platformWord(page, false, "You're offline");
   // Stop one: loaded, en route. Each move queues.
   await page.locator("[data-stop]", { hasText: "Bluffside Builders" }).click();
@@ -87,16 +86,33 @@ test("offline, the stop moves wait in the outbox and the proof says no signal, t
   await expect(page.locator("hh-shell-offline-banner")).toContainText("1 changes in the outbox");
   await page.getByRole("button", { name: "Mark en route" }).click();
   await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
-  // The proof of delivery is on its direct door (the core's pod scope is the
-  // photo record, the typed name attestation has no sync door): offline it
-  // says so in words and queues nothing.
   await page.getByRole("button", { name: "Delivered", exact: true }).click();
   await expect(page.locator("[data-pod]")).toBeVisible();
-  await page.getByLabel("Full name of the person receiving").fill("Receiver (demo)");
+}
+
+async function signOffline(page: import("@playwright/test").Page): Promise<void> {
+  await page.getByLabel("Full name of the person receiving").fill("  Receiver (demo)  ");
   await page.getByLabel(/confirm/i).check();
   await page.getByRole("button", { name: "Sign for this delivery" }).click();
-  await expect(page.getByRole("alert")).toContainText("Check your signal");
-  await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
+}
+
+test("offline, the stop moves and the proof wait in the outbox, then all drain in order and the stop reads delivered", async ({ page, request }) => {
+  // The world is pulled and the runner rests before the word goes offline: a
+  // boot still in flight would hear the word and then hear its own boot's
+  // online, and the glass would show online while the radio was cut.
+  await loadRunSheet(page);
+  // The banner says the truth about the connection, with the outbox's depth.
+  await toTheProofScreenOffline(page);
+  // The proof of delivery is the attestation: it queues on pod create, the
+  // stop shows delivered and waiting, and nobody has been told it is done.
+  await signOffline(page);
+  await expect(page.locator("[data-notice]").or(page.getByRole("status").first())).toContainText("Signature saved on this device. It sends when you have signal.");
+  await expect(page.locator("[data-stop-status]")).toHaveText("Delivered");
+  await expect(page.locator("[data-proof-waiting]")).toContainText("Waiting to send");
+  await expect(page.locator(".signed")).toContainText("Signed by Receiver (demo)");
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("3 changes in the outbox");
+  // A late photo is not offered while the signature waits.
+  await expect(page.locator("input[type=file]")).toHaveCount(0);
   // Back online: the outbox drains, in the order the writes were made.
   await platformWord(page, true);
   await expect
@@ -106,14 +122,61 @@ test("offline, the stop moves wait in the outbox and the proof says no signal, t
   expect(stopOps.length).toBe(2);
   expect(String(payloadOf(stopOps[0]).status)).toBe("LOADED");
   expect(String(payloadOf(stopOps[1]).status)).toBe("EN_ROUTE");
-  // Nothing rode the pod scope; the signature goes on its direct door now.
-  await page.getByRole("button", { name: "Sign for this delivery" }).click();
-  await expect(page.locator("main")).toContainText("is signed for.");
-  const calls = (await (await request.get("/_stub/log")).json()) as PushCall[];
-  expect(calls.filter((c) => c.path === "/api/v1/sync/pod" && c.method === "POST")).toHaveLength(0);
-  // The day board agrees: the stop is delivered on the pulled row.
+  const podOps = await pushedOps(request, "pod");
+  expect(podOps.length).toBe(1);
+  expect((podOps[0] as Record<string, unknown>).op).toBe("create");
+  const proof = payloadOf(podOps[0]);
+  expect(Object.keys(proof).sort()).toEqual(["affirmed", "id", "received_by", "stop_id"]);
+  expect(proof.received_by).toBe("Receiver (demo)");
+  expect(proof.affirmed).toBe(true);
+  expect(proof.stop_id).toBe(STOP_1);
+  // The order the writes were made is the order they reached the server.
+  const log = (await (await request.get("/_stub/log")).json()) as PushCall[];
+  const scopes = log.filter((c) => c.path.startsWith("/api/v1/sync/") && c.method === "POST").map((c) => c.path.slice("/api/v1/sync/".length));
+  expect(scopes.indexOf("stops")).toBeLessThan(scopes.indexOf("pod"));
+  // The direct route was never used for the signature.
+  expect(log.filter((c) => c.path.endsWith("/pod") && !c.path.includes("/sync/"))).toHaveLength(0);
+  // The stop is delivered on the server, and the pulled row says so.
+  const state = (await (await request.get("/_stub/state")).json()) as { stops: Array<{ id: string; status: string; pod_received_by: string }> };
+  expect(state.stops.find((s) => s.id === STOP_1)).toMatchObject({ status: "DELIVERED", pod_received_by: "Receiver (demo)" });
+  await expect(page.locator("[data-proof-waiting]")).toHaveCount(0);
   await page.getByRole("button", { name: "Back to my run" }).click();
   await expect(page.locator("[data-stop]", { hasText: "Bluffside Builders" }).locator("[data-stop-status]")).toHaveText("Delivered");
+  // No card: the whole chain applied clean.
+  await expect(page.getByRole("button", { name: /^Review [1-9]/ })).toHaveCount(0);
+});
+
+test("a stop the test moved first: the moves come back superseded and refused, the signature is refused in the core's words, and the server row stands", async ({ page, request }) => {
+  await loadRunSheet(page);
+  await toTheProofScreenOffline(page);
+  await signOffline(page);
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("3 changes in the outbox");
+  // Dispatch cancels the stop while the device cannot hear it.
+  const move = await request.post("/_stub/move-stop", { data: { stop_id: STOP_1, status: "CANCELLED" } });
+  expect(move.ok()).toBeTruthy();
+  await platformWord(page, true);
+  await expect
+    .poll(async () => page.locator("hh-shell-offline-banner").count(), { timeout: 10_000 })
+    .toBe(0);
+  await pushedOps(request, "pod");
+  await page.getByRole("button", { name: "Back to my run" }).click();
+  await expect(page.getByRole("button", { name: "Review 3" })).toBeVisible();
+  await page.getByRole("button", { name: "Review 3" }).click();
+  const list = page.locator("[data-conflict-list]");
+  await expect(list).toContainText("Superseded on the server");
+  await expect(list).toContainText("Refused · proof of delivery");
+  await expect(list).toContainText("illegal status transition");
+  // The board shows the server's row, not the device's delivery.
+  await page.getByRole("button", { name: "Back to the run" }).click();
+  await expect(page.locator("[data-stop]", { hasText: "Bluffside Builders" }).locator("[data-stop-status]")).toHaveText("Cancelled");
+});
+
+test("the proof photo stays a direct door: with no signal it says so and queues nothing", async ({ page }) => {
+  await loadRunSheet(page);
+  await toTheProofScreenOffline(page);
+  await page.locator("input[type=file]").setInputFiles({ name: "drop.png", mimeType: "image/png", buffer: TINY_PNG });
+  await expect(page.getByRole("alert")).toContainText("Check your signal");
+  await expect(page.locator("hh-shell-offline-banner")).toContainText("2 changes in the outbox");
 });
 
 test("a stop the test moved first comes back superseded, and the server row is what reads show", async ({ page, request }) => {

@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/httpx"
 )
 
@@ -167,7 +168,13 @@ type Service struct {
 	onOrder OnOrderReader
 	// draftPOs points a worklist row at the draft a buyer started for it (draft_po_seam.go).
 	draftPOs DraftPOReader
+	// zone is the dealer's business day zone source; nil = the Ontario dealer's. A transfer's promised
+	// arrival is counted in the dealer's own calendar.
+	zone houseday.Source
 }
+
+// WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
+func (s *Service) WithZone(src houseday.Source) *Service { s.zone = src; return s }
 
 // NewService wires the repository. Optional deps are injected via the With* methods.
 func NewService(repo *Repository) *Service {

@@ -17,7 +17,7 @@ import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 import "@hardscapehouse/design-system/src/header.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import { HHFeedback, type FeedbackSender } from "@hardscapehouse/design-system/src/feedback.js";
-import { framedByShell } from "@hardscapehouse/design-system/src/framed.js";
+import { framedByShell, listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { entryStyles, renderEntry, type EntryView, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
@@ -151,8 +151,12 @@ export class DispatchBoardApp extends HHElement {
     if (target instanceof Element) this.#desk.change(target);
   };
 
+  /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
+  #stopHostSignOut: (() => void) | null = null;
+
   connectedCallback(): void {
     super.connectedCallback();
+    this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     this.#phone.addEventListener("change", this.#onPhone);
     this.#narrow = this.#phone.matches;
@@ -181,6 +185,8 @@ export class DispatchBoardApp extends HHElement {
   }
 
   disconnectedCallback(): void {
+    this.#stopHostSignOut?.();
+    this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
     this.#phone.removeEventListener("change", this.#onPhone);
     this.renderRoot.removeEventListener("change", this.#onHostChange);

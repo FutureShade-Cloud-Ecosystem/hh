@@ -38,6 +38,12 @@ import (
 // truncated to the day before subtracting, an invoice is not "0.6 days late", and a subtraction of
 // timestamps would make the answer depend on what time of day somebody opened the screen.
 func registerStatus(v RegisterRow, asOf time.Time, dueSoonDays int) (string, int) {
+	return registerStatusIn(houseday.DefaultZone(), v, asOf, dueSoonDays)
+}
+
+// registerStatusIn is registerStatus in a named dealer's zone: "past due" is judged on the dealer's
+// own calendar day.
+func registerStatusIn(zone houseday.Zone, v RegisterRow, asOf time.Time, dueSoonDays int) (string, int) {
 	if v.DocType == "CREDIT_MEMO" {
 		return StatusCredit, 0
 	}
@@ -49,7 +55,7 @@ func registerStatus(v RegisterRow, asOf time.Time, dueSoonDays int) (string, int
 	case "PAID":
 		return StatusPaid, 0
 	}
-	days := daysBetween(v.DueDate, asOf)
+	days := DaysPastDueIn(zone, v.DueDate, asOf)
 	if v.Disputed {
 		if days > 0 {
 			return StatusDisputed, days
@@ -204,7 +210,12 @@ type RegisterService struct {
 	statements statementRunner
 	clock      func() time.Time
 	callerFrom func(context.Context) (identity.StaffContext, bool)
+	zone       houseday.Source // the dealer's business day zone; nil = the Ontario dealer's
 }
+
+// WithZone binds the dealer's business day zone source, so "the promised date is already past" is
+// judged against the dealer's own calendar day. Nil keeps the Ontario dealer's.
+func (s *RegisterService) WithZone(src houseday.Source) *RegisterService { s.zone = src; return s }
 
 // NewRegisterService builds the service over a store.
 func NewRegisterService(store registerStore) *RegisterService {
@@ -365,7 +376,11 @@ func (s *RegisterService) Detail(ctx context.Context, invoiceID string, withPaym
 		LastContactAt: lastContact, AsOf: asOf,
 	}
 	openDispute := hasDispute && dispute.Status == "OPEN"
-	d.Status, d.DaysOverdue = registerStatus(RegisterRow{
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return InvoiceDetail{}, err
+	}
+	d.Status, d.DaysOverdue = registerStatusIn(zone, RegisterRow{
 		DocType: h.DocType, StoredStatus: h.StoredStatus, DueDate: h.DueDate, Disputed: openDispute,
 	}, asOf, pol.DueSoonDays)
 
@@ -660,7 +675,11 @@ func (s *RegisterService) AddPromise(ctx context.Context, in PromiseInput) (Prom
 	if err != nil {
 		return PromiseView{}, false, httpx.BadRequestf("the promised date must be a calendar date (YYYY-MM-DD)")
 	}
-	if today, _ := time.Parse("2006-01-02", houseday.Today(s.clock)); day.Before(today) {
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return PromiseView{}, false, err
+	}
+	if today, _ := time.Parse("2006-01-02", zone.Today(s.clock)); day.Before(today) {
 		// A promise for a date already gone is a typo, and accepting it would put a row in the
 		// worklist that is broken the moment it is written.
 		return PromiseView{}, false, httpx.BadRequestf("the promised date is already past")

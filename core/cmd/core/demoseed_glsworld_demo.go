@@ -442,7 +442,9 @@ func glsRenamePlanted(ctx context.Context, tx glsTx, now time.Time) (int, error)
 	if err != nil {
 		return changed, fmt.Errorf("demoseed: moving the dealer's phone: %w", err)
 	}
-	return changed + int(tag.RowsAffected()), nil
+	changed += int(tag.RowsAffected())
+	taxed, err := glsConvergeSalesTax(ctx, tx, now)
+	return changed + taxed, err
 }
 
 func glsRenameColumn(ctx context.Context, tx glsTx, p glsPlanted, now time.Time) (int, error) {

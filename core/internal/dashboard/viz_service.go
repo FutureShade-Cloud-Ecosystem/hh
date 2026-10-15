@@ -92,9 +92,7 @@ func (s *Service) MetricCatalogFor(ctx context.Context, scope Scope) []MetricMet
 // present, StateUnwired, and the screen says so. "We are not measuring this yet" is honest; leaving
 // the tile out would look like the person's saved chart had been deleted.
 func (s *Service) ResolveViz(ctx context.Context, scope Scope, ids []string) []VizTile {
-	if scope.Now.IsZero() {
-		scope.Now = s.now()
-	}
+	s.stampScope(ctx, &scope)
 	if scope.Profile == "" {
 		scope.Profile = s.ProfileFor(ctx, scope.RoleCode)
 	}

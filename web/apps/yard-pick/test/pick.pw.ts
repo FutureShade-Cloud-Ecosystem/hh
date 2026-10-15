@@ -2,7 +2,7 @@
 // by line, with the reason a short line needs, and change the skid count on
 // the skid stepper with a reason.
 import { test, expect } from "@playwright/test";
-import { resetStub, stubLog, yardHandoff } from "./helpers.js";
+import { resetStub, stubLog, touchTicket, yardHandoff } from "./helpers.js";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -85,9 +85,11 @@ test("a quantity above what was ordered is refused in the server's own words", a
   await page.locator("[data-field=qty]").fill("3");
   await page.getByRole("button", { name: "Done" }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
-  // The pick record is on its direct door (the core's pick_tasks sync set has
-  // no picked field), so the refusal is the server's sentence, right there.
+  // The record goes through the outbox (the core's pick record door), the
+  // picker is connected so it is sent at once, and the refusal is the
+  // server's sentence, right there (and a Not accepted card, to dismiss).
   await expect(page.locator("[data-error]")).toContainText("that is more than was ordered, the yard cannot raise a quantity");
+  await expect(page.locator("[data-pick-pending]")).toHaveCount(0);
 });
 
 test("the skid stepper says Not counted until it is changed, then changes with a reason", async ({ page }) => {
@@ -137,7 +139,7 @@ test("the skids sit with the pull list, and the shortages come before the stage 
   expect(skidsBox?.y).toBeLessThan(recordBox?.y ?? Number.MAX_VALUE);
 });
 
-test("the record goes to the server as one call, in the ticket's own order", async ({ page, request }) => {
+test("the record goes to the server as one pick_tasks op, in the ticket's own order, with the door's nine line legs", async ({ page, request }) => {
   await openInProgress(page);
   await page.locator("[data-line]", { hasText: "Class 2 base rock gravel" }).locator(".line-row").click();
   await page.getByRole("button", { name: /^All \d+/ }).click();
@@ -145,12 +147,38 @@ test("the record goes to the server as one call, in the ticket's own order", asy
   await page.getByRole("button", { name: /^All \d+/ }).click();
   await page.getByRole("button", { name: "Save pick" }).click();
   await expect(page.locator("[data-notice]")).toContainText("pulled");
-  // The record is one call on its direct door, the lines in the ticket's own
-  // order (the core's pick_tasks sync set has no picked field).
-  const calls = (await stubLog(request)).filter((c) => c.path.endsWith("/lines"));
-  expect(calls).toHaveLength(1);
-  expect(calls[0]?.body?.lines).toEqual([
-    { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Class 2 base rock gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE" },
-    { order_line_no: 3, product_id: "1a000000-0000-4000-9000-0000000000c3", sku: "FAB-GEO", description: "Geotextile fabric, 4 by 300 ft", qty_ordered: "2.0000", qty_picked: "2", uom: "ROLL" },
+  await expect(page.locator("[data-pick-pending]")).toHaveCount(0);
+  // The record is one op on the pick_tasks sync door: the row address and the
+  // lines, in the ticket's own order, and no call on the old direct route.
+  const log = await stubLog(request);
+  expect(log.filter((c) => c.path.endsWith("/lines"))).toHaveLength(0);
+  const ops = log
+    .filter((c) => c.path === "/api/v1/sync/pick_tasks" && c.method === "POST")
+    .flatMap((c) => ((c.body as { ops?: Array<{ payload: Record<string, unknown> }> } | null)?.ops ?? []))
+    .filter((op) => "picked" in op.payload);
+  expect(ops).toHaveLength(1);
+  expect(Object.keys(ops[0]!.payload).sort()).toEqual(["id", "picked"]);
+  expect(ops[0]!.payload.picked).toEqual([
+    { order_line_no: 1, product_id: "1a000000-0000-4000-9000-0000000000c1", sku: "GRAN-A", description: "Class 2 base rock gravel, bulk", qty_ordered: "10.0000", qty_picked: "10", uom: "TONNE", short_reason: "", short_note: "" },
+    { order_line_no: 3, product_id: "1a000000-0000-4000-9000-0000000000c3", sku: "FAB-GEO", description: "Geotextile fabric, 4 by 300 ft", qty_ordered: "2.0000", qty_picked: "2", uom: "ROLL", short_reason: "", short_note: "" },
   ]);
+});
+
+test("a connected record the server superseded is an error in words, never a saved notice", async ({ page, request }) => {
+  // SO-1041 is in progress already, so the device has written nothing to it: its record names the pulled seq as its base.
+  // The boot pull must have rested first, or the record would go blind behind an in-flight cycle and meet no stale check.
+  await page.goto("/");
+  await expect(page.locator("[data-staleness]")).toContainText("Pulled");
+  await page.locator("[data-pick-card]", { hasText: "SO-1041" }).getByRole("button", { name: "Open" }).click();
+  await expect(page.locator("[data-pick-order]")).toHaveText("SO-1041");
+  await expect(page.locator("[data-task-status]")).toHaveText("Picking");
+  await page.waitForLoadState("networkidle");
+  // The desk changes the OPEN ticket after the device's last pull (the seq moves, the pick stays open).
+  await touchTicket(request, "0a000000-0000-4000-9000-000000000041");
+  await page.locator("[data-line]", { hasText: "Flagstone" }).locator(".line-row").click();
+  await page.getByRole("button", { name: /^All \d+/ }).click();
+  await page.getByRole("button", { name: "Save pick" }).click();
+  await expect(page.locator("[data-error]")).toContainText("changed on the server first");
+  await expect(page.locator("[data-error]")).toContainText("not saved");
+  await expect(page.locator("[data-notice]")).toHaveCount(0);
 });

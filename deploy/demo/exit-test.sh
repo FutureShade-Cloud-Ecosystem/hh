@@ -281,6 +281,12 @@ page_gated() {
 		|| fail "$2 answered $code without the phrase, want 401"
 }
 page_has / fd-app-root "the front door at /"
+cfg="$(curl -s -u "demo:$PHRASE" "$BASE/config.json")"
+case "$cfg" in
+	*'"mode":"demo"'*) pass "the front door's config.json carries mode demo" ;;
+	*) fail "the front door's config.json is missing or not mode demo (answer: $cfg)" ;;
+esac
+page_gated /config.json "the front door's config.json"
 page_has /till/ ct-app-root "the counter till at /till/"
 page_has /buying-and-stock/ buying-and-stock-app "Buying and Stock at /buying-and-stock/"
 page_has /drive/ drive-run-app "HH Drive at /drive/"
@@ -638,6 +644,44 @@ esac
 case "$nomode_log" in
 	*listening*) fail "the image reached serve without the sign in mode" ;;
 	*) pass "the image exited before serve" ;;
+esac
+[ "$(tables_count "$DBPFX"_nomode)" = "0" ] \
+	&& pass "the refused boot wrote nothing to the database" \
+	|| fail "the refused boot left user tables behind"
+
+echo "== the web runtime config comes from the environment (console copies)"
+webcfg="$(docker run --rm \
+	-e HH_WEB_MODE=console -e HH_WEB_ORG=hh-demo \
+	-e HH_WEB_CONSOLE_ENDPOINT=https://console.example.test/v1 \
+	-e HH_WEB_CONSOLE_PROJECT_ID=fake-project \
+	-e "HH_WEB_DEALER_NAME=Gable Landscape Supply" -e HH_WEB_DEALER_MARK=gable \
+	-e HH_WEB_PERSONAS=true \
+	--entrypoint sh "$IMAGE" -c '. /usr/local/bin/write-web-config.sh; write_web_config /tmp/config.json && cat /tmp/config.json' 2>&1)" || webcfg="refused: $webcfg"
+case "$webcfg" in
+	*'"mode":"console"'*'"org":"hh-demo"'*'"consoleProjectId":"fake-project"'*'"personas":true'*'"name":"Gable Landscape Supply"'*)
+		pass "the image's writer makes a console config.json from HH_WEB_*" ;;
+	*) fail "the image's writer did not make the console config.json (answer: $webcfg)" ;;
+esac
+webcfg_log="$(docker run --rm --network "$NET" \
+	-e "DATABASE_URL=$(dsn_for "$DBPFX"_nomode)" \
+	-e "PAYMENT_VAULT_KEY=$(random_hex 32)" \
+	-e "HH_ACCEPTANCE_SIGN_KEY_ID=demo-accept-1" \
+	-e "HH_ACCEPTANCE_SIGN_KEY=$(random_hex 32)" \
+	-e "DEMO_GATE_BCRYPT_HASH=$HASH" \
+	-e CORE_SIGNIN_MODE=demo \
+	-e HH_WEB_MODE=console -e HH_WEB_ORG=hh-demo \
+	-e "HH_WEB_CONSOLE_ENDPOINT=a phrase pasted where the endpoint belongs" \
+	-e HH_WEB_CONSOLE_PROJECT_ID=fake-project -e HH_WEB_DEALER_NAME=Gable \
+	"$IMAGE" 2>&1)" && webcfg_ok=0 || webcfg_ok=1
+[ "$webcfg_ok" = "1" ] && pass "a bad web config makes the image exit non-zero" \
+	|| fail "a bad web config exited 0"
+case "$webcfg_log" in
+	*HH_WEB_CONSOLE_ENDPOINT*) pass "the refusal names HH_WEB_CONSOLE_ENDPOINT" ;;
+	*) fail "the refusal does not name HH_WEB_CONSOLE_ENDPOINT" ;;
+esac
+case "$webcfg_log" in
+	*"a phrase pasted"*) fail "the refusal repeats the value" ;;
+	*) pass "the refusal repeats no value" ;;
 esac
 [ "$(tables_count "$DBPFX"_nomode)" = "0" ] \
 	&& pass "the refused boot wrote nothing to the database" \

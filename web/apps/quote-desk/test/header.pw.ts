@@ -79,6 +79,12 @@ test("Switch role ends the session and returns to the front door at /", async ({
   // boot that came up is signed out: the picker's word, no desk, and the
   // custody mirror went with the session, so the front door it lands on
   // comes up at its own picker rather than at a session it did not mint.
+  //
+  // The sign out paints the picker's word on the OLD document a moment before the walk to / reloads
+  // it, so the word alone does not prove the new document is up: a read taken between the two died
+  // with "Execution context was destroyed" on a loaded runner. Wait for the marker to be gone (a
+  // waitForFunction survives the navigation), then for the word, then read.
+  await page.waitForFunction(() => (window as { marker?: string }).marker === undefined, undefined, { timeout: 15_000 });
   await expect(page.getByTestId("header-word")).toHaveText("Pick a role", { timeout: 15_000 });
   const state = await page.evaluate(() => ({
     marker: (window as { marker?: string }).marker,
