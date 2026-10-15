@@ -42,6 +42,7 @@ import {
   actionDone,
   lineIsShort,
   pickSummary,
+  pickQueuedWords,
   qtyText,
   recordBlockedReason,
   shortOf,
@@ -495,6 +496,10 @@ export class YardPickApp extends HHElement {
       this.#syncState = state;
       this.requestUpdate();
       void this.#refreshOfflineChrome();
+      // A cycle came to rest with its pull landed: the open pick reads the
+      // server's row (a record the device queued shows the server's lines,
+      // not its own).
+      if ((state === "idle" || state === "conflict") && this.#view.kind === "pick" && !this.#busy) void this.#refreshPick().then(() => this.requestUpdate());
     });
     await layer.setOnline(navigator.onLine);
     await layer.cycle();
@@ -728,19 +733,29 @@ export class YardPickApp extends HHElement {
     this.#error = "";
     this.#notice = "";
     this.requestUpdate();
-    const answer = await this.#door().recordLines(this.#view.id, lines);
+    const taskId = this.#view.id;
+    const answer = await this.#door().recordLines(taskId, lines);
+    // Connected: send now, so the picker reads the server's answer (its
+    // refusal in its own words, the backorder figure) as they always have. No
+    // signal: the record waits in the outbox and the notice says so.
+    const layer = this.#yardOffline;
+    let refused = "";
+    if (answer.ok && layer !== null && layer.runner.state !== "offline") refused = await layer.sendRecordNow(taskId);
     this.#busy = false;
-    if (answer.ok) {
+    if (answer.ok && refused === "") {
       await this.#refreshPick();
       const firstShort = answer.value.find((p) => lineIsShort(p.qty_ordered, p.qty_picked));
-      if (firstShort !== undefined) {
+      if (layer !== null && (await layer.pendingRecord(taskId))) {
+        // Not sent: no signal, or the server could not be reached. Nobody has been told yet.
+        this.#notice = pickQueuedWords(answer.value);
+      } else if (firstShort !== undefined) {
         const ticketLine = this.#pick?.ticket?.lines.find((l) => l.line_no === firstShort.order_line_no);
         this.#notice = shortPickWords(firstShort, ticketLine?.qty_backordered ?? "");
       } else {
-        this.#notice = pickSummary(answer.value) || "The pick is recorded.";
+        this.#notice = pickSummary(this.#pick?.picked ?? answer.value) || "The pick is recorded.";
       }
     } else {
-      this.#error = yardError(answer.error, answer.status, "The pick did not save. Check your signal and try again.");
+      this.#error = yardError(answer.ok ? refused : answer.error, answer.ok ? 400 : answer.status, "The pick did not save. Check your signal and try again.");
       await this.#refreshPick();
     }
     this.requestUpdate();

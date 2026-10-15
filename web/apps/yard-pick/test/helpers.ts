@@ -52,6 +52,12 @@ export async function reassignTicket(request: APIRequestContext, taskId: string)
   if (!response.ok()) throw new Error(`stub reassign failed: ${response.status()}`);
 }
 
+/** The desk changes an OPEN ticket: its seq moves and it stays open (a record based on the older seq is superseded). */
+export async function touchTicket(request: APIRequestContext, taskId: string): Promise<void> {
+  const response = await request.post("/_stub/touch", { data: { task_id: taskId } });
+  if (!response.ok()) throw new Error(`stub touch failed: ${response.status()}`);
+}
+
 /** The desk settles a shortage while the device cannot hear it. */
 export async function deskResolve(request: APIRequestContext, shortageId: string): Promise<void> {
   const response = await request.post("/_stub/desk-resolve", { data: { shortage_id: shortageId } });
