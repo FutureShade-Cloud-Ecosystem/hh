@@ -25281,6 +25281,77 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/warranty/policy:
+    get:
+      operationId: warrantyGetPolicy
+      tags:
+        - staff-warranty
+      summary: Read the effective warranty policy for a branch
+      description: branch_id empty resolves the org-wide default row; a branch resolves that branch's override when present, else the org default. The claim threshold is the line total at which a defect becomes a warranty claim rather than shrinkage.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - manager-home
+          - counter-till
+          - dealer-admin
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: branch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The effective policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyPolicy"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      operationId: warrantyPutPolicy
+      tags:
+        - staff-warranty
+      summary: Write the warranty policy (org default or one branch override)
+      description: Money arrives in integer cents on the wire. A change records the old and new threshold on the audit spine; a save that moved nothing writes no audit row.
+      x-role: requireAdmin
+      x-access:
+        surfaces:
+          - dealer-admin
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyPolicyInput"
+      responses:
+        "200":
+          description: The stored policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyPolicy"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          description: A negative threshold, or an unknown branch
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/warranty/claims:
     get:
       operationId: warrantyListClaims
@@ -53981,6 +54052,35 @@ components:
         limit:
           type: integer
           format: int32
+    WarrantyPolicy:
+      type: object
+      description: "The effective warranty policy for a scope: the branch row when present, else the org default. The claim threshold is the line total at which a defect becomes a warranty claim rather than shrinkage."
+      required:
+        - claim_threshold_cents
+      properties:
+        branch_id:
+          type: string
+          description: The branch the row answers for; empty means the org default
+        claim_threshold_cents:
+          type: integer
+          format: int64
+          description: The claim threshold in integer cents, zero or more
+        updated_at:
+          type: string
+          format: date-time
+    WarrantyPolicyInput:
+      type: object
+      description: The policy write payload; money arrives in integer cents. branch_id empty writes the org default row, a branch id upserts that branch's override.
+      required:
+        - claim_threshold_cents
+      properties:
+        branch_id:
+          type: string
+        claim_threshold_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The new threshold in integer cents, zero or more
     WarrantyAddress:
       type: object
       description: The job-site (failure-location) address shape

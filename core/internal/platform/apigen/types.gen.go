@@ -8728,6 +8728,17 @@ type WarrantyVendorProfilePage struct {
 	Limit      *int32                  `json:"limit,omitempty"`
 }
 
+type WarrantyPolicy struct {
+	BranchId            *string    `json:"branch_id,omitempty"`
+	ClaimThresholdCents int64      `json:"claim_threshold_cents"`
+	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
+}
+
+type WarrantyPolicyInput struct {
+	BranchId            *string `json:"branch_id,omitempty"`
+	ClaimThresholdCents int64   `json:"claim_threshold_cents"`
+}
+
 type WarrantyAddress struct {
 	Line1    *string `json:"line1,omitempty"`
 	City     *string `json:"city,omitempty"`

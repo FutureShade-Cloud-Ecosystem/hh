@@ -7518,6 +7518,15 @@ export type WarrantyVendorProfilePage = {
   next_cursor?: string | null;
   limit?: number;
 };
+export type WarrantyPolicy = {
+  branch_id?: string;
+  claim_threshold_cents: number;
+  updated_at?: string;
+};
+export type WarrantyPolicyInput = {
+  branch_id?: string;
+  claim_threshold_cents: number;
+};
 export type WarrantyAddress = {
   line1?: string;
   city?: string;

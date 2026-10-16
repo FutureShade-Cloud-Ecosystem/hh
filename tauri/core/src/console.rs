@@ -30,8 +30,8 @@ use reqwest::{
 };
 use zeroize::Zeroizing;
 
-pub use crate::profiles::AuthConfig;
 use crate::custody::CustodyError;
+pub use crate::profiles::AuthConfig;
 
 /// The contract's error words. A command error is `{code}` only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,7 +168,9 @@ pub fn org_ok(org: &str) -> bool {
     let b = org.as_bytes();
     (1..=32).contains(&b.len())
         && (b[0].is_ascii_lowercase() || b[0].is_ascii_digit())
-        && b[1..].iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._-".contains(c))
+        && b[1..]
+            .iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._-".contains(c))
 }
 
 fn build_http(timeout: Duration) -> Result<reqwest::Client, AuthCode> {
@@ -206,7 +208,10 @@ fn transport(e: &reqwest::Error) -> AuthCode {
 
 /// The body, refused past the cap without buffering the rest.
 async fn read_body(mut response: reqwest::Response) -> Result<Vec<u8>, AuthCode> {
-    if response.content_length().is_some_and(|n| n > MAX_BODY as u64) {
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_BODY as u64)
+    {
         return Err(AuthCode::Unavailable);
     }
     let mut out = Vec::new();
@@ -226,7 +231,10 @@ fn json_object(bytes: &[u8]) -> Result<serde_json::Map<String, serde_json::Value
     }
 }
 
-fn non_empty_str(m: &serde_json::Map<String, serde_json::Value>, key: &str) -> Result<String, AuthCode> {
+fn non_empty_str(
+    m: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<String, AuthCode> {
     match m.get(key).and_then(|v| v.as_str()) {
         Some(s) if !s.is_empty() => Ok(s.to_string()),
         _ => Err(AuthCode::Unavailable),
@@ -296,7 +304,10 @@ impl ConsoleClient {
     }
 
     fn with_session(&self, request: RequestBuilder, secret: &SessionSecret) -> RequestBuilder {
-        request.header(COOKIE, format!("a_session_{}={}", self.project_id, secret.expose()))
+        request.header(
+            COOKIE,
+            format!("a_session_{}={}", self.project_id, secret.expose()),
+        )
     }
 
     fn with_json(request: RequestBuilder, body: String) -> RequestBuilder {
@@ -310,12 +321,24 @@ impl ConsoleClient {
     /// Email and password sign in. The session secret is read from the
     /// `a_session_<project>` cookie; a response without a usable one is
     /// `unavailable`, never a session.
-    pub async fn create_session(&self, email: &str, password: &str) -> Result<SessionSecret, AuthCode> {
-        if email.is_empty() || email.len() > MAX_EMAIL || password.is_empty() || password.len() > MAX_PASSWORD {
+    pub async fn create_session(
+        &self,
+        email: &str,
+        password: &str,
+    ) -> Result<SessionSecret, AuthCode> {
+        if email.is_empty()
+            || email.len() > MAX_EMAIL
+            || password.is_empty()
+            || password.len() > MAX_PASSWORD
+        {
             return Err(AuthCode::BadCredentials);
         }
-        let body = Zeroizing::new(serde_json::json!({ "email": email, "password": password }).to_string());
-        let request = Self::with_json(self.console(Method::POST, "/account/sessions/email"), body.to_string());
+        let body =
+            Zeroizing::new(serde_json::json!({ "email": email, "password": password }).to_string());
+        let request = Self::with_json(
+            self.console(Method::POST, "/account/sessions/email"),
+            body.to_string(),
+        );
         let response = Self::send(request).await?;
         let status = response.status().as_u16();
         match status {
@@ -339,33 +362,51 @@ impl ConsoleClient {
 
     /// The account under the session: the resume check and the sign in answer.
     pub async fn account(&self, secret: &SessionSecret) -> Result<AccountUser, AuthCode> {
-        let response = Self::send(self.with_session(self.console(Method::GET, "/account"), secret)).await?;
+        let response =
+            Self::send(self.with_session(self.console(Method::GET, "/account"), secret)).await?;
         let status = response.status().as_u16();
         if !(200..=299).contains(&status) {
             return Err(console_refusal(status));
         }
         let m = json_object(&read_body(response).await?)?;
-        let name = m.get("name").and_then(|v| v.as_str()).ok_or(AuthCode::Unavailable)?.to_string();
-        Ok(AccountUser { user_id: non_empty_str(&m, "$id")?, email: non_empty_str(&m, "email")?, name })
+        let name = m
+            .get("name")
+            .and_then(|v| v.as_str())
+            .ok_or(AuthCode::Unavailable)?
+            .to_string();
+        Ok(AccountUser {
+            user_id: non_empty_str(&m, "$id")?,
+            email: non_empty_str(&m, "email")?,
+            name,
+        })
     }
 
     /// Mint a fresh Console JWT. Every exchange attempt calls this again.
     pub async fn mint_jwt(&self, secret: &SessionSecret) -> Result<Jwt, AuthCode> {
-        let request = Self::with_json(self.with_session(self.console(Method::POST, "/account/jwts"), secret), "{}".into());
+        let request = Self::with_json(
+            self.with_session(self.console(Method::POST, "/account/jwts"), secret),
+            "{}".into(),
+        );
         let response = Self::send(request).await?;
         let status = response.status().as_u16();
         if !(200..=299).contains(&status) {
             return Err(console_refusal(status));
         }
         let m = json_object(&read_body(response).await?)?;
-        let jwt = m.get("jwt").and_then(|v| v.as_str()).ok_or(AuthCode::Unavailable)?;
+        let jwt = m
+            .get("jwt")
+            .and_then(|v| v.as_str())
+            .ok_or(AuthCode::Unavailable)?;
         Jwt::new(jwt.to_string()).ok_or(AuthCode::Unavailable)
     }
 
     /// Delete the current Console session.
     pub async fn delete_session(&self, secret: &SessionSecret) -> Result<(), AuthCode> {
-        let response =
-            Self::send(self.with_session(self.console(Method::DELETE, "/account/sessions/current"), secret)).await?;
+        let response = Self::send(self.with_session(
+            self.console(Method::DELETE, "/account/sessions/current"),
+            secret,
+        ))
+        .await?;
         let status = response.status().as_u16();
         if (200..=299).contains(&status) {
             Ok(())
@@ -381,7 +422,8 @@ impl ConsoleClient {
         if !org_ok(org) {
             return Err(AuthCode::BadRequest);
         }
-        let body = Zeroizing::new(serde_json::json!({ "jwt": jwt.expose(), "org": org }).to_string());
+        let body =
+            Zeroizing::new(serde_json::json!({ "jwt": jwt.expose(), "org": org }).to_string());
         drop(jwt);
         let request = self
             .http
@@ -396,13 +438,20 @@ impl ConsoleClient {
         }
         let m = json_object(&read_body(response).await?)?;
         let token = CoreToken::new(non_empty_str(&m, "token")?).ok_or(AuthCode::Unavailable)?;
-        let expires_at_ms = m.get("expiresAtMs").and_then(|v| v.as_i64()).ok_or(AuthCode::Unavailable)?;
+        let expires_at_ms = m
+            .get("expiresAtMs")
+            .and_then(|v| v.as_i64())
+            .ok_or(AuthCode::Unavailable)?;
         let user = m.get("user").cloned().ok_or(AuthCode::Unavailable)?;
         let user: ExchangeUser = serde_json::from_value(user).map_err(|_| AuthCode::Unavailable)?;
         if user.user_id.is_empty() {
             return Err(AuthCode::Unavailable);
         }
-        Ok(ExchangeAnswer { token, expires_at_ms, user })
+        Ok(ExchangeAnswer {
+            token,
+            expires_at_ms,
+            user,
+        })
     }
 }
 
@@ -425,30 +474,77 @@ mod tests {
     }
 
     fn session_created() -> Reply {
-        Reply::json(201, r#"{"$id":"s1","userId":"u1","provider":"email","secret":""}"#)
-            .header("Set-Cookie", &format!("a_session_{PROJECT}={SECRET}; Path=/; HttpOnly; Secure; SameSite=None"))
-            .header("Set-Cookie", &format!("a_session_{PROJECT}_legacy={SECRET}; Path=/; HttpOnly"))
+        Reply::json(
+            201,
+            r#"{"$id":"s1","userId":"u1","provider":"email","secret":""}"#,
+        )
+        .header(
+            "Set-Cookie",
+            &format!("a_session_{PROJECT}={SECRET}; Path=/; HttpOnly; Secure; SameSite=None"),
+        )
+        .header(
+            "Set-Cookie",
+            &format!("a_session_{PROJECT}_legacy={SECRET}; Path=/; HttpOnly"),
+        )
     }
 
-    const ACCOUNT_OK: &str = r#"{"$id":"u1","email":"a@b.example","name":"A B","status":true,"emailVerification":true}"#;
+    const ACCOUNT_OK: &str =
+        r#"{"$id":"u1","email":"a@b.example","name":"A B","status":true,"emailVerification":true}"#;
 
     fn run<F: std::future::Future>(f: F) -> F::Output {
-        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(f)
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(f)
     }
 
     // ---- configuration -------------------------------------------------
 
     #[test]
     fn the_config_requires_https_a_project_id_and_no_extras() {
-        assert!(AuthConfig::new("https://api.example.test/v1", "proj-1", "https://core.example.test").is_ok());
+        assert!(AuthConfig::new(
+            "https://api.example.test/v1",
+            "proj-1",
+            "https://core.example.test"
+        )
+        .is_ok());
         for (e, p, c) in [
-            ("http://api.example.test/v1", "proj-1", "https://core.example.test"),
-            ("https://api.example.test/v1", "proj-1", "http://core.example.test"),
-            ("https://api.example.test/v1", "", "https://core.example.test"),
-            ("https://api.example.test/v1", "a b", "https://core.example.test"),
-            ("https://u:p@api.example.test/v1", "proj-1", "https://core.example.test"),
-            ("https://api.example.test/v1?x=1", "proj-1", "https://core.example.test"),
-            ("https://api.example.test/v1#f", "proj-1", "https://core.example.test"),
+            (
+                "http://api.example.test/v1",
+                "proj-1",
+                "https://core.example.test",
+            ),
+            (
+                "https://api.example.test/v1",
+                "proj-1",
+                "http://core.example.test",
+            ),
+            (
+                "https://api.example.test/v1",
+                "",
+                "https://core.example.test",
+            ),
+            (
+                "https://api.example.test/v1",
+                "a b",
+                "https://core.example.test",
+            ),
+            (
+                "https://u:p@api.example.test/v1",
+                "proj-1",
+                "https://core.example.test",
+            ),
+            (
+                "https://api.example.test/v1?x=1",
+                "proj-1",
+                "https://core.example.test",
+            ),
+            (
+                "https://api.example.test/v1#f",
+                "proj-1",
+                "https://core.example.test",
+            ),
             ("", "proj-1", "https://core.example.test"),
             ("https://api.example.test/v1", "proj-1", ""),
         ] {
@@ -479,9 +575,15 @@ mod tests {
         assert_eq!(seen[0].path, "/v1/account/sessions/email");
         assert_eq!(seen[0].header("x-appwrite-project"), Some(PROJECT));
         assert_eq!(seen[0].header("content-type"), Some("application/json"));
-        assert!(seen[0].header("cookie").is_none(), "a sign in sends no cookie");
+        assert!(
+            seen[0].header("cookie").is_none(),
+            "a sign in sends no cookie"
+        );
         let body: serde_json::Value = serde_json::from_str(&seen[0].body).unwrap();
-        assert_eq!(body, serde_json::json!({"email": "a@b.example", "password": "pw-1"}));
+        assert_eq!(
+            body,
+            serde_json::json!({"email": "a@b.example", "password": "pw-1"})
+        );
     }
 
     #[test]
@@ -526,24 +628,46 @@ mod tests {
     fn create_session_refuses_empty_or_oversized_credentials_without_a_request() {
         let server = MockServer::start(vec![session_created()]);
         let c = client(&server);
-        assert_eq!(run(c.create_session("", "pw")).unwrap_err(), AuthCode::BadCredentials);
-        assert_eq!(run(c.create_session("a@b.example", "")).unwrap_err(), AuthCode::BadCredentials);
-        assert_eq!(run(c.create_session(&"a".repeat(400), "pw")).unwrap_err(), AuthCode::BadCredentials);
-        assert_eq!(run(c.create_session("a@b.example", &"p".repeat(300))).unwrap_err(), AuthCode::BadCredentials);
+        assert_eq!(
+            run(c.create_session("", "pw")).unwrap_err(),
+            AuthCode::BadCredentials
+        );
+        assert_eq!(
+            run(c.create_session("a@b.example", "")).unwrap_err(),
+            AuthCode::BadCredentials
+        );
+        assert_eq!(
+            run(c.create_session(&"a".repeat(400), "pw")).unwrap_err(),
+            AuthCode::BadCredentials
+        );
+        assert_eq!(
+            run(c.create_session("a@b.example", &"p".repeat(300))).unwrap_err(),
+            AuthCode::BadCredentials
+        );
         assert!(server.finish().is_empty());
     }
 
     #[test]
     fn a_console_that_cannot_be_reached_is_offline_and_one_that_hangs_is_unavailable() {
-        let cfg = AuthConfig::for_test(&format!("http://127.0.0.1:{}/v1", closed_port()), PROJECT, "http://127.0.0.1:1");
+        let cfg = AuthConfig::for_test(
+            &format!("http://127.0.0.1:{}/v1", closed_port()),
+            PROJECT,
+            "http://127.0.0.1:1",
+        );
         let c = ConsoleClient::new(&cfg).unwrap();
-        assert_eq!(run(c.create_session("a@b.example", "pw")).unwrap_err(), AuthCode::Offline);
+        assert_eq!(
+            run(c.create_session("a@b.example", "pw")).unwrap_err(),
+            AuthCode::Offline
+        );
         assert_eq!(run(c.account(&secret())).unwrap_err(), AuthCode::Offline);
         assert_eq!(run(c.mint_jwt(&secret())).unwrap_err(), AuthCode::Offline);
 
         let server = MockServer::start(vec![Reply::hang()]);
         let c = client(&server).with_timeout(Duration::from_millis(300));
-        assert_eq!(run(c.create_session("a@b.example", "pw")).unwrap_err(), AuthCode::Unavailable);
+        assert_eq!(
+            run(c.create_session("a@b.example", "pw")).unwrap_err(),
+            AuthCode::Unavailable
+        );
     }
 
     #[test]
@@ -565,10 +689,20 @@ mod tests {
         let server = MockServer::start(vec![Reply::json(200, ACCOUNT_OK)]);
         let user = run(client(&server).account(&secret())).unwrap();
         let seen = server.finish();
-        assert_eq!(user, AccountUser { user_id: "u1".into(), email: "a@b.example".into(), name: "A B".into() });
+        assert_eq!(
+            user,
+            AccountUser {
+                user_id: "u1".into(),
+                email: "a@b.example".into(),
+                name: "A B".into()
+            }
+        );
         assert_eq!(seen[0].method, "GET");
         assert_eq!(seen[0].path, "/v1/account");
-        assert_eq!(seen[0].header("cookie"), Some(format!("a_session_{PROJECT}={SECRET}").as_str()));
+        assert_eq!(
+            seen[0].header("cookie"),
+            Some(format!("a_session_{PROJECT}={SECRET}").as_str())
+        );
         assert_eq!(seen[0].header("x-appwrite-project"), Some(PROJECT));
     }
 
@@ -584,7 +718,11 @@ mod tests {
             (503, AuthCode::Unavailable),
         ] {
             let server = MockServer::start(vec![Reply::json(status, "{}")]);
-            assert_eq!(run(client(&server).account(&secret())).unwrap_err(), want, "status {status}");
+            assert_eq!(
+                run(client(&server).account(&secret())).unwrap_err(),
+                want,
+                "status {status}"
+            );
         }
     }
 
@@ -599,7 +737,11 @@ mod tests {
             "[]",
         ] {
             let server = MockServer::start(vec![Reply::json(200, body)]);
-            assert_eq!(run(client(&server).account(&secret())).unwrap_err(), AuthCode::Unavailable, "{body}");
+            assert_eq!(
+                run(client(&server).account(&secret())).unwrap_err(),
+                AuthCode::Unavailable,
+                "{body}"
+            );
         }
     }
 
@@ -613,7 +755,10 @@ mod tests {
         assert_eq!(jwt.expose(), "jwt-value-1");
         assert_eq!(seen[0].method, "POST");
         assert_eq!(seen[0].path, "/v1/account/jwts");
-        assert_eq!(seen[0].header("cookie"), Some(format!("a_session_{PROJECT}={SECRET}").as_str()));
+        assert_eq!(
+            seen[0].header("cookie"),
+            Some(format!("a_session_{PROJECT}={SECRET}").as_str())
+        );
         assert_eq!(seen[0].body, "{}");
     }
 
@@ -628,11 +773,19 @@ mod tests {
             (503, AuthCode::Unavailable),
         ] {
             let server = MockServer::start(vec![Reply::json(status, "{}")]);
-            assert_eq!(run(client(&server).mint_jwt(&secret())).unwrap_err(), want, "status {status}");
+            assert_eq!(
+                run(client(&server).mint_jwt(&secret())).unwrap_err(),
+                want,
+                "status {status}"
+            );
         }
         for body in ["{}", r#"{"jwt":""}"#, r#"{"jwt":3}"#, "nope"] {
             let server = MockServer::start(vec![Reply::json(201, body)]);
-            assert_eq!(run(client(&server).mint_jwt(&secret())).unwrap_err(), AuthCode::Unavailable, "{body}");
+            assert_eq!(
+                run(client(&server).mint_jwt(&secret())).unwrap_err(),
+                AuthCode::Unavailable,
+                "{body}"
+            );
         }
     }
 
@@ -643,10 +796,16 @@ mod tests {
         let seen = server.finish();
         assert_eq!(seen[0].method, "DELETE");
         assert_eq!(seen[0].path, "/v1/account/sessions/current");
-        assert_eq!(seen[0].header("cookie"), Some(format!("a_session_{PROJECT}={SECRET}").as_str()));
+        assert_eq!(
+            seen[0].header("cookie"),
+            Some(format!("a_session_{PROJECT}={SECRET}").as_str())
+        );
 
         let server = MockServer::start(vec![Reply::json(401, "{}")]);
-        assert_eq!(run(client(&server).delete_session(&secret())).unwrap_err(), AuthCode::NoSession);
+        assert_eq!(
+            run(client(&server).delete_session(&secret())).unwrap_err(),
+            AuthCode::NoSession
+        );
     }
 
     // ---- the core's exchange -------------------------------------------
@@ -686,7 +845,11 @@ mod tests {
             (404, AuthCode::Unavailable),
         ] {
             let server = MockServer::start(vec![Reply::json(status, r#"{"error":"Forbidden"}"#)]);
-            assert_eq!(run(client(&server).core_exchange(jwt("j"), "gable")).unwrap_err(), want, "status {status}");
+            assert_eq!(
+                run(client(&server).core_exchange(jwt("j"), "gable")).unwrap_err(),
+                want,
+                "status {status}"
+            );
         }
     }
 
@@ -695,9 +858,16 @@ mod tests {
         let server = MockServer::start(vec![Reply::json(200, ANSWER)]);
         let c = client(&server);
         for org in ["", "Gable", "a b", "-x", &"a".repeat(33), "a/b", "a\"b"] {
-            assert_eq!(run(c.core_exchange(jwt("j"), org)).unwrap_err(), AuthCode::BadRequest, "{org:?}");
+            assert_eq!(
+                run(c.core_exchange(jwt("j"), org)).unwrap_err(),
+                AuthCode::BadRequest,
+                "{org:?}"
+            );
         }
-        assert!(server.finish().is_empty(), "a bad org never leaves the machine");
+        assert!(
+            server.finish().is_empty(),
+            "a bad org never leaves the machine"
+        );
 
         for body in [
             "{}",
@@ -707,15 +877,25 @@ mod tests {
             "nope",
         ] {
             let server = MockServer::start(vec![Reply::json(200, body)]);
-            assert_eq!(run(client(&server).core_exchange(jwt("j"), "gable")).unwrap_err(), AuthCode::Unavailable, "{body}");
+            assert_eq!(
+                run(client(&server).core_exchange(jwt("j"), "gable")).unwrap_err(),
+                AuthCode::Unavailable,
+                "{body}"
+            );
         }
     }
 
     #[test]
     fn an_oversized_answer_is_refused_without_buffering_it_all() {
-        let big = format!(r#"{{"token":"{}","expiresAtMs":1,"user":{{}}}}"#, "x".repeat(200_000));
+        let big = format!(
+            r#"{{"token":"{}","expiresAtMs":1,"user":{{}}}}"#,
+            "x".repeat(200_000)
+        );
         let server = MockServer::start(vec![Reply::json(200, &big)]);
-        assert_eq!(run(client(&server).core_exchange(jwt("j"), "gable")).unwrap_err(), AuthCode::Unavailable);
+        assert_eq!(
+            run(client(&server).core_exchange(jwt("j"), "gable")).unwrap_err(),
+            AuthCode::Unavailable
+        );
     }
 
     /// A real TLS handshake with the compiled in roots (not run by default:
@@ -726,9 +906,13 @@ mod tests {
     #[test]
     #[ignore = "needs the network"]
     fn live_tls_handshake_uses_the_compiled_roots() {
-        let cfg = AuthConfig::new("https://example.com/v1", "proj-1", "https://example.com").unwrap();
+        let cfg =
+            AuthConfig::new("https://example.com/v1", "proj-1", "https://example.com").unwrap();
         let got = run(ConsoleClient::new(&cfg).unwrap().account(&secret()));
-        assert!(!matches!(got, Err(AuthCode::Offline)), "the handshake failed: {got:?}");
+        assert!(
+            !matches!(got, Err(AuthCode::Offline)),
+            "the handshake failed: {got:?}"
+        );
     }
 
     // ---- nothing echoed ------------------------------------------------
@@ -746,7 +930,10 @@ mod tests {
             AuthCode::Unavailable,
             AuthCode::RateLimited,
         ] {
-            assert_eq!(serde_json::to_value(code).unwrap(), serde_json::json!({ "code": code.code() }));
+            assert_eq!(
+                serde_json::to_value(code).unwrap(),
+                serde_json::json!({ "code": code.code() })
+            );
         }
         assert_eq!(AuthCode::KeychainUnavailable.code(), "keychain_unavailable");
         assert_eq!(AuthCode::RateLimited.code(), "rate_limited");
@@ -757,8 +944,10 @@ mod tests {
         let answer = ExchangeAnswer {
             token: CoreToken::new("tok-secret".into()).unwrap(),
             expires_at_ms: 1,
-            user: serde_json::from_value::<ExchangeUser>(serde_json::from_str::<serde_json::Value>(ANSWER).unwrap()["user"].clone())
-                .unwrap(),
+            user: serde_json::from_value::<ExchangeUser>(
+                serde_json::from_str::<serde_json::Value>(ANSWER).unwrap()["user"].clone(),
+            )
+            .unwrap(),
         };
         assert!(!format!("{answer:?}").contains("tok-secret"));
     }
@@ -767,10 +956,21 @@ mod tests {
     fn the_failing_paths_never_put_input_in_the_error() {
         // The credentials and the secret appear in no error value or its debug
         // form, whatever the Console answers.
-        let server = MockServer::start(vec![Reply::json(401, r#"{"message":"bad pw-unique-77 a@unique.example"}"#)]);
-        let err = run(client(&server).create_session("a@unique.example", "pw-unique-77")).unwrap_err();
-        for text in [format!("{err:?}"), err.code().to_string(), serde_json::to_string(&err).unwrap()] {
-            assert!(!text.contains("pw-unique-77") && !text.contains("unique.example"), "{text}");
+        let server = MockServer::start(vec![Reply::json(
+            401,
+            r#"{"message":"bad pw-unique-77 a@unique.example"}"#,
+        )]);
+        let err =
+            run(client(&server).create_session("a@unique.example", "pw-unique-77")).unwrap_err();
+        for text in [
+            format!("{err:?}"),
+            err.code().to_string(),
+            serde_json::to_string(&err).unwrap(),
+        ] {
+            assert!(
+                !text.contains("pw-unique-77") && !text.contains("unique.example"),
+                "{text}"
+            );
         }
     }
 }

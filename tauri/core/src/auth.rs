@@ -62,11 +62,21 @@ impl AuthService {
     /// `profile_identifier` is the profile's own identifier (the keychain
     /// service); the project id comes from the configuration. Neither comes
     /// from the webview.
-    pub fn new(profile_identifier: &str, config: &AuthConfig, custody: Arc<dyn Custody>) -> Result<Self, AuthCode> {
+    pub fn new(
+        profile_identifier: &str,
+        config: &AuthConfig,
+        custody: Arc<dyn Custody>,
+    ) -> Result<Self, AuthCode> {
         let console = ConsoleClient::new(config)?;
         let address = Address::console_session(profile_identifier, console.project_id())
             .map_err(|_| AuthCode::Unavailable)?;
-        Ok(Self { console, custody, address, best_effort: SIGN_OUT_BEST_EFFORT, writes: tokio::sync::Mutex::new(()) })
+        Ok(Self {
+            console,
+            custody,
+            address,
+            best_effort: SIGN_OUT_BEST_EFFORT,
+            writes: tokio::sync::Mutex::new(()),
+        })
     }
 
     /// Tests use a short window.
@@ -141,7 +151,8 @@ impl AuthService {
         let secret = self.get().await.ok().flatten().and_then(SessionSecret::new);
         let cleared = self.delete().await;
         if let Some(secret) = secret {
-            let _ = tokio::time::timeout(self.best_effort, self.console.delete_session(&secret)).await;
+            let _ =
+                tokio::time::timeout(self.best_effort, self.console.delete_session(&secret)).await;
         }
         cleared
     }
@@ -152,7 +163,10 @@ mod tests {
     use super::*;
     use crate::custody::{Address, Custody, MemoryCustody};
     use crate::mock_http::{closed_port, MockServer, Reply, Seen};
-    use std::{sync::Arc, time::{Duration, Instant}};
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     const PROJECT: &str = "proj-1";
     const PROFILE: &str = "ai.futurebuild.hh.field";
@@ -167,7 +181,11 @@ mod tests {
     }
 
     fn run<F: std::future::Future>(f: F) -> F::Output {
-        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(f)
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(f)
     }
 
     fn service(server_url: &str, custody: Arc<MemoryCustody>) -> AuthService {
@@ -176,7 +194,10 @@ mod tests {
     }
 
     fn created() -> Reply {
-        Reply::json(201, "{}").header("Set-Cookie", &format!("a_session_{PROJECT}={SECRET}; Path=/; HttpOnly"))
+        Reply::json(201, "{}").header(
+            "Set-Cookie",
+            &format!("a_session_{PROJECT}={SECRET}; Path=/; HttpOnly"),
+        )
     }
 
     fn jwt_reply(v: &str) -> Reply {
@@ -188,7 +209,9 @@ mod tests {
     }
 
     fn paths(seen: &[Seen]) -> Vec<String> {
-        seen.iter().map(|s| format!("{} {}", s.method, s.path)).collect()
+        seen.iter()
+            .map(|s| format!("{} {}", s.method, s.path))
+            .collect()
     }
 
     // ---- sign in -------------------------------------------------------
@@ -197,34 +220,52 @@ mod tests {
     fn sign_in_stores_the_secret_and_returns_the_user_only() {
         let server = MockServer::start(vec![created(), Reply::json(200, ACCOUNT_OK)]);
         let custody = Arc::new(MemoryCustody::new());
-        let user = run(service(&server.url(), custody.clone()).sign_in("a@b.example", PASSWORD)).unwrap();
+        let user =
+            run(service(&server.url(), custody.clone()).sign_in("a@b.example", PASSWORD)).unwrap();
         let seen = server.finish();
         assert_eq!(user.user_id, "u1");
         assert_eq!(user.email, "a@b.example");
         assert_eq!(custody.get(&addr()), Ok(Some(SECRET.to_string())));
-        assert_eq!(paths(&seen), ["POST /v1/account/sessions/email", "GET /v1/account"]);
+        assert_eq!(
+            paths(&seen),
+            ["POST /v1/account/sessions/email", "GET /v1/account"]
+        );
         assert_eq!(seen[1].header("cookie"), Some(cookie(SECRET).as_str()));
         let json = serde_json::to_string(&user).unwrap();
-        assert!(!json.contains(SECRET), "the secret never reaches the answer");
+        assert!(
+            !json.contains(SECRET),
+            "the secret never reaches the answer"
+        );
     }
 
     #[test]
     fn sign_in_with_an_unavailable_keychain_fails_closed_before_any_console_call() {
         let server = MockServer::start(vec![created(), Reply::json(200, ACCOUNT_OK)]);
         let custody = Arc::new(MemoryCustody::unavailable());
-        let err = run(service(&server.url(), custody).sign_in("a@b.example", PASSWORD)).unwrap_err();
+        let err =
+            run(service(&server.url(), custody).sign_in("a@b.example", PASSWORD)).unwrap_err();
         assert_eq!(err, AuthCode::KeychainUnavailable);
-        assert!(server.finish().is_empty(), "no Console session is created that cannot be kept");
+        assert!(
+            server.finish().is_empty(),
+            "no Console session is created that cannot be kept"
+        );
     }
 
     #[test]
     fn sign_in_that_cannot_store_deletes_the_session_it_made() {
         let server = MockServer::start(vec![created(), Reply::status(204)]);
         let custody = Arc::new(MemoryCustody::writes_fail());
-        let err = run(service(&server.url(), custody.clone()).sign_in("a@b.example", PASSWORD)).unwrap_err();
+        let err = run(service(&server.url(), custody.clone()).sign_in("a@b.example", PASSWORD))
+            .unwrap_err();
         let seen = server.finish();
         assert_eq!(err, AuthCode::KeychainUnavailable);
-        assert_eq!(paths(&seen), ["POST /v1/account/sessions/email", "DELETE /v1/account/sessions/current"]);
+        assert_eq!(
+            paths(&seen),
+            [
+                "POST /v1/account/sessions/email",
+                "DELETE /v1/account/sessions/current"
+            ]
+        );
         assert_eq!(seen[1].header("cookie"), Some(cookie(SECRET).as_str()));
         assert_eq!(custody.snapshot_len(), 0);
     }
@@ -233,7 +274,8 @@ mod tests {
     fn a_refused_sign_in_stores_nothing() {
         let server = MockServer::start(vec![Reply::json(401, "{}")]);
         let custody = Arc::new(MemoryCustody::new());
-        let err = run(service(&server.url(), custody.clone()).sign_in("a@b.example", PASSWORD)).unwrap_err();
+        let err = run(service(&server.url(), custody.clone()).sign_in("a@b.example", PASSWORD))
+            .unwrap_err();
         assert_eq!(err, AuthCode::BadCredentials);
         assert_eq!(custody.snapshot_len(), 0);
     }
@@ -242,19 +284,32 @@ mod tests {
     fn a_sign_in_whose_account_read_fails_rolls_back_the_entry_and_the_session() {
         let server = MockServer::start(vec![created(), Reply::status(503), Reply::status(204)]);
         let custody = Arc::new(MemoryCustody::new());
-        let err = run(service(&server.url(), custody.clone()).sign_in("a@b.example", PASSWORD)).unwrap_err();
+        let err = run(service(&server.url(), custody.clone()).sign_in("a@b.example", PASSWORD))
+            .unwrap_err();
         let seen = server.finish();
         assert_eq!(err, AuthCode::Unavailable);
-        assert_eq!(custody.snapshot_len(), 0, "a failed sign in leaves no half signed in state");
+        assert_eq!(
+            custody.snapshot_len(),
+            0,
+            "a failed sign in leaves no half signed in state"
+        );
         assert_eq!(
             paths(&seen),
-            ["POST /v1/account/sessions/email", "GET /v1/account", "DELETE /v1/account/sessions/current"]
+            [
+                "POST /v1/account/sessions/email",
+                "GET /v1/account",
+                "DELETE /v1/account/sessions/current"
+            ]
         );
     }
 
     #[test]
     fn signing_in_over_an_old_entry_replaces_it_and_ends_the_old_console_session() {
-        let server = MockServer::start(vec![created(), Reply::json(200, ACCOUNT_OK), Reply::status(204)]);
+        let server = MockServer::start(vec![
+            created(),
+            Reply::json(200, ACCOUNT_OK),
+            Reply::status(204),
+        ]);
         let custody = Arc::new(MemoryCustody::new());
         custody.set(&addr(), OLD_SECRET).unwrap();
         run(service(&server.url(), custody.clone()).sign_in("a@b.example", PASSWORD)).unwrap();
@@ -282,7 +337,10 @@ mod tests {
         // No entry: no_session without a request.
         let server = MockServer::start(vec![]);
         let custody = Arc::new(MemoryCustody::new());
-        assert_eq!(run(service(&server.url(), custody).resume()).unwrap_err(), AuthCode::NoSession);
+        assert_eq!(
+            run(service(&server.url(), custody).resume()).unwrap_err(),
+            AuthCode::NoSession
+        );
         assert!(server.finish().is_empty());
 
         for (status, want) in [
@@ -296,8 +354,16 @@ mod tests {
             let server = MockServer::start(vec![Reply::json(status, "{}")]);
             let custody = Arc::new(MemoryCustody::new());
             custody.set(&addr(), SECRET).unwrap();
-            assert_eq!(run(service(&server.url(), custody.clone()).resume()).unwrap_err(), want, "{status}");
-            assert_eq!(custody.snapshot_len(), 1, "a resume never deletes the entry");
+            assert_eq!(
+                run(service(&server.url(), custody.clone()).resume()).unwrap_err(),
+                want,
+                "{status}"
+            );
+            assert_eq!(
+                custody.snapshot_len(),
+                1,
+                "a resume never deletes the entry"
+            );
         }
 
         // Console cannot be reached: offline.
@@ -309,7 +375,10 @@ mod tests {
         // The keychain is unavailable.
         let server = MockServer::start(vec![]);
         let svc = service(&server.url(), Arc::new(MemoryCustody::unavailable()));
-        assert_eq!(run(svc.resume()).unwrap_err(), AuthCode::KeychainUnavailable);
+        assert_eq!(
+            run(svc.resume()).unwrap_err(),
+            AuthCode::KeychainUnavailable
+        );
     }
 
     // ---- exchange ------------------------------------------------------
@@ -327,7 +396,10 @@ mod tests {
         let seen = server.finish();
         assert_eq!(answer.expires_at_ms, 99);
         assert_eq!(answer.token.expose(), "core-token-sentinel");
-        assert_eq!(paths(&seen), ["POST /v1/account/jwts", "POST /api/v1/auth/exchange"]);
+        assert_eq!(
+            paths(&seen),
+            ["POST /v1/account/jwts", "POST /api/v1/auth/exchange"]
+        );
         let body: serde_json::Value = serde_json::from_str(&seen[1].body).unwrap();
         assert_eq!(body, serde_json::json!({"jwt": "jwt-a", "org": "gable"}));
     }
@@ -345,10 +417,18 @@ mod tests {
         assert_eq!(answer.expires_at_ms, 99);
         assert_eq!(
             paths(&seen),
-            ["POST /v1/account/jwts", "POST /api/v1/auth/exchange", "POST /v1/account/jwts", "POST /api/v1/auth/exchange"]
+            [
+                "POST /v1/account/jwts",
+                "POST /api/v1/auth/exchange",
+                "POST /v1/account/jwts",
+                "POST /api/v1/auth/exchange"
+            ]
         );
         assert!(seen[1].body.contains("jwt-a") && !seen[1].body.contains("jwt-b"));
-        assert!(seen[3].body.contains("jwt-b") && !seen[3].body.contains("jwt-a"), "never the first JWT again");
+        assert!(
+            seen[3].body.contains("jwt-b") && !seen[3].body.contains("jwt-a"),
+            "never the first JWT again"
+        );
     }
 
     #[test]
@@ -361,7 +441,10 @@ mod tests {
             jwt_reply("jwt-c"),
             Reply::json(200, ANSWER),
         ]);
-        assert_eq!(run(with_entry(&server).exchange("gable")).unwrap_err(), AuthCode::Unauthorized);
+        assert_eq!(
+            run(with_entry(&server).exchange("gable")).unwrap_err(),
+            AuthCode::Unauthorized
+        );
         assert_eq!(server.finish().len(), 4);
     }
 
@@ -373,17 +456,33 @@ mod tests {
             (429, AuthCode::RateLimited),
             (503, AuthCode::Unavailable),
         ] {
-            let server = MockServer::start(vec![jwt_reply("jwt-a"), Reply::json(status, "{}"), jwt_reply("jwt-b")]);
-            assert_eq!(run(with_entry(&server).exchange("gable")).unwrap_err(), want, "{status}");
+            let server = MockServer::start(vec![
+                jwt_reply("jwt-a"),
+                Reply::json(status, "{}"),
+                jwt_reply("jwt-b"),
+            ]);
+            assert_eq!(
+                run(with_entry(&server).exchange("gable")).unwrap_err(),
+                want,
+                "{status}"
+            );
             assert_eq!(server.finish().len(), 2, "status {status} is not retried");
         }
     }
 
     #[test]
     fn a_console_refusal_at_the_mint_is_no_session_and_never_reaches_the_core() {
-        for (status, want) in [(401, AuthCode::NoSession), (429, AuthCode::RateLimited), (500, AuthCode::Unavailable)] {
+        for (status, want) in [
+            (401, AuthCode::NoSession),
+            (429, AuthCode::RateLimited),
+            (500, AuthCode::Unavailable),
+        ] {
             let server = MockServer::start(vec![Reply::json(status, "{}")]);
-            assert_eq!(run(with_entry(&server).exchange("gable")).unwrap_err(), want, "{status}");
+            assert_eq!(
+                run(with_entry(&server).exchange("gable")).unwrap_err(),
+                want,
+                "{status}"
+            );
             assert_eq!(server.finish().len(), 1);
         }
     }
@@ -394,9 +493,15 @@ mod tests {
         let svc = service(&server.url(), Arc::new(MemoryCustody::new()));
         assert_eq!(run(svc.exchange("gable")).unwrap_err(), AuthCode::NoSession);
         let svc = with_entry(&server);
-        assert_eq!(run(svc.exchange("Not A Slug")).unwrap_err(), AuthCode::BadRequest);
+        assert_eq!(
+            run(svc.exchange("Not A Slug")).unwrap_err(),
+            AuthCode::BadRequest
+        );
         let svc = service(&server.url(), Arc::new(MemoryCustody::unavailable()));
-        assert_eq!(run(svc.exchange("gable")).unwrap_err(), AuthCode::KeychainUnavailable);
+        assert_eq!(
+            run(svc.exchange("gable")).unwrap_err(),
+            AuthCode::KeychainUnavailable
+        );
         assert!(server.finish().is_empty());
     }
 
@@ -428,7 +533,10 @@ mod tests {
         // Unreachable.
         let custody = Arc::new(MemoryCustody::new());
         custody.set(&addr(), SECRET).unwrap();
-        let svc = service(&format!("http://127.0.0.1:{}", closed_port()), custody.clone());
+        let svc = service(
+            &format!("http://127.0.0.1:{}", closed_port()),
+            custody.clone(),
+        );
         run(svc.sign_out()).unwrap();
         assert_eq!(custody.get(&addr()), Ok(None));
 
@@ -443,7 +551,8 @@ mod tests {
         let server = MockServer::start(vec![Reply::hang()]);
         let custody = Arc::new(MemoryCustody::new());
         custody.set(&addr(), SECRET).unwrap();
-        let svc = service(&server.url(), custody.clone()).with_best_effort(Duration::from_millis(300));
+        let svc =
+            service(&server.url(), custody.clone()).with_best_effort(Duration::from_millis(300));
         let started = Instant::now();
         run(svc.sign_out()).unwrap();
         assert!(started.elapsed() < Duration::from_secs(5));
@@ -457,19 +566,39 @@ mod tests {
         assert!(server.finish().is_empty(), "no secret, so no Console call");
         let server = MockServer::start(vec![]);
         let svc = service(&server.url(), Arc::new(MemoryCustody::unavailable()));
-        assert_eq!(run(svc.sign_out()).unwrap_err(), AuthCode::KeychainUnavailable);
+        assert_eq!(
+            run(svc.sign_out()).unwrap_err(),
+            AuthCode::KeychainUnavailable
+        );
     }
 
     // ---- nothing logged, nothing echoed ---------------------------------
 
     #[test]
     fn no_secret_reaches_an_error_value_on_any_failing_path() {
-        let sentinels = [SECRET, OLD_SECRET, PASSWORD, "core-token-sentinel", "jwt-a", "a@b.example"];
+        let sentinels = [
+            SECRET,
+            OLD_SECRET,
+            PASSWORD,
+            "core-token-sentinel",
+            "jwt-a",
+            "a@b.example",
+        ];
         let mut errors: Vec<AuthCode> = Vec::new();
         for status in [400, 401, 403, 429, 500, 503] {
-            let server = MockServer::start(vec![Reply::json(status, &format!(r#"{{"message":"{PASSWORD} {SECRET}"}}"#))]);
-            errors.push(run(service(&server.url(), Arc::new(MemoryCustody::new())).sign_in("a@b.example", PASSWORD)).unwrap_err());
-            let server = MockServer::start(vec![jwt_reply("jwt-a"), Reply::json(status, &format!(r#"{{"error":"{SECRET}"}}"#))]);
+            let server = MockServer::start(vec![Reply::json(
+                status,
+                &format!(r#"{{"message":"{PASSWORD} {SECRET}"}}"#),
+            )]);
+            errors.push(
+                run(service(&server.url(), Arc::new(MemoryCustody::new()))
+                    .sign_in("a@b.example", PASSWORD))
+                .unwrap_err(),
+            );
+            let server = MockServer::start(vec![
+                jwt_reply("jwt-a"),
+                Reply::json(status, &format!(r#"{{"error":"{SECRET}"}}"#)),
+            ]);
             errors.extend(run(with_entry(&server).exchange("gable")).err());
         }
         assert!(errors.len() >= 12);
@@ -509,14 +638,25 @@ mod tests {
 
         let (etx, erx) = mpsc::channel();
         let (rtx, rrx) = mpsc::channel();
-        let gate = Arc::new(Gate { inner: MemoryCustody::new(), entered: Mutex::new(etx), release: Mutex::new(rrx) });
-        let server = MockServer::start(vec![created(), Reply::json(200, ACCOUNT_OK), Reply::json(204, "")]);
+        let gate = Arc::new(Gate {
+            inner: MemoryCustody::new(),
+            entered: Mutex::new(etx),
+            release: Mutex::new(rrx),
+        });
+        let server = MockServer::start(vec![
+            created(),
+            Reply::json(200, ACCOUNT_OK),
+            Reply::json(204, ""),
+        ]);
         let cfg = AuthConfig::for_test(&format!("{}/v1", server.url()), PROJECT, &server.url());
         let svc = Arc::new(AuthService::new(PROFILE, &cfg, gate.clone()).unwrap());
         run(async {
             let s_in = svc.clone();
-            let signing_in = tokio::spawn(async move { s_in.sign_in("a@b.example", PASSWORD).await });
-            tokio::task::spawn_blocking(move || erx.recv().unwrap()).await.unwrap();
+            let signing_in =
+                tokio::spawn(async move { s_in.sign_in("a@b.example", PASSWORD).await });
+            tokio::task::spawn_blocking(move || erx.recv().unwrap())
+                .await
+                .unwrap();
             let s_out = svc.clone();
             let signing_out = tokio::spawn(async move { s_out.sign_out().await });
             // Give an unserialised sign out every chance to finish first.
@@ -526,7 +666,11 @@ mod tests {
             signing_out.await.unwrap().unwrap();
         });
         drop(server);
-        assert_eq!(gate.inner.get(&addr()), Ok(None), "the sign out returned, yet a live session secret sits in custody");
+        assert_eq!(
+            gate.inner.get(&addr()),
+            Ok(None),
+            "the sign out returned, yet a live session secret sits in custody"
+        );
     }
 
     #[test]
@@ -542,7 +686,20 @@ mod tests {
         ];
         for (name, src) in sources {
             let production = src.split("#[cfg(test)]").next().unwrap();
-            for banned in ["println!", "eprintln!", "print!(", "eprint!(", "dbg!", "log::", "tracing::", "info!(", "warn!(", "debug!(", "error!(", "trace!("] {
+            for banned in [
+                "println!",
+                "eprintln!",
+                "print!(",
+                "eprint!(",
+                "dbg!",
+                "log::",
+                "tracing::",
+                "info!(",
+                "warn!(",
+                "debug!(",
+                "error!(",
+                "trace!(",
+            ] {
                 assert!(!production.contains(banned), "{name} contains {banned}");
             }
         }
