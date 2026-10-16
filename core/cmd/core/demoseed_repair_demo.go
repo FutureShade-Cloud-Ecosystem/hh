@@ -1,7 +1,8 @@
 //go:build demo
 
 // demoseed_repair_demo.go, the demo build's side of the seed-repair seam: the guarded repairs
-// (a home branch, and empty product applications) this command carries, for databases the OLD plan already seeded.
+// (a home branch, empty product applications, the sync stamps and the order reps) this command
+// carries, for databases the OLD plan already seeded.
 //
 // WHY A REPAIR AT ALL. The applier is INSERT-only, by construction, so a change to a row the plan
 // already wrote (C01's home branch, moved to Trenton by plan.go's ruling) lands only on databases
@@ -55,8 +56,52 @@ func repairDemoWorld(ctx context.Context, tx txExec, now time.Time, branches []b
 	if err != nil {
 		return 0, err
 	}
+	reps, err := repairDemoOrderReps(ctx, tx, now, branches)
+	if err != nil {
+		return 0, err
+	}
 	n, err := repairNorthlineHome(ctx, tx, now, branches)
-	return fixed + stamped + tasks + n, err
+	return fixed + stamped + tasks + reps + n, err
+}
+
+// demoOpenOrderStatuses is what "an open order" means to the rep repair: the four statuses the
+// walk's orders sit in while there is still yard, counter and desk work on them. Finished history
+// (FULFILLED, INVOICED, CLOSED) and never-happened rows (DRAFT, CANCELLED) carry no rep story.
+var demoOpenOrderStatuses = []string{"CONFIRMED", "PICKING", "READY", "PARTIALLY_FULFILLED"}
+
+// orderRepRepairSQL sets the Sales persona as the salesperson on the open orders of the branch the
+// demo logins work. The seed's orders are planted on the first apply, before the demo populate
+// creates that login, and the applier is INSERT-only, so a plan column cannot carry the value: the
+// quote world solves the same problem the same way (demoseed_quotes.go builds nothing until the
+// logins resolve). The guards hold the repair to its case: the row must still carry no salesperson
+// (a second run matches nothing, and a rep somebody set by hand is left alone), the row must be
+// the seed's own (the demo marker) and the walk's (the yard branch, the open statuses), and the
+// Sales login must exist (on the first apply of a fresh box it does not yet). The persona is
+// resolved by email, the same join key resolvePersonas uses, never an id baked into the binary.
+const orderRepRepairSQL = `UPDATE orders
+	   SET salesperson_id = (SELECT id FROM users WHERE email = $1::citext), updated_at = $2
+	 WHERE salesperson_id IS NULL
+	   AND branch_id = $3::uuid
+	   AND status = ANY($4::text[])
+	   AND metadata->>'demo_seed' = $5
+	   AND EXISTS (SELECT 1 FROM users WHERE email = $1::citext)`
+
+// repairDemoOrderReps gives the open yard-branch orders their rep, so the short pick notice (and
+// every other order rep route: the order's own salesperson before the customer's) reaches the
+// Sales persona's DM instead of the empty sales room the fallback posts to. It runs beside the
+// other repairs on the apply transaction and returns how many rows it stamped.
+func repairDemoOrderReps(ctx context.Context, tx txExec, now time.Time, branches []branch) (int, error) {
+	if len(branches) == 0 {
+		return 0, nil
+	}
+	// The yard branch the demo logins work: the second by code order, the same branch
+	// repairNorthlineHome re-homes onto; a single-branch box has only the one yard.
+	yard := branches[len(branches)-1].ID
+	tag, err := tx.Exec(ctx, orderRepRepairSQL, personaQuoteSales, now, yard, demoOpenOrderStatuses, demoMarker)
+	if err != nil {
+		return 0, fmt.Errorf("demoseed: setting the demo rep on the open yard-branch orders: %w", err)
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // taskSyncRepairSQL gives the demo tasks of one type their org stamp and their place in the type's
@@ -223,6 +268,22 @@ func repairDemoWorldPlan(ctx context.Context, out *os.File, rows rowQuery, branc
 		   AND EXISTS (SELECT 1 FROM org WHERE slug = $2::citext)`,
 		demoID(dayKey(stamp, "driver-run")), demoOrgSlug).Scan(&unstamped); err == nil && unstamped > 0 {
 		fmt.Fprintf(out, "  org repair     the Driver's day-keyed run and stops take the demo org with -apply\n")
+	}
+	// The rep repair says its line only when it will stamp: the Sales login exists (the populate
+	// has run) and open yard-branch orders still carry no salesperson.
+	if len(branches) > 0 {
+		var unowned int
+		if err := rows.QueryRow(ctx, `
+			SELECT count(*) FROM orders
+			 WHERE salesperson_id IS NULL
+			   AND branch_id = $1::uuid
+			   AND status = ANY($2::text[])
+			   AND metadata->>'demo_seed' = $3
+			   AND EXISTS (SELECT 1 FROM users WHERE email = $4::citext)`,
+			branches[len(branches)-1].ID, demoOpenOrderStatuses, demoMarker, personaQuoteSales).Scan(&unowned); err == nil && unowned > 0 {
+			fmt.Fprintf(out, "  rep repair     %d open %s order(s) have no sales rep and get the Sales persona with -apply\n",
+				unowned, branches[len(branches)-1].Code)
+		}
 	}
 	if len(branches) > 1 && branches[0].ID != branches[1].ID {
 		var waiting int

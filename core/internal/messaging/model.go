@@ -24,6 +24,11 @@ const (
 	// KindApproval is a per-person approvals-rail channel (0075): slug approvals-<username>, sole member
 	// the approver. One dedicated surface per approver so a decision card is never lost in a busy channel.
 	KindApproval = "APPROVAL"
+	// KindGroup is a named group room (walk change 7, slice S2, rulings 3 and
+	// 4): explicit membership like a DM's (never rule filled), no branch and
+	// no slug (it spans branches and converges on nothing), any member adds a
+	// person and renames, and a system line records both.
+	KindGroup = "GROUP"
 )
 
 // Message kinds (mirror the msg_messages CHECK).

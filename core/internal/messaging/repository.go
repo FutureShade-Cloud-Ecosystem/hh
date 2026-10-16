@@ -1748,6 +1748,164 @@ func (r *Repository) AddChannelMember(ctx context.Context, channelID, userID str
 	return m, nil
 }
 
+// - Group rooms (walk change 7, slice S2, rulings 3 and 4) -
+
+// CreateGroup inserts one group room and seats its founding members in ONE
+// transaction: the caller as OWNER and every named staffer as an explicit
+// MEMBER, the feed bump committing with the room or not at all. There is no
+// convergence arm: a group carries no slug (migration 0397's shape guard), so
+// every call starts a fresh room.
+func (r *Repository) CreateGroup(ctx context.Context, ownerUserID, name string, memberIDs []string) (Channel, error) {
+	if r.pool == nil {
+		return Channel{}, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Channel{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var c Channel
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO msg_channels (kind, name, topic, tier)
+		VALUES ('GROUP', $1, '', 'STANDARD')
+		RETURNING `+channelCols, name).
+		Scan(&c.ID, &c.Kind, &c.BranchID, &c.Slug, &c.Name, &c.Topic, &c.Tier, &c.IsArchived, &c.CreatedAt); err != nil {
+		return Channel{}, fmt.Errorf("create group: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO msg_members (channel_id, user_id, role, source)
+		VALUES ($1, $2, 'OWNER', 'EXPLICIT')
+		ON CONFLICT DO NOTHING`, c.ID, ownerUserID); err != nil {
+		return Channel{}, fmt.Errorf("seat the group's owner: %w", err)
+	}
+	for _, id := range memberIDs {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO msg_members (channel_id, user_id, role, source)
+			VALUES ($1, $2, 'MEMBER', 'EXPLICIT')
+			ON CONFLICT DO NOTHING`, c.ID, id); err != nil {
+			return Channel{}, fmt.Errorf("seat a group member: %w", err)
+		}
+	}
+	if err := r.bumpChannelSeq(ctx, tx, c.ID); err != nil {
+		return Channel{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Channel{}, err
+	}
+	return c, nil
+}
+
+// SeatGroupMember seats one staffer in a group room and, on the fresh seat
+// alone, writes the system line naming who was added and by whom, both in the
+// seat's own transaction (the read-back arm answers the row as it stands,
+// writes nothing and bumps nothing, the shared member-add seam's own shape).
+// The active staff wall runs here as at every seat: an inactive staffer can
+// be named but not seated, an id that names no staffer is not found.
+func (r *Repository) SeatGroupMember(ctx context.Context, channelID, userID, adderName, targetName string) (ChannelMember, bool, error) {
+	if r.pool == nil {
+		return ChannelMember{}, false, errNoDB
+	}
+	if err := r.userActive(ctx, userID); err != nil {
+		return ChannelMember{}, false, err
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return ChannelMember{}, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var m ChannelMember
+	err = tx.QueryRow(ctx, `
+		INSERT INTO msg_members (channel_id, user_id, role, source)
+		VALUES ($1, $2, 'MEMBER', 'EXPLICIT')
+		ON CONFLICT (channel_id, user_id) DO NOTHING
+		RETURNING channel_id::text, user_id::text, role, source, joined_at`,
+		channelID, userID).
+		Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Already seated: answer the row as it stands, write no line and
+		// bump no feed (the add's replay is the no-op it reads as).
+		err = tx.QueryRow(ctx, `
+			SELECT channel_id::text, user_id::text, role, source, joined_at
+			FROM msg_members WHERE channel_id = $1 AND user_id = $2`,
+			channelID, userID).
+			Scan(&m.ChannelID, &m.UserID, &m.Role, &m.Source, &m.JoinedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ChannelMember{}, false, errNotFound // no such channel
+		}
+		if err != nil {
+			return ChannelMember{}, false, fmt.Errorf("read seated group member: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return ChannelMember{}, false, err
+		}
+		return m, false, nil
+	}
+	if err != nil {
+		return ChannelMember{}, false, fmt.Errorf("seat group member: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, requires_ack)
+		VALUES ($1, NULL, 'EVENT', $2, '{}'::jsonb, $3, FALSE)`,
+		channelID,
+		fmt.Sprintf("%s added %s to the group.", adderName, targetName),
+		fmt.Sprintf("group-added-%s-%d", userID, m.JoinedAt.UnixNano())); err != nil {
+		return ChannelMember{}, false, fmt.Errorf("write the group add line: %w", err)
+	}
+	if err := r.bumpChannelSeq(ctx, tx, channelID); err != nil {
+		return ChannelMember{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ChannelMember{}, false, err
+	}
+	return m, true, nil
+}
+
+// RenameGroup renames a group room and writes the rename's system line in the
+// UPDATE's own transaction, the feed bump committing with both or neither, so
+// the caller's answer and the members' reads always agree. The UPDATE's own
+// predicate holds the kind: a room of any other kind answers not-found here,
+// the service's refusal having answered first.
+func (r *Repository) RenameGroup(ctx context.Context, channelID, name, actorName string) (Channel, error) {
+	if r.pool == nil {
+		return Channel{}, errNoDB
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Channel{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx,
+		`UPDATE msg_channels SET name = $2, updated_at = now() WHERE id = $1::uuid AND kind = 'GROUP'`,
+		channelID, name)
+	if err != nil {
+		return Channel{}, fmt.Errorf("rename group: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return Channel{}, errNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO msg_messages (channel_id, author_id, kind, body, ref, event_key, requires_ack)
+		VALUES ($1, NULL, 'EVENT', $2, '{}'::jsonb, $3, FALSE)`,
+		channelID,
+		fmt.Sprintf("%s renamed this group to %s.", actorName, name),
+		fmt.Sprintf("group-renamed-%d", time.Now().UnixNano())); err != nil {
+		return Channel{}, fmt.Errorf("write the group rename line: %w", err)
+	}
+	if err := r.bumpChannelSeq(ctx, tx, channelID); err != nil {
+		return Channel{}, err
+	}
+	var c Channel
+	c, err = scanChannel(tx.QueryRow(ctx,
+		`SELECT `+channelCols+` FROM msg_channels WHERE id = $1`, channelID))
+	if err != nil {
+		return Channel{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Channel{}, err
+	}
+	return c, nil
+}
+
 // RemoveChannelMember drops one member row. A DERIVED row is refused
 // (ErrDerivedMember): the role and branch model re-derives it on the next
 // sync, so a hand removal would be undone and lie in between. A removal

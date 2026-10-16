@@ -610,6 +610,7 @@ func (s *StaffService) settingsKitService() *settings.Service {
 	}
 	return settings.NewService(settings.NewStore(r.pool)).
 		WithZone(settings.NewDealerConfigReader(r.pool)).
+		WithLegacyImport(settings.NewDealerConfigReader(r.pool)).
 		WithSurface("quotes.builder", s.SurfaceHooks())
 }
 
