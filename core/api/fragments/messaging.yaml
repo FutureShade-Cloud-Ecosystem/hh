@@ -1027,8 +1027,112 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/v1/messaging/saved:
+    get:
+      operationId: messagingListSaved
+      tags: [staff-messaging]
+      summary: List the caller's saved messages
+      description: Only the caller's own rows, inside rooms they still belong to and the hot window. Deleted messages render with an empty body.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, format: int32, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Saved messages ordered by saved time then message id, descending
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessagingSavedList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: messagingSaveMessage
+      tags: [staff-messaging]
+      summary: Save one message for the caller
+      description: The message must be live and in a room the caller belongs to. Replaying the save keeps the original saved time.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MessagingSavedSave" }
+      responses:
+        "200":
+          description: The saved message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MessagingSavedItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/messaging/saved/{messageID}:
+    delete:
+      operationId: messagingUnsaveMessage
+      tags: [staff-messaging]
+      summary: Remove one of the caller's saved messages
+      description: Idempotent for the caller, including when the row is already absent.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: messageID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: The saved row is absent }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
 components:
   schemas:
+    MessagingSavedSave:
+      type: object
+      required: [message_id]
+      properties:
+        message_id: { type: string, format: uuid }
+
+    MessagingSavedItem:
+      type: object
+      required: [message_id, channel_id, channel_slug, channel_name, author_id, author_name, kind, body, created_at, saved_at]
+      properties:
+        message_id: { type: string, format: uuid }
+        channel_id: { type: string, format: uuid }
+        channel_slug: { type: string }
+        channel_name: { type: string }
+        author_id: { type: string }
+        author_name: { type: string }
+        kind:
+          type: string
+          enum: [TEXT, EVENT, APPROVAL]
+        body: { type: string }
+        created_at: { type: string, format: date-time }
+        saved_at: { type: string, format: date-time }
+
+    MessagingSavedList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/MessagingSavedItem" }
+
     MessagingChannel:
       type: object
       description: >-

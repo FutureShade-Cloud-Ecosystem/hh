@@ -59,6 +59,9 @@ type store interface {
 	CreateDM(ctx context.Context, aUserID, bUserID string) (Channel, bool, error)
 	AddChannelMember(ctx context.Context, channelID, userID string) (ChannelMember, error)
 	RemoveChannelMember(ctx context.Context, channelID, userID string) error
+	SaveMessage(ctx context.Context, userID, messageID string) (SavedMessage, error)
+	ListSavedMessages(ctx context.Context, userID string, limit int) ([]SavedMessage, error)
+	DeleteSavedMessage(ctx context.Context, userID, messageID string) error
 	// The membership walls' reads: the room's kind/branch/auto_scope, the
 	// caller's row role, and the add-target's branch reach.
 	channelFacts(ctx context.Context, channelID string) (channelFactsRow, error)

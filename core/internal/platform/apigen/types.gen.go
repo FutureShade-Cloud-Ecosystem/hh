@@ -3821,6 +3821,27 @@ type LoadBatchView struct {
 	CreatedAt    time.Time              `json:"created_at"`
 }
 
+type MessagingSavedSave struct {
+	MessageId string `json:"message_id"`
+}
+
+type MessagingSavedItem struct {
+	MessageId   string    `json:"message_id"`
+	ChannelId   string    `json:"channel_id"`
+	ChannelSlug string    `json:"channel_slug"`
+	ChannelName string    `json:"channel_name"`
+	AuthorId    string    `json:"author_id"`
+	AuthorName  string    `json:"author_name"`
+	Kind        string    `json:"kind"`
+	Body        string    `json:"body"`
+	CreatedAt   time.Time `json:"created_at"`
+	SavedAt     time.Time `json:"saved_at"`
+}
+
+type MessagingSavedList struct {
+	Items []MessagingSavedItem `json:"items"`
+}
+
 type MessagingChannel struct {
 	Id          string     `json:"id"`
 	Kind        string     `json:"kind"`

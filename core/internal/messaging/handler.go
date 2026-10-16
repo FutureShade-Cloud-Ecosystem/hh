@@ -65,6 +65,9 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// membership write, the branch wall on a channel that names a branch.
 	r.Handle("POST /api/v1/messaging/channels", g.RequireStaff(h.staff(h.createChannel)))
 	r.Handle("POST /api/v1/messaging/dms", g.RequireStaff(h.staff(h.createDM)))
+	r.Handle("GET /api/v1/messaging/saved", g.RequireStaff(h.staff(h.listSaved)))
+	r.Handle("POST /api/v1/messaging/saved", g.RequireStaff(h.staff(h.saveSaved)))
+	r.Handle("DELETE /api/v1/messaging/saved/{messageID}", g.RequireStaff(h.staff(h.unsaveSaved)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/members", g.RequireStaff(h.staff(h.addChannelMember)))
 	r.Handle("DELETE /api/v1/messaging/channels/{id}/members/{userID}", g.RequireStaff(h.staff(h.removeChannelMember)))
 	r.Handle("GET /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.listMessages)))

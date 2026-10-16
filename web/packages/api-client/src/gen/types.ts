@@ -3223,6 +3223,24 @@ export type LoadBatchView = {
   items: LoadBatchItemOutcome[];
   created_at: string;
 };
+export type MessagingSavedSave = {
+  message_id: string;
+};
+export type MessagingSavedItem = {
+  message_id: string;
+  channel_id: string;
+  channel_slug: string;
+  channel_name: string;
+  author_id: string;
+  author_name: string;
+  kind: "TEXT" | "EVENT" | "APPROVAL";
+  body: string;
+  created_at: string;
+  saved_at: string;
+};
+export type MessagingSavedList = {
+  items: MessagingSavedItem[];
+};
 export type MessagingChannel = {
   id: string;
   kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL";

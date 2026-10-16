@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
+import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingSavedItem, MessagingSavedList, MessagingSavedSave, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -397,6 +397,52 @@ export async function messagingPreviewRepRoute(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingPreviewRepRoute",
+  });
+}
+
+export async function messagingListSaved(
+  client: ApiClient,
+  opts?: { limit?: number },
+  call?: ApiCallOptions
+): Promise<Result<MessagingSavedList>> {
+  return client.request<MessagingSavedList>({
+    method: "GET",
+    path: "/api/v1/messaging/saved",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingListSaved",
+  });
+}
+
+export async function messagingSaveMessage(
+  client: ApiClient,
+  body: MessagingSavedSave,
+  call?: ApiCallOptions
+): Promise<Result<MessagingSavedItem>> {
+  return client.request<MessagingSavedItem>({
+    method: "POST",
+    path: "/api/v1/messaging/saved",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingSaveMessage",
+  });
+}
+
+export async function messagingUnsaveMessage(
+  client: ApiClient,
+  messageID: string | number,
+  call?: ApiCallOptions
+): Promise<Result<unknown>> {
+  return client.request<unknown>({
+    method: "DELETE",
+    path: "/api/v1/messaging/saved/{messageID}",
+    pathParams: { messageID },
+    textResponse: true,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingUnsaveMessage",
   });
 }
 
