@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
@@ -619,4 +620,330 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n]
+}
+
+// -- walk change 8: account payment policy (S6), reminder rules (S8 / S5M), enrol / exempt -------------------
+//
+// These read / write the new tables the C8 walk introduced (migrations 0409 and 0410) plus the
+// existing ar_promises_to_pay (0176). They live here, on ARLandingRepository, because that file
+// already touches customers (allowlisted) and because every reading route is a Money Desk surface
+// mounted in the same dib510_register_mount.go as the rest of this repository's API.
+
+// AccountPaymentPolicy is the per-account payment policy read stored as a row, alongside the
+// house default used when no row exists. Mirrors the API contract's BillingAccountPaymentPolicy
+// shape (c8walk C8ReadOnlyForSalesAndTakeAPaymentPanel / PutAccountPaymentPolicy / S6).
+type AccountPaymentPolicy struct {
+	CustomerID       string
+	AchFirst         bool
+	SurchargeRateBps int
+	MinAchCents      int64
+	UpdatedAt        time.Time
+}
+
+// ReadAccountPaymentPolicy reads the stored row; absent row -> house default (ach_first true,
+// surcharge 240 bps, min 0 cents), the read's 200 answer for an absent row.
+func (r *ARLandingRepository) ReadAccountPaymentPolicy(ctx context.Context, customerID string) (AccountPaymentPolicy, error) {
+	if r.pool == nil {
+		return AccountPaymentPolicy{CustomerID: customerID, AchFirst: true, SurchargeRateBps: 240, MinAchCents: 0, UpdatedAt: time.Now()}, nil
+	}
+	var p AccountPaymentPolicy
+	err := r.pool.QueryRow(ctx, `
+        SELECT customer_id::text, ach_first, surcharge_rate_bps, min_ach_cents, updated_at
+          FROM ar_account_payment_policy
+         WHERE customer_id = $1::uuid`, customerID).Scan(&p.CustomerID, &p.AchFirst, &p.SurchargeRateBps, &p.MinAchCents, &p.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AccountPaymentPolicy{CustomerID: customerID, AchFirst: true, SurchargeRateBps: 240, MinAchCents: 0, UpdatedAt: time.Now()}, nil
+	}
+	if err != nil {
+		return AccountPaymentPolicy{}, fmt.Errorf("billing: read account payment policy: %w", err)
+	}
+	return p, nil
+}
+
+// PutAccountPaymentPolicy upserts the row. Caller validates 0..10000 bps and >=0 min_cents; this
+// layer trusts the caller and double-checks via the migration's CHECK.
+func (r *ARLandingRepository) PutAccountPaymentPolicy(ctx context.Context, p AccountPaymentPolicy) (AccountPaymentPolicy, error) {
+	if r.pool == nil {
+		p.UpdatedAt = time.Now()
+		return p, nil
+	}
+	now := time.Now()
+	var out AccountPaymentPolicy
+	err := r.pool.QueryRow(ctx, `
+        INSERT INTO ar_account_payment_policy (customer_id, ach_first, surcharge_rate_bps, min_ach_cents, updated_at)
+        VALUES ($1::uuid, $2, $3, $4, $5)
+        ON CONFLICT (customer_id) DO UPDATE
+          SET ach_first = EXCLUDED.ach_first,
+              surcharge_rate_bps = EXCLUDED.surcharge_rate_bps,
+              min_ach_cents = EXCLUDED.min_ach_cents,
+              updated_at = EXCLUDED.updated_at
+        RETURNING customer_id::text, ach_first, surcharge_rate_bps, min_ach_cents, updated_at`,
+		p.CustomerID, p.AchFirst, p.SurchargeRateBps, p.MinAchCents, now,
+	).Scan(&out.CustomerID, &out.AchFirst, &out.SurchargeRateBps, &out.MinAchCents, &out.UpdatedAt)
+	if err != nil {
+		return AccountPaymentPolicy{}, fmt.Errorf("billing: upsert account payment policy: %w", err)
+	}
+	return out, nil
+}
+
+// ReminderRule is one row of ar_reminder_rules plus the live inverse count (exclusion_count).
+type ReminderRule struct {
+	ID                   string
+	Code                 string
+	Label                string
+	Channel              string
+	DaysPastDue          int
+	MaxPerWindow         int
+	PaylinkURLTemplate   string
+	LastSentAt           *time.Time
+	AmountBroughtInCents int64
+	EnrolledCount        int
+	ExclusionCount       int
+	UpdatedAt            time.Time
+}
+
+// ListReminderRules returns the 5-rule table seeded by 0410, sorted by code for stable ordering.
+func (r *ARLandingRepository) ListReminderRules(ctx context.Context) ([]ReminderRule, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx, `
+        SELECT r.id::text, r.code, r.label, r.channel,
+               r.days_past_due, r.max_per_window,
+               r.paylink_url_template, r.last_sent_at,
+               r.amount_brought_in_cents, r.enrolled_count,
+               (SELECT COUNT(*) FROM ar_reminder_exempts x
+                  WHERE x.rule_id = r.id AND x.exempt = TRUE) AS exclusion_count,
+               r.updated_at
+          FROM ar_reminder_rules r
+         ORDER BY r.code`)
+	if err != nil {
+		return nil, fmt.Errorf("billing: list reminder rules: %w", err)
+	}
+	defer rows.Close()
+	out := []ReminderRule{}
+	for rows.Next() {
+		var x ReminderRule
+		var last *time.Time
+		if err := rows.Scan(&x.ID, &x.Code, &x.Label, &x.Channel, &x.DaysPastDue, &x.MaxPerWindow,
+			&x.PaylinkURLTemplate, &last, &x.AmountBroughtInCents, &x.EnrolledCount,
+			&x.ExclusionCount, &x.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("billing: scan reminder rule: %w", err)
+		}
+		x.LastSentAt = last
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+// EnrolReminder inserts (or flips to exempt=false) the per-account exemption and bumps
+// enrolled_count by exactly 1 on a fresh enrol. Idempotent on an already-enrolled account.
+func (r *ARLandingRepository) EnrolReminder(ctx context.Context, customerID, ruleID string) (EnrolResult, error) {
+	if r.pool == nil {
+		return EnrolResult{CustomerID: customerID, RuleID: ruleID, Exempt: false, UpdatedAt: time.Now()}, nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return EnrolResult{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var priorExempt bool
+	err = tx.QueryRow(ctx, `
+        SELECT exempt FROM ar_reminder_exempts
+         WHERE customer_id = $1::uuid AND rule_id = $2::uuid`, customerID, ruleID).Scan(&priorExempt)
+	alreadyEnrolled := err == nil && !priorExempt
+	if errors.Is(err, pgx.ErrNoRows) {
+		priorExempt = false
+	}
+	now := time.Now()
+	if !alreadyEnrolled {
+		if _, execErr := tx.Exec(ctx, `
+            INSERT INTO ar_reminder_exempts (customer_id, rule_id, exempt, updated_at)
+            VALUES ($1::uuid, $2::uuid, FALSE, $3)
+            ON CONFLICT (customer_id, rule_id) DO UPDATE
+              SET exempt = FALSE, updated_at = EXCLUDED.updated_at`,
+			customerID, ruleID, now); execErr != nil {
+			return EnrolResult{}, fmt.Errorf("billing: enrol upsert: %w", execErr)
+		}
+	}
+	var enrolled int
+	if scanErr := tx.QueryRow(ctx, `SELECT enrolled_count FROM ar_reminder_rules WHERE id = $1::uuid`, ruleID).Scan(&enrolled); scanErr != nil {
+		return EnrolResult{}, fmt.Errorf("billing: read rule count: %w", scanErr)
+	}
+	if !alreadyEnrolled {
+		if _, execErr := tx.Exec(ctx, `
+            UPDATE ar_reminder_rules
+               SET enrolled_count = enrolled_count + 1, updated_at = $2
+             WHERE id = $1::uuid`, ruleID, now); execErr != nil {
+			return EnrolResult{}, fmt.Errorf("billing: bump enrolled_count: %w", execErr)
+		}
+		enrolled++
+	}
+	var excl int
+	if scanErr := tx.QueryRow(ctx, `
+        SELECT COUNT(*) FROM ar_reminder_exempts WHERE rule_id = $1::uuid AND exempt = TRUE`,
+		ruleID).Scan(&excl); scanErr != nil {
+		return EnrolResult{}, fmt.Errorf("billing: read exclusion_count: %w", scanErr)
+	}
+	if commitErr := tx.Commit(ctx); commitErr != nil {
+		return EnrolResult{}, commitErr
+	}
+	return EnrolResult{CustomerID: customerID, RuleID: ruleID, Exempt: false, EnrolledCount: enrolled, ExclusionCount: excl, UpdatedAt: now}, nil
+}
+
+// ExemptReminder upserts exempt=true for the (customer, rule) pair. The note is application-validated
+// for required + length before this is called (the route layer's note gate).
+func (r *ARLandingRepository) ExemptReminder(ctx context.Context, customerID, ruleID, note, actorID string) (EnrolResult, error) {
+	if r.pool == nil {
+		return EnrolResult{CustomerID: customerID, RuleID: ruleID, Exempt: true, Note: note, ExclusionCount: 1, UpdatedAt: time.Now()}, nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return EnrolResult{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	actor := noteStrOrNil(actorID)
+	now := time.Now()
+	if _, execErr := tx.Exec(ctx, `
+        INSERT INTO ar_reminder_exempts (customer_id, rule_id, exempt, note, actor_id, updated_at)
+        VALUES ($1::uuid, $2::uuid, TRUE, $3, $4::uuid, $5)
+        ON CONFLICT (customer_id, rule_id) DO UPDATE
+          SET exempt = TRUE, note = EXCLUDED.note, actor_id = COALESCE(EXCLUDED.actor_id, ar_reminder_exempts.actor_id), updated_at = EXCLUDED.updated_at`,
+		customerID, ruleID, note, actor, now); execErr != nil {
+		return EnrolResult{}, fmt.Errorf("billing: exempt upsert: %w", execErr)
+	}
+	var enrolled int
+	if scanErr := tx.QueryRow(ctx, `SELECT enrolled_count FROM ar_reminder_rules WHERE id = $1::uuid`, ruleID).Scan(&enrolled); scanErr != nil {
+		return EnrolResult{}, fmt.Errorf("billing: read rule count: %w", scanErr)
+	}
+	var excl int
+	if scanErr := tx.QueryRow(ctx, `
+        SELECT COUNT(*) FROM ar_reminder_exempts WHERE rule_id = $1::uuid AND exempt = TRUE`,
+		ruleID).Scan(&excl); scanErr != nil {
+		return EnrolResult{}, fmt.Errorf("billing: read exclusion_count: %w", scanErr)
+	}
+	if commitErr := tx.Commit(ctx); commitErr != nil {
+		return EnrolResult{}, commitErr
+	}
+	return EnrolResult{CustomerID: customerID, RuleID: ruleID, Exempt: true, Note: note, EnrolledCount: enrolled, ExclusionCount: excl, UpdatedAt: now}, nil
+}
+
+// EnrolResult is the shape the enrol / exempt routes return. The actor and rule rows are private to
+// billing; the route layer translates this onto its own wire type.
+type EnrolResult struct {
+	CustomerID     string
+	RuleID         string
+	Exempt         bool
+	Note           string
+	EnrolledCount  int
+	ExclusionCount int
+	UpdatedAt      time.Time
+}
+
+// noteStrOrNil returns nil for empty actor ids so the SQL gets a typed NULL rather than the empty
+// string (the column is uuid, an empty string would cast fail).
+func noteStrOrNil(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// ListPromisesEnriched returns the cross-account Promises tab read (S5): ar_promises_to_pay rows
+// enriched with customer name and invoice number, newest first, cursor paginated.
+func (r *ARLandingRepository) ListPromisesEnriched(ctx context.Context, status []string, customerID, cursor string, limit int) ([]EnrichedPromiseRow, *string, error) {
+	if r.pool == nil {
+		return []EnrichedPromiseRow{}, nil, nil
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	effStatus := status
+	if len(effStatus) == 0 {
+		effStatus = []string{"OPEN", "KEPT", "BROKEN", "CANCELLED"}
+	}
+	args := []any{effStatus}
+	where := []string{"p.status = ANY($1)"}
+	if customerID != "" {
+		args = append(args, customerID)
+		where = append(where, fmt.Sprintf("p.customer_id = $%d::uuid", len(args)))
+	}
+	cursorTime, cursorID, hasCursor := decodeCursor(cursor)
+	if hasCursor {
+		args = append(args, cursorTime)
+		args = append(args, cursorID)
+		where = append(where, fmt.Sprintf("(p.taken_at, p.id) < ($%d, $%d)", len(args)-1, len(args)))
+	}
+	args = append(args, limit+1)
+	q := fmt.Sprintf(`
+        SELECT p.id::text, p.customer_id::text, COALESCE(c.name, '') AS customer_name,
+               p.invoice_id::text, COALESCE(i.invoice_no::text, '') AS invoice_no,
+               p.promised_cents, p.promised_date, p.status,
+               p.promised_by, p.note,
+               COALESCE(p.taken_by::text, '') AS taken_by,
+               p.taken_at, p.settled_at
+          FROM ar_promises_to_pay p
+          LEFT JOIN customers c ON c.id = p.customer_id
+          LEFT JOIN invoices  i ON i.id = p.invoice_id
+         WHERE %s
+         ORDER BY p.taken_at DESC, p.id DESC
+         LIMIT $%d`, strings.Join(where, " AND "), len(args))
+	rows, err := r.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("billing: list promises: %w", err)
+	}
+	defer rows.Close()
+	out := []EnrichedPromiseRow{}
+	for rows.Next() {
+		var e EnrichedPromiseRow
+		var settled *time.Time
+		if err := rows.Scan(&e.ID, &e.CustomerID, &e.CustomerName, &e.InvoiceID, &e.InvoiceNo,
+			&e.PromisedCents, &e.PromisedDate, &e.Status, &e.PromisedBy, &e.Note,
+			&e.TakenBy, &e.TakenAt, &settled); err != nil {
+			return nil, nil, fmt.Errorf("billing: scan promise: %w", err)
+		}
+		e.SettledAt = settled
+		if len(out) >= limit {
+			next := encodeCursor(e.TakenAt, e.ID)
+			return out, &next, nil
+		}
+		out = append(out, e)
+	}
+	return out, nil, rows.Err()
+}
+
+// EnrichedPromiseRow is one row of the cross-account Promises tab read.
+type EnrichedPromiseRow struct {
+	ID            string
+	CustomerID    string
+	CustomerName  string
+	InvoiceID     string
+	InvoiceNo     string
+	PromisedCents int64
+	PromisedDate  time.Time
+	Status        string
+	PromisedBy    string
+	Note          string
+	TakenBy       string
+	TakenAt       time.Time
+	SettledAt     *time.Time
+}
+
+func encodeCursor(t time.Time, id string) string {
+	return fmt.Sprintf("%d|%s", t.UTC().UnixNano(), id)
+}
+
+func decodeCursor(s string) (time.Time, string, bool) {
+	if s == "" {
+		return time.Time{}, "", false
+	}
+	idx := strings.IndexByte(s, '|')
+	if idx <= 0 || idx >= len(s)-1 {
+		return time.Time{}, "", false
+	}
+	var ns int64
+	if _, err := fmt.Sscanf(s[:idx], "%d", &ns); err != nil {
+		return time.Time{}, "", false
+	}
+	return time.Unix(0, ns), s[idx+1:], true
 }

@@ -215,7 +215,8 @@ func wireOperations(r httpx.Registrar, pool *pgxpool.Pool, g *guards.Guards, log
 		WithAudit(auditSvc).
 		WithLogger(log).
 		WithBranches(item5BranchDirectory{pool: pool}).
-		WithVendorAddresses(item5VendorAddressBook{pool: pool})
+		WithVendorAddresses(item5VendorAddressBook{pool: pool}).
+		WithWarrantyCreditReader(w4cWarrantyCreditReader{pool: pool})
 	purchasing.NewHandler(purchasingSvc, log).WithUserLinker(link).RegisterRoutes(r, g)
 
 	// UNION-W4 and UNION-470: the inventory seams purchasing closes. The
@@ -1567,6 +1568,110 @@ func (a w4cVendorDirectory) Vendor(ctx context.Context, vendorID string) (purcha
 		return purchasing.Vendor{}, fmt.Errorf("vendor directory: get %s: %w", vendorID, err)
 	}
 	return v, nil
+}
+
+// w4cWarrantyCreditReader satisfies purchasing.WarrantyCreditReader over warranty_claims,
+// warranty_recovery_balances and warranty_claim_lines.
+type w4cWarrantyCreditReader struct{ pool *pgxpool.Pool }
+
+func (w w4cWarrantyCreditReader) OpenCreditForVendor(ctx context.Context, vendorID, branchID string) (*purchasing.OpenWarrantyCredit, error) {
+	if w.pool == nil {
+		return nil, nil
+	}
+	var credit purchasing.OpenWarrantyCredit
+	var lineDesc *string
+	err := w.pool.QueryRow(ctx, `
+		SELECT b.claim_id::text, b.claim_no::text, b.outstanding_cents,
+		       COALESCE(c.description, ''),
+		       v.id::text, v.name,
+		       (SELECT COALESCE(NULLIF(product_text, ''), '') FROM warranty_claim_lines WHERE claim_id = b.claim_id LIMIT 1)
+		  FROM warranty_recovery_balances b
+		  JOIN warranty_claims c ON c.id = b.claim_id
+		  LEFT JOIN vendors v ON v.id = b.vendor_id
+		 WHERE b.vendor_id = $1::uuid
+		   AND ($2 = '' OR b.branch_id = $2::uuid)
+		   AND b.outstanding_cents > 0
+		 ORDER BY b.accrued_at DESC
+		 LIMIT 1`, vendorID, branchID).Scan(
+		&credit.ClaimID, &credit.ClaimNo, &credit.AmountCents,
+		&credit.Description, &credit.VendorID, &credit.VendorName, &lineDesc)
+	if err == nil {
+		if lineDesc != nil && *lineDesc != "" {
+			if credit.Description != "" {
+				s := fmt.Sprintf("%s (%s)", credit.Description, *lineDesc)
+				credit.Summary = &s
+			} else {
+				credit.Description = *lineDesc
+			}
+		}
+		return &credit, nil
+	}
+
+	err = w.pool.QueryRow(ctx, `
+		SELECT c.id::text, c.claim_no::text,
+		       COALESCE(NULLIF(c.realized_cents, 0), c.expected_cents),
+		       c.description,
+		       v.id::text, v.name,
+		       (SELECT COALESCE(NULLIF(product_text, ''), '') FROM warranty_claim_lines WHERE claim_id = c.id LIMIT 1)
+		  FROM warranty_claims c
+		  LEFT JOIN vendors v ON v.id = c.vendor_id
+		 WHERE c.vendor_id = $1::uuid
+		   AND ($2 = '' OR c.branch_id = $2::uuid)
+		   AND (c.outcome = 'VENDOR_CREDIT' OR c.phase IN ('SETTLEMENT', 'CLOSED'))
+		   AND COALESCE(NULLIF(c.realized_cents, 0), c.expected_cents) > 0
+		 ORDER BY c.opened_at DESC
+		 LIMIT 1`, vendorID, branchID).Scan(
+		&credit.ClaimID, &credit.ClaimNo, &credit.AmountCents,
+		&credit.Description, &credit.VendorID, &credit.VendorName, &lineDesc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("warranty credit reader: open credit: %w", err)
+	}
+	if lineDesc != nil && *lineDesc != "" {
+		if credit.Description != "" {
+			s := fmt.Sprintf("%s (%s)", credit.Description, *lineDesc)
+			credit.Summary = &s
+		} else {
+			credit.Description = *lineDesc
+		}
+	}
+	return &credit, nil
+}
+
+func (w w4cWarrantyCreditReader) ClaimInfo(ctx context.Context, claimID string) (*purchasing.OpenWarrantyCredit, error) {
+	if w.pool == nil {
+		return nil, nil
+	}
+	var credit purchasing.OpenWarrantyCredit
+	var lineDesc *string
+	err := w.pool.QueryRow(ctx, `
+		SELECT c.id::text, c.claim_no::text,
+		       COALESCE(NULLIF(c.realized_cents, 0), c.expected_cents),
+		       c.description,
+		       v.id::text, v.name,
+		       (SELECT COALESCE(NULLIF(product_text, ''), '') FROM warranty_claim_lines WHERE claim_id = c.id LIMIT 1)
+		  FROM warranty_claims c
+		  LEFT JOIN vendors v ON v.id = c.vendor_id
+		 WHERE c.id = $1::uuid`, claimID).Scan(
+		&credit.ClaimID, &credit.ClaimNo, &credit.AmountCents,
+		&credit.Description, &credit.VendorID, &credit.VendorName, &lineDesc)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("warranty credit reader: claim info %s: %w", claimID, err)
+	}
+	if lineDesc != nil && *lineDesc != "" {
+		if credit.Description != "" {
+			s := fmt.Sprintf("%s (%s)", credit.Description, *lineDesc)
+			credit.Summary = &s
+		} else {
+			credit.Description = *lineDesc
+		}
+	}
+	return &credit, nil
 }
 
 // item5BranchDirectory satisfies purchasing.BranchDirectory over

@@ -208,6 +208,22 @@ func (h *Handler) setDeliveryMethod(w http.ResponseWriter, r *http.Request, call
 	httpx.WriteJSON(w, http.StatusOK, po)
 }
 
+// POST /api/v1/purchasing/pos/{id}/apply-warranty-credit
+func (h *Handler) applyWarrantyCredit(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	var in ApplyWarrantyCreditRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSON(w, r, &in) {
+			return
+		}
+	}
+	po, err := h.svc.ApplyWarrantyCredit(r.Context(), r.PathValue("id"), in)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, po)
+}
+
 func (h *Handler) worklist(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
 	items, err := h.svc.Worklist(r.Context(), r.URL.Query().Get("branch_id"))
 	if err != nil {

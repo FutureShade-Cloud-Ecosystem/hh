@@ -149,6 +149,22 @@ test("the landing, the aging and the register answer in the contract's shapes", 
   holds("BillingAgingPage", aging.json);
   assert.ok(aging.json.items.length >= 5);
 
+  const worklist = await call("GET", "/api/v1/billing/ar/worklist");
+  assert.equal(worklist.status, 200);
+  holds("BillingARWorklistResponse", worklist.json);
+  assert.deepEqual(worklist.json.summary, {
+    total_past_due_cents: 1_149_950,
+    over_60_cents: 697_500,
+    broken_promises: 1,
+    unapplied_credits_cents: 12_500,
+  });
+  assert.deepEqual(worklist.json.counts, { all_open: 5, action_needed: 5, over_60: 2, credit_hold: 3 });
+  const narrowed = await call("GET", "/api/v1/billing/ar/worklist?chip=over_60&q=Oakline");
+  holds("BillingARWorklistResponse", narrowed.json);
+  assert.equal(narrowed.json.rows.length, 1);
+  assert.equal(narrowed.json.rows[0].account_no, "OB-200");
+  assert.deepEqual(narrowed.json.summary, worklist.json.summary);
+
   const register = await call("GET", `/api/v1/ar/register?customer_id=${aging.json.items[0].customer_id}`);
   assert.equal(register.status, 200);
   holds("BillingRegisterPage", register.json);
