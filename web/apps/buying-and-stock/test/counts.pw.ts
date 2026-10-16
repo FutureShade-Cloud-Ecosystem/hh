@@ -35,6 +35,7 @@ test("the counts area opens on the sheets list, and the posted sheet reads Poste
   await expect(page.locator("[data-sheets]")).toBeVisible();
   await expect(page.locator('[data-sheet-row="CS-PLM-0001"]')).toContainText("Posted");
   await expect(page.locator('[data-sheet-row="CS-PLM-0001"]')).toContainText("Full count");
+  await expect(page.locator('[data-sheet-row="CS-PLM-0001"] td[data-label="Frozen"]')).toHaveText("today");
 });
 
 test("a sheet is opened, frozen, counted blind, and submitted with a reason on the variance", async ({ page, request }) => {

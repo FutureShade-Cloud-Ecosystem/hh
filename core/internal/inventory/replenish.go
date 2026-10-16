@@ -73,6 +73,15 @@ type ShortfallRow struct {
 	// these let a screen say "drafted, not placed" and link the draft. Absent when there is none.
 	DraftPOID string `json:"draft_po_id,omitempty"`
 	DraftPONo string `json:"draft_po_no,omitempty"`
+
+	// ShortOrderNos names, oldest first, the open sales orders waiting on this product at this
+	// branch: the orders the shortfall holds up, at most three of them, the row keeping the order
+	// module's oldest first. Absent when the orders seam is unbound or nothing waits; the count of
+	// any rest rides in ShortOrderMore. See short_order_seam.go.
+	ShortOrderNos []string `json:"short_order_nos,omitempty"`
+	// ShortOrderMore is how many further open sales orders wait on this product beyond the three
+	// ShortOrderNos names. Absent when there are none.
+	ShortOrderMore int `json:"short_order_more,omitempty"`
 }
 
 // ReorderPoint is the per (product, branch) replenishment policy row.
@@ -212,6 +221,9 @@ func (s *Service) ShortfallWorklist(ctx context.Context, reach BranchReach, bran
 		return Worklist{}, err
 	}
 	if err := s.attachDrafts(ctx, reach, branchID, rows); err != nil {
+		return Worklist{}, err
+	}
+	if err := s.attachShortOrders(ctx, reach, branchID, rows); err != nil {
 		return Worklist{}, err
 	}
 	return Worklist{Rows: rows, OnOrderDegraded: degraded}, nil
