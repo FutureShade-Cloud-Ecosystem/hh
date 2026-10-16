@@ -18,7 +18,7 @@ test("the areas bar holds every purchasing area and Inventory and Cycle counts, 
   await page.goto("/");
   await expect(page.locator("[data-shortfall-row]").first()).toBeVisible();
   const bar = page.locator("nav.areas");
-  for (const [id, label] of [["orders", "Purchase orders"], ["receiving", "Receiving"], ["vendors", "Vendors"], ["bills", "Vendor bills"], ["landed", "Landed cost"], ["inventory", "Inventory"], ["counts", "Cycle counts"]]) {
+  for (const [id, label] of [["orders", "Purchase orders"], ["incoming", "Incoming"], ["receiving", "Receiving"], ["vendors", "Vendors"], ["bills", "Vendor bills"], ["landed", "Landed cost"], ["inventory", "Inventory"], ["counts", "Cycle counts"]]) {
     await expect(bar.locator(`[data-area-id="${id}"]`)).toHaveText(label);
   }
   await expect(bar.locator('[data-area-id="orders"][aria-current="true"]')).toBeVisible();
@@ -32,6 +32,10 @@ test("the stock lookup answers the per-branch buckets and the ledger for the pav
   const plmRow = page.locator("[data-onhand-row]", { hasText: "Point Loma" });
   await expect(plmRow).toContainText("400");
   await expect(plmRow).toContainText("340");
+  // One vocabulary (change 5, R6): the stock word is Reserved everywhere, Inventory included.
+  await expect(plmRow.locator("td[data-label='Reserved']")).toHaveCount(1);
+  await expect(page.locator("[data-onhand-row]").first().locator("td[data-label='Allocated']")).toHaveCount(0);
+  await expect(page.locator("[data-lookup]")).toContainText("Available is on hand minus reserved");
   await expect(page.locator("[data-move-row]").first()).toBeVisible();
   await expect(page.locator("[data-lookup]").locator("[data-move-row]").first()).toContainText("Receipt");
   await expect(page.locator("[data-lookup]").locator("[data-move-row]").first().locator("td[data-label='When']")).toHaveText("today");
