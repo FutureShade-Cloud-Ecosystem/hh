@@ -3346,25 +3346,26 @@ type InventoryBranchStock struct {
 }
 
 type InventoryBrowseRow struct {
-	ProductId      string  `json:"product_id"`
-	Sku            string  `json:"sku"`
-	Name           string  `json:"name"`
-	Manufacturer   string  `json:"manufacturer"`
-	Collection     string  `json:"collection"`
-	ColorFamily    string  `json:"color_family"`
-	Texture        string  `json:"texture"`
-	ProductSize    string  `json:"product_size"`
-	SoldBy         string  `json:"sold_by"`
-	Color          string  `json:"color"`
-	Finish         string  `json:"finish"`
-	Application    string  `json:"application"`
-	IsFeatured     bool    `json:"is_featured"`
-	IsSpecialOrder bool    `json:"is_special_order"`
-	OnHandBase     float64 `json:"on_hand_base"`
-	ReservedBase   float64 `json:"reserved_base"`
-	AvailableBase  float64 `json:"available_base"`
-	InTransitBase  float64 `json:"in_transit_base"`
-	AvgCostCents   *int64  `json:"avg_cost_cents,omitempty"`
+	ProductId      string    `json:"product_id"`
+	Sku            string    `json:"sku"`
+	Name           string    `json:"name"`
+	Manufacturer   string    `json:"manufacturer"`
+	Collection     string    `json:"collection"`
+	ColorFamily    string    `json:"color_family"`
+	Texture        string    `json:"texture"`
+	ProductSize    string    `json:"product_size"`
+	SoldBy         string    `json:"sold_by"`
+	Color          string    `json:"color"`
+	Finish         string    `json:"finish"`
+	Application    string    `json:"application"`
+	IsFeatured     bool      `json:"is_featured"`
+	IsSpecialOrder bool      `json:"is_special_order"`
+	OnHandBase     float64   `json:"on_hand_base"`
+	ReservedBase   float64   `json:"reserved_base"`
+	AvailableBase  float64   `json:"available_base"`
+	InTransitBase  float64   `json:"in_transit_base"`
+	AvgCostCents   *int64    `json:"avg_cost_cents,omitempty"`
+	OutAtBranches  *[]string `json:"out_at_branches,omitempty"`
 }
 
 type InventoryFacetValue struct {
@@ -3897,6 +3898,15 @@ type MessagingChannelCreate struct {
 
 type MessagingDMCreate struct {
 	UserId string `json:"user_id"`
+}
+
+type MessagingGroupCreate struct {
+	Name      *string   `json:"name,omitempty"`
+	MemberIds *[]string `json:"member_ids,omitempty"`
+}
+
+type MessagingChannelRename struct {
+	Name string `json:"name"`
 }
 
 type MessagingChannelMember struct {
@@ -8735,6 +8745,26 @@ type WarrantyPolicy struct {
 type WarrantyPolicyInput struct {
 	BranchId            *string `json:"branch_id,omitempty"`
 	ClaimThresholdCents int64   `json:"claim_threshold_cents"`
+}
+
+type WarrantyVendorAgreement struct {
+	VendorId      string     `json:"vendor_id"`
+	VendorNo      string     `json:"vendor_no"`
+	VendorName    string     `json:"vendor_name"`
+	AgreementKind string     `json:"agreement_kind"`
+	Period        *string    `json:"period,omitempty"`
+	AllowanceBp   int        `json:"allowance_bp"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type WarrantyVendorAgreementInput struct {
+	AgreementKind string  `json:"agreement_kind"`
+	Period        *string `json:"period,omitempty"`
+	AllowanceBp   int     `json:"allowance_bp"`
+}
+
+type WarrantyVendorAgreementPage struct {
+	Items []WarrantyVendorAgreement `json:"items"`
 }
 
 type WarrantyAddress struct {

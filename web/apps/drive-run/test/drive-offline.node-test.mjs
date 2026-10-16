@@ -8,8 +8,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { ApiClient } from "@hardscapehouse/api-client";
 import { nodeSqliteExecutor, FakeSyncServer } from "@hardscapehouse/offline-store/testing";
 import { OfflineStore, createSqliteBackend, scopeBookFor } from "@hardscapehouse/offline-store";
+import { houseZone, resetHouseZone, serveHouseZoneFrom } from "@hardscapehouse/pos-kit/src/ported/host-facts.ts";
+import { DriveApi } from "../src/drive-api.ts";
 import { DriveOffline, bannerMode } from "../src/drive-offline.js";
 import { goTypedNameBytes, payloadOffenders } from "./_lib/gosets.mjs";
 
@@ -567,4 +570,51 @@ test("the same refusal arriving through a fresh layer over the same store (a res
   assert.equal(stop.status, "EN_ROUTE");
   assert.equal(stop.pod_received_by, "");
   assert.deepEqual((await fresh.openCards()).map((c) => c.kind), ["rejected"]);
+});
+
+// The dealer's zone, persisted in the store: a fully offline cold start reads the
+// run sheet on the zone the last online session served, never on the Ontario
+// default. The instant is built from numbers as house-zone.test.mjs does: 21:30
+// on the second of a month in Los Angeles is the third in Toronto and in UTC.
+const PACIFIC_EVENING = new Date(Date.UTC(2026, 6, 3, 4, 30));
+const PACIFIC_DAY = "2026-07-02";
+const RUN_PACIFIC = "a2000000-0000-4000-9000-000000000006";
+
+test("the served zone round trips through the store, and an offline cold start reads the Pacific day", async (t) => {
+  // A failed config read must never be able to move the held zone in this test:
+  // the zone module state resets around it.
+  t.after(() => resetHouseZone());
+  const { layer, server } = await rig();
+  // A second run on the Pacific day, so the sheet has something to read there.
+  server.seed("runs", RUN_PACIFIC, {
+    id: RUN_PACIFIC,
+    run_no: "RUN-P1",
+    truck_code: "FLAT-2",
+    status: "DISPATCHED",
+    scheduled_date: PACIFIC_DAY,
+  });
+  await layer.cycle();
+  // Nothing stored yet: the read answers null, never a made up zone.
+  assert.equal(await layer.readZone(), null);
+  // The zone the config read served is saved, and reads back.
+  await layer.saveZone("America/Los_Angeles");
+  assert.equal(await layer.readZone(), "America/Los_Angeles");
+  // The cold start: the zone module is fresh, the config read fails (503, the
+  // device has no signal), and the app restores the stored zone before asking
+  // for the day. The day is the Pacific dealer's own, and the sheet reads that
+  // day's run from the store.
+  resetHouseZone();
+  const offlineFetch = async () =>
+    new Response(JSON.stringify({ error: "unreachable" }), { status: 503, headers: { "content-type": "application/json" } });
+  const drive = new DriveApi(new ApiClient({ baseUrl: "http://core.test", fetch: offlineFetch }));
+  const stored = await layer.readZone();
+  assert.ok(stored !== null, "the zone is in the store");
+  serveHouseZoneFrom({ business_zone: stored });
+  assert.equal(houseZone(), "America/Los_Angeles");
+  assert.equal(await drive.dealersDay(PACIFIC_EVENING), PACIFIC_DAY);
+  assert.equal(houseZone(), "America/Los_Angeles", "a failed config read never overwrites the restored zone");
+  const answer = await layer.runs(PACIFIC_DAY);
+  if (!answer.ok) return assert.fail("the run sheet should read back");
+  assert.equal(answer.value.runs.length, 1);
+  assert.equal(answer.value.runs[0].run_no, "RUN-P1");
 });
