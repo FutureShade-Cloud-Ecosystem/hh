@@ -221,6 +221,14 @@ const GLS_PENDING = [
   { order: "SO-3302", product: 3, qty: 3, saleType: "COLLECT_LATER" },
 ];
 
+// The open sales orders each managed line's shortfall holds up (change 5 slice S3), oldest first.
+// The turf row holds up five, so the row names the oldest three and counts two more; the
+// dimensional row one; nothing waits on the stone row and its row carries neither key.
+const SHORT_SALES_ORDERS = {
+  1: ["SO-3305", "SO-3311", "SO-3312", "SO-3318", "SO-3324"],
+  2: ["SO-3314"],
+};
+
 const REASON_CODES = [
   { code: "DAMAGE", description: "Damaged / broken stock write-down", account: "5200" },
   { code: "SHRINK", description: "Shrinkage / theft / unaccounted loss", account: "5200" },
@@ -244,6 +252,11 @@ function productRow(p) {
   const short = Math.max(p.point - projected, 0);
   const suggested = short === 0 ? 0 : Math.ceil(short / p.multiple) * p.multiple;
   const vendor = ALL_VENDORS.find((v) => v.n === p.vendor);
+  // The orders the shortfall holds up (change 5 slice S3): at most three numbers, oldest first,
+  // plus the count of the rest, and neither key when nothing waits, the core's shape.
+  const waiting = SHORT_SALES_ORDERS[p.n] ?? [];
+  const shortNos = waiting.slice(0, 3);
+  const shortMore = Math.max(waiting.length - 3, 0);
   return {
     product_id: uuid("f", p.n),
     sku: p.sku,
@@ -268,6 +281,7 @@ function productRow(p) {
     avg_cost_cents: p.cost,
     suggested_value_cents: suggested * p.cost,
     ...(draft === undefined ? {} : { draft_po_id: draft.id, draft_po_no: draft.no }),
+    ...(shortNos.length === 0 ? {} : { short_order_nos: shortNos, short_order_more: shortMore }),
   };
 }
 
