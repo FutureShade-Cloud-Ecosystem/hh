@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingChannelRename, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingGroupCreate, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPrefsPatch, MessagingReactionPut, MessagingReactionSummary, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingSeenBy, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
+import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingChannelRename, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingGroupCreate, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPersonPage, MessagingPrefsPatch, MessagingReactionPut, MessagingReactionSummary, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingSeenBy, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -435,6 +435,21 @@ export async function messagingPutPaymentRule(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingPutPaymentRule",
+  });
+}
+
+export async function messagingListPeople(
+  client: ApiClient,
+  opts?: { q?: string; cursor?: string; limit?: number },
+  call?: ApiCallOptions
+): Promise<Result<MessagingPersonPage>> {
+  return client.request<MessagingPersonPage>({
+    method: "GET",
+    path: "/api/v1/messaging/people",
+    query: opts,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingListPeople",
   });
 }
 

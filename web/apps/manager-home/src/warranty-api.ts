@@ -137,6 +137,106 @@ export interface IntakePhoto {
   readonly caption: string;
 }
 
+// -- change 6 item 5: defects and vendor credits (the manager's view) -----------------------------------
+
+/** A defect classification: the line cost crossed the dealer threshold (CLAIM)
+ *  or sat under it (SHRINKAGE). The defect is logged either way; only the CLAIM
+ *  rows open a warranty claim. */
+export type DefectClassification = "CLAIM" | "SHRINKAGE";
+
+/** The chip on the Defects tab. Empty string = All (no filter). */
+export type DefectFilter = "" | DefectClassification;
+
+/** One row on the Defects tab: a till return of damaged product with the fields
+ *  the board's table shows. */
+export interface DefectRow {
+  readonly id: string;
+  readonly defect_no: string;
+  readonly claim_id: string;
+  readonly claim_no: string;
+  readonly return_no: string;
+  readonly customer_name: string;
+  readonly branch_name: string;
+  readonly vendor_id: string;
+  readonly vendor_name: string;
+  readonly product_text: string;
+  readonly lot_or_batch: string;
+  readonly qty: string;
+  readonly uom_code: string;
+  readonly cost_cents: number;
+  readonly classification: DefectClassification;
+  readonly photo_ids: readonly string[];
+  readonly opened_at: string;
+}
+
+/** The Defects tab's data: the rows, the threshold the cost was measured
+ *  against (in integer cents), and the active filter. */
+export interface DefectsTab {
+  readonly rows: readonly DefectRow[];
+  readonly threshold_cents: number;
+  readonly filter: DefectFilter;
+}
+
+/** How a vendor settles its warranty claims, per the dealer-vendor agreement. */
+export type VendorAgreementKind = "CLAIM_BY_CLAIM" | "PERIODIC_CREDIT_NOTE" | "FIXED_ALLOWANCE";
+
+/** The period a vendor's claims roll into for a single credit note request. */
+export type VendorCreditPeriod = "EACH_CLAIM" | "MONTHLY" | "QUARTERLY";
+
+/** One row on the Vendors and credits table: the agreement, the period, the
+ *  claim count in the current period, the credit owed and the next request. */
+export interface VendorCreditRow {
+  readonly vendor_id: string;
+  readonly vendor_name: string;
+  readonly agreement_kind: VendorAgreementKind;
+  readonly agreement_summary: string;
+  readonly period: VendorCreditPeriod;
+  readonly claims_in_period: number;
+  readonly credit_cents: number;
+  readonly next_request_in_days: number;
+  readonly next_request_label: string;
+}
+
+/** A single claim rolled into a vendor's next credit note request. */
+export interface VendorCreditClaim {
+  readonly claim_id: string;
+  readonly claim_no: string;
+  readonly return_no: string;
+  readonly product_text: string;
+  readonly quantity_text: string;
+  readonly cost_cents: number;
+  readonly opened_at: string;
+}
+
+/** The right panel on the Vendors and credits tab: the picked vendor's
+ *  agreement, the rolled claims, the evidence thumbnails. */
+export interface VendorCreditDetail {
+  readonly vendor_id: string;
+  readonly vendor_name: string;
+  readonly agreement_kind: VendorAgreementKind;
+  readonly agreement_summary: string;
+  readonly period: VendorCreditPeriod;
+  readonly credit_cents: number;
+  readonly credit_summary: string;
+  readonly rolled_claims: readonly VendorCreditClaim[];
+  readonly photo_ids: readonly string[];
+  readonly request_busy: boolean;
+  readonly request_notice: string;
+  readonly request_error: string;
+}
+
+/** The Vendors and credits tab's data: the row list, the open vendor and its
+ *  detail, the open and request state. */
+export interface VendorCreditsTab {
+  readonly rows: readonly VendorCreditRow[];
+  readonly openVendorId: string;
+  readonly openDetail: VendorCreditDetail | null;
+  readonly openError: string;
+  readonly requestingFor: string;
+  readonly requestNotice: string;
+  readonly requestError: string;
+}
+
 // -- the vendor registry ----------------------------------------------------------------------------
 
 export interface ProductOverride {
@@ -947,5 +1047,61 @@ export class WarrantyApi {
       notes: input.notes,
     });
     return answer.ok ? { ok: true, value: toProductOverride(answer.value) } : answer;
+  }
+
+  // -- change 6 item 5: defects and vendor credits ---------------------------------------------------------
+
+  /** The defects list for the Defects tab, filtered by the chip row.
+   *  The route is not yet wired on the policy branch; the stub returns the
+   *  empty shape the view renders in its own words. */
+  async readDefects(branchId: string, filter: DefectFilter): Promise<Result<DefectsTab>> {
+    return { ok: true, value: { rows: [], threshold_cents: 5000, filter } };
+  }
+
+  /** The Vendors and credits table: each vendor's agreement, period, the
+   *  credit owed, and when the next credit note request is due. */
+  async readVendorCredits(branchId: string): Promise<Result<VendorCreditsTab>> {
+    return {
+      ok: true,
+      value: {
+        rows: [],
+        openVendorId: "",
+        openDetail: null,
+        openError: "",
+        requestingFor: "",
+        requestNotice: "",
+        requestError: "",
+      },
+    };
+  }
+
+  /** The right panel on the Vendors and credits tab: a vendor's agreement
+   *  summary, the claims rolled into the next credit note request, and the
+   *  evidence photos. */
+  async readVendorCreditDetail(branchId: string, vendorId: string): Promise<Result<VendorCreditDetail>> {
+    return {
+      ok: true,
+      value: {
+        vendor_id: vendorId,
+        vendor_name: "",
+        agreement_kind: "PERIODIC_CREDIT_NOTE",
+        agreement_summary: "",
+        period: "MONTHLY",
+        credit_cents: 0,
+        credit_summary: "",
+        rolled_claims: [],
+        photo_ids: [],
+        request_busy: false,
+        request_notice: "",
+        request_error: "",
+      },
+    };
+  }
+
+  /** Fire a credit note request for a vendor's open claims. The route is
+   *  not yet wired; the stub returns a 501 in the view's own words so the
+   *  panel surfaces the refusal without surfacing a global error. */
+  async requestVendorCreditNote(vendorId: string): Promise<Result<{ readonly vendor_id: string; readonly requested_at: string }>> {
+    return { ok: false, error: "The credit note request route is not wired yet.", status: 501 };
   }
 }
