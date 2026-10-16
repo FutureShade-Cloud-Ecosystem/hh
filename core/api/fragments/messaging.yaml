@@ -388,6 +388,87 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/messaging/channels/{id}/messages/{msgID}:
+    patch:
+      operationId: messagingEditMessage
+      tags: [staff-messaging]
+      summary: Edit the caller's own message inside the edit window
+      description: >-
+        Change 7 (ruling 6): a person edits only their own text messages,
+        only inside the edit window the dealer's messaging policy keeps.
+        The walls answer in their own words: not the author is 403, a
+        system message or a forced acknowledgement notice is 409 (a notice
+        is never editable once sent, a correction is a new notice), a
+        deleted message is 409, a closed window is 409. Offline devices
+        carry the change through the messages sync scope's fresh seq; the
+        sync write path itself still refuses an edit of a sent message.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          description: The message being edited
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingMessageEdit"
+      responses:
+        "200":
+          description: The edited message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMessage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: messagingDeleteMessage
+      tags: [staff-messaging]
+      summary: Delete the caller's own message inside the edit window
+      description: >-
+        Change 7 (ruling 6): a person deletes only their own text messages,
+        only inside the edit window. The deletion is a tombstone: the body
+        is dropped in the row, deleted_at is stamped, and the answer is the
+        tombstone the surface renders in place. The same walls as the edit,
+        minus the tombstone one: deleting a tombstone again answers it as
+        it stands (200). Offline devices are told through the messages sync
+        scope's fresh seq; the sync write path itself still refuses a
+        delete of a sent message.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+        - name: msgID
+          in: path
+          required: true
+          description: The message being deleted
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The tombstoned message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMessage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /api/v1/messaging/channels/{id}/threads/{rootID}:
     get:
       operationId: messagingListThread
@@ -1471,6 +1552,14 @@ components:
           type: string
           format: uuid
           description: Set to reply inside a thread
+
+    MessagingMessageEdit:
+      type: object
+      required: [body]
+      description: >-
+        The edit body, the message's new wording, bounded as a post is.
+      properties:
+        body: { type: string }
 
     MessagingAckRequest:
       type: object

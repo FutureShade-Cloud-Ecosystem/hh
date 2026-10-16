@@ -54,8 +54,10 @@ func TestIntegration_CreateChannel_Branch_System_Families_Are_Reserved(t *testin
 		{"yard chosen upper", CreateChannelInput{Kind: KindTeam, Name: "x", Slug: "YARD-0-MINE", BranchID: branchTrenton}},
 		{"yard name derived", CreateChannelInput{Kind: KindTeam, Name: "Yard 0 mine"}},
 	}
+	prev := publishDefaultRolesForTest(t)
+	defer PublishRoleConfig(prev)
 	for _, f := range foundings {
-		if _, _, err := svc.CreateChannel(ctx, samCaller(), f.in); !errors.Is(err, ErrReservedSlug) {
+		if _, _, err := svc.CreateChannel(ctx, adminCaller(), f.in); !errors.Is(err, ErrReservedSlug) {
 			t.Fatalf("%s: founding must be refused as a reserved system family, got %v", f.what, err)
 		}
 	}

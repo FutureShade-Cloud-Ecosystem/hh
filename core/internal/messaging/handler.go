@@ -57,12 +57,12 @@ func (h *Handler) WithStreamTickets(secret string) *Handler {
 // convention. There is otherwise no manager/admin split in P1 (channel-admin tooling is deferred).
 func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/messaging/channels", g.RequireStaff(h.staff(h.listChannels)))
-	// The house's own founding and membership routes (every role at Work on
-	// house-messages, the general manager at Admin, the roleconfig document's
-	// cells): create a TEAM/TOPIC channel (idempotent on its slug), open a DM
-	// with one colleague (found or created once), seat and drop explicit
-	// members. The walls are the module's existing ones: assertMember on every
-	// membership write, the branch wall on a channel that names a branch.
+	// The house's own founding and membership routes. Founding is the
+	// admins' pen now (change 7, ruling A: the boards' New channel is for
+	// admins only); DMs stay every role's, and the membership walls are the
+	// module's existing ones: assertMember on every membership write, the
+	// owner or matrix admin pen on the seats, the branch wall on a channel
+	// that names a branch.
 	r.Handle("POST /api/v1/messaging/channels", g.RequireStaff(h.staff(h.createChannel)))
 	r.Handle("POST /api/v1/messaging/dms", g.RequireStaff(h.staff(h.createDM)))
 	// Slice S1: the New message picker's roster, a read any staffer may make
@@ -82,6 +82,14 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.listMessages)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.postMessage)))
 	r.Handle("GET /api/v1/messaging/channels/{id}/threads/{rootID}", g.RequireStaff(h.staff(h.listThread)))
+	// Change 7 S4 (ruling 6): the author's own edit and delete inside the
+	// edit window the module's policy row keeps. PATCH rewords the author's
+	// own text message, DELETE tombstones it (the body dropped, deleted_at
+	// stamped); the walls are the service's: the channel wall, the kind wall
+	// (system messages are nobody's), the forced acknowledgement wall (a
+	// notice is never editable once sent), the author wall, and the window.
+	r.Handle("PATCH /api/v1/messaging/channels/{id}/messages/{msgID}", g.RequireStaff(h.staff(h.editMessage)))
+	r.Handle("DELETE /api/v1/messaging/channels/{id}/messages/{msgID}", g.RequireStaff(h.staff(h.deleteMessage)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/read", g.RequireStaff(h.staff(h.markRead)))
 	// Feature 1 (0071): forced-ack. POST an ack for one message (mirrors markRead: channel-scoped,
 	// staff-gated); GET the caller's un-acked forced-ack messages for the kiosk to poll.
@@ -471,6 +479,66 @@ func (h *Handler) listThread(w http.ResponseWriter, r *http.Request, caller guar
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"messages": replies})
+}
+
+// editMessageRequest is the PATCH body: the message's new wording.
+type editMessageRequest struct {
+	Body string `json:"body"`
+}
+
+// editMessage applies the caller's new wording to their own message inside
+// the edit window (change 7 S4). Mirrors postMessage's shape: caller, the
+// path UUIDs validated at the boundary, the body decoded and bounded, and
+// the service's walls answer in their own words.
+func (h *Handler) editMessage(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	messageID, ok := h.pathUUID(w, r, "msgID")
+	if !ok {
+		return
+	}
+	var req editMessageRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	m, err := h.svc.EditMessage(r.Context(), c, channelID, messageID, req.Body)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, m)
+}
+
+// deleteMessage tombstones the caller's own message inside the edit window
+// (change 7 S4): the body is dropped in the row, deleted_at is stamped, and
+// the answer is the tombstone the client renders in place.
+func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	channelID, ok := h.pathUUID(w, r, "id")
+	if !ok {
+		return
+	}
+	messageID, ok := h.pathUUID(w, r, "msgID")
+	if !ok {
+		return
+	}
+	m, err := h.svc.DeleteMessage(r.Context(), c, channelID, messageID)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, m)
 }
 
 func (h *Handler) markRead(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
@@ -931,6 +999,22 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusForbidden, "that staff member's role may not be seated in this room")
 	case errors.Is(err, ErrLastOwner):
 		httpx.Error(w, http.StatusConflict, "a channel must keep its owner")
+	// The founding gate (change 7, ruling A): founding is the admins' pen,
+	// a permission answer, never a validation one.
+	case errors.Is(err, ErrNotChannelAdmin):
+		httpx.Error(w, http.StatusForbidden, "only a house messages admin may found a channel")
+	// Change 7 S4: the edit and delete refusals, each in its own words so
+	// the surface can say what happened: the pen is the author's own (403),
+	// a system message or a forced ack notice is what it is (409), a
+	// tombstone is not a revival (409), and the window has closed (409).
+	case errors.Is(err, ErrNotMessageAuthor):
+		httpx.Error(w, http.StatusForbidden, "only the message's author may edit or delete it")
+	case errors.Is(err, ErrMessageImmutable):
+		httpx.Error(w, http.StatusConflict, "system messages cannot be edited or deleted")
+	case errors.Is(err, ErrMessageDeleted):
+		httpx.Error(w, http.StatusConflict, "a deleted message cannot be edited")
+	case errors.Is(err, ErrEditWindowClosed):
+		httpx.Error(w, http.StatusConflict, "the edit window has closed")
 	case errors.Is(err, ErrNotGroupRoom):
 		httpx.Error(w, http.StatusConflict, "only a group room renames through this route")
 	case errors.Is(err, ErrNotInBranch):

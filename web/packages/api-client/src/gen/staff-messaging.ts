@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingChannelRename, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingGroupCreate, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotificationSettings, MessagingNotificationSettingsPatch, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPersonPage, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
+import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelList, MessagingChannelMember, MessagingChannelRename, MessagingCustomerInbound, MessagingDMCreate, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingGroupCreate, MessagingHouseConversation, MessagingHouseQueue, MessagingMessage, MessagingMessageEdit, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotificationSettings, MessagingNotificationSettingsPatch, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPersonPage, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -135,6 +135,40 @@ export async function messagingPostMessage(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingPostMessage",
+  });
+}
+
+export async function messagingEditMessage(
+  client: ApiClient,
+  id: string | number,
+  msgID: string | number,
+  body: MessagingMessageEdit,
+  call?: ApiCallOptions
+): Promise<Result<MessagingMessage>> {
+  return client.request<MessagingMessage>({
+    method: "PATCH",
+    path: "/api/v1/messaging/channels/{id}/messages/{msgID}",
+    pathParams: { id, msgID },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingEditMessage",
+  });
+}
+
+export async function messagingDeleteMessage(
+  client: ApiClient,
+  id: string | number,
+  msgID: string | number,
+  call?: ApiCallOptions
+): Promise<Result<MessagingMessage>> {
+  return client.request<MessagingMessage>({
+    method: "DELETE",
+    path: "/api/v1/messaging/channels/{id}/messages/{msgID}",
+    pathParams: { id, msgID },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingDeleteMessage",
   });
 }
 

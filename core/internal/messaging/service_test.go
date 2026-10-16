@@ -57,6 +57,11 @@ type fakeStore struct {
 	stampCalls       int               // StampApprovalStatus invocation count
 	displayNames     map[string]string // userID -> display name (decider name resolution)
 	roster           map[string][]StaffRosterRow
+	// Change 7 S4 doubles: the planted message rows the edit and delete
+	// walls read, and the writes the legs assert on.
+	editFacts       map[string]messageFacts // messageID -> the planted row (channel bound)
+	editedMessages  []Message               // EditMessage writes captured
+	deletedMessages []string                // DeleteMessage writes captured (message ids)
 }
 
 func newFakeStore() *fakeStore {
@@ -405,6 +410,51 @@ func (f *fakeStore) userReachesBranch(_ context.Context, userID, branchID string
 // the wall never asks it.
 func (f *fakeStore) userHoldsAnyRole(_ context.Context, _ string, _ []string) (bool, error) {
 	return true, nil
+}
+
+// - change 7 S4: the edit and delete doubles -
+
+// messageFactsFor answers a planted row bound to its channel; a row of
+// another channel is the same not-found an absent id is.
+func (f *fakeStore) messageFactsFor(_ context.Context, channelID, messageID string) (messageFacts, error) {
+	mf, ok := f.editFacts[messageID]
+	if !ok || mf.ChannelID != channelID {
+		return messageFacts{}, errNotFound
+	}
+	return mf, nil
+}
+
+func (f *fakeStore) EditMessage(_ context.Context, channelID, messageID, body string) (Message, error) {
+	mf, ok := f.editFacts[messageID]
+	if !ok || mf.ChannelID != channelID || mf.DeletedAt != nil || mf.Kind != MsgText || mf.RequiresAck {
+		return Message{}, errNotFound
+	}
+	now := time.Now()
+	m := Message{ID: messageID, ChannelID: channelID, AuthorID: mf.AuthorID, Kind: mf.Kind,
+		Body: body, EditedAt: &now, CreatedAt: mf.CreatedAt}
+	f.editedMessages = append(f.editedMessages, m)
+	return m, nil
+}
+
+func (f *fakeStore) DeleteMessage(_ context.Context, channelID, messageID string) (Message, error) {
+	mf, ok := f.editFacts[messageID]
+	if !ok || mf.ChannelID != channelID || mf.Kind != MsgText || mf.RequiresAck {
+		return Message{}, errNotFound
+	}
+	deleted := time.Now()
+	if mf.DeletedAt != nil {
+		deleted = *mf.DeletedAt // the tombstone's own delete keeps the first stamp
+	}
+	m := Message{ID: messageID, ChannelID: channelID, AuthorID: mf.AuthorID, Kind: mf.Kind,
+		Body: "", DeletedAt: &deleted, CreatedAt: mf.CreatedAt}
+	f.deletedMessages = append(f.deletedMessages, messageID)
+	return m, nil
+}
+
+// EditWindowMinutes answers the default the policy row seeds; the window
+// legs plant their facts' created_at around it.
+func (f *fakeStore) EditWindowMinutes(context.Context) (int, error) {
+	return defaultEditWindowMinutes, nil
 }
 
 // svcWith builds a service over a fake store (bypassing the *Repository constructor).
