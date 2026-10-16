@@ -215,9 +215,11 @@ function reset(kind = "full") {
       payments: [],
     })),
     payments: [],
+    holds: [],
     credit_memos: [],
     ap_contacts: new Map(),
-    statements: [],
+    statements: new Map(),
+    workspace_statements: [],
     runs: new Map(),
     keys: new Map(),
     notes: new Map(),
@@ -277,7 +279,7 @@ function reset(kind = "full") {
   );
   world.ap_contacts.set(custId(1), { name: "Maria Quinn", email: "ap@graniteedge.example", phone: "+1-555-0101" });
   world.ap_contacts.set(custId(2), { name: "Otis Bell", email: "ops@oakline.example", phone: "+1-555-0102" });
-  world.statements.push(
+  world.workspace_statements.push(
     { id: uuid("a", 700), run_id: uuid("a", 701), acct: 1, mode: "MASS", as_of: dayOffset(-30), closing: 728_140, delivery: "SENT", created_at: dayOffset(-30) },
     { id: uuid("a", 702), run_id: uuid("a", 703), acct: 1, mode: "INTERIM", as_of: dayOffset(-2), closing: 728_140, delivery: "QUEUED", created_at: dayOffset(-2) },
     { id: uuid("a", 704), run_id: uuid("a", 705), acct: 2, mode: "MASS", as_of: dayOffset(-30), closing: 345_500, delivery: "SENT", created_at: dayOffset(-30) },
@@ -288,11 +290,6 @@ const acct = (n) => ACCOUNTS.find((a) => a.n === n);
 const custId = (n) => uuid("e", n);
 const acctOfCust = (id) => ACCOUNTS.find((a) => custId(a.n) === id);
 const invById = (id) => world.invoices.find((i) => i.id === id);
-// Free-text notes the workspace activity tab carries (customer_ar_notes, 0405).
-// world.notes is keyed by customer_id so the same account's notes accumulate across
-// sessions. Each row carries the same fields the server returns.
-if (!("notes" in world)) world.notes = new Map();
-reset();
 
 // workspaceFor builds the full workspace payload for one customer. The 5-bucket aging
 // is the same arithmetic the core uses; the five buckets sum to openCents and the
@@ -331,7 +328,7 @@ function workspaceFor(customerId) {
   const creditNotes = world.credit_memos
     .filter((m) => m.acct === a.n && m.status !== "VOID")
     .map(workspaceCredit);
-  const statements = (world.statements ?? []).filter((s) => s.acct === a.n).map(workspaceStatement);
+  const statements = (world.workspace_statements ?? []).filter((s) => s.acct === a.n).map(workspaceStatement);
   const notes = (world.notes.get(customerId) ?? []).map(workspaceNote);
   const activity = workspaceActivity(a);
   const aging = agingFor(a);
@@ -394,7 +391,7 @@ function emptyHeader(customerId) {
 }
 
 function workspaceInvoiceRow(inv) {
-  const bucket = bucketOf(inv.late);
+  const bucket = c8BucketOf(inv.late);
   return {
     id: inv.id,
     invoice_no: inv.invoice_no,
@@ -463,17 +460,17 @@ function workspaceNote(n) {
 // balances. The five buckets sum to openCents (the workspace reconciliation check
 // the server also enforces) and the four late buckets sum to overdueCents.
 function agingFor(a) {
-  const buckets = { current: 0, "1 to 30": 0, "31 to 60": 0, "61 to 90": 0, "91 and over": 0 };
+  const buckets = { Current: 0, "1 to 30": 0, "31 to 60": 0, "61 to 90": 0, "91 and over": 0 };
   let open = 0;
   let overdue = 0;
   for (const inv of world.invoices.filter((i) => i.acct === a.n && i.balance_cents > 0)) {
-    const b = bucketOf(inv.late);
+    const b = c8BucketOf(inv.late);
     buckets[b.label] = (buckets[b.label] ?? 0) + inv.balance_cents;
     open += inv.balance_cents;
     if (inv.late > 0) overdue += inv.balance_cents;
   }
   return {
-    current_cents: buckets.current,
+    current_cents: buckets.Current,
     days_30_cents: buckets["1 to 30"],
     days_60_cents: buckets["31 to 60"],
     days_90_cents: buckets["61 to 90"],
