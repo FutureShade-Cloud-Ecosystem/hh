@@ -66,6 +66,8 @@ export const poStyles = css`
   tr.hot td.sku, tr.hot td.full { font-weight: 700; }
   /* On the yellow wash the state colours fall under 4.5 to 1: the row's figures take the text colour, bold, and the sign and the words carry the meaning. */
   tr.hot td.stop, tr.hot td.good { color: var(--hh-text); font-weight: 700; }
+  /* The wash costs the dim grey its contrast too (the brand theme worst at 4.07 to 1): the row's small words take the text colour. */
+  tr.hot td .small { color: var(--hh-text); }
   tr.hot .link-inline { color: var(--hh-text); }
   tr.hot .status { color: var(--hh-text); }
   tr[aria-current="true"] td { background: var(--hh-row-alt); }

@@ -73,7 +73,7 @@ export function renderWarranty(model: WarrantyModel): TemplateResult {
 
 function renderThreshold(s: ThresholdSection): TemplateResult {
   return html`
-    <section class="card">
+    <section class="card" data-test="warranty-threshold-card">
       <div class="card-head">
         <h2 class="card-title">Claim threshold</h2>
       </div>
@@ -122,7 +122,7 @@ function renderThreshold(s: ThresholdSection): TemplateResult {
 
 function renderAgreements(s: AgreementsSection): TemplateResult {
   return html`
-    <section class="card">
+    <section class="card" data-test="warranty-agreements-card">
       <div class="card-head">
         <h2 class="card-title">How each vendor credits warranty</h2>
         ${s.phase === "ready" ? html`<span class="count" data-test="warranty-vendor-count">${s.rows.length} vendors</span>` : nothing}

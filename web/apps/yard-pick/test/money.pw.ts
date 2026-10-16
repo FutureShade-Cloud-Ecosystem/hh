@@ -81,6 +81,23 @@ test("with money laid on every read, no screen shows a figure or a money word", 
   await expect(page.locator("[data-notice]")).toContainText("Shortage cleared");
   screens.push(await everyWordOnScreen(page));
 
+  // The changes waiting on the yard: the list, the sheet, and an
+  // acknowledgement, every one of them a read the poisoned stub laces with
+  // the delta figures the projection must drop.
+  await page.getByRole("button", { name: "Back to the queue" }).click();
+  await page.locator("[data-changes-door]").click();
+  await expect(page.locator("[data-change-row]")).toHaveCount(2);
+  screens.push(await everyWordOnScreen(page));
+
+  await page.locator("[data-change-row]", { hasText: "SO-1042" }).locator(".line-row").click();
+  await expect(page.locator("[data-change-sheet]")).toBeVisible();
+  screens.push(await everyWordOnScreen(page));
+
+  await page.getByLabel("A note for the counter, optional").fill("Two more pallets fit the truck");
+  await page.getByRole("button", { name: "Acknowledge" }).click();
+  await expect(page.locator("[data-notice]")).toContainText("Acknowledged");
+  screens.push(await everyWordOnScreen(page));
+
   for (const [index, text] of screens.entries()) {
     for (const figure of FIGURES) expect(text, `screen ${index + 1}`).not.toContain(figure);
     // Field names, not words in a sentence: the held order's own words say

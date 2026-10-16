@@ -132,4 +132,63 @@ export const pricingStyles = css`
   .pr-readout .warn {
     color: var(--hh-danger);
   }
+
+  /* -- change 11: payment terms and deposits --------------------------------------- */
+
+  .pr-board-pills {
+    display: flex;
+    gap: var(--hh-s-8);
+    margin: 0 0 var(--hh-s-16);
+    flex-wrap: wrap;
+  }
+  .pr-board-pill {
+    min-height: 32px;
+    padding: 0 var(--hh-s-12);
+    border: 1px solid var(--hh-control-line);
+    border-radius: var(--hh-radius-pill);
+    background: transparent;
+    color: var(--hh-text-dim);
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .pr-board-pill:hover {
+    color: var(--hh-text);
+    border-color: var(--hh-accent-text);
+  }
+  .pr-board-pill-active {
+    color: var(--hh-accent-text);
+    border-color: var(--hh-accent-text);
+    box-shadow: inset 0 -2px 0 var(--hh-accent-text);
+    font-weight: 600;
+  }
+  .pr-tabs-hidden {
+    display: none !important;
+  }
+  .badge-always {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--hh-radius-pill);
+    font-size: 11px;
+    font-weight: 700;
+    background: color-mix(in srgb, var(--hh-accent-text) 15%, transparent);
+    color: var(--hh-accent-text);
+  }
+  .badge-not-default {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--hh-radius-pill);
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--hh-row-alt);
+    color: var(--hh-text-dim);
+  }
+  .badge-cod {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--hh-radius-pill);
+    font-size: 11px;
+    font-weight: 700;
+    background: color-mix(in srgb, var(--hh-danger) 15%, transparent);
+    color: var(--hh-danger);
+  }
 `;
