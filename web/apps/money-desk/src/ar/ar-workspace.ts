@@ -145,11 +145,11 @@ export function renderWorkspaceHeader(
 
       <div class="ar-workspace-header__aging">
         <div class="ar-workspace-header__aging-bar" role="img" aria-label="Aging breakdown">
-          <span class="bucket bucket-current" style="flex:${aging.current_cents}" data-label="Current"><span>${formatWorkspaceMoney(aging.current_cents)}</span></span>
-          <span class="bucket bucket-30" style="flex:${aging.days_30_cents}" data-label="1 to 30"><span>${formatWorkspaceMoney(aging.days_30_cents)}</span></span>
-          <span class="bucket bucket-60" style="flex:${aging.days_60_cents}" data-label="31 to 60"><span>${formatWorkspaceMoney(aging.days_60_cents)}</span></span>
-          <span class="bucket bucket-90" style="flex:${aging.days_90_cents}" data-label="61 to 90"><span>${formatWorkspaceMoney(aging.days_90_cents)}</span></span>
-          <span class="bucket bucket-over90" style="flex:${aging.days_90_plus_cents}" data-label="91 and over"><span>${formatWorkspaceMoney(aging.days_90_plus_cents)}</span></span>
+          <span class="bucket bucket-current" data-cents="${aging.current_cents}" data-label="Current"><span>${formatWorkspaceMoney(aging.current_cents)}</span></span>
+          <span class="bucket bucket-30" data-cents="${aging.days_30_cents}" data-label="1 to 30"><span>${formatWorkspaceMoney(aging.days_30_cents)}</span></span>
+          <span class="bucket bucket-60" data-cents="${aging.days_60_cents}" data-label="31 to 60"><span>${formatWorkspaceMoney(aging.days_60_cents)}</span></span>
+          <span class="bucket bucket-90" data-cents="${aging.days_90_cents}" data-label="61 to 90"><span>${formatWorkspaceMoney(aging.days_90_cents)}</span></span>
+          <span class="bucket bucket-over90" data-cents="${aging.days_90_plus_cents}" data-label="91 and over"><span>${formatWorkspaceMoney(aging.days_90_plus_cents)}</span></span>
         </div>
         <p class="ar-workspace-header__aging-legend">
           <span><b>${formatWorkspaceMoney(aging.open_cents)}</b> open</span>
@@ -166,7 +166,7 @@ export function renderWorkspaceHeader(
           <span class="value">${formatWorkspaceMoney(h.credit_limit_cents)}</span>
         </div>
         <div class="credit-bar credit-bar--${utilization}" role="progressbar" aria-valuenow="${Math.min(10000, h.utilization_bps)}" aria-valuemin="0" aria-valuemax="10000">
-          <span class="credit-bar__fill" style="width:${Math.min(100, Math.round(h.utilization_bps / 100))}%"></span>
+          <span class="credit-bar__fill" data-utilization-pct="${Math.min(100, Math.round(h.utilization_bps / 100))}"></span>
           <span class="credit-bar__text">${Math.round(h.utilization_bps / 100)}% used${utilization === "over" ? " (over limit)" : ""}</span>
         </div>
         <div class="credit-row">
