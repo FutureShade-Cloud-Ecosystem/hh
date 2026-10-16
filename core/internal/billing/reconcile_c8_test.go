@@ -28,9 +28,9 @@ import (
 // the same number the register row reads. Both come from this function.
 func TestBucketLabelFor_BoundariesAreInclusiveAtTheTop(t *testing.T) {
 	cases := []struct {
-		days       int
-		wantLabel  string
-		wantKey    string
+		days      int
+		wantLabel string
+		wantKey   string
 	}{
 		{-100, "Current", "CURRENT"},
 		{0, "Current", "CURRENT"},

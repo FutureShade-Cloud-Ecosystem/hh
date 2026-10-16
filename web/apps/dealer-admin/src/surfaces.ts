@@ -38,6 +38,7 @@ export const SURFACES: readonly SurfaceSpec[] = [
   { id: "role-config", title: "Role configuration", blurb: "What each job shape sees on every surface, curated per role." },
   { id: "deployment", title: "Deployment settings", blurb: "The brand, the card rail, the counter's policy, the walkthrough." },
   { id: "pricing", title: "Pricing", blurb: "The margin floors, the rules, the ladders, the imports and the ledgers." },
+  { id: "warranty", title: "Warranty", blurb: "When a defect becomes a claim, and how each vendor credits it." },
 ];
 
 export function isSurfaceId(value: string): value is SurfaceSpec["id"] {

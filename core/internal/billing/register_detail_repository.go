@@ -550,4 +550,3 @@ func (r *Repository) resolveWorkspaceNoteAuthor(ctx context.Context, authorID st
 		authorID).Scan(&name)
 	return name
 }
-

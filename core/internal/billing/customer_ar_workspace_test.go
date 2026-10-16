@@ -36,26 +36,26 @@ import (
 // whatever the test set up, and the test asserts the handler asks for the right
 // customer and limit rather than reaching into SQL.
 type fakeWorkspaceStore struct {
-	header CustomerWorkspaceHeader
-	invoicesOpen    []CustomerWorkspaceInvoice
-	invoicesClosed  []CustomerWorkspaceInvoice
+	header           CustomerWorkspaceHeader
+	invoicesOpen     []CustomerWorkspaceInvoice
+	invoicesClosed   []CustomerWorkspaceInvoice
 	invoicesDisputed []CustomerWorkspaceInvoice
-	payments       []CustomerWorkspacePayment
-	creditNotes    []CustomerWorkspaceCreditNote
-	statements     []CustomerWorkspaceStatement
-	notes          []CustomerWorkspaceNote
+	payments         []CustomerWorkspacePayment
+	creditNotes      []CustomerWorkspaceCreditNote
+	statements       []CustomerWorkspaceStatement
+	notes            []CustomerWorkspaceNote
 
-	headerErr error
-	invoicesErr error
-	paymentsErr error
-	creditErr error
+	headerErr     error
+	invoicesErr   error
+	paymentsErr   error
+	creditErr     error
 	statementsErr error
-	notesErr error
+	notesErr      error
 
-	gotCustomerID string
-	gotLimit int
-	addedNotes []AddNoteInput
-	addedForID string
+	gotCustomerID   string
+	gotLimit        int
+	addedNotes      []AddNoteInput
+	addedForID      string
 	addedByAuthorID string
 }
 
@@ -199,7 +199,7 @@ func TestWorkspaceAging_BucketsSumToOpenCents(t *testing.T) {
 // boundary puts the wrong bucket pill on the invoice row.
 func TestBucketForLabel_Boundaries(t *testing.T) {
 	cases := []struct {
-		days int
+		days  int
 		label string
 	}{
 		{-1, "Current"},
@@ -257,14 +257,14 @@ func TestWorkspaceHandler_ComposesAllSubPayloads(t *testing.T) {
 	at := time.Date(2026, 8, 11, 9, 30, 0, 0, time.UTC)
 	store := &fakeWorkspaceStore{
 		header: CustomerWorkspaceHeader{
-			CustomerID: "c1b00000-0000-4000-a000-000000000099",
-			Name: "Northgate",
-			AccountNo: "NG-1",
-			Status: AccountCreditOK,
-			TermsDays: 30,
+			CustomerID:       "c1b00000-0000-4000-a000-000000000099",
+			Name:             "Northgate",
+			AccountNo:        "NG-1",
+			Status:           AccountCreditOK,
+			TermsDays:        30,
 			CreditLimitCents: 5_000_000,
-			OpenCents: 140_000,
-			OverdueCents: 40_000,
+			OpenCents:        140_000,
+			OverdueCents:     40_000,
 		},
 		invoicesOpen: []CustomerWorkspaceInvoice{
 			{ID: "inv-1", InvoiceNo: "INV-1", DocType: "INVOICE", Status: "FINALIZED",
@@ -293,7 +293,7 @@ func TestWorkspaceHandler_ComposesAllSubPayloads(t *testing.T) {
 			CurrentCents: 100_000, Days30Cents: 25_000, Days60Cents: 10_000,
 			Days60To90Cents: 5_000, Days90PlusCents: 0, TotalCents: 140_000,
 		},
-		asOf: at,
+		asOf:  at,
 		found: true,
 		activity: []ARActivity{
 			{Kind: "INVOICE", Reference: "INV-1", AmountCents: 100_000, OccurredAt: at},
@@ -356,7 +356,7 @@ func TestWorkspaceHandler_500WhenAgingDoesNotReconcile(t *testing.T) {
 	store := &fakeWorkspaceStore{
 		header: CustomerWorkspaceHeader{
 			CustomerID: "c1b00000-0000-4000-a000-000000000099",
-			Name: "Northgate", AccountNo: "NG-1",
+			Name:       "Northgate", AccountNo: "NG-1",
 			Status: AccountCreditOK, TermsDays: 30, CreditLimitCents: 5_000_000,
 			OpenCents: 100_000, // DRIFT: less than the aging's total below.
 		},
@@ -482,7 +482,7 @@ func TestWorkspaceHandler_NilCreditLeavesAgingEmpty(t *testing.T) {
 	store := &fakeWorkspaceStore{
 		header: CustomerWorkspaceHeader{
 			CustomerID: "c1b00000-0000-4000-a000-000000000099",
-			Name: "Northgate", AccountNo: "NG-1",
+			Name:       "Northgate", AccountNo: "NG-1",
 			Status: AccountCurrent, TermsDays: 30, CreditLimitCents: 0,
 		},
 	}

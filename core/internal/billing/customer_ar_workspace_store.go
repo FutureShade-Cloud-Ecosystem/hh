@@ -54,22 +54,22 @@ import (
 // renders against. A dealer with a zero limit gets 0; a dealer whose account is over the
 // limit gets 10000+ (the bar reads "over limit" past 10000, an honest answer).
 type CustomerWorkspaceHeader struct {
-	CustomerID           string     `json:"customer_id"`
-	Name                 string     `json:"name"`
-	AccountNo            string     `json:"account_no"`
-	Status               string     `json:"status"` // CURRENT | CREDIT_APPROVED | CREDIT_HOLD | UNDER_REVIEW
-	TermsDays            int        `json:"terms_days"`
-	CreditLimitCents     int64      `json:"credit_limit_cents"`
-	OpenCents            int64      `json:"open_cents"`
-	AvailableCreditCents int64      `json:"available_credit_cents"`
-	OverdueCents         int64      `json:"overdue_cents"`
-	UtilizationBps       int        `json:"utilization_bps"` // 0..10000+, basis points of the limit used
-	PrimaryAPContactName string     `json:"primary_ap_contact_name,omitempty"`
-	PrimaryAPContactEmail string    `json:"primary_ap_contact_email,omitempty"`
-	PrimaryAPContactPhone string    `json:"primary_ap_contact_phone,omitempty"`
-	LastPaymentAt        *time.Time `json:"last_payment_at,omitempty"`
-	LastPaymentCents     int64      `json:"last_payment_cents"`
-	Aging                CustomerWorkspaceAging `json:"aging"`
+	CustomerID            string                 `json:"customer_id"`
+	Name                  string                 `json:"name"`
+	AccountNo             string                 `json:"account_no"`
+	Status                string                 `json:"status"` // CURRENT | CREDIT_APPROVED | CREDIT_HOLD | UNDER_REVIEW
+	TermsDays             int                    `json:"terms_days"`
+	CreditLimitCents      int64                  `json:"credit_limit_cents"`
+	OpenCents             int64                  `json:"open_cents"`
+	AvailableCreditCents  int64                  `json:"available_credit_cents"`
+	OverdueCents          int64                  `json:"overdue_cents"`
+	UtilizationBps        int                    `json:"utilization_bps"` // 0..10000+, basis points of the limit used
+	PrimaryAPContactName  string                 `json:"primary_ap_contact_name,omitempty"`
+	PrimaryAPContactEmail string                 `json:"primary_ap_contact_email,omitempty"`
+	PrimaryAPContactPhone string                 `json:"primary_ap_contact_phone,omitempty"`
+	LastPaymentAt         *time.Time             `json:"last_payment_at,omitempty"`
+	LastPaymentCents      int64                  `json:"last_payment_cents"`
+	Aging                 CustomerWorkspaceAging `json:"aging"`
 }
 
 // CustomerWorkspaceAging is the 5-bucket breakdown the Overview tab opens with. It is the
@@ -153,13 +153,13 @@ type CustomerWorkspaceCreditNote struct {
 // time (0105's "a statement is an artefact, not a query" rule), so the row carries the
 // figures that went out the door on that date.
 type CustomerWorkspaceStatement struct {
-	ID                 string    `json:"id"`
-	RunID              string    `json:"run_id"`
-	Mode               string    `json:"mode"`              // MASS | INTERIM
-	AsOfDate           time.Time `json:"as_of_date"`
-	ClosingBalanceCents int64    `json:"closing_balance_cents"`
-	DeliveryStatus     string    `json:"delivery_status"`   // NOT_QUEUED / QUEUED / SENT / FAILED
-	CreatedAt          time.Time `json:"created_at"`
+	ID                  string    `json:"id"`
+	RunID               string    `json:"run_id"`
+	Mode                string    `json:"mode"` // MASS | INTERIM
+	AsOfDate            time.Time `json:"as_of_date"`
+	ClosingBalanceCents int64     `json:"closing_balance_cents"`
+	DeliveryStatus      string    `json:"delivery_status"` // NOT_QUEUED / QUEUED / SENT / FAILED
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 // CustomerWorkspaceNote is one customer_ar_notes row, the Activity tab's note list. The
@@ -167,7 +167,7 @@ type CustomerWorkspaceStatement struct {
 // the body is what a collections person wrote.
 type CustomerWorkspaceNote struct {
 	ID         string    `json:"id"`
-	Kind       string    `json:"kind"`    // NOTE / CALL / VISIT / EMAIL_RECEIVED
+	Kind       string    `json:"kind"` // NOTE / CALL / VISIT / EMAIL_RECEIVED
 	Body       string    `json:"body"`
 	AuthorID   string    `json:"author_id,omitempty"`
 	AuthorName string    `json:"author_name,omitempty"`
@@ -180,16 +180,16 @@ type CustomerWorkspaceNote struct {
 // marshals as null in Go and as a missing field in JSON, so every list is initialised to
 // its empty slice before being filled, by the same rule the register's handler applies.
 type CustomerWorkspace struct {
-	Header         CustomerWorkspaceHeader       `json:"header"`
-	InvoicesOpen    []CustomerWorkspaceInvoice    `json:"invoices_open"`
-	InvoicesClosed  []CustomerWorkspaceInvoice    `json:"invoices_closed"`
-	InvoicesDisputed []CustomerWorkspaceInvoice   `json:"invoices_disputed"`
-	Payments       []CustomerWorkspacePayment    `json:"payments"`
-	CreditNotes    []CustomerWorkspaceCreditNote `json:"credit_notes"`
-	Statements     []CustomerWorkspaceStatement  `json:"statements"`
-	Notes          []CustomerWorkspaceNote       `json:"notes"`
-	Activity       []ARActivity                  `json:"activity"` // last 10 across invoices/payments/credits/promises/disputes
-	AsOf           time.Time                     `json:"as_of"`
+	Header           CustomerWorkspaceHeader       `json:"header"`
+	InvoicesOpen     []CustomerWorkspaceInvoice    `json:"invoices_open"`
+	InvoicesClosed   []CustomerWorkspaceInvoice    `json:"invoices_closed"`
+	InvoicesDisputed []CustomerWorkspaceInvoice    `json:"invoices_disputed"`
+	Payments         []CustomerWorkspacePayment    `json:"payments"`
+	CreditNotes      []CustomerWorkspaceCreditNote `json:"credit_notes"`
+	Statements       []CustomerWorkspaceStatement  `json:"statements"`
+	Notes            []CustomerWorkspaceNote       `json:"notes"`
+	Activity         []ARActivity                  `json:"activity"` // last 10 across invoices/payments/credits/promises/disputes
+	AsOf             time.Time                     `json:"as_of"`
 }
 
 // -- workspace store seam ------------------------------------------------------------------------

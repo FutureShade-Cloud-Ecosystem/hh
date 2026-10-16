@@ -121,9 +121,9 @@ type RegisterRow struct {
 	// BucketKey is the CANONICAL C8 bucket key for the row (CURRENT / 1_30 / 31_60 / 61_90 /
 	// 90_PLUS), machine-readable. The display label sits in BucketLabel; the key is for joins and
 	// filtering on the server side.
-	BucketKey   string `json:"bucket_key,omitempty"`
-	AccountStatus string    `json:"account_status"`
-	Disputed      bool      `json:"disputed"`
+	BucketKey     string `json:"bucket_key,omitempty"`
+	AccountStatus string `json:"account_status"`
+	Disputed      bool   `json:"disputed"`
 	// PromisedDate is the live promise against this document, when one exists, the fact that stops
 	// the next caller chasing a customer who has already committed.
 	PromisedDate  *time.Time `json:"promised_date,omitempty"`
@@ -154,15 +154,15 @@ const (
 // C8 register filter chips. The legacy strings below stay valid for backward compatibility with
 // every wire payload and stored URL bookmark that already names them.
 const (
-	ChipAll        = "all"
-	ChipPastDue    = "past_due"
-	ChipCurrent    = "current"
-	ChipOnHold     = "on_hold"
-	ChipOpen       = "open"       // legacy: open documents, any state
-	ChipOverdue    = "overdue"    // legacy
-	ChipPromised   = "promised"   // legacy
-	ChipDisputed   = "disputed"   // legacy
-	ChipPaid       = "paid"       // legacy
+	ChipAll      = "all"
+	ChipPastDue  = "past_due"
+	ChipCurrent  = "current"
+	ChipOnHold   = "on_hold"
+	ChipOpen     = "open"     // legacy: open documents, any state
+	ChipOverdue  = "overdue"  // legacy
+	ChipPromised = "promised" // legacy
+	ChipDisputed = "disputed" // legacy
+	ChipPaid     = "paid"     // legacy
 )
 
 // C8 5-bucket keys (the SQL aging buckets). The WIRE label (BucketLabel) and the JSON key

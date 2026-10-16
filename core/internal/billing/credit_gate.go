@@ -131,11 +131,11 @@ type AgingRow struct {
 	BranchID         string `json:"branch_id"`
 	TermsDays        int    `json:"payment_terms_days"`
 	CreditLimitCents int64  `json:"credit_limit_cents"`
-	CurrentCents     int64  `json:"current_cents"`     // 0 days past due or not yet due
-	Days30Cents      int64  `json:"days_30_cents"`     // 1 to 30 days past due
-	Days60Cents      int64  `json:"days_60_cents"`     // 31 to 60 days past due
+	CurrentCents     int64  `json:"current_cents"`       // 0 days past due or not yet due
+	Days30Cents      int64  `json:"days_30_cents"`       // 1 to 30 days past due
+	Days60Cents      int64  `json:"days_60_cents"`       // 31 to 60 days past due
 	Days60To90Cents  int64  `json:"days_60_to_90_cents"` // 61 to 90 days past due (C8 band)
-	Days90PlusCents  int64  `json:"days_90_plus_cents"` // 91 and over days past due (C8 band)
+	Days90PlusCents  int64  `json:"days_90_plus_cents"`  // 91 and over days past due (C8 band)
 	TotalCents       int64  `json:"total_cents"`
 	PastBucketCents  int64  `json:"past_bucket_cents"` // balance older than the policy's aging window
 	OnHold           bool   `json:"on_hold"`
