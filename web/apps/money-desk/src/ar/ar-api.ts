@@ -37,6 +37,8 @@ import {
   type TillPaymentHistory,
 } from "@hardscapehouse/api-client";
 
+import { OfficeApi } from "./office-api.js";
+
 export type PaymentMethod = "CASH" | "CARD" | "CHEQUE" | "EFT";
 
 export type ApplyAnswer = BillingApplyPaymentAnswer;
@@ -47,6 +49,11 @@ export class ArApi {
 
   constructor(client: ApiClient) {
     this.#client = client;
+  }
+
+  /** The receivables office's door, over the same client. */
+  office(): OfficeApi {
+    return new OfficeApi(this.#client);
   }
 
   landing(): Promise<Result<BillingARLanding>> {
