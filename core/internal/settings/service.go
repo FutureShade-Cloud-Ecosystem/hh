@@ -87,6 +87,7 @@ type Service struct {
 	hooks      map[string]SurfaceHooks
 	callerFrom func(context.Context) (identity.StaffContext, bool)
 	zone       ZoneSource
+	legacy     LegacyImportSource
 }
 
 // ZoneSource answers the dealer's business day zone (an IANA name). The dealer configuration reader
@@ -98,6 +99,19 @@ type ZoneSource interface {
 // WithZone serves the dealer's business day zone on every config read. Chainable at wiring time.
 func (s *Service) WithZone(z ZoneSource) *Service {
 	s.zone = z
+	return s
+}
+
+// LegacyImportSource answers the short lowercase word naming the legacy system a dealer imports from,
+// or "" when the dealer has none. The dealer configuration reader is one.
+type LegacyImportSource interface {
+	LegacyImportSource(ctx context.Context) (string, error)
+}
+
+// WithLegacyImport serves the dealer's legacy import source on every config read. Chainable at wiring
+// time; a kit built without one serves none, which is a dealer with no legacy import.
+func (s *Service) WithLegacyImport(l LegacyImportSource) *Service {
+	s.legacy = l
 	return s
 }
 
@@ -162,6 +176,9 @@ type SurfaceConfig struct {
 	// day and not the browser's or a compiled in one. Absent when the kit has no zone source; the
 	// web then keeps its Ontario default.
 	BusinessZone string `json:"business_zone,omitempty"`
+	// LegacyImportSource names the legacy system this dealer imports from (a short lowercase word),
+	// so a surface draws the legacy import check only where there is one. Absent means none.
+	LegacyImportSource string `json:"legacy_import_source,omitempty"`
 }
 
 // ConfigOpt narrows a config read. Options rather than a fourth positional argument so the six
@@ -244,6 +261,13 @@ func (s *Service) Config(ctx context.Context, surfaceID, branchID string, opts .
 			return SurfaceConfig{}, zerr
 		}
 		cfg.BusinessZone = z
+	}
+	if s.legacy != nil {
+		src, lerr := s.legacy.LegacyImportSource(ctx)
+		if lerr != nil {
+			return SurfaceConfig{}, lerr
+		}
+		cfg.LegacyImportSource = src
 	}
 	return cfg, nil
 }

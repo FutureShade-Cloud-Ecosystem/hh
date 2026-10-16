@@ -71,6 +71,8 @@ test("every text is 4.5 to 1 or better in both themes: home, the drafted K08 row
 test("the card lands on the home and the K08 gap is the hot, picked row of the worklist", async ({ page, request }) => {
   await openHome(page, request);
   await expect(page.getByRole("heading", { name: "Buying and Stock", level: 1 })).toBeVisible();
+  // The chrome names the app, as the board's selector does: never the design system's spare word.
+  await expect(page.locator("hos-app-header .brand-product")).toHaveText("HH Buying and Stock");
   await expect(page.locator("[data-shortfall-row]")).toHaveCount(3);
   const gap = page.locator("[data-shortfall-row][data-hot]");
   await expect(gap).toHaveCount(1);
@@ -78,7 +80,8 @@ test("the card lands on the home and the K08 gap is the hot, picked row of the w
   await expect(gap).toContainText("-40");
   await expect(gap).toContainText("240");
   await expect(gap.getByRole("checkbox")).toHaveAttribute("aria-checked", "true");
-  await expect(page.locator("[data-k08-note]")).toContainText("K08");
+  // The design notes are gone from the screen: the row and the button carry the whole story.
+  await expect(page.locator("[data-k08-note]")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Draft PO (1)" })).toBeEnabled();
   await expect(page.locator("[data-tile='below-point']")).toContainText("3");
   await expect(page.locator("[data-po-row]")).toHaveCount(4);

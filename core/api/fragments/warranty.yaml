@@ -124,6 +124,140 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  # --- warranty: walk change 6, the claim threshold policy ---------------------
+  /api/v1/warranty/policy:
+    get:
+      operationId: warrantyGetPolicy
+      tags: [staff-warranty]
+      summary: Read the effective warranty policy for a branch
+      description: >-
+        branch_id empty resolves the org-wide default row; a branch resolves
+        that branch's override when present, else the org default. The claim
+        threshold is the line total at which a defect becomes a warranty
+        claim rather than shrinkage.
+      x-role: requireStaff
+      x-access:
+        surfaces: [manager-home, counter-till, dealer-admin]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - { name: branch_id, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: The effective policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyPolicy"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    put:
+      operationId: warrantyPutPolicy
+      tags: [staff-warranty]
+      summary: Write the warranty policy (org default or one branch override)
+      description: >-
+        Money arrives in integer cents on the wire. A change records the old
+        and new threshold on the audit spine; a save that moved nothing
+        writes no audit row.
+      x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyPolicyInput"
+      responses:
+        "200":
+          description: The stored policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyPolicy"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: A negative threshold, or an unknown branch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  # --- warranty: walk change 6, the per vendor credit agreements ---------------
+  /api/v1/warranty/agreements:
+    get:
+      operationId: warrantyListVendorAgreements
+      tags: [staff-warranty]
+      summary: List every active vendor's warranty credit agreement
+      description: >-
+        One row per active vendor, in vendor name order. A vendor the dealer
+        never set answers the default claim_by_claim, with no period and no
+        allowance: the default lives in the read alone.
+      x-role: requireStaff
+      x-access:
+        surfaces: [manager-home, dealer-admin]
+        level: read
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The vendor agreements, every active vendor in one read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyVendorAgreementPage"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/v1/warranty/agreements/{vendorID}:
+    put:
+      operationId: warrantyUpsertVendorAgreement
+      tags: [staff-warranty]
+      summary: Write one vendor's warranty credit agreement
+      description: >-
+        The path is the source of truth for which vendor the agreement
+        belongs to. claim_by_claim clears the period and the allowance (the
+        kind is the rule, the other two carry nothing on their own); a
+        periodic credit note or a fixed allowance carries a standard month
+        or quarter, and a fixed allowance carries its percent of the
+        vendor's purchases as integer basis points. Each moved knob rides
+        the audit spine with its old and new value; a save that moved
+        nothing writes no audit row.
+      x-role: requireAdmin
+      x-access:
+        surfaces: [dealer-admin]
+        level: admin
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: vendorID
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarrantyVendorAgreementInput"
+      responses:
+        "200":
+          description: The stored agreement, the effective row read back
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarrantyVendorAgreement"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422":
+          description: An unknown vendor, an off-vocabulary kind or period, or an out of range allowance
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
   # --- warranty: FR-2 claim capture + reads -----------------------------------
   /api/v1/warranty/claims:
     get:
@@ -1421,6 +1555,95 @@ components:
           items: { $ref: "#/components/schemas/WarrantyVendorProfile" }
         next_cursor: { type: [string, "null"] }
         limit: { type: integer, format: int32 }
+
+    # --- warranty: walk change 6, the claim threshold policy --------------------
+    WarrantyPolicy:
+      type: object
+      description: >-
+        The effective warranty policy for a scope: the branch row when
+        present, else the org default. The claim threshold is the line total
+        at which a defect becomes a warranty claim rather than shrinkage.
+      required: [claim_threshold_cents]
+      properties:
+        branch_id:
+          type: string
+          description: The branch the row answers for; empty means the org default
+        claim_threshold_cents:
+          type: integer
+          format: int64
+          description: The claim threshold in integer cents, zero or more
+        updated_at: { type: string, format: date-time }
+    WarrantyPolicyInput:
+      type: object
+      description: >-
+        The policy write payload; money arrives in integer cents. branch_id
+        empty writes the org default row, a branch id upserts that branch's
+        override.
+      required: [claim_threshold_cents]
+      properties:
+        branch_id: { type: string }
+        claim_threshold_cents:
+          type: integer
+          format: int64
+          minimum: 0
+          description: The new threshold in integer cents, zero or more
+
+    # --- warranty: walk change 6, the per vendor credit agreements ---------------
+    WarrantyVendorAgreement:
+      type: object
+      description: >-
+        One vendor's effective warranty credit agreement: the stored row
+        when the dealer set one, the default claim_by_claim when not. The
+        period rides only for a periodic credit note or a fixed allowance;
+        the allowance rides only for a fixed allowance, as integer basis
+        points of the vendor's purchases in the period.
+      required: [vendor_id, vendor_no, vendor_name, agreement_kind, allowance_bp]
+      properties:
+        vendor_id: { type: string }
+        vendor_no:
+          type: string
+          description: Joined from the vendor master for display
+        vendor_name:
+          type: string
+          description: Joined from the vendor master for display
+        agreement_kind:
+          type: string
+          enum: [claim_by_claim, periodic_credit_note, fixed_allowance]
+        period:
+          type: string
+          enum: [monthly, quarterly]
+          description: The standard period the agreement runs on; absent for claim_by_claim
+        allowance_bp:
+          type: integer
+          description: The fixed allowance in basis points of the vendor's purchases; zero otherwise
+        updated_at: { type: string, format: date-time }
+    WarrantyVendorAgreementInput:
+      type: object
+      description: >-
+        One vendor's agreement write payload. claim_by_claim ignores a
+        period or allowance that rides beside it and stores them cleared.
+      required: [agreement_kind, allowance_bp]
+      properties:
+        agreement_kind:
+          type: string
+          enum: [claim_by_claim, periodic_credit_note, fixed_allowance]
+        period:
+          type: string
+          enum: [monthly, quarterly]
+          description: Required for a periodic credit note or a fixed allowance
+        allowance_bp:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: The fixed allowance in basis points; zero otherwise
+    WarrantyVendorAgreementPage:
+      type: object
+      description: Every active vendor with its effective agreement, in vendor name order
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WarrantyVendorAgreement" }
 
     # --- warranty: FR-2 claim object --------------------------------------------
     WarrantyAddress:

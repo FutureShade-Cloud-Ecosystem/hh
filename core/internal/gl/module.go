@@ -447,7 +447,19 @@ type Handler struct {
 	// zone is the dealer's business day zone source; nil = the Ontario dealer's. An explicit tie-out
 	// day is cut at the last instant of the dealer's own day.
 	zone houseday.Source
+	// legacy answers the dealer's legacy import source; nil or "" means the dealer has none and the
+	// legacy import check route is refused.
+	legacy LegacyImportSource
 }
+
+// LegacyImportSource answers the short lowercase word naming the legacy system a dealer imports from,
+// or "" when it has none. The settings module owns the key; the composition root binds the reader.
+type LegacyImportSource interface {
+	LegacyImportSource(ctx context.Context) (string, error)
+}
+
+// WithLegacyImport binds the dealer's legacy import source. Nil leaves the legacy import check off.
+func (h *Handler) WithLegacyImport(src LegacyImportSource) *Handler { h.legacy = src; return h }
 
 // WithZone binds the dealer's business day zone source. Nil keeps the Ontario dealer's.
 func (h *Handler) WithZone(src houseday.Source) *Handler { h.zone = src; return h }

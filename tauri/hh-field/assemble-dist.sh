@@ -20,7 +20,7 @@
 # The launch map is pinned to the manifest and the front door's tile table by
 # scripts/field-profiles.test.ts.
 #
-# A Field app of the manifest with no web app yet (House Messages) is skipped
+# A Field app of the manifest with no web app yet is skipped
 # with a note: its front door tile is a coming tile until its module lands.
 #
 # Run by beforeBuildCommand in tauri.conf.json (cwd independent: it resolves
@@ -51,6 +51,7 @@ cp -r "$ROOT/web/apps/front-door/dist/." "$DIST/"
 LAUNCH_MAP=(
   "yard-pick yard-pick /yard/"
   "drive-run drive-run /drive/"
+  "house-messages house-messages /messages/"
 )
 
 for entry in "${LAUNCH_MAP[@]}"; do

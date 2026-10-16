@@ -120,6 +120,28 @@ export function isOpen(status: string): boolean {
 }
 
 /** A pick nobody has taken yet: the queue's unclaimed half. */
+/** A held card is never the cached word. The row is re-sent only when the task's seq moves, and clearing
+ * the hold moves billing, not the task, so a device that pulled "held" keeps it until something else
+ * moves the task, with no Claim button to move it. Online, each held card is re-read from the server's
+ * detail read and the answer replaces it (the hold lives in the ticket); a read that does not answer
+ * keeps the cached card, which still says held, and the server's claim door decides. */
+export async function rereadHeldPicks<P extends { readonly task: { readonly id: string }; readonly ticket: { readonly held_from_picking: boolean } | null }>(
+  picks: readonly P[],
+  readOne: (id: string) => Promise<{ readonly ok: true; readonly value: P } | { readonly ok: false }>,
+): Promise<P[]> {
+  return Promise.all(
+    picks.map(async (p) => {
+      if (p.ticket?.held_from_picking !== true) return p;
+      try {
+        const answer = await readOne(p.task.id);
+        return answer.ok ? answer.value : p;
+      } catch {
+        return p;
+      }
+    }),
+  );
+}
+
 export function isUnclaimed(status: string): boolean {
   return status === "QUEUED" || status === "PUSHED";
 }

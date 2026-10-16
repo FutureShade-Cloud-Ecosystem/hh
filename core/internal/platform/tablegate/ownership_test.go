@@ -301,6 +301,8 @@ var migrationTopics = map[string]string{
 	"0369_yard_short_pick_backorder":       "order",
 	"0370_order_skids":                     "order",
 	"0372_yard_short_line_tax":             "order",
+	"0396_warranty_policy":                 "warranty",
+	"0404_warranty_vendor_agreements":      "warranty",
 	"0361_card_charge_attempts":            "payment",
 }
 
@@ -636,7 +638,9 @@ var ownedObjects = map[string]string{
 	"warranty_intake_photos":          "warranty",          // 0131_warranty_public_intake
 	"warranty_intake_rate_limit":      "warranty",          // 0131_warranty_public_intake
 	"warranty_outcome_paths":          "warranty",          // 0129_warranty_settlement_paths
+	"warranty_policy":                 "warranty",          // 0396_warranty_policy
 	"warranty_product_overrides":      "warranty",          // 0053_warranty_claims
+	"warranty_vendor_agreements":      "warranty",          // 0404_warranty_vendor_agreements
 	"warranty_recovery_actions":       "warranty",          // 0130_warranty_recovery_board
 	"warranty_recovery_balances":      "warranty",          // 0130_warranty_recovery_board
 	"demo_box":                        "demo",              // runtime created by demo populate's writeDemoBox, outside the frozen migration chain by that file's own statement
