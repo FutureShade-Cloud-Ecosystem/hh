@@ -30,7 +30,12 @@
          blue (--hh-quote, with the quote fill on the Accept button), never a
          brand override's blue and never the order's gold. -->
     <script>
-      document.documentElement.setAttribute('data-theme', 'light');
+      (function () {
+        var params = new URLSearchParams(location.search);
+        if (params.get('theme') !== 'charcoal') {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
     </script>
     <!-- The page's own chrome, the design-system harness's one line: the body
          stands on the token's ground (--hh-page, pale grey-blue in the light
