@@ -7,4 +7,6 @@ import "./page.css";
 import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import "./app-root.js";
 
-applyTenantTitle("Front Door");
+// The tab carries the card's own word for the page; "Front Door" is the
+// lane's internal name and never reaches a person's screen.
+applyTenantTitle("Sign in");
