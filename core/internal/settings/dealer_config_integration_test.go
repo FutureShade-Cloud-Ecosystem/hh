@@ -139,3 +139,41 @@ func TestIntegration_DealerConfig_BusinessZoneIsServedAndALiveWrite(t *testing.T
 		t.Fatalf("a written zone is live at the next read: %q %v", z, err)
 	}
 }
+
+// The legacy import source is absent on a migrated dealer, a write is live at the next read, and a
+// blank or malformed stored value reads as none.
+func TestIntegration_LegacyImportSource_AbsentWrittenAndMalformed(t *testing.T) {
+	r := NewDealerConfigReader(intPool(t))
+	ctx := context.Background()
+	var before []byte
+	has := r.pool.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = $1`, KeyLegacyImportSource).Scan(&before) == nil
+	t.Cleanup(func() {
+		_, _ = r.pool.Exec(ctx, `DELETE FROM system_settings WHERE key = $1`, KeyLegacyImportSource)
+		if has {
+			_, _ = r.pool.Exec(ctx, `INSERT INTO system_settings (key, value) VALUES ($1, $2::jsonb)`, KeyLegacyImportSource, string(before))
+		}
+	})
+	if _, err := r.pool.Exec(ctx, `DELETE FROM system_settings WHERE key = $1`, KeyLegacyImportSource); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.LegacyImportSource(ctx); err != nil || got != "" {
+		t.Fatalf("a dealer with no row has no source: %q %v", got, err)
+	}
+	if err := WriteLegacyImportSourceTx(ctx, r.pool, "bistrack"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.LegacyImportSource(ctx); err != nil || got != "bistrack" {
+		t.Fatalf("after write: %q %v", got, err)
+	}
+	if err := WriteLegacyImportSourceTx(ctx, r.pool, "  "); err == nil {
+		t.Fatal("a blank source write must be refused")
+	}
+	for _, raw := range []string{`""`, `"BIS TRACK"`, `7`} {
+		if _, err := r.pool.Exec(ctx, `UPDATE system_settings SET value = $2::jsonb WHERE key = $1`, KeyLegacyImportSource, raw); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := r.LegacyImportSource(ctx); err != nil || got != "" {
+			t.Fatalf("stored %s must read as none: %q %v", raw, got, err)
+		}
+	}
+}

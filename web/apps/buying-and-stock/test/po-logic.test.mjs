@@ -17,6 +17,7 @@ import {
   statusTone,
   statusWord,
   validateExpectedDate,
+  whenWords,
 } from "../src/po/po-logic.ts";
 import { costCentsFromTyped, formatMoney, formatQty } from "../src/po/po-money.ts";
 
@@ -137,6 +138,17 @@ test("promised days read against today, and far dates are left to the date", () 
   assert.equal(relativeDay("2031-02-27", "2031-03-02"), "3 days ago");
   assert.equal(relativeDay("2032-03-04", "2031-03-02"), "");
   assert.equal(relativeDay("soon", "2031-03-02"), "");
+});
+
+test("a stamp on screen reads as words against today, and a far day falls back to its day", () => {
+  assert.equal(whenWords("2031-03-04", "2031-03-02"), "in 2 days");
+  assert.equal(whenWords("2031-03-02T14:05:00Z", "2031-03-02"), "today");
+  assert.equal(whenWords("2031-03-01T09:00:00Z", "2031-03-02"), "yesterday");
+  assert.equal(whenWords("2031-02-20T09:00:00Z", "2031-03-02"), "10 days ago");
+  assert.equal(whenWords("2032-03-04", "2031-03-02"), "2032-03-04");
+  assert.equal(whenWords("soon", "2031-03-02"), "soon");
+  assert.equal(whenWords(undefined, "2031-03-02"), "");
+  assert.equal(whenWords("", "2031-03-02"), "");
 });
 
 test("what has landed reads as a count against what was ordered", () => {

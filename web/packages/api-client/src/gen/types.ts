@@ -1526,6 +1526,7 @@ export type SettingsSurfaceConfig = {
   workspace: SettingsWorkspaceView;
   policy?: { [key: string]: unknown };
   business_zone?: string;
+  legacy_import_source?: string;
 };
 export type SettingsRoleItemsBody = {
   profile: DashboardProfile;
@@ -2345,11 +2346,7 @@ export type BankRecAccount = {
   tracking_only: boolean;
   unmatched_lines: number;
 };
-export type BankRecAccountPage = {
-  items: BankRecAccount[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecAccountList = BankRecAccount[];
 export type BankRecStatementLine = {
   id: string;
   bank_account_id: string;
@@ -2398,11 +2395,7 @@ export type BankRecMatchSummary = {
   unmatched: number;
   matches: BankRecMatch[];
 };
-export type BankRecMatchPage = {
-  items: BankRecMatch[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecMatchList = BankRecMatch[];
 export type BankRecMatchInput = {
   mode: "auto" | "manual";
   bank_account_id?: string;
@@ -2421,6 +2414,12 @@ export type BankRecUnmatchResult = {
 };
 export type BankRecRuleSpec = {
   kind?: "gateway_ref_exact" | "lodgement_ref_exact" | "descriptor_fuzzy";
+  target?: string;
+  tolerance_cents?: number;
+  descriptor_ilike?: string;
+  date_window_days?: number;
+  allow_fee_split?: boolean;
+  fee_account_code?: string;
 };
 export type BankRecMatchRule = {
   id: string;
@@ -2438,11 +2437,7 @@ export type BankRecRuleInput = {
   spec: BankRecRuleSpec;
   priority: number;
 };
-export type BankRecMatchRulePage = {
-  items: BankRecMatchRule[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecMatchRuleList = BankRecMatchRule[];
 export type BankRecReconciliation = {
   id: string;
   bank_account_id: string;
@@ -2460,11 +2455,7 @@ export type BankRecReconInput = {
   month: number;
   statement_balance_cents: number;
 };
-export type BankRecReconciliationPage = {
-  items: BankRecReconciliation[];
-  next_cursor?: string | null;
-  limit?: number;
-};
+export type BankRecReconciliationList = BankRecReconciliation[];
 export type IdentityPing = {
   module: string;
   status: string;
@@ -2614,7 +2605,7 @@ export type IdentityApprovalDecideRequest = {
   approve: boolean;
   reason: string;
 };
-export type TaxReasonCode = "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "FNGST_5" | "MANUAL_TAX_REVIEW";
+export type TaxReasonCode = "STD_ON_HST_13" | "STD_SALES_TAX" | "ON_FN_POS_8" | "FED_S87_VENDOR_DELIVERY" | "FNGST_5" | "MANUAL_TAX_REVIEW" | "FED_S87_GOODS_ON_RES" | "FED_S87_SERVICE_RESERVE" | "FED_BAND_MANAGEMENT" | "FNT_PRODUCT" | "TREATY_OR_SELF_GOV_REVIEW" | "RELIEF_DECLINED_EVIDENCE";
 export type TaxRate = {
   id: string;
   jurisdiction: string;
@@ -2624,10 +2615,8 @@ export type TaxRate = {
   effective_to?: string;
   notes?: string;
 };
-export type TaxRatePage = {
-  items: TaxRate[];
-  next_cursor?: string | null;
-  limit?: number;
+export type TaxRateList = {
+  rates: TaxRate[] | null;
 };
 export type TaxProfileStatus = "ACTIVE" | "PENDING" | "RETIRED";
 export type TaxStatusCardProfile = {
@@ -2641,10 +2630,11 @@ export type TaxStatusCardProfile = {
   status: TaxProfileStatus;
   notes?: string;
 };
-export type TaxStatusCardProfilePage = {
-  items: TaxStatusCardProfile[];
-  next_cursor?: string | null;
-  limit?: number;
+export type TaxStatusCardProfileList = {
+  profiles: TaxStatusCardProfile[] | null;
+};
+export type TaxPendingProfileList = {
+  pending_profiles: TaxStatusCardProfile[];
 };
 export type TaxConfig = {
   branch_id?: string;
@@ -2667,10 +2657,8 @@ export type TaxEvidence = {
   created_at?: string;
   attestation_status?: string;
 };
-export type TaxEvidencePage = {
-  items: TaxEvidence[];
-  next_cursor?: string | null;
-  limit?: number;
+export type TaxEvidenceList = {
+  evidence: TaxEvidence[] | null;
 };
 export type TaxEvidenceCapture = {
   profile_id: string;
@@ -2944,6 +2932,8 @@ export type InventoryShortfallRow = {
   suggested_value_cents?: number;
   draft_po_id?: string;
   draft_po_no?: string;
+  short_order_nos?: string[];
+  short_order_more?: number;
 };
 export type InventoryReorderPoint = {
   product_id: string;
@@ -3010,51 +3000,36 @@ export type InventoryNudgeResult = {
   body: string;
   note: string;
 };
-export type InventoryOnHandPage = {
-  items: InventoryOnHand[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryOnHandList = {
+  on_hand: InventoryOnHand[];
 };
-export type InventoryMovePage = {
-  items: InventoryStockMove[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryMoveList = {
+  moves: InventoryStockMove[];
 };
-export type InventoryPendingFulfilmentPage = {
-  items: InventoryPendingFulfilment[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryPendingFulfilmentList = {
+  pending: InventoryPendingFulfilment[];
 };
-export type InventoryTransitDaysPairPage = {
-  items: InventoryTransitDaysPair[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryTransitDaysPairList = {
+  pairs: InventoryTransitDaysPair[];
 };
-export type InventoryBranchStockPage = {
-  items: InventoryBranchStock[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryBranchStockList = {
+  branches: InventoryBranchStock[] | null;
 };
-export type InventoryBrowsePage = {
-  items: InventoryBrowseRow[];
-  facets: InventoryFacet[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryBrowseResult = {
+  rows: InventoryBrowseRow[];
+  facets: InventoryFacet[] | null;
+  total: number;
+  limit: number;
+  offset: number;
 };
-export type InventoryReservationPage = {
-  items: InventoryReservation[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryReservationList = {
+  reservations: InventoryReservation[] | null;
 };
-export type InventoryTransferPage = {
-  items: InventoryTransfer[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryTransferList = {
+  transfers: InventoryTransfer[] | null;
 };
-export type InventoryInTransitLinePage = {
-  items: InventoryInTransitLine[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryInTransitLineList = {
+  lines: InventoryInTransitLine[];
 };
 export type InventoryShortfallPage = {
   items: InventoryShortfallRow[];
@@ -3062,10 +3037,8 @@ export type InventoryShortfallPage = {
   next_cursor?: string | null;
   limit?: number;
 };
-export type InventoryReorderPointPage = {
-  items: InventoryReorderPoint[];
-  next_cursor?: string | null;
-  limit?: number;
+export type InventoryReorderPointList = {
+  reorder_points: InventoryReorderPoint[] | null;
 };
 export type InvCountSheet = {
   id: string;

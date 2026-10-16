@@ -119,3 +119,11 @@ type Store interface {
 	// stamps the idempotency key, and allocates a fresh seq.
 	Delete(ctx context.Context, f ScopeFilter, id, key string) (RowState, error)
 }
+
+// ServerStateDecorator is an optional leg of a Store: the engine calls it on the row it is about to
+// show a device in a conflict envelope, and nowhere else. A store that builds something expensive for
+// the row a device displays (a ticket) does it here, so Load, FindApplied and the plain write paths
+// stay cheap. The row is the one Load returned; the decoration must not fail the operation.
+type ServerStateDecorator interface {
+	DecorateServerState(ctx context.Context, f ScopeFilter, row *RowState)
+}

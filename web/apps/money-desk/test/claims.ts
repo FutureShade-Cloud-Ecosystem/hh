@@ -226,7 +226,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   "year-close": [{ file: BOOKS, test: "the year end close is a review naming the year, retained earnings and the periods it seals, and reports the server's net income" }],
   "trial-export": [{ file: BOOKS, test: "the trial balance takes a month, shows that month alone, and the export downloads the rows on screen" }],
   checks: [
-    { file: BOOKS, test: "the checks read the receivables tie out in words beside its colour, and run the BisTrack check" },
+    { file: BOOKS, test: "the checks read the receivables tie out in words beside its colour, and run the legacy import check" },
     { file: BOOKS, test: "a journal that moves receivables puts the tie out out of tie, said in words with the difference" },
   ],
   policy: [{ file: BOOKS, test: "the policy reads the approval threshold and says changing it is not on this screen" }],
@@ -342,7 +342,7 @@ export const CLAIM_COVERAGE: Readonly<Record<string, readonly ClaimProof[]>> = {
   ],
   "bankrec-states": [
     { file: BANKREC, test: "while the accounts load the screen says so, a failed load offers Try again, and an empty list says so" },
-    { file: BANKREC, test: "the core's bare arrays and the contract's pages are both read, and anything else is refused, never half read" },
+    { file: BANKREC, test: "the core's bare array is read, and a page of items or anything else is refused, never half read" },
     { file: BANKREC, test: "more than a page of lines shows more on request and follows the core's cursor to the end" },
   ],
   "bankrec-phone": [
