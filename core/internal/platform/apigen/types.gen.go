@@ -1840,6 +1840,7 @@ type SettingsSurfaceConfig struct {
 	UserItems    []SettingsItem        `json:"user_items"`
 	Workspace    SettingsWorkspaceView `json:"workspace"`
 	Policy       *map[string]any       `json:"policy,omitempty"`
+	BusinessZone *string               `json:"business_zone,omitempty"`
 }
 
 type SettingsRoleItemsBody struct {
@@ -2975,6 +2976,10 @@ type IdentityExchangeRequest struct {
 	Org string `json:"org"`
 }
 
+type IdentityPersonaRequest struct {
+	Persona string `json:"persona"`
+}
+
 type IdentityExchangeResponse struct {
 	Token       string       `json:"token"`
 	ExpiresAtMs int64        `json:"expiresAtMs"`
@@ -3109,7 +3114,7 @@ type IdentityApprovalDecideRequest struct {
 	Reason  string `json:"reason"`
 }
 
-// TaxReasonCode is the document's enum: "STD_ON_HST_13", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW".
+// TaxReasonCode is the document's enum: "STD_ON_HST_13", "STD_SALES_TAX", "ON_FN_POS_8", "FED_S87_VENDOR_DELIVERY", "FNGST_5", "MANUAL_TAX_REVIEW".
 type TaxReasonCode string
 
 type TaxRate struct {
@@ -3456,30 +3461,32 @@ type InventoryInTransitLine struct {
 }
 
 type InventoryShortfallRow struct {
-	ProductId           string  `json:"product_id"`
-	Sku                 string  `json:"sku"`
-	ProductName         string  `json:"product_name"`
-	BranchId            string  `json:"branch_id"`
-	BranchCode          string  `json:"branch_code"`
-	Uom                 string  `json:"uom"`
-	OnHandBase          float64 `json:"on_hand_base"`
-	ReservedBase        float64 `json:"reserved_base"`
-	AvailableBase       float64 `json:"available_base"`
-	InTransitBase       float64 `json:"in_transit_base"`
-	OnOrderBase         float64 `json:"on_order_base"`
-	ProjectedBase       float64 `json:"projected_base"`
-	ReorderPointBase    float64 `json:"reorder_point_base"`
-	ReorderQtyBase      float64 `json:"reorder_qty_base"`
-	OrderMultipleBase   float64 `json:"order_multiple_base"`
-	SuggestedQtyBase    float64 `json:"suggested_qty_base"`
-	ShortBase           float64 `json:"short_base"`
-	PreferredVendorId   string  `json:"preferred_vendor_id"`
-	PreferredVendorName string  `json:"preferred_vendor_name"`
-	LeadTimeDays        int32   `json:"lead_time_days"`
-	AvgCostCents        *int64  `json:"avg_cost_cents,omitempty"`
-	SuggestedValueCents *int64  `json:"suggested_value_cents,omitempty"`
-	DraftPoId           *string `json:"draft_po_id,omitempty"`
-	DraftPoNo           *string `json:"draft_po_no,omitempty"`
+	ProductId           string    `json:"product_id"`
+	Sku                 string    `json:"sku"`
+	ProductName         string    `json:"product_name"`
+	BranchId            string    `json:"branch_id"`
+	BranchCode          string    `json:"branch_code"`
+	Uom                 string    `json:"uom"`
+	OnHandBase          float64   `json:"on_hand_base"`
+	ReservedBase        float64   `json:"reserved_base"`
+	AvailableBase       float64   `json:"available_base"`
+	InTransitBase       float64   `json:"in_transit_base"`
+	OnOrderBase         float64   `json:"on_order_base"`
+	ProjectedBase       float64   `json:"projected_base"`
+	ReorderPointBase    float64   `json:"reorder_point_base"`
+	ReorderQtyBase      float64   `json:"reorder_qty_base"`
+	OrderMultipleBase   float64   `json:"order_multiple_base"`
+	SuggestedQtyBase    float64   `json:"suggested_qty_base"`
+	ShortBase           float64   `json:"short_base"`
+	PreferredVendorId   string    `json:"preferred_vendor_id"`
+	PreferredVendorName string    `json:"preferred_vendor_name"`
+	LeadTimeDays        int32     `json:"lead_time_days"`
+	AvgCostCents        *int64    `json:"avg_cost_cents,omitempty"`
+	SuggestedValueCents *int64    `json:"suggested_value_cents,omitempty"`
+	DraftPoId           *string   `json:"draft_po_id,omitempty"`
+	DraftPoNo           *string   `json:"draft_po_no,omitempty"`
+	ShortOrderNos       *[]string `json:"short_order_nos,omitempty"`
+	ShortOrderMore      *int32    `json:"short_order_more,omitempty"`
 }
 
 type InventoryReorderPoint struct {
@@ -5034,6 +5041,7 @@ type PosReliefOutcome struct {
 	Automated         bool   `json:"automated"`
 	RequiresEvidence  bool   `json:"requires_evidence"`
 	EvidenceSatisfied bool   `json:"evidence_satisfied"`
+	TaxLabel          string `json:"tax_label"`
 }
 
 type PosSignatureCapture struct {
@@ -5192,6 +5200,7 @@ type PosTaxRate struct {
 	Jurisdiction string `json:"jurisdiction"`
 	ReasonCode   string `json:"reason_code"`
 	RateBps      int32  `json:"rate_bps"`
+	TaxLabel     string `json:"tax_label"`
 	RoundMode    string `json:"round_mode"`
 }
 
@@ -7437,6 +7446,7 @@ type QuoteTerms struct {
 	DepositCents     int64            `json:"deposit_cents"`
 	SubtotalCents    int64            `json:"subtotal_cents"`
 	TaxCents         int64            `json:"tax_cents"`
+	TaxLabel         string           `json:"tax_label"`
 	TotalCents       int64            `json:"total_cents"`
 	Lines            []QuoteTermsLine `json:"lines"`
 }
@@ -7517,6 +7527,7 @@ type QuotePublicView struct {
 	Lines            []QuotePublicLine `json:"lines"`
 	SubtotalCents    int64             `json:"subtotal_cents"`
 	TaxCents         int64             `json:"tax_cents"`
+	TaxLabel         string            `json:"tax_label"`
 	TotalCents       int64             `json:"total_cents"`
 	AsOf             time.Time         `json:"as_of"`
 	Acceptable       bool              `json:"acceptable"`
@@ -7558,6 +7569,7 @@ type QuoteAcceptanceResult struct {
 	AcceptedAt          time.Time `json:"accepted_at"`
 	SubtotalCents       int64     `json:"subtotal_cents"`
 	TaxCents            int64     `json:"tax_cents"`
+	TaxLabel            string    `json:"tax_label"`
 	TotalCents          int64     `json:"total_cents"`
 	RepeatAcceptance    *bool     `json:"repeat_acceptance,omitempty"`
 }
@@ -8693,6 +8705,17 @@ type WarrantyVendorProfilePage struct {
 	Items      []WarrantyVendorProfile `json:"items"`
 	NextCursor *string                 `json:"next_cursor,omitempty"`
 	Limit      *int32                  `json:"limit,omitempty"`
+}
+
+type WarrantyPolicy struct {
+	BranchId            *string    `json:"branch_id,omitempty"`
+	ClaimThresholdCents int64      `json:"claim_threshold_cents"`
+	UpdatedAt           *time.Time `json:"updated_at,omitempty"`
+}
+
+type WarrantyPolicyInput struct {
+	BranchId            *string `json:"branch_id,omitempty"`
+	ClaimThresholdCents int64   `json:"claim_threshold_cents"`
 }
 
 type WarrantyAddress struct {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/audit"
 	identity "github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/identity/staffcontext"
+	"github.com/FutureShade-Cloud-Ecosystem/hh/core/internal/platform/houseday"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -865,6 +866,12 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 	if err != nil {
 		return BillDetail{}, err
 	}
+	// The dealer's day, decided BEFORE the transaction opens (a zone read must not hold a connection
+	// beside the open transaction) and bound as the default bill date.
+	zone, err := houseday.Resolve(ctx, s.zone)
+	if err != nil {
+		return BillDetail{}, err
+	}
 
 	tx, err := s.repo.Begin(ctx)
 	if err != nil {
@@ -943,7 +950,7 @@ func (s *Service) CreateBill(ctx context.Context, in CreateBillRequest) (BillDet
 		BillDate: strings.TrimSpace(in.BillDate), DueDate: strings.TrimSpace(in.DueDate),
 		Subtotal: subtotal, Tax: taxCad, Total: total,
 		Match: headerState, CreatedBy: caller.UserID,
-		Currency: billCur, FXRate: billFX,
+		Currency: billCur, FXRate: billFX, HouseDay: zone.Today(nil),
 	})
 	if err != nil {
 		return BillDetail{}, err

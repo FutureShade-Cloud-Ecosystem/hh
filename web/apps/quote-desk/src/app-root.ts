@@ -20,6 +20,7 @@ import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // itself; the app feeds it through the wiring pass below, the same
 // no-template-binding discipline the builder's client rides.
 import "@hardscapehouse/design-system/src/header.js";
+import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient, staffFeedback } from "@hardscapehouse/api-client";
 import {
   HHFeedback,
@@ -27,11 +28,21 @@ import {
 } from "@hardscapehouse/design-system/src/feedback.js";
 import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
-import { HOUSE_ZONE, houseDayInZone } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
+import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
 import { QdClient, type BranchRef } from "./qd-client.js";
+// The Work shell's offline layer (item 8b): writes are refused with no signal and never queue (money never
+// queues); the desk's reads fall back to the copy on the device; a new quote and an expiry date are kept when
+// the signal is gone. The panel shows the connection, the copy's age, the drafts waiting and the cards.
+import { browserSignal, noSignalFetch, noSignalWebFetch, readThroughFetch, readThroughWebFetch, type CachedRoute, type ReadThroughHooks } from "@hardscapehouse/work-offline";
+import { apiClientTransport, DeskOffline, dbNameFor } from "./desk-offline.js";
+import { quoteDeskRoutes } from "./offline-reads.js";
+// The panel registers itself; the wiring pass hands it the controller.
+import "./offline-panel.js";
+import type { QdOfflinePanel } from "./offline-panel.js";
 import { PricingClient } from "./pricing-client.js";
 import { LIST_ROUTE, parseRoute, routeHash, type DeskRoute } from "./quote-router.js";
 import { THEME_LABEL, ThemeController, themeControlLabel, themeStatusText } from "./theme.js";
@@ -117,8 +128,16 @@ export class QuoteDeskApp extends HHElement {
   readonly #sessions = new SessionStore();
   readonly #account: DemoAccount;
   readonly #controller: AuthController;
+  /** The custody the served config chose: the demo controller as always, or this page recovering its own session (boot-custody.ts). */
+  readonly #custody: Custody;
   readonly #client: QdClient;
   readonly #pricing: PricingClient;
+  /** The staff client with no guard: only the offline store's sync transport rides it, and the only writes that reach it are the scopes the core admits a client write to. */
+  readonly #syncClient: ApiClient;
+  /** The device's connection, read each time it is asked. */
+  readonly #signal = browserSignal();
+  /** The Work shell's offline layer for the signed in person; null before the desk is up and after sign out. */
+  #offline: DeskOffline | null = null;
   /** Which of the desk's two screens shows: the quotes (always mounted, so a draft survives), or the pricing panel (mounted only while open). */
   #view: "quotes" | "pricing" = "quotes";
   #flowsState: FlowsState = { kind: "loading" };
@@ -151,12 +170,30 @@ export class QuoteDeskApp extends HHElement {
 
   constructor() {
     super();
+    // The demo adapter's own client carries no staff bearer: the demo routes
+    // are pre-auth by design (the tap a role sign-in).
+    const demoClient = new ApiClient({
+      baseUrl: "",
+      headers: async () => ({ "X-Org": DEMO_ORG }),
+    });
+    this.#account = new DemoAccount({ client: demoClient });
+    this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
+    this.#custody = bootCustody(servedConsoleConfig(), { sessions: this.#sessions, demoAccount: this.#account, demoOrg: DEMO_ORG });
+    this.#controller = this.#custody.controller;
     const staffHeaders = authHeaderProvider({
       callerClass: "staff",
       sessions: this.#sessions,
-      activeOrg: () => DEMO_ORG,
+      activeOrg: () => this.#custody.org,
     });
-    const client = new ApiClient({ baseUrl: "", headers: staffHeaders });
+    // The Work shell's guard: a write with no signal is refused before it dials (never queued), and a read the
+    // device holds a copy of is answered from it when the network does not answer.
+    const routes: CachedRoute[] = quoteDeskRoutes(() => this.#offline?.reader() ?? null, () => this.#branch?.id ?? "");
+    const hooks: ReadThroughHooks = {
+      onCached: (words) => this.#offline?.hooks.onCached?.(words),
+      onLive: () => this.#offline?.hooks.onLive?.(),
+    };
+    const client = new ApiClient({ baseUrl: this.#custody.coreBaseUrl, headers: staffHeaders, fetch: noSignalFetch(readThroughFetch(undefined, this.#signal, routes, hooks), this.#signal) });
+    this.#syncClient = new ApiClient({ baseUrl: this.#custody.coreBaseUrl, headers: staffHeaders });
     // The feedback widget's sender rides the staff client: the feedback
     // route is staff guarded and the desk's own custody holds the bearer.
     this.#feedbackSender = async (request) => {
@@ -173,14 +210,6 @@ export class QuoteDeskApp extends HHElement {
       }
       return { ok: false, error: answer.error };
     };
-    // The demo adapter's own client carries no staff bearer: the demo routes
-    // are pre-auth by design (the tap a role sign-in).
-    const demoClient = new ApiClient({
-      baseUrl: "",
-      headers: async () => ({ "X-Org": DEMO_ORG }),
-    });
-    this.#account = new DemoAccount({ client: demoClient });
-    this.#controller = new AuthController({ account: this.#account, sessions: this.#sessions });
     // The caller's own id is read from the live session, not from the sign-in answer kept beside it.
     this.#client = new QdClient(client, () => this.#sessions.current?.user.userId ?? "");
     this.#pricing = new PricingClient(client);
@@ -189,17 +218,23 @@ export class QuoteDeskApp extends HHElement {
     // second place.
     wirePorts({
       headers: staffHeaders,
-      houseDay: () => houseDayInZone(HOUSE_ZONE),
+      houseDay: () => houseDay(),
       user: () => this.#deskIdentity,
       token: () => this.#sessions.current?.token ?? "",
+      baseUrl: this.#custody.coreBaseUrl,
+      fetch: noSignalWebFetch(readThroughWebFetch(undefined, this.#signal, routes, hooks), this.#signal),
     });
   }
 
   /** The feedback widget's sender; built once beside the staff client. */
   #feedbackSender: FeedbackSender = async () => ({ ok: false, error: "not ready" });
 
+  /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
+  #stopHostSignOut: (() => void) | null = null;
+
   override connectedCallback(): void {
     super.connectedCallback();
+    this.#stopHostSignOut = listenForHostSignOut(() => this.#signOut());
     // The kits' wiring rule: listen on the HOST and read the control off
     // composedPath(), never an event binding in a template.
     this.addEventListener("click", this.#onHostClick);
@@ -208,6 +243,11 @@ export class QuoteDeskApp extends HHElement {
     window.addEventListener("hashchange", this.#onHashChange);
     // The system's light setting is honoured from the first paint.
     this.#theme.start();
+    // Console mode: this page recovers its own session and the demo cards never apply.
+    if (this.#custody.mode === "console") {
+      this.#custody.begin("quote-desk", (outcome) => this.#onRecovered(outcome));
+      return;
+    }
     void this.#loadFlows();
     // The seam rule (decision log rows 893 and 899): the front door's
     // handoff is adopted only where the demo is compiled in. Vite
@@ -233,6 +273,7 @@ export class QuoteDeskApp extends HHElement {
       builder.route = this.#route;
       builder.roleCode = this.#deskIdentity?.role_code ?? "";
     }
+    this.renderRoot.querySelector<QdOfflinePanel>("qd-offline-panel")?.attach(this.#offline);
     const pricing = this.renderRoot.querySelector<HTMLElement & Record<string, unknown>>("qd-pricing-panel");
     if (pricing !== null) {
       pricing["pricing"] = this.#pricing;
@@ -265,6 +306,8 @@ export class QuoteDeskApp extends HHElement {
   }
 
   override disconnectedCallback(): void {
+    this.#stopHostSignOut?.();
+    this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
     window.removeEventListener("hashchange", this.#onHashChange);
     this.#theme.stop();
@@ -383,6 +426,54 @@ export class QuoteDeskApp extends HHElement {
   }
 
   /**
+   * Console mode: this page recovered its own session, or could not. The person's role comes from the
+   * exchange (not a flow table). An unavailable page shows the entry's unavailable state while the
+   * custody retries; a session the front door must settle goes back there.
+   */
+  #onRecovered(outcome: AppStart): void {
+    if (outcome.kind === "ready") {
+      const entry = outcome.entry;
+      this.#deskUserId = entry.userId;
+      this.#deskIdentity = {
+        user_id: entry.userId,
+        email: entry.email,
+        display_name: entry.name,
+        role_code: entry.roleCode,
+        role_name: entry.roleLabel,
+        tier: entry.tier,
+        scope: entry.scope,
+      };
+      this.#roleLabel = entry.roleLabel;
+      this.requestUpdate();
+      void this.#initDesk(true);
+      return;
+    }
+    if (outcome.kind === "front-door" && outcome.why === "ended") {
+      void this.#signOut();
+      return;
+    }
+    this.#flowsState = { kind: "unavailable", status: null };
+    if (outcome.kind === "front-door") this.#custody.toFrontDoor();
+    this.requestUpdate();
+  }
+
+  /**
+   * Console mode, the branch did not resolve. The person's console session is theirs across every app, so a
+   * core blip must not end it: an ending refusal (401, 403) leaves cleanly; anything else shows the
+   * unavailable entry and the custody tries the start again on its backoff.
+   */
+  async #consoleStartFailed(status: number | undefined): Promise<void> {
+    this.#flowsState = { kind: "unavailable", status: null };
+    if (status === 401 || status === 403) {
+      await this.#custody.leave();
+      this.requestUpdate();
+      return;
+    }
+    this.requestUpdate();
+    this.#custody.retry("quote-desk", (outcome) => this.#onRecovered(outcome));
+  }
+
+  /**
    * A demo build that finds no session sends the person to the front door to pick a role (decision log row
    * 1040), never to the shared entry page. Only where the desk is served under its own prefix (the box:
    * BASE_URL is /quote/): at the origin root the desk's own entry cards are the way in, and the front door
@@ -442,6 +533,10 @@ export class QuoteDeskApp extends HHElement {
       this.#roleLabel = null;
       this.#deskUserId = null;
       this.#deskIdentity = null;
+      if (this.#custody.mode === "console") {
+        await this.#consoleStartFailed(branch.status);
+        return;
+      }
       await this.#controller.signOut();
       this.requestUpdate();
       // A session the server refuses (ended or revoked) must not be re-adopted by every load: the key goes
@@ -454,6 +549,17 @@ export class QuoteDeskApp extends HHElement {
     }
     this.#branch = branch.value;
     setBranches([{ id: branch.value.id, name: branch.value.name }]);
+    // The Work shell's copy on this device, the person's own: opened before the desk mounts so a read that loses
+    // the network has something to answer from; the first pull runs behind the desk.
+    const offline = new DeskOffline({
+      signal: this.#signal,
+      qd: this.#client,
+      transport: apiClientTransport(this.#syncClient),
+      dbName: dbNameFor(this.#sessions.current?.user.userId ?? ""),
+    });
+    this.#offline = offline;
+    await offline.open(branch.value.id);
+    void offline.cycle();
     this.#surface = "desk";
     // A sign in starts at the desk's landing page (decision log row 941):
     // whatever the address bar carried in (a stale quote fragment, a handoff
@@ -478,7 +584,18 @@ export class QuoteDeskApp extends HHElement {
     window.dispatchEvent(new CustomEvent(SIGN_OUT_EVENT, { detail }));
     // Bounded: a save that never answers must not hold the session open for good.
     const sent = await waitUpTo(UNSENT_WAIT_MS, Promise.allSettled(detail.waits));
-    await this.#controller.signOut();
+    if (this.#custody.mode === "console") {
+      // Console mode also forgets the persona id and stops the recovery loops, then goes to the front door.
+      // The copy on this device is released first, since leaving may walk away from the page.
+      await this.#offline?.close();
+      this.#offline = null;
+      await this.#custody.leave();
+    } else {
+      await this.#controller.signOut();
+      // The copy on this device is released with the session; its outbox stays the person's own for their next sign in.
+      await this.#offline?.close();
+      this.#offline = null;
+    }
     // The front door's key was kept in the tab for the session (row 1040); it goes with the session.
     clearFrontDoorHandoff();
     this.#busy = false;
@@ -602,6 +719,7 @@ export class QuoteDeskApp extends HHElement {
       <main>
         ${this.#surface === "desk"
           ? html`
+              <qd-offline-panel></qd-offline-panel>
               <div class="surface ${this.#view === "pricing" ? "away" : ""}">
                 <qd-quote-builder></qd-quote-builder>
               </div>

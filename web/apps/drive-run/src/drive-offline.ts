@@ -1,15 +1,17 @@
 // HH Drive's thin offline data layer: the api port over the offline store,
 // the mirror of Yard Pick's. The driver's reads compose from the store (the
-// pulled runs and stops, with the scope's staleness); the stop moves enqueue on
-// the stops scope and patch the local projection, so the run sheet shows the
-// work before the replay lands; a cycle pushes the outbox and pulls the scopes
-// back through the sync runner and the injected transport. The writes the core
-// does not admit through sync stay on their direct doors and need signal: the
-// proof of delivery (the core's pod scope is the photo record, the typed name
-// attestation has no sync door) and the run close (the manifest gives the runs
-// scope no writable policy). Both wait for the queued moves first. The proof
-// photos stay on their own direct door too: they are the attachments queue's
-// own story, not this slice's.
+// pulled runs and stops, with the scope's staleness); the stop moves and the
+// proof of delivery enqueue on their own scopes and patch the local projection,
+// so the run sheet shows the work before the replay lands; a cycle pushes the
+// outbox and pulls the scopes back through the sync runner and the injected
+// transport. The proof is the typed name attestation (core/internal/dispatch
+// syncscope_pod_attest.go): a pod create {id, stop_id, received_by, affirmed}
+// whose effect is the direct door's own, and the stop reaches the device
+// delivered through the stops feed. The writes the core does not admit through
+// sync stay on their direct doors and need signal: the run close (the manifest
+// gives the runs scope no writable policy), which waits for the queued moves
+// first. The proof photos stay on their own direct door too: they are the
+// attachments queue's own story, not this slice's, and say no signal offline.
 //
 // The base rule is the yard's, stated once there and held here: a write to a
 // row with nothing queued names the row's pulled seq as its base; a write to a
@@ -35,6 +37,7 @@ import {
 import * as syncMachine from "../../../../statecharts/sync/machine.js";
 import type { DriveApi, DriverLine, DriverRun, DriverStop } from "./drive-api.js";
 import { toLine, toRun, toStop } from "./drive-api.js";
+import { nameProblem, normalizeName } from "./drive-logic.js";
 
 type Bag = Record<string, unknown>;
 
@@ -49,14 +52,21 @@ export function bannerMode(state: string, ownership: Ownership): string {
   return "";
 }
 
+/** The writes the core does not admit through sync: the run close. It waits
+ * on the outbox and needs signal; nothing about it queues. */
+export type DriveDirectDoors = Pick<DriveApi, "completeRun">;
+
+/** What a stop held before this device's signature, so a signature the core
+ * refuses puts the stop back as the server last had it. */
+const PROOF_BEFORE = "__proof_before";
+
 export interface DriveOfflineOptions {
   store: OfflineStore;
   sql: SqlExecutor;
   transport: SyncTransport;
-  /** The direct doors: the writes the core does not admit through sync (the
-   * run close, the proof of delivery). They wait on the outbox and need
-   * signal; nothing about them queues. */
-  direct: Pick<DriveApi, "completeRun" | "pod">;
+  direct: DriveDirectDoors;
+  /** The id for the outbox's local row of a create. */
+  newKey?: () => string;
   /** Told whenever the outbox's depth or the cards may have moved, so the
    * chrome's counts are never a stale word. */
   onChange?: () => void;
@@ -75,7 +85,8 @@ export class DriveOffline {
   readonly store: OfflineStore;
   readonly runner: SyncRunner;
   readonly #sql: SqlExecutor;
-  readonly #direct: Pick<DriveApi, "completeRun" | "pod">;
+  readonly #direct: DriveDirectDoors;
+  readonly #newKey: () => string;
   readonly #onChange: (() => void) | undefined;
   readonly #now: () => string;
   /** Rows this device has written since the last completed cycle, each with
@@ -96,6 +107,7 @@ export class DriveOffline {
     this.#direct = options.direct;
     this.#onChange = options.onChange;
     this.#now = options.now ?? (() => new Date().toISOString());
+    this.#newKey = options.newKey ?? (() => globalThis.crypto.randomUUID());
     this.runner = new SyncRunner({ store: options.store, transport: options.transport, machine: syncMachine });
   }
 
@@ -109,7 +121,7 @@ export class DriveOffline {
       await this.runner.request();
       await this.runner.settled();
     });
-    this.#pulled(mark);
+    await this.#rested(mark);
     this.#onChange?.();
   }
 
@@ -117,8 +129,8 @@ export class DriveOffline {
   requestSync(): void {
     this.#onChange?.();
     const mark = this.#writes;
-    void this.#sync(() => this.runner.request()).then(() => {
-      this.#pulled(mark);
+    void this.#sync(() => this.runner.request()).then(async () => {
+      await this.#rested(mark);
       this.#onChange?.();
     });
   }
@@ -139,7 +151,7 @@ export class DriveOffline {
   async syncNow(): Promise<void> {
     const mark = this.#writes;
     await this.#sync(() => this.runner.request());
-    this.#pulled(mark);
+    await this.#rested(mark);
     this.#onChange?.();
   }
 
@@ -152,7 +164,7 @@ export class DriveOffline {
       await this.runner.settled();
     });
     const empty = (await this.waiting()) === 0;
-    if (empty) this.#pulled(mark);
+    if (empty) await this.#rested(mark);
     this.#onChange?.();
     return empty;
   }
@@ -200,6 +212,49 @@ export class DriveOffline {
     this.#writtenSincePull.set(key, this.#writes);
   }
 
+  /** A cycle came to rest: forget the writes its pull covered, and take back
+   * any signature the core refused (the card carries its words). */
+  async #rested(mark: number): Promise<void> {
+    this.#pulled(mark);
+    await this.#takeBackRefusedProofs();
+  }
+
+  /** A signature the core refused no longer stands on the glass: the stop
+   * goes back to what the server last had it as, so the run sheet never shows
+   * a delivery the server does not hold. Only a REFUSED proof is taken back;
+   * a proof that applied is replaced by the stops pull, which carries the
+   * delivery. Runs only at rest, with the pull landed. */
+  async #takeBackRefusedProofs(): Promise<void> {
+    if (this.runner.state !== "idle" && this.runner.state !== "conflict") return;
+    const stops = await this.store.list("stops");
+    const held = stops.rows.filter((row) => PROOF_BEFORE in row.data);
+    if (held.length === 0) return;
+    // By the proof's own id: an earlier refused signature on the stop must not
+    // take back a later one that applied.
+    const refused = new Set((await this.store.outbox.list("rejected")).filter((r) => r.scope === "pod").map((r) => String(r.payload["id"])));
+    for (const row of held) {
+      if (!refused.has(String((row.data[PROOF_BEFORE] as Bag)["proof_id"]))) continue;
+      await this.#patchRow("stops", row.id, (data) => {
+        const { [PROOF_BEFORE]: before, ...rest } = data;
+        const { proof_id: _proofId, ...fields } = before as Bag;
+        return { ...rest, ...fields };
+      });
+    }
+  }
+
+  /** Send the queue now (the driver is standing at a connected device and
+   * wants the server's answer) and give back the core's words if it refused
+   * the stop's signature during the send; empty when it took it or could not
+   * be reached. The refusal is also a card, which waits to be dismissed. */
+  async sendProofNow(stopId: string): Promise<string> {
+    const before = new Set((await this.openCards()).map((card) => card.id));
+    await this.#drain();
+    const fresh = (await this.openCards()).find(
+      (card) => !before.has(card.id) && card.kind === "rejected" && card.scope === "pod" && card.clientPayload["stop_id"] === stopId,
+    );
+    return fresh?.error ?? "";
+  }
+
   /** A cycle rested with its pull landed: the rows carry the server's seq for
    * every write made up to `mark`. A cycle that rested offline or unreachable
    * pulled nothing, so it forgets nothing. */
@@ -241,8 +296,11 @@ export class DriveOffline {
   async runs(day: string): Promise<RunsAnswer> {
     const { rows, staleness } = await this.store.list("runs");
     const stops = await this.store.list("stops");
+    const waitingProofs = new Set(
+      (await this.store.outbox.pending()).filter((r) => r.scope === "pod").map((r) => String(r.payload["stop_id"])),
+    );
     const runStops = stops.rows
-      .map((row) => this.#composeStop(row))
+      .map((row) => this.#composeStop(row, waitingProofs.has(row.id)))
       .sort((a, b) => a.stop_no - b.stop_no);
     const lines: Record<string, readonly DriverLine[]> = {};
     for (const row of stops.rows) {
@@ -259,8 +317,8 @@ export class DriveOffline {
     return { ok: true, value: { runs }, staleness };
   }
 
-  #composeStop(row: StoredRowLike): DriverStop {
-    return toStop({ ...row.data });
+  #composeStop(row: StoredRowLike, proofWaiting: boolean): DriverStop {
+    return toStop({ ...row.data, proof_waiting: proofWaiting });
   }
 
   // ---- writes ---------------------------------------------------------
@@ -306,16 +364,45 @@ export class DriveOffline {
   }
 
   /** The delivery's proof: the typed name, the recipient's own confirmation.
-   * The attestation has no sync door in the core (its pod scope is the photo
-   * record), so it stays on its direct door: it waits for the queued moves of
-   * its stop and needs signal, and the delivered stop lands in the store
-   * through the pull that follows. */
+   * Queued as a pod create with the attestation's exact fields and an id for
+   * the outbox's local row; the local stop shows delivered and waiting until
+   * the pull carries the server's. A name the door would refuse, or a stop
+   * that is not on the road, is refused here with words, before anything is
+   * queued: a queued poison op only comes back as a card the driver cannot
+   * act on after leaving the stop. */
   async pod(stopId: string, receivedBy: string): Promise<Result<DriverStop>> {
-    const refused = this.#noSignal<DriverStop>() ?? (await this.#outboxFirst<DriverStop>("Sign for the delivery"));
-    if (refused !== null) return refused;
-    const answer = await this.#direct.pod(stopId, receivedBy);
-    if (answer.ok) await this.#drain();
-    return answer;
+    const name = normalizeName(receivedBy);
+    if (name === "") return { ok: false, error: "Type the name of the person receiving.", status: 400 };
+    const problem = nameProblem(name);
+    if (problem !== "") return { ok: false, error: problem, status: 400 };
+    const found = await this.store.read("stops", stopId);
+    if (found.row === null) return { ok: false, error: "stop not found", status: 404 };
+    // The core's transition rule, in its words: only a stop on the road is delivered.
+    if (found.row.data["status"] !== "EN_ROUTE") return { ok: false, error: "illegal status transition", status: 409 };
+    const proofId = this.#newKey();
+    const enqueued = await this.store.enqueue({
+      scope: "pod",
+      op: "create",
+      entity: "pod",
+      payload: { id: proofId, stop_id: stopId, received_by: name, affirmed: true },
+    });
+    if (!enqueued.ok) return { ok: false, error: enqueued.message, status: 400 };
+    const at = this.#now();
+    const fields: Bag = { status: "DELIVERED", pod_received_by: name, pod_at: at, delivered_at: at };
+    await this.#patchRow("stops", stopId, (data) => ({
+      ...data,
+      [PROOF_BEFORE]: {
+        proof_id: proofId,
+        status: data["status"],
+        pod_received_by: data["pod_received_by"] ?? "",
+        pod_at: data["pod_at"] ?? "",
+        delivered_at: data["delivered_at"] ?? "",
+      },
+      ...fields,
+    }));
+    this.#markWritten(`stops:${stopId}`);
+    this.requestSync();
+    return { ok: true, value: toStop({ ...found.row.data, ...fields, proof_waiting: true }) };
   }
 
   // ---- internals ------------------------------------------------------
@@ -376,7 +463,7 @@ export async function openDriveOfflineOver(
   backend: StorageBackend,
   options: {
     transport: SyncTransport;
-    direct: Pick<DriveApi, "completeRun" | "pod">;
+    direct: DriveDirectDoors;
     onChange?: () => void;
   },
 ): Promise<DriveOfflineOpened> {
@@ -400,7 +487,7 @@ export async function openDriveOfflineOver(
 export async function openDriveOfflineOpfs(options: {
   dbName: string;
   transport: SyncTransport;
-  direct: Pick<DriveApi, "completeRun" | "pod">;
+  direct: DriveDirectDoors;
   onChange?: () => void;
 }): Promise<DriveOfflineOpened> {
   const locks = (globalThis as { navigator?: { locks?: unknown } }).navigator?.locks;

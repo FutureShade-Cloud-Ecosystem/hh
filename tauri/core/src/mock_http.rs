@@ -30,11 +30,18 @@ pub struct Reply {
 
 impl Reply {
     pub fn status(status: u16) -> Self {
-        Self { status, headers: Vec::new(), body: Vec::new(), hang: false }
+        Self {
+            status,
+            headers: Vec::new(),
+            body: Vec::new(),
+            hang: false,
+        }
     }
 
     pub fn json(status: u16, body: &str) -> Self {
-        Self::status(status).header("Content-Type", "application/json").body(body.as_bytes())
+        Self::status(status)
+            .header("Content-Type", "application/json")
+            .body(body.as_bytes())
     }
 
     pub fn header(mut self, name: &str, value: &str) -> Self {
@@ -48,7 +55,10 @@ impl Reply {
     }
 
     pub fn hang() -> Self {
-        Self { hang: true, ..Self::status(0) }
+        Self {
+            hang: true,
+            ..Self::status(0)
+        }
     }
 }
 
@@ -65,7 +75,10 @@ pub struct Seen {
 impl Seen {
     pub fn header(&self, name: &str) -> Option<&str> {
         let name = name.to_ascii_lowercase();
-        self.headers.iter().find(|(n, _)| *n == name).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -146,11 +159,20 @@ fn read_request(stream: &mut TcpStream) -> Option<Seen> {
         }
         body.extend_from_slice(&chunk[..n]);
     }
-    Some(Seen { method, path, headers, body: String::from_utf8_lossy(&body).to_string() })
+    Some(Seen {
+        method,
+        path,
+        headers,
+        body: String::from_utf8_lossy(&body).to_string(),
+    })
 }
 
 fn write_reply(stream: &mut TcpStream, reply: &Reply) {
-    let mut out = format!("HTTP/1.1 {} X\r\nContent-Length: {}\r\nConnection: close\r\n", reply.status, reply.body.len());
+    let mut out = format!(
+        "HTTP/1.1 {} X\r\nContent-Length: {}\r\nConnection: close\r\n",
+        reply.status,
+        reply.body.len()
+    );
     for (n, v) in &reply.headers {
         out.push_str(&format!("{n}: {v}\r\n"));
     }
@@ -178,7 +200,9 @@ impl MockServer {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         stream.set_nonblocking(false).ok();
-                        let Some(req) = read_request(&mut stream) else { continue };
+                        let Some(req) = read_request(&mut stream) else {
+                            continue;
+                        };
                         seen2.lock().unwrap().push(req);
                         let reply = script.next().unwrap_or_else(|| Reply::status(500));
                         if reply.hang {
@@ -191,7 +215,12 @@ impl MockServer {
                 }
             }
         });
-        Self { port, seen, stop, handle: Some(handle) }
+        Self {
+            port,
+            seen,
+            stop,
+            handle: Some(handle),
+        }
     }
 
     pub fn url(&self) -> String {

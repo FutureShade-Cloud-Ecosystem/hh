@@ -53,7 +53,7 @@ func goListDeps(t *testing.T, extra string) []string {
 	return strings.Fields(string(out))
 }
 
-// G1, second leg: the demo pair stays on the not-yet-registered ledger
+// G1, second leg (the persona entry rides it too): the demo pair stays on the not-yet-registered ledger
 // and stays documented, so the default build's registration parity keeps
 // accounting for the two operations the demo module registers (in the
 // demo build only). The parity test beside this file fails the moment the
@@ -61,7 +61,7 @@ func goListDeps(t *testing.T, extra string) []string {
 // fails the moment any demo package could register it here; between them
 // demoCreateSession cannot quietly become a default-build surface.
 func TestLedgerKeepsTheDemoPair(t *testing.T) {
-	for _, op := range []string{"demoCreateSession", "demoListFlows"} {
+	for _, op := range []string{"demoCreateSession", "demoListFlows", "identityPersona"} {
 		reason, ok := notYetRegistered[op]
 		if !ok {
 			t.Fatalf("%s left the not-yet-registered ledger without landing in the default build", op)
@@ -70,7 +70,7 @@ func TestLedgerKeepsTheDemoPair(t *testing.T) {
 			t.Fatalf("%s carries an empty ledger reason", op)
 		}
 	}
-	for _, op := range []string{"demoCreateSession", "demoListFlows"} {
+	for _, op := range []string{"demoCreateSession", "demoListFlows", "identityPersona"} {
 		documented := false
 		for _, r := range apigen.Routes {
 			if r.OperationID == op {

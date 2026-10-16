@@ -26,7 +26,7 @@
 //      plausible answer. An honest refusal beats a quiet zero at a counter.
 
 import { formatDollars } from "./_money-format.js";
-import { DEMO_CARD_TOKEN, HOUSE_ZONE, houseDayInZone } from "./host-facts.js";
+import { DEMO_CARD_TOKEN } from "./host-facts.js";
 
 /**
  * The port seam every unwired host call raises. The message names the seam so
@@ -64,6 +64,18 @@ export interface PortHost {
    * with no real picture on the stacked-stone glyph.
    */
   productTile?(category: string, theme: 'light' | 'dark'): string | null;
+  /**
+   * The core's base URL when it is not the page's own origin (a console copy points the app at the
+   * dealer's core); absent or empty keeps every call relative, as the demo's always were.
+   */
+  baseUrl?: string;
+  /**
+   * The fetch the request door sends through. Optional: a host that does not
+   * supply one uses the platform's. The Work shell supplies one that refuses a
+   * write with no signal (money never queues) and answers a cached read from
+   * the device when the network does not.
+   */
+  fetch?(input: string, init?: RequestInit): Promise<Response>;
 }
 
 /** True when the host has been wired and carries a live session. */
@@ -241,6 +253,26 @@ function enrichResolveBody(body: Record<string, unknown>): Record<string, unknow
 }
 
 /**
+ * The error a failed read throws. It names the route and the status, as it
+ * always has, except for one case: a refusal the HOST made before anything
+ * dialed (the Work shell's no signal guard marks it with a header). That
+ * refusal carries its own honest words in the shared error envelope, and those
+ * words are what the person reads, never a bare status.
+ */
+export async function refusal(response: Response, what: string): Promise<Error> {
+  if (response.headers.get('X-HH-Host-Refusal') === '1') {
+    try {
+      const body: unknown = await response.clone().json();
+      const words = body !== null && typeof body === 'object' ? (body as Record<string, unknown>)['error'] : undefined;
+      if (typeof words === 'string' && words !== '') return new Error(words);
+    } catch {
+      // an unreadable refusal falls back to the status below
+    }
+  }
+  return new Error(`${what} ${response.status}`);
+}
+
+/**
  * The authed request helper the whole ported surface talks through: relative
  * path in, the demo org and bearer attached, Response out.
  *
@@ -279,7 +311,8 @@ export async function api(path: string, init: RequestInit = {}): Promise<Respons
       // not JSON: send it as it arrived and let the server refuse it
     }
   }
-  const response = await fetch(path, { ...init, body, headers });
+  const base = (host.baseUrl ?? '').replace(/\/+$/, '');
+  const response = await (host.fetch ?? fetch)(`${base}${path}`, { ...init, body, headers });
   // The parked list arrives in the contract's page shape ({items, limit}); the
   // ported panel reads the bare rows. Unwrapped here, once, so every ported
   // call site keeps the reference's own shape: the rows themselves are
@@ -853,7 +886,7 @@ export async function putProductImage(productId: string, file: File): Promise<Re
   if (host === null) return unwired('putProductImage');
   const headers = new Headers(await host.headers());
   headers.set('Content-Type', file.type || 'image/png');
-  return fetch(`/api/v1/products/${encodeURIComponent(productId)}/image?alt=${encodeURIComponent(file.name)}`, {
+  return (host.fetch ?? fetch)(`${(host.baseUrl ?? '').replace(/\/+$/, '')}/api/v1/products/${encodeURIComponent(productId)}/image?alt=${encodeURIComponent(file.name)}`, {
     method: 'PUT',
     headers,
     body: file,
