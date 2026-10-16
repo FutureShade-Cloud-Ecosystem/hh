@@ -28,7 +28,7 @@ test("two fresh generations are byte-identical and match the committed tree", ()
   try {
     const out1 = generate(one);
     const out2 = generate(two);
-    if (!out1.includes("734 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
+    if (!out1.includes("736 operations")) throw new Error(`the generator reported: ${out1.trim()}`);
     const a = snapshot(one);
     const b = snapshot(two);
     const c = snapshot(committed);
