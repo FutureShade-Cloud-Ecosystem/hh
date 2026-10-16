@@ -817,7 +817,7 @@ func (b *builder) runs() {
 	// The reschedule trail. Two real moves, so the history panel is not an empty state on day one.
 	b.add(insert("dispatch_reschedules", "(id)",
 		"id", demoID("resched:1"),
-		"branch_id", b.branchID(0), "entity_type", "delivery_stop",
+		"branch_id", b.branchID(1), "entity_type", "delivery_stop",
 		"entity_id", demoID("stop:SP11"),
 		"from_date", b.day(0), "to_date", b.day(1),
 		"reason", "Customer asked for the morning instead", "stops_moved", 1,

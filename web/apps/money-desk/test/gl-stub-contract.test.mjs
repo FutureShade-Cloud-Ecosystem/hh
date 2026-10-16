@@ -363,6 +363,24 @@ test("the year end close sweeps net income into retained earnings and seals the 
   assert.ok(periods.every((p) => p.status === "CLOSED"));
 });
 
+test("the legacy import check is served only where the surface config names a source", async () => {
+  await reset();
+  const config = await call(IDS.controller, "GET", "/api/v1/surfaces/money-desk/config");
+  assert.equal(config.status, 200);
+  holds("SettingsSurfaceConfig", config.json);
+  assert.equal(config.json.legacy_import_source, "bistrack");
+  const off = await fetch(`${base}/_stub/legacy-import`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: "" }) });
+  assert.equal(off.status, 200);
+  const bare = await call(IDS.controller, "GET", "/api/v1/surfaces/money-desk/config");
+  assert.equal(bare.status, 200);
+  holds("SettingsSurfaceConfig", bare.json);
+  assert.equal("legacy_import_source" in bare.json, false, "a dealer with no source serves no field");
+  refused(await call(IDS.controller, "GET", "/api/v1/gl/tieout/bistrack?year=2026&month=6"), 404, "the legacy import check is not enabled for this dealer");
+  await reset();
+  const back = await call(IDS.controller, "GET", "/api/v1/gl/tieout/bistrack?year=2026&month=6");
+  assert.equal(back.status, 200, "a reset puts the first dealer's source back");
+});
+
 test("the policy, the receivables tie out, the BisTrack check and the export answer the contract", async () => {
   await reset();
   const policy = await call(IDS.controller, "GET", "/api/v1/gl/policy");

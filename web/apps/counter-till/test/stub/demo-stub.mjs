@@ -5,6 +5,7 @@
 // the engine's, the returns rules are RT-B's), and nothing in the app imports
 // this file. When the real routes land, the app and this suite keep working
 // against them unchanged, because both speak only the contract's shapes:
+//   GET  /api/v1/tenant/config              -> TenantPublicConfig
 //   GET  /api/v1/demo/flows                 -> DemoFlowList
 //   POST /api/v1/demo/session               -> DemoSessionResponse
 //   GET  /api/v1/branches                   -> Branch[]
@@ -2009,6 +2010,19 @@ const server = createServer(async (request, response) => {
     readBody(request, (parsed) => {
       approvalLimitEnabled = parsed !== null && typeof parsed === "object" && parsed.enabled === true;
       respondJson(response, 200, { approvalLimitEnabled });
+    });
+    return;
+  }
+
+  // The public tenant config route: no credential, dealer fields only.
+  if (request.method === "GET" && path === "/api/v1/tenant/config") {
+    respondJson(response, 200, {
+      id: "demo-dealer",
+      dealer_name: "Gable Landscape Supply",
+      logo_url: "",
+      primary_color: "#3a7d56",
+      support_email: "support@gablelandscape.invalid",
+      support_phone: "",
     });
     return;
   }

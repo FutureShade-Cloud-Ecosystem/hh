@@ -168,6 +168,9 @@ type Service struct {
 	onOrder OnOrderReader
 	// draftPOs points a worklist row at the draft a buyer started for it (draft_po_seam.go).
 	draftPOs DraftPOReader
+	// shortOrders names the sales orders a worklist row holds up (short_order_seam.go, change 5
+	// slice S3). nil → the row carries no order numbers, the fields stay absent.
+	shortOrders ShortOrderReader
 	// zone is the dealer's business day zone source; nil = the Ontario dealer's. A transfer's promised
 	// arrival is counted in the dealer's own calendar.
 	zone houseday.Source

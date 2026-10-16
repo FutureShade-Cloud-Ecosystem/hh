@@ -798,17 +798,18 @@ function resolveShortage(res, task, shortageId, input) {
 // rules, so a device's pulled rows and a desk's screen never disagree.
 
 
-// The stub's world, projected for the sync pull. No money anywhere: the
-// ticket's held figure rides only to a caller on the cost list, the same
-// fence the REST reads run under, and the poison scenario never reaches these
-// rows (the sync projection is the clean shape).
-function projectTaskRow(task, moneyAllowed) {
+// The stub's world, projected for the sync pull. No money anywhere: the core's
+// pull drops the ticket's held figure for every caller, the cost list included
+// (the sync filter carries no role: tasks/syncscope.go attachTicketData), and
+// the poison scenario never reaches these rows (the sync projection is the
+// clean shape). The moneyAllowed argument is kept for the callers' shape only.
+function projectTaskRow(task, _moneyAllowed) {
   return {
     id: task.id,
     seq: syncSeqOf("pick_tasks", task.id),
     data: {
       ...taskOut(task),
-      ticket: blankTicketMoney(ticketFor(task), moneyAllowed),
+      ticket: blankTicketMoney(ticketFor(task), false),
       picked: world.picked.get(task.id) ?? [],
     },
   };
