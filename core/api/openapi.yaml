@@ -13200,6 +13200,49 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+  /api/v1/messaging/search:
+    get:
+      operationId: messagingSearch
+      tags:
+        - staff-messaging
+      summary: Search messages, people, and reachable channels
+      description: Messages are live rows inside the caller's current rooms and the hot window. People are active staff in the caller's org, excluding platform administrators. Channels are public rooms or rooms the caller belongs to. The limit applies to each scope.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - name: q
+          in: query
+          required: true
+          description: Case-insensitive contains match; pattern wildcards are treated literally
+          schema:
+            type: string
+            minLength: 2
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: The three scoped result lists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingSearchResults"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
   /api/v1/orders/{id}:
     get:
       operationId: orderRead
@@ -38656,6 +38699,114 @@ components:
         created_at:
           type: string
           format: date-time
+    MessagingSearchMessage:
+      type: object
+      required:
+        - message_id
+        - channel_id
+        - channel_slug
+        - channel_name
+        - author_id
+        - author_name
+        - kind
+        - body
+        - created_at
+      properties:
+        message_id:
+          type: string
+          format: uuid
+        channel_id:
+          type: string
+          format: uuid
+        channel_slug:
+          type: string
+        channel_name:
+          type: string
+        author_id:
+          type: string
+        author_name:
+          type: string
+        kind:
+          type: string
+          enum:
+            - TEXT
+            - EVENT
+            - APPROVAL
+        body:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    MessagingSearchPerson:
+      type: object
+      description: A staff directory result; never includes email or phone
+      required:
+        - user_id
+        - display_name
+        - role_code
+        - role_label
+        - branch_label
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        role_code:
+          type: string
+        role_label:
+          type: string
+        branch_label:
+          type: string
+    MessagingSearchChannel:
+      type: object
+      required:
+        - id
+        - slug
+        - name
+        - kind
+        - topic
+        - is_member
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum:
+            - BRANCH
+            - TEAM
+            - TOPIC
+            - DM
+            - APPROVAL
+            - GROUP
+        topic:
+          type: string
+        is_member:
+          type: boolean
+    MessagingSearchResults:
+      type: object
+      required:
+        - messages
+        - people
+        - channels
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingSearchMessage"
+        people:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingSearchPerson"
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingSearchChannel"
     MessagingSavedSave:
       type: object
       required:

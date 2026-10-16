@@ -121,6 +121,18 @@ func (f *fakeStore) DeleteSavedMessage(_ context.Context, userID, messageID stri
 	return nil
 }
 
+func (f *fakeStore) SearchMessages(_ context.Context, _, _ string, _ int) ([]SearchMessage, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) SearchPeople(_ context.Context, _, _ string, _ int) ([]SearchPerson, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) SearchChannels(_ context.Context, _, _, _ string, _ int) ([]SearchChannel, error) {
+	return nil, nil
+}
+
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		members:       map[string]map[string]bool{},

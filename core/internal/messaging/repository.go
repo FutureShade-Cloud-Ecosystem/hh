@@ -2158,3 +2158,151 @@ func (r *Repository) DeleteSavedMessage(ctx context.Context, userID, messageID s
 	}
 	return nil
 }
+
+func (r *Repository) SearchMessages(ctx context.Context, userID, pattern string, limit int) ([]SearchMessage, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT m.id::text, m.channel_id::text, COALESCE(c.slug::text, ''), c.name,
+		       COALESCE(m.author_id::text, ''), COALESCE(u.display_name, ''), m.kind,
+		       m.body, m.created_at
+		FROM msg_messages m
+		JOIN msg_channels c ON c.id = m.channel_id
+		LEFT JOIN users u ON u.id = m.author_id
+		WHERE m.deleted_at IS NULL
+		  AND m.created_at >= NOW() - INTERVAL '365 days'
+		  AND c.is_archived = FALSE
+		  AND c.deleted_at IS NULL
+		  AND EXISTS (
+		    SELECT 1 FROM msg_members cm
+		    WHERE cm.channel_id = m.channel_id AND cm.user_id = $1
+		  )
+		  AND m.body ILIKE '%' || $2 || '%' ESCAPE '\'
+		ORDER BY m.created_at DESC, m.id DESC
+		LIMIT $3`, userID, pattern, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search messages: %w", err)
+	}
+	defer rows.Close()
+	var out []SearchMessage
+	for rows.Next() {
+		var item SearchMessage
+		if err := rows.Scan(&item.MessageID, &item.ChannelID, &item.ChannelSlug, &item.ChannelName,
+			&item.AuthorID, &item.AuthorName, &item.Kind, &item.Body, &item.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan message search: %w", err)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) SearchPeople(ctx context.Context, orgID, pattern string, limit int) ([]SearchPerson, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if orgID == "" {
+		return nil, errors.New("messaging: people search requires the org id")
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT u.id::text, u.display_name,
+		       COALESCE(win.code, ''), COALESCE(win.name, ''), COALESCE(brs.label, '')
+		FROM users u
+		LEFT JOIN LATERAL (
+		  SELECT ro.code::text AS code, ro.name
+		  FROM user_roles ur
+		  JOIN roles ro ON ro.id = ur.role_id
+		  WHERE ur.user_id = u.id AND ur.deleted_at IS NULL AND ro.deleted_at IS NULL
+		  ORDER BY ro.tier, ro.id
+		  LIMIT 1
+		) win ON TRUE
+		LEFT JOIN LATERAL (
+		  SELECT string_agg(loc.name, ', ' ORDER BY loc.name) AS label
+		  FROM user_branch_grants ubg
+		  JOIN locations loc ON loc.id = ubg.branch_id AND loc.loc_type = 'BRANCH'
+		  WHERE ubg.user_id = u.id AND ubg.deleted_at IS NULL
+		) brs ON TRUE
+		WHERE u.status = 'ACTIVE'
+		  AND u.deleted_at IS NULL
+		  AND (u.org_id IS NULL OR u.org_id = $1::uuid)
+		  AND NOT EXISTS (
+		    SELECT 1 FROM user_roles ur
+		    JOIN roles ro ON ro.id = ur.role_id
+		    WHERE ur.user_id = u.id AND ur.deleted_at IS NULL AND ro.code = 'SUPER_ADMIN'
+		  )
+		  AND (
+		    u.display_name ILIKE '%' || $2 || '%' ESCAPE '\'
+		    OR COALESCE(win.name, '') ILIKE '%' || $2 || '%' ESCAPE '\'
+		    OR COALESCE(brs.label, '') ILIKE '%' || $2 || '%' ESCAPE '\'
+		  )
+		ORDER BY u.display_name ASC, u.id ASC
+		LIMIT $3`, orgID, pattern, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search people: %w", err)
+	}
+	defer rows.Close()
+	var out []SearchPerson
+	for rows.Next() {
+		var item SearchPerson
+		if err := rows.Scan(&item.UserID, &item.DisplayName, &item.RoleCode, &item.RoleLabel, &item.BranchLabel); err != nil {
+			return nil, fmt.Errorf("scan people search: %w", err)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) SearchChannels(ctx context.Context, userID, orgID, pattern string, limit int) ([]SearchChannel, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if orgID == "" {
+		return nil, errors.New("messaging: channel search requires the org id")
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT c.id::text, COALESCE(c.slug::text, ''), c.name, c.kind, c.topic,
+		       EXISTS (
+		         SELECT 1 FROM msg_members mine
+		         WHERE mine.channel_id = c.id AND mine.user_id = $1
+		       ) AS is_member
+		FROM msg_channels c
+		WHERE c.is_archived = FALSE
+		  AND c.deleted_at IS NULL
+		  AND (
+		    EXISTS (
+		      SELECT 1 FROM msg_members cm
+		      WHERE cm.channel_id = c.id AND cm.user_id = $1
+		    )
+		    OR (
+		      c.kind IN ('BRANCH', 'TEAM', 'TOPIC')
+		      AND (
+		        c.branch_id IS NULL
+		        OR EXISTS (
+		          SELECT 1 FROM locations loc
+		          WHERE loc.id = c.branch_id
+		            AND (loc.org_id IS NULL OR loc.org_id = $3::uuid)
+		        )
+		      )
+		    )
+		  )
+		  AND (
+		    c.slug ILIKE '%' || $2 || '%' ESCAPE '\'
+		    OR c.name ILIKE '%' || $2 || '%' ESCAPE '\'
+		    OR COALESCE(c.topic, '') ILIKE '%' || $2 || '%' ESCAPE '\'
+		  )
+		ORDER BY c.name ASC, c.id ASC
+		LIMIT $4`, userID, pattern, orgID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search channels: %w", err)
+	}
+	defer rows.Close()
+	var out []SearchChannel
+	for rows.Next() {
+		var item SearchChannel
+		if err := rows.Scan(&item.ID, &item.Slug, &item.Name, &item.Kind, &item.Topic, &item.IsMember); err != nil {
+			return nil, fmt.Errorf("scan channel search: %w", err)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}

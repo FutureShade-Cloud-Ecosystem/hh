@@ -68,6 +68,7 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	r.Handle("GET /api/v1/messaging/saved", g.RequireStaff(h.staff(h.listSaved)))
 	r.Handle("POST /api/v1/messaging/saved", g.RequireStaff(h.staff(h.saveSaved)))
 	r.Handle("DELETE /api/v1/messaging/saved/{messageID}", g.RequireStaff(h.staff(h.unsaveSaved)))
+	r.Handle("GET /api/v1/messaging/search", g.RequireStaff(h.staff(h.search)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/members", g.RequireStaff(h.staff(h.addChannelMember)))
 	r.Handle("DELETE /api/v1/messaging/channels/{id}/members/{userID}", g.RequireStaff(h.staff(h.removeChannelMember)))
 	r.Handle("GET /api/v1/messaging/channels/{id}/messages", g.RequireStaff(h.staff(h.listMessages)))
@@ -737,6 +738,8 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusBadRequest, "message body is empty")
 	case errors.Is(err, ErrBadCursor):
 		httpx.Error(w, http.StatusBadRequest, "malformed pagination cursor")
+	case errors.Is(err, ErrBadSearchQuery):
+		httpx.Error(w, http.StatusBadRequest, "q must contain at least 2 characters")
 	case errors.Is(err, ErrBadAckMethod):
 		httpx.Error(w, http.StatusBadRequest, "ack method must be one of TAP, QUICK_REPLY, VOICE")
 	// DIB-269: refusing to mute an escalation channel is a CONFLICT with the channel's class, not a

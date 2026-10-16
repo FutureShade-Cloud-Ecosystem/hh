@@ -62,6 +62,9 @@ type store interface {
 	SaveMessage(ctx context.Context, userID, messageID string) (SavedMessage, error)
 	ListSavedMessages(ctx context.Context, userID string, limit int) ([]SavedMessage, error)
 	DeleteSavedMessage(ctx context.Context, userID, messageID string) error
+	SearchMessages(ctx context.Context, userID, pattern string, limit int) ([]SearchMessage, error)
+	SearchPeople(ctx context.Context, orgID, pattern string, limit int) ([]SearchPerson, error)
+	SearchChannels(ctx context.Context, userID, orgID, pattern string, limit int) ([]SearchChannel, error)
 	// The membership walls' reads: the room's kind/branch/auto_scope, the
 	// caller's row role, and the add-target's branch reach.
 	channelFacts(ctx context.Context, channelID string) (channelFactsRow, error)
