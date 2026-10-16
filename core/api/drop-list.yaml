@@ -162,3 +162,7 @@ additions:
     reason: "The truck registry update, the fields the create takes plus active or not (the roles roadmap's Dispatch core): the ERP registered trucks but never edited one; no ERP source route."
   - route: "PUT /api/v1/dispatch/drivers/{id}"
     reason: "The driver registry update, the truck update's twin (the login link included): the ERP registered drivers but never edited one; no ERP source route."
+  - route: "GET /api/v1/warranty/policy"
+    reason: "The warranty claim threshold read (walk change 6): the effective org or branch policy the Manager Home Warranty board, the counter till's return sentence and Dealer Admin's Warranty page read; the ERP had no claim threshold at all; no ERP source route."
+  - route: "PUT /api/v1/warranty/policy"
+    reason: "The warranty claim threshold write (walk change 6): Dealer Admin's Warranty page sets the org default or one branch override in integer cents, and the change rides the audit spine with the old and new value; the ERP had no claim threshold at all; no ERP source route."
