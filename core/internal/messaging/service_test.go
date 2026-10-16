@@ -57,6 +57,7 @@ type fakeStore struct {
 	stamped            map[string]string // approvalID -> last status stamped
 	stampCalls         int               // StampApprovalStatus invocation count
 	displayNames       map[string]string // userID -> display name (decider name resolution)
+	savedRows          map[string]map[string]SavedMessage
 	roster             map[string][]StaffRosterRow
 	channelAttachments map[string][]MessageAttachment
 	memberCounts       map[string]int
@@ -66,6 +67,86 @@ type fakeStore struct {
 	editFacts       map[string]messageFacts // messageID -> the planted row (channel bound)
 	editedMessages  []Message               // EditMessage writes captured
 	deletedMessages []string                // DeleteMessage writes captured (message ids)
+}
+
+func (f *fakeStore) SaveMessage(_ context.Context, userID, messageID string) (SavedMessage, error) {
+	for _, m := range f.inserted {
+		if m.ID != messageID {
+			continue
+		}
+		if m.DeletedAt != nil {
+			return SavedMessage{}, ErrNotFound
+		}
+		if !f.members[m.ChannelID][userID] {
+			return SavedMessage{}, ErrNotMember
+		}
+		if f.savedRows == nil {
+			f.savedRows = map[string]map[string]SavedMessage{}
+		}
+		if f.savedRows[userID] == nil {
+			f.savedRows[userID] = map[string]SavedMessage{}
+		}
+		if item, ok := f.savedRows[userID][messageID]; ok {
+			return item, nil
+		}
+		var channel Channel
+		for _, candidate := range f.roomsBySlug {
+			if candidate.ID == m.ChannelID {
+				channel = candidate
+				break
+			}
+		}
+		item := SavedMessage{
+			MessageID: m.ID, ChannelID: m.ChannelID, ChannelSlug: channel.Slug,
+			ChannelName: channel.Name, AuthorID: m.AuthorID, AuthorName: f.displayNames[m.AuthorID],
+			Kind: m.Kind, Body: m.Body, CreatedAt: m.CreatedAt, SavedAt: time.Now(),
+		}
+		f.savedRows[userID][messageID] = item
+		return item, nil
+	}
+	return SavedMessage{}, ErrNotFound
+}
+
+func (f *fakeStore) ListSavedMessages(_ context.Context, userID string, limit int) ([]SavedMessage, error) {
+	var out []SavedMessage
+	cutoff := time.Now().Add(-365 * 24 * time.Hour)
+	for id, item := range f.savedRows[userID] {
+		var current Message
+		for _, m := range f.inserted {
+			if m.ID == id {
+				current = m
+				break
+			}
+		}
+		if current.ID == "" || !f.members[item.ChannelID][userID] || current.CreatedAt.Before(cutoff) {
+			continue
+		}
+		if current.DeletedAt != nil {
+			item.Body = ""
+		}
+		out = append(out, item)
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) DeleteSavedMessage(_ context.Context, userID, messageID string) error {
+	delete(f.savedRows[userID], messageID)
+	return nil
+}
+
+func (f *fakeStore) SearchMessages(_ context.Context, _, _ string, _ int) ([]SearchMessage, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) SearchPeople(_ context.Context, _, _ string, _ int) ([]SearchPerson, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) SearchChannels(_ context.Context, _, _, _ string, _ int) ([]SearchChannel, error) {
+	return nil, nil
 }
 
 func newFakeStore() *fakeStore {

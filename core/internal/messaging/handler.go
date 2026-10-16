@@ -83,6 +83,10 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// work, the caller stamped from the verified staff context.
 	r.Handle("POST /api/v1/messaging/groups", g.RequireStaff(h.staff(h.createGroup)))
 	r.Handle("PATCH /api/v1/messaging/channels/{id}", g.RequireStaff(h.staff(h.renameChannel)))
+	r.Handle("GET /api/v1/messaging/saved", g.RequireStaff(h.staff(h.listSaved)))
+	r.Handle("POST /api/v1/messaging/saved", g.RequireStaff(h.staff(h.saveSaved)))
+	r.Handle("DELETE /api/v1/messaging/saved/{messageID}", g.RequireStaff(h.staff(h.unsaveSaved)))
+	r.Handle("GET /api/v1/messaging/search", g.RequireStaff(h.staff(h.search)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/members", g.RequireStaff(h.staff(h.addChannelMember)))
 	r.Handle("DELETE /api/v1/messaging/channels/{id}/members/{userID}", g.RequireStaff(h.staff(h.removeChannelMember)))
 	r.Handle("POST /api/v1/messaging/channels/{id}/join", g.RequireStaff(h.staff(h.joinChannel)))
@@ -1313,6 +1317,8 @@ func (h *Handler) writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusBadRequest, "message body is empty")
 	case errors.Is(err, ErrBadCursor):
 		httpx.Error(w, http.StatusBadRequest, "malformed pagination cursor")
+	case errors.Is(err, ErrBadSearchQuery):
+		httpx.Error(w, http.StatusBadRequest, "q must contain at least 2 characters")
 	case errors.Is(err, ErrBadAckMethod):
 		httpx.Error(w, http.StatusBadRequest, "ack method must be one of TAP, QUICK_REPLY, VOICE")
 	// Change 7, slice S3: a reaction on a system message is a conflict with what the message IS (the

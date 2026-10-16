@@ -302,6 +302,7 @@ var migrationTopics = map[string]string{
 	"0370_order_skids":                     "order",
 	"0372_yard_short_line_tax":             "order",
 	"0396_warranty_policy":                 "warranty",
+	"0402_messaging_saved_and_search":      "messaging",
 	"0404_warranty_vendor_agreements":      "warranty",
 	"0409_ar_account_payment_policy":       "billing",
 	"0410_ar_reminder_paylink_enrol":       "billing",
@@ -475,6 +476,7 @@ var ownedObjects = map[string]string{
 	"msg_policy":                      "messaging",         // 0398_msg_edit_window_policy
 	"msg_reactions":                   "messaging",         // 0399_messaging_reactions_mentions_seen
 	"msg_retention_policy":            "messaging",         // 0070_messaging_retention_archive
+	"msg_saved_messages":              "messaging",         // 0402_messaging_saved_and_search
 	"msg_unread_effective":            "messaging",         // 0137_msg_notification_modes
 	"msg_unread_summary":              "messaging",         // 0051_messaging_unread_view
 	"nsf_policy":                      "payments",          // 0035_nsf_credit_hold

@@ -3479,6 +3479,55 @@ export type LoadBatchView = {
   items: LoadBatchItemOutcome[];
   created_at: string;
 };
+export type MessagingSearchMessage = {
+  message_id: string;
+  channel_id: string;
+  channel_slug: string;
+  channel_name: string;
+  author_id: string;
+  author_name: string;
+  kind: "TEXT" | "EVENT" | "APPROVAL";
+  body: string;
+  created_at: string;
+};
+export type MessagingSearchPerson = {
+  user_id: string;
+  display_name: string;
+  role_code: string;
+  role_label: string;
+  branch_label: string;
+};
+export type MessagingSearchChannel = {
+  id: string;
+  slug: string;
+  name: string;
+  kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL" | "GROUP";
+  topic: string;
+  is_member: boolean;
+};
+export type MessagingSearchResults = {
+  messages: MessagingSearchMessage[];
+  people: MessagingSearchPerson[];
+  channels: MessagingSearchChannel[];
+};
+export type MessagingSavedSave = {
+  message_id: string;
+};
+export type MessagingSavedItem = {
+  message_id: string;
+  channel_id: string;
+  channel_slug: string;
+  channel_name: string;
+  author_id: string;
+  author_name: string;
+  kind: "TEXT" | "EVENT" | "APPROVAL";
+  body: string;
+  created_at: string;
+  saved_at: string;
+};
+export type MessagingSavedList = {
+  items: MessagingSavedItem[];
+};
 export type MessagingChannel = {
   id: string;
   kind: "BRANCH" | "TEAM" | "TOPIC" | "DM" | "APPROVAL" | "GROUP";

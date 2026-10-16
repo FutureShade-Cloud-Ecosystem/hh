@@ -4107,6 +4107,62 @@ type LoadBatchView struct {
 	CreatedAt    time.Time              `json:"created_at"`
 }
 
+type MessagingSearchMessage struct {
+	MessageId   string    `json:"message_id"`
+	ChannelId   string    `json:"channel_id"`
+	ChannelSlug string    `json:"channel_slug"`
+	ChannelName string    `json:"channel_name"`
+	AuthorId    string    `json:"author_id"`
+	AuthorName  string    `json:"author_name"`
+	Kind        string    `json:"kind"`
+	Body        string    `json:"body"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type MessagingSearchPerson struct {
+	UserId      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	RoleCode    string `json:"role_code"`
+	RoleLabel   string `json:"role_label"`
+	BranchLabel string `json:"branch_label"`
+}
+
+type MessagingSearchChannel struct {
+	Id       string `json:"id"`
+	Slug     string `json:"slug"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Topic    string `json:"topic"`
+	IsMember bool   `json:"is_member"`
+}
+
+type MessagingSearchResults struct {
+	Messages []MessagingSearchMessage `json:"messages"`
+	People   []MessagingSearchPerson  `json:"people"`
+	Channels []MessagingSearchChannel `json:"channels"`
+}
+
+type MessagingSavedSave struct {
+	MessageId string `json:"message_id"`
+}
+
+type MessagingSavedItem struct {
+	MessageId   string    `json:"message_id"`
+	ChannelId   string    `json:"channel_id"`
+	ChannelSlug string    `json:"channel_slug"`
+	ChannelName string    `json:"channel_name"`
+	AuthorId    string    `json:"author_id"`
+	AuthorName  string    `json:"author_name"`
+	Kind        string    `json:"kind"`
+	Body        string    `json:"body"`
+	CreatedAt   time.Time `json:"created_at"`
+	SavedAt     time.Time `json:"saved_at"`
+}
+
+type MessagingSavedList struct {
+	Items []MessagingSavedItem `json:"items"`
+}
+
 type MessagingChannel struct {
 	Id          string     `json:"id"`
 	Kind        string     `json:"kind"`
