@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingAgingPage, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreditHoldPage, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderInput, BillingReminderResult, BillingReminderSend, BillingReminderSendPage, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementRunRequest, BillingStatementRunResult, PaymentCardAttemptSummary } from "./types.js";
+import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreditHoldPage, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderInput, BillingReminderResult, BillingReminderSend, BillingReminderSendPage, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementRunRequest, BillingStatementRunResult, PaymentCardAttemptSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -596,6 +596,38 @@ export async function billingGetStatementRun(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingGetStatementRun",
+  });
+}
+
+export async function billingAddCustomerNote(
+  client: ApiClient,
+  customer_id: string | number,
+  body: BillingAddCustomerNoteInput,
+  call?: ApiCallOptions
+): Promise<Result<BillingAddCustomerNoteResult>> {
+  return client.request<BillingAddCustomerNoteResult>({
+    method: "POST",
+    path: "/api/v1/billing/ar/customers/{customer_id}/notes",
+    pathParams: { customer_id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingAddCustomerNote",
+  });
+}
+
+export async function billingGetCustomerWorkspace(
+  client: ApiClient,
+  customer_id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<BillingCustomerWorkspace>> {
+  return client.request<BillingCustomerWorkspace>({
+    method: "GET",
+    path: "/api/v1/billing/ar/customers/{customer_id}/workspace",
+    pathParams: { customer_id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingGetCustomerWorkspace",
   });
 }
 

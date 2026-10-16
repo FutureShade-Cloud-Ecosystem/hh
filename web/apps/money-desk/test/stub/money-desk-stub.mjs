@@ -216,9 +216,13 @@ function reset(kind = "full") {
     })),
     payments: [],
     holds: [],
+    credit_memos: [],
+    ap_contacts: new Map(),
     statements: new Map(),
+    workspace_statements: [],
     runs: new Map(),
     keys: new Map(),
+    notes: new Map(),
     counter: 0,
   };
   if (kind === "empty") {
@@ -266,12 +270,264 @@ function reset(kind = "full") {
       override_reason: "Deposit is coming",
     }),
   );
+
+  // Workspace seed: credit memos the payments tab carries as unapplied figures, the
+  // statements the statements tab carries, and the AP contacts the header shows.
+  world.credit_memos.push(
+    { id: uuid("a", 500), no: "CM-0001", acct: 1, issued_at: NOW_ISO(), amount_cents: 25_000, applied_cents: 0, reason: "Damaged on arrival, partial credit", status: "POSTED" },
+    { id: uuid("a", 501), no: "CM-0002", acct: 2, issued_at: NOW_ISO(), amount_cents: 50_000, applied_cents: 50_000, reason: "Returned full pallet", status: "POSTED" },
+  );
+  world.ap_contacts.set(custId(1), { name: "Maria Quinn", email: "ap@graniteedge.example", phone: "+1-555-0101" });
+  world.ap_contacts.set(custId(2), { name: "Otis Bell", email: "ops@oakline.example", phone: "+1-555-0102" });
+  world.workspace_statements.push(
+    { id: uuid("a", 700), run_id: uuid("a", 701), acct: 1, mode: "MASS", as_of: dayOffset(-30), closing: 728_140, delivery: "SENT", created_at: dayOffset(-30) },
+    { id: uuid("a", 702), run_id: uuid("a", 703), acct: 1, mode: "INTERIM", as_of: dayOffset(-2), closing: 728_140, delivery: "QUEUED", created_at: dayOffset(-2) },
+    { id: uuid("a", 704), run_id: uuid("a", 705), acct: 2, mode: "MASS", as_of: dayOffset(-30), closing: 345_500, delivery: "SENT", created_at: dayOffset(-30) },
+  );
 }
 
 const acct = (n) => ACCOUNTS.find((a) => a.n === n);
 const custId = (n) => uuid("e", n);
 const acctOfCust = (id) => ACCOUNTS.find((a) => custId(a.n) === id);
 const invById = (id) => world.invoices.find((i) => i.id === id);
+
+// workspaceFor builds the full workspace payload for one customer. The 5-bucket aging
+// is the same arithmetic the core uses; the five buckets sum to openCents and the
+// four late buckets sum to overdueCents, so the workspace and the AR console quote
+// the same numbers. When the customer is not in the demo's account list the stub
+// still answers (404 would be dishonest from the stub; a zero-everything answer is
+// the truth).
+function workspaceFor(customerId) {
+  const a = acctOfCust(customerId);
+  if (!a) {
+    return {
+      header: emptyHeader(customerId),
+      invoices_open: [], invoices_closed: [], invoices_disputed: [],
+      payments: [], credit_notes: [], statements: [], notes: [], activity: [],
+      as_of: NOW_ISO(),
+    };
+  }
+  const invs = world.invoices.filter((i) => i.acct === a.n);
+  const open = [];
+  const closed = [];
+  const disputed = [];
+  for (const inv of invs) {
+    const row = workspaceInvoiceRow(inv);
+    if (inv.dispute && inv.dispute.status === "OPEN") {
+      disputed.push(row);
+      if (inv.balance_cents > 0) open.push(row);
+    } else if (inv.balance_cents > 0) {
+      open.push(row);
+    } else if (inv.paid) {
+      closed.push(row);
+    }
+  }
+  const payments = world.payments
+    .filter((p) => p.acct === a.n && p.status === "RECEIVED")
+    .map(workspacePayment);
+  const creditNotes = world.credit_memos
+    .filter((m) => m.acct === a.n && m.status !== "VOID")
+    .map(workspaceCredit);
+  const statements = (world.workspace_statements ?? []).filter((s) => s.acct === a.n).map(workspaceStatement);
+  const notes = (world.notes.get(customerId) ?? []).map(workspaceNote);
+  const activity = workspaceActivity(a);
+  const aging = agingFor(a);
+  const lastPay = payments.length > 0 ? payments[0] : null;
+  const openCents = open.reduce((s, r) => s + r.balance_cents, 0);
+  const overdueCents = open.reduce((s, r) => s + (r.days_overdue > 0 ? r.balance_cents : 0), 0);
+  const utilization = a.limit > 0 ? Math.round((openCents * 10000) / a.limit) : 0;
+  const tagged = world.ap_contacts.get(customerId);
+  const header = {
+    customer_id: customerId,
+    name: a.name,
+    account_no: a.no,
+    status: accountStatus(a.n),
+    terms_days: a.terms,
+    credit_limit_cents: a.limit,
+    open_cents: openCents,
+    available_credit_cents: a.limit - openCents,
+    overdue_cents: overdueCents,
+    utilization_bps: utilization,
+    primary_ap_contact_name: tagged ? tagged.name : "",
+    primary_ap_contact_email: tagged ? tagged.email : "",
+    primary_ap_contact_phone: tagged ? tagged.phone : "",
+    last_payment_at: lastPay ? lastPay.received_at : null,
+    last_payment_cents: lastPay ? lastPay.amount_cents : 0,
+    aging,
+  };
+  return {
+    header,
+    invoices_open: open,
+    invoices_closed: closed,
+    invoices_disputed: disputed,
+    payments,
+    credit_notes: creditNotes,
+    statements,
+    notes,
+    activity,
+    as_of: NOW_ISO(),
+  };
+}
+
+function emptyHeader(customerId) {
+  return {
+    customer_id: customerId,
+    name: "",
+    account_no: "",
+    status: "CURRENT",
+    terms_days: 30,
+    credit_limit_cents: 0,
+    open_cents: 0,
+    available_credit_cents: 0,
+    overdue_cents: 0,
+    utilization_bps: 0,
+    primary_ap_contact_name: "",
+    primary_ap_contact_email: "",
+    primary_ap_contact_phone: "",
+    last_payment_at: null,
+    last_payment_cents: 0,
+    aging: { current_cents: 0, days_30_cents: 0, days_60_cents: 0, days_90_cents: 0, days_90_plus_cents: 0, open_cents: 0, overdue_cents: 0 },
+  };
+}
+
+function workspaceInvoiceRow(inv) {
+  const bucket = c8BucketOf(inv.late);
+  return {
+    id: inv.id,
+    invoice_no: inv.invoice_no,
+    doc_type: "INVOICE",
+    status: inv.balance_cents === 0 ? "PAID" : "FINALIZED",
+    issue_date: dayOffset(-inv.late - 30),
+    due_date: dayOffset(-inv.late),
+    total_cents: inv.total,
+    balance_cents: inv.balance_cents,
+    days_overdue: inv.late > 0 ? inv.late : 0,
+    days_overdue_bucket: bucket.label,
+    is_disputed: !!(inv.dispute && inv.dispute.status === "OPEN"),
+    has_open_promise: !!inv.promise,
+  };
+}
+
+function workspacePayment(p) {
+  const allocated = (p.allocations ?? []).reduce((s, a) => s + a, 0);
+  return {
+    id: p.id,
+    payment_no: p.no,
+    received_at: p.received_at,
+    amount_cents: p.amount_cents,
+    method: p.method,
+    unapplied_cents: Math.max(0, p.amount_cents - allocated),
+    branch_id: p.branch ?? "",
+  };
+}
+
+function workspaceCredit(m) {
+  return {
+    id: m.id,
+    memo_no: m.no,
+    issued_at: m.issued_at,
+    amount_cents: m.amount_cents,
+    unapplied_cents: Math.max(0, m.amount_cents - (m.applied_cents ?? 0)),
+    reason: m.reason ?? "",
+  };
+}
+
+function workspaceStatement(s) {
+  return {
+    id: s.id,
+    run_id: s.run_id,
+    mode: s.mode,
+    as_of_date: s.as_of,
+    closing_balance_cents: s.closing,
+    delivery_status: s.delivery,
+    created_at: s.created_at,
+  };
+}
+
+function workspaceNote(n) {
+  return {
+    id: n.id,
+    kind: n.kind,
+    body: n.body,
+    author_id: n.author_id ?? "",
+    author_name: n.author_name ?? "",
+    pinned: !!n.pinned,
+    created_at: n.created_at,
+  };
+}
+
+// agingFor returns the 5-bucket breakdown for one account, by summing open invoice
+// balances. The five buckets sum to openCents (the workspace reconciliation check
+// the server also enforces) and the four late buckets sum to overdueCents.
+function agingFor(a) {
+  const buckets = { Current: 0, "1 to 30": 0, "31 to 60": 0, "61 to 90": 0, "91 and over": 0 };
+  let open = 0;
+  let overdue = 0;
+  for (const inv of world.invoices.filter((i) => i.acct === a.n && i.balance_cents > 0)) {
+    const b = c8BucketOf(inv.late);
+    buckets[b.label] = (buckets[b.label] ?? 0) + inv.balance_cents;
+    open += inv.balance_cents;
+    if (inv.late > 0) overdue += inv.balance_cents;
+  }
+  return {
+    current_cents: buckets.Current,
+    days_30_cents: buckets["1 to 30"],
+    days_60_cents: buckets["31 to 60"],
+    days_90_cents: buckets["61 to 90"],
+    days_90_plus_cents: buckets["91 and over"],
+    open_cents: open,
+    overdue_cents: overdue,
+  };
+}
+
+// workspaceActivity returns the last 10 AR subledger rows the activity feed renders.
+// The stub simulates a customer_transactions feed by interleaving the customer's
+// invoices, payments and credit memos newest first; a real implementation reads the
+// customer_transactions table (0009_invoices_ar) the same way.
+function workspaceActivity(a) {
+  const rows = [];
+  for (const inv of world.invoices.filter((i) => i.acct === a.n)) {
+    rows.push({ kind: "INVOICE", reference: inv.invoice_no, amount_cents: inv.total, occurred_at: dayOffset(-inv.late - 30), memo: "" });
+  }
+  for (const p of world.payments.filter((p) => p.acct === a.n && p.status === "RECEIVED")) {
+    rows.push({ kind: "PAYMENT", reference: p.no, amount_cents: -p.amount_cents, occurred_at: p.received_at, memo: "" });
+  }
+  for (const m of world.credit_memos.filter((m) => m.acct === a.n && m.status !== "VOID")) {
+    rows.push({ kind: "CREDIT_MEMO", reference: m.no, amount_cents: -m.amount_cents, occurred_at: m.issued_at, memo: m.reason ?? "" });
+  }
+  rows.sort((x, y) => new Date(y.occurred_at).getTime() - new Date(x.occurred_at).getTime());
+  return rows.slice(0, 10).map((r) => ({
+    kind: r.kind,
+    reference: r.reference,
+    amount_cents: r.amount_cents,
+    balance_after_cents: 0,
+    branch_id: "",
+    memo: r.memo,
+    occurred_at: r.occurred_at,
+  }));
+}
+
+// workspaceAddNote writes one customer_ar_notes row. Pinned=true first un-pins any
+// existing pinned note on the same account (the partial unique index 0405 declares
+// refuses a second pinned row, so this is the order the server takes).
+function workspaceAddNote(customerId, body) {
+  if (!world.notes.has(customerId)) world.notes.set(customerId, []);
+  const list = world.notes.get(customerId);
+  if (body.pinned) for (const n of list) n.pinned = false;
+  const id = uuid("a", 9000 + list.length + 1);
+  const row = {
+    id,
+    kind: typeof body.kind === "string" && body.kind !== "" ? body.kind : "NOTE",
+    body: String(body.body),
+    pinned: !!body.pinned,
+    created_at: NOW_ISO(),
+    author_id: "de110000-0000-4000-9000-000000000007",
+    author_name: "Payables and Receivables (demo)",
+  };
+  list.unshift(row);
+  return workspaceNote(row);
+}
+
 reset();
 
 function statusOf(inv) {
@@ -775,6 +1031,22 @@ async function handle(req, res) {
 
   if (method === "GET" && path === "/api/v1/ar/landing") return send(res, 200, landing());
   if (method === "GET" && path === "/api/v1/ar/aging") return send(res, 200, { items: agingRows(), as_of: dayOffset(0) });
+
+  // The customer account workspace (Change 8 S2 + S2M). One round trip the panel
+  // renders in one paint, with the 5-bucket aging, the open/closed/disputed invoice
+  // lists, payments, credit notes, statements, notes and the activity timeline. The
+  // answers reconcile to the penny with S0 (the server reconciliation primitive),
+  // the same arithmetic the core checks.
+  let mWorkspace = path.match(/^\/api\/v1\/billing\/ar\/customers\/([^/]+)\/workspace$/);
+  if (mWorkspace && method === "GET") return send(res, 200, workspaceFor(mWorkspace[1]));
+  mWorkspace = path.match(/^\/api\/v1\/billing\/ar\/customers\/([^/]+)\/notes$/);
+  if (mWorkspace && method === "POST") {
+    const body = await readBody(req);
+    if (body === null) return refuse(res, 422, "the request body must be JSON");
+    if (typeof body.body !== "string" || body.body.trim() === "") return refuse(res, 422, "note body is required");
+    if (body.body.length > 4096) return refuse(res, 422, "note body exceeds 4096 characters");
+    return send(res, 201, { note: workspaceAddNote(mWorkspace[1], body) });
+  }
 
   if (method === "GET" && path === "/api/v1/ar/register") {
     const customer = q.get("customer_id") ?? "";

@@ -178,4 +178,7 @@ additions:
     reason: "The vendor warranty credit agreement write (walk change 6): Dealer Admin's Warranty page sets one vendor's kind, period and allowance percent, and each moved knob rides the audit spine with its old and new value; the ERP recorded no per vendor credit terms; no ERP source route."
   - route: "GET /api/v1/messaging/people"
     reason: "House Messages change 7, slice S1: the staffer readable roster the New message picker lists (id, display name, role label, branch label, is_me), every active staffer of the caller's org; the ERP's staff roster was manager only and the ERP had no picker."
-
+  - route: "GET /api/v1/billing/ar/customers/{customer_id}/workspace"
+    reason: "Change 8 S2 + S2M customer account workspace, one read composed of the AR console's own aging, the open/closed/disputed invoice lists, payments, credit notes, statements, notes and the activity feed; the ERP had no workspace panel, only the account list and per-invoice detail; no ERP source route."
+  - route: "POST /api/v1/billing/ar/customers/{customer_id}/notes"
+    reason: "Change 8 S2 + S2M activity tab's collection note writer on customer_ar_notes (0405), the seam behind the workspace activity timeline; the ERP recorded notes only as invoice_lines.memo or ar_promises_to_pay rows; no ERP source route."

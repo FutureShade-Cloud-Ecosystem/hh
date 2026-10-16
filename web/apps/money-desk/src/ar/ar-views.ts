@@ -19,6 +19,7 @@ import type {
   BillingAgingRow,
   BillingARLanding,
   BillingCreditHold,
+  BillingCustomerWorkspace,
   BillingInvoiceDetail,
   BillingPaperPathEntry,
   BillingRegisterRow,
@@ -28,6 +29,7 @@ import type {
   TillInvoicePayments,
   TillPaymentHistory,
 } from "@hardscapehouse/api-client";
+import { renderWorkspace, type WorkspaceTab } from "./ar-workspace.js";
 import type { ApplyAnswer } from "./ar-api.js";
 import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
@@ -104,6 +106,13 @@ export interface DeskModel {
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
+  // The customer account workspace (Change 8 S2 + S2M). workspace is the read payload
+  // from billingGetCustomerWorkspace; activeWorkspaceTab is the desktop / mobile
+  // workspace tab the operator last picked; workspaceCustomerId is the customer the
+  // workspace is currently showing (a back link clears all three).
+  readonly workspace: BillingCustomerWorkspace | null;
+  readonly workspaceCustomerId: string | null;
+  readonly activeWorkspaceTab: WorkspaceTab;
 }
 
 // ---- small parts -------------------------------------------------------------------------------
@@ -289,7 +298,7 @@ function registerRowView(model: DeskModel, r: BillingRegisterRow): TemplateResul
   return html`
     <tr data-register-row>
       <td><span class="who">${r.invoice_no}</span><span class="dim small">${r.order_no ?? ""}</span></td>
-      <td><span>${r.customer_name}</span><span class="dim small">${r.account_no}${terms}</span></td>
+      <td><span class="link-row" data-action="workspace-open" data-customer-id="${r.customer_id}"><span class="who">${r.customer_name}</span></span><span class="dim small">${r.account_no}${terms}</span></td>
       <td>${branchName(model, r.branch_id)}</td>
       <td class="nowrap due-col">
         <div class="due-line">${relativeDay(r.due_date, model.asOf)}</div>
@@ -895,5 +904,42 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
             <div class="col-side">${account.right === "invoice" ? invoicePanel(model, account) : account.right === "promise" ? promisePanel(model, account) : receivePanel(model, account)}</div>
           </div>
         `}
+  `;
+}
+
+// renderWorkspaceScreen is the second screen mode the desk offers: the customer
+// account workspace (Change 8 S2 desktop + S2M mobile). The back link clears the
+// workspace state and returns the operator to the page they came from; the screen
+// itself is delegated to ar-workspace.ts.
+//
+// Returns the loading tile while the read is in flight; the route is server-only
+// and we never fake the payload client-side, so a slow workspace read renders an
+// honest loading indicator and not a stale copy of a previous customer's data.
+export function renderWorkspaceScreen(model: DeskModel): TemplateResult {
+  if (model.workspace === null || model.workspaceCustomerId === null) {
+    return html`
+      <button type="button" class="link back" data-action="workspace-back">‹ Receivables</button>
+      <div class="head">
+        <h1>Account workspace</h1>
+        <p class="dim">Loading the workspace…</p>
+      </div>
+    `;
+  }
+  return html`
+    <button type="button" class="link back" data-action="workspace-back">‹ Receivables</button>
+    <div class="head">
+      <h1>Account workspace</h1>
+      <p class="dim">${model.workspace.header.name} · ${model.workspace.header.account_no}</p>
+    </div>
+    ${messages(model)}
+    ${renderWorkspace(
+      model.workspace,
+      model.activeWorkspaceTab,
+      () => {}, // tab change is handled by the desk press
+      () => {}, // apply credit is handled by the desk press
+      () => {}, // add note is handled by the desk press
+      () => {}, // quick action is handled by the desk press
+      false,
+    )}
   `;
 }

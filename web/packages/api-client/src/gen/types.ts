@@ -808,6 +808,111 @@ export type PaymentCardAttemptResolve = {
   resolution: "NOT_CHARGED" | "REVERSED_AT_PROCESSOR";
   note: string;
 };
+export type BillingCustomerWorkspaceHeader = {
+  customer_id: string;
+  name: string;
+  account_no: string;
+  status: "CURRENT" | "CREDIT_APPROVED" | "CREDIT_HOLD" | "UNDER_REVIEW";
+  terms_days: number;
+  credit_limit_cents: number;
+  open_cents: number;
+  available_credit_cents: number;
+  overdue_cents: number;
+  utilization_bps: number;
+  primary_ap_contact_name?: string;
+  primary_ap_contact_email?: string;
+  primary_ap_contact_phone?: string;
+  last_payment_at?: string;
+  last_payment_cents?: number;
+  aging: BillingCustomerWorkspaceAging;
+};
+export type BillingCustomerWorkspaceAging = {
+  current_cents: number;
+  days_30_cents: number;
+  days_60_cents: number;
+  days_90_cents: number;
+  days_90_plus_cents: number;
+  open_cents: number;
+  overdue_cents: number;
+};
+export type BillingCustomerWorkspaceInvoice = {
+  id: string;
+  invoice_no: string;
+  doc_type: "INVOICE" | "CREDIT_MEMO";
+  status: "DRAFT" | "FINALIZED" | "PARTIALLY_PAID" | "PAID" | "VOID";
+  issue_date: string;
+  due_date: string;
+  total_cents: number;
+  balance_cents: number;
+  days_overdue: number;
+  days_overdue_bucket: "Current" | "1 to 30" | "31 to 60" | "61 to 90" | "91 and over";
+  is_disputed: boolean;
+  has_open_promise: boolean;
+};
+export type BillingCustomerWorkspacePayment = {
+  id: string;
+  payment_no: string;
+  received_at: string;
+  amount_cents: number;
+  method: "CASH" | "CARD" | "CHEQUE" | "EFT" | "OTHER";
+  unapplied_cents: number;
+  branch_id?: string;
+};
+export type BillingCustomerWorkspaceCreditNote = {
+  id: string;
+  memo_no: string;
+  issued_at: string;
+  amount_cents: number;
+  unapplied_cents: number;
+  reason?: string;
+};
+export type BillingCustomerWorkspaceStatement = {
+  id: string;
+  run_id: string;
+  mode: "MASS" | "INTERIM";
+  as_of_date: string;
+  closing_balance_cents: number;
+  delivery_status: "NOT_QUEUED" | "QUEUED" | "SENT" | "FAILED";
+  created_at: string;
+};
+export type BillingCustomerWorkspaceNote = {
+  id: string;
+  kind: "NOTE" | "CALL" | "VISIT" | "EMAIL_RECEIVED";
+  body: string;
+  author_id?: string;
+  author_name?: string;
+  pinned: boolean;
+  created_at: string;
+};
+export type BillingCustomerWorkspaceActivity = {
+  kind: "INVOICE" | "PAYMENT" | "CREDIT_MEMO" | "ADJUSTMENT" | "NSF" | "WRITE_OFF";
+  reference?: string;
+  amount_cents: number;
+  balance_after_cents: number;
+  branch_id?: string;
+  memo?: string;
+  occurred_at: string;
+};
+export type BillingCustomerWorkspace = {
+  header: BillingCustomerWorkspaceHeader;
+  invoices_open: BillingCustomerWorkspaceInvoice[];
+  invoices_closed: BillingCustomerWorkspaceInvoice[];
+  invoices_disputed: BillingCustomerWorkspaceInvoice[];
+  payments: BillingCustomerWorkspacePayment[];
+  credit_notes: BillingCustomerWorkspaceCreditNote[];
+  statements: BillingCustomerWorkspaceStatement[];
+  notes: BillingCustomerWorkspaceNote[];
+  activity: BillingCustomerWorkspaceActivity[];
+  as_of: string;
+};
+export type BillingAddCustomerNoteInput = {
+  body: string;
+  kind?: "NOTE" | "CALL" | "VISIT" | "EMAIL_RECEIVED";
+  pinned?: boolean;
+};
+export type BillingAddCustomerNoteResult = {
+  note: BillingCustomerWorkspaceNote;
+};
 export type AssistArgSpec = {
   name: string;
   label: string;

@@ -11,7 +11,7 @@
 // a walled move in words naming who may do it. Nothing is stored: the
 // idempotency keys, like the rest, rest in memory for the life of the page.
 import { html, type TemplateResult } from "lit";
-import type { BillingRegisterRow, Result } from "@hardscapehouse/api-client";
+import type { BillingCustomerWorkspace, BillingRegisterRow, Result } from "@hardscapehouse/api-client";
 import { ArApi, type PaymentMethod } from "./ar-api.js";
 import { HeldKeys, newKey } from "./held-keys.js";
 import { canLiftHolds, MAX_APPLY_INVOICES, paymentOutcome, pickCeilingWords, refusalWords, validatePromise } from "./ar-logic.js";
@@ -27,6 +27,7 @@ import {
   renderReminders,
   renderSettings,
   renderStatements,
+  renderWorkspaceScreen,
   shownInvoiceIds,
   type AccountModel,
   type BouncedWork,
@@ -37,6 +38,7 @@ import {
   type Tab,
   type WorkChoice,
 } from "./ar-views.js";
+import type { WorkspaceTab } from "./ar-workspace.js";
 
 export interface DeskHost {
   /** Asks the root to repaint. */
@@ -102,6 +104,17 @@ export class ArDesk {
   readonly #office: OfficeDesk;
   #promiseKey = newKey();
   #remindKey = newKey();
+  // The customer account workspace (Change 8 S2 + S2M): a separate screen mode that
+  // lands when the operator clicks a customer name in the register or the worklist.
+  // workspaceMode is the gate the render function reads; workspaceCustomerId is the
+  // customer whose workspace is open; activeWorkspaceTab is the desktop / mobile
+  // workspace tab the operator last picked. The workspace payload itself is held on
+  // #workspace and reloaded on every entry so the visible numbers are the server's
+  // current ones, never a cached copy.
+  #workspaceMode = false;
+  #workspace: BillingCustomerWorkspace | null = null;
+  #workspaceCustomerId: string | null = null;
+  #activeWorkspaceTab: WorkspaceTab = "overview";
 
   constructor(api: ArApi, host: DeskHost, who: DeskWho) {
     this.#api = api;
@@ -399,9 +412,78 @@ export class ArDesk {
       case "run-sweep":
         void this.#runSweep();
         return true;
+      // The customer account workspace (Change 8 S2 + S2M): open the workspace for the
+      // customer the operator clicked, switch the workspace tab, fire the inline Add
+      // a note writer, the Apply Credit Note modal hook and the quick actions the
+      // summary card carries. Every action that lands here was rendered by
+      // ar-workspace.ts and reaches this desk via the data-action string.
+      case "workspace-open":
+        void this.openWorkspace(attr("data-customer-id"));
+        return true;
+      case "workspace-back":
+        this.closeWorkspace();
+        return true;
+      case "workspace-tab":
+        this.#activeWorkspaceTab = (attr("data-tab") || "overview") as WorkspaceTab;
+        this.#host.repaint();
+        return true;
+      case "workspace-add-note": {
+        const id = this.#workspaceCustomerId;
+        if (id === null) return true;
+        const text = (this.#host.field("workspace-note-body") || "").trim();
+        if (text === "") {
+          this.#error = "A note body is required.";
+          this.#host.repaint();
+          return true;
+        }
+        const pinned = this.#host.field("workspace-note-pinned") === "true";
+        void this.#addWorkspaceNote(id, text, pinned);
+        return true;
+      }
+      case "workspace-apply-credit": {
+        const id = this.#workspaceCustomerId;
+        const creditId = attr("data-credit-id");
+        if (id === null || creditId === "") return true;
+        this.#notice = "Apply credit note is wired; the allocation write lands when the route accepts it. For now, use the invoice detail.";
+        this.#host.repaint();
+        return true;
+      }
+      case "workspace-quick": {
+        if (this.#workspaceCustomerId === null) return true;
+        const quick = attr("data-quick");
+        if (quick === "apply" || quick === "remind" || quick === "statement") {
+          this.#notice = `Use the desk's primary actions for "${quick}". The workspace quick action is a future enhancement.`;
+          this.#host.repaint();
+          return true;
+        }
+        if (quick === "hold") {
+          this.#error = "Placing a hold goes through the Manager Home approval flow, which is not wired into this surface yet. Tell the Financial Controller or the General Manager.";
+          this.#host.repaint();
+          return true;
+        }
+        this.#error = "Add a note is wired; use the form on the Activity tab.";
+        this.#host.repaint();
+        return true;
+      }
       default:
         return this.#office.press(control);
     }
+  }
+
+  /** POST a note on customer_ar_notes (0405) and refresh the workspace payload. */
+  async #addWorkspaceNote(customerId: string, body: string, pinned: boolean): Promise<void> {
+    const result = await this.#api.addNote(customerId, { body, kind: "NOTE", pinned });
+    if (!result.ok) {
+      this.#error = refusalWords("note", result.error, result.status);
+      this.#host.repaint();
+      return;
+    }
+    this.#notice = "Note added.";
+    const reload = await this.#api.workspace(customerId);
+    if (reload.ok && this.#workspaceCustomerId === customerId) {
+      this.#workspace = reload.value;
+    }
+    this.#host.repaint();
   }
 
   /** An input in a field the screen carries. Only the payment amount asks the server again as it changes. */
@@ -966,6 +1048,9 @@ export class ArDesk {
       busy: this.#busy,
       error: this.#error,
       notice: this.#notice,
+      workspace: this.#workspace,
+      workspaceCustomerId: this.#workspaceMode ? this.#workspaceCustomerId : null,
+      activeWorkspaceTab: this.#activeWorkspaceTab,
     };
   }
 
@@ -973,11 +1058,50 @@ export class ArDesk {
     if (this.#phase === "loading") return renderLoading();
     if (this.#phase === "error") return renderLoadFailed(this.#loadError);
     const model = this.#model();
+    if (this.#workspaceMode) return html`${renderWorkspaceScreen(model)}`;
     if (model.account !== null) return html`${renderAccount(model, model.account)}`;
     if (model.tab === "statements") return html`${renderStatements(model)}`;
     if (model.tab === "reminders") return html`${renderReminders(model)}`;
     if (model.tab === "settings") return html`${renderSettings(model)}`;
     if (model.tab === "holds") return html`${renderHolds(model)}`;
     return html`${renderHome(model)}`;
+  }
+
+  /**
+   * Open the customer account workspace for one customer. Loads the workspace payload
+   * from the server and switches the desk into workspace mode. The back link returns
+   * the operator to wherever they were.
+   */
+  async openWorkspace(customerId: string): Promise<void> {
+    this.#clearMessages();
+    this.#workspaceMode = true;
+    this.#workspaceCustomerId = customerId;
+    this.#workspace = null;
+    this.#activeWorkspaceTab = "overview";
+    this.#host.repaint();
+    const result = await this.#api.workspace(customerId);
+    if (!result.ok) {
+      this.#error = refusalWords("workspace", result.error, result.status);
+      this.#workspaceMode = false;
+      this.#workspaceCustomerId = null;
+      this.#host.repaint();
+      return;
+    }
+    if (this.#workspaceCustomerId !== customerId) {
+      // The operator has already navigated elsewhere; drop the late answer.
+      return;
+    }
+    this.#workspace = result.value;
+    this.#host.repaint();
+  }
+
+  /** Back link: clears workspace state and returns to the previous one. */
+  closeWorkspace(): void {
+    this.#workspaceMode = false;
+    this.#workspace = null;
+    this.#workspaceCustomerId = null;
+    this.#activeWorkspaceTab = "overview";
+    this.#clearMessages();
+    void this.#reloadBook().then(() => this.#host.repaint());
   }
 }
