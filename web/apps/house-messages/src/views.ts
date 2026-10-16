@@ -1339,11 +1339,11 @@ function renderNotificationsOptInView(m: Model): TemplateResult {
           <div style="display: flex; gap: 16px; margin-top: 8px;">
             <div>
               <label class="dim small">Start time</label>
-              <input type="time" value=${quiet?.start_time ?? "20:00"} data-field="quiet-start" />
+              <input type="time" value="${quiet?.start_time ?? "20:00"}" data-field="quiet-start" />
             </div>
             <div>
               <label class="dim small">End time</label>
-              <input type="time" value=${quiet?.end_time ?? "07:00"} data-field="quiet-end" />
+              <input type="time" value="${quiet?.end_time ?? "07:00"}" data-field="quiet-end" />
             </div>
             <div>
               <label class="dim small">Timezone</label>
