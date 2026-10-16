@@ -65,6 +65,10 @@ func (h *Handler) RegisterRoutes(r httpx.Registrar, g *guards.Guards) {
 	// membership write, the branch wall on a channel that names a branch.
 	r.Handle("POST /api/v1/messaging/channels", g.RequireStaff(h.staff(h.createChannel)))
 	r.Handle("POST /api/v1/messaging/dms", g.RequireStaff(h.staff(h.createDM)))
+	// Slice S1: the New message picker's roster, a read any staffer may make
+	// (the picker feeds the DM route beside it), active staff of the caller's
+	// org with the labels the picker shows and nothing else.
+	r.Handle("GET /api/v1/messaging/people", g.RequireStaff(h.staff(h.listPeople)))
 	// The group room (walk change 7, slice S2, rulings 3 and 4): any staffer
 	// starts a named group with any set of staffers, and any member renames
 	// it; the rename and the fresh seat write their system lines. The add
@@ -249,6 +253,35 @@ func (h *Handler) createDM(w http.ResponseWriter, r *http.Request, caller guards
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, ch)
+}
+
+// listPeople answers the New message picker's roster page. The org comes
+// from the guard's resolved scope (never from the query string), the window
+// and the limit from the shared cursor family, q from the query string; a
+// malformed cursor is the client fault the shared family already maps to 400.
+func (h *Handler) listPeople(w http.ResponseWriter, r *http.Request, caller guards.StaffCaller) {
+	c, ok := h.caller(r)
+	if !ok {
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if caller.OrgID == "" {
+		// The guards resolve the org before any handler runs; an empty one
+		// means the request arrived unblessed, fail closed.
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	p, perr := httpx.ParseCursorPage(r)
+	if perr != nil {
+		httpx.Error(w, http.StatusBadRequest, "cursor is malformed")
+		return
+	}
+	items, next, err := h.svc.GetPeople(r.Context(), c, caller.OrgID, r.URL.Query().Get("q"), p.Cursor, p.Limit)
+	if err != nil {
+		h.writeErr(w, r, err)
+		return
+	}
+	httpx.WriteCursorPage(w, items, next, p.Limit)
 }
 
 // createGroup starts a group room (walk change 7, slice S2, rulings 3 and 4):
