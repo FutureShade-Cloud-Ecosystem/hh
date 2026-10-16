@@ -69,20 +69,20 @@ import (
 )
 
 // shapeCensusWantPages pins the page shape operation count the document
-// carries (119 at this census's cut: 114 staff lists, 3 tenant lists, the
+// carries (120 at this census's cut: 115 staff lists, 3 tenant lists, the
 // sync pull and the public products list, all answered at 200). The pin moved
-// to 109 when ten inventory reads stopped being page shapes: the contract
+// to 110 when ten inventory reads stopped being page shapes: the contract
 // now declares the key the core writes (on_hand, moves, pending, branches,
 // reservations, transfers, lines, pairs, reorder_points; rows for browse).
-// It moved to 105 when four bank reconciliation lists (accounts, matches,
+// It moved to 106 when four bank reconciliation lists (accounts, matches,
 // rules, reconciliations) stopped being page shapes: the contract now declares
-// the bare array the core writes. It moved to 101 when four tax lists stopped
+// the bare array the core writes. It moved to 102 when four tax lists stopped
 // being page shapes. The pin is
 // the census's knowing (the same discipline as the 611 staff operation pin
 // in census_test.go): a page shape added or removed must move this number
 // consciously, with the live half's report (the new operation is driven,
 // or the dropped one is named) as the evidence.
-const shapeCensusWantPages = 102
+const shapeCensusWantPages = 103
 
 // shapeCensusAllowlist names (per the brief) the page shape operations
 // whose served answer already breaks the page shape, each with the reason

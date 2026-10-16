@@ -80,10 +80,12 @@ func TestIntegration_TopicNamingABranch_Takes_The_Branch_Rule_On_Seat(t *testing
 	prev := publishDefaultRolesForTest(t)
 	defer PublishRoleConfig(prev)
 
+	// The room is setup for the seat wall, founded through the repository
+	// seam (the route's founding is the admins' pen now), sam stays OWNER.
 	sam := samCaller()
-	topic, created, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	topic, created, err := repo.CreateChannel(ctx, CreateChannelInput{
 		Kind: KindTopic, Name: "ruling-89-trenton-topic", Slug: "ruling-89-trenton-topic", BranchID: branchTrenton,
-	})
+	}, uSamRivera)
 	if err != nil || !created {
 		t.Fatalf("found the topic: created=%v err=%v", created, err)
 	}
@@ -99,9 +101,9 @@ func TestIntegration_TopicNamingABranch_Takes_The_Branch_Rule_On_Seat(t *testing
 	}
 
 	// A TOPIC founded without a branch still seats anyone the owner may reach.
-	open, _, err := svc.CreateChannel(ctx, sam, CreateChannelInput{
+	open, _, err := repo.CreateChannel(ctx, CreateChannelInput{
 		Kind: KindTopic, Name: "ruling-89-open-topic", Slug: "ruling-89-open-topic",
-	})
+	}, uSamRivera)
 	if err != nil {
 		t.Fatalf("found the open topic: %v", err)
 	}

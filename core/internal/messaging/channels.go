@@ -88,6 +88,12 @@ var (
 	// ErrAdminOnly: the caller is not a house messages admin, the rule
 	// write's wall.
 	ErrAdminOnly = errors.New("messaging: only a house messages admin may change this rule")
+	// ErrNotChannelAdmin: founding a channel is the admins' pen (change 7,
+	// ruling A, and the c7 board's "New channel, admins only"). The role
+	// matrix's Admin cell on house-messages (the general manager) holds it;
+	// the wall reads the same published matrix and fails closed exactly as
+	// the membership wall's authority half does.
+	ErrNotChannelAdmin = errors.New("messaging: only a house messages admin may found a channel")
 	// ErrNotGroupRoom: the rename route is the group room's own move (change
 	// 7 ruling 4); a room of any other kind (a DM's name is its parties', a
 	// channel's name is its founders') is a conflict with what the room IS,
@@ -226,8 +232,12 @@ type AddMemberInput struct {
 }
 
 // CreateChannel founds a TEAM or TOPIC channel idempotently (same slug, same
-// channel) and seats the caller as its OWNER. The branch wall runs here: a
-// channel naming a branch the caller neither holds nor reaches (GLOBAL) is
+// channel) and seats the caller as its OWNER. The admin gate runs first
+// (change 7, ruling A: founding is the admins' pen, the boards' New channel
+// is for admins only): a caller the matrix does not make a house messages
+// admin is refused before any wall of the founding runs, whatever the body
+// names. The branch wall runs here: a channel naming a branch the caller
+// neither holds nor reaches (GLOBAL) is
 // refused before anything is written.
 //
 // A slug that already names a room is NEVER handed to a caller who is not
@@ -241,6 +251,9 @@ type AddMemberInput struct {
 // member of a seeded room); anything else, and any room of another kind (a
 // DM is reached only through its own find or create), is refused in words.
 func (s *Service) CreateChannel(ctx context.Context, c Caller, in CreateChannelInput) (Channel, bool, error) {
+	if !houseMessagesAdmin(c) {
+		return Channel{}, false, ErrNotChannelAdmin
+	}
 	if in.Kind != KindTeam && in.Kind != KindTopic {
 		return Channel{}, false, ErrBadChannelKind
 	}

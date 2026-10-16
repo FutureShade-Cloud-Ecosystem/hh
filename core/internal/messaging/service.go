@@ -30,6 +30,13 @@ type store interface {
 	ListMessages(ctx context.Context, channelID, cursor string, limit int) (MessagePage, error)
 	ListThread(ctx context.Context, channelID, rootID string) ([]Message, error)
 	InsertMessage(ctx context.Context, channelID, userID, body, threadRootID string) (Message, error)
+	// Change 7 S4: the author's own edit and delete, inside the window the
+	// msg_policy row keeps. The facts read binds the message to its channel;
+	// both writes re-check their walls in the WHERE.
+	messageFactsFor(ctx context.Context, channelID, messageID string) (messageFacts, error)
+	EditMessage(ctx context.Context, channelID, messageID, body string) (Message, error)
+	DeleteMessage(ctx context.Context, channelID, messageID string) (Message, error)
+	EditWindowMinutes(ctx context.Context) (int, error)
 	MarkRead(ctx context.Context, channelID, userID string, at time.Time) error
 	UnreadSummary(ctx context.Context, userID string) (UnreadCounts, error)
 	InsertEventMessage(ctx context.Context, channelID, eventKey, body string, ref EventRef, requiresAck bool) (Message, bool, error)
@@ -205,19 +212,9 @@ func (s *Service) PostMessage(ctx context.Context, c Caller, channelID, body, th
 	if err := s.assertMember(ctx, c, channelID); err != nil {
 		return Message{}, err
 	}
-	body = strings.TrimSpace(body)
+	body = trimMessageBody(body)
 	if body == "" {
 		return Message{}, ErrEmptyBody
-	}
-	if len(body) > maxBody {
-		// Truncate on a rune boundary so a multibyte UTF-8 rune is never split (a split rune would
-		// serialize as U+FFFD and corrupt the trailing character). Walk back from maxBody to the
-		// start byte of the rune that straddles the cut.
-		cut := maxBody
-		for cut > 0 && !utf8.RuneStart(body[cut]) {
-			cut--
-		}
-		body = body[:cut]
 	}
 	m, err := s.repo.InsertMessage(ctx, channelID, c.UserID, body, threadRootID)
 	if err != nil {
@@ -225,6 +222,24 @@ func (s *Service) PostMessage(ctx context.Context, c Caller, channelID, body, th
 	}
 	s.fanout(channelID, m)
 	return m, nil
+}
+
+// trimMessageBody is the post's own trim and bound, shared with the edit
+// route so an edit cannot carry what a post cannot. Trimmed, and bounded to
+// maxBody on a rune boundary so a multibyte UTF-8 rune is never split (a
+// split rune would serialize as U+FFFD and corrupt the trailing character):
+// walk back from maxBody to the start byte of the rune that straddles the
+// cut.
+func trimMessageBody(body string) string {
+	body = strings.TrimSpace(body)
+	if len(body) > maxBody {
+		cut := maxBody
+		for cut > 0 && !utf8.RuneStart(body[cut]) {
+			cut--
+		}
+		body = body[:cut]
+	}
+	return body
 }
 
 // MarkRead advances the caller's read cursor for a channel to now (drives unread counts). Requires

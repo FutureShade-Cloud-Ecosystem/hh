@@ -404,10 +404,13 @@ func adminDo(t *testing.T, mux *http.ServeMux, bearer, method, target string, bo
 
 // The happy legs: a TEAM channel is created (201 the first time, 200 on the
 // idempotent replay), a DM between two staff is found-or-created once, a
-// member is added and an explicit member is removed.
+// member is added and an explicit member is removed. Founding is the admins'
+// pen now (change 7, ruling A), so the founding and its replay drive the
+// general manager through newFoundingRoutes; the member pens run as the
+// founder's own (the room's OWNER row).
 func TestRoute_CreateChannel_And_Idempotent_Replay(t *testing.T) {
 	fs := newAdminStore()
-	mux, bearer := newAdminRoutes(t, fs)
+	mux, bearer := newFoundingRoutes(t, fs)
 	body := []byte(`{"kind":"TEAM","name":"Paving crew","topic":"The paving crew's room"}`)
 	rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels", body)
 	if rec.Code != http.StatusCreated {
@@ -441,7 +444,7 @@ func TestRoute_CreateDM_FoundOrCreatedOnce(t *testing.T) {
 
 func TestRoute_AddAndRemoveMember(t *testing.T) {
 	fs := newAdminStore()
-	mux, bearer := newAdminRoutes(t, fs)
+	mux, bearer := newFoundingRoutes(t, fs)
 	rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels", []byte(`{"kind":"TEAM","name":"Paving crew"}`))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create channel: %d %s", rec.Code, rec.Body.String())
@@ -459,10 +462,12 @@ func TestRoute_AddAndRemoveMember(t *testing.T) {
 
 // The refusal legs, each pinned to its own status.
 
-// A kind outside TEAM/TOPIC (the creatable kinds) is a client fault.
+// A kind outside TEAM/TOPIC (the creatable kinds) is a client fault. The
+// leg drives an admin: founding is the admins' pen, and validation is the
+// admin's own next wall.
 func TestRoute_CreateChannel_Refuses_Structural_Kinds(t *testing.T) {
 	fs := newAdminStore()
-	mux, bearer := newAdminRoutes(t, fs)
+	mux, bearer := newFoundingRoutes(t, fs)
 	for _, kind := range []string{"BRANCH", "DM", "APPROVAL"} {
 		rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels",
 			[]byte(`{"kind":"`+kind+`","name":"X"}`))
@@ -473,10 +478,17 @@ func TestRoute_CreateChannel_Refuses_Structural_Kinds(t *testing.T) {
 }
 
 // A branch the caller does not hold is the branch wall the module's reads
-// already carry: 403, never a channel created above the wall.
+// already carry: 403, never a channel created above the wall. The leg drives
+// the branch scoped admin projection (the matrix seats the general manager
+// alone today, GLOBAL with it; the wall stays for any branch scoped admin a
+// later matrix seats), so the branch wall is what answers, not the gate.
 func TestRoute_CreateChannel_Refuses_Behind_The_Branch_Wall(t *testing.T) {
 	fs := newAdminStore()
-	mux, bearer := newAdminRoutes(t, fs)
+	prev := publishDefaultRolesForTest(t)
+	t.Cleanup(func() { PublishRoleConfig(prev) })
+	mux, bearer := newAdminRoutesAs(t, fs, rtDana, identity.StaffAuthority{
+		RoleID: "general_manager", Tier: identity.TierLeadership, Scope: identity.ScopeBranch,
+	})
 	rec := adminDo(t, mux, bearer, http.MethodPost, "/api/v1/messaging/channels",
 		[]byte(`{"kind":"TEAM","name":"Kingston crew","branch_id":"`+rtKingston+`"}`))
 	if rec.Code != http.StatusForbidden {
