@@ -450,7 +450,9 @@ func TestIntegration_Reaction_Walls_Binding_Membership_Key(t *testing.T) {
 	repo := NewRepository(intPool(t))
 	svc := NewService(repo)
 	sam := Caller{UserID: uSamRivera, RoleCode: "SALES_MANAGER", Scope: "BRANCH"}
-	casey := Caller{UserID: uCaseyDoyle, RoleCode: "YARD_MANAGER", Scope: "BRANCH"}
+	casey := Caller{UserID: uCaseyDoyle, RoleCode: "GENERAL_MANAGER", Scope: "BRANCH"}
+	prev := publishDefaultRolesForTest(t)
+	defer PublishRoleConfig(prev)
 	s3CleanupPosted(t)
 
 	if err := repo.SyncMembership(ctx, uSamRivera); err != nil {
