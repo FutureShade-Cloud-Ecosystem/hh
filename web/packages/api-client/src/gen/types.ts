@@ -62,6 +62,7 @@ export type Attachment = {
   created_by?: string;
   created_at: string;
   deleted_at?: string | null;
+  links?: AttachmentLink[];
 };
 export type AttachmentCreate = {
   kind: "photo" | "proof_of_delivery" | "document" | "signature" | "product_image";
@@ -74,7 +75,7 @@ export type AttachmentCreate = {
 };
 export type AttachmentLink = {
   attachment_id: string;
-  owner_kind: "order" | "plan" | "stop" | "receiving" | "quote";
+  owner_kind: "order" | "plan" | "stop" | "receiving" | "quote" | "channel";
   owner_id: string;
   role: string;
 };
@@ -3275,6 +3276,37 @@ export type MessagingMessage = {
   edited_at?: string | null;
   deleted_at?: string | null;
   created_at: string;
+  attachments?: MessageAttachment[];
+};
+export type MessageAttachment = {
+  id: string;
+  message_id?: string | null;
+  channel_id?: string | null;
+  attachment_id?: string | null;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  storage_key?: string;
+  kind: "photo" | "document";
+  uploaded_by?: string | null;
+  sender_name?: string;
+  appwrite_file_id?: string;
+  bucket?: string;
+  created_at: string;
+};
+export type MessagingChannelAttachmentsResponse = {
+  photos: MessageAttachment[];
+  files: MessageAttachment[];
+  member_count: number;
+};
+export type MessagingChannelAttachmentCreate = {
+  attachment_id: string;
+  message_id?: string | null;
+  filename: string;
+  content_type?: string;
+  size_bytes?: number;
+  kind?: "photo" | "document";
+  storage_key?: string;
 };
 export type MessagingEventRef = {
   topic: string;

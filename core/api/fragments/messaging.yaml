@@ -385,6 +385,59 @@ paths:
               schema:
                 $ref: "#/components/schemas/MessagingAckProgress"
         "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/v1/messaging/channels/{id}/attachments:
+    get:
+      operationId: messagingListChannelAttachments
+      tags: [staff-messaging]
+      summary: List all files and photos shared in a room
+      description: >-
+        Returns photos, files, and member count for a channel, group room,
+        or direct message room, ordered newest first.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Photos and files in the room with member count
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannelAttachmentsResponse"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: messagingCreateChannelAttachment
+      tags: [staff-messaging]
+      summary: Share a file or photo in a room
+      description: >-
+        Registers or links an attachment to a channel or message.
+      x-role: requireStaff
+      x-access:
+        surfaces: [house-messages]
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelAttachmentCreate"
+      responses:
+        "201":
+          description: The created room attachment item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageAttachment"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
@@ -1159,6 +1212,83 @@ components:
           type: [string, "null"]
           format: date-time
         created_at: { type: string, format: date-time }
+        attachments:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageAttachment"
+
+    MessageAttachment:
+      type: object
+      description: >-
+        One file or photo attached to a message or channel.
+      required: [id, filename, content_type, size_bytes, kind, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        message_id:
+          type: [string, "null"]
+          format: uuid
+        channel_id:
+          type: [string, "null"]
+          format: uuid
+        attachment_id:
+          type: [string, "null"]
+          format: uuid
+        filename: { type: string }
+        content_type: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        storage_key: { type: string }
+        kind:
+          type: string
+          enum: [photo, document]
+        uploaded_by:
+          type: [string, "null"]
+          format: uuid
+        sender_name:
+          type: string
+          description: Resolved display name of the uploader
+        appwrite_file_id:
+          type: string
+          description: File ID in Appwrite storage
+        bucket:
+          type: string
+          description: Storage bucket
+        created_at: { type: string, format: date-time }
+
+    MessagingChannelAttachmentsResponse:
+      type: object
+      description: >-
+        All files and photos shared in a room with member count.
+      required: [photos, files, member_count]
+      properties:
+        photos:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageAttachment"
+        files:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageAttachment"
+        member_count:
+          type: integer
+          format: int32
+
+    MessagingChannelAttachmentCreate:
+      type: object
+      description: >-
+        Payload to upload or link an attachment to a channel or message.
+      required: [attachment_id, filename]
+      properties:
+        attachment_id: { type: string, format: uuid }
+        message_id:
+          type: [string, "null"]
+          format: uuid
+        filename: { type: string }
+        content_type: { type: string }
+        size_bytes: { type: integer, format: int64 }
+        kind:
+          type: string
+          enum: [photo, document]
+        storage_key: { type: string }
 
     MessagingEventRef:
       type: object

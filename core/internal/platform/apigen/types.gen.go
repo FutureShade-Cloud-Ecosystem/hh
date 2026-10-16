@@ -71,18 +71,19 @@ type SyncPushResponse struct {
 }
 
 type Attachment struct {
-	Id             string     `json:"id"`
-	OrgId          string     `json:"org_id"`
-	TenantId       *string    `json:"tenant_id,omitempty"`
-	Kind           string     `json:"kind"`
-	AppwriteFileId string     `json:"appwrite_file_id"`
-	Bucket         string     `json:"bucket"`
-	Mime           *string    `json:"mime,omitempty"`
-	SizeBytes      *int64     `json:"size_bytes,omitempty"`
-	Checksum       *string    `json:"checksum,omitempty"`
-	CreatedBy      *string    `json:"created_by,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	DeletedAt      *time.Time `json:"deleted_at,omitempty"`
+	Id             string            `json:"id"`
+	OrgId          string            `json:"org_id"`
+	TenantId       *string           `json:"tenant_id,omitempty"`
+	Kind           string            `json:"kind"`
+	AppwriteFileId string            `json:"appwrite_file_id"`
+	Bucket         string            `json:"bucket"`
+	Mime           *string           `json:"mime,omitempty"`
+	SizeBytes      *int64            `json:"size_bytes,omitempty"`
+	Checksum       *string           `json:"checksum,omitempty"`
+	CreatedBy      *string           `json:"created_by,omitempty"`
+	CreatedAt      time.Time         `json:"created_at"`
+	DeletedAt      *time.Time        `json:"deleted_at,omitempty"`
+	Links          *[]AttachmentLink `json:"links,omitempty"`
 }
 
 type AttachmentCreate struct {
@@ -3861,23 +3862,57 @@ type MessagingChannelMember struct {
 }
 
 type MessagingMessage struct {
-	Id           string     `json:"id"`
-	ChannelId    string     `json:"channel_id"`
-	AuthorId     *string    `json:"author_id,omitempty"`
-	AuthorName   *string    `json:"author_name,omitempty"`
-	Kind         string     `json:"kind"`
-	Body         string     `json:"body"`
-	Ref          any        `json:"ref,omitempty"`
-	ThreadRootId *string    `json:"thread_root_id,omitempty"`
-	ReplyCount   int32      `json:"reply_count"`
-	RequiresAck  *bool      `json:"requires_ack,omitempty"`
-	Priority     *string    `json:"priority,omitempty"`
-	StateKey     *string    `json:"state_key,omitempty"`
-	SupersededBy *string    `json:"superseded_by,omitempty"`
-	SupersededAt *time.Time `json:"superseded_at,omitempty"`
-	EditedAt     *time.Time `json:"edited_at,omitempty"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
+	Id           string               `json:"id"`
+	ChannelId    string               `json:"channel_id"`
+	AuthorId     *string              `json:"author_id,omitempty"`
+	AuthorName   *string              `json:"author_name,omitempty"`
+	Kind         string               `json:"kind"`
+	Body         string               `json:"body"`
+	Ref          any                  `json:"ref,omitempty"`
+	ThreadRootId *string              `json:"thread_root_id,omitempty"`
+	ReplyCount   int32                `json:"reply_count"`
+	RequiresAck  *bool                `json:"requires_ack,omitempty"`
+	Priority     *string              `json:"priority,omitempty"`
+	StateKey     *string              `json:"state_key,omitempty"`
+	SupersededBy *string              `json:"superseded_by,omitempty"`
+	SupersededAt *time.Time           `json:"superseded_at,omitempty"`
+	EditedAt     *time.Time           `json:"edited_at,omitempty"`
+	DeletedAt    *time.Time           `json:"deleted_at,omitempty"`
+	CreatedAt    time.Time            `json:"created_at"`
+	Attachments  *[]MessageAttachment `json:"attachments,omitempty"`
+}
+
+type MessageAttachment struct {
+	Id             string    `json:"id"`
+	MessageId      *string   `json:"message_id,omitempty"`
+	ChannelId      *string   `json:"channel_id,omitempty"`
+	AttachmentId   *string   `json:"attachment_id,omitempty"`
+	Filename       string    `json:"filename"`
+	ContentType    string    `json:"content_type"`
+	SizeBytes      int64     `json:"size_bytes"`
+	StorageKey     *string   `json:"storage_key,omitempty"`
+	Kind           string    `json:"kind"`
+	UploadedBy     *string   `json:"uploaded_by,omitempty"`
+	SenderName     *string   `json:"sender_name,omitempty"`
+	AppwriteFileId *string   `json:"appwrite_file_id,omitempty"`
+	Bucket         *string   `json:"bucket,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type MessagingChannelAttachmentsResponse struct {
+	Photos      []MessageAttachment `json:"photos"`
+	Files       []MessageAttachment `json:"files"`
+	MemberCount int32               `json:"member_count"`
+}
+
+type MessagingChannelAttachmentCreate struct {
+	AttachmentId string  `json:"attachment_id"`
+	MessageId    *string `json:"message_id,omitempty"`
+	Filename     string  `json:"filename"`
+	ContentType  *string `json:"content_type,omitempty"`
+	SizeBytes    *int64  `json:"size_bytes,omitempty"`
+	Kind         *string `json:"kind,omitempty"`
+	StorageKey   *string `json:"storage_key,omitempty"`
 }
 
 type MessagingEventRef struct {
