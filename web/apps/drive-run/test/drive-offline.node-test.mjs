@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { nodeSqliteExecutor, FakeSyncServer } from "@hardscapehouse/offline-store/testing";
 import { OfflineStore, createSqliteBackend, scopeBookFor } from "@hardscapehouse/offline-store";
 import { DriveOffline, bannerMode } from "../src/drive-offline.js";
-import { payloadOffenders } from "./_lib/gosets.mjs";
+import { goTypedNameBytes, payloadOffenders } from "./_lib/gosets.mjs";
 
 const DRIVER = "de110000-0000-4000-9000-000000000003";
 const RUN = "a1000000-0000-4000-9000-000000000005";
@@ -89,7 +89,7 @@ async function rig(extra = {}) {
     ...extra,
   });
   await layer.cycle();
-  return { layer, server, store };
+  return { layer, server, store, backend };
 }
 
 test("the first cycle pulls the run, and the run sheet reads answer from the store with staleness", async () => {
@@ -270,7 +270,6 @@ test("the run close drains the outbox first, and refuses with words while a move
       closes.push({ id, applied: server.appliedOrder.length });
       return { ok: true, value: true };
     },
-    pod: async () => ({ ok: false, error: "unused", status: 400 }),
   };
   const { layer, server } = await rig({ direct });
   // A move queued with no signal: the close must not jump it.
@@ -315,30 +314,6 @@ test("every queued write declares only fields the core's sync stores admit (the 
   const failed = pushed.find((op) => op.payload.status === "FAILED");
   assert.equal(failed.payload.failure_reason, "Gate locked, no answer", "the failed stop carries the core's own key");
   assert.deepEqual(payloadOffenders(server.requests), []);
-});
-
-test("the proof of delivery never queues: it goes to its direct door after the outbox, and refuses in words while a move waits", async () => {
-  const proofs = [];
-  const direct = {
-    completeRun: async () => ({ ok: true, value: true }),
-    pod: async (id, name) => (proofs.push({ id, name, applied: server.appliedOrder.length }), { ok: true, value: { id, status: "DELIVERED" } }),
-  };
-  const { layer, server } = await rig({ direct });
-  server.setOffline(true);
-  await layer.advance(STOP_1, "LOADED");
-  await layer.advance(STOP_1, "EN_ROUTE");
-  const refused = await layer.pod(STOP_1, "Receiver (demo)");
-  assert.equal(refused.ok, false);
-  if (refused.ok) return;
-  assert.match(refused.error, /still waiting/);
-  assert.equal(proofs.length, 0);
-  server.setOffline(false);
-  const signed = await layer.pod(STOP_1, "Receiver (demo)");
-  assert.equal(signed.ok, true);
-  assert.equal(proofs.length, 1);
-  assert.equal(proofs[0].applied, 2, "both queued moves had applied before the proof went");
-  assert.equal(await layer.waiting(), 0, "the proof queued nothing");
-  assert.equal(server.requests.some((r) => r.kind === "push" && r.scope === "pod"), false);
 });
 
 test("a write made while an earlier request settles keeps its mark, so a third write still goes blind", async () => {
@@ -428,4 +403,168 @@ test("a write that read its row before a cycle's pull landed does not name the s
   await layer.runner.settled();
   assert.equal(server.appliedOrder.length, 2, "the second move applied, never superseded by the device's own first");
   assert.equal((await layer.openCards()).length, 0);
+});
+
+// ---- the proof of delivery attestation through the outbox (item 6c) ----
+
+const NAME = "Site Foreman (demo)";
+
+/** A stop on the road, offline: loaded and en route queued, the proof next. */
+async function onTheRoad(extra = {}) {
+  const made = await rig(extra);
+  made.server.setOffline(true);
+  assert.equal((await made.layer.advance(STOP_1, "LOADED")).ok, true);
+  assert.equal((await made.layer.advance(STOP_1, "EN_ROUTE")).ok, true);
+  return made;
+}
+
+async function stopOf(layer, id = STOP_1) {
+  const read = await layer.runs("2026-10-08");
+  if (!read.ok) assert.fail("the run sheet should read back");
+  return read.value.runs[0].stops.find((s) => s.id === id);
+}
+
+test("offline, the proof queues on pod create with the attestation's exact fields, and the local stop shows delivered and waiting", async () => {
+  const direct = { completeRun: async () => assert.fail("no direct door"), pod: async () => assert.fail("the attestation is not a direct door") };
+  const { layer } = await onTheRoad({ direct });
+  const signed = await layer.pod(STOP_1, `  ${NAME}  `);
+  assert.equal(signed.ok, true, JSON.stringify(signed));
+  assert.equal(await layer.waiting(), 3);
+  const pending = await layer.store.outbox.pending();
+  const proof = pending.find((row) => row.scope === "pod");
+  assert.equal(proof.op, "create");
+  assert.deepEqual(Object.keys(proof.payload).sort(), ["affirmed", "id", "received_by", "stop_id"]);
+  assert.equal(proof.payload.stop_id, STOP_1);
+  assert.equal(proof.payload.received_by, NAME, "the name is trimmed, as the core trims it");
+  assert.equal(proof.payload.affirmed, true);
+  assert.match(proof.payload.id, /^[0-9a-f-]{36}$/, "the outbox's local row id is a uuid");
+  assert.equal(proof.baseSeq, null, "a create names no base");
+  const stop = await stopOf(layer);
+  assert.equal(stop.status, "DELIVERED");
+  assert.equal(stop.pod_received_by, NAME);
+  assert.notEqual(stop.pod_at, "");
+  assert.equal(stop.proof_waiting, true, "the stop says the proof has not gone yet");
+});
+
+test("back online the moves and the proof drain in the order they were made, and the waiting state clears", async () => {
+  const { layer, server } = await onTheRoad();
+  await layer.pod(STOP_1, NAME);
+  server.setOffline(false);
+  await layer.cycle();
+  assert.equal(await layer.waiting(), 0);
+  const pushes = server.requests.filter((r) => r.kind === "push");
+  assert.deepEqual(pushes.flatMap((r) => r.ops.map(() => r.scope)), ["stops", "stops", "pod"]);
+  assert.deepEqual(payloadOffenders(server.requests), []);
+  assert.equal((await stopOf(layer)).proof_waiting, false);
+  assert.equal((await layer.openCards()).length, 0);
+});
+
+test("a proof the core refuses comes back as a Not accepted card with the core's words, and the local stop is put back", async () => {
+  const { layer, server } = await onTheRoad();
+  await layer.pod(STOP_1, NAME);
+  const proof = (await layer.store.outbox.pending()).find((row) => row.scope === "pod");
+  server.refuse(proof.key, "illegal status transition");
+  server.setOffline(false);
+  await layer.cycle();
+  const card = (await layer.openCards()).find((c) => c.kind === "rejected");
+  assert.ok(card !== undefined, "a Not accepted card waits");
+  assert.equal(card.scope, "pod");
+  assert.match(card.error, /illegal status transition/);
+  const stop = await stopOf(layer);
+  assert.equal(stop.status, "EN_ROUTE", "the stop is not shown delivered when the server refused");
+  assert.equal(stop.pod_received_by, "");
+  assert.equal(stop.proof_waiting, false);
+});
+
+test("a name the door would refuse is refused with words before it queues: blank, over the core's bound, control and bidi characters", async () => {
+  const { layer } = await onTheRoad();
+  const bound = goTypedNameBytes();
+  const before = await layer.waiting();
+  const long = await layer.pod(STOP_1, "e".repeat(bound + 1));
+  assert.equal(long.ok, false);
+  assert.match(long.error, /too long/);
+  const multibyte = await layer.pod(STOP_1, "\u00e9".repeat(bound / 2 + 1));
+  assert.equal(multibyte.ok, false, "the bound is bytes, not characters");
+  assert.match(multibyte.error, /too long/);
+  for (const bad of ["Clerk\u0000", "Cl\terk", "Cl\nerk", "Clerk\u007f", "Clerk\u202e", "Clerk\u2067"]) {
+    const refused = await layer.pod(STOP_1, bad);
+    assert.equal(refused.ok, false, JSON.stringify(bad));
+    assert.match(refused.error, /control characters/);
+  }
+  const blank = await layer.pod(STOP_1, "   ");
+  assert.equal(blank.ok, false);
+  assert.match(blank.error, /name/i);
+  assert.equal(await layer.waiting(), before, "nothing was queued");
+  // Exactly the bound lands, in bytes.
+  const exact = await layer.pod(STOP_1, "\u00e9".repeat(bound / 2));
+  assert.equal(exact.ok, true, JSON.stringify(exact));
+});
+
+test("a stop that is not on the road, or not on the sheet, refuses before it queues", async () => {
+  const { layer } = await rig();
+  const ready = await layer.pod(STOP_1, NAME);
+  assert.equal(ready.ok, false);
+  assert.equal(ready.status, 409);
+  assert.equal(await layer.waiting(), 0);
+  const unknown = await layer.pod("5a000000-0000-4000-9000-0000000000ff", NAME);
+  assert.equal(unknown.ok, false);
+  assert.equal(unknown.status, 404);
+});
+
+test("a second signature on a stop that is waiting to deliver refuses, the first one stands", async () => {
+  const { layer } = await onTheRoad();
+  assert.equal((await layer.pod(STOP_1, NAME)).ok, true);
+  const again = await layer.pod(STOP_1, "Someone Else");
+  assert.equal(again.ok, false);
+  assert.equal(again.status, 409);
+  assert.equal((await layer.store.outbox.pending()).filter((row) => row.scope === "pod").length, 1);
+});
+
+test("the payload check flags a field the attestation form does not admit (a forbidden field added to a queued write fails)", () => {
+  const request = (payload) => [{ kind: "push", scope: "pod", ops: [{ op: "create", payload }] }];
+  const good = { id: "7b000000-0000-4000-9000-0000000fb001", stop_id: STOP_1, received_by: "A B", affirmed: true };
+  assert.deepEqual(payloadOffenders(request(good)), []);
+  assert.deepEqual(payloadOffenders(request({ ...good, created_at: "x" })), ["pod attest create: created_at"]);
+  assert.deepEqual(payloadOffenders(request({ ...good, caption: "x" })), ["pod attest create: caption"]);
+  assert.deepEqual(payloadOffenders(request({ ...good, affirmed: "yes" })), ["pod attest create: affirmed is not true"]);
+});
+
+// ---- review 6c: the proof's rollback ----
+
+async function toTheRoad(layer) {
+  await layer.advance(STOP_1, "LOADED");
+  await layer.advance(STOP_1, "EN_ROUTE");
+  await layer.cycle();
+}
+
+test("a proof the core refuses while the stop is unchanged on the server is taken back", async () => {
+  const { layer, server } = await rig();
+  await toTheRoad(layer);
+  server.setOffline(true);
+  assert.equal((await layer.pod(STOP_1, "Site lead")).ok, true);
+  const [proof] = (await layer.store.outbox.pending()).filter((r) => r.scope === "pod");
+  server.refuse(proof.key, "dispatch: no active staff authority in this org");
+  server.setOffline(false);
+  await layer.cycle();
+  const stop = await stopOf(layer);
+  assert.equal(stop.status, "EN_ROUTE");
+  assert.equal(stop.pod_received_by, "");
+  assert.equal(stop.proof_waiting, false);
+  assert.deepEqual((await layer.openCards()).map((c) => c.kind), ["rejected"]);
+});
+
+test("the same refusal arriving through a fresh layer over the same store (a restart) takes the proof back", async () => {
+  const { layer, server, store, backend } = await rig();
+  await toTheRoad(layer);
+  server.setOffline(true);
+  await layer.pod(STOP_1, "Site lead");
+  const [proof] = (await layer.store.outbox.pending()).filter((r) => r.scope === "pod");
+  server.refuse(proof.key, "dispatch: no active staff authority in this org");
+  server.setOffline(false);
+  const fresh = new DriveOffline({ store, sql: backend.sql, transport: server.transport(), newKey: nextKey });
+  await fresh.cycle();
+  const stop = await stopOf(fresh);
+  assert.equal(stop.status, "EN_ROUTE");
+  assert.equal(stop.pod_received_by, "");
+  assert.deepEqual((await fresh.openCards()).map((c) => c.kind), ["rejected"]);
 });

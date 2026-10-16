@@ -46,22 +46,22 @@ const TEN_NAMES: Record<string, string> = {
   "DEMO-STEP-SLAB": "Step slab 24x48, natural",
   "DEMO-AGG-BEDDING": "Paver bedding stone",
   "DEMO-AGG-BASE": "Class 2 base rock",
-  "DEMO-AGG-SAND": "Concrete Sand",
+  "DEMO-AGG-SAND": "Concrete sand",
   "DEMO-MULCH-BLACK": "Black cedar mulch",
   "DEMO-EDGE-ALU": "Aluminum edging 8 ft",
 };
 
-test("the way in's data: nine flows with role codes and labels", async ({ page }) => {
+test("the way in's data: the closed table's staff flows with role codes and labels", async ({ page }) => {
   const flows = await page.request.get("/api/v1/demo/flows");
   expect(flows.ok()).toBe(true);
   const body = (await flows.json()) as {
     flows: Array<{ flow: string; role_code: string; label: string; class?: string }>;
   };
   // The table also lists the five contractor flows (class "tenant"), which the staff apps' pickers
-  // do not show; the staff rows are the nine this leg names.
+  // do not show; the staff rows are the thirteen this leg names.
   expect(body.flows.filter((row) => row.class === "tenant")).toHaveLength(5);
   body.flows = body.flows.filter((row) => row.class !== "tenant");
-  expect(body.flows).toHaveLength(9);
+  expect(body.flows).toHaveLength(13);
   expect(body.flows.map((row) => row.flow)).toEqual([
     "sales",
     "sales-manager",
@@ -72,6 +72,10 @@ test("the way in's data: nine flows with role codes and labels", async ({ page }
     "procurement-manager",
     "financial-controller",
     "logistics-manager",
+    "general-manager",
+    "hr",
+    "branch-manager",
+    "outside-sales",
   ]);
   expect(body.flows.map((row) => row.role_code)).toEqual([
     "inside_sales",
@@ -83,6 +87,10 @@ test("the way in's data: nine flows with role codes and labels", async ({ page }
     "procurement_manager",
     "financial_controller",
     "logistics_manager",
+    "general_manager",
+    "hr",
+    "branch_manager",
+    "outside_sales",
   ]);
   expect(body.flows.map((row) => row.label)).toEqual([
     "Sales",
@@ -94,6 +102,10 @@ test("the way in's data: nine flows with role codes and labels", async ({ page }
     "Procurement manager",
     "Financial Controller",
     "Logistics Manager",
+    "General Manager",
+    "HR",
+    "Branch Manager",
+    "Outside Sales",
   ]);
   // The picture is the table itself, as the browser shows the core's answer:
   // the page loads the flows route and waits for its rows to be on the

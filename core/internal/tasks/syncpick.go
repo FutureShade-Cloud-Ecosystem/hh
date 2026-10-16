@@ -139,7 +139,7 @@ func classifyRecordErr(err error) error {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		return sync.ErrRowNotFound
-	case errors.Is(err, ErrAboveOrdered), errors.Is(err, ErrOrderRefused), errors.As(err, &bad):
+	case errors.Is(err, ErrAboveOrdered), errors.Is(err, ErrOrderRefused), errors.Is(err, ErrPickClosed), errors.As(err, &bad):
 		return refused(err)
 	}
 	return err
@@ -175,6 +175,11 @@ func (s *SyncStore) writePicked(ctx context.Context, f sync.ScopeFilter, id, key
 	}
 	if branch, _ := cur.Data["branch_id"].(string); branch != "" && !sc.CanAccessBranch(branch) {
 		return sync.RowState{}, refusedf("yard: branch out of scope")
+	}
+	// A closed pick takes no record: refuse before the lines are parsed or the record body is called
+	// (RecordPick and the store check it again, from the row as it stands).
+	if status, _ := cur.Data["status"].(string); pickClosed(status) != nil {
+		return sync.RowState{}, refused(pickClosed(status))
 	}
 	lines, err := parsePickedLines(fields["picked"])
 	if err != nil {

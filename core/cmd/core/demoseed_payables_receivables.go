@@ -1,13 +1,14 @@
-// demoseed_payables_receivables.go, the receivables world's one addition (item 64, Payables and
-// Receivables): a bounced payment for the queue to show.
+// demoseed_payables_receivables.go, the receivables world's addition (item 64, Payables and
+// Receivables): bounced payments for the queue to show, one per branch.
 //
 // The persona works the 18 invoices the book already seeds across the aging buckets (I01 to I18). What
 // the book lacks is a payment that came back, so "marks a payment bounced and works it in the queue"
-// had nothing to open. B01 is the cheque for the whole of I08 (a Trenton contractor's invoice, one to
+// had nothing to open. B01 is the cheque for the whole of I08 (a Kingston contractor's invoice, one to
 // thirty days past due), returned NSF: the payment reads BOUNCED, the NSF record carries the reason and
 // the policy fee, and no allocation remains, so I08 stands open for the full amount, which is exactly
 // what the real bounce leaves behind (till/MarkNSF: flip BOUNCED, reverse the allocations, reopen the
-// invoices).
+// invoices). B02 is the same story at the Point Loma branch against I10, so the Payables and Receivables
+// landing has a bounced cheque from each yard.
 //
 // The queue (GET /api/v1/ar/bounced) is payments joined to payment_nsf where the payment is BOUNCED, so
 // both rows are needed or the payment is invisible. No credit hold is seeded: the dealer's NSF policy
@@ -30,6 +31,7 @@ var demoBouncedPayments = []struct {
 	FeeCents  int64
 }{
 	{"B01", "I08", 12, 9, "Cheque returned by the bank, not sufficient funds", 4_500},
+	{"B02", "I10", 8, 5, "Cheque returned by the bank, account frozen", 4_500},
 }
 
 func (b *builder) bouncedPayments() {
