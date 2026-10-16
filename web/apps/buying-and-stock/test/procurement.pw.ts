@@ -521,3 +521,51 @@ test("on a phone the incoming table stacks: every cell keeps its label, and the 
   const sideways = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(await sideways()).toBeLessThanOrEqual(0);
 });
+
+test("when the vendor has an open warranty credit, the draft renders the credit strip and can apply it without changing line costs", async ({ page, request }) => {
+  await openHome(page, request);
+  await draftTheGap(page);
+  const panel = page.locator("[data-draft]");
+  await expect(panel).toBeVisible();
+
+  // Credit strip names the credit, amount, claim and description
+  const strip = panel.locator("[data-warranty-credit-strip]");
+  await expect(strip).toBeVisible();
+  await expect(strip.locator("[data-credit-headline]")).toContainText("Open warranty credit · $264.00 from WCL-104 (8 pieces of Paver 60mm Slate)");
+
+  // Apply button is present
+  const applyBtn = strip.getByRole("button", { name: "Apply $264.00 to this PO" });
+  await expect(applyBtn).toBeVisible();
+
+  // Line unit cost and subtotal before applying credit
+  const line = panel.locator("[data-draft-line]");
+  await expect(line).toContainText("$8.40");
+  await expect(line).toContainText("$2,016.00");
+  await expect(panel.locator("[data-draft-total]")).toContainText("$2,016.00");
+
+  // Apply the credit
+  await applyBtn.click();
+
+  // Strip now displays the Applied badge
+  await expect(strip.locator("[data-credit-applied-badge]")).toBeVisible();
+  await expect(strip.locator("[data-credit-applied-badge]")).toHaveText("Applied");
+  await expect(applyBtn).toHaveCount(0);
+
+  // Line unit cost remains unchanged (Ruling R3)
+  await expect(line).toContainText("$8.40");
+  await expect(line).toContainText("$2,016.00");
+
+  // Draft totals reflect the 3-row breakdown
+  const subtotalRow = panel.locator("[data-row-lines-subtotal]");
+  await expect(subtotalRow).toContainText("Lines subtotal");
+  await expect(subtotalRow.locator("[data-lines-subtotal]")).toHaveText("$2,016.00");
+
+  const creditRow = panel.locator("[data-row-credit-applied]");
+  await expect(creditRow).toContainText("Warranty credit applied · WCL-104");
+  await expect(creditRow.locator("[data-warranty-credit-applied]")).toHaveText("-$264.00");
+
+  const dueRow = panel.locator("[data-row-total-due]");
+  await expect(dueRow).toContainText("Total due to Alcli (demo)");
+  await expect(dueRow.locator("[data-total-due-vendor]")).toHaveText("$1,752.00");
+});
+

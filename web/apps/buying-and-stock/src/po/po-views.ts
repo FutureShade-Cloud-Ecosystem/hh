@@ -20,7 +20,20 @@ import type {
   PurchasingPO,
   PurchasingPODetail,
 } from "@hardscapehouse/api-client";
-import { dateWords, draftOf, isPlaced, refusalWords, shortOrderWords, statusTone, statusWord, type DraftMarker } from "./po-logic.js";
+import {
+  appliedWarrantyCreditLabel,
+  applyWarrantyCreditButtonText,
+  dateWords,
+  draftOf,
+  isPlaced,
+  openWarrantyCreditStripText,
+  refusalWords,
+  shortOrderWords,
+  statusTone,
+  statusWord,
+  totalDueVendorLabel,
+  type DraftMarker,
+} from "./po-logic.js";
 import { formatMoney, formatQty } from "./po-money.js";
 
 /** The draft being worked: the order the core made, the worklist row it came from, and the draft
@@ -325,6 +338,7 @@ function draftPanel(model: DeskModel, draft: DraftModel): TemplateResult {
           </div>
         </div>
       </div>
+      ${creditStrip(model, po)}
       <h3 class="sub">Lines</h3>
       <div class="scroll">
         <table class="stack">
@@ -344,9 +358,7 @@ function draftPanel(model: DeskModel, draft: DraftModel): TemplateResult {
             ${model.adding && editable ? addLineRow(model) : nothing}
             ${lineCount === 0 && !model.adding ? html`<tr><td colspan="7" class="dim">No lines on this order.</td></tr>` : nothing}
           </tbody>
-          ${lineCount === 0
-            ? nothing
-            : html`<tfoot><tr class="total"><td colspan="5" class="num dim">Order total</td><td class="num" data-label="Order total" data-draft-total>${formatMoney(po.subtotal_cents)}</td><td></td></tr></tfoot>`}
+          ${lineCount === 0 ? nothing : draftTotals(po)}
         </table>
       </div>
       ${editable
@@ -367,6 +379,70 @@ function draftPanel(model: DeskModel, draft: DraftModel): TemplateResult {
       </div>
       <p class="callout" data-callout><strong>Place moves the order to Ordered.</strong> Receiving moves it to Partial and Received as stock lands; nothing here does.</p>
     </section>
+  `;
+}
+
+function creditStrip(model: DeskModel, po: PurchasingPODetail): TemplateResult | typeof nothing {
+  const credit = po.open_warranty_credit;
+  const appliedCents = po.warranty_credit_applied_cents ?? 0;
+  if (!credit && appliedCents === 0) {
+    return nothing;
+  }
+  const isApplied = appliedCents > 0;
+  const headline = credit
+    ? openWarrantyCreditStripText(credit)
+    : `Warranty credit applied · ${formatMoney(appliedCents)}${po.warranty_claim_no ? ` from ${po.warranty_claim_no}` : ""}`;
+  const subline = credit?.summary ?? "";
+
+  return html`
+    <div class="credit-strip" data-warranty-credit-strip>
+      <div class="credit-info">
+        <div class="credit-headline" data-credit-headline>${headline}</div>
+        ${subline === "" ? nothing : html`<div class="credit-subline dim">${subline}</div>`}
+      </div>
+      <div class="credit-action">
+        ${isApplied
+          ? html`<span class="badge-applied" data-credit-applied-badge>Applied</span>`
+          : html`<button type="button" class="btn btn-primary small-btn" data-action="apply-warranty-credit" ?disabled=${model.busy}>${applyWarrantyCreditButtonText(credit?.amount_cents)}</button>`}
+      </div>
+    </div>
+  `;
+}
+
+function draftTotals(po: PurchasingPODetail): TemplateResult {
+  const appliedCents = po.warranty_credit_applied_cents ?? 0;
+  if (appliedCents > 0) {
+    const claimLabel = appliedWarrantyCreditLabel(po.warranty_claim_no);
+    const dueLabel = totalDueVendorLabel(po.vendor_name);
+    const netTotal = po.net_total_cents ?? (po.subtotal_cents !== undefined ? po.subtotal_cents - appliedCents : undefined);
+    return html`
+      <tfoot>
+        <tr class="total" data-row-lines-subtotal>
+          <td colspan="5" class="num dim">Lines subtotal</td>
+          <td class="num" data-label="Lines subtotal" data-lines-subtotal>${formatMoney(po.subtotal_cents)}</td>
+          <td></td>
+        </tr>
+        <tr class="total credit-row" data-row-credit-applied>
+          <td colspan="5" class="num dim">${claimLabel}</td>
+          <td class="num credit-value" data-label="${claimLabel}" data-warranty-credit-applied>-${formatMoney(appliedCents)}</td>
+          <td></td>
+        </tr>
+        <tr class="total due-row" data-row-total-due>
+          <td colspan="5" class="num dim"><strong>${dueLabel}</strong></td>
+          <td class="num" data-label="${dueLabel}" data-total-due-vendor data-draft-total><strong>${formatMoney(netTotal)}</strong></td>
+          <td></td>
+        </tr>
+      </tfoot>
+    `;
+  }
+  return html`
+    <tfoot>
+      <tr class="total">
+        <td colspan="5" class="num dim">Order total</td>
+        <td class="num" data-label="Order total" data-draft-total>${formatMoney(po.subtotal_cents)}</td>
+        <td></td>
+      </tr>
+    </tfoot>
   `;
 }
 

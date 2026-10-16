@@ -20418,8 +20418,56 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v1/purchasing/pos/{id}/apply-warranty-credit:
+    post:
+      operationId: purchasingApplyWarrantyCredit
+      tags:
+        - staff-purchasing
+      summary: Apply vendor warranty credit to a draft purchase order
+      description: Applies open vendor warranty credit to reduce the net total due on a draft purchase order without changing any line unit cost (Ruling R3).
+      x-role: requireManager
+      x-access:
+        surfaces:
+          - buying-and-stock
+        level: read
+        list: po_writers
+        reason: "The po_writers list is the wall, not the level: applying warranty credit is a draft purchase order action for the procurement manager and general manager."
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        description: Optional claim id and credit amount to apply
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PurchasingApplyWarrantyCreditRequest"
+      responses:
+        "200":
+          description: The purchase order with warranty credit applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PurchasingPODetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "422":
+          description: Cannot apply warranty credit to the purchase order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /api/v1/purchasing/pos/{id}/receive:
     post:
       operationId: purchasingReceivePO
@@ -49730,6 +49778,25 @@ components:
           type: integer
           format: int64
           description: Gated document total in CAD, carried alongside so the rate can be checked
+        warranty_credit_applied_cents:
+          type: integer
+          format: int64
+          description: Gated; warranty credit applied to this purchase order
+        warranty_claim_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+          description: The warranty claim whose credit was applied
+        warranty_claim_no:
+          type:
+            - string
+            - "null"
+          description: The human sequence number of the applied warranty claim
+        net_total_cents:
+          type: integer
+          format: int64
+          description: Gated; net total due to vendor after warranty credit
         created_at:
           type: string
           format: date-time
@@ -49803,6 +49870,46 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/PurchasingReceipt"
+            open_warranty_credit:
+              $ref: "#/components/schemas/PurchasingOpenWarrantyCredit"
+    PurchasingApplyWarrantyCreditRequest:
+      type: object
+      description: Optional parameters when applying warranty credit to a purchase order
+      properties:
+        claim_id:
+          type: string
+          format: uuid
+          description: Specific warranty claim to apply; if omitted, the vendor's open credit is used
+        amount_cents:
+          type: integer
+          format: int64
+          description: Credit amount to apply in cents; if omitted, the open credit up to PO subtotal is applied
+    PurchasingOpenWarrantyCredit:
+      type: object
+      description: Open warranty credit available from the vendor
+      required:
+        - claim_id
+        - claim_no
+        - amount_cents
+        - description
+      properties:
+        claim_id:
+          type: string
+          format: uuid
+        claim_no:
+          type: string
+        amount_cents:
+          type: integer
+          format: int64
+        description:
+          type: string
+        summary:
+          type: string
+        vendor_id:
+          type: string
+          format: uuid
+        vendor_name:
+          type: string
     PurchasingReceipt:
       type: object
       description: One receiving event. stock_doc_id is the inventory receiving document the stock seam produced. value_cad_cents is gated money.

@@ -61,12 +61,14 @@ func nullStr(s string) any {
 
 const poCols = `p.id::text, p.po_no::text, p.vendor_id::text, p.branch_id::text, p.status,
 	COALESCE(to_char(p.expected_at,'YYYY-MM-DD'),''), p.ordered_at,
-	p.notes, p.created_at, p.updated_at, p.currency::text, p.fx_rate::float8, p.delivery_method`
+	p.notes, p.created_at, p.updated_at, p.currency::text, p.fx_rate::float8, p.delivery_method,
+	COALESCE(p.warranty_credit_applied_cents, 0), p.warranty_claim_id::text, COALESCE(p.net_total_cents, 0)`
 
 func scanPO(row pgx.Row) (PO, error) {
 	var p PO
 	err := row.Scan(&p.ID, &p.PONo, &p.VendorID, &p.BranchID, &p.Status,
-		&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt, &p.Currency, &p.FXRate, &p.DeliveryMethod)
+		&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt, &p.Currency, &p.FXRate, &p.DeliveryMethod,
+		&p.WarrantyCreditAppliedCents, &p.WarrantyClaimID, &p.NetTotalCents)
 	return p, err
 }
 
@@ -187,8 +189,17 @@ func (r *Repository) ListPOs(ctx context.Context, branchID, status string) ([]PO
 		var p PO
 		if err := rows.Scan(&p.ID, &p.PONo, &p.VendorID, &p.BranchID, &p.Status,
 			&p.ExpectedAt, &p.OrderedAt, &p.Notes, &p.CreatedAt, &p.UpdatedAt, &p.Currency, &p.FXRate, &p.DeliveryMethod,
+			&p.WarrantyCreditAppliedCents, &p.WarrantyClaimID, &p.NetTotalCents,
 			&p.LineCount, &p.SubtotalCents, &p.SubtotalCadCents); err != nil {
 			return nil, fmt.Errorf("purchasing: scan po: %w", err)
+		}
+		if p.NetTotalCents == 0 && p.WarrantyCreditAppliedCents == 0 {
+			p.NetTotalCents = p.SubtotalCents
+		} else if p.WarrantyCreditAppliedCents > 0 && p.NetTotalCents == 0 {
+			p.NetTotalCents = p.SubtotalCents - p.WarrantyCreditAppliedCents
+			if p.NetTotalCents < 0 {
+				p.NetTotalCents = 0
+			}
 		}
 		out = append(out, p)
 	}
@@ -295,6 +306,28 @@ func bumpPOHeaderSeq(ctx context.Context, q querier, poID string) error {
 		UPDATE purchasing_pos SET updated_at = now(), seq = (SELECT next_value FROM poseq) WHERE id = $1`,
 		poID); err != nil {
 		return fmt.Errorf("purchasing: bump po header seq: %w", err)
+	}
+	return nil
+}
+
+// ApplyWarrantyCredit records the warranty credit applied to a draft purchase order.
+func (r *Repository) ApplyWarrantyCredit(ctx context.Context, tx pgx.Tx, poID string, claimID *string, creditCents, netTotalCents int64) error {
+	if r.pool == nil {
+		return errNoDB
+	}
+	tag, err := r.q(tx).Exec(ctx, poSeqCTE+`
+		UPDATE purchasing_pos
+		   SET warranty_credit_applied_cents = $2,
+		       warranty_claim_id = $3::uuid,
+		       net_total_cents = $4,
+		       updated_at = now(),
+		       seq = (SELECT next_value FROM poseq)
+		 WHERE id = $1::uuid`, poID, creditCents, claimID, netTotalCents)
+	if err != nil {
+		return fmt.Errorf("purchasing: apply warranty credit: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errNotFound
 	}
 	return nil
 }

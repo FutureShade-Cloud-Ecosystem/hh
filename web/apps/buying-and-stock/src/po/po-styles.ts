@@ -130,6 +130,15 @@ export const poStyles = css`
   .btn { white-space: nowrap; }
   .small-btn { min-height: 36px; padding: 0 var(--hh-s-12); font-size: 14px; }
 
+  /* Warranty credit strip and totals */
+  .credit-strip { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--hh-s-12) var(--hh-s-16); padding: var(--hh-s-16) var(--hh-s-20); margin: var(--hh-s-16) 0; border: 1px solid var(--hh-state-good); border-radius: var(--hh-radius-card); background: color-mix(in srgb, var(--hh-state-good) 8%, var(--hh-card)); }
+  .credit-info { display: flex; flex-direction: column; gap: var(--hh-s-4); }
+  .credit-headline { font-weight: 700; font-size: 15px; color: var(--hh-text); }
+  .credit-subline { font-size: 13px; color: var(--hh-text-dim); }
+  .credit-action { display: flex; align-items: center; }
+  .credit-value { color: var(--hh-state-good); font-weight: 700; }
+  .badge-applied { display: inline-flex; align-items: center; padding: var(--hh-s-4) var(--hh-s-12); border-radius: var(--hh-radius-pill); background: var(--hh-state-good); color: var(--brand-fill-on, #ffffff); font-size: 12px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+
   .mob { display: none; }
   @media (max-width: 1439px) {
     .home { grid-template-columns: minmax(0, 1fr); }
