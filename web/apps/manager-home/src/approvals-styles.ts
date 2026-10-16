@@ -45,6 +45,8 @@ export const approvalsStyles = css`
     display: flex;
     gap: var(--hh-s-20);
     align-items: flex-start;
+    min-width: 0;
+    max-width: 100%;
   }
 
   @media (max-width: 1024px) {
@@ -57,6 +59,8 @@ export const approvalsStyles = css`
 
   .approvals-list {
     width: 360px;
+    max-width: 100%;
+    min-width: 0;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -80,6 +84,14 @@ export const approvalsStyles = css`
     gap: var(--hh-s-4);
     box-sizing: border-box;
     text-align: left;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .card-row-actions {
+    margin-top: var(--hh-s-8);
+    position: relative;
+    z-index: 1;
   }
 
   .approval-card:hover {
@@ -141,6 +153,7 @@ export const approvalsStyles = css`
   .approvals-detail {
     flex: 1;
     min-width: 0;
+    max-width: 100%;
     width: 100%;
   }
 
@@ -153,6 +166,8 @@ export const approvalsStyles = css`
     flex-direction: column;
     gap: var(--hh-s-20);
     box-sizing: border-box;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .decision-card-head {
@@ -234,6 +249,9 @@ export const approvalsStyles = css`
     display: flex;
     flex-direction: column;
     gap: var(--hh-s-8);
+    overflow-x: auto;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .section-heading {

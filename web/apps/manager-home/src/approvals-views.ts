@@ -117,10 +117,10 @@ function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, bus
       </p>
       ${item.status === "PENDING"
         ? html`
-            <div class="row-actions visually-hidden">
+            <div class="row-actions card-row-actions">
               <button
                 type="button"
-                class="btn btn-primary visually-hidden"
+                class="btn btn-primary"
                 data-action="decide"
                 data-approval-id="${item.id}"
                 data-decision="approve"
@@ -130,7 +130,7 @@ function renderApprovalListCard(item: ApprovalCardItem, isSelected: boolean, bus
               </button>
               <button
                 type="button"
-                class="btn btn-danger visually-hidden"
+                class="btn btn-danger"
                 data-action="decide"
                 data-approval-id="${item.id}"
                 data-decision="reject"
