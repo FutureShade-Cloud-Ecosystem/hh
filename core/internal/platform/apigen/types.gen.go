@@ -4114,6 +4114,7 @@ type MessagingChannel struct {
 	Name        string     `json:"name"`
 	Topic       string     `json:"topic"`
 	Tier        string     `json:"tier"`
+	Visibility  string     `json:"visibility"`
 	IsArchived  bool       `json:"is_archived"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UnreadCount int32      `json:"unread_count"`
@@ -4126,11 +4127,12 @@ type MessagingChannelList struct {
 }
 
 type MessagingChannelCreate struct {
-	Kind     string  `json:"kind"`
-	Name     string  `json:"name"`
-	Topic    *string `json:"topic,omitempty"`
-	Slug     *string `json:"slug,omitempty"`
-	BranchId *string `json:"branch_id,omitempty"`
+	Kind       string  `json:"kind"`
+	Name       string  `json:"name"`
+	Topic      *string `json:"topic,omitempty"`
+	Slug       *string `json:"slug,omitempty"`
+	BranchId   *string `json:"branch_id,omitempty"`
+	Visibility *string `json:"visibility,omitempty"`
 }
 
 type MessagingDMCreate struct {
@@ -4147,11 +4149,79 @@ type MessagingChannelRename struct {
 }
 
 type MessagingChannelMember struct {
-	ChannelId string    `json:"channel_id"`
-	UserId    string    `json:"user_id"`
-	Role      string    `json:"role"`
-	Source    string    `json:"source"`
-	JoinedAt  time.Time `json:"joined_at"`
+	ChannelId   string    `json:"channel_id"`
+	UserId      string    `json:"user_id"`
+	Role        string    `json:"role"`
+	Source      string    `json:"source"`
+	JoinedAt    time.Time `json:"joined_at"`
+	AddedReason *string   `json:"added_reason,omitempty"`
+	AddedBy     *string   `json:"added_by,omitempty"`
+}
+
+type MessagingChannelMemberAdd struct {
+	UserId      string  `json:"user_id"`
+	Role        string  `json:"role"`
+	AddedReason *string `json:"added_reason,omitempty"`
+	AddedBy     *string `json:"added_by,omitempty"`
+}
+
+type MessagingChannelVisibilityPatch struct {
+	Visibility string `json:"visibility"`
+}
+
+type MessagingMembershipRule struct {
+	AutoScope  string `json:"auto_scope"`
+	AutoRole   string `json:"auto_role"`
+	Visibility string `json:"visibility"`
+}
+
+type MessagingMembershipRuleEntry struct {
+	ChannelId  string  `json:"channel_id"`
+	Name       string  `json:"name"`
+	Kind       string  `json:"kind"`
+	BranchId   *string `json:"branch_id,omitempty"`
+	AutoScope  string  `json:"auto_scope"`
+	AutoRole   string  `json:"auto_role"`
+	Visibility string  `json:"visibility"`
+}
+
+type MessagingMembershipRulesList struct {
+	Rules []MessagingMembershipRuleEntry `json:"rules"`
+}
+
+type MessagingDirectoryEntry struct {
+	ChannelId        string  `json:"channel_id"`
+	Kind             string  `json:"kind"`
+	BranchId         *string `json:"branch_id,omitempty"`
+	Name             string  `json:"name"`
+	Topic            *string `json:"topic,omitempty"`
+	Slug             *string `json:"slug,omitempty"`
+	Joined           bool    `json:"joined"`
+	MembershipSource string  `json:"membership_source"`
+	MemberCount      int32   `json:"member_count"`
+}
+
+type MessagingDirectoryList struct {
+	Channels map[string]MessagingDirectoryEntry `json:"channels"`
+}
+
+type MessagingChannelMemberEntry struct {
+	UserId      string    `json:"user_id"`
+	DisplayName *string   `json:"display_name,omitempty"`
+	Role        string    `json:"role"`
+	Source      string    `json:"source"`
+	AddedReason *string   `json:"added_reason,omitempty"`
+	AddedBy     *string   `json:"added_by,omitempty"`
+	JoinedAt    time.Time `json:"joined_at"`
+}
+
+type MessagingChannelMembersList struct {
+	Members []MessagingChannelMemberEntry `json:"members"`
+}
+
+type MessagingChannelDelete struct {
+	ChannelDeleted *bool `json:"channel_deleted,omitempty"`
+	IsAdmin        *bool `json:"is_admin,omitempty"`
 }
 
 type MessagingPerson struct {

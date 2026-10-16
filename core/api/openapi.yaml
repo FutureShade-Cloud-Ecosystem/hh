@@ -12518,6 +12518,144 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}:
+    delete:
+      operationId: messagingDeleteChannel
+      tags:
+        - staff-messaging
+      summary: Archive one room the caller manages
+      description: "Change 7 ruling 7 hand on the room's settings panel: the manager flips the channel to is_archived = true and the channel leaves every list-my-channels read. The wall is the same one membership management carries (room owner or house messages admin, the role matrix's Admin cell on house-messages), not a plain member. An archived room answers 409 already-archived, never a re-archive: the manager wall already wrote the truth, and the second call is not a keep-state. The archive is soft: the row stays for the read path (the audit trail), the channel leaves every list. The body's channel_deleted / is_admin fields are the audit pair the rooms panel records; the work is the DELETE itself."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelDelete"
+      responses:
+        "200":
+          description: The channel is archived
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    patch:
+      operationId: messagingRenameChannel
+      tags:
+        - staff-messaging
+      summary: Rename a group room; any member may, and a system line records it
+      description: "Renaming is the group room's own move (the change 7 ruling): any member of the group may rename it, the new name shows to every member through the ordinary channel reads, and the rename writes a system line naming who renamed the group and to what. A caller who is not a member is refused with 403, an unknown room is 404, an empty name is 400, and a room of any other kind (a direct message's name is its parties', a channel's name is its founders') refuses with 409."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelRename"
+      responses:
+        "200":
+          description: The renamed room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannel"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/visibility:
+    patch:
+      operationId: messagingPatchChannelVisibility
+      tags:
+        - staff-messaging
+      summary: Flip one room's visibility PUBLIC/PRIVATE
+      description: "Change 7 ruling 7 hand on the room's settings panel: the manager flips PUBLIC/PRIVATE and the room's directory entry changes (a PRIVATE room hides behind the membership wall, the branch model keeps what it derives, and the membership-management wall carries hand-add). The wall is the same one membership management carries (room owner or house messages admin, the role matrix's Admin cell on house-messages), not a plain member. An invalid value is refused in shape the migration's CHECK already permits."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingChannelVisibilityPatch"
+      responses:
+        "200":
+          description: The visibility was flipped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/messaging/directory:
+    get:
+      operationId: messagingListDirectory
+      tags:
+        - staff-messaging
+      summary: List the PUBLIC channels the caller can see, with the caller's membership state
+      description: Walk change 7 ruling 7 directory. Returns every non-archived PUBLIC channel of kind TEAM, TOPIC, or BRANCH that the caller's branch reach can see, plus the caller's membership state (joined bool, membership_source DERIVED/EXPLICIT/empty, member_count). DM and APPROVAL rooms are excluded (the directory is the team's hand-built rooms, not the system namespaces). A branch-scoped caller sees only rooms whose branch_id they reach; a GLOBAL caller sees every branch.
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The directory entries the caller can see
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingDirectoryList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/v1/messaging/dms:
     post:
       operationId: messagingCreateDM
@@ -12631,13 +12769,13 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-  /api/v1/messaging/channels/{id}:
-    patch:
-      operationId: messagingRenameChannel
+  /api/v1/messaging/channels/{id}/members:
+    get:
+      operationId: messagingListChannelMembers
       tags:
         - staff-messaging
-      summary: Rename a group room; any member may, and a system line records it
-      description: "Renaming is the group room's own move (the change 7 ruling): any member of the group may rename it, the new name shows to every member through the ordinary channel reads, and the rename writes a system line naming who renamed the group and to what. A caller who is not a member is refused with 403, an unknown room is 404, an empty name is 400, and a room of any other kind (a direct message's name is its parties', a channel's name is its founders') refuses with 409."
+      summary: List the channel's membership rows with the audit pair
+      description: 'Walk change 7 ruling 7 rules read. Returns every membership row of the channel with the audit fields the Settings > Membership rules "Added by hand" panel shows: user_id, display_name, role, source, added_reason, added_by. The caller must be a member of the channel (the membership wall is the same wall the other reads carry).'
       x-role: requireStaff
       x-access:
         surfaces:
@@ -12646,30 +12784,19 @@ paths:
       parameters:
         - $ref: "#/components/parameters/XOrg"
         - $ref: "#/components/parameters/Id"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/MessagingChannelRename"
       responses:
         "200":
-          description: The renamed room
+          description: The channel's membership rows
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MessagingChannel"
-        "400":
-          $ref: "#/components/responses/BadRequest"
+                $ref: "#/components/schemas/MessagingChannelMembersList"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-  /api/v1/messaging/channels/{id}/members:
     post:
       operationId: messagingAddChannelMember
       tags:
@@ -12689,7 +12816,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/MessagingDMCreate"
+              $ref: "#/components/schemas/MessagingChannelMemberAdd"
       responses:
         "200":
           description: The membership row as seated
@@ -12751,6 +12878,132 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/join:
+    post:
+      operationId: messagingJoinChannel
+      tags:
+        - staff-messaging
+      summary: Self-join a PUBLIC channel the caller reaches
+      description: Walk change 7 ruling 7 self-join. A staffer who reaches the channel's branch may join a PUBLIC TEAM or TOPIC channel (PRIVATE rooms refuse 403; DM and APPROVAL refuse 403/409; money rooms with member_roles refuse 403 unless the caller holds a listed role). The seat is EXPLICIT MEMBER; an already-seated caller is a no-op (a re-join never downgrades DERIVED or OWNER).
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The seated member row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingChannelMember"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/channels/{id}/leave:
+    post:
+      operationId: messagingLeaveChannel
+      tags:
+        - staff-messaging
+      summary: Self-leave a channel the caller belongs to
+      description: Walk change 7 ruling 7 self-leave. A caller may leave a channel whose seat is EXPLICIT MEMBER. A DERIVED row is refused with 409 (the "Joined by rule, you stay" wall, the role and branch model owns the row); the last OWNER refuses with 409 (a channel keeps its owner); DM and APPROVAL refuse with 409 (fixed membership).
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: The leave echo
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - status
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/messaging/membership-rules:
+    get:
+      operationId: messagingListMembershipRules
+      tags:
+        - staff-messaging
+      summary: List every channel's membership rule the caller can see
+      description: "Walk change 7 ruling 7 rules collection read. Returns each channel's rule row (auto_scope, auto_role, visibility) plus the directory's read shape (name, kind, branch_id). The collection is scoped the same way as the directory: PUBLIC, non-archived, branch-reach wall."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: work
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+      responses:
+        "200":
+          description: The membership rules the caller can see
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMembershipRulesList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/messaging/channels/{id}/membership-rule:
+    put:
+      operationId: messagingUpdateMembershipRule
+      tags:
+        - staff-messaging
+      summary: Update one room's membership rule (admin only)
+      description: "Walk change 7 ruling 7 rules write. Updates the channel's auto_scope (empty, BRANCH, or GLOBAL), auto_role (a role code or \"*\" for any), and visibility (PUBLIC or PRIVATE) in one transaction. The wall is admin-only: only a role the role matrix gives Admin on house-messages (the roleconfig publish) may write a room's rule. The write commits the change plus a channel-feed bump in one transaction; the next SyncMembership reconciles the derived seats."
+      x-role: requireStaff
+      x-access:
+        surfaces:
+          - house-messages
+        level: manage
+      parameters:
+        - $ref: "#/components/parameters/XOrg"
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessagingMembershipRule"
+      responses:
+        "200":
+          description: The rule as updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagingMembershipRule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v1/messaging/channels/{id}/messages:
     get:
       operationId: messagingListMessages
@@ -40500,13 +40753,14 @@ components:
           format: date-time
     MessagingChannel:
       type: object
-      description: One conversation surface. unread_count, mentioned and latest_at are populated only in the list-my-channels projection; they are per-caller, not intrinsic to the channel.
+      description: "One conversation surface. unread_count, mentioned and latest_at are populated only in the list-my-channels projection; they are per-caller, not intrinsic to the channel. visibility is the change 7 ruling 7 hand: PUBLIC rooms list in the directory and accept any member the branch and role model approves; PRIVATE rooms are wall-only (the room owner or house messages admin hands members in, the audit row records the reason)."
       required:
         - id
         - kind
         - name
         - topic
         - tier
+        - visibility
         - is_archived
         - created_at
         - unread_count
@@ -40538,6 +40792,11 @@ components:
             - STANDARD
             - ESCALATION
             - FIREHOSE
+        visibility:
+          type: string
+          enum:
+            - PUBLIC
+            - PRIVATE
         is_archived:
           type: boolean
         created_at:
@@ -40564,7 +40823,7 @@ components:
             $ref: "#/components/schemas/MessagingChannel"
     MessagingChannelCreate:
       type: object
-      description: "One caller-founded channel. Slug is optional: an empty slug is derived from the name, so the same founding twice converges on one room. BranchID optionally scopes a TEAM channel to one yard the caller reaches."
+      description: "One caller-founded channel. Slug is optional: an empty slug is derived from the name, so the same founding twice converges on one room. BranchID optionally scopes a TEAM channel to one yard the caller reaches. Visibility defaults to PUBLIC when unset (the room's settings panel default, change 7 ruling 7 hand: a PRIVATE room hides from the directory behind the membership wall)."
       required:
         - kind
         - name
@@ -40583,6 +40842,11 @@ components:
         branch_id:
           type: string
           format: uuid
+        visibility:
+          type: string
+          enum:
+            - PUBLIC
+            - PRIVATE
     MessagingDMCreate:
       type: object
       description: Names the other staffer (the DM and member-add bodies share the shape)
@@ -40613,7 +40877,7 @@ components:
           type: string
     MessagingChannelMember:
       type: object
-      description: One membership row. DERIVED rows are the role and branch model's and are never hand-removable; EXPLICIT rows are the seat this surface writes.
+      description: "One membership row. DERIVED rows are the role and branch model's and are never hand-removable; EXPLICIT rows are the seat this surface writes. added_reason and added_by are the change 7 ruling 7 hand on the row's audit: a fresh seat writes the manager's text reason and the user id who added them, and a re-seat reads them back whatever they are."
       required:
         - channel_id
         - user_id
@@ -40640,6 +40904,208 @@ components:
         joined_at:
           type: string
           format: date-time
+        added_reason:
+          type: string
+        added_by:
+          type: string
+          format: uuid
+    MessagingChannelMemberAdd:
+      type: object
+      description: The change 7 ruling 7 body for POST /api/v1/messaging/channels/{id}/members. user_id names the staff member being seated (active); added_reason is the manager's text reason the staff member reads in the row audit (Settings > Membership rules "Added by hand"); added_by is the user id of the manager who wrote the row (the audit pair). role is always MEMBER here; an OWNER is the room's founder and is not hand-assignable.
+      required:
+        - user_id
+        - role
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum:
+            - MEMBER
+        added_reason:
+          type: string
+        added_by:
+          type: string
+          format: uuid
+    MessagingChannelVisibilityPatch:
+      type: object
+      description: The change 7 ruling 7 body for PATCH /api/v1/messaging/channels/{id}/visibility. visibility is PUBLIC (a directory room, hand-add opens or branch model keeps) or PRIVATE (a wall room, hand-add only and the directory hides it). An invalid value is refused in shape the migration's CHECK already permits.
+      required:
+        - visibility
+      properties:
+        visibility:
+          type: string
+          enum:
+            - PUBLIC
+            - PRIVATE
+    MessagingMembershipRule:
+      type: object
+      description: The Settings > Membership rules write body (item 3b's rule write). auto_scope is empty (hand-built), BRANCH (the branch model's reach), or GLOBAL (every active staff derives in). auto_role is a role code or "*" (any role qualifies; the wildcard the SQL reads). visibility is PUBLIC or PRIVATE (the room's settings panel default, private for now).
+      required:
+        - auto_scope
+        - auto_role
+        - visibility
+      properties:
+        auto_scope:
+          type: string
+          enum:
+            - ""
+            - BRANCH
+            - GLOBAL
+        auto_role:
+          type: string
+        visibility:
+          type: string
+          enum:
+            - PUBLIC
+            - PRIVATE
+    MessagingMembershipRuleEntry:
+      type: object
+      description: "One row of GET /api/v1/messaging/membership-rules: a channel's rule (auto_scope, auto_role, visibility) plus the directory's read shape (channel_id, name, kind, branch_id). The admin's \"Settings > Membership rules\" panel reads the collection."
+      required:
+        - channel_id
+        - name
+        - kind
+        - auto_scope
+        - auto_role
+        - visibility
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        kind:
+          type: string
+          enum:
+            - TEAM
+            - TOPIC
+            - BRANCH
+        branch_id:
+          type: string
+        auto_scope:
+          type: string
+          enum:
+            - ""
+            - BRANCH
+            - GLOBAL
+        auto_role:
+          type: string
+        visibility:
+          type: string
+          enum:
+            - PUBLIC
+            - PRIVATE
+    MessagingMembershipRulesList:
+      type: object
+      description: The response shape for GET /api/v1/messaging/membership-rules.
+      required:
+        - rules
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingMembershipRuleEntry"
+    MessagingDirectoryEntry:
+      type: object
+      description: "One row of GET /api/v1/messaging/directory: a PUBLIC, non-archived channel (TEAM, TOPIC, BRANCH) with the caller's own membership state. joined=true with source=DERIVED means the role and branch model derived them in; joined=true with source=EXPLICIT means they hand-joined or were hand-added; member_count is the room's current seat count (DERIVED + EXPLICIT)."
+      required:
+        - channel_id
+        - kind
+        - name
+        - joined
+        - membership_source
+        - member_count
+      properties:
+        channel_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+            - TEAM
+            - TOPIC
+            - BRANCH
+        branch_id:
+          type: string
+        name:
+          type: string
+        topic:
+          type: string
+        slug:
+          type: string
+        joined:
+          type: boolean
+        membership_source:
+          type: string
+          enum:
+            - ""
+            - DERIVED
+            - EXPLICIT
+        member_count:
+          type: integer
+          format: int32
+    MessagingDirectoryList:
+      type: object
+      description: The response shape for GET /api/v1/messaging/directory.
+      required:
+        - channels
+      properties:
+        channels:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/MessagingDirectoryEntry"
+    MessagingChannelMemberEntry:
+      type: object
+      description: "One row of GET /api/v1/messaging/channels/{id}/members: the channel's membership with the audit fields the Settings > Membership rules \"Added by hand\" panel shows."
+      required:
+        - user_id
+        - role
+        - source
+        - joined_at
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        display_name:
+          type: string
+        role:
+          type: string
+          enum:
+            - MEMBER
+            - OWNER
+        source:
+          type: string
+          enum:
+            - DERIVED
+            - EXPLICIT
+        added_reason:
+          type: string
+        added_by:
+          type: string
+          format: uuid
+        joined_at:
+          type: string
+          format: date-time
+    MessagingChannelMembersList:
+      type: object
+      description: The response shape for GET /api/v1/messaging/channels/{id}/members.
+      required:
+        - members
+      properties:
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessagingChannelMemberEntry"
+    MessagingChannelDelete:
+      type: object
+      description: The change 8 ruling 8 body for DELETE /api/v1/messaging/channels/{id}. The body's acknowledgement pair (channel_deleted=true, is_admin=true) is the keep-state the manager's hand-add screen records. The body is not strictly required (the repository's archive is the work), but the schema names the audit pair the rooms panel shows.
+      properties:
+        channel_deleted:
+          type: boolean
+        is_admin:
+          type: boolean
     MessagingPerson:
       type: object
       description: One staffer of the caller's org on the New message picker's roster. The shape carries no email, no phone, no permission or cost field and no tier. role_label is the role catalog's display name and branch_label the person's granted branches' display names joined with a comma and a space; either is empty when the person holds none. is_me flags the caller's own row.

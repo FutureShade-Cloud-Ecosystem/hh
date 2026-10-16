@@ -3486,6 +3486,7 @@ export type MessagingChannel = {
   name: string;
   topic: string;
   tier: "STANDARD" | "ESCALATION" | "FIREHOSE";
+  visibility: "PUBLIC" | "PRIVATE";
   is_archived: boolean;
   created_at: string;
   unread_count: number;
@@ -3501,6 +3502,7 @@ export type MessagingChannelCreate = {
   topic?: string;
   slug?: string;
   branch_id?: string;
+  visibility?: "PUBLIC" | "PRIVATE";
 };
 export type MessagingDMCreate = {
   user_id: string;
@@ -3518,6 +3520,64 @@ export type MessagingChannelMember = {
   role: "MEMBER" | "OWNER";
   source: "DERIVED" | "EXPLICIT";
   joined_at: string;
+  added_reason?: string;
+  added_by?: string;
+};
+export type MessagingChannelMemberAdd = {
+  user_id: string;
+  role: "MEMBER";
+  added_reason?: string;
+  added_by?: string;
+};
+export type MessagingChannelVisibilityPatch = {
+  visibility: "PUBLIC" | "PRIVATE";
+};
+export type MessagingMembershipRule = {
+  auto_scope: "" | "BRANCH" | "GLOBAL";
+  auto_role: string;
+  visibility: "PUBLIC" | "PRIVATE";
+};
+export type MessagingMembershipRuleEntry = {
+  channel_id: string;
+  name: string;
+  kind: "TEAM" | "TOPIC" | "BRANCH";
+  branch_id?: string;
+  auto_scope: "" | "BRANCH" | "GLOBAL";
+  auto_role: string;
+  visibility: "PUBLIC" | "PRIVATE";
+};
+export type MessagingMembershipRulesList = {
+  rules: MessagingMembershipRuleEntry[];
+};
+export type MessagingDirectoryEntry = {
+  channel_id: string;
+  kind: "TEAM" | "TOPIC" | "BRANCH";
+  branch_id?: string;
+  name: string;
+  topic?: string;
+  slug?: string;
+  joined: boolean;
+  membership_source: "" | "DERIVED" | "EXPLICIT";
+  member_count: number;
+};
+export type MessagingDirectoryList = {
+  channels: { [key: string]: MessagingDirectoryEntry };
+};
+export type MessagingChannelMemberEntry = {
+  user_id: string;
+  display_name?: string;
+  role: "MEMBER" | "OWNER";
+  source: "DERIVED" | "EXPLICIT";
+  added_reason?: string;
+  added_by?: string;
+  joined_at: string;
+};
+export type MessagingChannelMembersList = {
+  members: MessagingChannelMemberEntry[];
+};
+export type MessagingChannelDelete = {
+  channel_deleted?: boolean;
+  is_admin?: boolean;
 };
 export type MessagingPerson = {
   user_id: string;

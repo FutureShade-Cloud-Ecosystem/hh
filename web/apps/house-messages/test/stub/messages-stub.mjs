@@ -174,13 +174,13 @@ function reset() {
   const A = USERS.admin.user_id;
   world = {
     channels: [
-      { id: CH.branch, kind: "BRANCH", branch_id: BRANCH, slug: "branch-point-loma", name: "Point Loma", topic: "Everyone at the yard", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y, P] },
-      { id: CH.yard, kind: "TEAM", slug: "yard-point-loma", name: "Yard floor", topic: "Picks, staging and the gate", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y, A] },
-      { id: CH.deliveries, kind: "TOPIC", slug: "deliveries", name: "Deliveries", topic: "Truck 01 to Truck 04", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y, P, A] },
-      { id: CH.esc, kind: "TOPIC", slug: "escalations", name: "Escalations", topic: "Alerts that must be acknowledged", tier: "ESCALATION", is_archived: false, created_at: at(9000), members: [S, Y, P] },
-      { id: CH.house, kind: "TOPIC", branch_id: BRANCH, slug: "house-point-loma", name: "House queue", topic: "Customers with no assigned rep", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y, A] },
-      { id: CH.dm, kind: "DM", slug: "dm-sales-yard", name: "Direct message", topic: "", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [S, Y], dmNames: { [S]: "Yard manager (demo)", [Y]: "Inside Sales (demo)" } },
-      { id: CH.pay, kind: "TOPIC", branch_id: BRANCH, slug: "payments-point-loma", name: "Payments Point Loma", topic: "The day's payments", tier: "STANDARD", is_archived: false, created_at: at(9000), members: [P], defaultMode: "MUTED" },
+      { id: CH.branch, kind: "BRANCH", branch_id: BRANCH, slug: "branch-point-loma", name: "Point Loma", topic: "Everyone at the yard", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, created_at: at(9000), members: [S, Y, P] },
+      { id: CH.yard, kind: "TEAM", slug: "yard-point-loma", name: "Yard floor", topic: "Picks, staging and the gate", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, created_at: at(9000), members: [S, Y, A] },
+      { id: CH.deliveries, kind: "TOPIC", slug: "deliveries", name: "Deliveries", topic: "Truck 01 to Truck 04", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, created_at: at(9000), members: [S, Y, P, A] },
+      { id: CH.esc, kind: "TOPIC", slug: "escalations", name: "Escalations", topic: "Alerts that must be acknowledged", tier: "ESCALATION", visibility: "PUBLIC", is_archived: false, created_at: at(9000), members: [S, Y, P] },
+      { id: CH.house, kind: "TOPIC", branch_id: BRANCH, slug: "house-point-loma", name: "House queue", topic: "Customers with no assigned rep", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, created_at: at(9000), members: [S, Y, A] },
+      { id: CH.dm, kind: "DM", slug: "dm-sales-yard", name: "Direct message", topic: "", tier: "STANDARD", visibility: "PRIVATE", is_archived: false, created_at: at(9000), members: [S, Y], dmNames: { [S]: "Yard manager (demo)", [Y]: "Inside Sales (demo)" } },
+      { id: CH.pay, kind: "TOPIC", branch_id: BRANCH, slug: "payments-point-loma", name: "Payments Point Loma", topic: "The day's payments", tier: "STANDARD", visibility: "PUBLIC", is_archived: false, created_at: at(9000), members: [P], defaultMode: "MUTED" },
     ],
     messages: [],
     lastRead: {}, // `${user}|${channel}` -> iso
