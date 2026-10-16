@@ -31,7 +31,7 @@ const stubPort = process.env.FD_STUB_PORT ?? String(24000 + slot + 1);
 
 export default defineConfig({
   testDir: ".",
-  testMatch: "acceptance/*.pw.ts",
+  testMatch: ["acceptance/*.pw.ts", "tenant-title.pw.ts"],
   timeout: 30_000,
   workers: 1,
   use: {
