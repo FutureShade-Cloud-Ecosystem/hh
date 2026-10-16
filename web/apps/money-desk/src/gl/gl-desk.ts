@@ -82,6 +82,9 @@ export class GlDesk {
   #policy: Section<GlPolicy | null> = idle(null);
   #tie: Section<GlTieoutState[]> = idle([]);
   #bis: Section<GlBisTrackTieoutReport | null> = idle(null);
+  // The legacy system the dealer imports from, as its surface config names it; "" is none, and then
+  // the Checks tab draws no legacy import section.
+  #legacyImport = "";
   #confirm: Confirm | null = null;
   #composing = false;
   #lineCount = 2;
@@ -101,11 +104,12 @@ export class GlDesk {
     this.#phase = "loading";
     this.#host.repaint();
     const controller = this.#mode === "controller";
-    const [approvals, journals, trial, branches] = await Promise.all([
+    const [approvals, journals, trial, branches, legacyImport] = await Promise.all([
       controller ? this.#api.pendingApprovals() : Promise.resolve<Result<IdentityApproval[]>>({ ok: true, value: [] }),
       this.#api.journals(),
       this.#api.trialBalance(this.#trialBranch, this.#trialYear, this.#trialMonth),
       this.#api.branches(),
+      this.#api.legacyImportSource(),
     ]);
     if (!approvals.ok) {
       this.#phase = "error";
@@ -124,6 +128,7 @@ export class GlDesk {
     this.#trial = trial.ok ? trial.value : null;
     if (trial.ok) this.#trialYear = trial.value.fiscal_year;
     this.#branches = branches.ok ? branches.value : [];
+    this.#legacyImport = legacyImport;
     // The ledger's own refusals are said, not hidden, but they never hide the queue.
     this.#error = !journals.ok
       ? refusalWords("journals", journals.error, journals.status ?? 0)
@@ -686,7 +691,7 @@ export class GlDesk {
     this.#bis = { phase: "loading", value: null, error: "" };
     this.#host.repaint();
     const answer = await this.#api.bisTrack(year, month, tolerance);
-    this.#bis = answer.ok ? { phase: "ready", value: answer.value, error: "" } : { phase: "error", value: null, error: refusalWords("bistrack", answer.error, answer.status ?? 0) };
+    this.#bis = answer.ok ? { phase: "ready", value: answer.value, error: "" } : { phase: "error", value: null, error: refusalWords("legacy-import", answer.error, answer.status ?? 0) };
     this.#host.repaint();
   }
 
@@ -700,6 +705,7 @@ export class GlDesk {
       policy: this.#policy,
       tie: this.#tie,
       bis: this.#bis,
+      legacyImport: this.#legacyImport,
       confirm: this.#confirm,
       composing: this.#composing,
       lineCount: this.#lineCount,

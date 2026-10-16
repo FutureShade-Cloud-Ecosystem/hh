@@ -1833,14 +1833,15 @@ type SettingsWorkspaceSaveInput struct {
 }
 
 type SettingsSurfaceConfig struct {
-	SurfaceId    string                `json:"surface_id"`
-	Profile      string                `json:"profile"`
-	ItemsProfile *string               `json:"items_profile,omitempty"`
-	RoleItems    []SettingsItem        `json:"role_items"`
-	UserItems    []SettingsItem        `json:"user_items"`
-	Workspace    SettingsWorkspaceView `json:"workspace"`
-	Policy       *map[string]any       `json:"policy,omitempty"`
-	BusinessZone *string               `json:"business_zone,omitempty"`
+	SurfaceId          string                `json:"surface_id"`
+	Profile            string                `json:"profile"`
+	ItemsProfile       *string               `json:"items_profile,omitempty"`
+	RoleItems          []SettingsItem        `json:"role_items"`
+	UserItems          []SettingsItem        `json:"user_items"`
+	Workspace          SettingsWorkspaceView `json:"workspace"`
+	Policy             *map[string]any       `json:"policy,omitempty"`
+	BusinessZone       *string               `json:"business_zone,omitempty"`
+	LegacyImportSource *string               `json:"legacy_import_source,omitempty"`
 }
 
 type SettingsRoleItemsBody struct {
@@ -3849,6 +3850,15 @@ type MessagingChannelCreate struct {
 
 type MessagingDMCreate struct {
 	UserId string `json:"user_id"`
+}
+
+type MessagingGroupCreate struct {
+	Name      *string   `json:"name,omitempty"`
+	MemberIds *[]string `json:"member_ids,omitempty"`
+}
+
+type MessagingChannelRename struct {
+	Name string `json:"name"`
 }
 
 type MessagingChannelMember struct {
@@ -8687,6 +8697,26 @@ type WarrantyPolicy struct {
 type WarrantyPolicyInput struct {
 	BranchId            *string `json:"branch_id,omitempty"`
 	ClaimThresholdCents int64   `json:"claim_threshold_cents"`
+}
+
+type WarrantyVendorAgreement struct {
+	VendorId      string     `json:"vendor_id"`
+	VendorNo      string     `json:"vendor_no"`
+	VendorName    string     `json:"vendor_name"`
+	AgreementKind string     `json:"agreement_kind"`
+	Period        *string    `json:"period,omitempty"`
+	AllowanceBp   int        `json:"allowance_bp"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
+}
+
+type WarrantyVendorAgreementInput struct {
+	AgreementKind string  `json:"agreement_kind"`
+	Period        *string `json:"period,omitempty"`
+	AllowanceBp   int     `json:"allowance_bp"`
+}
+
+type WarrantyVendorAgreementPage struct {
+	Items []WarrantyVendorAgreement `json:"items"`
 }
 
 type WarrantyAddress struct {

@@ -10,7 +10,13 @@ test("a short pick with a reason backorders the line and the rep's read holds th
   await arriveFromFrontDoor(page);
   const answer = await queue(page);
   expect(answer.status).toBe(200);
-  const open = (answer.body.items as any[]).filter((e) => e.task.status === "QUEUED" || e.task.status === "PUSHED");
+  // A PICK alone: the pick queue also lists the NEED_WEIGHT tasks, and a
+  // short pick recorded on one of those takes a pick record a NEED_WEIGHT
+  // task must not take (the money fault the principal has queued), so the
+  // leg holds itself to the task type the story is about.
+  const open = (answer.body.items as any[]).filter(
+    (e) => e.task.task_type === "PICK" && (e.task.status === "QUEUED" || e.task.status === "PUSHED"),
+  );
   expect(open.length).toBeGreaterThan(0);
   const id = open[0].task.id;
 
@@ -48,8 +54,11 @@ test("a short pick with a reason backorders the line and the rep's read holds th
   const rep = await mint("sales");
   const channels = await page.request.get("/api/v1/messaging/channels", { headers: { Authorization: `Bearer ${rep.token}`, "X-Org": "hh-demo" } });
   expect(channels.status()).toBe(200);
-  const list = (await channels.json()) as { items?: any[] } | any[];
-  const channelList = Array.isArray(list) ? list : (list.items ?? []);
+  // The channels read answers {"channels":[...]}, the same wrapper the
+  // yard's own queue read does not use; `items` was the stale key that saw
+  // an empty list over eight channels.
+  const list = (await channels.json()) as { channels?: any[]; items?: any[] } | any[];
+  const channelList = Array.isArray(list) ? list : (list.channels ?? list.items ?? []);
   expect(channelList.length).toBeGreaterThan(0);
   let notice: any = null;
   for (const channel of channelList) {
@@ -76,7 +85,9 @@ test("a short pick with a reason backorders the line and the rep's read holds th
 test("the screen tells the yard the same story in the server's words", async ({ page }) => {
   await arriveFromFrontDoor(page);
   const answer = await queue(page);
-  const open = (answer.body.items as any[]).filter((e) => e.task.status === "QUEUED" || e.task.status === "PUSHED");
+  const open = (answer.body.items as any[]).filter(
+    (e) => e.task.task_type === "PICK" && (e.task.status === "QUEUED" || e.task.status === "PUSHED"),
+  );
   const id = open[0].task.id;
   await staff(page, "POST", `/api/v1/tasks/${id}/claim`);
   await staff(page, "POST", `/api/v1/tasks/${id}/accept`);

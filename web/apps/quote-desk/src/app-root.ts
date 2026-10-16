@@ -30,6 +30,7 @@ import { AuthController, SessionStore, authHeaderProvider } from "@hardscapehous
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
 import { bootCustody, servedConsoleConfig, type AppStart, type Custody } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { entryStyles, renderEntry, type FlowsState } from "@hardscapehouse/pos-kit/src/ported/entry.js";
+import { applyTenantTitle } from "@hardscapehouse/pos-kit/src/tenant-title.js";
 import { clearFrontDoorHandoff, readFrontDoorHandoff } from "./demo-account.js";
 import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 import { setBranches, wirePorts, clearSessionState, type AuthUser } from "@hardscapehouse/pos-kit/src/ported/ports.js";
@@ -613,7 +614,7 @@ export class QuoteDeskApp extends HHElement {
     this.#view = "quotes";
     this.#surface = "entry";
     // The tab's title goes back to the entry page's own: it must not keep the last quote's number.
-    document.title = "Quote Desk";
+    applyTenantTitle("Quote Desk");
     // The shared surface's session-owned module state goes with the session.
     clearSessionState();
     this.requestUpdate();
