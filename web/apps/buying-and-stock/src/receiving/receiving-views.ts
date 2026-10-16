@@ -58,14 +58,14 @@ function queue(model: ReceivingModel): TemplateResult {
         : html`
             <div class="scroll">
               <table class="stack">
-                <thead><tr><th>Order</th><th>State</th><th>Expected</th><th class="num">Open lines</th>${showValues ? html`<th class="num">Value open</th>` : nothing}</tr></thead>
+                <thead><tr><th>Order</th><th>State</th><th data-expected-col>Expected</th><th class="num">Open lines</th>${showValues ? html`<th class="num">Value open</th>` : nothing}</tr></thead>
                 <tbody>
                   ${model.worklist.map((w) => {
                     const words = whenWords(w.expected_at, model.today);
                     return html`<tr data-queue-row data-po-no=${w.po_no} aria-current="${model.po !== null && model.po.id === w.po_id ? "true" : "false"}">
                       <td class="full" data-label="Order"><button type="button" class="link-inline" data-action="open-order" data-po-id=${w.po_id}>${w.po_no}</button><span class="small dim">${w.vendor_name} · ${model.branchNames.get(w.branch_id) ?? ""}</span></td>
                       <td data-label="State">${pill(statusTone(w.status), statusWord(w.status))}</td>
-                      <td data-label="Expected">${words === "" ? html`<span class="nodate">no date</span>` : html`<span class="who">${words}</span>`}</td>
+                      <td data-expected-col data-label="Expected">${words === "" ? html`<span class="nodate">no date</span>` : html`<span class="who">${words}</span>`}</td>
                       <td class="num" data-label="Open lines">${w.open_lines}</td>
                       ${w.value_open_cents === undefined ? nothing : html`<td class="num" data-label="Value open">${formatMoney(w.value_open_cents)}</td>`}
                     </tr>`;
