@@ -247,6 +247,17 @@ const officeStyles = css`
   }
   .inv-actions { margin: var(--hh-s-12) 0; padding-top: var(--hh-s-12); border-top: 1px solid var(--hh-line); }
   .row-actions { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }
+  /* C8 S3 + S3M: the Statement Preview / Send Paylink / Copy URL row buttons stack on
+   * phones (< 720px) into a single full-width strip rather than three side-by-side
+   * controls, which the screen real estate does not support. */
+  @media (max-width: 720px) {
+    .statement-table .row-actions { flex-direction: column; align-items: stretch; }
+    .statement-table .row-actions .btn { width: 100%; }
+    .ar-workspace-statements .statement-table th:nth-child(2),
+    .ar-workspace-statements .statement-table td:nth-child(2),
+    .ar-workspace-statements .statement-table th:nth-child(3),
+    .ar-workspace-statements .statement-table td:nth-child(3) { display: none; }
+  }
   .doc-view { margin-top: var(--hh-s-12); }
   .doc-slot iframe { width: 100%; height: 360px; border: 1px solid var(--hh-line); border-radius: var(--hh-radius-control); background: var(--hh-card); }
   .doc-slot:empty { display: none; }

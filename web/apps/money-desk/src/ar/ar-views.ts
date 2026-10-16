@@ -113,6 +113,15 @@ export interface DeskModel {
   readonly workspace: BillingCustomerWorkspace | null;
   readonly workspaceCustomerId: string | null;
   readonly activeWorkspaceTab: WorkspaceTab;
+  // The Place-a-hold draft (Change 8 S4): the operator's typed reason and the picked
+  // account id, so the form rerenders without losing state. The draft is empty when
+  // the panel has never been opened; the desk resets it on close.
+  readonly placeHoldDraft: { readonly customerId: string; readonly reason: string };
+  // The register summary the Place-a-hold pick-list reads from. A small slice of the
+  // register's customer list so the form has SOMETHING to pick without pulling every
+  // invoice of every account. The empty slice renders an empty select; the operator
+  // can still open the workspace from the Customer tab and place the hold there.
+  readonly registerSummary: readonly BillingRegisterRow[];
 }
 
 // ---- small parts -------------------------------------------------------------------------------
@@ -549,6 +558,37 @@ function holdActions(model: DeskModel, h: BillingCreditHold): TemplateResult {
   `;
 }
 
+/** The Place-a-hold panel (Change 8 S4). Manager-gated on the server: the form is the
+ *  same one every other workspace writer uses, the gate refuses every other role with the
+ *  server's own 403. The disabled placeholder the S2 scaffold left behind is gone, the
+ *  reason textarea is the only input that is required, and the cancel/close button keeps
+ *  the panel close to its previous shape.
+ */
+function placeHoldPanel(model: DeskModel): TemplateResult {
+  const draft = model.placeHoldDraft;
+  return html`
+    <section class="panel side" aria-label="Place a hold" data-hold-panel>
+      <div class="panel-head"><h2>Place a hold</h2></div>
+      <p class="note" data-place-words>Placing a hold by hand stops the account at the till, the gate and the portal. The sweep places the Aged AR, Over limit and Pay-before-release holds, and a returned payment places its own.</p>
+      <fieldset class="held-form">
+        <label>Account<select data-field="place-hold-account">
+          <option data-id="">Pick an account</option>
+          ${model.registerSummary.map((r) => html`<option data-id="${r.customer_id}">${r.customer_name}</option>`)}
+        </select></label>
+        <label>Kind<input type="text" value="Manual" readonly /></label>
+        <label>Reason<textarea data-field="place-hold-reason" rows="3" placeholder="Why the account is held" maxlength="1024"></textarea></label>
+        <p class="label">What it blocks</p>
+        <ul class="blocks"><li>New orders at the till</li><li>Release to dispatch</li><li>Portal checkout</li><li>Cash sales (still ring)</li></ul>
+      </fieldset>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-action="place-hold-go" ?disabled=${model.busy || draft.customerId === "" || draft.reason.trim() === ""}>Place hold</button>
+        <button type="button" class="btn btn-secondary" data-action="hold-close">Close</button>
+      </div>
+      <p class="ok-note" data-place-audited><b>Audited.</b> The hold carries your role, the reason and the time.</p>
+    </section>
+  `;
+}
+
 /** The payment a returned payment hold names, once the till's list has said it. */
 function placedBy(model: DeskModel, holdId: string): TemplateResult | typeof nothing {
   const paymentId = model.office.tillHolds.get(holdId);
@@ -560,20 +600,23 @@ function placedBy(model: DeskModel, holdId: string): TemplateResult | typeof not
 function holdsPanel(model: DeskModel): TemplateResult {
   const hold = model.holds.find((h) => h.id === model.selectedHoldId);
   if (model.holdPanel === "place-later") {
-    return html`
-      <section class="panel side" aria-label="Place a hold" data-hold-panel>
-        <div class="panel-head"><h2>Place a hold</h2><span class="later">later</span></div>
-        <p class="note" data-later-words>Placing a hold by hand arrives later: there is no path for it yet. The sweep places the Aged AR, Over limit and Pay-before-release holds, and a returned payment places its own.</p>
-        <fieldset class="held-form" disabled>
-          <label>Account<select><option>Pick an account</option></select></label>
-          <label>Kind<input type="text" value="Manual" readonly /></label>
-          <label>Reason<textarea rows="2" placeholder="Why the account is held"></textarea></label>
-          <p class="label">What it blocks</p>
-          <ul class="blocks"><li>New orders at the till</li><li>Release to dispatch</li><li>Portal checkout</li><li>Cash sales (still ring)</li></ul>
-        </fieldset>
-        <div class="actions"><button type="button" class="btn btn-secondary held" aria-disabled="true">Place hold</button><button type="button" class="btn btn-secondary" data-action="hold-close">Close</button></div>
-      </section>
-    `;
+    if (!model.canLift) {
+      return html`
+        <section class="panel side" aria-label="Place a hold" data-hold-panel>
+          <div class="panel-head"><h2>Place a hold</h2><span class="later">later</span></div>
+          <p class="note" data-later-words>Placing a hold by hand arrives later: there is no path for it yet. The sweep places the Aged AR, Over limit and Pay-before-release holds, and a returned payment places its own.</p>
+          <fieldset class="held-form" disabled>
+            <label>Account<select><option>Pick an account</option></select></label>
+            <label>Kind<input type="text" value="Manual" readonly /></label>
+            <label>Reason<textarea rows="2" placeholder="Why the account is held"></textarea></label>
+            <p class="label">What it blocks</p>
+            <ul class="blocks"><li>New orders at the till</li><li>Release to dispatch</li><li>Portal checkout</li><li>Cash sales (still ring)</li></ul>
+          </fieldset>
+          <div class="actions"><button type="button" class="btn btn-secondary held" aria-disabled="true">Place hold</button><button type="button" class="btn btn-secondary" data-action="hold-close">Close</button></div>
+        </section>
+      `;
+    }
+    return placeHoldPanel(model);
   }
   if (hold === undefined) {
     return html`

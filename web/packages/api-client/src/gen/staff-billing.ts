@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreditHoldPage, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderInput, BillingReminderResult, BillingReminderSend, BillingReminderSendPage, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementRunRequest, BillingStatementRunResult, PaymentCardAttemptSummary } from "./types.js";
+import type { BillingAPContact, BillingAPContactRead, BillingARLanding, BillingAddCustomerNoteInput, BillingAddCustomerNoteResult, BillingAgingPage, BillingApplyPaymentAnswer, BillingApplyPaymentInput, BillingAutoHoldRequest, BillingAutoHoldSetting, BillingCreateHoldRequest, BillingCreditHold, BillingCreditHoldPage, BillingCustomerWorkspace, BillingDispatchGateResult, BillingDisputeInput, BillingDisputeResolveRequest, BillingDisputeView, BillingEvaluationResult, BillingHoldOverrideRequest, BillingHoldOverrideResult, BillingHoldReleaseRequest, BillingInvoiceDetail, BillingInvoiceSendRequest, BillingLandingPolicy, BillingPaperPathPage, BillingPaperPathResolveRequest, BillingPaperPathSweepResult, BillingPolicyChangePage, BillingPromiseInput, BillingPromiseView, BillingReceiptInput, BillingReceiptResult, BillingRegisterPage, BillingRegisterPolicy, BillingRegisterSelectionRequest, BillingRegisterSelectionResult, BillingRegisterStatementsRequest, BillingReminderInput, BillingReminderResult, BillingReminderSend, BillingReminderSendPage, BillingSendPaylinkRequest, BillingSendPaylinkResult, BillingSendReminderInput, BillingStatement, BillingStatementBatch, BillingStatementPreview, BillingStatementRunRequest, BillingStatementRunResult, PaymentCardAttemptSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -161,6 +161,23 @@ export async function billingListHolds(
   });
 }
 
+// The document also declares success as 201; the client
+// types the lowest declared success code (200).
+export async function billingCreateHold(
+  client: ApiClient,
+  body: BillingCreateHoldRequest,
+  call?: ApiCallOptions
+): Promise<Result<BillingCreditHold>> {
+  return client.request<BillingCreditHold>({
+    method: "POST",
+    path: "/api/v1/ar/holds",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingCreateHold",
+  });
+}
+
 export async function billingReleaseHold(
   client: ApiClient,
   id: string | number,
@@ -314,6 +331,21 @@ export async function paymentsApplyReceived(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "paymentsApplyReceived",
+  });
+}
+
+export async function billingSendPaylink(
+  client: ApiClient,
+  body: BillingSendPaylinkRequest,
+  call?: ApiCallOptions
+): Promise<Result<BillingSendPaylinkResult>> {
+  return client.request<BillingSendPaylinkResult>({
+    method: "POST",
+    path: "/api/v1/ar/payments/paylink",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingSendPaylink",
   });
 }
 
@@ -613,6 +645,22 @@ export async function billingAddCustomerNote(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "billingAddCustomerNote",
+  });
+}
+
+export async function billingGetStatementPreview(
+  client: ApiClient,
+  customer_id: string | number,
+  statement_id: string | number,
+  call?: ApiCallOptions
+): Promise<Result<BillingStatementPreview>> {
+  return client.request<BillingStatementPreview>({
+    method: "GET",
+    path: "/api/v1/billing/ar/customers/{customer_id}/statements/{statement_id}/preview",
+    pathParams: { customer_id, statement_id },
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "billingGetStatementPreview",
   });
 }
 

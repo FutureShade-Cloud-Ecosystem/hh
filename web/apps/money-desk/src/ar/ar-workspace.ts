@@ -402,14 +402,25 @@ export function renderWorkspacePayments(
 // renderWorkspaceStatements is the Statements tab body. The list reads from
 // ar_statements, newest first; the closing_balance_cents is the figure that went out the
 // door on that date, an immutable artefact per migration 0105.
+//
+// Change 8 S3 + S3M adds three actions on each row: Statement Preview (opens the
+// billingGetStatementPreview panel with the 5-bucket reconciliation), Send Paylink
+// (billingSendPaylink), and Copy Paylink (the same URL, copied to the clipboard). The
+// row-level buttons are the workspace version of the desktop Statements panel's
+// actions; the mobile summary card carries the same three in a compact strip.
 export function renderWorkspaceStatements(workspace: BillingCustomerWorkspace): TemplateResult {
   const rows = workspace.statements.map((s) => html`
-    <tr class="statement-row">
+    <tr class="statement-row" data-statement-row data-customer-id="${workspace.header.customer_id}" data-statement-id="${s.id}">
       <td>${formatWorkspaceDate(s.as_of_date)}</td>
       <td>${s.mode}</td>
       <td>${s.delivery_status}</td>
       <td class="num">${formatWorkspaceMoney(s.closing_balance_cents)}</td>
       <td>${formatWorkspaceDate(s.created_at)}</td>
+      <td class="row-actions">
+        <button type="button" class="btn btn-secondary small-btn" data-action="statement-preview" data-customer-id="${workspace.header.customer_id}" data-statement-id="${s.id}">Preview</button>
+        <button type="button" class="btn btn-secondary small-btn" data-action="statement-paylink" data-customer-id="${workspace.header.customer_id}" data-statement-id="${s.id}">Send paylink</button>
+        <button type="button" class="btn btn-secondary small-btn" data-action="statement-copy-paylink" data-customer-id="${workspace.header.customer_id}" data-statement-id="${s.id}">Copy URL</button>
+      </td>
     </tr>
   `);
   return html`
@@ -419,7 +430,7 @@ export function renderWorkspaceStatements(workspace: BillingCustomerWorkspace): 
         ? html`<p class="dim">No statements on this account.</p>`
         : html`
           <table class="statement-table">
-            <thead><tr><th>As of</th><th>Mode</th><th>Delivery</th><th class="num">Closing balance</th><th>Created</th></tr></thead>
+            <thead><tr><th>As of</th><th>Mode</th><th>Delivery</th><th class="num">Closing balance</th><th>Created</th><th><span class="visually-hidden">Act</span></th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         `}
