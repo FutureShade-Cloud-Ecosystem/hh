@@ -42,7 +42,11 @@ const noteAt = (model: ReceivingModel, at: ErrorAt): TemplateResult => (model.er
 
 // ---- the queue -------------------------------------------------------------------------------------------
 
+// The queue's Value open column is the managers' (change 5, R5): the column stands only where the
+// answer itself carries the values; where the policy hides them it is not drawn at all, never a
+// stub cell in it.
 function queue(model: ReceivingModel): TemplateResult {
+  const showValues = model.worklist.some((w) => w.value_open_cents !== undefined);
   return html`
     <section class="panel" aria-label="Orders to receive" data-queue>
       <div class="panel-head">
@@ -54,7 +58,7 @@ function queue(model: ReceivingModel): TemplateResult {
         : html`
             <div class="scroll">
               <table class="stack">
-                <thead><tr><th>Order</th><th>State</th><th data-expected-col>Expected</th><th class="num">Open lines</th><th class="num">Value open</th></tr></thead>
+                <thead><tr><th>Order</th><th>State</th><th data-expected-col>Expected</th><th class="num">Open lines</th>${showValues ? html`<th class="num">Value open</th>` : nothing}</tr></thead>
                 <tbody>
                   ${model.worklist.map((w) => {
                     const words = whenWords(w.expected_at, model.today);
@@ -63,7 +67,7 @@ function queue(model: ReceivingModel): TemplateResult {
                       <td data-label="State">${pill(statusTone(w.status), statusWord(w.status))}</td>
                       <td data-expected-col data-label="Expected">${words === "" ? html`<span class="nodate">no date</span>` : html`<span class="who">${words}</span>`}</td>
                       <td class="num" data-label="Open lines">${w.open_lines}</td>
-                      <td class="num" data-label="Value open">${w.value_open_cents === undefined ? html`<span class="dim">hidden</span>` : formatMoney(w.value_open_cents)}</td>
+                      ${w.value_open_cents === undefined ? nothing : html`<td class="num" data-label="Value open">${formatMoney(w.value_open_cents)}</td>`}
                     </tr>`;
                   })}
                 </tbody>
