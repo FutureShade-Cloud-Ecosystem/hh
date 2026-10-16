@@ -2791,6 +2791,7 @@ export type InventoryBrowseRow = {
   available_base: number;
   in_transit_base: number;
   avg_cost_cents?: number;
+  out_at_branches?: string[];
 };
 export type InventoryFacetValue = {
   value: string;
@@ -3264,6 +3265,18 @@ export type MessagingChannelMember = {
   role: "MEMBER" | "OWNER";
   source: "DERIVED" | "EXPLICIT";
   joined_at: string;
+};
+export type MessagingPerson = {
+  user_id: string;
+  display_name: string;
+  role_label: string;
+  branch_label: string;
+  is_me: boolean;
+};
+export type MessagingPersonPage = {
+  items: MessagingPerson[];
+  next_cursor?: string | null;
+  limit?: number;
 };
 export type MessagingMessage = {
   id: string;

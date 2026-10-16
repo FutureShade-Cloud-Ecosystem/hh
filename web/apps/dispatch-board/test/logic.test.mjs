@@ -741,3 +741,104 @@ test("a refused split keeps the core's sentence; a lost reply says asking again 
   assert.match(splitRefusal("", null), /could not reach the server.*asking again is safe/s);
   assert.match(splitRefusal("", 500), /nothing changed/);
 });
+
+// WALK-C16 helpers -----------------------------------------------------------------------------------
+
+test("the TIME_AXIS_HOURS is the twelve hours the redesigned board fits the day into, fixed", async () => {
+  const { TIME_AXIS_HOURS } = await import("../src/dispatch-logic.js");
+  assert.equal(TIME_AXIS_HOURS.length, 12);
+  assert.equal(TIME_AXIS_HOURS[0], 5);
+  assert.equal(TIME_AXIS_HOURS[TIME_AXIS_HOURS.length - 1], 16);
+});
+
+test("MOFFETT_WEIGHT_LB is named once and is the figure the page reads for a Moffett", async () => {
+  const { MOFFETT_WEIGHT_LB } = await import("../src/dispatch-logic.js");
+  assert.equal(MOFFETT_WEIGHT_LB, 4500);
+});
+
+test("carriesMoffett reads the truck type and the flag, in the demo's order: BOOM rides with one", async () => {
+  const { carriesMoffett } = await import("../src/dispatch-logic.js");
+  assert.equal(carriesMoffett({ truck_type: "BOOM" }), true);
+  assert.equal(carriesMoffett({ truck_type: "FLATBED" }), false);
+  assert.equal(carriesMoffett({ truck_type: "BOOM", carries_moffett: false }), false, "an explicit off beats the type");
+  assert.equal(carriesMoffett({ truck_type: "FLATBED", carries_moffett: true }), true, "an explicit on beats the type");
+  assert.equal(carriesMoffett(null), false);
+  assert.equal(carriesMoffett(undefined), false);
+});
+
+test("netPayloadWords subtracts the Moffett when the truck carries one, and is words when capacity is absent", async () => {
+  const { netPayloadWords } = await import("../src/dispatch-logic.js");
+  assert.match(netPayloadWords(4536, true), /after Moffett/, "a Moffett truck reads its payload after the Moffett");
+  assert.match(netPayloadWords(4536, false), /lb payload$/, "a wide-open truck reads its full payload");
+  assert.equal(netPayloadWords(null, false), "Capacity not measured");
+  assert.equal(netPayloadWords(undefined, true), "Capacity not measured");
+});
+
+test("yardLoadOrder puts PLANNED first, DISPATCHED next, then COMPLETED and CANCELLED last, by run_no within a status", async () => {
+  const { yardLoadOrder } = await import("../src/dispatch-logic.js");
+  const row = (runNo, status) => ({ run: { run_no: runNo, status }, gauge: {}, commit: {}, stops: [] });
+  const ordered = yardLoadOrder([
+    row("RUN-PLM-9", "COMPLETED"),
+    row("RUN-PLM-1", "PLANNED"),
+    row("RUN-PLM-3", "CANCELLED"),
+    row("RUN-PLM-2", "DISPATCHED"),
+    row("RUN-PLM-0", "PLANNED"),
+  ]);
+  assert.deepEqual(ordered.map((r) => r.run.run_no), ["RUN-PLM-0", "RUN-PLM-1", "RUN-PLM-2", "RUN-PLM-9", "RUN-PLM-3"]);
+});
+
+test("deckSlotsForStops assigns one slot per stop on the lane's day, never on other days", async () => {
+  const { deckSlotsForStops } = await import("../src/dispatch-logic.js");
+  const slots = deckSlotsForStops(
+    [
+      { stop_no: 1, scheduled_date: "2026-10-16" },
+      { stop_no: 2, scheduled_date: "2026-10-17" },
+      { stop_no: 3, scheduled_date: "2026-10-16" },
+      { stop_no: 4, scheduled_date: "2026-10-16" },
+    ],
+    "2026-10-16",
+  );
+  assert.equal(slots.get(1), 1);
+  assert.equal(slots.get(2), 1, "another day still gets a slot so the row draws even on the empty side");
+  assert.equal(slots.get(3), 2);
+  assert.equal(slots.get(4), 3);
+});
+
+test("boardProblems lists missing crews and over-weight runs in one walk, and is empty on a clean day", async () => {
+  const { boardProblems } = await import("../src/dispatch-logic.js");
+  const view = {
+    branch_id: "b", date: "d", policy: null, value_visible: false, gaps_checked: true, can_commit: true, can_reopen: true,
+    working_from: "d", working_to: "d", working_days: 14, counts: { deliveries: 0, pickups: 0, unassigned: 0, ready: 0, requested: 0, committed: 0, due: 0 },
+    trucks: [], loads: [], staging: [],
+  };
+  assert.deepEqual(boardProblems(view), [{ kind: "no-runs", runNo: "" }]);
+  const rowMissing = (status, truck_id, driver_id, band) => ({
+    run: { id: "r1", run_no: "RUN-PLM-1", status, truck_id, driver_id },
+    gauge: { weight_kg: 9000, capacity_kg: 9000, band },
+    commit: { due_to_commit: false, committed: false, can_reopen: true, reopened: false },
+    stops: [],
+  });
+  const view2 = {
+    ...view, loads: [
+      rowMissing("PLANNED", null, null, "GREEN"),
+      rowMissing("PLANNED", "t1", null, "GREEN"),
+      rowMissing("PLANNED", "t1", "d1", "RED"),
+    ],
+  };
+  const problems = boardProblems(view2);
+  assert.equal(problems.length, 3, "1 both-missing, 1 driver-missing, 1 over-weight");
+  assert.equal(problems[0].kind, "missing-crew");
+  assert.equal(problems[0].what, "both");
+  assert.equal(problems[1].kind, "missing-crew");
+  assert.equal(problems[1].what, "driver");
+  assert.equal(problems[2].kind, "over-weight");
+});
+
+test("boardProblemLine reads each problem in its own words, never in a generic sentence", async () => {
+  const { boardProblemLine } = await import("../src/dispatch-logic.js");
+  assert.match(boardProblemLine({ kind: "over-weight", runNo: "RUN-PLM-1", figure: "10.0 of 9.9 tons" }), /RUN-PLM-1 is over weight/);
+  assert.match(boardProblemLine({ kind: "missing-crew", runNo: "RUN-PLM-2", what: "both" }), /missing a truck and a driver/);
+  assert.match(boardProblemLine({ kind: "missing-crew", runNo: "RUN-PLM-2", what: "driver" }), /missing a driver/);
+  assert.match(boardProblemLine({ kind: "due-to-commit", runNo: "RUN-PLM-3", daysToCommit: 1 }), /due to commit in 1 day/);
+  assert.match(boardProblemLine({ kind: "due-to-commit", runNo: "RUN-PLM-3", daysToCommit: 2 }), /due to commit in 2 days/);
+});

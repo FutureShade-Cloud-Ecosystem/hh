@@ -559,4 +559,231 @@ export const warrantyStyles = css`
       grid-template-columns: 1fr;
     }
   }
+
+  // -- change 6 item 5: defects tab, claim-evidence drawer, vendors and credits tab -----------------------
+
+  .row-tiles {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin: 16px 0 20px;
+  }
+  .row-tiles.three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .tile {
+    border: 1px solid var(--mh-frame, #d6d8de);
+    border-radius: 8px;
+    padding: 14px 16px;
+    background: var(--mh-bg, #fff);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .tile-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--mh-fg-mute, #6b6f78);
+  }
+  .tile-headline {
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--mh-fg, #15171a);
+  }
+  .tile-headline.amount {
+    font-feature-settings: "tnum";
+  }
+  .tile-sub {
+    font-size: 13px;
+    color: var(--mh-fg-mute, #6b6f78);
+  }
+  .defects-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .defects-table th,
+  .defects-table td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--mh-frame, #e5e7eb);
+    font-size: 14px;
+  }
+  .defects-table th {
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--mh-fg-mute, #6b6f78);
+  }
+  .defects-table .badge.warn {
+    color: var(--mh-amber, #b46a00);
+    border: 1px solid var(--mh-amber, #b46a00);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 12px;
+  }
+  .defects-table .badge.dim {
+    color: var(--mh-fg-mute, #6b6f78);
+    border: 1px solid var(--mh-frame, #d6d8de);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 12px;
+  }
+  .split-grid {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 16px;
+    margin-top: 8px;
+  }
+  .vc-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .vc-table th,
+  .vc-table td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--mh-frame, #e5e7eb);
+    font-size: 14px;
+  }
+  .vc-table th {
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--mh-fg-mute, #6b6f78);
+  }
+  .vc-table tr.is-open {
+    background: var(--mh-tint, #f6f4ee);
+  }
+  .vc-table tr.is-open td {
+    border-bottom-color: var(--mh-tint-edge, #ece6cf);
+  }
+  .vc-panel {
+    border: 1px solid var(--mh-frame, #d6d8de);
+    border-radius: 8px;
+    padding: 14px 16px;
+    background: var(--mh-bg, #fff);
+  }
+  .vc-panel .rolled-claims {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .vc-panel .rolled-claim {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    align-items: center;
+    font-size: 14px;
+  }
+  .vc-panel .rolled-product {
+    color: var(--mh-fg, #15171a);
+  }
+  .vc-panel .evidence-row {
+    margin-top: 4px;
+    margin-bottom: 10px;
+  }
+  .drawer-shell {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+  }
+  .drawer-back {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.32);
+  }
+  .drawer-pane {
+    position: relative;
+    margin-left: auto;
+    width: min(960px, 96vw);
+    max-width: 96vw;
+    height: 100%;
+    overflow: auto;
+    background: var(--mh-bg, #fff);
+    border-left: 1px solid var(--mh-frame, #d6d8de);
+    padding: 16px 20px;
+  }
+  .drawer-pane .drawer-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+  }
+  .drawer-grid {
+    display: grid;
+    gap: 16px;
+  }
+  .drawer-grid.two {
+    grid-template-columns: 1.4fr 1fr;
+  }
+  .claim-card {
+    border: 1px solid var(--mh-frame, #d6d8de);
+    border-radius: 8px;
+    padding: 14px 16px;
+    background: var(--mh-bg, #fff);
+  }
+  .claim-card .claim-rows {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    row-gap: 6px;
+    column-gap: 14px;
+  }
+  .claim-card .claim-row {
+    display: contents;
+  }
+  .claim-card .claim-row > span:first-child {
+    color: var(--mh-fg-mute, #6b6f78);
+    font-size: 13px;
+  }
+  .claim-card .claim-row > span:last-child {
+    font-size: 14px;
+    color: var(--mh-fg, #15171a);
+  }
+  .photo-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 6px;
+  }
+  .photo-row .photo-frame {
+    width: 96px;
+    height: 96px;
+    border: 1px solid var(--mh-frame, #d6d8de);
+    border-radius: 8px;
+    background-color: var(--mh-tile, #f3f4f6);
+    background-size: cover;
+    background-position: center;
+  }
+  .timeline {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .timeline .timeline-row {
+    display: grid;
+    grid-template-columns: 12px 1fr max-content;
+    align-items: baseline;
+    gap: 10px;
+    padding: 6px 0;
+  }
+  .timeline .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--mh-amber, #b46a00);
+    display: inline-block;
+  }
+  .timeline .detail {
+    margin: 0;
+    font-size: 14px;
+  }
+  .timeline .timeline-when {
+    font-size: 12px;
+    color: var(--mh-fg-mute, #6b6f78);
+  }
 `;

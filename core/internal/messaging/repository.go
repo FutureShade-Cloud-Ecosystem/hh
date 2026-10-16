@@ -1696,6 +1696,83 @@ func (r *Repository) personaUsersByRole(ctx context.Context) (map[string][]strin
 	return out, rows.Err()
 }
 
+// StaffRosterRow is one staffer on the New message picker's roster: the
+// display name, the winning role's display name from the role catalog
+// (roles.name, never the code) and the granted branches' display names
+// joined with a comma and a space. Either label is empty when the person
+// holds none. No email, no phone, no permission or cost field, no tier
+// leaves this query.
+type StaffRosterRow struct {
+	UserID      string
+	DisplayName string
+	RoleLabel   string
+	BranchLabel string
+}
+
+// StaffRoster answers every active staffer of one org, the people a direct
+// message may be opened with (the DM rule admits exactly the ACTIVE staff,
+// whatever branch they sit at: a DM names no branch, so the branch wall that
+// governs rooms founded naming one has nothing to bite on here), one
+// exception the DM rule itself does not make: a holder of the carried
+// platform SUPER_ADMIN role is no dealer's staffer (0043 plants the platform
+// owner, the UAT migrations plant platform testers, and the demo populate
+// stamps them into the org), so such a row never answers the picker. The
+// identity tables are the ones this file's allowlist entry already carries;
+// the org wall is the additive 0213 anchor read the same shape the load
+// doors use (a row anchored to another org is nobody else's staffer, an
+// unanchored row is the carried single org world's). The winning role is the
+// lowest tier's, ties by role id, the same priority the authority resolver
+// applies; the order of the answer is the service's to fix (it sorts bytewise
+// for the cursor), so the query orders by nothing.
+func (r *Repository) StaffRoster(ctx context.Context, orgID string) ([]StaffRosterRow, error) {
+	if r.pool == nil {
+		return nil, errNoDB
+	}
+	if orgID == "" {
+		return nil, errors.New("messaging: staff roster requires the org id")
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT u.id::text, u.display_name,
+		       COALESCE(win.name, ''),
+		       COALESCE(brs.label, '')
+		FROM users u
+		LEFT JOIN LATERAL (
+			SELECT ro.name
+			FROM user_roles ur
+			JOIN roles ro ON ro.id = ur.role_id
+			WHERE ur.user_id = u.id AND ur.deleted_at IS NULL AND ro.deleted_at IS NULL
+			ORDER BY ro.tier, ro.id
+			LIMIT 1
+		) win ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT string_agg(loc.name, ', ' ORDER BY loc.name) AS label
+			FROM user_branch_grants ubg
+			JOIN locations loc ON loc.id = ubg.branch_id AND loc.loc_type = 'BRANCH'
+			WHERE ubg.user_id = u.id AND ubg.deleted_at IS NULL
+		) brs ON TRUE
+		WHERE u.status = 'ACTIVE'
+		  AND u.deleted_at IS NULL
+		  AND (u.org_id IS NULL OR u.org_id = $1::uuid)
+		  AND NOT EXISTS (
+			SELECT 1 FROM user_roles ur
+			JOIN roles ro ON ro.id = ur.role_id
+			WHERE ur.user_id = u.id AND ur.deleted_at IS NULL AND ro.code = 'SUPER_ADMIN'
+		  )`, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("staff roster: %w", err)
+	}
+	defer rows.Close()
+	var out []StaffRosterRow
+	for rows.Next() {
+		var row StaffRosterRow
+		if err := rows.Scan(&row.UserID, &row.DisplayName, &row.RoleLabel, &row.BranchLabel); err != nil {
+			return nil, fmt.Errorf("staff roster: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 // - The sync feeds (0385): per-caller reads and the stamped writes -
 //
 // Every feed query here is fenced to ONE user's own world: the channels and
