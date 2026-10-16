@@ -3946,6 +3946,20 @@ type MessagingChannelMember struct {
 	JoinedAt  time.Time `json:"joined_at"`
 }
 
+type MessagingPerson struct {
+	UserId      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	RoleLabel   string `json:"role_label"`
+	BranchLabel string `json:"branch_label"`
+	IsMe        bool   `json:"is_me"`
+}
+
+type MessagingPersonPage struct {
+	Items      []MessagingPerson `json:"items"`
+	NextCursor *string           `json:"next_cursor,omitempty"`
+	Limit      *int32            `json:"limit,omitempty"`
+}
+
 type MessagingMessage struct {
 	Id           string     `json:"id"`
 	ChannelId    string     `json:"channel_id"`
