@@ -296,8 +296,18 @@ function position(n) {
   return { open_balance_cents, credit_limit_cents, available_credit_cents: credit_limit_cents - open_balance_cents, overdue_cents };
 }
 
+function c8BucketOf(days) {
+  if (days <= 0) return { label: "Current", key: "CURRENT" };
+  if (days <= 30) return { label: "1 to 30", key: "1_30" };
+  if (days <= 60) return { label: "31 to 60", key: "31_60" };
+  if (days <= 90) return { label: "61 to 90", key: "61_90" };
+  return { label: "91 and over", key: "90_PLUS" };
+}
+
 function registerRow(inv) {
   const a = acct(inv.acct);
+  const days = Math.max(inv.late, 0);
+  const bucket = c8BucketOf(days);
   const row = {
     id: inv.id,
     invoice_no: inv.invoice_no,
@@ -313,7 +323,9 @@ function registerRow(inv) {
     balance_cents: inv.balance_cents,
     stored_status: inv.balance_cents === 0 ? "PAID" : inv.balance_cents < inv.total_cents ? "PARTIALLY_PAID" : "FINALIZED",
     status: statusOf(inv),
-    days_overdue: Math.max(inv.late, 0),
+    days_overdue: days,
+    bucket_label: bucket.label,
+    bucket_key: bucket.key,
     account_status: accountStatus(a.n),
     disputed: inv.dispute !== null && inv.dispute.status === "OPEN",
     account: position(a.n),

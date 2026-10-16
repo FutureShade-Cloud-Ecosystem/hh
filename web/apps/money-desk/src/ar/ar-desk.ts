@@ -72,7 +72,7 @@ export class ArDesk {
   #landing: DeskModel["landing"] = null;
   #aging: DeskModel["aging"] = [];
   #rows: readonly BillingRegisterRow[] = [];
-  #filter: RegisterFilter = "open";
+  #filter: RegisterFilter = "all";
   #cardFilter: string | null = null;
   #selection: DeskModel["selection"] = null;
   #bounced: DeskModel["bounced"] = [];

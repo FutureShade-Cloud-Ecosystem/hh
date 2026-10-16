@@ -32,6 +32,7 @@ export default defineConfig(({ mode }) => ({
     port: Number(appPort),
     strictPort: true,
     host: "127.0.0.1",
+    watch: process.env.ROLE_VITE_NO_WATCH ? null : undefined,
     proxy: {
       "/api": {
         target: `http://127.0.0.1:${stubPort}`,

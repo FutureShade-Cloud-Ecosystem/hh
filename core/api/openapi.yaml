@@ -832,7 +832,7 @@ paths:
         - name: chip
           in: query
           required: false
-          description: Filter to one derived register status
+          description: Filter to one derived register status. The C8 chips (all, past_due, current, on_hold) sit alongside the legacy StatusX strings; old URLs still resolve.
           schema:
             type: string
             enum:
@@ -846,6 +846,10 @@ paths:
               - DRAFT
               - VOID
               - CREDIT
+              - all
+              - past_due
+              - current
+              - on_hold
         - name: branch_id
           in: query
           required: false
@@ -28088,6 +28092,26 @@ components:
           type: integer
           format: int32
           description: Zero unless past due
+        bucket_label:
+          type: string
+          description: 'C8 5-bucket human label (Current / 1 to 30 / 31 to 60 / 61 to 90 / 91 and over), derived from days_overdue against the same server asOf clock that picked days_overdue itself. Empty for not-yet-due rows.'
+          enum:
+            - ""
+            - Current
+            - 1 to 30
+            - 31 to 60
+            - 61 to 90
+            - 91 and over
+        bucket_key:
+          type: string
+          description: 'C8 5-bucket machine-readable key (CURRENT / 1_30 / 31_60 / 61_90 / 90_PLUS), for joins and server-side filtering. Empty when not past due.'
+          enum:
+            - ""
+            - CURRENT
+            - 1_30
+            - 31_60
+            - 61_90
+            - 90_PLUS
         account_status:
           type: string
           enum:
