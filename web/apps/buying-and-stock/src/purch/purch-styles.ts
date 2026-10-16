@@ -39,6 +39,11 @@ export const purchStyles = css`
   .badge-row { display: flex; flex-wrap: wrap; gap: var(--hh-s-8); align-items: center; }
   .btn-danger { white-space: nowrap; }
   .mono { font-family: var(--hh-font-mono); }
+  /* The vendor codes table's wordy columns keep a readable floor: the mono code columns hold
+     their own width, the words wrap at spaces, and the table scrolls inside its card rather
+     than crushing a cell to its longest word. */
+  [data-codes] td.full { min-width: 12rem; }
+  [data-codes] td[data-label="Vendor unit"] { min-width: 10rem; }
   td.warn { color: var(--hh-state-watch); font-weight: 700; }
   td.warn::before { content: ""; }
   .variance-note { margin: var(--hh-s-4) 0 0; font-size: 13px; }

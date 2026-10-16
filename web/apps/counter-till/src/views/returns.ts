@@ -9,6 +9,11 @@ import { keyed } from "lit/directives/keyed.js";
 import { formatMoney } from "../money.js";
 import { DISPOSITIONS, DISPOSITION_WORDS, type Disposition } from "../returns/draft.js";
 import { STEP_ORDER, type ReturnStep, type ReturnsFlow } from "../returns/flow.js";
+import {
+  defectCostCents,
+  defectThresholdSentence,
+  type DefectSentence,
+} from "../returns/defect.js";
 import type { CustomerLine, CustomerOrder } from "../returns/lines.js";
 import { approverLabels } from "../returns/approval.js";
 import type { RefundMethod } from "../returns/note.js";
@@ -280,6 +285,39 @@ export const returnsStyles = css`
     border-color: var(--hh-accent);
     background: color-mix(in srgb, var(--hh-accent) 22%, transparent);
     font-weight: 600;
+  }
+  /*
+   * The manufacturer defect threshold sentence (walk change 6 item 4, boards
+   * ct-return-defect-over and ct-return-defect-under). One bullet at the line's left, a short word
+   * after. The sentence is one piece of prose; the bullet is the only visual difference between
+   * the over and under thresholds, kept identical in size so the two boards read identically.
+   */
+  .returns .defect-sentence {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--hh-s-8);
+    margin: var(--hh-s-12) 0 0;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .returns .defect-sentence::before {
+    content: "";
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--hh-accent);
+    margin-top: 6px;
+  }
+  .returns .defect-sentence[data-kind="under"]::before {
+    background: var(--hos-text-dim);
+  }
+  .returns .defect-sentence[data-testid="returns-defect-unreadable"] {
+    font-weight: 400;
+    color: var(--hos-text-dim);
+  }
+  .returns .defect-sentence[data-testid="returns-defect-unreadable"]::before {
+    display: none;
   }
   .returns .rt-credit h3 {
     font-size: 15px;
@@ -766,12 +804,65 @@ function renderLine(flow: ReturnsFlow, order: CustomerOrder, line: CustomerLine)
                 </button>
               `)}
             </div>
+            ${chosen === "MANUFACTURER_DEFECT" ? renderDefectSentence(flow, line, qty) : nothing}
             ${qty > 0 && chosen === null
               ? html`<p class="notice" data-testid="returns-line-choose">Choose what happens below.</p>`
               : nothing}
           `}
     </li>
   `;
+}
+
+/**
+ * The one line that says what the picked manufacturer defect will do (walk change 6 item 4, boards
+ * ct-return-defect-over and ct-return-defect-under): "Over the $50 claim threshold ($56.80 at cost):
+ * this goes to a warranty claim." or "Under the $50 claim threshold ($12.30 at cost): logged as
+ * shrinkage." The cost is the line's picked quantity x unit cost, in integer cents; the threshold
+ * is the dealer's live warranty claim threshold, the figure Manager Home and the till agree on by
+ * reading the same row. A line whose unit cost has not yet arrived on the wire answers in quiet
+ * words instead of guessing at zero.
+ */
+function renderDefectSentence(flow: ReturnsFlow, line: CustomerLine, qty: number): TemplateResult {
+  const threshold = flow.claimThresholdCents;
+  if (threshold === null || threshold <= 0) {
+    return html`<p
+      class="defect-sentence"
+      data-testid="returns-defect-unreadable"
+      data-line=${line.orderLineId}
+    >
+      Manufacturer defect: the dealer's claim threshold has not loaded yet; sign out and back in to read it.
+    </p>`;
+  }
+  if (line.unitCostCents === null) {
+    return html`<p
+      class="defect-sentence"
+      data-testid="returns-defect-unreadable"
+      data-line=${line.orderLineId}
+    >
+      Manufacturer defect: this line has no unit cost on it yet, so the threshold cannot be sized; pick another disposition.
+    </p>`;
+  }
+  const cost = defectCostCents(qty, line.unitCostCents);
+  const sentence: DefectSentence | null = defectThresholdSentence(cost, threshold);
+  if (sentence === null) {
+    return html`<p
+      class="defect-sentence"
+      data-testid="returns-defect-unreadable"
+      data-line=${line.orderLineId}
+    >
+      Manufacturer defect: the claim threshold could not be compared; check the dealer's warranty setting.
+    </p>`;
+  }
+  return html`<p
+    class="defect-sentence"
+    data-testid="returns-defect-sentence"
+    data-line=${line.orderLineId}
+    data-kind=${sentence.kind}
+    data-cost-cents=${sentence.costCents}
+    data-threshold-cents=${sentence.thresholdCents}
+  >
+    ${sentence.words}
+  </p>`;
 }
 
 function shownQty(value: number): string {

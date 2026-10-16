@@ -261,7 +261,7 @@ export class LandedDesk implements AreaDesk {
     for (const line of cap.po?.lines ?? []) onHand[line.id] = this.#host.field(`onhand-${line.id}`);
     const picked = this.#orders.find((o) => orderOptionText(o) === this.#host.field("lc-po"));
     const retroText = this.#host.field("lc-retro-of");
-    const prior = cap.po === null ? undefined : retroCandidates(this.#items, cap.po.id).find((p) => priorOptionText(p) === retroText);
+    const prior = cap.po === null ? undefined : retroCandidates(this.#items, cap.po.id).find((p) => priorOptionText(p, this.#today()) === retroText);
     const check = buildCreate(
       {
         poNo: picked?.po_no ?? "",
@@ -378,7 +378,13 @@ export class LandedDesk implements AreaDesk {
       busy: this.#busy,
       error: this.#phase === "error" || this.#error !== "" ? this.#error : "",
       notice: this.#notice,
+      today: this.#today(),
     });
+  }
+
+  /** Today, YYYY-MM-DD in the reader's own day: the stamps on screen read against it. */
+  #today(): string {
+    return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   }
 }
 

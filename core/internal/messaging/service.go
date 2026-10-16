@@ -68,6 +68,12 @@ type store interface {
 	GetChannelRule(ctx context.Context, channelID string) (MembershipRule, error)
 	SetChannelRule(ctx context.Context, channelID string, rule MembershipRule) error
 	ListChannelRules(ctx context.Context, userID string, isGlobal bool, branches map[string]bool) ([]MembershipRuleEntry, error)
+	// Group rooms (walk change 7, slice S2, rulings 3 and 4): the create,
+	// the any-member seat with its system line, and the rename with its own.
+	CreateGroup(ctx context.Context, ownerUserID, name string, memberIDs []string) (Channel, error)
+	SeatGroupMember(ctx context.Context, channelID, userID, adderName, targetName string) (ChannelMember, bool, error)
+	RenameGroup(ctx context.Context, channelID, name, actorName string) (Channel, error)
+	userActive(ctx context.Context, userID string) error
 	// The membership walls' reads: the room's kind/branch/auto_scope, the
 	// caller's row role, and the add-target's branch reach.
 	channelFacts(ctx context.Context, channelID string) (channelFactsRow, error)

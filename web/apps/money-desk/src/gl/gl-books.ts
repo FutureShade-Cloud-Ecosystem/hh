@@ -1,6 +1,6 @@
 // The ledger slice's books screens: the chart of accounts, the new journal form and its review, the recurring
 // templates, the fiscal periods with their close and reopen, the year end close, the checks (the receivables
-// tie out and the BisTrack check) and the policy. Plain render functions of a model, like gl-views.ts: no
+// tie out and the legacy import check) and the policy. Plain render functions of a model, like gl-views.ts: no
 // state, no events, every control a plain element carrying a data-action name.
 //
 // Every figure is the server's, formatted: nothing on these screens adds two amounts. The new journal form
@@ -64,6 +64,8 @@ export interface BooksModel {
   readonly policy: Section<GlPolicy | null>;
   readonly tie: Section<readonly GlTieoutState[]>;
   readonly bis: Section<GlBisTrackTieoutReport | null>;
+  /** The dealer's legacy import source word; "" is none, and the legacy import section is not drawn. */
+  readonly legacyImport: string;
   readonly confirm: Confirm | null;
   readonly composing: boolean;
   readonly lineCount: number;
@@ -563,16 +565,19 @@ function tieCard(frame: Frame): TemplateResult {
   `;
 }
 
+/** The one name the legacy import section wears on screen, whichever legacy system the dealer names. */
+const LEGACY_IMPORT_LABEL = "Legacy import check";
+
 function bisCard(frame: Frame): TemplateResult {
   const bis = frame.books.bis;
   if (frame.books.mode !== "controller") {
-    return html`<section class="gl-panel" aria-label="BisTrack check" data-bis><div class="gl-panel-head"><h3>BisTrack check</h3></div>${held("The BisTrack check is for the Financial Controller.")}</section>`;
+    return html`<section class="gl-panel" aria-label=${LEGACY_IMPORT_LABEL} data-bis><div class="gl-panel-head"><h3>${LEGACY_IMPORT_LABEL}</h3></div>${held(`The ${LEGACY_IMPORT_LABEL.toLowerCase()} is for the Financial Controller.`)}</section>`;
   }
   const report = bis.value;
   return html`
-    <section class="gl-panel" aria-label="BisTrack check" data-bis>
-      <div class="gl-panel-head"><h3>BisTrack check</h3>${later("static snapshot")}</div>
-      <p class="gl-dim">Compares this ledger's closing balances for one month against the BisTrack trial balance the dealer is moving from. It reads a fixed snapshot, not a live feed.</p>
+    <section class="gl-panel" aria-label=${LEGACY_IMPORT_LABEL} data-bis>
+      <div class="gl-panel-head"><h3>${LEGACY_IMPORT_LABEL}</h3>${later("static snapshot")}</div>
+      <p class="gl-dim">Compares this ledger's closing balances for one month against the trial balance of the legacy system the dealer is moving from. It reads a fixed snapshot, not a live feed.</p>
       <div class="gl-form-grid">
         <label class="gl-field">Fiscal year
           <input data-field="bis-year" type="text" inputmode="numeric" autocomplete="off" aria-label="Fiscal year" />
@@ -596,10 +601,10 @@ function bisReport(report: GlBisTrackTieoutReport): TemplateResult {
   return html`
     <div data-bis-report>
       <p>${pill(report.ties_within_tolerance ? "good" : "stop", report.ties_within_tolerance ? "Ties within tolerance" : "Does not tie")}
-        ${report.is_synthetic ? html` <span class="gl-dim">Synthetic test data, not a real BisTrack export.</span>` : nothing}</p>
+        ${report.is_synthetic ? html` <span class="gl-dim">Synthetic test data, not a real legacy export.</span>` : nothing}</p>
       <div class="gl-scroll">
-        <table aria-label="BisTrack lines">
-          <thead><tr><th>Account</th><th class="num">This ledger</th><th class="num">BisTrack</th><th class="num">Difference</th><th class="gl-col-type">Found</th></tr></thead>
+        <table aria-label="Legacy import lines">
+          <thead><tr><th>Account</th><th class="num">This ledger</th><th class="num">Legacy import</th><th class="num">Difference</th><th class="gl-col-type">Found</th></tr></thead>
           <tbody>
             ${report.lines.map(
               (l) => html`<tr>
@@ -619,7 +624,7 @@ function bisReport(report: GlBisTrackTieoutReport): TemplateResult {
 }
 
 export function checksView(frame: Frame): TemplateResult {
-  return html`<div class="gl-stack">${tieCard(frame)}${bisCard(frame)}</div>`;
+  return html`<div class="gl-stack">${tieCard(frame)}${frame.books.legacyImport === "" ? nothing : bisCard(frame)}</div>`;
 }
 
 // ---- the policy -----------------------------------------------------------------------------------

@@ -84,7 +84,7 @@ export class BankrecDesk {
   #linesLoaded = false;
   // The last message brought into view, so a new outcome is shown to a person scrolled away from the banner.
   #lastSaid = "";
-  #ruleKind = RULE_KINDS[0] ?? "gateway_ref_exact";
+  #ruleKind: string = RULE_KINDS[0] ?? "gateway_ref_exact";
   #busy = false;
   #error = "";
   #notice = "";
@@ -657,7 +657,7 @@ export class BankrecDesk {
   // ---- rules ------------------------------------------------------------------------------------------
 
   #cloneRule(rule: BankRecMatchRule): void {
-    const f = ruleSpecFields(rule.spec as Record<string, unknown>);
+    const f = ruleSpecFields(rule.spec);
     this.#ruleKind = f.kind;
     this.#form["br-rule-code"] = rule.code;
     this.#form["br-rule-name"] = rule.name;

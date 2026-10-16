@@ -27,10 +27,10 @@
 # launch map is pinned to the manifest, the front door's tile table and the
 # Dockerfile's build lines by scripts/field-profiles.test.ts.
 #
-# A Work app of the manifest with no web app yet (House Messages) is not in
-# the launch map: its front door tile is a coming tile until its module lands,
-# and the map grows with it (the test turns red when an app gets a web bundle
-# and the map does not name it).
+# A Work app of the manifest with no web app yet is not in the launch map: its
+# front door tile is a coming tile until its module lands, and the map grows
+# with it (the test turns red when an app gets a web bundle and the map does
+# not name it).
 #
 # Run by beforeBuildCommand in tauri.conf.json (cwd independent: it resolves
 # the repository root itself), or by hand from anywhere:
@@ -68,6 +68,7 @@ LAUNCH_MAP=(
   "buying-and-stock buying-and-stock /buying-and-stock/"
   "money-desk money-desk /money-desk/"
   "manager-home manager-home /home/"
+  "house-messages house-messages /messages/"
   "dealer-admin dealer-admin /dealer-admin/"
 )
 

@@ -37,6 +37,7 @@ import {
   transitDaysFor,
 } from "./inventory-logic.js";
 import { formatMoney, formatQty } from "../po/po-money.js";
+import { whenWords } from "../po/po-logic.js";
 
 export type InvTab = "lookup" | "browse" | "branch-stock" | "pending" | "reservations" | "transfers" | "receive" | "replenish";
 
@@ -268,7 +269,7 @@ function lookupPane(model: InvModel): TemplateResult {
                   ${model.moves.map(
                     (m) => html`
                       <tr data-move-row>
-                        <td data-label="When" class="code">${m.occurred_at.slice(0, 16).replace("T", " ")}</td>
+                        <td data-label="When">${whenWords(m.occurred_at, model.today)}</td>
                         <td data-label="Type">${moveTypeWord(m.move_type)}</td>
                         <td data-label="Direction" class="${m.direction === "OUT" ? "stop" : ""}">${moveDirectionWord(m.direction)}</td>
                         <td class="num" data-label="Quantity">${formatQty(m.qty_base, m.uom)}</td>

@@ -3,7 +3,7 @@
 // operation, in route-table order (paths in byte order). Every function
 // resolves a Result and never throws on a refusal or a transport error.
 
-import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelDelete, MessagingChannelList, MessagingChannelMember, MessagingChannelMemberAdd, MessagingChannelMembersList, MessagingChannelVisibilityPatch, MessagingCustomerInbound, MessagingDMCreate, MessagingDirectoryList, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingHouseConversation, MessagingHouseQueue, MessagingMembershipRule, MessagingMembershipRulesList, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
+import type { MessagingAck, MessagingAckProgress, MessagingAckRequest, MessagingChannel, MessagingChannelCreate, MessagingChannelDelete, MessagingChannelList, MessagingChannelMember, MessagingChannelMemberAdd, MessagingChannelMembersList, MessagingChannelRename, MessagingChannelVisibilityPatch, MessagingCustomerInbound, MessagingDMCreate, MessagingDirectoryList, MessagingEventClass, MessagingEventClassList, MessagingEventClassPut, MessagingExportResponse, MessagingGroupCreate, MessagingHouseConversation, MessagingHouseQueue, MessagingMembershipRule, MessagingMembershipRulesList, MessagingMessage, MessagingMessageList, MessagingMessagePage, MessagingMessagePost, MessagingNotifyPrefs, MessagingPaymentRulePrefs, MessagingPaymentRulePut, MessagingPrefsPatch, MessagingRepAssignRequest, MessagingRepAssignment, MessagingRepAssignmentList, MessagingRepRoutePreview, MessagingRepUnassignResponse, MessagingRouteResult, MessagingStreamTicket, MessagingUnreadSummary } from "./types.js";
 import type { Result } from "../result.js";
 import { ApiClient, type ApiCallOptions } from "../http.js";
 
@@ -51,6 +51,23 @@ export async function messagingDeleteChannel(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingDeleteChannel",
+  });
+}
+
+export async function messagingRenameChannel(
+  client: ApiClient,
+  id: string | number,
+  body: MessagingChannelRename,
+  call?: ApiCallOptions
+): Promise<Result<MessagingChannel>> {
+  return client.request<MessagingChannel>({
+    method: "PATCH",
+    path: "/api/v1/messaging/channels/{id}",
+    pathParams: { id },
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingRenameChannel",
   });
 }
 
@@ -386,6 +403,21 @@ export async function messagingExport(
     signal: call?.signal,
     timeoutMs: call?.timeoutMs,
     operationId: "messagingExport",
+  });
+}
+
+export async function messagingCreateGroup(
+  client: ApiClient,
+  body: MessagingGroupCreate,
+  call?: ApiCallOptions
+): Promise<Result<MessagingChannel>> {
+  return client.request<MessagingChannel>({
+    method: "POST",
+    path: "/api/v1/messaging/groups",
+    body,
+    signal: call?.signal,
+    timeoutMs: call?.timeoutMs,
+    operationId: "messagingCreateGroup",
   });
 }
 

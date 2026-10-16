@@ -198,3 +198,36 @@ func TestDefaultBuildCarriesNoTaskSyncRepair(t *testing.T) {
 		}
 	}
 }
+
+// orderRepRepairSignatures are the order rep repair's load-bearing literals: the one guarded
+// UPDATE (the Sales persona by email, the open orders of the branch the demo logins work, the
+// demo marker, and the NULL the repair waits for) and the plan's own words about it. The repair
+// is the demo build's write alone.
+var orderRepRepairSignatures = []string{
+	`UPDATE orders
+	   SET salesperson_id = (SELECT id FROM users WHERE email = $1::citext), updated_at = $2
+	 WHERE salesperson_id IS NULL
+	   AND branch_id = $3::uuid
+	   AND status = ANY($4::text[])
+	   AND metadata->>'demo_seed' = $5
+	   AND EXISTS (SELECT 1 FROM users WHERE email = $1::citext)`,
+	"setting the demo rep on the open yard-branch orders",
+}
+
+// TestDefaultBuildCarriesNoOrderRepRepair holds the same gate for the order rep repair: the
+// default binary carries none of it, and the demo binary carries both markers or this test has
+// stopped probing.
+func TestDefaultBuildCarriesNoOrderRepRepair(t *testing.T) {
+	def := buildCoreBinary(t, "core-default-orderreprepair", "")
+	for _, sig := range orderRepRepairSignatures {
+		if bytes.Contains(def, []byte(sig)) {
+			t.Errorf("the default build carries the order rep repair's %q; the repair must compile only into the demo build", sig)
+		}
+	}
+	demo := buildCoreBinary(t, "core-demo-orderreprepair", "-tags=demo")
+	for _, sig := range orderRepRepairSignatures {
+		if !bytes.Contains(demo, []byte(sig)) {
+			t.Errorf("the demo build has lost the order rep repair's %q, so the default leg above passes vacuously", sig)
+		}
+	}
+}
