@@ -498,3 +498,60 @@ test("the manifest and the scan trail: a run's document, a print recorded, an or
   refused(await call("GET", "/api/v1/dispatch/scan-trail"), 400, "order_id is required");
   refused(await call("GET", "/api/v1/dispatch/scan-trail?order_id=00000000-0000-4000-9000-000000000000"), 404, "not found");
 });
+
+test("split freight: an ordinary split applies, a raise above the quote parks and converges, the card reads back, and every refusal is the core's sentence", async () => {
+  await reset();
+  const { stop } = await ids();
+  const split = (order, over) => call("POST", "/api/v1/dispatch/freight-split", { order_id: stop(order).order_id, loads: 2, ...over });
+  // ORD-0012: freight 300.00 quoted at 300.00. Dividing it is the ordinary work and never gates.
+  const done = await split("ORD-0012", {});
+  assert.equal(done.status, 200);
+  holds("DispatchSplitResult", done.json);
+  assert.equal(done.json.parked, undefined);
+  assert.equal(done.json.freight_cents, 30000);
+  assert.deepEqual(done.json.loads.map((l) => l.freight_cents), [15000, 15000]);
+  assert.deepEqual(done.json.loads.map((l) => l.load_seq), [1, 2]);
+  const again = await split("ORD-0012", {});
+  assert.equal(again.status, 200, "the same ask twice leaves the same rows");
+  assert.equal(again.json.loads.length, 2);
+  const odd = await split("ORD-0012", { loads: 3 });
+  assert.deepEqual(odd.json.loads.map((l) => l.freight_cents), [10000, 10000, 10000]);
+  const hand = await split("ORD-0012", { loads: 3, amounts: [20000, 5000, 5000] });
+  assert.equal(hand.json.override, true);
+  // ORD-0014: freight 100.00 quoted at 100.00. Asking 150.00 is a rise nobody has agreed to: it parks.
+  const parked = await split("ORD-0014", { freight_cents: 15000 });
+  assert.equal(parked.status, 200);
+  holds("DispatchSplitResult", parked.json);
+  assert.equal(parked.json.parked.state, "PARKED");
+  assert.equal(parked.json.freight_cents, 10000, "a parked ask leaves the charge as it was");
+  assert.equal(parked.json.loads.length, 1, "no truck is minted at ask time");
+  assert.deepEqual(parked.json.parked.money, { quoted_freight_cents: 10000, current_freight_cents: 10000, proposed_freight_cents: 15000, delta_cents: 5000 });
+  const twin = await split("ORD-0014", { freight_cents: 15000 });
+  assert.equal(twin.json.parked.id, parked.json.parked.id, "an identical re-ask converges on the one parked raise");
+  refused(await split("ORD-0014", { freight_cents: 16000 }), 409, "a freight raise on this order is already waiting for approval, that one has to be decided before another can be asked for");
+  const card = await call("GET", `/api/v1/dispatch/freight-raises/${parked.json.parked.id}`);
+  assert.equal(card.status, 200);
+  holds("DispatchFreightRaiseView", card.json);
+  await post("/_stub/raise", { id: parked.json.parked.id, state: "APPLIED" });
+  assert.equal((await call("GET", `/api/v1/dispatch/freight-raises/${parked.json.parked.id}`)).json.state, "APPLIED");
+  // ORD-0021 was never quoted: nothing to be above, so a raise applies.
+  const free = await split("ORD-0021", { freight_cents: 25000 });
+  assert.equal(free.json.parked, undefined);
+  assert.equal(free.json.freight_cents, 25000);
+  // The core's sentences.
+  refused(await split("ORD-0029", {}), 409, "this order carries no freight to split");
+  refused(await split("ORD-0012", { loads: 11 }), 422, "an order goes out on between 1 and");
+  refused(await split("ORD-0012", { loads: 1 }), 409, "cancel one before splitting into");
+  refused(await split("ORD-0012", { loads: 3, amounts: [1, 2] }), 422, "amounts and the order is on");
+  refused(await split("ORD-0012", { loads: 3, amounts: [10000, 10000, 9000] }), 422, "they have to match");
+  refused(await split("ORD-0012", { loads: 3, freight_cents: 1000 }), 422, "lowering it is a credit note, not a split");
+  refused(await split("ORD-0012", { loads: 3, freight_cents: -5 }), 422, "freight cannot be negative");
+  refused(await call("POST", "/api/v1/dispatch/freight-split", { order_id: "ORD-9999", loads: 2 }), 404, "not found");
+  refused(await call("GET", "/api/v1/dispatch/freight-raises/00000000-0000-4000-9000-000000000000"), 404, "not found");
+  // A caller the load value policy refuses may not divide freight, and reads a parked card with no money key at all.
+  await post("/_stub/caller", { can_see_value: false });
+  refused(await split("ORD-0012", {}), 403, "forbidden");
+  const blind = await call("GET", `/api/v1/dispatch/freight-raises/${parked.json.parked.id}`);
+  holds("DispatchFreightRaiseView", blind.json);
+  assert.equal("money" in blind.json, false, "absent is absent: no key, no zero, no null");
+});

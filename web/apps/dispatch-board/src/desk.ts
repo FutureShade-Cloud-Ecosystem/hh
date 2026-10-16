@@ -16,6 +16,7 @@ import type {
   DispatchLoadStop,
   DispatchStop,
   DispatchStopPaymentHold,
+  DispatchFreightRaiseView,
   DispatchMintedPickup,
   DispatchPolicy,
   DispatchPolicyChange,
@@ -31,6 +32,9 @@ import {
   driverBody,
   historyFaultWords,
   manifestNotice,
+  splitBody,
+  splitNotice,
+  splitRefusal,
   manifestRefusal,
   policyBody,
   policyRefusal,
@@ -51,12 +55,14 @@ import {
   truckBody,
   validateDriver,
   validateOrderRef,
+  validateSplit,
   validatePolicyFields,
   validateTruck,
   willCallNotice,
   willCallRefusal,
   type DriverFields,
   type PolicyFields,
+  type SplitFields,
   type ScheduleFields,
   type TruckFields,
   type CardId,
@@ -113,6 +119,8 @@ export class DispatchDesk {
   // Will call: the order as typed, its codes, whether a lookup has run, and the code just minted (held in memory, shown once).
   // The scan trail open on a card: its read, in progress, done or refused.
   #trail: BoardModel["trail"] = null;
+  // A parked freight ask: held until the person closes it, read again on request.
+  #raise: DispatchFreightRaiseView | null = null;
   #policy: DispatchPolicy | null = null;
   #history: readonly DispatchPolicyChange[] = [];
   #historyFault = "";
@@ -286,6 +294,7 @@ export class DispatchDesk {
       span: this.#span,
       scheduleError: this.#scheduleError,
       trail: this.#trail,
+      raise: this.#raise,
       policy: this.#policy,
       history: this.#history,
       historyFault: this.#historyFault,
@@ -423,6 +432,13 @@ export class DispatchDesk {
         return true;
       case "schedule-submit":
         void this.#schedule();
+        return true;
+      case "raise-check":
+        void this.#raiseCheck();
+        return true;
+      case "raise-close":
+        this.#raise = null;
+        this.#host.repaint();
         return true;
       case "print-manifest":
         // The window is opened inside the press, while the click still counts as the person's own act.
@@ -761,6 +777,25 @@ export class DispatchDesk {
     this.#host.repaint();
   }
 
+  #stopById(id: string): DispatchStop | undefined {
+    const all: DispatchStop[] = [...(this.#view?.staging ?? []), ...(this.#view?.loads.flatMap((r) => r.stops) ?? []), ...(this.#day?.stops ?? []), ...(this.#day?.unassigned ?? [])];
+    return all.find((s) => s.id === id);
+  }
+
+  /** Reads a parked ask again. A refusal is the core's word, shown as the board's error; the card stays as it was. */
+  async #raiseCheck(): Promise<void> {
+    const raise = this.#raise;
+    if (raise === null || this.#busy) return;
+    this.#busy = true;
+    this.#clearMessages();
+    this.#host.repaint();
+    const r = await this.#api.freightRaise(raise.id);
+    if (r.ok) this.#raise = r.value;
+    else this.#error = refusalWords("Reading the ask", r.error, r.status ?? null);
+    this.#busy = false;
+    this.#host.repaint();
+  }
+
   /** Opens a card's scan trail: the sheet shows at once and fills when the core answers. */
   async #openTrail(stopId: string): Promise<void> {
     const all: DispatchStop[] = [...(this.#view?.staging ?? []), ...(this.#view?.loads.flatMap((r) => r.stops) ?? []), ...(this.#day?.stops ?? []), ...(this.#day?.unassigned ?? [])];
@@ -1009,6 +1044,33 @@ export class DispatchDesk {
           (failure) => policyRefusal(failure.error, failure.status ?? null),
         );
         if (!ok) this.#restoreSheet(sheet, typed);
+        return;
+      }
+      case "split-freight": {
+        const stop = this.#stopById(sheet.id);
+        if (stop === undefined) return;
+        const f: SplitFields = { loads: typed.loads ?? "", freight: typed.freight ?? "", amounts: typed.amounts ?? "" };
+        const words = validateSplit(f);
+        if (words !== "") return this.#sheetRefused(words);
+        const body = splitBody(f, stop.order_id);
+        let notice = "";
+        const ok = await this.#run(
+          async () => {
+            const r = await this.#api.splitFreight(body);
+            if (!r.ok) return r;
+            notice = splitNotice(r.value);
+            this.#raise = r.value.parked ?? null;
+            return null;
+          },
+          "",
+          "The split",
+          false,
+          (failure) => splitRefusal(failure.error, failure.status ?? null),
+        );
+        if (ok) {
+          this.#notice = notice;
+          this.#host.repaint();
+        } else this.#restoreSheet(sheet, typed);
         return;
       }
       case "revoke-willcall": {

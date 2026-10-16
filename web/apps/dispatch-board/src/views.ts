@@ -15,6 +15,7 @@ import type {
   DispatchCalendarDay,
   DispatchDriver,
   DispatchGapPage,
+  DispatchFreightRaiseView,
   DispatchLoadBoardView,
   DispatchLoadRow,
   DispatchLoadStop,
@@ -79,6 +80,8 @@ import {
   shortDay,
   toCuYd,
   toWeight,
+  raiseLine,
+  raiseStateWord,
   trailSummary,
   weightUnit,
   stopActions,
@@ -97,7 +100,7 @@ export type Axis = "TRUCK" | "STATUS";
 export interface Sheet {
   readonly kind:
     | "reschedule-stop" | "reschedule-run" | "reopen-stop" | "reopen-run" | "fail-stop" | "new-run" | "cancel-run"
-    | "add-truck" | "edit-truck" | "add-driver" | "edit-driver" | "revoke-willcall" | "edit-policy" | "scan-trail";
+    | "add-truck" | "edit-truck" | "add-driver" | "edit-driver" | "revoke-willcall" | "edit-policy" | "scan-trail" | "split-freight";
   readonly id: string;
   /** What was typed when a refusal sent the sheet back, so the person keeps their work. */
   readonly values?: Readonly<Record<string, string>>;
@@ -135,6 +138,8 @@ export interface BoardModel {
   readonly span: Span;
   /** The schedule form's own refusal, shown beside its button. */
   readonly scheduleError: string;
+  /** A parked freight ask, held until closed. Its figures are drawn only if the core sent them. */
+  readonly raise: DispatchFreightRaiseView | null;
   /** The scan trail open on a card: the order named, and its read in progress, done or refused. */
   readonly trail: {
     readonly stopId: string;
@@ -265,6 +270,55 @@ function scanTrailSheet(sheet: Sheet, model: BoardModel): TemplateResult {
   `;
 }
 
+// ---- split freight -------------------------------------------------------------------------------
+
+function splitSheet(sheet: Sheet, model: BoardModel): TemplateResult {
+  const all: DispatchStop[] = [...(model.view?.staging ?? []), ...(model.view?.loads.flatMap((r) => r.stops) ?? []), ...(model.day?.stops ?? []), ...(model.day?.unassigned ?? [])];
+  const stop = all.find((s) => s.id === sheet.id);
+  const now = stop?.load_count ?? 1;
+  return html`
+    <form class="sheet" data-sheet=${sheet.kind} data-sheet-id=${sheet.id} novalidate>
+      <h4>Split the freight on ${stop?.order_no ?? "this order"} across trucks</h4>
+      <div class="sheet-grid">
+        <label>Trucks the order goes out on<input class="control" type="text" inputmode="numeric" data-field="loads" data-initial=${String(now + 1)} autocomplete="off" /></label>
+        <label>The order's freight after the split, dollars, optional; empty keeps it as it is<input class="control" type="text" inputmode="decimal" data-field="freight" autocomplete="off" /></label>
+        <label class="wide">Each truck's share by hand, dollars, separated by commas, optional<input class="control" type="text" data-field="amounts" autocomplete="off" /></label>
+      </div>
+      <p class="small dim">Left empty, the core divides the freight evenly. Freight above what the customer was quoted waits for an approver and changes nothing until it is approved. Asking the same thing twice is safe.</p>
+      ${sheet.error !== "" ? html`<p class="alert alert-error" role="alert" data-sheet-error>${sheet.error}</p>` : nothing}
+      <div class="actions">
+        <button type="button" class="btn btn-primary" data-action="sheet-submit" ?disabled=${model.busy}>Split it</button>
+        <button type="button" class="btn btn-secondary" data-action="sheet-cancel">Cancel</button>
+      </div>
+    </form>
+  `;
+}
+
+function splitButton(model: BoardModel, stop: DispatchStop): TemplateResult {
+  return html`<button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="split-freight" data-stop-id=${stop.id} ?disabled=${model.busy}>Split across trucks</button>`;
+}
+
+/** The parked ask: what was asked, where it stands, and a way to read it again. Figures only where the core sent them. */
+function raiseCard(model: BoardModel): TemplateResult | typeof nothing {
+  const r = model.raise;
+  if (r === null) return nothing;
+  const lines = raiseLine(r);
+  return html`
+    <section class="panel raise" data-raise data-raise-id=${r.id} data-raise-state=${r.state} aria-label="A freight ask waiting for approval">
+      <div class="panel-head">
+        <h3>Freight ask</h3>
+        <span class="status ${r.state === "APPLIED" ? "status-good" : r.state === "REFUSED" ? "status-stop" : "status-watch"}" data-raise-word>${raiseStateWord(r.state)}</span>
+      </div>
+      ${lines.map((l) => html`<p class="small">${l}</p>`)}
+      <p class="small dim">An approver decides it on Manager Home. Nothing on the loads changes until they do.</p>
+      <div class="actions">
+        <button type="button" class="btn btn-secondary" data-action="raise-check" ?disabled=${model.busy}>Check on it</button>
+        <button type="button" class="btn btn-secondary" data-action="raise-close">Close</button>
+      </div>
+    </section>
+  `;
+}
+
 function printManifestButton(model: BoardModel, run: DispatchRun): TemplateResult {
   return html`<button type="button" class="btn btn-secondary small-btn" data-action="print-manifest" data-run-id=${run.id} ?disabled=${model.busy}>Print manifest</button>`;
 }
@@ -349,6 +403,7 @@ function sheetPanel(sheet: Sheet, model: BoardModel): TemplateResult {
     `;
   }
   if (sheet.kind === "scan-trail") return scanTrailSheet(sheet, model);
+  if (sheet.kind === "split-freight") return splitSheet(sheet, model);
   if (sheet.kind === "revoke-willcall") {
     return html`
       <form class="sheet" data-sheet=${sheet.kind} data-sheet-id=${sheet.id} novalidate>
@@ -587,8 +642,9 @@ function loadCard(model: BoardModel, view: DispatchLoadBoardView, stop: Dispatch
           ? html`<button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="reschedule-stop" data-stop-id=${stop.id} ?disabled=${model.busy}>Move date</button>`
           : nothing}
         ${scanTrailButton(model, stop)}
+        ${splitButton(model, stop)}
       </div>
-      ${sheetFor(model, ["reopen-stop", "reschedule-stop", "scan-trail"], stop.id)}
+      ${sheetFor(model, ["reopen-stop", "reschedule-stop", "scan-trail", "split-freight"], stop.id)}
     </li>
   `;
 }
@@ -870,8 +926,9 @@ function dayStopCard(model: BoardModel, stop: DispatchStop, runs: readonly Dispa
             </select>`
           : nothing}
         ${scanTrailButton(model, stop)}
+        ${splitButton(model, stop)}
       </div>
-      ${sheetFor(model, ["fail-stop", "reschedule-stop", "scan-trail"], stop.id)}
+      ${sheetFor(model, ["fail-stop", "reschedule-stop", "scan-trail", "split-freight"], stop.id)}
     </li>
   `;
 }
@@ -995,8 +1052,8 @@ function booksStop(model: BoardModel, stop: DispatchStop): TemplateResult {
       ${block === ""
         ? html`<div class="actions"><button type="button" class="btn btn-secondary small-btn" data-action="open-sheet" data-sheet-kind="reschedule-stop" data-stop-id=${stop.id} ?disabled=${model.busy}>Move date</button></div>`
         : html`<p class="small dim" data-move-why>${block}</p>`}
-      <div class="actions">${scanTrailButton(model, stop)}</div>
-      ${sheetFor(model, ["reschedule-stop", "scan-trail"], stop.id)}
+      <div class="actions">${scanTrailButton(model, stop)}${splitButton(model, stop)}</div>
+      ${sheetFor(model, ["reschedule-stop", "scan-trail", "split-freight"], stop.id)}
     </li>
   `;
 }
@@ -1237,6 +1294,7 @@ export function renderDesk(model: BoardModel): TemplateResult {
     ${tabs(model)}
     ${toolbar(model)}
     ${renderMessages(model)}
+    ${raiseCard(model)}
     ${model.loading
       ? html`<p class="alert" role="status" data-loading>Reading the board for ${formatDayHeading(model.date)}...</p>`
       : model.tab === "load"

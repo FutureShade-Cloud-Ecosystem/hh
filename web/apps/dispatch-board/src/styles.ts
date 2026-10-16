@@ -172,6 +172,8 @@ export const boardStyles = css`
   /* The inline sheet. */
   .sheet { margin-top: var(--hh-s-12); padding: var(--hh-s-12); background: var(--hh-row-alt); border: 1px solid var(--hh-control-line); border-radius: var(--hh-radius-control); display: grid; gap: var(--hh-s-8); }
   .sheet h4 { margin: 0; color: var(--hh-text); font-size: 14px; letter-spacing: 0; text-transform: none; }
+  .sheet-grid .wide { grid-column: 1 / -1; }
+  .raise { border-inline-start: 4px solid var(--hh-state-watch); }
   .sheet-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--hh-s-8); }
   .sheet .alert { margin: 0; }
   label { display: grid; gap: var(--hh-s-4); font-size: 14px; color: var(--hh-text-dim); font-weight: 600; }
