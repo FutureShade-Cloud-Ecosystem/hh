@@ -31,8 +31,11 @@ import type {
 import type { ApplyAnswer } from "./ar-api.js";
 import { cardRange, cardTitle, holdKindWord, holdMarks, lineWords, relativeDay, rowMarks, type Mark } from "./ar-logic.js";
 import { formatMoney, parseAmountToCents } from "./ar-money.js";
+import type { OfficeModel } from "./office-desk.js";
+import { renderContacts, renderInvoiceActions, renderRemindersPanels, renderReverse, renderRunPanel } from "./office-views.js";
+import { renderSettingsPanels } from "./office-settings-views.js";
 
-export type Tab = "receivables" | "statements" | "holds";
+export type Tab = "receivables" | "statements" | "holds" | "reminders" | "settings";
 export type RegisterFilter = "open" | "overdue" | "promised" | "disputed" | "paid";
 export type RightMode = "receive" | "invoice" | "promise";
 export type PayMethod = "CHEQUE" | "EFT" | "CARD" | "CASH";
@@ -46,7 +49,7 @@ export interface AccountModel {
   readonly branchName: string;
   readonly invoices: readonly BillingRegisterRow[];
   readonly showAll: boolean;
-  readonly sub: "invoices" | "statement";
+  readonly sub: "invoices" | "statement" | "contacts";
   readonly right: RightMode;
   readonly selectedInvoiceId: string | null;
   readonly detail: BillingInvoiceDetail | null;
@@ -93,6 +96,7 @@ export interface DeskModel {
   readonly holdPanel: "about" | "lift" | "place-later";
   readonly liftChoice: "lift" | "override";
   readonly account: AccountModel | null;
+  readonly office: OfficeModel;
   readonly busy: boolean;
   readonly error: string;
   readonly notice: string;
@@ -143,7 +147,7 @@ function tabsBar(model: DeskModel): TemplateResult {
   const tab = (id: Tab, word: string): TemplateResult => html`<button type="button" class="tab" data-action="tab" data-tab="${id}" aria-current="${model.tab === id ? "true" : "false"}">${word}</button>`;
   return html`
     <nav class="tabs" aria-label="Money Desk views">
-      ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")}
+      ${tab("receivables", "Receivables")} ${tab("statements", "Statements")} ${tab("holds", "Credit holds")} ${tab("reminders", "Reminders")} ${tab("settings", "Settings")}
       <span class="tab tab-later" aria-disabled="true">Payables ${later()}</span>
     </nav>
   `;
@@ -158,7 +162,7 @@ function frame(body: TemplateResult): TemplateResult {
       <div><h1>Receivables</h1><p class="dim">The AR register with its aging, overdue first. Bounced payments and accounts on hold wait in Needs you.</p></div>
     </div>
     <nav class="tabs" aria-label="Money Desk views">
-      <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span>
+      <span class="tab" aria-disabled="true">Receivables</span><span class="tab" aria-disabled="true">Statements</span><span class="tab" aria-disabled="true">Credit holds</span><span class="tab" aria-disabled="true">Reminders</span><span class="tab" aria-disabled="true">Settings</span>
     </nav>
     ${body}
   `;
@@ -406,6 +410,7 @@ export function renderStatements(model: DeskModel): TemplateResult {
       <div class="actions"><button type="button" class="btn btn-primary" data-action="run-statements" ?disabled=${model.busy}>Run for every account</button></div>
     </div>
     ${tabsBar(model)} ${messages(model)}
+    ${renderRunPanel(model.office, model.asOf)}
     <section class="panel" aria-label="Statements by account">
       <div class="panel-head"><h3>Statements</h3></div>
       <div class="scroll">
@@ -430,6 +435,30 @@ export function renderStatements(model: DeskModel): TemplateResult {
   `;
 }
 
+// ---- reminders tab -----------------------------------------------------------------------------
+
+export function renderReminders(model: DeskModel): TemplateResult {
+  return html`
+    <div class="head">
+      <div><h1>Reminders</h1><p class="dim">Chase an account's overdue invoice, see what has been sent, and work the accounts that ignore reminders. Everything leaves through the messaging sink and goes to the AP contact by its role.</p></div>
+    </div>
+    ${tabsBar(model)} ${messages(model)}
+    ${renderRemindersPanels(model.office)}
+  `;
+}
+
+// ---- settings tab ------------------------------------------------------------------------------
+
+export function renderSettings(model: DeskModel): TemplateResult {
+  return html`
+    <div class="head">
+      <div><h1>Settings</h1><p class="dim">The rules this desk runs on. Payables and Receivables reads them; the Financial Controller or the General Manager changes them, and every change is on the record.</p></div>
+    </div>
+    ${tabsBar(model)} ${messages(model)}
+    ${renderSettingsPanels(model.office.settings, model.office.nowMs)}
+  `;
+}
+
 // ---- credit holds ------------------------------------------------------------------------------
 
 function holdActions(model: DeskModel, h: BillingCreditHold): TemplateResult {
@@ -440,6 +469,14 @@ function holdActions(model: DeskModel, h: BillingCreditHold): TemplateResult {
       <button type="button" class="btn btn-secondary small-btn ${held ? "held" : ""}" data-action="hold-act" data-hold-id="${h.id}" data-choice="lift" aria-disabled="${held ? "true" : "false"}">Lift...</button>
     </div>
   `;
+}
+
+/** The payment a returned payment hold names, once the till's list has said it. */
+function placedBy(model: DeskModel, holdId: string): TemplateResult | typeof nothing {
+  const paymentId = model.office.tillHolds.get(holdId);
+  if (paymentId === undefined) return nothing;
+  const bounced = model.bounced.find((b) => b.payment_id === paymentId);
+  return html`<dt>Placed by</dt><dd data-hold-source>${bounced === undefined ? "A returned payment" : `Payment ${bounced.payment_no}, returned by the bank`}</dd>`;
 }
 
 function holdsPanel(model: DeskModel): TemplateResult {
@@ -474,6 +511,7 @@ function holdsPanel(model: DeskModel): TemplateResult {
       <dt>Account</dt><dd>${name}</dd>
       <dt>Placed</dt><dd>${relativeDay(hold.created_at, model.asOf)} ${hold.auto_placed ? "by the credit sweep · automatic" : "by hand"}</dd>
       <dt>Why</dt><dd>${hold.reason}</dd>
+      ${placedBy(model, hold.id)}
       ${hold.override_until !== undefined && hold.override_until !== null ? html`<dt>Override</dt><dd>Until ${dateOnly(hold.override_until)}${hold.override_reason ? `: ${hold.override_reason}` : ""}</dd>` : nothing}
     </dl>
   `;
@@ -649,7 +687,7 @@ function receivePanel(model: DeskModel, account: AccountModel): TemplateResult {
   `;
 }
 
-function paymentList(account: AccountModel): TemplateResult {
+function paymentList(model: DeskModel, account: AccountModel): TemplateResult {
   const payments = account.payments?.items ?? [];
   if (payments.length === 0) return html`<p class="dim">No payment has been applied to this invoice yet.</p>`;
   return html`
@@ -658,12 +696,12 @@ function paymentList(account: AccountModel): TemplateResult {
         (p) => html`
           <li data-payment-row>
             <span>${p.payment_no} · ${p.method.toLowerCase()} · ${formatMoney(p.amount_cents)}
-              ${p.status === "BOUNCED" ? html`<span class="pill pill-stop">Bounced</span>` : html`<span class="pill pill-good">${p.status === "DEPOSITED" ? "Deposited" : "Received"}</span>`}</span>
-            ${p.status === "BOUNCED"
+              ${p.status === "BOUNCED" ? html`<span class="pill pill-stop">Bounced</span>` : p.status === "VOID" ? html`<span class="pill pill-plain">Reversal</span>` : html`<span class="pill pill-good">${p.status === "DEPOSITED" ? "Deposited" : "Received"}</span>`}</span>
+            ${p.status === "BOUNCED" || p.status === "VOID"
               ? nothing
               : account.bounceFor === p.payment_id
                 ? html`<span class="inline-form"><label><span class="visually-hidden">Reason it bounced</span><input type="text" data-field="bounce-reason" placeholder="Why it came back, such as cheque returned NSF" autocomplete="off" /></label><button type="button" class="btn btn-danger small-btn" data-action="bounce-confirm" data-payment-id="${p.payment_id}">Confirm bounced</button><button type="button" class="btn btn-secondary small-btn" data-action="bounce-cancel">Cancel</button></span>`
-                : html`<button type="button" class="btn btn-secondary small-btn" data-action="bounce-start" data-payment-id="${p.payment_id}">Mark bounced</button>`}
+                : html`<span class="row-actions"><button type="button" class="btn btn-secondary small-btn" data-action="bounce-start" data-payment-id="${p.payment_id}">Mark bounced</button>${renderReverse(model.office, p)}</span>`}
           </li>
         `,
       )}
@@ -687,8 +725,9 @@ function invoicePanel(model: DeskModel, account: AccountModel): TemplateResult {
         ${d.promise !== undefined ? html`<dt>Promise to pay</dt><dd data-promise>${formatMoney(d.promise.promised_cents)} by ${d.promise.promised_date}${d.promise.note ? `: ${d.promise.note}` : ""}</dd>` : nothing}
         ${d.dispute !== undefined ? html`<dt>Dispute</dt><dd data-dispute>${d.dispute.status === "OPEN" ? "Open" : "Resolved"}: ${formatMoney(d.dispute.amount_cents)}${d.dispute.note ? `, ${d.dispute.note}` : ""}</dd>` : nothing}
       </dl>
+      ${renderInvoiceActions(model.office, d)}
       <h3>Payments on this invoice</h3>
-      ${paymentList(account)}
+      ${paymentList(model, account)}
     </section>
   `;
 }
@@ -774,12 +813,14 @@ export function renderAccount(model: DeskModel, account: AccountModel): Template
       <button type="button" class="tab" data-action="sub" data-choice="invoices" aria-current="${account.sub === "invoices" ? "true" : "false"}">Open invoices</button>
       <button type="button" class="tab" data-action="sub" data-choice="statement" aria-current="${account.sub === "statement" ? "true" : "false"}">Statement</button>
       <span class="tab tab-later" aria-disabled="true">Activity ${later()}</span>
-      <span class="tab tab-later" aria-disabled="true">Contacts ${later()}</span>
+      <button type="button" class="tab" data-action="sub" data-choice="contacts" aria-current="${account.sub === "contacts" ? "true" : "false"}">Contacts</button>
     </nav>
     ${messages(model)}
     ${account.sub === "statement"
       ? statementDoc(model, account)
-      : html`
+      : account.sub === "contacts"
+        ? renderContacts(model.office, account)
+        : html`
           <div class="cols">
             <div class="col-main">${invoiceTable(model, account)}</div>
             <div class="col-side">${account.right === "invoice" ? invoicePanel(model, account) : account.right === "promise" ? promisePanel(model, account) : receivePanel(model, account)}</div>
