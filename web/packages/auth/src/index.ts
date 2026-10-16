@@ -8,3 +8,4 @@
 export * from "./session.js";
 export * from "./lock.js";
 export * from "./client.js";
+export * from "./identity-tap.js";

@@ -40,15 +40,15 @@
 <p class="lede">One page about what the Money Desk does and what it does not do yet. If the box and this page disagree, the box is wrong and that is a bug worth reporting.</p>
 
 <h2>What this is</h2>
-<p>The Money Desk has five areas. The receivables side is for the Payables and Receivables role: it reads the book's aging, works the bounced payment the queue shows, takes a payment in against open invoices, records a promise to pay and runs a statement. The ledger side is for the Financial Controller: it decides the approvals queue, approves a parked journal, reads the journal register and the trial balance. The controller holds both sides. Liens and Compliance are the holdback and deadline areas: jobs that hold back retention, the release of that retention, the lien forms, and the calendar of deadlines they register.</p>
+<p>The Money Desk has six areas. The receivables side is for the Payables and Receivables role: it reads the book's aging, works the bounced payment the queue shows, takes a payment in against open invoices, records a promise to pay and runs a statement. The ledger side is for the Financial Controller: it decides the approvals queue, approves a parked journal, reads the journal register and the trial balance. The controller holds both sides. Liens and Compliance are the holdback and deadline areas: jobs that hold back retention, the release of that retention, the lien forms, and the calendar of deadlines they register.</p>
 
 <h2>How to sign in</h2>
 <p data-claim="sign-in-cards">On the front door, tap <strong>Payables and Receivables</strong> ("Chase overdue accounts and work the bounced payments.") or <strong>Financial Controller</strong> ("Decide approvals and keep the ledger."). Each card shows a <strong>Money Desk</strong> tile, and the tile opens the same Money Desk with no second sign in.</p>
 <p data-claim="payrec-lands">Payables and Receivables lands on the receivables side.</p>
 <p data-claim="controller-lands">The Financial Controller lands on the ledger side, Approvals and ledger, with a Receivables switch beside it. One tap opens the receivables side whole.</p>
-<p data-claim="other-cards">The Sales and Sales manager cards offer no Money Desk tile. The other nine roles on the front door are listed as Coming and cannot be tapped.</p>
+<p data-claim="other-cards">The Sales and Sales manager cards offer no Money Desk tile.</p>
 <p data-claim="own-way-in">If you open the Money Desk without the front door, its own sign in offers only the two roles that can use it.</p>
-<p data-claim="no-gm">No General Manager sign in exists on this box. Anything the screens say is the General Manager's to decide has no one to decide it here.</p>
+<p data-claim="gm-tile">The General Manager card offers a Money Desk tile on the front door, beside Manager Home.</p>
 
 <h2>The receivables world</h2>
 <p data-claim="world-invoices">The receivables side works the book's 18 invoices, spread across the aging buckets, and one bounced payment.</p>
@@ -72,7 +72,7 @@
 
 <h2>Receivables: bounced payments, statements and holds</h2>
 <p data-claim="bounced-work">A payment can be marked bounced from its invoice, with a reason, and it joins the queue. In the queue it is worked three ways: a replacement payment, a promise to pay, or a reminder to the account.</p>
-<p data-claim="statement">An account's Statement tab has none until you run it. Run a statement to read the aging strip, then send it to the AP contact. Download PDF, the Activity tab and the Contacts tab are marked later.</p>
+<p data-claim="statement">An account's Statement tab has none until you run it. Run a statement to read the aging strip, then send it to the AP contact. Download PDF and the Activity tab are marked later. The Contacts tab holds the account's AP contact.</p>
 <p data-claim="statements-all">The Statements tab lists every account, and Run for every account runs them all.</p>
 <p data-claim="holds-payrec">The Credit holds tab lists the holds. For Payables and Receivables, Lift and Override are held. Pressing Lift says in words that releasing a hold is for the Financial Controller or the General Manager, and the bare word Forbidden is not shown. Run the sweep is refused in words as the Financial Controller's. Place a hold is marked later: there is no path for it yet.</p>
 <p data-claim="holds-controller">The Financial Controller lifts a hold with a reason, or overrides another, and has no Place a hold button.</p>
@@ -103,8 +103,45 @@
 <p data-claim="policy">The Policy tab reads the approval threshold, the month the fiscal year starts and the cost basis. Changing the policy is not on this screen.</p>
 <p data-claim="reader">Payables and Receivables opens the Ledger area beside Receivables and reads the journals, chart, trial balance, periods, tie out and policy. Every write is held, with words naming who may do it.</p>
 
+<h2>Receivables office: statement runs and AP contacts</h2>
+<p data-claim="office-run">After a statement run the Statements tab shows the run read back from the server: its kind, the number of statements, how many went to the messaging sink and how many did not, one row per account with its total due and a delivery word, and one line saying a statement with a balance is queued as a text to the account's consented number when notices are on. No address or number is shown.</p>
+<p data-claim="office-contact">An account's Contacts tab tags, replaces or removes its AP contact, which reminders go to. It says what is on file in words and never shows the address or number back. Saving replaces the whole contact, a contact with neither an email nor a phone is refused before anything is sent, and removing asks a second time.</p>
+
+<h2>Receivables office: reminders and the paper path</h2>
+<p data-claim="office-reminders">The Reminders tab sends a reminder for one invoice of one account by email or text, and says before it is sent what would go and to which contact by its role. On the base plan the screen says reminders are part of accelerated AR and a press shows the server's own sentence. A resend carries a watermark with the days past due. When nobody is tagged for AP, the account's own address is used only after you confirm it. A lost answer is sent again with the same key and is recorded once. Nothing leaves except through the messaging sink, and no address or number is drawn.</p>
+<p data-claim="office-paper">The paper path lists the accounts that were sent several reminders and opened none. Run the sweep raises new flags, and a flag closes as moved to paper or dismissed only with a note saying why. The Needs you list on the receivables home follows.</p>
+
+<h2>Receivables office: an invoice and a reversed payment</h2>
+<p data-claim="office-invoice">An open invoice can be sent to the account's contact through the messaging sink, and says so without showing an address. An account with no contact email is refused in the server's words. View the document opens the invoice in a frame that can run nothing, and closes again.</p>
+<p data-claim="office-dispute">Open a dispute asks for a reason and an amount in dollars that is not above the balance, and refuses anything else before it is sent. An open dispute shows on the invoice and on the register as disputed, and closes with an outcome: paid, credited, written off or withdrawn. Closing records how it ended and moves no money.</p>
+<p data-claim="office-reverse">A payment taken in error is reversed from its invoice with a reason, which is required. The invoice is owing what it was and the payment shows a reversal entry. A payment that has been reversed is refused a second time in the server's words. A returned cheque is still Mark bounced.</p>
+
+<h2>Receivables office: settings and holds</h2>
+<p data-claim="office-settings">The Settings tab shows the receivables rules (where an account turns overdue, late and escalated, how often it is reminded, the paper path window, the plan), the register settings and the history of rule changes. Payables and Receivables can read the rules; the boxes are held for it and say that changing them is for the Financial Controller or the General Manager. The controller's changes are checked before they are sent, saved, and listed in the history with what each rule was and became.</p>
+<p data-claim="office-fee">The returned payment fee is typed in dollars and a fee with more than two decimals is refused before it is sent. The next payment marked bounced is charged the fee that was saved.</p>
+<p data-claim="office-autohold">The automatic credit hold switch is the controller's. It says in words whether the switch is on, what it would hold, and that the thresholds are read only. Turning it on or off asks a second time and takes a reason. When the server has no way to change it, the screen shows it and offers no button.</p>
+<p data-claim="office-nsf-hold">A hold that a returned payment placed names that payment, and the controller lifts it with a reason through the till's own path, which the receivables release refuses.</p>
+<p data-claim="office-sweep">Run the sweep says what it did. While automatic holds are off it only reports how many accounts it would hold and places none, and says that is why. Once they are on it places the holds and says how many.</p>
+<p data-claim="office-dispatch">On an open invoice, Can the order go out asks the credit gate and says either that nothing on the account stops the order or why it is stopped, in the server's words.</p>
+<h2>Statements</h2>
+<p data-claim="stmt-area">The Financial Controller has an area called Statements, beside Approvals and ledger and Receivables. Payables and Receivables does not have it. It opens on the income statement for the latest fiscal year the books hold.</p>
+<p data-claim="stmt-periods">Years and periods come from the books' own list and are named as the books name them: a fiscal year, or a numbered period of it, each marked closed or still open. No calendar month is written on the screen.</p>
+<p data-claim="stmt-branch">A statement can be read for all branches or for one. A manager who holds one branch must name it, and is told so in words if they ask for the whole company.</p>
+<p data-claim="stmt-compare">The income statement and the balance sheet can sit beside the year before. The change is the books' own figure and is not worked out on the page.</p>
+<p data-claim="stmt-detail">An account number on a statement opens the ledger detail behind that line, and the screen says whether the detail ties to the line. The detail can be narrowed to one account and shows more on request.</p>
+<p data-claim="stmt-balance">The balance sheet shows each section with its total and says Balanced or Out of balance from the books' own check. A cash flow statement is marked later: the books do not serve one yet.</p>
+<p data-claim="stmt-trial">The trial balance reads In balance with the books' totals. It is the whole company's and takes no branch.</p>
+<p data-claim="stmt-aging">The receivables aging shows the five bands and the total, line by line by customer, for all branches or one.</p>
+<p data-claim="stmt-csv">Download CSV gets the core's own export of the statement, which the core records, in plain decimals with no currency mark, named for the statement and the period. A cell that a spreadsheet could run as a formula is made plain text. The comparison view makes its file from the figures on the page.</p>
+<p data-claim="stmt-print">Print leaves the statement with its title, period and scope, and drops the header, the tabs and the controls.</p>
+<p data-claim="stmt-packs">Saved packs records which statement goes to whom and how often. A pack can be saved, changed, paused and deleted, and delete asks first. Sending packs by e-mail is marked later: nothing is sent yet.</p>
+<p data-claim="stmt-pack-refused">A pack missing its statement, its frequency or a valid recipient is refused in the browser and nothing is sent. A role that may read but not save is told that saving a pack is for the Financial Controller.</p>
+<p data-claim="stmt-refused">A refused read names who may read statements, the Financial Controller or a manager, and never shows the bare word Forbidden.</p>
+<p data-claim="stmt-states">While the books load the screen says so, a failed read offers Try again, and an empty list says so. An answer that is not the shape the core sends is refused whole, never half read.</p>
+<p data-claim="stmt-phone">On a phone the ledger detail, the aging and the packs become cards and nothing scrolls sideways. Every control works from the keyboard.</p>
+
 <h2>Liens: the areas and the banner</h2>
-<p data-claim="liens-areas">Liens and Compliance sit beside the other areas on the area switch. The Financial Controller's switch holds five: Approvals and ledger, Receivables, Bank reconciliation, Liens and Compliance. Payables and Receivables holds Receivables, Liens and Compliance, and reads the last two. The General Manager's switch holds Liens and Compliance, but no General Manager sign in exists on this box, so those screens are reached here by the other two roles.</p>
+<p data-claim="liens-areas">Liens and Compliance sit beside the other areas on the area switch. The Financial Controller's switch holds six: Approvals and ledger, Receivables, Statements, Bank reconciliation, Liens and Compliance. Payables and Receivables holds Receivables, Liens and Compliance, and reads the last two. The General Manager's switch holds Liens and Compliance, and the General Manager card on the front door signs in to reach it.</p>
 <p data-claim="liens-payrec-reads">Payables and Receivables reads the jobs, the triage, the holdbacks, the documents and the calendar, and is offered no write: no New job, no Sync holdbacks, no Render draft and no way to set the review status. The server gives that role work, not manage, on the Money Desk and Manager Home, so those controls would only be refused. The Financial Controller and the General Manager write.</p>
 <p data-claim="liens-banner">Every Liens screen carries a draft banner. Its words and its state come from the core's review status, so they are the core's and not the app's.</p>
 <p data-claim="liens-core-words">The triage notes and the form titles are the core's own words, and they name a fixed release window and the Construction Act, which are not California terms. The core has not been given California's yet, and this screen shows what the core says.</p>

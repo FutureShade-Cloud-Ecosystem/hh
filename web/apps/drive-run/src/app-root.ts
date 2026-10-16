@@ -20,6 +20,7 @@ import "@hardscapehouse/design-system/src/header.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { houseDay } from "@hardscapehouse/pos-kit/src/ported/host-facts.js";
 // The offline strip and the conflict cards ride the shell chrome package,
 // wired here through their properties (the injected seams): this app maps the
@@ -29,7 +30,7 @@ import { apiClientTransport } from "@hardscapehouse/offline-store";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { DriveApi, type DriverRun, type DriverStop } from "./drive-api.js";
 import { DriveOffline, bannerMode, openDriveOfflineOpfs, type RunsAnswer } from "./drive-offline.js";
-import { HANDBACK_TITLE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
+import { HANDBACK_TITLE, PROOF_QUEUED_NOTICE, canRecordFailure, canSign, normalizeName, roadsideError } from "./drive-logic.js";
 import { driveStyles } from "./styles.js";
 import { readyPhoto } from "./photo.js";
 import {
@@ -51,15 +52,8 @@ const DEMO_ORG = "hh-demo";
 export class DriveRunApp extends HHElement {
   static styles = [baseStyles, driveStyles];
 
-  // The demo account surface: listFlows() and chooseFlow() over the core's
-  // two demo routes. It is the injected AccountSurface for the auth package.
-  readonly #demoAccount: AccountSurface;
-
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();
-
-  // The auth controller: owns sign-in, sign-out, and adoption.
-  readonly #auth: AuthController;
 
   // The demo client: no bearer token (demo routes are pre-auth by design).
   readonly #demoClient = new ApiClient({
@@ -67,10 +61,21 @@ export class DriveRunApp extends HHElement {
     headers: async () => ({ "X-Org": DEMO_ORG }),
   });
 
+  // The demo account surface: listFlows() and chooseFlow() over the core's
+  // two demo routes. It is the injected AccountSurface for the auth package.
+  readonly #demoAccount: AccountSurface = new DemoAccount({ client: this.#demoClient });
+
+  // The custody the served config chose: in demo mode the auth controller over the demo account, as
+  // always; in console mode this page recovers its own session on load (boot-custody.ts).
+  readonly #custody = bootCustody(servedConsoleConfig(), { sessions: this.#sessions, demoAccount: this.#demoAccount, demoOrg: DEMO_ORG });
+
+  // The auth controller: owns sign-in, sign-out, and adoption.
+  readonly #auth: AuthController = this.#custody.controller;
+
   // The staff client: carries the mint's bearer after adoption.
   readonly #staffClient = new ApiClient({
-    baseUrl: "",
-    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
+    baseUrl: this.#custody.coreBaseUrl,
+    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => this.#custody.org }),
   });
 
   // The driver's calls, over the staff client.
@@ -124,12 +129,6 @@ export class DriveRunApp extends HHElement {
 
   // The way in: this app's own card, drawn by views.ts.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
-
-  constructor() {
-    super();
-    this.#demoAccount = new DemoAccount({ client: this.#demoClient });
-    this.#auth = new AuthController({ account: this.#demoAccount, sessions: this.#sessions });
-  }
 
   // The role label the header shows; set from the handoff or the mint.
   #roleLabel = "";
@@ -268,6 +267,10 @@ export class DriveRunApp extends HHElement {
     // Some hosts deliver the platform's word late or not at all; a short
     // watcher repeats it, and the layer dispatches only on a change.
     this.#connectivityWatch = setInterval(this.#onConnectivity, 1_000);
+    if (this.#custody.mode === "console") {
+      this.#custody.begin("drive-run", (outcome) => this.#onRecovered(outcome));
+      return;
+    }
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -288,6 +291,24 @@ export class DriveRunApp extends HHElement {
     } else {
       void this.loadFlows();
     }
+  }
+
+  // Console mode: this page recovered its own session, or could not. A role the matrix gives this
+  // app lands on its screen; an unavailable page keeps the unavailable entry while the custody retries;
+  // a session the front door must settle goes back there.
+  #onRecovered(outcome: AppStart): void {
+    if (outcome.kind === "ready") {
+      this.#roleLabel = outcome.entry.roleLabel;
+      this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
+      void this.#loadRuns();
+    } else if (outcome.kind === "front-door" && outcome.why === "ended") {
+      this.#onSignOut();
+      return;
+    } else {
+      this.#entryView = entryUnavailable();
+      if (outcome.kind === "front-door") this.#custody.toFrontDoor();
+    }
+    this.requestUpdate();
   }
 
   disconnectedCallback(): void {
@@ -573,13 +594,21 @@ export class DriveRunApp extends HHElement {
     this.#error = "";
     this.requestUpdate();
     const result = await this.#door().pod(stopId, normalizeName(this.#podName));
+    // Connected: send now, so the driver reads the server's answer (its
+    // refusal in its own words) as they always have. No signal: the
+    // signature waits in the outbox and the notice says so.
+    const layer = this.#driveOffline;
+    let refused = "";
+    if (result.ok && layer !== null && layer.runner.state !== "offline") refused = await layer.sendProofNow(stopId);
     this.#podBusy = false;
-    if (result.ok) {
+    if (result.ok && refused === "") {
       await this.#refreshRuns();
       this.#view = { kind: "stop", id: stopId };
-      this.#notice = `Delivery to ${found?.stop.customer_name || "this stop"} is signed for.`;
+      const waiting = this.#findStop(stopId)?.stop.proof_waiting === true;
+      this.#notice = waiting ? PROOF_QUEUED_NOTICE : `Delivery to ${found?.stop.customer_name || "this stop"} is signed for.`;
     } else {
-      this.#error = roadsideError(result.error, result.status, "The signature did not go through. Check your signal and try again.");
+      this.#error = roadsideError(result.ok ? refused : result.error, result.ok ? 400 : result.status, "The signature did not go through. Check your signal and try again.");
+      await this.#refreshRuns();
     }
     this.requestUpdate();
   }
@@ -592,7 +621,16 @@ export class DriveRunApp extends HHElement {
     if (this.#view.kind === "run" || this.#view.kind === "close" || this.#view.kind === "fail" || this.#view.kind === "conflicts") {
       return;
     }
-    this.#photoQueue.push({ file, stopId: this.#view.id, late: this.#view.kind === "stop" });
+    const stopId = this.#view.id;
+    const late = this.#view.kind === "stop";
+    // The photo is a direct door and the server does not hold the delivery
+    // yet: it waits for the signature, in words, rather than failing at the core.
+    if (this.#findStop(stopId)?.stop.proof_waiting === true) {
+      this.#error = "The signature is still waiting to send. Add the photo once it has gone through.";
+      this.requestUpdate();
+      return;
+    }
+    this.#photoQueue.push({ file, stopId, late });
     if (this.#photoBusy) return;
     this.#photoBusy = true;
     this.#error = "";
@@ -696,6 +734,12 @@ export class DriveRunApp extends HHElement {
     this.#notice = "";
     this.#view = { kind: "run" };
     clearFrontDoorHandoff();
+    if (this.#custody.mode === "console") {
+      this.#entryView = entryUnavailable();
+      this.requestUpdate();
+      void this.#custody.leave();
+      return;
+    }
     void this.loadFlows();
   }
 

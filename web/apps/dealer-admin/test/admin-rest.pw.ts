@@ -198,18 +198,25 @@ test.describe("the exports surface", () => {
     await expect(page.locator("[data-test=msg-row-2]")).toContainText("deleted");
   });
 
-  test("a frontline caller is refused the messages export, and the workbook still downloads", async ({ page }) => {
+  test("a frontline caller is refused both exports and no file is downloaded", async ({ page }) => {
     await page.goto("/");
     await page.locator("[data-flow]").nth(1).click();
     await page.locator('.surface-link[data-surface="exports"]').click();
     await expect(page.locator('[data-action="wb-download"]')).toBeVisible();
 
-    // The messages export is leadership's; the workbook read is staff wide.
+    // Both exports are leadership's: the messages export is the core's RequireAdmin and the audit
+    // workbook carries the gate of the audit read it mirrors (RequireAdmin), so neither answers a
+    // frontline caller with a file.
+    let downloads = 0;
+    page.on("download", () => {
+      downloads += 1;
+    });
     await page.locator('[data-action="msg-export"]').click();
     await expect(page.locator("[data-test=msg-error]")).toContainText("leadership");
-    const downloadPromise = page.waitForEvent("download");
     await page.locator('[data-action="wb-download"]').click();
-    expect((await downloadPromise).suggestedFilename()).toBe("audit.xlsx");
+    await expect(page.locator("[data-test=wb-error]")).toBeVisible();
+    await expect(page.locator("[data-test=wb-notice]")).toHaveCount(0);
+    expect(downloads).toBe(0);
   });
 });
 

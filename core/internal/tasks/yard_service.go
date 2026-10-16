@@ -198,25 +198,33 @@ func (s *Service) RecordPick(ctx context.Context, taskID, actorID string, lines 
 		}
 		clean = append(clean, l)
 	}
+	// One transaction holds the task row across the order call (RecordPickLocked): a closed pick takes no
+	// record and the order is not told, and a cancel or complete that arrives during the order call waits
+	// and lands after the record instead of leaving the order moved with no lines behind it.
+	//
 	// The order first: it refuses a pick above what the order line holds, and a refused pick must
 	// not be recorded. The order's effect sets absolute quantities, so a retry after a failed
 	// record converges rather than doubling.
-	res, err := s.applyToOrder(ctx, taskID, actorID, clean)
-	if err != nil {
-		return nil, err
-	}
-	// What is stored is what the order holds: its own ordered quantity (not the ticket's) and the
-	// reason and note it keeps, so a re-save with none never blanks them.
-	byLine := make(map[int]YardLineEffect, len(res.Lines))
-	for _, e := range res.Lines {
-		byLine[e.LineNo] = e
-	}
-	for i := range clean {
-		if e, ok := byLine[clean[i].OrderLineNo]; ok {
-			clean[i].QtyOrdered, clean[i].ShortReason, clean[i].ShortNote = e.QtyOrdered, e.Reason, e.Note
+	var res YardPickResult
+	picked, err := s.store.RecordPickLocked(ctx, taskID, actorID, func(ctx context.Context, task Task) ([]PickedLineInput, error) {
+		r, err := s.applyToOrder(ctx, task, actorID, clean)
+		if err != nil {
+			return nil, err
 		}
-	}
-	picked, err := s.store.UpsertPickedLines(ctx, taskID, actorID, clean)
+		res = r
+		// What is stored is what the order holds: its own ordered quantity (not the ticket's) and the
+		// reason and note it keeps, so a re-save with none never blanks them.
+		byLine := make(map[int]YardLineEffect, len(res.Lines))
+		for _, e := range res.Lines {
+			byLine[e.LineNo] = e
+		}
+		for i := range clean {
+			if e, ok := byLine[clean[i].OrderLineNo]; ok {
+				clean[i].QtyOrdered, clean[i].ShortReason, clean[i].ShortNote = e.QtyOrdered, e.Reason, e.Note
+			}
+		}
+		return clean, nil
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -250,13 +258,9 @@ func checkPickText(l PickedLineInput) error {
 }
 
 // applyToOrder hands a recorded pick to the order module, when the port is wired.
-func (s *Service) applyToOrder(ctx context.Context, taskID, actorID string, lines []PickedLineInput) (YardPickResult, error) {
+func (s *Service) applyToOrder(ctx context.Context, task Task, actorID string, lines []PickedLineInput) (YardPickResult, error) {
 	if s.yardOrders == nil {
 		return YardPickResult{}, nil
-	}
-	task, err := s.store.GetTask(ctx, taskID)
-	if err != nil {
-		return YardPickResult{}, err
 	}
 	in := YardPickChange{OrderID: task.OrderID, ActorID: actorID}
 	for _, l := range lines {

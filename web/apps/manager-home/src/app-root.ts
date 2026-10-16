@@ -25,10 +25,12 @@ import { HHElement, defineElement } from "@hardscapehouse/design-system/src/base
 import { baseStyles } from "@hardscapehouse/design-system/src/primitives.js";
 // hos-app-header: the shared chrome element (decision log row 938).
 import "@hardscapehouse/design-system/src/header.js";
+import { listenForHostSignOut } from "@hardscapehouse/design-system/src/framed.js";
 import { ApiClient } from "@hardscapehouse/api-client";
 import { browserSignal, noSignalFetch } from "@hardscapehouse/work-offline/guard";
 import { AuthController, authHeaderProvider, SessionStore, type AccountSurface } from "@hardscapehouse/auth";
 import { DemoAccount } from "@hardscapehouse/pos-kit/src/ported/demo-account.js";
+import { bootCustody, entryUnavailable, servedConsoleConfig, type AppStart } from "@hardscapehouse/pos-kit/src/ported/boot-custody.js";
 import { readFrontDoorHandoff, clearFrontDoorHandoff } from "./demo-account.js";
 import { groupDriverRows, idleDriverWords } from "./drivers-logic.js";
 import { rowsForBoard } from "./drivers-api.js";
@@ -111,15 +113,8 @@ const DEMO_ORG = "hh-demo";
 export class ManagerHomeApp extends HHElement {
   static styles = [baseStyles, homeStyles, builderStyles, reportingStyles, warrantyStyles, quickStyles];
 
-  // The demo account surface: listFlows() and chooseFlow() over the core's
-  // demo routes. It is the injected AccountSurface for the auth package.
-  readonly #demoAccount: AccountSurface;
-
   // The custody: holds the adopted demo mint in memory, nothing persisted.
   readonly #sessions = new SessionStore();
-
-  // The auth controller: owns sign-in, sign-out, and adoption.
-  readonly #auth: AuthController;
 
   // The demo client: no bearer token (demo routes are pre-auth by design).
   readonly #demoClient = new ApiClient({
@@ -127,12 +122,23 @@ export class ManagerHomeApp extends HHElement {
     headers: async () => ({ "X-Org": DEMO_ORG }),
   });
 
+  // The demo account surface: listFlows() and chooseFlow() over the core's
+  // demo routes. It is the injected AccountSurface for the auth package.
+  readonly #demoAccount: AccountSurface = new DemoAccount({ client: this.#demoClient });
+
+  // The custody the served config chose: in demo mode the auth controller over the demo account, as
+  // always; in console mode this page recovers its own session on load (boot-custody.ts).
+  readonly #custody = bootCustody(servedConsoleConfig(), { sessions: this.#sessions, demoAccount: this.#demoAccount, demoOrg: DEMO_ORG });
+
+  // The auth controller: owns sign-in, sign-out, and adoption.
+  readonly #auth: AuthController = this.#custody.controller;
+
   // The staff client: carries the mint's bearer after adoption.
   readonly #staffClient = new ApiClient({
-    baseUrl: "",
+    baseUrl: this.#custody.coreBaseUrl,
     // The Work shell's rule: money never queues. With no signal a write is refused before it dials, with one honest state.
     fetch: noSignalFetch(undefined, browserSignal()),
-    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => DEMO_ORG }),
+    headers: authHeaderProvider({ callerClass: "staff", sessions: this.#sessions, activeOrg: () => this.#custody.org }),
   });
 
   // The manager's calls, over the staff client.
@@ -215,12 +221,6 @@ export class ManagerHomeApp extends HHElement {
 
   // The way in: this app's own card, drawn by the shared entry.
   #entryView: EntryView = { flows: { kind: "loading" }, busy: false, message: null };
-
-  constructor() {
-    super();
-    this.#demoAccount = new DemoAccount({ client: this.#demoClient });
-    this.#auth = new AuthController({ account: this.#demoAccount, sessions: this.#sessions });
-  }
 
   // The entry cards and every control ride data-action names; one host
   // listener reads them, as the till's does.
@@ -378,12 +378,20 @@ export class ManagerHomeApp extends HHElement {
     }
   };
 
+  /** Framed by the Work shell: the host asks this app to run its own sign out when the person switches role (item 8e); standalone, nothing listens. */
+  #stopHostSignOut: (() => void) | null = null;
+
   connectedCallback(): void {
     super.connectedCallback();
+    this.#stopHostSignOut = listenForHostSignOut(() => this.#onSignOut());
     this.addEventListener("click", this.#onHostClick);
     // input does not leave this element's own shadow root, so the form
     // listener sits on the root itself.
     this.renderRoot.addEventListener("input", this.#onField);
+    if (this.#custody.mode === "console") {
+      this.#custody.begin("manager-home", (outcome) => this.#onRecovered(outcome));
+      return;
+    }
     const handoff = readFrontDoorHandoff();
     if (handoff.kind === "ready") {
       const adopted = this.#auth.adopt({
@@ -408,7 +416,27 @@ export class ManagerHomeApp extends HHElement {
     }
   }
 
+  // Console mode: this page recovered its own session, or could not. A role the matrix gives this
+  // app lands on its screen; an unavailable page keeps the unavailable entry while the custody retries;
+  // a session the front door must settle goes back there.
+  #onRecovered(outcome: AppStart): void {
+    if (outcome.kind === "ready") {
+      this.#roleLabel = outcome.entry.roleLabel;
+      this.#entryView = { flows: { kind: "ready", flows: [] }, busy: false, message: null };
+      void this.#start();
+    } else if (outcome.kind === "front-door" && outcome.why === "ended") {
+      this.#onSignOut();
+      return;
+    } else {
+      this.#entryView = entryUnavailable();
+      if (outcome.kind === "front-door") this.#custody.toFrontDoor();
+    }
+    this.requestUpdate();
+  }
+
   disconnectedCallback(): void {
+    this.#stopHostSignOut?.();
+    this.#stopHostSignOut = null;
     this.removeEventListener("click", this.#onHostClick);
     this.renderRoot.removeEventListener("input", this.#onField);
     super.disconnectedCallback();
@@ -614,6 +642,12 @@ export class ManagerHomeApp extends HHElement {
     this.#scope = "";
     this.#branchList = [];
     clearFrontDoorHandoff();
+    if (this.#custody.mode === "console") {
+      this.#entryView = entryUnavailable();
+      this.requestUpdate();
+      void this.#custody.leave();
+      return;
+    }
     void this.loadFlows();
   }
 

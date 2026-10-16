@@ -53,10 +53,14 @@ func TestQuotePlan_TheWorldHoldsTheStatesATesterNeeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := quoteRows(rows, sum)
-	if got := len(q["quotes"]); got != 4 {
-		t.Fatalf("the world holds %d quotes, want 4", got)
+	if got := len(q["quotes"]); got != 5 {
+		t.Fatalf("the world holds %d quotes, want 5", got)
 	}
 	sales, manager := in.Personas[personaQuoteSales], in.Personas[personaQuoteManager]
+	wantBranch := map[string]string{}
+	for _, qsp := range demoQuotes {
+		wantBranch[demoID("quote:"+qsp.Key)] = in.Branches[qsp.Branch].ID
+	}
 	byStatus := map[string]map[string]any{}
 	owners := map[string]bool{}
 	custs := map[string]bool{}
@@ -70,8 +74,8 @@ func TestQuotePlan_TheWorldHoldsTheStatesATesterNeeds(t *testing.T) {
 		if f["salesperson_id"] == "" || f["salesperson_id"] == nil {
 			t.Errorf("quote %v is ownerless", f["quote_no"])
 		}
-		if f["branch_id"] != in.Branches[1].ID {
-			t.Errorf("quote %v is at %v, want the second branch by code (Trenton, the demo logins' branch)", f["quote_no"], f["branch_id"])
+		if want := wantBranch[fmt.Sprint(f["id"])]; f["branch_id"] != want {
+			t.Errorf("quote %v is at %v, want %v", f["quote_no"], f["branch_id"], want)
 		}
 		if !strings.HasPrefix(fmt.Sprint(f["quote_no"]), demoPrefix) {
 			t.Errorf("quote number %v is not DEMO-prefixed", f["quote_no"])
@@ -85,12 +89,12 @@ func TestQuotePlan_TheWorldHoldsTheStatesATesterNeeds(t *testing.T) {
 	if len(owners) != 2 || !owners[sales] || !owners[manager] {
 		t.Errorf("owners %v, want exactly the Sales and the Sales manager logins", owners)
 	}
-	if !custs[demoID("customer:C01")] || !custs[demoID("customer:C02")] || !custs[demoID("customer:C10")] || len(custs) != 3 {
-		t.Errorf("customers %v, want C01, C02 and the Cash On Demand account C10 only", custs)
+	if !custs[demoID("customer:C01")] || !custs[demoID("customer:C02")] || !custs[demoID("customer:C04")] || !custs[demoID("customer:C10")] || len(custs) != 4 {
+		t.Errorf("customers %v, want C01, C02, C04 and the Cash On Demand account C10 only", custs)
 	}
 	// Every quote line is a priced, whole-quantity line on a demo product.
-	if len(q["quote_lines"]) != 9 {
-		t.Errorf("the world holds %d quote lines, want 9", len(q["quote_lines"]))
+	if len(q["quote_lines"]) != 10 {
+		t.Errorf("the world holds %d quote lines, want 10", len(q["quote_lines"]))
 	}
 	// A tester can open a SENT quote and an ACCEPTED quote by a derived token, and the stored hash is
 	// the hash of that printed token, never the token.
@@ -248,12 +252,22 @@ func TestQuotePlan_TheFloorStoriesAreAllThere(t *testing.T) {
 			t.Errorf("the BYPASS row says %v, want %q", logs[demoID("quote:Q3")+"/line_1/BYPASS"]["new_value"], want)
 		}
 	}
-	// Exactly one pending floor request, filed by Sales (never by the manager who decides it), bound to
-	// the line's own row and product, in the quote's branch.
-	if len(q["permission_approval_requests"]) != 1 {
-		t.Fatalf("floor requests: %d, want 1", len(q["permission_approval_requests"]))
+	// Exactly two pending floor requests, one per branch, filed by Sales (never by the manager who
+	// decides it), bound to the line's own row and product, in the quote's branch.
+	if len(q["permission_approval_requests"]) != 2 {
+		t.Fatalf("floor requests: %d, want 2", len(q["permission_approval_requests"]))
 	}
-	req := q["permission_approval_requests"][0]
+	reqByQuote := map[string]map[string]any{}
+	for _, r := range q["permission_approval_requests"] {
+		reqByQuote[fmt.Sprint(r["subject_ref"])] = r
+	}
+	if reqByQuote[demoID("quote:Q5")] == nil {
+		t.Errorf("no pending floor request for Q5 (the Kingston branch story)")
+	}
+	req := reqByQuote[demoID("quote:Q1")]
+	if req == nil {
+		t.Fatal("no pending floor request for Q1")
+	}
 	if req["requested_by"] != sales || req["requested_by"] == manager {
 		t.Errorf("the request is filed by %v, want the Sales login and not the deciding manager", req["requested_by"])
 	}

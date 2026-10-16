@@ -42,6 +42,32 @@ const maxShortNote = 400
 // request: the order cannot take a pick in its status, or the line has already gone out. Mapped to 409.
 var ErrOrderRefused = errors.New("tasks: the order cannot take that pick")
 
+// ErrPickClosed is a record onto a pick that is CANCELLED or DONE. Both are terminal in the module's
+// matrix (allowedTransitions moves out of neither) and the module has no correction path for a done
+// pick, so the record is refused before the order is told anything. → 409, and through sync that op's
+// rejection.
+var ErrPickClosed = errors.New("tasks: this pick is closed, its record cannot change")
+
+// pickClosedError is ErrPickClosed with the status in the words.
+type pickClosedError struct{ status string }
+
+func (e pickClosedError) Error() string {
+	if e.status == StatusCancelled {
+		return "tasks: this pick was cancelled, its record cannot change"
+	}
+	return "tasks: this pick is done, its record cannot change"
+}
+
+func (e pickClosedError) Is(target error) bool { return target == ErrPickClosed }
+
+// pickClosed is the refusal for a task in a terminal status, nil for any open one.
+func pickClosed(status string) error {
+	if status == StatusCancelled || status == StatusDone {
+		return pickClosedError{status: status}
+	}
+	return nil
+}
+
 // ErrAboveOrdered is a picked quantity above what was ordered. The yard may record less, never more.
 var ErrAboveOrdered = errors.New("tasks: that is more than was ordered, the yard cannot raise a quantity")
 
